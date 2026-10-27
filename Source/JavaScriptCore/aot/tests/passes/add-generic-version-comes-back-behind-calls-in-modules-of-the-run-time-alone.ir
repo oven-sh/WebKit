@@ -7,9 +7,10 @@
 
 module m0 path="main.js" displayPath="main.js"
 module m1 path="library" displayPath="library" flags=[IsLibrary]
+layout L0 name="Sized" fields=[{key="size" declared={type=anything}}]
 
 function f0 name="ofTheProgram" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 expectedType=object
+    v2 = Check v0 expectedType=L0
     v3: anything ~ number = PropGet v2 key="size"
     v4 = Call v1
     v5 = Add v3, v3
@@ -42,7 +43,7 @@ function f1 name="ofTheProgramWithLoop" module=m0 parameters=[{type=anything}, {
 }
 
 function f2 name="ofTheRunTime" module=m1 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 expectedType=object
+    v2 = Check v0 expectedType=L0
     v3: anything ~ number = PropGet v2 key="size"
     v4 = Call v1
     v5 = Add v3, v3

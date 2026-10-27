@@ -1,0 +1,78 @@
+# An object keeps the brand that it has taken, whatever runs in between: the second test of the same object for the same brand goes, and so does a test behind the definition. A test of another object, for another token, on one way alone or in the handler of the block that holds the first one stays, and so does a second definition, which throws.
+# FORM: Prepared
+# RUN: pass EliminateRedundantReads
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" fields=[{key=#"#"@L0 declared={type=classtoken} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#secret"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}]
+
+function f0 name="repeated" parameters=[{type=anything}, {type=classtoken}, {type=anything}] results=[{type=anything}] {
+    v3 = PrivateGet v0, v1 layout=L0
+    v4 = Call v2
+    v5 = PrivateGet v0, v1 layout=L0
+    v6 = PrivateGet v0, v1 layout=L0
+    Return v4
+# CHECK: = PrivateGet v0, v1 layout=L0
+# CHECK-NEXT: = Call v2
+# CHECK-NEXT: Return
+}
+
+function f1 name="behindTheDefinition" parameters=[{type=anything}, {type=classtoken}] results=[{type=anything}] {
+    PrivateDefine v0, v1, v1 layout=L0
+    v3 = PrivateGet v0, v1 layout=L0
+    PrivateDefine v0, v1, v1 layout=L0
+    Return v0
+# CHECK: PrivateDefine v0, v1, v1 layout=L0
+# CHECK-NEXT: PrivateDefine v0, v1, v1 layout=L0
+# CHECK-NEXT: Return
+}
+
+function f2 name="others" parameters=[{type=anything}, {type=classtoken}, {type=anything}, {type=classtoken}] results=[{type=anything}] {
+    v4 = PrivateGet v0, v1 layout=L0
+    v5 = PrivateGet v2, v1 layout=L0
+    v6 = PrivateGet v0, v3 layout=L0
+    v7 = PrivateGet v0, v1 layout=L0 field=1
+    v8 = PrivateGet v0, v1 layout=L0 field=1
+    Return v8
+# CHECK: = PrivateGet v0, v1 layout=L0
+# CHECK-NEXT: = PrivateGet v2, v1 layout=L0
+# CHECK-NEXT: = PrivateGet v0, v3 layout=L0
+# CHECK-NEXT: = PrivateGet v0, v1 layout=L0 field=1
+# CHECK-NEXT: = PrivateGet v0, v1 layout=L0 field=1
+}
+
+function f3 name="onOneWay" parameters=[{type=anything}, {type=classtoken}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = PrivateGet v0, v1 layout=L0
+    v4 = PrivateGet v0, v1 layout=L0
+    Jump -> next b2()
+  b2():
+    v5 = PrivateGet v0, v1 layout=L0
+    Return v0
+# CHECK: b1():
+# CHECK-NEXT: = PrivateGet v0, v1 layout=L0
+# CHECK-NEXT: Jump
+# CHECK: b2():
+# CHECK-NEXT: = PrivateGet v0, v1 layout=L0
+}
+
+function f4 name="inTheHandler" parameters=[{type=anything}, {type=classtoken}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b3():
+    v3 = Call v2
+    v4 = PrivateGet v0, v1 layout=L0
+    Jump -> next b2()
+  b2():
+    v5 = PrivateGet v0, v1 layout=L0
+    Return v0
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = PrivateGet v0, v1 layout=L0
+    Return v6
+# CHECK: b1() handler=b3():
+# CHECK: = PrivateGet v0, v1 layout=L0
+# CHECK: b2():
+# CHECK-NEXT: Return v0
+# CHECK: = CatchValue
+# CHECK-NEXT: = PrivateGet v0, v1 layout=L0
+}

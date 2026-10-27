@@ -209,11 +209,11 @@ static void heatRanksHandlersAboveLoopsAtStart()
     const Program& program = *server.program;
     Heat heat = estimateHeat(program, server.callGraph, server.flow, server.build);
 
-    AOT_TEST_CHECK(hasElements(heat.hottestFirst().first(5), { fetch, route, respond, onMessage, registerRoute }));
-    AOT_TEST_CHECK(heat.percentileOf(program, fetch) == heat.percentileOf(program, onMessage));
-    AOT_TEST_CHECK(heat.percentileOf(program, respond) > heat.percentileOf(program, registerRoute));
-    AOT_TEST_CHECK(heat.percentileOf(program, registerRoute) > heat.percentileOf(program, job));
-    AOT_TEST_CHECK(heat.of(program, moduleBody) == HeatClass::RunsOnce && heat.of(program, setUp) == HeatClass::RunsOnce);
+    AOT_TEST_CHECK(hasElements(heat.hottestFirst().predicted().first(5), { fetch, route, respond, onMessage, registerRoute }));
+    AOT_TEST_CHECK((heat.percentileOf(program, fetch) == heat.percentileOf(program, onMessage)).predicted());
+    AOT_TEST_CHECK((heat.percentileOf(program, respond) > heat.percentileOf(program, registerRoute)).predicted());
+    AOT_TEST_CHECK((heat.percentileOf(program, registerRoute) > heat.percentileOf(program, job)).predicted());
+    AOT_TEST_CHECK(heat.of(program, moduleBody).predicted() == HeatClass::RunsOnce && heat.of(program, setUp).predicted() == HeatClass::RunsOnce);
 }
 
 static void heatGraphCountsOneCallOfCallbackCalledLater()

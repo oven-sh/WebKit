@@ -344,6 +344,7 @@ inline Policy optimizingPolicy()
         optimization.sinksValues = true;
         optimization.placesConstantsByFrequency = true;
         optimization.mergesBlocksAfterForwardingJumps = true;
+        optimization.keepsOriginsOfDemotedValues = true;
 
         policy.selection.extendsInstructionSelection = true;
         policy.selection.attributesTrapsToAccesses = true;

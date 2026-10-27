@@ -14,6 +14,7 @@
 #include "ArgList.h"
 #include "CodeSpecializationKind.h"
 #include "NativeFunction.h"
+#include <optional>
 #include <wtf/CommaPrinter.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StringPrintStream.h>
@@ -130,6 +131,8 @@ struct OperandDifference {
     String detail;
     RefPtr<UniquedStringImpl> key { };
     EncodedJSValue arrived { 0 };
+    // Of an element that changed.
+    std::optional<uint32_t> index { };
 };
 
 AbstractHeaps heapsOfClassOf(JSObject*);

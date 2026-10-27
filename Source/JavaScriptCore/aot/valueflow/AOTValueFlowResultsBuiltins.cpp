@@ -13,6 +13,7 @@
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowUnseenCode.h"
 #include "AOTKnownClosures.h"
+#include "AOTLedgerOfBuiltinObjects.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPrimitiveKeyTexts.h"
 #include "AOTSchemaOperandPositions.h"
@@ -30,212 +31,6 @@ static ValueSetID valueOfHostNode(const ValueFlowResultInputs& inputs, ValueFlow
 {
     return inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(node));
 }
-
-namespace {
-
-enum class BuiltinWriteForm : uint8_t {
-    UnderName,
-    UnderKeyNobodyKnows,
-    OfPrototypeLink,
-    OfSlot,
-    Other,
-};
-
-} // anonymous namespace
-
-static BuiltinWriteForm formOfWrite(ValueFlowNameKind kind)
-{
-    ValueFlowNameShape shape = shapeOf(kind);
-    if (shape.reach == ValueFlowNameReach::OneKey)
-        return BuiltinWriteForm::UnderName;
-    if (shape.reach == ValueFlowNameReach::Elements || shape.reach == ValueFlowNameReach::UnknownKey || shape.sort == ValueFlowNameSort::Copy)
-        return BuiltinWriteForm::UnderKeyNobodyKnows;
-    if (shape.sort == ValueFlowNameSort::PrototypeLink)
-        return BuiltinWriteForm::OfPrototypeLink;
-    return kind == ValueFlowNameKind::Slot ? BuiltinWriteForm::OfSlot : BuiltinWriteForm::Other;
-}
-
-namespace {
-
-class BuiltinHolders {
-    WTF_MAKE_NONCOPYABLE(BuiltinHolders);
-public:
-    BuiltinHolders(const ValueFlowResultInputs& inputs, ValueFlowHeapView& heap)
-        : m_inputs(inputs)
-        , m_builtins(inputs.program.builtins())
-        , m_unseenCodeRuns(!inputs.sets().isEmpty(valueOfHostNode(inputs, ValueFlowHostNode::UnseenCodeChangesRealm)))
-        , m_unknownCodeWrites(!inputs.sets().isEmpty(valueOfHostNode(inputs, ValueFlowHostNode::UnknownCodeWrites)) || unseenCodeCanRun(inputs.solution))
-        , m_unknownObject(m_builtins.builtinCount())
-        , m_untrackedObject(m_builtins.builtinCount() + 1)
-        , m_keysWritten(m_builtins.builtinCount() + 2)
-    {
-        auto noteHoldersIn = [&](ValueSetID set, BitVector& holders) {
-            for (BuiltinID holder : holdersIn(heap.maker(), set))
-                holders.set(holder.index());
-        };
-        noteHoldersIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), m_escaped);
-        noteHoldersIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()), m_lost);
-        noteWrites(heap.index());
-        if (!m_unseenCodeRuns && isWrittenBehindAnalysis())
-            noteHoldersIn(valueOfHostNode(inputs, ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_mayBeHeldWithoutBeingListed);
-    }
-
-    bool unseenCodeRuns() const { return m_unseenCodeRuns; }
-    bool hasEscaped(BuiltinID holder) const { return m_escaped.get(holder.index()); }
-    bool isLost(BuiltinID holder) const { return m_lost.get(holder.index()); }
-    bool operandMayHaveProperty(BuiltinID builtin, BuiltinName property) const { return m_propertiesOfOperands.contains(static_cast<uint64_t>(builtin.index()) << 32 | property.index()); }
-
-    bool isWrittenByProgram(BuiltinID holder, PropertyKeyID key) const
-    {
-        if (m_underKeysNobodyKnows.get(holder.index()) || (m_underIndexes.get(holder.index()) && m_inputs.program.isIndexLike(key)) || m_keysWritten[holder.index()].get(key.index()))
-            return true;
-        return (isLost(holder) && mayWriteThrough(m_untrackedObject, key)) || (m_mayBeHeldWithoutBeingListed.get(holder.index()) && mayWriteThrough(m_unknownObject, key));
-    }
-
-    bool mayBeWrittenBehindAnalysis(BuiltinID holder, PropertyKeyID key) const
-    {
-        return m_unseenCodeRuns || (hasEscaped(holder) && (m_unknownCodeWrites || mayWriteThrough(m_unknownObject, key)));
-    }
-
-    bool isIntact(BuiltinID holder) const
-    {
-        if (m_builtins.at(holder).flags.contains(BuiltinFlag::IsLockedObject))
-            return true;
-        if (m_unseenCodeRuns || m_underKeysNobodyKnows.get(holder.index()) || m_underIndexes.get(holder.index()) || m_ofPrototypeLinks.get(holder.index()))
-            return false;
-        return !(isLost(holder) && writesThrough(m_untrackedObject)) && !(hasEscaped(holder) && isWrittenBehindAnalysis());
-    }
-
-    bool mayWriteLockedLocationUnderKeyNobodyKnows() const
-    {
-        BitVector written = m_underKeysNobodyKnows;
-        written.merge(m_underIndexes);
-        for (size_t index : written) {
-            BuiltinID holder(static_cast<uint32_t>(index));
-            if (index >= m_unknownObject)
-                break;
-            if (m_builtins.at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers, BuiltinFlag::IsClosedToOtherNames }) || !m_builtins.closedKeysOf(holder).empty()
-                || std::ranges::any_of(m_builtins.membersOf(holder), [&](BuiltinID member) { return isLockedLocation(m_builtins, member); }))
-                return true;
-        }
-        return false;
-    }
-
-    void forEachHolderOfWrittenPrototypeLink(NOESCAPE const Invocable<void(BuiltinID)> auto& functor) const
-    {
-        for (size_t holder : m_ofPrototypeLinks) {
-            if (holder < m_unknownObject)
-                functor(BuiltinID(static_cast<uint32_t>(holder)));
-        }
-    }
-
-    void forEachNameWritten(NOESCAPE const Invocable<void(BuiltinID, PropertyKeyID)> auto& functor) const
-    {
-        for (uint32_t holder = 0; holder < m_unknownObject; ++holder) {
-            for (size_t key : m_keysWritten[holder])
-                functor(BuiltinID(holder), PropertyKeyID(static_cast<uint32_t>(key)));
-        }
-    }
-
-    Vector<BuiltinID> holdersIn(ValueSetMaker& maker, ValueSetID set) const
-    {
-        Vector<BuiltinID> found;
-        m_inputs.sets().forEachMember(maker.intersect(set, m_inputs.universe().builtinObjects()), [&](ValueFlowObjectID object) {
-            found.append(m_builtins.canonicalID(m_inputs.universe().builtinOf(object)));
-        });
-        AOT::sort(found);
-        removeRepeatedElements(found);
-        return found;
-    }
-
-private:
-    struct Notes {
-        struct ThroughSet {
-            Vector<uint32_t> receivers;
-            Vector<uint32_t> keys;
-        };
-        HashMap<uint32_t, ThroughSet, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> throughSet;
-        BitVector underKeysNobodyKnows;
-        BitVector underIndexes;
-        BitVector ofPrototypeLinks;
-        Vector<uint64_t> propertiesOfOperands;
-    };
-
-    bool writesUnderKeysNobodyKnowsThrough(uint32_t placeholder) const { return m_underKeysNobodyKnows.get(placeholder) || m_underIndexes.get(placeholder); }
-    bool mayWriteThrough(uint32_t placeholder, PropertyKeyID key) const { return writesUnderKeysNobodyKnowsThrough(placeholder) || m_keysWritten[placeholder].get(key.index()); }
-    bool writesThrough(uint32_t placeholder) const { return writesUnderKeysNobodyKnowsThrough(placeholder) || m_ofPrototypeLinks.get(placeholder) || !m_keysWritten[placeholder].isEmpty(); }
-    bool isWrittenBehindAnalysis() const { return m_unknownCodeWrites || writesThrough(m_unknownObject); }
-
-    void noteWrite(Notes& notes, ValueSetMaker& maker, ValueSetID receivers, ValueFlowName name) const
-    {
-        BuiltinWriteForm form = formOfWrite(name.kind);
-        if (form == BuiltinWriteForm::Other || (form == BuiltinWriteForm::OfSlot && name.payload < m_builtins.slotCount()))
-            return;
-        Notes::ThroughSet& written = notes.throughSet.ensure(receivers.index(), [&] {
-            Vector<uint32_t> found = WTF::map(holdersIn(maker, receivers), [](BuiltinID holder) { return holder.index(); });
-            if (m_inputs.sets().contains(receivers, ValueFlowUniverse::unknownObject()))
-                found.append(m_unknownObject);
-            if (m_inputs.sets().contains(receivers, ValueFlowUniverse::untrackedObject()))
-                found.append(m_untrackedObject);
-            return Notes::ThroughSet { WTF::move(found), { } };
-        }).iterator->value;
-        if (form == BuiltinWriteForm::UnderName) {
-            if (!written.receivers.isEmpty())
-                written.keys.append(name.payload);
-            return;
-        }
-        for (uint32_t receiver : written.receivers) {
-            if (form == BuiltinWriteForm::OfPrototypeLink)
-                notes.ofPrototypeLinks.set(receiver);
-            else if (form == BuiltinWriteForm::UnderKeyNobodyKnows)
-                (name.kind == ValueFlowNameKind::Elements ? notes.underIndexes : notes.underKeysNobodyKnows).set(receiver);
-            else if (receiver < m_unknownObject)
-                notes.propertiesOfOperands.append(static_cast<uint64_t>(receiver) << 32 | (name.payload - m_builtins.slotCount()));
-        }
-    }
-
-    void noteWrites(const ValueFlowHeapIndex& index)
-    {
-        Vector<ValueFlowHeapIndex::Stretch> stretches = index.stretchesOfNodesWrittenUnder([](ValueFlowName name) {
-            return formOfWrite(name.kind) != BuiltinWriteForm::Other;
-        });
-        ValueSetMakers makers(m_inputs);
-        Vector<Notes> notesOfWorker(m_inputs.loops().width());
-        forEachIndexInParallel(m_inputs.loops(), stretches.size(), [&](unsigned position, unsigned worker) {
-            for (const ValueFlowHeapIndex::WrittenNode& node : stretches[position].nodes)
-                noteWrite(notesOfWorker[worker], makers.of(worker), node.objects, stretches[position].name);
-        });
-        for (const Notes& notes : notesOfWorker) {
-            m_underKeysNobodyKnows.merge(notes.underKeysNobodyKnows);
-            m_underIndexes.merge(notes.underIndexes);
-            m_ofPrototypeLinks.merge(notes.ofPrototypeLinks);
-            for (const Notes::ThroughSet& written : notes.throughSet.values()) {
-                for (uint32_t receiver : written.receivers) {
-                    for (uint32_t key : written.keys)
-                        m_keysWritten[receiver].set(key);
-                }
-            }
-            m_propertiesOfOperands.addAll(notes.propertiesOfOperands);
-        }
-    }
-
-    const ValueFlowResultInputs& m_inputs;
-    const BuiltinTable& m_builtins;
-    const bool m_unseenCodeRuns;
-    const bool m_unknownCodeWrites;
-    const uint32_t m_unknownObject;
-    const uint32_t m_untrackedObject;
-    BitVector m_escaped;
-    BitVector m_lost;
-    BitVector m_mayBeHeldWithoutBeingListed;
-    BitVector m_underKeysNobodyKnows;
-    BitVector m_underIndexes;
-    BitVector m_ofPrototypeLinks;
-    Vector<BitVector> m_keysWritten;
-    HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_propertiesOfOperands;
-};
-
-} // anonymous namespace
 
 static OptionSet<BuiltinUse> usesEnteringCode(BuiltinKind kind)
 {
@@ -316,7 +111,7 @@ static BitVector findBuiltinsWhoseCodeRuns(const ValueFlowResultInputs& inputs)
     return builtinsWhoseCodeRuns;
 }
 
-static bool mayHold(const BuiltinTable& builtins, const BuiltinHolders& holders, BuiltinID builtin, const BuiltinCondition* condition)
+static bool mayHold(const BuiltinTable& builtins, const LedgerOfBuiltinObjects& ledger, BuiltinID builtin, const BuiltinCondition* condition)
 {
     if (!condition)
         return true;
@@ -324,11 +119,11 @@ static bool mayHold(const BuiltinTable& builtins, const BuiltinHolders& holders,
         return false;
     const BuiltinUnseenCode* unseenCode = builtins.unseenCodeOf(builtin);
     bool runsUnseenCodeForProperty = condition->hasProperty && unseenCode && unseenCode->condition && unseenCode->condition->hasProperty == condition->hasProperty;
-    if (holders.hasEscaped(builtin) && !condition->calledOn && !runsUnseenCodeForProperty)
+    if (ledger.isCoveredByUnknownObject(builtin) && !condition->calledOn && !runsUnseenCodeForProperty)
         return true;
-    if (condition->firstText() && isObjectKind(builtins.at(builtin).kind) && !holders.operandMayHaveProperty(builtin, condition->firstText()))
+    if (condition->firstText() && isObjectKind(builtins.at(builtin).kind) && !ledger.operandMayHaveProperty(builtin, condition->firstText()))
         return false;
-    return !condition->hasProperty || holders.operandMayHaveProperty(builtin, condition->hasProperty);
+    return !condition->hasProperty || ledger.operandMayHaveProperty(builtin, condition->hasProperty);
 }
 
 static void forEachTypeOfValueThatOverloadMakes(const BuiltinOverload& overload, NOESCAPE const Invocable<void(BuiltinTypeID)> auto& functor)
@@ -392,7 +187,7 @@ static void markUnnamedFeatureUses(const ValueFlowResultInputs& inputs, Vector<F
     }
 }
 
-static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders, const BitVector& builtinsWhoseCodeRuns)
+static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& inputs, const LedgerOfBuiltinObjects& ledger, const BitVector& builtinsWhoseCodeRuns)
 {
     constexpr uint32_t noClass = UINT32_MAX;
     const BuiltinTable& builtins = inputs.program.builtins();
@@ -497,7 +292,7 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
                 uses.append(FeatureUseRecord { static_cast<uint32_t>(feature), static_cast<uint32_t>(index), noWitness });
         };
         for (const BuiltinFeatureUse& line : builtins.featureUsesOf(BuiltinID(index))) {
-            if (mayHold(builtins, holders, BuiltinID(index), line.condition))
+            if (mayHold(builtins, ledger, BuiltinID(index), line.condition))
                 addUnlessRootedByMakersOfClass(line.feature);
         }
         BuiltinID entryOfClass = entryWithFeaturesOfClassOf(entry);
@@ -583,24 +378,61 @@ static void warnAboutLoadsUnderComputedNames(const Program& program, BuildContex
     }
 }
 
-static BuiltinLocationState stateOfLocation(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders, BuiltinID member)
-{
-    const BuiltinTable& builtins = inputs.program.builtins();
-    if (isLockedLocation(builtins, member))
-        return BuiltinLocationState::Constant;
-    if (builtins.at(member).mutability == BuiltinMutability::ChangesOnItsOwn)
-        return BuiltinLocationState::Unknown;
+namespace {
 
-    BuiltinID holder = builtins.canonicalID(builtins.at(member).holder);
-    PropertyKeyID key = inputs.program.keyOf(builtins.at(member).name);
-    OptionSet<BuiltinUse> uses = inputs.solver().usesOf(member);
-    bool isWritten = holders.unseenCodeRuns() ? uses.contains(BuiltinUse::Written) : holders.isWrittenByProgram(holder, key);
-    if (isWritten || !inputs.build.isEnabled(FlowResultKind::ConstantBuiltinLocations, member.index()))
-        return BuiltinLocationState::Unknown;
-    if (!holders.mayBeWrittenBehindAnalysis(holder, key))
-        return BuiltinLocationState::Constant;
-    bool isLockedAtStartUp = !uses.isEmpty() && canLockAtStartUp(builtins, member) && !(holders.unseenCodeRuns() && holder == Builtins::GlobalThis);
-    return isLockedAtStartUp ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown;
+struct BuiltinLocationClaim {
+    BuiltinLocationState state { BuiltinLocationState::Unknown };
+    UnprovenCause cause { UnprovenCause::Unknown };
+};
+
+} // anonymous namespace
+
+static constexpr BuiltinLocationClaim unknown(UnprovenCause cause) { return { BuiltinLocationState::Unknown, cause }; }
+
+static UnprovenCause causeOf(const Write& write)
+{
+    switch (write.form) {
+    case WriteForm::Delete:
+        return UnprovenCause::FieldDeleted;
+    case WriteForm::Define:
+    case WriteForm::DefineAccessor:
+        return UnprovenCause::PropertyRedefined;
+    case WriteForm::Link:
+        return UnprovenCause::PrototypeChanged;
+    case WriteForm::Freeze:
+        return UnprovenCause::IntegrityChanged;
+    case WriteForm::AtCreation:
+    case WriteForm::Store:
+        return UnprovenCause::StoreOfOtherType;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static BuiltinLocationClaim stateOfLocation(const Writers& writers)
+{
+    auto all = writers.all();
+    if (!all)
+        return unknown(causeOf(writers.open()));
+    if (!all->value().empty())
+        return unknown(causeOf(all->value().front()));
+    return { BuiltinLocationState::Constant, UnprovenCause::Unknown };
+}
+
+static bool isIntact(const Writers& ofProperties, const Writers& ofPrototypeLink)
+{
+    auto links = ofPrototypeLink.all();
+    return ofProperties.all() && links && links->value().empty();
+}
+
+// A member that the program uses, and that no write was followed to, is worth a lock. A write that comes all the same is refused.
+static Expected<bool> isWorthLockingAtStartUp(const BuiltinTable& builtins, BuiltinID member, OptionSet<BuiltinUse> uses, const Writers& writers)
+{
+    if (uses.isEmpty() || !canLockAtStartUp(builtins, member))
+        return false;
+    // Unseen code hands the objects of the realm around, and declares globals. There a write through a value nobody knows counts for the members that the program names.
+    if (writers.open().contains(Actor::UnseenCode))
+        return !uses.contains(BuiltinUse::Written) && builtins.canonicalID(builtins.at(member).holder) != Builtins::GlobalThis;
+    return writers.seen().predicted().empty();
 }
 
 // Adds the locations that say where they are written, and keeps one record for each place.
@@ -692,26 +524,28 @@ static ValueID valuePassedAt(const Value& call, BuiltinOperand position)
     return index < call.numberOfOperands() ? call.operand(index) : ValueID();
 }
 
-static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders, ValueFlowHeapView& heap, Vector<BuiltinLocationFlow>& locations)
+static bool mayWriteLockedLocationUnderKeyNobodyKnows(const BuiltinTable& builtins, const LedgerOfBuiltinObjects& ledger)
+{
+    bool mayWrite = false;
+    ledger.forEachHolderWrittenUnderKeysNobodyKnows([&](BuiltinID holder) {
+        mayWrite = mayWrite || builtins.at(holder).flags.containsAny({ BuiltinFlag::IsLockedObject, BuiltinFlag::HasLockedMembers, BuiltinFlag::IsClosedToOtherNames }) || !builtins.closedKeysOf(holder).empty()
+            || std::ranges::any_of(builtins.membersOf(holder), [&](BuiltinID member) { return isLockedLocation(builtins, member); });
+    });
+    return mayWrite;
+}
+
+static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const ValueFlowResultInputs& inputs, const LedgerOfBuiltinObjects& holders, ValueFlowHeapView& heap, bool writesLockedLocation, Vector<BuiltinLocationFlow>& locations)
 {
     const Program& program = inputs.program;
     const BuiltinTable& builtins = program.builtins();
     const ValueFlowBodies& bodies = inputs.bodies();
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueSets& sets = inputs.sets();
-    bool writesLockedLocation = false;
     PropertyKeyID keyOfPrototypeLink = program.keyOf(BuiltinNames::__proto__);
-    holders.forEachNameWritten([&](BuiltinID holder, PropertyKeyID key) {
-        writesLockedLocation |= key == keyOfPrototypeLink && builtins.isNativeFunction(holder);
-        if (!isLockedLocation(program, holder, key))
-            return;
-        locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Constant, noWitness });
-        writesLockedLocation = true;
-    });
     holders.forEachHolderOfWrittenPrototypeLink([&](BuiltinID holder) {
         writesLockedLocation |= isLockedLocation(program, holder, keyOfPrototypeLink) || builtins.isNativeFunction(holder);
     });
-    if (!writesLockedLocation && !holders.mayWriteLockedLocationUnderKeyNobodyKnows())
+    if (!writesLockedLocation && !mayWriteLockedLocationUnderKeyNobodyKnows(builtins, holders))
         return { };
 
     struct Write {
@@ -802,7 +636,7 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
             Witness witness = witnessOfStatement(program, statement);
             ValueFlowStatementID id(static_cast<uint32_t>(&statement - bodies.statements().data()));
             inputs.forEachMadeNodeAskedForBy(id, kindsOfMadeNodes({ ValueFlowMadeNodeKind::Written }), false, [&](const ValueFlowNodeKey& key, ValueFlowStatementID) {
-                if (formOfWrite(key.name().kind) == BuiltinWriteForm::UnderName)
+                if (shapeOf(key.name().kind).reach == ValueFlowNameReach::OneKey)
                     note(notes, key.set, PropertyKeyID(key.payload), witness);
             });
             const Value& operation = program.at(statement.function).at(statement.site);
@@ -878,29 +712,43 @@ static Vector<ValueFlowWriteUnderNewName> collectWritesOfLockedLocations(const V
     return underNewNames;
 }
 
-static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders, ValueFlowHeapView& heap, FlowBuiltinTables& tables)
+static Vector<ValueFlowWriteUnderNewName> computeBuiltinLocations(const ValueFlowResultInputs& inputs, const LedgerOfBuiltinObjects& holders, ValueFlowHeapView& heap, FlowBuiltinTables& tables)
 {
     const Program& program = inputs.program;
     const BuiltinTable& builtins = program.builtins();
     tables.constantMembers = BitVector(builtins.builtinCount());
     tables.intactHolders = BitVector(builtins.builtinCount());
+    tables.membersLockedAtStartUp = BitVector(builtins.builtinCount());
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         BuiltinID member(index);
-        if (inputs.build.isEnabled(FlowResultKind::ConstantBuiltinLocations, index) && holders.isIntact(builtins.canonicalID(member)))
+        bool isEnabled = inputs.build.isEnabled(FlowResultKind::ConstantBuiltinLocations, index);
+        BuiltinID canonical = builtins.canonicalID(member);
+        if (isEnabled && isIntact(holders.writersOfEveryOwnProperty(canonical), holders.writersOfPrototypeLink(canonical)))
             tables.intactHolders.quickSet(index);
         const Builtin& entry = builtins.at(member);
         if (!entry.holder || !entry.name)
             continue;
-        BuiltinLocationState state = stateOfLocation(inputs, holders, member);
-        tables.constantMembers.quickSet(index, state == BuiltinLocationState::Constant && !builtins.has(BuiltinMark::MayBeAbsent, member));
-        if (!inputs.solver().usesOf(member).isEmpty())
-            tables.locations.append(BuiltinLocationFlow { entry.holder, program.keyOf(entry.name), state, noWitness });
+        OptionSet<BuiltinUse> uses = inputs.solver().usesOf(member);
+        // First the choice, which the image carries out. Then the claim, which rests on the record of the choice.
+        Writers withoutLocks = holders.writersOfMemberWithoutLocks(member);
+        if (isEnabled && isWorthLockingAtStartUp(builtins, member, uses, withoutLocks).predicted())
+            tables.membersLockedAtStartUp.quickSet(index);
+        BuiltinLocationClaim claim = isEnabled || Locks::byTable(builtins, member) ? stateOfLocation(holders.behindLocks(member, withoutLocks)) : unknown(UnprovenCause::ResultDisabled);
+        tables.constantMembers.quickSet(index, claim.state == BuiltinLocationState::Constant && !builtins.has(BuiltinMark::MayBeAbsent, member));
+        if (!uses.isEmpty())
+            tables.locations.append(BuiltinLocationFlow { entry.holder, program.keyOf(entry.name), claim.state, noWitness });
     }
+    bool writesLockedLocation = false;
+    PropertyKeyID keyOfPrototypeLink = program.keyOf(BuiltinNames::__proto__);
     holders.forEachNameWritten([&](BuiltinID holder, PropertyKeyID key) {
-        if (!findOwnMember(program, holder, key) && !isLockedLocation(program, holder, key))
+        writesLockedLocation |= key == keyOfPrototypeLink && builtins.isNativeFunction(holder);
+        if (isLockedLocation(program, holder, key)) {
+            tables.locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Constant, noWitness });
+            writesLockedLocation = true;
+        } else if (!findOwnMember(program, holder, key))
             tables.locations.append(BuiltinLocationFlow { holder, key, BuiltinLocationState::Unknown, noWitness });
     });
-    Vector<ValueFlowWriteUnderNewName> underNewNames = collectWritesOfLockedLocations(inputs, holders, heap, tables.locations);
+    Vector<ValueFlowWriteUnderNewName> underNewNames = collectWritesOfLockedLocations(inputs, holders, heap, writesLockedLocation, tables.locations);
     tables.writesOfLocations = mergeWrites(WTF::move(tables.writesOfLocations), tables.locations.span());
     sortAndMergeLocations(tables.locations);
     return underNewNames;
@@ -936,11 +784,11 @@ static ProgramInstances countProgramInstances(const ValueFlowResultInputs& input
     return ProgramInstances::AtMostOne;
 }
 
-static LegacyRegExpStatics findReadsOfLegacyRegExpStatics(const ValueFlowResultInputs& inputs, const BuiltinHolders& holders)
+static LegacyRegExpStatics findReadsOfLegacyRegExpStatics(const ValueFlowResultInputs& inputs, const LedgerOfBuiltinObjects& ledger)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
     BuiltinID constructor = builtins.canonicalID(builtins.at(BuiltinClasses::RegExp).constructor);
-    if (!inputs.build.isEnabled(FlowResultKind::ObjectUses, constructor.index()) || holders.unseenCodeRuns() || holders.hasEscaped(constructor) || holders.isLost(constructor))
+    if (!inputs.build.isEnabled(FlowResultKind::ObjectUses, constructor.index()) || !ledger.reachersOf(constructor).all())
         return LegacyRegExpStatics::Unknown;
     bool isMentioned = std::ranges::any_of(builtins.membersOf(constructor), [&](BuiltinID member) {
         return builtins.at(member).mutability == BuiltinMutability::ChangesOnItsOwn && (!inputs.solver().usesOf(member).isEmpty() || !inputs.solver().usesOf(builtins.canonicalID(member)).isEmpty());
@@ -967,7 +815,7 @@ void findHoldersWithListedKeys(const ValueFlowResultInputs& inputs, const ValueF
     });
 }
 
-ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs& inputs)
+ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)
 {
     const BuiltinTable& builtins = inputs.program.builtins();
     const ValueFlowUniverse& universe = inputs.universe();
@@ -1016,6 +864,32 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
                 found.append({ universe.siteObject(call, 1), BuiltinClasses::Array });
         }
     });
+    // One object a built-in stands for all that it makes where native code calls it. The constructor of a typed array answers nothing else, and each allocation has noted its class there.
+    if (const ValueFlowHeapIndex::NodesWrittenUnderName* written = heapIndex.findNodesWrittenUnder(allocatedAsName)) {
+        HashMap<uint32_t, BuiltinClassID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classMadeAs;
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            BuiltinClassID builtinClass(index);
+            BuiltinID constructor = builtins.at(builtinClass).constructor;
+            if (constructor && builtins.typedArrayClassOf(builtinClass) == builtinClass && universe.builtinTables().objectStandingFor(builtinClass))
+                classMadeAs.add(universe.resultOf(constructor, 0).index(), builtinClass);
+        }
+        for (const ValueFlowHeapIndex::WrittenNode& node : written->nodes) {
+            if (ValueSets::isComplement(node.objects))
+                continue;
+            inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID object) {
+                BuiltinClassID made = classMadeAs.get(object.index());
+                if (!made)
+                    return;
+                if (ValueSets::isComplement(node.value)) {
+                    noted.append({ object, { } });
+                    return;
+                }
+                inputs.sets().forEachMember(node.value, [&](ValueFlowObjectID named) {
+                    noted.append({ object, named == universe.builtinTables().objectStandingFor(made) ? made : BuiltinClassID() });
+                });
+            });
+        }
+    }
     ValueFlowClassesOfBuiltinResults classes;
     for (auto [object, builtinClass] : noted) {
         auto result = classes.add(object.index(), builtinClass);
@@ -1091,11 +965,13 @@ static void recordPlaces(const ValueFlowResultInputs& inputs, FlowResultTables& 
     recordPlacesOfUnseenCode(builtins, places, tables.wholeProgram.loadsOfMachineCode);
 }
 
-Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)
+Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables, std::unique_ptr<LedgerPart>& ledgerOfBuiltinObjects)
 {
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     ValueFlowHeapView heap(inputs);
-    BuiltinHolders holders(inputs, heap);
+    auto ownedHolders = makeUnique<LedgerOfBuiltinObjects>(inputs, heap, tables.builtins);
+    const LedgerOfBuiltinObjects& holders = *ownedHolders;
+    ledgerOfBuiltinObjects = WTF::move(ownedHolders);
     times.didFinish("built-ins: holders"_s);
     Vector<ValueFlowWriteUnderNewName> writesUnderNewNames = computeBuiltinLocations(inputs, holders, heap, tables.builtins);
     times.didFinish("built-ins: locations"_s);

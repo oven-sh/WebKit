@@ -23,7 +23,6 @@ static constexpr unsigned maxTypeNestingInText = 32;
 static constexpr uint32_t hasIntegersFlag = static_cast<uint32_t>(TypeFlags::HasIntegers);
 static constexpr uint32_t anyFunctionFlag = static_cast<uint32_t>(TypeFlags::AnyFunction);
 static constexpr uint32_t anyObjectFlags = static_cast<uint32_t>(TypeFlags::AnyObject) | anyFunctionFlag;
-static constexpr uint32_t hasMembersWithoutLayoutFlag = static_cast<uint32_t>(TypeFlags::HasMembersWithoutLayout);
 
 struct PrimitiveTypeWord {
     ASCIILiteral word;
@@ -44,6 +43,7 @@ static constexpr PrimitiveTypeWord primitiveTypeWords[] = {
     { "symbol"_s, Primitive::Symbol },
     { "bigint"_s, Primitive::BigInt },
     { "absent"_s, Primitive::Absent },
+    { "unspecified"_s, Primitive::Unspecified },
 };
 
 struct TextParser::TypeParts {
@@ -69,7 +69,6 @@ struct TextParser::TypeParts {
     Vector<EngineClassPart> engineClassParts;
     Vector<RegExpLiteralInType> regExpLiterals;
     bool layoutsAreExact { false };
-    bool hasMembersWithoutLayout { false };
     bool hasEngineParts { false };
 };
 
@@ -198,7 +197,7 @@ Wire::PropertyKey TextParser::parsePropertyKeyValue()
         expect(TokenKind::At);
         key.module = parseIDWordOrMinus(*this, IDPrefix::Module);
         expect(TokenKind::Colon);
-        key.position = accept(TokenKind::Minus) ? Wire::none : parseUInt32(Wire::none - 1);
+        key.callNumber = accept(TokenKind::Minus) ? Wire::none : parseUInt32(Wire::none - 1);
         return key;
     }
     if (acceptWord("Symbol"_s)) {
@@ -287,7 +286,7 @@ static bool parsePrimitivePart(TextParser& parser, Wire::Type& wire, uint16_t& n
         if (!parser.acceptWord(entry.word))
             continue;
         wire.primitives |= wirePrimitivesOf(entry.primitives);
-        numberBits |= entry.primitives & Primitive::Number;
+        numberBits |= entry.primitives & (Primitive::Number | Primitive::Unspecified);
         return true;
     }
     if (!parser.acceptWord("anything"_s))
@@ -320,10 +319,6 @@ static bool parseObjectWordPart(TextParser& parser, Wire::Type& wire)
 {
     if (parser.acceptWord("object"_s)) {
         wire.flags |= anyObjectFlags;
-        return true;
-    }
-    if (parser.acceptWord("nolayout"_s)) {
-        wire.flags |= hasMembersWithoutLayoutFlag;
         return true;
     }
     if (parser.atWord("function"_s)) {
@@ -392,8 +387,7 @@ uint32_t TextParser::parseTypeWord()
     if (hasFailed())
         return 0;
 
-    parts->hasMembersWithoutLayout = wire.flags & hasMembersWithoutLayoutFlag;
-    parts->layoutsAreExact = m_layoutsAreExact && (!parts->layouts.isEmpty() || parts->hasMembersWithoutLayout);
+    parts->layoutsAreExact = m_layoutsAreExact && !parts->layouts.isEmpty();
     if (!parts->hasEngineParts && !parts->layoutsAreExact)
         return m_builder.internType(wire);
 
@@ -424,7 +418,7 @@ Wire::Type TextParser::parseTypeValue(TypeParts& parts)
         return { };
     }
 
-    if (parts.numberBits & Primitive::Double && !(wire.primitives & wirePrimitivesOf(Primitive::Number)))
+    if ((parts.numberBits & Primitive::Double && !(wire.primitives & wirePrimitivesOf(Primitive::Number))) || parts.numberBits & Primitive::Unspecified)
         parts.hasEngineParts = true;
     wire.strings = appendSortedWords(m_builder, parts.strings);
     wire.layouts = appendSortedWords(m_builder, parts.layouts);
@@ -538,58 +532,53 @@ void TextParser::completeType(uint32_t wireIndex, Type& type) const
     type.regExpLiteralSet = SortedSet<RegExpLiteralInType>(parts.regExpLiterals.span());
 
     if (parts.layoutsAreExact) {
-        LayoutSet exactLayouts { parts.layouts.map([](uint32_t word) { return LayoutID(word); }), true };
-        exactLayouts.hasMembersWithoutLayout = parts.hasMembersWithoutLayout;
-        type.layouts = m_program->types.intern(WTF::move(exactLayouts));
+        type.layouts = m_program->types.intern(LayoutSet::complete(parts.layouts.map([](uint32_t word) { return LayoutID(word); })));
     }
 }
 
 LayoutSetID TextParser::parseLayoutSet()
 {
-    LayoutSet set;
-    set.isComplete = true;
+    Vector<LayoutID> members;
+    bool isComplete = true;
     parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
-        if (!set.isComplete) {
+        if (!isComplete) {
             fail();
             return;
         }
         if (accept(TokenKind::DotDot)) {
-            set.isComplete = false;
+            isComplete = false;
             return;
         }
-        if (!set.hasMembersWithoutLayout && acceptWord("nolayout"_s)) {
-            set.hasMembersWithoutLayout = true;
-            return;
-        }
-        set.members.append(LayoutID(parseIDWordUnderLimit(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));
+        members.append(LayoutID(parseIDWordUnderLimit(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));
     });
     if (hasFailed())
         return { };
-    return m_program->types.intern(WTF::move(set));
+    return m_program->types.intern(isComplete ? LayoutSet::complete(WTF::move(members)) : LayoutSet::open(WTF::move(members)));
 }
 
 CalleeSetID TextParser::parseCalleeSet()
 {
-    CalleeSet set;
-    set.isComplete = true;
+    Vector<FunctionID> functions;
+    Vector<BuiltinID> builtins;
+    bool isComplete = true;
     parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
-        if (!set.isComplete) {
+        if (!isComplete) {
             fail();
             return;
         }
         if (accept(TokenKind::DotDot)) {
-            set.isComplete = false;
+            isComplete = false;
             return;
         }
         if (atWord("builtin"_s)) {
-            set.builtins.append(parseBuiltinPart(*this));
+            builtins.append(parseBuiltinPart(*this));
             return;
         }
-        set.functions.append(FunctionID(parseIDWordUnderLimit(*this, IDPrefix::Function, countOf(ProgramList::Functions))));
+        functions.append(FunctionID(parseIDWordUnderLimit(*this, IDPrefix::Function, countOf(ProgramList::Functions))));
     });
     if (hasFailed())
         return { };
-    return m_program->types.intern(WTF::move(set));
+    return m_program->types.intern(isComplete ? CalleeSet::complete(WTF::move(functions), WTF::move(builtins)) : CalleeSet::open(WTF::move(functions), WTF::move(builtins)));
 }
 
 template<typename IDType>

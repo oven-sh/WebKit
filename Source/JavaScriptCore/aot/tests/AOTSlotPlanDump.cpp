@@ -192,22 +192,22 @@ void dumpFillEstimates(PrintStream& out, const Program& program, const SlotUses&
     for (unsigned index = 0; index < program.layouts.size(); ++index) {
         LayoutID id(index);
         const Vector<Field>& fields = program.at(id).fields;
-        if (fields.isEmpty() || !uses.rows[rows.rowOf(id, 0)].holderHeat)
+        if (fields.isEmpty() || !uses.rows[rows.rowOf(id, 0)].holderHeat.predicted())
             continue;
         auto percentOfHolders = [&](const SlotRowUse& use, double heat) {
-            return static_cast<unsigned>(std::min(9999.0, 100 * heat / use.holderHeat));
+            return static_cast<unsigned>(std::min(9999.0, 100 * heat / use.holderHeat.predicted()));
         };
         printer.print(id);
-        out.print(" allocated="_s, uses.layouts[index].creationHeat, "\n"_s);
+        out.print(" allocated="_s, uses.layouts[index].creationHeat.predicted(), "\n"_s);
         for (FieldIndex field = 0; field < fields.size(); ++field) {
             const SlotRowUse& use = uses.rows[rows.rowOf(id, field)];
             out.print("  ."_s, field, " "_s);
             printer.print(fields[field].key);
-            out.print(" filled="_s, percentOfHolders(use, use.fillHeat), "%"_s);
-            if (use.heatFilledBesideCreation)
-                out.print(" besideCreation="_s, percentOfHolders(use, use.heatFilledBesideCreation), "%"_s);
+            out.print(" filled="_s, percentOfHolders(use, use.fillHeat.predicted()), "%"_s);
+            if (use.heatFilledBesideCreation.predicted())
+                out.print(" besideCreation="_s, percentOfHolders(use, use.heatFilledBesideCreation.predicted()), "%"_s);
             printFlag(out, use.storesOfConstructorWithValue, "byConstructor"_s);
-            printFlag(out, use.isLikelyFilled(), "likely"_s);
+            printFlag(out, use.isLikelyFilled().predicted(), "likely"_s);
             out.print("\n"_s);
         }
     }

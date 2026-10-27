@@ -287,7 +287,7 @@ private:
     bool shouldCacheResult(LayoutSetID, LayoutSetID) const;
     LayoutSetID cachedResult(LayoutSetOperation, LayoutSetID, LayoutSetID);
     LayoutSetID computeResult(LayoutSetOperation, LayoutSetID, LayoutSetID);
-    LayoutSetID internCompleteSet(Vector<LayoutID>&& sortedMembers, bool hasMembersWithoutLayout);
+    LayoutSetID internCompleteSet(Vector<LayoutID>&& sortedMembers);
 
     const TypeTable& m_table;
     TypeTable* m_serialTable { nullptr };

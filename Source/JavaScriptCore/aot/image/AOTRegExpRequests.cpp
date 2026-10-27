@@ -1280,12 +1280,12 @@ private:
         }
         if ((value.opcode != Typed::Opcode::Call && value.opcode != Typed::Opcode::CallMethod) || !value.callees())
             return;
-        const Typed::CalleeSet& callees = m_program.at(value.callees());
-        if (!callees.isComplete || !callees.functions.isEmpty() || callees.builtins.size() != 1)
+        std::optional<Typed::ProvenValue<Typed::Callees>> callees = m_program.at(value.callees()).all();
+        if (!callees || !callees->value().functions.empty() || callees->value().builtins.size() != 1)
             return;
         const BuiltinTable& table = m_program.builtins();
         ValueID receiver = value.opcode == Typed::Opcode::Call ? value.thisValueOperand() : value.receiverOperand();
-        for (BuiltinOverloadID overload : table.overloadIDsOf(table.canonicalID(callees.builtins[0]))) {
+        for (BuiltinOverloadID overload : table.overloadIDsOf(table.canonicalID(callees->value().builtins[0]))) {
             if (table.at(overload).mode == BuiltinCallMode::Call)
                 functor(Typed::BuiltinCall { overload, Typed::BuiltinCallForm::Whole, 0, receiver, value.argumentsOperands() });
         }

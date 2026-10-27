@@ -13,6 +13,7 @@
 #include "AOTKeyOrderTable.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSort.h"
 #include "AOTState.h"
@@ -117,6 +118,7 @@ NEVER_INLINE AssignmentPlan* AssignmentPlanCache::makePlan(VM& vm, JSObject* tar
     plan.target = target->structureID();
     plan.source = source.object->structureID();
     plan.sourcePropertyStorage = source.propertyStorageStructureID();
+    plan.sourceStructureNamesPropertyStorage = !source.compiledObject || source.compiledObject->compiledStructure().extraPropertiesStructureID() == plan.sourcePropertyStorage;
     plan.extraPropertiesBefore = extraProperties ? extraProperties->structureID() : StructureID();
     plan.sourceOrderWord = source.orderWord;
     plan.servesDefinitionsOnly = source.defines;
@@ -218,7 +220,7 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, con
         if (!listed)
             return std::nullopt;
         for (const PropertyListEntry& property : *listed) {
-            if (hasForm(property.field))
+            if (hasForm(property.field) || (property.field && isPreparedBeforeLookups(vm, property.name)))
                 return std::nullopt;
             properties.append({ property.name, property.field, property.offsetInExtraProperties });
         }
@@ -234,6 +236,8 @@ static std::optional<Vector<AssignedProperty, 16>> listOwnProperties(VM& vm, con
                 return std::nullopt;
             const FieldData& field = layout.fields()[index];
             if (field.attributes() || hasForm(&field))
+                return std::nullopt;
+            if (objects.layouts.hasSymbolKey(field) && isPreparedBeforeLookups(vm, objects.layouts.nameOf(vm, field)))
                 return std::nullopt;
             if (objects.layouts.hasStringKey(field) || objects.layouts.hasSymbolKey(field))
                 properties.append({ objects.layouts.nameOf(vm, field), &field, invalidOffset });
@@ -355,6 +359,8 @@ uint16_t AssignmentPlanCache::describeMappedField(VM& vm, const LayoutData& targ
     if (!layouts.hasStringKey(from) && !layouts.hasSymbolKey(from))
         return FieldMap::isLeftOut;
     UniquedStringImpl* name = layouts.nameOf(vm, from);
+    if (isPreparedBeforeLookups(vm, name))
+        return FieldMap::isNotServed;
     if (excludedRunNumberPlusOne && m_excludedListsByRun.get(excludedRunNumberPlusOne)->contains(name))
         return FieldMap::isLeftOut;
     const FieldData* to = layouts.field(vm, target, name);
@@ -547,6 +553,8 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
         }
         if (field->flags & (fieldIsStoredOnce | fieldAttributeFlags))
             return notePlanWithoutUse("a field of the target is stored once or has a form"_s);
+        if (isPreparedBeforeLookups(vm, property.name))
+            return notePlanWithoutUse("the target is asked to prepare itself before a store to a field"_s);
         // A run writes slots by itself, and a marker in such a slot has to set the mark of the cell.
         if (field->holdsRawValueFromBirth)
             return notePlanWithoutUse("the mark of the target's cell answers for a field"_s);

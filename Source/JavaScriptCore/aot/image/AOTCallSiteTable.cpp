@@ -372,6 +372,14 @@ std::optional<CallSiteRecord> Image::callSiteAt(uint32_t function, uint32_t retu
     return findCallSite(&*head, returnOffset);
 }
 
+bool Image::callsOwnFunctionObjectAt(uint32_t function, CallSiteIndex site) const
+{
+    const ImageFunction& record = this->function(function);
+    if (!record.has(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) [[likely]]
+        return false;
+    return SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables).data()).callsOwnFunctionObjectAt(site.bits());
+}
+
 ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const
 {
     const ImageFunction& record = this->function(function);
@@ -720,7 +728,10 @@ std::optional<SourcePosition> Image::positionOf(uint32_t function, CallSiteIndex
         if (remembered.image == this && remembered.function == function && remembered.site == site.bits())
             return SourcePosition { { remembered.line, remembered.column }, remembered.sourcePlusOne ? ModuleID(remembered.sourcePlusOne - 1) : ModuleID(), remembered.constructionStart, remembered.startIsForCallers };
     }
-    std::optional<SourcePosition> position = findPosition(*this, function, site);
+    unsigned methodReadColumnDelta = site.bits() >> siteNumberBits;
+    std::optional<SourcePosition> position = findPosition(*this, function, CallSiteIndex(site.bits() & ((1u << siteNumberBits) - 1)));
+    if (position && methodReadColumnDelta)
+        position = SourcePosition { { position->lineColumn.line, position->lineColumn.column - methodReadColumnDelta }, position->source };
     if (position) {
         Locker locker { rememberedPositionsLock };
         remembered = { this, function, site.bits(), position->lineColumn.line, position->lineColumn.column, position->source ? position->source.index() + 1 : 0, position->constructionStart, position->startIsForCallers };

@@ -13,8 +13,10 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
+#include "AOTClaims.h"
 #include "AOTDeferDefinitions.h"
 #include "AOTDefinitions.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDescription.h"
@@ -164,7 +166,7 @@ static Vector<ConstantVariableStore> collectConstantStores(const Program& progra
             KnownValue stored;
             std::optional<Vector<KnownValue, 8>> list;
             if (value.opcode == Opcode::PutModuleVariable) {
-                stored = knownValueOfType(program, program.typeOf(program.functions[index], value.valueOperand()));
+                stored = knownValueOfType(program.typeOf(program.functions[index], value.valueOperand()));
                 list = findConstantsOfWholeLiteral(program, flow, program.functions[index], value.valueOperand());
             }
             stores.append(ConstantVariableStore { value.variable(), stored.isObject() ? KnownValue() : stored, WTF::move(list) });
@@ -1048,15 +1050,16 @@ struct MovableCode {
             return { };
         CalleeList callees = calleesOfCall(program, call);
         // What the call of this run hands on says more than what all calls hand on.
-        if (!callees.isComplete && call.opcode != Opcode::CallDirect && hasOnlyFunctions(typeOf(caller, call.calleeOperand()))) {
+        if (!callees.listsEveryCallee() && call.opcode != Opcode::CallDirect && hasOnlyFunctions(typeOf(caller, call.calleeOperand()))) {
             callees = CalleeList::none();
             for (FunctionID function : typeOf(caller, call.calleeOperand()).functions)
                 callees.add(function);
         }
-        if (!callees.isComplete || !callees.builtins.isEmpty() || callees.functions.isEmpty())
+        std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+        if (!functions || functions->value().empty())
             return { };
         InitializerCalleeAnswer result { true, true };
-        for (FunctionID id : callees.functions) {
+        for (FunctionID id : functions->value()) {
             const Function& callee = program.at(id);
             unsigned numberOfParameters = callee.numberOfEntryParameters();
             // A rest parameter and `arguments` are made at the entrance, which this does not follow.
@@ -1132,7 +1135,7 @@ struct MovableCode {
         }
         auto isUnchanging = [&](const Value& value) {
             const Type& type = arenas.types.at(value.type);
-            if (type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) { return program.at(id).flow.impossibleMutations.containsAll(mutationsOfContents); }))
+            if (type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) { return program.at(id).flow.impossibleMutations.containsAll(mutationsOfContents); }))
                 return true;
             if (isOtherNameOfFirstOperand(function, value))
                 return known.unchanging.get(value.operand(0).index());
@@ -1194,7 +1197,7 @@ struct MovableCode {
             const Type& arrayType = typeOf(function, test.objectOperand());
             const ClassPart* part = hasOnlyPristineArrays(arrayType) ? arrayType.singleBuiltinClass() : nullptr;
             BlockID taken = block.terminator.targets[0].block;
-            if (!part || !part->contentsAreProven || part->contents.isEmpty() || numberOfPredecessors[taken.index()] != 1)
+            if (!part || !part->contentsAreProven || part->writtenContents.isEmpty() || numberOfPredecessors[taken.index()] != 1)
                 continue;
             // Nothing in front of the read has run that could take the element away.
             const BlockValues& values = function.at(taken).values;
@@ -1204,7 +1207,7 @@ struct MovableCode {
             const Value& read = function.at(*found);
             if (sameObjectThroughCasts(function, read.objectOperand()) == sameObjectThroughCasts(function, test.objectOperand())
                 && definitionThroughUpcasts(function, read.propertyOperand()) == definitionThroughUpcasts(function, test.propertyOperand()))
-                narrowings.append({ taken, static_cast<uint32_t>(found - values.begin()), part->contents[0] });
+                narrowings.append({ taken, static_cast<uint32_t>(found - values.begin()), *part->provenContentsAt(0) });
         }
         if (narrowings.isEmpty())
             return;
@@ -1403,7 +1406,7 @@ struct MovableCode {
         if (hasOnlyArrays(type, { }) && !hasName && typeOf(function, value.propertyOperand()).isNumber())
             return true;
         if (function.at(allocationOf(function, object)).opcode != Opcode::NewDictionary || !isOnlyFilledHere(analyses, object)) {
-            bool hasOnlyPlainObjects = type.isObject() && type.hasOnlyLayouts(program) && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) {
+            bool hasOnlyPlainObjects = type.isObject() && type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID id) {
                 return (program.at(id).kind == LayoutKind::Record || program.at(id).kind == LayoutKind::Container) && !program.at(id).base;
             });
             // No such object ever gets an accessor, a lock or another prototype: above it stands Object.prototype, which nobody can change.
@@ -1460,14 +1463,8 @@ struct MovableCode {
             if (!isCast(function.at(descriptor).opcode))
                 break;
         }
-        const Value& literal = function.at(descriptor);
-        if (literal.opcode != Opcode::NewObject || literal.prototypeOperand() || program.at(literal.layout()).kind != LayoutKind::Record)
-            return false;
-        return std::ranges::all_of(literal.fields(), [&](uint32_t index) {
-            const Field& field = program.at(literal.layout()).fields[index];
-            bool isKnown = field.key && (isText(field.key, "value"_s) || isText(field.key, "writable"_s) || isText(field.key, "enumerable"_s) || isText(field.key, "configurable"_s));
-            return isKnown && !field.form.contains(FieldForm::IsAccessor);
-        });
+        std::optional<DescriptorLiteral> described = readDescriptorLiteral(program, function, function.at(descriptor));
+        return described && !described->isAccessor() && !described->closureEnvironment;
     }
 
     bool mayMoveByEffects(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)
@@ -1680,7 +1677,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
                     return true;
                 if (program.typeOf(function, value.valueOperand()).primitives & Primitive::Absent)
                     return false;
-            } else if (!isCastWithoutTest(value.opcode) || value.numberOfOperands() != 1)
+            } else if (!isCastWithoutTest(value.opcode) || std::ranges::count_if(value.operands(), [](ValueID operand) { return !!operand; }) != 1)
                 return false;
         }
     };
@@ -1768,7 +1765,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
                 for (ValueID link = taken;; link = function.at(link).operand(0)) {
                     if (stateOf(link) == State::Moves)
                         itemsUsedByCodeThatStays.append(itemOf[link.index()]);
-                    if (stateOf(link) != State::IsRepeated || !function.at(link).numberOfOperands())
+                    if (stateOf(link) != State::IsRepeated || !function.at(link).numberOfOperands() || !function.at(link).operand(0))
                         break;
                 }
             });
@@ -2013,9 +2010,7 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
         builder.emitTerminator(WTF::move(copy));
     };
 
-    builder.setOrigin(unit.items.first().originIn(body));
-    builder.moveToEndOf(builder.addBlock());
-    for (ValueID id : unit.repeated) {
+    auto repeat = [&](ValueID id) {
         // A cast comes behind what it casts. The test for a dead zone has passed where it stands.
         Vector<ValueID, 4> chain;
         for (ValueID link = id; link && !values.contains(link.index()); link = body.at(link).numberOfOperands() ? body.at(link).operand(0) : ValueID())
@@ -2028,17 +2023,38 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
             builder.setOrigin(body.at(link).origin());
             values.add(link.index(), assumeType(builder, copyIn(values, body.at(link).operand(0)), body.at(link).type));
         }
-    }
+    };
+    // What is done again is done where it is first taken, as in the body. All of it at the top would be held from there to its use, and a long initializer has more of it than there are registers.
+    // The place is one that every run of the function passes, so what is done there is there for whatever takes it later.
+    BitVector isRepeated(body.values.size());
+    for (ValueID id : unit.repeated)
+        isRepeated.quickSet(id.index());
+    auto repeatWhatIsTakenBy = [&](const auto& user) {
+        user.forEachChild([&](ValueID operand) {
+            if (operand && isRepeated.quickGet(operand.index()))
+                repeat(operand);
+        });
+    };
+
+    builder.setOrigin(unit.items.first().originIn(body));
+    builder.moveToEndOf(builder.addBlock());
     for (const ValueOfVariable& taken : unit.valuesOfVariables)
         readInPlaceOf(taken.value, taken.variable);
 
     ValueID stored;
     for (const Item& item : unit.items) {
         if (!item.isRegion()) {
+            repeatWhatIsTakenBy(body.at(item.value));
             copyValue(item.value);
             if (body.at(item.value).opcode == Opcode::PutModuleVariable)
                 stored = copyIn(values, body.at(item.value).valueOperand());
             continue;
+        }
+        repeatWhatIsTakenBy(body.at(item.block).terminator);
+        for (BlockID block : item.blocks) {
+            for (ValueID id : body.at(block).values)
+                repeatWhatIsTakenBy(body.at(id));
+            repeatWhatIsTakenBy(body.at(block).terminator);
         }
         for (BlockID block : item.blocks)
             addBlockLike(block);
@@ -2052,6 +2068,8 @@ static void buildInitializerUnit(const InitializerUnit& unit, const Function& bo
         }
         builder.moveToEndOf(copyIn(blocks, item.join));
     }
+    for (ValueID id : unit.repeated)
+        repeat(id);
     for (const ValueOfVariable& added : unit.addedVariables) {
         stored = copyIn(values, added.value);
         builder.append(makeVariableAccess(Opcode::PutModuleVariable, added.variable, { stored }));
@@ -2253,8 +2271,8 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
                 variable.module = body.module;
                 variable.declared = proven ? DeclaredType(*proven) : DeclaredType(ExpectedType(type));
                 variable.initialization = VariableInitialization::Uninitialized;
-                variable.flow.writers = WriterState::AllKnown;
-                variable.flow.stores = StoreCount::AtMostOnce;
+                variable.flow.writers = writerStateOf(writersOfVariableThatPassFillsOnce()).state;
+                variable.flow.stores = storeCountOf(writersOfVariableThatPassFillsOnce()).state;
                 variable.flow.initialization = InitializationState::StoredBeforeEveryRead;
                 addedInBody.add(added.variable.index(), editor.addVariable(WTF::move(variable)));
             }

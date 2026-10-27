@@ -43,6 +43,8 @@ struct ModuleEvaluationSite {
 struct SlotInReceivers {
     LayoutID memberWithoutField;
     LayoutID memberWithRemovedField;
+    LayoutID memberWithAccessor;
+    LayoutID memberWithValue;
     bool isAlwaysFilled { true };
     bool mayHoldDeferredClosure { false };
 };
@@ -147,6 +149,7 @@ private:
     void verifyProofs();
     void verifyOperandKindsWithoutChecks();
     void verifyStoredTypesWithoutChecks();
+    void verifyProofsOfValueBesideMode(BlockID, ValueID suspension);
     void verifyGuardOperand(BlockID, ValueID user, const Value&, ProofSet neededFromGuard, ValueID guard);
 
     void verifyUnspecifiedValues();
@@ -171,6 +174,7 @@ private:
     void verifyBuiltinOperation(BlockID, ValueID, const Value&);
     void verifyDirectEval(BlockID, ValueID, const Value&);
     void verifySlotOperation(BlockID, ValueID, const Value&);
+    void verifyFormsOfListedFields(BlockID, ValueID, const Value& allocation);
     void verifyKeyedTail(BlockID, ValueID, const Value&, size_t numberOfKeys);
     void verifyElementOperation(BlockID, ValueID, const Value&);
     void verifyStringBuilderOperation(BlockID, ValueID, const Value&);
@@ -212,6 +216,7 @@ public:
     ProgramVerifier(const Program&, IRForm, BuildContext&, const VerifierInputs&);
 
     bool run();
+    bool runRecords();
     bool runIDs();
 
 private:

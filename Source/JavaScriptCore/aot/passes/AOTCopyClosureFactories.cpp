@@ -14,15 +14,18 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTRegionCloner.h"
+#include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
+#include <ranges>
 #include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
 AOT_THRESHOLD(unsigned, maxValuesInCopiedFactory, 200);
+AOT_THRESHOLD(unsigned, maxValuesInCopiedClassFactory, 2000);
 // How many times the size of the program as read all copies of factories together may have.
 AOT_THRESHOLD(unsigned, maxGrowthByCopiedFactories, 4);
 AOT_THRESHOLD(unsigned, maxValuesInCopiedMaker, 400);
@@ -84,13 +87,35 @@ static void forEachValueOf(const Function& function, NOESCAPE const Invocable<vo
     }
 }
 
+// What fills the fields of a class is a function of its own that the constructor, or whoever evaluates the class, calls.
+static bool callsInitializer(const Program& program, const Value& value)
+{
+    return value.opcode == Opcode::CallDirect && program.at(value.function()).kind == FunctionKind::Initializer;
+}
+
 static unsigned numberOfValuesWithClosures(const Program& program, const Function& function)
 {
     unsigned result = function.values.size();
     forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
-        if (value.opcode == Opcode::NewClosure)
+        if (value.opcode == Opcode::NewClosure || callsInitializer(program, value))
             result += numberOfValuesWithClosures(program, program.at(value.function()));
     });
+    return result;
+}
+
+// `Base => class extends Base { .. }`
+static LayoutID classReturnedBy(const Function& function)
+{
+    LayoutID result;
+    for (const Block& block : function.blocks) {
+        if (block.terminator.kind != TerminatorKind::Return)
+            continue;
+        ValueID returned = block.terminator.valueOperand();
+        const Value* definition = returned ? &function.at(definitionBehindDeadZoneChecks(function, returned)) : nullptr;
+        if (!definition || definition->opcode != Opcode::FinishClass || (result && result != definition->layout()))
+            return { };
+        result = definition->layout();
+    }
     return result;
 }
 
@@ -218,6 +243,7 @@ struct CallToCopyFor {
     ReasonToCopy reason;
     // The field of an environment that the closure was read from: the call gets a copy if the program stores to the field at one place.
     std::optional<FieldReference> holder { };
+    bool returnsClass { false };
     FunctionID copy { };
 };
 
@@ -268,6 +294,11 @@ struct ExpectedRead {
     ExpectedValue expected;
 };
 
+struct CopiedClass {
+    LayoutID original;
+    LayoutID copy;
+};
+
 struct Size {
     unsigned numberOfValuesWithClosures { 0 };
     bool definesWhatStandsAtOnePlace { false };
@@ -289,6 +320,7 @@ struct Copier {
     UncheckedKeyHashMap<uint32_t, unsigned> numberOfCallsOfFactory;
     // By constant of a module: the function whose closure it holds. The constants of a module are entered when the first of them is asked for.
     UncheckedKeyHashMap<uint32_t, uint32_t> functionsByConstant;
+    UncheckedKeyHashMap<uint32_t, LayoutID> classesByConstant;
     BitVector modulesWithConstantsEntered;
     UncheckedKeyHashMap<uint32_t, Size> sizes;
     std::optional<BitVector> functionsNamedByClosedTypes;
@@ -296,6 +328,15 @@ struct Copier {
     UncheckedKeyHashMap<uint32_t, FunctionID> originalsOfCopies;
     // The layouts of the environments of the copies that are being made, each with its original.
     Vector<std::pair<LayoutID, LayoutID>, 4> copiedEnvironments;
+    // While a function that evaluates classes is copied: the classes, and what belongs to them.
+    Vector<CopiedClass, 2> copiedClasses;
+    Vector<std::pair<VariableID, VariableID>, 2> copiedStaticFields;
+    Vector<std::pair<PropertyKeyID, PropertyKeyID>, 4> copiedPrivateNames;
+    Vector<std::pair<FunctionID, FunctionID>, 8> copiedFunctionsOfClasses;
+    UncheckedKeyHashMap<uint32_t, LayoutID> classesReturnedByCopies;
+    // Each with the class that it is read as a class below from now on.
+    Vector<std::pair<LayoutID, LayoutID>> classesPutBelowOthers;
+    bool didCopyClasses { false };
     Vector<ExpectedInstance> expectedInstances;
     UncheckedKeyHashMap<uint64_t, ExpectedValue> expectedValuesInOnlyActivations;
     // By function and layout: the value that holds the object which the program writes out. In code that runs once that is the literal, in a copy a capture.
@@ -372,6 +413,9 @@ struct Copier {
     {
         if (!isConstantOfModule(variable))
             return { };
+        // `function make() { .. }`
+        if (program.at(variable).initialization == VariableInitialization::Function)
+            return program.at(variable).function;
         auto module = program.at(variable).module;
         FunctionID body = program.at(module).body;
         if (modulesWithConstantsEntered.add(module.index()) && body && program.at(body).hasBody()) {
@@ -382,15 +426,27 @@ struct Copier {
                 const Value& stored = function.at(definitionBehindDeadZoneChecks(function, value.valueOperand()));
                 if (stored.opcode == Opcode::NewClosure)
                     functionsByConstant.add(value.variable().index() + 1, stored.function().index());
+                else if (stored.opcode == Opcode::FinishClass)
+                    classesByConstant.add(value.variable().index() + 1, stored.layout());
             });
         }
         auto found = functionsByConstant.find(variable.index() + 1);
         return found == functionsByConstant.end() ? FunctionID() : FunctionID(found->value);
     }
 
+    // `class Base { .. }`, read in another function or module.
+    LayoutID classHeldBy(VariableID variable)
+    {
+        functionHeldBy(variable);
+        return classesByConstant.get(variable.index() + 1);
+    }
+
     // A type that lists functions and admits no others holds no closure of a copy of one of them.
     bool isNamedByClosedType(FunctionID id)
     {
+        // What the types say of a function as read, the types in a copy say of its copy.
+        while (FunctionID original = originalsOfCopies.get(id.index() + 1))
+            id = original;
         if (!functionsNamedByClosedTypes) {
             functionsNamedByClosedTypes.emplace(program.functions.size());
             for (uint32_t index = 0; index < program.types.size(); ++index) {
@@ -406,25 +462,36 @@ struct Copier {
 
     // A class, a function that constructs objects of a layout, the array of a tagged template and the scope of an eval stand at one place of the program.
     // The closure of the copy that is called is held by nothing but the call, so no type speaks of it.
-    bool definesWhatStandsAtOnePlace(FunctionID id, bool isHeldByCallAlone = true)
+    bool definesWhatStandsAtOnePlace(FunctionID id, bool isHeldByCallAlone = true, LayoutID classThatIsCopied = { })
     {
         const Function& function = program.at(id);
-        if (function.constructedClass || (!isHeldByCallAlone && isNamedByClosedType(id)))
+        if ((function.constructedClass && function.constructedClass != classThatIsCopied) || (!isHeldByCallAlone && isNamedByClosedType(id)))
             return true;
         bool result = false;
         forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
-            if (value.opcode == Opcode::NewClosure)
-                result |= definesWhatStandsAtOnePlace(value.function(), false);
+            if (value.opcode == Opcode::NewClosure || (classThatIsCopied && callsInitializer(program, value)))
+                result |= definesWhatStandsAtOnePlace(value.function(), false, classThatIsCopied);
+            else if (value.opcode == Opcode::NewClass || value.opcode == Opcode::NewClassToken)
+                result |= !isHeldByCallAlone || value.layout() != classThatIsCopied;
             else
-                result |= value.opcode == Opcode::NewClass || value.opcode == Opcode::NewClassToken || value.opcode == Opcode::NewTemplateObject || value.opcode == Opcode::DirectEval;
+                result |= value.opcode == Opcode::NewTemplateObject || value.opcode == Opcode::DirectEval;
         });
         return result;
+    }
+
+    // A copy of the function evaluates a copy of the class: a class of its own, with its own private names and static fields, as each evaluation of the class has anyway.
+    bool isClassFactory(FunctionID id)
+    {
+        LayoutID returned = classReturnedBy(program.at(id));
+        if (!returned || program.at(returned).kind != LayoutKind::Instance || program.at(returned).computedKeyCount)
+            return false;
+        return !definesWhatStandsAtOnePlace(id, true, returned);
     }
 
     Size sizeOf(FunctionID id)
     {
         return sizes.ensure(id.index() + 1, [&] {
-            return Size { numberOfValuesWithClosures(program, program.at(id)), definesWhatStandsAtOnePlace(id) };
+            return Size { numberOfValuesWithClosures(program, program.at(id)), definesWhatStandsAtOnePlace(id) && !isClassFactory(id) };
         }).iterator->value;
     }
 
@@ -462,25 +529,374 @@ struct Copier {
         }
     }
 
+    template<typename IDType>
+    static IDType copyIn(const auto& pairs, IDType id)
+    {
+        for (auto [original, copy] : pairs) {
+            if (original == id)
+                return copy;
+        }
+        return id;
+    }
+
+    LayoutID copyOfClass(LayoutID layout) const
+    {
+        for (const CopiedClass& copied : copiedClasses) {
+            if (copied.original == layout)
+                return copied.copy;
+        }
+        return layout;
+    }
+
+    // The closures that the copies create are closures of copies. Whoever names the function that was called, in its own body too, means what the program holds under that name.
+    FunctionID copyOfFunctionOfClass(FunctionID id) const
+    {
+        return id == copiedFunctionsOfClasses.last().first ? id : copyIn(copiedFunctionsOfClasses, id);
+    }
+
+    LayoutSetID withCopiedClasses(LayoutSetID id)
+    {
+        if (!id)
+            return id;
+        Vector<LayoutID> members = program.at(id).written();
+        bool hasChanged = false;
+        for (LayoutID& member : members)
+            hasChanged |= std::exchange(member, copyOfClass(member)) != member;
+        if (!hasChanged)
+            return id;
+        std::ranges::sort(members);
+        return types.intern(program.at(id).withMembers(WTF::move(members)));
+    }
+
+    // The layouts below the class stay in the type: what is true of fewer objects is true of these.
+    TypeID withCopiedClasses(TypeID id)
+    {
+        if (!id)
+            return id;
+        Type type = program.at(id);
+        bool hasChanged = std::exchange(type.layouts, withCopiedClasses(type.layouts)) != type.layouts;
+        Vector<FunctionID, 8> functions(type.functions.size(), [&](size_t index) {
+            return copyOfFunctionOfClass(type.functions[index]);
+        });
+        if (!std::ranges::equal(functions.span(), type.functions.span())) {
+            type.functions = SortedSet<FunctionID>(functions.span());
+            hasChanged = true;
+        }
+        for (ClassPart& part : type.classes) {
+            for (TypeID& contents : part.writtenContents)
+                hasChanged |= std::exchange(contents, withCopiedClasses(contents)) != contents;
+        }
+        if (!hasChanged)
+            return id;
+        return types.intern(WTF::move(type));
+    }
+
+    struct TypesWithClassesBelow {
+        TypeID inPlaceOf(TypeID id) const { return changes(id) ? types[id.index()] : id; }
+        LayoutSetID inPlaceOf(LayoutSetID id) const { return changes(id) ? layoutSets[id.index()] : id; }
+        bool changes(TypeID id) const { return id && id.index() < types.size() && types[id.index()]; }
+        bool changes(LayoutSetID id) const { return id && id.index() < layoutSets.size() && layoutSets[id.index()]; }
+
+        // By type and by set: what takes its place. Nothing where it stays.
+        Vector<TypeID> types;
+        Vector<LayoutSetID> layoutSets;
+    };
+
+    // In what was copied: the copies of the classes and of what belongs to them. With a table: in any record, the types and sets of the table.
+    struct ReferencesToCopiedClasses {
+        void operator()(TypeID& id) const { id = table ? table->inPlaceOf(id) : copier.withCopiedClasses(id); }
+        void operator()(LayoutSetID& id) const { id = table ? table->inPlaceOf(id) : copier.withCopiedClasses(id); }
+        void operator()(LayoutID& id) const { id = table ? id : copier.copyOfClass(id); }
+        void operator()(VariableID& id) const { id = table ? id : copyIn(copier.copiedStaticFields, id); }
+        void operator()(PropertyKeyID& id) const { id = table ? id : copyIn(copier.copiedPrivateNames, id); }
+        void operator()(FunctionID& id) const { id = table ? id : copier.copyOfFunctionOfClass(id); }
+        template<typename Tag> void operator()(ID<Tag>&) const { }
+
+        Copier& copier;
+        const TypesWithClassesBelow* table { nullptr };
+    };
+
+    void copyClassesOf(const Function& copy)
+    {
+        forEachValueOf(copy, [&](ProgramPoint, ValueID, const Value& value) {
+            if (value.opcode != Opcode::NewClass || copyOfClass(value.layout()) != value.layout())
+                return;
+            LayoutID original = value.layout();
+            LayoutID added = editor.addLayout(Layout(program.at(original)));
+            copiedClasses.append({ original, added });
+            // Whoever names the class as it is written means each of its evaluations.
+            classesPutBelowOthers.append({ added, original });
+            for (const Field& field : program.at(original).fields) {
+                if (!field.key || program.at(field.key).owner != original)
+                    continue;
+                PropertyKey name = program.at(field.key);
+                name.owner = added;
+                copiedPrivateNames.append({ field.key, types.intern(name) });
+            }
+            for (const StaticField& field : program.at(original).staticFields) {
+                Variable variable = program.at(field.variable);
+                variable.owner = added;
+                copiedStaticFields.append({ field.variable, editor.addVariable(WTF::move(variable)) });
+            }
+        });
+    }
+
+    // Everything that was copied names the copies of the classes and of what belongs to them.
+    void finishCopiesOfClasses()
+    {
+        ReferencesToCopiedClasses rewriter { *this };
+        for (auto [original, copy] : copiedFunctionsOfClasses) {
+            Function& function = editor.at(copy);
+            // These say which function the copy was made of.
+            auto derivation = function.derivation;
+            auto creator = function.creator;
+            forEachReference(static_cast<FunctionRecord&>(function), rewriter);
+            function.derivation = WTF::move(derivation);
+            function.creator = WTF::move(creator);
+            for (Value& value : function.editAllValues()) {
+                value.type = withCopiedClasses(value.type);
+                forEachReference(value, rewriter);
+            }
+            for (Block& block : function.editAllBlocks())
+                forEachReference(block.terminator, rewriter);
+        }
+        for (const CopiedClass& copied : copiedClasses) {
+            Layout& layout = editor.at(copied.copy);
+            forEachReference(static_cast<LayoutRecord&>(layout), rewriter);
+            layout.indexFields();
+        }
+        for (auto [original, copy] : copiedStaticFields)
+            forEachReference(editor.at(copy), rewriter);
+        copiedClasses.shrink(0);
+        copiedStaticFields.shrink(0);
+        copiedPrivateNames.shrink(0);
+        copiedFunctionsOfClasses.shrink(0);
+        didCopyClasses = true;
+    }
+
     // The closures that the copy creates are closures of copies too, and so on below them.
     FunctionID copyWithItsClosures(FunctionID original, unsigned& numberOfValuesInCopies)
     {
         Function copy = program.at(original);
         size_t numberOfEnvironmentsAround = copiedEnvironments.size();
+        bool isOutermostWithClasses = copiedClasses.isEmpty();
         copyEnvironmentsOf(copy);
+        copyClassesOf(copy);
         Vector<std::pair<ValueID, FunctionID>> closures;
         forEachValueOf(copy, [&](ProgramPoint, ValueID id, const Value& value) {
-            if (value.opcode == Opcode::NewClosure)
+            if (value.opcode == Opcode::NewClosure || (!copiedClasses.isEmpty() && callsInitializer(program, value)))
                 closures.append({ id, value.function() });
         });
         for (auto [id, function] : closures)
             copy.edit(id).setFunction(copyWithItsClosures(function, numberOfValuesInCopies));
         copiedEnvironments.shrink(numberOfEnvironmentsAround);
         numberOfValuesInCopies += copy.values.size();
+        LayoutID returned = copiedClasses.isEmpty() ? LayoutID() : copyOfClass(classReturnedBy(copy));
         FunctionID result = editor.addFunctionLike(original, WTF::move(copy));
         copies.set(result.index());
         originalsOfCopies.add(result.index() + 1, original);
+        if (copiedClasses.isEmpty())
+            return result;
+        copiedFunctionsOfClasses.append({ original, result });
+        if (isOutermostWithClasses) {
+            if (returned)
+                classesReturnedByCopies.add(result.index() + 1, returned);
+            finishCopiesOfClasses();
+        }
         return result;
+    }
+
+    // `class A extends Mixin(Base) { .. }`   The class below was read as a class below the one that every call of the function evaluates.
+    void putClassesBelowCopy(const Function& caller, const CallToCopyFor& call)
+    {
+        LayoutID copy = classesReturnedByCopies.get(call.copy.index() + 1);
+        LayoutID original = classReturnedBy(program.at(call.callee));
+        if (!copy || !original)
+            return;
+        forEachValueOf(caller, [&](ProgramPoint, ValueID, const Value& value) {
+            if (value.opcode != Opcode::NewClass || !value.heritageOperand() || definitionBehindDeadZoneChecks(caller, value.heritageOperand()) != call.call)
+                return;
+            // Where the function has a declared result, the class below was read as a class below nothing that is known.
+            LayoutID baseAsRead = program.at(value.layout()).base;
+            if (baseAsRead && baseAsRead != original)
+                return;
+            Layout& below = editor.at(value.layout());
+            below.base = copy;
+            classesPutBelowOthers.append({ value.layout(), copy });
+            for (LayoutID& supertype : below.supertypes) {
+                if (supertype == original)
+                    supertype = copy;
+            }
+            if (!below.supertypes.contains(copy))
+                below.supertypes.append(copy);
+            std::ranges::sort(below.supertypes);
+        });
+    }
+
+    // `Mixin(Base)`   The copy is handed one class, which the caller names: what it evaluates is read as a class below that one, as if it were written so.
+    void putCopyBelowClassItIsHanded(const Function& caller, const CallToCopyFor& call, UncheckedKeyHashMap<uint32_t, LayoutID>& classesMadeByCalls)
+    {
+        LayoutID copy = classesReturnedByCopies.get(call.copy.index() + 1);
+        if (!copy)
+            return;
+        classesMadeByCalls.add(call.call.index() + 1, copy);
+        if (program.at(copy).base)
+            return;
+        const Function& function = program.at(call.copy);
+        ValueID heritage;
+        forEachValueOf(function, [&](ProgramPoint, ValueID, const Value& value) {
+            if (value.opcode == Opcode::NewClass && value.layout() == copy)
+                heritage = value.heritageOperand();
+        });
+        std::optional<unsigned> parameter = heritage ? positionalParameterAt(function, definitionBehindDeadZoneChecks(function, heritage)) : std::nullopt;
+        std::span<const ValueID> arguments = caller.at(call.call).argumentsOperands();
+        if (!parameter || *parameter >= arguments.size())
+            return;
+        ValueID handedID = definitionBehindDeadZoneChecks(caller, arguments[*parameter]);
+        const Value& handed = caller.at(handedID);
+        LayoutID base = classesMadeByCalls.get(handedID.index() + 1);
+        if (handed.opcode == Opcode::FinishClass)
+            base = handed.layout();
+        else if (handed.opcode == Opcode::GetModuleVariable)
+            base = classHeldBy(handed.variable());
+        if (!base || program.at(base).kind != LayoutKind::Instance)
+            return;
+        Layout& layout = editor.at(copy);
+        layout.base = base;
+        if (!layout.supertypes.contains(base))
+            layout.supertypes.append(base);
+        std::ranges::sort(layout.supertypes);
+        classesPutBelowOthers.append({ copy, base });
+    }
+
+    struct ClassesBelow {
+        Vector<LayoutID> of(LayoutID id)
+        {
+            Vector<LayoutID> family;
+            if (isVisited.set(id.index()))
+                return family;
+            for (LayoutID member : program.at(program.declaredMembersOf(id)).written()) {
+                family.append(member);
+                family.appendVector(addedBelow(member));
+            }
+            isVisited.clear(id.index());
+            return family;
+        }
+
+        // What stands below the class and did not when the program was read.
+        Vector<LayoutID> addedBelow(LayoutID id)
+        {
+            Vector<LayoutID> added;
+            for (auto [below, above] : std::ranges::equal_range(ascendingByClassAbove, id, { }, &std::pair<LayoutID, LayoutID>::second))
+                added.appendVector(of(below));
+            return added;
+        }
+
+        const Program& program;
+        std::span<const std::pair<LayoutID, LayoutID>> ascendingByClassAbove;
+        BitVector isVisited { };
+    };
+
+    struct FinderOfTypesWithClassesBelow {
+        void operator()(const TypeID& id) const { found |= table.changes(id); }
+        void operator()(const LayoutSetID& id) const { found |= table.changes(id); }
+        template<typename Tag> void operator()(const ID<Tag>&) const { }
+
+        const TypesWithClassesBelow& table;
+        bool& found;
+    };
+
+    // The reader lets a type that names a class name every class below it. The classes that were put below others are named as if the program were written so.
+    void nameClassesWhereClassesAboveAreNamed()
+    {
+        if (classesPutBelowOthers.isEmpty())
+            return;
+        std::ranges::sort(classesPutBelowOthers, { }, [](const auto& entry) { return std::pair(entry.second, entry.first); });
+        ClassesBelow classesBelow { program, classesPutBelowOthers.span() };
+        UncheckedKeyHashMap<uint32_t, Vector<LayoutID>> added;
+        BitVector hasClassesAdded;
+        for (auto [below, above] : classesPutBelowOthers) {
+            if (hasClassesAdded.set(above.index()))
+                continue;
+            added.add(above.index() + 1, classesBelow.addedBelow(above));
+        }
+
+        TypesWithClassesBelow table { Vector<TypeID>(program.types.size()), Vector<LayoutSetID>(program.types.numberOfLayoutSets()) };
+        for (uint32_t index = 0, end = table.layoutSets.size(); index < end; ++index) {
+            const LayoutSet& set = program.at(LayoutSetID(index));
+            if (!set.listsEveryLayout())
+                continue;
+            Vector<LayoutID> members;
+            for (LayoutID member : set.written()) {
+                if (hasClassesAdded.get(member.index()))
+                    members.appendVector(added.get(member.index() + 1));
+            }
+            if (members.isEmpty())
+                continue;
+            members.appendVector(set.written());
+            std::ranges::sort(members);
+            members.shrink(std::ranges::unique(members).begin() - members.begin());
+            if (members.size() != set.written().size())
+                table.layoutSets[index] = types.intern(set.withMembers(WTF::move(members)));
+        }
+        // A type stands behind the types of its contents only where the reader has met them in that order.
+        for (bool didChange = true; std::exchange(didChange, false);) {
+            for (uint32_t index = 0, end = table.types.size(); index < end; ++index) {
+                const Type& current = program.at(table.types[index] ? table.types[index] : TypeID(index));
+                bool namesWhatChanges = false;
+                FinderOfTypesWithClassesBelow finder { table, namesWhatChanges };
+                finder(current.layouts);
+                for (const ClassPart& part : current.classes) {
+                    for (TypeID contents : part.writtenContents)
+                        finder(contents);
+                }
+                if (!namesWhatChanges)
+                    continue;
+                Type type = current;
+                type.layouts = table.inPlaceOf(type.layouts);
+                for (ClassPart& part : type.classes) {
+                    for (TypeID& contents : part.writtenContents)
+                        contents = table.inPlaceOf(contents);
+                }
+                table.types[index] = types.intern(WTF::move(type));
+                didChange = true;
+            }
+        }
+
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            if (LayoutSetID members = program.declaredMembersOf(LayoutID(index)); table.changes(members))
+                editor.setDeclaredMembers(LayoutID(index), table.inPlaceOf(members));
+        }
+
+        ReferencesToCopiedClasses rewriter { *this, &table };
+        auto names = [&](const auto& record) {
+            bool found = false;
+            forEachReference(record, FinderOfTypesWithClassesBelow { table, found });
+            return found;
+        };
+        for (uint32_t index : findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+            const Function& function = program.functions[index];
+            return names(static_cast<const FunctionRecord&>(function))
+                || std::ranges::any_of(function.values, [&](const Value& value) { return table.changes(value.type) || names(value); })
+                || std::ranges::any_of(function.blocks, [&](const Block& block) { return names(block.terminator); });
+        })) {
+            Function& function = editor.at(FunctionID(index));
+            forEachReference(static_cast<FunctionRecord&>(function), rewriter);
+            for (Value& value : function.editAllValues()) {
+                rewriter(value.type);
+                forEachReference(value, rewriter);
+            }
+            for (Block& block : function.editAllBlocks())
+                forEachReference(block.terminator, rewriter);
+        }
+        for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+            if (names(static_cast<const LayoutRecord&>(program.layouts[index])))
+                forEachReference(static_cast<LayoutRecord&>(editor.at(LayoutID(index))), rewriter);
+        }
+        for (uint32_t index = 0; index < program.variables.size(); ++index) {
+            if (names(program.variables[index]))
+                forEachReference(editor.at(VariableID(index)), rewriter);
+        }
     }
 
     // The caller runs once, or is a copy that one call has to itself. A call in a loop makes many objects at one place whatever is copied.
@@ -515,6 +931,39 @@ struct Copier {
         };
         if (!depth && !constantsHandedToObjectCreate.isEmpty())
             findStores();
+        // `class A extends Mixin(Other(B)) { .. }`   `const Stamped = Mixin(Plain);`   A class that is only handed on, `list.push(Mixin(B))`, is one of many wherever it arrives: a copy of its own buys it little.
+        std::optional<BitVector> classesWithName;
+        auto getsName = [&](ValueID made) {
+            if (!classesWithName) {
+                classesWithName.emplace();
+                Vector<ValueID> values;
+                forEachValueOf(caller, [&](ProgramPoint, ValueID id, const Value&) {
+                    values.append(id);
+                });
+                auto give = [&](ValueID id) {
+                    if (id)
+                        classesWithName->set(definitionBehindDeadZoneChecks(caller, id).index());
+                };
+                // A value stands behind what it is made of.
+                for (ValueID id : values | std::views::reverse) {
+                    const Value& value = caller.at(id);
+                    if (value.opcode == Opcode::PutModuleVariable || value.opcode == Opcode::PutEnvironmentField)
+                        give(value.valueOperand());
+                    else if (value.opcode == Opcode::NewClass) {
+                        if (program.at(value.layout()).name || classesWithName->get(id.index()))
+                            give(value.heritageOperand());
+                    } else if (!classesWithName->get(id.index()))
+                        continue;
+                    else if (value.opcode == Opcode::FinishClass)
+                        give(value.classObjectOperand());
+                    else if (value.opcode == Opcode::Call) {
+                        for (ValueID argument : value.argumentsOperands())
+                            give(argument);
+                    }
+                }
+            }
+            return classesWithName->get(made.index());
+        };
         // A read of a `let` or a `const` throws by itself until the store has run. A `var` answers undefined until then, and the call throws.
         auto isReadBehindItsStore = [&](VariableID variable, ProgramPoint read) {
             if (program.at(variable).initialization != VariableInitialization::Undefined)
@@ -559,16 +1008,20 @@ struct Copier {
             // What a copy calls to make the objects that it hands on is copied with it: `const members = makeMembers(options)`.
             bool makesWhatObjectCreateIsHanded = function.captures.isEmpty() && (depth || makers.get(callee.index()) || resultsHandedToObjectCreate.get(id.index()));
             bool definesClosureUnderWrittenName = !makesWhatObjectCreateIsHanded && handsWrittenNameToDefineClosureUnder(caller, value, function);
-            bool isClosureFactory = definesClosureUnderWrittenName || (!makesWhatObjectCreateIsHanded && returnsClosureItCreates(function));
+            bool returnsClass = !makesWhatObjectCreateIsHanded && !!classReturnedBy(function) && getsName(id);
+            bool isClosureFactory = definesClosureUnderWrittenName || returnsClass || (!makesWhatObjectCreateIsHanded && returnsClosureItCreates(function));
             if (!makesWhatObjectCreateIsHanded && !isClosureFactory)
                 return;
-            if (!definesClosureUnderWrittenName && isNamedByClosedType(callee))
+            if (!isCreatedByCaller && !returnsClass && program.at(definition.variable()).initialization == VariableInitialization::Function)
+                return;
+            // The closure of the copy is held by nothing but the call. What a type says of the function that is declared, it goes on saying of that function.
+            if (!definesClosureUnderWrittenName && !returnsClass && isNamedByClosedType(callee))
                 return;
             Size size = sizeOf(callee);
             // However often it runs, a call that hands on a written name defines closures of its copy under that name alone.
-            if (size.numberOfValuesWithClosures > (isClosureFactory ? maxValuesInCopiedFactory : maxValuesInCopiedMaker) || size.definesWhatStandsAtOnePlace || (!definesClosureUnderWrittenName && analyses.isInCycle(point.block)))
+            if (size.numberOfValuesWithClosures > (returnsClass ? maxValuesInCopiedClassFactory : isClosureFactory ? maxValuesInCopiedFactory : maxValuesInCopiedMaker) || size.definesWhatStandsAtOnePlace || (!definesClosureUnderWrittenName && analyses.isInCycle(point.block)))
                 return;
-            calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), isClosureFactory ? ReasonToCopy::IsClosureFactory : ReasonToCopy::MakesWhatObjectCreateIsHanded, holder });
+            calls.append({ point, id, callee, isCreatedByCaller ? definitionID : ValueID(), isClosureFactory ? ReasonToCopy::IsClosureFactory : ReasonToCopy::MakesWhatObjectCreateIsHanded, holder, returnsClass });
         });
         return calls;
     }
@@ -577,8 +1030,8 @@ struct Copier {
     {
         switch (call.reason) {
         case ReasonToCopy::IsClosureFactory:
-            // The only call of a factory has the factory to itself.
-            if (numberOfCallsOfFactory.get(call.callee.index() + 1) < 2 || numberOfValuesInCopiesOfFactories / maxGrowthByCopiedFactories > numberOfValuesAsRead)
+            // The only call of a factory has the factory to itself. Somebody unseen may still call it with another class, so the class that is read as one below the class of this call is a copy.
+            if ((numberOfCallsOfFactory.get(call.callee.index() + 1) < 2 && !call.returnsClass) || numberOfValuesInCopiesOfFactories / maxGrowthByCopiedFactories > numberOfValuesAsRead)
                 return { };
             return copyWithItsClosures(call.callee, numberOfValuesInCopiesOfFactories);
         case ReasonToCopy::MakesWhatObjectCreateIsHanded: {
@@ -609,6 +1062,7 @@ struct Copier {
         Function& caller = editor.at(callerID);
         FunctionAnalyses analyses(context, caller);
         IRBuilder builder(context, caller, types, &analyses);
+        UncheckedKeyHashMap<uint32_t, LayoutID> classesMadeByCalls;
         for (const CallToCopyFor& call : calls) {
             if (!call.copy)
                 continue;
@@ -621,6 +1075,8 @@ struct Copier {
             edited.setOperand(OperandIndex::Call::callee, created);
             // The copy has this one call, so its body moves here and is no second copy.
             edited.setIsAlwaysInlined(true);
+            putClassesBelowCopy(caller, call);
+            putCopyBelowClassItIsHanded(caller, call, classesMadeByCalls);
         }
         builder.applyInsertions();
     }
@@ -1369,6 +1825,10 @@ struct Copier {
         }
         for (FunctionID caller : callersThatRunOnce)
             copyForExpectedCallsIn({ caller, { }, { }, true }, 0);
+        if (didCopyClasses) {
+            nameClassesWhereClassesAboveAreNamed();
+            editor.indexClassesAndNames(build.parallelLoops());
+        }
         return WTF::move(copies);
     }
 };

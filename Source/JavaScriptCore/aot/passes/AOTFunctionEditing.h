@@ -27,7 +27,7 @@ enum class KindOfEdit : uint8_t { Any, Lowering };
 // Nothing: for a pass that changes the records of functions by itself behind its edits. A row also holds what stands in the record.
 enum class BehindEdit : uint8_t { FitAndWriteRow, Nothing };
 
-void editFunctionsInParallelImpl(ProgramEditor&, BuildContext&, KindOfEdit, BehindEdit, std::span<const FunctionID> functions, std::span<const FunctionID> functionsBuiltByEdits, NOESCAPE const FunctionEdit&);
+void editFunctionsInParallelImpl(ProgramEditor&, BuildContext&, KindOfEdit, BehindEdit, std::span<const FunctionID> functions, std::span<const FunctionID> functionsBuiltByEdits, NOESCAPE const FunctionEdit&, NOESCAPE const ScopedLambda<void()>* beside = nullptr);
 
 void editFunctionsInParallel(ProgramEditor& editor, BuildContext& build, std::span<const FunctionID> functions, NOESCAPE const Invocable<void(unsigned, FunctionID, Function&, TaskArenas&)> auto& edit)
 {
@@ -42,6 +42,12 @@ void editFunctionsInParallel(ProgramEditor& editor, BuildContext& build, BehindE
 void editFunctionsInParallel(ProgramEditor& editor, BuildContext& build, std::span<const FunctionID> functions, std::span<const FunctionID> functionsBuiltByEdits, NOESCAPE const Invocable<void(unsigned, FunctionID, Function&, TaskArenas&)> auto& edit)
 {
     editFunctionsInParallelImpl(editor, build, KindOfEdit::Any, BehindEdit::FitAndWriteRow, functions, functionsBuiltByEdits, edit);
+}
+
+// `beside` runs next to the edits, once, and reads no body.
+void editFunctionsInParallel(ProgramEditor& editor, BuildContext& build, std::span<const FunctionID> functions, NOESCAPE const Invocable<void(unsigned, FunctionID, Function&, TaskArenas&)> auto& edit, NOESCAPE const ScopedLambda<void()>& beside)
+{
+    editFunctionsInParallelImpl(editor, build, KindOfEdit::Any, BehindEdit::FitAndWriteRow, functions, { }, edit, &beside);
 }
 
 // See ProgramEditor::atForLowering().

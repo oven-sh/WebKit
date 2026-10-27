@@ -64,6 +64,7 @@ enum class PlacementMutation : uint8_t {
     FieldType,
     RunTimeAllocation,
     PrivateDefinition,
+    AccessorField,
 };
 
 struct NamedMutation {
@@ -531,6 +532,7 @@ static std::optional<PlacementMutation> parseMutation(StringView word)
         { "field-type"_s, PlacementMutation::FieldType },
         { "run-time-allocation"_s, PlacementMutation::RunTimeAllocation },
         { "private-definition"_s, PlacementMutation::PrivateDefinition },
+        { "accessor-field"_s, PlacementMutation::AccessorField },
     };
     const NamedMutation* found = findView(std::span<const NamedMutation> { mutations }, word);
     if (!found)
@@ -774,6 +776,12 @@ static bool mutate(const MutationContext& context, PlacementMutation mutation)
     case PlacementMutation::PrivateDefinition:
         return mutateValues(context, MutatedValues::First, [&](Value& value) {
             return defineFieldWithoutAbsentState(placement, value);
+        });
+    case PlacementMutation::AccessorField:
+        return mutateFirstField(context, [](const Layout& layout, const PlacedSlot&) {
+            return isObjectLayout(layout.kind);
+        }, [](Field& field) {
+            field.form.add(FieldForm::IsAccessor);
         });
     }
     RELEASE_ASSERT_NOT_REACHED();

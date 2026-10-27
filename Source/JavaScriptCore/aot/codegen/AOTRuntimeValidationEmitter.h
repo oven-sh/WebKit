@@ -57,6 +57,8 @@ public:
 
     void checkPrecondition(const ValueContext&, Condition);
     void checkBindingIsStored(const ValueContext&, Condition);
+    // A short form of a test answers as the whole test does.
+    void checkTypeTestsAgree(Condition, CellPointer tested);
     void checkGuardIsAvailable(const OperationContext&, ValueID guard, uint32_t operandIndex);
     void checkIsNotFrameCell(const OperationContext&, Operand, std::optional<Operand> retainer);
     void checkIsNotReleased(const OperationContext&, CellPointer environment, LayoutID);

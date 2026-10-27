@@ -46,7 +46,7 @@ static void unfuseBranchOnPath(Terminator& terminator, ValueID condition)
         changeBranchKind(terminator, TerminatorKind::Branch);
 }
 
-BlockFrequency GroupRewriter::slowPathFrequency() const
+Expected<BlockFrequency> GroupRewriter::slowPathFrequency() const
 {
     return BlockFrequency::Rare;
 }
@@ -79,7 +79,7 @@ void GroupRewriter::emitTestAndBranchAsValue()
 {
     Value test = function().at(m_group.root);
     RELEASE_ASSERT(branchesOf(test.opcode) != Branches::No);
-    BlockFrequency frequency = function().at(state().block).frequency;
+    Expected<BlockFrequency> frequency = function().at(state().block).frequency;
 
     beginArms();
     ValueID condition = builder().append(WTF::move(test));
@@ -257,7 +257,7 @@ void GroupRewriter::beginArms(ValueID follower, bool followerIsOnlyReturned)
     std::optional<Terminator> duplicatedTerminator;
     if (followerIsOnlyReturned)
         duplicatedTerminator = entered.terminator;
-    BlockFrequency frequency = entered.frequency;
+    Expected<BlockFrequency> frequency = entered.frequency;
     ValueID handedOver = entered.parameters[0];
     Vector<ValueID, 2> earlierValues(entered.values.span().first(index));
     Vector<Value, 3> originals;
@@ -271,7 +271,7 @@ void GroupRewriter::beginArms(ValueID follower, bool followerIsOnlyReturned)
     builder().moveToEndOf(head);
 }
 
-BlockID GroupRewriter::addArm(BlockFrequency frequency)
+BlockID GroupRewriter::addArm(Expected<BlockFrequency> frequency)
 {
     RELEASE_ASSERT(m_expansion);
     return builder().addBlock(frequency);

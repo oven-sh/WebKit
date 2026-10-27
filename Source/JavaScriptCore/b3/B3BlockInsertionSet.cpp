@@ -77,6 +77,7 @@ BasicBlock* BlockInsertionSet::splitForward(
     for (BasicBlock* predecessor : result->predecessors())
         predecessor->replaceSuccessor(block, result);
 
+    m_proc.movedLoadLog().didSplitForward(block, result);
     return result;
 }
 

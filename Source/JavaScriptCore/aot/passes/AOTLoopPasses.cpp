@@ -325,9 +325,8 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 
 static MemoryAccess variableAccessOf(const Function& function, const Value& value)
 {
-    constexpr AbstractHeapSet hoistableHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
     MemoryAccess access = memoryAccessOf(function, value);
-    if (!access || !hoistableHeaps.contains(access.location.heap()))
+    if (!access || !heapsOfVariables.contains(access.location.heap()))
         return { };
     return access;
 }
@@ -383,14 +382,32 @@ static bool readsWhatMayChangeBehindHeader(FunctionPassContext& context, const N
     });
 }
 
+// The read goes ahead of the fact that it names, so the word it finds may be anything. The cast that stays names the fact.
+static ValueID readAheadAndAssumeInPlace(FunctionPassContext& context, IRBuilder& builder, BlockValues& remaining, ValueID id)
+{
+    Function& function = context.function;
+    Value ahead = function.at(id);
+    ValueID fact = ahead.factOperand();
+    ahead.setFactOperand({ });
+    ahead.setMayPrecedeItsStore(true);
+    builder.setOrigin(ahead.origin());
+    ValueID read = builder.addDetached(WTF::move(ahead));
+
+    Value& value = function.edit(id, ValueEdit::Definition);
+    value.becomeAssumeType(read, Proven::behindFact(value.type));
+    value.setFactOperand(fact);
+    remaining.append(id);
+    return read;
+}
+
 // In the header what stands in front of a read is known, and so it is in the block behind a test of the header that holds when the loop is entered. Anything in the loop may have run in front of a read in another block.
 // A loop that is entered from a branch has no block in front of it for what leaves it: such an entry is listed where something would leave.
-static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& testsThatStay, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
+static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& looksAtWhatMayBeUnspecified, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
 {
     const Program& program = context.program;
     Function& function = context.function;
     BlockID header = loop.header();
-    if (isClosedOnlyByWaysBack(context.analyses, loop))
+    if (isClosedOnlyByWaysBack(context.analyses, loop).predicted())
         return 0;
     bool hasRead = false;
     BitVector body(function.blocks.size());
@@ -430,11 +447,22 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         });
         return result;
     };
+    auto canGoAheadOfItsFact = [&](const Value& value) {
+        return value.opcode == Opcode::GetModuleVariable && program.at(value.type).isJavaScriptValue() && !program.at(value.type).mayBeUnspecified();
+    };
+    // What was entered where the first turn is sure to get to, with every variable as it is ahead of the loop, may as well be entered ahead of the loop. What names the fact follows it.
+    bool firstTurnGetsHere = true;
+    Vector<ValueID, 4> factsOfFirstTurn;
+    auto namesFactOfFirstTurn = [&](const Value& value) {
+        return value.opcode == Opcode::GetModuleVariable && factsOfFirstTurn.contains(value.factOperand());
+    };
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
+        if (looksAtWhatMayBeUnspecified.get(id.index()))
+            return false;
         if (value.opcode == Opcode::ToBoolean)
-            return !keptReads.get(id.index()) && !testsThatStay.get(id.index()) && hasInvariantOperands(value);
+            return !keptReads.get(id.index()) && hasInvariantOperands(value);
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
         if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode)) {
             if (keptReads.get(id.index()) || !hasInvariantOperands(value))
@@ -466,20 +494,20 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
             return false;
         if (stability == LocationStability::Unknown && clobbers.writes.overlaps(program, access.location))
             return false;
-        return hasInvariantOperands(value);
+        return hasInvariantOperands(value) || namesFactOfFirstTurn(value) || canGoAheadOfItsFact(value);
     };
 
     unsigned numberOfHoistedReads = 0;
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
-    BlockFrequency frequencyOfPreheader = frequencies.classOf(preheader);
+    Expected<BlockFrequency> frequencyOfPreheader = frequencies.classOf(preheader);
     LoopClobbers clobbersSinceEntry;
     for (BlockID blockID : context.analyses.cfg().reversePostOrder()) {
         if (!body.get(blockID.index()))
             continue;
         // In front of the loop a read runs each time the loop is entered, and what it read is kept all the way round. A block that seldom runs pays for its own reads.
-        BlockFrequency frequency = frequencies.classOf(blockID);
-        if (frequency == BlockFrequency::Rare || frequency > frequencyOfPreheader) {
+        Expected<BlockFrequency> frequency = frequencies.classOf(blockID);
+        if (frequency.predicted() == BlockFrequency::Rare || (frequency > frequencyOfPreheader).predicted()) {
             if (blockID == header)
                 behindHeader = { };
             continue;
@@ -490,8 +518,12 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         remaining.reserveInitialCapacity(function.at(blockID).values.size());
         for (ValueID id : function.at(blockID).values) {
             if (!canHoist(id, blockID, followsEntry ? clobbersSinceEntry : clobbers)) {
-                if (followsEntry)
+                if (followsEntry) {
                     addClobbers(context, id, clobbersSinceEntry);
+                    firstTurnGetsHere &= !mayLeaveOrStoreToVariable(context.analyses.effectsOf(id).onAnyEdge());
+                    if (firstTurnGetsHere && function.at(id).opcode == Opcode::Entered && hasInvariantOperands(function.at(id)))
+                        factsOfFirstTurn.append(id);
+                }
                 remaining.append(id);
                 continue;
             }
@@ -499,15 +531,30 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
                 entriesFromBranches.append(*entry);
                 return 0;
             }
+            ++numberOfHoistedReads;
+            if (namesFactOfFirstTurn(function.at(id))) {
+                ValueID fact = function.at(id).factOperand();
+                factsOfFirstTurn.removeFirst(fact);
+                BlockValues& valuesAroundFact = definingBlock[fact.index()] == blockID ? remaining : function.edit(definingBlock[fact.index()]).values;
+                valuesAroundFact.removeFirst(fact);
+                function.edit(preheader).values.append(fact);
+                definingBlock[fact.index()] = preheader;
+            }
+            if (!hasInvariantOperands(function.at(id))) {
+                function.edit(preheader).values.append(readAheadAndAssumeInPlace(context, builder, remaining, id));
+                appendKeptReadForValidation(builder, remaining, id);
+                continue;
+            }
             function.edit(preheader).values.append(id);
             definingBlock[id.index()] = preheader;
-            ++numberOfHoistedReads;
             appendKeptReadForValidation(builder, remaining, id);
             if (context.build.validates() && blockID != header && function.at(id).opcode == Opcode::GetModuleVariable)
-                function.edit(id).setMayPrecedeItsStore(true);
+                function.edit(id).setIsValidatedWhereLookedAt(true);
         }
-        if (blockID == header)
+        if (blockID == header) {
             addEffects(context.analyses.effectsOfTerminator(header), clobbersSinceEntry);
+            firstTurnGetsHere &= !mayLeaveOrStoreToVariable(context.analyses.effectsOfTerminator(header).onAnyEdge());
+        }
         if (numberOfHoistedReads > numberOfReadsBefore)
             function.edit(blockID).values = WTF::move(remaining);
         while (definingBlock.size() < function.values.size())
@@ -540,15 +587,17 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
             definingBlock[id.index()] = blockID;
     }
 
-    // A value that may be unspecified is tested only where the program tests it. This and whether a loop turns once are asked before anything moves: the answers follow the uses of values.
-    BitVector testsThatStay;
-    if (context.analyses.opcodesOfValues().contains(Opcode::ToBoolean)) {
-        UnspecifiedValues unspecified(context.analyses);
-        for (BlockID block : cfg.reversePostOrder()) {
-            for (ValueID id : function.at(block).values) {
-                if (function.at(id).opcode == Opcode::ToBoolean && unspecified.mayContain(function.at(id).operand(0)))
-                    testsThatStay.set(id.index());
-            }
+    // A value that may be unspecified is looked at only where the program looks at it. This and whether a loop turns once are asked before anything moves: the answers follow the uses of values.
+    BitVector looksAtWhatMayBeUnspecified;
+    UnspecifiedValues unspecified(context.analyses);
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            if (!hoistableOpcodes.contains(function.at(id).opcode))
+                continue;
+            function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                if (unspecified.mayContain(operand))
+                    looksAtWhatMayBeUnspecified.set(id.index());
+            });
         }
     }
 
@@ -560,7 +609,7 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
 
     unsigned numberOfHoistedReads = 0;
     for (const NaturalLoop* loop : loopsInnermostFirst)
-        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, testsThatStay, headersWhoseTestHoldsOnEntry, entriesFromBranches);
+        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, looksAtWhatMayBeUnspecified, headersWhoseTestHoldsOnEntry, entriesFromBranches);
     if (numberOfHoistedReads)
         context.analyses.didChangeValues();
     return numberOfHoistedReads;
@@ -808,7 +857,7 @@ static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, cons
 {
     const Function& function = context.function;
     NaturalLoops& loops = context.analyses.naturalLoops();
-    if (!mayBeHeaderOfShortLoop(context.program, function, function.at(loop.header())) || !isHotLoop(context, loop))
+    if (!mayBeHeaderOfShortLoop(context.program, function, function.at(loop.header())) || !isHotLoop(context, loop).predicted())
         return std::nullopt;
     std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
     if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))

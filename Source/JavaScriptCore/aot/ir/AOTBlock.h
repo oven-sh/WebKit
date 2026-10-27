@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTExpected.h"
 #include "AOTValue.h"
 #include <optional>
 #include <span>
@@ -119,7 +120,7 @@ struct Block {
     Terminator terminator;
     OutOfLineOptional<Target> handler;
     BlockRole role { BlockRole::Ordinary };
-    BlockFrequency frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> frequency { BlockFrequency::Normal };
     CodeShape shape { CodeShape::Unchosen };
     ValueID subject;
 

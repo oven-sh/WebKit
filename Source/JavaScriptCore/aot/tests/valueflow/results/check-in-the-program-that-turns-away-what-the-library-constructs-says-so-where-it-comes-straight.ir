@@ -1,0 +1,31 @@
+# interface Rule { limit: number }   const made = new Made()   unknown(made)   function readsMade(rule: Rule) { rule.limit }   readsMade(made); readsMade(unknown()), where Made is a function of the library
+# The constructed object comes to the parameter straight from where it is made, past no place that holds any value: the check says that it may fail.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f2 name="readsMade"
+# CHECK: = Check v0 expectedType=undefined|null|L0 cause=MayFail
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+runtimefunction id=0 function=f1
+layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Construct v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="unknown" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = Call v3
+    v6 = NewClosure function=f2
+    v7 = Call v6, -, v1
+    v8 = Call v6, -, v5
+    Return
+}
+function f1 name="Made" role=Library flags=[HasThis] enclosingRuntimeFunction=0 thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 name="readsMade" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="limit"
+    Return v2
+}

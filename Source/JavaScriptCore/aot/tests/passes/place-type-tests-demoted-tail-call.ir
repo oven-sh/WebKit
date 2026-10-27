@@ -12,7 +12,7 @@ function f1 name="marked-call" parameters=[{type=f0 flags=[IsExpected]}, {type=a
     v2 = Call v0, -, v1 @0 tail
     Return v2
 # CHECK: = IsClosureOf v0 function=f0
-# CHECK: anything = CallDirect v1 function=f0 @0 tail
+# CHECK: anything = CallDirect v1 function=f0 [calleeIsPredicted] @0 tail
 # CHECK: frequency=Unlikely:
 # CHECK-NEXT: anything = Call {{*}}, -, v1 @0 tail
 }

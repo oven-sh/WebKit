@@ -34,6 +34,8 @@ constexpr StubKey getByIdOfEmptySlot() { return StubKey(StubFamily::GetByIdOfEmp
 constexpr StubKey getByIdBehindFieldTable() { return StubKey(StubFamily::GetByIdBehindFieldTable); }
 constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
 constexpr StubKey getLengthAtSite() { return StubKey(StubFamily::GetLengthAtSite); }
+// The operands: the proxy, the key as its trap takes it, and of a store the value and whether the code is strict.
+constexpr StubKey throughProxy(TrapOfProxy trap) { return StubKey(StubFamily::ThroughProxy).withForm(static_cast<uint8_t>(trap)); }
 constexpr StubKey inById(PresenceQuestion question) { return StubKey(StubFamily::InById).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey getByIdChain() { return StubKey(StubFamily::GetByIdChain); }
 constexpr StubKey getByIdPair(SecondReceiver receiver) { return StubKey(StubFamily::GetByIdPair).withForm(static_cast<uint8_t>(receiver)); }
@@ -48,6 +50,7 @@ constexpr StubKey instanceOf(InstanceOfOperand operand) { return StubKey(StubFam
 // The operands: the object and the token of the evaluation of the class. The immediate: the index of the field in the record of the layout that declares it.
 constexpr StubKey privateGet() { return StubKey(StubFamily::PrivateGet); }
 
+constexpr StubKey storeElementOfCompiledObject(PutMode mode) { return StubKey(StubFamily::StoreElementOfCompiledObject).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putById(PutMode mode) { return StubKey(StubFamily::PutById).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdAfterFrontProbe(PutMode mode) { return StubKey(StubFamily::PutByIdAfterFrontProbe).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdHashed(PutMode mode) { return StubKey(StubFamily::PutByIdHashed).withForm(static_cast<uint8_t>(mode)); }
@@ -71,6 +74,7 @@ constexpr StubKey rememberKeyOrderStep() { return StubKey(StubFamily::RememberKe
 
 constexpr StubKey getByValCached() { return StubKey(StubFamily::GetByValCached); }
 constexpr StubKey getByValCachedCells() { return StubKey(StubFamily::GetByValCachedCells); }
+constexpr StubKey getSuperByVal() { return StubKey(StubFamily::GetSuperByVal); }
 constexpr StubKey inByValCached(PresenceQuestion question) { return StubKey(StubFamily::InByValCached).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey deleteByIdCached(PutMode mode) { return StubKey(StubFamily::DeleteByIdCached).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey deleteByValCached(PutMode mode) { return StubKey(StubFamily::DeleteByValCached).withForm(static_cast<uint8_t>(mode)); }
@@ -189,7 +193,7 @@ static_assert([] {
         getFreeName(FreeNameRead::TypeOf), setFreeName(PutMode::Sloppy), instanceOf(InstanceOfOperand::Prototype),
         putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putByIdAtSite(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define),
         didCreateField(CreatedFields::Run), didCreateFieldAtPlace(CreatedFieldsAtPlace::Run),
-        getByValCached(), getByValCachedCells(), inByValCached(PresenceQuestion::HasOwn), deleteByIdCached(PutMode::Sloppy), deleteByValCached(PutMode::Sloppy), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
+        getByValCached(), getByValCachedCells(), getSuperByVal(), inByValCached(PresenceQuestion::HasOwn), deleteByIdCached(PutMode::Sloppy), deleteByValCached(PutMode::Sloppy), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
     }) {
         if (!exists(lastFormKey) || lastFormKey.form() + 1u != descriptorOf(lastFormKey.family()).numberOfForms)
             return false;

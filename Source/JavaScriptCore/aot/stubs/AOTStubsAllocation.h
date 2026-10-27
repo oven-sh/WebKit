@@ -32,6 +32,14 @@ constexpr StubKey allocateCell(CellInitialization initialization, std::optional<
     return StubKey(StubFamily::AllocateCell).withForm(static_cast<uint8_t>(initialization)).withCount(cellSize ? *cellSize / cellSizeStep : 0);
 }
 
+// The second operand is the prototype that the object is to have. With the one of the allocation's record the cell is as from allocateCell(HeaderAndWordsAndZeros) and the second result is not zero.
+// With any other the object is whole, of whatever layout the prototype selects, and the second result is zero.
+constexpr StubKey allocateInstance(std::optional<size_t> cellSize = std::nullopt)
+{
+    ASSERT_UNDER_CONSTEXPR_CONTEXT(!cellSize || (*cellSize && *cellSize <= maxCellSizeInKey && !(*cellSize % cellSizeStep)));
+    return StubKey(StubFamily::AllocateInstance).withCount(cellSize ? *cellSize / cellSizeStep : 0);
+}
+
 // How many instructions the zeros take: one store a chunk where the size is known, a loop of two chunks where it is not.
 constexpr unsigned instructionsToZeroBody(CellInitialization initialization, size_t bytes, bool knowsSize)
 {
@@ -62,6 +70,7 @@ void loadAllocationSiteRecord(StubAssembler&, GPRReg allocation, GPRReg record, 
 
 static_assert(exists(allocateCell(CellInitialization::HeaderAndWordsAndZeros)) && !exists(allocateCell(CellInitialization::HeaderAndWords).withForm(4)));
 static_assert(exists(allocateCell(CellInitialization::Header, maxCellSizeInKey)) && !exists(allocateCell(CellInitialization::Header, maxCellSizeInKey).withCount(maxCellSizeInKey / cellSizeStep + 1)));
+static_assert(exists(allocateInstance()) && exists(allocateInstance(maxCellSizeInKey)) && !exists(allocateInstance(maxCellSizeInKey).withCount(maxCellSizeInKey / cellSizeStep + 1)));
 static_assert(exists(copyObject(maxBytesCopiedWithoutLoop)) && exists(copyObject(std::nullopt)));
 static_assert(!exists(copyObject(maxBytesCopiedWithoutLoop).withCount(maxBytesCopiedWithoutLoop / copyChunkBytes + 1)));
 static_assert(exists(allocateExtension(copyChunkBytes)) && exists(allocateExtension(maxExtensionSizeFromStub)));

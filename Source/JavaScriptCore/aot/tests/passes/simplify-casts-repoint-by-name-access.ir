@@ -40,9 +40,10 @@ function f2 name="widerCastComesSecond" parameters=[{type=anything}] results=[{t
     v2 = RequireObjectCoercible v0 nullishAccess=Read name="x"
     v3 = PropGet v0 key="x"
     Return v3
+# The wider cast takes the check as its operand. It is a test of the language: it stays while the check stands, which answers it in the typed version alone.
 # CHECK: = Check v0 expectedType=L0
-# CHECK-NOT: RequireObjectCoercible
-# CHECK: = PropGet v1 key="x"
+# CHECK-NEXT: = RequireObjectCoercible v1 name="x"
+# CHECK-NEXT: = PropGet v1 key="x"
 }
 
 function f3 name="receiverIsWiderCast" parameters=[{type=anything}] results=[{type=anything}] {

@@ -24,6 +24,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -351,7 +352,8 @@ static bool mayGainFrom(const Program& program, const FramePlan& plan, const Bit
     auto handsToSuchFunction = [&](const Use& use) {
         if (use.kind != Use::Kind::Operand || effectRuleOf(function.at(use.user).opcode) != EffectRule::Call)
             return false;
-        return std::ranges::any_of(calleesOfCall(program, function.at(use.user)).functions, [&](FunctionID callee) {
+        CalleeList callees = calleesOfCall(program, function.at(use.user));
+        return std::ranges::any_of(callees.seen().predicted().functions, [&](FunctionID callee) {
             return functionsThatBorrowMore.get(callee.index());
         });
     };
@@ -428,7 +430,7 @@ static void countPlans(BuildContext& build, std::span<const FramePlan> plans)
         build.statistics().count(statisticsOfFramePlans[index], sums[index]);
 }
 
-static void applyPlans(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build, std::span<const FramePlan> plans)
+static void applyPlans(ProgramEditor& editor, const OptimizationInputs& inputs, BuildContext& build, std::span<const FramePlan> plans, NOESCAPE const ScopedLambda<void()>& besideEdits)
 {
     Vector<FunctionID> changedFunctions;
     Vector<const FramePlan*> plansOfChangedFunctions;
@@ -451,7 +453,7 @@ static void applyPlans(ProgramEditor& editor, const OptimizationInputs& inputs, 
     });
     editFunctionsInParallel(editor, build, changedFunctions.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
         applyFramePlan(AnalysisContext { build, editor.program(), &inputs.flow, &inputs.effects, id }, function, arenas.types, *plansOfChangedFunctions[index]);
-    });
+    }, besideEdits);
 }
 
 FrameAllocation allocateInFrames(ProgramEditor& editor, const OptimizationInputs& inputs, FlowResults& flow, BuildContext& build)
@@ -474,12 +476,9 @@ FrameAllocation allocateInFrames(ProgramEditor& editor, const OptimizationInputs
 
     // The edits change functions and types. The merge reads the plans and the layouts.
     FrameAllocation result;
-    runTasksInParallel(build.parallelLoops(), {
-        [&] { applyPlans(editor, inputs, build, plans.span()); },
-        [&] {
-            result = FrameAllocation(program, plans.span());
-            countPlans(build, plans.span());
-        },
+    applyPlans(editor, inputs, build, plans.span(), [&] {
+        result = FrameAllocation(program, plans.span());
+        countPlans(build, plans.span());
     });
     times.didFinish("applyAndMergePlans"_s);
     build.destroyLater(WTF::move(plans));

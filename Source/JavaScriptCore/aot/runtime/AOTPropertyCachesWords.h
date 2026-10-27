@@ -180,6 +180,20 @@ struct KeyedValuePlace {
     };
 };
 
+enum class TrapOfProxy : uint8_t { Get, Has, Set };
+inline constexpr unsigned numberOfTrapsOfProxies = 3;
+
+// What the stub that goes through a proxy keeps in its frame while code of the program runs.
+struct ProxyAccessWords {
+    JSObject* proxy;
+    JSCell* key;
+    JSObject* target;
+    JSObject* handler;
+    EncodedJSValue storedValue;
+    // Of a store: whether the code is strict. Of a read: Slot::headerBits() of the slot that led here.
+    uint64_t storeIsStrictOrHeaderOfSlot;
+};
+
 struct MissesOfPairs {
     static constexpr uint32_t numberOfCounters = 1u << 15;
     static constexpr uint32_t missesBetweenFilings = 16;
@@ -215,8 +229,15 @@ struct PropertyCacheWords {
     const CustomAccessorRecord* customAccessors;
     uint32_t numberStructureID;
     uint32_t booleanStructureID;
+    // By TrapOfProxy. Zero where the image does not have the name.
+    uint32_t numbersOfNamesOfTraps[numberOfTrapsOfProxies];
     UniquedStringImpl* hasInstanceUID;
     UniquedStringImpl* prototypeUID;
+    UniquedStringImpl* lengthUID;
+    UniquedStringImpl* nameUID;
+    const void* lookupOfOrdinaryObjects;
+    const void* lookupOfArrays;
+    const void* lookupOfFunctions;
     JSCell* defaultHasInstanceFunction;
 #if !defined(BUN_HARDENED)
     SlotHandlers handlers;

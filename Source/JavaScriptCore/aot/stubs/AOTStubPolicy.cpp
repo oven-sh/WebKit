@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTFlowResults.h"
 #include "AOTIRProgram.h"
@@ -31,6 +32,7 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .forceGCSlowPaths = recorded.has(TestingSwitch::ForceGCSlowPaths),
         .imageHasWebAssembly = mayHaveWebAssemblyModules(program),
         .hasOneInstance = flow.programInstances() == Typed::ProgramInstances::AtMostOne,
+        .callsTrapsOfProxies = flow.mayRunUnseenCode() || !flow.loadsOfMachineCode().empty() || !flow.usesOf(Builtins::Proxy).isEmpty() || !flow.usesOf(Builtins::ProxyRevocable).isEmpty(),
         .validates = recorded.validates,
         .countsAllocations = recorded.countsBranches,
         .isPositionIndependent = recorded.form() == ImageForm::PositionIndependent,

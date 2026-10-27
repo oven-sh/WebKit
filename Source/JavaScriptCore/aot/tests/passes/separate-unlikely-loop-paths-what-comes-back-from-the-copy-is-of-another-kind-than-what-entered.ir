@@ -1,0 +1,97 @@
+# What enters the loop fails the test of every turn, and what comes back from the copy passes it. The variables that go around the loop have the types of a turn that runs
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="out" declared={type=string}
+variable g1 name="total" declared={type=number}
+layout L0 name="Given" fields=[{key="a" declared={type=number}}]
+
+function f0 name="anObjectBecomesAnInteger" parameters=[{type=L0}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: L0, v1: i32):
+    v2 = Integer
+    Jump -> next b1(v0, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = String string=","
+    v9 = TypeTest v3 testedType=i32
+    Branch v9 -> taken b4(| 0), notTaken b6(| 0)
+  b3():
+    v10 = Undefined
+    Return v10
+  b4(v11):
+    v12 = Add v11, v8
+    v13 = Add v7, v12
+    PutModuleVariable v13 variable=g0
+    Jump -> next b5(v11)
+  b5(v15):
+    v16 = GetModuleVariable variable=g0
+    v17 = Add v15, v8
+    v18 = Add v16, v17
+    PutModuleVariable v18 variable=g0
+    v20 = Increment v4
+    Jump -> next b1(v15, v20)
+  b6(v21) frequency=Unlikely:
+    v22 = Add v21, v8
+    v23 = Add v7, v22
+    PutModuleVariable v23 variable=g0
+    v25 = Integer integer=-1
+    v26 = BitAnd v21, v25
+    Jump -> next b5(v26)
+# CHECK: [[loop0]]([[carried0]]: i32, {{*}}, [[out0]]: string):
+# CHECK-NEXT: LoopHint
+# CHECK: ([[integer0]]: i32):
+# CHECK-NEXT: [[shown0]]: string = Add [[integer0]],
+# CHECK-NEXT: [[first0]]: string = Add [[out0]], [[shown0]]
+# CHECK-NEXT: PutModuleVariable [[first0]] variable=g0
+# CHECK-NEXT: Jump -> next
+# CHECK-NEXT: ([[same0]]: i32):
+# CHECK-NEXT: [[shownAgain0]]: string = Add [[same0]],
+# CHECK-NEXT: [[second0]]: string = Add [[first0]], [[shownAgain0]]
+# CHECK-NEXT: PutModuleVariable [[second0]] variable=g0
+# CHECK-NEXT: = Increment
+# CHECK-NEXT: Jump -> next [[loop0]]([[same0]], {{*}}, [[second0]])
+}
+
+# What is stored is made of the value that changes its kind
+function f1 name="undefinedBecomesAnInteger" parameters=[{type=undefined}, {type=i32}] results=[{type=undefined}] {
+  b0(v0: undefined, v1: i32):
+    v2 = Integer
+    Jump -> next b1(v0, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g1
+    v8 = Integer integer=7
+    v9 = TypeTest v3 testedType=i32
+    Branch v9 -> taken b4(| 0), notTaken b6()
+  b3():
+    v10 = Undefined
+    Return v10
+  b4(v11):
+    v12 = Add v7, v11
+    PutModuleVariable v12 variable=g1
+    v14 = BitAnd v11, v8
+    v15 = Increment v14
+    Jump -> next b5(v15)
+  b5(v16):
+    v17 = Increment v4
+    Jump -> next b1(v16, v17)
+  b6() frequency=Unlikely:
+    PutModuleVariable v7 variable=g1
+    v19 = Integer integer=1
+    Jump -> next b5(v19)
+# CHECK: [[loop1]]([[carried1]]: int[1, 8], {{*}}, [[total1]]: number):
+# CHECK: ([[integer1]]: int[1, 8]):
+# CHECK-NEXT: [[sum1]]: number = Add [[total1]], [[integer1]]
+# CHECK: [[next1]]: int[1, 8] = Increment
+# CHECK: Jump -> next [[loop1]]({{*}}, {{*}}, [[sum1]])
+}

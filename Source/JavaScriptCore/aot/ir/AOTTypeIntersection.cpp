@@ -128,7 +128,7 @@ static ClassPart withoutProofs(ClassPart part)
 
 static void copyContents(ClassPart& target, const ClassPart& source)
 {
-    target.contents = source.contents;
+    target.writtenContents = source.writtenContents;
     target.arrayStorage = source.arrayStorage;
 }
 
@@ -144,10 +144,10 @@ static TypeID intersectKnownContents(TypeID first, TypeID second, TypeArena& are
 static void intersectContents(ClassPart& result, const ClassPart& a, const ClassPart& b, TypeArena& arena)
 {
     result.arrayStorage = a.arrayStorage != ArrayStorage::Other ? a.arrayStorage : b.arrayStorage;
-    size_t size = std::max(a.contents.size(), b.contents.size());
-    result.contents.resize(size);
+    size_t size = std::max(a.writtenContents.size(), b.writtenContents.size());
+    result.writtenContents.resize(size);
     for (unsigned index = 0; index < size; ++index)
-        result.contents[index] = intersectKnownContents(a.contentsAt(index), b.contentsAt(index), arena);
+        result.writtenContents[index] = intersectKnownContents(a.writtenContentsAt(index), b.writtenContentsAt(index), arena);
 }
 
 static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeArena& arena, DeclaredParts declared)
@@ -160,7 +160,7 @@ static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeAren
     else if (a.contentsAreProven || declared == DeclaredParts::FromEither)
         intersectContents(result, a, b, arena);
     else
-        copyContents(result, b.contents.isEmpty() ? a : b);
+        copyContents(result, b.writtenContents.isEmpty() ? a : b);
     return result;
 }
 
@@ -227,24 +227,6 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
     }
 }
 
-static Type objectsWithoutLayoutOf(const Type& type)
-{
-    Type objects = type.withOnlyObjects();
-    objects.layouts = { };
-    return objects;
-}
-
-static void intersectMembersWithoutLayout(Type& result, const Type& a, const Type& b, TypeArena& arena)
-{
-    bool areInFirst = hasMembersWithoutLayout(arena.table(), a);
-    bool areInSecond = hasMembersWithoutLayout(arena.table(), b);
-    if (areInFirst && areInSecond)
-        copyObjectParts(result, objectsWithoutLayoutOf(a).unionWith(objectsWithoutLayoutOf(b), arena));
-    else
-        copyObjectParts(result, areInFirst ? b : a);
-    result.layouts = arena.intersectionOf(a.layouts, b.layouts);
-}
-
 static void intersectListedObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
 {
     const BuiltinTable& builtins = arena.builtins();
@@ -257,37 +239,6 @@ static void intersectListedObjects(Type& result, const Type& a, const Type& b, T
     result.layouts = arena.intersectionOf(a.layouts, b.layouts);
 }
 
-static void castToFamilyWithUnlistedMembers(Type& result, const Type& source, const Type& family, TypeArena& arena)
-{
-    if (hasMembersWithoutLayout(arena.table(), source)) {
-        copyObjectParts(result, family);
-        result.layouts = arena.intersectionOf(source.layouts, family.layouts);
-        return;
-    }
-
-    intersectListedObjects(result, source, family, arena, DeclaredParts::FromSecond);
-    if (isSubset(objectsWithoutLayoutOf(source), objectsWithoutLayoutOf(result), arena.table()))
-        return;
-    LayoutSet layouts { .isComplete = true };
-    if (result.layouts)
-        layouts = arena.at(result.layouts);
-    layouts.hasMembersWithoutLayout = true;
-    result.layouts = arena.intern(WTF::move(layouts));
-}
-
-static void intersectKnownObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
-{
-    if (declared == DeclaredParts::FromSecond && hasMembersWithoutLayout(arena.table(), b)) {
-        castToFamilyWithUnlistedMembers(result, a, b, arena);
-        return;
-    }
-    if (hasMembersWithoutLayout(arena.table(), a) || hasMembersWithoutLayout(arena.table(), b)) {
-        intersectMembersWithoutLayout(result, a, b, arena);
-        return;
-    }
-    intersectListedObjects(result, a, b, arena, declared);
-}
-
 static void intersectObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)
 {
     if (!a.hasObjects() || !b.hasObjects())
@@ -297,7 +248,7 @@ static void intersectObjects(Type& result, const Type& a, const Type& b, TypeAre
     else if (b.anyObject)
         copyObjectParts(result, a);
     else
-        intersectKnownObjects(result, a, b, arena, declared);
+        intersectListedObjects(result, a, b, arena, declared);
 }
 
 Type intersect(const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)

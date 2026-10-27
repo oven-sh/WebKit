@@ -1643,6 +1643,38 @@ std::optional<size_t> computeInterferenceEdgeBound(Code& code, const StackSlotAc
     return numberOfEdges;
 }
 
+// The number of pairs of spill slots that are live together if each is live from its first mention, in layout order, to its last.
+size_t estimateInterferenceEdges(Code& code)
+{
+    constexpr uint32_t noPosition = std::numeric_limits<uint32_t>::max();
+    Vector<uint32_t> lastMentionOfSlot(FillWith { }, code.stackSlots().size(), noPosition);
+    Vector<uint32_t> firstMentions;
+    uint32_t position = 0;
+    for (BasicBlock* block : code) {
+        for (Inst& inst : *block) {
+            inst.forEach<StackSlot*>([&](StackSlot*& slot, Arg::Role, Bank, Width) {
+                if (!slot->isSpill())
+                    return;
+                if (lastMentionOfSlot[slot->index()] == noPosition)
+                    firstMentions.append(position);
+                lastMentionOfSlot[slot->index()] = position;
+            });
+            ++position;
+        }
+    }
+    lastMentionOfSlot.removeAll(noPosition);
+    std::ranges::sort(lastMentionOfSlot);
+
+    size_t numberOfEdges = 0;
+    size_t numberOfSlotsBehindLastMention = 0;
+    for (size_t index = 0; index < firstMentions.size(); ++index) {
+        while (lastMentionOfSlot[numberOfSlotsBehindLastMention] < firstMentions[index])
+            ++numberOfSlotsBehindLastMention;
+        numberOfEdges += index - numberOfSlotsBehindLastMention;
+    }
+    return numberOfEdges;
+}
+
 struct StackSlotActionsAndLiveness {
     explicit StackSlotActionsAndLiveness(Code& code)
         : actions(code, code.policy().frame.coalescesSpillSlots)
@@ -1662,11 +1694,15 @@ bool shouldUseDenseInterferenceGraph(Code& code, bool& hasTooManyLiveSlots, std:
     if (numberOfSlots <= code.proc().limit(Limit::MaxSlotsForDenseInterference))
         return true;
 
-    // Above the limit, use the rows only if the hash sets of the sparse graph would take at least as much memory.
+    // Either graph is walked edge by edge.
+    hasTooManyLiveSlots = estimateInterferenceEdges(code) > AirLimits::maxInterferenceEdgesAboveDenseLimit;
+    if (hasTooManyLiveSlots)
+        return false;
     computed.emplace(code);
     std::optional<size_t> numberOfEdges = computeInterferenceEdgeBound(code, computed->actions, computed->liveness);
-    hasTooManyLiveSlots = !numberOfEdges;
-    return numberOfEdges && 2 * *numberOfEdges * AirLimits::bytesPerNeighborInSparseInterference >= numberOfSlots * numberOfSlots / 8;
+    hasTooManyLiveSlots = !numberOfEdges || *numberOfEdges > AirLimits::maxInterferenceEdgesAboveDenseLimit;
+    // Above the limit, use the rows only if the hash sets of the sparse graph would take at least as much memory.
+    return !hasTooManyLiveSlots && 2 * *numberOfEdges * AirLimits::bytesPerNeighborInSparseInterference >= numberOfSlots * numberOfSlots / 8;
 }
 
 } // anonymous namespace

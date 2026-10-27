@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTCodeGenerator.h"
 #include "AOTFrameAddressValidation.h"
+#include "AOTInnerPointerValidation.h"
 #include "AOTNarrowReferenceValidation.h"
 #include "AOTVector.h"
 
@@ -161,6 +162,12 @@ void appendFindings(BackEndReport& report, std::span<const NarrowReferenceViolat
 {
     for (const NarrowReferenceViolation& violation : violations)
         report.findings.append(BackEndFinding { internalErrorKindOf(violation.kind), violation.reference, violation.safepoint, violation.detail });
+}
+
+void appendFindings(BackEndReport& report, std::span<const InnerPointerViolation> violations)
+{
+    for (const InnerPointerViolation& violation : violations)
+        report.findings.append(BackEndFinding { InternalErrorKind::InnerPointerWithoutOwner, violation.pointer, violation.safepoint, violation.detail });
 }
 
 static Subject subjectOf(Typed::FunctionID id, const Typed::Function& function, B3::Origin origin)

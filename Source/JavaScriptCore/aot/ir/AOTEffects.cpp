@@ -168,11 +168,12 @@ static EffectsOnEdges calleeEffectsBeyondOperands(const EffectContext& context, 
 static EffectsOnEdges callEffectsBeyondOperands(const EffectContext& context, const Function& function, const Value& call, const EffectsOnEdges& effects)
 {
     CalleeList callees = calleesThatBoundEffectsOf(context.program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return effects;
     EffectDescription description = describeEffects(context.program, function, call);
     description.functions.clear();
-    for (FunctionID callee : callees.functions)
+    for (FunctionID callee : functions->value())
         description.own.merge(calleeEffectsBeyondOperands(context, callee, call));
     return resolveEffects(context, description);
 }

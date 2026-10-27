@@ -278,9 +278,10 @@ ValueFlowObjectID ValueFlowUniverse::objectAllocatedUnder(const Program& program
         return allocated == ownClass ? instanceOf(requested) : site;
     LayoutID current = requested;
     for (size_t steps = 0; steps < program.layouts.size() && current && program.at(current).has(LayoutFlags::HasHeritage); ++steps) {
-        current = predictedHeritageOf(program.at(current));
-        if (current == ownClass)
+        LayoutID above = predictedHeritageOf(program.at(current));
+        if (above == ownClass || (!above && !m_classesNamedAboveSeveralClasses.get(current.index())))
             return instanceOf(requested);
+        current = above;
     }
     return site;
 }
@@ -355,7 +356,7 @@ ValueSetID ValueFlowUniverse::objectsWithLayoutIn(ValueSetMaker& maker, const Pr
         return ValueSets::nothing;
     return rememberedSetOr(layouts.index() < m_numberOfRememberedLayoutSets ? &m_objectsWithLayoutIn[layouts.index()] : nullptr, [&] {
         Vector<ValueSetID, 8> objectsOfLayouts;
-        for (LayoutID layout : program.at(layouts).members)
+        for (LayoutID layout : program.at(layouts).completeMembers())
             objectsOfLayouts.append(m_objectsOfLayout[layout.index()]);
         return maker.uniteAll(objectsOfLayouts.span());
     });
@@ -382,8 +383,6 @@ static void appendKeysInside(const ValueFlowUniverse& universe, const Program& p
 ValueSetID ValueFlowUniverse::maskOf(ValueSetMaker& maker, const Program& program, const Type& type) const
 {
     if (!type.isJavaScriptValue() || type.isAnything())
-        return ValueSets::anything;
-    if (type.layouts && program.at(type.layouts).hasMembersWithoutLayout)
         return ValueSets::anything;
 
     Vector<ValueFlowObjectID, 32> members;
@@ -430,8 +429,6 @@ bool ValueFlowUniverse::namesProgramObjectsAlone(const Program& program, const T
         return false;
     if (!type.layouts)
         return !type.functions.isEmpty() || !type.builtins.isEmpty();
-    if (program.at(type.layouts).hasMembersWithoutLayout)
-        return false;
     bool isAllocated = !type.functions.isEmpty() || !type.builtins.isEmpty();
     for (LayoutID layout : membersOf(program, type)) {
         if (m_isLayoutOfTable.quickGet(layout.index()))
@@ -447,7 +444,7 @@ ValueSetID ValueFlowUniverse::objectsSurelyWithLayoutIn(ValueSetMaker& maker, co
         return ValueSets::nothing;
     return rememberedSetOr(layouts.index() < m_numberOfRememberedLayoutSets ? &m_objectsSurelyWithLayoutIn[layouts.index()] : nullptr, [&] {
         Vector<ValueSetID, 4> objectsOfLayouts;
-        for (LayoutID layout : program.at(layouts).members) {
+        for (LayoutID layout : program.at(layouts).completeMembers()) {
             if (!m_isLayoutOfTable.quickGet(layout.index()))
                 objectsOfLayouts.append(m_objectsOfLayout[layout.index()]);
         }
@@ -513,6 +510,13 @@ ValueFlowNodeID ValueFlowProgramNodes::valueOf(const UnobservedFieldDefinition& 
     return { };
 }
 
+bool ValueFlowProgramNodes::isValueOfUnobservedDefinitions(FunctionID initializer, ValueFlowNodeID node) const
+{
+    return std::ranges::any_of(std::ranges::equal_range(m_unobservedDefinitionsByInitializer, initializer, { }, &UnobservedDefinitions::initializer), [&](const UnobservedDefinitions& entry) {
+        return entry.value == node;
+    });
+}
+
 std::span<const ValueFlowProgramNodes::UnobservedDefinitions> ValueFlowProgramNodes::unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const
 {
     auto found = std::ranges::equal_range(m_unobservedDefinitionsByClass, classCallingSuper, { }, &UnobservedDefinitions::classCallingSuper);
@@ -553,7 +557,7 @@ public:
         while (!types.isEmpty()) {
             const Type& type = m_program.at(types.takeLast());
             for (const ClassPart& part : type.classes) {
-                for (TypeID contents : part.contents)
+                for (TypeID contents : part.writtenContents)
                     take(contents);
             }
             for (LayoutID member : membersOf(m_program, type)) {
@@ -911,6 +915,14 @@ private:
         Vector<ValueFlowObjectID> objectsThatPickTheirLayout = allocatedByAnyClass;
         Vector<ValueFlowObjectID> instancesOfClasses;
         Vector<ValueFlowObjectID> constructorsWithLayouts;
+        BitVector classesNamedAboveOneClass(m_program.layouts.size());
+        for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
+            const Layout& layout = m_program.layouts[index];
+            if (!layoutIsDefinedByClass(layout) || declaredLayoutOf(m_program, LayoutID(index)) != LayoutID(index))
+                continue;
+            if (LayoutID above = predictedHeritageOf(layout); above && classesNamedAboveOneClass.set(above.index()))
+                m_result.m_universe.m_classesNamedAboveSeveralClasses.set(above.index());
+        }
         for (unsigned index = 0; index < m_program.layouts.size(); ++index) {
             const Layout& layout = m_program.layouts[index];
             if (layout.kind == LayoutKind::Instance && layout.constructor) {

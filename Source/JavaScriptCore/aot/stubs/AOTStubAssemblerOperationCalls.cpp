@@ -38,9 +38,16 @@ void StubAssembler::loadRuntimePointer(Entry entry, GPRReg result)
 void StubAssembler::callOperation(Entry entry, GPRReg scratch)
 {
     RELEASE_ASSERT(scratch != assertionScratchGPR);
+#if CPU(X86_64)
+    recordCall(entry);
+    loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), scratch);
+    prepareCallOperation();
+    call(Address(scratch, offsetInRuntimeTable(entry)), OperationPtrTag);
+#else
     loadOperation(entry, scratch);
     prepareCallOperation();
     call(scratch, OperationPtrTag);
+#endif
 }
 
 void StubAssembler::prepareCallOperation()

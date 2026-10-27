@@ -498,25 +498,26 @@ static void collectRulesOfBody(const Program& program, const FlowResults& flow, 
         OperandUses usesOfCalledValue = declaredUses | OperandUse::Inspects;
         if (isInCycle)
             usesOfCalledValue.add(OperandUse::CallsRepeatedly);
-        if (isCalledValue && call.opcode == Opcode::Call && !callees.isComplete) {
+        if (isCalledValue && call.opcode == Opcode::Call && !callees.listsEveryCallee()) {
             addUses(subject, usesOfCalledValue);
             return;
         }
-        if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode)) {
+        std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+        if (!functions || maySuspend(call.opcode)) {
             addUses(subject, OperandUses::all());
             return;
         }
 
         if (isCalledValue) {
             addUses(subject, usesOfCalledValue);
-            for (FunctionID callee : callees.functions) {
+            for (FunctionID callee : functions->value()) {
                 for (uint32_t entryParameter : entryParametersOfCalledValue(program.at(callee), call))
                     passTo(subject, callee, entryParameter, callID, isInCycle);
             }
             return;
         }
         addUses(subject, OperandUse::Inspects);
-        for (FunctionID callee : callees.functions) {
+        for (FunctionID callee : functions->value()) {
             if (!isDroppedBy(program.at(callee), call, operandIndex))
                 passTo(subject, callee, entryParameterOf(program.at(callee), call, operandIndex), callID, isInCycle);
         }

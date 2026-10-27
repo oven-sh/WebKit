@@ -43,7 +43,7 @@ static constexpr uint16_t primitivesInParts()
     return primitives;
 }
 
-static_assert(primitivesInParts() == Primitive::Defined);
+static_assert(primitivesInParts() == (Primitive::Defined & ~Primitive::Unspecified), "nobody looks a property up on a word that may be anything");
 
 static ReceiverState stateWithoutObjects()
 {
@@ -146,14 +146,11 @@ LayoutList allocatedLayoutsWith(const Program& program, std::span<const Property
 
 ReceiverCandidates candidatesOf(const Program& program, const Type& receiver, const Type* expected, LayoutSetID stamp)
 {
-    bool mayHaveNoLayout = hasMembersWithoutLayout(program, receiver);
-
     ReceiverCandidates result;
     result.mayBeNullish = receiver.mayBeUndefinedOrNull();
     result.hasOtherParts = receiver.primitives & ~Primitive::UndefinedOrNull
         || receiver.anyObject
         || receiver.anyFunction
-        || mayHaveNoLayout
         || !receiver.classes.isEmpty()
         || !receiver.functions.isEmpty()
         || !receiver.builtins.isEmpty()
@@ -163,24 +160,24 @@ ReceiverCandidates candidatesOf(const Program& program, const Type& receiver, co
         return result;
 
     FamilyTables::Candidates members = program.familyTables().candidatesOf(receiver.layouts, expected ? expected->layouts : LayoutSetID(), stamp);
-    if (receiver.layouts && !mayHaveNoLayout) {
+    if (receiver.layouts) {
         result.proof = ReceiverProof::Type;
         result.level = KnowledgeLevel::Proven;
         result.proven = WTF::move(members.proven);
-        result.predicted = WTF::move(members.predicted);
+        result.expected = WTF::move(members.expected);
         return result;
     }
 
-    result.predicted = WTF::move(members.predicted.isEmpty() ? members.proven : members.predicted);
+    result.expected = members.expected.predicted().isEmpty() ? Expected(WTF::move(members.proven)) : WTF::move(members.expected);
     result.ofExpectedType = WTF::move(members.ofExpectedType);
-    if (!result.predicted.isEmpty())
+    if (!result.expected.predicted().isEmpty())
         result.level = KnowledgeLevel::Expected;
     return result;
 }
 
 ReceiverCandidates receiverCandidates(const Program& program, const Function& function, ValueID receiver, LayoutSetID stamp)
 {
-    return candidatesOf(program, program.typeOf(function, receiver), &program.expectedOrTypeOf(function, receiver), stamp);
+    return candidatesOf(program, program.typeOf(function, receiver), &program.expectedOrTypeOf(function, receiver).predicted(), stamp);
 }
 
 static void dumpLayouts(PrintStream& out, ASCIILiteral label, const LayoutList& layouts)
@@ -198,7 +195,7 @@ void ReceiverCandidates::dump(PrintStream& out) const
 {
     out.print("proof=", enumName(proof), " level=", nameOf(level));
     dumpLayouts(out, "proven"_s, proven);
-    dumpLayouts(out, "predicted"_s, predicted);
+    dumpLayouts(out, "predicted"_s, expected.predicted());
     if (hasOtherParts)
         out.print(" otherParts");
     if (mayBeNullish)

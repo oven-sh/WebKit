@@ -924,6 +924,14 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 #endif
         if (promise) {
             if (mapEntry->record()) {
+#if ENABLE(AOT)
+                // Whoever asks for the entry point while its graph is loaded hears of it one step ahead of whoever asked for the program.
+                if (auto* compiled = promise->status() == JSPromise::Status::Pending ? dynamicDowncast<AOT::ModuleRecord>(mapEntry->record()) : nullptr; compiled && compiled->takeLoadPromiseBelowMainModule()) {
+                    promise = JSPromise::create(vm, globalObject->promiseStructure());
+                    promise->markAsHandled();
+                    mapEntry->setLoadPromise(vm, promise);
+                }
+#endif
                 finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, mapEntry->record(), scriptFetcher);
                 RETURN_IF_EXCEPTION(scope, nullptr);
             } else {

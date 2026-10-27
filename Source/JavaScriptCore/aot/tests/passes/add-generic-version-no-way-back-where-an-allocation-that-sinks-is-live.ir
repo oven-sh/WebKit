@@ -7,9 +7,10 @@
 # STATISTIC: WaysBackFromGenericVersion = 1
 
 module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
+layout L0 name="Sized" fields=[{key="size" declared={type=anything}}]
 
 function f0 name="listIsOnlyRead" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 expectedType=object
+    v2 = Check v0 expectedType=L0
     v3 = NewArray v1, v1 contents=anything
     v4: anything ~ number = PropGet v2 key="size"
     v5 = Call v1
@@ -22,7 +23,7 @@ function f0 name="listIsOnlyRead" parameters=[{type=anything}, {type=anything}] 
 }
 
 function f1 name="listIsHandedOut" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-    v2 = Check v0 expectedType=object
+    v2 = Check v0 expectedType=L0
     v3 = NewArray v1, v1 contents=anything
     v4: anything ~ number = PropGet v2 key="size"
     v5 = Call v1, -, v3

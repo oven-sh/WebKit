@@ -1,0 +1,34 @@
+# unknown = unseen({ get: answer })  for (..) unknown.member
+# A read under a name that runs code nobody knows runs what a descriptor holds under `get`: it calls that name as often as it runs
+# FORM: AsRead
+# RUN: heat-graph flow
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="text" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = NewClosure function=f1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = Call v3, -, v5
+    v7 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = PropGet v6 key="member"
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="answer" results=[{type=anything}] {
+    Return
+}
+# CHECK: f0 size 14 mass 49.000000: unknown*2.000000 name0*11.000000
+# CHECK: name0: f1*1.000000
+# CHECK: f1 12.000000

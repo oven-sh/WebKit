@@ -20,6 +20,7 @@
 #include "AOTCompactTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTFunctionTables.h"
 #include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
@@ -316,6 +317,8 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     constexpr bool targetIsJSFunction = false;
     words.boundFunctionExecutable = vm.getBoundFunction(targetIsJSFunction, SourceTaintedOrigin::Untainted);
     words.emptyExtraPropertiesStructure = JSFinalObject::createStructure(vm, realm, jsNull(), extraPropertiesInlineCapacity);
+    words.extraPropertiesWithElementsStructure = Structure::nonPropertyTransition(vm, words.emptyExtraPropertiesStructure, TransitionKind::AllocateContiguous, nullptr);
+    words.headerOfExtraPropertiesWithElements = cellHeaderFor(words.extraPropertiesWithElementsStructure);
     words.boundFunctionClassInfo = JSBoundFunction::info();
     words.objectPrototype = realm->objectPrototype();
     words.functionPrototypeCall = realm->linkTimeConstant(LinkTimeConstant::callFunction);
@@ -708,11 +711,29 @@ struct CountedCall<entry, operation, Result(First, Rest...) noexcept(isNoexcept)
 };
 #endif
 
+// A leaf that preserves most registers is handed characters and numbers and no instance.
+static constexpr bool isCalledWithoutCollection(Entry entry)
+{
+    std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
+    return operation && !Typed::declaredBoundOf(*operation).mayCollect && !preservesMostRegisters(*operation) && !featureOf(entry);
+}
+
+// What takes the pending exception runs the collection that throwing put off.
+static_assert(!isCalledWithoutCollection(Entry::operationAOTCatch) && !isCalledWithoutCollection(Entry::operationAOTCatchException) && !isCalledWithoutCollection(Entry::operationAOTCatchValueAndException));
+
+template<Entry entry, auto operation>
+static constexpr auto functionInTable = [] {
+    if constexpr (isCalledWithoutCollection(entry))
+        return CallWithoutCollection<operation>::call;
+    else
+        return operation;
+}();
+
 template<bool countsCalls>
 static void fillOperations(void** entries)
 {
 #define AOT_FILL_OPERATION(name) \
-    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, countsCalls ? CountedCall<Entry::name, &name, std::remove_pointer_t<decltype(&name)>>::call : &name>();
+    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, countsCalls ? CountedCall<Entry::name, functionInTable<Entry::name, &name>, std::remove_pointer_t<decltype(&name)>>::call : functionInTable<Entry::name, &name>>();
 #define AOT_FILL_SCHEMA_OPERATION(name) AOT_FILL_OPERATION(operationAOT##name)
 #define AOT_TRAP_ENTRY(name) \
     entries[static_cast<unsigned>(Entry::name)] = tagCFunctionPtr<void*, OperationPtrTag>(operationNotUsedByImage);
@@ -1018,7 +1039,7 @@ static size_t sizeOfPagesForNewThread(const Image& image)
 }
 
 // The allocator keeps pieces of different sizes in pages of different sizes, and a thread shares no page with another thread. So does a heap.
-// Other threads allocate meanwhile, so it stops where less than this much address space is left.
+// Other threads allocate meanwhile, so it stops where less than this much address space is left, and it reads what is left: to map as much would take it from them.
 static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeaveFree)
 {
 #if USE(MIMALLOC)
@@ -1033,13 +1054,14 @@ static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeav
     // It asks the system for an arena whenever its arenas are full, and each time it is refused it goes on at addresses far from the last.
     AOT_THRESHOLD(size_t, smallestStep, 128 * MB);
     static const size_t largestStep = mi_option_get_size(mi_option_arena_reserve);
-    size_t step = canMap(largestStep + sizeToLeaveFree) ? largestStep : largestStep > smallestStep && canMap(smallestStep + sizeToLeaveFree) ? smallestStep : 0;
+    size_t left = addressSpaceLeft();
+    size_t step = largestStep + sizeToLeaveFree <= left ? largestStep : largestStep > smallestStep && smallestStep + sizeToLeaveFree <= left ? smallestStep : 0;
     mi_option_set(mi_option_arena_reserve, step / KB);
 
     size_t sizeOfPagesOfThread = 0;
     for (auto [size, count] : pagesOfThread)
         sizeOfPagesOfThread += count * (size + alignmentOfPages);
-    if (canMap(numberOfThreads * sizeOfPagesOfThread + sizeToLeaveFree))
+    if (numberOfThreads * sizeOfPagesOfThread + sizeToLeaveFree <= left)
         return true;
 
     mi_heap_t* heap = mi_heap_new();
@@ -1051,7 +1073,7 @@ static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeav
             for (unsigned page = 0; hasRoom && page < count; ++page) {
                 for (unsigned piece = 0; hasRoom && piece < piecesInPage; ++piece)
                     hasRoom = !!mi_heap_malloc(heap, size / (piecesInPage + 1));
-                hasRoom = hasRoom && canMap(sizeToLeaveFree);
+                hasRoom = hasRoom && addressSpaceLeft() >= sizeToLeaveFree;
             }
         }
     }
@@ -1065,11 +1087,13 @@ static bool tryEnsureRoomInAllocator(unsigned numberOfThreads, size_t sizeToLeav
 }
 
 // Until a thread adopts them the pages begin with their size.
-static void* tryReservePagesForTables(const Image& image, unsigned numberOfThreads)
+static void* tryReservePagesForTables(const Image& image, unsigned numberOfThreads, size_t sizeToLeaveFree)
 {
     if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
         return nullptr;
     size_t size = sizeOfPagesForNewThread(image);
+    if (addressSpaceLeft() < size + sizeToLeaveFree)
+        return nullptr;
     void* pages = OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages);
     if (pages)
         *static_cast<size_t*>(pages) = size;
@@ -1081,7 +1105,7 @@ PagesForNewThread tryReservePagesForFirstThread()
     const Image* image = Image::current();
     if (!hasAddressSpaceLimit() || !image)
         return { };
-    void* pages = tryReservePagesForTables(*image, ++s_numberOfThreadsStarting);
+    void* pages = tryReservePagesForTables(*image, ++s_numberOfThreadsStarting, 0);
     if (!pages)
         --s_numberOfThreadsStarting;
     return { pages, !pages };
@@ -1095,7 +1119,7 @@ PagesForNewThread tryReservePagesForNewThread()
     if (!hasAddressSpaceLimit() || !image)
         return { };
     unsigned numberOfThreads = ++s_numberOfThreadsStarting;
-    void* pages = tryReservePagesForTables(*image, numberOfThreads);
+    void* pages = tryReservePagesForTables(*image, numberOfThreads, sizeToLeaveFree);
     if (!pages) {
         --s_numberOfThreadsStarting;
         return { nullptr, true };

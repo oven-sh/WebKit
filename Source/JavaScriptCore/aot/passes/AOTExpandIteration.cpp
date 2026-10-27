@@ -218,7 +218,7 @@ struct IterationExpansion {
     ValueID positionBehindStep { };
 
     bool isMakingSharedFunction() const { return !pass; }
-    bool isExpectedToRun() const { return isMakingSharedFunction() || function.at(builder.currentBlock()).frequency == BlockFrequency::Normal; }
+    bool isExpectedToRun() const { return isMakingSharedFunction() || function.at(builder.currentBlock()).frequency.predicted() == BlockFrequency::Normal; }
     StateVariable addVariable(ValueID initialDefinition) { return { repair->addVariable(initialDefinition), initialDefinition }; }
 
     void define(const StateVariable& variable, ValueID definition)
@@ -314,7 +314,7 @@ struct IterationExpansion {
         return kind == JSC::IterationKind::Keys ? key : value;
     }
 
-    IRBuilder::ProvenBranch branchOnType(ValueID value, TypeID type, BlockFrequency taken = BlockFrequency::Normal, BlockFrequency notTaken = BlockFrequency::Normal)
+    IRBuilder::ProvenBranch branchOnType(ValueID value, TypeID type, Expected<BlockFrequency> taken = BlockFrequency::Normal, Expected<BlockFrequency> notTaken = BlockFrequency::Normal)
     {
         return builder.emitBranchWithProof(builder.appendTypeTest(value, type), 0, taken, notTaken);
     }
@@ -442,7 +442,7 @@ static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, Bu
         return IterationForm::Map;
     if (id == BuiltinClasses::Set)
         return IterationForm::Set;
-    if (isTypedView(builtins.at(id).typedArrayType))
+    if (isTypedView(builtins.typedArrayTypeOf(id)))
         return IterationForm::TypedArray;
     return std::nullopt;
 }
@@ -464,6 +464,20 @@ static bool hasConstantIteratorMethod(FunctionPassContext& pass, const Iteration
     return findMethod(WellKnownSymbol::Iterator).isConstant();
 }
 
+// An object whose layout has nothing under @@iterator is not iterated: whoever expects only such objects has looked at what else is done with the value.
+static bool namesOnlyLayoutsWithoutIterator(FunctionPassContext& pass, const Type& expected, IteratorKind kind)
+{
+    const Program& program = pass.program;
+    if (!expected.layouts || expected.anyObject || expected.anyFunction || !expected.classes.isEmpty() || !expected.functions.isEmpty() || !expected.builtins.isEmpty())
+        return false;
+    auto hasMethod = [&](LayoutID layout, WellKnownSymbol symbol) {
+        return hasMemberToFindUnder(program, layout, program.keyOf(program.builtins().nameOf(symbol)));
+    };
+    return std::ranges::none_of(pass.types.at(expected.layouts).seen().predicted(), [&](LayoutID layout) {
+        return hasMethod(layout, WellKnownSymbol::Iterator) || (kind == IteratorKind::Async && hasMethod(layout, WellKnownSymbol::AsyncIterator));
+    });
+}
+
 static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& planned)
 {
     const BuiltinTable& builtins = pass.program.builtins();
@@ -480,8 +494,8 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
             .form = *form,
             .kind = form == IterationForm::Map ? JSC::IterationKind::Entries : JSC::IterationKind::Values,
             .builtinClass = part.builtinClass,
-            .typedArrayType = builtins.at(part.builtinClass).typedArrayType,
-            .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.contents.span())),
+            .typedArrayType = builtins.typedArrayTypeOf(part.builtinClass),
+            .testedType = pass.types.intern(Type::builtinClass(part.builtinClass, part.writtenContents.span())),
             .awaitsEachValue = planned.kind == IteratorKind::Async && form != IterationForm::AsyncGenerator,
         });
     };
@@ -492,7 +506,7 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
     };
 
     const Type& proven = pass.program.typeOf(pass.function, planned.value);
-    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value);
+    const Type& expected = pass.program.expectedOrTypeOf(pass.function, planned.value).predicted();
     for (const Type* type : { &expected, &proven }) {
         for (const ClassPart& part : type->classes)
             addClass(part);
@@ -500,7 +514,8 @@ static Arms collectCandidates(FunctionPassContext& pass, const PlannedValue& pla
             add(IterationArm { .form = IterationForm::String, .testedType = TypeTable::string });
     }
     // An iteration over undefined or null throws: whoever expects nothing else says nothing about what is iterated.
-    if (!(expected.isUndefinedOrNull() ? proven : expected).anyObject)
+    bool expectsNothingIterable = expected.isUndefinedOrNull() || namesOnlyLayoutsWithoutIterator(pass, expected, planned.kind);
+    if (!(expectsNothingIterable ? proven : expected).anyObject)
         return candidates;
 
     // What an iterable that nobody knows anything about is tested for. Of the classes with an arm only a generator does anything with what it is sent.
@@ -594,7 +609,7 @@ static std::optional<BypassedIterator> findBypassedIterator(FunctionPassContext&
         .form = *form,
         .kind = static_cast<JSC::IterationKind>(implementation.inlineParameters[0]),
         .builtinClass = part->builtinClass,
-        .typedArrayType = builtins.at(part->builtinClass).typedArrayType,
+        .typedArrayType = builtins.typedArrayTypeOf(part->builtinClass),
         .testedType = pass.function.at(receiver).type,
         .classIsProven = true,
         .namesAreProven = true,
@@ -2258,7 +2273,7 @@ struct ArmDispatcher {
     }
 
     // One block for each arm, entered by the number of the arm.
-    Vector<BlockID, 4> emitSwitchOverArms(ValueID chosenArm, BlockFrequency frequency)
+    Vector<BlockID, 4> emitSwitchOverArms(ValueID chosenArm, Expected<BlockFrequency> frequency)
     {
         Vector<BlockID, 4> blocks;
         for (const IterationArm& arm : plan.arms)
@@ -2460,7 +2475,7 @@ struct ArmDispatcher {
     // %AsyncFromSyncIteratorPrototype%.next rejects its promise with what the step throws, and the loop awaits that promise: the exception arrives one turn of the job queue later.
     void emitStepOfWrappedIterator(ArmState& state)
     {
-        BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+        Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
         std::optional<Target> outer = builder.handler();
 
         IRBuilder::Expansion step { builder.addBlock(frequency), { }, outer };
@@ -2704,7 +2719,7 @@ static PassOutcome expandIterations(FunctionPassContext& pass, IRBuilder& builde
 
 // Where the protocol finds no method of the program in the operand, the effects of a spread say that it runs no code, and tests are placed by them. A call of the function that walks anything
 // counts as running any code, so nothing of such an operand goes there: a string is walked here, and the rest throws. Answers what is left to walk.
-static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilder& builder, ValueID source, bool hasFailedStringTest, BlockFrequency frequency)
+static ValueID emitThrowWhereNoMethodIsFound(FunctionPassContext& pass, IRBuilder& builder, ValueID source, bool hasFailedStringTest, Expected<BlockFrequency> frequency)
 {
     Type type = pass.program.typeOf(pass.function, source);
     if (type.without(pass.types.at(TypeTable::string), pass.types).isNever() || protocolMayFindMember(pass.program, type, Protocol::Iterate))
@@ -2766,7 +2781,7 @@ static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const Sp
     Value original = function.at(id);
     ValueID iterable = original.iterableOperand();
     replaced.add(pass.analyses.effectContext(), function, original);
-    BlockFrequency loopFrequency = rarerOf(plan.hasClassArm() ? BlockFrequency::Unlikely : BlockFrequency::Normal, function.at(point.block).frequency);
+    Expected<BlockFrequency> loopFrequency = rarerOf(plan.hasClassArm() ? BlockFrequency::Unlikely : BlockFrequency::Normal, function.at(point.block).frequency);
 
     builder.setOrigin(original.origin());
     IRBuilder::Expansion cut = builder.beginExpansion(point);
@@ -2839,7 +2854,7 @@ static void replaceWithCallOfOutlinedLoop(FunctionPassContext& pass, IRBuilder& 
     uint32_t numberOfValues = function.at(loop.entry).values.size();
     RELEASE_ASSERT(numberOfValues && function.at(loop.entry).values.last() == loop.open);
     ValueID source = function.at(loop.open).iterableOperand();
-    BlockFrequency frequency = function.at(loop.entry).frequency;
+    Expected<BlockFrequency> frequency = function.at(loop.entry).frequency;
     builder.beginExpansion(ProgramPoint { loop.entry, numberOfValues - 1 });
 
     if (pass.program.typeOf(function, source).mayBeUndefinedOrNull()) {
@@ -2855,7 +2870,7 @@ static void replaceWithCallOfOutlinedLoop(FunctionPassContext& pass, IRBuilder& 
 
 static void emitLoop(FunctionPassContext& pass, IRBuilder& builder, const SpreadLoop& loop)
 {
-    BlockFrequency frequency = pass.function.at(loop.entry).frequency;
+    Expected<BlockFrequency> frequency = pass.function.at(loop.entry).frequency;
     builder.setOrigin(pass.function.at(loop.open).origin());
     builder.setHandler(loop.handler);
     BlockID header = builder.addBlock(frequency);
@@ -3028,7 +3043,7 @@ void reportEnumeratedKeyTests(TestSiteReporter& reporter)
         if (!isResultRead(origin, ForInStepResult::Key) || function.at(origin.resultsOperand()).opcode != Opcode::ForInStep || !reporter.typeOf(operation->object).hasObjects())
             return;
         ValueID step = origin.resultsOperand();
-        if (operation->opcodeWhenCurrent == Opcode::EnumeratorGetByVal && (reporter.program().expectedOrTypeOf(function, operation->object).hasOnlyLayouts(reporter.program()) || !reporter.typeOf(reporter.use()).isAnything()))
+        if (operation->opcodeWhenCurrent == Opcode::EnumeratorGetByVal && (reporter.program().expectedOrTypeOf(function, operation->object).predicted().hasOnlyLayouts() || !reporter.typeOf(reporter.use()).isAnything()))
             return;
 
         for (const Use& read : reporter.analyses().useLists().usesOf(step)) {

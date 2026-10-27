@@ -718,7 +718,7 @@ void UsesOfObjects::findHostFunctionsThatProgramHasStored(ValueSetMakers& makers
     Vector<ValueSetID> stored(FillWith { }, keys.size(), ValueSets::nothing);
     forEachIndexInParallel(m_inputs.loops(), keys.size(), [&](unsigned position, unsigned worker) {
         UnionOfSets values;
-        m_heap.forEachNodeWrittenUnder(ValueFlowName::property(PropertyKeyID(keys[position])), [&](ValueSetID, ValueSetID value) {
+        m_heap.forEachNodeWrittenUnder(ValueFlowName::property(program, PropertyKeyID(keys[position])), [&](ValueSetID, ValueSetID value) {
             if (sets.meet(value, builtinFunctions))
                 values.add(value);
         });
@@ -745,7 +745,7 @@ void UsesOfObjects::noteRefusedOperands(Noter noter, const ValueFlowBuiltinAppli
         if (stored != m_hostFunctionsStoredUnderKey.end() && m_inputs.sets().contains(stored->value, function)) {
             ValueSetID found = m_foundAboveReceivers.ensure(static_cast<uint64_t>(application.thisValue.index()) << 32 | key.index(), [&] {
                 ValueSetID ofProgram = noter.maker.intersect(application.thisValue, noter.maker.intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects())));
-                return ofProgram == ValueSets::nothing ? ValueSets::nothing : m_heap.writtenUnder(noter.maker, m_heap.chainOf(noter.maker, ofProgram), ValueFlowName::property(key));
+                return ofProgram == ValueSets::nothing ? ValueSets::nothing : m_heap.writtenUnder(noter.maker, m_heap.chainOf(noter.maker, ofProgram), ValueFlowName::property(m_inputs.program, key));
             });
             mayRunOnObjectOfProgram = m_inputs.sets().contains(found, function);
         }

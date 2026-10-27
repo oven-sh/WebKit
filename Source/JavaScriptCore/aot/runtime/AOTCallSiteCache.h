@@ -39,6 +39,9 @@ public:
         bool innermostIsInlinedConstructCall : 1 { false };
         bool rejectsOnThrow : 1 { false };
         bool isInModuleBody : 1 { false };
+        bool innermostIsAsync : 1 { false };
+        // What the site calls is a function object that its own function made and handed to nobody.
+        bool callsOwnFunctionObject : 1 { false };
         TraceVisibility innermostVisibility { TraceVisibility::Visible };
         StubFrameKind stubFrameKind { StubFrameKind::Plain };
         FunctionID innermostFunction;
@@ -55,7 +58,11 @@ public:
     ALWAYS_INLINE const Entry* find(const void* returnAddress) const;
     // Nothing for an address that runs no compiled code.
     const Entry* resolve(const Image&, const void* returnAddress);
+    // For an entry of this cache, or none: a call whose stub reads the method. Where the read has no site, the throw site of the call says where it is, and the entry gets that as its firstReadSite.
+    const Entry* withMethodReadSite(const Image&, const Entry*);
     std::optional<SourcePosition> positionOf(const Image&, CompiledFunctionID, CallSiteIndex);
+    // It remembers the inlined frames of the function that was asked for last.
+    InlineFrameReader& inlineFrames() { return m_inlineFrames; }
 
     static constexpr size_t initialNumberOfEntries = 128;
     static constexpr size_t maxNumberOfEntries = 2048;

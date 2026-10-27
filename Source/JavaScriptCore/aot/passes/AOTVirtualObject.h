@@ -145,6 +145,8 @@ std::optional<uint32_t> layoutFieldOf(const Program&, const VirtualObjectDescrip
 std::optional<uint32_t> prefixPropertyOf(const VirtualObjectContext&, const VirtualObjectDescription&, PropertyKeyID);
 VirtualField fieldOfLayoutField(const Program&, LayoutID, uint32_t field);
 TypeID typeOfField(const VirtualObjectContext&, const VirtualObjectDescription&, const VirtualField&);
+// The slot of the field has room for undefined and null beside the values of typeOfField().
+bool holdsUndefinedAndNullToo(const VirtualObjectContext&, const VirtualObjectDescription&, const VirtualField&);
 bool isEnumerable(const Program&, const VirtualObjectDescription&, const VirtualField&);
 
 enum class FieldLookup : uint8_t { Unknown, Field, DynamicElement, AbsentEverywhere };

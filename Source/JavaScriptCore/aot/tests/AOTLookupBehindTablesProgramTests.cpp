@@ -33,7 +33,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v10 = NewClosure function=f9
     v11 = NewClosure function=f10
     v12 = CallDirect function=f11
-    v13 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12
+    v13 = Builtin builtin=Proxy
+    v14 = Call v1, -, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13
     Return
 }
 function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
@@ -129,7 +130,7 @@ static_assert(MissesOfPairs::missesBetweenFilings > 12);
 
 #define ASK_QUESTIONS R"JS(
 const operations = [
-    "GetById", "GetByIdAndCache", "GetGeneric", "GetByVal", "GetByValGeneric", "GetByValAndCache",
+    "GetById", "GetByIdAndCache", "GetGeneric", "GetByVal", "GetByValGeneric", "GetByValAndCache", "GetWithProxyTrap", "HasWithProxyTrap",
     "InByIdAndCache", "InByValGeneric", "InByValAndCache", "HasOwnByIdAndCache", "HasOwnByValAndCache",
     "PutByValGeneric", "PutByValAndCache", "PutByValAndCacheSloppy",
 ];
@@ -226,7 +227,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
 #define LINE_OF_ANSWERS(kind, answer) \
     kind ": read " answer " | in " answer " | hasOwn " answer " | read by key " answer " | in by key " answer " | hasOwn by key " answer " | read by key, twice " answer "\n"
 
-#define OUTPUT_OF_ORDINARY_OBJECTS(objects, operations) \
+#define OUTPUT_OF_ORDINARY_OBJECTS(objects, operations, fewOperations) \
     LINE_OF_ANSWERS("own value in the cell", objects) \
     LINE_OF_ANSWERS("own value outside the cell", objects) \
     LINE_OF_ANSWERS("own value among 300 names", objects) \
@@ -246,7 +247,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
     LINE_OF_ANSWERS("setter alone", objects) \
     LINE_OF_ANSWERS("own value that is undefined", objects) \
     LINE_OF_ANSWERS("own value beside an element", operations) \
-    LINE_OF_ANSWERS("value behind a proxy", operations)
+    "value behind a proxy: read " operations " | in " objects " | hasOwn " operations " | read by key " operations " | in by key " fewOperations " | hasOwn by key " operations " | read by key, twice " operations "\n"
 
 static constexpr OptionWords shellOptions = { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s };
 
@@ -257,7 +258,7 @@ static constexpr OptionWords shellOptions = { "--aotCountsPath=/dev/null"_s, "--
             checkOutputOfProgramInShell(programText, output("right", "right", "right") ""_s, { word }, ASK_QUESTIONS statements ""_s, shellOptions); \
     } while (false)
 
-#define OUTPUT_OF_ORDINARY_OBJECTS_BY(objects, operations, fewOperations) OUTPUT_OF_ORDINARY_OBJECTS(objects, operations)
+#define OUTPUT_OF_ORDINARY_OBJECTS_BY(objects, operations, fewOperations) OUTPUT_OF_ORDINARY_OBJECTS(objects, operations, fewOperations)
 
 static void testOrdinaryObjectsAnswer()
 {
@@ -813,6 +814,137 @@ static void testCompiledObjectsAnswer()
     CHECK_OUTPUT(STATEMENTS_ASKING_COMPILED_OBJECTS, OUTPUT_OF_COMPILED_OBJECTS);
 }
 
+// The key that a trap is handed for a name of the program is kept, so what is filed for a proxy is there behind a collection.
+#define STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS R"JS(
+globalThis.publish = (read, has) => {
+    const proxy = new Proxy({ shared: 1 }, { get(target, key) { return target[key]; }, has(target, key) { return key in target; } });
+    for (let n = 0; n < 40; n++) { read(proxy); has(proxy); }
+    printAnswers("a collection in front of each", {
+        "read": verdict(n => { fullGC(); return read(proxy) === 1; }),
+        "in": verdict(n => { fullGC(); return has(proxy); }),
+    });
+};
+)JS"
+
+#define OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS(objects, operations, fewOperations) "a collection in front of each: read " objects " | in " objects "\n"
+
+static void testWhatIsFiledForAProxyOutlivesCollections()
+{
+    CHECK_OUTPUT(STATEMENTS_ASKING_A_PROXY_BEHIND_COLLECTIONS, OUTPUT_OF_A_PROXY_BEHIND_COLLECTIONS);
+}
+
+// Nothing in this program makes a proxy, so its code holds nothing that reads and calls traps.
+static constexpr ASCIILiteral textOfProgramThatNamesNoProxy = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7
+    Return
+}
+function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="shared"
+    Return v1
+}
+function f2 name="has" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropHas v0 key="shared"
+    Return v1
+}
+function f3 name="store" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="shared"
+    Return
+}
+function f4 name="readByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f5 name="hasByKey" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ElemHas v0, v1
+    Return v2
+}
+function f6 name="storeByKey" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    ElemSet v0, v1, v2 mode=Strict
+    Return
+}
+)IR"_s;
+
+#define STATEMENTS_HANDING_PROXIES_OVER R"JS(
+globalThis.publish = (read, has, store, readByKey, hasByKey, storeByKey) => {
+    const throws = ask => { try { ask(); } catch (error) { return error instanceof TypeError; } return false; };
+    const kinds = {
+        "with traps": () => {
+            const seen = [];
+            const target = { shared: 1 };
+            const proxy = new Proxy(target, {
+                get(object, key, receiver) { seen.push("get " + key + (receiver === proxy)); return object[key] + 1; },
+                has(object, key) { seen.push("has " + key); return !(key in object); },
+                set(object, key, value, receiver) { seen.push("set " + key + (receiver === proxy)); object[key] = value + 1; return true; },
+            });
+            return n => {
+                seen.length = 0;
+                target.shared = n;
+                const answers = [read(proxy), has(proxy), readByKey(proxy, "shared"), hasByKey(proxy, "shared"), hasByKey(proxy, "other")];
+                store(proxy, n + 10);
+                answers.push(target.shared);
+                storeByKey(proxy, "shared", n + 20);
+                answers.push(target.shared);
+                return answers.join() === [n + 1, false, n + 1, false, true, n + 11, n + 21].join()
+                    && seen.join() === "get sharedtrue,has shared,get sharedtrue,has shared,has other,set sharedtrue,set sharedtrue";
+            };
+        },
+        "without traps": () => {
+            const target = { shared: 1 };
+            const proxy = new Proxy(target, { });
+            return n => {
+                target.shared = n;
+                const answers = [read(proxy), has(proxy), readByKey(proxy, "shared"), hasByKey(proxy, "shared"), hasByKey(proxy, "other"), readByKey(proxy, "other")];
+                store(proxy, n + 10);
+                answers.push(target.shared);
+                storeByKey(proxy, "shared", n + 20);
+                answers.push(target.shared);
+                return answers.join() === [n, true, n, true, false, undefined, n + 10, n + 20].join();
+            };
+        },
+        "above the receiver": () => {
+            const heir = Object.create(new Proxy({ }, { get(object, key, receiver) { return receiver === heir ? key : "another receiver"; }, has() { return true; } }));
+            return n => read(heir) === "shared" && has(heir) && readByKey(heir, "k" + n) === "k" + n && hasByKey(heir, "k" + n);
+        },
+        "whose trap answers against the target": () => {
+            const proxy = new Proxy(Object.freeze({ shared: 1 }), { get() { return 2; }, has() { return false; }, set() { return true; } });
+            return n => throws(() => read(proxy)) && throws(() => has(proxy)) && throws(() => store(proxy, n + 2)) && throws(() => readByKey(proxy, "shared")) && throws(() => hasByKey(proxy, "shared")) && throws(() => storeByKey(proxy, "shared", n + 2));
+        },
+        "revoked": () => {
+            const { proxy, revoke } = Proxy.revocable({ shared: 1 }, { });
+            const before = read(proxy) === 1 && has(proxy);
+            revoke();
+            return n => before && throws(() => read(proxy)) && throws(() => has(proxy)) && throws(() => store(proxy, n)) && throws(() => readByKey(proxy, "shared")) && throws(() => hasByKey(proxy, "shared")) && throws(() => storeByKey(proxy, "shared", n));
+        },
+    };
+    for (const kind in kinds)
+        print(kind + ": " + verdict(kinds[kind](), 40));
+};
+)JS"
+
+#define OUTPUT_OF_PROXIES_HANDED_OVER(verdict) \
+    "with traps: " verdict "\n" \
+    "without traps: " verdict "\n" \
+    "above the receiver: " verdict "\n" \
+    "whose trap answers against the target: " verdict "\n" \
+    "revoked: " verdict "\n"
+
+static void testAProxyHandedToAProgramThatMakesNoneIsAnswered()
+{
+    checkOutputOfProgramInShell(textOfProgramThatNamesNoProxy, OUTPUT_OF_PROXIES_HANDED_OVER("operations") ""_s, { }, "globalThis.printsCalls = true;" ASK_QUESTIONS STATEMENTS_HANDING_PROXIES_OVER ""_s, shellOptions);
+    for (ASCIILiteral word : { "validate"_s, "heat=EverythingIsHot"_s, "heat=EverythingIsCold"_s })
+        checkOutputOfProgramInShell(textOfProgramThatNamesNoProxy, OUTPUT_OF_PROXIES_HANDED_OVER("right") ""_s, { word }, ASK_QUESTIONS STATEMENTS_HANDING_PROXIES_OVER ""_s, shellOptions);
+}
+
 std::span<const NativeTest> lookupBehindTablesProgramTests()
 {
     static constexpr NativeTest tests[] = {
@@ -825,6 +957,8 @@ std::span<const NativeTest> lookupBehindTablesProgramTests()
         { "lookup-behind-tables/programs/dictionaries-grown-by-stores-are-whole"_s, testDictionariesGrownByStoresAreWhole },
         { "lookup-behind-tables/programs/structures-are-made-for-what-comes-again"_s, testStructuresAreMadeForWhatComesAgain },
         { "lookup-behind-tables/programs/compiled-objects-answer"_s, testCompiledObjectsAnswer },
+        { "lookup-behind-tables/programs/what-is-filed-for-a-proxy-outlives-collections"_s, testWhatIsFiledForAProxyOutlivesCollections },
+        { "lookup-behind-tables/programs/a-proxy-handed-to-a-program-that-makes-none-is-answered"_s, testAProxyHandedToAProgramThatMakesNoneIsAnswered },
     };
     return tests;
 }

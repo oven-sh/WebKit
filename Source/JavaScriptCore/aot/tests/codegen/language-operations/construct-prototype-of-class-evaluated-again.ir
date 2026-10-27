@@ -5,11 +5,13 @@
 # CHECK-LABEL: f2: size=
 # CHECK-NOT: stub GetById
 # CHECK: operation operationAOTGetConstructPrototype x1
-# CHECK-NEXT: operation operationAOTSetConstructPrototype x1
+# CHECK-NOT: operation operationAOTSetConstructPrototype
+# CHECK: stub AllocateInstance.n2 x1
 # CHECK-NOT: stub GetById
 # CHECK-LABEL: f3: size=
 # CHECK: operation operationAOTGetConstructPrototype x1
-# CHECK: operation operationAOTSetConstructPrototype x1
+# CHECK-NOT: operation operationAOTSetConstructPrototype
+# CHECK: stub AllocateInstance.n2 x1
 # CHECK: stub GetById
 # CHECK-LABEL: f4: size=
 

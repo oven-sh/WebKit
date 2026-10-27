@@ -30,15 +30,16 @@ static uint64_t maskOfKey(PropertyKeyID key)
 
 static uint64_t maskOfLayouts(const LayoutSet& layouts)
 {
-    if (!layouts.isComplete || layouts.hasMembersWithoutLayout)
+    auto all = layouts.all();
+    if (!all)
         return LocationMasks::entireHeap;
 
     constexpr size_t numberOfBits = 64;
-    if (layouts.members.size() > numberOfBits)
+    if (all->value().size() > numberOfBits)
         return LocationMasks::entireHeap;
 
     uint64_t mask = 0;
-    for (LayoutID member : layouts.members)
+    for (LayoutID member : *all)
         mask |= bitOf(member.index(), 0);
     return mask;
 }
@@ -111,10 +112,7 @@ void LocationMasks::add(const MemoryLocation& location)
 
 static LocationOverlap overlapOfLayouts(const LayoutSet& a, const LayoutSet& b)
 {
-    bool mayShareObjectWithoutLayout = a.hasMembersWithoutLayout && b.hasMembersWithoutLayout;
-    if (!a.isComplete || !b.isComplete || mayShareObjectWithoutLayout || overlaps(a, b))
-        return LocationOverlap::May;
-    return LocationOverlap::None;
+    return overlaps(a, b) ? LocationOverlap::May : LocationOverlap::None;
 }
 
 static LocationOverlap overlapOfFields(const Program& program, const MemoryLocation& a, const MemoryLocation& b)

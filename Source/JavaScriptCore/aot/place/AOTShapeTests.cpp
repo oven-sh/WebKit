@@ -245,7 +245,7 @@ ShapeTestCandidates collectShapeTestCandidates(const PlacementContext& context, 
             list.weight = saturatedSum(list.weight, testedSets[next].weight);
             list.sites = clampTo<uint32_t>(static_cast<uint64_t>(list.sites) + testedSets[next].sites);
         }
-        for (LayoutID member : context.program.at(list.set).members) {
+        for (LayoutID member : context.program.at(list.set).completeMembers()) {
             uint32_t numberOfShapes = variants.numberOfShapesOf(member);
             if (!context.isCompiledObject(member) || !numberOfShapes)
                 continue;
@@ -267,7 +267,7 @@ ShapeTestCandidates collectShapeTestCandidates(const PlacementContext& context, 
         weight = saturatedSum(weight, lists[i].weight);
     }
     AOT::sort(result.listsByWeight, [&](uint32_t a, uint32_t b) {
-        return std::tuple { lists[b].weight, lists[a].numberOfLayouts, a } < std::tuple { lists[a].weight, lists[b].numberOfLayouts, b };
+        return std::tuple { lists[b].weight.predicted(), lists[a].numberOfLayouts, a } < std::tuple { lists[a].weight.predicted(), lists[b].numberOfLayouts, b };
     });
     return result;
 }
@@ -791,7 +791,7 @@ private:
                 m_layoutsTestedAlone.append(i);
         }
         AOT::stableSort(m_layoutsTestedAlone, [&](uint32_t a, uint32_t b) {
-            return m_candidates.singleLayoutTestWeight[a] > m_candidates.singleLayoutTestWeight[b];
+            return (m_candidates.singleLayoutTestWeight[a] > m_candidates.singleLayoutTestWeight[b]).predicted();
         });
     }
 
@@ -827,7 +827,7 @@ private:
         for (uint32_t index : m_candidates.listsByWeight) {
             auto& list = m_candidates.lists[index];
             // A list without weight ties no groups together: it would move tested shapes behind untested ones.
-            if (!list.weight)
+            if (!list.weight.predicted())
                 continue;
             auto [first, last] = extentOf(list, positionOf);
             ++numberOfListsSpanning[first + 1];
@@ -844,13 +844,13 @@ private:
             ++group.count;
             group.weight = saturatedSum(group.weight, saturatedSum(weightOfListsBeginningAt[position], m_candidates.singleLayoutTestWeight[frontier[position]]));
         }
-        while (m_numberOfLayoutsTestedAloneInFrontier < m_layoutsTestedAlone.size() && m_candidates.singleLayoutTestWeight[m_layoutsTestedAlone[m_numberOfLayoutsTestedAloneInFrontier]]) {
+        while (m_numberOfLayoutsTestedAloneInFrontier < m_layoutsTestedAlone.size() && m_candidates.singleLayoutTestWeight[m_layoutsTestedAlone[m_numberOfLayoutsTestedAloneInFrontier]].predicted()) {
             uint32_t layout = m_layoutsTestedAlone[m_numberOfLayoutsTestedAloneInFrontier++];
             groups.append(Group { static_cast<uint32_t>(frontier.size()), 1, m_candidates.singleLayoutTestWeight[layout] });
             frontier.append(layout);
         }
         AOT::stableSort(groups, [](const Group& a, const Group& b) {
-            return static_cast<UInt128>(a.weight) * static_cast<UInt128>(b.count) > static_cast<UInt128>(b.weight) * static_cast<UInt128>(a.count);
+            return static_cast<UInt128>(a.weight.predicted()) * static_cast<UInt128>(b.count) > static_cast<UInt128>(b.weight.predicted()) * static_cast<UInt128>(a.count);
         });
         m_groupOf.fill(0, m_numberOfLayouts);
         for (uint32_t index = 0; index < groups.size(); ++index) {
@@ -948,7 +948,7 @@ private:
             addTest(m_candidates.layoutsOf(list), list.weight);
         }
         for (const uint32_t& layout : sequence) {
-            if (SiteWeight weight = m_candidates.singleLayoutTestWeight[layout])
+            if (SiteWeight weight = m_candidates.singleLayoutTestWeight[layout]; weight.predicted())
                 addTest(singleElementSpan(layout), weight);
         }
         return estimatedInstructions;
@@ -971,7 +971,7 @@ private:
             auto [first, last] = extentOf(list, positionOf);
             uint32_t length = list.numberOfLayouts;
             // A list without weight may lie in several groups.
-            if (!list.weight || last - first + 1 != length || list.numberOfShapes > shapesPerBlock * maxTestableBlocks / 2)
+            if (!list.weight.predicted() || last - first + 1 != length || list.numberOfShapes > shapesPerBlock * maxTestableBlocks / 2)
                 continue;
             if (static_cast<uint64_t>(list.sites) * bytesSavedPerBlockTest < (WTF::roundUpToMultipleOf<shapesPerBlock>(list.numberOfShapes) - list.numberOfShapes) * sizeof(uint32_t))
                 continue;
@@ -1012,7 +1012,7 @@ private:
         });
         SequenceNumbering best = WTF::move(*numberings[0]);
         for (std::optional<SequenceNumbering>& numbering : std::span(numberings).subspan(1)) {
-            if (numbering && numbering->estimatedInstructions < best.estimatedInstructions)
+            if (numbering && (numbering->estimatedInstructions < best.estimatedInstructions).predicted())
                 best = WTF::move(*numbering);
         }
         for (uint32_t layout : m_frontierByTestsPerShape)
@@ -1147,7 +1147,7 @@ static void deriveSetTests(const PlacementContext& context, const ShapeNumbering
     parts.firstMemberShape.fill(0, numberOfSets + 1);
     forEachIndexInParallel(loops, numberOfSets, [&](unsigned index) {
         CheckedUint32 numberOfShapes = 0;
-        for (LayoutID member : context.program.at(LayoutSetID(index)).members)
+        for (LayoutID member : context.program.at(LayoutSetID(index)).written())
             numberOfShapes += objectShapesOf(member).count;
         parts.firstMemberShape[index + 1] = numberOfShapes.value();
     });
@@ -1164,7 +1164,7 @@ static void deriveSetTests(const PlacementContext& context, const ShapeNumbering
         uint32_t first = parts.firstMemberShape[index];
         auto shapes = parts.memberShapes.mutableSubspan(first, parts.firstMemberShape[index + 1] - first);
         size_t next = 0;
-        for (LayoutID member : context.program.at(LayoutSetID(index)).members) {
+        for (LayoutID member : context.program.at(LayoutSetID(index)).written()) {
             ShapeRange range = objectShapesOf(member);
             for (uint32_t shape = range.first; shape < range.end(); ++shape)
                 shapes[next++] = shape;
@@ -1247,8 +1247,8 @@ static void deriveKnownSetTests(const PlacementContext& context, const PlacedSit
     });
     forEachIndexInParallel(loops, tests.size(), [&](unsigned index) {
         ShapeTestWithinKnownSet& entry = tests[index];
-        const LayoutSet& known = context.program.at(entry.known);
-        bool areMemberShapesComplete = known.isComplete && std::ranges::all_of(known.members, [&](LayoutID member) {
+        auto known = context.program.at(entry.known).all();
+        bool areMemberShapesComplete = known && std::ranges::all_of(*known, [&](LayoutID member) {
             return context.isCompiledObject(member) || context.program.at(member).flow.allocation == AllocationState::NeverAllocated;
         });
         const ShapeTest& general = parts.testOfSet[entry.tested.index()];

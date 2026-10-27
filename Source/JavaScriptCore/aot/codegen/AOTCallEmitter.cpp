@@ -176,6 +176,10 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     if (stackWordsToReserve)
         m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(stackWordsToReserve * sizeOfStackWord));
 
+    RELEASE_ASSERT(!options.readBeforeCall || (target.kind == TargetKind::Stub && target.immediate));
+    OptionalIndex firstReadSite;
+    if (options.readBeforeCall)
+        firstReadSite = { calls.addSite(context, { .origin = options.readBeforeCall }) };
     uint32_t site = calls.addSite(context, options);
     B3::Air::StackSlot* keptRegisterStorage = generator().checksKeptRegisters() ? calls.keptRegisterStorage() : nullptr;
     RegisterSet clobbered = request.lateClobbered;
@@ -184,7 +188,7 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     Vector<uint32_t, 3> wordsOfThrowSite;
     if (options.throwSite)
         wordsOfThrowSite = throwSiteWords(*options.throwSite, Representation::Void, 0);
-    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite = WTF::move(wordsOfThrowSite), stubCalls = &m_records.stubCalls, kind = target.kind, calledFunction = target.calledFunction, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, expectation = target.expectation, passesCallee = target.passesCallee, site = OptionalIndex { site }, keptRegisterStorage, clobbered, caller = m_id, value = context.valueID().index()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
+    patchpoint->setGenerator([records = &m_records, wordsOfThrowSite = WTF::move(wordsOfThrowSite), stubCalls = &m_records.stubCalls, kind = target.kind, calledFunction = target.calledFunction, entry = target.entry, calledStub = target.calledStub, immediate = target.immediate, expectation = target.expectation, passesCallee = target.passesCallee, site = OptionalIndex { site }, firstReadSite, keptRegisterStorage, clobbered, caller = m_id, value = context.valueID().index()](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         std::optional<KeptRegisterCheck> check;
         if (keptRegisterStorage)
@@ -217,12 +221,12 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
         case TargetKind::Stub:
             if (wordsOfThrowSite.isEmpty()) {
                 if (immediate)
-                    stubCalls->call(jit, calledStub, *immediate, site, keptRegisters);
+                    stubCalls->call(jit, calledStub, *immediate, site, keptRegisters, firstReadSite);
                 else
                     stubCalls->call(jit, calledStub, site, keptRegisters);
             } else {
                 CCallHelpers::Label begin = jit.label();
-                uint32_t returnSite = immediate ? stubCalls->call(jit, calledStub, *immediate, site, keptRegisters) : stubCalls->call(jit, calledStub, site, keptRegisters);
+                uint32_t returnSite = immediate ? stubCalls->call(jit, calledStub, *immediate, site, keptRegisters, firstReadSite) : stubCalls->call(jit, calledStub, site, keptRegisters);
                 records->units.pin(begin, jit.label());
                 records->traps.callThrowSites.append({ returnSite, wordsOfThrowSite });
             }
@@ -363,7 +367,8 @@ NativeCallExpectation CallEmitter::expectationOf(const OperationContext& context
         if (context.valueID()) {
             const Value& call = m_function.at(context.valueID());
             const BuiltinTable& table = m_program.builtins();
-            for (BuiltinID callee : calleesOfCall(m_program, call).builtins)
+            CalleeList callees = calleesOfCall(m_program, call);
+            for (BuiltinID callee : callees.listed().builtins)
                 expectation.name(table.canonicalID(callee));
             call.forEachOperand([&](ValueID operand, uint32_t) {
                 for (BuiltinID handed : typeOf(operand).builtins) {

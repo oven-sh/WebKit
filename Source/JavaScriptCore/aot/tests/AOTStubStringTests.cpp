@@ -10,6 +10,7 @@
 #include "AOTLimits.h"
 #include "AOTPropertyCachesStringKeys.h"
 #include "AOTSchemaRuntimeOperations.h"
+#include "AOTStringBuilderStorage.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
 #include "AOTStubsArithmetic.h"
@@ -677,9 +678,46 @@ static void testIntegersBeyondInt32()
     strings.checkIsLeftToOperation(int64_t { 0xffffffff });
 }
 
+// A builder without text goes into the empty pool by a store of the pool's word and of nothing else. Every other builder is the operation's.
+static void testStringBuilderDiscard()
+{
+    using FakeBuilder = FakeObject<sizeof(StringBuilderStorage)>;
+    StubRunner runner;
+    StringBuilderStorage*& pool = runner.instance().stringBuilder.freeStorage;
+    auto storageOf = [](const FakeBuilder& builder) {
+        return std::bit_cast<StringBuilderStorage*>(builder.address());
+    };
+    FakeBuilder builder;
+    FakeBuilder pooled;
+    builder.bytes.fill(0xa5);
+    builder.at<uint32_t>(StringBuilderStorage::offsetOfPosition()) = 0;
+    builder.at<uint32_t>(StringBuilderStorage::offsetOfLengthOutsideBuffer()) = 0;
+    auto isLeftToOperation = [&] {
+        FakeBuilder before = builder;
+        StringBuilderStorage* poolBefore = pool;
+        bool calledOperation = runner.run(stringBuilderDiscard(), { builder.address() }).calledOperation;
+        AOT_TEST_CHECK(builder.bytes == before.bytes && pool == (calledOperation ? poolBefore : storageOf(builder)));
+        return calledOperation;
+    };
+
+    AOT_TEST_CHECK(!pool && !isLeftToOperation());
+    pool = storageOf(pooled);
+    AOT_TEST_CHECK(isLeftToOperation());
+    pool = nullptr;
+    for (ptrdiff_t offset : { StringBuilderStorage::offsetOfPosition(), StringBuilderStorage::offsetOfLengthOutsideBuffer() }) {
+        for (uint32_t length : { 1u, 1u << 31 }) {
+            builder.at<uint32_t>(offset) = length;
+            AOT_TEST_CHECK(isLeftToOperation());
+        }
+        builder.at<uint32_t>(offset) = 0;
+    }
+    AOT_TEST_CHECK(!isLeftToOperation());
+}
+
 std::span<const NativeTest> stubStringTests()
 {
     static constexpr NativeTest tests[] = {
+        { "stubs/string-builder-discard"_s, ImageTests::whenExecutable<testStringBuilderDiscard> },
         { "stubs/integer-to-string-cached-integers"_s, ImageTests::whenExecutable<testCachedIntegers> },
         { "stubs/integer-to-string-integers-outside-the-caches"_s, ImageTests::whenExecutable<testIntegersOutsideTheCaches> },
         { "stubs/integer-to-string-integers-beyond-int32"_s, ImageTests::whenExecutable<testIntegersBeyondInt32> },

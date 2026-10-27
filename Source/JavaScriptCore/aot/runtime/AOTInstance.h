@@ -236,6 +236,9 @@ struct RealmWords {
     JSCell* functionPrototypeCall;
     JSCell* boundFunctionExecutable;
     Structure* emptyExtraPropertiesStructure;
+    // Of extra properties that hold elements and no name, and the first word of such a cell.
+    Structure* extraPropertiesWithElementsStructure;
+    uint64_t headerOfExtraPropertiesWithElements;
     // What a call without surplus arguments hands to a function that takes the list of them. Nothing writes to it.
     JSCell* emptyArgumentList;
     const ClassInfo* boundFunctionClassInfo;
@@ -254,6 +257,9 @@ struct RealmWords {
     Structure* readAndWrittenCountsStructure;
     // Of the ordinary object that was made last from the fields that a direct entry answered, and the number of its layout in the table of built-ins. Null until the first is made.
     Structure* builtinLayoutStructure;
+    // A function object of the engine that only hands on to a compiled function, and the closure of that function. Null until the run time has handed on once.
+    JSCell* functionOfEngineOverCompiledFunction;
+    JSCell* compiledFunctionUnderFunctionOfEngine;
     uint32_t builtinLayoutOfStructure;
 };
 
@@ -396,7 +402,7 @@ struct Instance : InstanceHeader {
     template<typename Visitor>
     void visitRoots(Visitor& visitor)
     {
-        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure, realm.builtinLayoutStructure };
+        JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.extraPropertiesWithElementsStructure, realm.emptyArgumentList, realm.readAndWrittenCountsStructure, realm.builtinLayoutStructure, realm.functionOfEngineOverCompiledFunction, realm.compiledFunctionUnderFunctionOfEngine };
         for (JSCell* cell : cells) {
             if (cell)
                 visitor.appendUnbarriered(cell);

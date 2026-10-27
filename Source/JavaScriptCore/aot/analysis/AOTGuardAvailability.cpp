@@ -512,7 +512,7 @@ void GuardAvailability::leaveOutGuardsInRarerBlocks()
     });
     AOT::stableSort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t guardIndex) {
         BlockID block = useLists.blockOf(m_guards[guardIndex]);
-        return block ? frequencies.frequencyOf(block) : 0;
+        return block ? frequencies.frequencyOf(block).predicted() : 0;
     });
 
     BitVector solved(m_guards.size());

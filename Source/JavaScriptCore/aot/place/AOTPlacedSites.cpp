@@ -208,7 +208,7 @@ private:
     LayoutSetID knownSetOf(ValueID id) const
     {
         const Type& type = m_program.typeOf(m_function, id);
-        if (!type.hasOnlyLayouts(m_program) || !type.layouts || !m_program.at(type.layouts).isComplete)
+        if (!type.hasOnlyLayouts() || !type.layouts || !m_program.at(type.layouts).all())
             return { };
         return type.layouts;
     }
@@ -244,7 +244,7 @@ private:
     void appendFieldCreations(LayoutSetID receivers, std::span<const PropertyKeyID> keys)
     {
         const SlotPlan& slots = m_context.slots();
-        for (LayoutID member : m_program.at(receivers).members) {
+        for (LayoutID member : m_program.at(receivers).completeMembers()) {
             if (!m_context.isCompiledObject(member) || slots.layout(member).keysAreNeverEnumerated)
                 continue;
             Vector<FieldIndex> fields;
@@ -283,10 +283,10 @@ private:
             m_sites->guardSets.append(GuardSetUse { WTF::move(guards), weight });
     }
 
-    // A private name is no value, so it has no cell.
+    // A private name of a class is no value, so it has no cell. That of the library has one, which only the run time is handed.
     void appendKeyCell(PropertyKeyID key)
     {
-        if (!key || (m_program.at(key).kind != PropertyKeyKind::Text && !isSymbolKind(m_program.at(key).kind)))
+        if (!key || m_program.at(key).kind == PropertyKeyKind::PrivateName)
             return;
         ModuleID module = m_program.at(m_source).module;
         m_sites->keyCellUses.append(KeyCellUse { key, module ? module.index() : UINT32_MAX, m_source.index() });
@@ -331,7 +331,7 @@ private:
     {
         m_sites->tableCalls.append({ selectorOf(m_program, value), value.receivers() });
         PropertyAccessContext access { m_program, &m_context.inputs.flow };
-        MemberPartition partition = partitionMembers(access, m_program.at(value.receivers()).members.span(), value.key(), Access::Read);
+        MemberPartition partition = partitionMembers(access, m_program.at(value.receivers()).completeMembers(), value.key(), Access::Read);
         for (const MemberArm& arm : partition.arms) {
             if (arm.answer.kind == MemberKind::Method && !arm.answer.conditions.isEmpty())
                 appendGuards(guardsOf(arm.answer.conditions.span()), weight);
@@ -356,7 +356,7 @@ private:
             for (const ClassPart& part : type.classes) {
                 if (!part.contentsAreProven)
                     continue;
-                for (TypeID contents : part.contents) {
+                for (TypeID contents : part.writtenContents) {
                     bool everyBuiltinHasCell = contents && std::ranges::all_of(m_program.at(contents).builtins, [&](BuiltinID builtin) {
                         return BuiltinCellKey::object(builtin).hasCell(builtins);
                     });
@@ -378,7 +378,7 @@ private:
             if (!set || (!m_sites->layoutSets.isEmpty() && m_sites->layoutSets.last() == set))
                 return;
             if (TypeTable::isProvisional(set))
-                m_sites->layouts.appendVector(m_program.at(set).members);
+                m_sites->layouts.appendVector(m_program.at(set).written());
             else
                 m_sites->layoutSets.append(set);
         });
@@ -699,7 +699,7 @@ static void numberStoresThatMayAdd(const Program& program, FunctionSitesArray fu
         for (const PlacedFunctionSites* function : functions) {
             uint32_t store = sites.firstStoreThatMayAdd[function->function.index()];
             for (LayoutSetID receivers : function->receiversOfStoresThatMayAdd)
-                functor(sites.placesOfStoresThatMayAdd[store++], program.at(receivers).members.span());
+                functor(sites.placesOfStoresThatMayAdd[store++], program.at(receivers).completeMembers());
         }
     };
     uint32_t storesInFront = 0;
@@ -782,7 +782,7 @@ static BitVector findLayoutsOutOfUse(const Program& program, const BitVector& bo
             use(LayoutID(index));
     }
     for (size_t index : layoutSets) {
-        for (LayoutID member : program.at(LayoutSetID(static_cast<uint32_t>(index))).members)
+        for (LayoutID member : program.at(LayoutSetID(static_cast<uint32_t>(index))).written())
             use(member);
     }
     for (const Module& module : program.modules) {

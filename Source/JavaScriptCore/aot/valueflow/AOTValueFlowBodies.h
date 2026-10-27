@@ -233,6 +233,7 @@ private:
     ValueSetID m_objectsThatPickTheirLayout;
     ValueSetID m_constructedObjects;
     ValueSetID m_instancesOfClasses;
+    BitVector m_classesNamedAboveSeveralClasses;
     ValueSetID m_constructorsWithLayouts;
     ValueSetID m_constructorsAnsweringOnlyWhatTheyConstruct;
     BitVector m_isLayoutOfTable;
@@ -341,9 +342,11 @@ enum class ValueFlowHostNode : uint8_t {
     MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses,
     SourcesOfCopiesIntoUnknownObject,
     SourcesOfCopiesIntoUntrackedObject,
+    ClosuresThatDefinitionsCompare,
+    PrototypeObjectsThatWritesUnderUnknownKeysReach,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 52;
+inline constexpr unsigned numberOfValueFlowHostNodes = 54;
 
 class ValueFlowProgramNodes {
 public:
@@ -373,6 +376,7 @@ public:
         bool areObservedWhereObjectRefusesDefinition { false };
     };
     ValueFlowNodeID valueOf(const UnobservedFieldDefinition&) const;
+    bool isValueOfUnobservedDefinitions(FunctionID initializer, ValueFlowNodeID) const;
     std::span<const UnobservedDefinitions> unobservedDefinitionsBehindSuperOf(LayoutID classCallingSuper) const LIFETIME_BOUND;
 
     struct PassedParameter {
@@ -638,7 +642,7 @@ constexpr ValueFlowNotedOperations notedOperationsOf(Opcode opcode)
     note(ValueFlowNotedOperation::ClassDefinition, opcode == Opcode::NewClass || opcode == Opcode::DefineMethod);
     note(ValueFlowNotedOperation::StoreToLocation, opcode == Opcode::PutModuleVariable || opcode == Opcode::PutEnvironmentField);
     note(ValueFlowNotedOperation::Builtin, opcode == Opcode::Builtin);
-    note(ValueFlowNotedOperation::ModuleOperation, opcode == Opcode::ModuleNamespace || opcode == Opcode::ImportModule || opcode == Opcode::RequireModule || opcode == Opcode::EvaluateModule || opcode == Opcode::ImportDynamic || opcode == Opcode::RequireDynamic || opcode == Opcode::RequireBuiltinModule);
+    note(ValueFlowNotedOperation::ModuleOperation, PayloadWord::module(opcode).has_value() || opcode == Opcode::ImportDynamic || opcode == Opcode::RequireDynamic || opcode == Opcode::RequireBuiltinModule);
     return bits;
 }
 

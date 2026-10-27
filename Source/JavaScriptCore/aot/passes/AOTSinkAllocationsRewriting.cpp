@@ -138,6 +138,7 @@ static bool carriesField(const VirtualFamily& family, const ObjectState& state, 
 static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObjectID object, const ObjectState& state, uint32_t fieldIndex, TypeArena& types)
 {
     const VirtualObjectContext& context = sinking.objectContext();
+    ShapeContext shapes = sinking.shapeContext(object);
     const Candidate& candidate = sinking.at(object);
     const VirtualFamily& family = sinking.familyOf(object);
     const VirtualField& field = family.fieldAt(fieldIndex);
@@ -146,11 +147,11 @@ static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObject
     for (const ObjectVariant& variant : state.variants) {
         const VirtualShape& shape = family.at(variant.shape);
         if (hasStored(shape, fieldIndex))
-            type = types.unionOf(type, typeOfField(context, family.descriptionOf(shape), field));
+            type = types.unionOf(type, typeOf(contentsOf(shapes, family.descriptionOf(shape), fieldIndex), types));
     }
     if (type != TypeTable::never && field.kind == VirtualFieldKind::Element) {
         for (const VirtualObjectDescription& description : family.descriptions())
-            type = types.unionOf(type, typeOfField(context, description, field));
+            type = types.unionOf(type, typeOf(contentsOf(shapes, description, fieldIndex), types));
     }
 
     if (state.hasCell() && state.fieldsValidInCell.get(fieldIndex)) {
@@ -159,7 +160,7 @@ static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObject
             descriptionsOfCells = descriptionsOfCells.subspan(candidate.descriptionIndex, 1);
         for (const VirtualObjectDescription& description : descriptionsOfCells) {
             if (canLoadSpeculatively(context, description, field) == SpeculativeLoad::Safe)
-                type = types.unionOf(type, typeOfField(context, description, field));
+                type = types.unionOf(type, typeOf(contentsOf(shapes, description, fieldIndex), types));
         }
     }
     return type;
@@ -588,7 +589,7 @@ void AllocationSinking::raiseFrequenciesBehindDecidedBranches()
     Function& function = m_cursor->builder().function();
     bool hasAnalysesOfRewrittenFunction = false;
     for (BlockID block : m_tables->blocksWithDecidedBranches) {
-        if (!isRarerThan(function.at(function.at(block).terminator.next().block).frequency, function.at(block).frequency))
+        if (!isRarerThan(function.at(function.at(block).terminator.next().block).frequency, function.at(block).frequency).predicted())
             continue;
         if (!std::exchange(hasAnalysesOfRewrittenFunction, true))
             m_analyses.didChangeControlFlow();

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAddGenericVersion.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionEditing.h"
@@ -148,7 +149,7 @@ static std::optional<Type> typeDeclaredInFamilies(const Program& program, Family
     for (LayoutSetID family : families) {
         uint64_t cacheKey = static_cast<uint64_t>(family.index()) << 32 | key.index();
         const std::optional<Type>& declaredInFamily = cache.ensure(cacheKey, [&] {
-            return uniteTypesDeclaredIn(program, program.at(family).members.span(), key, arena);
+            return uniteTypesDeclaredIn(program, program.at(family).completeMembers(), key, arena);
         }).iterator->value;
         if (declaredInFamily)
             declared = declared ? declared->unionWith(*declaredInFamily, arena) : *declaredInFamily;
@@ -432,6 +433,12 @@ static StringID internNameOfFunctionUnder(Program& program, const PropertyKey& k
     return program.strings.intern(name.span());
 }
 
+static void noteLooksForNameWhereClosuresMayBeRenamed(const FlowResults& results, FunctionID id, Function& function)
+{
+    if (results.closuresMayBeRenamed(id))
+        function.capabilities.add(FunctionCapabilities::NotesLooksForName);
+}
+
 static void applySignatureUpdates(const FlowApplyContext& context)
 {
     const Vector<FlowSignatureUpdate>& updates = context.application.signatures;
@@ -449,8 +456,7 @@ static void applySignatureUpdates(const FlowApplyContext& context)
         applyEntryParameterUpdates(function, update.entryParameters.span());
         applyResultUpdates(function, update.results.span());
         function.capabilities.add(update.provenCapabilities);
-        if (context.results.closuresMayBeRenamed(FunctionID(index)))
-            function.capabilities.add(FunctionCapabilities::NotesLooksForName);
+        noteLooksForNameWhereClosuresMayBeRenamed(context.results, FunctionID(index), function);
     });
 }
 
@@ -528,7 +534,7 @@ static void narrowContentsOfData(const FlowApplyContext& context)
 static void proveEveryPosition(Program& program, BuildContext& build)
 {
     auto prove = [](DeclaredType& declared) {
-        declared.establish(Proven::byPosition(declared.expected().predicted()));
+        declared.establish(Proven::byTestingSwitch(declared.expected()));
     };
     for (Layout& layout : program.layouts) {
         if (isOfRuntimeModule(program, layout.module))
@@ -640,24 +646,31 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
             for (const FlowCallStamp& stamp : bodies[index].calls) {
                 if (!!OperandPosition::newTarget(program.functions[index].at(stamp.value).opcode) != ofConstructions)
                     continue;
-                for (FunctionID callee : program.at(stamp.callees).functions)
+                for (FunctionID callee : program.at(stamp.callees).followed().value())
                     functor(callee);
             }
         }
     };
-    forEachStampedCallee(true, [&](FunctionID callee) {
+    auto noteConstruction = [&](FunctionID callee) {
         const Function& function = program.at(callee);
         if (function.kind == FunctionKind::Plain && context.results.function(callee).callers == CallerState::AllKnown && makesTailCall(function))
             constructed.quickSet(callee.index());
-    });
+    };
+    forEachStampedCallee(true, noteConstruction);
+    for (const FlowIndirectCall& call : context.results.indirectCalls()) {
+        if (call.isAlwaysConstruction)
+            noteConstruction(call.callee);
+    }
     if (constructed.isEmpty())
         return constructed;
 
     forEachStampedCallee(false, [&](FunctionID callee) {
         constructed.quickClear(callee.index());
     });
-    for (const FlowIndirectCall& call : context.results.indirectCalls())
-        constructed.quickClear(call.callee.index());
+    for (const FlowIndirectCall& call : context.results.indirectCalls()) {
+        if (!call.isAlwaysConstruction)
+            constructed.quickClear(call.callee.index());
+    }
     for (const Function& function : program.functions) {
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {
@@ -695,6 +708,9 @@ static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& edi
 
 static void applyUnknownResults(Program& program, const FlowResults& results, BuildContext& build)
 {
+    forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+        noteLooksForNameWhereClosuresMayBeRenamed(results, FunctionID(index), program.functions[index]);
+    });
     ProgramEditor editor(program);
     Vector<FunctionID> functions = collectBodiesLargestFirst(program, program.functions.size(), build.parallelLoops());
     editFunctionsInParallel(editor, build, BehindEdit::Nothing, functions.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
@@ -731,6 +747,32 @@ static void nameObjectInPlaceOfDictionaryLayouts(Program& program, const FlowApp
     rewriteList(program.webAssemblyModules);
 }
 
+// What an allocation lists is tested by nobody. Where it may lie outside the type of its field it is stored behind the allocation, by a store that tests it.
+// Where that cannot be done the type of the field is only expected, and this is settled before a body is told what its stores take.
+static void takeBackFieldsThatListUntestedValues(Program& program, FlowResults& results, const FlowApplication& application, BuildContext& build)
+{
+    Vector<FieldReference> fields;
+    for (uint32_t layout = 0; layout < application.layouts.size(); ++layout) {
+        for (const FlowListedValue& listed : application.layouts[layout].valuesListedWithOtherTypes) {
+            FieldReference declaration { LayoutID(layout), listed.field };
+            if ((!fields.isEmpty() && fields.last() == declaration) || fieldAt(program, declaration).declared.isExpected())
+                continue;
+            const Value& allocation = program.at(listed.function).at(listed.allocation);
+            std::span<const uint32_t> listedFields = allocation.fields();
+            for (uint32_t valueIndex = 0; valueIndex < listedFields.size(); ++valueIndex) {
+                if (declarationOf(program, { allocation.layout(), listedFields[valueIndex] }) != declaration || canStoreInitialValueBehindAllocation(program, allocation, valueIndex))
+                    continue;
+                fields.append(declaration);
+                break;
+            }
+        }
+    }
+    if (fields.isEmpty())
+        return;
+    expectFields(program, fields.span(), build);
+    results.setFieldsTakenBack(WTF::move(fields));
+}
+
 void applyFlowResults(Program& program, FlowResults& results, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -755,6 +797,7 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     Vector<BitVector> fieldsExpectedAsRead = findExpectedFields(program, build.parallelLoops());
     nameObjectInPlaceOfDictionaryLayouts(program, *application, build.parallelLoops());
     applyLayoutUpdates(context);
+    takeBackFieldsThatListUntestedValues(program, results, *application, build);
     times.didFinish("applyLayoutUpdates"_s);
     applyVariableUpdates(context);
     applySignatureUpdates(context);

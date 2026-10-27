@@ -31,12 +31,15 @@ struct TypeTestPlan;
 struct CallOptions {
     std::optional<uint32_t> immediate { };
     std::optional<Origin> origin { };
+    // The callee reads something and then calls it. What the read throws or runs is shown here.
+    std::optional<Origin> readBeforeCall { };
     std::optional<B3::PureFunction> pureFunction { };
     std::optional<ThrowSite> throwSite { };
     // The callee runs steps of this function, which has no frame of its own. A stack trace lists the function above the caller.
     BuiltinID calledBuiltin { };
     bool constructs { false };
     bool isTailCall { false };
+    bool callsOwnFunctionObject { false };
     bool isOnRarePath { false };
     bool accessesCollectorState { false };
     // The callee runs code of the host, which the effects of the IR say nothing about: it may give a cell another Structure or another butterfly.

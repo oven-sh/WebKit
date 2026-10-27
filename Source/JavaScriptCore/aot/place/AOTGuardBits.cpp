@@ -81,7 +81,7 @@ GuardBitTable placeGuardBits(const PlacementContext& context, const PlacedSites&
         if (guards.size() > limit) {
             heaviest = Vector<GuardUse>(guards);
             AOT::sort(heaviest, [](const GuardUse& a, const GuardUse& b) {
-                return std::tuple { b.weight, guardKeyOf(a) } < std::tuple { a.weight, guardKeyOf(b) };
+                return std::tuple { b.weight.predicted(), guardKeyOf(a) } < std::tuple { a.weight.predicted(), guardKeyOf(b) };
             });
             for (size_t index = limit; index < heaviest.size(); ++index)
                 context.build.gaveUp(LimitID::MaxGuardBitsPerClassSide, { .layout = classLayout });

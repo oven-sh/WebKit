@@ -274,7 +274,7 @@ private:
     OperandOutcome requirePristine(BuiltinOperand, const PristineRequirement&);
     OperandOutcome giveUp();
 
-    TypeID expectedWithin(const PlannedOperand&) const;
+    ExpectedType expectedWithin(const PlannedOperand&) const;
     bool followsOperandRefusedByValue(BuiltinOperand) const;
     OperandRequirement& ensureRequirement(BuiltinOperand);
     bool hasStepFor(BuiltinOperand) const;
@@ -420,7 +420,7 @@ OperandOutcome CallPlanner::excludeThrowingValues(PlannedOperand& operand)
     if (!refused || fitIn(operand.type, refused) == TypeFit::Outside)
         return OperandOutcome::Undecided;
 
-    TypeID expected = expectedWithin(operand);
+    TypeID expected = expectedWithin(operand).predicted();
     if (!expected || fitIn(expected, refused) != TypeFit::Outside)
         return giveUp();
 
@@ -444,7 +444,7 @@ OperandOutcome CallPlanner::planConversion(PlannedOperand& operand)
     bool mayRunUserCode = convertible != type;
 
     if (mayRunUserCode && !m_mayHoistUserCode) {
-        TypeID expected = expectedWithin(operand);
+        TypeID expected = expectedWithin(operand).predicted();
         if (!expected && followsOperandRefusedByValue(operand.position))
             expected = types().intern(convertible);
         if (!expected || !types().at(expected).isSubsetOf(convertible, m_context.program))
@@ -463,7 +463,7 @@ OperandOutcome CallPlanner::requireAcceptedType(PlannedOperand& operand)
 {
     BuiltinTypeID accepted = operand.parameter.accepted;
     Type narrowed = types().at(operand.type).intersectWith(typeOfBuiltinType({ m_context }, accepted), types());
-    TypeID expected = expectedWithin(operand);
+    TypeID expected = expectedWithin(operand).predicted();
     if (!expected && isExpectedToBeAccepted(types().at(operand.type), operand.parameter.conversion))
         expected = types().intern(narrowed);
     if (!expected && isExpectedToBeNumber(types().at(operand.type), operand.parameter.conversion))
@@ -512,14 +512,14 @@ OperandOutcome CallPlanner::giveUp()
     return OperandOutcome::GaveUp;
 }
 
-TypeID CallPlanner::expectedWithin(const PlannedOperand& operand) const
+ExpectedType CallPlanner::expectedWithin(const PlannedOperand& operand) const
 {
     const OverloadQuery& overloads = m_query.overloads;
-    TypeID expected = overloads.expected.at(operand.position);
+    TypeID expected = overloads.expected.predicted().at(operand.position);
     if (!expected || expected == overloads.proven.at(operand.position))
         return { };
     Type met = withoutClassProofs(types().at(expected)).intersectWith(types().at(operand.type), types());
-    return met.isNever() ? TypeID() : types().intern(met);
+    return ExpectedType(met.isNever() ? TypeID() : types().intern(met));
 }
 
 static bool failsByValue(BuiltinConversion conversion)

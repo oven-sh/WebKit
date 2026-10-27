@@ -1158,7 +1158,6 @@ export interface ClassOptions extends ClassColumns, EntryColumns {
 const classColumnKeys = [
   "extends",
   "jsType",
-  "typedArrayType",
   "sharingMode",
   "isPrimitiveWrapper",
   "isNeverPristine",
@@ -1244,7 +1243,6 @@ export function typedArrayClass(elementName: string, bytesPerElement: number): D
   return class_(`${elementName}Array`, {
     extends: "TypedArray",
     jsType: `${elementName}ArrayType`,
-    typedArrayType: `Type${elementName}`,
     constructorSignaturesOf: "TypedArray",
     lockedMembers: ["constructor", "prototype"],
     // core-js 2 keeps its copies of the methods of a class on the constructor, under their names.
@@ -1592,6 +1590,10 @@ export const seenCodeOnly = (options: {
   nativeFiles?: readonly string[];
 }): Declaration[] => [
   { declares: "SeenCodeOnly", holders: options.holders ?? [], nativeFiles: options.nativeFiles ?? [] },
+];
+
+export const instancesWithoutOwnNames = (...classes: readonly ClassName[]): Declaration[] => [
+  { declares: "InstancesWithoutOwnNames", classes },
 ];
 
 export const declarations = (...groups: readonly (readonly Declaration[])[]) => new DeclarationFile(groups.flat());

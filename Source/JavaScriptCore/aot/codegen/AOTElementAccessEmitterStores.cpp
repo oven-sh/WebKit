@@ -294,7 +294,7 @@ void ElementAccessEmitter::appendElement(const ValueContext& store, CellPointer 
     }
 
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(store->arrayOperand())).kind;
-    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(store->arrayOperand()));
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(store->arrayOperand())).predicted();
     ArrayStorageFormList forms = candidateFormsFor(element, expected);
     // An array of any other kind than its element type declares takes the stub, which knows them all.
     if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
@@ -377,7 +377,7 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
     Word32 shape = indexingMode(array, IndexingShapeMask);
     const ClassPart* declared = typeOf(value->arrayOperand()).singleBuiltinClass();
     // What a hole reads as is among the elements of an array that may have holes.
-    if (declared && m_program.at(declared->contentsAt(m_program.builtins(), ContentsSlot::Element)).withoutPrimitives(Primitive::Undefined).isNumber()) {
+    if (declared && m_program.at(declared->expectedContentsAt(m_program.builtins(), ContentsSlot::Element).predicted()).withoutPrimitives(Primitive::Undefined).isNumber()) {
         LBasicBlock isOfOtherKind = newBlock();
         LBasicBlock stillConverts = newBlock();
         LBasicBlock holdsAnyValue = newBlock();
@@ -386,7 +386,7 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(isOfOtherKind) });
 
         m_out.appendTo(isOfOtherKind);
-        uint32_t numberOfPlace = (m_function.position + value.id().index()) % ArrayWords::numberOfCounts;
+        uint32_t numberOfPlace = (m_id.index() + value.id().index()) % ArrayWords::numberOfCounts;
         TypedPointer count = mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.shortYoungArraysConverted) + numberOfPlace);
         branch(below(Word32(m_out.load8ZeroExt32(count)), word32(ArrayWords::maxShortYoungArraysConverted)), { normalEdge(stillConverts), normalEdge(continuation) });
 

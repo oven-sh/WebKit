@@ -113,6 +113,14 @@ public:
     const UseLists* useListsIfUpToDate() const LIFETIME_BOUND { return m_values.useLists && m_values.useLists->isUpToDate() && !m_values.didDropBesideUseLists ? &*m_values.useLists : nullptr; }
     UseLists* updatingUseLists() LIFETIME_BOUND;
     void setEveryChangeIsReported(bool isReported) { m_everyChangeIsReported = isReported; }
+    // While an SSARepair holds two definitions of a variable and has not run, a use may name a value that does not reach it.
+    void didBeginRepair() { ++m_numberOfPendingRepairs; }
+    void didEndRepair() { --m_numberOfPendingRepairs; }
+    void willFollowValuesThroughParameters() const
+    {
+        if (m_numberOfPendingRepairs) [[unlikely]]
+            reportQuestionBeforeRepair();
+    }
     const ValueIdentities& identities() LIFETIME_BOUND;
     const Liveness& liveness() LIFETIME_BOUND;
     const EscapeAnalysis& escape() LIFETIME_BOUND;
@@ -216,6 +224,7 @@ private:
     struct ControlFlowResults {
         size_t numberOfBlocks { 0 };
         bool mayDescribeFormerGraph { false };
+        bool isReadByUseLists { false };
         std::optional<CFG> cfg;
         std::optional<Vector<Edge>> edgesFromUnreachableBlocks;
         std::optional<Dominators> dominators;
@@ -261,6 +270,7 @@ private:
     void verifyLiveness() const;
     void verifyFrequencies();
     void willDrop(AnalysisSet);
+    void reportQuestionBeforeRepair() const;
 
     const AnalysisContext m_context;
     const Function& m_function;
@@ -277,6 +287,7 @@ private:
     const bool m_verifiesUpdates;
     PassID m_runningPass { PassID::None };
     bool m_everyChangeIsReported { false };
+    unsigned m_numberOfPendingRepairs { 0 };
     std::array<PassID, numberOfFunctionAnalyses> m_passesThatDropped { };
 };
 

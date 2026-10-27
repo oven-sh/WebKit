@@ -1069,6 +1069,12 @@ void PropertyListNode::emitPutConstantProperty(BytecodeGenerator& generator, Reg
             return;
         }
 
+        // Only built-in code can write such a name, and nothing lists what lies under it.
+        if (node.name() && node.name()->isPrivateName()) {
+            generator.emitDirectPutById(newObj, *node.name(), value.get());
+            return;
+        }
+
         RefPtr<RegisterID> propertyNameRegister;
         if (node.name())
             propertyName = generator.emitLoad(nullptr, *node.name());

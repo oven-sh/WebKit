@@ -6,7 +6,7 @@
 
 module m0 path="main.js" displayPath="main.js"
 
-function f0 name="sum" parameters=[{type=Array<number>}] results=[{type=anything}] {
+function f0 name="sum" parameters=[{type=Array<undefined|number, proven>}] results=[{type=anything}] {
     v1 = Integer
     v2 = Double number=0.5
     Jump -> next b1(v2, v1)
@@ -48,6 +48,6 @@ function f0 name="sum" parameters=[{type=Array<number>}] results=[{type=anything
 # CHECK-NEXT: IsElementPresent v0, v8, {{*}} arrayStorage=Contiguous [keyIsIntegral]
 # CHECK-NEXT: Boolean boolean=true
 # CHECK-NEXT: ValidateSameValue
-# CHECK-NEXT: [[element]]: anything ~ number = GetArrayElement v0, v8, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
+# CHECK-NEXT: [[element]]: undefined|number = GetArrayElement v0, v8, {{*}} arrayStorage=Contiguous level=Expected [keyIsIntegral, isPresent]
 # CHECK-NEXT: TypeTest [[element]] testedType=number
 }

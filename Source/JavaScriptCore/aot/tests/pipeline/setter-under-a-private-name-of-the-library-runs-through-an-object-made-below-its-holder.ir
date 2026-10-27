@@ -1,0 +1,33 @@
+# const holder = { set $call(v) { print(v + 1) } }  const k = same(Object.create(holder))  k.$call = 1
+# Nothing outside the library can write the name, so the setter does not leave with the object below its holder. The store through what the shell hands back finds it on the holder, which stands above another object.
+# OPTIONS: check=VerifyEachPass,FlowFixpoint
+# RUN: run-in-shell globalThis.same = value => value;
+# CHECK: 2
+# CHECK-NEXT: exited with 0
+
+layout L0 name="Holder" module=m0 position=29 fields=[{key=@#"call" declared={type=anything} flags=[IsRequired]}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    DefineSetter v0, v1 key=@#"call"
+    v3 = FinishObject v0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="same" [isFreeName]
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectCreate
+    v8 = Call v7, v6, v3 calleeName="Object.create"
+    v9 = Call v5, -, v8 calleeName="same"
+    v10 = Integer integer=1
+    PropSet v9, v10 key=@#"call" mode=Strict
+    Return
+}
+function f1 name="call" module=m0 position=31 kind=Setter length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="print" [isFreeName]
+    v5 = Call v4, -, v2 calleeName="print"
+    Return
+}

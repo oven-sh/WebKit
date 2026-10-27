@@ -66,7 +66,7 @@ public:
     IRBuilder& builder() { return m_builder; }
     Function& function() { return m_builder.function(); }
     const Value& original() const LIFETIME_BOUND { return m_original; }
-    BlockFrequency frequency() const { return m_frequency; }
+    Expected<BlockFrequency> frequency() const { return m_frequency; }
     bool isTailCall() const { return m_tailCall || m_original.isTailCall; }
     bool isRequiredTailCall() const { return m_tailCall && m_tailCall->requirement() == TailCallRequirement::Required; }
 
@@ -87,7 +87,7 @@ private:
     IRBuilder& m_builder;
     ValueSite m_site;
     Value m_original;
-    BlockFrequency m_frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> m_frequency { BlockFrequency::Normal };
     IRBuilder::Expansion m_expansion;
     std::optional<Terminator> m_tailCall;
     Vector<BlockID, 2> m_continuationPredecessors;
@@ -99,14 +99,14 @@ private:
 
 struct SplitArm {
     TypeID testedType;
-    BlockFrequency frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> frequency { BlockFrequency::Normal };
 };
 
 struct ValueSplit {
     ValueID value;
     Vector<SplitArm, 4> arms;
     bool hasRest { true };
-    BlockFrequency restFrequency { BlockFrequency::Unlikely };
+    Expected<BlockFrequency> restFrequency { BlockFrequency::Unlikely };
 };
 
 using EmitSplitArm = ScopedLambda<void(uint32_t armIndex, ValueID narrowedValue)>;

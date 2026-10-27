@@ -59,7 +59,7 @@ struct RemapFixture {
             string = stringArena.intern(StringView("a string made by a pass"_s));
             key = typeArena.textKey(string);
             layouts = typeArena.completeLayoutSet(std::array<LayoutID, 1> { LayoutID(0u) });
-            callees = typeArena.intern(CalleeSet { { function }, { }, true });
+            callees = typeArena.intern(CalleeSet::complete({ function }, { }));
             firstType = typeArena.unionOf(TypeTable::string, TypeTable::boolean);
             secondType = typeArena.unionOf(TypeTable::string, TypeTable::null);
             thirdType = typeArena.unionOf(TypeTable::string, TypeTable::undefined);
@@ -488,7 +488,7 @@ static void remapIDsRewritesPayloadsOfValues()
 
     const Program& program = fixture.test.program;
     AOT_TEST_CHECK(program.at(function.at(copy).excludedKeys()[1]).text == function.at(string).string());
-    AOT_TEST_CHECK(hasElements(program.at(function.at(call).callees()).functions, { fixture.finalFunction }));
+    AOT_TEST_CHECK(hasElements(program.at(function.at(call).callees()).written().functions, { fixture.finalFunction }));
 }
 
 static void remapIDsRewritesPayloadsOfTerminators()

@@ -482,6 +482,12 @@ FunctionAnalyses::~FunctionAnalyses()
         statistics.count(StatisticID::EffectsKept, numberOfKeptAnswers);
 }
 
+void FunctionAnalyses::reportQuestionBeforeRepair() const
+{
+    if (m_context.build.options().verifiesProgram)
+        m_context.build.diagnostics().add(InternalError { .kind = InternalErrorKind::QuestionBeforeRepair, .function = m_context.id, .pass = currentWork().pass.load(std::memory_order_relaxed) });
+}
+
 Subject FunctionAnalyses::subject(ValueID value) const
 {
     if (!m_context.id)
@@ -522,6 +528,8 @@ static constinit std::atomic<uint64_t> numberOfFormerFrequencies { 0 };
 static constinit CountsByPass useListUpdatesByChangingPass { };
 static constinit std::atomic<uint64_t> valuesOfFunctionsWithUpdatedUseLists { 0 };
 static constinit std::atomic<uint64_t> valuesReadByUseListUpdates { 0 };
+static constinit std::array<std::atomic<uint64_t>, UseLists::numberOfReasonsToMakeAnew> useListsMadeAnewByReason { };
+static constinit std::array<std::atomic<uint64_t>, UseLists::numberOfReasonsToMakeAnew> valuesOfUseListsMadeAnewByReason { };
 
 void FunctionAnalyses::didBuild(FunctionAnalysis analysis)
 {
@@ -536,8 +544,12 @@ void FunctionAnalyses::didBuild(FunctionAnalysis analysis)
 
 void FunctionAnalyses::didBringUseListsUpToDate(const UseLists::Update& update)
 {
-    if (update.hasMadeAnew) {
+    if (update.madeAnewFor != UseLists::ReasonToMakeAnew::None) {
         didBuild(FunctionAnalysis::UseLists);
+        if (m_countsBuilds) [[unlikely]] {
+            useListsMadeAnewByReason[static_cast<unsigned>(update.madeAnewFor)].fetch_add(1, std::memory_order_relaxed);
+            valuesOfUseListsMadeAnewByReason[static_cast<unsigned>(update.madeAnewFor)].fetch_add(update.numberOfValuesRead, std::memory_order_relaxed);
+        }
         return;
     }
     if (m_verifiesUpdates) [[unlikely]]
@@ -631,6 +643,15 @@ void FunctionAnalyses::logBuilds()
     uint64_t valuesRead = valuesReadByUseListUpdates.exchange(0, std::memory_order_relaxed);
     if (updates)
         dataLogLn("AOT analyses: use-lists | brought up to date ", updates, " | behind", changingPasses.toString(), " | in functions of ", valuesHeld, " values | ", valuesRead, " of them read again");
+    static constexpr std::array<ASCIILiteral, UseLists::numberOfReasonsToMakeAnew> reasons { ""_s, "no log"_s, "nothing was kept for an update"_s, "changes forgotten"_s, "much has changed"_s, "much is gone"_s, "a change that the log does not have"_s };
+    StringPrintStream madeAnew;
+    for (unsigned reason = 0; reason < UseLists::numberOfReasonsToMakeAnew; ++reason) {
+        uint64_t values = valuesOfUseListsMadeAnewByReason[reason].exchange(0, std::memory_order_relaxed);
+        if (uint64_t count = useListsMadeAnewByReason[reason].exchange(0, std::memory_order_relaxed))
+            madeAnew.print(" | ", reasons[reason], " ", count, " over ", values, " values");
+    }
+    if (madeAnew.length())
+        dataLogLn("AOT analyses: use-lists | made anew where they were held", madeAnew.toString());
 }
 
 void FunctionAnalyses::dropResultsOfFormerGraph()
@@ -683,6 +704,7 @@ CFG& FunctionAnalyses::cfg()
     dropResultsOfFormerGraph();
     if (!m_controlFlow.cfg) {
         m_controlFlow.cfg.emplace(m_function);
+        m_controlFlow.isReadByUseLists = false;
         m_controlFlow.numberOfBlocks = m_function.blocks.size();
         didBuild(FunctionAnalysis::ControlFlow);
     }
@@ -751,12 +773,14 @@ const UseLists& FunctionAnalyses::useLists()
     }
     if (!m_values.useLists) {
         willComputeValueAnalysis();
-        m_values.useLists.emplace(m_function, cfg());
+        m_values.useLists.emplace(m_function, cfg(), m_changes);
+        m_controlFlow.isReadByUseLists = true;
         m_values.didDropBesideUseLists = false;
         didBuild(FunctionAnalysis::UseLists);
     } else if (!m_values.useLists->isUpToDate()) {
         willComputeValueAnalysis();
-        UseLists::Update update = m_values.useLists->bringUpToDate(cfg());
+        const CFG& graph = cfg();
+        UseLists::Update update = m_values.useLists->bringUpToDate(graph, std::exchange(m_controlFlow.isReadByUseLists, true));
         m_values.didDropBesideUseLists = false;
         didBringUseListsUpToDate(update);
     } else if (m_values.didDropBesideUseLists) [[unlikely]] {
@@ -1019,7 +1043,7 @@ AnalysisSet FunctionAnalyses::tellUseLists(void (UseLists::*didChange)(Arguments
 
 void FunctionAnalyses::didAddDetachedValue(ValueID)
 {
-    invalidate(valueAnalyses, tellUseLists(&UseLists::didAddValues));
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeWhatTheLogSays));
     m_values.numberOfValues = m_function.values.size();
 }
 
@@ -1041,9 +1065,9 @@ void FunctionAnalyses::didChangeBlock(BlockID block)
     invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeBlock, block));
 }
 
-void FunctionAnalyses::didReplaceUses(ValueID from, ValueID to)
+void FunctionAnalyses::didReplaceUses(ValueID, ValueID)
 {
-    invalidate(valueAnalyses, tellUseLists(&UseLists::didReplaceUses, from, to));
+    invalidate(valueAnalyses, tellUseLists(&UseLists::didChangeWhatTheLogSays));
 }
 
 void FunctionAnalyses::didChangeValuesButNotUses()
@@ -1057,7 +1081,7 @@ void FunctionAnalyses::didChangeControlFlow(std::span<const BlockID> changedBloc
     if (UseLists* useLists = updatingUseLists()) {
         for (BlockID block : changedBlocks)
             useLists->didChangeBlock(block);
-        useLists->didChangeControlFlow();
+        useLists->didChangeWhatTheLogSays();
         broughtUpToDate.add(FunctionAnalysis::UseLists);
     }
     invalidate(allAnalyses, broughtUpToDate);
@@ -1106,7 +1130,7 @@ void FunctionAnalyses::drop(AnalysisSet set)
     if (set.contains(FunctionAnalysis::Identities))
         m_values.identities.reset();
     if (set.contains(FunctionAnalysis::UseLists) && m_values.useLists)
-        m_values.useLists->didChangeEverything();
+        m_values.useLists->didChangeWhatTheLogSays();
     if (set.contains(FunctionAnalysis::NaturalLoops))
         m_controlFlow.naturalLoops.reset();
     if (set.contains(FunctionAnalysis::Dominators))

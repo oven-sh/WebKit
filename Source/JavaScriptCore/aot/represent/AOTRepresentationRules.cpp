@@ -160,6 +160,7 @@ static Representation wantedByKind(const RepresentationInputs& inputs, OperandKi
     case OperandKind::StringBuilder:
     case OperandKind::Cursor:
     case OperandKind::KeyOrder:
+    case OperandKind::Fact:
     case OperandKind::FlatString:
     case OperandKind::CodeAddress:
     case OperandKind::JSONHolders:
@@ -415,7 +416,7 @@ static Representation wantedByBuiltinCall(const RepresentationInputs& inputs, co
     std::optional<uint32_t> argumentIndex = call.variadicOperandIndex(operandIndex);
     if (argumentIndex && builtin == InlineBuiltin::ArrayPush) {
         Representation wanted = wantedByNewArrayElement(inputs, call.operand(operandIndex));
-        bool isPushedToDoubles = arrayStorageDeclaredBy(program, inputs.typeOf(call.operand(0))) == ArrayStorage::Double;
+        bool isPushedToDoubles = arrayStorageDeclaredBy(program, inputs.typeOf(call.operand(0))).predicted() == ArrayStorage::Double;
         return wanted == Representation::JSValue && isPushedToDoubles && type.isNumber() ? Representation::Double : wanted;
     }
 
@@ -499,6 +500,8 @@ static Representation wantedByDeclaredPosition(const RepresentationInputs& input
         return storeRepresentationOf(inputs, placement.slot(user.layout(), user.fields()[variadicIndex()]), operand);
     case Opcode::PrivateDefine:
         return Representation::JSValue;
+    case Opcode::NewArray:
+        return Representation::Unchosen;
     case Opcode::PutEnvironmentField:
         return storeRepresentationOf(inputs, placement.slot(user.layout(), user.field()), operand);
     case Opcode::PutModuleVariable: {
@@ -635,6 +638,18 @@ static bool computesWithNumbers(const Value& value)
 static bool computesWithNumbers(const Terminator&)
 {
     return false;
+}
+
+bool readsDoubleOutOfBytes(const Value& value)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(value);
+    return value.opcode == Opcode::GetTypedArrayElement || (builtin && builtinsThatMoveBytes.contains(*builtin));
+}
+
+bool readsDoubleOutOfBytes(const Terminator& terminator)
+{
+    std::optional<InlineBuiltin> builtin = inlineBuiltinOf(terminator);
+    return builtin && builtinsThatMoveBytes.contains(*builtin);
 }
 
 // Arithmetic hands the sign and the payload of a NaN on to its result.
@@ -1107,6 +1122,8 @@ void checkRepresentations(const RepresentationInputs& inputs, Vector<InternalErr
         if (!isLegalRepresentation(inputs.typeOf(id), value.representation))
             return false;
         Representation expected = resultRepresentationOf(inputs, value);
+        if (expected == Representation::ImpureDouble && value.representation == Representation::Double && readsDoubleOutOfBytes(value))
+            return true;
         return expected == Representation::Unchosen || expected == value.representation;
     };
     auto canConvert = [&](ValueID id, Representation wanted) {

@@ -32,6 +32,20 @@ ValueID sameObjectThroughCasts(const Function& function, ValueID value)
     return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode); });
 }
 
+ValueID sameObjectBehindFacts(const Function& function, ValueID value)
+{
+    ValueID id = value;
+    for (size_t remainingSteps = function.values.size(); isCastOrConversion(function.at(id).opcode); --remainingSteps) {
+        if (!remainingSteps)
+            return value;
+        const Value& cast = function.at(id);
+        if (cast.opcode == Opcode::AssumeType && cast.factOperand())
+            break;
+        id = cast.operand(0);
+    }
+    return id;
+}
+
 ValueID sameObjectThroughConversionsToObject(const Function& function, ValueID value)
 {
     return stripCasts(function, value, [](Opcode opcode) { return isCastOrConversion(opcode) || opcode == Opcode::Convert || conversionsToObject.contains(opcode); });

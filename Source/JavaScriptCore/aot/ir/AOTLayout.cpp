@@ -13,6 +13,7 @@
 #include "AOTIRProgram.h"
 #include "AOTLayoutUses.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTPropertyAccessCache.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
@@ -151,13 +152,23 @@ bool isFilledWithValueAtBirth(const Program& program, FieldReference reference)
     return flowOf(program, reference).occupancy == Occupancy::FilledWithValueAtBirth;
 }
 
-bool hasFieldsFilledAtBirth(const Program& program, LayoutID id)
+static bool findsFieldFilledAtBirth(const Program& program, LayoutID id)
 {
     for (uint32_t field = 0; field < program.at(id).fields.size(); ++field) {
         if (isFilledAtBirth(program, { id, field }))
             return true;
     }
     return false;
+}
+
+bool hasFieldsFilledAtBirth(const Program& program, LayoutID id)
+{
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    if (!cache || TypeTable::isProvisional(id) || program.at(id).fields.size() < PropertyAccessCache::fewestFields)
+        return findsFieldFilledAtBirth(program, id);
+    return findOrCompute(cache->layoutsFilledAtBirth, id, computeHash(id), [&] {
+        return PropertyAccessCache::FilledAtBirth { id, findsFieldFilledAtBirth(program, id) };
+    }).value;
 }
 
 bool isNeverStored(const Program& program, FieldReference reference)
@@ -181,7 +192,7 @@ static LayoutID baseOf(const Layout& layout, BaseChain chain)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<FieldReference> findField(const Program& program, LayoutID id, PropertyKeyID key, BaseChain chain)
+static std::optional<FieldReference> findFieldByWalk(const Program& program, LayoutID id, PropertyKeyID key, BaseChain chain)
 {
     LayoutID current = id;
     for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
@@ -191,6 +202,52 @@ std::optional<FieldReference> findField(const Program& program, LayoutID id, Pro
         current = baseOf(layout, chain);
     }
     return std::nullopt;
+}
+
+// All classes of a row from one that is asked up to the one that holds the field have the same answer. A walk that has gone some way keeps the answer for one in every few classes that it passes, and ends at the first for which it is kept.
+static NEVER_INLINE std::optional<FieldReference> findFieldInLongRow(const Program& program, LayoutID id, PropertyKeyID key, BaseChain chain)
+{
+    PropertyAccessCache* cache = TypeTable::isProvisional(key) ? nullptr : program.propertyAccessCache();
+    if (!cache)
+        return findFieldByWalk(program, id, key, chain);
+    Vector<LayoutID, 8> passed;
+    auto isAnswerFor = [&](LayoutID wanted) {
+        return [wanted, key, chain](const PropertyAccessCache::FieldAbove& entry) {
+            return entry.key == PropertyAccessCache::FieldAboveKey { wanted, key, chain };
+        };
+    };
+    auto keep = [&](std::optional<FieldReference> answer) {
+        for (LayoutID layout : passed)
+            cache->fieldsAbove.add(computeHash(layout, key, chain), PropertyAccessCache::FieldAbove { { layout, key, chain }, answer }, isAnswerFor(layout));
+        RELEASE_ASSERT(!cache->checksAnswers || answer == findFieldByWalk(program, id, key, chain));
+        return answer;
+    };
+    LayoutID current = id;
+    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+        const Layout& layout = program.at(current);
+        if (auto field = layout.findField(key))
+            return keep(FieldReference { current, *field });
+        if (!TypeTable::isProvisional(current)) {
+            if (const PropertyAccessCache::FieldAbove* kept = cache->fieldsAbove.find(computeHash(current, key, chain), isAnswerFor(current)))
+                return keep(kept->value);
+            if (steps % PropertyAccessCache::classesBetweenFieldsKept == PropertyAccessCache::classesBetweenFieldsKept - 1)
+                passed.append(current);
+        }
+        current = baseOf(layout, chain);
+    }
+    return keep(std::nullopt);
+}
+
+std::optional<FieldReference> findField(const Program& program, LayoutID id, PropertyKeyID key, BaseChain chain)
+{
+    LayoutID current = id;
+    for (size_t steps = 0; current && steps < PropertyAccessCache::fewestClassesAbove; ++steps) {
+        const Layout& layout = program.at(current);
+        if (auto field = layout.findField(key))
+            return FieldReference { current, *field };
+        current = baseOf(layout, chain);
+    }
+    return current ? findFieldInLongRow(program, current, key, chain) : std::nullopt;
 }
 
 LayoutID expectedBaseOf(const Layout& layout)
@@ -213,16 +270,46 @@ LayoutID predictedHeritageOf(const Layout& layout)
     return layout.has(LayoutFlags::HasHeritage) ? layout.base : LayoutID();
 }
 
+// All classes of a row have the answer of the class at its upper end. A walk that has gone some way keeps the answer for the classes that it passes from there on, and ends at the first for which it is kept.
+static NEVER_INLINE BuiltinClassID builtinBaseClassOfLongRow(const Program& program, LayoutID id)
+{
+    PropertyAccessCache* cache = program.propertyAccessCache();
+    Vector<LayoutID, 8> passed;
+    auto isAnswerFor = [](LayoutID wanted) {
+        return [wanted](const PropertyAccessCache::BuiltinBase& entry) {
+            return entry.key == wanted;
+        };
+    };
+    auto keep = [&](BuiltinClassID answer) {
+        for (LayoutID layout : passed)
+            cache->builtinBases.add(computeHash(layout), PropertyAccessCache::BuiltinBase { layout, answer }, isAnswerFor(layout));
+        return answer;
+    };
+    LayoutID current = id;
+    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+        if (cache && !TypeTable::isProvisional(current)) {
+            if (const PropertyAccessCache::BuiltinBase* kept = cache->builtinBases.find(computeHash(current), isAnswerFor(current)))
+                return keep(kept->value);
+            passed.append(current);
+        }
+        const LayoutFlow& flow = program.at(current).flow;
+        if (flow.baseState == BaseState::BuiltinClass)
+            return keep(flow.baseClass);
+        current = baseOf(program.at(current), BaseChain::Proven);
+    }
+    return keep({ });
+}
+
 BuiltinClassID builtinBaseClassOf(const Program& program, LayoutID id)
 {
     LayoutID current = id;
-    for (size_t steps = 0; current && steps < program.layouts.size(); ++steps) {
+    for (size_t steps = 0; current && steps < PropertyAccessCache::fewestClassesAbove; ++steps) {
         const LayoutFlow& flow = program.at(current).flow;
         if (flow.baseState == BaseState::BuiltinClass)
             return flow.baseClass;
         current = baseOf(program.at(current), BaseChain::Proven);
     }
-    return { };
+    return current ? builtinBaseClassOfLongRow(program, current) : BuiltinClassID();
 }
 
 bool isEvaluatedOnce(const Program& program, const Layout& layout)
@@ -302,7 +389,7 @@ Vector<Vector<LayoutID>> declaredViewsOf(const Program& program, const BitVector
         LayoutID view(index);
         if (program.at(view).kind != LayoutKind::Record)
             continue;
-        for (LayoutID member : program.at(program.declaredMembersOf(view)).members) {
+        for (LayoutID member : program.at(program.declaredMembersOf(view)).completeMembers()) {
             if (member != view && declaredLayouts.get(member.index()))
                 views[member.index()].append(view);
         }
@@ -325,7 +412,7 @@ void initializeAddedLayout(Program& program, LayoutID id)
     Layout& layout = program.at(id);
     layout.ownFieldCount = static_cast<uint32_t>(layout.fields.size());
     layout.indexFields();
-    program.setDeclaredMembers(id, program.types.intern(LayoutSet { { id }, true }));
+    program.setDeclaredMembers(id, program.types.intern(LayoutSet::complete({ id })));
 }
 
 static bool shouldAppendInheritedFields(const Layout& layout)
@@ -463,7 +550,7 @@ static unsigned findTypesWithLayouts(const Program& program, BitVector& result, 
     for (unsigned index = firstType; index < numberOfTypes; ++index) {
         const Type& type = program.at(TypeID(index));
         bool hasLayouts = type.layouts || std::ranges::any_of(type.classes, [&](const ClassPart& part) {
-            return std::ranges::any_of(part.contents, [&](TypeID contents) {
+            return std::ranges::any_of(part.writtenContents, [&](TypeID contents) {
                 return contents && result.quickGet(contents.index());
             });
         });
@@ -531,7 +618,7 @@ static void nameLayoutsOfConvertedResults(const Program& program, const BitVecto
     while (!worklist.isEmpty()) {
         const Type& type = program.at(worklist.takeLast());
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents)
+            for (TypeID contents : part.writtenContents)
                 visit(contents);
         }
         for (LayoutID member : membersOf(program, type)) {

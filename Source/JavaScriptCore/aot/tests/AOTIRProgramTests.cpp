@@ -184,7 +184,7 @@ static void editorAddedLayoutIsItsOnlyDeclaredMember()
     LayoutID id = editor.addLayout(WTF::move(layout));
     AOT_TEST_CHECK(id == LayoutID(1u) && editor.program().at(id).ownFieldCount == 2);
     const LayoutSet& members = editor.program().at(editor.program().declaredMembersOf(id));
-    AOT_TEST_CHECK(members.isComplete && hasElements(members.members, { id }));
+    AOT_TEST_CHECK(members.listsEveryLayout() && hasElements(members.written(), { id }));
     AOT_TEST_CHECK(editor.changedFunctions().isEmpty());
 }
 
@@ -194,9 +194,9 @@ static void expectedTypeOfValueWinsOverItsType()
     Function function;
     ValueID value = addValue(function, addBlock(function), Opcode::Undefined);
     function.edit(value).type = TypeTable::number;
-    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value) == &test.program.at(TypeTable::number));
+    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value).predicted() == &test.program.at(TypeTable::number));
     function.edit(value).setExpected(ExpectedType(TypeTable::int32));
-    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value) == &test.program.at(TypeTable::int32));
+    AOT_TEST_CHECK(&test.program.typeOf(function, value) == &test.program.at(TypeTable::number) && &test.program.expectedOrTypeOf(function, value).predicted() == &test.program.at(TypeTable::int32));
 }
 
 static void propertyKeysAreUnique()
@@ -216,9 +216,9 @@ static void propertyKeysAreUnique()
     created.kind = PropertyKeyKind::CreatedSymbol;
     created.text = description;
     created.module = ModuleID(0u);
-    created.position = 120;
+    created.callNumber = 120;
     PropertyKey createdElsewhere = created;
-    createdElsewhere.position = 130;
+    createdElsewhere.callNumber = 130;
     AOT_TEST_CHECK(!types.find(created));
     PropertyKeyID createdKey = arena.intern(created);
     AOT_TEST_CHECK(arena.intern(created) == createdKey && types.find(created) == createdKey && arena.intern(createdElsewhere) != createdKey);
@@ -275,18 +275,33 @@ static void wellKnownTypeIDs()
 static void equalLayoutSetsGetOneID()
 {
     TypeTable types(BuiltinTable::singleton());
-    LayoutSetID set = types.intern(LayoutSet { { LayoutID(2u), LayoutID(0u), LayoutID(1u) }, true });
-    AOT_TEST_CHECK(types.intern(LayoutSet { { LayoutID(0u), LayoutID(1u), LayoutID(2u) }, true }) == set);
-    AOT_TEST_CHECK(types.intern(LayoutSet { { LayoutID(1u), LayoutID(2u), LayoutID(1u), LayoutID(0u) }, true }) == set);
-    AOT_TEST_CHECK(types.numberOfLayoutSets() == 1 && hasElements(types.at(set).members, { LayoutID(0u), LayoutID(1u), LayoutID(2u) }));
-    AOT_TEST_CHECK(types.intern(LayoutSet { { LayoutID(0u), LayoutID(1u), LayoutID(2u) }, false }) != set);
-    AOT_TEST_CHECK(types.intern(LayoutSet { { LayoutID(0u), LayoutID(1u) }, true }) != set && types.numberOfLayoutSets() == 3);
-    AOT_TEST_CHECK(types.intern(LayoutSet { { LayoutID(0u), LayoutID(1u), LayoutID(2u) }, true, true }) != set && types.numberOfLayoutSets() == 4);
+    LayoutSetID set = types.intern(LayoutSet::complete({ LayoutID(2u), LayoutID(0u), LayoutID(1u) }));
+    AOT_TEST_CHECK(types.intern(LayoutSet::complete({ LayoutID(0u), LayoutID(1u), LayoutID(2u) })) == set);
+    AOT_TEST_CHECK(types.intern(LayoutSet::complete({ LayoutID(1u), LayoutID(2u), LayoutID(1u), LayoutID(0u) })) == set);
+    AOT_TEST_CHECK(types.numberOfLayoutSets() == 1 && hasElements(types.at(set).written(), { LayoutID(0u), LayoutID(1u), LayoutID(2u) }));
+    AOT_TEST_CHECK(types.intern(LayoutSet::open({ LayoutID(0u), LayoutID(1u), LayoutID(2u) })) != set);
+    AOT_TEST_CHECK(types.intern(LayoutSet::complete({ LayoutID(0u), LayoutID(1u) })) != set && types.numberOfLayoutSets() == 3);
 
     TypeArena arena(types);
     AOT_TEST_CHECK(arena.completeLayoutSet(std::array<LayoutID, 3> { LayoutID(1u), LayoutID(0u), LayoutID(2u) }) == set);
     TypeID type = arena.intern(Type::forLayouts(std::array<LayoutID, 3> { LayoutID(2u), LayoutID(1u), LayoutID(0u) }, arena));
     AOT_TEST_CHECK(types.at(type).layouts == set && arena.intern(Type::forLayoutSet(set)) == type);
+}
+
+static void onlyCompleteLayoutSetsListAllLayouts()
+{
+    static_assert(!std::is_convertible_v<Expected<std::span<const LayoutID>>, std::span<const LayoutID>>);
+    static_assert(std::is_convertible_v<ProvenValue<std::span<const LayoutID>>, std::span<const LayoutID>>);
+    static_assert(!std::is_constructible_v<ProvenValue<std::span<const LayoutID>>, std::span<const LayoutID>>);
+
+    LayoutSet complete = LayoutSet::complete({ LayoutID(0u), LayoutID(1u) });
+    AOT_TEST_CHECK(complete.all() && std::ranges::equal(*complete.all(), complete.written()) && std::ranges::equal(complete.completeMembers(), complete.written()));
+    AOT_TEST_CHECK(complete.listsEveryLayout());
+
+    LayoutSet open = LayoutSet::open({ LayoutID(0u), LayoutID(1u) });
+    AOT_TEST_CHECK(!open.all() && !open.listsEveryLayout());
+    AOT_TEST_CHECK(std::ranges::equal(open.seen().predicted(), complete.written()));
+    AOT_TEST_CHECK(isSubsetOf(complete, open) && !isSubsetOf(open, complete) && overlaps(open, LayoutSet::complete({ LayoutID(7u) })));
 }
 
 static void builtinLayoutsAppendedOnce()
@@ -338,7 +353,7 @@ static void derivedLayoutIDsFollowLayoutsAsRead()
     }
     for (unsigned index = 2; index < program.layouts.size(); ++index) {
         const LayoutSet& members = program.at(program.declaredMembersOf(LayoutID(index)));
-        AOT_TEST_CHECK(members.isComplete && hasElements(members.members, { LayoutID(index) }));
+        AOT_TEST_CHECK(members.listsEveryLayout() && hasElements(members.written(), { LayoutID(index) }));
     }
 }
 
@@ -485,7 +500,7 @@ static void verifierRejectsTooManyCaptures()
     v(verifierRejectsRecordOfAnotherRole) v(enclosingRuntimeFunctionMustBeRegistered) \
     v(editorRecordsChangedFunctions) v(editorTellsFunctionsGivenOutOnlyForStorage) v(editorAddFunctionLikeFollowsDerivationSource) v(editorRemoveBodyKeepsSignature) v(editorReservesConsecutiveFunctions) \
     v(editorAddedLayoutIsItsOnlyDeclaredMember) \
-    v(expectedTypeOfValueWinsOverItsType) v(propertyKeysAreUnique) v(wellKnownTypeIDs) v(equalLayoutSetsGetOneID) \
+    v(expectedTypeOfValueWinsOverItsType) v(propertyKeysAreUnique) v(wellKnownTypeIDs) v(equalLayoutSetsGetOneID) v(onlyCompleteLayoutSetsListAllLayouts) \
     v(builtinLayoutsAppendedOnce) v(derivedLayoutIDsFollowLayoutsAsRead) v(builtinNameKeysAreInverse) \
     v(lineColumnWithoutTable) v(lineColumnAfterNonASCII) v(lineColumnAtEveryBoundary) v(lineColumnAfterLineSeparator) v(lineColumnWithoutLineStarts) v(functionsCalledByHostAscending) \
     v(verifierRejectsTooManyCaptures)

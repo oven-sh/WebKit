@@ -1,0 +1,22 @@
+# An operation may report its own errors at one place and whatever it calls at the place where it is written: the word callers says so
+# RUN: round-trip wire
+# CHECK: v2 = ElemGet v0, v1 @110 @19 callers
+# CHECK-NEXT: v3 = ElemGet v0, v1 @120 @19
+# CHECK-NEXT: v4 = ElemGet v0, v1 @130
+# CHECK: round trip: same
+# RUN(V): verify
+# V: valid
+# RUN(WORD): round-trip wire f0
+# WORD-NOT: function f0
+# WORD: error: bad argument f0
+
+module m0 path="/a.js" displayPath="a.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" @100
+    v2 = ElemGet v0, v1 @110 @19 callers
+    v3 = ElemGet v0, v1 @120 @19
+    v4 = ElemGet v0, v1 @130
+    Return v4
+}

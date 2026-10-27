@@ -763,6 +763,69 @@ static void testPinnedConstantInMemory()
     CHECK_EQ(invoke<double>(*banksCode, table.word ^ 4, &table, 1.0), 7.0);
 }
 
+struct PinnedBitsAtJoin {
+    explicit PinnedBitsAtJoin(const Policy& policy)
+        : proc(policy)
+    {
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        upsilonBlock = proc.addBlock();
+        BasicBlock* otherBlock = proc.addBlock();
+        BasicBlock* next = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t, double>(proc, root);
+        Value* other = arguments[2];
+        graph.branch(root, arguments[0], upsilonBlock, otherBlock);
+        Value* phi = graph.phi(next, Double);
+        upsilon = upsilonBlock->appendNew<UpsilonValue>(proc, Origin(), graph.number(upsilonBlock, std::bit_cast<double>(pinnedWord)), phi);
+        graph.jump(upsilonBlock, next);
+        graph.upsilon(otherBlock, other, phi);
+        graph.jump(otherBlock, next);
+        graph.ret(next, phi);
+    }
+
+    Procedure proc;
+    BasicBlock* upsilonBlock;
+    Value* upsilon;
+};
+
+static void checkReadsPinnedRegisterAsDouble(BasicBlock* block, Value* user, unsigned childIndex)
+{
+    Value* cast = user->child(childIndex);
+    CHECK(cast->opcode() == BitwiseCast);
+    CHECK(cast->type() == Double);
+    CHECK(isPinnedRegister(cast->child(0)));
+    size_t userIndex = block->values().find(user);
+    CHECK(userIndex != notFound && userIndex);
+    CHECK(block->at(userIndex - 1) == cast);
+}
+
+static void testPinnedConstantInRegisterOfOtherBank()
+{
+    Policy policy = pinnedConstantPolicy(findTestConstant<false, false>);
+    int64_t two = std::bit_cast<int64_t>(2.0);
+
+    PinnedBitsInBothBanks inspected(policy);
+    CHECK(materializeAndValidate(inspected.proc));
+    CHECK(isPinnedRegister(inspected.difference->child(1)));
+    checkReadsPinnedRegisterAsDouble(inspected.root, inspected.sum, 1);
+    CHECK_EQ(numberOfValues(inspected.proc, isPinnedRegister), 1u);
+
+    PinnedBitsInBothBanks compiled(policy);
+    auto code = compileAndCheckReport(compiled.proc, Options::defaultB3OptLevel());
+    CHECK_EQ(invoke<double>(*code, pinnedWord, pinnedWord, 0.0), std::bit_cast<double>(pinnedWord));
+    CHECK_EQ(invoke<double>(*code, two, two, 1.0), 3.0);
+    CHECK_EQ(invoke<double>(*code, two ^ 4, two, 1.0), 7.0);
+
+    PinnedBitsAtJoin inspectedJoin(policy);
+    CHECK(materializeAndValidate(inspectedJoin.proc));
+    checkReadsPinnedRegisterAsDouble(inspectedJoin.upsilonBlock, inspectedJoin.upsilon, 0);
+
+    PinnedBitsAtJoin compiledJoin(policy);
+    auto joinCode = compileAndCheckReport(compiledJoin.proc, Options::defaultB3OptLevel());
+    CHECK_EQ(invoke<double>(*joinCode, static_cast<int64_t>(1), two, 5.0), 2.0);
+    CHECK_EQ(invoke<double>(*joinCode, static_cast<int64_t>(0), two, 5.0), 5.0);
+}
+
 struct PinnedSmallWordUses {
     explicit PinnedSmallWordUses(const Policy& policy)
         : proc(policy)
@@ -1107,6 +1170,7 @@ static void addPipelineTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testCheckVariablesAreSetUnreachable());
     RUN(testCheckVariablesAreSetWithoutVariables());
     RUN(testPinnedConstantInRegister());
+    RUN(testPinnedConstantInRegisterOfOtherBank());
     RUN(testPinnedConstantInMemory());
     RUN(testPinnedConstantKeepsImmediates());
     RUN(testPinnedConstantReplacesImmediate());

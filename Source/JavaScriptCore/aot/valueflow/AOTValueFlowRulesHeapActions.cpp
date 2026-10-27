@@ -32,7 +32,11 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         add(m_context.nodes().ofHost(ValueFlowHostNode::CopiesOfObjectsNobodyKnows), known(targets));
     notePrototypeObjectsThatWriteMayReach(target, targets, unknownHeapKey);
     noteClosuresThatMayBeRenamed(target, unknownHeapKey, targets);
-    connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), elementsName), m_context.written(known(targets), elementsName));
+    connect(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), elementsName), m_context.written(known(targets), elementsName));
+    if (keepsAccessors) {
+        for (ValueFlowName name : { everyValue, everyGetter, everySetter })
+            compareWithPropertyThatIsThere(operandOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), name)));
+    }
 
     ValueFlowNodeID copied = m_context.written(known(targets), valueUnderUnknownKey);
     Vector<ValueFlowNodeID, 3> nodesTakingCopies { copied };
@@ -40,12 +44,13 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         ValueFlowNodeID stored = m_context.written(placeholder, valueUnderUnknownKey);
         ClimbingSet holders = withSourcesOfCopies(m_context, known(sources));
         add(m_context.nodes().ofHost(sourcesOfCopies), holders);
-        connect(m_context.read(holders, everyValue), stored);
+        connect(m_context.readWhatWasWritten(holders, everyValue), stored);
+        connect(enumerablePropertiesNobodyWrote(m_context, holders, MetBy::Program), stored);
         connect(storedThroughUnknownObjectInto(holders, everyValue), stored);
         connect(storedThroughUntrackedObjectInto(holders, everyValue), stored);
         if (keepsAccessors) {
-            connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyGetter), m_context.written(placeholder, writtenName(unknownHeapKey, HeapPropertyPart::Getter)));
-            connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everySetter), m_context.written(placeholder, writtenName(unknownHeapKey, HeapPropertyPart::Setter)));
+            connect(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyGetter), m_context.written(placeholder, writtenName(unknownHeapKey, HeapPropertyPart::Getter)));
+            connect(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everySetter), m_context.written(placeholder, writtenName(unknownHeapKey, HeapPropertyPart::Setter)));
         }
         nodesTakingCopies.append(stored);
         return stored;
@@ -54,10 +59,10 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         storeThrough(untrackedObjectAlone(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
     if (mayBeUnknownObject(targets)) {
         connect(storeThrough(unknownObjectAlone(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject), ValueFlowProgramNodes::escaped());
-        connect(m_context.read(known(sources), copiedFromName), ValueFlowProgramNodes::escaped());
+        connect(m_context.readWhatWasWritten(known(sources), copiedFromName), ValueFlowProgramNodes::escaped());
         if (keepsAccessors) {
-            connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyGetter), ValueFlowProgramNodes::escaped());
-            connect(m_context.read(withSourcesOfCopies(m_context, known(sources)), everySetter), ValueFlowProgramNodes::escaped());
+            connect(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyGetter), ValueFlowProgramNodes::escaped());
+            connect(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everySetter), ValueFlowProgramNodes::escaped());
         }
         add(ValueFlowProgramNodes::escaped(), m_context.restrict(known(sources), ValueSets::complement(m_tables.objectsHoldingOnlyWhatWasWritten())));
     }
@@ -65,12 +70,12 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         ClimbingSet all = withSourcesOfCopies(m_context, known(sources));
         ClimbingSet read = m_context.restrict(all, m_tables.objectsHoldingOnlyWhatWasWritten());
         add(ValueFlowProgramNodes::escaped(), m_context.restrict(all, ValueSets::complement(m_tables.objectsHoldingOnlyWhatWasWritten())));
-        connect(m_context.read(read, everyValue), ValueFlowProgramNodes::escaped());
+        connect(m_context.readWhatWasWritten(read, everyValue), ValueFlowProgramNodes::escaped());
         connect(storedThroughUnknownObjectInto(read, everyValue), ValueFlowProgramNodes::escaped());
         connect(storedThroughUntrackedObjectInto(read, everyValue), ValueFlowProgramNodes::escaped());
         if (keepsAccessors) {
-            connect(m_context.read(read, everyGetter), ValueFlowProgramNodes::escaped());
-            connect(m_context.read(read, everySetter), ValueFlowProgramNodes::escaped());
+            connect(m_context.readWhatWasWritten(read, everyGetter), ValueFlowProgramNodes::escaped());
+            connect(m_context.readWhatWasWritten(read, everySetter), ValueFlowProgramNodes::escaped());
         }
     }
 
@@ -95,17 +100,28 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
             connect(exports, node);
     }
 
-    ClimbingSet getters = m_context.valueOf(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyGetter));
+    ClimbingSet getters = m_context.valueOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyGetter));
     if (mayBeUntrackedObject(sources)) {
         for (ClimbingSet holders : { ClimbingSet(m_universe.knownObjects()), untrackedObjectAlone(), unknownObjectAlone() }) {
             for (ValueFlowNodeID node : nodesTakingCopies)
-                connect(m_context.read(holders, everyValue), node);
-            getters = m_context.unite(getters, m_context.valueOf(m_context.read(holders, everyGetter)));
+                connect(m_context.readWhatWasWritten(holders, everyValue), node);
+            getters = m_context.unite(getters, m_context.valueOf(m_context.readWhatWasWritten(holders, everyGetter)));
             if (keepsAccessors) {
-                connect(m_context.read(holders, everyGetter), m_context.written(known(targets), writtenName(unknownHeapKey, HeapPropertyPart::Getter)));
-                connect(m_context.read(holders, everySetter), m_context.written(known(targets), writtenName(unknownHeapKey, HeapPropertyPart::Setter)));
+                connect(m_context.readWhatWasWritten(holders, everyGetter), m_context.written(known(targets), writtenName(unknownHeapKey, HeapPropertyPart::Getter)));
+                connect(m_context.readWhatWasWritten(holders, everySetter), m_context.written(known(targets), writtenName(unknownHeapKey, HeapPropertyPart::Setter)));
             }
         }
+    }
+    // A getter nobody knows is entered with the source that holds it, whichever others are copied beside it.
+    HeapReceiver readSources { nullptr, sources, { } };
+    if (!keepsAccessors && mayBeAccessorNobodyKnows(getters)) {
+        ValueFlowObjectsToldApart toldApart = tellObjectsApart(m_context, m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), known(sources)));
+        ClimbingSet holdingSuchGetter(toldApart.rest);
+        for (ValueSetID group : toldApart.groups) {
+            if (mayBeAccessorNobodyKnows(m_context.valueOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, ClimbingSet(group)), everyGetter))))
+                holdingSuchGetter = m_context.unite(holdingSuchGetter, ClimbingSet(group));
+        }
+        readSources.belowAccessorNobodyKnows = holdingSuchGetter;
     }
     for (ValueFlowNodeID node : nodesTakingCopies) {
         if (mayBeUnknownObject(sources))
@@ -113,18 +129,18 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         if (m_context.meet(sources, m_universe.strings()))
             add(node, m_universe.anyPrimitive());
         if (!keepsAccessors)
-            callAccessors(getters, ValueFlowCallKind::Get, { &source, { } }, nullptr, node);
+            callAccessors(getters, ValueFlowCallKind::Get, readSources, nullptr, node);
     }
     if (keepsAccessors && (mayBeUnknownObject(sources) || holdsAnything(hostObjects) || m_context.meet(sources, m_universe.builtinObjects())))
         connect(target, ValueFlowProgramNodes::escaped());
 
     if (storesThroughSetters) {
-        ValueFlowOperand held = operandOf(m_context.read(withSourcesOfCopies(m_context, known(sources)), everyValue));
+        ValueFlowOperand held = operandOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyValue));
         convertStoredValue(targets, unknownHeapKey, held);
         convertStoredValue(targets, unknownHeapKey, operandOf(copied));
         forEachStartOfLookup(targets, [&](ClimbingSet start) {
             callSettersOfReceivers(start, unknownHeapKey, held);
-            callSettersOfReceivers(start, unknownHeapKey, operandOf(m_context.read(known(targets), valueUnderUnknownKey)));
+            callSettersOfReceivers(start, unknownHeapKey, operandOf(m_context.readWhatWasWritten(known(targets), valueUnderUnknownKey)));
         });
     }
 
@@ -140,13 +156,21 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     mayThrow();
 }
 
-void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors)
+// A property that cannot be configured takes a definition only of the value, the getter and the setter that it has.
+void HeapRule::compareWithPropertyThatIsThere(const ValueFlowOperand& defined)
+{
+    connect(defined, m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare));
+}
+
+void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors, DefinedObject definedObject)
 {
     auto define = [&](HeapPropertyPart part, BuiltinName member) {
-        ValueFlowNodeID described = m_context.lookup(descriptors, ValueFlowName::property(m_program.keyOf(member)));
+        ValueFlowNodeID described = m_context.lookup(descriptors, ValueFlowName::property(m_program, m_program.keyOf(member)));
         if (part != HeapPropertyPart::Value && !m_context.meet(m_context.valueOf(described), ValueSets::complement(m_universe.undefinedValue())))
             return;
         this->define(object, key, part, operandOf(described));
+        if (definedObject == DefinedObject::MayHoldProperty)
+            compareWithPropertyThatIsThere(operandOf(described));
     };
     define(HeapPropertyPart::Value, BuiltinNames::value);
     define(HeapPropertyPart::Getter, BuiltinNames::get);
@@ -212,12 +236,7 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
                 return;
             }
             readOwn(holders, foundName(key, HeapPropertyPart::Value), m_statement.result);
-            readPropertiesAtCreation(holders, key, m_statement.result);
-            handOutPrototypeObjectsAtCreation(holders, key);
-            if (key.mayNameNonEnumerable(m_tables.lengthKey()) && m_context.meet(holders, m_context.maker().unite(m_tables.arraysThatOperationsAllocate(), m_universe.closures())))
-                add(m_statement.result, m_tables.numberKinds());
-            if (key.mayNameNonEnumerable(m_tables.nameKey()) && m_context.meet(holders, m_universe.closures()))
-                add(m_statement.result, m_universe.strings());
+            readOwnPropertiesNobodyWrote(holders, key, m_statement.result);
             if (m_context.meet(m_context.valueOf(object), m_universe.strings())) {
                 if (key.keyClass != HeapKeyClass::Name)
                     add(m_statement.result, m_universe.strings());
@@ -243,6 +262,7 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         forEachKey([&](const HeapKey& key) {
             define(object, key, action.kind == BuiltinPropertyActionKind::DefinesGetter ? HeapPropertyPart::Getter : HeapPropertyPart::Setter, value);
         }, &value);
+        compareWithPropertyThatIsThere(value);
         return;
     case BuiltinPropertyActionKind::DeletesByKey:
         forEachKey([&](const HeapKey& key) {
@@ -275,13 +295,13 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         return;
     case BuiltinPropertyActionKind::TakesDescriptor:
         forEachKey([&](const HeapKey& key) {
-            defineAsDescribed(object, key, m_context.valueOf(value));
+            defineAsDescribed(object, key, m_context.valueOf(value), DefinedObject::MayHoldProperty);
         }, &value);
         return;
     case BuiltinPropertyActionKind::TakesDescriptorMap:
     case BuiltinPropertyActionKind::DescribesResult: {
         auto defineUnder = [&](const HeapKey& key) {
-            defineAsDescribed(object, key, m_context.valueOf(m_context.lookup(m_context.valueOf(value), foundName(key, HeapPropertyPart::Value))));
+            defineAsDescribed(object, key, m_context.valueOf(m_context.lookup(m_context.valueOf(value), foundName(key, HeapPropertyPart::Value))), action.kind == BuiltinPropertyActionKind::DescribesResult ? DefinedObject::IsNew : DefinedObject::MayHoldProperty);
         };
         for (PropertyKeyID name : operands.namesInMap.value_or(std::span<const PropertyKeyID>()))
             defineUnder(keyNamed(name));

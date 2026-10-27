@@ -313,10 +313,9 @@ JSCell* ProgramStrings::keyCell(VM& vm, uint32_t number)
     const Identifier& name = vm.aotState().identifiers->identifier(m_tables.keyCellIdentifiers()[number]);
     RELEASE_ASSERT(!name.isNull());
     JSCell* created;
-    if (auto* symbol = dynamicDowncast<SymbolImpl>(name.impl())) {
-        RELEASE_ASSERT(!symbol->isPrivate());
+    if (auto* symbol = dynamicDowncast<SymbolImpl>(name.impl()))
         created = Symbol::create(vm, *symbol);
-    } else
+    else
         created = jsOwnedString(vm, name.string());
     const ConstantCellWords& constants = m_instance.runtime.constants;
     setImmortalCellAt(constants.keyCells, constants.wideKeyCells, number, created);

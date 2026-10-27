@@ -179,7 +179,7 @@ private:
     std::optional<uint32_t> findListedElement(VirtualObjectID, uint32_t position) const;
     bool canAppendListedElements(VirtualObjectID target, VirtualObjectID source);
     std::optional<Vector<CopiedField, 8>> collectCopiedFields(ValueID copy, VirtualObjectID source) const;
-    bool tryResolveTargetFields(VirtualObjectID target, const VirtualObjectDescription& source, std::span<CopiedField>);
+    bool tryResolveTargetFields(VirtualObjectID target, VirtualObjectID source, std::span<CopiedField>);
     void requireCellOfHeldObject(VirtualObjectID holder, uint32_t field, const BuildCause&);
     bool hasListedElements(VirtualObjectID) const;
     Vector<ValueID, 8> listedElementsOf(VirtualObjectID);

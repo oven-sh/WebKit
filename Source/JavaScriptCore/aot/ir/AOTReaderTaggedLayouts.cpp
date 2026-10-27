@@ -131,6 +131,28 @@ TellingFields::TellingFields(const ParallelLoops& loops, const Wire::Sections& c
         }
     });
     sumUp(m_firstField);
+
+    uint32_t numberOfLayouts = static_cast<uint32_t>(m_bases.size());
+    const uint32_t notFoundYet = numberOfLayouts;
+    const uint32_t isOnTheWay = numberOfLayouts + 1;
+    m_nearestWithFields.fill(notFoundYet, numberOfLayouts);
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (!fieldsOf(index).empty())
+            m_nearestWithFields[index] = index;
+    }
+    Vector<uint32_t, 8> passed;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        uint32_t current = index;
+        for (; current != Wire::none && m_nearestWithFields[current] == notFoundYet; current = m_bases[current]) {
+            m_nearestWithFields[current] = isOnTheWay;
+            passed.append(current);
+        }
+        // A ring of layouts that the walk has come back to has no such field.
+        uint32_t nearest = current == Wire::none || m_nearestWithFields[current] == isOnTheWay ? Wire::none : m_nearestWithFields[current];
+        for (uint32_t layout : passed)
+            m_nearestWithFields[layout] = nearest;
+        passed.shrink(0);
+    }
 }
 
 bool TellingFields::haveNothingInCommon(const Field& a, const Field& b)
@@ -148,8 +170,13 @@ bool TellingFields::haveNothingInCommon(const Field& a, const Field& b)
 
 bool TellingFields::tellApart(uint32_t layout, uint32_t otherLayout) const
 {
+    if (fieldsOf(otherLayout).empty())
+        return false;
+    auto nearestFrom = [&](uint32_t first) {
+        return first == Wire::none ? Wire::none : m_nearestWithFields[first];
+    };
     size_t remainingBases = m_bases.size();
-    for (uint32_t current = layout; current != Wire::none && remainingBases--; current = m_bases[current]) {
+    for (uint32_t current = nearestFrom(layout); current != Wire::none && remainingBases--; current = nearestFrom(m_bases[current])) {
         for (const Field& field : fieldsOf(current)) {
             for (const Field& otherField : fieldsOf(otherLayout)) {
                 if (field.key == otherField.key && haveNothingInCommon(field, otherField))

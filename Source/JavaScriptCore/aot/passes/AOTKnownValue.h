@@ -93,7 +93,7 @@ private:
 constexpr KnownBoolean knownBoolean(bool value) { return value ? KnownBoolean::True : KnownBoolean::False; }
 
 KnownValue knownValueOf(const Program&, const Function&, ValueID);
-KnownValue knownValueOfType(const Program&, const Type&);
+KnownValue knownValueOfType(const Type&);
 // Unknown for a hole, a bigint, a list and an object.
 KnownValue knownValueOf(const DataNode&);
 // The type that has the primitive and nothing else.

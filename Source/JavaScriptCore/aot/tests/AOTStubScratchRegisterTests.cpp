@@ -66,6 +66,61 @@ static void testStubsReadScratchValuesBeforeReplacingThem()
     AOT_TEST_CHECK(!numberOfConflicts);
 }
 
+static void testStubsReadConstantsAndCopiesBeforeReplacingThem()
+{
+    unsigned numberOfUnreadValues = 0;
+    for (const StubOptions& options : stubOptionVariants()) {
+        // Without the fast path of an allocation nobody reads what is laid out for it.
+        if (options.forceGCSlowPaths)
+            continue;
+        StubBlob blob = buildEveryStub(options);
+        std::span<const uint8_t> code = blob.code.bytes.span();
+        Vector<StubPlacement> placementsByOffset = blob.placements;
+        std::ranges::stable_sort(placementsByOffset, { }, &StubPlacement::offset);
+
+        for (const UnreadValue& value : findUnreadConstantsAndCopies(code)) {
+            const StubPlacement& stub = findStubAt(placementsByOffset, value.offset);
+            ++numberOfUnreadValues;
+            dataLog("x", static_cast<unsigned>(value.reg), " is written and on every path written again before it is read in ");
+            dump(WTF::dataFile(), stub.key);
+            dataLogLn(", which starts at ", stub.offset, ":");
+            printInstructions(WTF::dataFile(), code, value.offset, value.offset + 2 * sizeof(uint32_t));
+        }
+    }
+    AOT_TEST_CHECK(!numberOfUnreadValues);
+}
+
+static void testCheckerFollowsValuesOverBranches()
+{
+    constexpr GPRReg x0 = ARM64Registers::x0;
+    auto find = [](std::initializer_list<uint32_t> words) {
+        return findUnreadConstantsAndCopies(asByteSpan(std::span(words)));
+    };
+    auto finds = [&](std::initializer_list<uint32_t> words, std::initializer_list<UnreadValue> expected) {
+        return std::ranges::equal(find(words), expected);
+    };
+
+    // mov w0, #0 . b +8 . orr w0, wzr, #1 . mov x0, x26 . cbnz w0, +8 . ret . ret
+    AOT_TEST_CHECK(finds({ 0x52800000, 0x14000002, 0x320003E0, 0xAA1A03E0, 0x35000040, 0xD65F03C0, 0xD65F03C0 }, { { x0, 0 }, { x0, 8 } }));
+    // mov x0, x1 . mov x0, x2 . ret
+    AOT_TEST_CHECK(finds({ 0xAA0103E0, 0xAA0203E0, 0xD65F03C0 }, { { x0, 0 } }));
+    // Both paths write it again: mov w0, #0 . cbz x1, +12 . mov x0, x2 . ret . mov x0, x3 . ret
+    AOT_TEST_CHECK(finds({ 0x52800000, 0xB4000061, 0xAA0203E0, 0xD65F03C0, 0xAA0303E0, 0xD65F03C0 }, { { x0, 0 } }));
+
+    // mov w13, #0 . b +8 . orr w13, wzr, #1 . mov x0, x26 . cbnz w13, +8 . ret . ret
+    AOT_TEST_CHECK(find({ 0x5280000D, 0x14000002, 0x320003ED, 0xAA1A03E0, 0x3500004D, 0xD65F03C0, 0xD65F03C0 }).isEmpty());
+    // One path reads it: mov w0, #0 . cbz x1, +12 . mov x0, x2 . ret . str x0, [x1] . ret
+    AOT_TEST_CHECK(find({ 0x52800000, 0xB4000061, 0xAA0203E0, 0xD65F03C0, 0xF9000020, 0xD65F03C0 }).isEmpty());
+    // A call may read it: mov w0, #0 . blr x11 . mov x0, x2 . ret
+    AOT_TEST_CHECK(find({ 0x52800000, 0xD63F0160, 0xAA0203E0, 0xD65F03C0 }).isEmpty());
+    // So may what a jump out of the code reaches: mov w0, #0 . b +4096
+    AOT_TEST_CHECK(find({ 0x52800000, 0x14000400 }).isEmpty());
+    // A loop reads it in its next turn: mov w0, #0 . add x1, x1, x0 . mov w0, #1 . cbnz x1, -8 . ret
+    AOT_TEST_CHECK(find({ 0x52800000, 0x8B000021, 0x52800020, 0xB5FFFFC1, 0xD65F03C0 }).isEmpty());
+    // What is loaded or computed is not looked at: ldr x0, [x1] . add x0, x1, #1 . mov x0, x2 . ret
+    AOT_TEST_CHECK(find({ 0xF9400020, 0x91000420, 0xAA0203E0, 0xD65F03C0 }).isEmpty());
+}
+
 static Vector<ScratchRegisterConflict> findConflicts(std::initializer_list<uint32_t> words, std::initializer_list<uint32_t> entryOffsets = { })
 {
     return findScratchRegisterConflicts(asByteSpan(std::span(words)), std::span(entryOffsets));
@@ -144,6 +199,8 @@ std::span<const NativeTest> stubScratchRegisterTests()
         { "stubs/scratch-registers/stubs-read-values-before-replacing-them"_s, testStubsReadScratchValuesBeforeReplacingThem },
         { "stubs/scratch-registers/checker-reports-conflicts"_s, testCheckerReportsConflicts },
         { "stubs/scratch-registers/checker-accepts-ordinary-code"_s, testCheckerAcceptsOrdinaryCode },
+        { "stubs/scratch-registers/stubs-read-constants-and-copies-before-replacing-them"_s, testStubsReadConstantsAndCopiesBeforeReplacingThem },
+        { "stubs/scratch-registers/checker-follows-values-over-branches"_s, testCheckerFollowsValuesOverBranches },
     };
     return tests;
 #else

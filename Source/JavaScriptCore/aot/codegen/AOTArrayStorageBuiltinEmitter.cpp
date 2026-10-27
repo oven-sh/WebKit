@@ -127,7 +127,7 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     }
 
     ArrayStorage expected = ArrayAllocationEmitter(generator()).formAtAllocation(typeOf(call.receiver())).kind;
-    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(call.receiver()));
+    ArrayStorage declared = arrayStorageDeclaredBy(m_program, typeOf(call.receiver())).predicted();
     ArrayStorageFormList forms = elements().candidateFormsFor(pushed, expected);
     // An array of any other kind than its element type declares takes the stub, which knows them all.
     if (hasArrayStorageForm(declared) && forms.size() > 1 && forms.first()->kind == declared)
@@ -240,7 +240,8 @@ void ArrayStorageBuiltinEmitter::generateArrayWithLength(const InlineCall& call)
     m_out.appendTo(isNotInteger);
     join.add(integer(invalidArrayLength));
     Integer length = join.finish();
-    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call))));
+    bool isDoneInPlace = call.value() && (*call.value())->isDoneInPlace();
+    finishInlineCall(call, allocation.newArrayOfHoles(call.context(), length, allocation.formAtAllocation(typeOfArraysCreatedBy(call)), isDoneInPlace ? BuiltinID() : functionOf(call.overload())));
 }
 
 void ArrayStorageBuiltinEmitter::generateArrayOf(const InlineCall& call)

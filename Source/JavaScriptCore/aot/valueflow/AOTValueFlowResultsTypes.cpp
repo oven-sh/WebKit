@@ -12,12 +12,14 @@
 #include "AOTPredictedValues.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTCFG.h"
+#include "AOTClaims.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTKnownClosures.h"
+#include "AOTLedger.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
@@ -321,8 +323,10 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
 void NumbersOfPositions::followPositions(const FlowResultTables& tables)
 {
     PhaseTimes times(m_inputs.build, PassID::AnalyzeFlow);
-    for (size_t variable : m_inputs.variablesOnObjects->staticFieldsStoredIntegersBehindChecks)
-        m_numbers[variable].integers = Range::full();
+    for (uint32_t variable = 0; variable < m_inputs.program.variables.size(); ++variable) {
+        if (m_inputs.program.variables[variable].owner && isStoredIntegersThatOnlyChecksBound(m_inputs.ledger->writersOf(Place::variable(VariableID(variable)))))
+            m_numbers[variable].integers = Range::full();
+    }
     choosePositions(tables);
     times.didFinish("numbers: positions chosen"_s);
     for (uint32_t index = 0; index < m_maps.size(); ++index) {
@@ -511,8 +515,8 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
         return flow.writers == WriterState::AllKnown && flow.storeNaming == StoreNaming::EveryStoreNamesLocation;
     };
     auto everyStoreThroughObjectSpellsItsValue = [&](VariableID id) {
-        return std::ranges::all_of(m_inputs.variablesOnObjects->accessesTo(id), [&](const ValueFlowAccessThroughObject& access) {
-            return access.kind != ValueFlowAccessThroughObjectKind::Store || indexOfValueStoredIntoProperty(program.at(access.function).at(access.site).opcode);
+        return std::ranges::all_of(m_inputs.ledger->writersOf(Place::variable(id)).seen().predicted(), [&](const Write& write) {
+            return write.traits.contains(WriteTrait::SpellsItsValue);
         });
     };
 
@@ -611,11 +615,15 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
             }
         });
     }));
-    for (const ValueFlowAccessThroughObject& access : m_inputs.variablesOnObjects->accesses) {
-        if (access.kind != ValueFlowAccessThroughObjectKind::Store || !m_isFollowed.quickGet(access.variable.index()))
+    for (uint32_t variable = 0; variable < program.variables.size(); ++variable) {
+        if (!program.variables[variable].owner || !m_isFollowed.quickGet(variable))
             continue;
-        const Value& store = program.at(access.function).at(access.site);
-        m_writers.append({ access.variable.index(), access.function, store.operand(*indexOfValueStoredIntoProperty(store.opcode)) });
+        for (const Write& write : m_inputs.ledger->writersOf(Place::variable(VariableID(variable))).seen().predicted()) {
+            if (write.traits.contains(WriteTrait::NamesPlace))
+                continue;
+            const Value& store = program.at(write.function).at(write.site);
+            m_writers.append({ variable, write.function, store.operand(*indexOfValueStoredIntoProperty(store.opcode)) });
+        }
     }
     m_writers.appendVector(std::exchange(m_writersOfMaps, { }));
     sortAndRemoveDuplicates(m_inputs.loops(), m_writers);
@@ -1295,15 +1303,50 @@ static std::optional<Value> findValueHeldAnyway(const Program& program, const Ty
     return std::nullopt;
 }
 
-using FieldsDefined = Vector<FieldReference, 2>;
-static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultInputs& inputs)
+struct AppendedFieldReference {
+    LayoutID layout;
+    uint32_t field { 0 };
+
+    friend bool operator==(const AppendedFieldReference&, const AppendedFieldReference&) = default;
+};
+
+struct FieldsDefined {
+    Vector<FieldReference, 2> declared;
+    Vector<AppendedFieldReference, 1> appended;
+};
+
+static void addFieldsOfObjectsThatInitializerMeets(const ValueFlowResultInputs& inputs, const FlowApplication& application, const UnobservedFieldDefinition& definition, FieldsDefined& fields)
+{
+    const Program& program = inputs.program;
+    ValueFlowNodeID receiver = inputs.bodies().nodes().entryParameter(definition.initializer, *program.at(definition.initializer).thisParameterIndex());
+    inputs.sets().forEachMember(inputs.solver().possibleValuesOf(receiver), [&](ValueFlowObjectID object) {
+        LayoutID current = inputs.universe().layoutOf(object);
+        for (size_t steps = 0; current && steps < program.layouts.size(); ++steps, current = provenBaseOf(application, current)) {
+            if (std::optional<uint32_t> field = program.at(current).findField(definition.key)) {
+                fields.declared.appendIfNotContains(declarationOf(program, { current, *field }));
+                return;
+            }
+            const Vector<FlowAppendedField>& appended = application.layouts[current.index()].appendedFields;
+            size_t field = appended.findIf([&](const FlowAppendedField& candidate) {
+                return candidate.key == definition.key;
+            });
+            if (field != notFound) {
+                fields.appended.appendIfNotContains(AppendedFieldReference { current, static_cast<uint32_t>(field) });
+                return;
+            }
+        }
+    });
+}
+
+static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultInputs& inputs, const FlowApplication& application)
 {
     const Program& program = inputs.program;
     std::span<const UnobservedFieldDefinition> definitions = inputs.bodies().unobservedDefinitions().all();
     Vector<FieldsDefined> fields(definitions.size());
     Vector<Vector<uint32_t, 2>> definitionsOfClass(definitions.empty() ? 0 : program.layouts.size());
     for (uint32_t index = 0; index < definitions.size(); ++index) {
-        fields[index].append(declarationOf(program, { definitions[index].classLayout, *program.at(definitions[index].classLayout).findField(definitions[index].key) }));
+        fields[index].declared.append(declarationOf(program, { definitions[index].classLayout, *program.at(definitions[index].classLayout).findField(definitions[index].key) }));
+        addFieldsOfObjectsThatInitializerMeets(inputs, application, definitions[index], fields[index]);
         definitionsOfClass[definitions[index].classLayout.index()].append(index);
     }
     if (definitions.empty())
@@ -1313,17 +1356,29 @@ static Vector<FieldsDefined> findFieldsDefinedUnobserved(const ValueFlowResultIn
         for (size_t steps = 0; base && steps < program.layouts.size(); ++steps, base = program.at(base).base) {
             for (uint32_t index : definitionsOfClass[base.index()]) {
                 if (std::optional<uint32_t> field = program.layouts[heir].findField(definitions[index].key))
-                    fields[index].appendIfNotContains(declarationOf(program, { LayoutID(heir), *field }));
+                    fields[index].declared.appendIfNotContains(declarationOf(program, { LayoutID(heir), *field }));
             }
         }
     }
     return fields;
 }
 
-static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, const Vector<FieldsDefined>& fieldsDefined, TypeTable& types, FlowApplication& application)
+void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
 {
     const Program& program = inputs.program;
+    FlowApplication& application = *tables.application;
     std::span<const UnobservedFieldDefinition> definitions = inputs.bodies().unobservedDefinitions().all();
+    Vector<FieldsDefined> fieldsDefined = findFieldsDefinedUnobserved(inputs, application);
+    auto positionOfAppended = [&](AppendedFieldReference reference) -> FlowPositionUpdate& {
+        return application.layouts[reference.layout.index()].appendedFields[reference.field].position;
+    };
+    auto typeOfAppended = [&](AppendedFieldReference reference) {
+        const FlowPositionUpdate& position = positionOfAppended(reference);
+        return position.isProven && position.type ? position.type : TypeTable::anything;
+    };
+    auto appendedHoldsUndefined = [&](AppendedFieldReference reference) {
+        return !!(types.at(typeOfAppended(reference)).primitives & Primitive::Undefined);
+    };
     auto positionOf = [&](FieldReference reference) -> FlowPositionUpdate& {
         return application.layouts[reference.layout.index()].fields[reference.field].position;
     };
@@ -1338,39 +1393,74 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
     };
     for (uint32_t index = 0; index < definitions.size(); ++index) {
         const UnobservedFieldDefinition& definition = definitions[index];
-        if (!inputs.isReached(definition.initializer) || std::ranges::all_of(fieldsDefined[index], holdsUndefined))
+        if (!inputs.isReached(definition.initializer) || (std::ranges::all_of(fieldsDefined[index].declared, holdsUndefined) && std::ranges::all_of(fieldsDefined[index].appended, appendedHoldsUndefined)))
             continue;
         ValueFlowNodeID defined = inputs.bodies().nodes().valueOf(definition);
         if (defined && !inputs.sets().isEmpty(inputs.solver().possibleValuesOf(defined)))
             continue;
         ScratchTypeArena scratch(types);
-        Type common = types.at(typeOf(fieldsDefined[index].first()));
-        for (FieldReference reference : fieldsDefined[index].span().subspan(1))
+        Type common = types.at(typeOf(fieldsDefined[index].declared.first()));
+        for (FieldReference reference : fieldsDefined[index].declared.span().subspan(1))
             common = common.intersectWith(types.at(typeOf(reference)), scratch);
+        for (AppendedFieldReference reference : fieldsDefined[index].appended)
+            common = common.intersectWith(types.at(typeOfAppended(reference)), scratch);
         if (std::optional<Value> value = findValueHeldAnyway(program, common)) {
             application.bodies[definition.initializer.index()].definedValues.append({ definition.definition, WTF::move(*value) });
             continue;
         }
-        for (FieldReference reference : fieldsDefined[index]) {
+        for (FieldReference reference : fieldsDefined[index].declared) {
             if (positionOf(reference).isProven && !holdsUndefined(reference) && program.at(fieldAt(program, reference).declared.written()).primitives & Primitive::Undefined)
                 positionOf(reference).type = types.intern(types.at(typeOf(reference)).withPrimitives(Primitive::Undefined));
+        }
+        for (AppendedFieldReference reference : fieldsDefined[index].appended) {
+            if (!appendedHoldsUndefined(reference))
+                positionOfAppended(reference).type = types.intern(types.at(typeOfAppended(reference)).withPrimitives(Primitive::Undefined));
         }
     }
 }
 
-static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID id, const ValueFlowFieldContents& contents, const BitVector& fieldsWithUnobservedDefinition, ValueFlowPositions& positions, TypeArena& types, FlowLayoutUpdate& update)
+static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID id, const ValueFlowFieldContents& contents, const LedgerPart& ledger, const BitVector& fieldsWithUnobservedDefinition, ValueFlowPositions& positions, TypeArena& types, FlowLayoutUpdate& update)
 {
     const Program& program = inputs.program;
     const Layout& layout = program.at(id);
     if (!hasObjectsThatCodeAlters(layout.kind))
         return;
     ValueSetMaker& maker = positions.maker();
+    ValueSetID numbersThatAreNoIntegers = maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) });
+    // A store tests what it is handed, in every version of its function, and turns away what does not fit the slot: of what arrives there only what passes counts.
+    // An allocation tests nothing, so what it lists counts as it arrives. Whoever applies this stores such a value behind the allocation, or takes the type of the field back.
+    auto noteValuesListedWithOtherTypes = [&](uint32_t index, const Type& asRead, ValueSetID primitivesInside, bool everyObjectLiesInside) {
+        if (layout.fields[index].flags.contains(FieldFlags::IsInherited) || !asRead.isJavaScriptValue() || asRead.isAnything())
+            return;
+        const ValueFlowNumbers& storedNumbers = contents.storedNumbers[id.index()][index];
+        for (const Write& write : ledger.writersOf(Place::field(program, id, index))->seen().predicted()) {
+            if (write.form != WriteForm::AtCreation || !write.site)
+                continue;
+            auto liesInside = [&] {
+                if (ValueSets::isComplement(write.arrives))
+                    return false;
+                ValueSetID primitives = maker.intersect(write.arrives, inputs.universe().primitives());
+                if (!storedNumbers.mayBeOtherThanIntegers)
+                    primitives = maker.intersect(primitives, ValueSets::complement(numbersThatAreNoIntegers));
+                if (!inputs.sets().isSubset(primitives, primitivesInside))
+                    return false;
+                return everyObjectLiesInside || positions.isSurelyInside(maker.intersect(write.arrives, inputs.universe().objects()), asRead);
+            };
+            if (!liesInside())
+                update.valuesListedWithOtherTypes.append({ index, write.function, write.site });
+        }
+    };
     for (uint32_t index = 0; index < layout.fields.size(); ++index) {
         FieldFlow& flow = update.fields[index].flow;
-        if (flow.location.writers != WriterState::AllKnown)
-            continue;
-        ValueSetID stored = contents.stored[id.index()][index];
         const Type& asRead = program.at(layout.fields[index].declared.written());
+        if (flow.location.writers != WriterState::AllKnown) {
+            ValueSetID primitivesInside = inputs.universe().membersSurelyInside(maker, program, layout.fields[index].declared.written());
+            if (asRead.primitives & Primitive::Integer && contents.storedNumbers[id.index()][index].integers.isSubsetOf(asRead.integers))
+                primitivesInside = maker.unite(primitivesInside, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Integer)));
+            noteValuesListedWithOtherTypes(index, asRead, primitivesInside, false);
+            continue;
+        }
+        ValueSetID stored = contents.stored[id.index()][index];
         bool startsAbsent = asRead.primitives & Primitive::Absent && !inputs.sets().isEmpty(stored);
         auto resultWith = [&](ValueSetID held) {
             return positions.resultAt(layout.fields[index].declared, startsAbsent ? maker.unite(held, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))) : held);
@@ -1396,10 +1486,12 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
             surelyInside = maker.unite(surelyInside, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Integer)));
         ValueSetID storedPrimitives = maker.intersect(stored, inputs.universe().primitives());
         if (!storedNumbers.mayBeOtherThanIntegers)
-            storedPrimitives = maker.intersect(storedPrimitives, ValueSets::complement(maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) })));
+            storedPrimitives = maker.intersect(storedPrimitives, ValueSets::complement(numbersThatAreNoIntegers));
         bool storesOnlyPrimitivesOfType = inputs.sets().isSubset(storedPrimitives, surelyInside);
         if (inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) && !update.fields[index].accessor.isAccessor() && (asRead.isAnything() || (storesOnlyObjectsOfType && storesOnlyPrimitivesOfType)))
             flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
+        else
+            noteValuesListedWithOtherTypes(index, asRead, surelyInside, storesOnlyObjectsOfType);
         if (!flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) && flow.location.stores == StoreCount::AtMostOnce) {
             flow.location.stores = StoreCount::Unknown;
             flow.location.isUnchangedDuringActivation = false;
@@ -1486,7 +1578,7 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
     else if (!everyReadSeesStore && startsWithoutValueInSolve(inputs.program, inputs.program.at(id)))
         deadZone = DeadZone::UndefinedAtStartMayBeObserved;
     update.position = positions.updateFor(inputs.program.at(id).declared, inputs.bodies().nodes().variable(id), deadZone, numbers.ofVariable(id));
-    if (inputs.variablesOnObjects->staticFieldsStoredIntegersBehindChecks.quickGet(id.index()))
+    if (isStoredIntegersThatOnlyChecksBound(inputs.ledger->writersOf(Place::variable(id))))
         widenToStoredIntegers(inputs.program.at(inputs.program.at(id).declared.written()), numbers.ofVariable(id), types, update.position);
 }
 
@@ -1518,7 +1610,7 @@ static void expectThisToBeCreatedBelow(const Program& program, const FlowApplica
         return;
     Vector<LayoutID, 4> expected(createdBelow);
     if (LayoutSetID layouts = program.at(declared.expected().predicted()).layouts) {
-        for (LayoutID layout : program.at(layouts).members) {
+        for (LayoutID layout : program.at(layouts).completeMembers()) {
             if (!application.layouts[layout.index()].objectsAreDictionaries && !expected.contains(layout))
                 expected.append(layout);
         }
@@ -1790,7 +1882,7 @@ static void proveReadsAfterInitialization(const Program& program, const Parallel
     }
 }
 
-void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFieldContents& fieldContents, TypeTable& types, FlowResultTables& tables, const ListenerForSetsOutsideTypes* listenerForSetsOutsideTypes)
+void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFieldContents& fieldContents, const LedgerPart& ledgerOfFields, TypeTable& types, FlowResultTables& tables, const ListenerForSetsOutsideTypes* listenerForSetsOutsideTypes)
 {
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
@@ -1806,10 +1898,9 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
 
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     LocationsStoredUndefined storedUndefined = findLocationsStoredUndefined(inputs, application);
-    Vector<FieldsDefined> fieldsDefinedUnobserved = findFieldsDefinedUnobserved(inputs);
     Vector<BitVector> fieldsWithUnobservedDefinition(numberOfLayouts);
-    for (const FieldsDefined& defined : fieldsDefinedUnobserved) {
-        for (FieldReference field : defined)
+    for (const FieldsDefined& defined : findFieldsDefinedUnobserved(inputs, application)) {
+        for (FieldReference field : defined.declared)
             fieldsWithUnobservedDefinition[field.layout.index()].set(field.field);
     }
     RELEASE_ASSERT(inputs.numbersOfValues);
@@ -1837,7 +1928,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         if (task < numberOfLayouts) {
             ValueFlowPositions positions(inputs, arena, counts, task, maker);
             narrowEnvironmentFields(inputs, LayoutID(task), storedUndefined.environmentFields, numbers, positions, application.layouts[task]);
-            narrowFieldsOfObjects(inputs, LayoutID(task), fieldContents, fieldsWithUnobservedDefinition[task], positions, arena, application.layouts[task]);
+            narrowFieldsOfObjects(inputs, LayoutID(task), fieldContents, ledgerOfFields, fieldsWithUnobservedDefinition[task], positions, arena, application.layouts[task]);
             return;
         }
         if (task < firstFunctionTask) {
@@ -1882,7 +1973,6 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         remapTypes(application.bodies[task - firstFunctionTask], remap);
     });
     times.didFinish("types: remapped"_s);
-    replaceUnobservedDefinitions(inputs, fieldsDefinedUnobserved, types, application);
     proveReadsAfterInitialization(program, inputs.loops(), types, application);
 }
 

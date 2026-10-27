@@ -1,0 +1,56 @@
+# main.mjs: import "./a.cjs"; import "./b.cjs"; import "./late.cjs"        a.cjs: exports.kept = function () {}; require("./d.mjs"); throw 1        d.mjs: import "./a.cjs"        b.cjs: exports.other = function () {}
+# late.cjs: require("./a.cjs").default.kept(); require("./b.cjs").default.other()
+# The loader has a.cjs from the moment at which d.mjs imports the file. Nobody gets what the file throws behind that, and a later `require` answers with the namespace object,
+# which has what the file exports under the name "default". No ES module imports b.cjs while it runs: a `require` of it answers with what it exports, which has no such name
+# RUN: valueflow-solve calls
+# CHECK: f3 v3 -> f5
+# CHECK-NOT: f3 v7 -> f
+
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m4 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/app/d.mjs" displayPath="d.mjs" flags=[KeepsError, IsLoadedByLoader, IsRequiredDuringLoad] body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/app/a.cjs" displayPath="a.cjs" kind=CommonJs flags=[KeepsError, IsLoadedByLoader, MayBeImportedWhileItRuns] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError, IsLoadedByLoader] body=f2 requests=[{target=m1 completes=true}, {target=m4 completes=true}, {target=m3 completes=true}]
+module m3 path="/app/late.cjs" displayPath="late.cjs" kind=CommonJs flags=[KeepsError, IsLoadedByLoader] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
+module m4 path="/app/b.cjs" displayPath="b.cjs" kind=CommonJs flags=[KeepsError, IsLoadedByLoader] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g1
+entry module=m2
+function f0 name="d" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f1 name="a" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f5
+    PropSet v0, v2 key="kept"
+    v4 = RequireModule module=m0 referrer=m1 specifier="./d.mjs"
+    v5 = Integer integer=1
+    Throw v5
+}
+function f2 name="main" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="late" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m3 specifier="./a.cjs"
+    v1 = PropGet v0 key="default"
+    v2 = PropGet v1 key="kept"
+    v3 = Call v2, v1
+    v4 = RequireModule module=m4 referrer=m3 specifier="./b.cjs"
+    v5 = PropGet v4 key="default"
+    v6 = PropGet v5 key="other"
+    v7 = Call v6, v5
+    Return
+}
+function f4 name="b" module=m4 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f6
+    PropSet v0, v2 key="other"
+    Return
+}
+function f5 name="kept" module=m1 results=[{type=anything}] {
+    Return
+}
+function f6 name="other" module=m4 results=[{type=anything}] {
+    Return
+}

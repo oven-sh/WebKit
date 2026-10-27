@@ -364,6 +364,7 @@ static void printFieldRecords(const TablesContext& context, ASCIILiteral keyword
         RecordLine line(context, keyword, index);
         line.identifier("name"_s, field.name).flags("flags"_s, field.flags, fieldFlagNames).field("slot"_s, field.slot).field("type"_s, field.type);
         line.flag("isFilledAtBirth"_s, field.isFilledAtBirth).flag("holdsRawValueFromBirth"_s, field.holdsRawValueFromBirth).flag("keepsStateOfBirth"_s, field.keepsStateOfBirth);
+        line.flag("slotHoldsUndefinedAndNull"_s, field.slotHoldsUndefinedAndNull);
         if (field.slot.representation() != SlotRepresentation::DeferredClosure)
             continue;
         line.field("function"_s, layout.deferredClosureOf(field));
@@ -411,7 +412,7 @@ static void printLayoutRecord(const TablesContext& context, const LayoutData& la
     RecordLine(context, "layout"_s).field("shape"_s, layout.shape).field("index"_s, LayoutID(layout.index)).field("kind"_s, layout.kind()).string("name"_s, layout.name).field("size"_s, layout.size)
         .field("impossible"_s, layout.impossibleMutations()).flag("keysAreNeverEnumerated"_s, layout.keysAreNeverEnumerated).flag("hasFieldsWithSymbolKeys"_s, layout.hasFieldsWithSymbolKeys)
         .flag("hasOnlyPlainSlots"_s, layout.hasOnlyPlainSlots)
-        .flag("hasFieldThatKeepsStateOfBirth"_s, layout.hasFieldThatKeepsStateOfBirth);
+        .flag("hasSlotWithUnusedMarkers"_s, layout.hasSlotWithUnusedMarkers);
     printFieldRecords(context, "  field"_s, layout, layout.fields());
     printReferences(context, referenceTableOf(layout));
     for (uint32_t order = 0; order < layout.numberOfOrders; ++order)

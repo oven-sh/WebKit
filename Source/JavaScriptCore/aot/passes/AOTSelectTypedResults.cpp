@@ -282,7 +282,7 @@ static TypedResultChoice chooseResult(FunctionPassContext& context, TypedResultS
     };
 
     // The generic side of an expansion is a rare block, which ends the rounds. How often the call runs says nothing about how often its result is read.
-    if (context.function.at(site.block).frequency == BlockFrequency::Rare)
+    if (context.function.at(site.block).frequency.predicted() == BlockFrequency::Rare)
         return { };
     if (site.form == TypedResultForm::Rows && hasExpectedRows())
         return { };
@@ -453,7 +453,7 @@ struct TypedResultExpander final : Emission {
         function.edit(site.call) = WTF::move(*bytesCall);
         Value& call = function.edit(site.call);
         call.type = resultTypeOf(program(), function, call, inputs().types);
-        call.setExpected(ExpectedType(expectedTypeOf(program(), function, call, inputs().types)));
+        call.setExpected(expectedTypeOf(program(), function, call, inputs().types));
         removeCastsOfAwaitedPromise(function, site);
         pass.analyses.didChangeValues();
         builder().setOrigin(originalCall.origin());

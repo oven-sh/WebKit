@@ -68,11 +68,10 @@ struct HeapFixture {
 
     LayoutSetID layoutSet(std::initializer_list<uint32_t> members, bool isComplete = true)
     {
-        Typed::LayoutSet set;
+        Vector<LayoutID> list;
         for (uint32_t member : members)
-            set.members.append(LayoutID(member));
-        set.isComplete = isComplete;
-        return program.program.types.intern(WTF::move(set));
+            list.append(LayoutID(member));
+        return program.program.types.intern(isComplete ? Typed::LayoutSet::complete(WTF::move(list)) : Typed::LayoutSet::open(WTF::move(list)));
     }
 
     B3::MemoryValue* appendLoad(const B3::AbstractHeap& heap)

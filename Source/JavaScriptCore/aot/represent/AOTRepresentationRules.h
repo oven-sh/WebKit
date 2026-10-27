@@ -65,6 +65,8 @@ bool isEqualityOfNumbers(const Program&, const Function&, const Value&);
 
 bool picksOwnRepresentation(const Function&, ValueID);
 bool isForwardedOperand(const Value& user, uint32_t operandIndex);
+bool readsDoubleOutOfBytes(const Value&);
+bool readsDoubleOutOfBytes(const Terminator&);
 
 Representation wantedRepresentationOf(const RepresentationInputs&, const Value& user, uint32_t operandIndex);
 Representation wantedRepresentationOf(const RepresentationInputs&, const Terminator& user, uint32_t operandIndex);

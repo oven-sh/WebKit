@@ -38,6 +38,8 @@ public:
         // The object has its layout's fields and nothing else, and above it is only the Object.prototype of its realm: a name that is neither a field nor a name of that object finds nothing.
         HasOnlyFieldsBelowObjectPrototype = 1 << 5,
         IsCopiedByWords = 1 << 6,
+        // Set by whoever has looked at the fields of the layout.
+        EveryFieldIsBornConfigurable = 1 << 7,
     };
 
     template<typename CellType, SubspaceAccess mode>
@@ -86,6 +88,8 @@ public:
     bool hasOutOfLineKeyOrder() const { return m_flags.contains(Flag::HasOutOfLineKeyOrder); }
     bool hasOnlyPlainSlots() const { return m_flags.contains(Flag::HasOnlyPlainSlots); }
     bool isCopiedByWords() const { return m_flags.contains(Flag::IsCopiedByWords); }
+    bool isKnownThatEveryFieldIsBornConfigurable() const { return m_flags.contains(Flag::EveryFieldIsBornConfigurable); }
+    void didFindEveryFieldBornConfigurable() { m_flags.add(Flag::EveryFieldIsBornConfigurable); }
 
     StructureID extraPropertiesStructureID() const { return std::bit_cast<StructureID>(hasExtraProperties() ? m_namedStructureAndRareData.extraPropertiesStructureID : 0); }
     Structure* extraPropertiesStructure() const

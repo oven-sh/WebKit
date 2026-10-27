@@ -201,7 +201,7 @@ static void loadHoleOf(StubAssembler& jit, GPRReg array, GPRReg hole)
 
 static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::optional<GPRReg> neededLength, JumpList& slowPath)
 {
-    const auto [array, butterfly, length, storage, allocator, scratch] = growth;
+    const auto [array, butterfly, length, storage, allocator, scratch, isOfExtraProperties] = growth;
     const GPRReg index = length;
     const GPRReg vectorLength = allocator;
     RELEASE_ASSERT(noOverlap(array, butterfly, length, storage, allocator, scratch, instanceGPR));
@@ -210,7 +210,12 @@ static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::opti
     slowPath.append(jit.branch32(CCallHelpers::Above, neededLength.value_or(length), TrustedImm32(maxLengthForElementwiseCopy)));
     // Only the array leads to the new vector, so an array that the collector will not visit again is left to C++.
     slowPath.append(branchIfBarrierIsNeeded(jit, array, scratch));
-    branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
+    if (growth.isOfExtraProperties) {
+        // Such hold elements alone.
+        jit.load32(Address(array, JSCell::structureIDOffset()), scratch);
+        slowPath.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.headerOfExtraPropertiesWithElements))));
+    } else
+        branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
     // The length of an array with ArrayStorage may lie beyond its vector.
     if (jit.options().validates && !neededLength)
         emitVectorGrowthValidation(jit, growth);

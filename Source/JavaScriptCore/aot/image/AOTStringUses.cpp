@@ -32,6 +32,7 @@
 #include <array>
 #include <concepts>
 #include <functional>
+#include <limits>
 #include <span>
 #include <wtf/Atomics.h>
 #include <wtf/FastBitVector.h>
@@ -260,14 +261,16 @@ struct FunctionWalk {
 
 static Vector<uint32_t> sortFunctionsBySourcePosition(const Typed::Program& program, const ParallelLoops& loops)
 {
-    using PositionAndIndex = std::array<uint32_t, 3>;
+    // Of functions that begin at one place the outer one comes first, and ahead of it what has no text of its own, as the body of a module: a function may begin with the first character of its file.
+    using PositionAndIndex = std::array<uint32_t, 4>;
     Vector<PositionAndIndex> positionsAndIndices(program.functions.size(), [&](size_t index) {
         const Typed::Function& function = program.functions[index];
-        return PositionAndIndex { function.module.index(), function.position, static_cast<uint32_t>(index) };
+        uint32_t charactersBehindEnd = function.text.end ? std::numeric_limits<uint32_t>::max() - function.text.end : 0;
+        return PositionAndIndex { function.module.index(), function.position, charactersBehindEnd, static_cast<uint32_t>(index) };
     });
     parallelSort(loops, positionsAndIndices.mutableSpan(), std::less<PositionAndIndex> { });
     return Vector<uint32_t>(program.functions.size(), [&](size_t index) {
-        return positionsAndIndices[index][2];
+        return positionsAndIndices[index][3];
     });
 }
 

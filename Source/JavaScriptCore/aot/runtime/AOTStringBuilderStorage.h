@@ -172,7 +172,7 @@ private:
         uint32_t maxPooledBuilders;
     };
 
-    StringBuilderStorage(VM&, Structure*, StackManager::Mirror& levelLimit);
+    StringBuilderStorage(VM&, Structure*, StackManager::Mirror& levelLimit, StringBuilderWords&);
     static StringBuilderStorage* create(Instance&);
     void reset();
     void returnToPool(Instance&);
@@ -191,6 +191,7 @@ private:
     bool tryEnsureRoom(size_t length, size_t bytesWritten);
     bool tryReplaceBuffer(size_t newCapacity);
     void dropBuffer();
+    void dropLargeBuffer(size_t longestTextInBuffer);
     bool ensureRoom(JSGlobalObject*, size_t size);
     void throwOutOfMemory(JSGlobalObject*);
     static bool holderInTheMiddleRepeats(const JSONHolderRecord* innermost);
@@ -220,7 +221,10 @@ private:
     JSONHolderRecord* m_jsonHolders { nullptr };
     WatchedJSONLevels m_watchedLevels;
     uint32_t m_lengthWhenWatchBegan { 0 };
+    uint32_t m_positionWhenSegmentsWereJoined { 0 };
+    uint32_t m_capacityOfNextBuffer { 0 };
     StackManager::Mirror& m_levelLimit;
+    StringBuilderWords& m_words;
     WriteBarrier<StringBuilderStorage> m_nextFree;
     WriteBarrier<JSString> m_lastString;
     uint32_t m_lengthOfLastString { 0 };

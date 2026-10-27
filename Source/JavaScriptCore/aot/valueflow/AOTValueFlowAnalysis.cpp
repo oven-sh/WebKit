@@ -13,7 +13,9 @@
 #include "AOTKnownClosures.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
+#include "AOTValueFlowWidenedSolve.h"
 #include <wtf/MonotonicTime.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -353,7 +355,7 @@ static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelL
         for (StringID literal : type.stringLiterals)
             program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = literal });
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents)
+            for (TypeID contents : part.writtenContents)
                 visit(contents);
         }
     }
@@ -479,6 +481,20 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     if (!m_instancedFunctions->isEmpty())
         m_input.instancedFunctions = m_instancedFunctions.get();
     times.didFinish("solve: instanced functions"_s);
+    Vector<UnseenCodeRecord> unseenCodeOfProgramAsItIs;
+    if (build.options().widensFlow) [[unlikely]] {
+        m_inputAsItIs = m_input;
+        m_inputAsItIs.remembersWhoLoggedEachEdge = true;
+        m_inputAsItIs.isAskedHowValuesCame = true;
+        m_inputAsItIs.leavesOutWhatIsCovered = false;
+        m_solver = makeUnique<ValueFlowSolver>(m_inputAsItIs, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
+        if (m_solver->solve()) {
+            unseenCodeOfProgramAsItIs = unseenCodeRecordsOf(*this);
+            m_solverOfProgramAsItIs = WTF::move(m_solver);
+            m_input.seedOfWidening = build.recordedOptions().layoutSeed;
+        }
+        times.didFinish("solve: the program as it is"_s);
+    }
     m_solver = makeUnique<ValueFlowSolver>(m_input, m_bodies.sets(), runValueFlowRule, build.parallelLoops(), rounds);
     times.didFinish("solve: the solver made"_s);
     m_hasResult = m_solver->solve();
@@ -490,6 +506,10 @@ ValueFlowSolution::ValueFlowSolution(Program& program, BuildContext& build, Valu
     }
     for (const std::unique_ptr<ValueSetMaker>& maker : m_solver->makersIdleAfterSolve())
         m_makerPool.giveBack(*maker);
+    if (m_solverOfProgramAsItIs && m_hasResult) [[unlikely]] {
+        reportWhatIsFoundOnlyFromLess(*this, unseenCodeOfProgramAsItIs.span(), build);
+        times.didFinish("solve: the two solves compared"_s);
+    }
 }
 
 ValueFlowSolution::~ValueFlowSolution() = default;

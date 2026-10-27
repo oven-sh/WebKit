@@ -116,24 +116,36 @@ struct AssignmentPlan {
     // In storesInSourceOrder: the index of an ExtraPropertyStore. Without it, of a FieldStore.
     static constexpr uint16_t isExtraPropertyStore = 1 << 15;
 
+    bool readsFrom(StructureID structure, uint32_t orderWord, const JSObject* propertyStorageOrNull) const
+    {
+        return source == structure && sourceOrderWord == orderWord && sourcePropertyStorage == (propertyStorageOrNull ? propertyStorageOrNull->structureID() : StructureID());
+    }
+
+    bool readsFrom(const Object& from) const
+    {
+        if (sourceStructureNamesPropertyStorage)
+            return source == from.structureID() && sourceOrderWord == from.orderWord();
+        return readsFrom(from.structureID(), from.orderWord(), from.extraProperties());
+    }
+
+    bool leavesOutRun(uint32_t numberPlusOne) const { return (excludedList ? excludedList->runNumberPlusOne() : 0) == numberPlusOne && excludedNames.isEmpty(); }
+
     bool isFor(StructureID targetID, StructureID extraPropertiesID, const AssignmentSource& from) const
     {
-        return target == targetID && extraPropertiesBefore == extraPropertiesID && source == from.object->structureID()
-            && sourcePropertyStorage == from.propertyStorageStructureID() && sourceOrderWord == from.orderWord
+        return target == targetID && extraPropertiesBefore == extraPropertiesID && readsFrom(from.object->structureID(), from.orderWord, from.propertyStorage)
             && (!servesDefinitionsOnly || from.defines) && leavesOut(from.excludedNames);
     }
 
     bool fillsEmptySlotsOf(const Object& targetObject, const Object& sourceObject, uint32_t excludedRunNumberPlusOne) const
     {
-        return orderWordBeforeFillingAll == targetObject.orderWord() && target == targetObject.structureID() && source == sourceObject.structureID() && sourceOrderWord == sourceObject.orderWord()
-            && (excludedList ? excludedList->runNumberPlusOne() : 0) == excludedRunNumberPlusOne && excludedNames.isEmpty();
+        return orderWordBeforeFillingAll == targetObject.orderWord() && target == targetObject.structureID()
+            && readsFrom(sourceObject) && leavesOutRun(excludedRunNumberPlusOne);
     }
 
     bool runsAsBeforeOn(const Object& targetObject, const AssignmentSource& from, uint32_t excludedRunNumberPlusOne) const
     {
-        return isUsable && orderWordBeforeRun == targetObject.orderWord() && target == targetObject.structureID() && extraPropertiesBefore == StructureID() && source == from.object->structureID()
-            && sourcePropertyStorage == from.propertyStorageStructureID() && sourceOrderWord == from.orderWord
-            && (excludedList ? excludedList->runNumberPlusOne() : 0) == excludedRunNumberPlusOne && excludedNames.isEmpty();
+        return isUsable && orderWordBeforeRun == targetObject.orderWord() && target == targetObject.structureID() && extraPropertiesBefore == StructureID()
+            && readsFrom(from.object->structureID(), from.orderWord, from.propertyStorage) && leavesOutRun(excludedRunNumberPlusOne);
     }
 
     // Nothing but the list itself lies at the address of a list.
@@ -160,6 +172,7 @@ struct AssignmentPlan {
     const ExcludedNameList* excludedList { nullptr };
     Vector<RefPtr<UniquedStringImpl>, 2> excludedNames;
     bool isUsable { false };
+    bool sourceStructureNamesPropertyStorage { false };
     Vector<uint16_t> storesInSourceOrder;
     bool servesDefinitionsOnly { false };
     bool addsExtraProperties { false };

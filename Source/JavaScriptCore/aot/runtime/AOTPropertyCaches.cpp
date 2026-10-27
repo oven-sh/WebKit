@@ -11,6 +11,7 @@
 #include "AOTArrayAllocationProfile.h"
 #include "AOTClassPrototype.h"
 #include "AOTClassTable.h"
+#include "AOTClosure.h"
 #include "AOTCompiledFrame.h"
 #include "AOTCompiledStructure.h"
 #include "AOTEmptyPages.h"
@@ -50,6 +51,7 @@
 #include <wtf/SIMDHelpers.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
 #if OS(LINUX)
 #include <sys/mman.h>
 #if !defined(MADV_POPULATE_WRITE)
@@ -1115,6 +1117,9 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
         }
         m_front.remove(id, *column, access);
     }
+    // An access by value finds what this table holds. The cells in front are for accesses by name alone. A store that makes the field finds nothing there that the library keeps in a form of its own.
+    if (slot.kind != Slot::Kind::FieldCreation && isPreparedBeforeLookups(m_vm, name.uid))
+        return;
     if (m_hashedTable.set(name.uid, access, slot) == HashedSlotTable::SetResult::Stored)
         return;
     for (Instance* instance : m_vm.aotState().instances)
@@ -1169,6 +1174,17 @@ void initializePropertyCacheWords(Instance& instance)
     words.booleanStructureID = (booleanStructure ? booleanStructure : structureOfNoReceiver)->id().bits();
     words.hasInstanceUID = vm.propertyNames->hasInstanceSymbol.impl();
     words.prototypeUID = vm.propertyNames->prototype.impl();
+    words.lengthUID = vm.propertyNames->length.impl();
+    words.nameUID = vm.propertyNames->name.impl();
+    words.lookupOfOrdinaryObjects = std::bit_cast<const void*>(JSFinalObject::info()->methodTable.getOwnPropertySlot);
+    words.lookupOfArrays = std::bit_cast<const void*>(JSArray::info()->methodTable.getOwnPropertySlot);
+    words.lookupOfFunctions = std::bit_cast<const void*>(JSFunction::info()->methodTable.getOwnPropertySlot);
+    auto setNumberOfName = [&](TrapOfProxy trap, const Identifier& name) {
+        words.numbersOfNamesOfTraps[static_cast<unsigned>(trap)] = vm.aotState().identifiers->numberOf(name.impl()).value_or(0);
+    };
+    setNumberOfName(TrapOfProxy::Get, vm.propertyNames->get);
+    setNumberOfName(TrapOfProxy::Has, vm.propertyNames->has);
+    setNumberOfName(TrapOfProxy::Set, vm.propertyNames->set);
     words.defaultHasInstanceFunction = globalObject->functionProtoHasInstanceSymbolFunction();
     const Image& image = *vm.aotState().image;
     if (image.sharedCodeCopies().empty())
@@ -1219,9 +1235,36 @@ void PropertyCaches::didAddProperty(Structure* before, Structure* after)
     m_additionsSinceCollection.append({ before->id(), after->id() });
 }
 
+JSCell* PropertyCaches::keyForTraps(UniquedStringImpl* uid)
+{
+    bool isKept = !uid->isSymbol() && m_vm.aotState().identifiers->numberOf(uid);
+    if (isKept) {
+        if (JSCell* key = m_keysForTraps.get(uid))
+            return key;
+    }
+    JSCell* key = identifierToSafePublicJSValue(m_vm, Identifier::fromUid(m_vm, uid)).asCell();
+    if (isKept) {
+        Locker locker { m_state.caches->lock() };
+        m_keysForTraps.add(uid, key);
+    }
+    return key;
+}
+
+void PropertyCaches::prepareHoldersBeforeLookupsUnder(Symbol* symbol, JSObject* function)
+{
+    Locker locker { m_state.caches->lock() };
+    m_preparationsBeforeLookups.set(&symbol->uid(), PreparationBeforeLookups { symbol, function });
+}
+
 template<typename Visitor>
 void PropertyCaches::visitRoots(Visitor& visitor)
 {
+    for (JSCell* key : m_keysForTraps.values())
+        visitor.appendUnbarriered(key);
+    for (const PreparationBeforeLookups& preparation : m_preparationsBeforeLookups.values()) {
+        visitor.appendUnbarriered(preparation.symbol);
+        visitor.appendUnbarriered(preparation.function);
+    }
     if (visitor.collectionScope() != CollectionScope::Eden)
         return;
     auto keepsStructure = [&](const Addition& addition) {
@@ -1284,8 +1327,10 @@ static bool belongsToOneObject(Structure* structure)
 
 void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& answer)
 {
-    if (answer.didFlatten)
+    if (answer.didFlatten) {
+        didFileNothing();
         return;
+    }
     ASSERT(answer.access == access.access);
     Structure* structure = access.structure;
     if (!canCache(structure, answer)) {
@@ -1372,10 +1417,139 @@ static ASCIILiteral describeFieldOfMiss(JSValue receiver, UniquedStringImpl* nam
     return object->isInSlot(*field) ? ", a field in its slot"_s : ", a field outside its slot"_s;
 }
 
+// For the counts alone: why answerFromObjectsAndReturn(), the walk of the stubs over the receiver and the objects above it, left a name to the run time. The tests are those of the stub, in its order.
+static ASCIILiteral whyObjectsDidNotAnswer(VM& vm, JSValue receiver, UniquedStringImpl* uid)
+{
+    constexpr unsigned flagsOfOwnLookup = OverridesGetOwnPropertySlot | OverridesGetPrototype;
+    if (!receiver.isCell())
+        return "the receiver is no cell"_s;
+    if (!receiver.isObject())
+        return "the receiver is a cell and no object"_s;
+    if (!uid->length())
+        return "the empty name"_s;
+    bool isReceiver = true;
+    auto at = [&](ASCIILiteral ofReceiver, ASCIILiteral ofObjectAbove) { return isReceiver ? ofReceiver : ofObjectAbove; };
+    enum class InTable : uint8_t { Absent, Value, Stops };
+    ASCIILiteral stop;
+    bool hasElementsThatDoNotMatter = false;
+    auto askPropertyTable = [&](JSObject* object, ASCIILiteral hasElements, ASCIILiteral hasNoTable, ASCIILiteral isCustom, ASCIILiteral isAccessor) {
+        if (object->indexingType() & IndexingShapeMask && !hasElementsThatDoNotMatter) {
+            stop = hasElements;
+            return InTable::Stops;
+        }
+        Structure* structure = object->structure();
+        if (structure->seenProperties().ruleOut(CompactPtr<UniquedStringImpl>::encode(uid)))
+            return InTable::Absent;
+        PropertyTable* table = *std::bit_cast<PropertyTable* const*>(std::bit_cast<const uint8_t*>(structure) + Structure::propertyTableUnsafeOffset());
+        if (!table) {
+            stop = hasNoTable;
+            return InTable::Stops;
+        }
+        auto [offset, attributes] = table->get(uid);
+        if (!isValidOffset(offset))
+            return InTable::Absent;
+        if (attributes & PropertyAttribute::CustomAccessorOrValue) {
+            stop = isCustom;
+            return InTable::Stops;
+        }
+        if (attributes & PropertyAttribute::Accessor) {
+            stop = isAccessor;
+            return InTable::Stops;
+        }
+        return InTable::Value;
+    };
+    for (JSObject* object = asObject(receiver);; isReceiver = false) {
+        bool asksPropertyTable = !(object->inlineTypeFlags() & flagsOfOwnLookup);
+        hasElementsThatDoNotMatter = false;
+        JSType type = object->type();
+        if (!asksPropertyTable) {
+            if (uid->isSymbol())
+                return at("a symbol, and the receiver has a lookup of its own"_s, "a symbol, and an object above has a lookup of its own"_s);
+            if (type == CompiledObjectType) {
+                Object& compiled = *uncheckedDowncast<Object>(object);
+                std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(uid);
+                if (number && *number > FieldTableEntry::maxName)
+                    return at("the name has no column, and the receiver is a compiled object"_s, "the name has no column, and an object above is a compiled object"_s);
+                if (const FieldData* field = number ? compiled.fieldNamed(compiled.state(), uid) : nullptr) {
+                    if (field->isPrivate())
+                        return "a private field"_s;
+                    if (compiled.isInSlot(*field)) {
+                        if (field->isAccessor())
+                            return at("an accessor field of the receiver, in its slot"_s, "an accessor field of an object above, in its slot"_s);
+                        if (field->slot.representation() == SlotRepresentation::DeferredClosure)
+                            return at("a closure of the receiver that is not made yet"_s, "a closure of an object above that is not made yet"_s);
+                        return at("a field of the receiver in its slot, in a form that the stub does not read"_s, "a field of an object above in its slot, in a form that the stub does not read"_s);
+                    }
+                    if (field->flags & fieldMayExistWithoutStorage)
+                        return at("a field of the receiver that may exist without storage"_s, "a field of an object above that may exist without storage"_s);
+                }
+                if (compiled.hasExtraProperties()) {
+                    JSObject* extra = compiled.compiledStructure().extraPropertiesSlot() ? compiled.extraProperties() : nullptr;
+                    if (!extra || extra->type() != FinalObjectType)
+                        return at("the extra properties of the receiver are not where the stub looks"_s, "the extra properties of an object above are not where the stub looks"_s);
+                    switch (askPropertyTable(extra, "the extra properties have elements"_s, at("the extra properties of the receiver have no property table"_s, "the extra properties of an object above have no property table"_s), "an extra property is a custom accessor or value"_s, "an extra property is an accessor: the stub could not call the getter"_s)) {
+                    case InTable::Stops:
+                        return stop;
+                    case InTable::Value:
+                        return "an extra property that is a plain value: NOTHING STOOD IN THE WAY"_s;
+                    case InTable::Absent:
+                        break;
+                    }
+                }
+            } else if (type == CompiledClosureType || isSlimClosureType(type)) {
+                if (uid == vm.propertyNames->name.impl() || uid == vm.propertyNames->length.impl() || uid == vm.propertyNames->prototype.impl())
+                    return at("name, length or prototype of a function object"_s, "name, length or prototype, and a function object is above"_s);
+                if (type == CompiledClosureType && uncheckedDowncast<Closure>(object)->kind().isConstructor)
+                    return at("the receiver is a class object"_s, "a class object is above"_s);
+                asksPropertyTable = type != SlimClosureType;
+            } else if (object->classInfo() == ClassPrototype::info()) {
+                if (object->butterfly())
+                    return "a prototype object of a class that has been given something"_s;
+                if (ClassPrototype::hasMember(object, uid))
+                    return "a member that a class declares: its closure is not made yet, or the stub could not call the getter"_s;
+            } else if (!(object->inlineTypeFlags() & OverridesGetPrototype) && object->methodTable()->getOwnPropertySlot == JSFinalObject::info()->methodTable.getOwnPropertySlot)
+                asksPropertyTable = true;
+            else if (!(object->inlineTypeFlags() & OverridesGetPrototype) && object->methodTable()->getOwnPropertySlot == JSArray::info()->methodTable.getOwnPropertySlot) {
+                if (uid == vm.propertyNames->length.impl() || isASCIIDigit((*uid)[0]))
+                    return at("the length of an array, or a name that begins with a digit"_s, "the length, or a name that begins with a digit, and an array is above"_s);
+                asksPropertyTable = true;
+                hasElementsThatDoNotMatter = true;
+            } else if (!(object->inlineTypeFlags() & OverridesGetPrototype) && object->methodTable()->getOwnPropertySlot == JSFunction::info()->methodTable.getOwnPropertySlot) {
+                if (uid == vm.propertyNames->name.impl() || uid == vm.propertyNames->length.impl() || uid == vm.propertyNames->prototype.impl())
+                    return at("name, length or prototype of a function of the engine or the host"_s, "name, length or prototype, and a function of the engine or the host is above"_s);
+                asksPropertyTable = true;
+            } else if (type == ProxyObjectType)
+                return at("the receiver is a proxy"_s, "a proxy is above"_s);
+            else
+                return at("the receiver is of another class with a lookup of its own"_s, "an object of another class with a lookup of its own is above"_s);
+        }
+        if (asksPropertyTable) {
+            switch (askPropertyTable(object, at("the receiver has elements"_s, "an object above has elements"_s), at("the receiver has no property table"_s, "an object above has no property table"_s), at("a custom accessor or value of the receiver"_s, "a custom accessor or value of an object above"_s), "an accessor: the stub could not call the getter"_s)) {
+            case InTable::Stops:
+                return stop;
+            case InTable::Value:
+                return "a plain value: NOTHING STOOD IN THE WAY"_s;
+            case InTable::Absent:
+                break;
+            }
+            if (TypeInfo::hasStaticPropertyTable(object->inlineTypeFlags()) && !object->structure()->staticPropertiesReified())
+                return at("the receiver has a static table that is not all in its property table"_s, "an object above has a static table that is not all in its property table"_s);
+        }
+        JSValue above = object->structure()->storedPrototype();
+        if (!above)
+            return "an object that has its prototype in a slot of its own"_s;
+        if (!above.isObject())
+            return "nothing has the name: NOTHING STOOD IN THE WAY"_s;
+        object = asObject(above);
+    }
+}
+
 NEVER_INLINE void PropertyCaches::countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name)
 {
     if (!m_countedFilings)
         return;
+    if (access == "read"_s)
+        ++m_namedCounts.add(makeString("miss by reason:read:"_s, shouldFile && !m_counterOfPairToFile ? "one miss in sixteen that the stub sends to be filed"_s : whyObjectsDidNotAnswer(m_vm, receiver, name)), 0).iterator->value;
     ASCIILiteral which = shouldFile ? "later"_s : "first"_s;
     ASCIILiteral ofReceiver = describeReceiverOfMiss(receiver);
     ASCIILiteral ofField = describeFieldOfMiss(receiver, name);
@@ -1396,6 +1570,7 @@ void PropertyCaches::dumpNamedCounts(PrintStream& out) const
 
 bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid, SlotAccess access)
 {
+    m_counterOfPairToFile = nullptr;
     if (std::exchange(m_state.instance.propertyCaches.missIsDueForFiling, 0))
         return true;
     if (m_shouldForgetMisses.load(std::memory_order_relaxed)) [[unlikely]] {
@@ -1427,11 +1602,18 @@ bool PropertyCaches::shouldFile(StructureID structureID, UniquedStringImpl* uid,
     uint8_t& counter = *ofPair;
     if ((counter & maskOfCount) >= (access == SlotAccess::Read ? missesBeforeFiling : storeMissesBeforeFiling)) {
         counter |= wasFiled;
+        m_counterOfPairToFile = &counter;
         return true;
     }
     ++counter;
     count(m_state.instance, RuntimeCounterID::FirstMissesNotFiled);
     return false;
+}
+
+void PropertyCaches::didFileNothing()
+{
+    if (uint8_t* counter = std::exchange(m_counterOfPairToFile, nullptr))
+        *counter = 0;
 }
 
 bool PropertyCaches::shouldMakeStructureForAdditionByKey(Structure* structure, UniquedStringImpl* uid)
@@ -1516,6 +1698,36 @@ void PropertyCaches::fillSiteCacheFromTables(SiteCache site, JSCell* base, uint3
     }
     ensureChangesAreReported(walk.changeableObjects.span());
     m_siteCaches.fill(site, *slot, { name.uid, access, walk.changeableObjects.span() });
+}
+
+JSValue PropertyCaches::findGetterAndFillSiteCache(SiteCache site, JSCell* base, uint32_t identifierNumber)
+{
+    VM& vm = *m_state.instance.vm;
+    DeferGCForAWhile deferGC(vm);
+    Structure* structure = base->structure();
+    CachedName name = nameOf(identifierNumber);
+    auto find = [&]() -> JSValue {
+        Object* object = compiledObjectOrNull(base);
+        if (!object || !Object::structureGuaranteesAbsence(structure, name.uid) || hasPendingStars(*object))
+            return { };
+        JSGlobalObject* globalObject = m_state.instance.globalObject;
+        ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing }, name.uid);
+        if (walk.result != ChainWalkResult::Found || !isValidOffset(walk.offset) || !(walk.attributes & PropertyAttribute::Accessor))
+            return { };
+        auto* accessor = uncheckedDowncast<GetterSetter>(valueAtOffset(walk.holder, walk.offset).asCell());
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        slot.setCacheableGetterSlot(walk.holder, walk.attributes, accessor, walk.offset);
+        PropertyAnswer answer = classifyRead({ globalObject, object, structure, name.uid, slot, ChainWalkMode::AllocatesNothing });
+        if (answer.kind != PropertyAnswerKind::Accessor || !canCache(structure, answer))
+            return { };
+        m_siteCaches.didMissRepeatedly(site);
+        cache({ structure, name, SlotAccess::Read, site }, answer);
+        return accessor->getter();
+    };
+    if (JSValue getter = find())
+        return getter;
+    m_siteCaches.didFindNothingToFill(site);
+    return jsUndefined();
 }
 
 void PropertyCaches::cacheFreeName(SiteCache site, UniquedStringImpl* uid, SlotAccess access, const PropertyAnswer& answer)
@@ -1922,6 +2134,12 @@ void SiteCaches::didFailToFill(SiteCache site)
         waitLongerForNextFill(stateOf(site));
 }
 
+// Whoever asks on behalf of an empty site looks the name up each time, so it asks more and more seldom.
+void SiteCaches::didFindNothingToFill(SiteCache site)
+{
+    waitLongerForNextFill(stateOf(site));
+}
+
 bool SiteCaches::tryWrite(SiteCache site, const Slot& slot)
 {
     if (!didMissBefore(site)) {
@@ -2005,6 +2223,7 @@ static void forEachStructureNamedBy(const Slot& slot, const Invocable<void(Struc
     case SlotPayload::Holder:
     case SlotPayload::FieldAndHolder:
     case SlotPayload::Constant:
+    case SlotPayload::Key:
         return;
     }
 }

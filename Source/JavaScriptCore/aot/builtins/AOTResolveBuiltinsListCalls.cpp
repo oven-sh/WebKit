@@ -58,7 +58,7 @@ static bool canMoveToCall(FunctionAnalyses& analyses, const Function& function, 
 static bool canPlaceTests(FunctionPassContext& context, std::span<const UseRequirement> requirements, BlockID block)
 {
     FunctionAnalyses& analyses = context.analyses;
-    if (analyses.blockFrequencies().classOf(block) == BlockFrequency::Rare)
+    if (analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Rare)
         return false;
 
     const BuiltinTable& table = context.program.builtins();
@@ -180,7 +180,7 @@ static void rewriteProvenListCall(FunctionPassContext& context, const ListCallSi
     becomeBuiltinCall(call, plan.call.overload, BuiltinCallForm::List, plan.operands, plan.stamps);
     call.setNeedsPristineReceiver(!isPristineByType);
     call.type = resultTypeOf(program, function, call, context.types);
-    call.setExpected(ExpectedType(expectedTypeOf(program, function, call, context.types)));
+    call.setExpected(expectedTypeOf(program, function, call, context.types));
     checkRewrite(context, listCall.site, replaced);
 }
 

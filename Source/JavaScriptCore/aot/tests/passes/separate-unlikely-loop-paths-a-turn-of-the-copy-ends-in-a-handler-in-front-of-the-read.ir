@@ -1,0 +1,82 @@
+# A loop that paths have to leave is entered through its copy, and what every turn reads is read on the way from the end of a turn into the loop. A turn that threw in front of the read and was caught inside the loop
+# has come to its end without reading: the variable may still be empty on that way
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" declared={type=number} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="caughtInFrontOfTheRead" parameters=[{type=anything}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: string):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2() handler=b6():
+    v4 = RequireObject v0 runtimeError=IteratorIsNotAnObject
+    v5 = Entered function=f2
+    v6 = GetModuleVariable fact=v5 variable=g0
+    v7 = GetStringLength v2
+    v8 = Less v6, v7
+    Branch v8 -> taken b3(), notTaken b8()
+  b3():
+    v9 = TypeTest v6 testedType=i32
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = BitOr v10, v10
+    Jump -> next b7()
+  b5() frequency=Unlikely:
+    v12 = Call v1, -
+    Jump -> next b7()
+  b6() role=CatchHandler:
+    v13 = CatchValue
+    Jump -> next b1()
+  b7():
+    v14 = Increment v6
+    PutModuleVariable v14 variable=g0
+    Jump -> next b1()
+  b8():
+    Return v6
+}
+# CHECK-LABEL: name="caughtInFrontOfTheRead"
+# CHECK: [[entering]]: number|unspecified{{*}} = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK-NOT: = TypeTest [[entering]]
+
+# What is thrown leaves the loop, so every turn of the copy that comes to its end has read
+function f1 name="nothingIsCaught" parameters=[{type=anything}, {type=anything}, {type=string}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: string):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    v4 = RequireObject v0 runtimeError=IteratorIsNotAnObject
+    v5 = Entered function=f2
+    v6 = GetModuleVariable fact=v5 variable=g0
+    v7 = GetStringLength v2
+    v8 = Less v6, v7
+    Branch v8 -> taken b3(), notTaken b7()
+  b3():
+    v9 = TypeTest v6 testedType=i32
+    Branch v9 -> taken b4(| 0), notTaken b5()
+  b4(v10):
+    v11 = BitOr v10, v10
+    Jump -> next b6()
+  b5() frequency=Unlikely:
+    v12 = Call v1, -
+    Jump -> next b6()
+  b6():
+    v13 = Increment v6
+    PutModuleVariable v13 variable=g0
+    Jump -> next b1()
+  b7():
+    Return v6
+}
+# CHECK-LABEL: name="nothingIsCaught"
+# CHECK-NOT: mayPrecedeItsStore
+
+function f2 name="reader" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}

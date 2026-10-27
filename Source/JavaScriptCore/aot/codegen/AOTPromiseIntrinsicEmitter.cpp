@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAsyncAwaitConditions.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTGuardEmitter.h"
 #include "AOTStubsCoroutines.h"
@@ -27,6 +28,12 @@ CellPointer PromiseIntrinsicEmitter::newPromise(const OperationContext& context)
 
 void PromiseIntrinsicEmitter::generateCreatePromise(const ValueContext& value)
 {
+    const Value& definition = m_function.at(value->constructorOperand());
+    if (definition.opcode == Opcode::Builtin && m_builtins.canonicalID(definition.builtin()) == m_builtins.canonicalID(m_builtins.at(BuiltinClasses::Promise).constructor)) {
+        define(value, newPromise(value));
+        return;
+    }
+
     Boxed constructor = in<Boxed>(value->constructorOperand());
     if (value.shape() == CodeShape::Compact) {
         define(value, callOperation<CellPointer>(value, RuntimeOperation::CreatePromise, { constructor }));
@@ -39,7 +46,7 @@ void PromiseIntrinsicEmitter::generateCreatePromise(const ValueContext& value)
     define(value, either<CellPointer>(isPromiseConstructor, [&] {
         return newPromise(value);
     }, [&] {
-        return callOperation<CellPointer>(value, RuntimeOperation::CreatePromise, { constructor }, { .isOnRarePath = true });
+        return callOperation<CellPointer>(value, RuntimeOperation::CreatePromise, { constructor });
     }));
 }
 

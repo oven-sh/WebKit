@@ -424,7 +424,7 @@ public:
         Locker locker { table.lock };
         return table.fields.ensure(tableKey, [&]() -> AccessedFields {
             std::span<const FieldWithKey> fields = fieldsWithKey(key);
-            std::span<const LayoutID> members = m_program.at(receivers).members.span();
+            std::span<const LayoutID> members = m_program.at(receivers).completeMembers();
             Vector<Node, 8> declarations;
             bool areRequired = true;
             auto add = [&](const FieldWithKey& field) {
@@ -506,8 +506,8 @@ public:
         Locker locker { table.lock };
         return table.methods.ensure(tableKey, [&]() -> StoreCallees {
             const LayoutSet& family = m_program.at(receivers);
-            StoreCallees callees { .areAllSeen = !family.hasMembersWithoutLayout };
-            for (LayoutID member : family.members) {
+            StoreCallees callees { .areAllSeen = true };
+            for (LayoutID member : family.completeMembers()) {
                 const Layout& layout = m_program.at(member);
                 if (layout.flow.allocation == AllocationState::NeverAllocated)
                     continue;
@@ -820,7 +820,7 @@ public:
 
     StoreSource sourceOf(ValueID id) const { return id ? m_sources[id.index()] : StoreSource(StoredKind::Other); }
     const TypeFacts& typeFactsOf(ValueID id) const { return m_graph.factsOf(m_function.at(id).type); }
-    LayoutSetID expectedLayoutsOf(ValueID id) const { return m_graph.factsOf(m_function.at(id).expectedOrType().predicted()).layouts; }
+    Expected<LayoutSetID> expectedLayoutsOf(ValueID id) const { return m_graph.factsOf(m_function.at(id).expectedOrType().predicted()).layouts; }
     Argument argumentOf(ValueID id) const { return { sourceOf(id), id && typeFactsOf(id).isInt32 }; }
     void connect(StoreSource from, Node to) { m_graph.connect(m_part, from, to); }
 
@@ -880,7 +880,7 @@ public:
             }
         }
 
-        const Type& type = m_program.expectedOrTypeOf(m_function, operand);
+        const Type& type = m_program.expectedOrTypeOf(m_function, operand).predicted();
         bool listsOnlyFunctions = !type.anyObject && type.classes.isEmpty() && !type.layouts && type.builtins.isEmpty();
         if (!listsOnlyFunctions || type.functions.isEmpty() || type.functions.size() > maxCalleesOfCall)
             return false;
@@ -917,7 +917,7 @@ public:
         const Value& callee = m_function.at(sameObjectThroughCasts(m_function, operand));
         if (callee.opcode != Opcode::PropGet || callee.isFreeName())
             return StoredKind::Other;
-        LayoutSetID receivers = expectedLayoutsOf(callee.operand(*receiverOf(callee.opcode)));
+        LayoutSetID receivers = expectedLayoutsOf(callee.operand(*receiverOf(callee.opcode))).predicted();
         if (!receivers)
             return StoredKind::Other;
 
@@ -962,7 +962,7 @@ public:
         PropertyKeyID key = store.key();
         StoreSource stored = sourceOf(store.operand(*storedOf(store.opcode)));
 
-        LayoutSetID receivers = expectedLayoutsOf(store.operand(*receiverOf(store.opcode)));
+        LayoutSetID receivers = expectedLayoutsOf(store.operand(*receiverOf(store.opcode))).predicted();
         if (!receivers) {
             connect(stored, m_graph.nodeOfAllStores(key));
             connect(stored, m_graph.nodeOfStoresWithoutReceiver(m_code, key));
@@ -984,11 +984,11 @@ public:
             m_part.usedAsIntegers.append(source.node());
     }
 
-    bool hasCountedElements(ValueID object) const
+    Expected<bool> hasCountedElements(ValueID object) const
     {
         if (!object)
             return false;
-        BuiltinReceiver receiver = builtinReceiverOf(m_program, m_program.expectedOrTypeOf(m_function, object).withoutNullish());
+        BuiltinReceiver receiver = builtinReceiverOf(m_program, m_program.expectedOrTypeOf(m_function, object).predicted().withoutNullish());
         switch (receiver.kind) {
         case BuiltinReceiverKind::Primitive:
             return receiver.builtinClass == BuiltinClasses::String;
@@ -1014,7 +1014,7 @@ public:
             return;
 
         const BuiltinTable& table = m_program.builtins();
-        BuiltinReceiver receiver = builtinReceiverOf(m_program, m_program.expectedOrTypeOf(m_function, callee.operand(*receiverOf(callee.opcode))).withoutNullish());
+        BuiltinReceiver receiver = builtinReceiverOf(m_program, m_program.expectedOrTypeOf(m_function, callee.operand(*receiverOf(callee.opcode))).predicted().withoutNullish());
         BuiltinMemberLookup found;
         switch (receiver.kind) {
         case BuiltinReceiverKind::Unknown:
@@ -1075,7 +1075,7 @@ public:
         case Opcode::PropGet: {
             if (value.isFreeName())
                 return StoredKind::Other;
-            LayoutSetID receivers = expectedLayoutsOf(value.operand(*receiverOf(value.opcode)));
+            LayoutSetID receivers = expectedLayoutsOf(value.operand(*receiverOf(value.opcode))).predicted();
             if (!receivers)
                 return StoreSource::fromNode(m_graph.nodeOfAllStores(value.key()));
             return m_graph.accessedFields(m_part, receivers, value.key()).read;
@@ -1129,7 +1129,7 @@ public:
         case Opcode::ElemSet:
         case Opcode::ElemHas:
         case Opcode::ElemDelete:
-            if (hasCountedElements(value.operand(*receiverOf(value.opcode))))
+            if (hasCountedElements(value.operand(*receiverOf(value.opcode))).predicted())
                 noteUseAsInteger(value.operand(OperandIndex::ElemGet::property));
             [[fallthrough]];
         default:

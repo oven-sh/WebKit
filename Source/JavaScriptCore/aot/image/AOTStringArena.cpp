@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTLimits.h"
+#include "AOTThreads.h"
 #include "AOTVector.h"
 #include <wtf/Locker.h>
 #include <wtf/StdLibExtras.h>
@@ -34,7 +35,7 @@ StringInterningPhase::StringInterningPhase(StringTable& table, unsigned numberOf
     : m_table(table)
 {
     m_firstUses.grow(numberOfTasks);
-    RELEASE_ASSERT(!table.m_openPhase);
+    RELEASE_ASSERT(!table.m_openPhase && !ParallelLoops::isInsideLoop());
     table.m_openPhase = this;
 }
 

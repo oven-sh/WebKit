@@ -83,15 +83,15 @@ static double maxLayoutAllocations(const Heat& heat, const Program& program, Typ
     const Type& type = program.at(id);
     double allocations = 0;
     for (LayoutID layout : membersOf(program, type))
-        allocations = std::max(allocations, heat.allocationsOf(layout));
+        allocations = std::max(allocations, heat.allocationsOf(layout).predicted());
     for (const ClassPart& part : type.classes) {
-        for (TypeID contents : part.contents)
+        for (TypeID contents : part.writtenContents)
             allocations = std::max(allocations, maxLayoutAllocations(heat, program, contents));
     }
     return allocations;
 }
 
-double Heat::activationsOf(const Program& program, FunctionID id) const
+Expected<double> Heat::activationsOf(const Program& program, FunctionID id) const
 {
     constexpr double activationsWhereEverythingIsHot = 1e12;
 
@@ -99,7 +99,7 @@ double Heat::activationsOf(const Program& program, FunctionID id) const
     if (program.at(id).runsOnlyBehindFailedTest())
         return 0;
     if (m_classOfEverything)
-        return isHot(*m_classOfEverything) ? activationsWhereEverythingIsHot : 0;
+        return *m_classOfEverything == HeatClass::Hot ? activationsWhereEverythingIsHot : 0;
     const Entry& entry = m_entries.of(program, id);
     if (entry.heatClass != HeatClass::Unknown || isOfVeryLargeProgram())
         return entry.activations;
@@ -107,7 +107,7 @@ double Heat::activationsOf(const Program& program, FunctionID id) const
     return std::max(entry.activations, parser ? maxLayoutAllocations(*this, program, parser->type) : 0);
 }
 
-double Heat::estimatedActivationsOf(const Program& program, FunctionID id) const
+Expected<double> Heat::estimatedActivationsOf(const Program& program, FunctionID id) const
 {
     if (m_classOfEverything || program.at(id).runsOnlyBehindFailedTest())
         return activationsOf(program, id);
@@ -120,25 +120,25 @@ static uint64_t packedKeyOf(auto upperHalf, auto lowerHalf)
     return static_cast<uint64_t>(upperHalf.index()) << 32 | lowerHalf.index();
 }
 
-bool Heat::isAllocatedIn(LayoutID layout, ModuleID module) const
+Expected<bool> Heat::isAllocatedIn(LayoutID layout, ModuleID module) const
 {
     RELEASE_ASSERT(m_hasWeights);
     return std::ranges::binary_search(m_modulesThatAllocate, packedKeyOf(layout, module));
 }
 
-bool Heat::isStoredUnder(LayoutID layout, PropertyKeyID name) const
+Expected<bool> Heat::isStoredUnder(LayoutID layout, PropertyKeyID name) const
 {
     RELEASE_ASSERT(m_hasWeights);
     return std::ranges::binary_search(m_layoutsStoredUnderNames, packedKeyOf(name, layout));
 }
 
-double Heat::allocationsOf(LayoutID layout) const
+Expected<double> Heat::allocationsOf(LayoutID layout) const
 {
     RELEASE_ASSERT(m_hasWeights);
     return layout.index() < m_allocationsOfLayouts.size() ? m_allocationsOfLayouts[layout.index()] : 0;
 }
 
-HeatClass Heat::of(const Program& program, FunctionID id) const
+Expected<HeatClass> Heat::of(const Program& program, FunctionID id) const
 {
     if (program.at(id).runsOnlyBehindFailedTest())
         return HeatClass::Cold;
@@ -147,24 +147,25 @@ HeatClass Heat::of(const Program& program, FunctionID id) const
     return m_entries.of(program, id).heatClass;
 }
 
-bool Heat::hasWarmCode(const Program& program, FunctionID id) const
+Expected<bool> Heat::hasWarmCode(const Program& program, FunctionID id) const
 {
     if (program.at(id).runsOnlyBehindFailedTest())
         return false;
     if (m_classOfEverything)
-        return !isCold(*m_classOfEverything);
+        return !isCold(*m_classOfEverything).predicted();
     return m_entries.of(program, id).hasWarmCode;
 }
 
-uint8_t Heat::percentileOf(const Program& program, FunctionID id) const
+Expected<uint8_t> Heat::percentileOf(const Program& program, FunctionID id) const
 {
     if (program.at(id).runsOnlyBehindFailedTest())
         return 0;
     return m_entries.of(program, id).percentile;
 }
 
-double Heat::leastHeatOfFastCode(const Program& program, FunctionID id, double frequencyInFunction) const
+Expected<double> Heat::leastHeatOfFastCode(const Program& program, FunctionID id, Expected<double> expectedFrequencyInFunction) const
 {
+    double frequencyInFunction = expectedFrequencyInFunction.predicted();
     if (!m_thresholds)
         return frequencyConstants.iterationsPerLoop;
     // How often a function is entered is a product along paths of calls, and a call by value spreads over all that it may reach. A loop of its own is in the text.
@@ -179,26 +180,33 @@ static bool leadsToBody(const Function& function)
     return isWrapperCreatedByEngine(function) || function.creator.kind() == CreatorRecord::Kind::Entrypoint;
 }
 
-HeatClass Heat::classOf(const Program& program, FunctionID id, double activations, double frequencyInFunction) const
+Expected<HeatClass> Heat::classOf(const Program& program, FunctionID id, Expected<double> expectedActivations, Expected<double> expectedFrequencyInFunction) const
 {
+    double activations = expectedActivations.predicted();
+    double frequencyInFunction = expectedFrequencyInFunction.predicted();
     // A share of the program would cut through a handler: its blocks run equally often but for the calls that may throw in between.
     if (m_thresholds && !m_classOfEverything && frequencyInFunction >= HeatModel::minWeightOfNearlyCertainCall && m_entries.of(program, id).isCalledPerEvent)
         return HeatClass::Hot;
     double heat = activations * frequencyInFunction;
-    HeatClass heatClass = classOf(heat);
-    if (m_hotIsByRank && !m_classOfEverything && !isCold(heatClass)) {
+    HeatClass heatClass = classOf(heat).predicted();
+    if (m_hotIsByRank && !m_classOfEverything && !isCold(heatClass).predicted()) {
         heat = m_entries.of(program, id).rank * frequencyInFunction;
         heatClass = heat >= m_thresholds->hot ? HeatClass::Hot : HeatClass::Warm;
     }
-    if (!isHot(heatClass) || heat >= frequencyConstants.iterationsPerLoop || frequencyInFunction >= HeatModel::minWeightOfCallInLoop)
+    if (heatClass != HeatClass::Hot || heat >= frequencyConstants.iterationsPerLoop || frequencyInFunction >= HeatModel::minWeightOfCallInLoop)
         return heatClass;
     return m_entries.of(program, id).isCalledInLoop && !leadsToBody(program.at(id)) ? heatClass : HeatClass::Warm;
 }
 
-HeatClass Heat::classOf(double heat) const
+Expected<HeatClass> Heat::classOf(Expected<double> expectedHeat) const
 {
+    double heat = expectedHeat.predicted();
     if (m_classOfEverything)
         return *m_classOfEverything;
+    if (m_seedOfShuffledHeat) [[unlikely]] {
+        uint64_t bits = std::bit_cast<uint64_t>(heat);
+        return static_cast<HeatClass>(static_cast<uint32_t>(HeatClass::Cold) + drawForShuffledHeat(*m_seedOfShuffledHeat, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32), 3));
+    }
     if (!m_thresholds)
         return HeatClass::Unknown;
     if (!(heat > 0) || heat < m_thresholds->cold)
@@ -219,7 +227,7 @@ void Heat::dump(PrintStream& out, const Program& program) const
         const Entry& entry = m_entries.of(program, id);
         if (entry.heatClass == HeatClass::Unknown)
             continue;
-        out.print("f", index, " ", isCompact(program, id) ? "Compact"_s : nameOf(of(program, id)), " ", entry.percentile, " ");
+        out.print("f", index, " ", isCompact(program, id).predicted() ? "Compact"_s : nameOf(of(program, id).predicted()), " ", entry.percentile, " ");
         printWithThreeDigits(out, entry.activations);
         out.print("\n");
     }
@@ -507,9 +515,9 @@ static Vector<uint64_t> collectLayoutsStoredUnderNames(const Program& program, c
             if (!name || !value)
                 return;
             LayoutSetID layouts = program.typeOf(function, value).layouts;
-            if (!layouts || program.at(layouts).members.size() > maxLayoutsOfStoredValue)
+            if (!layouts || program.at(layouts).written().size() > maxLayoutsOfStoredValue)
                 return;
-            for (LayoutID layout : program.at(layouts).members)
+            for (LayoutID layout : program.at(layouts).completeMembers())
                 stored.append(packedKeyOf(name, layout));
         };
         forEachValueListedOrNot(program, FunctionID(functionsWithBody[k]), { Opcode::PropSet, Opcode::PropDefine, Opcode::PutSlot, Opcode::PutSlotOrAdd, Opcode::NewObject }, [&](ValueID, const Value& value) {
@@ -688,7 +696,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
         heat.m_entries[id].isCalledInLoop = runsInLoop[i];
         heat.m_entries[id].isCalledPerEvent = !isVeryLargeProgram && isCalledPerEvent[i] && !isLibraryCode(program, program.functions[i]);
         if (!flow.runsAtMostOnce(program, id))
-            heat.m_entries[id].heatClass = heat.classOf(program, id, 1);
+            heat.m_entries[id].heatClass = heat.classOf(program, id, 1).predicted();
     });
     if (estimatesTwice) {
         for (uint32_t i : functionsWithBody) {
@@ -745,13 +753,23 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
     case HeatOverride::NothingIsHottest:
         heat.m_hottestFirst.clear();
         break;
+    case HeatOverride::Shuffled:
+        heat.m_seedOfShuffledHeat = seedOfShuffledHeat(build);
+        for (uint32_t i : functionsWithBody) {
+            Heat::Entry& entry = heat.m_entries[FunctionID(i)];
+            entry.heatClass = static_cast<HeatClass>(static_cast<uint32_t>(HeatClass::RunsOnce) + drawForShuffledHeat(*heat.m_seedOfShuffledHeat, i, 0, 4));
+            entry.isCompact = drawForShuffledHeat(*heat.m_seedOfShuffledHeat, i, 1, 4) == 0;
+            entry.isCalledInLoop = drawForShuffledHeat(*heat.m_seedOfShuffledHeat, i, 2, 2);
+            entry.isCalledPerEvent = drawForShuffledHeat(*heat.m_seedOfShuffledHeat, i, 3, 4) == 0;
+        }
+        break;
     }
     forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
         FunctionID id(functionsWithBody[k]);
         Heat::Entry& entry = heat.m_entries[id];
         entry.hasWarmCode = std::ranges::any_of(graph.blockGroupsOf(id), [&](const HeatBlockGroup& group) {
             bool runsOnce = entry.heatClass == HeatClass::RunsOnce && group.frequency <= roundingOfFrequencySums;
-            return !runsOnce && !isCold(heat.classOf(entry.activations * group.frequency));
+            return !runsOnce && !isCold(heat.classOf(entry.activations * group.frequency)).predicted();
         });
     });
     build.destroyLater(WTF::move(graph));
@@ -771,25 +789,27 @@ static double frequencyBehindEntryTests(FunctionAnalyses& analyses)
         const Value& test = function.at(terminator.conditionOperand());
         if (test.opcode != Opcode::TypeTest || !parameters.contains(test.operand(0)))
             break;
-        if (function.at(terminator.taken().block).frequency != BlockFrequency::Normal || function.at(terminator.notTaken().block).frequency == BlockFrequency::Normal)
+        if (function.at(terminator.taken().block).frequency.predicted() != BlockFrequency::Normal || function.at(terminator.notTaken().block).frequency.predicted() == BlockFrequency::Normal)
             break;
         block = terminator.taken().block;
     }
-    return analyses.blockFrequencies().frequencyOf(block);
+    return analyses.blockFrequencies().frequencyOf(block).predicted();
 }
 
-HeatClass heatClassOf(const Heat& heat, FunctionAnalyses& analyses, BlockID block)
+Expected<HeatClass> heatClassOf(const Heat& heat, FunctionAnalyses& analyses, BlockID block)
 {
     const AnalysisContext& context = analyses.context();
-    double activations = heat.activationsOf(context.program, context.id);
-    bool isColdEverywhere = heat.classOf(context.program, context.id, activations, roundingOfFrequencySums) == HeatClass::Cold && runsNoBlockMoreOftenThanEntry(analyses.cfg());
-    HeatClass heatClass = isColdEverywhere ? HeatClass::Cold : heat.classOf(context.program, context.id, activations, analyses.blockFrequencies().frequencyOf(block));
-    if (heatClass == HeatClass::Cold && !isColdEverywhere)
+    Expected<double> activations = heat.activationsOf(context.program, context.id);
+    bool isColdEverywhere = heat.classOf(context.program, context.id, activations, roundingOfFrequencySums).predicted() == HeatClass::Cold && runsNoBlockMoreOftenThanEntry(analyses.cfg());
+    Expected<HeatClass> heatClass = isColdEverywhere ? Expected(HeatClass::Cold) : heat.classOf(context.program, context.id, activations, analyses.blockFrequencies().frequencyOf(block));
+    if (heatClass.predicted() == HeatClass::Cold && !isColdEverywhere)
         heatClass = heat.classOf(context.program, context.id, activations, analyses.blockFrequencies().frequencyOf(block) / frequencyBehindEntryTests(analyses));
     switch (context.build.recordedOptions().heat()) {
     case HeatOverride::EverythingIsHot:
     case HeatOverride::EverythingIsCold:
         return heatClass;
+    case HeatOverride::Shuffled:
+        return static_cast<HeatClass>(static_cast<uint32_t>(HeatClass::RunsOnce) + drawForShuffledHeat(*seedOfShuffledHeat(context.build), context.id.index(), block.index(), 4));
     case HeatOverride::None:
     case HeatOverride::OnlyLoopsAreHot:
     case HeatOverride::NothingIsHottest:
@@ -798,25 +818,25 @@ HeatClass heatClassOf(const Heat& heat, FunctionAnalyses& analyses, BlockID bloc
     if (analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
         return HeatClass::RunsOnce;
     // The throw costs more than all that leads up to it, however often the function is entered.
-    if (heatClass > HeatClass::Cold && analyses.blockFrequencies().alwaysEndsInThrow(block))
+    if (heatClass.predicted() > HeatClass::Cold && analyses.blockFrequencies().alwaysEndsInThrow(block))
         return HeatClass::Cold;
     return heatClass;
 }
 
-bool isInColderPartOfProgram(const Heat& heat, const Program& program, FunctionID id)
+Expected<bool> isInColderPartOfProgram(const Heat& heat, const Program& program, FunctionID id)
 {
     constexpr uint8_t firstPercentileOfHotterPart = 35;
 
-    HeatClass heatClass = heat.of(program, id);
-    if (isHot(heatClass) || isCold(heatClass))
-        return isCold(heatClass);
-    std::span<const FunctionID> hottestFirst = heat.hottestFirst();
-    if (hottestFirst.empty() || !heat.percentileOf(program, hottestFirst.front()))
+    Expected<HeatClass> heatClass = heat.of(program, id);
+    if (isHot(heatClass).predicted() || isCold(heatClass).predicted())
+        return isCold(heatClass).predicted();
+    std::span<const FunctionID> hottestFirst = heat.hottestFirst().predicted();
+    if (hottestFirst.empty() || !heat.percentileOf(program, hottestFirst.front()).predicted())
         return false;
     return heat.percentileOf(program, id) < firstPercentileOfHotterPart;
 }
 
-HeatClass heatClassOf(FunctionPassContext& context, BlockID block)
+Expected<HeatClass> heatClassOf(FunctionPassContext& context, BlockID block)
 {
     return heatClassOf(context.inputs.heat, context.analyses, block);
 }
@@ -830,28 +850,28 @@ static bool runsCodeOfHotFunction(FunctionPassContext& context, const NaturalLoo
     const Function& function = context.function;
     for (unsigned index = 0; index < loop.size(); ++index) {
         const Block& block = function.at(loop.at(index));
-        if (block.frequency != BlockFrequency::Normal)
+        if (block.frequency.predicted() != BlockFrequency::Normal)
             continue;
         for (ValueID id : block.values) {
             const Value& value = function.at(id);
-            if (value.opcode == Opcode::CallDirect && isHot(heat.of(context.program, value.function())))
+            if (value.opcode == Opcode::CallDirect && isHot(heat.of(context.program, value.function())).predicted())
                 return true;
             if (!value.inlineFrame)
                 continue;
             FunctionID callee = function.inlineFrames[value.inlineFrame].callee;
-            if (isHot(heat.of(context.program, callee)))
+            if (isHot(heat.of(context.program, callee)).predicted())
                 return true;
             // The loop itself came out of a function, where it ran as often.
-            if (value.opcode == Opcode::LoopHint && loop.at(index) == loop.header() && isHot(heat.classOf(context.program, callee, frequencyConstants.iterationsPerLoop)))
+            if (value.opcode == Opcode::LoopHint && loop.at(index) == loop.header() && isHot(heat.classOf(context.program, callee, frequencyConstants.iterationsPerLoop)).predicted())
                 return true;
         }
     }
     return false;
 }
 
-bool isHotLoop(FunctionPassContext& context, const NaturalLoop& loop)
+Expected<bool> isHotLoop(FunctionPassContext& context, const NaturalLoop& loop)
 {
-    return context.analyses.blockFrequencies().classOf(loop.header()) == BlockFrequency::Normal && (isHot(heatClassOf(context, loop.header())) || runsCodeOfHotFunction(context, loop));
+    return context.analyses.blockFrequencies().classOf(loop.header()).predicted() == BlockFrequency::Normal && (isHot(heatClassOf(context, loop.header())).predicted() || runsCodeOfHotFunction(context, loop));
 }
 
 static constexpr uint64_t outlinedBodyOverheadBytes = 48;
@@ -940,8 +960,9 @@ namespace {
 struct OutliningNormalForm {
     enum class Mark : uint32_t { Value, Parameter, Terminator, InteriorTarget, ExitTarget, Proof, Result, Absent, InSite, LiveIn, Constant };
 
-    OutliningNormalForm(const Function& function, const OutliningSite& site, uint64_t maxLiveIns)
-        : function(function)
+    OutliningNormalForm(const Program& program, const Function& function, const OutliningSite& site, uint64_t maxLiveIns)
+        : program(program)
+        , function(function)
         , site(site)
         , maxLiveIns(maxLiveIns)
     {
@@ -952,6 +973,8 @@ struct OutliningNormalForm {
             for (BlockID blockID : site.interiorBlocks) {
                 const Block& block = function.at(blockID);
                 for (ValueID parameter : block.parameters) {
+                    if (isFact(parameter))
+                        continue;
                     append(Mark::Parameter, function.at(parameter).type.index());
                     definitions.append(parameter);
                 }
@@ -969,10 +992,13 @@ struct OutliningNormalForm {
 
     void append(auto... added) { (words.append(static_cast<uint32_t>(added)), ...); }
 
+    // A fact leaves nothing in the form: it makes no code, and the shared function is entered behind every fact that its operations name.
+    bool isFact(ValueID id) const { return program.typeOf(function, id).isOpaque(OpaqueKind::Fact); }
+
     void appendValue(ValueID id)
     {
         const Value& value = function.at(id);
-        if (isRematerializable(value))
+        if (isRematerializable(value) || isFact(id))
             return;
         append(Mark::Value, value.opcode, value.type.index());
         bool dependsOnModule = std::ranges::any_of(payloadFieldsOf(value.opcode), [](const PayloadFieldInfo& field) {
@@ -1017,9 +1043,11 @@ struct OutliningNormalForm {
             }
             size_t interiorIndex = site.interiorBlocks.find(target.block);
             RELEASE_ASSERT(interiorIndex != notFound);
-            append(Mark::InteriorTarget, interiorIndex, target.arguments.size());
-            for (ValueID argument : target.arguments)
-                appendReference(argument);
+            append(Mark::InteriorTarget, interiorIndex, target.arguments.size() - std::ranges::count_if(target.arguments, [&](ValueID argument) { return isFact(argument); }));
+            for (ValueID argument : target.arguments) {
+                if (!isFact(argument))
+                    appendReference(argument);
+            }
             append(Mark::Proof, target.proofs.size());
             words.append(target.proofs.span());
         }
@@ -1028,7 +1056,7 @@ struct OutliningNormalForm {
     // Says whether the value comes from outside the site.
     bool appendReference(ValueID id)
     {
-        if (!id) {
+        if (!id || isFact(id)) {
             append(Mark::Absent);
             return false;
         }
@@ -1077,6 +1105,7 @@ struct OutliningNormalForm {
         return result;
     }
 
+    const Program& program;
     const Function& function;
     const OutliningSite& site;
     uint64_t maxLiveIns;
@@ -1111,8 +1140,8 @@ static bool areEqualSites(const Program& program, const OutliningSite& first, co
 {
     if (first.hash != second.hash)
         return false;
-    OutliningNormalForm firstForm(program.at(first.function), first, first.liveIns.size());
-    OutliningNormalForm secondForm(program.at(second.function), second, second.liveIns.size());
+    OutliningNormalForm firstForm(program, program.at(first.function), first, first.liveIns.size());
+    OutliningNormalForm secondForm(program, program.at(second.function), second, second.liveIns.size());
     ASSERT(firstForm.liveIns == first.liveIns && secondForm.liveIns == second.liveIns);
     return firstForm.words == secondForm.words && firstForm.payloadWords() == secondForm.payloadWords();
 }
@@ -1409,6 +1438,12 @@ struct OutliningScan {
         // A call in tail position that returns here has one frame more than the program wrote. A body would add another.
         if (value.isTailCall && callOpcodes.contains(value.opcode))
             return false;
+        // Reflect.construct(..) is shown at one place where it constructs and at another where it calls. The call of a body does neither.
+        if (value.isPartOfConstruction) {
+            const ConstructionStart* construction = program.findConstructionReportedAt(program.sourceFunctionOf(function, value).module, value.position);
+            if (construction && construction->isWrittenAsCall)
+                return false;
+        }
         bool dependsOnInlineFrame = std::ranges::any_of(payloadFieldsOf(value.opcode), [&](const PayloadFieldInfo& field) {
             return field.kind == PayloadKind::Origin && value.payloadWordAt(field.firstWord + 1);
         });
@@ -1846,13 +1881,13 @@ struct OutliningScan {
         }
 
         site.calledBuiltin = findCalledBuiltin(site);
-        OutliningNormalForm form(function, site, build.limit(LimitID::MaxOutlinedOperands));
+        OutliningNormalForm form(program, function, site, build.limit(LimitID::MaxOutlinedOperands));
         if (form.hasRequiredDefinitionOutside)
             return false;
         // No use of an Unspecified value is reached, and an operand or the result of the call of the shared function would be one.
         for (ValueID liveIn : form.liveIns) {
             const Value& value = function.at(liveIn);
-            if (!program.at(value.type).isJavaScriptValue() || isFramePointer(liveIn) || branchesOf(value.opcode) == Branches::Only || isDeferredClosure(function, liveIn) || unspecifiedValues.mayContain(liveIn))
+            if (!program.at(value.type).isJavaScriptValue() || isFramePointer(liveIn) || branchesOf(value.opcode) == Branches::Only || isDeferredClosure(function, liveIn) || unspecifiedValues.mayContain(liveIn) || program.at(value.type).mayBeUnspecified())
                 return false;
         }
         if (mayEndGuardInUse(site, form.liveIns.span(), namedGuards))
@@ -2067,6 +2102,7 @@ static bool usesExecutionCounts(HeatOverride heat)
     switch (heat) {
     case HeatOverride::EverythingIsHot:
     case HeatOverride::EverythingIsCold:
+    case HeatOverride::Shuffled:
         return false;
     case HeatOverride::None:
     case HeatOverride::OnlyLoopsAreHot:
@@ -2081,10 +2117,10 @@ static BitVector findColdBlocks(const OutliningSiteFinder::State& finder, Functi
     const AnalysisContext& context = analyses.context();
     const Heat& heat = finder.inputs.heat;
     bool isColdOutsideCycles = (usesExecutionCounts(finder.build.recordedOptions().heat()) && finder.inputs.flow.runsAtMostOnce(context.program, context.id))
-        || (isCold(heat.classOf(heat.activationsOf(context.program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(analyses.cfg()));
+        || (isCold(heat.classOf(heat.activationsOf(context.program, context.id) * roundingOfFrequencySums)).predicted() && runsNoBlockMoreOftenThanEntry(analyses.cfg()));
     BitVector coldBlocks(analyses.function().blocks.size());
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (!analyses.isInCycle(block) && (isColdOutsideCycles || isCold(heatClassOf(heat, analyses, block))))
+        if (!analyses.isInCycle(block) && (isColdOutsideCycles || isCold(heatClassOf(heat, analyses, block)).predicted()))
             coldBlocks.quickSet(block.index());
     }
     return coldBlocks;
@@ -2303,6 +2339,7 @@ static void buildOutlinedBody(const AnalysisContext& context, const Function& so
     Vector<std::pair<ValueID, ValueID>, 32> valueCopies;
     Vector<std::pair<BlockID, BlockID>, 4> blockCopies;
     BlockID returnBlock;
+    ValueID factOfEntry;
 
     auto copyOf = [](const auto& copies, auto original) {
         size_t index = copies.findIf([&](const auto& entry) {
@@ -2334,8 +2371,19 @@ static void buildOutlinedBody(const AnalysisContext& context, const Function& so
         bool hasCopy = valueCopies.containsIf([&](const auto& entry) {
             return entry.first == id;
         });
-        if (!hasCopy && !isDefinedInSite(source, site, id) && isRematerializable(source.at(id)))
+        if (hasCopy || isDefinedInSite(source, site, id))
+            return;
+        if (isRematerializable(source.at(id)))
             copyValue(id);
+        if (!context.program.typeOf(source, id).isOpaque(OpaqueKind::Fact))
+            return;
+        // The body is entered behind every fact that its operations name.
+        if (!factOfEntry) {
+            Value entered = IRBuilder::make(Opcode::Entered);
+            entered.setFunction(site.function);
+            factOfEntry = builder.append(WTF::move(entered));
+        }
+        valueCopies.append({ id, factOfEntry });
     };
     auto copyValuesAndTerminator = [&](std::span<const ValueID> values, const Terminator& terminator) {
         for (ValueID id : values)

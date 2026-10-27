@@ -32,6 +32,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTInlineHeads.h"
 #include "AOTKnownValue.h"
+#include "AOTMemoryLocation.h"
 #include "AOTOperatorForms.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
@@ -98,6 +99,7 @@ static constexpr OpcodeSet opcodesWithoutCode = castsThatProveNothing | OpcodeSe
     Opcode::AssumeType,
     Opcode::FinishObject,
     Opcode::AllGuards,
+    Opcode::Entered,
     Opcode::LogicalNot,
     Opcode::ValidateType,
     Opcode::ValidateCallee,
@@ -162,6 +164,10 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
         return CodeSize::typeCheck;
     if (opcode == Opcode::ToBoolean)
         return program.typeOf(function, value.valueOperand()).isBoolean() ? 0 : CodeSize::simpleOperation;
+
+    // What takes the caught value calls a stub without operands.
+    if (opcode == Opcode::CatchValue || opcode == Opcode::CatchException)
+        return estimatedDirectCallBytes(0);
 
     unsigned operandBytes = CodeSize::perOperand * value.numberOfOperands();
 
@@ -395,9 +401,9 @@ static bool isStoreByKey(Opcode opcode)
 }
 
 // The summary counts neither the bytes nor the stores of these blocks.
-static bool isSlowPath(const Function& function, const Block& block)
+static Expected<bool> isSlowPath(const Function& function, const Block& block)
 {
-    return block.frequency == BlockFrequency::Rare && function.at(entryBlock).frequency != BlockFrequency::Rare;
+    return block.frequency.predicted() == BlockFrequency::Rare && function.at(entryBlock).frequency.predicted() != BlockFrequency::Rare;
 }
 
 // `catch (e) { throw e; }` does no work of the program. Under a `catch` of the caller the copy loses it, and its throw is a jump.
@@ -475,7 +481,7 @@ static BitVector findHeadBlocks(const Function& function, FunctionAnalyses& anal
         blocks.set(id.index());
         const auto& targets = function.at(id).terminator.targets;
         for (uint32_t index = 0; index < targets.size(); ++index) {
-            if (analyses.blockFrequencies().classOf(Edge { id, index }) == BlockFrequency::Normal)
+            if (analyses.blockFrequencies().classOf(Edge { id, index }).predicted() == BlockFrequency::Normal)
                 queue.append(targets[index].block);
         }
     }
@@ -495,7 +501,7 @@ static BitVector findHeadBlocks(const Function& function, FunctionAnalyses& anal
     return blocks;
 }
 
-InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, const Function& function, HeatClass heat)
+InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, const Function& function, Expected<HeatClass> heat)
 {
     RELEASE_ASSERT(context.flow);
     BuildContext& build = context.build;
@@ -623,7 +629,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         Vector<ParameterCondition*, 4> tests;
         for (ParameterCondition& condition : summary.conditions) {
             BlockID failed = function.at(condition.block).terminator.notTaken().block;
-            if (!cfg.singleIncomingEdge(failed) || function.at(failed).frequency <= function.at(entryBlock).frequency)
+            if (!cfg.singleIncomingEdge(failed) || (function.at(failed).frequency <= function.at(entryBlock).frequency).predicted())
                 continue;
             failedTargets.set(failed.index());
             tests.append(&condition);
@@ -862,7 +868,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
             return ReceiverParameter { static_cast<uint32_t>(index), 0, 0 };
         });
         for (BlockID block : analyses.cfg().reversePostOrder()) {
-            if (isSlowPath(function, function.at(block)))
+            if (isSlowPath(function, function.at(block)).predicted())
                 continue;
             for (ValueID id : function.at(block).values) {
                 const Value& access = function.at(id);
@@ -907,7 +913,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
 
     blockBytes.fill(0, function.blocks.size());
     for (BlockID id : cfg.reversePostOrder()) {
-        if (isSlowPath(function, function.at(id)) || onlyThrowsCaughtValueAgain(function, function.at(id)))
+        if (isSlowPath(function, function.at(id)).predicted() || onlyThrowsCaughtValueAgain(function, function.at(id)))
             continue;
         blockBytes[id.index()] = estimatedCodeBytes(program, function, function.at(id));
     }
@@ -917,7 +923,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
-    if (isCold(heat) && !(function.role == FunctionRole::Library && cfg.hasCycle()))
+    if (isCold(heat).predicted() && !(function.role == FunctionRole::Library && cfg.hasCycle()))
         return summary;
 
     if (function.results.size() == 1) {
@@ -1116,10 +1122,31 @@ ValueID upcastToParameterType(IRBuilder& builder, const Value& parameter, ValueI
     return builder.append(WTF::move(cast));
 }
 
+bool takesFactOfEntry(const Program& program, const Value& value, bool calleeIsPredicted)
+{
+    return value.opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(program.at(value.variable()).flow, calleeIsPredicted) && !value.factOperand() && !value.mayPrecedeItsStore();
+}
+
 void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::span<const BlockID> region, uint32_t firstFrame)
 {
+    const Program& program = builder.context().program;
+    const Function& source = cloner.source();
+    bool calleeIsPredicted = liesInCopyOfPredictedCallee(builder.function(), firstFrame);
+    bool needsFact = std::ranges::any_of(region, [&](BlockID block) {
+        return std::ranges::any_of(source.at(block).values, [&](ValueID id) {
+            return takesFactOfEntry(program, source.at(id), calleeIsPredicted);
+        });
+    });
+    ValueID entered;
+    if (needsFact) {
+        Value fact = IRBuilder::make(Opcode::Entered);
+        fact.setFunction(builder.function().inlineFrames[firstFrame].callee);
+        entered = builder.append(WTF::move(fact));
+    }
     cloner.cloneBlocks(region, [&](ValueID, Value& clone) {
         clone.inlineFrame += firstFrame;
+        if (entered && takesFactOfEntry(program, clone, calleeIsPredicted))
+            clone.setFactOperand(entered);
     });
     for (BlockID id : cloner.clonedBlocks())
         builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;
@@ -1297,7 +1324,7 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         body = &*calleeWithAdoptedIDs;
     }
     const Function& callee = body ? *body : program.at(call.function());
-    BlockFrequency frequencyOfCall = caller.at(point.block).frequency;
+    Expected<BlockFrequency> frequencyOfCall = caller.at(point.block).frequency;
     uint32_t firstFrame = appendInlineFrames(caller, InlineFrame {
         .callee = call.function(),
         .callPosition = call.position,
@@ -1305,6 +1332,8 @@ static void copyBodyIn(IRBuilder& builder, ProgramPoint point, const Function* b
         .isTailCall = !!call.isTailCall,
         .isConstruction = call.isConstruction(),
         .callIsPartOfConstruction = !!call.isPartOfConstruction,
+        .callsOwnFunctionObject = call.callsOwnFunctionObject(),
+        .calleeIsPredicted = call.calleeIsPredicted(),
         .module = callee.module,
     }, callee);
     IRBuilder::Expansion expansion = resultReads ? builder.beginExpansion(point, *resultReads) : builder.beginExpansion(point);
@@ -1682,7 +1711,7 @@ static bool handsOwnClosureToLoopOfLibrary(FunctionPassContext& context, ValueID
 {
     const Function& caller = context.function;
     const Value& call = caller.at(callID);
-    if (context.inputs.heat.isCompact(context.program, context.id))
+    if (context.inputs.heat.isCompact(context.program, context.id).predicted())
         return false;
     if (context.program.at(call.function()).role != FunctionRole::Library)
         return false;
@@ -1698,7 +1727,7 @@ static uint64_t computeOwnAllocationBenefit(const Program& program, const Functi
     uint64_t bytes = uint64_t { InlineModel::storeIntoOwnAllocationBytes } * receiver.stores;
     ValueID object = callee.at(entryBlock).parameters[receiver.entryParameter];
     for (const Block& block : callee.blocks) {
-        if (isSlowPath(callee, block))
+        if (isSlowPath(callee, block).predicted())
             continue;
         for (ValueID id : block.values) {
             const Value& store = callee.at(id);
@@ -1750,7 +1779,7 @@ static bool mayBeEnteredElsewhere(const FunctionPassContext& context, FunctionID
 }
 
 // Closures, class records, bound functions and the host name the entrypoint of a function, so what finds the function there enters the body through the call in the entrypoint.
-static bool isEnteredThroughCallerAlone(const FunctionPassContext& context, FunctionID function, HeatClass heat)
+static bool isEnteredThroughCallerAlone(const FunctionPassContext& context, FunctionID function, Expected<HeatClass> heat)
 {
     const Function& caller = context.function;
     const auto* entrypoint = caller.creator.tryAs<CreatorRecord::Entrypoint>();
@@ -1763,7 +1792,7 @@ static bool isEnteredThroughCallerAlone(const FunctionPassContext& context, Func
     if (!context.inputs.flow.hasResults() || function.index() >= callGraph.numberOfFunctions())
         return false;
     // Hot code is worth the copy beside the body that such a call keeps.
-    if (callGraph.isExpectedByCode(function) && !isHot(heat))
+    if (callGraph.isExpectedByCode(function) && !isHot(heat).predicted())
         return false;
     return std::ranges::none_of(callGraph.callersOf(function), [&](FunctionID other) {
         return other != context.id;
@@ -1781,10 +1810,10 @@ static bool isCalledAgainByGenericVersionAlone(const FunctionPassContext& contex
 }
 
 // The body goes only where the call in the frame is the one call that the graph counts.
-static bool hasSingleCallSite(const FunctionPassContext& context, FunctionID function, uint32_t frame, HeatClass heat)
+static bool hasSingleCallSite(const FunctionPassContext& context, FunctionID function, uint32_t frame, Expected<HeatClass> heat)
 {
     const CallGraph& callGraph = context.inputs.callGraph;
-    bool isTheCallThatIsCounted = numberOfCallSitesCountedHere(context, frame) || isHot(heat);
+    bool isTheCallThatIsCounted = numberOfCallSitesCountedHere(context, frame) || isHot(heat).predicted();
     if (isTheCallThatIsCounted && callGraph.callSiteSet(function) == CallSiteSet::Complete && (callGraph.numberOfCallSites(function) == 1 || isCalledAgainByGenericVersionAlone(context, function)))
         return true;
     return isEnteredThroughCallerAlone(context, function, heat);
@@ -1812,7 +1841,7 @@ unsigned inlineDepthOf(const Program& program, const Function& caller, uint32_t 
 }
 
 // A body with one call site moves into its caller and is no copy. So what is called from it has the depth that it had there.
-static unsigned depthOfCopies(const FunctionPassContext& context, uint32_t inlineFrame, HeatClass heat)
+static unsigned depthOfCopies(const FunctionPassContext& context, uint32_t inlineFrame, Expected<HeatClass> heat)
 {
     const Function& caller = context.function;
     unsigned depth = inlineDepthOf(context.program, caller, inlineFrame);
@@ -1828,7 +1857,7 @@ static unsigned depthOfCopies(const FunctionPassContext& context, uint32_t inlin
 }
 
 // An entrypoint tests what it was given and enters the body.
-static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context, BlockID block, ValueID id, HeatClass heat)
+static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context, BlockID block, ValueID id, Expected<HeatClass> heat)
 {
     const Function& caller = context.function;
     const Value& call = caller.at(id);
@@ -1837,7 +1866,7 @@ static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context
     // In hot code the copy knows what the entrypoint has tested and needs no way back to it. An entrypoint that is nothing but a tail call has tested nothing, and jumps.
     const Terminator& terminator = caller.at(block).terminator;
     bool onlyEntersBody = caller.blocks.size() == 1 && caller.at(block).values.size() == 1 && terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id;
-    if (isHot(heat) && !onlyEntersBody)
+    if (isHot(heat).predicted() && !onlyEntersBody)
         return false;
     // Wrappers lead to the body. What the body calls has the budget that it has there, unless the body is itself a copy.
     bool entersBody = !inlineDepthOf(context.program, caller, call.inlineFrame);
@@ -1851,13 +1880,13 @@ static bool wouldCopySharedBodyIntoEntrypoint(const FunctionPassContext& context
 }
 
 // The tests that were split off the head of a function go where the entrypoint that takes them in is all that enters them.
-static bool wouldCopySharedEntryChecksIntoEntrypoint(const FunctionPassContext& context, const Value& call, HeatClass heat)
+static bool wouldCopySharedEntryChecksIntoEntrypoint(const FunctionPassContext& context, const Value& call, Expected<HeatClass> heat)
 {
     const Program& program = context.program;
     const Function& callee = program.at(call.function());
     if (context.function.role != FunctionRole::GenericEntrypoint || call.isAlwaysInlined() || callee.role != FunctionRole::EntryChecks)
         return false;
-    if (isHot(heat)) {
+    if (isHot(heat).predicted()) {
         Representation result = defaultRepresentationOf(program.at(call.type));
         bool convertsResult = result != Representation::JSValue && result != Representation::Cell;
         if (convertsResult && context.inputs.inlining.of(program, callee.creator.as<CreatorRecord::EntryChecks>().body).codeBytes <= InlineModel::bodyCopiedIntoHotEntrypointBytes)
@@ -1866,10 +1895,10 @@ static bool wouldCopySharedEntryChecksIntoEntrypoint(const FunctionPassContext& 
     return mayBeEnteredElsewhere(context, call.function(), call.inlineFrame);
 }
 
-static uint32_t inlineBudgetBytes(const FunctionPassContext& context, HeatClass heat, unsigned depth)
+static uint32_t inlineBudgetBytes(const FunctionPassContext& context, Expected<HeatClass> heat, unsigned depth)
 {
     uint64_t budget = 0;
-    switch (heat) {
+    switch (heat.predicted()) {
     case HeatClass::RunsOnce:
     case HeatClass::Cold:
         budget = context.limit(LimitID::InlineBudgetColdBytes);
@@ -1885,7 +1914,7 @@ static uint32_t inlineBudgetBytes(const FunctionPassContext& context, HeatClass 
     return clampTo<uint32_t>(budget >> std::min(depth, 31u));
 }
 
-static uint32_t budgetAt(const FunctionPassContext& context, const InliningSummary& summary, BlockID block, const Value& call, HeatClass heat, unsigned depth, bool isRepeatedByCaller)
+static uint32_t budgetAt(const FunctionPassContext& context, const InliningSummary& summary, BlockID block, const Value& call, Expected<HeatClass> heat, unsigned depth, bool isRepeatedByCaller)
 {
     uint32_t budget = inlineBudgetBytes(context, heat, depth);
     // What a call costs, a loop around it pays at every turn, and what the loop knows of the arguments stops at the call. Of a function with one call site there is one copy at most.
@@ -1893,11 +1922,11 @@ static uint32_t budgetAt(const FunctionPassContext& context, const InliningSumma
     if (isRepeatedByCaller && !summary.hasCycle && hasSingleCallSite(context, call.function(), call.inlineFrame, heat))
         return std::max(budget, clampTo<uint32_t>(context.limit(LimitID::InlineBudgetOnlyCallBytes) >> std::min(depth, 31u)));
     // How seldom one arm of a function that runs often is taken is the weakest estimate there is. A small function that only such an arm calls moves there: nothing is copied, and the call goes.
-    bool isArmOfBusyFunction = heat == HeatClass::Cold && context.function.at(block).frequency == BlockFrequency::Normal && !isCold(context.inputs.heat.of(context.program, context.id));
+    bool isArmOfBusyFunction = heat.predicted() == HeatClass::Cold && context.function.at(block).frequency.predicted() == BlockFrequency::Normal && !isCold(context.inputs.heat.of(context.program, context.id)).predicted();
     if (isArmOfBusyFunction && !summary.hasCycle && context.function.role != FunctionRole::GenericEntrypoint && hasSingleCallSite(context, call.function(), call.inlineFrame, heat))
         return std::max(budget, InlineModel::bodyMovedToArmBytes);
     // A function that is entered from many places runs often, though none of the places may.
-    if (isHot(heat) || isCold(heat) || context.inputs.heat.percentileOf(context.program, call.function()) < InlineModel::percentileOfMostEnteredFunctions)
+    if (isHot(heat).predicted() || isCold(heat).predicted() || context.inputs.heat.percentileOf(context.program, call.function()).predicted() < InlineModel::percentileOfMostEnteredFunctions)
         return budget;
     return std::max(budget, inlineBudgetBytes(context, HeatClass::Hot, depth) / 4 * 3);
 }
@@ -1911,6 +1940,47 @@ static bool calleeReturnsFreshAggregate(FunctionPassContext& context, const Inli
     return returnsFreshAggregateAskedOnce(summary, AnalysisContext { context.build, context.program, &context.inputs.flow, &context.inputs.effects, callee });
 }
 
+// A field that nothing reads goes in the end, and an allocation that is stored nowhere else goes with it. A call would stay.
+static bool isStoredOnlyInFieldsThatNothingReads(FunctionPassContext& context, ValueID value)
+{
+    return std::ranges::all_of(context.analyses.useLists().usesOf(value), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& holder = context.function.at(use.user);
+        if (isCast(holder.opcode))
+            return isStoredOnlyInFieldsThatNothingReads(context, use.user);
+        if (holder.opcode != Opcode::NewObject)
+            return false;
+        std::optional<uint32_t> position = holder.variadicOperandIndex(use.operandIndex);
+        if (!position || *position >= holder.fields().size())
+            return false;
+        const LocationFlow& location = fieldAt(context.program, { holder.layout(), holder.fields()[*position] }).flow.location;
+        return location.writers == WriterState::AllKnown && location.storeNaming == StoreNaming::EveryStoreNamesLocation && location.reads == ReadState::NeverRead;
+    });
+}
+
+// Code that runs once has no time to win, so a copy there is worth the bytes that it takes off. The wrapper makes the object whose parts its worker returns, and that takes more code than the call.
+// It goes to such a place where the caller does without the object: it takes the object apart, or keeps it where nothing reads. And it goes where the calls are so few that they and the one body
+// which they need take more than a copy at each place. That body is the wrapper with its worker, which other places may enter by itself.
+static bool wouldOnlyMoveAllocationIntoCodeThatRunsOnce(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call, Expected<HeatClass> heat)
+{
+    FunctionID callee = context.function.at(call).function();
+    if (heat.predicted() != HeatClass::RunsOnce || context.program.at(callee).creator.kind() != CreatorRecord::Kind::ResultWrapper)
+        return false;
+    const InliningSummaries& inlining = context.inputs.inlining;
+    FunctionID worker = context.program.at(callee).creator.as<CreatorRecord::ResultWrapper>().worker;
+    if (!inlining.contains(worker))
+        return false;
+    uint64_t bytesThatCallsSave = uint64_t { context.inputs.callGraph.numberOfCallSites(callee) } * (InlineModel::allocationCallBytes - CodeSize::directCall);
+    if (bytesThatCallsSave <= uint64_t { summary.codeBytes } + inlining.of(context.program, worker).codeBytes)
+        return false;
+    if (isStoredOnlyInFieldsThatNothingReads(context, call))
+        return false;
+    return !sinkableAllocationsAfterInlining(context, block, call, [&] {
+        return calleeReturnsFreshAggregate(context, summary, callee);
+    }).predicted();
+}
+
 static FunctionID functionAsWritten(const Program& program, FunctionID id)
 {
     while (FunctionID source = program.at(id).derivation.source)
@@ -1919,9 +1989,10 @@ static FunctionID functionAsWritten(const Program& program, FunctionID id)
 }
 
 // The call stands behind the test that no function object was renamed, beside the call by value that is made once one was. The forms of the callee itself enter one another as those of any function do.
+// The caller's own function object is called without the test.
 static bool standsBesideCallByValue(const FunctionPassContext& context, const Value& call)
 {
-    return context.program.at(call.function()).capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
+    return !call.callsOwnFunctionObject() && context.program.at(call.function()).capabilities.containsAll({ FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed }) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
 }
 
 InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call)
@@ -1939,26 +2010,26 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     if (!canInlineWholeBody && !summary.canInlineHead())
         return { .decision = InlineDecision::Barrier };
 
-    HeatClass heat = heatClassOf(context, block);
+    Expected<HeatClass> heat = heatClassOf(context, block);
     // However often the caller runs, this part of it is not expected to.
-    if (caller.at(block).frequency != BlockFrequency::Normal && !isCold(heat))
+    if (caller.at(block).frequency.predicted() != BlockFrequency::Normal && !isCold(heat).predicted())
         heat = HeatClass::Cold;
-    else if (heat == HeatClass::Cold && caller.at(block).frequency == BlockFrequency::Normal && handsOwnClosureToLoopOfLibrary(context, call, summary))
+    else if (heat.predicted() == HeatClass::Cold && caller.at(block).frequency.predicted() == BlockFrequency::Normal && handsOwnClosureToLoopOfLibrary(context, call, summary))
         heat = HeatClass::Warm;
     // In a loop of the caller the call runs more often than the caller. A caller that runs once repeats it often only in a loop within a loop.
-    double leastFrequencyOfHotCall = context.inputs.heat.of(program, context.id) == HeatClass::RunsOnce ? frequencyConstants.iterationsPerLoop : HeatModel::minWeightOfCallInLoop;
-    if (heat == HeatClass::Warm && context.inputs.heat.callsInLoopsAreHot() && context.analyses.blockFrequencies().frequencyOf(block) >= leastFrequencyOfHotCall)
+    double leastFrequencyOfHotCall = context.inputs.heat.of(program, context.id).predicted() == HeatClass::RunsOnce ? frequencyConstants.iterationsPerLoop : HeatModel::minWeightOfCallInLoop;
+    if (heat.predicted() == HeatClass::Warm && context.inputs.heat.callsInLoopsAreHot().predicted() && context.analyses.blockFrequencies().frequencyOf(block).predicted() >= leastFrequencyOfHotCall)
         heat = HeatClass::Hot;
 
     // How often the caller is entered is a product along paths of calls. A loop around the call is in the text.
-    bool isRepeatedByCaller = isHot(heat) && context.analyses.isInCycle(block);
+    bool isRepeatedByCaller = isHot(heat).predicted() && context.analyses.isInCycle(block);
     uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
     uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
     uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
 
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
-    Bets bets = isCold(heat) || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;
+    Bets bets = isCold(heat).predicted() || depth >= InlineModel::depthWithoutBets ? Bets::None : Bets::OnSpeed;
     uint32_t budget = wouldCopySharedBodyIntoEntrypoint(context, block, call, heat) ? 0 : budgetAt(context, summary, block, value, heat, depth, isRepeatedByCaller);
     InlineVerdict verdict { .costBytes = cost, .budgetBytes = budget };
 
@@ -1973,8 +2044,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool isEntryChecks = callee.role == FunctionRole::EntryChecks;
     bool callerIsEntrypoint = caller.role == FunctionRole::GenericEntrypoint || caller.role == FunctionRole::TableEntrypoint;
     bool leavesEntryChecksOutside = wouldCopySharedEntryChecksIntoEntrypoint(context, value, heat);
-    bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || (!isCold(heat) && knowsMoreThanEntryChecksPassOn(context, call)));
-    bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody);
+    bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
+    bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
     if (canInlineWholeBody && (value.isAlwaysInlined() || isAlwaysWorthInlining)) {
         addBenefit(value.isAlwaysInlined() ? InlineBenefit::CallOverhead : InlineBenefit::Wrapper, cost);
         verdict.decision = InlineDecision::Inline;
@@ -2018,14 +2089,14 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         bool makesOrFillsNewObject = callee.role == FunctionRole::ConstructBody || callee.role == FunctionRole::AllocatedThisVersion || callee.has(FunctionFlags::AllocatesOwnThis);
         if (cost <= InlineModel::constructorBytes && makesOrFillsNewObject)
             addBenefit(InlineBenefit::SunkAllocation, cost);
-        // The limit bounds what each level adds to the caller. A body that costs no more than its call adds nothing.
-        isTooDeep = cost > callOverheadBytes && context.exceeds(LimitID::MaxInlineDepth, depth + 1, call);
+        // The limit bounds what each level adds to the caller. A body that costs no more than its call adds nothing to the code, but each level is one more look at all of the caller.
+        isTooDeep = (cost > callOverheadBytes && context.exceeds(LimitID::MaxInlineDepth, depth + 1, call)) || context.exceeds(LimitID::MaxInlineNesting, inlineDepthOf(program, caller, value.inlineFrame) + 1, call);
         // Where code runs seldom, an allocation that goes is worth its own bytes and no more.
-        if (!isTooDeep && !isWithinBudget() && (!isCold(heat) || callerIsEntrypoint)) {
-            uint64_t bytesOfAllocation = isCold(heat) ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);
+        if (!isTooDeep && !isWithinBudget() && (!isCold(heat).predicted() || callerIsEntrypoint)) {
+            uint64_t bytesOfAllocation = isCold(heat).predicted() ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);
             unsigned allocations = sinkableAllocationsAfterInlining(context, block, call, [&] {
                 return calleeReturnsFreshAggregate(context, summary, value.function());
-            });
+            }).predicted();
             if (allocations)
                 addBenefit(InlineBenefit::SunkAllocation, allocations * bytesOfAllocation);
         }
@@ -2033,7 +2104,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
 
     if (canInlineWholeBody && !isTooDeep && isWithinBudget())
         verdict.decision = InlineDecision::Inline;
-    else if (isHot(heat) && summary.canInlineHead()) {
+    else if (isHot(heat).predicted() && summary.canInlineHead()) {
         verdict.decision = InlineDecision::InlineHead;
         verdict.costBytes = summary.headBytes;
     } else if (!canInlineWholeBody)
@@ -2136,7 +2207,7 @@ static bool handsObjectToFrequentCode(FunctionPassContext& context, ValueID call
         for (const Use& use : useLists.usesOf(worklist.takeLast())) {
             if (use.kind == Use::Kind::EdgeArgument) {
                 const Block& target = caller.at(targetOf(caller, use.edge()).block);
-                if (target.frequency == BlockFrequency::Normal)
+                if (target.frequency.predicted() == BlockFrequency::Normal)
                     return true;
                 if (use.operandIndex < target.parameters.size())
                     add(target.parameters[use.operandIndex]);
@@ -2157,7 +2228,7 @@ static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t
         BlockID blockID(blockIndex);
         if (!cfg.isReachable(blockID))
             continue;
-        bool isRare = isRecordedAsRare(caller, blockID);
+        bool isRare = isRecordedAsRare(caller, blockID).predicted();
         const Block& block = caller.at(blockID);
         for (uint32_t index = 0; index < block.values.size(); ++index) {
             ValueID id = block.values[index];
@@ -2196,7 +2267,7 @@ static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t
 
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
     sites.removeAllMatching([&](const InlineSite& site) {
-        return frequencies.classOf(site.block) == BlockFrequency::Rare && !handsObjectToFrequentCode(context, site.call);
+        return frequencies.classOf(site.block).predicted() == BlockFrequency::Rare && !handsObjectToFrequentCode(context, site.call);
     });
     return sites;
 }
@@ -2207,7 +2278,7 @@ static PassOutcome markNoReturnCallBlocks(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     for (BlockID blockID : context.analyses.cfg().reversePostOrder()) {
         const Block& block = caller.at(blockID);
-        if (block.frequency == BlockFrequency::Rare)
+        if (block.frequency.predicted() == BlockFrequency::Rare)
             continue;
         bool callsNoReturnFunction = block.values.containsIf([&](ValueID id) {
             const Value& value = caller.at(id);
@@ -2252,7 +2323,7 @@ static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& 
     // Heat only says who comes first.
     if (order.size() > 1) {
         for (uint32_t index : order) {
-            double heat = context.heatOf(sites[index].block);
+            double heat = context.heatOf(sites[index].block).predicted();
             sites[index].heat = heat > 0 ? heat : 0;
         }
     }
@@ -2274,7 +2345,7 @@ static void spendCallerBudget(FunctionPassContext& context, Vector<InlineSite>& 
         const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
         uint64_t bytes = 0;
         for (BlockID block : context.analyses.cfg().reversePostOrder()) {
-            if (frequencies.classOf(block) == BlockFrequency::Rare)
+            if (frequencies.classOf(block).predicted() == BlockFrequency::Rare)
                 continue;
             for (ValueID id : context.function.at(block).values) {
                 const Value& value = context.function.at(id);
@@ -2337,9 +2408,9 @@ static PassOutcome callCalleeVersions(FunctionPassContext& context, std::span<co
                 return context.exceeds(LimitID::MaxBytesOfCalleeVersions, uint64_t { parameter.functions.size() } * site.summary->codeBytes, site.call);
             };
             bool mayBeNullish = passed.mayBeUndefinedOrNull();
-            bool sharesCopy = isLibraryCode(program, callee) || isInColderPartOfProgram(context.inputs.heat, program, context.id);
+            bool sharesCopy = isLibraryCode(program, callee) || isInColderPartOfProgram(context.inputs.heat, program, context.id).predicted();
             // All who pass one built-in function share the copy for it, and few built-in functions are passed at all.
-            bool isForCalleeAlone = builtinArgument || ((isHot(heatClassOf(context, site.block)) || !sharesCopy) && !wouldHaveTooManyCopies());
+            bool isForCalleeAlone = builtinArgument || ((isHot(heatClassOf(context, site.block)).predicted() || !sharesCopy) && !wouldHaveTooManyCopies());
             caller.edit(site.call, ValueEdit::Definition).setFunction(context.derivedFunction(!isForCalleeAlone
                 ? calleeVersionKeyForAnyFunction(call.function(), entryParameter, mayBeNullish)
                 : argument ? calleeVersionKey(call.function(), entryParameter, argument, mayBeNullish)
@@ -2430,7 +2501,7 @@ PassOutcome inlineCalls(FunctionPassContext& context)
                 break;
             for (const InlineSite& site : sites) {
                 DecisionHandling handling = handlingOf(site.verdict.decision);
-                if (handling.followUp != FollowUp::ReportDecline || !isHot(heatClassOf(context, site.block)))
+                if (handling.followUp != FollowUp::ReportDecline || !isHot(heatClassOf(context, site.block)).predicted())
                     continue;
 
                 uint64_t allowedBytes = uint64_t { site.verdict.budgetBytes } + site.verdict.benefitBytes;
@@ -2455,7 +2526,7 @@ struct Head {
     FunctionID function;
     BitVector blocks;
     // Only edges that are not expected to be taken lead out of it.
-    bool holdsEveryLikelyPath { false };
+    Expected<bool> holdsEveryLikelyPath { false };
 };
 
 struct CallerSites {
@@ -2524,7 +2595,7 @@ static std::optional<Head> findHead(const AnalysisContext& context)
     for (size_t index : blocks) {
         const auto& targets = function.at(BlockID(index)).terminator.targets;
         for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex)
-            holdsEveryLikelyPath &= blocks.get(targets[targetIndex].block.index()) || analyses.blockFrequencies().classOf(Edge { BlockID(index), targetIndex }) != BlockFrequency::Normal;
+            holdsEveryLikelyPath &= blocks.get(targets[targetIndex].block.index()) || analyses.blockFrequencies().classOf(Edge { BlockID(index), targetIndex }).predicted() != BlockFrequency::Normal;
     }
     return Head { context.id, WTF::move(blocks), holdsEveryLikelyPath };
 }
@@ -2540,7 +2611,7 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
     std::optional<FunctionAnalyses> analyses;
     for (uint32_t blockIndex = 0; blockIndex < caller.blocks.size(); ++blockIndex) {
         const Block& block = caller.blocks[blockIndex];
-        if (block.frequency != BlockFrequency::Normal || block.handler)
+        if (block.frequency.predicted() != BlockFrequency::Normal || block.handler)
             continue;
         ValueID tailCall = block.terminator.kind == TerminatorKind::ReturnCall ? block.terminator.callOperand() : ValueID();
         for (uint32_t valueIndex = 0; valueIndex < block.values.size(); ++valueIndex) {
@@ -2554,15 +2625,15 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
             if (!analyses) {
                 analyses.emplace(context, caller);
                 // Without looking at the blocks: none of them is in a cycle or runs more often than the function is entered, and code that runs that often is not hot.
-                if (caller.role != FunctionRole::EntryChecks && !isHot(heat.classOf(heat.activationsOf(program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(analyses->cfg()))
+                if (caller.role != FunctionRole::EntryChecks && !isHot(heat.classOf(heat.activationsOf(program, context.id) * roundingOfFrequencySums)).predicted() && runsNoBlockMoreOftenThanEntry(analyses->cfg()))
                     return sites;
             }
             // A copy buys time where time is spent.
-            HeatClass heatOfCall = heatClassOf(heat, *analyses, BlockID(blockIndex));
+            Expected<HeatClass> heatOfCall = heatClassOf(heat, *analyses, BlockID(blockIndex));
             bool isInCycle = analyses->isInCycle(BlockID(blockIndex));
             // The tests in front of a body are entered for the body.
             bool entersOwnBody = caller.role == FunctionRole::EntryChecks && caller.creator.as<CreatorRecord::EntryChecks>().body == value.function();
-            if (isHot(heatOfCall) || (headOf[value.function().index()]->holdsEveryLikelyPath && (isInCycle || entersOwnBody) && !isCold(heatOfCall)))
+            if (isHot(heatOfCall).predicted() || (headOf[value.function().index()]->holdsEveryLikelyPath.predicted() && (isInCycle || entersOwnBody) && !isCold(heatOfCall).predicted()))
                 sites.append({ BlockID(blockIndex), valueIndex, call });
         }
     }

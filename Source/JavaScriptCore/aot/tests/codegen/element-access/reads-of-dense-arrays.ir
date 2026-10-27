@@ -1,9 +1,14 @@
-# A read from an array that has no holes tests for none: its code differs from the code of the same read from an array that may have one, in each storage kind, and so does the code of `in`
+# A read from an array that has no holes tests for none: its code differs from the code of the same read from an array that may have one, in each storage kind, and so does the code of `in`.
+# Code of another size is other code. On ARM64 the two reads of int32 have one size, and what tells them apart is where the unlikely arm sets its frame up
 # FORM: Placed
 # OPTIONS: check=validate-back-end
 # RUN: generate-code
-# CHECK: f0: size=[[int32]] frame=[[int32Frame]]@
-# CHECK-NOT: f1: size=[[int32]] frame=[[int32Frame]]@
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# CHECK: f0: size=[[int32]] frame=[[int32Frame]]@[[int32Setup]]-
+# CHECK-NOT: f1: size=[[int32]] frame=[[int32Frame]]@[[int32Setup]]-
+# X64: f0: size=[[int32]] frame=[[int32Frame]]@
+# X64-NOT: f1: size=[[int32]] frame=[[int32Frame]]@
 # CHECK: f2: size=[[double]] frame=[[doubleFrame]]@
 # CHECK-NOT: f3: size=[[double]] frame=[[doubleFrame]]@
 # CHECK: f4: size=[[contiguous]] frame=[[contiguousFrame]]@

@@ -108,6 +108,7 @@ static bool isSame(const CompileOptions& first, const CompileOptions& second)
         && first.validatesBackEnd == second.validatesBackEnd
         && first.validatesReferences == second.validatesReferences
         && first.validatesReferenceGuards == second.validatesReferenceGuards
+        && first.widensFlow == second.widensFlow
         && first.reports == second.reports
         && first.excludedCode == second.excludedCode
         && first.output == second.output;
@@ -268,6 +269,8 @@ static constexpr OptionWordCase optionWordCases[] = {
     } },
     { "heat=EverythingIsCold"_s, [](WireOptions& options) { options.heatOverride = Wire::HeatOverride::EverythingIsCold; } },
     { "heat=everything-is-cold"_s, [](WireOptions& options) { options.heatOverride = Wire::HeatOverride::EverythingIsCold; } },
+    { "flow=Widened"_s, [](WireOptions& options) { options.flowOverride = Wire::FlowOverride::Widened; } },
+    { "flow=widened"_s, [](WireOptions& options) { options.flowOverride = Wire::FlowOverride::Widened; } },
     { "testing=ignore-branch-hints"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreBranchHints; } },
     { "testing=IgnoreExpectedTypes"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::IgnoreExpectedTypes; } },
     { "testing=FailPredictions"_s, [](WireOptions& options) {
@@ -332,6 +335,7 @@ static constexpr ASCIILiteral rejectedWords[] = {
     "limit=MaxLayoutsInType"_s,
     "limit=MaxDataNodes:1"_s,
     "heat=Warm"_s,
+    "flow=Narrowed"_s,
     "testing=DropGuard"_s,
     "testing=IgnorePredictions"_s,
     "sabotage=Everything"_s,
@@ -442,6 +446,7 @@ static void testOptionWordsListedNamesAccepted()
         "limit=MaxLayoutsInType:0"_s,
         "limit=MinSwitchCases:0"_s,
         "heat=None"_s,
+        "flow=None"_s,
         "testing=IgnoreBranchHints"_s,
         "testing=IgnoreExpectedTypes"_s,
         "sabotage=None"_s,
@@ -609,6 +614,7 @@ static constexpr InvalidMemberCase invalidMemberCases[] = {
     { offsetof(WireOptions, action), [](WireOptions& wire) { wire.action = firstInvalidEnumerator<Wire::CompileAction>; } },
     { offsetof(WireOptions, mismatchPolicy), [](WireOptions& wire) { wire.mismatchPolicy = firstInvalidEnumerator<Wire::MismatchPolicy>; } },
     { offsetof(WireOptions, heatOverride), [](WireOptions& wire) { wire.heatOverride = firstInvalidEnumerator<Wire::HeatOverride>; } },
+    { offsetof(WireOptions, flowOverride), [](WireOptions& wire) { wire.flowOverride = firstInvalidEnumerator<Wire::FlowOverride>; } },
     { offsetof(WireOptions, loweredLimit), [](WireOptions& wire) { wire.loweredLimit = firstInvalidEnumerator<LimitID>; } },
     { offsetof(WireOptions, loweredLimit), [](WireOptions& wire) { wire.loweredLimit = LimitID::MaxDataNodes; } },
     { offsetof(WireOptions, loweredLimit), [](WireOptions& wire) { wire.loweredLimitValue = 5; } },

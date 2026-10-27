@@ -33,6 +33,7 @@
 #include "CodeSpecializationKind.h"
 #include "FunctionRareData.h"
 #include "JSCJSValueInlines.h"
+#include "MathCommon.h"
 #include "NativeExecutable.h"
 #include "PageCount.h"
 
@@ -148,6 +149,11 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return;
         }
         BuiltinID builtin = m_builtins.canonicalID(overload.builtin);
+        // Bytecode makes the array of `Array(length)` in the caller, so the stack has no frame of Array.
+        if (builtin == Builtins::Array && value->isDoneInPlace() && arguments.size() == 1) {
+            defineResult(boxCell(callOperation<CellPointer>(value, RuntimeOperation::ArrayOfLengthOrElement, { boxedOperand(value, arguments[0]) })));
+            return;
+        }
         if (builtin == Builtins::Number && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
             defineResult(callOperation<Boxed>(value, RuntimeOperation::NumberOfAnyValue, { boxedOperand(value, arguments[0]) }, { .calledBuiltin = builtin }));
             return;
@@ -177,7 +183,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return index < boxedArguments.size() ? boxedArguments[index] : undefined();
         };
         auto answerOrCallFunction = [&](RuntimeOperation operation, std::initializer_list<Operand> operands) {
-            Boxed answer = callOperation<Boxed>(value, operation, operands);
+            Boxed answer = callOperation<Boxed>(value, operation, operands, { .calledBuiltin = builtin });
             defineResult(either<Boxed>(isNotEmpty(answer), [&] {
                 return answer;
             }, [&] {

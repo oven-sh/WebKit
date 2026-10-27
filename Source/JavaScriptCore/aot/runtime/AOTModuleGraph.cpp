@@ -330,10 +330,28 @@ static Vector<LinkPlanStepData> planLink(const ModuleGraph& graph, ModuleID entr
     return plan;
 }
 
+static void markModulesLoadedWithFirstEntryPoint(const ModuleGraph& graph, ModuleID entryPoint)
+{
+    RELEASE_ASSERT(entryPoint.index() < graph.size());
+    graph[entryPoint.index()].firstEntryPoint = true;
+    graph[entryPoint.index()].loadedWithFirstEntryPoint = true;
+    Vector<uint32_t, 64> importers { entryPoint.index() };
+    while (!importers.isEmpty()) {
+        for (const ModuleRequestData& request : graph.requestsOf(importers.takeLast())) {
+            if (request.isRequire || request.isHoisted || graph[request.target()].loadedWithFirstEntryPoint)
+                continue;
+            graph[request.target()].loadedWithFirstEntryPoint = true;
+            importers.append(request.target());
+        }
+    }
+}
+
 Vector<LinkPlanStepData> planLinkOfEntryPoint(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, ModuleID entryPoint)
 {
     RELEASE_ASSERT(!modulesAndEndRecord.empty());
-    return planLink(ModuleGraph { modulesAndEndRecord, requests }, entryPoint, PlannedRoot::EntryPoint);
+    ModuleGraph graph { modulesAndEndRecord, requests };
+    markModulesLoadedWithFirstEntryPoint(graph, entryPoint);
+    return planLink(graph, entryPoint, PlannedRoot::EntryPoint);
 }
 
 LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, std::span<const ModuleImportSite> unsortedImportSites, std::optional<ModuleID> plannedEntryPoint)

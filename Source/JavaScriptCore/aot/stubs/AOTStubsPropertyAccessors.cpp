@@ -141,9 +141,9 @@ static void loadCustomAccessorRecord(StubAssembler& jit, GPRReg accessorIndexAnd
 }
 
 // A0 is set last: on ARM64 it is the receiver's register.
-static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg record, GPRReg uid, std::optional<GPRReg> storedValue)
+static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg record, GPRReg uid, std::optional<GPRReg> storedValue, std::optional<GPRReg> keyCell)
 {
-    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !storedValue, .checksException = true }, [&] {
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::HostFunction, .returnsValue = !storedValue, .checksException = true, .cellToKeep = keyCell }, [&] {
         const GPRReg A0 = jit.reuseScratch(StubRegister::A0);
         const GPRReg A1 = jit.reuseScratch(StubRegister::A1);
         const GPRReg A2 = jit.reuseScratch(StubRegister::A2);
@@ -166,7 +166,7 @@ static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, G
     });
 }
 
-void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg accessorIndex, GPRReg uid)
+void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell)
 {
     const GPRReg cachedValue = jit.reuseScratch(StubRegister::T11);
     const GPRReg record = jit.clobberRegister(accessorIndex);
@@ -182,15 +182,15 @@ void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg acces
 
     hasNoCachedValue.link(&jit);
     isEmpty.link(&jit);
-    callRecordedAccessorAndReturn(jit, receiver, record, uid, std::nullopt);
+    callRecordedAccessorAndReturn(jit, receiver, record, uid, std::nullopt, keyCell);
 }
 
-void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid)
+void callCustomSetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell)
 {
     const GPRReg record = jit.clobberRegister(accessorIndex);
     RELEASE_ASSERT(noOverlap(receiver, value, record, uid));
     loadCustomAccessorRecord(jit, record);
-    callRecordedAccessorAndReturn(jit, receiver, record, uid, value);
+    callRecordedAccessorAndReturn(jit, receiver, record, uid, value, keyCell);
 }
 
 // functionNames has no "get ", "set " or "bound ". A look that stack frames tell of is noted in the function object.

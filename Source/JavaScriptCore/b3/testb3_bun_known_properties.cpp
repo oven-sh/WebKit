@@ -898,6 +898,36 @@ static void testTrapOriginOfFusedLoad()
     }
 }
 
+static void testAddressOfTrappingAccessNamesWhatIsDereferenced()
+{
+    for (bool attributesTrapsToAccesses : { true, false }) {
+        Procedure proc(policyWith([&](Policy& policy) {
+            policy.selection.attributesTrapsToAccesses = attributesTrapsToAccesses;
+            policy.allocation.keepsValuesAfterLowering = true;
+        }));
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+        Value* address = graph.make(root, Add, arguments[0], arguments[1]);
+        graph.ret(root, root->appendNew<MemoryValue>(proc, trapping(Load), Int64, Origin(), address, 0, firstHeap));
+        generateToAir(proc);
+
+        unsigned numberOfTrappingInstructions = 0;
+        for (Air::BasicBlock* block : proc.code()) {
+            for (Air::Inst& inst : *block) {
+                if (!inst.kind.effects)
+                    continue;
+                ++numberOfTrappingInstructions;
+                bool hasIndex = false;
+                for (const Air::Arg& arg : inst.args())
+                    hasIndex |= arg.isIndex();
+                CHECK_EQ(hasIndex, !attributesTrapsToAccesses);
+            }
+        }
+        CHECK_EQ(numberOfTrappingInstructions, 1u);
+    }
+}
+
 void addBunKnownPropertyTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testKnownDereferenceableBytes());
@@ -921,6 +951,7 @@ void addBunKnownPropertyTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRunTimeChecksOfKnownProperties());
     RUN(testRunTimeRangeCheckSurvivesRangeReductions());
     RUN(testTrapOriginOfFusedLoad());
+    RUN(testAddressOfTrappingAccessNamesWhatIsDereferenced());
 }
 
 #endif // ENABLE(B3_JIT)

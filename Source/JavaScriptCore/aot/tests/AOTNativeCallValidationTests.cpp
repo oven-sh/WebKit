@@ -321,6 +321,20 @@ static void testChangesMadeByCodeThatRanAreAccepted()
     AOT_TEST_CHECK(realms.vm().didEnterVM);
 }
 
+static void testOperandThatAnotherOperandHoldsUnderAnIndexMayArriveThere()
+{
+    Realms realms(RuntimeValidation::On);
+    JSGlobalObject* realm = realms.plain();
+    JSObject* target = realms.object(realm, "({ 0: {} })"_s);
+    JSArray* list = realms.array(realm, "[{}]"_s);
+    JSValue element = list->getIndexQuickly(0);
+    SimulatedCall(realms, "Object.assign"_s).run({ target, element, jsNumber(0), list }, [&] {
+        target->putDirectIndex(realm, 0, element);
+        return target;
+    });
+    AOT_TEST_CHECK(target->getIndexQuickly(0) == element);
+}
+
 static void testBuiltinThatTheCallNamesIsAccepted()
 {
     Realms realms(RuntimeValidation::On);
@@ -625,6 +639,7 @@ std::span<const NativeTest> nativeCallValidationTests()
         { "native-call-validation/collection-in-a-call-that-throws-is-accepted"_s, testCollectionInCallThatThrowsIsAccepted },
         { "native-call-validation/proxy-that-an-entry-uses-by-a-protocol-throws-by-itself"_s, testProxyThatAnEntryUsesByProtocolThrowsByItself },
         { "native-call-validation/property-of-an-array-under-a-number-that-is-no-index-is-an-element"_s, testPropertyOfAnArrayUnderANumberThatIsNoIndexIsAnElement },
+        { "native-call-validation/operand-that-another-operand-holds-under-an-index-may-arrive-there"_s, testOperandThatAnotherOperandHoldsUnderAnIndexMayArriveThere },
         { "native-call-validation/built-in-that-the-call-names-is-accepted"_s, testBuiltinThatTheCallNamesIsAccepted },
         { "native-call-validation/no-proof-rests-on-native-code-where-unseen-code-runs"_s, testNoProofRestsOnNativeCodeWhereUnseenCodeRuns },
         { "native-call-validation/nothing-is-checked-without-validation"_s, testNothingIsCheckedWithoutValidation },

@@ -462,21 +462,21 @@ private:
         });
     }
 
-    static bool runsOnlyCallees(const EffectDescription& description, const CalleeList& callees)
+    static bool runsOnlyCallees(const EffectDescription& description, std::span<const FunctionID> callees)
     {
         if (description.callsUnknownCode)
             return false;
-        if (std::ranges::is_sorted(callees.functions))
-            return std::ranges::includes(callees.functions, description.functions);
+        if (std::ranges::is_sorted(callees))
+            return std::ranges::includes(callees, description.functions);
         return std::ranges::all_of(description.functions, [&](FunctionID function) {
-            return callees.functions.contains(function);
+            return std::ranges::contains(callees, function);
         });
     }
 
-    void summarizeCall(BlockID block, const Value& value, const CalleeList& callees, const EffectDescription& description)
+    void summarizeCall(BlockID block, const Value& value, ProvenValue<std::span<const FunctionID>> callees, const EffectDescription& description)
     {
         addToExits(block, description.own.normal, description.own.handler);
-        for (FunctionID id : callees.functions) {
+        for (FunctionID id : callees.value()) {
             const Function& callee = m_context.program.at(id);
             uint32_t numberOfParameters = callee.numberOfEntryParameters();
             addDependencyToExits(block, SummaryNode::onReturn(id), SummaryNode::onThrow(id));
@@ -559,8 +559,8 @@ private:
         }
         if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
             CalleeList callees = calleesThatBoundEffectsOf(program, value);
-            if (callees.isComplete && callees.builtins.isEmpty() && runsOnlyCallees(description, callees)) {
-                summarizeCall(block, value, callees, description);
+            if (std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone(); functions && runsOnlyCallees(description, *functions)) {
+                summarizeCall(block, value, *functions, description);
                 return;
             }
         }

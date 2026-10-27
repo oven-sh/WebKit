@@ -117,6 +117,7 @@ struct BodyContents {
 };
 
 BodyContents contentsOf(const Function&);
+bool hasNeverResult(const Value&);
 
 // What contentsOf() answers, kept by counting: only what the change log names is read again.
 class CountedContents {

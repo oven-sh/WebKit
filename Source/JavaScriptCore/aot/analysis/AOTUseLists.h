@@ -8,11 +8,14 @@
 #if ENABLE(AOT)
 
 #include "AOTCFG.h"
+#include "AOTChangeLog.h"
 #include "AOTVector.h"
 #include <compare>
+#include <limits>
 #include <optional>
 #include <span>
 #include <type_traits>
+#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
@@ -64,7 +67,8 @@ class UseLists {
     WTF_MAKE_NONCOPYABLE(UseLists);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(UseLists);
 public:
-    UseLists(const Function&, const CFG&);
+    // With the log of the function's changes, lists of a function that changes little at a time read only the blocks that have changed.
+    UseLists(const Function&, const CFG&, const ChangeLog* = nullptr);
 
     std::span<const Use> usesOf(ValueID id) const
     {
@@ -76,9 +80,9 @@ public:
     unsigned useCount(ValueID id) const
     {
         UseRange range = rangeOf(id);
-        return range.end & isLinked ? range.end & ~isLinked : range.end - range.first;
+        return range.end & isLinked ? range.end & ~marksOfLinks : range.end - range.first;
     }
-    std::optional<Use> singleUse(ValueID id) const { return useCount(id) == 1 ? std::optional(uses()[rangeOf(id).first]) : std::nullopt; }
+    std::optional<Use> singleUse(ValueID id) const { return useCount(id) == 1 ? std::optional(usesOf(id)[0]) : std::nullopt; }
     ValueLocation locationOf(ValueID id) const
     {
         RELEASE_ASSERT(id.index() < m_locations.size());
@@ -92,21 +96,29 @@ public:
     bool isBefore(const Use& a, const Use& b) const { return orderOf(a) < orderOf(b); }
     unsigned numberOfValues() const { return m_locations.size(); }
 
-    void didChangeBlock(BlockID) { m_isUpToDate = false; m_hasChangedBlocks = true; }
+    void didChangeBlock(BlockID block)
+    {
+        m_isUpToDate = false;
+        m_namedBlocks.append(block);
+    }
     void didChangeOperandsOf(ValueID user);
-    void didReplaceUses(ValueID from, ValueID to);
-    void didAddValues() { m_isUpToDate = false; }
-    void didChangeControlFlow() { m_isUpToDate = false; m_graphMayHaveChanged = true; }
-    void didChangeEverything() { m_isUpToDate = false; m_mustBeMadeAnew = true; }
+    void didChangeWhatTheLogSays()
+    {
+        m_isUpToDate = false;
+        m_mustBeMadeAnew |= !m_changes;
+    }
 
     bool isUpToDate() const { return m_isUpToDate; }
     bool mustBeMadeAnew() const { return m_mustBeMadeAnew; }
 
+    enum class ReasonToMakeAnew : uint8_t { None, NoLog, NothingKeptForUpdates, ForgottenChanges, MuchHasChanged, MuchIsGone, UnknownChange };
+    static constexpr unsigned numberOfReasonsToMakeAnew = 7;
+
     struct Update {
-        bool hasMadeAnew { false };
+        ReasonToMakeAnew madeAnewFor { ReasonToMakeAnew::None };
         size_t numberOfValuesRead { 0 };
     };
-    Update bringUpToDate(const CFG&);
+    Update bringUpToDate(const CFG&, bool isGraphThatWasRead = false);
 
 private:
     struct UseRange {
@@ -114,6 +126,9 @@ private:
         uint32_t end { 0 };
     };
     static constexpr uint32_t isLinked = 1u << 31;
+    static constexpr uint32_t mayBeOutOfOrder = 1u << 30;
+    static constexpr uint32_t marksOfLinks = isLinked | mayBeOutOfOrder;
+    static constexpr uint32_t useIsGone = std::numeric_limits<uint32_t>::max();
 
     struct StoredUse {
         uint32_t words[5];
@@ -127,27 +142,62 @@ private:
         return m_ranges.span().data()[id.index()];
     }
 
+    // Where the uses in a block and the values that it lists stand. An update takes them out by it.
+    struct PartOfBlock {
+        static constexpr uint32_t notListed = std::numeric_limits<uint32_t>::max();
+
+        bool isListed() const { return firstUse != notListed; }
+
+        uint32_t firstUse { notListed };
+        uint32_t endOfUses { 0 };
+        uint32_t firstListedValue { 0 };
+        uint32_t endOfListedValues { 0 };
+    };
+
     void makeAnew();
+    template<bool keepsWhatUpdatesRead> void makeAnewFromBlocks();
     struct RoomForUses {
         StoredUse* uses;
         uint32_t* placeOfNextUse;
+        uint32_t* usedValues;
         size_t size;
     };
-    NEVER_INLINE RoomForUses makeRoomForUses(size_t);
+    NEVER_INLINE RoomForUses makeRoomForUses(size_t size, size_t capacity);
     std::span<const Use> layOut(ValueID) const;
+    NEVER_INLINE std::span<const Use> layOutBehindUpdates(ValueID) const;
+    ReasonToMakeAnew findReasonToMakeAnew() const;
+    struct ChangedBlocks {
+        size_t numberOfValuesRead { 0 };
+        bool keepTheirOrder { true };
+    };
+    ChangedBlocks findChangedBlocks(bool isGraphThatWasRead, size_t mostValuesRead);
+    void forgetChangedBlocks();
+    bool hasChangedLittle();
+    bool readChangedBlocks();
+    void linkAgain(UseRange&, ValueID);
     void didBecomeUpToDate();
 
     const Function& m_function;
     const CFG* m_cfg;
+    const ChangeLog* m_changes;
+    ChangeLog::Cursor m_firstUnreadChange;
     mutable Vector<UseRange> m_ranges;
     mutable Vector<StoredUse> m_uses;
-    Vector<uint32_t> m_placeOfNextUse;
+    mutable Vector<uint32_t> m_placeOfNextUse;
+    mutable Vector<uint32_t> m_firstPlacesOfRows;
     Vector<ValueLocation> m_locations;
+    Vector<uint32_t> m_usedValues;
+    Vector<ValueID> m_listedValues;
+    Vector<PartOfBlock> m_partsOfBlocks;
+    Vector<BlockID> m_order;
+    Vector<BlockID> m_namedBlocks;
+    Vector<BlockID> m_changedBlocks;
+    BitVector m_isChangedBlock;
     size_t m_numberOfUses { 0 };
-    bool m_hasChangedBlocks { false };
     bool m_isUpToDate { false };
-    bool m_graphMayHaveChanged { false };
     bool m_mustBeMadeAnew { false };
+    bool m_keepsWhatUpdatesRead { false };
+    bool m_wasUpdated { false };
 };
 
 // A branch on a test passes the tested operand on as a parameter of the block it enters.

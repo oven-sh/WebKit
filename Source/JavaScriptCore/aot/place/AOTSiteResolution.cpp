@@ -419,7 +419,7 @@ std::optional<uint32_t> findRecordOfStoredField(const Program& program, const Pl
     if ((store.opcode != Opcode::PropSet || store.isFreeName()) && store.opcode != Opcode::PropDefine)
         return std::nullopt;
     const Type& receiver = program.typeOf(function, store.objectOperand());
-    if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts(program))
+    if (!receiver.isObject() || !receiver.layouts || !receiver.hasOnlyLayouts())
         return std::nullopt;
     std::optional<uint16_t> index;
     for (LayoutID member : membersOf(program, receiver)) {
@@ -447,8 +447,14 @@ static unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program& prog
     if (findRecordOfStoredField(program, placement, function, value, NameHasColumn::Yes))
         return 0;
     // Flow has seen compiled objects come to this read. The table of fields answers for all their layouts alike, and the stub without a site asks it first: a site in front of it would stay empty.
-    if (value.opcode == Opcode::PropGet && !value.isFreeName() && value.receivers() && program.nameClassOf(value.key()) != NameClass::Length)
-        return 0;
+    // A name that none of the layouts has is found above the object, and the table has nothing to say.
+    if (value.opcode == Opcode::PropGet && !value.isFreeName() && value.receivers() && program.nameClassOf(value.key()) != NameClass::Length) {
+        bool isFieldOfReceiver = std::ranges::any_of(program.at(value.receivers()).seen().predicted(), [&](LayoutID member) {
+            return !!findField(program, member, value.key(), BaseChain::Proven);
+        });
+        if (isFieldOfReceiver)
+            return 0;
+    }
     return siteCachesOf(value.opcode);
 }
 
@@ -530,8 +536,8 @@ SiteCaches placeSiteCaches(ProgramEditor& editor, const Placement& placement, co
     if (requests.size() > build.limit(LimitID::MaxSiteCaches)) {
         requests = collectRequests(true);
         parallelSort(loops, requests.mutableSpan(), [](const SiteCacheRequest& a, const SiteCacheRequest& b) {
-            if (a.weight != b.weight)
-                return a.weight > b.weight;
+            if (!a.weight.isSamePredictionAs(b.weight))
+                return (a.weight > b.weight).predicted();
             return std::tie(a.function, a.value) < std::tie(b.function, b.value);
         });
     }

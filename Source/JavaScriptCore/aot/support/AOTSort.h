@@ -7,9 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <ranges>
@@ -17,7 +19,6 @@
 #include <utility>
 #include <wtf/Compiler.h>
 #include <wtf/StdLibExtras.h>
-#include <wtf/VectorTraits.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -139,11 +140,7 @@ inline NEVER_INLINE void stableSortLongRange(const SortSteps& steps, char* first
 }
 
 template<typename T>
-inline constexpr bool movesAsBytes = alignof(T) <= alignof(uint64_t) && ((std::is_trivially_move_constructible_v<T> && std::is_trivially_destructible_v<T>) || VectorTraits<T>::canMoveWithMemcpy);
-
-// FreeBSD's libc++ gives std::pair a copy constructor of its own.
-template<typename First, typename Second>
-inline constexpr bool movesAsBytes<std::pair<First, Second>> = alignof(std::pair<First, Second>) <= alignof(uint64_t) && movesAsBytes<First> && movesAsBytes<Second>;
+inline constexpr bool sortsAsBytes = alignof(T) <= alignof(uint64_t) && movesAsBytes<T>;
 
 template<typename T, typename IsLess, typename Projection>
 class OrderedSteps {
@@ -212,15 +209,12 @@ private:
         auto& order = *static_cast<OrderedSteps*>(erasedOrder);
         T* first = static_cast<T*>(erasedFirst);
         T* last = static_cast<T*>(erasedLast);
-        T* a = first + 1;
-        T* b = first + (last - first) / 2;
+        T* lesser = first + 1;
+        T* greater = first + (last - first) / 2;
         T* c = last - 1;
-        T* median;
-        if (isLessOutOfLine(erasedOrder, a, b))
-            median = isLessOutOfLine(erasedOrder, b, c) ? b : isLessOutOfLine(erasedOrder, a, c) ? c : a;
-        else
-            median = isLessOutOfLine(erasedOrder, a, c) ? a : isLessOutOfLine(erasedOrder, b, c) ? c : b;
-        swap(first, median);
+        if (!order.isLess(*lesser, *greater))
+            std::swap(lesser, greater);
+        swap(first, order.isLess(*greater, *c) ? greater : order.isLess(*lesser, *c) ? c : lesser);
         T* low = first + 1;
         T* high = last;
         while (true) {
@@ -258,7 +252,20 @@ private:
 template<typename Integer>
 NEVER_INLINE void sortIntegers(Integer* begin, Integer* end)
 {
-    std::sort(begin, end);
+    // Lists that were in order, one behind the other, are merged.
+    AOT_THRESHOLD(ptrdiff_t, fewestIntegersToMerge, 64);
+    AOT_THRESHOLD(unsigned, mostListsMerged, 8);
+    Integer* endOfOrdered = std::is_sorted_until(begin, end);
+    for (unsigned lists = 1; endOfOrdered != end && end - begin >= fewestIntegersToMerge && lists < mostListsMerged; ++lists) {
+        Integer* endOfNext = std::is_sorted_until(endOfOrdered, end);
+        bool areTooShort = (endOfNext - begin) * static_cast<ptrdiff_t>(mostListsMerged) < (end - begin) * static_cast<ptrdiff_t>(lists + 1);
+        if (areTooShort)
+            break;
+        std::inplace_merge(begin, endOfOrdered, endOfNext);
+        endOfOrdered = endOfNext;
+    }
+    if (endOfOrdered != end)
+        std::sort(begin, end);
 }
 
 template<typename T> struct IntegerOrderedLike { using Type = std::conditional_t<std::is_integral_v<T>, T, void>; };
@@ -291,7 +298,7 @@ void sortElements(T* elements, size_t size, IsLess& isLess, Projection& projecti
 {
     if (size < 2)
         return;
-    if constexpr (!movesAsBytes<T>) {
+    if constexpr (!sortsAsBytes<T>) {
         SortedIndices indices = indicesInOrder(size);
         auto isLessAt = [&](uint32_t first, uint32_t second) -> bool {
             return std::invoke(isLess, std::invoke(projection, elements[first]), std::invoke(projection, elements[second]));

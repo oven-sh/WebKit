@@ -56,7 +56,7 @@ static FieldReferenceList findUntoldFields(const Program& program, const Functio
 {
     FieldReferenceList fields;
     ReceiverCandidates receivers = receiverCandidates(program, function, object);
-    const LayoutList& layouts = receivers.isProven() ? receivers.proven : receivers.predicted;
+    const LayoutList& layouts = receivers.isProven() ? receivers.proven : receivers.expected.predicted();
     if (layouts.isEmpty() || layouts.size() > maxReceiversOfFieldRead)
         return fields;
     for (LayoutID layout : layouts) {
@@ -91,7 +91,7 @@ static void collectNamesAsked(const Program& program, const Function& function, 
                     found.append({ *filled, { }, { }, { }, true });
                 ValueID stored = sameObjectThroughCasts(function, access.operand(OperandIndex::PropSet::value));
                 ReceiverCandidates candidates = receiverCandidates(program, function, stored);
-                const LayoutList& layoutsStored = candidates.isProven() ? candidates.proven : candidates.predicted;
+                const LayoutList& layoutsStored = candidates.isProven() ? candidates.proven : candidates.expected.predicted();
                 bool tellsNothing = program.typeOf(function, stored) == Type::anything() && !function.at(stored).expected().predicted();
                 bool listsLayouts = !layoutsStored.isEmpty() && layoutsStored.size() <= maxLayoutsExpectedOfField;
                 if (!tellsNothing && !listsLayouts)

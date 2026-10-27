@@ -647,17 +647,19 @@ const Vector<PropertyListEntry>* Object::fieldsAndExtraPropertiesInKeyOrder(VM& 
     return listing ? &listing->properties : nullptr;
 }
 
-JSCellButterfly* Object::keys(VM& vm) const
+JSCellButterfly* Object::keys(VM& vm, KeyListKind kind) const
 {
     validateKeyListing(vm, *this);
     if (hasExtraProperties() || !hasNumberedKeyOrder(*this))
         return nullptr;
     State& state = this->state();
-    uint32_t shapeWord = this->shapeWord();
+    if (!hasKeyListsInTable(kind, state.tables.numberOfShapes))
+        return state.objects->keyOrders.keysInOrder(vm, layout(), orderWord(), kind);
+    uint32_t shapeWord = keyListWordOf(this->shapeWord(), kind);
     auto& cacheEntry = state.instance.objects.keyLists[indexOfKeyList(shapeWord, orderWord())];
     if (cacheEntry.shapeWord == shapeWord && cacheEntry.orderWord == orderWord())
         return uncheckedDowncast<JSCellButterfly>(cacheEntry.list);
-    JSCellButterfly* list = state.objects->keyOrders.keysInOrder(vm, layout(), orderWord() & orderAndCountMask);
+    JSCellButterfly* list = state.objects->keyOrders.keysInOrder(vm, layout(), orderWord(), kind);
     if (list)
         cacheEntry = { orderWord(), shapeWord, list };
     return list;

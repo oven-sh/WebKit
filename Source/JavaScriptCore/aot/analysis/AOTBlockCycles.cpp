@@ -193,7 +193,7 @@ private:
     BlockID chooseHeader(std::span<const uint32_t> members, const Vector<BlockID, 2>& entries) const
     {
         auto rankOf = [&](BlockID block) {
-            return std::pair { m_function ? m_function->at(block).frequency : BlockFrequency::Normal, m_cfg.reversePostOrderIndex(block) };
+            return std::pair { m_function ? m_function->at(block).frequency.predicted() : BlockFrequency::Normal, m_cfg.reversePostOrderIndex(block) };
         };
         if (!entries.isEmpty())
             return *std::ranges::min_element(entries, { }, rankOf);

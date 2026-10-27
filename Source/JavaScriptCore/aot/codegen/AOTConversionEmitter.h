@@ -66,7 +66,7 @@ public:
 
     // Code on an edge runs as seldom as the rarer of its ends and has the more compact of their shapes, whatever the context of the terminator says.
     struct PlaceOnEdge {
-        BlockFrequency frequency;
+        Expected<BlockFrequency> frequency;
         CodeShape shape;
     };
     // Answers with the place that was set before.

@@ -274,7 +274,7 @@ bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member
     const ValueFlowSite* site = m_inputs.universe().siteOf(member);
     if (const ValueFlowContainerFacts* facts = m_inputs.containers ? m_inputs.containers->find(member) : nullptr) {
         if (isEnabled(FlowResultKind::ProvenContents) && !(site && site->origin == ValueFlowSiteOrigin::TypedResult)) {
-            part.contents = facts->contents;
+            part.writtenContents = facts->contents;
             part.contentsAreProven = facts->contentsAreProven;
         }
         if (isEnabled(FlowResultKind::ArrayStorageKinds) && part.contentsAreProven)
@@ -380,9 +380,12 @@ BuiltinClassID ValueFlowPositions::addUnlessInstanceOfClass(Type& type, Vector<L
             return { };
         }
         break;
+    case ValueFlowObjectKind::ResultOfBuiltin:
+        if (BuiltinClassID builtinClass = m_inputs.classOf(member); builtinClass && !builtins.at(builtinClass).hasClosureInstances)
+            return builtinClass;
+        break;
     case ValueFlowObjectKind::UnknownObject:
     case ValueFlowObjectKind::Prototype:
-    case ValueFlowObjectKind::ResultOfBuiltin:
         break;
     }
     type.anyObject = type.anyFunction = true;
@@ -521,24 +524,30 @@ ValueFlowObjectID ValueFlowPositions::findStranger(ValueSetID set, const Type& f
     ValueFlowObjectID outside;
     ValueFlowObjectID undecided;
     BitVector layoutsInside;
-    auto sureLayoutOf = [&](ValueFlowObjectID member) {
-        if (universe.kindOf(member) != ValueFlowObjectKind::Site && universe.kindOf(member) != ValueFlowObjectKind::Instance)
+    auto sureLayoutOf = [&](ValueFlowObjectID member, const ValueFlowLayoutsOfSite* picked) {
+        if (picked || (universe.kindOf(member) != ValueFlowObjectKind::Site && universe.kindOf(member) != ValueFlowObjectKind::Instance))
             return LayoutID();
         LayoutID layout = universe.layoutOf(member);
-        if (!layout || m_inputs.isLayoutOfDictionaries(layout) || findLayoutsPickedBy(member))
+        if (!layout || m_inputs.isLayoutOfDictionaries(layout))
             return LayoutID();
         const ValueFlowSite* site = universe.siteOf(member);
         return site && site->origin == ValueFlowSiteOrigin::BuiltinResult ? LayoutID() : layout;
     };
+    bool hasMetObjectThatPicksAnyLayout = false;
     m_inputs.sets().anyMember(set, [&](ValueFlowObjectID member) {
-        LayoutID sureLayout = sureLayoutOf(member);
+        bool mayPickLayout = universe.kindOf(member) == ValueFlowObjectKind::Site || universe.kindOf(member) == ValueFlowObjectKind::Instance;
+        const ValueFlowLayoutsOfSite* picked = mayPickLayout ? findLayoutsPickedBy(member) : nullptr;
+        LayoutID sureLayout = sureLayoutOf(member, picked);
         if (member == ValueFlowUniverse::untrackedObject() || (sureLayout && layoutsInside.get(sureLayout.index())))
+            return false;
+        // All of these have one type, and the first of them has been looked at.
+        if (picked && picked->mayBeOtherObject && !m_inputs.isLayoutOfDictionaries(universe.layoutOf(member)) && std::exchange(hasMetObjectThatPicksAnyLayout, true))
             return false;
         Type type = typeOfObject(member);
         if (type.isSubsetOf(family, program)) {
             if (sureLayout)
                 layoutsInside.set(sureLayout.index());
-        } else if (!findLayoutsPickedBy(member) || !type.overlaps(family, program))
+        } else if (!picked || !type.overlaps(family, program))
             outside = member;
         else if (!undecided)
             undecided = member;
@@ -568,11 +577,11 @@ std::optional<Type> ValueFlowPositions::familyBehindDictionaries(const Type& fam
     auto namesDictionaries = [&](LayoutSetID set) {
         if (!TypeTable::isProvisional(set) && set.index() < m_inputs.layoutSetsNamingDictionaries->size())
             return m_inputs.layoutSetsNamingDictionaries->quickGet(set.index());
-        return std::ranges::any_of(m_inputs.program.at(set).members, [&](LayoutID member) { return m_inputs.isLayoutOfDictionaries(member); });
+        return std::ranges::any_of(m_inputs.program.at(set).written(), [&](LayoutID member) { return m_inputs.isLayoutOfDictionaries(member); });
     };
     bool isChanged = family.layouts && namesDictionaries(family.layouts);
     for (const ClassPart& part : family.classes) {
-        for (TypeID contents : part.contents)
+        for (TypeID contents : part.writtenContents)
             isChanged |= typeBehindDictionaries(m_inputs.typesBehindDictionaries, contents) != contents;
     }
     if (!isChanged)
@@ -732,23 +741,16 @@ void ValueFlowPositions::takeWhatArrives(const DeclaredType& declared, ValueFlow
     update.replacesExpectation = true;
 }
 
-std::optional<LayoutSet> ValueFlowPositions::receiversAt(const Type& family, ValueSetID set)
+std::optional<LayoutSet> ValueFlowPositions::receiversAt(ValueSetID set)
 {
     const Program& program = m_inputs.program;
-    if (ValueSets::isComplement(set) || holds(set, ValueFlowUniverse::unknownObject()))
-        return std::nullopt;
-    bool holdsUntrackedObject = holds(set, ValueFlowUniverse::untrackedObject());
-    if (holdsUntrackedObject && !m_inputs.universe().namesProgramObjectsAlone(program, family))
+    if (ValueSets::isComplement(set) || m_inputs.sets().meet(set, m_inputs.universe().placeholdersAlone()))
         return std::nullopt;
 
     Type held = typeOf(set);
-    if (holdsUntrackedObject)
-        held = held.unionWith(family.withOnlyObjects(), m_types);
     if (held.anyObject || held.anyFunction || !held.classes.isEmpty() || !held.functions.isEmpty() || !held.builtins.isEmpty())
         return std::nullopt;
-    LayoutSet receivers;
-    receivers.members.append(membersOf(program, held));
-    receivers.isComplete = true;
+    LayoutSet receivers = LayoutSet::complete(Vector<LayoutID>(membersOf(program, held)));
     canonicalize(receivers);
     return receivers;
 }
@@ -765,22 +767,15 @@ ValueSetID ValueFlowPositions::withoutWhatPlaceholdersCover(ValueSetID set)
     return set;
 }
 
-std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction)
+std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, ValueSetID seen, const ValueFlowOperand* calleeOfConstruction)
 {
     if (ValueSets::isComplement(possible) || ValueSets::isComplement(seen))
         return std::nullopt;
 
     const Program& program = m_inputs.program;
     const ValueFlowUniverse& universe = m_inputs.universe();
-    auto withFamilyInPlaceOfUntrackedObject = [&](ValueSetID set) {
-        if (!holds(set, ValueFlowUniverse::untrackedObject()) || !universe.namesProgramObjectsAlone(program, family))
-            return set;
-        return maker().unite(maker().intersect(set, ValueSets::complement(universe.untrackedObjectAlone())), universe.familyObjectsOf(maker(), program, family));
-    };
-    ValueSetID arriving = withFamilyInPlaceOfUntrackedObject(possible);
-    bool mayBeAnyCallee = m_inputs.sets().meet(arriving, universe.placeholdersAlone());
-    if (mayBeAnyCallee)
-        arriving = withFamilyInPlaceOfUntrackedObject(seen);
+    bool mayBeAnyCallee = m_inputs.sets().meet(possible, universe.placeholdersAlone());
+    ValueSetID arriving = mayBeAnyCallee ? seen : possible;
     ValueSetID listed = withoutWhatPlaceholdersCover(arriving);
     bool isConstruction = !!calleeOfConstruction;
     if (isConstruction && listed != arriving) {
@@ -791,8 +786,9 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
             listed = maker().unite(listed, maker().intersect(arriving, followed));
     }
 
-    CalleeSet callees;
-    callees.isComplete = !mayBeAnyCallee;
+    Vector<FunctionID> functions;
+    Vector<BuiltinID> builtins;
+    bool isComplete = !mayBeAnyCallee;
     m_inputs.sets().forEachMember(listed, [&](ValueFlowObjectID member) {
         if (!universe.isObject(member))
             return;
@@ -800,12 +796,13 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(const Type& family, Value
             const Function& callee = program.at(function);
             bool throwsInFrontOfBody = isConstruction ? callee.constructorForm() == ConstructorForm::NotConstructor : callee.kind == FunctionKind::BaseConstructor || callee.kind == FunctionKind::DerivedConstructor;
             if (!throwsInFrontOfBody)
-                callees.functions.append(function);
+                functions.append(function);
         } else if (holds(universe.builtinFunctions(), member))
-            callees.builtins.append(program.builtins().canonicalID(universe.builtinOf(member)));
+            builtins.append(program.builtins().canonicalID(universe.builtinOf(member)));
         else
-            callees.isComplete = false;
+            isComplete = false;
     });
+    CalleeSet callees = isComplete ? CalleeSet::complete(WTF::move(functions), WTF::move(builtins)) : CalleeSet::open(WTF::move(functions), WTF::move(builtins));
     canonicalize(callees);
     return callees;
 }

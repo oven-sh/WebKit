@@ -35,7 +35,7 @@ void testAcceptsFixture()
     AOT_TEST_CHECK(parsedText.toString() == readText.toString());
 
     AOT_TEST_CHECK(program->form() == IRForm::AsRead);
-    AOT_TEST_CHECK(program->at(f7).blocks[2].frequency == BlockFrequency::Unlikely);
+    AOT_TEST_CHECK(program->at(f7).blocks[2].frequency.predicted() == BlockFrequency::Unlikely);
     AOT_TEST_CHECK(program->at(f8).blocks[1].handler && program->at(f8).blocks[1].handler->block == BlockID(3u));
     AOT_TEST_CHECK(program->at(f8).blocks[3].role == BlockRole::CatchHandler);
     AOT_TEST_CHECK(hasElements(program->at(f8).blocks[0].terminator.taken().proofs, { 0u }));
@@ -205,7 +205,7 @@ void testPropertyKeys()
         { "text key without text"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, text)), Wire::none, Kind::InvalidPropertyKey },
         { "text key with an owner"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, owner)), L0.index(), Kind::InvalidPropertyKey },
         { "text key with a symbol"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, symbol)), 0, Kind::InvalidPropertyKey },
-        { "text key with a position"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, position)), 0, Kind::InvalidPropertyKey },
+        { "text key with the number of a call"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, callNumber)), 0, Kind::InvalidPropertyKey },
         { "private name without an owner"_s, keyOffset(fixture, privateName, offsetof(Wire::PropertyKey, owner)), Wire::none, Kind::InvalidPropertyKey },
         { "well-known symbol without a symbol"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, kind)), static_cast<uint32_t>(PropertyKeyKind::WellKnownSymbol), Kind::InvalidPropertyKey },
         { "created symbol without a module"_s, keyOffset(fixture, textKey, offsetof(Wire::PropertyKey, kind)), static_cast<uint32_t>(PropertyKeyKind::CreatedSymbol), Kind::InvalidPropertyKey },

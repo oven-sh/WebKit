@@ -695,7 +695,7 @@ bool AllocationSinking::startOverWithFewerCandidates()
     if (mostFrequentFirst.size() < 2)
         return false;
     AOT::stableSort(mostFrequentFirst, std::ranges::greater { }, [&](uint32_t index) {
-        return frequencies.frequencyOf(m_candidates[index].block);
+        return frequencies.frequencyOf(m_candidates[index].block).predicted();
     });
 
     uint64_t blocksInAll = 0;

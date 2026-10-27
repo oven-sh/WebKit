@@ -496,7 +496,7 @@ void fixSSAGlobally(Procedure& proc, IndexSet<Value*>& valuesToDelete)
         LivePhiFinder livePhiFinder(proc);
         for (Variable* variable : proc.variables()) {
             livePhiFinder.forEachPhiBlock(variable, [&](BasicBlock* block) {
-                Value* phi = proc.add<Value>(Phi, variable->type(), block->at(0)->origin());
+                Value* phi = proc.add<Value>(Phi, variable->type(), variable->origin() ? variable->origin() : block->at(0)->origin());
                 if (proc.knownInductions().hasDemoted()) [[unlikely]]
                     proc.knownInductions().didCreatePhi(variable, block, phi);
                 proc.knownProperties().didCreatePhi(variable, phi);
@@ -623,6 +623,8 @@ void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
     // Create stack slots.
     auto addVariableFor = [&](Value* value) {
         Variable* variable = proc.addVariable(value->type());
+        if (proc.policy().optimization.keepsOriginsOfDemotedValues)
+            variable->setOrigin(value->origin());
         proc.knownProperties().didDemote(value, variable);
         return variable;
     };

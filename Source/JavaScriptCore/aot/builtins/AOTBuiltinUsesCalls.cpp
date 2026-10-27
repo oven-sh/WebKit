@@ -150,16 +150,16 @@ static bool mayBeAmongCallees(const Program& program, const Value& call, Builtin
 {
     if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
         return true;
-    const CalleeSet& callees = program.at(call.callees());
-    return !callees.isComplete || callees.builtins.contains(program.builtins().canonicalID(callee));
+    std::optional<ProvenValue<Callees>> callees = program.at(call.callees()).all();
+    return !callees || std::ranges::contains(callees->value().builtins, program.builtins().canonicalID(callee));
 }
 
-static bool isOnlyBuiltinSeenAtCall(const Program& program, const Value& call, BuiltinID callee)
+static Expected<bool> isOnlyBuiltinSeenAtCall(const Program& program, const Value& call, BuiltinID callee)
 {
     if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
         return false;
-    const CalleeSet& callees = program.at(call.callees());
-    return callees.builtins.size() == 1 && program.builtins().canonicalID(callees.builtins[0]) == callee;
+    std::span<const BuiltinID> seen = program.at(call.callees()).seen().predicted().builtins;
+    return seen.size() == 1 && program.builtins().canonicalID(seen[0]) == callee;
 }
 
 static BuiltinCalleeAnswer findCalleeByTypes(const BuiltinUseInputs&, const Value& call);
@@ -178,11 +178,12 @@ static BuiltinCalleeAnswer findCalleeSeenWithDirectFunction(const BuiltinUseInpu
         return { };
     const BuiltinTable& table = inputs.program.builtins();
     const CalleeSet& callees = inputs.program.at(call.callees());
-    for (BuiltinID seen : callees.builtins) {
+    std::optional<ProvenValue<Callees>> all = callees.all();
+    for (BuiltinID seen : callees.seen().predicted().builtins) {
         BuiltinID callee = table.canonicalID(seen);
         if (!isCalledOnlyDirectly(table, callee) || !hasDirectFunction(table, callee))
             continue;
-        bool isOnlyCallee = callees.isComplete && callees.functions.isEmpty() && callees.builtins.size() == 1;
+        bool isOnlyCallee = all && all->value().functions.empty() && all->value().builtins.size() == 1;
         if (!isOnlyCallee)
             return { callee, { }, { }, true };
         bool isFunction = inputs.program.typeOf(inputs.function, call.calleeOperand()).isSubsetOf(Type::function(), inputs.program);
@@ -227,7 +228,7 @@ bool mayFindProvenCallee(const BuiltinUseInputs& inputs, const Value& call)
 {
     if (singleBuiltinOf(inputs.program.typeOf(inputs.function, call.calleeOperand())))
         return true;
-    return Value::opcodesWithCallees.contains(call.opcode) && call.callees() && !inputs.program.at(call.callees()).builtins.isEmpty();
+    return Value::opcodesWithCallees.contains(call.opcode) && call.callees() && !inputs.program.at(call.callees()).seen().predicted().builtins.empty();
 }
 
 static bool mayObserveThisValue(const BuiltinTable& table, BuiltinID callee)
@@ -298,7 +299,7 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     bool calleeIsProven = !answer.testedReceiverType && !answer.testedCalleeType && !answer.testsCodeOfCallee;
     if (inputs.asksOnlyForProvenPlans && calleeIsProven && plan.kind == BuiltinUseKind::Call && !plan.isProven() && !isCalledOnlyDirectly(inputs.program.builtins(), answer.callee))
         degradeToUnmatchedCall(plan);
-    if (plan.kind == BuiltinUseKind::UnmatchedCall && answer.testedCalleeType && !(answer.testedReceiverType && isOnlyBuiltinSeenAtCall(inputs.program, call, answer.callee)))
+    if (plan.kind == BuiltinUseKind::UnmatchedCall && answer.testedCalleeType && !(answer.testedReceiverType && isOnlyBuiltinSeenAtCall(inputs.program, call, answer.callee).predicted()))
         return { };
 
     bool isPossible = true;
@@ -322,7 +323,7 @@ static BuiltinID findExpectedParent(const Program& program, const Value& call)
 
     const BuiltinTable& table = program.builtins();
     BuiltinID expected;
-    for (BuiltinID seen : program.at(call.callees()).builtins) {
+    for (BuiltinID seen : program.at(call.callees()).seen().predicted().builtins) {
         bool isConstructor = std::ranges::any_of(table.overloadsOf(seen), [](const BuiltinOverload& overload) {
             return overload.mode == BuiltinCallMode::Construct;
         });

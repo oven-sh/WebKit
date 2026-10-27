@@ -23,6 +23,8 @@ constexpr StubKey compareStrings() { return StubKey(StubFamily::CompareStrings);
 constexpr StubKey stringCodePointAt() { return StubKey(StubFamily::StringCodePointAt); }
 // The operands: a builder and a string.
 constexpr StubKey stringBuilderAppendString() { return StubKey(StubFamily::StringBuilderAppendString); }
+// The operand: a builder.
+constexpr StubKey stringBuilderDiscard() { return StubKey(StubFamily::StringBuilderDiscard); }
 // The operands: a StackStringBuilder, its cursor and a string. The result: the cursor behind the string.
 constexpr StubKey stackStringBuilderAppendString() { return StubKey(StubFamily::StackStringBuilderAppendString); }
 constexpr StubKey integerToString() { return StubKey(StubFamily::IntegerToString); }
@@ -35,7 +37,7 @@ constexpr StubKey concatenate(unsigned count)
     return StubKey(StubFamily::Concatenate).withCount(count);
 }
 
-static_assert(exists(ropeCharacters()) && exists(flattenString()) && exists(stringCodePointAt()) && exists(stringBuilderAppendString()) && exists(stackStringBuilderAppendString()));
+static_assert(exists(ropeCharacters()) && exists(flattenString()) && exists(stringCodePointAt()) && exists(stringBuilderAppendString()) && exists(stringBuilderDiscard()) && exists(stackStringBuilderAppendString()));
 static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()) && exists(findCharacter8()));
 static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqual()) == stringsAreEqual());
 static_assert(exists(concatenate(2)) && exists(concatenate(3)));
@@ -68,6 +70,8 @@ void loadSubstringBaseAndOffset(StubAssembler&, GPRReg string, GPRReg base, GPRR
 void packSubstringFibers(StubAssembler&, GPRReg base, GPRReg offset, GPRReg length, GPRReg lengthWord);
 // impl arrives with the value word of string, which is a rope. For a substring, impl gets the impl of the base and characters the address of the first unit.
 void loadSubstringCharacters(StubAssembler&, GPRReg string, GPRReg impl, GPRReg characters, GPRReg length, JumpList& isNotSubstring);
+// fiber arrives with the value word of string, which is a rope, and gets the address of the first character of a piece of an 8-bit string.
+void load8BitCharactersOfSubstring(StubAssembler&, GPRReg string, GPRReg fiber, GPRReg offset, MacroAssembler::JumpList& isOther);
 struct ComparedBytes {
     GPRReg first;
     GPRReg second;
@@ -87,6 +91,17 @@ struct ComparedImpls {
 };
 // Two impls of one length, with the flags that both have. Falls through when the characters are the same. At needsLeaf the impls are untouched, elsewhere all five registers are overwritten.
 void branchIfCharactersDiffer(StubAssembler&, const ComparedImpls&, MacroAssembler::JumpList& differ, MacroAssembler::JumpList& needsLeaf);
+struct ComparedStrings {
+    GPRReg first;
+    GPRReg second;
+    GPRReg firstFiber;
+    GPRReg secondFiber;
+    GPRReg length;
+    GPRReg offset;
+    GPRReg word;
+};
+// Two strings of one length with their value words. Falls through when the characters are the same. At needsOperation the strings are untouched. word may be one of the strings.
+void branchIfCharactersInPlaceDiffer(StubAssembler&, const ComparedStrings&, MacroAssembler::JumpList& differ, MacroAssembler::JumpList& needsOperation);
 struct ScannedBytes {
     GPRReg bytes;
     GPRReg size;

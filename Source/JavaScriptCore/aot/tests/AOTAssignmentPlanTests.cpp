@@ -13,6 +13,7 @@
 #include "AOTMappedCopyInlines.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
 #include "AOTOperationCallScope.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeCounters.h"
@@ -24,6 +25,7 @@
 #include "PropertyNameArray.h"
 #include <array>
 #include <wtf/SetForScope.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -276,6 +278,28 @@ static void testLeavesOutExcludedNames(LoadedProgram& program)
         Object* restOfOrdinary = createCopy(program);
         AOT_TEST_CHECK(restOfOrdinary->tryAssignPropertiesOf(vm, ordinary, fieldAndName) && hasKeys(program, restOfOrdinary, { "absent"_s }));
     }
+}
+
+static void testNamesBesideTheFieldsOfTheSourceSelectThePlan(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    std::optional<uint32_t> numberOfLabel = vm.aotState().identifiers->numberOf(Identifier::fromString(vm, "label"_s).impl());
+    AOT_TEST_CHECK(numberOfLabel);
+    std::array<uint32_t, 1> identifiers { *numberOfLabel };
+    constexpr uint32_t runNumberPlusOne = 3;
+    std::span<UniquedStringImpl* const> withoutLabel = program.state().objects->caches->assignmentPlans.excludedNames(vm, { runNumberPlusOne, identifiers }).names();
+    auto restOfPointWith = [&](ASCIILiteral name) {
+        Object* source = createPoint(program, 1, 2);
+        addName(program, source, name, 3);
+        Object* rest = allocate(program, "Pair"_s);
+        if (tryRepeatAssignment(vm, program.state(), rest, source, runNumberPlusOne) == RepeatedCopy::IsNotDone)
+            AOT_TEST_CHECK(tryDefinePropertiesOf(vm, *rest, source, withoutLabel));
+        return rest;
+    };
+    for (int32_t turn = 0; turn < 3; ++turn)
+        AOT_TEST_CHECK(hasKeys(program, restOfPointWith("label"_s), { "x"_s, "y"_s }));
+    AOT_TEST_CHECK(hasKeys(program, restOfPointWith("late"_s), { "x"_s, "y"_s, "late"_s }));
+    AOT_TEST_CHECK(hasKeys(program, restOfPointWith("label"_s), { "x"_s, "y"_s }));
 }
 
 static bool isRefused(LoadedProgram& program, JSObject* source)
@@ -712,6 +736,7 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/creates-field-behind-added-names"_s, withPoints<testCreatesFieldBehindAddedNames> },
         { "assignment-plans/keeps-order-where-field-lies-between-added-names"_s, withPoints<testKeepsOrderWhereFieldLiesBetweenAddedNames> },
         { "assignment-plans/leaves-out-excluded-names"_s, withPoints<testLeavesOutExcludedNames> },
+        { "assignment-plans/names-beside-the-fields-of-the-source-select-the-plan"_s, withPoints<testNamesBesideTheFieldsOfTheSourceSelectThePlan> },
         { "assignment-plans/refuses-what-only-lookup-can-copy"_s, withPoints<testRefusesWhatOnlyLookupCanCopy> },
         { "assignment-plans/follows-changes-to-fields"_s, withPoints<testFollowsChangesToFields> },
         { "assignment-plans/copies-fields-of-same-layout-in-any-order"_s, withPoints<testCopiesFieldsOfSameLayoutInAnyOrder> },

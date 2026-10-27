@@ -64,6 +64,16 @@ void loadSubstringCharacters(StubAssembler& jit, GPRReg string, GPRReg impl, GPR
     jit.addPtr(Address(impl, StringImpl::dataOffset()), characters);
 }
 
+void load8BitCharactersOfSubstring(StubAssembler& jit, GPRReg string, GPRReg fiber, GPRReg offset, JumpList& isOther)
+{
+    isOther.append(jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    loadSubstringBaseAndOffset(jit, string, fiber, offset);
+    jit.loadPtr(Address(fiber, JSString::offsetOfValue()), fiber);
+    isOther.append(jit.branchTest32(CCallHelpers::Zero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+    jit.addPtr(offset, fiber);
+}
+
 static void loadZeroExtended(StubAssembler& jit, unsigned width, auto address, GPRReg word)
 {
     switch (width) {

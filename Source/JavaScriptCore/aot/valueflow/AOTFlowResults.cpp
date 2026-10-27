@@ -195,12 +195,12 @@ bool FlowResults::mayChangeStorageOfReceiver(AccessSiteID access) const
 AllocationSiteID FlowResults::typedResultSite(LayoutID layout) const { return recordAt(m_tables.sites.typedResultSites, layout, AllocationSiteID()); }
 const BuiltinLocationFlow* FlowResults::findBuiltinLocation(BuiltinID holder, PropertyKeyID key) const { return findRecord(m_tables.builtins.locations, std::tuple(holder, key)); }
 
-std::span<const FlowBoundFunctionAtSite> FlowResults::boundFunctionsSeenAt(AccessSiteID site, FlowBoundFunctionUseAtSite use) const
+Expected<std::span<const FlowBoundFunctionAtSite>> FlowResults::boundFunctionsSeenAt(AccessSiteID site, FlowBoundFunctionUseAtSite use) const
 {
     auto [first, end] = std::ranges::equal_range(m_tables.sites.boundFunctionsAtSites, std::pair(site, use), { }, [](const FlowBoundFunctionAtSite& bound) {
         return std::pair(bound.site, bound.use);
     });
-    return std::span(first, end);
+    return std::span<const FlowBoundFunctionAtSite>(first, end);
 }
 
 bool FlowResults::runsAtMostOnce(const Program& program, FunctionID id) const
@@ -335,6 +335,8 @@ bool FlowResults::areClosuresAsCreated(FunctionID closureFunction, std::span<con
 
 bool FlowResults::closuresMayBeRenamed(FunctionID closureFunction) const
 {
+    if (!hasResults())
+        return true;
     FunctionID analyzed = findAnalyzedFunction(closureFunction);
     return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamed.get(analyzed.index());
 }
@@ -345,8 +347,16 @@ bool FlowResults::closuresMayBeRenamedOnlyWhereNobodySees(FunctionID closureFunc
     return analyzed && m_tables.functions.functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees.get(analyzed.index());
 }
 
+bool FlowResults::closuresGoOutOfSightUnnamed(FunctionID closureFunction) const
+{
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresGoOutOfSightUnnamed.get(analyzed.index());
+}
+
 bool FlowResults::closuresAreGivenDisplayName(FunctionID closureFunction) const
 {
+    if (!hasResults())
+        return true;
     FunctionID analyzed = findAnalyzedFunction(closureFunction);
     return analyzed && m_tables.functions.functionsWhoseClosuresAreGivenDisplayName.get(analyzed.index());
 }

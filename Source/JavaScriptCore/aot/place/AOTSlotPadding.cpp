@@ -23,7 +23,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-inline constexpr SiteWeight minAccessWeightPerEmptySlot = SiteWeight { 1 } << siteWeightFractionBits;
+inline constexpr SiteWeight minAccessWeightPerEmptySlot = uint64_t { 1 } << siteWeightFractionBits;
 
 void ensureSizeReaches(PackedLayouts& packed, LayoutID layout, uint32_t end)
 {
@@ -66,8 +66,11 @@ private:
     void recordOccupiedBytes();
     void orderCandidates();
     std::optional<uint32_t> roomFor(const PaddingUnit&);
+    std::optional<SlotRow> findRowThatMayMove(LayoutID, uint32_t offset) const;
+    std::optional<uint32_t> findFreeHalfOutside(LayoutID, uint32_t word) const;
+    std::optional<uint32_t> makeRoomInOwnWord(const PaddingUnit&);
     void move(const PaddingUnit&, uint32_t offset);
-    bool widen(uint32_t unit);
+    bool widen(uint32_t unit, bool mayMoveOtherSlots);
 
     const SlotPlanContext& m_context;
     const SlotUses& m_uses;
@@ -222,7 +225,7 @@ void PaddingWidener::recordOccupiedBytes()
 void PaddingWidener::orderCandidates()
 {
     parallelSort(m_context.build.parallelLoops(), m_candidates.mutableSpan(), [&](uint32_t a, uint32_t b) {
-        return std::tuple(m_units[b].weight, m_units[a].rows[0]) < std::tuple(m_units[a].weight, m_units[b].rows[0]);
+        return std::tuple(m_units[b].weight.predicted(), m_units[a].rows[0]) < std::tuple(m_units[a].weight.predicted(), m_units[b].rows[0]);
     });
 }
 
@@ -274,10 +277,74 @@ std::optional<uint32_t> PaddingWidener::roomFor(const PaddingUnit& unit)
     return std::nullopt;
 }
 
-bool PaddingWidener::widen(uint32_t index)
+std::optional<SlotRow> PaddingWidener::findRowThatMayMove(LayoutID layout, uint32_t offset) const
+{
+    const SlotRows& rows = m_context.rows;
+    for (FieldIndex field = 0; field < rows.numberOfFieldsOf(layout); ++field) {
+        SlotRow row = rows.rowOf(layout, field);
+        const PlacedSlot& slot = m_packed.slots[row];
+        if (slot.storage != SlotStorage::Inline || slot.offset != offset)
+            continue;
+        if (slot.width() != narrow || m_packed.sharedLocationOfRow[row] != noSharedLocation || m_packed.rowsWithEmptySlotElsewhere.get(row))
+            return std::nullopt;
+        return row;
+    }
+    return std::nullopt;
+}
+
+std::optional<uint32_t> PaddingWidener::findFreeHalfOutside(LayoutID layout, uint32_t word) const
+{
+    const OccupiedBytes& occupied = m_occupied[layout.index()];
+    uint32_t limit = m_packed.inlineLimits[layout.index()];
+    for (uint32_t offset = firstSlotOffsetOf(layout); offset + narrow <= limit; offset += narrow) {
+        if (offset / wide * wide != word && !(occupied[offset / 64] & bytesAt(offset, narrow)))
+            return offset;
+    }
+    return std::nullopt;
+}
+
+std::optional<uint32_t> PaddingWidener::makeRoomInOwnWord(const PaddingUnit& unit)
+{
+    struct Departure {
+        SlotRow row;
+        uint32_t offset;
+    };
+    uint32_t current = offsetOf(unit);
+    uint32_t word = current / wide * wide;
+    uint32_t otherHalf = current == word ? word + narrow : word;
+    Vector<Departure, 4> departures;
+    for (SlotRow row : unit.rows) {
+        LayoutID layout = layoutOf(row);
+        if (word + wide > m_packed.inlineLimits[layout.index()])
+            return std::nullopt;
+        if (!(m_occupied[layout.index()][otherHalf / 64] & bytesAt(otherHalf, narrow)))
+            continue;
+        auto leaving = findRowThatMayMove(layout, otherHalf);
+        if (!leaving)
+            return std::nullopt;
+        auto freeHalf = findFreeHalfOutside(layout, word);
+        if (!freeHalf)
+            return std::nullopt;
+        departures.append(Departure { *leaving, *freeHalf });
+    }
+    for (Departure departure : departures) {
+        LayoutID layout = layoutOf(departure.row);
+        OccupiedBytes& occupied = m_occupied[layout.index()];
+        occupied[otherHalf / 64] &= ~bytesAt(otherHalf, narrow);
+        RELEASE_ASSERT(!(occupied[departure.offset / 64] & bytesAt(departure.offset, narrow)));
+        occupied[departure.offset / 64] |= bytesAt(departure.offset, narrow);
+        m_packed.slots[departure.row].offset = departure.offset;
+        ensureSizeReaches(m_packed, layout, departure.offset + narrow);
+    }
+    return word;
+}
+
+bool PaddingWidener::widen(uint32_t index, bool mayMoveOtherSlots)
 {
     const PaddingUnit& unit = m_units[index];
     auto offset = roomFor(unit);
+    if (!offset && mayMoveOtherSlots)
+        offset = makeRoomInOwnWord(unit);
     if (!offset)
         return false;
     move(unit, *offset);
@@ -299,11 +366,13 @@ void PaddingWidener::run()
         return;
     recordOccupiedBytes();
     orderCandidates();
-    for (bool didWiden = true; didWiden;) {
-        didWiden = false;
-        for (uint32_t unit : m_candidates) {
-            if (!m_isWidened.get(unit) && widen(unit))
-                didWiden = true;
+    for (bool mayMoveOtherSlots : { false, true }) {
+        for (bool didWiden = true; didWiden;) {
+            didWiden = false;
+            for (uint32_t unit : m_candidates) {
+                if (!m_isWidened.get(unit) && widen(unit, mayMoveOtherSlots))
+                    didWiden = true;
+            }
         }
     }
 }
@@ -363,7 +432,7 @@ std::optional<SlotRow> EmptySlotReserver::findRowWithSlot(LayoutID member, Prope
 SlotCoverage EmptySlotReserver::coverageOf(const SlotAccessKey& access) const
 {
     SlotCoverage coverage;
-    for (LayoutID member : m_context.program.at(access.receivers).members) {
+    for (LayoutID member : m_context.program.at(access.receivers).completeMembers()) {
         auto row = findRowWithSlot(member, access.key);
         if (!row) {
             coverage.membersWithoutSlot.append(member);
@@ -404,7 +473,7 @@ bool EmptySlotReserver::isCandidate(const SlotAccessUse& use) const
     if (!everyMemberIsCompiledObject)
         return false;
     uint64_t withoutSlot = coverage.membersWithoutSlot.size();
-    return coverage.rowsWithSlot.size() >= withoutSlot && use.weight >= saturatedProduct(minAccessWeightPerEmptySlot, withoutSlot);
+    return coverage.rowsWithSlot.size() >= withoutSlot && (use.weight >= saturatedProduct(minAccessWeightPerEmptySlot, withoutSlot)).predicted();
 }
 
 bool EmptySlotReserver::isKeptZero(ReservedBytes bytes, LayoutID layout) const
@@ -437,7 +506,7 @@ void EmptySlotReserver::run()
     if (candidates.isEmpty())
         return;
     AOT::sort(candidates, [&](uint32_t a, uint32_t b) {
-        return std::tuple(accesses[b].weight, a) < std::tuple(accesses[a].weight, b);
+        return std::tuple(accesses[b].weight.predicted(), a) < std::tuple(accesses[a].weight.predicted(), b);
     });
 
     for (uint32_t index : candidates) {

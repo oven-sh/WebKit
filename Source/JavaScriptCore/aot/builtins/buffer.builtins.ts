@@ -269,7 +269,11 @@ export default b.declarations(
         usesFeature: "DataView",
         implementation: b.generic,
       },
-      byteLength: { ...viewExtent, nativeSymbols: ["dataViewProtoGetterByteLength"], implementation: b.hostCall },
+      byteLength: {
+        ...viewExtent,
+        nativeSymbols: ["dataViewProtoGetterByteLength"],
+        implementation: b.inline("DataViewByteLength", { otherwise: b.hostCall }),
+      },
       byteOffset: { ...viewExtent, implementation: b.generic },
       getInt8: viewRead("TypeInt8", b.int(-128, 127), singleByte),
       getUint8: viewRead("TypeUint8", b.int(0, 255), singleByte),

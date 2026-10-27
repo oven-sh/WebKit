@@ -69,6 +69,8 @@ struct AccessorDefinitionPlan {
     uint32_t enumerable { 0 };
     Vector<Definition> definitions;
     Vector<FilledSlot> slots;
+    // Definition i is the getter of slot i, which is empty before.
+    bool definesGettersOfEmptySlots { false };
 };
 
 struct ObjectModelCaches {

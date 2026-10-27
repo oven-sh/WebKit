@@ -210,7 +210,7 @@ Vector<CallOfOwnArguments> planCallsOfOwnArguments(FunctionPassContext& context)
     Vector<CallOfOwnArguments> calls;
     context.forEachSiteIn(SiteList::Calls, [&](const ValueSite& site) {
         const Value& value = function.at(site.value);
-        if (function.at(site.block).frequency != BlockFrequency::Normal)
+        if (function.at(site.block).frequency.predicted() != BlockFrequency::Normal)
             return;
         if (context.program.typeOf(function, value.calleeOperand()).singleBuiltin() != Builtins::FunctionPrototypeApply)
             return;

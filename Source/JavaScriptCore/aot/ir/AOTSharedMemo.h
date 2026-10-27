@@ -168,7 +168,7 @@ public:
         };
         if (const ProvisionalSet* known = m_provisionalSets.find(hash, isWanted))
             return known->list;
-        return m_provisionalSets.add(hash, ProvisionalSet { set, phase, idOf(types.at(set).members.span()) }, isWanted).list;
+        return m_provisionalSets.add(hash, ProvisionalSet { set, phase, idOf(types.at(set).written().span()) }, isWanted).list;
     }
 
 private:

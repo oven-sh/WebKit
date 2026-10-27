@@ -87,7 +87,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, Allo
     const PlacedAllocation& allocation = m_placement.allocation(id);
     CellAllocationEmitter& cellAllocation = emitter<CellAllocationEmitter>();
     if (!isObjectLayout(m_program.at(allocation.layout).kind))
-        return cellAllocation.allocateInFrame(layout.size);
+        return cellAllocation.allocateInFrame(layout.size, &layout);
 
     LBasicBlock hasNoRecord = newBlock();
     Join<Integer> headerOfHeapCells(m_out);
@@ -101,7 +101,7 @@ CellPointer AllocationEmitter::allocateFrameCell(const ValueContext& value, Allo
     headerOfHeapCells.add(callOperation<Integer>(value, RuntimeOperation::GetHeaderOfAllocation, { word32(static_cast<int32_t>(id.index())) }, { .isOnRarePath = true }));
     Integer header = headerOfHeapCells.finish();
 
-    CellPointer cell = cellAllocation.allocateInFrame(layout.size);
+    CellPointer cell = cellAllocation.allocateInFrame(layout.size, &layout);
     CodeGenerator::InitializationScope scope(generator());
     cellAllocation.storeHeader(cell, header);
     storeField(cell, m_heaps.AOTObject_orderWord, word32(static_cast<int32_t>(allocation.orderWord)));
@@ -145,6 +145,10 @@ void AllocationEmitter::generateNewObject(const ValueContext& value)
             define(value, *cell);
             return;
         }
+    }
+    if (looksAtPrototypeBeforeAllocating(value)) {
+        define(value, allocateInstance(value, allocation, value->prototypeOperand()));
+        return;
     }
     CellPointer cell = allocateWithFields(value, allocation, value->fields(), value->valuesOperands(), storage);
     if (ValueID prototype = value->prototypeOperand())
@@ -388,6 +392,34 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
     }
     if (barrier == OwnerBarrier::Emitted)
         emitter<BarrierEmitter>().barrierAfterStores(value, cell, storedOutOfLine.span());
+}
+
+// An object of another layout takes the place of one in which nothing is stored yet, so that one need not be made.
+bool AllocationEmitter::looksAtPrototypeBeforeAllocating(const ValueContext& value)
+{
+    LayoutID layout = m_placement.allocation(value->allocation()).layout;
+    return mayAllocateOtherLayout(m_program, value.value()) && value->fields().empty() && value->storage() == AllocationStorage::Heap && m_placement.layout(layout).hasSlots() && !m_placement.freeCellOffset(layout);
+}
+
+CellPointer AllocationEmitter::allocateInstance(const ValueContext& value, AllocationID id, ValueID prototype)
+{
+    LayoutID layout = m_placement.allocation(id).layout;
+    auto [cell, isCellOfAllocation] = emitter<CellAllocationEmitter>().allocateInstance(value, id, in<CellPointer>(prototype));
+    if (!wordsOfEmptyObject(layout).isEmpty()) {
+        LBasicBlock fill = newBlock();
+        LBasicBlock isWhole = newBlock();
+        m_out.branch(isCellOfAllocation.value(), normalEdge(fill), normalEdge(isWhole));
+        m_out.appendTo(fill);
+        {
+            CodeGenerator::InitializationScope scope(generator());
+            initializeHiddenFields(cell, layout, AllocationStorage::Heap, ZeroedBy::Stub);
+            storeEmptySlots(cell, layout, BitVector(m_placement.layout(layout).numberOfFields()), ZeroedBy::Stub);
+        }
+        m_out.jump(isWhole);
+        m_out.appendTo(isWhole);
+    }
+    emitter<BarrierEmitter>().fenceAfterInitialization();
+    return cell;
 }
 
 // The operation returns the object to use: the prototype of a subclass selects the layout of that subclass.

@@ -169,7 +169,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         }
     }
     readEvaluators(object, key);
-    handOutPrototypeObjectsAtCreation(receivers, key);
+    handOutPrototypeObjectsAtCreation(receivers, key, m_statement.result);
     mayThrow();
 }
 
@@ -233,9 +233,6 @@ void HeapRule::noteTestOfMembers(const ValueFlowOperand& object, const HeapKey& 
 void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOperand& value)
 {
     connect(value, m_context.written(known(objects), name));
-    // The unknown object stands for an object that has escaped, and for no object that lets in unseen code: a read through it finds such a one under the name it is written under.
-    if (value.node && m_context.holdsAnyOf(ClimbingSet(m_tables.objectsThatLetInUnseenCode()), value.node) && hasEscaped(known(objects)))
-        connect(m_context.masked(value.node, m_tables.objectsThatLetInUnseenCode()), m_context.written(unknownObjectAlone(), name));
     bool namesProperty = name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter;
     if (namesProperty && m_tables.isSymbolUsedOnlyAsKey(PropertyKeyID(name.payload)))
         add(m_context.nodes().ofHost(ValueFlowHostNode::ObjectsHoldingSymbolsUsedOnlyAsKeys), known(objects));
@@ -538,7 +535,8 @@ void HeapRule::notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& obj
 {
     if (!object.node || key.keyClass != HeapKeyClass::Unknown || !mayBeUnknownObject(receivers) || key.receivers == HeapKeyReceivers::AllButBuiltinObjects)
         return;
-    add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.valueWithin(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName()), object.node));
+    // A retired node takes none of them. The node of the operand hands on those that come to it, whether before it is retired or after.
+    connect(object.node, m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach));
     // A lookup above the unknown object lets every prototype object of the language escape. Only one that was carried out comes back as a value.
     if (isInProgramCode())
         add(m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed), m_context.valueWithin(ClimbingSet(m_tables.prototypeObjectsThatListingDoesNotName()), m_context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut)));
@@ -664,6 +662,15 @@ void HeapRule::remove(const ValueFlowOperand& object, const HeapKey& key)
     mayThrow();
 }
 
+// What an unobserved definition defines is chosen behind the solve, by the fields of the objects that come to it.
+void HeapRule::defineUndefinedOnObjectsNobodyKnows(const ValueFlowOperand& object, const ValueFlowOperand& value)
+{
+    if (m_program.at(m_statement.function).kind != FunctionKind::Initializer || !m_context.nodes().isValueOfUnobservedDefinitions(m_statement.function, value.node))
+        return;
+    if (m_context.meet(m_context.valueOf(object), m_universe.objectsThatMayBeAnything()))
+        add(value.node, m_universe.undefinedValue());
+}
+
 ClimbingSet HeapRule::allocateUnder(const ValueFlowOperand& prototype)
 {
     ValueFlowObjectID site = m_universe.siteObject(m_statement);
@@ -696,7 +703,7 @@ void HeapRule::runCreateArguments(const ValueFlowOperand& count, const ValueFlow
         connect(parameter, contents);
 
     auto propertyNamed = [&](BuiltinName name) {
-        return m_context.written(arguments, ValueFlowName::property(m_program.keyOf(name)));
+        return m_context.written(arguments, ValueFlowName::property(m_program, m_program.keyOf(name)));
     };
     connect(count, propertyNamed(BuiltinNames::length));
     if (callee)
@@ -774,6 +781,7 @@ void HeapRule::runOperation()
         mayThrow();
         return;
     case Opcode::PropDefine:
+        defineUndefinedOnObjectsNobodyKnows(operand(At::PropDefine::object), operand(At::PropDefine::value));
         define(operand(At::PropDefine::object), keyNamed(operation().key()), HeapPropertyPart::Value, operand(At::PropDefine::value));
         return;
     case Opcode::ElemDefine:
@@ -971,7 +979,7 @@ void HeapRule::runOperation()
             if (!m_universe.siteOf(object))
                 return;
             bool mayLack = false;
-            m_context.forEachMember(m_context.valueOf(m_context.read(ClimbingSet(only(object)), prototypeLinkName)), [&](ValueFlowObjectID prototype) {
+            m_context.forEachMember(m_context.valueOf(m_context.readWhatWasWritten(ClimbingSet(only(object)), prototypeLinkName)), [&](ValueFlowObjectID prototype) {
                 LayoutID classOfPrototype = m_universe.classLayoutOf(prototype);
                 mayLack |= classOfPrototype && !std::ranges::any_of(m_program.at(classOfPrototype).fields, [&](const Field& field) {
                     return field.key == key.name;

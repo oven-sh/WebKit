@@ -15,6 +15,7 @@
 #include "AOTPrimitives.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSortedSet.h"
+#include "AOTTypeKinds.h"
 #include "AOTWire.h"
 #include <compare>
 #include <optional>
@@ -39,10 +40,16 @@ struct ClassPart {
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
     OptionSet<PristineAspects> provenPristine;
-    InlineList<TypeID, 3> contents;
+    // As they stand in the type: for the algebra of types, walkers, printers and tables. Whoever wants to know what a collection holds asks one of the two questions below.
+    InlineList<TypeID, 3> writtenContents;
 
-    TypeID contentsAt(unsigned indexInType) const;
-    TypeID contentsAt(const BuiltinTable&, ContentsSlot) const;
+    TypeID writtenContentsAt(unsigned indexInType) const;
+    TypeID writtenContentsAt(const BuiltinTable&, ContentsSlot) const;
+    // All that is ever stored, where flow has followed it. Nothing where the contents are declared or guessed.
+    std::optional<ProvenValue<TypeID>> provenContentsAt(unsigned indexInType) const;
+    std::optional<ProvenValue<TypeID>> provenContentsAt(const BuiltinTable&, ContentsSlot) const;
+    ExpectedType expectedContentsAt(unsigned indexInType) const { return ExpectedType(writtenContentsAt(indexInType)); }
+    ExpectedType expectedContentsAt(const BuiltinTable&, ContentsSlot) const;
 
     friend bool operator==(const ClassPart&, const ClassPart&) = default;
 };
@@ -128,6 +135,7 @@ struct Type {
     bool isAnyStringOrNullish() const { return primitives & Primitive::AnyString && hasOnlyPrimitives(Primitive::AnyString | Primitive::UndefinedOrNull); }
     bool isObject() const { return hasObjects() && !primitives; }
     bool mayBeUndefinedOrNull() const { return primitives & Primitive::UndefinedOrNull; }
+    bool mayBeUnspecified() const { return primitives & Primitive::Unspecified; }
     bool mayBeNaN() const { return primitives & Primitive::WholeNumber; }
     bool hasLiteralStrings() const { return primitives & Primitive::LiteralString; }
     bool isInt32() const { return isInteger() && integers.isSubsetOf(Range::int32()); }
@@ -136,8 +144,7 @@ struct Type {
     bool mayBeFunction() const { return anyFunction || anyObject || !functions.isEmpty() || !builtins.isEmpty(); }
     bool hasOnlyKnownCallees() const { return !anyFunction && !anyObject && classes.isEmpty(); }
     bool hasOnlyClassObjects() const { return !anyObject && !anyFunction && !layouts && functions.isEmpty() && builtins.isEmpty(); }
-    bool hasOnlyLayouts(const Program&) const;
-    bool hasOnlyLayouts(const TypeTable&) const;
+    bool hasOnlyLayouts() const;
     bool isSingleValue() const;
 
     LayoutID singleLayout(const Program&) const;
@@ -181,8 +188,6 @@ Wire::Primitives toWire(uint16_t primitives);
 std::span<const LayoutID> membersOf(const Program&, const Type&);
 std::span<const LayoutID> membersOf(const TypeTable&, const Type&);
 
-bool hasMembersWithoutLayout(const Program&, const Type&);
-bool hasMembersWithoutLayout(const TypeTable&, const Type&);
 
 } } } // namespace JSC::AOT::Typed
 

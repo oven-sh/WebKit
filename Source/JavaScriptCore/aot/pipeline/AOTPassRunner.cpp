@@ -393,8 +393,8 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     run.functionAsRead = context.subject().function;
     CurrentWorkScope workScope(program, run.functionAsRead);
     const bool readsHeat = schedule == FunctionSchedule::Prepare || schedule == FunctionSchedule::Optimize;
-    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id);
-    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id));
+    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id).predicted();
+    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id).predicted());
     if (run.optionalPassesOfShortSchedule)
         run.maxRounds = maxRoundsOfShortSchedule;
     if (contents) {
@@ -496,7 +496,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::CreateStringBuilders, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
     { PassID::DeferClosuresInFields, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Call } },
     { PassID::DeferDefinitions, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CheckInitialized, Opcode::DefineMethod, Opcode::NewClass } },
-    { PassID::EliminateRedundantReads, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add, Opcode::AppendElements, Opcode::Call, Opcode::CallBuiltin, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::JSONAppendValue, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::RequireObjectCoercible } },
+    { PassID::EliminateRedundantReads, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::Add, Opcode::AppendElements, Opcode::Call, Opcode::CallBuiltin, Opcode::CallDirect, Opcode::CallList, Opcode::Construct, Opcode::JSONAppendValue, Opcode::PrivateGet, Opcode::PropDefine, Opcode::PropGet, Opcode::PropSet, Opcode::RequireObjectCoercible } },
     { PassID::EmbedConstantCollections, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::PropDefine } },
     { PassID::FoldConstants, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::PropHas } },
     { PassID::FuseConcatenations, InPlaceOfOperation::ItsExpansion, false, TakesHandlersAway::No, { Opcode::Add, Opcode::Strcat } },
@@ -506,7 +506,8 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
 };
 
-static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations)
+// A pass that runs inside another one, on a function that the other has edited, answers for the other one too.
+static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations, ReasonsForOperationsThatWent* listenerOutside = nullptr)
 {
     const OperationsThatPassAnswersFor* entry = nullptr;
     for (const OperationsThatPassAnswersFor& candidate : operationsThatPassesAnswerFor) {
@@ -517,6 +518,8 @@ static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationTha
         bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
         if (!isAnswered)
             return describe(operation);
+        if (listenerOutside)
+            listenerOutside->addForOperationThatWent(operation.value, entry->reason);
     }
     return { };
 }
@@ -713,7 +716,7 @@ static OptionSet<BlockEdit> editsBetween(const Block& before, const Block& after
         if (before.handler)
             compareTargets(*before.handler, *after.handler);
     }
-    if (before.subject != after.subject || before.role != after.role || before.frequency != after.frequency || before.shape != after.shape)
+    if (before.subject != after.subject || before.role != after.role || !before.frequency.isSamePredictionAs(after.frequency) || before.shape != after.shape)
         edits.add(BlockEdit::Rest);
     return edits;
 }
@@ -878,7 +881,7 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     if (functionBeforeRun) [[unlikely]] {
         stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
         if (outcome == PassOutcome::Changed)
-            stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons)));
+            stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons), &*reasons));
     }
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))

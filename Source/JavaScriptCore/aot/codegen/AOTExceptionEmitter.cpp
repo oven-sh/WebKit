@@ -327,6 +327,8 @@ LValue ExceptionEmitter::keptBy(ValueID thrown)
 LValue ExceptionEmitter::caughtWord(const ValueContext& value)
 {
     BlockID handler = value.block();
+    // The landing pad of a handler leaves what was thrown to the head of that handler and to nobody else.
+    RELEASE_ASSERT(m_function.at(handler).isHandlerBlock());
     if (LValue caught = m_caughtWords.get(handler))
         return caught;
 

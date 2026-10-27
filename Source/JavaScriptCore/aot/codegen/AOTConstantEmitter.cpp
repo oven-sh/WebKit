@@ -66,9 +66,9 @@ static bool hasKeyCell(PropertyKeyKind kind)
     case PropertyKeyKind::WellKnownSymbol:
     case PropertyKeyKind::CreatedSymbol:
     case PropertyKeyKind::RegisteredSymbol:
-        return true;
     case PropertyKeyKind::EnginePrivateName:
     case PropertyKeyKind::ModulePrivateName:
+        return true;
     case PropertyKeyKind::PrivateName:
         return false;
     }

@@ -235,6 +235,12 @@ CellPointer CellAllocationEmitter::allocateZeroedByNumber(const OperationContext
     return CellPointer(callStub(context, allocateCell(CellInitialization::HeaderAndWordsAndZeros), { zeroExtended(numberOfAllocation).value() }).first);
 }
 
+std::pair<CellPointer, Condition> CellAllocationEmitter::allocateInstance(const OperationContext& context, AllocationID id, CellPointer prototype)
+{
+    StubCallResult result = callStub(context, AOT::allocateInstance(knownCellSizeFor(m_placement.allocation(id).size)), { m_out.constInt64(id.index()), prototype.value() });
+    return { CellPointer(result.first), Condition(m_out.notZero64(result.second)) };
+}
+
 CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& context, AllocationID id, CellPointer source, unsigned fieldBytes)
 {
     RELEASE_ASSERT(fieldBytes && !(fieldBytes % copyChunkBytes));
@@ -245,11 +251,11 @@ CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& co
 }
 
 // Readers take this value as they take the result of an allocation, so they stay behind it. dissolveBirthsOfFrameCells() puts the slot's address in its place.
-CellPointer CellAllocationEmitter::allocateInFrame(size_t size)
+CellPointer CellAllocationEmitter::allocateInFrame(size_t size, const PlannedLayout* layout)
 {
     B3::SlotBaseValue* slot = m_out.lockedStackSlot(size);
     slot->slot()->setIsDeadAtSuspensions(true);
-    m_records.slotsOfFrameCells.append(slot->slot());
+    m_records.slotsOfFrameCells.append({ slot->slot(), layout });
     B3::PatchpointValue* birth = m_out.patchpoint(B3::pointerType());
     birth->append(slot, B3::ValueRep::SomeRegister);
     birth->effects = B3::Effects::none();

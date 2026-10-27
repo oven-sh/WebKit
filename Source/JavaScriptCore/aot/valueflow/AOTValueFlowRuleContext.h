@@ -104,7 +104,9 @@ public:
     const ValueSets& sets() const { return m_maker.sets(); }
     ValueSetMaker& maker() { return m_maker; }
 
-    ValueFlowNodeID read(ClimbingSet objects, ValueFlowName);
+    ValueFlowNodeID read(ClimbingSet objects, ValueFlowCellName cell) { return readWhatWasWritten(objects, static_cast<ValueFlowName>(cell)); }
+    ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowName);
+    ValueFlowNodeID readWhatWasWritten(ClimbingSet objects, ValueFlowCellName) = delete;
     ValueFlowNodeID written(ClimbingSet objects, ValueFlowName);
     bool mayFindSomethingWritten(ClimbingSet objects, ValueFlowNameKind);
     std::optional<ClimbingSet> holdersUnder(ValueFlowName, ClimbingSet within);
@@ -162,6 +164,7 @@ public:
     RefusedCode refusedCode() const;
     bool refusesEvaluatedText() const { return refusedCode().evaluatedText; }
     bool isGuardedByRemovedFeature(BuiltinID) const;
+    bool isSabotaged(Sabotage) const;
 
     static ValueSetID throughMaskOf(const ValueFlowOperand&, ValueSetID value, const ValueFlowSolver&, ValueSetMaker&);
     static ValueSetID valueShownToRules(const ValueFlowOperand&, const ValueFlowSolver&, ValueSetMaker&);

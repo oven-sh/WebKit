@@ -4,7 +4,7 @@
 # CHECK-LABEL: function f1 name="first"
 # CHECK: parameters=[{type=Array}]
 # CHECK-LABEL: function f2 name="ofStrings"
-# CHECK: [[array]]: Array<string> = NewArray v1 contents=string
+# CHECK: [[array]]: Array<string, Contiguous> = NewArray v1 contents=string
 # CHECK-NEXT: [[proven]]: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType [[array]]
 # CHECK-NEXT: = CallDirect [[proven]] function=f1
 

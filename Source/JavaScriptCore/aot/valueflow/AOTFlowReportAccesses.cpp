@@ -46,7 +46,7 @@ struct FlowSiteObservation {
     AccessSiteID site;
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     AccessCost cost { AccessCost::ByName };
-    BlockFrequency frequency { BlockFrequency::Normal };
+    Expected<BlockFrequency> frequency { BlockFrequency::Normal };
     CopyPlace place { CopyPlace::OwnBody };
     bool isInGenericVersion { false };
     LayoutID layout;
@@ -208,14 +208,14 @@ static void forEachDescribedSite(const Program& program, const Value& value, con
         access.key = value.key();
     if (PayloadWord::receivers(value.opcode)) {
         if (LayoutSetID receivers = value.receivers()) {
-            access.receivers = program.at(receivers).members.span();
-            if (program.at(receivers).isComplete)
+            access.receivers = program.at(receivers).written().span();
+            if (program.at(receivers).listsEveryLayout())
                 access.numberOfCandidates = access.receivers.size();
         }
     }
     if (PayloadWord::callees(value.opcode)) {
-        if (CalleeSetID callees = value.callees(); callees && program.at(callees).isComplete)
-            access.numberOfCandidates = program.at(callees).functions.size() + program.at(callees).builtins.size();
+        if (std::optional<ProvenValue<Callees>> callees = value.callees() ? program.at(value.callees()).all() : std::nullopt)
+            access.numberOfCandidates = callees->value().functions.size() + callees->value().builtins.size();
     }
 
     if (Value::opcodesWithPlacedKeys.contains(value.opcode)) {
@@ -280,9 +280,9 @@ static void collectObservations(const Program& program, const FlowResults& flow,
     });
 }
 
-static uint8_t rarityOf(BlockFrequency frequency)
+static uint8_t rarityOf(Expected<BlockFrequency> frequency)
 {
-    switch (frequency) {
+    switch (frequency.predicted()) {
     case BlockFrequency::Normal:
         return 0;
     case BlockFrequency::Unlikely:
@@ -304,7 +304,7 @@ static void gradeSlowHalvesOfUnstampedOperations(const FlowResults& flow, const 
         uint8_t rarityOfOtherHalf { UINT8_MAX };
     };
     auto isCandidate = [&](const FlowSiteObservation& observation) {
-        return observation.cost == AccessCost::ByName && observation.frequency != BlockFrequency::Normal && !observation.isInGenericVersion
+        return observation.cost == AccessCost::ByName && observation.frequency.predicted() != BlockFrequency::Normal && !observation.isInGenericVersion
             && observation.site.index() < flow.numberOfAccessSites() && hasModule(flow.at(observation.site).location);
     };
 
@@ -426,11 +426,11 @@ static ObservationsOfFunction observeAccessSites(const Program& program, const F
     double weightOfFunction = 0;
     if (heat) {
         analyses.emplace(AnalysisContext { build, program, &flow, nullptr, id }, function);
-        weightOfFunction = 100.0 / (101 - std::min<unsigned>(heat->percentileOf(program, id), 100));
+        weightOfFunction = 100.0 / (101 - std::min<unsigned>(heat->percentileOf(program, id).predicted(), 100));
     }
     for (BlockID blockID : cfg.reversePostOrder()) {
         const Block& block = function.at(blockID);
-        double heatOfBlock = analyses ? weightOfFunction * analyses->blockFrequencies().frequencyOf(blockID) : 0;
+        double heatOfBlock = analyses ? weightOfFunction * analyses->blockFrequencies().frequencyOf(blockID).predicted() : 0;
         for (ValueID value : block.values) {
             collectObservations(program, flow, function, function.at(value), blockID, heatOfBlock, tests, observations.sites);
             if (heat)

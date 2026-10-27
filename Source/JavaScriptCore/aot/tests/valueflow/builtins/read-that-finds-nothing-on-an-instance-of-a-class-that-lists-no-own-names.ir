@@ -1,0 +1,25 @@
+# wrapped = Iterator.from(..), as the library makes it; wrapped.other();        map = new Map(); map.other()
+# A built-in makes the wrapper, so the classes whose prototype objects lie above it answer for it. One of them is WrapForValidIterator, which does not list the own names of its instances:
+# native code may have put a property on the wrapper that the table does not show, and a read that finds nothing answers undefined or a value nobody knows.
+# The class Map lists the own names of its instances, and there are none: the read answers undefined.
+# RUN: valueflow-why values=f0:v4 values=f0:v7
+# CHECK: values=f0:v4
+# CHECK: result {{*}} primitive0 {{*}} unknown
+# CHECK: values=f0:v7
+# CHECK: result {{*}} 1 members: primitive0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=LinkTimeConstantWrapForValidIteratorCreate
+    v1 = Builtin builtin=ObjectPrototype
+    v2 = Undefined
+    v3 = Call v0, -, v1, v2
+    v4 = PropGet v3 key="other"
+    v5 = Builtin builtin=Map
+    v6 = Construct v5
+    v7 = PropGet v6 key="other"
+    v8 = Call v4, v3 calleeKey="other"
+    v9 = Call v7, v6 calleeKey="other"
+    Return
+}

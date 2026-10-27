@@ -106,6 +106,7 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(optimization.sinksValues);
     AOT_TEST_CHECK(optimization.placesConstantsByFrequency);
     AOT_TEST_CHECK(optimization.mergesBlocksAfterForwardingJumps);
+    AOT_TEST_CHECK(optimization.keepsOriginsOfDemotedValues);
 
     AOT_TEST_CHECK(policy.selection.extendsInstructionSelection);
     AOT_TEST_CHECK(policy.selection.attributesTrapsToAccesses);

@@ -157,10 +157,10 @@ uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, OptionalIndex site, con
     return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, { } }, keptRegisters);
 }
 
-uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* keptRegisters)
+uint32_t StubCalls::call(CCallHelpers& jit, StubKey key, uint32_t immediate, OptionalIndex site, const KeptRegisterCheck* keptRegisters, OptionalIndex firstReadSite)
 {
     StubKey finalKey = prepare(jit, key, immediate);
-    return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, { } }, keptRegisters);
+    return emitCall(jit, finalKey, { SymbolSpace::Stub, indexOf(finalKey) }, { 0, site, firstReadSite }, keptRegisters);
 }
 
 void StubCalls::call(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, OptionalIndex site, const ArgumentMoves& moves, OptionalIndex firstReadSite)

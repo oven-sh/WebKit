@@ -44,7 +44,7 @@ struct NumberedBinding {
 static Vector<FirstUse> findFirstUses(const PlacementContext& context, std::span<const GlobalBindingSite> sites)
 {
     Vector<uint32_t> ranks(FillWith { }, context.program.functions.size(), UINT32_MAX);
-    std::span<const FunctionID> hottestFirst = context.inputs.heat.hottestFirst();
+    std::span<const FunctionID> hottestFirst = context.inputs.heat.hottestFirst().predicted();
     for (uint32_t rank = 0; rank < hottestFirst.size(); ++rank) {
         if (hottestFirst[rank].index() < ranks.size())
             ranks[hottestFirst[rank].index()] = rank;

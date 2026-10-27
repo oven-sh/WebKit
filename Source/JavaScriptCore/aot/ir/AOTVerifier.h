@@ -43,6 +43,8 @@ struct VerifierInputs {
 };
 
 bool verifyProgram(const Program&, IRForm, BuildContext&, const VerifierInputs& = { });
+// Everything but the bodies of the functions.
+bool verifyRecords(const Program&, IRForm, BuildContext&, const VerifierInputs& = { });
 bool verifyUnspecifiedValues(const Program&, BuildContext&);
 bool hoistsFunctionsIntoVariables(ModuleKind);
 bool verifyFunction(const Program&, FunctionID, const Function&, IRForm, BuildContext&, const VerifierInputs& = { });

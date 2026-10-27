@@ -49,7 +49,7 @@ variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 # CHECK: [[hasEscapes]]: boolean = JSONKeyHasEscapes [[key]]
 # CHECK-NEXT: Branch [[hasEscapes]] -> taken [[escapes]](), notTaken
 # CHECK-NEXT: [[escapes]]() frequency=Rare:
-# CHECK-NEXT: Jump -> next [[unknown0]]()
+# CHECK-NEXT: Jump -> next [[undeclared]]()
 # CHECK: [[idInLoop]]: boolean = JSONStartsWith [[key]] string="\"id\"" @
 # CHECK: = JSONStartsWith [[key]] string="\"name\"" @
 # CHECK: Branch [[seenId]] -> taken [[idRepeats]](), notTaken [[idIsNew]]()
@@ -59,7 +59,6 @@ variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 # CHECK-NEXT: [[idIsNew]]():
 # CHECK-NEXT: [[orderAfterIdInLoop]]: keyorder = JSONObjectKey [[order]] layout=L0 @
 # CHECK-NEXT: Jump -> next [[afterId]]([[orderAfterIdInLoop]])
-# CHECK: = JSONParseExtraMembers [[key]], [[extra]], [[order]] layout=L0
 # CHECK: Branch [[seenName]] -> taken [[nameRepeats]](), notTaken [[nameIsNew]]()
 # CHECK: [[afterName]]([[orderWithName]]: keyorder):
 # CHECK: [[nameRepeats]]() frequency=Rare:
@@ -67,6 +66,8 @@ variable g2 name="keyWithAccent" declared={type=L2} initialization=Undefined
 # CHECK-NEXT: [[nameIsNew]]():
 # CHECK-NEXT: [[orderAfterNameInLoop]]: keyorder = JSONObjectKey [[order]] layout=L0 field=1
 # CHECK-NEXT: Jump -> next [[afterName]]([[orderAfterNameInLoop]])
+# CHECK: [[undeclared]]():
+# CHECK-NEXT: = JSONParseExtraMembers [[key]], [[extra]], [[order]] layout=L0
 # CHECK: [[hasId]]():
 # CHECK-NEXT: Branch [[cSeenName]] -> taken {{*}}, notTaken [[nameIsMissing]]()
 # CHECK-NEXT: [[idIsMissing]]() frequency=Rare:

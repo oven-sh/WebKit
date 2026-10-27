@@ -19,6 +19,7 @@
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowResultsUnseenCode.h"
@@ -429,8 +430,12 @@ struct ConstructionEventCollector {
     {
         const Use& use = objectUse.use;
         Opcode opcode = function.at(use.user).opcode;
-        if (isCast(opcode))
+        if (isCast(opcode)) {
+            // What a cast hands on is followed as far as its type admits a reference. A check that turns the object away hands it on all the same: to the generic version of the function, which does with it what the body says.
+            if (!mayBeReference(program.typeOf(function, use.user)))
+                addLeak(use);
             return;
+        }
         if (std::optional<ConstructionEventKind> access = accessEventOf(opcode, use.operandIndex)) {
             if (opcode == Opcode::PrivateSet)
                 addAccess(ConstructionEventKind::Read, use);
@@ -735,7 +740,7 @@ struct ConstructionGraphBuilder {
     ValueSetID accessorsUnder(ValueSetID holders, PropertyKeyID key, bool getters)
     {
         holders = maker.intersect(holders, ValueSets::complement(universe.builtinTables().heap().under(key).holdersWithLockedLocation));
-        ValueSetID underKey = heap.writtenUnder(holders, getters ? ValueFlowName::getter(key) : ValueFlowName::setter(key));
+        ValueSetID underKey = heap.writtenUnder(holders, getters ? ValueFlowName::getter(program, key) : ValueFlowName::setter(program, key));
         return maker.unite(underKey, heap.writtenUnder(holders, ValueFlowName::of(getters ? ValueFlowNameKind::GetterUnderUnknownKey : ValueFlowNameKind::SetterUnderUnknownKey)));
     }
 
@@ -755,6 +760,25 @@ struct ConstructionGraphBuilder {
         return arePlain;
     }
 
+    bool holdsObjectOfProgramThatStopsStores(ValueSetID holders)
+    {
+        AOT_THRESHOLD(uint32_t, fewestHoldersAskedTogether, 8);
+        auto stopsStores = [&](ValueFlowObjectID holder) {
+            return !universe.builtinOf(holder) && markedMutationsOf(inputs, holder).containsAny(mutationsStoppingStores);
+        };
+        if (ValueSets::isComplement(holders) || sets.size(holders) < fewestHoldersAskedTogether)
+            return sets.anyMember(holders, stopsStores);
+        if (!objectsOfProgramThatStopStores) {
+            Vector<ValueFlowObjectID> stopping;
+            for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
+                if (stopsStores(ValueFlowObjectID(index)))
+                    stopping.append(ValueFlowObjectID(index));
+            }
+            objectsOfProgramThatStopStores = maker.of(stopping.span());
+        }
+        return sets.meet(holders, *objectsOfProgramThatStopStores);
+    }
+
     bool mayBeStoppedAbove(const ChainOfReceivers& chain, PropertyKeyID key)
     {
         ValueSetID above = chain.above;
@@ -762,14 +786,12 @@ struct ConstructionGraphBuilder {
         const ValueFlowMembersUnderKey& members = universe.builtinTables().heap().under(key);
         if (accessorsUnder(above, key, true) != ValueSets::nothing || accessorsUnder(above, key, false) != ValueSets::nothing || sets.meet(above, members.holdersOfUndeclaredProperties))
             return true;
+        if (holdsObjectOfProgramThatStopsStores(above))
+            return true;
         bool mayBeStopped = false;
-        sets.forEachMember(above, [&](ValueFlowObjectID holder) {
+        sets.forEachMember(maker.intersect(above, members.holders), [&](ValueFlowObjectID holder) {
             BuiltinID builtin = universe.builtinOf(holder);
-            if (!builtin) {
-                mayBeStopped |= markedMutationsOf(inputs, holder).containsAny(mutationsStoppingStores);
-                return;
-            }
-            if (!sets.contains(members.holders, holder))
+            if (!builtin)
                 return;
             mayBeStopped |= sets.contains(members.holdersWithLockedLocation, holder);
             for (BuiltinID member : builtins.membersOf(builtin))
@@ -1046,6 +1068,7 @@ struct ConstructionGraphBuilder {
     const ValueSets& sets { inputs.sets() };
     ValueSetMaker& maker { heap.maker() };
     MapByNumber<uint32_t, ChainOfReceivers> chains { };
+    std::optional<ValueSetID> objectsOfProgramThatStopStores { };
     MapByNumber<uint32_t, std::optional<ChainOfReceivers>> chainsBeforeLeak { };
     ConstructionGraph graph { };
 };

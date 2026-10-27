@@ -43,6 +43,10 @@ struct DirectCallRequest {
     bool isNeverInlined { false };
     bool isAlwaysInlined { false };
     bool isTailCall { false };
+    // The caller has made the function object itself and has handed it to nobody.
+    bool callsOwnFunctionObject { false };
+    // Flow has not followed the callee to the call, so it does not count the caller among the callers of the callee.
+    bool calleeIsPredicted { false };
 };
 
 ValueID appendDirectCall(IRBuilder&, const DirectCallRequest&);

@@ -14,13 +14,13 @@ enum WellKnownSymbol {
     Unscopables
 }
 record PropertyKey wire customText {
-    kind: PropertyKeyKind text: String? owner: Layout? symbol: WellKnownSymbol? module: Module(Referrer)? position: UInt32?
+    kind: PropertyKeyKind text: String? owner: Layout? symbol: WellKnownSymbol? module: Module(Referrer)? callNumber: UInt32?
     | engine site: AllocationSite?
 }
 
 flags Primitives abi { Undefined Null False True Number String Symbol BigInt Absent }
-flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber FractionalNumber String Symbol BigInt Absent LiteralString LiteralSymbol }
-flags TypeFlags { HasIntegers AnyObject AnyFunction HasMembersWithoutLayout }
+flags PrimitiveSet { | engine Undefined Null False True Integer WholeNumber FractionalNumber String Symbol BigInt Absent LiteralString LiteralSymbol Unspecified }
+flags TypeFlags { HasIntegers AnyObject AnyFunction }
 enum ContentsSlot { Element Key Value }
 enum ArrayStorage { Other Int32 Double Contiguous }
 flags PristineAspects { | engine Storage Names AsCreated Dense NamesKeptBelow }

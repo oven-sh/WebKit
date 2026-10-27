@@ -22,7 +22,7 @@ class FunctionAnalyses;
 class Liveness;
 class SSARepair;
 
-enum class CloneCheck : uint8_t { Unknown, OperandMustBeDefinition, FunctionMayNotBeCloned, BoundToFrame, HandlerOutsideRegion, CanClone };
+enum class CloneCheck : uint8_t { Unknown, OperandMustBeDefinition, FunctionMayNotBeCloned, BoundToFrame, UniqueInFunction, HandlerOutsideRegion, CanClone };
 
 class RegionCloner {
     WTF_MAKE_NONCOPYABLE(RegionCloner);
@@ -49,6 +49,7 @@ public:
     ValueID cloneOf(ValueID inSource) const;
     BlockID cloneOf(BlockID inSource) const;
     std::span<const BlockID> clonedBlocks() const { return m_clonedBlocks.span(); }
+    const Function& source() const { return m_source; }
 
     void repairSSA(FunctionAnalyses&);
     static void repairSSA(FunctionAnalyses&, std::span<const std::unique_ptr<RegionCloner>> clonersOfOneRegion);
@@ -58,6 +59,7 @@ private:
     static void addVariables(SSARepair&, FunctionAnalyses&, std::span<const RegionCloner* const> clonersOfOneRegion);
 
     void cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE const ScopedLambda<void(ValueID, Value&)>& didCloneValue);
+    bool saysAsMuchAs(ValueID inDestination, ValueID inSource) const;
 
     bool isSameFunction() const { return &m_source == &m_destination.function(); }
 

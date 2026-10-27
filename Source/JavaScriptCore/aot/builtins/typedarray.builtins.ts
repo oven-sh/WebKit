@@ -238,7 +238,7 @@ export default b.declarations(
       from: {
         this: b.callable,
         args: { items: b.any, mapper: b.callable.optional, thisArg: b.any.optional },
-        returns: typedArray,
+        returns: b.callbackResult("this"),
         ...operandCodeEffects,
         uses: {
           this: [constructedByReceiver],

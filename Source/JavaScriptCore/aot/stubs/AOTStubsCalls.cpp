@@ -808,7 +808,8 @@ void generateConstructValue(StubAssembler& jit)
 {
     const CallRegisters registers = CallRegisters::allocate(jit);
     JumpList isNotClosureOfThisRealm;
-    isNotClosureOfThisRealm.append(jit.branchIfNotCell(calleeGPR));
+    Jump isNotCell = jit.branchIfNotCell(calleeGPR);
+    Label hasCell = jit.label();
     loadClosureWordOfThisRealm(jit, calleeGPR, registers, isNotClosureOfThisRealm);
     Jump isCallable = jit.branchTest64(CCallHelpers::Zero, registers.word, TrustedImm64(isNotCallableMask));
 
@@ -835,6 +836,12 @@ void generateConstructValue(StubAssembler& jit)
     emitConstructWithPlainFunction(jit, registers.word, isNotPlainFunction);
 
     isNotClosureOfThisRealm.link(&jit);
+    Jump isOverNoCompiledFunction = jit.branchPtr(CCallHelpers::NotEqual, calleeGPR, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.functionOfEngineOverCompiledFunction)));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.compiledFunctionUnderFunctionOfEngine)), calleeGPR);
+    jit.jump().linkTo(hasCell, &jit);
+
+    isOverNoCompiledFunction.link(&jit);
+    isNotCell.link(&jit);
     emitSpillArgumentsAndPushFrame(jit);
     isNotPlainFunction.link(&jit);
     emitConstructByOperation(jit, static_cast<ConstructSyntax>(jit.key().form()));

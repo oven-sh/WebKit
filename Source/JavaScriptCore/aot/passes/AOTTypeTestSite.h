@@ -261,7 +261,7 @@ public:
         const CFG& cfg = m_context.analyses.cfg();
         const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
         for (BlockID block : cfg.reversePostOrder()) {
-            if (frequencies.classOf(block) == BlockFrequency::Rare)
+            if (frequencies.classOf(block).predicted() == BlockFrequency::Rare)
                 continue;
             const BlockValues& values = m_context.function.at(block).values;
             for (uint32_t index = 0; index < values.size(); ++index) {

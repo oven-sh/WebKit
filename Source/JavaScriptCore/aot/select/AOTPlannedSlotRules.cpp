@@ -66,10 +66,10 @@ static bool findsOffsetByShape(Opcode opcode, const SlotAgreement& agreement)
 static bool belongsTo(const Program& program, const Heat& heat, LayoutID layout, ModuleID module)
 {
     for (LayoutID current = declaredLayoutOf(program, layout); current; current = expectedBaseOf(program.at(current))) {
-        if (program.at(current).module == module || heat.isAllocatedIn(current, module))
+        if (program.at(current).module == module || heat.isAllocatedIn(current, module).predicted())
             return true;
     }
-    return heat.isAllocatedIn(layout, module);
+    return heat.isAllocatedIn(layout, module).predicted();
 }
 
 // The arms are tested in this order: first the groups with a layout of the module that the function is written in, for a library handles the objects that it makes.
@@ -87,7 +87,7 @@ static Vector<LayoutSetID, 4> createArms(SelectionContext& context, const SlotAg
         });
         double allocations = 0;
         for (LayoutID layout : members)
-            allocations += heat.allocationsOf(layout);
+            allocations += heat.allocationsOf(layout).predicted();
         return std::tuple { hasLayoutOfModule, allocations, members.size() };
     });
     Vector<size_t, 4> likeliestFirst(agreement.groups.size(), [](size_t index) {
@@ -318,7 +318,7 @@ static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgree
     const Function& function = context.function();
     for (ValueID id : context.candidates(opcode)) {
         const Value& access = function.at(id);
-        if (program.at(access.receivers()).members.size() < 2)
+        if (program.at(access.receivers()).written().size() < 2)
             continue;
 
         const SlotAgreement& agreement = context.slots().agreementOf(program, access.key(), access.receivers());
@@ -377,7 +377,7 @@ static void endArmInCopy(GroupRewriter& rewriter, const PlannedSlotMatch& match,
 }
 
 // A failed test takes the layouts of its arm out of the type of the object. What has failed every test has the layouts of the last arm, so no arm is left for other objects.
-static void dispatchOnType(GroupRewriter& rewriter, const PlannedSlotMatch& match, ValueID object, ValueID guard, BlockFrequency frequency)
+static void dispatchOnType(GroupRewriter& rewriter, const PlannedSlotMatch& match, ValueID object, ValueID guard, Expected<BlockFrequency> frequency)
 {
     IRBuilder& builder = rewriter.builder();
     for (LayoutSetID arm : match.arms.span().first(match.arms.size() - 1)) {
@@ -391,7 +391,7 @@ static void dispatchOnType(GroupRewriter& rewriter, const PlannedSlotMatch& matc
 }
 
 // A guard proves the layouts of the receiver, and only the case of a switch gives a guard for fewer of them: every arm is a case.
-static void dispatchOnShape(GroupRewriter& rewriter, const PlannedSlotMatch& match, ValueID object, ValueID previousGuard, BlockFrequency frequency)
+static void dispatchOnShape(GroupRewriter& rewriter, const PlannedSlotMatch& match, ValueID object, ValueID previousGuard, Expected<BlockFrequency> frequency)
 {
     IRBuilder& builder = rewriter.builder();
     BlockID head = builder.currentBlock();
@@ -425,7 +425,7 @@ static void dispatchToArms(GroupRewriter& rewriter, const PlannedSlotMatch& matc
     const Value& original = rewriter.original(match.group.root);
     ValueID object = original.objectOperand();
     ValueID guard = original.guardOperand();
-    BlockFrequency frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
+    Expected<BlockFrequency> frequency = rewriter.function().at(rewriter.rootBlock()).frequency;
 
     if (match.follower)
         rewriter.beginArms(match.follower, match.followerIsOnlyReturned);

@@ -1150,6 +1150,10 @@ private:
         }
 
         Arg result = effectiveAddr(value->lastChild(), offset, width);
+        // Whoever handles the trap finds what was dereferenced in one register: the base, or the index beside a pinned base.
+        bool namesDereferencedValue = !result.isIndex() || (result.base().isReg() && m_code.isPinned(result.base().reg()));
+        if (value->traps() && m_procedure.policy().selection.attributesTrapsToAccesses && !namesDereferencedValue)
+            result = Arg::addr(tmp(value->lastChild()), offset);
         RELEASE_ASSERT(result.isValidForm(Air::Move, width));
 
         return result;

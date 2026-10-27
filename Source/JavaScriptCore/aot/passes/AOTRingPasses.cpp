@@ -213,7 +213,7 @@ KnownValue knownValueOf(const DataNode& node)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-KnownValue knownValueOfType(const Program& program, const Type& type)
+KnownValue knownValueOfType(const Type& type)
 {
     if (!type.isJavaScriptValue())
         return { };
@@ -223,7 +223,7 @@ KnownValue knownValueOfType(const Program& program, const Type& type)
         return { };
     if (hasOnlyCallableObjects(type))
         return KnownValue::function();
-    return type.hasOnlyLayouts(program) ? KnownValue::object() : KnownValue();
+    return type.hasOnlyLayouts() ? KnownValue::object() : KnownValue();
 }
 
 KnownValue knownValueOf(const Program& program, const Function& function, ValueID id)
@@ -237,7 +237,7 @@ KnownValue knownValueOf(const Program& program, const Function& function, ValueI
         return KnownValue::function();
     if (resultRuleOf(definition.opcode) == ResultRule::Allocation && program.at(definition.type).isJavaScriptValue())
         return KnownValue::object();
-    return knownValueOfType(program, program.typeOf(function, id));
+    return knownValueOfType(program.typeOf(function, id));
 }
 
 enum class EqualityKind : uint8_t { Strict, Loose };
@@ -349,7 +349,7 @@ static bool mayContainNumbers(const Program& program, const Type& array)
     const ClassPart* part = array.singleBuiltinClass();
     if (!part || part->builtinClass != BuiltinClasses::Array || !part->contentsAreProven)
         return true;
-    return program.at(part->contentsAt(program.builtins(), ContentsSlot::Element)).primitives & Primitive::Number;
+    return program.at(*part->provenContentsAt(program.builtins(), ContentsSlot::Element)).primitives & Primitive::Number;
 }
 
 // The storage kinds that are left for an array are no range of integers, so the type of an ArrayStorageKind cannot say them.
@@ -1224,7 +1224,7 @@ struct ConstantFolder {
         if (rules.contains(FoldingRule::SingleValueType)) {
             const Type& type = program.types.at(value.type);
             static_assert(std::has_single_bit(Primitive::Undefined) && std::has_single_bit(Primitive::Null) && std::has_single_bit(Primitive::False) && std::has_single_bit(Primitive::True) && std::has_single_bit(Primitive::Integer) && std::has_single_bit(Primitive::LiteralString));
-            if (std::has_single_bit(type.primitives) && becomeConstantIfRemovable(id, knownValueOfType(program, type)))
+            if (std::has_single_bit(type.primitives) && becomeConstantIfRemovable(id, knownValueOfType(type)))
                 return true;
         } else if (rules.contains(FoldingRule::SingleValueBehindCasts) && resultRuleOf(value.opcode) != ResultRule::None && becomeConstantIfRemovable(id, knownValueOf(id)))
             return true;
@@ -1524,15 +1524,15 @@ struct ConstantFolder {
         return becomeConstant(id, KnownValue::string(context.strings.intern(StringView(answer->text))));
     }
 
-    PropertyKeyID findConstantPropertyKey(ValueID key)
+    PropertyKeyID findNameGivenTo(const Value& operation, ValueID key)
     {
-        return internKey(context.types, constantKeyOf(program, typeOf(key)));
+        return internKey(context.types, constantNameOf(program, program.sourceFunctionOf(function, operation), typeOf(key)));
     }
 
     bool convertToNamedSuperAccess(ValueID id, const Value& value)
     {
         ValueID computedKey = value.computedKeyOperand();
-        PropertyKeyID key = computedKey ? findConstantPropertyKey(computedKey) : PropertyKeyID();
+        PropertyKeyID key = computedKey ? findNameGivenTo(value, computedKey) : PropertyKeyID();
         if (!key)
             return false;
         Value& access = function.edit(id, ValueEdit::Definition);
@@ -1543,7 +1543,7 @@ struct ConstantFolder {
 
     bool convertToNamedAccess(ValueID id, const Value& value)
     {
-        PropertyKeyID key = findConstantPropertyKey(value.propertyOperand());
+        PropertyKeyID key = findNameGivenTo(value, value.propertyOperand());
         if (!key)
             return false;
 
@@ -1660,7 +1660,7 @@ struct TrivialParameterRemover {
     {
         if (block.handler || block.subject == parameter)
             return { };
-        KnownValue value = knownValueOfType(context.program, context.types.at(function.at(parameter).type));
+        KnownValue value = knownValueOfType(context.types.at(function.at(parameter).type));
         switch (value.kind()) {
         case KnownValue::Kind::Undefined:
         case KnownValue::Kind::Null:
@@ -2212,8 +2212,8 @@ struct ControlFlowSimplifier {
         if (numberOfIncomingEdges * numberOfArguments > numberOfIncomingEdges + numberOfArguments)
             return false;
         BlockID target = block.terminator.next().block;
-        BlockFrequency targetFrequency = function.at(target).frequency;
-        return target != id && rarerOf(block.frequency, targetFrequency) == targetFrequency;
+        Expected<BlockFrequency> targetFrequency = function.at(target).frequency;
+        return target != id && rarerOf(block.frequency, targetFrequency).isSamePredictionAs(targetFrequency);
     }
 
     static ValueID testedValueOf(const Terminator& terminator)
@@ -2452,7 +2452,7 @@ struct ControlFlowSimplifier {
         block.terminator = WTF::move(successor.terminator);
         if (choice == HandlerChoice::TakeSuccessorHandler)
             block.handler = WTF::move(successor.handler);
-        mayFindMoreAtOnce |= rarerOf(block.frequency, successor.frequency) != block.frequency || (block.values.isEmpty() && block.parameters.isEmpty());
+        mayFindMoreAtOnce |= !rarerOf(block.frequency, successor.frequency).isSamePredictionAs(block.frequency) || (block.values.isEmpty() && block.parameters.isEmpty());
         block.frequency = rarerOf(block.frequency, successor.frequency);
         if (throwingUncoveredBlocks.get(next->index()))
             throwingUncoveredBlocks.set(id.index());
@@ -3099,7 +3099,7 @@ static const Value* findTypeTestThatEnds(Rewrite& rewrite, const Block& block)
 
 static void testNarrowerTypeFirst(Rewrite& rewrite, BlockID id, const Block& block)
 {
-    if (block.frequency == BlockFrequency::Rare || block.handler)
+    if (block.frequency.predicted() == BlockFrequency::Rare || block.handler)
         return;
     const Value* wider = findTypeTestThatEnds(rewrite, block);
     const Target& proven = block.terminator.targets[0];
@@ -3121,13 +3121,13 @@ static void testNarrowerTypeFirst(Rewrite& rewrite, BlockID id, const Block& blo
     if (wider->testedType() == narrower->testedType() || !narrowerType.isSubsetOf(widerType, rewrite.program))
         return;
     // `links[id] ??= ..`, `session().project`: the second test asks whether there is nothing. Mostly there is something, which would fail it, then pass the first test on the failing side and be asked again.
-    if (narrowerType.isUndefinedOrNull() || rewrite.at(provenNarrower.block).frequency > rewrite.at(nextBlock.terminator.targets[1].block).frequency)
+    if (narrowerType.isUndefinedOrNull() || (rewrite.at(provenNarrower.block).frequency > rewrite.at(nextBlock.terminator.targets[1].block).frequency).predicted())
         return;
 
     rewrite.claim(id);
     rewrite.claim(next);
     // Where the first test admits nothing beside the second but undefined and null, flow expects `undefined|number` and the use needs a number: the rest is unlikely.
-    BlockFrequency frequencyOfRest = widerType.withoutNullish().isSubsetOf(narrowerType, rewrite.program) ? BlockFrequency::Unlikely : block.frequency;
+    Expected<BlockFrequency> frequencyOfRest = widerType.withoutNullish().isSubsetOf(narrowerType, rewrite.program) ? BlockFrequency::Unlikely : block.frequency;
     rewrite.later([&rewrite, id, test = block.values.last(), narrowerType = narrower->testedType(), provenNarrower = Target(provenNarrower), frequencyOfRest]() mutable {
         IRBuilder& builder = rewrite.builder();
         Target taken = rewrite.at(id).terminator.targets[0];

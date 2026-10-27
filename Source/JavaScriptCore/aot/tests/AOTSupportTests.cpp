@@ -14,6 +14,7 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTDiagnostics.h"
 #include "AOTFlowResults.h"
+#include "AOTFunctionEditing.h"
 #include "AOTFunctionQueue.h"
 #include "AOTIR.h"
 #include "AOTIRParser.h"
@@ -34,13 +35,22 @@
 #include "LineColumn.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <initializer_list>
 #include <memory>
 #include <numeric>
 #include <optional>
 #include <ranges>
+#include <span>
+#include <utility>
+#include <wtf/EnumTraits.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
+#include <wtf/VectorTraits.h>
 #include <wtf/WeakRandom.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT {
 
@@ -294,6 +304,34 @@ static void testDerivedFunctionIDsFromManyThreads()
     AOT_TEST_CHECK(table.find(recorded) == FunctionID(3u));
     table.recordFunctionsOf(*program);
     AOT_TEST_CHECK(table.find(recorded) == FunctionID(3u));
+}
+
+static void testCachesOfProgramLastAsLongAsWhatRunsBesideEdits()
+{
+    BuildContext build(optionsWith({ "threads=8"_s }));
+    std::unique_ptr<Program> program = parseDerivedFunctions(build);
+    ProgramEditor editor(*program);
+    auto hasCachesAndOpenPhases = [&] {
+        return program->propertyAccessCache() && program->sharedFieldTypes() && program->types.hasOpenPhase() && program->strings.hasOpenPhase();
+    };
+    auto hasNone = [&] {
+        return !program->propertyAccessCache() && !program->sharedFieldTypes() && !program->types.hasOpenPhase() && !program->strings.hasOpenPhase();
+    };
+    std::array functions { FunctionID(0u), FunctionID(1u) };
+    for (size_t numberOfFunctions = 0; numberOfFunctions <= functions.size(); ++numberOfFunctions) {
+        std::atomic<unsigned> numberOfEdits { 0 };
+        unsigned numberOfRunsBeside = 0;
+        AOT_TEST_CHECK(hasNone());
+        editFunctionsInParallel(editor, build, std::span<const FunctionID>(functions).first(numberOfFunctions), [&](unsigned, FunctionID, Function&, TaskArenas&) {
+            AOT_TEST_CHECK(hasCachesAndOpenPhases());
+            numberOfEdits.fetch_add(1, std::memory_order_relaxed);
+        }, [&] {
+            AOT_TEST_CHECK(numberOfFunctions ? hasCachesAndOpenPhases() : hasNone());
+            ++numberOfRunsBeside;
+        });
+        AOT_TEST_CHECK(hasNone());
+        AOT_TEST_CHECK(numberOfEdits.load() == numberOfFunctions && numberOfRunsBeside == 1);
+    }
 }
 
 static void testStatisticsFromManyThreads()
@@ -788,6 +826,253 @@ static void testCurrentWorkFitsItsBuffer()
     }
 }
 
+namespace {
+
+struct MallocOfMarkedBuffers {
+    static constexpr uint64_t inUse = 0x6275666665722121;
+    static constexpr size_t wordsInFront = 2;
+
+    static void* malloc(size_t size)
+    {
+        auto* words = static_cast<uint64_t*>(FastMalloc::malloc(size + wordsInFront * sizeof(uint64_t)));
+        words[0] = inUse;
+        ++numberInUse;
+        return words + wordsInFront;
+    }
+    static void* tryMalloc(size_t size) { return malloc(size); }
+    static void* realloc(void* buffer, size_t size)
+    {
+        auto* words = static_cast<uint64_t*>(buffer) - wordsInFront;
+        AOT_TEST_CHECK(words[0] == inUse);
+        return static_cast<uint64_t*>(FastMalloc::realloc(words, size + wordsInFront * sizeof(uint64_t))) + wordsInFront;
+    }
+    static void free(void* buffer)
+    {
+        auto* words = static_cast<uint64_t*>(buffer) - wordsInFront;
+        AOT_TEST_CHECK(words[0] == inUse);
+        words[0] = 0;
+        --numberInUse;
+        FastMalloc::free(words);
+    }
+    static constexpr size_t nextCapacity(size_t capacity) { return FastMalloc::nextCapacity(capacity); }
+
+    static thread_local size_t numberInUse;
+};
+thread_local size_t MallocOfMarkedBuffers::numberInUse = 0;
+
+struct RecordWithPadding {
+    uint64_t number;
+    uint8_t byte;
+
+    friend bool operator==(const RecordWithPadding&, const RecordWithPadding&) = default;
+};
+
+struct alignas(16) RecordAlignedToTwoWords {
+    uint64_t number;
+
+    friend bool operator==(const RecordAlignedToTwoWords&, const RecordAlignedToTwoWords&) = default;
+};
+
+struct RecordThatKnowsWhereItIs {
+    explicit RecordThatKnowsWhereItIs(unsigned number)
+        : number(number)
+        , self(this)
+    {
+    }
+    RecordThatKnowsWhereItIs(const RecordThatKnowsWhereItIs& other)
+        : number(other.number)
+        , self(this)
+    {
+        AOT_TEST_CHECK(other.self == &other);
+    }
+    ~RecordThatKnowsWhereItIs()
+    {
+        AOT_TEST_CHECK(self == this);
+        self = nullptr;
+    }
+    RecordThatKnowsWhereItIs& operator=(const RecordThatKnowsWhereItIs& other)
+    {
+        AOT_TEST_CHECK(self == this && other.self == &other);
+        number = other.number;
+        return *this;
+    }
+
+    friend bool operator==(const RecordThatKnowsWhereItIs& a, const RecordThatKnowsWhereItIs& b) { return a.self == &a && b.self == &b && a.number == b.number; }
+
+    unsigned number;
+    RecordThatKnowsWhereItIs* self;
+};
+
+static_assert(movesAsBytes<uint8_t> && movesAsBytes<FunctionID> && movesAsBytes<RecordWithPadding> && movesAsBytes<RecordAlignedToTwoWords> && movesAsBytes<SortedRecord<9>> && movesAsBytes<String>);
+static_assert(!VectorTraits<FunctionID>::canMoveWithMemcpy && !VectorTraits<RecordWithPadding>::canMoveWithMemcpy);
+static_assert(!movesAsBytes<RecordThatKnowsWhereItIs> && !movesAsBytes<Vector<unsigned, 2>> && !movesAsBytes<std::pair<unsigned, RecordThatKnowsWhereItIs>>);
+
+template<typename T, size_t inlineCapacity, size_t minCapacity>
+void checkGrowthOfVector(const Invocable<T(unsigned)> auto& create)
+{
+    using VectorUnderTest = Vector<T, inlineCapacity, CrashOnOverflow, minCapacity, MallocOfMarkedBuffers>;
+    using ExpectedVector = WTF::Vector<T, inlineCapacity, CrashOnOverflow, minCapacity>;
+    constexpr unsigned numberOfElements = 2000;
+
+    auto isInline = [](const VectorUnderTest& vector) {
+        auto* start = reinterpret_cast<const char*>(&vector);
+        auto* buffer = reinterpret_cast<const char*>(vector.span().data());
+        return buffer >= start && buffer < start + sizeof(VectorUnderTest);
+    };
+    auto checkEqual = [&](const VectorUnderTest& vector, const ExpectedVector& expected) {
+        AOT_TEST_CHECK(vector.size() == expected.size() && vector.capacity() == expected.capacity());
+        AOT_TEST_CHECK(std::ranges::equal(vector, expected));
+        AOT_TEST_CHECK(isInline(vector) == (inlineCapacity && vector.capacity() == inlineCapacity));
+    };
+    auto onBoth = [&](VectorUnderTest& vector, ExpectedVector& expected, const auto& change) {
+        change(vector);
+        change(expected);
+        checkEqual(vector, expected);
+    };
+
+    {
+        VectorUnderTest vector;
+        ExpectedVector expected;
+        unsigned numberOfFullVectors = 0;
+        for (unsigned number = 0; vector.size() < numberOfElements; ++number) {
+            if (vector.size() < vector.capacity() || !vector.size()) {
+                vector.append(T(create(number)));
+                expected.append(T(create(number)));
+                AOT_TEST_CHECK(vector.size() == expected.size() && vector.capacity() == expected.capacity() && vector.last() == expected.last());
+                continue;
+            }
+            onBoth(vector, expected, [&](auto& list) {
+                T outside(create(number));
+                switch (numberOfFullVectors % 8) {
+                case 0:
+                    list.append(list.first());
+                    break;
+                case 1:
+                    list.append(list.last());
+                    break;
+                case 2:
+                    list.append(outside);
+                    break;
+                case 3:
+                    list.append(WTF::move(outside));
+                    break;
+                case 4:
+                    list.insert((list.size() + 1) / 2, list.first());
+                    break;
+                case 5:
+                    list.append(ExpectedVector(list.span().subspan(list.size() / 2)).span());
+                    break;
+                case 6:
+                    list.constructAndAppend(outside);
+                    break;
+                case 7:
+                    list.insertFill(1, outside, 3);
+                    break;
+                }
+            });
+            ++numberOfFullVectors;
+        }
+        AOT_TEST_CHECK(numberOfFullVectors >= 8);
+
+        VectorUnderTest copy = vector;
+        AOT_TEST_CHECK(copy == vector && copy.capacity() == vector.size());
+        VectorUnderTest moved = WTF::move(copy);
+        AOT_TEST_CHECK(moved == vector && copy.isEmpty());
+        onBoth(vector, expected, [&](auto& list) {
+            list.reserveCapacity(list.capacity() + 1);
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.reserveCapacity(list.size());
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.shrink(inlineCapacity / 2 + 1);
+            list.shrinkToFit();
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.fill(T(create(7)), 3 * inlineCapacity + 40);
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.clear();
+        });
+        onBoth(vector, expected, [&](auto& list) {
+            list.reserveInitialCapacity(inlineCapacity + 5);
+            list.append(T(create(1)));
+        });
+    }
+    AOT_TEST_CHECK(!MallocOfMarkedBuffers::numberInUse);
+}
+
+template<typename T>
+void checkGrowthOfVectorsOf(const Invocable<T(unsigned)> auto& create)
+{
+    checkGrowthOfVector<T, 0, 16>(create);
+    checkGrowthOfVector<T, 0, 1>(create);
+    checkGrowthOfVector<T, 1, 16>(create);
+    checkGrowthOfVector<T, 3, 2>(create);
+    checkGrowthOfVector<T, 20, 16>(create);
+}
+
+} // anonymous namespace
+
+static void testVectorsGrowAsThoseOfWTF()
+{
+    auto createInteger = [](unsigned number) {
+        return number;
+    };
+    checkGrowthOfVectorsOf<uint8_t>(createInteger);
+    checkGrowthOfVectorsOf<uint16_t>(createInteger);
+    checkGrowthOfVectorsOf<uint32_t>(createInteger);
+    checkGrowthOfVectorsOf<uint64_t>(createInteger);
+    checkGrowthOfVectorsOf<double>(createInteger);
+    checkGrowthOfVectorsOf<FunctionID>([](unsigned number) {
+        return FunctionID(number);
+    });
+    checkGrowthOfVectorsOf<std::pair<uint64_t, uint64_t>>([](unsigned number) {
+        return std::pair<uint64_t, uint64_t> { number, ~static_cast<uint64_t>(number) };
+    });
+    checkGrowthOfVectorsOf<RecordWithPadding>([](unsigned number) {
+        return RecordWithPadding { number, static_cast<uint8_t>(number) };
+    });
+    checkGrowthOfVectorsOf<RecordAlignedToTwoWords>([](unsigned number) {
+        return RecordAlignedToTwoWords { number };
+    });
+    checkGrowthOfVectorsOf<SortedRecord<9>>([](unsigned number) {
+        return SortedRecord<9> { number, { number + 1, number + 2, 0, 0, 0, 0, 0, 0, number + 9 } };
+    });
+    checkGrowthOfVectorsOf<String>([](unsigned number) {
+        return String::number(number);
+    });
+    checkGrowthOfVectorsOf<RecordThatKnowsWhereItIs>([](unsigned number) {
+        return RecordThatKnowsWhereItIs(number);
+    });
+    checkGrowthOfVectorsOf<Vector<unsigned>>([](unsigned number) {
+        return Vector<unsigned> { number, number + 1 };
+    });
+    checkGrowthOfVectorsOf<Vector<unsigned, 2>>([](unsigned number) {
+        return Vector<unsigned, 2>(number % 4, [&](size_t index) {
+            return number + static_cast<unsigned>(index);
+        });
+    });
+    checkGrowthOfVectorsOf<std::pair<unsigned, Vector<unsigned>>>([](unsigned number) {
+        return std::pair<unsigned, Vector<unsigned>> { number, { number } };
+    });
+}
+
+enum class EnumWithGap : uint8_t { First, Second, Last = 4 };
+enum class WideEnum : uint16_t { Only };
+
+static void testNamesOfEnumeratorsEndAtTheLastOne()
+{
+    static_assert(WTF::enumNamesSize<EnumWithGap>() == 256 && WTF::enumNamesSizeUpToLastName<EnumWithGap>() == 5);
+    static_assert(WTF::enumNamesSize<WideEnum>() == 511 && WTF::enumNamesSizeUpToLastName<WideEnum>() == 1);
+    AOT_TEST_CHECK(WTF::enumName(EnumWithGap::First) == "First"_s && WTF::enumName(EnumWithGap::Second) == "Second"_s && WTF::enumName(EnumWithGap::Last) == "Last"_s);
+    for (unsigned value = 0; value < 256; ++value)
+        AOT_TEST_CHECK(WTF::enumName(static_cast<EnumWithGap>(value)) == WTF::enumNames<EnumWithGap>()[value]);
+    AOT_TEST_CHECK(WTF::enumName(static_cast<EnumWithGap>(3)).isNull() && WTF::enumName(static_cast<EnumWithGap>(5)).isNull() && WTF::enumName(static_cast<EnumWithGap>(255)).isNull());
+    AOT_TEST_CHECK(WTF::enumName(WideEnum::Only) == "Only"_s && WTF::enumName(static_cast<WideEnum>(510)).isNull());
+    AOT_TEST_CHECK(WTF::enumName(static_cast<WideEnum>(511)) == "enum out of range"_s);
+}
+
 std::span<const NativeTest> supportTests()
 {
     static constexpr NativeTest tests[] = {
@@ -795,6 +1080,7 @@ std::span<const NativeTest> supportTests()
         { "function-queue/many-threads"_s, testFunctionQueueOnManyThreads },
         { "function-queue/behind-long-function"_s, testFunctionQueueBehindLongFunction },
         { "derived-functions/ids-from-many-threads"_s, testDerivedFunctionIDsFromManyThreads },
+        { "function-editing/caches-last-as-long-as-what-runs-beside-edits"_s, testCachesOfProgramLastAsLongAsWhatRunsBesideEdits },
         { "diagnostics/order-by-text-position"_s, testDiagnosticsOrderByTextPosition },
         { "diagnostics/text-position-is-last-context-clause"_s, testTextPositionIsLastContextClause },
         { "diagnostics/two-lists"_s, testDiagnosticsKeepTwoLists },
@@ -815,6 +1101,8 @@ std::span<const NativeTest> supportTests()
         { "sort/equal-elements"_s, testSortLeavesEqualElementsWhereTheStandardLibraryDoes },
         { "sort/integers-and-ids"_s, testSortOfIntegersAndIDs },
         { "sort/heap-sort-behind-too-many-partitions"_s, testHeapSortBehindTooManyPartitions },
+        { "vector/grows-as-that-of-wtf"_s, testVectorsGrowAsThoseOfWTF },
+        { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };
     return tests;
 }

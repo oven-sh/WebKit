@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTKnownClosures.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
@@ -185,7 +186,7 @@ static void enterRuntimeFunction(ValueFlowRuleContext& context, RuntimeFunctionI
 static ValueFlowSources memberOfRequiredValue(ValueFlowRuleContext& context, ModuleID module, StringID name)
 {
     std::optional<PropertyKeyID> key = context.program().types.find({ .kind = PropertyKeyKind::Text, .text = name });
-    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(*key) : everyPropertyName) }, { } };
+    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(context.program(), *key) : everyPropertyName) }, { } };
 }
 
 static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& context, ModuleID id, StringID name)
@@ -196,7 +197,7 @@ static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& conte
 
     auto found = std::ranges::find(module.exports, name, &ModuleExport::name);
     if (found != module.exports.end())
-        return found->kind == ModuleExportKind::Indirect ? unknown : exportedValueOf(context, *found);
+        return found->kind == ModuleExportKind::Indirect && program.at(found->module).kind == ModuleKind::External ? unknown : exportedValueOf(context, *found);
 
     if (module.exportRule != SyntheticExportRule::None || module.exportsVariable) {
         bool isDefault = name == program.stringOf(BuiltinNames::defaultKeyword);
@@ -236,7 +237,7 @@ static bool mayBeServerConfiguration(ValueFlowRuleContext& context, const ValueF
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet configuration = valueOf(context, value);
     auto found = [&](BuiltinName name) {
-        return context.valueOf(context.lookup(configuration, ValueFlowName::property(program.keyOf(name))));
+        return context.valueOf(context.lookup(configuration, ValueFlowName::property(program, program.keyOf(name))));
     };
     auto hasHandler = [&] {
         if (context.meet(configuration, universe.placeholdersAlone()))
@@ -278,7 +279,7 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
     if (!condition->calledOn && (isRun || mayCallWhateverHasEscaped(context)) && context.holdsAnyOf(object, ValueFlowProgramNodes::escaped()))
         return true;
 
-    auto holdsSomething = [&](ValueFlowName cell) {
+    auto holdsSomething = [&](ValueFlowCellName cell) {
         return context.meet(context.valueOf(context.read(object, cell)), ValueSets::anything);
     };
     if (isObjectKind(builtins.at(builtin).kind)) {
@@ -286,10 +287,10 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
             return false;
         if (condition->callRunsOtherCode && !holdsSomething(cellOfCallsThatRunOtherCode(builtins)))
             return false;
-        if (condition->firstText() && !holdsSomething({ ValueFlowNameKind::Slot, builtins.slotCount() + condition->firstText().index() }))
+        if (condition->firstText() && !holdsSomething(ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + condition->firstText().index() }))
             return false;
     }
-    return !condition->hasProperty || holdsSomething({ ValueFlowNameKind::Slot, builtins.slotCount() + condition->hasProperty.index() });
+    return !condition->hasProperty || holdsSomething(ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + condition->hasProperty.index() });
 }
 
 static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModuleLoad& load)
@@ -322,7 +323,7 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
     if (load.readsEveryExport) {
         ValueFlowSources answer = requiredValueOf(context, id);
         connect(context, answer, escaped);
-        context.connect(context.read(withSourcesOfCopies(context, context.restrict(valueOf(context, answer), context.universe().knownObjects())), everyPropertyName), escaped);
+        context.connect(context.readWhatWasWritten(withSourcesOfCopies(context, context.restrict(valueOf(context, answer), context.universe().knownObjects())), everyPropertyName), escaped);
         return;
     }
     for (size_t index = 0; index < load.exports.size(); ++index) {
@@ -342,6 +343,8 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
             use(namespaceOf(context, found->module), index);
             break;
         case ModuleExportKind::Indirect:
+            if (program.at(found->module).kind != ModuleKind::External)
+                use(exportedValueOf(context, *found), index);
             break;
         }
     }
@@ -491,14 +494,14 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
     ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()));
     ClimbingSet all = context.valueOf(heldNode);
     ClimbingSet held = context.restrict(all, objectsOfProgram);
-    held = context.unite(held, context.valueWithin(ClimbingSet(universe.holdersOfLibraryExports()), heldNode));
+    held = context.unite(held, context.valueWithin(ClimbingSet(universe.objectsOfLibraryFoundByNameAlone()), heldNode));
     if (context.contains(all, ValueFlowUniverse::untrackedObject()))
         held = context.unite(held, context.valueWithin(ClimbingSet(objectsOfProgram), ValueFlowProgramNodes::lost()));
     if (!context.meet(held, ValueSets::anything))
         return;
 
     for (ValueFlowNameKind kind : { ValueFlowNameKind::EveryProperty, ValueFlowNameKind::EveryGetter, ValueFlowNameKind::EverySetter, ValueFlowNameKind::PrototypeLink, ValueFlowNameKind::CopiedFrom })
-        context.connect(context.read(held, { kind, 0 }), heldNode);
+        context.connect(context.readWhatWasWritten(held, { kind, 0 }), heldNode);
     context.add(heldNode, objectsHeldFromCreation(context, held));
     context.mark(held, ObjectMutation::ReachNativeCode);
 
@@ -510,7 +513,7 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
         { ValueFlowNameKind::PrototypeLink, ValueFlowNameKind::PrototypeLink },
     };
     for (auto [found, written] : foundAndWrittenNames)
-        context.connect(context.read(unknownObject, { found, 0 }), context.written(held, { written, 0 }));
+        context.connect(context.readWhatWasWritten(unknownObject, { found, 0 }), context.written(held, { written, 0 }));
     for (ObjectMutation mutation : OptionSet<ObjectMutation>::all()) {
         if (context.meet(context.markedAmong(unknownObject, mutation), ValueSets::anything))
             context.mark(held, mutation);
@@ -605,7 +608,7 @@ static bool someCallPassesPropertyThatRunsUnseenCode(ValueFlowRuleContext& conte
     const BuiltinUnseenCode* row = builtins.unseenCodeOf(builtin);
     if (!row || !row->condition || !row->condition->hasProperty)
         return false;
-    ValueFlowName cell { ValueFlowNameKind::Slot, builtins.slotCount() + row->condition->hasProperty.index() };
+    ValueFlowCellName cell { ValueFlowNameKind::Slot, builtins.slotCount() + row->condition->hasProperty.index() };
     return context.meet(context.valueOf(context.read(only(context, context.universe().objectOf(builtin)), cell)), ValueSets::anything);
 }
 

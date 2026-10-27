@@ -30,6 +30,7 @@ constexpr OptionSet<FunctionCapabilities> capabilitiesAddedByPasses {
     FunctionCapabilities::RecordsCallee,
     FunctionCapabilities::RecordsCalleeOnceRenamed,
     FunctionCapabilities::NotesLooksForName,
+    FunctionCapabilities::IsLongConstructor,
 };
 
 bool isSentByFrontEnd(FunctionRole role)
@@ -93,15 +94,18 @@ std::optional<InternalError> findHeaderError(const Program& program, IRForm form
         return InternalError { .kind = InternalErrorKind::ListOutOfBounds, .function = id, .limit = LimitID::MaxCaptures, .count = id.index() };
 
     bool isAsRead = form == IRForm::AsRead && id.index() < program.numberOfFunctionsAsRead();
-    if (hasValidSignature(function)
+    bool hasValidHeader = hasValidSignature(function)
         && hasOnlyTypesThatCrossCalls(program, function)
         && nameOf(function.creator.kind()) == recordOf(function.role)
         && (!isAsRead || isSentByFrontEnd(function.role) || function.role == FunctionRole::EntryChecks)
         && function.capabilities.containsOnly(capabilitiesOf(function.role) | capabilitiesAddedByPasses)
         && hasValidConstructedClass(program, id, function)
-        && (!function.enclosingRuntimeFunction || findRuntimeFunction(program, function.enclosingRuntimeFunction)))
-        return std::nullopt;
-    return InternalError { .kind = InternalErrorKind::InvalidCreatorRecord, .function = id };
+        && (!function.enclosingRuntimeFunction || findRuntimeFunction(program, function.enclosingRuntimeFunction));
+    if (!hasValidHeader)
+        return InternalError { .kind = InternalErrorKind::InvalidCreatorRecord, .function = id };
+    if (!function.blocks.isEmpty() && function.at(entryBlock).parameters.size() != function.numberOfEntryParameters())
+        return InternalError { .kind = InternalErrorKind::EntryParametersMismatch, .function = id };
+    return std::nullopt;
 }
 
 bool hasRole(const Program& program, FunctionID id, FunctionRole role)

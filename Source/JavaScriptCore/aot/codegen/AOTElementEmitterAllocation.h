@@ -20,12 +20,12 @@ public:
     explicit ArrayAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     const ArrayStorageForm& formAtAllocation(const Type& array) const;
-    const ArrayStorageForm& formOfLiteral(std::span<const ValueID> elements, const Type& array) const;
+    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array);
 
     CellPointer newLiteral(const ValueContext&);
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);
     CellPointer newArrayOfNumbers(const OperationContext&, std::span<const Number>);
-    CellPointer newArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&);
+    CellPointer newArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, BuiltinID calledBuiltin);
     CellPointer allocateArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, LBasicBlock slowPath);
 
     CellPointer allocateEmptyArrayWithStorage(const OperationContext&, Integer header, Integer capacity, LBasicBlock slowPath);

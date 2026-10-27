@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCellFormat.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayoutData.h"
@@ -132,7 +133,7 @@ BitVector chooseKeysWithColumn(const SlotPlanContext& context, const SlotUses& u
         return static_cast<uint32_t>(index);
     });
     parallelSort(context.build.parallelLoops(), order.mutableSpan(), [&](uint32_t a, uint32_t b) {
-        return weights[a] != weights[b] ? weights[a] > weights[b] : a < b;
+        return !weights[a].isSamePredictionAs(weights[b]) ? (weights[a] > weights[b]).predicted() : a < b;
     });
 
     auto keysByWeight = order.span();
@@ -142,7 +143,7 @@ BitVector chooseKeysWithColumn(const SlotPlanContext& context, const SlotUses& u
         keysWithColumn.quickSet(key);
 
     auto usedKeysWithoutColumn = std::ranges::count_if(keysByWeight.subspan(numberOfColumns), [&](uint32_t key) {
-        return weights[key] > 0;
+        return weights[key].predicted() > 0;
     });
     context.build.statistics().count(StatisticID::KeysWithoutColumn, static_cast<uint64_t>(usedKeysWithoutColumn));
     return keysWithColumn;
@@ -236,14 +237,14 @@ static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const Slo
         LayoutID id(index);
         if (!context.isCompiledObject(id))
             continue;
-        double creations = uses.layouts[index].creationHeat;
-        bool isMadeInLoop = uses.layouts[index].isMadeInLoop;
+        SiteHeat creations = uses.layouts[index].creationHeat;
+        Expected<bool> isMadeInLoop = uses.layouts[index].isMadeInLoop;
         for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(id); ++field) {
             const SlotRowUse& row = uses.rows[context.rows.rowOf(id, field)];
-            creations = std::max(creations, row.holderHeat);
+            creations = greaterOf(creations, row.holderHeat);
             isMadeInLoop |= row.hasHoldersMadeInLoop;
         }
-        if (creations < maxCreationsOfLayoutMadeSeldom && !isMadeInLoop)
+        if ((creations < maxCreationsOfLayoutMadeSeldom).predicted() && !isMadeInLoop.predicted())
             layouts.quickSet(index);
     }
     for (const TaggedFamily& family : program.taggedFamilies) {
@@ -325,6 +326,28 @@ bool PlannedLayout::keepsZero(uint32_t offset, uint32_t width) const
     return width <= entry.width && offset - entry.offset <= entry.width - width;
 }
 
+BitVector PlannedLayout::padding() const
+{
+    BitVector padding(size);
+    if (!hasSlots())
+        return padding;
+    for (uint32_t offset = storage == LayoutStorage::Environment ? offsetOfFirstEnvironmentVariable : offsetOfFirstField; offset < size; ++offset)
+        padding.quickSet(offset);
+    auto occupy = [&](uint32_t offset, uint32_t width) {
+        for (uint32_t end = offset + width; offset < end; ++offset)
+            padding.quickClear(offset);
+    };
+    for (const PlacedSlot& slot : slots) {
+        if (slot.storage == SlotStorage::Inline)
+            occupy(slot.offset, slot.width());
+    }
+    for (ReservedBytes bytes : bytesKeptZero)
+        occupy(bytes.offset, bytes.width);
+    if (isEscapedOffset)
+        occupy(*isEscapedOffset, sizeof(bool));
+    return padding;
+}
+
 SlotAgreement SlotPlan::agreementOf(const Program& program, PropertyKeyID key, std::span<const LayoutID> members) const
 {
     SlotAgreement agreement;
@@ -382,7 +405,7 @@ const SlotAgreement& SlotPlan::agreementOf(const Program& program, PropertyKeyID
 {
     if (!receivers)
         return m_agreementOfNoReceivers;
-    std::span<const LayoutID> members = program.at(receivers).members.span();
+    std::span<const LayoutID> members = program.at(receivers).completeMembers();
     // An id that a thread made for itself names another set in the next phase, so such a set is found by its members.
     bool isFoundByMembers = TypeTable::isProvisional(receivers);
     uint32_t hash = pairIntHash(key.index(), isFoundByMembers ? hashOfLayouts(members) : receivers.index());
@@ -493,6 +516,7 @@ InheritedRows::InheritedRows(const Program& program, const SlotRows& rows, std::
 
 static void add(SlotRowUse& sum, const SlotRowUse& use)
 {
+    sum.accessSites += use.accessSites;
     sum.accessWeight = saturatedSum(sum.accessWeight, use.accessWeight);
     sum.fillHeat += use.fillHeat;
     sum.holderHeat += use.holderHeat;
@@ -553,7 +577,7 @@ void JoinedRows::collectAccesses(const SlotPlanContext& context, const SlotUses&
         }
         keys.append(&access);
         m_accesses.append(Access { numberOfReceivers, 0, use.weight });
-        numberOfReceivers += program.at(access.receivers).members.size();
+        numberOfReceivers += program.at(access.receivers).written().size();
     }
 
     m_rowsOfAccesses.grow(numberOfReceivers);
@@ -633,7 +657,7 @@ JoinedRows::JoinedRows(const SlotPlanContext& context, const SlotUses& uses)
     }
 
     AOT::sort(m_sets, [](const Set& a, const Set& b) {
-        return std::tuple(b.weight, a.firstRow) < std::tuple(a.weight, b.firstRow);
+        return std::tuple(b.weight.predicted(), a.firstRow) < std::tuple(a.weight.predicted(), b.firstRow);
     });
 }
 
@@ -723,7 +747,7 @@ BitVector findZeroEncodingCandidates(const SlotPlanContext& context)
 static bool isColdBlock(const Block& block)
 {
     TerminatorKind kind = block.terminator.kind;
-    return block.frequency != BlockFrequency::Normal
+    return block.frequency.predicted() != BlockFrequency::Normal
         || kind == TerminatorKind::Throw
         || kind == TerminatorKind::Rethrow
         || kind == TerminatorKind::Unreachable;

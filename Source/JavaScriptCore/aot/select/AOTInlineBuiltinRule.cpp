@@ -117,6 +117,8 @@ static void fillInlineCall(Entry& entry, const Program& program, const Value& or
     entry.setArgumentsOperands(original.argumentsOperands());
     entry.setAccessSite(original.accessSite());
     entry.setAllocationSite(original.allocationSite());
+    if constexpr (std::same_as<Entry, Value>)
+        entry.setIsDoneInPlace(original.isDoneInPlace());
 }
 
 std::optional<InlineBuiltinSite> findInlineBuiltinSite(SelectionContext& context, ValueID id)

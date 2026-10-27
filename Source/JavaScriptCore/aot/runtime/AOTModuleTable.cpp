@@ -16,6 +16,7 @@
 #include <compare>
 #include <ranges>
 #include <utility>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC { namespace AOT {
@@ -74,6 +75,17 @@ std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath) const
     if (registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::IsPublic))
         return std::nullopt;
     return ModuleID(found);
+}
+
+bool ModuleTable::holdsFormThatAttributeAsksFor(StringView publicPath) const
+{
+    String start = makeString(publicPath, '?');
+    ModuleNumbers byPath = modulesByPath();
+    auto places = std::views::iota(size_t(0), byPath.size());
+    size_t place = static_cast<size_t>(std::ranges::partition_point(places, [&](size_t candidate) {
+        return comparePath(ModuleID(byPath[candidate]), start) < 0;
+    }) - places.begin());
+    return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
 }
 
 std::optional<ModuleID> ModuleTable::findRuntimeSource(uint32_t registryID) const

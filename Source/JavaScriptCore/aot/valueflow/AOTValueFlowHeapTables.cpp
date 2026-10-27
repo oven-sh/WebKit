@@ -11,6 +11,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowObjectOperations.h"
 #include "AOTFlowSiteData.h"
@@ -251,7 +252,7 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
         addHolder(Builtins::GlobalThis);
 
     ValueSetID holders = m_maker.of(objectsOfHolders.span());
-    ValueSetID undeclared = m_maker.intersect(isPrivateName ? m_builtinObjects : m_holdersThatListNotAllMembers, ValueSets::complement(holders));
+    ValueSetID undeclared = m_maker.intersect(isPrivateName ? m_builtinObjects : m_entriesOpenToTableOrNativeCode, ValueSets::complement(holders));
     ValueSetID instancesThatKeepProperty = ValueSets::nothing;
     if (!isPrivateName) {
         Objects prototypes;
@@ -494,6 +495,20 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_letsInUnseenCode.ensureSize(builtins.builtinCount());
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCode;
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCodeWhenCalled;
+        // f.call(..), f.bind(..), Reflect.apply(f, ..), list.map(f): the row says that the function calls its receiver or an argument, or answers a bound function.
+        auto callsOrBindsOperand = [&](BuiltinID function) {
+            auto isCalled = [](const BuiltinParameter& parameter) {
+                return parameter.uses != OperandUses::all() && parameter.uses.containsAny(callingUses);
+            };
+            return std::ranges::any_of(builtins.overloadsOf(function), [&](const BuiltinOverload& overload) {
+                if ((overload.receiver && isCalled(*overload.receiver)) || std::ranges::any_of(overload.parameters, isCalled))
+                    return true;
+                return overload.result.type && std::ranges::any_of(builtins.at(overload.result.type).parts, [](const BuiltinTypePart& part) {
+                    return part.kind == BuiltinTypePartKind::Instance && part.builtinClass == BuiltinClasses::BoundFunction;
+                });
+            });
+        };
+        Vector<ValueFlowObjectID, 32> functionsThatCallOrBindOperand;
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
             if (builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Get))
                 m_hasGetEntry.quickSet(index);
@@ -505,7 +520,10 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCode);
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCodeWhenCalled(BuiltinID(index)))
                 universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCodeWhenCalled);
+            if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && callsOrBindsOperand(BuiltinID(index)))
+                universe.appendObjectsOf(BuiltinID(index), functionsThatCallOrBindOperand);
         }
+        m_functionsThatCallOrBindOperand = maker.intersect(maker.of(functionsThatCallOrBindOperand.span()), universe.builtinFunctions());
         m_objectsThatLetInUnseenCode = maker.of(objectsThatLetInUnseenCode.span());
         m_objectsThatLetInUnseenCodeWhenCalled = maker.of(objectsThatLetInUnseenCodeWhenCalled.span());
         Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
@@ -528,11 +546,14 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects prototypesOfTypedArrays;
         Objects prototypeObjectsThatListingDoesNotName;
         Objects prototypesAboveNativeElements;
+        Objects prototypeObjectsOfClassesThatListNoOwnNames;
         for (uint32_t index = 0; index < builtins.classCount(); ++index) {
             const BuiltinClass& builtinClass = builtins.at(BuiltinClassID(index));
             if (!builtinClass.prototype)
                 continue;
             ValueFlowObjectID prototype = universe.objectOf(builtinClass.prototype);
+            if (!builtinClass.listsNamesDefinedOnNewInstances)
+                prototypeObjectsOfClassesThatListNoOwnNames.append(prototype);
             bool reachesPrograms = builtinClass.id != BuiltinClasses::AsyncFromSyncIterator;
             if (builtinClass.instancesAreEntries) {
                 m_classesOfEntries.append({ prototype, entriesRightBelow(builtins, universe, maker, entriesBelowEntries.span(), builtinClass.prototype) });
@@ -547,11 +568,11 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             }
             if (builtinClass.origin == BuiltinOrigin::Engine && reachesPrograms)
                 prototypeObjectsOfLanguage.append(prototype);
-            if (builtinClass.origin == BuiltinOrigin::Engine && !builtinClass.isPrimitiveWrapper)
+            if (!builtinClass.isPrimitiveWrapper)
                 prototypeObjectsThatListingDoesNotName.append(prototype);
-            if (builtinClass.typedArrayType != NotTypedArray)
+            if (builtins.typedArrayTypeOf(builtinClass.id) != NotTypedArray)
                 prototypesOfTypedArrays.append(prototype);
-            if (builtinClass.typedArrayType != NotTypedArray || builtins.definesCharactersOnNewInstances(builtinClass.id))
+            if (builtins.typedArrayTypeOf(builtinClass.id) != NotTypedArray || builtins.definesCharactersOnNewInstances(builtinClass.id))
                 prototypesAboveNativeElements.append(prototype);
         }
         collectNamesReadByNativeCode(program, universe, maker);
@@ -561,6 +582,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_prototypesOfTypedArrays = maker.of(prototypesOfTypedArrays.span());
         m_prototypeObjectsThatListingDoesNotName = maker.of(prototypeObjectsThatListingDoesNotName.span());
         m_prototypesAboveNativeElements = maker.of(prototypesAboveNativeElements.span());
+        m_prototypeObjectsOfClassesThatListNoOwnNames = maker.of(prototypeObjectsOfClassesThatListNoOwnNames.span());
 
         Objects hostObjectsKeepingStrings;
         std::span<const BuiltinHostObject> hostObjects = builtins.hostObjects();
@@ -698,8 +720,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 if (isNamespaceOrFunction && holder != Builtins::GlobalThis && holder != Builtins::Bun)
                     namespacesWhoseHoldersListThem.appendVector(objects);
             }
-            // A prototype object is found above every instance: HeapRule::notePrototypeObjectsThatWriteMayReach() says which of them a write reaches.
-            if (hasReplaceableMember && entry.kind != BuiltinKind::Prototype)
+            if (hasReplaceableMember)
                 holdersOfReplaceableMembers.appendVector(objects);
             if (hasMemberUnderNumericName)
                 holdersWithMembersUnderNumericNames.appendVector(objects);
@@ -710,7 +731,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects keysOfMembersOfBun;
         for (const NamedMember& named : namedMembers) {
             PropertyKeyID key = program.keyOf(named.name);
-            if (key && builtins.canonicalID(named.member.holder) == Builtins::Bun)
+            if (key && builtins.canonicalID(named.member.holder) == Builtins::Bun && !letsInUnseenCode(builtins.canonicalID(named.member.member)))
                 keysOfMembersOfBun.append(universe.keyConstant(key));
         }
         m_keysOfMembersOfBun = maker.of(keysOfMembersOfBun.span());
@@ -724,12 +745,33 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersWithMembers = maker.of(holdersWithMembers.span());
         m_holdersWithMembersUnderNumericNames = maker.of(holdersWithMembersUnderNumericNames.span());
         m_holdersOfMembersThatHostMakes = maker.of(holdersOfMembersThatHostMakes.span());
-        m_holdersOfReplaceableMembers = maker.of(holdersOfReplaceableMembers.span());
+        // HeapRule::notePrototypeObjectsThatWriteMayReach() says which of the prototype objects that no listing names a write reaches.
+        m_holdersOfReplaceableMembers = without(maker.of(holdersOfReplaceableMembers.span()), m_prototypeObjectsThatListingDoesNotName);
         m_namespacesWhoseHoldersListThem = maker.of(namespacesWhoseHoldersListThem.span());
         m_namespacesNotedWhenCarriedOut = maker.unite(m_namespacesWhoseHoldersListThem, universe.holdersOfLibraryExports());
-        m_holdersThatListNotAllMembers = maker.unite(without(builtinObjects, maker.of(holdersThatListAllMembers.span())), maker.of(m_undescribedNativeCode));
-        m_holdersOfUndeclaredPropertiesUnderIndexes = m_holdersThatListNotAllMembers;
-        m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_holdersThatListNotAllMembers, maker.of(prototypesOfInstancesWithNames.span()));
+        for (Actor actor : actorsInOrder) {
+            m_openTo[indexOf(actor)] = [&] {
+                switch (actor) {
+                case Actor::Creation:
+                    return placeholders;
+                case Actor::Table:
+                    return maker.unite(placeholders, without(builtinObjects, maker.of(holdersThatListAllMembers.span())));
+                case Actor::NativeCode:
+                    return maker.unite(placeholders, maker.of(m_undescribedNativeCode));
+                case Actor::Statements:
+                case Actor::Loader:
+                case Actor::KeysNobodyKnows:
+                case Actor::ReceiversNobodyKnows:
+                case Actor::UnseenCode:
+                    // Which objects these reach only the solve finds.
+                    return ValueSets::nothing;
+                }
+                RELEASE_ASSERT_NOT_REACHED();
+            }();
+        }
+        m_entriesOpenToTableOrNativeCode = without(maker.unite(openTo(Actor::Table), openTo(Actor::NativeCode)), placeholders);
+        m_holdersOfUndeclaredPropertiesUnderIndexes = m_entriesOpenToTableOrNativeCode;
+        m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_entriesOpenToTableOrNativeCode, maker.of(prototypesOfInstancesWithNames.span()));
 
         m_lockedObjects = maker.of(lockedObjects.span());
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());
@@ -738,9 +780,9 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_prototypeObjectsOfEntries = maker.of(prototypeObjectsOfEntries.span());
 
         m_membersUnderKey.reserveInitialCapacity(numberOfRecordsOfUnnamedKeys + 2 * static_cast<size_t>(builtins.nameCount()));
-        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_holdersThatListNotAllMembers, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
+        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_entriesOpenToTableOrNativeCode, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, builtinObjects, m_lockedObjects, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
-        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_holdersThatListNotAllMembers, maker.unite(m_lockedObjects, maker.of(holdersClosedToOtherNames.span())), ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
+        m_membersUnderKey.append({ ValueSets::nothing, ValueSets::nothing, m_entriesOpenToTableOrNativeCode, maker.unite(m_lockedObjects, maker.of(holdersClosedToOtherNames.span())), ValueSets::nothing, ValueSets::nothing, ValueSets::nothing, ValueSets::nothing });
         m_closedHoldersNotListingKeyOfClass.grow(MembersUnderKey::numberOfClasses);
         m_holdersUnderKey = std::make_unique<HoldersUnderKey[]>(numberOfKeys);
         m_membersOfHolder = std::make_unique<std::atomic<const ValueFlowMembersOfHolder*>[]>(builtins.builtinCount());
@@ -921,6 +963,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 if (kind == LayoutKind::Record || kind == LayoutKind::Instance || kind == LayoutKind::Container)
                     objectsHoldingOnlyWhatWasWritten.append(object);
             };
+            // An object that no case lists among those that hold what the solve shows is left to its class.
             maker.sets().forEachMember(knownObjectsOfProgram, [&](ValueFlowObjectID object) {
                 switch (universe.kindOf(object)) {
                 case ValueFlowObjectKind::RestArray:
@@ -933,13 +976,22 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                     return;
                 case ValueFlowObjectKind::Instance:
                     noteLayout(object);
+                    // Below another class the constructor at the top makes the object, and that may be a built-in.
                     if (!hasHeritage(universe.layoutOf(object)))
                         ordinaryObjects.append(object);
                     return;
                 case ValueFlowObjectKind::Site: {
                     noteLayout(object);
                     const ValueFlowSite& site = *universe.siteOf(object);
-                    if (site.origin == ValueFlowSiteOrigin::BuiltinResult || hasHeritage(site.layout))
+                    switch (site.origin) {
+                    case ValueFlowSiteOrigin::BuiltinResult:
+                        return;
+                    case ValueFlowSiteOrigin::Operation:
+                    case ValueFlowSiteOrigin::DataNode:
+                    case ValueFlowSiteOrigin::TypedResult:
+                        break;
+                    }
+                    if (hasHeritage(site.layout))
                         return;
                     if (!site.builtinClass || site.builtinClass == BuiltinClasses::Object)
                         ordinaryObjects.append(object);
@@ -949,15 +1001,19 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                         argumentsObjects.append(object);
                     return;
                 }
+                case ValueFlowObjectKind::CoroutineResult:
+                case ValueFlowObjectKind::ResultOfBuiltin:
+                    return;
+                case ValueFlowObjectKind::Closure:
+                case ValueFlowObjectKind::Namespace:
+                    // universe.closures() and universe.namespaces() hold them. The loader makes a namespace object and lists its names, and it takes no other.
+                    return;
                 case ValueFlowObjectKind::Primitive:
                 case ValueFlowObjectKind::UnknownObject:
                 case ValueFlowObjectKind::Builtin:
                 case ValueFlowObjectKind::ModuleBuiltin:
-                case ValueFlowObjectKind::Namespace:
-                case ValueFlowObjectKind::Closure:
-                case ValueFlowObjectKind::CoroutineResult:
-                case ValueFlowObjectKind::ResultOfBuiltin:
                 case ValueFlowObjectKind::Key:
+                    // None is an object of the program.
                     return;
                 }
             });
@@ -998,6 +1054,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     m_arraysThatOperationsAllocate = maker.of(arraysThatOperationsAllocate.span());
     m_objectsHoldingOnlyWhatWasWritten = maker.of(objectsHoldingOnlyWhatWasWritten.span());
     m_objectsWithoutPropertiesOfNativeCode = maker.unite(maker.unite(maker.of(ordinaryObjects.span()), universe.closures()), maker.unite(m_argumentsObjects, m_arraysThatOperationsAllocate));
+    m_objectsThatTheirClassAnswersFor = without(knownObjectsOfProgram, maker.unite(m_objectsWithoutPropertiesOfNativeCode, universe.namespaces()));
+    m_objectsMadeWithPropertiesListedAboveThem = without(universe.knownObjects(), maker.unite(maker.of(ordinaryObjects.span()), m_prototypeObjects));
 }
 
 } } } // namespace JSC::AOT::Typed
