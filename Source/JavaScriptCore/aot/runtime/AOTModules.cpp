@@ -786,12 +786,20 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     RELEASE_AND_RETURN(scope, importUncompiled(key, *data(module).referrerModule(), WTF::move(*fetchParameters)));
 }
 
+std::optional<ModuleID> Modules::findByName(const Identifier& key)
+{
+    std::optional<ModuleID> found = m_table.findByPath(key.string());
+    if (found && data(*found).kind == ModuleKind::Runtime && host().replacesNativeModule && host().replacesNativeModule(m_instance.globalObject, key.string()))
+        return std::nullopt;
+    return found;
+}
+
 std::optional<ModuleID> Modules::findWithAttributes(const Identifier& key, const ScriptFetchParameters* fetchParameters)
 {
     if (!fetchParameters)
         return std::nullopt;
     // A module of the library has one form.
-    if (std::optional<ModuleID> module = m_table.findByPath(key.string()); module && data(*module).registryID())
+    if (std::optional<ModuleID> module = findByName(key); module && data(*module).registryID())
         return module;
     if (!host().findModuleWithAttributes)
         return std::nullopt;
@@ -1410,7 +1418,7 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
         return fetchParameters.error();
     Identifier key = loader()->resolve(realm, text, pathString(referrer), nullptr, true);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    if (std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : m_table.findByPath(key.string())) {
+    if (std::optional<ModuleID> found = *fetchParameters ? findWithAttributes(key, fetchParameters->get()) : findByName(key)) {
         willAnswerWithModule(realm, *found, LoadByName::Import);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         // An import() that names a file in its text names the face of the file.
@@ -1811,6 +1819,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStopLoadingBehindFile, size_t, (Instance* i
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAbandonModuleEvaluation, void, (Instance* instance, uint32_t module, JSCell* exception))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAbandonModuleEvaluation);
+    DeferTerminationForAWhile deferTermination(vm);
     modulesOf(*instance).abandonEvaluation(ModuleID(module), cellArgument<Exception>(exception, Entry::operationAOTAbandonModuleEvaluation)->value());
     scope.assertNoException();
 }
@@ -1917,7 +1926,7 @@ static PathOfModule pathOfModule(ModuleID module)
         RELEASE_ASSERT(table);
         // A text that the program evaluates is shown under the URL of the file that evaluates it, as the engine shows the text of `new Function(text)`.
         std::optional<ModuleID> evaluator = table->data(module).evaluatorModule();
-        String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->pathText(module);
+        String path = evaluator ? URL::fileURLWithFileSystemPath(table->pathText(*evaluator)).string() : table->data(module).registryID() ? table->displayPathText(module) : table->pathText(module);
         return PathOfModule { &(path.is8Bit() ? StringImpl::createStaticStringImpl(path.span8()) : StringImpl::createStaticStringImpl(path.span16())).leakRef(), !!evaluator };
     }).iterator->value;
 }
@@ -1944,6 +1953,12 @@ bool isESModule(ModuleID module)
 {
     std::optional<ModuleTable> table = currentModuleTable();
     return table && table->data(module).kind == ModuleKind::SourceText;
+}
+
+bool isNativeModule(ModuleID module)
+{
+    std::optional<ModuleTable> table = currentModuleTable();
+    return table && table->data(module).kind == ModuleKind::Runtime;
 }
 
 bool leavesModuleToHost(JSGlobalObject* realm, ModuleID module)

@@ -79,10 +79,6 @@ static EmptyArray emptyNumberArray(const ArrayStorageForm& form)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool isOptionalNumberInDoubleForm(const ArrayStorageForm& form, Representation representation)
-{
-    return form.element == Representation::Double && representation == Representation::OptionalDouble;
-}
 
 template<typename T>
 static Vector<T, 16> boxElements(CodeGenerator& generator, const OperationContext& context, std::span<const ValueID> elements)
@@ -105,6 +101,27 @@ static Integer plannedCapacityOf(CodeGenerator& generator, const ValueContext& l
     return operand.as<Integer>();
 }
 
+const Type& ArrayAllocationEmitter::typeGivenByOnlyCast(ValueID array)
+{
+    ValueID onlyCast;
+    for (const Use& use : analyses().useLists().usesOf(array)) {
+        if (use.kind == Use::Kind::Operand && m_function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard)
+            continue;
+        if (onlyCast || use.kind != Use::Kind::Operand || use.operandIndex || !isCast(m_function.at(use.user).opcode))
+            return typeOf(array);
+        onlyCast = use.user;
+    }
+    return typeOf(onlyCast ? onlyCast : array);
+}
+
+bool ArrayAllocationEmitter::isNumberOrMarker(ValueID element)
+{
+    if (representationOf(element) == Representation::OptionalDouble)
+        return true;
+    const Type& type = typeOf(element);
+    return representationOf(element) == Representation::JSValue && !type.isNumber() && type.isSubsetOf(Type::fromPrimitives(Primitive::Number | Primitive::Undefined), m_program);
+}
+
 const ArrayStorageForm& ArrayAllocationEmitter::formAtAllocation(const Type& array) const
 {
     return arrayStorageFormOf(arrayStorageAtAllocation(m_program, array));
@@ -118,7 +135,7 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationCon
         return typeOf(element).isNever();
     });
     bool canHoldElements = !isNeverMade && std::ranges::all_of(elements, [&](ValueID element) {
-        return isOptionalNumberInDoubleForm(form, representationOf(element)) || fitsStorageOfLiteral(form.kind, typeOf(element));
+        return (form.element == Representation::Double && isNumberOrMarker(element)) || fitsStorageOfLiteral(form.kind, typeOf(element));
     });
     if (canHoldElements)
         return form;
@@ -145,7 +162,7 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         return newLiteralWithHoles(value);
     if (value->capacityOperand())
         return newLiteralWithCapacity(value);
-    return newArrayOf(value, value->elementsOperands(), typeOf(value.id()));
+    return newArrayOf(value, value->elementsOperands(), typeGivenByOnlyCast(value.id()));
 }
 
 Integer ArrayAllocationEmitter::headerOfNewArray(const ArrayStorageForm& form)
@@ -238,7 +255,7 @@ Number ArrayAllocationEmitter::numberOrMarker(ValueID element)
     case Representation::Int32:
         return toNumber(operand.as<Word32>());
     case Representation::JSValue:
-        return emitter<ConversionEmitter>().unbox(operand.as<Boxed>(), typeOf(element), Representation::Double).as<Number>();
+        return Number(emitter<ConversionEmitter>().unbox(operand.as<Boxed>(), typeOf(element), isNumberOrMarker(element) ? Representation::OptionalDouble : Representation::Double).value);
     case Representation::Unchosen:
     case Representation::Void:
     case Representation::Boolean:
@@ -266,7 +283,7 @@ CellPointer ArrayAllocationEmitter::newArrayOutOfLine(const OperationContext& co
     Vector<Number, 16> rawNumbers(length, [&](size_t index) {
         ValueID element = elements[index];
         Number rawNumber = numberOrMarker(element);
-        bool mayLookLikeMarker = representationOf(element) != Representation::OptionalDouble && typeOf(element).mayBeNaN();
+        bool mayLookLikeMarker = !isNumberOrMarker(element) && typeOf(element).mayBeNaN();
         return mayLookLikeMarker ? conversions.withoutPayload(rawNumber) : rawNumber;
     });
     Pointer values = emitter<RuntimeCallEmitter>().uninitializedArgumentBuffer(length);
@@ -300,7 +317,7 @@ ArrayAllocationEmitter::RawElements ArrayAllocationEmitter::rawElementsOf(std::s
     ElementAccessEmitter& access = emitter<ElementAccessEmitter>();
     RawElements rawElements;
     for (ValueID element : elements) {
-        if (isOptionalNumberInDoubleForm(form, representationOf(element))) {
+        if (form.element == Representation::Double && isNumberOrMarker(element)) {
             Number number = numberOrMarker(element);
             branchUnless(equal(number, number), doesNotFit);
             rawElements.append(number);
@@ -346,7 +363,7 @@ CellPointer ArrayAllocationEmitter::newArrayOf(const OperationContext& context, 
         uint32_t isNumberMask = 0;
         for (unsigned i = 0; i < length; ++i) {
             numbersOrMarkers.append(numberOrMarker(elements[i]));
-            isNumberMask |= static_cast<uint32_t>(representationOf(elements[i]) != Representation::OptionalDouble) << i;
+            isNumberMask |= static_cast<uint32_t>(!isNumberOrMarker(elements[i])) << i;
         }
         return newDoubleLiteral(context, numbersOrMarkers.span(), isNumberMask);
     }

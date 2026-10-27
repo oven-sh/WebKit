@@ -553,7 +553,7 @@ static BuiltinUsePlan planFoundMemberAccess(const BuiltinUseInputs& inputs, cons
     return plan;
 }
 
-static BuiltinUsePlan planConstantRead(const BuiltinUseInputs& inputs, const MemberSite& site, ProgramPoint point)
+static BuiltinUsePlan planConstantRead(const BuiltinUseInputs& inputs, const MemberSite& site, ValueID use, ProgramPoint point)
 {
     LocationState location = locationStateOf(inputs, site);
     if (location == LocationState::Unknown)
@@ -567,8 +567,15 @@ static BuiltinUsePlan planConstantRead(const BuiltinUseInputs& inputs, const Mem
     plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, builtinMemberNameOf(program, site.key).name);
     if (BuiltinName symbol = table.nameOfSymbol(plan.member))
         plan.key = program.keyOf(symbol);
-    else if (std::optional<Value> constant = tryMakeBuiltinConstant(program, plan.member); !constant || (constant->opcode != Opcode::Builtin && firstReadChangesListedKeys(table, inputs.flow, plan.member)))
+    else if (std::optional<Value> constant = tryMakeBuiltinConstant(program, plan.member); !constant)
         return { };
+    // The value is known whatever the read does to the holder. Where the keys of that very holder are listed, the read stays beside the constant. The modules of the library have such values written in where Bun itself is built, and read nothing.
+    else if (constant->opcode != Opcode::Builtin && !isLibraryCode(program, inputs.function) && table.at(plan.member).isAddedAtFirstRead && inputs.flow.seesKeysListedOf(table.canonicalID(table.at(plan.member).holder))) {
+        // A read that nobody takes is what an earlier plan left behind.
+        if (inputs.analyses && inputs.useLists().usesOf(use).empty())
+            return { };
+        plan.leavesReadBehind = true;
+    }
 
     bool isPossible = addLocationRequirement(inputs, site, location, plan);
     addReceiverRequirements(inputs, site, point, plan, isPossible);
@@ -675,7 +682,7 @@ BuiltinUsePlan planBuiltinRead(const BuiltinUseInputs& inputs, ValueID use, Prog
         ASSERT(!read.isFreeName() || readsGlobal);
         if (inputs.analyses && isClosureAsCreated(inputs, *site) && isTestedByValidation(inputs.function, inputs.useLists(), use))
             return { };
-        return planConstantRead(inputs, *site, point);
+        return planConstantRead(inputs, *site, use, point);
     case BuiltinKind::Accessor:
     case BuiltinKind::DataProperty:
         return planFoundMemberAccess(inputs, *site, use, BuiltinCallMode::Get, point);

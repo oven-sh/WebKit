@@ -43,6 +43,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/dtoa.h>
+#include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/EscapedFormsForJSON.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/ParsingUtilities.h>
@@ -1695,8 +1696,10 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             return;
         }
         buffer()[m_length] = '"';
-        if (!string.data.is8Bit())
-            m_hasSeenWideString = true;
+        if constexpr (sizeof(CharType) == 2) {
+            if (!m_hasSeenWideString && !string.data.is8Bit())
+                m_hasSeenWideString = !WTF::charactersAreAllLatin1(string.data.span16());
+        }
         if (stringLength >= lengthOfLongString) {
             ++m_length;
             if (string.data.is8Bit() ? appendContentOfLongString(string.data.span8()) : appendContentOfLongString(string.data.span16())) [[likely]]

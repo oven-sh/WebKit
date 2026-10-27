@@ -3316,6 +3316,14 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
     }
 }
 
+// Beside the unknown object the members that have escaped are not listed.
+static ClimbingSet withEscapedBuiltinsUnder(ValueFlowRuleContext& context, ClimbingSet found, BuiltinName name)
+{
+    if (!context.contains(found, ValueFlowUniverse::unknownObject()))
+        return found;
+    return context.unite(found, context.restrict(escapedMembersUnder(context, context.program().keyOf(name)), context.universe().builtinFunctions()));
+}
+
 static ClimbingSet membersToCall(ValueFlowRuleContext& context, ClimbingSet receivers, BuiltinName name)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -3326,10 +3334,10 @@ static ClimbingSet membersToCall(ValueFlowRuleContext& context, ClimbingSet rece
             made.append(receiver);
     });
     if (made.isEmpty())
-        return context.valueOf(context.lookup(receivers, property(context, name)));
+        return withEscapedBuiltinsUnder(context, context.valueOf(context.lookup(receivers, property(context, name))), name);
     ValueSetID madeInDescribedCode = context.maker().of(made.span());
     ClimbingSet found = context.restrict(context.valueOf(context.lookup(ClimbingSet(madeInDescribedCode), property(context, name))), ValueSets::complement(universe.unknownObjectAlone()));
-    return context.unite(found, context.valueOf(context.lookup(context.restrict(receivers, ValueSets::complement(madeInDescribedCode)), property(context, name))));
+    return context.unite(found, withEscapedBuiltinsUnder(context, context.valueOf(context.lookup(context.restrict(receivers, ValueSets::complement(madeInDescribedCode)), property(context, name))), name));
 }
 
 static ClimbingSet withoutWhatBuiltinsMadeAsNoFunction(ValueFlowRuleContext& context, ClimbingSet values)

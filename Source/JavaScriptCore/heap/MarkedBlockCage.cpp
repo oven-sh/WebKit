@@ -463,14 +463,33 @@ bool MarkedBlockCage::releaseReserve()
     return true;
 }
 
-bool MarkedBlockCage::tryKeepReleasedReserveAgain()
+bool MarkedBlockCage::hasHeapThatReleasedReserve() const
 {
-    if (m_exhaustedHeap == ExhaustedHeap::Structures) {
-        if (m_hasReleasedReserve || !StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain())
+    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Storage });
+}
+
+bool MarkedBlockCage::tryKeepReleasedReservesAgain()
+{
+    if (!hasHeapThatReleasedReserve())
+        return false;
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::Structures)) {
+        if (!StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain())
             return false;
-        m_exhaustedHeap = ExhaustedHeap::Cells;
-        return true;
+        m_exhaustedHeaps.remove(ExhaustedHeap::Structures);
     }
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::Storage)) {
+        if (!tryKeepBallastAgain())
+            return false;
+        m_exhaustedHeaps.remove(ExhaustedHeap::Storage);
+    }
+    if (m_hasReleasedReserve && !tryKeepOwnReleasedReserveAgain())
+        return false;
+    m_exhaustedHeaps = { };
+    return true;
+}
+
+bool MarkedBlockCage::tryKeepOwnReleasedReserveAgain()
+{
     if (!m_hasReleasedReserve || !m_numberOfChunksReleased)
         return false;
     size_t numberOfChunksKept = m_reserve.size();
@@ -496,7 +515,6 @@ bool MarkedBlockCage::tryKeepBallastAgain()
     if (!bmalloc::api::hasWholeAddressSpaceBallast())
         return false;
 #endif
-    m_exhaustedHeap = ExhaustedHeap::Cells;
     return true;
 }
 
@@ -508,7 +526,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
     vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
-    if (m_exhaustedHeap == ExhaustedHeap::Storage ? !tryKeepBallastAgain() : !tryKeepReleasedReserveAgain())
+    if (!tryKeepReleasedReservesAgain())
         return false;
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
@@ -525,15 +543,13 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
-    if (m_hasReleasedReserve || m_exhaustedHeap == ExhaustedHeap::Structures) {
-        if (!tryKeepReleasedReserveAgain())
-            return false;
-    } else if (m_exhaustedHeap == ExhaustedHeap::Storage) {
-        if (!tryKeepBallastAgain())
+    if (hasHeapThatReleasedReserve()) {
+        if (!tryKeepReleasedReservesAgain())
             return false;
     } else {
         // How much the program can allocate now says whether this collection was barren too.
         m_numberOfBarrenCollections = barrenCollectionsUntilError - 1;
+        m_exhaustedHeaps = { };
     }
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
@@ -650,7 +666,7 @@ static String describeLimitOfStructureHeap()
 
 String MarkedBlockCage::describeExhaustedLimit() const
 {
-    return m_exhaustedHeap == ExhaustedHeap::Structures ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage();
+    return m_exhaustedHeaps.contains(ExhaustedHeap::Structures) ? describeLimitOfStructureHeap() : describeLimitOfMarkedBlockCage();
 }
 
 void MarkedBlockCage::didThrowOutOfMemoryError()
@@ -659,7 +675,7 @@ void MarkedBlockCage::didThrowOutOfMemoryError()
     m_usesSharedReserve = false;
     m_shouldKeepLargeCellReserve = true;
     m_errorWaitsForPoll = false;
-    if (std::exchange(m_exhaustedHeap, ExhaustedHeap::Cells) == ExhaustedHeap::Structures)
+    if (std::exchange(m_exhaustedHeaps, { }).contains(ExhaustedHeap::Structures))
         StructureAlignedMemoryAllocator::didThrowOutOfMemoryError();
 }
 
@@ -673,9 +689,9 @@ void MarkedBlockCage::didCreateOutOfMemoryError()
 void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
-    if (m_exhaustedHeap != ExhaustedHeap::Storage)
+    if (!m_exhaustedHeaps.contains(ExhaustedHeap::Storage))
         return;
-    m_exhaustedHeap = ExhaustedHeap::Cells;
+    didThrowOutOfMemoryError();
     vm.traps().setNeedsOutOfMemoryError(false);
 }
 
@@ -696,7 +712,7 @@ void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
         return;
     m_errorWaitsForPoll = false;
     if (!vm.traps().needsOutOfMemoryError()) {
-        setExhaustedHeap(exhaustedHeap);
+        addExhaustedHeap(exhaustedHeap);
         m_errorWaitsForPoll = !m_hasCollectedAtPoll;
         vm.traps().setNeedsOutOfMemoryError(true);
     }
@@ -756,7 +772,7 @@ void MarkedBlockCage::didUseAddressSpaceBallast(VM& vm)
     if (vm.traps().needsOutOfMemoryError())
         willUseLastReserve(vm);
     MarkedBlockCage& cage = vm.heap.cage();
-    cage.setExhaustedHeap(ExhaustedHeap::Storage);
+    cage.addExhaustedHeap(ExhaustedHeap::Storage);
     cage.didFindNoRoomWhereNothingCollects();
     vm.traps().setNeedsOutOfMemoryError(true);
 }

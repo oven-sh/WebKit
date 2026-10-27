@@ -51,6 +51,11 @@ ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap& usesOfHeap)
     return usesOfHeap.uses.objectsWithEnumerableKeysShown();
 }
 
+ValueSetID objectsSeenWithKeysShown(const ValueFlowUsesOfHeap& usesOfHeap)
+{
+    return usesOfHeap.uses.objectsSeenWithKeysShown();
+}
+
 void listStoresByLayout(const ValueFlowResultInputs& inputs, ValueFlowUsesOfHeap& usesOfHeap, const FlowResultTables& tables)
 {
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
@@ -697,53 +702,82 @@ struct FieldResults {
         AOT::sort(births, { }, [](const BirthWithCopies& birth) {
             return std::pair { birth.function, birth.allocation };
         });
-        auto noteOtherBirth = [&](LayoutID layout, std::span<const uint32_t> fields) {
+        struct OtherBirth {
+            LayoutID layout;
             Vector<PropertyKeyID, 8> keys;
-            for (uint32_t field : fields) {
-                if (PropertyKeyID key = program.at(layout).fields[field].key)
-                    keys.append(key);
-            }
-            AOT::sort(keys);
-            keepCommonKeys(keysOfOtherBirths[layout.index()], keys);
         };
-        for (const AllocatingOperation& operation : operations) {
+        for (const OtherBirth& birth : collectInParallel<OtherBirth>(loops, operations.size(), [&](unsigned index, Vector<OtherBirth>& found) {
+            auto noteOtherBirth = [&](LayoutID layout, std::span<const uint32_t> fields) {
+                Vector<PropertyKeyID, 8> keys;
+                for (uint32_t field : fields) {
+                    if (PropertyKeyID key = program.at(layout).fields[field].key)
+                        keys.append(key);
+                }
+                AOT::sort(keys);
+                found.append({ layout, WTF::move(keys) });
+            };
+            const AllocatingOperation& operation = operations[index];
             const Value& value = program.at(operation.function).at(operation.value);
             if (value.opcode == Opcode::NewObject) {
                 if (isBornWithCopies.get(value.layout().index()) && !isListed(operation.function, operation.value))
                     noteOtherBirth(value.layout(), value.fields());
-                continue;
+                return;
             }
             forEachDataNodeInPreorder(program.at(value.data()).root, [&](uint32_t position, const DataNode& node) {
                 const DataNode::Object* object = node.tryAs<DataNode::Object>();
                 if (object && object->layout && isBornWithCopies.get(object->layout.index()) && (position || !isListed(operation.function, operation.value)))
                     noteOtherBirth(object->layout, fieldsFilledBy(program, program.at(object->layout), *object).span());
             });
-        }
+        }))
+            keepCommonKeys(keysOfOtherBirths[birth.layout.index()], birth.keys);
 
         AOT_THRESHOLD(unsigned, mostRoundsOverCopies, 4);
-        BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
-        ValueSetMaker& maker = borrowedMaker.get();
-        Vector<ValueSetID> objectsAboveLayout(FillWith { }, numberOfLayouts, ValueSetID());
+        // The births of one layout stand together, in their order.
+        Vector<uint32_t> birthsByLayout(births.size(), [](size_t index) {
+            return static_cast<uint32_t>(index);
+        });
+        AOT::sort(birthsByLayout, { }, [&](uint32_t index) {
+            return std::pair { births[index].layout, index };
+        });
+        Vector<uint32_t> firstBirthOfLayout;
+        for (uint32_t position = 0; position < birthsByLayout.size(); ++position) {
+            if (!position || births[birthsByLayout[position]].layout != births[birthsByLayout[position - 1]].layout)
+                firstBirthOfLayout.append(position);
+        }
+        unsigned numberOfLayoutsBornWithCopies = firstBirthOfLayout.size();
+        firstBirthOfLayout.append(birthsByLayout.size());
+        auto layoutBornWithCopiesAt = [&](unsigned position) {
+            return births[birthsByLayout[firstBirthOfLayout[position]]].layout;
+        };
+        ValueSetMakers makers(inputs);
+        Vector<ValueSetID> objectsAboveLayout(FillWith { }, numberOfLayoutsBornWithCopies, ValueSetID());
         auto holdWhatBirthsBring = [&](bool followsCopies) {
-            Vector<std::optional<Vector<PropertyKeyID>>> held = keysOfOtherBirths;
-            for (const BirthWithCopies& birth : births) {
-                Vector<PropertyKeyID> keys(birth.definedKeys.span());
-                for (const SourceOfCopyAtBirth& source : followsCopies ? birth.sources.span() : std::span<const SourceOfCopyAtBirth>()) {
-                    for (PropertyKeyID key : keysSurelyCopiedFrom(maker, hasOtherSites, source.objects)) {
-                        if (std::ranges::contains(source.excludedKeys, key))
-                            continue;
-                        if (!source.isAssigned || inheritsNothingUnder(maker, birth.layout, objectsAboveLayout[birth.layout.index()], key))
-                            keys.append(key);
+            Vector<Vector<PropertyKeyID>> held(numberOfLayoutsBornWithCopies);
+            forEachIndexInParallel(loops, numberOfLayoutsBornWithCopies, [&](unsigned position, unsigned worker) {
+                ValueSetMaker& maker = makers.of(worker);
+                std::optional<Vector<PropertyKeyID>> common = keysOfOtherBirths[layoutBornWithCopiesAt(position).index()];
+                for (uint32_t index : birthsByLayout.subspan(firstBirthOfLayout[position], firstBirthOfLayout[position + 1] - firstBirthOfLayout[position])) {
+                    const BirthWithCopies& birth = births[index];
+                    Vector<PropertyKeyID> keys(birth.definedKeys.span());
+                    for (const SourceOfCopyAtBirth& source : followsCopies ? birth.sources.span() : std::span<const SourceOfCopyAtBirth>()) {
+                        for (PropertyKeyID key : keysSurelyCopiedFrom(maker, hasOtherSites, source.objects)) {
+                            if (std::ranges::contains(source.excludedKeys, key))
+                                continue;
+                            if (!source.isAssigned || inheritsNothingUnder(maker, birth.layout, objectsAboveLayout[position], key))
+                                keys.append(key);
+                        }
                     }
+                    AOT::sort(keys);
+                    removeRepeatedElements(keys);
+                    keepCommonKeys(common, keys);
                 }
-                AOT::sort(keys);
-                removeRepeatedElements(keys);
-                keepCommonKeys(held[birth.layout.index()], keys);
-            }
+                held[position] = WTF::move(*common);
+            });
             bool hasChanged = false;
-            for (size_t layout : isBornWithCopies) {
-                hasChanged |= keysHeldSinceBirth[layout] != *held[layout];
-                keysHeldSinceBirth[layout] = WTF::move(*held[layout]);
+            for (unsigned position = 0; position < numberOfLayoutsBornWithCopies; ++position) {
+                Vector<PropertyKeyID>& keys = keysHeldSinceBirth[layoutBornWithCopiesAt(position).index()];
+                hasChanged |= keys != held[position];
+                keys = WTF::move(held[position]);
             }
             return hasChanged;
         };
@@ -757,15 +791,16 @@ struct FieldResults {
 
         // A source is born before its copy. So what every birth brings where every source holds it is held by all of them: `{ ...state, label }` under the layout of `state` holds what the
         // literals of that layout list. The rounds begin with every name and take names away; only where they come to rest do they say anything.
-        for (size_t layout : isBornWithCopies) {
-            Vector<PropertyKeyID>& keys = keysHeldSinceBirth[layout];
-            forEachFieldOfObjectsWith(program, application, LayoutID(layout), [&](FieldReference, const Field& field) {
+        forEachIndexInParallel(loops, numberOfLayoutsBornWithCopies, [&](unsigned position) {
+            LayoutID layout = layoutBornWithCopiesAt(position);
+            Vector<PropertyKeyID>& keys = keysHeldSinceBirth[layout.index()];
+            forEachFieldOfObjectsWith(program, application, layout, [&](FieldReference, const Field& field) {
                 if (field.key)
                     keys.append(field.key);
             });
             AOT::sort(keys);
             removeRepeatedElements(keys);
-        }
+        });
         if (settles())
             return;
         holdWhatBirthsBring(false);
@@ -984,9 +1019,9 @@ struct FieldResults {
     }
 
     // Nothing tests a value that an allocation lists, so each has a write of its own.
-    Vector<LedgerOfFields::WriteToField> collectValuesListedByAllocations() const
+    Vector<LedgerOfFields::Notes> collectValuesListedByAllocations() const
     {
-        return collectInParallel<LedgerOfFields::WriteToField>(loops, program.functions.size(), [&](unsigned index, Vector<LedgerOfFields::WriteToField>& found) {
+        return collectChunksInParallel<LedgerOfFields::NumberedWrite>(loops, program.functions.size(), { }, [&](unsigned index, LedgerOfFields::Notes& found) {
             FunctionID id(index);
             if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewObject })) || !isCompiled(id))
                 return;
@@ -997,7 +1032,7 @@ struct FieldResults {
                     return;
                 std::span<const uint32_t> fields = allocation.fields();
                 for (uint32_t position = 0; position < fields.size(); ++position)
-                    found.append({ declarationOf(program, { allocation.layout(), fields[position] }), Write { Actor::Creation, WriteForm::AtCreation, { }, arrivesAt(position), id, site } });
+                    ledger.note(found, declarationOf(program, { allocation.layout(), fields[position] }), Write { Actor::Creation, WriteForm::AtCreation, { }, arrivesAt(position), id, site });
             };
             if (!inputs.isReached(id)) {
                 for (uint32_t value = 0; value < function.values.size(); ++value) {
@@ -1104,22 +1139,46 @@ struct FieldResults {
             });
         });
 
-        for (Vector<HeldField>& heldFields : fieldsHeldByObjectsWith) {
-            for (HeldField& held : heldFields) {
+        // What the layouts hold is joined declaration by declaration, for each in the order of the layouts.
+        Vector<HeldField*> heldFields = collectInParallel<HeldField*>(loops, numberOfLayouts, [&](unsigned index, Vector<HeldField*>& found) {
+            for (HeldField& held : fieldsHeldByObjectsWith[index])
+                found.append(&held);
+        });
+        constexpr size_t fieldsPerShare = 1 << 10;
+        size_t numberOfShares = (heldFields.size() + fieldsPerShare - 1) / fieldsPerShare;
+        Vector<uint64_t> byDeclaration = createVectorWithCapacityInParallel<uint64_t>(loops, heldFields.size());
+        byDeclaration.grow(heldFields.size());
+        forEachIndexInParallel(loops, numberOfShares, [&](unsigned share) {
+            for (size_t position = share * fieldsPerShare; position < std::min(heldFields.size(), (share + 1) * fieldsPerShare); ++position)
+                byDeclaration[position] = static_cast<uint64_t>(ledger.numberOf(heldFields[position]->declaration)) << 32 | position;
+        });
+        parallelSort(loops, byDeclaration.mutableSpan(), std::less<uint64_t>());
+        auto firstOfShare = [&](size_t share) {
+            size_t position = std::min(share * fieldsPerShare, byDeclaration.size());
+            while (position && position < byDeclaration.size() && byDeclaration[position] >> 32 == byDeclaration[position - 1] >> 32)
+                ++position;
+            return position;
+        };
+        Vector<LedgerOfFields::Notes> notes(numberOfShares);
+        forEachIndexInParallel(loops, numberOfShares, [&](unsigned share, unsigned worker) {
+            for (size_t position = firstOfShare(share), end = firstOfShare(share + 1); position < end; ++position) {
+                HeldField& held = *heldFields[static_cast<uint32_t>(byDeclaration[position])];
                 uint32_t layout = held.declaration.layout.index();
                 uint32_t field = held.declaration.field;
                 FactsOfField& all = known[layout][field];
                 if (held.facts.contains(FieldFact::IsAskedForAccessor))
                     uniteAccessors(application.layouts[layout].fields[field].accessor, WTF::move(held.accessor), !all.facts.contains(FieldFact::IsAskedForAccessor));
                 all.facts.add(held.facts);
-                ledger.sign(held.declaration, held.open, writesSeen(held.writers, held.stored, held.facts.contains(FieldFact::IsStoredAfterCreation), held.possibleMutations).span());
-                contents.stored[layout][field] = makers.of(0).unite(contents.stored[layout][field], held.stored);
+                ledger.sign(notes[share], held.declaration, held.open, writesSeen(held.writers, held.stored, held.facts.contains(FieldFact::IsStoredAfterCreation), held.possibleMutations).span());
+                contents.stored[layout][field] = makers.of(worker).unite(contents.stored[layout][field], held.stored);
                 contents.storedNumbers[layout][field].unite(held.storedNumbers);
             }
-            heldFields.clear();
-        }
-        ledger.note(collectValuesListedByAllocations());
-        ledger.close(loops);
+        });
+        forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
+            fieldsHeldByObjectsWith[index] = { };
+        });
+        notes.appendVector(collectValuesListedByAllocations());
+        ledger.close(loops, WTF::move(notes));
 
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
             const Layout& layout = program.layouts[index];

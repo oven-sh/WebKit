@@ -283,6 +283,8 @@ public:
     // The frame is the last one shown of its run: the functions below wait for the step of an async generator that it belongs to.
     JS_EXPORT_PRIVATE bool isAboveFramesThatWait() const;
     JS_EXPORT_PRIVATE bool isConstructCall();
+    // The frame above, which advance() came from, is the same activation: the frame tail-called the body of its own function.
+    JS_EXPORT_PRIVATE bool tailCalledOwnBody() const;
     // A walk that lists a stack trace stops once more between two machine frames, or behind the last, where a function was constructed and has left by a tail call. frame() is still the frame above.
     JS_EXPORT_PRIVATE void listConstructedFunctionsThatLeft();
     const std::optional<TraceFrame>& constructedFunctionThatLeft() const { return m_constructedFunctionThatLeft; }
@@ -358,6 +360,7 @@ private:
     // It left before the first frame of the run was entered, so the walk has yet to show that frame.
     bool m_constructedFunctionLeftOnTop { false };
     std::optional<TraceFrame> m_constructedFunctionThatLeft;
+    FunctionID m_calleeFunction;
     Exit m_exit;
     RunEnd m_runEnd;
     InlineFrameReader m_inlineFrames;

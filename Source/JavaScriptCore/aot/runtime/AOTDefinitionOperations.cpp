@@ -79,7 +79,7 @@ void defineDataProperty(Instance* instance, JSObject* object, PropertyName name,
 // These are the arrays for which JSArray::defineOwnProperty() comes down to putDirectIndex(): a length that is read-only puts the array into sparse mode. The text of the index is never made.
 static bool canDefineElementsDirectly(JSObject* object)
 {
-    return isJSArray(object) && !object->structure()->hasImmutableIndexedProperties() && !object->inSparseIndexingMode() && !isCopyOnWrite(object->indexingMode());
+    return (isJSArray(object) || object->type() == FinalObjectType) && !object->structure()->hasImmutableIndexedProperties() && !object->inSparseIndexingMode() && !isCopyOnWrite(object->indexingMode());
 }
 
 // What the stub StoreElementOfCompiledObject makes, out of the same allocators: where one of them has run out, this fills it again.
@@ -192,6 +192,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
     bool isKeyUniqued = key.isSymbol() || atomOfKey(key);
     auto name = key.toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (std::optional<uint32_t> index = parseIndex(name)) {
+        if (canDefineElementsDirectly(object)) {
+            object->putDirectIndex(globalObject, *index, JSValue::decode(value), 0, PutDirectIndexShouldThrow);
+            OPERATION_RETURN(scope);
+        }
+        if (tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(value)))
+            OPERATION_RETURN(scope);
+    }
     Structure* structureBefore = WTF::opaque(object->structure());
     bool files = isKeyUniqued && !parseIndex(name) && instance->state->propertyCaches->shouldFile(structureBefore->id(), name.impl(), SlotAccess::Define);
     if (instance->state->propertyCaches->countsNames()) [[unlikely]]

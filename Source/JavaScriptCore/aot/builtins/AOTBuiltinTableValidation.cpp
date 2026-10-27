@@ -11,6 +11,7 @@
 #include "AOTBuiltinTableBindings.h"
 #include "AOTBuiltinTableRealm.h"
 #include "AOTNameClass.h"
+#include "AOTRealmStartup.h"
 #include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include "ArgList.h"
@@ -20,6 +21,7 @@
 #include "JSArrayBuffer.h"
 #include "JSCInlines.h"
 #include "JSPromise.h"
+#include "Lookup.h"
 #include "MarkedVector.h"
 #include "PropertyNameArray.h"
 #include "PureNaN.h"
@@ -431,6 +433,41 @@ static void checkClosedHolders(RealmComparison& comparison)
     });
 }
 
+// Asks the table alone: a look at the object would add the member.
+static const HashTableValue* findRowOfStaticTable(JSObject* holder, UniquedStringImpl* key)
+{
+    for (const ClassInfo* info = holder->classInfo(); info; info = info->parentClass) {
+        const HashTable* rows = info->staticPropHashTable;
+        if (const HashTableValue* row = rows ? rows->entry(PropertyName(key)) : nullptr)
+            return row;
+    }
+    return nullptr;
+}
+
+static void checkMembersAddedAtFirstRead(RealmComparison& comparison)
+{
+    auto& table = comparison.table;
+    forEachFoundObject(comparison, [&](BuiltinID holder, JSObject* object) {
+        if (table.at(holder).sameObjectAs || table.at(holder).flags.contains(BuiltinFlag::IsGlobalObject) || !object->hasNonReifiedStaticProperties())
+            return;
+        for (BuiltinID member : table.membersOf(holder)) {
+            const Builtin& entry = table.at(member);
+            if (!entry.name || !isExpectedInRealm(comparison, member))
+                continue;
+            bool isAddedAtFirstRead = reportsCreationOfMember(object, table.identifierOf(comparison.vm(), entry.name).impl());
+            if (isAddedAtFirstRead && !entry.isAddedAtFirstRead)
+                comparison.report(member, "is added to its holder when it is first read, and the table says the holder has it from the start"_s);
+            if (!isAddedAtFirstRead && entry.isAddedAtFirstRead)
+                comparison.report(member, "is not added to its holder when it is first read, and the table says it is"_s);
+            if (!isAddedAtFirstRead)
+                continue;
+            const HashTableValue* row = findRowOfStaticTable(object, table.identifierOf(comparison.vm(), entry.name).impl());
+            if (row && entry.isAddedAsEnumerable != !(row->attributes() & PropertyAttribute::DontEnum))
+                comparison.report(member, entry.isAddedAsEnumerable ? "is not enumerable, and the table says it is"_s : "is enumerable, and the table says it is not"_s);
+        }
+    });
+}
+
 static void checkThatNothingSettlesLater(RealmComparison& comparison)
 {
     VM& vm = comparison.vm();
@@ -568,6 +605,7 @@ Vector<String> BuiltinTable::mismatches(JSGlobalObject* realm) const
     checkInheritance(comparison);
     checkObjectIdentities(comparison);
     checkClosedHolders(comparison);
+    checkMembersAddedAtFirstRead(comparison);
     checkThatNothingSettlesLater(comparison);
     checkClasses(comparison);
     checkInstanceTestsOfEntries(comparison);

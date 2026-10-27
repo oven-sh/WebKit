@@ -51,7 +51,8 @@ enum class ModuleStatus : uint8_t {
 static_assert(static_cast<uint8_t>(ModuleStatus::Evaluated) == static_cast<uint8_t>(CyclicModuleRecord::Status::Evaluated));
 
 enum class SynchronousEvaluationReason : uint8_t { Require, DeferredNamespace };
-enum class JobsOfImportedFiles : uint8_t { StayQueued, WaitForLoader };
+// While require() loads a graph the jobs of the program wait for its return in any case, and the steps of the loader are in a queue of their own.
+enum class JobsOfImportedFiles : uint8_t { StayQueued, WaitForLoader, StepsOfLoaderWaitForLoader };
 enum class ErrorOfImportedFile : uint8_t { IsThrown, IsLeftToLoader };
 
 struct LinkContext {
@@ -165,6 +166,7 @@ public:
     // Says whether a file ran.
     bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown);
     void queueJobsThatWaitForLoader();
+    void runFilesThatWaitInLoader();
     void didLoadGraph(ModuleID root);
     void didFailToLoadGraph(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
@@ -177,7 +179,8 @@ public:
     // The loader can load a file of the program as it loads code that is not compiled.
     bool isFileOfProgram(ModuleID module) const { return !data(module).isOfLibrary() && (data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs); }
     bool isLoadedWithRequests(ModuleID module) const { return isFileOfProgram(module) && data(module).kind == ModuleKind::SourceText; }
-    bool isImportedByLoader(ModuleID module) const { return isFileOfProgram(m_table.fileBehindFace(module).value_or(module)); }
+    // `bun run` takes the loader's whole round for a data file too.
+    bool isImportedByLoader(ModuleID module) const { return isFileOfProgram(m_table.fileBehindFace(module).value_or(module)) || (data(module).kind == ModuleKind::Data && !data(module).isOfLibrary()); }
     bool isBuiltinModuleOfLoader(ModuleID) const;
     bool isBuiltinModuleNewToLoader(ModuleID) const;
     bool needsLoaderForRequire(ModuleID);
@@ -349,7 +352,8 @@ private:
     Vector<DynamicExport> collectDynamicExports(ModuleID);
 
     void evaluateWithOwnStack(ModuleID root);
-    void holdJobsBehind(size_t numberOfJobs, ModuleID file);
+    size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
+    void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
     struct LevelOfLoad;
     struct PlanOfLoad;
     bool planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay = nullptr);
@@ -386,6 +390,7 @@ private:
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
+    std::optional<ModuleID> findByName(const Identifier& key);
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
@@ -440,6 +445,8 @@ private:
         // Without one, the start of the root calls them.
         std::optional<ModuleID> fileOrFace;
         FilesBeingRun* outer;
+        // The loader of `bun run` has asked for every file of the root by now, in jobs that stand in front of whatever the files queue.
+        bool isAheadOfJobsOfLoader { false };
     };
     FilesBeingRun* m_innermostFilesBeingRun { nullptr };
     void noteRequestByLoader(ModuleID fileOrFace);
@@ -599,6 +606,8 @@ private:
     // The loader goes through its graph, and comes to files that have run.
     std::optional<ModuleID> m_rootWhoseFilesRanAhead;
     RefPtr<MicrotaskQueue> m_jobsThatWaitForLoader;
+    // The queue that evaluateSynchronously() has opened for the files that run ahead. The collector finds it from the VM.
+    VM::SynchronousModuleQueue* m_stepsThatWaitForLoader { nullptr };
     bool m_isStartingRuntimeModule { false };
     // The link of the entry point that the image has a plan for stores no status.
     bool m_entryPointIsLinked { false };

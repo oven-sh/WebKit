@@ -9,12 +9,15 @@
 
 #include "AOTNativeTest.h"
 #include "AOTThreads.h"
+#include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowGraph.h"
 #include "AOTValueFlowSolver.h"
 #include "AOTValueSets.h"
 #include "AOTVector.h"
+#include <array>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -1632,11 +1635,36 @@ static void numbersByKeyAgreeWithAHashMap()
     }
 }
 
+// A loop on many threads borrows a maker at each of its steps. A thread takes what it gave back, whoever else takes one in between, so the threads do not meet at the pool.
+static void aMakerThatIsGivenBackWaitsForItsThread()
+{
+    ValueSets sets(64);
+    ValueSetMakerPool pool(sets);
+    ValueSetMaker& mine = pool.take();
+    pool.giveBack(mine);
+    // Of two threads made one behind the other at most one is taken for this one.
+    std::array<ValueSetMaker*, 2> takenByOthers { };
+    for (ValueSetMaker*& taken : takenByOthers) {
+        Thread::create("a borrower"_s, [&] {
+            taken = &pool.take();
+            pool.giveBack(*taken);
+        })->waitForCompletion();
+    }
+    AOT_TEST_CHECK(takenByOthers[0] != &mine || takenByOthers[1] != &mine);
+    AOT_TEST_CHECK(&pool.take() == &mine);
+    ValueSetMaker& second = pool.take();
+    AOT_TEST_CHECK(&second != &mine);
+    pool.giveBack(second);
+    pool.giveBack(mine);
+    AOT_TEST_CHECK(&pool.take() == &second);
+    AOT_TEST_CHECK(&pool.take() == &mine);
+}
+
 #define FOR_EACH_AOT_VALUE_FLOW_CORE_TEST(v) \
     v(valueSetsAgreeWithPlainSets) v(valueSetsOfFewAndOfManyBlocksAgreeWithPlainSets) v(valueSetsOfSeveralGroupsOfBlocksAgreeWithPlainSets) v(valueSetsOfBothFormsAgreeWithPlainSets) v(valueSetsAreTheSameFromEveryThread) v(sampleOfBlocksDependsOnTheMembersAlone) v(valueFlowGraphFindsTheLeastSolution) v(whatTheGraphHoldsDoesNotHangOnTheOrderOfTheEdges) v(rowsOfNodesInsideOneShardAreWalkedInOneWave) \
     v(masksTreatPlaceholdersByTheirKind) v(nodesThatPlaceholdersCoverAreRetired) v(theCallerMayConnectWhatLeadsIntoRetiredNodes) v(whatACoveredNodeHoldsIsNotSentToItAgain) \
     v(valueFlowGraphSolvesLongChainsAndWideLevelsOnThreads) v(valueFlowRoundsAgreeWithAnAnalysisObjectByObject) v(whatATurnMakesAndReachesRunsInThatTurn) \
-    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(numbersByKeyAgreeWithAHashMap)
+    v(valueFlowSolveStopsAtTheLimitOnLoggedEdges) v(valueFlowSolverFindsObjectsOutsideDeclaredTypes) v(whatAShorterWayOfARuleLeavesOutIsFound) v(whatIsAskedLastIsAnsweredWhenNothingElseIsDue) v(numbersByKeyAgreeWithAHashMap) v(aMakerThatIsGivenBackWaitsForItsThread)
 
 std::span<const NativeTest> valueFlowCoreTests()
 {

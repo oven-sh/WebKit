@@ -49,11 +49,13 @@ struct EntryCall {
     EntryCall(Address firstArgument, StubFrameKind kind)
         : arguments(firstArgument)
         , isInAdapterFrame(kind == StubFrameKind::Adapter || kind == StubFrameKind::ConstructAdapter)
+        , bytesBelowFramePointer(AdapterFrame::saveAreaSize + (kind == StubFrameKind::ConstructAdapter ? constructSlotsSize : 0))
     {
     }
 
     Address arguments;
     bool isInAdapterFrame;
+    unsigned bytesBelowFramePointer;
     JumpList passesFewer;
     JumpList passesMore;
     Label ready;
@@ -246,46 +248,83 @@ static void emitLoadArgumentRegisters(StubAssembler& jit, Address arguments)
 
 static void emitLocateOutOfLineArguments(StubAssembler& jit, GPRReg source, GPRReg count, GPRReg scratch)
 {
-    jit.load32(CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis), count);
-    Jump areInFrame = jit.branchTest32(CCallHelpers::Zero, count);
-    // The interpreter stores only the low word of the count.
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
-    jit.loadPtr(Address(scratch, VM::topEntryFrameOffset()), scratch);
-    Jump isCalledByInterpreter = jit.branchPtr(CCallHelpers::NotEqual, Address(fp, CallFrame::callerFrameOffset()), scratch);
+    constexpr ptrdiff_t offsetOfTaggedCount = offsetOfFirstArgument + static_cast<ptrdiff_t>(numberOfArgumentGPRs * sizeof(Register));
+    static_assert(outOfLineArgumentCountTagShift == 48);
+    jit.load16(Address(fp, offsetOfTaggedCount + 6), count);
+    Jump areInFrame = jit.branch32(CCallHelpers::NotEqual, count, TrustedImm32(outOfLineArgumentCountTag));
+    jit.load32(Address(fp, offsetOfTaggedCount), count);
     jit.add32(count, countGPR);
     jit.sub32(TrustedImm32(adapterArgumentCountWithOutOfLineArguments), countGPR);
-    jit.loadPtr(Address(fp, offsetOfFirstArgument + static_cast<ptrdiff_t>(numberOfArgumentGPRs * sizeof(Register))), scratch);
+    jit.loadPtr(Address(fp, offsetOfTaggedCount + static_cast<ptrdiff_t>(sizeof(Register))), scratch);
     jit.subPtr(fp, source);
     jit.addPtr(scratch, source);
     jit.subPtr(TrustedImm32(offsetOfFirstArgument), source);
     areInFrame.link(&jit);
-    isCalledByInterpreter.link(&jit);
 }
 
-static void emitCopyStackWords(StubAssembler& jit, const EntryCall& call, JumpList& stackDoesNotFit)
+struct StackWordCopy {
+    GPRReg index;
+    GPRReg value;
+    GPRReg destination;
+    GPRReg source;
+};
+
+static void emitCopyStackWords(StubAssembler& jit, const StackWordCopy& copy, JumpList& stackDoesNotFit)
 {
-    const Address arguments = call.arguments;
-    static_assert(numberOfArgumentGPRs >= 4 && gprOf(StubRegister::A3) == argumentGPR(3));
     constexpr int32_t numberOfRegisters = numberOfArgumentGPRs;
-    const GPRReg index = jit.reuseScratch(StubRegister::A0);
-    const GPRReg value = jit.reuseScratch(StubRegister::A1);
-    const GPRReg destination = jit.reuseScratch(StubRegister::A2);
-    const GPRReg source = jit.reuseScratch(StubRegister::A3);
-    const GPRReg size = value;
-    ASSERT(noOverlap(arguments.base, index, value, destination, source));
-
-    jit.addPtr(TrustedImm32(static_cast<int32_t>(arguments.offset + numberOfArgumentGPRs * sizeof(Register))), arguments.base, source);
-    if (call.isInAdapterFrame)
-        emitLocateOutOfLineArguments(jit, source, value, index);
-
+    const GPRReg size = copy.value;
     emitAlignedSizeOfWords(jit, countGPR, -numberOfRegisters, size);
-    jit.move(sp, destination);
-    jit.subPtr(size, destination);
-    stackDoesNotFit.append(jit.branchPtr(CCallHelpers::Below, destination, softStackLimit()));
-    jit.move(destination, sp);
+    jit.move(sp, copy.destination);
+    jit.subPtr(size, copy.destination);
+    stackDoesNotFit.append(jit.branchPtr(CCallHelpers::Below, copy.destination, softStackLimit()));
+    jit.move(copy.destination, sp);
 
-    jit.add32(TrustedImm32(-numberOfRegisters), countGPR, index);
-    emitCopyFromLastWord(jit, Address(source), Address(destination), index, value);
+    jit.add32(TrustedImm32(-numberOfRegisters), countGPR, copy.index);
+    emitCopyFromLastWord(jit, Address(copy.source), Address(copy.destination), copy.index, copy.value);
+}
+
+// The caller does not read the callee frame again. The stack words slide down over the adapter frame, which is rebuilt above them with the arguments that go in registers.
+static void emitRelocateFrameAboveStackWords(StubAssembler& jit, const EntryCall& call, const StackWordCopy& copy)
+{
+    constexpr int32_t numberOfRegisters = numberOfArgumentGPRs;
+    constexpr int32_t bytesAboveFramePointer = offsetOfFirstArgument + numberOfRegisters * static_cast<int32_t>(sizeof(Register));
+    const int32_t bytesBelowFramePointer = call.bytesBelowFramePointer;
+    const int32_t frameSize = bytesBelowFramePointer + bytesAboveFramePointer;
+    const TrustedImm32 frameSizeInWords(frameSize / static_cast<int32_t>(sizeof(Register)));
+    const GPRReg argumentBase = call.arguments.base;
+    const GPRReg numberOfStackWords = countGPR;
+    RELEASE_ASSERT(!(frameSize % stackAlignmentBytes()));
+
+    jit.sub32(TrustedImm32(numberOfRegisters), numberOfStackWords);
+    jit.getEffectiveAddress(BaseIndex(copy.source, numberOfStackWords, CCallHelpers::TimesEight, sizeof(Register)), copy.destination);
+    jit.andPtr(TrustedImm32(~static_cast<int32_t>(stackAlignmentBytes() - 1)), copy.destination);
+    emitAlignedSizeOfWords(jit, numberOfStackWords, 0, copy.value);
+    jit.subPtr(copy.value, copy.destination);
+    jit.subPtr(TrustedImm32(frameSize), copy.destination);
+    jit.addPtr(TrustedImm32(-frameSize), copy.destination, sp);
+
+    jit.move(frameSizeInWords, copy.index);
+    emitCopyFromLastWord(jit, Address(fp, -bytesBelowFramePointer), Address(sp), copy.index, copy.value);
+    if (argumentBase != fp)
+        jit.subPtr(fp, argumentBase);
+    jit.loadPtr(Address(fp, CallFrame::callerFrameOffset()), fp);
+
+    emitCopyFromFirstWord(jit, copy.source, copy.destination, numberOfStackWords, copy.index, copy.value);
+    jit.store64(TrustedImm32(0), BaseIndex(copy.destination, copy.index, CCallHelpers::TimesEight));
+
+    const GPRReg frame = copy.source;
+    emitAlignedSizeOfWords(jit, numberOfStackWords, 0, frame);
+    jit.addPtr(copy.destination, frame);
+    jit.move(frameSizeInWords, copy.index);
+    emitCopyFromLastWord(jit, Address(sp), Address(frame), copy.index, copy.value);
+    jit.addPtr(TrustedImm32(bytesBelowFramePointer), frame, fp);
+    jit.move(copy.destination, sp);
+    if (argumentBase != fp)
+        jit.addPtr(fp, argumentBase);
+    jit.add32(TrustedImm32(numberOfRegisters), countGPR);
+    jit.store64(TrustedImm32(numberOfRegisters + 1), CCallHelpers::addressFor(CallFrameSlot::argumentCountIncludingThis));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), copy.value);
+    jit.storePtr(fp, Address(copy.value, VM::offsetOfTopCallFrame()));
 }
 
 static void emitRareArgumentPaths(StubAssembler& jit, EntryCall& call)
@@ -296,9 +335,28 @@ static void emitRareArgumentPaths(StubAssembler& jit, EntryCall& call)
     jit.jump().linkTo(call.ready, &jit);
 
     call.passesMore.link(&jit);
-    emitCopyStackWords(jit, call, call.stackDoesNotFit);
+    static_assert(numberOfArgumentGPRs >= 4 && gprOf(StubRegister::A3) == argumentGPR(3));
+    static_assert(adapterArgumentCountWithOutOfLineArguments < maxListLengthCopiedTwice);
+    const StackWordCopy copy { jit.reuseScratch(StubRegister::A0), jit.reuseScratch(StubRegister::A1), jit.reuseScratch(StubRegister::A2), jit.reuseScratch(StubRegister::A3) };
+    const TrustedImm32 offsetOfStackWords(static_cast<int32_t>(call.arguments.offset + numberOfArgumentGPRs * sizeof(Register)));
+    ASSERT(noOverlap(call.arguments.base, copy.index, copy.value, copy.destination, copy.source));
+    Jump isLong;
+    if (call.isInAdapterFrame)
+        isLong = jit.branch32(CCallHelpers::Above, countGPR, TrustedImm32(maxListLengthCopiedTwice));
+    jit.addPtr(offsetOfStackWords, call.arguments.base, copy.source);
+    if (call.isInAdapterFrame)
+        emitLocateOutOfLineArguments(jit, copy.source, copy.value, copy.index);
+    emitCopyStackWords(jit, copy, call.stackDoesNotFit);
     emitLoadArgumentRegisters(jit, call.arguments);
     jit.jump().linkTo(call.readyWithTestedStack, &jit);
+    if (!call.isInAdapterFrame)
+        return;
+
+    isLong.link(&jit);
+    jit.addPtr(offsetOfStackWords, call.arguments.base, copy.source);
+    emitRelocateFrameAboveStackWords(jit, call, copy);
+    emitLoadArgumentRegisters(jit, call.arguments);
+    jit.jump().linkTo(call.ready, &jit);
 }
 
 static void emitThrowFromAdapter(StubAssembler& jit, Label afterCall, StubKey target)

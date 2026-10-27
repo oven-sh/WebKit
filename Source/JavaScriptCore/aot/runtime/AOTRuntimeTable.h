@@ -158,6 +158,27 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
         return RemovableFeature::IntlNumberFormat;
     case Entry::operationAOTFormatDateTime:
         return RemovableFeature::IntlDateTimeFormat;
+    case Entry::operationAOTRegExpExec:
+    case Entry::operationAOTRegExpTest:
+    case Entry::operationAOTRegExpFind:
+    case Entry::operationAOTRegExpTestBoxed:
+    case Entry::operationAOTRegExpMatchLiteral:
+    case Entry::operationAOTRegExpMatchLiteralWithoutObject:
+    case Entry::operationAOTRegExpMatchFlatProgram8:
+    case Entry::operationAOTNewRegExpLiteral:
+    case Entry::operationAOTSharedRegExpLiteral:
+    case Entry::operationAOTNewRegExp:
+    case Entry::operationAOTRegExpFlags:
+    case Entry::operationAOTRegExpSource:
+    case Entry::operationAOTStringReplaceRegExp:
+    case Entry::operationAOTStringReplaceAllRegExp:
+    case Entry::operationAOTStringReplaceRegExpString:
+    case Entry::operationAOTStringSplitRegExp:
+    case Entry::operationAOTStringMatchRegExp:
+    case Entry::operationAOTStringSearchRegExp:
+    case Entry::operationAOTRegExpExecPrefix:
+    case Entry::operationAOTStringMatchPrefix:
+        return RemovableFeature::RegExp;
     default:
         return std::nullopt;
     }
@@ -174,6 +195,7 @@ static_assert(argumentBufferAccessOf(Entry::operationAOTValueAdd) == ArgumentBuf
 static_assert(argumentBufferAccessOf(Entry::operationAOTNewArray) == ArgumentBufferAccess::Reads);
 static_assert(argumentBufferAccessOf(Entry::operationArrayIndexOfValueInt32OrContiguous) == ArgumentBufferAccess::ReadsAndWrites);
 static_assert(featureOf(Entry::operationAOTFormatNumber) == RemovableFeature::IntlNumberFormat);
+static_assert(featureOf(Entry::operationAOTRegExpTest) == RemovableFeature::RegExp);
 static_assert(!featureOf(Entry::operationAOTValueAdd));
 static_assert(isOperation(Entry::operationArrayIndexOfValueInt32OrContiguous) && !isOperation(Entry::VirtualCallTrampoline));
 

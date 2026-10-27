@@ -507,6 +507,8 @@ struct Builtin {
     BuiltinOverloadID firstOverload { };
     uint16_t overloadCount { 0 };
     bool isNamedByText { false };
+    bool isAddedAtFirstRead { false };
+    bool isAddedAsEnumerable { false };
 };
 
 struct BuiltinSlot {

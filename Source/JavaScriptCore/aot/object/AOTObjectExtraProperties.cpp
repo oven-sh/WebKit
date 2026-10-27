@@ -16,6 +16,7 @@
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "GetterSetter.h"
 #include "InternalFieldTuple.h"
 #include "JSCInlines.h"
@@ -80,6 +81,7 @@ static JSObject* createWithStructure(VM& vm, Structure* structure, std::span<con
 static JSObject* createExtraPropertiesWithAttributes(JSGlobalObject* realm, std::span<const Object::ExtraProperty> inOrder, unsigned attributes)
 {
     VM& vm = realm->vm();
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Structure* emptyStructure = Instance::of(realm)->realm.emptyExtraPropertiesStructure;
     Vector<UniquedStringImpl*, 16> names;

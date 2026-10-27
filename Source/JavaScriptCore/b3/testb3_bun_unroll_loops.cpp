@@ -251,6 +251,76 @@ static void testUnrollLoopsLeavesRareBlocksToLoopItself()
     }
 }
 
+enum class SidePath : uint8_t { EndsTurnItself, ComesBackInTurn };
+
+static void checkLoopWithSidePath(TestPlace place, bool isRare, SidePath sidePath, bool counterHasRoom)
+{
+    constexpr int64_t fewestTurns = Limits::minTurnsPerUnrolledLoop;
+    CountedSum sum(LessThan, 1, 0);
+    auto& [proc, graph, loop, relation, step, firstIndex] = sum;
+    PollState state;
+    appendPoll(graph, loop.body, state);
+    BasicBlock* side = proc.addBlock();
+    BasicBlock* stays = proc.addBlock();
+    BasicBlock* last = proc.addBlock();
+    Value* isMarked = graph.make(loop.body, Equal, graph.make(loop.body, BitAnd, graph.get(loop.body, loop.index), loop.extra), graph.int64(loop.body, 0));
+    graph.branch(loop.body, isMarked, isRare ? rarely(side) : unlikely(side), FrequentedBlock(stays));
+    graph.increase(side, loop.sum, 1000);
+    if (sidePath == SidePath::EndsTurnItself) {
+        graph.increase(side, loop.index, 1);
+        graph.jump(side, loop.header);
+    } else
+        graph.jump(side, last);
+    graph.increase(stays, loop.sum, graph.get(stays, loop.index));
+    graph.jump(stays, last);
+    loop.endBody(last);
+    if (counterHasRoom)
+        proc.setKnownRange(loop.counter(), IntRange(0, 1 << 20));
+    if (place == TestPlace::Bottom)
+        loop.rotate();
+
+    CHECK(unrollLoopsAndValidate(proc));
+    auto code = compileProc(proc);
+    for (int64_t mask : { 0ll, 1ll, 3ll, 7ll, 15ll, 63ll, -1ll }) {
+        for (int64_t bound : { 0, 1, 7, 8, 9, 10, 16, 17, 18, 64, 67, 800 }) {
+            int64_t expected = 0;
+            for (int64_t index = 0; index < bound; ++index)
+                expected += index & mask ? index : 1000;
+            state = { };
+            CHECK_EQ(run(*code, bound, nullptr, mask), expected);
+            if (bound != 800)
+                continue;
+            // With this mask only the first turn takes the side path.
+            bool takesSidePathOnce = mask == -1;
+            // A loop that was turned round has a side path that ends its turn outside: it comes in again through the test in front of the loop, and polls there.
+            if (place == TestPlace::Bottom && sidePath == SidePath::EndsTurnItself) {
+                if (takesSidePathOnce)
+                    CHECK(state.numberOfPolls <= bound / fewestTurns + fewestTurns);
+            } else if (!isRare)
+                CHECK(state.numberOfPolls <= bound / fewestTurns + fewestTurns);
+            else if (!counterHasRoom)
+                CHECK_EQ(state.numberOfPolls, bound);
+            else if (takesSidePathOnce)
+                CHECK(state.numberOfPolls <= 1 + bound / fewestTurns + fewestTurns);
+        }
+    }
+}
+
+// What lies behind an edge that is merely unlikely is written out with the turns: whoever leaves them ends in the loop itself and stays there.
+// What lies behind a rare edge has one copy, behind which the turns are entered again where the counter is known not to wrap around.
+// The polls tell how many turns ran one by one: the turns that are written out poll once for all.
+static void testUnrollLoopsComesBackBehindSidePaths()
+{
+    for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+        for (bool isRare : { false, true }) {
+            for (SidePath sidePath : { SidePath::EndsTurnItself, SidePath::ComesBackInTurn }) {
+                for (bool counterHasRoom : { false, true })
+                    checkLoopWithSidePath(place, isRare, sidePath, counterHasRoom);
+            }
+        }
+    }
+}
+
 static void testUnrollLoopsSkipsLoopWithCall()
 {
     CountedSum sum(LessThan, 1, 0);
@@ -344,24 +414,28 @@ static void testUnrollLoopsStoresInOrder()
     }
 }
 
-static void testUnrollLoopsSkipsLoopOverWords()
+// A loop that walks a list of words and reads them is written out. One that stores words is not, nor one that picks among a few of them.
+static void testUnrollLoopsSkipsLoopThatStoresWordsOrPicksAmongThem()
 {
-    enum class Access : uint8_t { Load, Store };
-    for (Access access : { Access::Load, Access::Store }) {
+    enum class Access : uint8_t { LoadAtCounter, LoadAtLowBitsOfCounter, Store };
+    for (Access access : { Access::LoadAtCounter, Access::LoadAtLowBitsOfCounter, Access::Store }) {
         CountedSum sum(LessThan, 1, 0);
         auto& [proc, graph, loop, relation, step, firstIndex] = sum;
-        Value* address = graph.make(loop.body, Add, loop.pointer, graph.make(loop.body, Shl, graph.get(loop.body, loop.index), graph.int32(loop.body, 3)));
-        if (access == Access::Load)
-            graph.increase(loop.body, loop.sum, graph.load(loop.body, Int64, address, 0, firstHeap));
-        else
+        Value* index = graph.get(loop.body, loop.index);
+        if (access == Access::LoadAtLowBitsOfCounter)
+            index = graph.make(loop.body, BitAnd, index, graph.int64(loop.body, 1));
+        Value* address = graph.make(loop.body, Add, loop.pointer, graph.make(loop.body, Shl, index, graph.int32(loop.body, 3)));
+        if (access == Access::Store)
             graph.store(loop.body, loop.extra, address, 0, firstHeap);
+        else
+            graph.increase(loop.body, loop.sum, graph.load(loop.body, Int64, address, 0, firstHeap));
         sum.finish(loop.body, TestPlace::Bottom);
 
-        CHECK(!unrollLoopsAndValidate(proc));
+        CHECK_EQ(unrollLoopsAndValidate(proc), access == Access::LoadAtCounter);
         int64_t words[20];
         std::ranges::fill(words, 3);
-        CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(20), words, static_cast<int64_t>(5)), access == Access::Load ? 60 : 0);
-        CHECK_EQ(words[19], access == Access::Load ? 3 : 5);
+        CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(20), words, static_cast<int64_t>(5)), access == Access::Store ? 0 : 60);
+        CHECK_EQ(words[19], access == Access::Store ? 5 : 3);
     }
 }
 
@@ -675,12 +749,13 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUnrollLoopsDropsBranchThatRepeatsTestAtTop());
     RUN(testUnrollLoopsKeepsOtherWaysOut());
     RUN(testUnrollLoopsLeavesRareBlocksToLoopItself());
+    RUN(testUnrollLoopsComesBackBehindSidePaths());
     RUN(testUnrollLoopsSkipsLoopWithCall());
     RUN(testUnrollLoopsSkipsLoopThatWalksNothing());
     RUN(testUnrollLoopsReadsOnePlaceOnceATurn());
     RUN(testUnrollLoopsSkipsLoopWithLikelySecondWayOut());
     RUN(testUnrollLoopsStoresInOrder());
-    RUN(testUnrollLoopsSkipsLoopOverWords());
+    RUN(testUnrollLoopsSkipsLoopThatStoresWordsOrPicksAmongThem());
     RUN(testUnrollLoopsPollsOnceForAllTurns());
     RUN(testUnrollLoopsWritesFewerTurnsOfLargerLoop());
     RUN(testUnrollLoopsSkipsLoopThatEndsBeforeAllTurns());

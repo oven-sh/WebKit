@@ -931,25 +931,60 @@ private:
         }
     }
 
-    // What an operand holds may be another operand, or the operand itself, and a copy of its properties hands that on under its key.
-    bool isAmongRetainedContents(JSObject* arrived, const OperandDifference& difference) const
+    // The value that the object itself has where the other object changed. Empty where it has none.
+    JSValue ownValueAt(JSObject* object, const OperandDifference& difference) const
+    {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+        if (!difference.key) {
+            if (!object->methodTable()->getOwnPropertySlotByIndex(object, m_call.realm, *difference.index, slot) || !slot.isValue())
+                return { };
+            return slot.getValue(m_call.realm, static_cast<uint64_t>(*difference.index));
+        }
+        PropertyName key(difference.key.get());
+        if (!object->methodTable()->getOwnPropertySlot(object, m_call.realm, key, slot) || !slot.isValue())
+            return { };
+        return slot.getValue(m_call.realm, key);
+    }
+
+    // A definition reads `value`, `get` and `set` as a statement would: the description has them, or an object above it.
+    bool describes(const BuiltinParameter& parameter, JSValue description, JSObject* described) const
+    {
+        if (!description || !description.isObject())
+            return false;
+        return std::ranges::any_of(parameter.namedMembers, [&](BuiltinName name) {
+            Identifier key = m_table.identifierOf(m_vm, name);
+            PropertySlot slot(description, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+            return asObject(description)->getPropertySlot(m_call.realm, key, slot) && slot.isValue() && slot.getValue(m_call.realm, key) == JSValue(described);
+        });
+    }
+
+    // The description is an operand, or what a map of descriptions has under the key.
+    bool isDescribedFor(JSObject* holder, JSObject* arrived, const OperandDifference& difference) const
+    {
+        return std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            return std::ranges::any_of(overload->flow.propertyActions, [&](const BuiltinPropertyAction& action) {
+                bool takesMap = action.kind == BuiltinPropertyActionKind::TakesDescriptorMap;
+                if ((!takesMap && action.kind != BuiltinPropertyActionKind::TakesDescriptor) || action.value.kind != BuiltinPlaceKind::Operand || !isAt(action.object, holder))
+                    return false;
+                BuiltinOperand position = *action.value.operand;
+                const BuiltinParameter* parameter = m_table.parameterFor(*overload, position);
+                JSValue operand = position.isReceiver() ? m_call.thisValue : m_call.arguments.at(position.argumentIndex());
+                if (!parameter || !parameter->uses.contains(OperandUse::RetainsContents) || !operand.isObject())
+                    return false;
+                return describes(*parameter, takesMap ? ownValueAt(asObject(operand), difference) : operand, arrived);
+            });
+        });
+    }
+
+    // What an operand holds may be another operand, or the operand itself. A copy of its properties hands that on under its key, and a definition hands on what the description holds.
+    bool isAmongRetainedContents(JSObject* holder, JSObject* arrived, const OperandDifference& difference) const
     {
         if (!difference.key && !difference.index)
             return false;
-        return std::ranges::any_of(m_operands, [&](const Operand& source) {
-            if (!usesOf(source.object).contains(OperandUse::RetainsContents))
-                return false;
-            PropertySlot slot(source.object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
-            if (!difference.key) {
-                if (!source.object->methodTable()->getOwnPropertySlotByIndex(source.object, m_call.realm, *difference.index, slot) || !slot.isValue())
-                    return false;
-                return slot.getValue(m_call.realm, static_cast<uint64_t>(*difference.index)) == JSValue(arrived);
-            }
-            PropertyName key(difference.key.get());
-            if (!source.object->methodTable()->getOwnPropertySlot(source.object, m_call.realm, key, slot) || !slot.isValue())
-                return false;
-            return slot.getValue(m_call.realm, key) == JSValue(arrived);
+        bool isCopied = std::ranges::any_of(m_operands, [&](const Operand& source) {
+            return usesOf(source.object).contains(OperandUse::RetainsContents) && ownValueAt(source.object, difference) == JSValue(arrived);
         });
+        return isCopied || isDescribedFor(holder, arrived, difference);
     }
 
     // An operand that another operand holds after the call is retained.
@@ -960,7 +995,7 @@ private:
             if (JSValue::encode(operand.object) != difference.arrived || operand.object == holder.object)
                 continue;
             OperandUses uses = usesOf(operand.object);
-            if (!uses.contains(OperandUse::Retains) && !isAmongRetainedContents(operand.object, difference))
+            if (!uses.contains(OperandUse::Retains) && !isAmongRetainedContents(holder.object, operand.object, difference))
                 fail(ValidationFailureKind::NativeCallKeptOperand, operand.object, makeString(describe(operand.position), ": "_s, describe(holder.position), " holds it, uses "_s, describeMembers(uses)));
         }
     }

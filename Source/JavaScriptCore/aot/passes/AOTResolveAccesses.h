@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowResults.h"
 #include "AOTMethodDispatch.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTRefusedContents.h"
@@ -17,9 +18,11 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 // The operations that resolveAccesses() looks at. A deletion by a constant key becomes a deletion by name.
-// What an access through a proxy is written out as.
-inline constexpr OpcodeSet readsBehindProxies { Opcode::SuperGet, Opcode::GetInternalField };
-inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | readsBehindProxies | OpcodeSet { Opcode::ElemDelete };
+// They name another receiver than the object at which the lookup starts.
+inline constexpr OpcodeSet readsForAnotherReceiver { Opcode::SuperGet, Opcode::GetByValWithThis };
+inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | readsForAnotherReceiver | OpcodeSet { Opcode::ElemDelete, Opcode::GetInternalField };
+
+LayoutsExpectedInProxies collectLayoutsExpectedInProxies(const Program&);
 
 struct AccessOperands {
     ValueID receiver;

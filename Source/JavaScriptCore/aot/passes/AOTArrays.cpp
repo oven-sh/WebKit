@@ -262,6 +262,22 @@ std::optional<ArrayMethodCall> arrayMethodCallOf(const Program& program, const F
     return ArrayMethodCall { method, id, call.receiver, Vector<ValueID, 2>(call.arguments) };
 }
 
+static bool answersOnlyNumbers(const BuiltinTable& table, BuiltinID function)
+{
+    if (!function)
+        return false;
+    bool isCalled = false;
+    for (const BuiltinOverload& overload : table.overloadsOf(function)) {
+        if (overload.mode != BuiltinCallMode::Call)
+            continue;
+        const BuiltinType& result = table.at(overload.result.type);
+        if (result.isAnything() || result.primitives != OptionSet<BuiltinPrimitive> { BuiltinPrimitive::Number } || !result.parts.empty())
+            return false;
+        isCalled = true;
+    }
+    return isCalled;
+}
+
 FunctionID findChainTraversal(const Program& program)
 {
     std::span<const BuiltinOverload> overloads = program.builtins().overloadsOf(Builtins::CompilerHelpersTraverseArray);
@@ -375,6 +391,8 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
             break;
         }
         FunctionID callee = call.arguments.isEmpty() ? FunctionID() : calleeOf(call.arguments[0]);
+        if (!callee && !call.arguments.isEmpty())
+            return answersOnlyNumbers(program.builtins(), typeOf(call.arguments[0]).singleBuiltin());
         return callee && program.at(callee).results.size() == 1 && arrayStorageAtAllocation(program.at(program.at(callee).results[0].expected().predicted())) != ArrayStorage::Contiguous;
     };
     auto takeEnd = [&](ArrayChain& chain, const ArrayMethodCall& last) {

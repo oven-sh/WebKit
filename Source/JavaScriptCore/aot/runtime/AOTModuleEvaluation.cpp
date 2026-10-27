@@ -16,6 +16,7 @@
 #include "AOTModuleNamespace.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramStatics.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTState.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
@@ -26,9 +27,11 @@
 #include "ModuleGraphLoadingState.h"
 #include "ModuleLoadingContext.h"
 #include "ObjectConstructor.h"
+#include "TopExceptionScope.h"
 #include "VMInlines.h"
 #include <algorithm>
 #include <limits>
+#include <ranges>
 #include <wtf/Scope.h>
 #include <wtf/StackPointer.h>
 #include <wtf/Variant.h>
@@ -860,8 +863,9 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
 
     bool didRunFile = false;
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
-    FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun };
+    FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader };
     SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
+    SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
     // The start of the root calls the files one after the other, and leaves where one of them has queued a job or where the root would begin.
     if (jobs == JobsOfImportedFiles::WaitForLoader && data(root).evaluatesItself() && data(root).isEntryPoint() && queue.isEmpty() && !m_rootWhoseFilesRun) {
         ensureRecord(root)->retain();
@@ -924,7 +928,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
             continue;
         didRunFile |= statusAtStart != ModuleStatus::Failed;
-        size_t numberOfJobs = queue.size();
+        size_t numberOfJobs = numberOfJobsThatWouldWait(jobs);
         filesBeingRun.fileOrFace = imported;
         // As the start of the root would call it.
         if (storedStatus(imported) < StoredModuleStatus::InRecord && data(imported).evaluatesItself())
@@ -943,11 +947,11 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             }
         }
         if (!exception) [[likely]] {
-            bool didQueueJobs = jobs == JobsOfImportedFiles::WaitForLoader && queue.size() != numberOfJobs;
+            bool didQueueJobs = numberOfJobsThatWouldWait(jobs) != numberOfJobs;
             if (!didQueueJobs && !hasDeferredLoads) [[likely]]
                 continue;
             if (didQueueJobs)
-                holdJobsBehind(numberOfJobs, imported);
+                holdJobsBehind(numberOfJobs, imported, jobs);
             m_rootWhoseFilesRanAhead = root;
             return didRunFile;
         }
@@ -956,8 +960,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             // `bun run` loads the rest of the graph, and with it runs the other files, before it reports the error. The loader goes through the graph and finds the error where it comes to the file.
             if (error == ErrorOfImportedFile::IsLeftToLoader && !vm.isTerminationException(exception)) {
                 TRY_CLEAR_EXCEPTION(scope, didRunFile);
-                if (jobs == JobsOfImportedFiles::WaitForLoader && queue.size() != numberOfJobs)
-                    holdJobsBehind(numberOfJobs, imported);
+                if (numberOfJobsThatWouldWait(jobs) != numberOfJobs)
+                    holdJobsBehind(numberOfJobs, imported, jobs);
                 m_rootWhoseFilesRanAhead = root;
             }
             return didRunFile;
@@ -971,13 +975,56 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
 }
 
 // Under `bun run` these jobs run before the loader comes to a file that a deeper module imports. From here on the loader goes through the graph.
-void Modules::holdJobsBehind(size_t numberOfJobs, ModuleID file)
+void Modules::holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles jobs)
 {
     VM& vm = *m_instance.vm;
+    m_fileWhoseJobsWaitForLoader = m_table.fileBehindFace(file).value_or(file);
+    if (jobs == JobsOfImportedFiles::StepsOfLoaderWaitForLoader) {
+        // The loader opens a queue of its own for the graph, and nothing runs out of this one until then.
+        ASSERT(!numberOfJobs);
+        m_stepsThatWaitForLoader = vm.m_synchronousModuleQueue;
+        return;
+    }
     if (!m_jobsThatWaitForLoader)
         m_jobsThatWaitForLoader = MicrotaskQueue::create(vm);
     vm.defaultMicrotaskQueue().moveTasksBehind(numberOfJobs, *m_jobsThatWaitForLoader);
-    m_fileWhoseJobsWaitForLoader = m_table.fileBehindFace(file).value_or(file);
+}
+
+size_t Modules::numberOfJobsThatWouldWait(JobsOfImportedFiles jobs) const
+{
+    VM& vm = *m_instance.vm;
+    switch (jobs) {
+    case JobsOfImportedFiles::StayQueued:
+        return 0;
+    case JobsOfImportedFiles::WaitForLoader:
+        return vm.defaultMicrotaskQueue().size();
+    case JobsOfImportedFiles::StepsOfLoaderWaitForLoader:
+        return vm.m_synchronousModuleQueue->tasks.size();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// One of the files has the waiting jobs run. Under `bun run` the first of them run the files behind it.
+void Modules::runFilesThatWaitInLoader()
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    Vector<ModuleID, 2> roots;
+    for (const FilesBeingRun* load = m_innermostFilesBeingRun; load; load = load->outer) {
+        if (load->isAheadOfJobsOfLoader)
+            roots.append(load->root);
+    }
+    for (ModuleID root : roots | std::views::reverse) {
+        evaluateImportedCommonJSFiles(root, JobsOfImportedFiles::StayQueued, ErrorOfImportedFile::IsLeftToLoader);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+// Only a request to terminate is left behind, and the jobs find it.
+void RuntimeHooks::runFilesThatWaitInLoader(VM& vm)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    vm.aotState().modulesWhoseFilesRunAheadOfLoader->runFilesThatWaitInLoader();
+    static_cast<void>(scope.exception());
 }
 
 bool Modules::stopLoadingBehindFile(ModuleID file)
@@ -993,6 +1040,11 @@ void Modules::queueJobsThatWaitForLoader()
     if (!m_fileWhoseJobsWaitForLoader)
         return;
     m_fileWhoseJobsWaitForLoader = std::nullopt;
+    if (VM::SynchronousModuleQueue* steps = std::exchange(m_stepsThatWaitForLoader, nullptr)) {
+        if (steps != m_instance.vm->m_synchronousModuleQueue)
+            m_instance.vm->m_synchronousModuleQueue->tasks.appendVector(std::exchange(steps->tasks, { }));
+        return;
+    }
     m_jobsThatWaitForLoader->moveTasksBehind(0, m_instance.vm->defaultMicrotaskQueue());
 }
 
@@ -2061,12 +2113,26 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         RETURN_IF_EXCEPTION(scope, void());
     }
     bool needsLoader = needsLoaderForRequire(module);
-    auto didLeaveLoad = makeScopeExit([&] {
+    // As in JSModuleLoader::loadModuleSync(): the steps of the loader run before require() returns, those that a file of the graph asks for among them. One of them resumes a module whose awaited promise is settled.
+    std::optional<VM::SynchronousModuleQueueScope> queue(std::in_place, *m_instance.vm);
+    auto leaveLoad = [&] {
+        if (!queue)
+            return;
         if (m_rootWhoseFilesRanAhead == module)
             m_rootWhoseFilesRanAhead = std::nullopt;
-    });
+        // The loader has not come to the file. As where JSModuleLoader::drainSynchronousModuleQueue() leaves early.
+        VM::SynchronousModuleQueue* steps = m_instance.vm->m_synchronousModuleQueue;
+        if (m_stepsThatWaitForLoader == steps) {
+            m_stepsThatWaitForLoader = nullptr;
+            m_fileWhoseJobsWaitForLoader = std::nullopt;
+        }
+        for (const VM::SynchronousModuleTask& step : steps->tasks)
+            realm->queueMicrotask(*m_instance.vm, step.task, step.payload, step.arg0, step.arg1, step.arg2, step.arg3);
+        queue.reset();
+    };
+    auto didLeaveLoad = makeScopeExit(leaveLoad);
     if (!needsLoader) {
-        evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::StayQueued, ErrorOfImportedFile::IsLeftToLoader);
+        evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::StepsOfLoaderWaitForLoader, ErrorOfImportedFile::IsLeftToLoader);
         RETURN_IF_EXCEPTION(scope, void());
         needsLoader = m_rootWhoseFilesRanAhead == module;
         // One of the files may have required the module.
@@ -2086,8 +2152,6 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     } else {
         link(module);
         RETURN_IF_EXCEPTION(scope, void());
-        // As in JSModuleLoader::loadModuleSync(): the jobs of the loader run before require() returns. One of them resumes a module whose awaited promise is settled.
-        VM::SynchronousModuleQueueScope queue(*m_instance.vm);
         if (moduleData.isSynchronous()) {
             evaluateWithOwnStack(module);
             Exception* exception = scope.exception();
@@ -2106,6 +2170,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         RETURN_IF_EXCEPTION(scope, void());
         JSModuleLoader::drainSynchronousModuleQueue(realm);
     }
+    leaveLoad();
     RETURN_IF_EXCEPTION(scope, void());
     retireRecordsOfSettledLoads();
 

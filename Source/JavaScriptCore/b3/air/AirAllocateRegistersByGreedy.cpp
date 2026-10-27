@@ -5292,20 +5292,51 @@ private:
         return move;
     }
 
-    void sortAndRemoveRepeatedOrdinals(Vector<unsigned>& ordinals)
-    {
-        if (ordinals.size() < m_mentions.numberOfInsts / 8) [[likely]] {
-            std::ranges::sort(ordinals);
-            removeRepeatedElements(ordinals);
-            return;
+    class SetOfOrdinals {
+    public:
+        explicit SetOfOrdinals(unsigned numberOfInsts)
+            : m_numberOfInsts(numberOfInsts)
+        {
         }
-        BitVector isListed(m_mentions.numberOfInsts);
-        for (unsigned ordinal : ordinals)
-            isListed.quickSet(ordinal);
-        ordinals.shrink(0);
-        for (size_t ordinal : isListed)
-            ordinals.append(static_cast<unsigned>(ordinal));
-    }
+
+        ALWAYS_INLINE void add(unsigned ordinal)
+        {
+            if (m_hasBits) {
+                m_bits.quickSet(ordinal);
+                return;
+            }
+            m_list.append(ordinal);
+            if (m_list.size() >= m_numberOfInsts / 8) [[unlikely]]
+                moveListToBits();
+        }
+
+        Vector<unsigned> takeInOrder()
+        {
+            if (m_hasBits) {
+                for (size_t ordinal : m_bits)
+                    m_list.append(static_cast<unsigned>(ordinal));
+                return WTF::move(m_list);
+            }
+            std::ranges::sort(m_list);
+            removeRepeatedElements(m_list);
+            return WTF::move(m_list);
+        }
+
+    private:
+        NEVER_INLINE void moveListToBits()
+        {
+            m_hasBits = true;
+            m_bits.ensureSize(m_numberOfInsts);
+            for (unsigned ordinal : m_list)
+                m_bits.quickSet(ordinal);
+            m_list.shrink(0);
+        }
+
+        Vector<unsigned> m_list;
+        BitVector m_bits;
+        unsigned m_numberOfInsts;
+        bool m_hasBits { false };
+    };
 
     template <Bank bank>
     void emitSpillCodeAndEnqueueNewTmps()
@@ -5314,7 +5345,7 @@ private:
         std::ranges::sort(m_newlySpilledTmps, [](Tmp a, Tmp b) {
             return a.tmpIndex(bank) < b.tmpIndex(bank);
         });
-        Vector<unsigned> ordinals;
+        SetOfOrdinals mentioningInsts(m_mentions.numberOfInsts);
         for (Tmp tmp : m_newlySpilledTmps) {
             ASSERT(tmp.bank() == bank);
             TmpData& tmpData = m_map.get<bank>(tmp);
@@ -5331,7 +5362,7 @@ private:
 
             if (!tmpData.splitFrom) {
                 for (Point point : useDefsOf(tmp))
-                    ordinals.append(point / PointOffsets::PointsPerInst);
+                    mentioningInsts.add(point / PointOffsets::PointsPerInst);
                 continue;
             }
             if (tmpData.liveRange.intervals().isEmpty())
@@ -5340,12 +5371,11 @@ private:
             Point end = tmpData.liveRange.intervals().last().end();
             auto useDefs = useDefsOf(tmpData.splitFrom);
             for (auto iterator = std::ranges::lower_bound(useDefs, first); iterator != useDefs.end() && *iterator < end; ++iterator)
-                ordinals.append(*iterator / PointOffsets::PointsPerInst);
+                mentioningInsts.add(*iterator / PointOffsets::PointsPerInst);
         }
         m_newlySpilledTmps.shrink(0);
-        sortAndRemoveRepeatedOrdinals(ordinals);
 
-        for (unsigned ordinal : ordinals) {
+        for (unsigned ordinal : mentioningInsts.takeInOrder()) {
             {
                 BasicBlock* block = m_code[m_instBlockIndex[ordinal]];
                 Point positionOfHead = this->positionOfHead(block);

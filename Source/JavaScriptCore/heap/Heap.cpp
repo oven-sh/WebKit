@@ -2960,7 +2960,7 @@ bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocat
     if (exhaustedAllocator == structureAllocator.get()) {
         if (!StructureAlignedMemoryAllocator::releaseReserve())
             return false;
-        cage().setExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Structures);
+        cage().addExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Structures);
         vm().traps().setNeedsOutOfMemoryError(true);
         return true;
     }

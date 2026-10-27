@@ -666,6 +666,7 @@ static bool hasOwnIndexedProperty(JSGlobalObject* globalObject, JSObject* object
 void ClassDefinition::EarlyStores::restoreTo(JSGlobalObject* globalObject, JSObject* object, StoreTime storeTime)
 {
     VM& vm = globalObject->vm();
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     for (size_t i = 0; i < keysAndAttributes.size(); ++i) {
         auto& [key, attributes] = keysAndAttributes[i];

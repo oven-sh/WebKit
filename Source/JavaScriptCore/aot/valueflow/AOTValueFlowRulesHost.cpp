@@ -149,11 +149,16 @@ void letAnythingHappenTo(ValueFlowRuleContext& context, ClimbingSet escaped)
     ValueSetID unknown = unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject);
     ValueSetID unknownObject = context.maker().intersect(unknown, universe.objects());
     context.mark(objects, OptionSet<ObjectMutation>::all());
-    context.add(context.written(objects, { ValueFlowNameKind::UnknownKey, 0 }), unknown);
-    context.add(context.written(objects, { ValueFlowNameKind::InternalFields, 0 }), unknown);
-    context.add(context.written(objects, { ValueFlowNameKind::GetterUnderUnknownKey, 0 }), unknownObject);
-    context.add(context.written(objects, { ValueFlowNameKind::SetterUnderUnknownKey, 0 }), unknownObject);
-    context.add(context.written(context.restrict(objects, ValueSets::complement(universe.objectsWithLockedPrototypeLink())), { ValueFlowNameKind::PrototypeLink, 0 }), unknown);
+    // No statement of the program writes through a set that holds the unknown object beside known ones: what the program lays on an object and what nobody knows never share a node, whichever objects escape together.
+    auto throughReceiversNobodyKnows = [&](ClimbingSet receivers) {
+        return context.unite(receivers, ClimbingSet(universe.unknownObjectAlone()));
+    };
+    ClimbingSet receivers = throughReceiversNobodyKnows(objects);
+    context.add(context.written(receivers, { ValueFlowNameKind::UnknownKey, 0 }), unknown);
+    context.add(context.written(receivers, { ValueFlowNameKind::InternalFields, 0 }), unknown);
+    context.add(context.written(receivers, { ValueFlowNameKind::GetterUnderUnknownKey, 0 }), unknownObject);
+    context.add(context.written(receivers, { ValueFlowNameKind::SetterUnderUnknownKey, 0 }), unknownObject);
+    context.add(context.written(throughReceiversNobodyKnows(context.restrict(objects, ValueSets::complement(universe.objectsWithLockedPrototypeLink()))), { ValueFlowNameKind::PrototypeLink, 0 }), unknown);
 }
 
 void letUndeclaredNativeCodeRun(ValueFlowRuleContext& context)

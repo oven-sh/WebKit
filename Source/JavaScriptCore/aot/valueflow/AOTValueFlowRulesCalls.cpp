@@ -752,6 +752,11 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
         ClimbingSet receivers = context.restrict(all, context.maker().unite(universe.sureInstancesOf(BuiltinClasses::Promise), promisesAllocatedByBuiltins(context, all)));
         if (context.meet(receivers, ValueSets::anything))
             listedCallees = context.unite(callees, context.valueWithin(ClimbingSet(universe.builtinFunctions()), context.lookup(receivers, ValueFlowName::property(context.program(), key))));
+        // Beside the unknown object the built-ins that have escaped are not listed. A receiver that is known finds them all the same.
+        ClimbingSet hidden = context.restrict(escapedMembersUnder(context, key), universe.builtinFunctions());
+        ClimbingSet known = context.restrict(all, universe.knownObjects());
+        if (context.meet(hidden, ValueSets::anything) && context.meet(known, ValueSets::anything))
+            listedCallees = context.unite(listedCallees, context.valueWithin(hidden, context.lookup(known, ValueFlowName::property(context.program(), key))));
     }
     ValueSetID receiversFollowedBehindUnknownObject = ValueSets::nothing;
     if (context.contains(callees, ValueFlowUniverse::unknownObject())) {

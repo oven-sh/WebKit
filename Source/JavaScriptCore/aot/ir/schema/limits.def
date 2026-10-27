@@ -90,6 +90,7 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
 
     MaxThreadedBlockValues(Optimize, CodeSize, NotOptimized, 8, 8, 0, "code duplicated per threaded jump")
     MaxThreadingReachabilitySteps(Optimize, CompileTime, NotOptimized, 128, 128, 0, "blocks walked to keep loops intact while threading jumps")
+    MaxValuesMergedAgainBelowThreadedJumps(Optimize, CodeSize, NotOptimized, 32, 32, 0, "values that every join below a row of threaded jumps merges again")
     MaxReadsPerSolve(Optimize, Memory, NotOptimized, 4096, 4096, 0, "redundant read elimination memory per function")
     MaxMergedReadPredecessors(Optimize, CodeSize, NotOptimized, 4, 4, 0, "predecessors merged to remove a repeated read")
     MaxVirtualObjectFields(Optimize, Memory, HeapAllocation, 64, 64, 0, "fields of an object that can be removed or stack-allocated")

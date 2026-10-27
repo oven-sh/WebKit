@@ -799,9 +799,9 @@ static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callD
     }
     std::array<EncodedJSValue, adapterArgumentCountWithOutOfLineArguments> frameArguments;
     std::copy_n(args.data(), numberOfArgumentGPRs, frameArguments.begin());
-    frameArguments[numberOfArgumentGPRs] = std::bit_cast<EncodedJSValue>(args.data());
+    frameArguments[numberOfArgumentGPRs] = static_cast<EncodedJSValue>(static_cast<uint64_t>(outOfLineArgumentCountTag) << outOfLineArgumentCountTagShift | args.size());
+    frameArguments[numberOfArgumentGPRs + 1] = std::bit_cast<EncodedJSValue>(args.data());
     protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + frameArguments.size(), frameArguments.data());
-    protoCallFrame.argCountAndCodeOriginValue.highWord() = static_cast<int32_t>(args.size());
     return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
 }
 

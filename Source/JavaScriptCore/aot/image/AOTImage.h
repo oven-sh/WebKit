@@ -88,6 +88,8 @@ public:
     }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
+    // For a thread whose VM runs no compiled program.
+    JS_EXPORT_PRIVATE static void useNoneOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
     // Takes no lock and does not depend on the calling thread.
     static const Image* findByCodeAddress(const void*);

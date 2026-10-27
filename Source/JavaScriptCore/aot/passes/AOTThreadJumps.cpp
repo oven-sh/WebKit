@@ -22,6 +22,7 @@
 #include <span>
 #include <tuple>
 #include <utility>
+#include <wtf/HashMap.h>
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
 
@@ -190,11 +191,11 @@ struct EdgeThreader : Rewrite {
     {
         if (!repair)
             repair.emplace(builder(), analyses);
-        size_t first = std::ranges::find(variablesByBlock, block, &std::pair<BlockID, SSARepair::Variable>::first) - variablesByBlock.begin();
+        size_t first = firstVariableOfBlock.ensure(block.index(), [&] { return variables.size(); }).iterator->value;
         for (unsigned index = 0; index < originals.size(); ++index) {
-            if (first + index == variablesByBlock.size())
-                variablesByBlock.append({ block, repair->addVariable(originals[index]) });
-            repair->addDefinition(variablesByBlock[first + index].second, copies[index]);
+            if (first + index == variables.size())
+                variables.append(repair->addVariable(originals[index]));
+            repair->addDefinition(variables[first + index], copies[index]);
         }
     }
 
@@ -466,10 +467,15 @@ struct EdgeThreader : Rewrite {
         IndexMap<ValueID, BlockID> definingCandidate(function.values.size());
         IndexMap<BlockID, IndexSet<BlockID>> usersOutsideBlock(function.blocks.size());
         IndexSet<BlockID> computesValuesForOthers;
+        IndexMap<BlockID, uint32_t> orderOfBlock(function.blocks.size());
+        for (uint32_t order = 0; BlockID block : analyses.cfg().reversePostOrder())
+            orderOfBlock[block] = order++;
+        IndexMap<ValueID, uint32_t> orderBehindLastUser(function.values.size());
         auto addUserOutsideBlock = [&](BlockID candidate, ValueID definition, BlockID user) {
             if (user == candidate)
                 return;
             usersOutsideBlock[candidate].add(user);
+            orderBehindLastUser[definition] = std::max(orderBehindLastUser[definition], orderOfBlock[user] + 1);
             if (!at(candidate).parameters.contains(definition))
                 computesValuesForOthers.add(candidate);
         };
@@ -492,6 +498,9 @@ struct EdgeThreader : Rewrite {
         }, [&](BlockID block) {
             numbersInSubtree[block].second = number;
         });
+        IndexMap<BlockID, BlockID> dominatorOfCandidate(function.blocks.size());
+        for (BlockID candidate : candidates)
+            dominatorOfCandidate[candidate] = analyses.dominators().idom(candidate);
         // A block made since the tree was numbered counts as dominated.
         auto wasDominatedBy = [&](BlockID candidate, BlockID block) {
             if (block.index() >= numbersInSubtree.size())
@@ -538,6 +547,8 @@ struct EdgeThreader : Rewrite {
         };
 
         Vector<DecidedEdge, 4> skippingEdges;
+        IndexSet<BlockID> skippedBlocks;
+        IndexSet<BlockID> blocksToSkip;
         for (BlockID candidate : candidates) {
             const Block& mergePoint = at(candidate);
             const Terminator& terminator = mergePoint.terminator;
@@ -553,8 +564,10 @@ struct EdgeThreader : Rewrite {
                 std::optional<UsersBelow>& usersBelow = usersBelowTargets[*targetIndex];
                 if (!usersBelow)
                     usersBelow = findUsersBelow(chosenEdge);
-                if (*usersBelow == UsersBelow::Some)
+                if (*usersBelow == UsersBelow::Some) {
                     skippingEdges.append({ edge, *targetIndex });
+                    blocksToSkip.add(candidate);
+                }
                 std::optional<Target> target = *usersBelow == UsersBelow::None ? createThreadedTarget(mergePoint, chosenEdge, incomingArguments) : std::nullopt;
                 if (!target)
                     continue;
@@ -563,6 +576,34 @@ struct EdgeThreader : Rewrite {
                         addUserOutsideBlock(definingBlock, argument, edge.from);
                 }
                 redirect(edge, WTF::move(*target));
+                skippedBlocks.add(candidate);
+            }
+        }
+
+        // A block that edges skip no longer dominates what lies below it: every join there merges its parameters again, down to the next block that no edge skips. Such a block ends a row of skipped ones.
+        IndexSet<BlockID> blocksThatEndRows;
+        if (!skippingEdges.isEmpty() && !hasHandlers) {
+            IndexMap<BlockID, Vector<uint32_t>> valuesMergedAgainBelow(function.blocks.size());
+            for (BlockID candidate : candidates) {
+                Vector<uint32_t> mergedAgain;
+                for (uint32_t orderBehindLastUserOfValue : valuesMergedAgainBelow[dominatorOfCandidate[candidate]]) {
+                    if (orderBehindLastUserOfValue > orderOfBlock[candidate])
+                        mergedAgain.append(orderBehindLastUserOfValue);
+                }
+                if (blocksToSkip.contains(candidate) && !computesValuesForOthers.contains(candidate)) {
+                    size_t numberFromAbove = mergedAgain.size();
+                    for (ValueID parameter : at(candidate).parameters) {
+                        if (orderBehindLastUser[parameter])
+                            mergedAgain.append(orderBehindLastUser[parameter]);
+                    }
+                    if (context.exceeds(LimitID::MaxValuesMergedAgainBelowThreadedJumps, mergedAgain.size(), valueTestedBy(at(candidate).terminator))) {
+                        blocksThatEndRows.add(candidate);
+                        mergedAgain.shrink(numberFromAbove);
+                    } else
+                        skippedBlocks.add(candidate);
+                }
+                if (skippedBlocks.contains(candidate))
+                    valuesMergedAgainBelow[candidate] = WTF::move(mergedAgain);
             }
         }
 
@@ -571,7 +612,7 @@ struct EdgeThreader : Rewrite {
             BlockID mergePoint = targetOf(function, edge).block;
             Edge chosenEdge { mergePoint, targetIndex };
             // An edge that skips the block has a value for each of its parameters. What the block computes exists only behind it.
-            if (!isCandidate.contains(mergePoint) || hasHandlers || computesValuesForOthers.contains(mergePoint))
+            if (!isCandidate.contains(mergePoint) || hasHandlers || computesValuesForOthers.contains(mergePoint) || blocksThatEndRows.contains(mergePoint))
                 continue;
             Arguments incomingArguments = targetOf(function, edge).arguments;
             if (!createThreadedTarget(at(mergePoint), chosenEdge, incomingArguments))
@@ -582,8 +623,9 @@ struct EdgeThreader : Rewrite {
             builder().setOrigin(at(mergePoint).terminator.origin());
             BlockID skippingBlock = builder().addBlock(at(edge.from).frequency);
             Arguments parameters;
+            // No edge leads to the block yet.
             for (ValueID argument : incomingArguments)
-                parameters.append(builder().addParameter(skippingBlock, at(argument).type));
+                parameters.append(builder().addParameter(skippingBlock, at(argument).type, 0));
             Target next = substituteParameters(at(mergePoint), target, argumentsOfChosenEdge, parameters);
             builder().moveToEndOf(skippingBlock);
             builder().emitJump(next.block, WTF::move(next.arguments));
@@ -801,7 +843,8 @@ struct EdgeThreader : Rewrite {
     IndexSet<BlockID> isCandidate;
     IndexMap<BlockID, Vector<Edge, 2>> incomingEdges;
     std::optional<SSARepair> repair;
-    Vector<std::pair<BlockID, SSARepair::Variable>, 8> variablesByBlock;
+    Vector<SSARepair::Variable, 8> variables;
+    UncheckedKeyHashMap<uint32_t, size_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstVariableOfBlock;
     PassOutcome outcome { PassOutcome::Unchanged };
 };
 

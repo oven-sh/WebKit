@@ -400,6 +400,8 @@ export class ModelBuilder {
       members: [],
       overloads: [],
       constant: null,
+      isAddedAtFirstRead: false,
+      isAddedAsEnumerable: false,
       hostNumber: noHostNumber,
       attachments: createAttachments(),
     };

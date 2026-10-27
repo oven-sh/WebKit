@@ -90,6 +90,16 @@ void emitCopyFromLastWord(StubAssembler& jit, Address source, Address destinatio
 #endif
 }
 
+void emitCopyFromFirstWord(StubAssembler& jit, GPRReg source, GPRReg destination, GPRReg count, GPRReg index, GPRReg word)
+{
+    jit.move(TrustedImm32(0), index);
+    Label next = jit.label();
+    jit.load64(BaseIndex(source, index, CCallHelpers::TimesEight), word);
+    jit.store64(word, BaseIndex(destination, index, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::Below, index, count).linkTo(next, &jit);
+}
+
 static void branchIfNotCompiledCallee(StubAssembler& jit, GPRReg scratch, JumpList& isNotCompiledCallee)
 {
     static_assert(isCompiledCalleeType(CompiledClosureType) && SlimClosureWithPropertiesType == SlimClosureType + 1);
@@ -173,12 +183,7 @@ static void emitCopyListBelowFrame(StubAssembler& jit, GPRReg count, GPRReg sour
     emitCopyFromLastWord(jit, Address(source), Address(destination), index, word);
     didCopy.append(jit.jump());
     movesDown.link(&jit);
-    jit.move(TrustedImm32(0), index);
-    Label next = jit.label();
-    jit.load64(BaseIndex(source, index, CCallHelpers::TimesEight), word);
-    jit.store64(word, BaseIndex(destination, index, CCallHelpers::TimesEight));
-    jit.add32(TrustedImm32(1), index);
-    jit.branch32(CCallHelpers::Below, index, count).linkTo(next, &jit);
+    emitCopyFromFirstWord(jit, source, destination, count, index, word);
     didCopy.link(&jit);
 }
 

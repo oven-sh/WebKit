@@ -454,6 +454,7 @@ void RegExp::crashIfLiteralIsInterpreted() const
 
 void RegExp::byteCodeCompileIfNecessary(VM* vm)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::byteCodeCompileIfNecessary);
 #if ENABLE(AOT)
     crashIfLiteralIsInterpreted();
 #endif
@@ -566,6 +567,7 @@ bool RegExp::compileWithJIT(VM* vm, Yarr::YarrPattern& pattern, Yarr::CharSize c
 
 void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::compile);
     Locker locker { cellLock() };
 
 #if ENABLE(AOT)
@@ -661,6 +663,7 @@ bool RegExp::matchConcurrently(
 
 void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExp::compileMatchOnly);
     Locker locker { cellLock() };
 
 #if ENABLE(AOT)

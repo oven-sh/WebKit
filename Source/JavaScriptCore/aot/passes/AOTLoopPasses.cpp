@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTFlowApply.h"
 #include "AOTFrameAllocationPointers.h"
@@ -1012,17 +1013,12 @@ static bool mayBeHeaderOfShortLoop(const Program& program, const Function& funct
     return relationalOperators.contains(comparison.opcode) && (integerConstantThroughCasts(program, function, comparison.operand(0)) || integerConstantThroughCasts(program, function, comparison.operand(1)));
 }
 
-static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
+// An innermost loop that is small enough to stand in the function once more for each of the turns.
+static std::optional<ShortLoop> planTurnsInFrontOf(FunctionPassContext& context, const NaturalLoop& loop, uint64_t numberOfTurns)
 {
     const Function& function = context.function;
     NaturalLoops& loops = context.analyses.naturalLoops();
-    if (!mayBeHeaderOfShortLoop(context.program, function, function.at(loop.header())) || !isHotLoop(context, loop).predicted())
-        return std::nullopt;
-    std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
-    if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
-        return std::nullopt;
-
-    ShortLoop found { loop.header(), *numberOfTurns, { }, { }, { } };
+    ShortLoop found { loop.header(), numberOfTurns, { }, { }, { } };
     uint64_t bytes = 0;
     for (unsigned index = 0; index < loop.size(); ++index) {
         if (loops.innerMostLoopOf(loop.at(index)) != &loop)
@@ -1030,7 +1026,7 @@ static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, cons
         found.region.append(loop.at(index));
         bytes += estimatedCodeBytes(context.program, function, function.at(loop.at(index)));
     }
-    if (bytes * *numberOfTurns > context.build.limit(LimitID::MaxBytesOfUnrolledLoop))
+    if (bytes * numberOfTurns > context.build.limit(LimitID::MaxBytesOfUnrolledLoop))
         return std::nullopt;
 
     for (Edge edge : context.analyses.cfg().incomingEdges(loop.header())) {
@@ -1041,6 +1037,41 @@ static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, cons
     if (RegionCloner::checkCanDuplicate(context.analyses, found.region.span()) != CloneCheck::CanClone)
         return std::nullopt;
     return found;
+}
+
+static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    if (!mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(loop.header())) || !isHotLoop(context, loop).predicted())
+        return std::nullopt;
+    std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
+    if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
+        return std::nullopt;
+    return planTurnsInFrontOf(context, loop, *numberOfTurns);
+}
+
+// A wider cycle may leave a turn for code that comes round to the turn again and passes the loop by. The mark of the turn is then the only one on that way.
+static bool comesBackPastNoOtherMark(FunctionPassContext& context, BlockID start)
+{
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    auto hasLoopMark = [&](BlockID block) {
+        return std::ranges::any_of(function.at(block).values, [&](ValueID id) {
+            return function.at(id).opcode == Opcode::LoopHint;
+        });
+    };
+    BitVector seen(function.blocks.size());
+    Vector<BlockID, 16> worklist { start };
+    while (!worklist.isEmpty()) {
+        for (BlockID next : cfg.successors(worklist.takeLast())) {
+            if (next == start)
+                return true;
+            if (seen.get(next.index()) || hasLoopMark(next))
+                continue;
+            seen.set(next.index());
+            worklist.append(next);
+        }
+    }
+    return false;
 }
 
 // The turns stand one behind the other, each a copy of the loop that goes on to the next one where the loop went back to its header. The loop itself stands behind the last: whoever folds the test of its counter finds that it is left at once.
@@ -1062,16 +1093,109 @@ static void unroll(FunctionPassContext& context, const ShortLoop& loop)
             Edge leaving { turns[turn]->cloneOf(backEdge.from), backEdge.targetIndex };
             builder.redirectEdge(leaving, next, Arguments(targetOf(function, leaving).arguments));
         }
-        eraseLoopHints(builder, function, turns[turn]->cloneOf(loop.header));
     }
     context.analyses.didChangeControlFlow();
     RegionCloner::repairSSA(context.analyses, turns.span());
     context.analyses.didChangeControlFlow();
+    for (const std::unique_ptr<RegionCloner>& turn : turns) {
+        if (!comesBackPastNoOtherMark(context, turn->cloneOf(loop.header)))
+            eraseLoopHints(builder, function, turn->cloneOf(loop.header));
+    }
+}
+
+// What every turn runs on its way back to the header.
+static Vector<ValueID, 4> findInitializationsOfEveryTurn(FunctionPassContext& context, const ShortLoop& loop)
+{
+    const Function& function = context.function;
+    const Dominators& dominators = context.analyses.dominators();
+    Vector<ValueID, 4> found;
+    for (BlockID block : loop.region) {
+        bool runsInEveryTurn = std::ranges::all_of(loop.backEdges, [&](Edge backEdge) {
+            return backEdge.from == block || dominators.terminatorDominates(block, backEdge.from);
+        });
+        if (!runsInEveryTurn)
+            continue;
+        for (ValueID id : function.at(block).values) {
+            if (function.at(id).opcode == Opcode::InitializeBuiltin)
+                found.append(id);
+        }
+    }
+    return found;
+}
+
+// Behind an operation that runs other code, or that writes outside the program as InitializeBuiltin does, whatever the loop keeps at hand is read anew in any case.
+static bool keepsNothingAtHandAnyway(FunctionPassContext& context, const ShortLoop& loop)
+{
+    const Function& function = context.function;
+    static_assert(declaredBoundOf(Opcode::InitializeBuiltin).writes.contains(AbstractHeap::ExternalState));
+    auto reachesAsFar = [&](const Effects& effects) {
+        return effects.mayRunOtherCode() || effects.writes.contains(AbstractHeap::ExternalState);
+    };
+    return std::ranges::any_of(loop.region, [&](BlockID block) {
+        if (context.analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Rare)
+            return false;
+        return reachesAsFar(context.analyses.effectsOfTerminator(block).onAnyEdge()) || std::ranges::any_of(function.at(block).values, [&](ValueID id) {
+            return function.at(id).opcode != Opcode::InitializeBuiltin && reachesAsFar(context.analyses.effectsOf(id).onAnyEdge());
+        });
+    });
+}
+
+// Only the first InitializeBuiltin of a member does anything. Where every turn of a hot loop runs one, the first turn stands in front of the loop and keeps it, and the loop, which is entered from the end of that turn alone, has none.
+static PassOutcome takeFirstTurnsThatInitializeOutOfLoops(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin))
+        return PassOutcome::Unchanged;
+
+    Function& function = context.function;
+    auto initializes = [&](const NaturalLoop& loop) {
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            for (ValueID id : function.at(loop.at(index)).values) {
+                if (function.at(id).opcode == Opcode::InitializeBuiltin)
+                    return true;
+            }
+        }
+        return false;
+    };
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (uint64_t taken = 0; taken < context.build.limit(LimitID::MaxUnrolledLoopsPerFunction); ++taken) {
+        std::optional<ShortLoop> found;
+        Vector<ValueID, 4> initializations;
+        NaturalLoops& loops = context.analyses.naturalLoops();
+        for (unsigned index = 0; index < loops.numLoops() && !found; ++index) {
+            const NaturalLoop& loop = loops.loop(index);
+            if (!initializes(loop) || !isHotLoop(context, loop).predicted())
+                continue;
+            std::optional<ShortLoop> plan = planTurnsInFrontOf(context, loop, 1);
+            if (!plan || plan->entries.isEmpty() || keepsNothingAtHandAnyway(context, *plan))
+                continue;
+            initializations = findInitializationsOfEveryTurn(context, *plan);
+            if (!initializations.isEmpty())
+                found = WTF::move(plan);
+        }
+        if (!found)
+            break;
+        unroll(context, *found);
+
+        IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+        for (BlockID block : found->region) {
+            const BlockValues& values = function.at(block).values;
+            BitVector erasedIndexes;
+            for (size_t index = 0; index < values.size(); ++index) {
+                if (initializations.contains(values[index]))
+                    erasedIndexes.set(index);
+            }
+            if (!erasedIndexes.isEmpty())
+                builder.eraseValues(block, erasedIndexes);
+        }
+        context.analyses.didChangeValues();
+        outcome = PassOutcome::Changed;
+    }
+    return outcome;
 }
 
 PassOutcome unrollShortLoops(FunctionPassContext& context)
 {
-    PassOutcome outcome = PassOutcome::Unchanged;
+    PassOutcome outcome = takeFirstTurnsThatInitializeOutOfLoops(context);
     const CFG& cfg = context.analyses.cfg();
     bool mayHaveShortLoop = std::ranges::any_of(cfg.reversePostOrder(), [&](BlockID block) {
         return mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(block)) && std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {

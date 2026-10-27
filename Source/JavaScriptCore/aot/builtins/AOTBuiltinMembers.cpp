@@ -385,17 +385,15 @@ std::optional<Value> tryMakeBuiltinConstant(const BuiltinTable& table, BuiltinID
     return constant;
 }
 
-// The first read of a member may add it to its holder, which decides where it stands among the holder's keys.
+// The holder adds the member behind the properties that it has when the member is first read. From the first copy of the holder on, its keys stand in that order.
 bool firstReadChangesListedKeys(const BuiltinTable& table, const FlowResults& flow, BuiltinID member)
 {
-    BuiltinID holder = table.at(member).holder;
-    if (!holder || holder == Builtins::GlobalThis || !flow.listsKeysOf(table.canonicalID(holder)))
-        return false;
-    // What a module exports is filled when the module runs.
-    BuiltinID root = holder;
-    while (BuiltinID above = table.at(root).holder)
-        root = above;
-    return root == Builtins::GlobalThis;
+    return table.at(member).isAddedAtFirstRead && flow.listsKeysOf(table.canonicalID(table.at(member).holder));
+}
+
+bool onlyAddsMemberToHolder(const BuiltinTable& table, BuiltinID member)
+{
+    return !isMadeWithCodeOfLibrary(table, member);
 }
 
 std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const FlowResults& flow, const Value& constant)

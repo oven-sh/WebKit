@@ -22,6 +22,7 @@ interface WordMeaning {
   kind?: "Function" | "Accessor" | "DataProperty";
   valueColumn?: ValueColumn;
   isLazilyCreated?: boolean;
+  isAddedAtFirstRead?: boolean;
   requiresFunction?: boolean;
 }
 
@@ -33,12 +34,15 @@ interface Condition {
 const constructableWord = "Constructable";
 
 const attributeWords = new Map<string, WordMeaning>([
-  ["Function", { kind: "Function", valueColumn: "Function" }],
+  ["Function", { kind: "Function", valueColumn: "Function", isAddedAtFirstRead: true }],
   [constructableWord, { requiresFunction: true }],
   ["Builtin", { requiresFunction: true }],
-  ["PropertyCallback", { kind: "DataProperty", valueColumn: "CreationCallback", isLazilyCreated: true }],
-  ["ClassStructure", { kind: "DataProperty", valueColumn: "Data", isLazilyCreated: true }],
-  ["CellProperty", { kind: "DataProperty", valueColumn: "Data" }],
+  [
+    "PropertyCallback",
+    { kind: "DataProperty", valueColumn: "CreationCallback", isLazilyCreated: true, isAddedAtFirstRead: true },
+  ],
+  ["ClassStructure", { kind: "DataProperty", valueColumn: "Data", isLazilyCreated: true, isAddedAtFirstRead: true }],
+  ["CellProperty", { kind: "DataProperty", valueColumn: "Data", isAddedAtFirstRead: true }],
   ["ConstantInteger", { kind: "DataProperty", valueColumn: "Data" }],
   ["CustomAccessor", { kind: "Accessor", valueColumn: "Getter" }],
   ["Accessor", { kind: "Accessor", valueColumn: "Getter" }],
@@ -274,6 +278,9 @@ function memberOf(
       platforms: entry.platforms,
       ...symbolColumnsOf(entry),
       ...(entry.attributes.includes(constructableWord) ? { constructable: true } : {}),
+      ...(meanings.some(meaning => meaning.isAddedAtFirstRead === true)
+        ? { addedAtFirstRead: true, ...(entry.attributes.includes("DontEnum") ? {} : { addedAsEnumerable: true }) }
+        : {}),
     },
   };
 }

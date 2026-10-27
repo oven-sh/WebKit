@@ -128,4 +128,4 @@ function f1 name="drain" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CALLS-LABEL: end of loop
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
 # X64: loop #{{*}}, instructions: 51, patchpoints: 5, rare instructions: 17
-# ARM64: loop #{{*}}, instructions: 49, patchpoints: 5, rare instructions: 17
+# ARM64: loop #{{*}}, instructions: 47, patchpoints: 5, rare instructions: 17

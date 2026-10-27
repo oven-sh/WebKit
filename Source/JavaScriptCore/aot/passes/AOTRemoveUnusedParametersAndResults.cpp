@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTCallGraph.h"
 #include "AOTEffectSummaries.h"
+#include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
 #include "AOTParameterUses.h"
@@ -19,6 +20,7 @@
 #include "AOTResolveCallsDirectCall.h"
 #include "AOTResultRules.h"
 #include "AOTThreads.h"
+#include "AOTTypePropagation.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -621,57 +623,78 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
     const Program& program = editor.program();
     const ParallelLoops& loops = build.parallelLoops();
     unsigned count = program.functions.size();
-    auto isEnabledFor = [&](FunctionID id) {
-        return build.isEnabled(PassID::ProveResults, findFunctionAsRead(&program, id));
+    auto findProvenAmong = [&](std::span<const FunctionID> functions) {
+        return collectInParallel<FunctionID>(loops, functions.size(), [&](unsigned index, Vector<FunctionID>& found) {
+            FunctionID id = functions[index];
+            if (returnsOnlyWhatIsExpected(program, program.at(id)) && build.isEnabled(PassID::ProveResults, findFunctionAsRead(&program, id)))
+                found.append(id);
+        });
     };
 
-    Vector<FunctionID> functionsToAsk = collectInParallel<FunctionID>(loops, count, [&](unsigned index, Vector<FunctionID>& found) {
+    Vector<FunctionID> candidates = collectInParallel<FunctionID>(loops, count, [&](unsigned index, Vector<FunctionID>& found) {
         if (hasResultThatMayBeProven(program, program.functions[index]))
             found.append(FunctionID(index));
     });
-    uint64_t numberOfProvenResults = 0;
-    while (!functionsToAsk.isEmpty()) {
-        Vector<FunctionID> proven = collectInParallel<FunctionID>(loops, functionsToAsk.size(), [&](unsigned index, Vector<FunctionID>& found) {
-            FunctionID id = functionsToAsk[index];
-            if (returnsOnlyWhatIsExpected(program, program.at(id)) && isEnabledFor(id))
-                found.append(id);
+    Vector<FunctionID> proven = findProvenAmong(candidates.span());
+    if (proven.isEmpty())
+        return;
+
+    // Whose values have the type of a candidate's result: a direct call, and a call of a value that can only be one function, whether or not anybody has listed the callee at the call.
+    using TypedCall = std::pair<FunctionID, FunctionID>;
+    BitVector isCandidate(count);
+    for (FunctionID id : candidates)
+        isCandidate.quickSet(id.index());
+    auto appendTypedCallsOf = [&](FunctionID caller, Vector<TypedCall>& found) {
+        const Function& function = program.at(caller);
+        auto append = [&](FunctionID callee) {
+            if (callee && isCandidate.quickGet(callee.index()) && (found.isEmpty() || found.last() != TypedCall { callee, caller }))
+                found.append({ callee, caller });
+        };
+        forEachDirectCall(program, caller, [&](BlockID, ValueID, FunctionID callee) { append(callee); });
+        forEachListedValue(program, caller, { Opcode::Call }, [&](BlockID, uint32_t, ValueID, const Value& call) {
+            append(onlyCalleeOf(program, program.typeOf(function, call.operand(OperandIndex::Call::callee))));
         });
-        if (proven.isEmpty())
-            break;
+    };
+    Vector<TypedCall> typedCalls = collectInParallel<TypedCall>(loops, count, [&](unsigned index, Vector<TypedCall>& found) {
+        if (program.functions[index].hasBody())
+            appendTypedCallsOf(FunctionID(index), found);
+    });
+    sortAndRemoveDuplicates(loops, typedCalls);
+
+    uint64_t numberOfProvenResults = 0;
+    while (!proven.isEmpty()) {
         numberOfProvenResults += proven.size();
         editFunctionsInParallel(editor, build, proven.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
             function.results[0].establish(Proven::byEveryArrival(function.results[0].expected()));
         });
 
-        BitVector isProven(count);
         BitVector isCaller(count);
         Vector<FunctionID> callers;
         for (FunctionID id : proven) {
-            isProven.quickSet(id.index());
-            for (FunctionID caller : inputs.callGraph.callersOf(id)) {
-                if (!isCaller.quickSet(caller.index()) && program.at(caller).hasBody())
-                    callers.append(caller);
+            for (auto first = std::ranges::lower_bound(typedCalls, TypedCall { id, FunctionID(0u) }); first != typedCalls.end() && first->first == id; ++first) {
+                if (!isCaller.quickSet(first->second.index()))
+                    callers.append(first->second);
             }
         }
-        // A call of a value that can only be one function has the type of that function's result, whether or not anybody has listed the callee at the call.
-        for (FunctionID caller : collectInParallel<FunctionID>(loops, count, [&](unsigned index, Vector<FunctionID>& found) {
-            const Function& function = program.functions[index];
-            bool callsProvenFunction = false;
-            forEachListedValue(program, FunctionID(index), { Opcode::Call }, [&](BlockID, uint32_t, ValueID, const Value& call) {
-                FunctionID only = callsProvenFunction ? FunctionID() : onlyCalleeOf(program, program.typeOf(function, call.operand(OperandIndex::Call::callee)));
-                callsProvenFunction |= only && isProven.quickGet(only.index());
-            });
-            if (callsProvenFunction)
-                found.append(FunctionID(index));
-        })) {
-            if (!isCaller.quickSet(caller.index()))
-                callers.append(caller);
-        }
+        // Where the types cut no code and no test is decided with them there is nothing to clean up.
         editFunctionsInParallel(editor, build, callers.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
-            simplifyEditedFunction(runner, program, inputs, id, function, arenas);
+            FunctionAnalyses analyses(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, function);
+            TypePropagationOutcome typing = typeValuesFromNever(TypePropagationInputs { program, id, function, analyses, arenas.types, build });
+            if (!typing.didChange())
+                return;
+            FunctionPassContext context { program, inputs, id, function, analyses, arenas.types, arenas.strings, build };
+            if (runner.runFunctionPass(PassID::SimplifyControlFlow, context) == PassOutcome::Changed || typing.cutBlocks || typing.waitsToCutCode || typing.replacedUpcasts)
+                simplifyEditedFunction(runner, program, inputs, id, function, arenas);
         });
-        functionsToAsk = WTF::move(callers);
-        functionsToAsk.removeAllMatching([&](FunctionID id) { return !hasResultThatMayBeProven(program, program.at(id)); });
+        // With narrower types a value may have come to be one function only.
+        size_t numberOfSortedCalls = typedCalls.size();
+        for (FunctionID caller : callers)
+            appendTypedCallsOf(caller, typedCalls);
+        if (typedCalls.size() != numberOfSortedCalls)
+            sortAndRemoveDuplicates(loops, typedCalls);
+
+        callers.removeAllMatching([&](FunctionID id) { return !hasResultThatMayBeProven(program, program.at(id)); });
+        proven = findProvenAmong(callers.span());
     }
     build.statistics().count(StatisticID::ResultsProvenByReturns, numberOfProvenResults);
 }

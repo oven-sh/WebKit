@@ -844,9 +844,11 @@ static Function createShorterEntrance(const AnalysisContext& context, TypeArena&
     Entrance shorter { { }, entrance.operandsOfBody, entrance.operandsOfFallback };
     for (uint32_t index = 0; index < entrance.tests.size(); ++index) {
         const EntryTest& test = entrance.tests[index];
-        if (key.answered & 1u << index)
-            *tests.declaredEntryParameter(test.entryParameter) = DeclaredType(Proven::byPosition(test.type));
-        else
+        if (key.answered & 1u << index) {
+            // The fallback takes the parameter as the entrance declares it.
+            DeclaredType& parameter = *tests.declaredEntryParameter(test.entryParameter);
+            parameter = DeclaredType(Proven::byPosition(types.intersectionOf(context.program.provenTypeOf(parameter), test.type)));
+        } else
             shorter.tests.append(test);
     }
     emitEntrance(context, types, tests, shorter, record.body, record.fallback);

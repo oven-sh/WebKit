@@ -1032,6 +1032,10 @@ function finishEntries(context: EntryContext): void {
       if (columnOf(builder, builtin, column) === true) addFlag(builtin, flag);
     }
     if (holder !== null && holder === compilerHelpers) addFlag(builtin, "IsCompilerHelper");
+    // The global object lists the rows of its tables first, whichever of them it has added.
+    builtin.isAddedAtFirstRead =
+      columnOf(builder, builtin, "addedAtFirstRead") === true && holder !== null && !holder.flags.includes("IsGlobalObject");
+    builtin.isAddedAsEnumerable = builtin.isAddedAtFirstRead && columnOf(builder, builtin, "addedAsEnumerable") === true;
     const writtenColumns = builder.columnsOf(builtin);
     builtin.marks = builtinMarks.filter(mark => writtenColumns.some(({ columns }) => columns.marks?.includes(mark)));
     const loader = writtenColumns.find(({ columns }) => columns.loadsMachineCodeAs !== undefined);

@@ -446,6 +446,43 @@ static void testOperandThatAnotherOperandHoldsUnderAnIndexMayArriveThere()
     AOT_TEST_CHECK(target->getIndexQuickly(0) == element);
 }
 
+static void testOperandThatADescriptionHoldsMayArriveWhereItIsDefined()
+{
+    Realms realms(RuntimeValidation::On);
+    JSGlobalObject* realm = realms.plain();
+    VM& vm = realms.vm();
+    Identifier name = Identifier::fromString(vm, "held"_s);
+    enum class Answer : bool { Target, True };
+    auto defineByDescription = [&](ASCIILiteral callee, Answer answer, JSValue thisValue, JSObject* description, JSObject* described) {
+        JSObject* target = realms.object(realm, "({ })"_s);
+        SimulatedCall(realms, callee).on(thisValue).run({ target, jsNontrivialString(vm, "held"_s), description }, [&] {
+            target->putDirect(vm, name, described);
+            return answer == Answer::Target ? JSValue(target) : jsBoolean(true);
+        });
+    };
+    auto defineByMap = [&](JSValue thisValue, JSObject* map, JSObject* described) {
+        JSObject* target = realms.object(realm, "({ })"_s);
+        SimulatedCall(realms, "Object.defineProperties"_s).on(thisValue).run({ target, map }, [&] {
+            target->putDirect(vm, name, described);
+            return target;
+        });
+    };
+
+    // Compiled code calls a function that does not look at `this` with the object that holds the function.
+    JSObject* holder = realms.object(realm, "Object"_s);
+    defineByMap(holder, realms.object(realm, "({ held: { value: Object } })"_s), holder);
+    defineByMap(holder, realms.object(realm, "({ held: Object.create({ value: Object }) })"_s), holder);
+    defineByDescription("Object.defineProperty"_s, Answer::Target, holder, realms.object(realm, "({ value: Object })"_s), holder);
+    defineByDescription("Object.defineProperty"_s, Answer::Target, holder, realms.object(realm, "Object.create({ value: Object })"_s), holder);
+    JSObject* reflect = realms.object(realm, "Reflect"_s);
+    defineByDescription("Reflect.defineProperty"_s, Answer::True, reflect, realms.object(realm, "({ value: Reflect })"_s), reflect);
+
+    JSObject* description = realms.object(realm, "(() => { const description = { }; description.value = description; return description; })()"_s);
+    defineByDescription("Object.defineProperty"_s, Answer::Target, jsUndefined(), description, description);
+    JSObject* map = realms.object(realm, "(() => { const map = { held: { } }; map.held.value = map; return map; })()"_s);
+    defineByMap(jsUndefined(), map, map);
+}
+
 static void testBuiltinThatTheCallNamesIsAccepted()
 {
     Realms realms(RuntimeValidation::On);
@@ -628,6 +665,41 @@ static void keepOperandThatIsOnlyInspected(Realms& realms)
     });
 }
 
+static void defineHeld(Realms& realms, JSObject* target, JSValue value)
+{
+    target->putDirect(realms.vm(), Identifier::fromString(realms.vm(), "held"_s), value);
+}
+
+static void keepReceiverThatTheDescriptionDoesNotHold(Realms& realms)
+{
+    JSObject* target = realms.object(realms.plain(), "({ })"_s);
+    JSObject* holder = realms.object(realms.plain(), "Object"_s);
+    SimulatedCall(realms, "Object.defineProperty"_s).on(holder).run({ target, jsNontrivialString(realms.vm(), "held"_s), realms.object(realms.plain(), "({ value: 1, other: Object })"_s) }, [&] {
+        defineHeld(realms, target, holder);
+        return target;
+    });
+}
+
+static void keepReceiverThatIsDescribedUnderAnotherKey(Realms& realms)
+{
+    JSObject* target = realms.object(realms.plain(), "({ })"_s);
+    JSObject* holder = realms.object(realms.plain(), "Object"_s);
+    SimulatedCall(realms, "Object.defineProperties"_s).on(holder).run({ target, realms.object(realms.plain(), "({ held: { value: 1 }, other: { value: Object } })"_s) }, [&] {
+        defineHeld(realms, target, holder);
+        return target;
+    });
+}
+
+static void keepMapOfDescriptions(Realms& realms)
+{
+    JSObject* target = realms.object(realms.plain(), "({ })"_s);
+    JSObject* map = realms.object(realms.plain(), "({ held: { value: 1 } })"_s);
+    SimulatedCall(realms, "Object.defineProperties"_s).run({ target, map }, [&] {
+        defineHeld(realms, target, map);
+        return target;
+    });
+}
+
 static constexpr ASCIILiteral programCallingShellFunction = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}]} module=m0
@@ -770,6 +842,9 @@ static constexpr ASCIILiteral collectInCallThatDoesNotCollectTest = "native-call
 static constexpr ASCIILiteral collectFromEntryThatDoesNotAllocateTest = "native-call-validation/entry-that-does-not-allocate-collects"_s;
 static constexpr ASCIILiteral returnOperandThatIsOnlyInspectedTest = "native-call-validation/inspected-operand-is-returned"_s;
 static constexpr ASCIILiteral keepOperandThatIsOnlyInspectedTest = "native-call-validation/inspected-operand-is-stored-in-another"_s;
+static constexpr ASCIILiteral keepReceiverThatTheDescriptionDoesNotHoldTest = "native-call-validation/receiver-that-the-description-does-not-hold-is-defined"_s;
+static constexpr ASCIILiteral keepReceiverThatIsDescribedUnderAnotherKeyTest = "native-call-validation/receiver-that-is-described-under-another-key-is-defined"_s;
+static constexpr ASCIILiteral keepMapOfDescriptionsTest = "native-call-validation/map-of-descriptions-is-defined-in-the-place-of-a-value"_s;
 
 std::span<const NativeTest> nativeCallValidationTests()
 {
@@ -785,6 +860,7 @@ std::span<const NativeTest> nativeCallValidationTests()
         { "native-call-validation/proxy-that-an-entry-uses-by-a-protocol-throws-by-itself"_s, testProxyThatAnEntryUsesByProtocolThrowsByItself },
         { "native-call-validation/property-of-an-array-under-a-number-that-is-no-index-is-an-element"_s, testPropertyOfAnArrayUnderANumberThatIsNoIndexIsAnElement },
         { "native-call-validation/operand-that-another-operand-holds-under-an-index-may-arrive-there"_s, testOperandThatAnotherOperandHoldsUnderAnIndexMayArriveThere },
+        { "native-call-validation/operand-that-a-description-holds-may-arrive-where-it-is-defined"_s, testOperandThatADescriptionHoldsMayArriveWhereItIsDefined },
         { "native-call-validation/setter-of-native-code-may-define-its-property-anew"_s, testSetterOfNativeCodeMayDefineItsPropertyAnew },
         { "native-call-validation/object-of-the-host-stores-and-deletes-in-its-own-way"_s, testObjectOfHostStoresAndDeletesInItsOwnWay },
         { "native-call-validation/built-in-that-the-call-names-is-accepted"_s, testBuiltinThatTheCallNamesIsAccepted },
@@ -806,6 +882,9 @@ std::span<const NativeTest> nativeCallValidationTests()
         { collectFromEntryThatDoesNotAllocateTest, testMismatchCrashes<collectFromEntryThatDoesNotAllocateTest, NativeCallCollected, collectFromEntryThatDoesNotAllocate> },
         { returnOperandThatIsOnlyInspectedTest, testMismatchCrashes<returnOperandThatIsOnlyInspectedTest, NativeCallKeptOperand, returnOperandThatIsOnlyInspected> },
         { keepOperandThatIsOnlyInspectedTest, testMismatchCrashes<keepOperandThatIsOnlyInspectedTest, NativeCallKeptOperand, keepOperandThatIsOnlyInspected> },
+        { keepReceiverThatTheDescriptionDoesNotHoldTest, testMismatchCrashes<keepReceiverThatTheDescriptionDoesNotHoldTest, NativeCallKeptOperand, keepReceiverThatTheDescriptionDoesNotHold> },
+        { keepReceiverThatIsDescribedUnderAnotherKeyTest, testMismatchCrashes<keepReceiverThatIsDescribedUnderAnotherKeyTest, NativeCallKeptOperand, keepReceiverThatIsDescribedUnderAnotherKey> },
+        { keepMapOfDescriptionsTest, testMismatchCrashes<keepMapOfDescriptionsTest, NativeCallKeptOperand, keepMapOfDescriptions> },
         { "native-call-validation/operation-may-write-what-it-lists"_s, testOperationMayWriteWhatItLists },
         { growArrayInOperationThatWritesNoArrayStorageTest, testMismatchCrashes<growArrayInOperationThatWritesNoArrayStorageTest, OperationWroteHeap, growArrayInOperationThatWritesNoArrayStorage> },
         { changeOperandThatTheOperationOnlyReadsTest, testMismatchCrashes<changeOperandThatTheOperationOnlyReadsTest, OperationWroteHeap, changeOperandThatTheOperationOnlyReads> },

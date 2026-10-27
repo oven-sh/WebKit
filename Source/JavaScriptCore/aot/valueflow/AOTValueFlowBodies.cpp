@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinMembers.h"
 #include "AOTCFG.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"

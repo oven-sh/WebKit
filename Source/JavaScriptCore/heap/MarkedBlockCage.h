@@ -12,6 +12,7 @@
 #include <limits>
 #include <wtf/Assertions.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/OptionSet.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
@@ -104,12 +105,12 @@ public:
     bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
 
     // Storage: what arrays and objects keep outside their cells. It comes from malloc.
-    enum class ExhaustedHeap : uint8_t { Cells, Structures, Storage };
+    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Storage = 1 << 2 };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError();
-    // This error also tells the program what it is owed for storage.
+    // Where storage is among what the program is owed an error for, this error is that error.
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError(VM&);
 
     struct ReservationFailure {
@@ -119,7 +120,8 @@ public:
     JS_EXPORT_PRIVATE static ReservationFailure reservationFailure();
 
     static void logExhaustion(ExhaustedHeap);
-    void setExhaustedHeap(ExhaustedHeap exhaustedHeap) { m_exhaustedHeap = exhaustedHeap; }
+    // One error may be owed for several heaps.
+    void addExhaustedHeap(ExhaustedHeap exhaustedHeap) { m_exhaustedHeaps.add(exhaustedHeap); }
     JS_EXPORT_PRIVATE String describeExhaustedLimit() const;
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
@@ -134,7 +136,9 @@ public:
 
 private:
     void didAllocate(const void*, size_t);
-    bool tryKeepReleasedReserveAgain();
+    bool hasHeapThatReleasedReserve() const;
+    bool tryKeepReleasedReservesAgain();
+    bool tryKeepOwnReleasedReserveAgain();
     bool tryKeepBallastAgain();
     bool releaseOwnLastReserve();
     bool tryUseSharedReserve();
@@ -155,7 +159,7 @@ private:
     void* m_stackPointerAtError { nullptr };
     size_t m_numberOfChunksReleased { 0 };
     std::atomic<size_t> m_numberOfBlocksTaken { 0 };
-    ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
+    OptionSet<ExhaustedHeap> m_exhaustedHeaps;
     unsigned m_numberOfBarrenCollections { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;

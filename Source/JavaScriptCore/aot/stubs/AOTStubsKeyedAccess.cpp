@@ -154,7 +154,9 @@ static KeyedProbeRegisters allocateKeyedProbeRegisters(StubAssembler& jit)
 }
 
 // A trap is handed an index as its text and asks its target under that text. Goes on where the base may have elements and the key is the text of an index of at most four digits, with the index in registers.entry. Preserves base and key.
-static void loadIndexOfText(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& isNoSuchKey)
+enum class ElementUnderText : bool { IsLookedFor, MayBeAdded };
+
+static void loadIndexOfText(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& isNoSuchKey, ElementUnderText element = ElementUnderText::IsLookedFor)
 {
     const GPRReg key = registers.key;
     const GPRReg characters = registers.uid;
@@ -167,7 +169,8 @@ static void loadIndexOfText(StubAssembler& jit, const KeyedProbeRegisters& regis
     // The elements of a compiled object are those of its extra properties.
     Jump hasIndexedStorage = jit.branchTest8(CCallHelpers::NonZero, Address(registers.base, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask));
     isNoSuchKey.append(jit.branchIfNotType(registers.base, CompiledObjectType));
-    isNoSuchKey.append(jit.branchTest32(CCallHelpers::Zero, Address(registers.base, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
+    if (element == ElementUnderText::IsLookedFor)
+        isNoSuchKey.append(jit.branchTest32(CCallHelpers::Zero, Address(registers.base, offsetOfOrderWord), TrustedImm32(orderWordHasExtraProperties)));
     hasIndexedStorage.link(&jit);
     isNoSuchKey.append(jit.branchIfNotString(key));
     jit.loadPtr(Address(key, JSString::offsetOfValue()), characters);
@@ -1212,7 +1215,7 @@ void generatePutByValCached(StubAssembler& jit)
 
     miss.link(&jit);
     JumpList leafStores;
-    loadIndexOfText(jit, registers, leafStores);
+    loadIndexOfText(jit, registers, leafStores, ElementUnderText::MayBeAdded);
     boxInt32(jit, registers.entry, key);
     jit.jumpToStub(storeElement);
     leafStores.link(&jit);
@@ -1270,11 +1273,19 @@ void generateDefineByValCached(StubAssembler& jit)
 
     JumpList miss;
     Jump keyIsCell = jit.branchIfCell(registers.key);
+    Label defineElement = jit.label();
     defineOwnElementAndReturn(jit, registers, value, miss);
 
     keyIsCell.link(&jit);
     miss.append(jit.branchIfNotCell(registers.base));
-    storeByKeyedSlot(jit, SlotOperation::Define, registers, value, miss);
+    JumpList isNotFiled;
+    storeByKeyedSlot(jit, SlotOperation::Define, registers, value, isNotFiled);
+
+    // `{ [key]: value }` makes a text of an index before the value is worked out.
+    isNotFiled.link(&jit);
+    loadIndexOfText(jit, registers, miss, ElementUnderText::MayBeAdded);
+    boxInt32(jit, registers.entry, registers.key);
+    jit.jump().linkTo(defineElement, &jit);
 
     miss.link(&jit);
     exitOnStoreMiss(jit, PutMode::Define, registers, value);

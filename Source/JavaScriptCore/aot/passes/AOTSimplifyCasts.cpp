@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTFieldValueNarrowing.h"
 #include "AOTFlowApply.h"
 #include "AOTObservableOperations.h"
 #include "AOTPredictedValues.h"
@@ -235,6 +236,10 @@ struct CastSimplification : Rewrite {
             edit(id, ValueEdit::Definition).setOperand(0, narrowest);
         operand = narrowest;
         if (!typeOf(operand).isSubsetOf(typeOf(id), program)) {
+            noteCastThatStays(id);
+            return changed;
+        }
+        if (narrowsHolderToNothing({ program, function, context.types }, cast)) {
             noteCastThatStays(id);
             return changed;
         }

@@ -593,7 +593,8 @@ void CompiledFrameIterator::advance()
         advanceToCallerMachineFrame();
         return;
     }
-    if (!frame().inlineFrame) {
+    m_calleeFunction = frame().function;
+    if (!m_frame.inlineFrame) {
         if (m_listsConstructedFunctionsThatLeft && !m_cursor.isAmongFramesThatWait) {
             m_constructedFunctionThatLeft = findConstructedFunctionThatLeft();
             if (m_constructedFunctionThatLeft) [[unlikely]]
@@ -611,6 +612,11 @@ void CompiledFrameIterator::advance()
     m_frame.calledBuiltin = { };
     m_frame.visibility = m_cursor.isAmongFramesThatWait ? TraceVisibility::Hidden : FunctionDescription(caller.function).visibility();
     m_isInlinedConstructCall = caller.isInlinedConstructCall;
+}
+
+bool CompiledFrameIterator::tailCalledOwnBody() const
+{
+    return m_calleeFunction && isFormThatLeftByTailCall(frame().function, FunctionDescription(m_calleeFunction).sourceFunction(), m_frame.isTailDeleted);
 }
 
 bool CompiledFrameIterator::isAboveFramesThatWait() const

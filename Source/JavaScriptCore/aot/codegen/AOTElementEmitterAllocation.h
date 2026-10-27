@@ -20,6 +20,7 @@ public:
     explicit ArrayAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     const ArrayStorageForm& formAtAllocation(const Type& array) const;
+    const Type& typeGivenByOnlyCast(ValueID array);
     const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array);
 
     CellPointer newLiteral(const ValueContext&);
@@ -47,6 +48,7 @@ private:
     RawElements rawElementsOf(std::span<const ValueID> elements, const ArrayStorageForm&, LBasicBlock doesNotFit);
     void storeElements(CellPointer newArray, const ArrayStorageForm&, std::span<const Operand> rawElements, std::span<const uint32_t> indexes);
     Number numberOrMarker(ValueID);
+    bool isNumberOrMarker(ValueID);
 };
 
 static_assert(sizeof(ArrayAllocationEmitter) == sizeof(OperationEmitter));

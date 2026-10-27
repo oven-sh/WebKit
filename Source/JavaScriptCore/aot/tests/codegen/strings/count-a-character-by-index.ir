@@ -11,6 +11,8 @@
 # REQUIRES: unsanitized-code
 # RUN(HOT): lower-to-b3 optimized loops f1
 # REQUIRES(HOT): unsanitized-code
+# RUN(FOUND): lower-to-b3 optimized loops f1
+# REQUIRES(FOUND): unsanitized-code
 # RUN(X64): lower-to-air loops f1
 # REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air loops f1
@@ -91,7 +93,7 @@ function f1 name="commas" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # REPEAT: turn = 1..8
 # CHECK: Int32 b@[[unit%(turn)]] = Load8Z(b@{{*}}, ControlDependent|ReadsImmutable|Reads:characters8,
 # CHECK: Int32 b@[[isComma%(turn)]] = Equal(b@[[unit%(turn)]], $44(
-# CHECK-NEXT: Branch(b@[[isComma%(turn)]], Terminal,
+# CHECK: Branch(b@[[isComma%(turn)]], Terminal,
 # CHECK-NEXT: Successors: Then:Unlikely:#
 # END REPEAT
 # CHECK-LABEL: end of loop
@@ -104,11 +106,20 @@ function f1 name="commas" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # HOT-NOT: Reads:singleCharacterStrings
 # HOT-NOT: Reads:{
 # HOT-NOT: ExitsSideways
-# HOT-NOT: Below(
+# HOT-NOT: Below({{*}}:StringRange
+# HOT-NOT: Above({{*}}:StringRange
 # HOT-LABEL: end of loop
 
-# x86-64 compares the byte in memory. ARM64 loads it first.
-# X64: instructions: 3, patchpoints: 1, {{*}} steps by 1
-# X64: instructions: 10, patchpoints: 8, {{*}} steps by 8
-# ARM64: instructions: 4, patchpoints: 1, {{*}} steps by 1
-# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8
+# What a comma does is written out with each turn: behind it comes the next turn. A text with one comma in it runs as fast as a text without.
+# FOUND-LABEL: steps by 8
+# REPEAT: turn = 1..8
+# FOUND: Int64 b@{{*}} = Add(b@{{*}}, $1(b@{{*}}), {{*}}:Increment)
+# END REPEAT
+# FOUND-LABEL: end of loop
+
+# x86-64 compares the byte in memory. ARM64 loads it first. The counts hold what a comma does as well, which is part of the loops now:
+# three instructions in the loop by one, 17 in the eight turns. Without a comma a trip is 3 and 10 instructions on x86-64, 4 and 19 on ARM64.
+# X64: instructions: 6, patchpoints: 1, {{*}} steps by 1
+# X64: instructions: 27, patchpoints: 8
+# ARM64: instructions: 7, patchpoints: 1, {{*}} steps by 1
+# ARM64: instructions: 36, patchpoints: 8

@@ -277,6 +277,7 @@ public:
 
         reduceAllBlocksStrength();
         mergeTestsOfOneInterval();
+        shareNewPartsOfAddresses();
 
         if (m_proc.optLevel() >= 2 && !m_changed && !m_mayHaveUnfoldedPhis)
             return false;
@@ -4818,7 +4819,55 @@ private:
             representative = m_numbering->ensureRepresentative(inserted);
         if (representative != inserted)
             inserted->replaceWithIdentity(representative);
+        else
+            m_newPartsOfAddresses.append(inserted);
         return representative;
+    }
+
+    // The turns of a loop that are written out share base + (index << shift) where one turn stands in front of the next. Where each access stands behind a test of its own, none does,
+    // and every turn would make the sum again. It moves up to where all of them come from.
+    void shareNewPartsOfAddresses()
+    {
+        if (m_newPartsOfAddresses.size() < 2)
+            return;
+        m_proc.resetValueOwners();
+        Dominators& dominators = m_proc.dominators();
+        NaturalLoops& loops = m_proc.naturalLoops();
+        // A shift comes before the sums that it is part of.
+        for (Opcode opcode : { Shl, Add }) {
+            UncheckedKeyHashMap<ValueKey, Vector<Value*, 8>> valuesByKey;
+            for (Value* value : m_newPartsOfAddresses) {
+                if (value->opcode() != opcode || !value->owner)
+                    continue;
+                value->performSubstitution();
+                valuesByKey.add(value->key(), Vector<Value*, 8>()).iterator->value.append(value);
+            }
+            for (auto& values : valuesByKey.values()) {
+                if (values.size() < 2)
+                    continue;
+                BasicBlock* common = values[0]->owner;
+                double frequency = 0;
+                for (Value* value : values) {
+                    frequency += value->owner->frequency();
+                    while (!dominators.dominates(common, value->owner))
+                        common = dominators.idom(common);
+                }
+                bool canStandThere = frequency >= common->frequency() && loops.innerMostLoopOf(common) == loops.innerMostLoopOf(values[0]->owner);
+                for (Value* child : values[0]->children())
+                    canStandThere &= child->owner && dominators.dominates(child->owner, common);
+                for (Value* value : values)
+                    canStandThere &= value->owner != common;
+                if (!canStandThere)
+                    continue;
+                Value* shared = m_proc.add<Value>(opcode, values[0]->origin(), values[0]->child(0), values[0]->child(1));
+                common->appendNonTerminal(shared);
+                shared->owner = common;
+                for (Value* value : values)
+                    value->replaceWithIdentity(shared);
+                m_changed = true;
+            }
+        }
+        m_newPartsOfAddresses.shrink(0);
     }
 
     Value* insertOrReuse(Opcode opcode, Value* child)
@@ -4856,13 +4905,25 @@ private:
                 if (hasOnlyUnlikelyEdges)
                     isEnteredOnlyOverUnlikelyEdges.quickSet(block->index());
             }
+            // A Phi that the walk has not reached yet and that gets one value is that value.
+            auto onlyInputOf = [&](Value* phi) -> Value* {
+                if (phi->opcode() != Phi || phi->index() >= m_phiChildrenValueCount)
+                    return nullptr;
+                return uniquePhiInput(phi, upsilonsInSnapshot(phi));
+            };
             for (Value* user : m_proc.values()) {
-                if (user->opcode() == ZExt32 || (user->opcode() == Add && user->child(1)->hasInt()))
+                if (user->opcode() == Identity || user->opcode() == ZExt32 || (user->opcode() == Add && user->child(1)->hasInt()))
                     continue;
                 if (user->owner && isEnteredOnlyOverUnlikelyEdges.quickGet(user->owner->index()))
                     continue;
-                for (Value* child : user->children())
+                if (auto* upsilon = user->as<UpsilonValue>(); upsilon && onlyInputOf(upsilon->phi()))
+                    continue;
+                for (Value* child : user->children()) {
+                    child = child->foldIdentity();
+                    if (Value* input = onlyInputOf(child))
+                        child = input;
                     m_hasUserThatKeepsSum->quickSet(child->index());
+                }
             }
         }
         return sum->index() < m_hasUserThatKeepsSum->size() && !m_hasUserThatKeepsSum->quickGet(sum->index());
@@ -5857,6 +5918,7 @@ private:
     UncheckedKeyHashMap<unsigned, Value*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_phisByInputs;
     Vector<Value*> m_inputInBlock;
     std::optional<BitVector> m_hasUserThatKeepsSum;
+    Vector<Value*, 8> m_newPartsOfAddresses;
     PhiChildren* m_phiChildren { nullptr };
     unsigned m_phiChildrenValueCount { 0 };
     IndexMap<BasicBlock*, BlockState> m_blockStates;

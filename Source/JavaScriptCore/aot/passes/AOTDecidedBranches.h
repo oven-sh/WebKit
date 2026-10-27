@@ -120,29 +120,30 @@ public:
 
     KnownBoolean outcomeBehindDominatingTests(BlockID branchingBlock);
     Vector<ProvenExpectation, 4> takeProvenExpectations();
-    bool hasTests() const { return !m_operands.isEmpty(); }
-    // Branches have become jumps. The values are the same.
-    void didChangeControlFlow() { m_outcomes.clear(); }
+    bool isEmpty() const { return m_operands.isEmpty(); }
+    // Branches have become jumps. The values are the same. False if no test is left that could say something of another.
+    bool didChangeControlFlow();
 
 private:
     struct TestedOperand {
         ValueID subject;
         BlockID block;
+        // The test that the block branches on, or what the block expects of the value.
+        ValueID user;
         uint32_t operandIndex;
-        // Set where the block does not test the value, and expects something of it.
-        ValueID expectation { };
-        uint32_t group { 0 };
+        bool isExpectation { false };
     };
 
-    const Value& testBranchedOn(BlockID) const LIFETIME_BOUND;
-    std::span<const TestedOperand> operandsTestedIn(BlockID) const LIFETIME_BOUND;
+    bool isLive(const TestedOperand&) const;
     void computeOutcomes();
 
     FunctionAnalyses& m_analyses;
     TypeArena& m_types;
-    // The operands that stand for a value which several branches test, by block.
+    // The operands that stand for a value which several blocks test or expect something of, those for one value side by side. At least one of them is tested.
     Vector<TestedOperand, 16> m_operands;
-    uint32_t m_numberOfGroups { 0 };
+    BitVector m_blocksThatTest;
+    bool m_hasExpectations { false };
+    bool m_hasOutcomes { false };
     Vector<KnownBoolean> m_outcomes;
     Vector<ProvenExpectation, 4> m_provenExpectations;
 };

@@ -131,4 +131,4 @@ function f1 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # ONCE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
 # X64: instructions: 39, patchpoints: 4, rare instructions: 23
-# ARM64: instructions: 42, patchpoints: 4, rare instructions: 24
+# ARM64: instructions: 40, patchpoints: 4, rare instructions: 24

@@ -2335,7 +2335,7 @@ static void setDisplayPath(TableEncoder& encoder, ModuleID id, const Module& mod
 {
     std::span<const uint8_t> displayPath = module.displayPath ? encoder.program.string(module.displayPath) : std::span<const uint8_t>();
     entry.charactersInFrontOfDisplayPath = ModuleData::hasNoDisplayPath;
-    if (encoder.obfuscates() || displayPath.empty())
+    if ((encoder.obfuscates() && !module.runtimeModule) || displayPath.empty())
         return;
     std::span<const uint8_t> publicPath = encoder.program.string(module.path);
     if (publicPath.size() >= displayPath.size()) {
@@ -2377,7 +2377,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
         { module.flags.contains(ModuleFlags::EvaluatesItself) && entry.bodyFunction(), Flag::EvaluatesItself },
         { module.exportsVariable || encoder.placement.hasModuleValue(id), Flag::HasValue },
         { isBundlerHelperModule(program, module), Flag::IsLibraryCodeWithFilePath },
-        { module.kind == ModuleKind::RuntimeSource || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
+        { module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
     };
     for (auto [holds, flag] : flags) {
         if (holds)
@@ -2542,7 +2542,7 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     Vector<CompiledRuntimeModuleData> runtimeModules;
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!isFoundByPathOf(module.kind) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
+        if (!answersToPath(program, module) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             runtimeModules.append({ module.runtimeModule.index(), index });

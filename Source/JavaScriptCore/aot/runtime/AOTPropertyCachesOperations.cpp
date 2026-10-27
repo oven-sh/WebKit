@@ -23,6 +23,7 @@
 #include "AOTRuntimeFunctions.h"
 #include "AOTSlimClosure.h"
 #include "AOTStaticFields.h"
+#include "DeferTermination.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
 #include "NumericStrings.h"
@@ -36,6 +37,7 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
     // What the first look changes (a dictionary is made flat, members are made, an absent field is marked as read) it changes once. A second look, which runs no code, sees what every later read sees.
     if (answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && base.isObject()) {
         VM& vm = *instance->vm;
+        DeferTerminationForAWhile deferTermination(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         Structure* structureNow = asObject(base)->structure();
         PropertyCaches& caches = *instance->state->propertyCaches;

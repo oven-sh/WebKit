@@ -471,6 +471,8 @@ Effects effectsWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan&
         Effects effects = declaredBoundOf(constant.opcode);
         if (tryMakeInitializeBuiltin(inputs.program.builtins(), inputs.flow, constant))
             effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
+        if (plan.leavesReadBehind)
+            effects.merge(declaredBoundOf(Opcode::PropGet));
         effects.merge(nullishCheckEffects);
         return effects;
     }
@@ -648,6 +650,8 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
         Value constant = makeConstant(context.program, plan);
         if (std::optional<Value> initialization = tryMakeInitializeBuiltin(context.program.builtins(), context.inputs.flow, constant))
             insert(WTF::move(*initialization));
+        if (plan.leavesReadBehind)
+            insert(Value(function.at(rewrite.use)));
         replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(constant));
         break;
     }

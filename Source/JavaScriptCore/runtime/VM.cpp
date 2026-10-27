@@ -414,7 +414,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     AtomStringTable* existingEntryAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
     structureStructure.setWithoutWriteBarrier(Structure::createStructure(*this));
 #if ENABLE(AOT)
-    if (AOT::Image::isRegistered())
+    if (AOT::Image::current())
         m_aotState.attachImage(*this);
 #endif
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
@@ -1910,6 +1910,8 @@ void VM::drainMicrotasks()
 #if ENABLE(AOT)
     if (m_aotState.hasObjectsBeingFilled) [[unlikely]]
         AOT::RuntimeHooks::finishFillingObjects(*this);
+    if (m_aotState.modulesWhoseFilesRunAheadOfLoader) [[unlikely]]
+        AOT::RuntimeHooks::runFilesThatWaitInLoader(*this);
 #endif
 
     if (executionForbidden()) [[unlikely]]

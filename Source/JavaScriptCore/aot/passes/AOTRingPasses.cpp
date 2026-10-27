@@ -2001,10 +2001,11 @@ struct ControlFlowSimplifier {
         });
         mayFindMoreAtOnce |= typeTests && typeTests->gaveUpOnLongWays();
         // With an edge gone, a block may have come to stand behind one edge of a test.
-        while (didDecide && testsOfSameValues && testsOfSameValues->hasTests()) {
+        while (didDecide && testsOfSameValues && !testsOfSameValues->isEmpty()) {
             analyses.didChangeControlFlow();
-            testsOfSameValues->didChangeControlFlow();
-            didDecide = decide(Vector<BlockID>(analyses.cfg().reversePostOrder()).span(), [&](BlockID block) {
+            if (!testsOfSameValues->didChangeControlFlow())
+                break;
+            didDecide = decide(analyses.cfg().reversePostOrder(), [&](BlockID block) {
                 return testsOfSameValues->outcomeBehindDominatingTests(block);
             });
         }

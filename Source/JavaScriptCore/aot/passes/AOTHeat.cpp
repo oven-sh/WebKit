@@ -893,6 +893,8 @@ struct OutliningSite {
     ValueID root { };
     // Whether the operations that a stack trace can show stand for a call in tail position: all of them do or none does.
     std::optional<bool> isTailCall { };
+    // Whether those operations have a second place, which a stack trace shows for some of their frames: all of them have it or none has.
+    std::optional<bool> isPartOfConstruction { };
     // The built-in function that those operations run steps of, if all of them run steps of the same one or of none. The call of the body names it.
     std::optional<BuiltinID> calledBuiltin { };
     bool rootIsUsed { false };
@@ -1649,9 +1651,11 @@ struct OutliningScan {
             return false;
         if (!analyses.mayThrow(id) && !analyses.mayCallUnknownCode(id))
             return true;
-        if (!site.isTailCall)
+        if (!site.isTailCall) {
             site.isTailCall = site.root ? origin.isTailCall : !!value.isTailCall;
-        return value.position == origin.position && value.isTailCall == *site.isTailCall;
+            site.isPartOfConstruction = site.root ? origin.isPartOfConstruction : !!value.isPartOfConstruction;
+        }
+        return value.position == origin.position && value.isTailCall == *site.isTailCall && value.isPartOfConstruction == *site.isPartOfConstruction;
     }
 
     std::optional<BuiltinID> findCalledBuiltin(const OutliningSite& site)
@@ -2515,6 +2519,7 @@ static void replaceRegion(IRBuilder& builder, const OutliningSite& site, Functio
 
     Origin origin = function.at(site.entryBlock).terminator.origin();
     origin.isTailCall = site.isTailCall.value_or(origin.isTailCall);
+    origin.isPartOfConstruction = site.isPartOfConstruction.value_or(origin.isPartOfConstruction);
     builder.setOrigin(origin);
     builder.splitBlock({ site.entryBlock, site.firstIndex });
     ProgramPoint point { site.entryBlock, site.firstIndex };

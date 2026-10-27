@@ -60,6 +60,7 @@
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
+#include "AOTResolveAccesses.h"
 #include "AOTReuseEnvironments.h"
 #include "AOTSlotPlan.h"
 #include "AOTSplitBehindEntryChecks.h"
@@ -169,7 +170,7 @@ constexpr std::array rows {
     programPass(ReadCapturesFromEnvironments, Optional, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies),
     takingAway(programPass(RemoveUnreadFields, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
-    addingOnly({ }, programPass(ProveResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
+    addingOnly({ }, programPass(ProveResults, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedParameters, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     programPass(RemoveUnreachableFunctions, Optional, { Prepared, Selected }, { CallGraph }, { }, { }),
     programPass(SplitBehindEntryChecks, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, resultsAboutBodies | Results { Heat }),
@@ -205,7 +206,7 @@ constexpr std::array rows {
     functionPass(BindGlobalNames, bindGlobalNames, Optional, Prepared, { Flow }, values),
     derivingFunctions(readingOtherBodies(functionPass(CallThroughMethodTable, callThroughMethodTable, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything))),
     derivingFunctions(readingOtherBodies(functionPass(ResolveCalls, resolveCalls, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything))),
-    functionPass(ResolveAccesses, resolveAccesses, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
+    functionPass(ResolveAccesses, resolveAccesses, Optional, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(SplitUnions, splitUnions, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(PlaceTypeTests, placeTypeTests, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     derivingFunctions(functionPass(ExpandIteration, expandIteration, Required, Prepared, { Flow, EffectSummaries }, everything)),
@@ -789,6 +790,7 @@ static_assert(canRunSimplify(ChooseCallingConventions));
 static_assert(canRunFunctionPass(RemoveUnreadFields, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(RemoveUnusedResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ProveResults, RemoveDeadCountedLoops));
+static_assert(canRunFunctionPass(ProveResults, SimplifyControlFlow));
 static_assert(canRunFunctionPass(RemoveUnusedParameters, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(SplitFreshResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ChooseCallingConventions, RemoveDeadCountedLoops));
@@ -1615,6 +1617,7 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::SplitBehindEntryChecks);
     if (!m_runner.isStopped()) {
         m_output->flow->setSitesOfWholeLiterals(collectSitesOfWholeLiterals(m_program, flow(), m_build));
+        m_output->flow->setLayoutsExpectedInProxies(collectLayoutsExpectedInProxies(m_program));
         m_output->flow->setConstantLists(collectConstantLists(m_program, flow(), m_build));
     }
     stage.didFinish("collect whole literals and constant lists"_s);

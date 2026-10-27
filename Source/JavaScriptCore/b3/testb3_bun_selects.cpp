@@ -49,6 +49,35 @@ static void testConvertBranchesToSelectsConvertsTriangle()
     CHECK_EQ(run(*code, 0, memory, 4), 0);
 }
 
+// A branch that mostly goes one way is given up for one value, not for more: what its unlikely side computes would be computed every time.
+static void testConvertBranchesToSelectsKeepsBranchWithUnlikelySideThatComputes()
+{
+    for (bool computes : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        TopTestedLoop loop(graph);
+        BasicBlock* taken = proc.addBlock();
+        BasicBlock* join = proc.addBlock();
+        Value* loaded = elementAtIndex(graph, loop, loop.body);
+        graph.branch(loop.body, graph.make(loop.body, GreaterThan, loaded, loop.extra), unlikely(taken), FrequentedBlock(join));
+        if (computes)
+            graph.increase(taken, loop.sum, 1);
+        else
+            graph.set(taken, loop.sum, loaded);
+        graph.jump(taken, join);
+        loop.endBody(join);
+
+        CHECK_EQ(convertBranchesToSelectsAndValidate(proc), !computes);
+        checkValueCountInEachLoop(proc, Branch, { computes ? 2u : 1u });
+        checkValueCountInEachLoop(proc, Select, { computes ? 0u : 1u });
+        auto code = compileProc(proc);
+        int64_t memory[6] = { 5, -3, 9, 4, 4, 100 };
+        CHECK_EQ(run(*code, 6, memory, 4), computes ? 3 : 100);
+        CHECK_EQ(run(*code, 5, memory, 4), computes ? 2 : 9);
+        CHECK_EQ(run(*code, 6, memory, 100), 0);
+    }
+}
+
 static void testConvertBranchesToSelectsConvertsDiamond()
 {
     Procedure proc;
@@ -322,6 +351,7 @@ static void testConvertBranchesToSelectsCountsLimits()
 void addBunSelectTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testConvertBranchesToSelectsConvertsTriangle());
+    RUN(testConvertBranchesToSelectsKeepsBranchWithUnlikelySideThatComputes());
     RUN(testConvertBranchesToSelectsConvertsDiamond());
     RUN(testConvertBranchesToSelectsConvertsNestedTest());
     RUN(testConvertBranchesToSelectsKeepsOtherBranches());

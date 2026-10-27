@@ -53,6 +53,8 @@ public:
         for (const Plan& plan : m_plans) {
             for (BasicBlock* block : plan.blocks)
                 cloner.addBlock(block);
+            for (BasicBlock* block : plan.blocksBehindRareEdges)
+                cloner.addBlock(block);
         }
         cloner.demoteEscapingValues();
         m_proc.resetValueOwners();
@@ -94,6 +96,19 @@ private:
             unsigned stayingSuccessorIndex { 0 };
         };
         Vector<RepeatedTest, 2> repeatedTests;
+        Value* counter { nullptr };
+        // A side path that ends its turn by itself has a copy of the test at the bottom.
+        struct SideTest {
+            BasicBlock* block { nullptr };
+            unsigned stayingSuccessorIndex { 0 };
+            Value* tested { nullptr };
+            Vector<BasicBlock*, 2> blocksBehindTest;
+        };
+        Vector<SideTest, 1> sideTests;
+        // With side paths: every value that is the counter of the next turn. Each way through a turn has its own.
+        Vector<Value*, 2> nextCounters;
+        // What lies behind the rare edges, and the rest of the turn behind that.
+        Vector<BasicBlock*, 4> blocksBehindRareEdges;
     };
 
     struct Counter {
@@ -132,13 +147,11 @@ private:
         return !scratch.subsumes(patchpoint->earlyClobbered()) || !scratch.subsumes(patchpoint->lateClobbered());
     }
 
-    // A word of 64 bits in memory is a pointer or a value of any type. Lists of those are mostly short, and most loops that touch nothing else copy or fill one.
-    static bool accessesWord(const Value* value)
+    // A word of 64 bits in memory is a pointer or a value of any type. Lists of those are mostly short, and most loops that store them copy or fill one.
+    static bool storesWord(const Value* value)
     {
         auto* memory = value->as<MemoryValue>();
-        if (!memory)
-            return false;
-        return memory->isStore() ? memory->child(0)->type() == Int64 && memory->opcode() == Store : memory->type() == Int64;
+        return memory && memory->opcode() == Store && memory->child(0)->type() == Int64;
     }
 
     static bool countsTowardsSize(const Value* value)
@@ -209,17 +222,17 @@ private:
     }
 
     // Behind a test at the bottom nothing is left of the turn but what hands values to the next.
-    static bool findBlocksBehindTest(const NaturalLoops& loops, const NaturalLoop& loop, Plan& plan)
+    static bool findBlocksBehindTest(const NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* test, unsigned stayingSuccessorIndex, Vector<BasicBlock*, 2>& blocksBehindTest)
     {
-        plan.blocksBehindTest.clear();
-        for (BasicBlock* block = plan.test->successorBlock(plan.stayingSuccessorIndex); block != plan.header; block = block->successorBlock(0)) {
-            if (!loops.belongsTo(block, loop) || block->numPredecessors() != 1 || block->last()->opcode() != Jump || plan.blocksBehindTest.size() == Limits::maxBlocksBesideTestOfUnrolledLoop)
+        blocksBehindTest.clear();
+        for (BasicBlock* block = test->successorBlock(stayingSuccessorIndex); block != loop.header(); block = block->successorBlock(0)) {
+            if (!loops.belongsTo(block, loop) || block->numPredecessors() != 1 || block->last()->opcode() != Jump || blocksBehindTest.size() == Limits::maxBlocksBesideTestOfUnrolledLoop)
                 return false;
             for (Value* value : *block) {
                 if (emitsInstructions(value))
                     return false;
             }
-            plan.blocksBehindTest.append(block);
+            blocksBehindTest.append(block);
         }
         return true;
     }
@@ -259,6 +272,7 @@ private:
                 continue;
             plan.test = block;
             plan.stayingSuccessorIndex = firstStays ? 0 : 1;
+            plan.counter = counter->phi;
             plan.tested = tested;
             plan.testsCounterBeforeStep = tested == counter->phi;
             plan.start = counter->start;
@@ -266,7 +280,7 @@ private:
             plan.step = counter->step;
             if (plan.testsCounterBeforeStep)
                 return canRepeatUpToTest(plan);
-            return findBlocksBehindTest(loops, loop, plan);
+            return findBlocksBehindTest(loops, loop, plan.test, plan.stayingSuccessorIndex, plan.blocksBehindTest);
         }
         return false;
     }
@@ -460,6 +474,41 @@ private:
         return false;
     }
 
+    // Whether the address goes on by the same distance from turn to turn, stays, or comes out of memory.
+    static bool goesOnEvenly(const Plan& plan, Value* address, unsigned timeToLive)
+    {
+        address = address->foldIdentity();
+        if (address == plan.counter || address->isConstant() || address->as<MemoryValue>() || !plan.blocks.contains(address->owner))
+            return true;
+        if (!timeToLive)
+            return false;
+        switch (address->opcode()) {
+        case Add:
+        case Sub:
+            return goesOnEvenly(plan, address->child(0), timeToLive - 1) && goesOnEvenly(plan, address->child(1), timeToLive - 1);
+        case Shl:
+            return address->child(1)->hasInt() && goesOnEvenly(plan, address->child(0), timeToLive - 1);
+        case ZExt32:
+        case SExt32:
+            return goesOnEvenly(plan, address->child(0), timeToLive - 1);
+        default:
+            return false;
+        }
+    }
+
+    // A loop that reads pointers out of a list and goes on to their fields is written out where it walks the list. One that picks among a few elements of it is as a rule about what it does with them.
+    static bool readsWordsOnlyWhereItWalks(const Plan& plan)
+    {
+        for (BasicBlock* block : plan.blocks) {
+            for (Value* value : *block) {
+                MemoryValue* memory = value->as<MemoryValue>();
+                if (memory && memory->isLoad() && memory->type() == Int64 && !goesOnEvenly(plan, memory->lastChild(), Limits::maxDepthOfAddressInUnrolledLoop))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     // The turns that are written out share one counter: each reads or writes at its own distance from it.
     static bool walksData(const Plan& plan)
     {
@@ -551,7 +600,7 @@ private:
             if (block->last()->type() != Void)
                 return;
             for (Value* value : *block) {
-                if (!canCloneForLoop(value) || (isCall(value) && !isLoopPoll(value)) || accessesWord(value))
+                if (!canCloneForLoop(value) || (isCall(value) && !isLoopPoll(value)) || storesWord(value))
                     return;
                 numberOfValues += countsTowardsSize(value);
             }
@@ -576,24 +625,259 @@ private:
         for (BasicBlock* block : plan.blocks) {
             if (!runsEveryTurn(block) || !readTest(loops, loop, likelyBlocks, block, phiChildren, plan))
                 continue;
-            if (!isLikelyToLeaveOnlyAtTest(likelyBlocks, plan))
+            if (!isLikelyToLeaveOnlyAtTest(likelyBlocks, plan) || !readsWordsOnlyWhereItWalks(plan))
                 return;
             findRepeatedTests(plan);
-            plan.factor = factorFor(numberOfValues - std::min<unsigned>(numberOfValues, 2 * plan.repeatedTests.size()), block->last()->origin());
-            if (plan.factor && planFarBound(plan)) {
-                findSumsOfIntegers(phiChildren, plan);
-                // A loop that walks nothing and sums nothing up would only test less often.
-                if (!plan.sums.isEmpty() || walksData(plan))
-                    m_plans.append(WTF::move(plan));
+            auto chooseFactor = [&](Plan& plan, unsigned numberOfValues) {
+                plan.factor = factorFor(numberOfValues - std::min<unsigned>(numberOfValues, 2 * plan.repeatedTests.size()), block->last()->origin());
+                return plan.factor && planFarBound(plan);
+            };
+            if (!chooseFactor(plan, numberOfValues))
+                return;
+            findSumsOfIntegers(phiChildren, plan);
+            // A loop that walks nothing and sums nothing up would only test less often.
+            if (plan.sums.isEmpty() && !walksData(plan))
+                return;
+            if (plan.sums.isEmpty()) {
+                Plan withSidePaths = plan;
+                unsigned numberOfValuesWithSidePaths = numberOfValues;
+                if (addSidePaths(loops, loop, likelyBlocks, phiChildren, withSidePaths, numberOfValuesWithSidePaths) && chooseFactor(withSidePaths, numberOfValuesWithSidePaths))
+                    plan = WTF::move(withSidePaths);
             }
+            findBlocksBehindRareEdges(loops, loop, plan);
+            m_plans.append(WTF::move(plan));
             return;
         }
+    }
+
+    // What lies behind a rare edge is not written out with each turn. It gets one copy, with the rest of the turn, for all the turns that are written out,
+    // and behind that copy they are entered again if there is room for them. A counter of 32 bits is asked in 64 bits. One of 64 bits is asked only where the sum cannot wrap around.
+    void findBlocksBehindRareEdges(const NaturalLoops& loops, const NaturalLoop& loop, Plan& plan)
+    {
+        // A stretch of sums begins with more than the counter.
+        if (!plan.sums.isEmpty())
+            return;
+        if (plan.counter->type() == Int64) {
+            Signedness signedness = isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed;
+            Int128 room = Int128 { plan.step } * (plan.factor - 1);
+            IntegerInterval full = fullInterval(Int64, signedness);
+            IntegerInterval counter = intervalFor(m_proc, plan.counter, signedness);
+            if (counter.min + room < full.min || counter.max + room > full.max)
+                return;
+        }
+        IndexSet<BasicBlock*> reached;
+        Vector<BasicBlock*, 4> blocks;
+        auto add = [&](BasicBlock* block) {
+            if (block != plan.header && loops.belongsTo(block, loop) && reached.add(block))
+                blocks.append(block);
+        };
+        for (BasicBlock* block : plan.blocks) {
+            for (const FrequentedBlock& successor : block->successors()) {
+                if (successor.isRare() && !plan.blocks.contains(successor.block()))
+                    add(successor.block());
+            }
+        }
+        bool comesBack = false;
+        unsigned numberOfValues = 0;
+        for (unsigned index = 0; index < blocks.size(); ++index) {
+            BasicBlock* block = blocks[index];
+            if (loops.innerMostLoopOf(block) != &loop || block->last()->type() != Void)
+                return;
+            for (Value* value : *block) {
+                if (!canCloneForLoop(value))
+                    return;
+                numberOfValues += countsTowardsSize(value);
+            }
+            for (BasicBlock* successor : block->successorBlocks()) {
+                comesBack |= successor == plan.header;
+                add(successor);
+            }
+        }
+        if (!comesBack)
+            return;
+        if (numberOfValues > m_proc.limit(Limit::MaxValuesPerUnrolledLoop)) {
+            m_proc.didReachLimit(Limit::MaxValuesPerUnrolledLoop, plan.header->at(0)->origin());
+            return;
+        }
+        plan.blocksBehindRareEdges = WTF::move(blocks);
+    }
+
+    static Opcode relationOfSignedValues(Opcode relation)
+    {
+        switch (relation) {
+        case Below:
+            return LessThan;
+        case BelowEqual:
+            return LessEqual;
+        case Above:
+            return GreaterThan;
+        case AboveEqual:
+            return GreaterEqual;
+        default:
+            return relation;
+        }
+    }
+
+    std::optional<Plan::SideTest> readSideTest(const NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* block, const Plan& plan)
+    {
+        bool firstStays = loops.belongsTo(block->successorBlock(0), loop);
+        if (firstStays == loops.belongsTo(block->successorBlock(1), loop))
+            return std::nullopt;
+        DominatingCondition condition = stripNegations(block->last()->child(0)->foldIdentity());
+        Value* comparison = condition.value->foldIdentity();
+        std::optional<Opcode> inverted = invertedRelation(comparison->opcode());
+        if (!inverted || !comparison->child(0)->type().isInt())
+            return std::nullopt;
+        Opcode relation = firstStays == condition.isNonZero ? comparison->opcode() : *inverted;
+        for (unsigned testedIndex = 0; testedIndex < 2; ++testedIndex) {
+            Value* tested = comparison->child(testedIndex)->foldIdentity();
+            Value* bound = comparison->child(1 - testedIndex)->foldIdentity();
+            bool isSameBound = bound == plan.bound || (bound->hasInt() && plan.bound->hasInt() && bound->type() == plan.bound->type() && bound->asInt() == plan.bound->asInt());
+            if (!isSameBound || (testedIndex ? flippedRelation(relation) : relation) != plan.relation || stepOf(tested, plan.counter) != plan.step)
+                continue;
+            Plan::SideTest test { block, firstStays ? 0u : 1u, tested, { } };
+            if (!findBlocksBehindTest(loops, loop, block, test.stayingSuccessorIndex, test.blocksBehindTest))
+                return std::nullopt;
+            return test;
+        }
+        return std::nullopt;
+    }
+
+    // What one turn stores at a place that does not change and the next turn loads there stays in a register from turn to turn, as long as one turn stands in front of the next.
+    // Where ways meet between them, it is stored and loaded every turn.
+    static bool carriesValueInMemory(const NaturalLoops& loops, const NaturalLoop& loop, const Plan& plan)
+    {
+        Vector<MemoryValue*, 4> stores;
+        for (BasicBlock* block : plan.blocks) {
+            for (Value* value : *block) {
+                MemoryValue* memory = value->as<MemoryValue>();
+                if (memory && memory->isStore() && memory->lastChild()->owner && !loops.belongsTo(memory->lastChild()->owner, loop))
+                    stores.append(memory);
+            }
+        }
+        if (stores.isEmpty())
+            return false;
+        for (BasicBlock* block : plan.blocks) {
+            for (Value* value : *block) {
+                MemoryValue* memory = value->as<MemoryValue>();
+                if (!memory || !memory->isLoad())
+                    continue;
+                for (MemoryValue* store : stores) {
+                    if (store->lastChild() == memory->lastChild() && store->offset() == memory->offset())
+                        return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Whoever leaves the turns that are written out ends in the loop itself and stays there. An edge that is merely called unlikely may be taken every other turn,
+    // so what lies behind such edges is written out with the turns. What lies behind a rare edge is not.
+    bool addSidePaths(const NaturalLoops& loops, const NaturalLoop& loop, const IndexSet<BasicBlock*>& likelyBlocks, PhiChildren& phiChildren, Plan& plan, unsigned& numberOfValues)
+    {
+        if (carriesValueInMemory(loops, loop, plan))
+            return false;
+        IndexSet<BasicBlock*> sideBlocks;
+        Vector<BasicBlock*, 8> worklist;
+        for (BasicBlock* block : plan.blocks)
+            worklist.append(block);
+        unsigned numberOfLikelyBlocks = plan.blocks.size();
+        while (!worklist.isEmpty()) {
+            for (const FrequentedBlock& successor : worklist.takeLast()->successors()) {
+                if (successor.isRare() || !loops.belongsTo(successor.block(), loop) || likelyBlocks.contains(successor.block()) || !sideBlocks.add(successor.block()))
+                    continue;
+                plan.blocks.append(successor.block());
+                worklist.append(successor.block());
+            }
+        }
+        if (plan.blocks.size() == numberOfLikelyBlocks)
+            return false;
+
+        for (BasicBlock* block : plan.blocks.span().subspan(numberOfLikelyBlocks)) {
+            if (block->last()->type() != Void)
+                return false;
+            for (Value* value : *block) {
+                if (!canCloneForLoop(value) || (isCall(value) && !isLoopPoll(value)) || storesWord(value))
+                    return false;
+                numberOfValues += countsTowardsSize(value);
+            }
+            bool leavesLoop = false;
+            for (const FrequentedBlock& successor : block->successors())
+                leavesLoop |= !successor.isRare() && !loops.belongsTo(successor.block(), loop);
+            if (!leavesLoop)
+                continue;
+            // A loop that looks for something is expected to find it.
+            std::optional<Plan::SideTest> test = plan.testsCounterBeforeStep || block->last()->opcode() != Branch ? std::nullopt : readSideTest(loops, loop, block, plan);
+            if (!test)
+                return false;
+            plan.sideTests.append(WTF::move(*test));
+        }
+
+        for (UpsilonValue* upsilon : phiChildren[plan.counter]) {
+            if (sideBlocks.contains(upsilon->owner) && stepOf(upsilon->child(0)->foldIdentity(), plan.counter) != plan.step)
+                return false;
+        }
+        for (BasicBlock* block : plan.blocks) {
+            for (Value* value : *block) {
+                if (stepOf(value, plan.counter) == plan.step)
+                    plan.nextCounters.append(value);
+            }
+        }
+        if (plan.testsCounterBeforeStep)
+            return true;
+        // At the bottom of every turn stands a test.
+        for (BasicBlock* predecessor : plan.header->predecessors()) {
+            if (!sideBlocks.contains(predecessor))
+                continue;
+            bool endsBehindTest = plan.sideTests.containsIf([&](const Plan::SideTest& test) {
+                return predecessor == (test.blocksBehindTest.isEmpty() ? test.block : test.blocksBehindTest.last());
+            });
+            if (!endsBehindTest)
+                return false;
+        }
+        return true;
     }
 
     struct Bounds {
         Value* bound { nullptr };
         Value* farBound { nullptr };
+        // The block in front of the turns that are written out, where there is one.
+        BasicBlock* entry { nullptr };
     };
+
+    void enterAgainBehindRareEdges(RegionCloner& cloner, const Plan& plan, const Bounds& bounds, std::span<const RegionCloner::BlockMap> turns)
+    {
+        if (plan.blocksBehindRareEdges.isEmpty())
+            return;
+        Origin origin = plan.test->last()->origin();
+        RELEASE_ASSERT(plan.counter->opcode() == Identity && plan.counter->child(0)->opcode() == Get);
+        BasicBlock* again = m_proc.addBlock();
+        Value* counter = again->appendNew<VariableValue>(m_proc, Get, origin, plan.counter->child(0)->as<VariableValue>()->variable());
+        Value* bound = bounds.bound;
+        Opcode relation = plan.relation;
+        if (counter->type() == Int32) {
+            Opcode extension = isUnsignedRelation(relation) ? ZExt32 : SExt32;
+            counter = again->appendNew<Value>(m_proc, extension, origin, counter);
+            bound = again->appendNew<Value>(m_proc, extension, origin, bound);
+            relation = relationOfSignedValues(relation);
+        }
+        Value* reached = again->appendNew<Value>(m_proc, Add, origin, counter, again->appendIntConstant(m_proc, origin, Int64, plan.step * static_cast<int64_t>(plan.factor - 1)));
+        again->appendNew<Value>(m_proc, Branch, origin, again->appendNew<Value>(m_proc, relation, origin, reached, bound));
+        again->setSuccessors(FrequentedBlock(bounds.entry ? bounds.entry : turns[0].get(plan.header)), FrequentedBlock(plan.header));
+
+        RegionCloner::BlockMap copies = cloner.cloneBlocks(plan.blocksBehindRareEdges.span());
+        for (BasicBlock* block : plan.blocksBehindRareEdges)
+            copies.get(block)->replaceSuccessor(plan.header, again);
+        for (const RegionCloner::BlockMap& turn : turns) {
+            for (BasicBlock* block : plan.blocks) {
+                for (FrequentedBlock& successor : turn.get(block)->successors()) {
+                    BasicBlock* copy = successor.isRare() ? copies.get(successor.block()) : nullptr;
+                    if (copy)
+                        successor.block() = copy;
+                }
+            }
+        }
+    }
 
     // The block in front of the pre-header that lets the loop be entered exactly where the first turn's test would hold, for a counter that starts at a constant and rises to a bound that is not negative.
     struct TestOfFirstTurn {
@@ -699,7 +983,7 @@ private:
                 Value* isNotShort = appendInFront(m_proc.add<Value>(AboveEqual, origin, turnsBehindFirst, appendInFront(m_proc.addIntConstant(origin, type, room))));
                 testOfFirstTurn->last()->child(0) = isNotShort;
                 testOfFirstTurn->setSuccessors(FrequentedBlock(other), FrequentedBlock(found->blocksBehind[0]));
-                return { bound, farBound };
+                return { bound, farBound, entered };
             }
             // Where only the nearest start is known, a bound that is too near even for that one is told by a comparison with a constant.
             Int128 nearestStart = plan.step > 0 ? start.min : start.max;
@@ -716,7 +1000,7 @@ private:
             Value* enters = append(m_proc.add<Value>(plan.relation, origin, reached, bound));
             preHeader->replaceLastWithNew<Value>(m_proc, Branch, origin, enters);
             preHeader->setSuccessors(FrequentedBlock(behindFirstTest), FrequentedBlock(plan.header));
-            return { bound, farBound };
+            return { bound, farBound, entered };
         }
         Value* farBound = append(m_proc.add<Value>(Sub, origin, bound, constant(room)));
         Value* enters = nullptr;
@@ -730,11 +1014,11 @@ private:
         }
         if (!enters) {
             preHeader->setSuccessors(FrequentedBlock(unrolledHeader));
-            return { bound, farBound };
+            return { bound, farBound, nullptr };
         }
         preHeader->replaceLastWithNew<Value>(m_proc, Branch, origin, enters);
         preHeader->setSuccessors(FrequentedBlock(unrolledHeader), FrequentedBlock(plan.header));
-        return { bound, farBound };
+        return { bound, farBound, nullptr };
     }
 
     static constexpr int64_t greatestSumOfIntegers = 1ll << 52;
@@ -827,10 +1111,37 @@ private:
             set->owner = owner;
             owner->values().insert(index + 1, set);
         }
+        for (const Plan::SideTest& side : plan.sideTests)
+            insertBehind(side.tested, m_proc.add<VariableValue>(Set, origin, testedVariable, side.tested));
 
         Vector<RegionCloner::BlockMap, 8> turns;
         for (unsigned turn = 0; turn < plan.factor; ++turn)
             turns.append(cloner.cloneBlocks(plan.blocks.span()));
+
+        // Where the ways through a turn meet, their counters would meet as well, and no turn would know how far it is from the first. So a turn computes its next counter once, at its top.
+        // Behind the last turn they meet in the Phi of the loop anyway, and a counter that is computed early would live beside the one it follows.
+        if (!plan.nextCounters.isEmpty()) {
+            size_t indexOfCounter = plan.header->values().find(plan.counter);
+            RELEASE_ASSERT(indexOfCounter != notFound);
+            Vector<std::pair<BasicBlock*, size_t>, 2> places;
+            for (Value* next : plan.nextCounters) {
+                size_t index = next->owner->values().find(next);
+                RELEASE_ASSERT(index != notFound);
+                places.append({ next->owner, index });
+            }
+            for (unsigned turn = 0; turn + 1 < plan.factor; ++turn) {
+                Vector<Value*, 2> copies;
+                for (auto [block, index] : places)
+                    copies.append(turns[turn].get(block)->at(index));
+                BasicBlock* header = turns[turn].get(plan.header);
+                Value* counter = header->at(indexOfCounter);
+                counter->owner = header;
+                Value* step = insertBehind(counter, m_proc.addIntConstant(origin, counter->type(), plan.step));
+                Value* next = insertBehind(step, m_proc.add<Value>(Add, origin, counter, step));
+                for (Value* copy : copies)
+                    copy->replaceWithIdentity(next);
+            }
+        }
 
         // A copy has its values in the order of the block it was made of. All the copies are found before anything is put between them.
         Vector<Variable*, 1> integers;
@@ -872,6 +1183,7 @@ private:
         Bounds bounds = appendBoundsAndEnter(plan, stretch.first ? stretch.first : turns[0].get(plan.header));
         if (stretch.tests)
             appendTestsOfSums(plan, stretch, integers.span(), bounds, turns[0].get(plan.header));
+        enterAgainBehindRareEdges(cloner, plan, bounds, turns.span());
         unsigned testingTurn = plan.testsCounterBeforeStep ? 0 : plan.factor - 1;
         const FrequentedBlock staying = plan.test->successor(plan.stayingSuccessorIndex);
         const FrequentedBlock leaving = plan.test->successor(1 - plan.stayingSuccessorIndex);
@@ -894,6 +1206,26 @@ private:
                 BasicBlock* staying = copy->successorBlock(repeated.stayingSuccessorIndex);
                 copy->replaceLastWithNew<Value>(m_proc, Jump, origin);
                 copy->setSuccessors(FrequentedBlock(staying));
+            }
+            for (const Plan::SideTest& side : plan.sideTests) {
+                BasicBlock* test = turns[turn].get(side.block);
+                BasicBlock* stayingCopy = test->successorBlock(side.stayingSuccessorIndex);
+                if (turn != testingTurn) {
+                    test->replaceLastWithNew<Value>(m_proc, Jump, origin);
+                    test->setSuccessors(FrequentedBlock(stayingCopy));
+                    continue;
+                }
+                BasicBlock* rest = m_proc.addBlock();
+                Value* tested = m_proc.add<VariableValue>(Get, origin, testedVariable);
+                test->appendNonTerminal(tested);
+                Value* hasRoom = m_proc.add<Value>(plan.relation, origin, tested, bounds.farBound);
+                test->appendNonTerminal(hasRoom);
+                test->last()->child(0) = hasRoom;
+                test->setSuccessors(FrequentedBlock(stayingCopy, side.block->successor(side.stayingSuccessorIndex).frequency()), FrequentedBlock(rest, side.block->successor(1 - side.stayingSuccessorIndex).frequency()));
+                BasicBlock* behindTest = side.blocksBehindTest.isEmpty() ? plan.header : cloner.cloneBlocks(side.blocksBehindTest.span()).get(side.blocksBehindTest[0]);
+                Value* goesOn = rest->appendNew<Value>(m_proc, plan.relation, origin, rest->appendNew<VariableValue>(m_proc, Get, origin, testedVariable), bounds.bound);
+                rest->appendNew<Value>(m_proc, Branch, origin, goesOn);
+                rest->setSuccessors(FrequentedBlock(behindTest), FrequentedBlock(side.block->successorBlock(1 - side.stayingSuccessorIndex)));
             }
             BasicBlock* test = turns[turn].get(plan.test);
             FrequentedBlock stayingCopy = test->successor(plan.stayingSuccessorIndex);

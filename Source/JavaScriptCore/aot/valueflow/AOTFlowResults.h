@@ -206,6 +206,8 @@ struct FlowBuiltinTables {
     BitVector membersLockedAtStartUp;
     // An operation that lists own keys is handed one of these, by canonical ID.
     BitVector holdersWithListedKeys;
+    // Of those: the operand of such an operation is one of a few known objects, and this is one of them.
+    BitVector holdersSeenListed;
     Vector<BuiltinUseRecord> uses;
     Vector<FeatureUseRecord> featureUses;
     BitVector builtinsThatMayBeTrimmed;
@@ -260,6 +262,12 @@ struct ConstantLists {
     Vector<Entry> entries;
 };
 
+// The layouts of what arrives at `new Proxy`, where they are few. A list is empty where nothing with a layout arrives and where more kinds arrive than a place can tell apart.
+struct LayoutsExpectedInProxies {
+    Vector<LayoutID, 4> handlers;
+    Vector<LayoutID, 4> targets;
+};
+
 class FlowResults {
     WTF_MAKE_TZONE_ALLOCATED(FlowResults);
     WTF_MAKE_NONCOPYABLE(FlowResults);
@@ -298,6 +306,8 @@ public:
     void setFrameArrayParameters(FrameArrayParameters&& table) { m_frameArrayParameters = WTF::move(table); }
     bool isSiteOfWholeLiterals(AllocationSiteID site) const { return site && m_sitesOfWholeLiterals.get(site.index()); }
     void setSitesOfWholeLiterals(BitVector&& sites) { m_sitesOfWholeLiterals = WTF::move(sites); }
+    const LayoutsExpectedInProxies& layoutsExpectedInProxies() const { return m_layoutsExpectedInProxies; }
+    void setLayoutsExpectedInProxies(LayoutsExpectedInProxies&& layouts) { m_layoutsExpectedInProxies = WTF::move(layouts); }
     const Vector<KnownValue>* constantListIn(VariableID variable) const LIFETIME_BOUND { return m_constantLists.find(variable); }
     void setConstantLists(ConstantLists&& table) { m_constantLists = WTF::move(table); }
     std::span<const FlowIndirectCall> indirectCalls() const LIFETIME_BOUND { return m_tables.functions.indirectCalls.span(); }
@@ -308,6 +318,7 @@ public:
     BuiltinLocationState builtinLocation(BuiltinID member) const { return member && m_tables.builtins.constantMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown; }
     BuiltinHolderState builtinHolder(BuiltinID holder) const { return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown; }
     bool listsKeysOf(BuiltinID canonicalHolder) const { return m_mayListKeysOfEveryHolder || m_tables.builtins.holdersWithListedKeys.get(canonicalHolder.index()); }
+    bool seesKeysListedOf(BuiltinID canonicalHolder) const { return m_mayListKeysOfEveryHolder || m_tables.builtins.holdersSeenListed.get(canonicalHolder.index()); }
     void setMayListKeysOfEveryHolder() { m_mayListKeysOfEveryHolder = true; }
     // The fields whose types were taken back as the results were applied. Their reads have no checks yet.
     std::span<const FieldReference> fieldsTakenBack() const LIFETIME_BOUND { return m_fieldsTakenBack.span(); }
@@ -403,6 +414,7 @@ private:
     FrameArrayParameters m_frameArrayParameters;
     ConstantLists m_constantLists;
     BitVector m_sitesOfWholeLiterals;
+    LayoutsExpectedInProxies m_layoutsExpectedInProxies;
     Vector<FieldReference> m_fieldsTakenBack;
     bool m_mayListKeysOfEveryHolder { false };
     bool m_unseenCodeCanRun { true };

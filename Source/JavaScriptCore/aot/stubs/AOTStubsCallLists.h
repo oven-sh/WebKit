@@ -33,6 +33,8 @@ void emitLoadArgumentRegistersFromList(StubAssembler&, const ArgumentList&, unsi
 void emitAlignedSizeOfWords(StubAssembler&, GPRReg count, int32_t extraWords, GPRReg size);
 // index is the number of words, zero-extended, which is not zero.
 void emitCopyFromLastWord(StubAssembler&, Address source, Address destination, GPRReg index, GPRReg word);
+// count is not zero. Leaves it in index.
+void emitCopyFromFirstWord(StubAssembler&, GPRReg source, GPRReg destination, GPRReg count, GPRReg index, GPRReg word);
 
 } } // namespace JSC::AOT
 

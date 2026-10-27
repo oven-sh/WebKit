@@ -1622,7 +1622,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 
     SourceProviderSourceType sourceType = sourceCode.provider()->sourceType();
 #if USE(BUN_JSC_ADDITIONS)
-    if (Options::disallowNonStaticCode()) [[unlikely]] {
+    if (vm.runsOnlyStaticCode()) [[unlikely]] {
         // Earlier than ScriptExecutable::prepareForExecutionImpl: what a module imports is loaded and evaluated before the module is. Every type but these four is parsed as JavaScript below.
         bool isParsedAsJavaScript = sourceType != SourceProviderSourceType::WebAssembly && sourceType != SourceProviderSourceType::JSON && sourceType != SourceProviderSourceType::Text && sourceType != SourceProviderSourceType::Synthetic;
         if (isParsedAsJavaScript && sourceCode.provider()->provenance() != SourceProvenance::Static) {

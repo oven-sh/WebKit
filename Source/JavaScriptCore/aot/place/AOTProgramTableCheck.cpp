@@ -542,9 +542,10 @@ static void checkObfuscation(const TableCheck& check)
     }) || std::ranges::any_of(check.tables.functionNameRuns(), [&](const FunctionNameRunData& run) {
         return run.name != emptyString;
     });
-    bool hasDisplayPath = std::ranges::any_of(modules.first(std::min<size_t>(modules.size(), check.program.modules.size())), [&](const ModuleData& module) {
-        return module.charactersInFrontOfDisplayPath != ModuleData::hasNoDisplayPath;
-    });
+    // The names of the files of the host's library are no names of the program.
+    bool hasDisplayPath = false;
+    for (size_t index = 0; index < std::min<size_t>(modules.size(), check.program.modules.size()); ++index)
+        hasDisplayPath |= modules[index].charactersInFrontOfDisplayPath != ModuleData::hasNoDisplayPath && !check.program.modules[index].runtimeModule;
     bool hasTypeText = std::ranges::any_of(check.tables.typeSites(), [](const TypeSiteData& site) {
         return site.text != TypeSiteData::noText;
     });

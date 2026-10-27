@@ -683,6 +683,7 @@ public:
     ValueSetID objectsThatMayBeEnumerated() const { return m_enumerated; }
     ValueSetID objectsWithAllKeysShown() const { return m_withAllKeysShown; }
     ValueSetID objectsWithEnumerableKeysShown() const { return m_withEnumerableKeysShown; }
+    ValueSetID objectsSeenWithKeysShown() const { return m_seenWithKeysShown; }
     bool mayBeExportedByCommonJSModule(ValueSetID objects) const { return m_inputs.sets().meet(objects, m_exportedByCommonJSModules); }
     bool mayBeObservedUnder(ValueSetID objects, PropertyKeyID) const;
     bool mayBeCalledUnder(ValueSetID objects, PropertyKeyID key) const { return m_inputs.sets().meet(objects, setAt(m_calledUnderKey, key.index())); }
@@ -701,14 +702,13 @@ private:
         UnionOfSets withAllKeysShown;
         UnionOfSets withEnumerableKeysShown;
         UnionOfSets walkedForEnumerableKeys;
+        UnionOfSets seenWithKeysShown;
         UnionOfSets observedUnderAnyKey;
         PartsByNumber observedUnderKey;
         PartsByNumber startsOfTestsUnderKey;
         PartsByNumber calledUnderKey;
         PartsByNumber accessedUnderKey;
         PartsByNumber receiversOfReads;
-        FunctionID functionThatHandsOn;
-        ValueSetID builtinObjectsHandedOn { ValueSets::nothing };
     };
 
     struct Noter {
@@ -717,18 +717,9 @@ private:
     };
 
     bool isFullyKnown(ValueSetID objects) const;
-    struct WrittenOperands {
-        FunctionID function;
-        std::span<const ValueID> values;
-        std::span<const ValueFlowOperand> operands;
-    };
-
-    BuiltinID builtinWrittenAs(const Function&, ValueID) const;
-    ValueSetID builtinObjectsHandedOnBy(Noter, FunctionID) const;
-    ValueSetID builtinObjectsWrittenAt(Noter, const WrittenOperands&) const;
-    void noteShownKeys(Noter, ValueSetID objects, ShownKeys, const WrittenOperands&, bool goesOnToPrototypes = false) const;
+    void noteShownKeys(Noter, ValueSetID objects, ShownKeys, bool goesOnToPrototypes = false) const;
     void noteShownKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand, ShownKeys) const;
-    ValueSetID followKnownPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
+    ValueSetID followPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
     void noteReads(ValueSetMakers&);
     void noteRead(Noter, const ValueFlowNodeKey&, Reader, ValueSetID startOfLookup);
@@ -804,6 +795,7 @@ private:
     ValueSetID m_enumerated { ValueSets::nothing };
     ValueSetID m_withAllKeysShown { ValueSets::nothing };
     ValueSetID m_withEnumerableKeysShown { ValueSets::nothing };
+    ValueSetID m_seenWithKeysShown { ValueSets::nothing };
     ValueSetID m_exportedByCommonJSModules { ValueSets::nothing };
     ValueSetID m_observedUnderAnyKey { ValueSets::nothing };
     SetsByNumber m_observedUnderKey;

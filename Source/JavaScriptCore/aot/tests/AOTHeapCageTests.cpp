@@ -28,9 +28,12 @@
 #include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
 #include "ObjectConstructor.h"
+#include "OwedOutOfMemoryError.h"
 #include "PreciseAllocation.h"
 #include "ReservedRangeHeap.h"
 #include "SourceCode.h"
+#include "StructureAlignedMemoryAllocator.h"
+#include "TopExceptionScope.h"
 #include "VM.h"
 #include "VMTrapsInlines.h"
 #include <array>
@@ -910,6 +913,78 @@ static void checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce()
     traps.setNeedsOutOfMemoryError(false);
 }
 
+static void runOutOfStructures(VM& vm)
+{
+    // A whole reserve, as the allocator keeps once a quarter of its heap is in use.
+    StructureAlignedMemoryAllocator::releaseReserve();
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain());
+
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::releaseReserve());
+    vm.heap.cage().addExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Structures);
+    vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+static bool throwErrorIfOwed(VM& vm, JSGlobalObject* realm)
+{
+    auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    bool hasThrown = [&] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return throwOutOfMemoryErrorIfOwed(vm, realm, scope);
+    }();
+    AOT_TEST_CHECK(hasThrown == !!topScope.exception());
+    topScope.clearException();
+    return hasThrown;
+}
+
+enum class FirstToRunOut : uint8_t { Structures, Storage };
+enum class ErrorGiven : uint8_t { TheOneOwed, OneOfAnotherRequest };
+
+// Structures and storage both run out before an error can be thrown: one error is owed for the two. The allocator of Structures has given out its reserve, and keeps one again once it hears that the error was thrown.
+template<FirstToRunOut first, ErrorGiven given>
+static void checkErrorOwedForStructuresAndStorageIsHeardOfByBoth()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+
+    if constexpr (first == FirstToRunOut::Storage)
+        MarkedBlockCage::didUseAddressSpaceBallast(vm);
+    runOutOfStructures(vm);
+    if constexpr (first == FirstToRunOut::Structures)
+        MarkedBlockCage::didUseAddressSpaceBallast(vm);
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() && test.cage().describeExhaustedLimit().contains("Structures"_s));
+
+    if constexpr (given == ErrorGiven::TheOneOwed)
+        AOT_TEST_CHECK(throwErrorIfOwed(vm, realm));
+    else
+        AOT_TEST_CHECK(createOutOfMemoryError(realm));
+    AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().describeExhaustedLimit().contains("Structures"_s));
+    // Only an allocator that still waits for the error takes back what it gave out.
+    AOT_TEST_CHECK(!StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain());
+}
+
+#if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)
+// The collection at a poll makes room. The error is taken back, and both have again what they gave out.
+template<FirstToRunOut first>
+static void checkErrorOwedForStructuresAndStorageIsTakenBackForBoth()
+{
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
+    TestVM test;
+    test.createRealm();
+    VM& vm = test.vm();
+
+    if constexpr (first == FirstToRunOut::Storage)
+        MarkedBlockCage::didUseAddressSpaceBallast(vm);
+    runOutOfStructures(vm);
+    if constexpr (first == FirstToRunOut::Structures)
+        MarkedBlockCage::didUseAddressSpaceBallast(vm);
+
+    AOT_TEST_CHECK(test.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) && !vm.traps().needsOutOfMemoryError());
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast() && StructureAlignedMemoryAllocator::releaseReserve());
+}
+#endif
+
 static void checkRangeIsReused()
 {
     uintptr_t baseOfFirst;
@@ -1103,6 +1178,8 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
 #if USE(MIMALLOC)
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
+        { "heap-cage/cage/error-owed-for-structures-then-storage-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Structures>> },
+        { "heap-cage/cage/error-owed-for-storage-then-structures-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Storage>> },
 #endif
 #endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
@@ -1118,6 +1195,10 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },
+        { "heap-cage/cage/error-owed-for-structures-then-storage-is-heard-of-by-both"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Structures, ErrorGiven::TheOneOwed>> },
+        { "heap-cage/cage/error-owed-for-storage-then-structures-is-heard-of-by-both"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Storage, ErrorGiven::TheOneOwed>> },
+        { "heap-cage/cage/error-of-another-request-settles-structures-then-storage"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Structures, ErrorGiven::OneOfAnotherRequest>> },
+        { "heap-cage/cage/error-of-another-request-settles-storage-then-structures"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Storage, ErrorGiven::OneOfAnotherRequest>> },
         { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
         { "heap-cage/cage/other-allocator-warms-up-with-the-cage"_s, withCage<checkOtherAllocatorWarmsUpWithTheCage> },

@@ -48,6 +48,7 @@ bool becomesDictionaryByAddition(VM&, JSObject*, Structure*, UniquedStringImpl*)
 void didMakeStructureForAddition(VM&, Structure* made);
 // The code that gave those objects their names has returned to the event loop: they are made flat, and are objects like any other from here on.
 void finishFillingObjects(VM&);
+void runFilesThatWaitInLoader(VM&);
 // From now on a store that replaces a value of some Structure has somebody to tell.
 void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);

@@ -82,6 +82,8 @@ struct ModuleHost {
     std::optional<ModuleID> (*findModuleWithAttributes)(JSGlobalObject*, const String& path, const ScriptFetchParameters&);
     // What lies under `resolve` on the `require` of the module object, if it does what the host put there does, or else another function that does. Null in a host whose `require` has no such member.
     JSCell* (*resolveFunctionOf)(JSGlobalObject*, JSObject* requirer, JSCell* heldOrNull);
+    // The program has registered something with the host that answers to the name of a native module in its place. Null in a host where nothing can be registered.
+    bool (*replacesNativeModule)(JSGlobalObject*, const String& path);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -94,6 +96,8 @@ JS_EXPORT_PRIVATE String modulePath(ModuleID);
 String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool isESModule(ModuleID);
+// Of what findModule() answers: the host makes the module, and the image holds its number alone.
+JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
 // A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
 JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);

@@ -698,11 +698,17 @@ static void JIT_OPERATION_ATTRIBUTES operationNotUsedByImage()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+template<RemovableFeature feature>
+static void JIT_OPERATION_ATTRIBUTES operationOfRemovedFeature()
+{
+    Bun__abortForRemovedFeature(static_cast<uint16_t>(feature));
+}
+
 template<Entry entry, auto operation>
 static ALWAYS_INLINE void* operationAddress()
 {
     if constexpr (featureOf(entry).has_value()) {
-        auto replacement = reinterpret_cast<decltype(operation)>(&operationNotUsedByImage);
+        auto replacement = reinterpret_cast<decltype(operation)>(&operationOfRemovedFeature<*featureOf(entry)>);
         return tagCFunctionPtr<void*, OperationPtrTag>(addressUnlessRemoved<*featureOf(entry), operation>(replacement));
     } else
         return tagCFunctionPtr<void*, OperationPtrTag>(operation);

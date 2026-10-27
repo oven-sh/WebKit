@@ -965,8 +965,7 @@ void TypePropagation::cutAfterNeverValues()
     };
     TypingContext typing { m_inputs.program, function, m_inputs.types };
     auto isNeverReached = [&](ValueID id) {
-        const Value& value = function.at(id);
-        return value.opcode == Opcode::NarrowByField && narrowsHolderToNothing(typing, typing.typeOf(value.valueOperand()), value.key(), typing.typeOf(value.readOperand()));
+        return narrowsHolderToNothing(typing, function.at(id));
     };
 
     for (BlockID id : m_cfg.reversePostOrder()) {
