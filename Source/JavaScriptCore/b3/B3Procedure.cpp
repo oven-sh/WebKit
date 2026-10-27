@@ -301,6 +301,7 @@ void Procedure::resetReachability()
         }
     }
     
+    MovedLoadLog::UnreachableCodeIsDeleted unreachableCodeIsDeleted(m_movedLoadLog);
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get())) {
             for (Value* value : *block)

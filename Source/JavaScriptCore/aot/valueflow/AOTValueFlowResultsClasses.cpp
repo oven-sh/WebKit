@@ -559,7 +559,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
     holders[staticSide] = universe.closureOf(layout.constructor);
     Writers writersOfEveryOwnProperty[2] { ledger.writersOfEveryOwnProperty(holders[0]), ledger.writersOfEveryOwnProperty(holders[1]) };
     bool sharesNameWithStaticField = std::ranges::any_of(definition.definitions, [&](const ClassMemberDefinition& entry) {
-        return entry.member.side == ClassSide::Static && (!entry.member.key || std::ranges::contains(layout.staticFields, entry.member.key, &StaticField::key));
+        return entry.member.side == ClassSide::Static && (!entry.member.key || layout.findStaticField(entry.member.key));
     });
     // On a class object only the stores of its static fields are looked through.
     bool looksThroughStores[2];
@@ -658,7 +658,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
             return key != lengthKey && (key == constructorKey || isNamedMember(ClassSide::Prototype, key));
         });
         flow.staticNamesAreComplete = !definition.mayHaveUnknownName[staticSide] && Claims::namesAreComplete(writersOfEveryOwnProperty[staticSide], Claims::Redefinitions::MayAddNames, [&](PropertyKeyID key) {
-            return looksThroughStores[staticSide] && (isNamedMember(ClassSide::Static, key) || std::ranges::contains(layout.staticFields, key, &StaticField::key) || isLaidOnEveryClassObject(program, key));
+            return looksThroughStores[staticSide] && (isNamedMember(ClassSide::Static, key) || (key ? layout.findStaticField(key).has_value() : std::ranges::contains(layout.staticFields, key, &StaticField::key)) || isLaidOnEveryClassObject(program, key));
         });
     }
     flow.members = listMembersInDefinitionOrder(WTF::move(definition.definitions), namedMembers.span());

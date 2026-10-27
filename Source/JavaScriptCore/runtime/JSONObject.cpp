@@ -3100,7 +3100,7 @@ static NEVER_INLINE bool tryAppendScalarsInSeveralSteps(JSGlobalObject& globalOb
             ++index;
         }
         builder.commit(next);
-        start = builder.tryReserve(*room + 2, AOT::roomBehindJSONText(*room));
+        start = builder.tryReserve({ .length = *room + 2, .roomForMore = AOT::roomBehindJSONText(*room) });
         if (!start)
             break;
         written = writeListedProperties(object, extraProperties, list, index, start, start + *room);
@@ -3120,6 +3120,14 @@ static NEVER_INLINE bool tryAppendScalarsInSeveralSteps(JSGlobalObject& globalOb
     }
     builder.rollBack(lengthBefore);
     return false;
+}
+
+static NEVER_INLINE Latin1Character* tryAppendEscapedInPlace(const ListedPropertiesWritten& written, const Latin1Character* limit)
+{
+    const StringImpl* string = written.otherValue.isString() ? asString(written.otherValue)->tryGetValueImpl() : nullptr;
+    if (!string || !string->is8Bit() || static_cast<size_t>(limit - written.next) < AOT::maxLengthOfEscapedJSONString(string->length()))
+        return nullptr;
+    return AOT::appendQuotedAndEscapedJSONString(written.next, string->span8());
 }
 
 static bool tryAppendScalarsOfObjectWithExtraProperties(JSGlobalObject& globalObject, AOT::StringBuilderStorage& builder, JSObject& object)
@@ -3144,9 +3152,16 @@ static bool tryAppendScalarsOfObjectWithExtraProperties(JSGlobalObject& globalOb
         return false;
     ListedPropertiesWritten written = writeListedProperties(object, extraProperties, *list, 0, brace, brace + room);
     if (written.status != Status::All) [[unlikely]] {
+        while (written.status == Status::FoundOtherValue) {
+            Latin1Character* afterText = tryAppendEscapedInPlace(written, brace + room);
+            if (!afterText)
+                break;
+            written = writeListedProperties(object, extraProperties, *list, written.index + 1, afterText, brace + room);
+        }
         if (written.status == Status::FoundAbsentField || (written.status == Status::FoundOtherValue && !written.otherValue.isString()))
             return false;
-        return tryAppendScalarsInSeveralSteps(globalObject, builder, object, extraProperties, *list, brace, written);
+        if (written.status != Status::All)
+            return tryAppendScalarsInSeveralSteps(globalObject, builder, object, extraProperties, *list, brace, written);
     }
     Latin1Character* next = written.next;
     next += next == brace;

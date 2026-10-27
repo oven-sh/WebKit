@@ -428,11 +428,41 @@ private:
             }
             return bounds;
         };
+        // Where an attempt begins counts as a way too.
+        Vector<unsigned> waysTo(FillWith { }, ops.size() + 1, 0);
+        ++waysTo[0];
+        if (m_program->laterAttemptsBeginAt)
+            ++waysTo[m_program->laterAttemptsBeginAt];
+        for (unsigned i = 0; i < ops.size(); ++i) {
+            switch (ops[i].kind) {
+            case Kind::Choice:
+            case Kind::ChoiceByFirst:
+            case Kind::ChoiceByTable:
+            case Kind::GreedyLoopChoice:
+            case Kind::NegativeLookaheadBegin:
+            case Kind::JumpIfBelow:
+            case Kind::JumpIfNotBelow:
+            case Kind::NeedsInputElseJump:
+                ++waysTo[i + 1];
+                ++waysTo[ops[i].target];
+                break;
+            case Kind::Jump:
+            case Kind::LoopBack:
+            case Kind::LoopBackUnlessEmpty:
+                ++waysTo[ops[i].target];
+                break;
+            default:
+                ++waysTo[i + 1];
+                break;
+            }
+        }
         Vector<std::pair<unsigned, uint64_t>, 8> waysToFollow { { 0, 0 } };
         while (!waysToFollow.isEmpty()) {
             auto [i, bounds] = waysToFollow.takeLast();
             for (bool goesOn = true; goesOn; ++i) {
                 const FlatOp& op = ops[i];
+                if (waysTo[i] > 1)
+                    break;
                 switch (op.kind) {
                 case Kind::Character:
                 case Kind::Text:

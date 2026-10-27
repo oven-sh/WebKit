@@ -454,18 +454,19 @@ static NEVER_INLINE void recordFailedRestOfRun(const FlatProgram& program, const
     }
 }
 
-// Where a run without an upper bound that stands at `at` ends.
+// A greedy run that began at `lowest` has failed from every place. What is entered already reaches up to the end of the stretch.
 template<typename CharType>
-static NEVER_INLINE unsigned findEndOfRun(const FlatProgram& program, const FlatOp& run, const CharType* input, unsigned length, unsigned at)
+static NEVER_INLINE void recordFailedRestOfGreedyRun(const FlatProgram& program, const FlatOp& run, const uint32_t* registers, const uint32_t* failedSearches, uint32_t* failedRests, const CharType* input, unsigned length, unsigned lowest)
 {
     const CharacterSetBits& set = program.characterSets[run.set];
     auto wideRanges = program.wideRanges.span();
-    for (unsigned end = length - run.needed; at < end; ++at) {
-        bool isMember = input[at] > 0xff ? wideRangesContain(wideRanges, set, input[at]) : contains(set, wideRanges, static_cast<Latin1Character>(input[at]));
+    unsigned highest = lowest;
+    for (unsigned end = length - run.needed; highest < end && !failedRests[highest]; ++highest) {
+        bool isMember = input[highest] > 0xff ? wideRangesContain(wideRanges, set, input[highest]) : contains(set, wideRanges, static_cast<Latin1Character>(input[highest]));
         if (!isMember)
             break;
     }
-    return at;
+    recordFailedRestOfRun(program, run, registers, failedSearches, failedRests, lowest, highest);
 }
 
 // What a match seldom uses. Separate from Machine for the same reason as FrameStorage.
@@ -831,8 +832,8 @@ struct Machine {
     // The top frame is the run's. There is no place left to go on from.
     ALWAYS_INLINE Step failMemoizedGreedyRun(const FlatOp* from, unsigned row)
     {
-        if (rowsToRestOfRun(from))
-            recordFailedRestOfRun(from, row, top[-1].limit, findEndOfRun(program, *from, input, length, top[-1].limit));
+        if (unsigned rowsToRest = rowsToRestOfRun(from))
+            recordFailedRestOfGreedyRun(program, *from, registers(), memo + memoIndex(row, 0), memo + memoIndex(row + rowsToRest, 0), input, length, top[-1].limit);
         --top;
         return Step::Failed;
     }
@@ -1222,8 +1223,26 @@ struct Machine {
     template<bool knowsFollowingCharacters>
     ALWAYS_INLINE Step beginMemoizedGreedyRun(unsigned least)
     {
-        if (uint32_t rest = findFailedRestOfRun(op, memoRowOf(op), least); rest && turnsAroundHaveTakenSomething(op->memoRow, least))
-            return takeTurnsOfFailedSearch(rest) ? Step::Failed : Step::HitLimit;
+        if (unsigned rowsToRest = rowsToRestOfRun(op)) {
+            // The places from which the rest has failed reach up to the end of the stretch. The way down begins below the lowest of them.
+            const uint32_t* failedRests = memo + memoIndex(memoRowOf(op) + rowsToRest, 0);
+            unsigned low = least + !turnsAroundHaveTakenSomething(op->memoRow, least);
+            if (low <= position && failedRests[position]) {
+                unsigned high = position;
+                while (low < high) {
+                    unsigned middle = low + (high - low) / 2;
+                    if (failedRests[middle])
+                        high = middle;
+                    else
+                        low = middle + 1;
+                }
+                if (!takeTurnsOfFailedSearch(failedRests[high]))
+                    return Step::HitLimit;
+                if (high == least)
+                    return Step::Failed;
+                position = high - 1;
+            }
+        }
         push(position, least, 0);
         return goOnFromGreedyRun<knowsFollowingCharacters>(op);
     }

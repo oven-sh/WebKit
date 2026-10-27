@@ -486,6 +486,40 @@ struct AccessesThroughHolders {
     bool isNamespace(ValueFlowObjectID object) const { return inputs.universe().kindOf(object) == ValueFlowObjectKind::Namespace; }
     std::span<const VariableOnObject> variablesOn(ValueFlowObjectID object) const LIFETIME_BOUND { return std::span(std::ranges::equal_range(variables, object, { }, &VariableOnObject::object)); }
     ValueFlowName nameOf(PropertyKeyID key) const { return ValueFlowName::property(inputs.program, key); }
+
+    // In the order of variablesOn().
+    void forEachVariableNamedBy(ValueFlowObjectID object, ValueFlowName name, NOESCAPE const Invocable<void(const VariableOnObject&)> auto& functor) const
+    {
+        AOT_THRESHOLD(size_t, mostVariablesWalked, 16);
+        std::span<const VariableOnObject> all = variablesOn(object);
+        if (name.kind != ValueFlowNameKind::Property || all.size() <= mostVariablesWalked) {
+            for (const VariableOnObject& variable : all) {
+                if (variable.mayBeNamedBy(name))
+                    functor(variable);
+            }
+            return;
+        }
+        auto placeOf = [&](uint32_t position) { return std::pair { variables[position].object, variables[position].key.index() }; };
+        std::span<const uint32_t> keyed = std::span(std::ranges::equal_range(positionsByKey, std::pair { object, name.payload }, { }, placeOf));
+        std::span<const uint32_t> underAnyName = std::span(std::ranges::equal_range(positionsUnderAnyName, object, { }, [&](uint32_t position) { return variables[position].object; }));
+        while (!keyed.empty() || !underAnyName.empty()) {
+            std::span<const uint32_t>& next = underAnyName.empty() || (!keyed.empty() && keyed.front() < underAnyName.front()) ? keyed : underAnyName;
+            functor(variables[next.front()]);
+            next = next.subspan(1);
+        }
+    }
+
+    void indexVariables()
+    {
+        for (uint32_t position = 0; position < variables.size(); ++position) {
+            if (variables[position].mayLieUnderAnyName)
+                positionsUnderAnyName.append(position);
+            else if (variables[position].key)
+                positionsByKey.append(position);
+        }
+        AOT::stableSort(positionsByKey, { }, [&](uint32_t position) { return std::pair { variables[position].object, variables[position].key.index() }; });
+    }
+
     bool reachesFollowedObject(ValueFlowStatementID sharedLookup) const { return lookupReachesFollowedObject[sharedLookup.index() - solver.input().statements.size()]; }
 
     bool hasObjectIn(ValueSetID set)
@@ -571,11 +605,10 @@ struct AccessesThroughHolders {
         }
         if (access.by)
             access.actor = actorOf(solver.statementAt(access.by), name, true);
-        for (const VariableOnObject& variable : variablesOn(object)) {
+        forEachVariableNamedBy(object, name, [&](const VariableOnObject& variable) {
             access.variable = variable.variable;
-            if (variable.mayBeNamedBy(name))
-                found.append(access);
-        }
+            found.append(access);
+        });
     }
 
     void noteLook(ValueSetID lookedInto, ValueFlowName name, ObjectAccess access, Vector<ObjectAccess>& found)
@@ -648,9 +681,7 @@ struct AccessesThroughHolders {
             access.actor = actorOf(solver.statementAt(access.by), name, isListed);
             access.form = formOf(solver.statementAt(access.by), name);
             bool namesStaticField = false;
-            for (const VariableOnObject& variable : variablesOn(object)) {
-                if (!variable.mayBeNamedBy(name))
-                    continue;
+            forEachVariableNamedBy(object, name, [&](const VariableOnObject& variable) {
                 namesStaticField |= name.kind == ValueFlowNameKind::Property && !variable.mayLieUnderAnyName;
                 access.variable = variable.variable;
                 OptionSet<WriteTrait> traits;
@@ -660,7 +691,7 @@ struct AccessesThroughHolders {
                     traits.add(whatStoredValueKeeps(*statement, variable.variable) | WriteTrait::SpellsItsValue);
                 access.traits = traits.toRaw();
                 found.append(access);
-            }
+            });
             if (!namesStaticField && (!statement || statement->opcode != Opcode::DefineMethod))
                 setFlag(isClassObjectStoredUnderOtherName, inputs.universe().closureFunction(object).index());
         });
@@ -884,6 +915,7 @@ struct AccessesThroughHolders {
         setOfObjects = heap.maker().of(objects.span());
         setOfEscapedObjects = heap.maker().of(escapedObjects.span());
         AOT::stableSort(variables, { }, &VariableOnObject::object);
+        indexVariables();
         setsWithObject.fill(0, sets.endOfTableBySet() / 4);
         lookupReachesFollowedObject.fill(0, solver.numberOfStatements() - solver.input().statements.size());
         isNamespaceReadUnderUnknownName.fill(0, program.modules.size());
@@ -921,6 +953,8 @@ struct AccessesThroughHolders {
     ValueSetID setOfObjects { ValueSets::nothing };
     ValueSetID setOfEscapedObjects { ValueSets::nothing };
     Vector<VariableOnObject> variables;
+    Vector<uint32_t> positionsByKey;
+    Vector<uint32_t> positionsUnderAnyName;
     Vector<uint8_t> setsWithObject;
     Vector<uint8_t> lookupReachesFollowedObject;
     Vector<uint8_t> isNamespaceReadUnderUnknownName;

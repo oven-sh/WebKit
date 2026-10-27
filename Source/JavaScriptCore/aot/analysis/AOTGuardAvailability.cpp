@@ -1085,7 +1085,7 @@ void GuardAvailability::applyDefinitions(BitVector& available, const BitVector& 
     bool unitesGuards = VariadicOperandPosition::guards(value.opcode).has_value();
     for (const Component& component : components) {
         bool isAvailable = !unitesGuards || std::ranges::any_of(value.guardsOperands(), [&](ValueID operand) {
-            return isAvailableIn(available, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject);
+            return isAvailableIn(available, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject, facts.facts[component.factIndex].position);
         });
         available.quickSet(firstComponent + component.factIndex, isAvailable);
     }
@@ -1156,11 +1156,12 @@ bool GuardAvailability::isProvenOnEdge(Edge edge, const EdgeResult& result, cons
 
 bool GuardAvailability::isAvailableBeforeEdge(const BitVector& available, Edge edge, ValueID guard, const GuardFact& factAfterEdge) const
 {
-    std::optional<ValueID> subject = subjectBeforeEdge(factAfterEdge.subject, edge);
-    return subject && isAvailableIn(available, guard, factAfterEdge, *subject);
+    std::optional<ValueID> subject = valueBeforeEdge(factAfterEdge.subject, edge);
+    std::optional<ValueID> position = valueBeforeEdge(factAfterEdge.position, edge);
+    return subject && position && isAvailableIn(available, guard, factAfterEdge, *subject, *position);
 }
 
-bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard, const GuardFact& fact, ValueID subject) const
+bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard, const GuardFact& fact, ValueID subject, ValueID position) const
 {
     if (componentsOf(guard).empty())
         return false;
@@ -1169,7 +1170,7 @@ bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard,
     const GuardFacts& facts = factsOf(guard);
     for (uint32_t factIndex = 0; factIndex < facts.facts.size(); ++factIndex) {
         const GuardFact& candidate = facts.facts[factIndex];
-        if (available.quickGet(firstComponent + factIndex) && candidate.subject == subject && isAsStrongAs(candidate, fact))
+        if (available.quickGet(firstComponent + factIndex) && candidate.subject == subject && candidate.position == position && isAsStrongAs(candidate, fact))
             return true;
     }
     return false;
@@ -1369,7 +1370,7 @@ std::optional<BitVector> GuardAvailability::componentsProvenAtDefinition(ValueID
         heldByOperands.ensureSize(m_components.size());
         for (const Component& component : components) {
             bool isAvailable = std::ranges::any_of(value.guardsOperands(), [&](ValueID operand) {
-                return isAvailableIn(heldByOperands, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject);
+                return isAvailableIn(heldByOperands, operand, facts.facts[component.factIndex], facts.facts[component.factIndex].subject, facts.facts[component.factIndex].position);
             });
             if (isAvailable)
                 available.set(firstComponent + component.factIndex);

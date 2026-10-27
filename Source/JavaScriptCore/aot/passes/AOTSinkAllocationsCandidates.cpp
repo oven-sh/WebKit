@@ -2097,6 +2097,7 @@ void AllocationSinking::computeInputsOf(BlockID block)
         bool mayThrow { false };
         bool writesObjects { false };
         bool callsUnknownCode { false };
+        uint64_t endedMemberGuards { 0 };
     };
     auto traitsOf = [&](ValueID id) -> Traits {
         if (m_analyses.hasNoEffects(id))
@@ -2106,6 +2107,7 @@ void AllocationSinking::computeInputsOf(BlockID block)
             effects.mayThrow(),
             effects.normal.writes.containsAny(perObjectHeaps) || effects.handler.writes.containsAny(perObjectHeaps) || effects.normal.mayRunOtherCode(),
             effects.normal.mayCallUnknownCode && reliesOf(m_function.at(id).opcode).isEmpty(),
+            effects.normal.mayRunOtherCode() ? LocationMasks::entireHeap : effects.normal.writes.maskOf(AbstractHeap::MemberGuards) | effects.handler.writes.maskOf(AbstractHeap::MemberGuards),
         };
     };
 
@@ -2123,9 +2125,11 @@ void AllocationSinking::computeInputsOf(BlockID block)
             m_inputs.valuesWritingObjects.quickSet(id.index());
         if (traits.callsUnknownCode)
             m_inputs.valuesCallingUnknownCode.quickSet(id.index());
+        if (traits.endedMemberGuards)
+            m_inputs.memberGuardsEndedByValues.add(id.index() + 1, traits.endedMemberGuards);
         if (m_names.valuesMentioningNames.quickGet(id.index()) || m_candidateOfValue[id.index()])
             m_relevantValues.append(index);
-        else if (traits.writesObjects || (traits.mayThrow && contents.handler))
+        else if (traits.writesObjects || traits.endedMemberGuards || (traits.mayThrow && contents.handler))
             m_relevantValues.append(index | onlyWritesOrThrows);
     }
     m_relevantValuesOfBlocks[block.index()] = { first, static_cast<uint32_t>(m_relevantValues.size()) };

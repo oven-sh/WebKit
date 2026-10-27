@@ -17,6 +17,7 @@
 #include "B3ProcedureInlines.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
+#include "B3VariableValue.h"
 #include "CCallHelpers.h"
 #include <algorithm>
 #include <wtf/HashSet.h>
@@ -147,6 +148,14 @@ void MovedLoadLog::name(Value* value, unsigned entry)
         m_entriesNaming.add(value, Vector<unsigned, 2>()).iterator->value.append(entry);
 }
 
+void MovedLoadLog::rename(Value*& named, Value* replacement, unsigned entry)
+{
+    if (auto found = m_entriesNaming.find(named); found != m_entriesNaming.end())
+        found->value.removeFirst(entry);
+    named = replacement;
+    name(replacement, entry);
+}
+
 void MovedLoadLog::add(const MovedLoad& load, BasicBlock* block, unsigned index, Value* address, Value* givenToUsers, Value* store)
 {
     Value* before = nullptr;
@@ -189,11 +198,81 @@ void MovedLoadLog::didClone(Value* original, Value* clone)
         m_copiesInRegion.set(original, clone);
         return;
     }
+    // A Get gives what its variable holds where it stands, however many there are of it.
+    if (m_depthOfCopiesBesideOriginals || original->opcode() == Get)
+        return;
     // Where there are two of a value, its users may be handed a Phi of the two, and the log does not hear of that.
     for (unsigned index : found->value) {
         Entry& entry = m_entries[index];
         if (entry.address == original || entry.givenToUsers == original)
             drop(entry);
+    }
+}
+
+void MovedLoadLog::willCopy(Procedure& proc, const IndexSet<BasicBlock*>& blocks)
+{
+    if (isEmpty())
+        return;
+    // An entry may name a value that is gone: see insertChecks().
+    UncheckedKeyHashMap<Value*, BasicBlock*> blockOf;
+    for (BasicBlock* block : proc) {
+        for (Value* value : *block) {
+            if (m_entriesNaming.contains(value))
+                blockOf.add(value, block);
+        }
+    }
+    for (Entry& entry : m_entries) {
+        if (!entry.address)
+            continue;
+        BasicBlock* place = entry.before ? blockOf.get(entry.before) : entry.block;
+        BasicBlock* blockOfAddress = blockOf.get(entry.address);
+        BasicBlock* blockOfGiven = blockOf.get(entry.givenToUsers);
+        auto keepsItsMeaning = [&](BasicBlock* block) {
+            return block && (block == place || !blocks.contains(block));
+        };
+        if (!place || !keepsItsMeaning(blockOfAddress) || !keepsItsMeaning(blockOfGiven))
+            drop(entry);
+    }
+}
+
+void MovedLoadLog::didDemote(Procedure& proc, const UncheckedKeyHashMap<Value*, Variable*>& variables)
+{
+    if (isEmpty())
+        return;
+    UncheckedKeyHashMap<Value*, Vector<unsigned, 2>> entriesBehind;
+    UncheckedKeyHashMap<BasicBlock*, Vector<unsigned, 2>> entriesAtHead;
+    for (unsigned index = 0; index < m_entries.size(); ++index) {
+        const Entry& entry = m_entries[index];
+        if (!entry.address || (!variables.contains(entry.address) && !variables.contains(entry.givenToUsers)))
+            continue;
+        if (entry.before)
+            entriesBehind.add(entry.before, Vector<unsigned, 2>()).iterator->value.append(index);
+        else
+            entriesAtHead.add(entry.block, Vector<unsigned, 2>()).iterator->value.append(index);
+    }
+    if (entriesBehind.isEmpty() && entriesAtHead.isEmpty())
+        return;
+
+    InsertionSet insertionSet(proc);
+    Vector<unsigned, 8> entriesInFrontOfPlace;
+    for (BasicBlock* block : proc) {
+        entriesInFrontOfPlace = entriesAtHead.get(block);
+        for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
+            Value* value = block->at(valueIndex);
+            if (staysInPlace(value)) {
+                for (unsigned index : entriesInFrontOfPlace) {
+                    Entry& entry = m_entries[index];
+                    for (Value** named : { &entry.address, &entry.givenToUsers }) {
+                        if (Variable* variable = variables.get(*named))
+                            rename(*named, insertionSet.insert<VariableValue>(valueIndex, Get, entry.load.origin, variable), index);
+                    }
+                }
+                entriesInFrontOfPlace.shrink(0);
+            }
+            if (auto found = entriesBehind.find(value); found != entriesBehind.end())
+                entriesInFrontOfPlace.appendVector(found->value);
+        }
+        insertionSet.execute(block);
     }
 }
 
@@ -225,11 +304,15 @@ void MovedLoadLog::didCopyRegion()
         Entry copy = m_entries[index];
         if (!copy.address)
             continue;
-        if (!(copy.before ? copies.contains(copy.before) : blockCopies.contains(copy.block))) {
-            if (copies.contains(copy.address) || copies.contains(copy.givenToUsers))
-                drop(m_entries[index]);
+        if (!(copy.before ? copies.contains(copy.before) : blockCopies.contains(copy.block)))
             continue;
-        }
+        // What stands in the block of the place and is left out of the copy has nothing to stand for it there.
+        BasicBlock* place = copy.before ? copy.before->owner : copy.block;
+        auto isLeftOut = [&](Value* value) {
+            return !copies.contains(value) && value->owner == place;
+        };
+        if (isLeftOut(copy.address) || isLeftOut(copy.givenToUsers))
+            continue;
         copy.address = copyOf(copy.address);
         copy.givenToUsers = copyOf(copy.givenToUsers);
         copy.store = copyOf(copy.store);
@@ -258,7 +341,8 @@ void MovedLoadLog::willDelete(Value* value)
 {
     if (isEmpty())
         return;
-    dropEntriesWrittenBy(value);
+    if (!m_isDeletingUnreachableCode)
+        dropEntriesWrittenBy(value);
     if (m_depthOfRegionCopies) {
         m_copiesInRegion.removeIf([&](auto& pair) {
             return pair.value == value;

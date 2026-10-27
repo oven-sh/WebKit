@@ -805,6 +805,73 @@ static void testVersionLoopsFastLoopBelowLengthOfArrayIsForArrayThatHoldsIt()
     }
 }
 
+// What a fast version asks in front of its loop may be a value that the loop does not use: the address that a length was read from, the length under its extension.
+// Here they stand on an unlikely path of the loop around, which that loop's fast version copies: the path that goes round an inner loop of no turns.
+static void testVersionLoopsAsksInFrontOfLoopAboutValuesOnPathThatLoopAroundCopies()
+{
+    struct List {
+        int32_t length;
+        int32_t room;
+    };
+    struct Memory {
+        int64_t key;
+        List* list;
+    };
+    for (bool readsLengthTwice : { false, true }) {
+        Policy policy = loopPolicy();
+        policy.loops.omitsPollsFromLoopsThatEndWithinData = true;
+        LoopProcedure procedure(policy);
+        auto& [proc, graph, state, outer] = procedure;
+        BasicBlock* beforeInner = proc.addBlock();
+        BasicBlock* innerHeader = proc.addBlock();
+        BasicBlock* innerBody = proc.addBlock();
+        BasicBlock* outerLatch = proc.addBlock();
+        Variable* innerIndex = proc.addVariable(Int64);
+        auto appendKeyGuard = [&](BasicBlock* block) {
+            return appendGuard(graph, block, graph.make(block, Equal, graph.load(block, Int64, outer.pointer, OBJECT_OFFSETOF(Memory, key), secondHeap), outer.extra), outer.sum, 1000);
+        };
+        auto appendLength = [&](BasicBlock* block) {
+            Value* list = graph.load(block, Int64, outer.pointer, OBJECT_OFFSETOF(Memory, list), thirdHeap);
+            return graph.make(block, ZExt32, graph.load(block, Int32, list, OBJECT_OFFSETOF(List, length), firstHeap));
+        };
+
+        BasicBlock* hot = appendKeyGuard(outer.body);
+        graph.branch(hot, graph.make(hot, BitAnd, graph.get(hot, outer.index), graph.int64(hot, 3)), FrequentedBlock(outerLatch), unlikely(beforeInner));
+        Value* length = appendLength(beforeInner);
+        graph.set(beforeInner, innerIndex, graph.int64(beforeInner, 0));
+        graph.jump(beforeInner, innerHeader);
+        graph.branch(innerHeader, graph.make(innerHeader, Below, graph.get(innerHeader, innerIndex), readsLengthTwice ? appendLength(innerHeader) : length), innerBody, outerLatch);
+        appendPoll(graph, innerBody, state);
+        BasicBlock* innerHot = appendKeyGuard(innerBody);
+        graph.increase(innerHot, outer.sum, graph.get(innerHot, innerIndex));
+        Value* nextInnerIndex = graph.make(innerHot, Add, graph.get(innerHot, innerIndex), graph.int64(innerHot, 1));
+        graph.set(innerHot, innerIndex, nextInnerIndex);
+        graph.jump(innerHot, innerHeader);
+        proc.setKnownInduction(DemotedInduction { innerIndex, innerHeader, nextInnerIndex, innerHeader->last()->child(0), 1, false });
+        endBodyAndRotate(outer, outerLatch);
+        readLimitsOutOf(proc, &AbstractHeapRepository::Butterfly_publicLength);
+
+        CHECK(versionLoopsAndValidate(proc));
+        CHECK_EQ(proc.report().countOf(Counter::LoopsVersioned), 2u);
+        CHECK_EQ(proc.report().countOf(Counter::LoopPollsRemoved), 1u);
+        auto code = compileProc(proc);
+        for (int32_t length : { 0, 1, 5 }) {
+            for (int32_t room : { 0, 5, 6 }) {
+                for (int64_t bound : { 0, 1, 4, 5, 9 }) {
+                    for (int64_t key : { 7, 8 }) {
+                        List list { length, room };
+                        Memory memory { 7, &list };
+                        int64_t entries = (bound + 3) / 4;
+                        state = { };
+                        CHECK_EQ(run(*code, bound, reinterpret_cast<int64_t*>(&memory), key), entries * sumBelow(length) + (key == 7 ? 0 : 1000 * (bound + entries * length)));
+                        CHECK_EQ(state.numberOfPolls, key == 7 && room >= length ? 0 : entries * length);
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void testVersionLoopsKeepsPollThatThrowsWhatIsOwed()
 {
     Policy policy = loopPolicy();
@@ -1160,6 +1227,7 @@ void addBunLoopPlanTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsRemovesRangeChecksOfNeighborsInDecreasingLoop());
     RUN(testVersionLoopsFastLoopThatCannotOutrunDataDoesNotPoll());
     RUN(testVersionLoopsFastLoopBelowLengthOfArrayIsForArrayThatHoldsIt());
+    RUN(testVersionLoopsAsksInFrontOfLoopAboutValuesOnPathThatLoopAroundCopies());
     RUN(testVersionLoopsKeepsPollThatThrowsWhatIsOwed());
     RUN(testVersionLoopsOmitsPollWhoseLikelyTurnsEndWithinData());
     RUN(testVersionLoopsRemovesRangeChecksOfCountersThatMeet());

@@ -1341,7 +1341,7 @@ void HeapRule::readFromStartsThatMayFindSomething(ClimbingSet start, const HeapK
     std::optional<ClimbingSet> finding = startsThatMayFindSomething(start, key);
     if (!finding)
         return;
-    connect(m_context.lookup(*finding, nameOfLookupForValue(key)), m_statement.result);
+    connect(m_context.lookup(*finding, nameOfLookupForValue(key), useOfLookupUnder(key)), m_statement.result);
     if (!m_context.holdsAllOf(*finding, start))
         add(m_statement.result, m_universe.undefinedValue());
 }
@@ -1502,7 +1502,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
     } else if (chain.holdsUnknownObject) {
         connect(m_context.lookup(unknownObjectAlone(), value), result);
-        noteName(ValueFlowHostNode::NamesFoundBelowValuesNobodyKnows, key);
+        if (!m_context.isLookupForCall())
+            noteName(ValueFlowHostNode::NamesFoundBelowValuesNobodyKnows, key);
         if (handsOutEvaluators) {
             // The unknown object stands for no object that lets in unseen code: one that is written on an object listed beside it is read there.
             ClimbingSet listed = m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), m_context.lookup(chain.start, prototypeLinkName));

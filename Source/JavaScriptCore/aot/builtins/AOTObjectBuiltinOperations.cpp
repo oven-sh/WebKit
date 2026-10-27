@@ -19,6 +19,7 @@
 #include "AOTOperationScope.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -132,8 +133,17 @@ static JSArray* tryListOwnKeys(JSGlobalObject* globalObject, Object& compiled, O
             if (JSArray* list = compiled.tryCreateKeysArrayWithExtraProperties(globalObject))
                 return list;
         } else if (kind != OwnKeysKind::Symbols) {
-            if (JSCellButterfly* keys = PropertyWalk::tryGetCachedOwnKeys(vm, &compiled, kind == OwnKeysKind::Names ? PropertyWalk::Filter::Strings : PropertyWalk::Filter::StringsAndSymbols))
+            bool listsSymbols = kind == OwnKeysKind::All;
+            compiled.ensureStructureForExtraProperties(vm);
+            JSCellButterfly* keys = findKeptOwnKeys(compiled, listsSymbols);
+            if (!keys)
+                keys = PropertyWalk::tryGetCachedOwnKeys(vm, &compiled, listsSymbols ? PropertyWalk::Filter::StringsAndSymbols : PropertyWalk::Filter::Strings);
+            if (keys)
                 return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+            JSArray* list = tryListKeysAsCreated(globalObject, compiled, extra, kind);
+            if (list)
+                didListOwnKeys(vm, compiled, listsSymbols, list);
+            return list;
         }
         return tryListKeysAsCreated(globalObject, compiled, extra, kind);
     }

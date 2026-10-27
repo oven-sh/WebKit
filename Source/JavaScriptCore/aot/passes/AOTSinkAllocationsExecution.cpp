@@ -614,8 +614,30 @@ void ObjectInterpreter::requireCellsOfOperandsBeside(ValueID id, uint32_t operan
     }
 }
 
+void ObjectInterpreter::buildObjectsWhosePrototypeMayBeReplacedBy(ValueID writer)
+{
+    uint64_t endedGuards = m_sinking.inputs().memberGuardsEndedByValues.get(writer.index() + 1);
+    if (!endedGuards)
+        return;
+
+    Vector<VirtualObjectID, 2> objects;
+    for (const ObjectEntry& entry : m_state.objects) {
+        ShapeContext context = m_sinking.shapeContext(entry.object);
+        bool takesReplacedPrototype = std::ranges::any_of(entry.state.variants, [&](const ObjectVariant& variant) {
+            LayoutID constructed = constructorFunctionWhosePrototypeIsTakenWhenBuilt(context, context.family.at(variant.shape));
+            return constructed && (endedGuards & maskOf(program(), MemoryLocation::memberGuards(constructed)));
+        });
+        if (takesReplacedPrototype)
+            objects.append(entry.object);
+    }
+    BuildCause cause { .opcode = function().at(writer).opcode, .admitsStoresByName = m_sinking.inputs().valuesCallingUnknownCode.get(writer.index()) };
+    for (VirtualObjectID object : objects)
+        build(object, cause);
+}
+
 void ObjectInterpreter::forgetFieldsWrittenBy(ValueID id)
 {
+    buildObjectsWhosePrototypeMayBeReplacedBy(id);
     if (m_noCellHasValidFields || !m_sinking.inputs().valuesWritingObjects.get(id.index()))
         return;
 

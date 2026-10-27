@@ -18,6 +18,7 @@
 
 namespace JSC {
 
+class JSArray;
 class JSCellButterfly;
 class JSObject;
 class JSPropertyNameEnumerator;
@@ -43,26 +44,50 @@ struct CachedPropertyList {
     bool holdsOnlyPlainData { false };
 };
 
+// Every own key of the objects with one Structure and one order word, enumerable or not: the strings, and behind them the symbols where they are listed.
+struct KeptOwnKeys {
+    bool isFor(StructureID id, uint32_t word, bool symbolsToo) const { return structureID == id && orderWord == word && listsSymbols == symbolsToo; }
+
+    StructureID structureID;
+    uint32_t orderWord { 0 };
+    bool listsSymbols { false };
+    // Null until the keys are asked for a second time.
+    JSCellButterfly* keys { nullptr };
+};
+
 class PropertyListCache {
     WTF_MAKE_NONCOPYABLE(PropertyListCache);
 public:
     explicit PropertyListCache(State&);
 
     static constexpr unsigned numberOfEntries = 256;
+    static constexpr unsigned numberOfOwnKeyLists = 64;
 
     CachedPropertyList& entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount);
+    // The place of that list, or the place that it would take.
+    KeptOwnKeys& ownKeysFor(StructureID, uint32_t orderWord, bool listsSymbols);
     void clear();
 
 private:
-    using Entries = std::array<CachedPropertyList, numberOfEntries>;
+    struct Entries {
+        std::array<CachedPropertyList, numberOfEntries> lists;
+        std::array<KeptOwnKeys, numberOfOwnKeyLists> ownKeys;
+    };
+
+    Entries& entries();
 
     State& m_state;
     std::unique_ptr<Entries> m_entries;
+    unsigned m_numberOfOwnKeyListsReplaced { 0 };
     RememberedSlotSet m_writes;
 };
 
 CachedPropertyList* cachedPropertyList(VM&, const Object&);
 CachedPropertyList* findCachedPropertyList(VM&, const Object&, JSObject* extraProperties);
+// For an object with extra properties whose Structure names theirs. The list that is kept, or null.
+JSCellButterfly* findKeptOwnKeys(const Object&, bool listsSymbols);
+// The list was made for the object just now. It is kept if the same was asked for before.
+void didListOwnKeys(VM&, const Object&, bool listsSymbols, JSArray* list);
 
 } } // namespace JSC::AOT
 

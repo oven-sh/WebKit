@@ -117,6 +117,10 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     loadStructure(jit, r.object, r.scratch);
     // What is cached about the objects below a prototype relies on the run time's report of a field that the prototype gets.
     hasNoTransition.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
+    LayoutData hasNoOrderBits { };
+    hasNoOrderBits.keysAreNeverEnumerated = true;
+    jit.loadPtr(Address(r.scratch, CompiledStructure::offsetOfLayout()), r.entry);
+    Jump hasNoOrder = jit.branchTest32(CCallHelpers::NonZero, Address(r.entry), TrustedImm32(static_cast<int32_t>(hasNoOrderBits.firstWord())));
     jit.load16(Address(r.scratch, CompiledStructure::offsetOfNumberOfExtraKeys()), r.scratch);
     hasNoTransition.append(jit.branch32(CCallHelpers::Equal, r.scratch, TrustedImm32(CompiledStructure::unknownNumberOfExtraKeys)));
     jit.lshift32(TrustedImm32(bitsPerSlotKey), r.scratch);
@@ -152,6 +156,7 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
     jit.store32(r.scratch, Address(r.object, offsetOfOrderWord));
     jit.and32(TrustedImm32(slotKeyMask), r.slotKey);
     isListed.link(&jit);
+    hasNoOrder.link(&jit);
 }
 
 void listCreatedFieldAndReturn(StubAssembler& jit, const KeyOrderRegisters& r, GPRReg value, std::optional<FieldOfLayout> known)

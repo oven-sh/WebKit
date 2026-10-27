@@ -632,7 +632,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
-    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay, options.pureFunction ? SlotsOfSites::StayAsTheyAre : slotsOfSitesBehind(request.effectsOfCallee));
+    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay, options.pureFunction ? SlotsOfSites::StayAsTheyAre : slotsOfSitesBehindStub(context, effects));
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         patchpoint->effects.exitsSideways = false;
@@ -732,7 +732,7 @@ B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationCon
     B3::PatchpointValue* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);
-    applyEffects(patchpoint, effects, request.argumentBufferAccess, false, CellConversions::AsEffectsSay, slotsOfSitesBehind(request.effects));
+    applyEffects(patchpoint, effects, request.argumentBufferAccess, false, CellConversions::AsEffectsSay, request.callsStub ? slotsOfSitesBehindStub(&context, effects) : SlotsOfSites::MayChange);
     patchpoint->setRunsWithoutFrame(request.runsWithoutFrame);
     patchpoint->effects.terminal = request.neverReturns;
     return patchpoint;
@@ -828,6 +828,13 @@ Effects RuntimeCallEmitter::effectsOfCall(const OperationContext& context, const
 bool RuntimeCallEmitter::mayConvertCells(const Effects& effects)
 {
     return AOTHeaps::mayConvertCells(effects) && !build().recordedOptions().has(TestingSwitch::NoCallConvertsCells);
+}
+
+// A slot says what a lookup found. It changes where the operation that it belongs to finds no answer in it, where code of the program runs, and where something is written that a lookup may come by.
+RuntimeCallEmitter::SlotsOfSites RuntimeCallEmitter::slotsOfSitesBehindStub(const OperationContext* context, const Effects& effects) const
+{
+    bool hasSlotOfItsOwn = context && context->valueID() && siteCachesOf(m_function.at(context->valueID()).opcode);
+    return hasSlotOfItsOwn || !effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre;
 }
 
 void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions, SlotsOfSites slotsOfSites)

@@ -36,6 +36,8 @@ struct Layout : LayoutRecord {
     bool mayKeepFieldsOutOfLine() const { return fields.size() > maxFieldsAlwaysInline; }
 
     std::optional<uint32_t> findField(PropertyKeyID) const;
+    // The first of that key.
+    std::optional<uint32_t> findStaticField(PropertyKeyID) const;
     void indexFields();
 
     uint32_t appendField(Field&&);
@@ -54,8 +56,10 @@ private:
     void addToIndex(uint32_t field);
 
     Vector<IndexedField> m_fieldsByKey;
+    Vector<IndexedField> m_staticFieldsByKey;
     uint64_t m_keysByHash { 0 };
     uint32_t m_indexedFieldCount { 0 };
+    uint32_t m_indexedStaticFieldCount { 0 };
 };
 
 inline std::optional<uint32_t> Layout::findField(PropertyKeyID key) const

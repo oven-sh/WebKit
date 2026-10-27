@@ -404,7 +404,8 @@ private:
     ValueSetID whatRetiredNodeTakes(uint32_t node, ValueSetMaker&) const;
     bool retiredNodeTakesAnyOf(uint32_t node, uint64_t low, uint32_t set) const;
     void connectPredecessorsOfRetiredNodes(Team&);
-    void connectStraightToCoveredNode(Covering&, uint32_t node);
+    bool isToBeConnectedStraightToCoveredNode(const Covering&, uint32_t node) const;
+    void connectStraightToCoveredNodes(Team&, size_t count, NOESCAPE const auto& forEachNodeToConnect);
     bool isRetiredUnderNearerCovering(const Covering&, uint32_t node) const;
     bool isFollowedBackThrough(const Covering& covering, uint32_t node) const { return !covering.retiresNoNodeByItself || (!(m_gates[node].flags & IsCoveredNode) && !covering.isMadeForPlaceholder(covering.contextOfIsMadeForPlaceholder, ValueFlowNodeID(node))); }
     void markNodesFlowingIntoCoveredNodes(Team*, std::span<const ValueFlowEdge> added);
@@ -454,6 +455,8 @@ private:
     Vector<Vector<uint32_t>> m_indicesBySource;
     Vector<Vector<ValueFlowEdge>> m_edgesByTarget;
     Vector<Vector<ValueFlowEdge>> m_edgesOnlyToLink;
+    Vector<Vector<ValueFlowEdge>> m_straightEdgesOfShare;
+    Vector<ValueFlowEdge> m_straightEdges;
 
     Vector<std::unique_ptr<Shard>> m_shards;
     std::array<Vector<Message>, 2> m_messages;

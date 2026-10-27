@@ -117,7 +117,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (areReceiversListedForGood && tellsApartStartsThatFindNothing(start, key))
             readFromStartsThatMayFindSomething(start, key);
         else
-            connect(m_context.lookup(start, name), m_statement.result);
+            connect(m_context.lookup(start, name, useOfLookupUnder(key)), m_statement.result);
     });
     if (key.keyClass == HeapKeyClass::Unknown) {
         // A key nobody knows may be a symbol that the program has found by listing the keys.

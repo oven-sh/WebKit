@@ -17,7 +17,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ProofSet proofsUnitedOverOrigins { Proof::Shape, Proof::OwnInstance, Proof::SlotFilled, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot, Proof::BirthFieldsFilled, Proof::NotFrozen, Proof::KeyOrder };
+static constexpr ProofSet proofsUnitedOverOrigins { Proof::Shape, Proof::OwnInstance, Proof::SlotFilled, Proof::NoExtraProperties, Proof::NoFieldOutsideSlot, Proof::BirthFieldsFilled, Proof::NotFrozen, Proof::KeyOrder, Proof::InBounds };
 
 GuardFacts GuardAvailability::factsAfterEdge(const GuardFacts& factsBeforeEdge, Edge edge) const
 {
@@ -26,39 +26,64 @@ GuardFacts GuardAvailability::factsAfterEdge(const GuardFacts& factsBeforeEdge, 
 
     BlockID target = targetOf(m_function, edge).block;
     const UseLists& useLists = m_analyses.useLists();
+    auto isBoundAnew = [&](ValueID value) {
+        ValueLocation location = value ? useLists.locationOf(value) : ValueLocation();
+        return location.placement == ValuePlacement::Parameter && location.block == target;
+    };
     GuardFacts result { GuardKnowledge::Known, { } };
     for (const GuardFact& fact : factsBeforeEdge.facts) {
-        ValueLocation location = fact.subject ? useLists.locationOf(fact.subject) : ValueLocation();
-        if (location.placement != ValuePlacement::Parameter || location.block != target)
+        if (!isBoundAnew(fact.subject))
             result.facts.append(fact);
     }
 
     auto& parameters = m_function.at(target).parameters;
-    for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
-        ValueID parameter = parameters[parameterIndex];
-        if (isGuardValue(m_function, parameter) || m_analyses.identityOf(parameter) != parameter)
-            continue;
-        ValueID passed = valuePassedOn(m_function, edge, parameterIndex);
-        if (!passed)
-            continue;
-        ValueID subject = m_analyses.identityOf(passed);
+    auto forEachParameterThatTakes = [&](const Invocable<void(ValueID parameter, ValueID identityOfPassedValue)> auto& functor) {
+        for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
+            ValueID parameter = parameters[parameterIndex];
+            if (isGuardValue(m_function, parameter) || m_analyses.identityOf(parameter) != parameter)
+                continue;
+            if (ValueID passed = valuePassedOn(m_function, edge, parameterIndex))
+                functor(parameter, m_analyses.identityOf(passed));
+        }
+    };
+    forEachParameterThatTakes([&](ValueID parameter, ValueID subject) {
         for (const GuardFact& fact : factsBeforeEdge.facts) {
             if (fact.subject != subject)
                 continue;
             result.facts.append(fact);
             result.facts.last().subject = parameter;
         }
+    });
+
+    bool namesPosition = std::ranges::any_of(result.facts, [](const GuardFact& fact) {
+        return !!fact.position;
+    });
+    if (!namesPosition)
+        return result;
+
+    GuardFacts atPositionsAfterEdge { GuardKnowledge::Known, { } };
+    for (const GuardFact& fact : result.facts) {
+        if (!isBoundAnew(fact.position))
+            atPositionsAfterEdge.facts.append(fact);
     }
-    return result;
+    forEachParameterThatTakes([&](ValueID parameter, ValueID position) {
+        for (const GuardFact& fact : result.facts) {
+            if (fact.position != position)
+                continue;
+            atPositionsAfterEdge.facts.append(fact);
+            atPositionsAfterEdge.facts.last().position = parameter;
+        }
+    });
+    return atPositionsAfterEdge;
 }
 
-std::optional<ValueID> GuardAvailability::subjectBeforeEdge(ValueID subjectAfterEdge, Edge edge) const
+std::optional<ValueID> GuardAvailability::valueBeforeEdge(ValueID valueAfterEdge, Edge edge) const
 {
-    if (!subjectAfterEdge)
-        return subjectAfterEdge;
-    ValueLocation location = m_analyses.useLists().locationOf(subjectAfterEdge);
+    if (!valueAfterEdge)
+        return valueAfterEdge;
+    ValueLocation location = m_analyses.useLists().locationOf(valueAfterEdge);
     if (location.placement != ValuePlacement::Parameter || location.block != targetOf(m_function, edge).block)
-        return subjectAfterEdge;
+        return valueAfterEdge;
     ValueID passed = valuePassedOn(m_function, edge, location.index);
     if (!passed)
         return std::nullopt;
@@ -109,7 +134,7 @@ bool GuardAvailability::areSameFact(const GuardFact& a, const GuardFact& b) cons
             });
         });
     };
-    return a.proofs == b.proofs && a.subject == b.subject && a.dependsOn == b.dependsOn && hasOriginsOf(a, b) && hasOriginsOf(b, a);
+    return a.proofs == b.proofs && a.subject == b.subject && a.position == b.position && a.dependsOn == b.dependsOn && hasOriginsOf(a, b) && hasOriginsOf(b, a);
 }
 
 static bool testImplies(const Value& test, const Value& impliedTest)
@@ -320,7 +345,7 @@ GuardFacts GuardAvailability::meetFacts(const GuardFacts& a, const GuardFacts& b
 
 bool GuardAvailability::leavesUnspecified(Edge edge, ValueID subjectAfterEdge) const
 {
-    std::optional<ValueID> subject = subjectBeforeEdge(subjectAfterEdge, edge);
+    std::optional<ValueID> subject = valueBeforeEdge(subjectAfterEdge, edge);
     return subject && *subject && m_function.at(*subject).opcode == Opcode::Unspecified;
 }
 
@@ -350,7 +375,7 @@ bool GuardAvailability::tryWiden(GuardFact& fact, const GuardFacts& factsOnOther
     const GuardFact* partner = nullptr;
     ProofSet proofs;
     for (const GuardFact& candidate : factsOnOtherWay.facts) {
-        if (candidate.subject != fact.subject)
+        if (candidate.subject != fact.subject || candidate.position != fact.position)
             continue;
         ProofSet united;
         for (Proof proof : allMembersOf<Proof>) {

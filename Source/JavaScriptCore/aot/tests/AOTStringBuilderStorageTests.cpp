@@ -953,6 +953,56 @@ static void testLengthLimit(LoadedProgram& program)
     builder->release(program.instance());
 }
 
+static void testRoomThatMayStayUnused(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    constexpr uint32_t left = 100;
+    auto fillUpTo = [&](Builder& builder) {
+        JSString* piece = jsString(vm, repeated('x', 1u << 16));
+        for (unsigned bit = 16; bit < 30; ++bit) {
+            builder.append(piece);
+            piece = jsString(program.realm(), piece, piece);
+        }
+        builder.append(piece);
+        builder.appendRepeated('y', (1u << 16) - 1 - left);
+        AOT_TEST_CHECK(builder->length() == String::MaxLength - left && builder.limit() - builder.position() <= left);
+    };
+    auto writeBehind = [&](Builder& builder, uint32_t length) {
+        Latin1Character* cursor = builder->reserve(program.realm(), { .length = 0, .maxLengthOfRest = maxStringBuilderReservation });
+        AOT_TEST_CHECK(cursor == builder.characters() + builder.position() && builder.limit() - builder.position() >= maxStringBuilderReservation);
+        memset(cursor, 'z', length);
+        builder->commit(cursor + length);
+    };
+
+    Builder exact(program);
+    fillUpTo(exact);
+    AOT_TEST_CHECK(!exact->reserve(program.realm(), left + 1));
+    AOT_TEST_CHECK(takeOutOfMemoryError(program));
+    AOT_TEST_CHECK(!exact->reserve(program.realm(), { .length = left + 1, .maxLengthOfRest = 0 }));
+    AOT_TEST_CHECK(takeOutOfMemoryError(program));
+    writeBehind(exact, left);
+    AOT_TEST_CHECK(exact->length() == String::MaxLength);
+    AOT_TEST_CHECK(exact.finish()->length() == String::MaxLength);
+
+    Builder tooLong(program);
+    fillUpTo(tooLong);
+    uint32_t lengthBefore = tooLong->length();
+    writeBehind(tooLong, left + 1);
+    AOT_TEST_CHECK(tooLong->length() == String::MaxLength + 1);
+    AOT_TEST_CHECK(!tooLong->toString(program.realm(), program.instance(), StringUse::Unknown));
+    AOT_TEST_CHECK(takeOutOfMemoryError(program));
+    AOT_TEST_CHECK(!tooLong->reserve(program.realm(), { .length = 0, .maxLengthOfRest = 2 * maxStringBuilderReservation }));
+    AOT_TEST_CHECK(takeOutOfMemoryError(program));
+    AOT_TEST_CHECK(tooLong->append(program.realm(), jsString(vm, repeated('w', 1u << 16))) == AppendResult::Failed);
+    AOT_TEST_CHECK(takeOutOfMemoryError(program));
+    tooLong->rollBack(lengthBefore);
+    AOT_TEST_CHECK(tooLong->length() == lengthBefore && tooLong.limit() - tooLong.position() == left);
+    AOT_TEST_CHECK(!tooLong->reserve(program.realm(), left + 1));
+    AOT_TEST_CHECK(takeOutOfMemoryError(program));
+    writeBehind(tooLong, 1);
+    AOT_TEST_CHECK(tooLong.finish()->length() == lengthBefore + 1);
+}
+
 static void testPoolDepth(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1554,6 +1604,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/append-values-is-atomic"_s, withInstance<testAppendValuesIsAtomic> },
         { "string-builder-storage/reserve-commit"_s, withInstance<testReserveCommit> },
         { "string-builder-storage/length-limit"_s, withInstance<testLengthLimit> },
+        { "string-builder-storage/room-that-may-stay-unused"_s, withInstance<testRoomThatMayStayUnused> },
         { "string-builder-storage/pool-depth"_s, withInstance<testPoolDepth> },
         { "string-builder-storage/pool-depth-above-a-builder-laid-into-the-empty-pool"_s, withInstance<testPoolDepthAboveBuilderLaidIntoEmptyPool> },
         { "string-builder-storage/pool-cleared-by-collection"_s, withInstance<testPoolClearedByCollection> },

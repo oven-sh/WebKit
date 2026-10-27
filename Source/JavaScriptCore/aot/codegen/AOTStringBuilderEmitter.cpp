@@ -399,14 +399,14 @@ Pointer StringBuilderEmitter::reserve(const OperationContext& context, CellPoint
     return join.finish();
 }
 
-Pointer StringBuilderEmitter::reserve(const OperationContext& context, CellPointer builder, Word32 size)
+Pointer StringBuilderEmitter::reserveAtMost(const OperationContext& context, CellPointer builder, uint32_t size)
 {
     LBasicBlock slow = newBlock();
     Join<Pointer> join(m_out);
-    join.add(tryReserve(builder, size, slow));
+    join.add(tryReserve(builder, word32(static_cast<int32_t>(size)), slow));
 
     m_out.appendTo(slow);
-    join.add(callOperation<Pointer>(context, RuntimeOperation::StringBuilderReserve, { builder, zeroExtended(size) }, { .isOnRarePath = true }));
+    join.add(callOperation<Pointer>(context, RuntimeOperation::StringBuilderReserve, { builder, integer(encodeReservationOfAtMost(size)) }, { .isOnRarePath = true }));
     return join.finish();
 }
 

@@ -110,5 +110,5 @@ function f2 name="chain" module=m0 position=216 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: BB#[[done]]:
 # CHECK: Return(b@[[entry]], Terminal)
 # CHECK: BB#[[remember]]:
-# CHECK: Patchpoint(b@[[entry]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, AOTInstance_siteCaches}|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
+# CHECK: Patchpoint(b@[[entry]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
 # CHECK-LABEL: end of function

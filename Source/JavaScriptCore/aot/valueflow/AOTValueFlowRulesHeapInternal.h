@@ -195,6 +195,7 @@ private:
     }
     void forEachNodeHolding(ClimbingSet objects, ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     void noteName(ValueFlowHostNode, const HeapKey&);
+    ValueFlowRuleContext::LookupUse useOfLookupUnder(const HeapKey& key) const { return m_statement.isOnlyCalledOnItsHolder && key.keyClass == HeapKeyClass::Name ? ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver : ValueFlowRuleContext::LookupUse::Any; }
     void forEachNodeReadByName(ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     void letPrototypeObjectsOfLanguageEscape() { add(ValueFlowProgramNodes::escaped(), m_tables.prototypeObjectsOfLanguage()); }
     void appendPrototypeAtCreation(ValueFlowObjectID, Members&) const;

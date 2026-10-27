@@ -285,6 +285,7 @@ struct SinkingInputs {
     BitVector throwingValues;
     BitVector valuesWritingObjects;
     BitVector valuesCallingUnknownCode;
+    UncheckedKeyHashMap<uint32_t, uint64_t> memberGuardsEndedByValues;
     BitVector throwingTerminators;
     BitVector conditionsOnlyBranchedOn;
     BitVector blocksInCycles;

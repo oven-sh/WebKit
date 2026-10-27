@@ -138,6 +138,7 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
     case TargetKind::Stub:
         request.lateClobbered.merge(catalog.summaryOf(target.calledStub).clobbered);
         request.effects = catalog.effectsOf(target.calledStub);
+        request.callsStub = true;
         break;
     }
 

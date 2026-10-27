@@ -60,7 +60,7 @@ public:
     Pointer tryReserve(CellPointer builder, Word32 size, LBasicBlock whenThereIsNoRoom);
     // Room for whole words that hold `length` characters. What appends fewer characters than it asks room for would be refused near the longest text while it fits: see tryReserve().
     Pointer reserve(const OperationContext&, CellPointer builder, uint32_t length);
-    Pointer reserve(const OperationContext&, CellPointer builder, Word32 size);
+    Pointer reserveAtMost(const OperationContext&, CellPointer builder, uint32_t size);
     void commit(CellPointer builder, Pointer cursor);
 
     Pointer writeBytes(Pointer cursor, std::span<const Latin1Character>);

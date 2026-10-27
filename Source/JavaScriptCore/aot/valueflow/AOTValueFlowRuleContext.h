@@ -63,6 +63,7 @@ public:
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;
     ValueFlowName nameOfKey() const;
+    bool isLookupForCall() const;
     ValueFlowCallKind callKindOfKey() const;
     ValueFlowObjectID markerOfKey() const;
 
@@ -125,7 +126,8 @@ public:
     ClimbingSet holdersOfLibraryExportsWrittenUnder(PropertyKeyID);
     bool mayFindWhatIsWrittenUnderUnknownKey(ValueFlowName) const;
     bool usesGeneralRulesOnly() const;
-    ValueFlowNodeID lookup(ClimbingSet receivers, ValueFlowName);
+    enum class LookupUse : bool { Any, OnlyCalledOnReceiver };
+    ValueFlowNodeID lookup(ClimbingSet receivers, ValueFlowName, LookupUse = LookupUse::Any);
     bool runsCodeThatRecordsDescribe() const;
     ValueFlowCallGroup group(ClimbingSet callees, ValueFlowCallKind, ValueFlowCalleeOrigin = ValueFlowCalleeOrigin::Value);
     ValueFlowNodeID hub(ValueFlowBehaviorID);

@@ -292,12 +292,12 @@ void StringBuilderStorage::reset()
 
 void StringBuilderStorage::updateLimit()
 {
-    m_limit = wouldOverwriteSharedCharacters() ? m_position : std::min<uint32_t>(capacity(), String::MaxLength - m_lengthOutsideBuffer);
+    m_limit = wouldOverwriteSharedCharacters() ? m_position : std::min<uint32_t>(capacity(), std::max<uint32_t>(String::MaxLength - m_lengthOutsideBuffer, m_position));
 }
 
 bool StringBuilderStorage::canGrowBy(size_t added) const
 {
-    return added <= String::MaxLength - length();
+    return static_cast<uint64_t>(length()) + added <= String::MaxLength;
 }
 
 // The bytes that are written behind the characters that are appended want room in the buffer. They are no part of the text, so the longest text says nothing about them.
@@ -526,15 +526,20 @@ Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, siz
     return nullptr;
 }
 
-Latin1Character* StringBuilderStorage::tryReserve(size_t length, size_t roomForMore)
+Latin1Character* StringBuilderStorage::tryReserve(const Reservation& reservation)
 {
-    size_t bytesWritten = roundUpToMultipleOf<sizeof(uint64_t)>(length);
-    return bytesWritten <= m_limit - m_position || tryMakeRoom(length, bytesWritten, roomForMore) ? m_characters + m_position : nullptr;
+    size_t bytesWritten = roundUpToMultipleOf<sizeof(uint64_t)>(reservation.length + reservation.maxLengthOfRest);
+    if (bytesWritten > m_limit - m_position) {
+        if (!tryMakeRoom(reservation.length, bytesWritten, reservation.roomForMore))
+            return nullptr;
+        m_limit = std::max(m_limit, static_cast<uint32_t>(m_position + bytesWritten));
+    }
+    return m_characters + m_position;
 }
 
-Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, size_t length, size_t roomForMore)
+Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, const Reservation& reservation)
 {
-    if (Latin1Character* cursor = tryReserve(length, roomForMore)) [[likely]]
+    if (Latin1Character* cursor = tryReserve(reservation)) [[likely]]
         return cursor;
     throwOutOfMemory(globalObject);
     return nullptr;
@@ -1395,6 +1400,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderReserve, uint8_t*, (Instance* 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderReserve);
     auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderReserve);
+    if (isReservationOfAtMost(size))
+        OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, { .length = 0, .maxLengthOfRest = decodeReservationOfAtMost(size) })));
     OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, size)));
 }
 

@@ -976,19 +976,73 @@ PropertyListCache::PropertyListCache(State& state)
     state.caches->add(CacheKind::ClearedEachCollection, "property lists"_s, *this);
 }
 
-CachedPropertyList& PropertyListCache::entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
+PropertyListCache::Entries& PropertyListCache::entries()
 {
     if (!m_entries)
         m_entries = makeUniqueWithoutFastMallocCheck<Entries>();
     m_writes.recordAll();
-    return (*m_entries)[((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries];
+    return *m_entries;
+}
+
+CachedPropertyList& PropertyListCache::entryFor(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
+{
+    return entries().lists[((extraPropertiesStructureID.bits() >> 4) + shapeWord + orderAndCount * 31) % numberOfEntries];
+}
+
+KeptOwnKeys& PropertyListCache::ownKeysFor(StructureID structureID, uint32_t orderWord, bool listsSymbols)
+{
+    constexpr unsigned listsPerSet = 4;
+    static_assert(!(numberOfOwnKeyLists % listsPerSet));
+    auto set = std::span { entries().ownKeys }.subspan(WTF::pairIntHash(structureID.bits(), orderWord) % (numberOfOwnKeyLists / listsPerSet) * listsPerSet, listsPerSet);
+    KeptOwnKeys* unused = nullptr;
+    KeptOwnKeys* withoutList = nullptr;
+    for (KeptOwnKeys& kept : set) {
+        if (kept.isFor(structureID, orderWord, listsSymbols))
+            return kept;
+        if (!kept.structureID)
+            unused = &kept;
+        else if (!kept.keys)
+            withoutList = &kept;
+    }
+    if (unused)
+        return *unused;
+    return withoutList ? *withoutList : set[m_numberOfOwnKeyListsReplaced++ % listsPerSet];
+}
+
+JSCellButterfly* findKeptOwnKeys(const Object& object, bool listsSymbols)
+{
+    if (!object.keysDependOnlyOnStructureAndOrderWord())
+        return nullptr;
+    const KeptOwnKeys& kept = object.state().objects->caches->propertyLists.ownKeysFor(object.structureID(), object.orderWord(), listsSymbols);
+    return kept.isFor(object.structureID(), object.orderWord(), listsSymbols) ? kept.keys : nullptr;
+}
+
+void didListOwnKeys(VM& vm, const Object& object, bool listsSymbols, JSArray* list)
+{
+    if (!object.keysDependOnlyOnStructureAndOrderWord())
+        return;
+    DeferGC deferGC(vm);
+    KeptOwnKeys& kept = object.state().objects->caches->propertyLists.ownKeysFor(object.structureID(), object.orderWord(), listsSymbols);
+    if (!kept.isFor(object.structureID(), object.orderWord(), listsSymbols)) {
+        kept = { object.structureID(), object.orderWord(), listsSymbols, nullptr };
+        return;
+    }
+    unsigned length = list->length();
+    JSCellButterfly* keys = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, length);
+    if (!keys)
+        return;
+    auto elements = list->butterfly()->contiguous();
+    for (unsigned index = 0; index < length; ++index)
+        keys->setIndex(vm, index, elements.at(list, index).get());
+    kept.keys = keys;
 }
 
 void PropertyListCache::clear()
 {
     m_writes.forEachRegionToClear([&](size_t, size_t) {
-        for (auto& listing : *m_entries)
+        for (auto& listing : m_entries->lists)
             listing = { };
+        m_entries->ownKeys.fill({ });
         for (auto& cacheEntry : std::span { m_state.instance.objects.keyLists, numberOfKeyLists }) {
             if (cacheEntry.orderWord & orderWordHasExtraProperties)
                 cacheEntry = { };

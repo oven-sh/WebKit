@@ -109,9 +109,15 @@ public:
 
     Latin1Character* reserve(JSGlobalObject*, size_t size);
     Latin1Character* tryReserve(size_t size);
-    // A buffer that has to be replaced is made larger by roomForMore, if that can be had.
-    Latin1Character* reserve(JSGlobalObject*, size_t size, size_t roomForMore);
-    Latin1Character* tryReserve(size_t size, size_t roomForMore);
+    struct Reservation {
+        size_t length;
+        // Bytes that may be written behind them. What is committed of them is held against the longest string when the string is made, or more room is asked for.
+        size_t maxLengthOfRest { 0 };
+        // A buffer that has to be replaced is made larger by this, if that can be had.
+        size_t roomForMore { 0 };
+    };
+    Latin1Character* reserve(JSGlobalObject*, const Reservation&);
+    Latin1Character* tryReserve(const Reservation&);
     void commit(const Latin1Character* cursor);
     bool hasRoomAt(const Latin1Character* cursor, size_t size) const
     {

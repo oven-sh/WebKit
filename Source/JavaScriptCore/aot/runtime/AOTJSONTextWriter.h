@@ -105,6 +105,7 @@ ALWAYS_INLINE Latin1Character* appendJSONNumber(Latin1Character* cursor, double 
 constexpr size_t roomBehindJSONText(size_t length) { return length / 8; }
 
 constexpr size_t maxLengthOfEscapedJSONString(size_t length) { return 6 * length + 2; }
+Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* cursor, std::span<const Latin1Character>);
 
 // The cursor behind the quoted text, with maxStringBuilderReservation bytes of room. Null with an exception.
 Latin1Character* appendEscapedJSONString(JSGlobalObject*, StringBuilderStorage&, Latin1Character* cursor, std::span<const Latin1Character>);

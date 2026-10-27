@@ -12,6 +12,8 @@
 #include "B3ClampLoopBound.h"
 #include "B3CountedLoops.h"
 #include "B3EnsureLoopPreHeaders.h"
+#include "B3FixSSA.h"
+#include "B3InsertionSetInlines.h"
 #include "B3Limits.h"
 #include "B3LoopInvariance.h"
 #include "B3LoopRangeChecks.h"
@@ -64,6 +66,7 @@ public:
 
         for (unsigned i = m_versions.size(); i--;)
             buildFastPreHeader(*m_versions[i], i);
+        storeValuesThatOnlyPreHeadersName();
         for (auto& version : m_versions)
             copyFastLoop(*version);
         splitEdgesIntoSlowPaths();
@@ -87,6 +90,7 @@ private:
         RegionCloner::ValueMap hoistedMap;
         RegionCloner::ValueMap peeledMap;
         FastLoopBounds bounds;
+        Value* start { nullptr };
         RegionCloner::BlockMap hotCopies;
         RegionCloner::BlockMap excursionCopies;
         Value* testedCopy { nullptr };
@@ -137,11 +141,37 @@ private:
             return replacement;
         if (!m_cloner.contains(value->owner))
             return value;
-        Variable* variable = m_definitionVariables.get(value);
-        RELEASE_ASSERT(variable);
-        Value* siblingLoopValue = version.front->last()->appendNew<VariableValue>(m_proc, Get, value->origin(), variable);
-        m_cloner.substitute(version.hoistedMap, value, siblingLoopValue);
-        return siblingLoopValue;
+        Value* valueOfCopiedBlock = version.front->last()->appendNew<VariableValue>(m_proc, Get, value->origin(), variableHolding(value));
+        m_cloner.substitute(version.hoistedMap, value, valueOfCopiedBlock);
+        return valueOfCopiedBlock;
+    }
+
+    Variable* variableHolding(Value* value)
+    {
+        if (value->opcode() == Get)
+            return value->as<VariableValue>()->variable();
+        return m_definitionVariables.ensure(value, [&] {
+            RELEASE_ASSERT(!m_didStoreValuesThatOnlyPreHeadersName);
+            Variable* variable = addVariableForDemotedValue(m_proc, value);
+            m_singleDefinitions.add(variable, value);
+            m_blocksOfValuesThatOnlyPreHeadersName.add(value->owner);
+            m_valuesThatOnlyPreHeadersName.add(value);
+            return variable;
+        }).iterator->value;
+    }
+
+    void storeValuesThatOnlyPreHeadersName()
+    {
+        m_didStoreValuesThatOnlyPreHeadersName = true;
+        InsertionSet insertionSet(m_proc);
+        for (BasicBlock* block : m_blocksOfValuesThatOnlyPreHeadersName.values(m_proc)) {
+            for (unsigned index = 0; index < block->size(); ++index) {
+                Value* value = block->at(index);
+                if (m_valuesThatOnlyPreHeadersName.contains(value))
+                    insertionSet.insert<VariableValue>(index + 1, Set, value->origin(), m_definitionVariables.get(value), value);
+            }
+            insertionSet.execute(block);
+        }
     }
 
     void mapOperands(Version& version, Value* value, RegionCloner::ValueMap& map, IsPeeled isPeeled)
@@ -226,6 +256,7 @@ private:
         version.bounds = appendEntryGuards(*version.front, plan.rangeChecks, *plan.countedLoop, [&](Value* value) {
             return hoistedValueOrSelf(version, value);
         });
+        version.start = hoistedValueOrSelf(version, plan.countedLoop->start);
     }
 
     void closeWithGuard(Version& version, unsigned index, Value* terminal)
@@ -434,7 +465,7 @@ private:
         const CountedLoop& original = *version.plan.countedLoop;
         CountedLoop fast = original;
         fast.preHeader = version.front->last();
-        fast.start = hoistedValueOrSelf(version, original.start);
+        fast.start = version.start;
         fast.header = version.hotCopies.get(original.header);
         fast.test = version.hotCopies.get(original.test);
         fast.latch = version.hotCopies.get(original.latch);
@@ -496,6 +527,9 @@ private:
     Vector<std::unique_ptr<Version>> m_versions;
     UncheckedKeyHashMap<Variable*, Value*> m_singleDefinitions;
     UncheckedKeyHashMap<Value*, Variable*> m_definitionVariables;
+    IndexSet<Value*> m_valuesThatOnlyPreHeadersName;
+    IndexSet<BasicBlock*> m_blocksOfValuesThatOnlyPreHeadersName;
+    bool m_didStoreValuesThatOnlyPreHeadersName { false };
     IndexSet<BasicBlock*> m_slowPathBlocks;
 };
 

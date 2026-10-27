@@ -566,6 +566,70 @@ static void testMovedLoadLogFollowsCopiedBlocks()
     }
 }
 
+// The test of a loop reads a word, and the body was to read it again behind a store. The test is copied to the bottom of the loop, so the body is given the one read in the first turn and the other in the later ones.
+static void testMovedLoadLogNamesWhatReachesThePlace()
+{
+    constexpr int64_t reported = 42;
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* test = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* last = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t, int64_t>(proc, root).eager();
+    graph.jump(root, test);
+    Value* loaded = graph.load(test, Int64, arguments[0], 0, firstHeap);
+    graph.branch(test, graph.make(test, LessThan, loaded, arguments[1]), body, last);
+    graph.store(body, graph.make(body, Add, loaded, arguments[2]), arguments[0], 0, firstHeap);
+    proc.movedLoadLog().add(*MovedLoad::describe(loaded), body, body->size(), arguments[0], loaded);
+    graph.store(body, graph.make(body, Add, loaded, graph.int64(body, 1)), arguments[0], 0, firstHeap);
+    graph.jump(body, test);
+    graph.ret(last, graph.int64(last, 0));
+    proc.resetReachability();
+
+    RegionCloner cloner(proc);
+    cloner.addBlock(test);
+    cloner.demoteEscapingValues();
+    body->replaceSuccessor(test, cloner.cloneBlocks(singleElementSpan(test)).get(test));
+    cloner.finish();
+    fixSSA(proc);
+    validate(proc);
+
+    CHECK(proc.movedLoadLog().insertChecks(proc, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+        jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
+        jit.emitFunctionEpilogue();
+        jit.ret();
+    })));
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
+    auto code = compileProc(proc, 1);
+    int64_t word = 0;
+    CHECK_EQ(invoke<int64_t>(*code, &word, 3, 0), 0);
+    CHECK_EQ(word, 3);
+    word = 0;
+    CHECK_EQ(invoke<int64_t>(*code, &word, 3, 1), reported);
+}
+
+static void testMovedLoadLogDoesNotMissWritesThatNothingLeadsTo()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* orphan = proc.addBlock();
+    BasicBlock* last = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*>(proc, root).eager();
+    Value* loaded = graph.load(root, Int64, arguments[0], 0, firstHeap);
+    graph.store(root, loaded, arguments[0], 8, secondHeap);
+    proc.movedLoadLog().add(*MovedLoad::describe(loaded), root, root->size(), arguments[0], loaded);
+    graph.jump(root, last);
+    graph.store(orphan, graph.int64(orphan, 1), arguments[0], 0, firstHeap);
+    graph.jump(orphan, last);
+    graph.ret(last, loaded);
+    proc.resetReachability();
+    CHECK_EQ(numberOfBlocks(proc), 2u);
+    CHECK(proc.movedLoadLog().insertChecks(proc, nullptr));
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
+}
+
 static void testHoistFromLargeLoop()
 {
     Procedure proc(likelyPathsPolicy(true));
@@ -796,6 +860,8 @@ void addBunHoistingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testHoistLoopInvariantValuesHoistsImmutableLoadPastStores());
     RUN(testMovedLoadCheckLetsWordGetFilled());
     RUN(testMovedLoadLogFollowsCopiedBlocks());
+    RUN(testMovedLoadLogNamesWhatReachesThePlace());
+    RUN(testMovedLoadLogDoesNotMissWritesThatNothingLeadsTo());
     RUN(testHoistFromLargeLoop());
     RUN(testHoistWithEarlyLikelyExit());
     RUN(testHoistAcrossInnerLoop());

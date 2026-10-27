@@ -455,6 +455,16 @@ static KnownBoolean evaluatePrototypeTest(const ShapeContext& context, const Vir
     return prototype && hasStored(shape, *prototype) ? KnownBoolean::Unknown : KnownBoolean::True;
 }
 
+LayoutID constructorFunctionWhosePrototypeIsTakenWhenBuilt(const ShapeContext& context, const VirtualShape& shape)
+{
+    if (shape.kind != VirtualShapeKind::Fields || evaluatePrototypeTest(context, shape) != KnownBoolean::True)
+        return { };
+    const Program& program = context.objects.program;
+    LayoutID declared = declaredLayoutOf(program, context.family.descriptionOf(shape).layout);
+    const Layout& layout = program.at(declared);
+    return layout.has(LayoutFlags::IsConstructorFunction) && layout.classFlow.prototypeProperty != MemberMutability::Fixed ? declared : LayoutID();
+}
+
 static bool isSubjectOperand(Opcode opcode, uint32_t operandIndex)
 {
     switch (opcode) {
