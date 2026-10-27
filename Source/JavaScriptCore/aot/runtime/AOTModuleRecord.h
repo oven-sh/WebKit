@@ -16,6 +16,7 @@
 namespace JSC {
 
 class ModuleGraphLoadingState;
+class ModuleLoadingContext;
 
 namespace AOT {
 
@@ -64,10 +65,25 @@ public:
 
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
     void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
-    void willLoadRequests();
+    void willLoadRequests(ModuleGraphLoadingState&);
+    void didGoOnWithLoadWhileRequestsWereListed(ModuleGraphLoadingState& load) { m_loadGoneOnWithWhileRequestsWereListed = &load; }
+    bool takeWentOnWhileRequestsWereListed(ModuleGraphLoadingState& load)
+    {
+        if (m_loadGoneOnWithWhileRequestsWereListed != &load)
+            return false;
+        m_loadGoneOnWithWhileRequestsWereListed = nullptr;
+        return true;
+    }
+    ModuleGraphLoadingState* loadThatWaitsFor(const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure);
     void didLoad();
-    static void didFailToLoad(const ModuleGraphLoadingState&);
+    static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
+    static std::optional<ModuleID> fileToWaitFor(JSGlobalObject*, const Identifier& key);
+    static JSPromise* deferRequest(JSGlobalObject*, ModuleID file, ModuleLoadingContext*, bool useImportMap);
+    static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
+    static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
+    static void didFailToMakeModule(JSGlobalObject*, const Identifier& key);
+    void willBeLoadedByImport();
     bool takeStepOfMainModule();
     bool takeLoadPromiseBelowMainModule();
     // The loader reports the module as loaded so many steps later.
@@ -80,6 +96,8 @@ public:
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
     // Around a request that the loader makes for the module. The first returns what the second takes.
     uint8_t willAskHostForRequest();
+    // Answers what it was.
+    static bool setIsAskingHost(JSGlobalObject*, bool);
     void didAskHostForRequest(uint8_t flagsBefore);
     // What the host answers when it is asked to fetch the module under a key that this record requests. Null where the host has to be asked.
     AbstractModuleRecord* recordOfRequest(JSGlobalObject*, const Identifier& key);
@@ -111,6 +129,8 @@ private:
     // The requests keep the keys. The loader asks in the order of the requests, and not for all of them.
     Vector<std::pair<UniquedStringImpl*, ModuleID>, 2> m_compiledRequests;
     unsigned m_nextCompiledRequest { 0 };
+    // Compared, never followed: the step that asked the module for its requests is on the stack.
+    ModuleGraphLoadingState* m_loadGoneOnWithWhileRequestsWereListed { nullptr };
     uint32_t m_stepsBehindLoad { 0 };
     bool m_holdsStatus { false };
     bool m_isRetained { false };

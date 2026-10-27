@@ -23,6 +23,11 @@
 #define JSC_CALL_WITHOUT_INLINING
 #endif
 
+namespace WTF {
+class StringImpl;
+}
+using WTF::StringImpl;
+
 namespace JSC {
 
 class JSGlobalObject;

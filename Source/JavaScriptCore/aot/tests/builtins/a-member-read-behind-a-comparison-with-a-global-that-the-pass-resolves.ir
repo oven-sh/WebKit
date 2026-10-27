@@ -1,0 +1,46 @@
+# The pass finds which object a global holds, and a list is compared with it. Behind the comparison the list is still a list, and the read of its length is the read of a list's length
+# RUN: pipeline ResolveBuiltins
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    Return
+}
+
+function f1 name="comparedWithConstructor" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="WeakMap" [isFreeName]
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Jump -> next b3(v4)
+  b2(v5):
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = PropGet v6 key="length"
+    Return v7
+# CHECK: = Builtin builtin=WeakMap
+# CHECK: b3(v6: Array<1, proven, Int32, pristine[Storage, Names, Dense]>):
+# CHECK: = CallBuiltin v6 overload=ArrayPrototypeLength/0
+}
+
+function f2 name="comparedWithNamespace" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="console" [isFreeName]
+    v3 = StrictEq v0, v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    Jump -> next b3(v4)
+  b2(v5):
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = PropGet v6 key="length"
+    Return v7
+# CHECK: = Builtin builtin=Console
+# CHECK: b3(v6: Array<1, proven, Int32, pristine[Storage, Names, Dense]>):
+# CHECK: = CallBuiltin v6 overload=ArrayPrototypeLength/0
+}

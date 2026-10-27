@@ -5,7 +5,7 @@
 # cleared: a store comes before every read, and one of the stores brings undefined
 # OPTIONS: disable=pass:CopyClosureFactories
 # RUN: valueflow-apply
-# CHECK: layout L0 kind=Environment {{*}}{key="table" declared={type=L1} {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead} {{*}}{key="late" declared={type=undefined|1} {{*}}initialization=SetAtCreation} {{*}}{key="cleared" declared={type=undefined|2} {{*}}initialization=StoredBeforeEveryRead}
+# CHECK: layout L0 kind=Environment {{*}}{key="table" declared={type=L1} {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead isStoredBeforeCapturersRun=true} {{*}}{key="late" declared={type=undefined|1} {{*}}initialization=SetAtCreation} {{*}}{key="cleared" declared={type=undefined|2} {{*}}initialization=StoredBeforeEveryRead}
 # CHECK-LABEL: name="make"
 # CHECK: NewObject -, [[undefined]] layout=L0 fields=[1]
 

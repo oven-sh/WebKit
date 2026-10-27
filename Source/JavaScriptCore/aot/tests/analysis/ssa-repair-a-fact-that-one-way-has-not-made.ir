@@ -1,0 +1,36 @@
+# A read of a variable names the fact that says where the copy of a function begins. One way takes the fact away again and leaves its position unfilled: behind the test of a tag the read is reached only
+# where the fact holds. The read names a fact that is made where it stands, and nothing casts a fact
+# FORM: Prepared
+# RUN: repair function=f0 variable=v1,v3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" module=m0 declared={type=number} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+function f0 name="oneWayLeavesNoFact" parameters=[{type=boolean}] results=[{type=anything}] inlineFrames=[{}, {callee=f1 module=m0}] {
+    v1 = Entered function=f1
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=1
+    Jump -> next b3(v2)
+  b2():
+    v3 = Unspecified valueType=fact
+    v4 = Integer
+    Jump -> next b3(v4)
+  b3(v5):
+    Switch v5 cases=[1] -> case b4(), otherwise b5()
+  b4():
+    v6 = GetModuleVariable fact=v1 variable=g0 @0:1
+    Return v6
+  b5():
+    Return
+}
+function f1 name="callee" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+# CHECK: function f0
+# CHECK: b3({{*}}, {{*}}: unspecified|fact):
+# CHECK: b4():
+# CHECK-NEXT: [[made]]: fact = Specified
+# CHECK-NEXT: = GetModuleVariable fact=[[made]] variable=g0
+# CHECK-NOT: AssumeType

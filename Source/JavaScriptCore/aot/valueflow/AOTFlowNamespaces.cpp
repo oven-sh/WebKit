@@ -38,11 +38,8 @@ VariableID findStaticFieldVariable(const Program& program, FunctionID classConst
     if (!layout || !key)
         return { };
 
-    for (const StaticField& field : program.at(layout).staticFields) {
-        if (field.key == key)
-            return field.variable;
-    }
-    return { };
+    std::optional<uint32_t> field = program.at(layout).findStaticField(key);
+    return field ? program.at(layout).staticFields[*field].variable : VariableID();
 }
 
 } } } // namespace JSC::AOT::Typed

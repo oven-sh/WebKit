@@ -228,7 +228,7 @@ static std::optional<PropertyAccessCache::ProvenAccessKey> findKeyOfNamedAccess(
     if (TypeTable::isProvisional(key.key) || TypeTable::isProvisional(key.receiver) || TypeTable::isProvisional(key.stored))
         return std::nullopt;
 
-    ValueID object = sameObjectThroughCasts(function, receiver);
+    RootThroughCasts object = sameObjectThroughCasts(function, receiver);
     const Value& allocation = function.at(object);
     if (allocation.opcode != Opcode::NewObject)
         return key;

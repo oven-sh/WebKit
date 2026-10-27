@@ -20,6 +20,7 @@
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
 #include "AOTProgramIdentifiers.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSort.h"
 #include "AOTState.h"
@@ -558,7 +559,7 @@ static bool lacksMember(VM& vm, State& state, JSObject* object, MemberName& name
         return Instance::of(structure->realm()) == &state.instance && !object->butterfly() && !ClassPrototype::hasMember(object, name.uid());
     if (isCompiledObject(object))
         return !uncheckedDowncast<Object>(object)->isInFrame() && !hasPropertyOrSlot(vm, object, name);
-    if (object->type() != FinalObjectType || structure->isDictionary() || !structure->propertyAccessesAreCacheable() || !structure->propertyAccessesAreCacheableForAbsence())
+    if (object->type() != FinalObjectType || !flattenOnce(vm, object) || !structure->propertyAccessesAreCacheable() || !structure->propertyAccessesAreCacheableForAbsence())
         return false;
     return !hasPropertyOrSlot(vm, object, name);
 }

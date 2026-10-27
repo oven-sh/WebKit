@@ -91,9 +91,51 @@ bool mayContainAnyCallable(const BuiltinTable& builtins, const Type& type)
     });
 }
 
-bool mayContainAnyBuiltin(const Type& type)
+static bool inheritsFromPrototypeOf(const BuiltinTable& builtins, BuiltinID object, BuiltinClassID builtinClass)
 {
-    return type.anyFunction || !type.classes.isEmpty();
+    BuiltinID prototype = builtins.at(builtinClass).prototype;
+    if (!prototype)
+        return true;
+    prototype = builtins.canonicalID(prototype);
+    while (true) {
+        const Builtin& entry = builtins.at(object);
+        switch (entry.prototypeLink) {
+        case BuiltinPrototypeLink::Unknown:
+            return true;
+        case BuiltinPrototypeLink::Null:
+            return false;
+        case BuiltinPrototypeLink::Builtin:
+            object = builtins.canonicalID(entry.inheritsFrom);
+            break;
+        }
+        if (object == prototype)
+            return true;
+    }
+}
+
+bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinID builtin, BuiltinClassID builtinClass)
+{
+    if (isCallableBuiltin(builtins, builtin))
+        return isFunctionClass(builtins, builtinClass);
+    BuiltinID object = builtins.canonicalID(builtin);
+    const Builtin& entry = builtins.at(object);
+    switch (entry.kind) {
+    case BuiltinKind::Prototype:
+        if (!entry.instanceClass || builtins.isSameOrSubclassOf(entry.instanceClass, builtinClass))
+            return true;
+        [[fallthrough]];
+    case BuiltinKind::Namespace:
+        return inheritsFromPrototypeOf(builtins, object, builtinClass);
+    case BuiltinKind::Constructor:
+    case BuiltinKind::Function:
+    case BuiltinKind::Method:
+    case BuiltinKind::Accessor:
+    case BuiltinKind::DataProperty:
+    case BuiltinKind::Constant:
+    case BuiltinKind::NativeBinding:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 const RuntimeFunctionData* findTableRecordOf(const Program& program, FunctionID function)
@@ -174,9 +216,12 @@ LibraryClosuresOfBuiltin libraryClosuresOf(const TypeTable& types, BuiltinID bui
 
 bool mayContainBuiltin(const TypeTable& types, const Type& type, BuiltinID builtin)
 {
-    if (mayContainAnyBuiltin(type) || type.builtins.contains(builtin))
+    if (type.anyFunction || type.builtins.contains(builtin))
         return true;
-    return std::ranges::any_of(type.functions, [&](FunctionID function) {
+    bool mayBeInstance = std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+        return mayBeInstanceOf(types.builtins(), builtin, part.builtinClass);
+    });
+    return mayBeInstance || std::ranges::any_of(type.functions, [&](FunctionID function) {
         return mayBeClosureOf(types, builtin, function);
     });
 }

@@ -477,6 +477,243 @@ KnownBoolean SlotValueTests::outcomeFromDominatingTests(BlockID block)
     return evaluateTypeTest(program, narrowed, program.at(test->testedType()));
 }
 
+TestsOfSameValues::TestsOfSameValues(FunctionAnalyses& analyses, TypeArena& types)
+    : m_analyses(analyses)
+    , m_types(types)
+{
+    const Function& function = analyses.function();
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        if (function.at(block).terminator.kind != TerminatorKind::Branch)
+            continue;
+        ValueID id = analyses.definitionThroughUpcasts(function.at(block).terminator.conditionOperand());
+        const Value& test = function.at(id);
+        Proof proof = provesOf(test.opcode);
+        // Which of two integers is the greater is B3's to follow.
+        if (!provesForever(proof) || proof == Proof::IntegerBound)
+            continue;
+        for (uint32_t index = 0; index < test.numberOfOperands(); ++index) {
+            ValueID operand = test.operand(index);
+            if (operand && test.operandKind(index) != OperandKind::Guard && resultRuleOf(function.at(operand).opcode) != ResultRule::Constant)
+                m_operands.append({ operand, block, id, index });
+        }
+    }
+    if (m_operands.isEmpty())
+        return;
+    bool hasExpectations = analyses.opcodesOfValues().contains(Opcode::Expect);
+    if (m_operands.size() < 2 && !hasExpectations) {
+        m_operands.clear();
+        return;
+    }
+    const ValueIdentities& identities = analyses.identities();
+    BitVector isTested(function.values.size());
+    for (TestedOperand& operand : m_operands) {
+        operand.subject = identities.identityOf(operand.subject);
+        isTested.quickSet(operand.subject.index());
+    }
+    if (hasExpectations) {
+        for (BlockID block : analyses.cfg().reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                if (function.at(id).opcode != Opcode::Expect)
+                    continue;
+                ValueID subject = identities.identityOf(function.at(id).valueOperand());
+                if (isTested.quickGet(subject.index()))
+                    m_operands.append({ subject, block, id, 0, true });
+            }
+        }
+    }
+    AOT::stableSort(m_operands, { }, &TestedOperand::subject);
+    size_t end = 0;
+    forEachRunOfEqualKeys(m_operands.span(), &TestedOperand::subject, [&](std::span<const TestedOperand> operands) {
+        if (operands.size() < 2 || std::ranges::all_of(operands, &TestedOperand::isExpectation))
+            return;
+        for (const TestedOperand& operand : operands) {
+            m_hasExpectations |= operand.isExpectation;
+            if (!operand.isExpectation)
+                m_blocksThatTest.set(operand.block.index());
+            m_operands[end++] = operand;
+        }
+    });
+    m_operands.shrink(end);
+}
+
+bool TestsOfSameValues::isLive(const TestedOperand& operand) const
+{
+    return m_analyses.cfg().isReachable(operand.block) && (operand.isExpectation || m_analyses.function().at(operand.block).terminator.kind == TerminatorKind::Branch);
+}
+
+bool TestsOfSameValues::didChangeControlFlow()
+{
+    m_hasOutcomes = false;
+    if (m_operands.isEmpty())
+        return false;
+    bool mayDecideMore = false;
+    forEachRunOfEqualKeys(m_operands.span(), &TestedOperand::subject, [&](std::span<const TestedOperand> operands) {
+        size_t numberOfLiveOperands = std::ranges::count_if(operands, [&](const TestedOperand& operand) { return isLive(operand); });
+        mayDecideMore |= numberOfLiveOperands >= 2 && std::ranges::any_of(operands, [&](const TestedOperand& operand) { return !operand.isExpectation && isLive(operand); });
+    });
+    return mayDecideMore;
+}
+
+// An edge on which nothing is left of an operand is never taken. Only the blocks that say or ask something of a value are looked at, in the order in which a walk of the dominator tree would meet them.
+void TestsOfSameValues::computeOutcomes()
+{
+    const Program& program = m_analyses.program();
+    const Function& function = m_analyses.function();
+    const CFG& cfg = m_analyses.cfg();
+    const Dominators& dominators = m_analyses.dominators();
+    TypingContext context { program, function, m_types };
+    m_hasOutcomes = true;
+    m_outcomes.fill(KnownBoolean::Unknown, cfg.numNodes());
+    m_provenExpectations.clear();
+
+    struct Step {
+        uint32_t number;
+        // None where the block asks.
+        std::optional<EdgeSide> edgeEntered;
+        uint32_t lastNumberBelow;
+        const TestedOperand* operand;
+
+        auto order() const { return std::tuple { number, !edgeEntered }; }
+    };
+    // What the edge has left of the value is looked for when a block behind the edge asks. Where the edge hands the operand on and nothing above it says more than the type of the operand, that is the type of what it hands on.
+    enum class ScopeState : uint8_t { NotLookedAt, IsWhatEdgeHandsOn, WorkedOut };
+    struct Scope {
+        uint32_t lastNumberBelow;
+        const TestedOperand* test;
+        EdgeSide side;
+        ValueID handedOn;
+        ScopeState state { ScopeState::NotLookedAt };
+        std::optional<Type> left { };
+        // What is left was taken from this type, so it lies inside.
+        TypeID narrowedType { };
+    };
+    Vector<Step, 16> steps;
+    Vector<Scope, 8> scopes;
+    // Null where the first scopes say no more of the value than the type of the operand does. What was taken from that very type may be all of it: whoever has to know asks.
+    auto leftOf = [&](size_t numberOfScopes, ValueID operand, bool mustSayMore) -> const Type* {
+        if (!numberOfScopes)
+            return nullptr;
+        const Scope& innermost = scopes[numberOfScopes - 1];
+        TypeID type = function.at(operand).type;
+        if (innermost.state == ScopeState::IsWhatEdgeHandsOn) {
+            if (type == function.at(innermost.handedOn).type || sameObjectThroughCasts(function, operand) == innermost.handedOn)
+                return nullptr;
+        } else if (!mustSayMore && type == innermost.narrowedType)
+            return &*innermost.left;
+        const Type& left = innermost.state == ScopeState::IsWhatEdgeHandsOn ? context.typeOf(innermost.handedOn) : *innermost.left;
+        const Type& typeOfOperand = m_types.at(type);
+        return typeOfOperand == left || typeOfOperand.isSubsetOf(left, program) ? nullptr : &left;
+    };
+    auto workOutScopes = [&] {
+        size_t first = scopes.size();
+        while (first && scopes[first - 1].state == ScopeState::NotLookedAt)
+            --first;
+        for (size_t index = first; index < scopes.size(); ++index) {
+            Scope& scope = scopes[index];
+            const Value& test = function.at(scope.test->user);
+            ValueID value = test.operand(scope.test->operandIndex);
+            TypeID type = function.at(value).type;
+            const Type* left = leftOf(index, value, false);
+            if (!left && scope.handedOn) {
+                scope.state = ScopeState::IsWhatEdgeHandsOn;
+                continue;
+            }
+            if (!left || (scopes[index - 1].state == ScopeState::WorkedOut && type == scopes[index - 1].narrowedType))
+                scope.narrowedType = type;
+            scope.left = narrowTypeByTest(context, left ? *left : m_types.at(type), test, scope.test->operandIndex, scope.side);
+            scope.state = ScopeState::WorkedOut;
+        }
+    };
+    auto valueHandedOn = [&](const TestedOperand& operand, uint32_t targetIndex) -> ValueID {
+        const Terminator& terminator = function.at(operand.block).terminator;
+        const Target& target = terminator.targets[targetIndex];
+        size_t position = terminator.conditionOperand() == operand.user ? target.proofs.find(operand.operandIndex) : notFound;
+        return position == notFound ? ValueID() : function.at(target.block).parameters[target.arguments.size() + position];
+    };
+    forEachRunOfEqualKeys(m_operands.span(), &TestedOperand::subject, [&](std::span<const TestedOperand> operands) {
+        steps.shrink(0);
+        scopes.shrink(0);
+        bool entersEdge = false;
+        for (const TestedOperand& operand : operands) {
+            if (!isLive(operand))
+                continue;
+            steps.append({ dominators.numberOf(operand.block), std::nullopt, 0, &operand });
+            if (operand.isExpectation)
+                continue;
+            for (uint32_t targetIndex = 0; targetIndex < 2; ++targetIndex) {
+                BlockID target = function.at(operand.block).terminator.targets[targetIndex].block;
+                if (cfg.singleIncomingEdge(target) != Edge { operand.block, targetIndex })
+                    continue;
+                steps.append({ dominators.numberOf(target), targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken, dominators.lastNumberBelow(target), &operand });
+                entersEdge = true;
+            }
+        }
+        if (!entersEdge)
+            return;
+        AOT::stableSort(steps, { }, &Step::order);
+        for (const Step& step : steps) {
+            while (!scopes.isEmpty() && scopes.last().lastNumberBelow < step.number)
+                scopes.removeLast();
+            const TestedOperand& operand = *step.operand;
+            if (step.edgeEntered) {
+                scopes.append({ step.lastNumberBelow, &operand, *step.edgeEntered, valueHandedOn(operand, *step.edgeEntered == EdgeSide::Taken ? 0 : 1) });
+                continue;
+            }
+            if (scopes.isEmpty())
+                continue;
+            workOutScopes();
+            const Value& user = function.at(operand.user);
+            // What the type of the operand says has been asked.
+            const Type* left = leftOf(scopes.size(), user.operand(operand.operandIndex), true);
+            if (!left || left->isNever())
+                continue;
+            if (operand.isExpectation) {
+                if (left->isSubsetOf(m_types.at(user.expectedType().predicted()), program))
+                    m_provenExpectations.append({ operand.block, operand.user, m_types.intern(*left) });
+                continue;
+            }
+            KnownBoolean& outcome = m_outcomes[operand.block.index()];
+            if (outcome != KnownBoolean::Unknown)
+                continue;
+            if (narrowTypeByTest(context, *left, user, operand.operandIndex, EdgeSide::NotTaken).isNever())
+                outcome = KnownBoolean::True;
+            else if (narrowTypeByTest(context, *left, user, operand.operandIndex, EdgeSide::Taken).isNever())
+                outcome = KnownBoolean::False;
+        }
+    });
+}
+
+KnownBoolean TestsOfSameValues::outcomeBehindDominatingTests(BlockID block)
+{
+    if (!m_blocksThatTest.get(block.index()))
+        return KnownBoolean::Unknown;
+    if (!m_hasOutcomes)
+        computeOutcomes();
+    return m_outcomes[block.index()];
+}
+
+Vector<TestsOfSameValues::ProvenExpectation, 4> TestsOfSameValues::takeProvenExpectations()
+{
+    if (!m_hasExpectations)
+        return { };
+    if (!m_hasOutcomes)
+        computeOutcomes();
+    return std::exchange(m_provenExpectations, { });
+}
+
+void proveExpectation(IRBuilder& builder, const TestsOfSameValues::ProvenExpectation& proven)
+{
+    Function& function = builder.function();
+    size_t index = function.at(proven.block).values.find(proven.expectation);
+    RELEASE_ASSERT(index != notFound);
+    ProgramPoint point { proven.block, static_cast<uint32_t>(index) };
+    builder.setOrigin(function.at(proven.expectation).origin());
+    // It holds from the tests on, not wherever the value is at hand.
+    ValueID expectationStoodHere = builder.insertBefore(point, IRBuilder::make(Opcode::Specified));
+    ValueID cast = builder.insertBefore(point, makeAssumeType(function.at(proven.expectation).valueOperand(), expectationStoodHere, Proven::behindFact(proven.type)));
+    function.edit(proven.expectation).setValueOperand(cast);
+}
+
 bool hasEdgeResults(const Function& function, Edge edge)
 {
     return !edge.isHandlerEdge() && numberOfEdgeResults(function, edge.from, edge.targetIndex);
@@ -575,6 +812,8 @@ void castArgumentsToParameters(IRBuilder& builder, BlockID block, bool validates
 
     builder.setOrigin(terminator.origin());
     Target& target = terminator.targets[0];
+    // What decided the test holds where the test stood, not wherever its subject is at hand.
+    ValueID testStoodHere;
     for (size_t index = 0; index < target.arguments.size(); ++index) {
         ValueID argument = target.arguments[index];
         ValueID parameter = function.at(target.block).parameters[index];
@@ -583,7 +822,9 @@ void castArgumentsToParameters(IRBuilder& builder, BlockID block, bool validates
         TypeID narrowed = function.at(parameter).type;
         if (validates)
             builder.insertBefore(pointBeforeTerminatorOf(function, block), makeValidateType(argument, narrowed));
-        target.arguments[index] = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(argument, Proven::byRulesWithoutChecks(narrowed)));
+        if (!testStoodHere)
+            testStoodHere = builder.insertBefore(pointBeforeTerminatorOf(function, block), IRBuilder::make(Opcode::Specified));
+        target.arguments[index] = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(argument, testStoodHere, Proven::behindFact(narrowed)));
     }
 }
 
@@ -653,7 +894,7 @@ KnownBoolean evaluateConditionByDefinitions(FunctionAnalyses& analyses, BlockID 
     }));
 }
 
-KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranches& typeTests, SlotValueTests& slotValueTests, BlockID block)
+KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranches& typeTests, SlotValueTests& slotValueTests, TestsOfSameValues& testsOfSameValues, BlockID block)
 {
     KnownBoolean outcome = evaluateConditionByDefinitions(analyses, block);
     if (outcome == KnownBoolean::Unknown)
@@ -664,6 +905,8 @@ KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranche
         outcome = typeTests.outcomeOnEveryWay(block);
     if (outcome == KnownBoolean::Unknown)
         outcome = slotValueTests.outcomeFromDominatingTests(block);
+    if (outcome == KnownBoolean::Unknown)
+        outcome = testsOfSameValues.outcomeBehindDominatingTests(block);
     return outcome;
 }
 

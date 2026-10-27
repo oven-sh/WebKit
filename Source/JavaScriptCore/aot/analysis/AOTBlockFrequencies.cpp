@@ -103,7 +103,7 @@ static bool isPartOfEdgeToUnlikelyBlock(const Function& function, BlockID id)
         return false;
     return std::ranges::all_of(block.values, [&](ValueID valueID) {
         const Value& value = function.at(valueID);
-        return isCastThatProvesNothing(value.opcode) || value.opcode == Opcode::AssumeType || isRematerializable(value);
+        return isCastThatProvesNothing(value.opcode) || value.opcode == Opcode::AssumeType || makesFact(value.opcode) || isRematerializable(value);
     });
 }
 

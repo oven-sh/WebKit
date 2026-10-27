@@ -1059,7 +1059,9 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
 #if ENABLE(AOT)
             } else if (visitor->isCompiledFrame()) {
                 const AOT::CompiledFrame& frame = visitor->compiledFrame();
-                if (visitor->isOfBuiltinCalledByCompiledFrame())
+                if (visitor->isOfConstructedFunctionThatLeft())
+                    appendIfWanted(StackFrame(*visitor.compiledFrames().constructedFunctionThatLeft()));
+                else if (visitor->isOfBuiltinCalledByCompiledFrame())
                     appendIfWanted(StackFrame(AOT::TraceFrame { frame.code, AOT::functionInFramesOf(frame.calledBuiltin), frame.callSite, !!frame.inlineFrame, false }));
                 else {
                     std::optional<JSObject*> callee = visitor.compiledFrames().recordedCallee();
@@ -1595,7 +1597,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
 
 #if USE(BUN_JSC_ADDITIONS)
     // Earlier than ScriptExecutable::prepareForExecutionImpl: a program acts before it has a CodeBlock. JSONP needs none, and its global declarations come first.
-    if (Options::disallowNonStaticCode() && source.provider()->provenance() != SourceProvenance::Static) [[unlikely]]
+    if (vm.runsOnlyStaticCode() && source.provider()->provenance() != SourceProvenance::Static) [[unlikely]]
         return throwNonStaticCodeError(globalObject, throwScope);
 #endif
 

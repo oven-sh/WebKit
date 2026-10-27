@@ -1,0 +1,54 @@
+# main.cjs: require("./two-files.mjs"); require("./child.cjs"); globalThis.answer = module.children
+# The run time answers both calls. The second is a whole `require`, and the run time records it by the file that requires: the operation gets the number of main.cjs, 4.
+# The first is an evaluation with operations around it that record, also where the module has run and the run time is not asked: the operation gets no file.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: lower-to-b3 f4
+# CHECK-LABEL: name="main" role=Source
+# CHECK: Patchpoint($0({{*}}):ColdAny, $4({{*}}):ColdAny, {{*}}v0:RecordRequire)
+# CHECK-NEXT: Patchpoint($0({{*}}):ColdAny, $4294967295({{*}}):ColdAny, {{*}}v1:EvaluateRequiredModule)
+# CHECK-NEXT: Patchpoint($0({{*}}):ColdAny, $4({{*}}):ColdAny, {{*}}v2:RecordRequire)
+# CHECK-NEXT: Patchpoint($3({{*}}):ColdAny, $4({{*}}):ColdAny, {{*}}v3:RequireModule)
+# CHECK-LABEL: end of function
+
+variable g0 name="exports" module=m4 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m3 declared={type=anything} initialization=Undefined
+variable g2 name="a" module=m1 declared={type=anything} initialization=Undefined
+variable g3 name="b" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="/two-files.mjs" displayPath="two-files.mjs" flags=[KeepsError] body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}]
+module m1 path="/a.cjs" displayPath="a.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1
+module m2 path="/b.cjs" displayPath="b.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f2
+module m3 path="/child.cjs" displayPath="child.cjs" kind=CommonJs flags=[KeepsError, MayBeImportedWhileItRuns] requireResult=ModuleExports body=f3 exportsVariable=g1
+module m4 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f4 exportsVariable=g0 requests=[{target=m0 kind=Require completes=true}]
+entry module=m4
+function f0 name="twoFiles" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f1 name="a" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f2 name="b" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f3 name="child" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f4 name="main" module=m4 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    RecordRequire module=m0 referrer=m4
+    EvaluateModule module=m0 referrer=m4 [isBare]
+    RecordRequire module=m0 referrer=m4
+    v3 = RequireModule module=m3 referrer=m4 specifier="./child.cjs"
+    v4 = ModuleBuiltin builtin=ModuleObject module=m4
+    v5 = PropGet v4 key="children"
+    v6 = Builtin builtin=GlobalThis
+    PropSet v6, v5 key="answer"
+    Return
+}

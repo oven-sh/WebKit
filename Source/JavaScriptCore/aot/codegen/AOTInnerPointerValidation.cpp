@@ -570,12 +570,16 @@ private:
                 return;
             const B3::MemoryValue* loadThroughAddress = Arg::isAnyUse(role) ? loadOf(inst, arg) : nullptr;
             // A reference has 32 or 64 bits and is no floating point number.
-            bool mayGiveCells = Arg::isAnyUse(role) && bank == B3::GP && width >= Width32 && !(loadThroughAddress && contains(m_rules.contentsWithoutCells.span(), loadThroughAddress->range()));
+            bool loadsWordWithoutCells = loadThroughAddress && contains(m_rules.contentsWithoutCells.span(), loadThroughAddress->range());
+            bool mayGiveCells = Arg::isAnyUse(role) && bank == B3::GP && width >= Width32 && !loadsWordWithoutCells;
             arg.forEachTmpFast([&](Tmp& tmp) {
                 if (std::optional<unsigned> location = locationOfRegister(tmp)) {
-                    m_operands.append(read(*location, m_early));
+                    unsigned base = read(*location, m_early);
+                    // What is added is the word that was loaded, and the address it was loaded from is no part of the sum.
+                    if (!loadsWordWithoutCells)
+                        m_operands.append(base);
                     if (mayGiveCells)
-                        noteReadThatMayGiveCells(m_operands.last(), m_early);
+                        noteReadThatMayGiveCells(base, m_early);
                 }
             });
             if (!Arg::isAnyUse(role) || !(arg.isAddr() || arg.isIndex() || arg.isSimpleAddr()))
@@ -1143,7 +1147,7 @@ InnerPointerRules innerPointerRulesOf(B3::Procedure& proc, bool usesNarrowRefere
     for (const B3::AbstractHeap* heap : std::initializer_list<const B3::AbstractHeap*> { &heaps.StringImpl_data, &heaps.ArrayBuffer_data })
         rules.fieldsOutsideCells.append(heaps.rangeOf(*heap));
     rules.fieldsThatHoldPointersTheScanKnows.append(heaps.rangeOf(heaps.JSObject_butterfly));
-    for (const B3::AbstractHeap* heap : std::initializer_list<const B3::AbstractHeap*> { &heaps.indexedInt32Properties.atAnyIndex(), &heaps.indexedDoubleProperties.atAnyIndex(), &heaps.Butterfly_publicLength, &heaps.Butterfly_vectorLength })
+    for (const B3::AbstractHeap* heap : std::initializer_list<const B3::AbstractHeap*> { &heaps.indexedInt32Properties.atAnyIndex(), &heaps.indexedDoubleProperties.atAnyIndex(), &heaps.Butterfly_publicLength, &heaps.Butterfly_vectorLength, &heaps.ArrayBuffer_sizeInBytes })
         rules.contentsWithoutCells.append(heaps.rangeOf(*heap));
     for (const B3::AbstractHeap* heap : std::initializer_list<const B3::AbstractHeap*> { &heaps.AOTInstance_stringCells, &heaps.AOTInstance_fixedFields, &heaps.AOTImage_tables })
         rules.permanentCells.append(heaps.rangeOf(*heap));

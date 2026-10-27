@@ -505,6 +505,13 @@ static void jscSignalHandler(int sig, siginfo_t* info, void* ucontext)
     SigInfo sigInfo;
     if (signal == Signal::AccessFault)
         sigInfo.faultingAddress = info->si_addr;
+#if USE(BUN_JSC_ADDITIONS)
+#if OS(FREEBSD)
+    sigInfo.isSentByProcess = info->si_code <= 0 || info->si_code >= SI_USER;
+#else
+    sigInfo.isSentByProcess = info->si_code <= 0;
+#endif
+#endif
 
 #if HAVE(MACHINE_CONTEXT)
     PlatformRegisters& registers = registersFromUContext(reinterpret_cast<ucontext_t*>(ucontext));

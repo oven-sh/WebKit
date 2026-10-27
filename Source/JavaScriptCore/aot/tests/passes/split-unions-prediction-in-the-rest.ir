@@ -1,7 +1,8 @@
 # The rest of a split is unlikely where an arm takes what is expected. Where the expected type lies in the rest, the rest keeps the frequency of the block: one side of a test is always as likely as the test
+# A part that no test tells from the others is left to the rest, where the access resolves on it behind their tests: it is expected as much as they are
 # FORM: Prepared
 # RUN: pass SplitUnions
-# STATISTIC: UnionsSplit = 3
+# STATISTIC: UnionsSplit = 5
 
 module m0 path="main.js" displayPath="main.js"
 
@@ -32,4 +33,21 @@ function f2 name="nothingIsExpected" parameters=[{type=string|function}] results
     Return v1
 # CHECK: ([[text2]]: string):
 # CHECK: ([[handler2]]: function) frequency=Unlikely:
+}
+
+function f3 name="partWithoutTestIsExpectedAsMuchAsTheArms" parameters=[{type=string|Array<number>|ArrayIterator}] results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    Return v1
+# CHECK: ([[text3]]: string):
+# CHECK: ([[iterator3]]: ArrayIterator):
+# CHECK-NEXT: = PropGet [[iterator3]] key="toString"
+}
+
+function f4 name="partWithoutTestBesideAnExpectedArm" parameters=[{type=string|Array<number>|ArrayIterator}] results=[{type=anything}] {
+  b0(v0: string|Array<number>|ArrayIterator ~ string):
+    v1 = PropGet v0 key="toString"
+    Return v1
+# CHECK: ([[text4]]: string):
+# CHECK: ([[iterator4]]: ArrayIterator) frequency=Unlikely:
+# CHECK-NEXT: = PropGet [[iterator4]] key="toString"
 }

@@ -14,8 +14,9 @@
 #include <optional>
 #include <span>
 #include <wtf/FastMalloc.h>
-#include <wtf/FixedVector.h>
 #include <wtf/OptionSet.h>
+#include <wtf/Vector.h>
+#include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC { namespace AOT {
 
@@ -58,6 +59,8 @@ public:
         Structure* extraPropertiesStructure { nullptr };
         JSObject* heldExtraProperties { nullptr };
         std::optional<std::span<const uint16_t>> outOfLineKeyOrder;
+        // With a value, the order is that of one object. An entry from the number of fields on then stands for one of these extra keys, in this order: the extra keys up to that one come before what follows the entry.
+        std::optional<std::span<const RefPtr<UniquedStringImpl>>> keysNamedByOrder;
     };
 
     JS_EXPORT_PRIVATE static CompiledStructure* createForObject(VM&, const TypeInfo&, const ClassInfo*, const ObjectParameters&);
@@ -127,6 +130,35 @@ public:
         ASSERT(hasOutOfLineKeyOrder());
         return rareData()->outOfLineKeyOrder.span();
     }
+    // Such a Structure belongs to one object, which changes the order in place.
+    bool hasKeyOrderOfOneObject() const { return hasOutOfLineKeyOrder() && rareData()->keyOrderBelongsToOneObject; }
+    std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder() const
+    {
+        ASSERT(hasKeyOrderOfOneObject());
+        return rareData()->keysNamedByOrder.span();
+    }
+    void setKeyOrderOfOneObject(Vector<uint16_t>&& entries, Vector<RefPtr<UniquedStringImpl>>&& keysNamedByOrder) const
+    {
+        ASSERT(hasKeyOrderOfOneObject());
+        RareData* rareData = const_cast<RareData*>(this->rareData());
+        rareData->outOfLineKeyOrder = WTF::move(entries);
+        rareData->keysNamedByOrder = WTF::move(keysNamedByOrder);
+    }
+    void appendToKeyOrderOfOneObject(UniquedStringImpl* lastKeyInFrontOrNull, uint16_t entryOfKey, uint16_t field) const
+    {
+        ASSERT(hasKeyOrderOfOneObject());
+        RareData* rareData = const_cast<RareData*>(this->rareData());
+        if (lastKeyInFrontOrNull) {
+            rareData->outOfLineKeyOrder.append(entryOfKey);
+            rareData->keysNamedByOrder.append(lastKeyInFrontOrNull);
+        }
+        rareData->outOfLineKeyOrder.append(field);
+    }
+    void replaceKeyNamedByOrder(size_t index, UniquedStringImpl* key) const
+    {
+        ASSERT(hasKeyOrderOfOneObject());
+        const_cast<RareData*>(rareData())->keysNamedByOrder[index] = key;
+    }
 
     // The list that KeyOrderTable has for the order word an object of this Structure was last listed with. Lists live as long as the table.
     struct ListedFields {
@@ -180,8 +212,10 @@ private:
     struct RareData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(RareData);
 
-        FixedVector<uint16_t> outOfLineKeyOrder;
+        Vector<uint16_t> outOfLineKeyOrder;
+        Vector<RefPtr<UniquedStringImpl>> keysNamedByOrder;
         WriteBarrier<JSObject> heldExtraProperties;
+        bool keyOrderBelongsToOneObject { false };
     };
 
     struct NamedStructureAndRareData {

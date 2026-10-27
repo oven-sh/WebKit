@@ -20,17 +20,21 @@ function f0 name="firstStateIsUnspecified" parameters=[{type=string}, {type=numb
   b4():
     Jump -> next b6(v0)
   b5():
-    v9 = Add v4, v0
-    Jump -> next b6(v9)
-  b6(v10):
-    v11 = Integer integer=1
-    v12 = Add v5, v11
-    Jump -> next b1(v10, v12, v11)
+    v9 = Specified
+    v10 = AssumeType v4, v9 provenType=string
+    v11 = Add v10, v0
+    Jump -> next b6(v11)
+  b6(v12):
+    v13 = Integer integer=1
+    v14 = Add v5, v13
+    Jump -> next b1(v12, v14, v13)
   b7():
     Return v0
   b8():
-    v13 = Add v4, v0
-    Return v13
+    v15 = Specified
+    v16 = AssumeType v4, v15 provenType=string
+    v17 = Add v16, v0
+    Return v17
 }
 # CHECK-LABEL: name="firstStateIsUnspecified"
 # CHECK: [[h0]]: stringbuilder = StringBuilderBegin

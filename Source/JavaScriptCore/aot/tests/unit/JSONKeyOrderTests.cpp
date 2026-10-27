@@ -18,6 +18,7 @@
 #include "PropertyNameArray.h"
 #include <algorithm>
 #include <initializer_list>
+#include <optional>
 #include <wtf/Noncopyable.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
@@ -92,6 +93,7 @@ public:
     const uint8_t* parseExtraMembers(const uint8_t* quote, uint64_t* extraAndOrder);
     const uint8_t* parseMember(Object*, const uint8_t* quote, uint64_t* extraAndOrder);
     String stringifyAfterParsing(const String& text);
+    std::optional<String> stringifyAfterParsingWhole(const String& text);
     Vector<uint16_t> fieldsInOrderOfKeys(Object*);
 
 private:
@@ -204,7 +206,7 @@ const uint8_t* Row::parseMember(Object* object, const uint8_t* quote, uint64_t* 
     ParsedJSONValue value = parser.parse(name.afterColon);
     AOT_TEST_CHECK(value.end && object->store(vm(), *field, AcceptedValue::provenAtBuildTime(value.value)));
     extraAndOrder[1] = advance(JSONKeyOrder::fromWord(extraAndOrder[1]), layout().indexOf(*field)).word();
-    return value.end;
+    return *value.end == ',' ? value.end + 1 : value.end;
 }
 
 String Row::stringifyAfterParsing(const String& text)
@@ -213,13 +215,26 @@ String Row::stringifyAfterParsing(const String& text)
     AOT_TEST_CHECK(!!source && *source.start() == '{');
     Object* object = createObject();
     uint64_t extraAndOrder[2] = { static_cast<uint64_t>(JSValue::encode(jsUndefined())), JSONKeyOrder().word() };
-    const uint8_t* cursor = source.start();
+    const uint8_t* cursor = source.start() + 1;
     do {
-        cursor = parseMember(object, cursor + 1, extraAndOrder);
-        AOT_TEST_CHECK(cursor && (*cursor == ',' || *cursor == '}'));
-    } while (*cursor == ',');
+        cursor = parseMember(object, cursor, extraAndOrder);
+        AOT_TEST_CHECK(cursor && (*cursor == '"' || *cursor == '}'));
+    } while (*cursor == '"');
     AOT_TEST_CHECK(finish(object, JSValue::decode(extraAndOrder[0]), JSONKeyOrder::fromWord(extraAndOrder[1])) == JSONOutcome::Parsed);
     return JSONStringify(realm(), object, 0u);
+}
+
+std::optional<String> Row::stringifyAfterParsingWhole(const String& text)
+{
+    JSONSourceScope source(instance(), StringView(text));
+    AOT_TEST_CHECK(!!source && *source.start() == '{');
+    uint64_t extraAndOrder[2] = { static_cast<uint64_t>(JSValue::encode(jsNull())), JSONKeyOrder().word() };
+    const uint8_t* end = parseExtraMembers(source.start(), extraAndOrder);
+    AOT_TEST_CHECK(end);
+    if (end == source.start())
+        return std::nullopt;
+    AOT_TEST_CHECK(*end == '}' && JSValue::decode(extraAndOrder[0]).inherits<Object>());
+    return JSONStringify(realm(), JSValue::decode(extraAndOrder[0]), 0u);
 }
 
 Vector<uint16_t> Row::fieldsInOrderOfKeys(Object* object)
@@ -319,8 +334,15 @@ static void testExtraMembers(LoadedProgram& program)
     auto checkText = [&](const String& text) {
         String expected = JSONStringify(row.realm(), JSONParse(row.realm(), text), 0u);
         AOT_TEST_CHECK(!expected.isNull());
-        for (unsigned i = 0; i < timesParsed; ++i)
+        unsigned timesParsedWhole = 0;
+        for (unsigned i = 0; i < timesParsed; ++i) {
             AOT_TEST_CHECK(row.stringifyAfterParsing(text) == expected);
+            if (std::optional<String> whole = row.stringifyAfterParsingWhole(text)) {
+                AOT_TEST_CHECK(*whole == expected);
+                ++timesParsedWhole;
+            }
+        }
+        return timesParsedWhole;
     };
     for (unsigned round = 0; round < 2; ++round) {
         for (ASCIILiteral text : texts)
@@ -334,21 +356,36 @@ static void testExtraMembers(LoadedProgram& program)
             everyFieldAndExtraMembers.append(",\"e"_s, i, "\":"_s, i, ",\"f"_s, i, "\":true"_s);
     }
     everyFieldAndExtraMembers.append('}');
-    checkText(everyFieldAndExtraMembers.toString());
+    AOT_TEST_CHECK(checkText(everyFieldAndExtraMembers.toString()) == timesParsed - 1);
 }
 
 static void testDeclaredNameAmongExtraMembers(LoadedProgram& program)
 {
     Row row(program);
     uint64_t fallbacksBefore = valueOf(row.vm(), RuntimeCounterID::TypedParsesFellBackPerValue);
-    for (ASCIILiteral text : { "\"\\u006b0\":1}"_s, "\"x\":}"_s, "\"x\" 1}"_s, "x:1}"_s }) {
+    auto parse = [&](ASCIILiteral text, const Invocable<bool(const uint8_t* start, const uint8_t* next)> auto& isExpected) {
         JSONSourceScope source(row.instance(), StringView(text));
         AOT_TEST_CHECK(!!source);
         uint64_t extraAndOrder[2] = { static_cast<uint64_t>(JSValue::encode(jsUndefined())), JSONKeyOrder().word() };
-        AOT_TEST_CHECK(!row.parseExtraMembers(source.start(), extraAndOrder));
+        const uint8_t* next = source.start();
+        for (const uint8_t* cursor = nullptr; next && next != cursor && *next == '"';) {
+            cursor = next;
+            next = row.parseExtraMembers(cursor, extraAndOrder);
+        }
+        AOT_TEST_CHECK(isExpected(source.start(), next));
         AOT_TEST_CHECK(!row.vm().exceptionForInspection());
-    }
+        return JSValue::decode(extraAndOrder[0]);
+    };
+    for (ASCIILiteral text : { "\"\\u006b0\":1}"_s, "\"k0\":1}"_s, "x:1}"_s, "}"_s })
+        AOT_TEST_CHECK(parse(text, [](const uint8_t* start, const uint8_t* next) { return next == start; }).isUndefined());
+    AOT_TEST_CHECK(valueOf(row.vm(), RuntimeCounterID::TypedParsesFellBackPerValue) == fallbacksBefore);
+    for (ASCIILiteral text : { "\"x\":}"_s, "\"x\" 1}"_s, "\"x\":1,}"_s, "\"x\":1 2}"_s })
+        parse(text, [](const uint8_t*, const uint8_t* next) { return !next; });
     AOT_TEST_CHECK(valueOf(row.vm(), RuntimeCounterID::TypedParsesFellBackPerValue) == fallbacksBefore + 4);
+    for (unsigned i = 0; i < timesParsed; ++i) {
+        AOT_TEST_CHECK(parse("\"x\":1,\"y\":2 , \"k0\":1}"_s, [](const uint8_t* start, const uint8_t* next) { return next == start + 14; }).isObject());
+        AOT_TEST_CHECK(parse("\"x\":1,\"y\":2 }"_s, [](const uint8_t* start, const uint8_t* next) { return next == start + 12; }).isObject());
+    }
 }
 
 static Vector<uint16_t> fillOrderTable(Row& row)

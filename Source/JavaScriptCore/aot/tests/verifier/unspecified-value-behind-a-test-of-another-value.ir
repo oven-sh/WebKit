@@ -12,12 +12,14 @@ function f0 name="goodReadBehindASecondTestOfTheSameValue" parameters=[{type=any
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = TypeTest v0 testedType=string
     Branch v5 -> taken b4(), notTaken b5()
   b4():
-    v6 = GetStringLength v4
-    Return v6
+    v6 = Specified
+    v7 = AssumeType v4, v6 provenType=string
+    v8 = GetStringLength v7
+    Return v8
   b5():
     Return
 }
@@ -29,13 +31,15 @@ function f1 name="goodReadBehindATestOfTheSameValueUnderAnotherName" parameters=
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = RequireObjectCoercible v0 name="length"
     v6 = TypeTest v5 testedType=string
     Branch v6 -> taken b4(), notTaken b5()
   b4():
-    v7 = GetStringLength v4
-    Return v7
+    v7 = Specified
+    v8 = AssumeType v4, v7 provenType=string
+    v9 = GetStringLength v8
+    Return v9
   b5():
     Return
 }
@@ -47,10 +51,12 @@ function f2 name="goodReadBehindARefusalOfWhatIsNoString" parameters=[{type=unde
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = RequireObjectCoercible v0 name="length"
-    v6 = GetStringLength v4
-    Return v6
+    v6 = Specified
+    v7 = AssumeType v4, v6 provenType=string
+    v8 = GetStringLength v7
+    Return v8
 }
 function f3 name="badReadBehindATestOfAnotherValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
     v2 = TypeTest v0 testedType=string
@@ -60,7 +66,7 @@ function f3 name="badReadBehindATestOfAnotherValue" parameters=[{type=anything},
   b2():
     v4 = Unspecified valueType=string
     Jump -> next b3(v4)
-  b3(v5: string):
+  b3(v5: string|unspecified):
     v6 = TypeTest v1 testedType=string
     Branch v6 -> taken b4(), notTaken b5()
   b4():
@@ -77,7 +83,7 @@ function f4 name="badReadBehindASecondTestForALayoutWhichAnObjectMayLeave" param
   b2():
     v3 = Unspecified valueType=null|L0
     Jump -> next b3(v3)
-  b3(v4: null|L0):
+  b3(v4: null|unspecified|L0):
     v5 = TypeTest v0 testedType=L0
     Branch v5 -> taken b4(), notTaken b5()
   b4():
@@ -94,7 +100,7 @@ function f5 name="badReadInFrontOfTheRefusal" parameters=[{type=undefined|string
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = GetStringLength v4
     v6 = RequireObjectCoercible v0 name="length"
     Return v5
@@ -107,10 +113,12 @@ function f6 name="goodReadBehindARefusalOfWhatIsNoneOfTheStrings" parameters=[{t
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = RequireObjectCoercible v0 name="length"
-    v6 = GetStringLength v4
-    Return v6
+    v6 = Specified
+    v7 = AssumeType v4, v6 provenType=string
+    v8 = GetStringLength v7
+    Return v8
 }
 function f7 name="goodReadBehindATestOfTheSameValueForWhatIsLeftOfIt" parameters=[{type=undefined|string}] results=[{type=anything}] {
     v1 = TypeTest v0 testedType=string
@@ -120,12 +128,14 @@ function f7 name="goodReadBehindATestOfTheSameValueForWhatIsLeftOfIt" parameters
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = TypeTest v0 testedType=undefined
     Branch v5 -> taken b5(), notTaken b4()
   b4():
-    v6 = GetStringLength v4
-    Return v6
+    v6 = Specified
+    v7 = AssumeType v4, v6 provenType=string
+    v8 = GetStringLength v7
+    Return v8
   b5():
     Return
 }
@@ -137,7 +147,7 @@ function f8 name="badReadBehindATestOfTheSameValueForPartOfWhatIsLeftOfIt" param
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = TypeTest v0 testedType=undefined
     Branch v5 -> taken b5(), notTaken b4()
   b4():
@@ -154,10 +164,12 @@ function f9 name="goodReadBehindAnAssumptionThatTheFailedTestRulesOut" parameter
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = AssumeType v0 provenType=string
-    v6 = GetStringLength v4
-    Return v6
+    v6 = Specified
+    v7 = AssumeType v4, v6 provenType=string
+    v8 = GetStringLength v7
+    Return v8
 }
 function f10 name="badReadInFrontOfTheAssumption" parameters=[{type=undefined|string}] results=[{type=anything}] {
     v1 = TypeTest v0 testedType=string
@@ -167,7 +179,7 @@ function f10 name="badReadInFrontOfTheAssumption" parameters=[{type=undefined|st
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = GetStringLength v4
     v6 = AssumeType v0 provenType=string
     Return v5
@@ -180,12 +192,14 @@ function f11 name="goodReadBehindATestForTheBuiltinClassThatIsLeftOfIt" paramete
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = TypeTest v0 testedType=Array
     Branch v5 -> taken b5(), notTaken b4()
   b4():
-    v6 = GetStringLength v4
-    Return v6
+    v6 = Specified
+    v7 = AssumeType v4, v6 provenType=string
+    v8 = GetStringLength v7
+    Return v8
   b5():
     Return
 }
@@ -197,7 +211,7 @@ function f12 name="badReadBehindATestForTheLayoutThatIsLeftOfItAndThatTheObjectM
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = TypeTest v0 testedType=L0
     Branch v5 -> taken b5(), notTaken b4()
   b4():
@@ -215,10 +229,12 @@ function f13 name="goodReadBehindARefusalOfANarrowedNameOfTheValue" parameters=[
   b2():
     v4 = Unspecified valueType=string
     Jump -> next b3(v4)
-  b3(v5: string):
+  b3(v5: string|unspecified):
     v6 = RequireObjectCoercible v1 name="length"
-    v7 = GetStringLength v5
-    Return v7
+    v7 = Specified
+    v8 = AssumeType v5, v7 provenType=string
+    v9 = GetStringLength v8
+    Return v9
 }
 function f14 name="goodReadBehindARefusalAndATestForTheBuiltinClassThatIsLeft" parameters=[{type=undefined|string|Array}] results=[{type=anything}] {
     v1 = TypeTest v0 testedType=string
@@ -228,13 +244,15 @@ function f14 name="goodReadBehindARefusalAndATestForTheBuiltinClassThatIsLeft" p
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = RequireObjectCoercible v0 name="length"
     v6 = TypeTest v0 testedType=Array
     Branch v6 -> taken b5(), notTaken b4()
   b4():
-    v7 = GetStringLength v4
-    Return v7
+    v7 = Specified
+    v8 = AssumeType v4, v7 provenType=string
+    v9 = GetStringLength v8
+    Return v9
   b5():
     Return
 }
@@ -246,7 +264,7 @@ function f15 name="badReadBehindATestForTheBuiltinClassWithoutTheRefusal" parame
   b2():
     v3 = Unspecified valueType=string
     Jump -> next b3(v3)
-  b3(v4: string):
+  b3(v4: string|unspecified):
     v5 = TypeTest v0 testedType=Array
     Branch v5 -> taken b5(), notTaken b4()
   b4():

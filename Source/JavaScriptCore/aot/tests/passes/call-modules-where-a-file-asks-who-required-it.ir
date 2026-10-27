@@ -1,0 +1,70 @@
+# A file that the loader has asked for before any `require` has no parent. Where a program asks who required whom, the run time says which of several imported files the loader has asked for:
+# a `require` of the module that imports them goes through the loader, and a file that is imported and required has a state.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 3
+# STATISTIC: ModulesWithoutState = 2
+# STATISTIC: RequiresRecorded = 6
+# CHECK: outcome: Changed
+
+variable g0 name="a" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="b" module=m3 declared={type=anything} initialization=Undefined
+variable g2 name="alone" module=m5 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError, NamesWayToModuleObjects] requireResult=ModuleExports body=f0 requests=[{target=m1 kind=Require completes=true}, {target=m3 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
+module m1 path="/two-files.mjs" displayPath="two-files.mjs" body=f1 requests=[{target=m2 completes=true isHoisted=true}, {target=m3 completes=true isHoisted=true}, {target=m2 completes=true}, {target=m3 completes=true}]
+module m2 path="/a.cjs" displayPath="a.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f2
+module m3 path="/b.cjs" displayPath="b.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f3
+module m4 path="/one-file.mjs" displayPath="one-file.mjs" body=f4 requests=[{target=m5 completes=true isHoisted=true}, {target=m5 completes=true}]
+module m5 path="/alone.cjs" displayPath="alone.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f5
+entry module=m0
+# CHECK: module m3 {{*}}flags=[KeepsError, EvaluatesItself] requireResult=ModuleExports body=f3
+
+function f0 name="main" module=m0 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    RecordRequire module=m1 referrer=m0
+    EvaluateModule module=m1 referrer=m0 [isBare]
+    RecordRequire module=m1 referrer=m0
+    RecordRequire module=m3 referrer=m0
+    EvaluateModule module=m3 referrer=m0 [isBare]
+    RecordRequire module=m3 referrer=m0
+    RecordRequire module=m4 referrer=m0
+    EvaluateModule module=m4 referrer=m0 [isBare]
+    RecordRequire module=m4 referrer=m0
+    Return
+# CHECK-NEXT: b0():
+# CHECK-NEXT: RecordRequire module=m1 referrer=m0
+# CHECK-NEXT: EvaluateRequiredModule module=m1 referrer=m0
+# CHECK-NEXT: RecordRequire module=m1 referrer=m0
+# CHECK-NEXT: RecordRequire module=m3 referrer=m0
+# CHECK-NEXT: = CallDirect function=f3
+# CHECK-NEXT: RecordRequire module=m3 referrer=m0
+# CHECK-NEXT: RecordRequire module=m4 referrer=m0
+# CHECK-NEXT: = CallDirect function=f5
+# CHECK-NEXT: = CallDirect function=f4
+# CHECK-NEXT: RecordRequire module=m4 referrer=m0
+# CHECK-NEXT: Return
+}
+function f1 name="twoFiles" module=m1 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f2 name="a" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f3 name="b" module=m3 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g1
+    Return
+}
+function f4 name="oneFile" module=m4 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f5 name="alone" module=m5 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g2
+    Return
+}

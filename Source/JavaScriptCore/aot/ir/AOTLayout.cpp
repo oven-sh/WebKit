@@ -25,6 +25,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr unsigned minFieldsToIndex = 4;
+static constexpr unsigned minStaticFieldsToIndex = 8;
 
 void Layout::indexFields()
 {
@@ -35,6 +36,49 @@ void Layout::indexFields()
         m_fieldsByKey.fill(IndexedField { }, WTF::roundUpToPowerOfTwo(2 * fields.size()));
     for (uint32_t i = 0; i < fields.size(); ++i)
         addToIndex(i);
+
+    m_indexedStaticFieldCount = static_cast<uint32_t>(staticFields.size());
+    m_staticFieldsByKey.clear();
+    if (staticFields.size() < minStaticFieldsToIndex)
+        return;
+    m_staticFieldsByKey.fill(IndexedField { }, WTF::roundUpToPowerOfTwo(2 * staticFields.size()));
+    uint32_t mask = static_cast<uint32_t>(m_staticFieldsByKey.size()) - 1;
+    for (uint32_t i = 0; i < staticFields.size(); ++i) {
+        PropertyKeyID key = staticFields[i].key;
+        if (!key)
+            continue;
+        for (uint32_t place = hashOf(key) & mask;; place = (place + 1) & mask) {
+            IndexedField& indexed = m_staticFieldsByKey[place];
+            if (indexed.key == key)
+                break;
+            if (!indexed.key) {
+                indexed = { key, i };
+                break;
+            }
+        }
+    }
+}
+
+std::optional<uint32_t> Layout::findStaticField(PropertyKeyID key) const
+{
+    RELEASE_ASSERT(m_indexedStaticFieldCount == staticFields.size());
+    if (!key)
+        return std::nullopt;
+    if (m_staticFieldsByKey.isEmpty()) {
+        for (uint32_t i = 0; i < staticFields.size(); ++i) {
+            if (staticFields[i].key == key)
+                return i;
+        }
+        return std::nullopt;
+    }
+    uint32_t mask = static_cast<uint32_t>(m_staticFieldsByKey.size()) - 1;
+    for (uint32_t place = hashOf(key) & mask;; place = (place + 1) & mask) {
+        const IndexedField& indexed = m_staticFieldsByKey[place];
+        if (indexed.key == key)
+            return indexed.field;
+        if (!indexed.key)
+            return std::nullopt;
+    }
 }
 
 void Layout::addToIndex(uint32_t field)

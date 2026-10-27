@@ -26,6 +26,7 @@
 #include "AOTFunctionEditing.h"
 #include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
+#include "AOTInlineCopy.h"
 #include "AOTPredictedValues.h"
 #include "AOTKnownValue.h"
 #include "AOTLargeVectors.h"
@@ -232,7 +233,7 @@ static PromotionScan scanForPromotion(const Program& program, const FlowResults&
         supplier.captures.reserveInitialCapacity(numberOfCaptures);
         for (ValueID captured : value.variadicOperands().first(numberOfCaptures)) {
             SuppliedCapture description { .supplied = captured, .isComputedAtMostOnce = isComputedAtMostOnce(captured) };
-            ValueID definitionID = sameObjectThroughCasts(function, captured);
+            ValueID definitionID = sameObjectThroughCasts(function, captured).valueInFrontOfFacts();
             const Value& definition = function.at(definitionID);
             if (definition.opcode == Opcode::Parameter) {
                 if (size_t position = function.at(entryBlock).parameters.find(definitionID); position != notFound)
@@ -1130,8 +1131,9 @@ struct ClosureWebs {
                     }
                     continue;
                 }
-                // What stands for a closure that may be missing does not pass for one that is there.
-                bool isLink = isCast(value.opcode) && (program.typeOf(function, id).primitives || !program.typeOf(function, value.operand(0)).primitives);
+                // What stands for a closure that may be missing does not pass for one that is there. A word that may be anything is looked at behind the cast alone.
+                auto mayBeMissing = [&](ValueID closure) { return program.typeOf(function, closure).primitives & ~Primitive::Unspecified; };
+                bool isLink = isCast(value.opcode) && (mayBeMissing(id) || !mayBeMissing(value.operand(0)));
                 value.forEachChild([&](ValueID operand) {
                     if (candidateOf(id) == noCandidate || candidateOf(id) != candidateOf(operand) || !isLink)
                         noteObject(operand, value.opcode);
@@ -1673,7 +1675,8 @@ static void scanFunction(const Program& program, const BuildContext& build, cons
 // The type of what stands for a value of the given type, which is the closure, undefined, or either.
 static TypeID typeInPlaceOf(const PlannedClosure& planned, const Type& type)
 {
-    if (!type.primitives)
+    // The environment is at hand wherever the field is read, whatever word the field holds.
+    if (!(type.primitives & ~Primitive::Unspecified))
         return planned.typeOfEnvironment;
     return type.hasObjects() ? planned.typeOfEnvironmentOrAbsent : TypeTable::absent;
 }
@@ -2725,6 +2728,7 @@ void readCapturesFromEnvironments(ProgramEditor& editor, const FlowResults& flow
             removeStores(plan, id, builder);
             if (!webs.isEmpty)
                 makeClosuresAtReads(candidates, plan, webs, builder);
+            nameFactsWhereReadsStand(program, function, arenas.types);
         });
     }
     passOwnCaptures(editor, flow, build, plan);

@@ -102,6 +102,8 @@ static bool saysWhatCountsOfUnchangingWord(AOTHeaps& heaps, const B3::MemoryValu
             return false;
         moved.bitsOfWordsThatCount = compiledObjectShapeBit;
     }
+    if (load.range() == heaps.rangeOf(heaps.AOTInstance_fieldsFilledOnce))
+        moved.mayGetFilled = true;
     return true;
 }
 
@@ -236,7 +238,7 @@ static bool readUnchangingWordsAgainAtUses(B3::Procedure& proc, Typed::FunctionI
     return changed;
 }
 
-void checkClaimsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const SlotsOfCells& slotsOfCells, bool entersOnlyAtRoot)
+void checkClaimsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const SlotsOfCells& slotsOfCells)
 {
     policy.clientPhases.append(B3::ClientPhase {
         B3::ClientPhase::Point::AfterSinking,
@@ -247,7 +249,7 @@ void checkClaimsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const 
             return changed;
         })
     });
-    policy.clientPhases.append(reportReadsOfUnwrittenStackSlots(function, slotsOfCells, entersOnlyAtRoot));
+    policy.clientPhases.append(reportReadsOfUnwrittenStackSlots(function, slotsOfCells));
 }
 
 // Only the bit that the operation asks for, and only that the guard has ended: see GuardEmitter::holds().

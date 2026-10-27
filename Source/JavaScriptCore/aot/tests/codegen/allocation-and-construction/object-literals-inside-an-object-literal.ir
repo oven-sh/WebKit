@@ -1,0 +1,114 @@
+# type Point = { x: number; y: number };
+# type Line = { start: Point; end: Point };
+# function line(a: number, b: number): Line {
+#   return { start: { x: a, y: b }, end: { x: b, y: a } };
+# }
+# declare const input: any;
+# const made = line(+input, +input);
+# (globalThis as any).answer = [made, made.start.x + made.start.y + made.end.x + made.end.y];
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:SplitFreshResults
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=95 kind=Parameter function=f1
+typesite w1 module=m0 position=106 kind=Parameter function=f1
+typesite w2 module=m0 position=81 kind=Result
+typesite w3 module=m0 position=223 kind=CallResult
+layout L0 name="Line" module=m0 position=44 fields=[{key="end" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="start" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L1 name="Point" module=m0 position=5 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = ToNumber v4
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Call v1, -, v5, v9 calleeName="line"
+    v11 = Convert v10 declared={type=undefined|null|L0 site=w3 flags=[OmitsNull, OmitsUndefined]}
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="globalThis" [isFreeName]
+    v14 = Convert v13 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v15 = Convert v14 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v16 = PropGet v11 key="start"
+    v17 = PropGet v16 key="x"
+    v18 = PropGet v11 key="start"
+    v19 = PropGet v18 key="y"
+    v20 = Add v17, v19
+    v21 = PropGet v11 key="end"
+    v22 = PropGet v21 key="x"
+    v23 = Add v20, v22
+    v24 = PropGet v11 key="end"
+    v25 = PropGet v24 key="y"
+    v26 = Add v23, v25
+    v27 = NewArray v11, v26 contents=anything
+    PropSet v15, v27 key="answer"
+    v29 = Undefined
+    Return v29
+}
+function f1 name="line" module=m0 position=81 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Convert v0 declared={type=number}
+    v3 = Convert v1 declared={type=number}
+    v4 = NewObject -, v2, v3 layout=L1 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Convert v5 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v7 = Convert v1 declared={type=number}
+    v8 = Convert v0 declared={type=number}
+    v9 = NewObject -, v7, v8 layout=L1 fields=[0, 1]
+    v10 = FinishObject v9
+    v11 = Convert v10 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v12 = NewObject -, v6, v11 layout=L0 fields=[1, 0]
+    v13 = FinishObject v12
+    v14 = Convert v13 declared={type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}
+    Return v14
+}
+
+# Three allocations. The two inner cells go into the outer one, which is the newest of the three, by plain stores.
+# CHECK-LABEL: name="line" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK: Int64 b@[[start]] = Patchpoint($2(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
+# CHECK: Store(b@[[a]], b@[[start]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK: Store(b@[[b]], b@[[start]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK: Int64 b@[[end]] = Patchpoint($2(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
+# CHECK-NEXT: Store(b@[[b]], b@[[end]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK-NEXT: Store(b@[[a]], b@[[end]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK: Int64 b@[[line]] = Patchpoint($1(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
+# CHECK-NEXT: Store(b@[[start]], b@[[line]], offset = {{*}}, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK-NEXT: Store(b@[[end]], b@[[line]], offset = {{*}}, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK: Return(b@[[line]], Terminal)
+# CHECK-LABEL: end of function
+# No store has a write barrier, and the inner cells stay in registers across the later allocations.
+# NONE-LABEL: name="line" role=Source
+# NONE-NOT: Reads:JSCell
+# NONE-NOT: Reads:ObjectFields
+# NONE-NOT: SlotBase(
+# NONE-COUNT-3: Patchpoint(
+# NONE-NOT: Patchpoint(
+# NONE-LABEL: end of function
+# CALLS: f1: size=
+# CALLS-NEXT: stub AllocateCell.HeaderAndWords.n2 x3
+# CALLS-NOT: stub
+# CALLS-NOT: operation
+# CALLS: f{{*}}: size=
+# X64: instructions: 16, patchpoints: 3
+# ARM64 tests behind each allocation whether the collector is marking.
+# ARM64: instructions: 18, patchpoints: 3, rare instructions: 6

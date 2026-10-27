@@ -553,6 +553,8 @@ export interface ModelBuiltin {
   members: readonly ModelBuiltin[];
   overloads: readonly ModelOverload[];
   constant: ModelConstant | null;
+  isAddedAtFirstRead: boolean;
+  isAddedAsEnumerable: boolean;
   /** Of a native binding that some text of the library names: what the host evaluates it by. It depends on how Bun is built, so the engine's half of the table does not hold it. */
   hostNumber: number;
   attachments: ModelAttachments;

@@ -420,6 +420,15 @@ bool ordinarySetSlow(JSGlobalObject* globalObject, JSObject* object, PropertyNam
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    // The receiver is a proxy of the object that hands definitions on to it. Where an element can be set quickly nothing above the object takes the store, so the store ends in the object as it does without the proxy.
+    if (std::optional<uint32_t> index = parseIndex(propertyName); index && !object->structure()->hasImmutableIndexedProperties()) {
+        JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (definedOn == object && object->trySetIndexQuickly(vm, *index, value))
+            return true;
+    }
+#endif
     PropertyDescriptor ownDescriptor;
     if (object->type() != ProxyObjectType) {
         object->getOwnPropertyDescriptor(globalObject, propertyName, ownDescriptor);
@@ -783,6 +792,11 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
     if (receiver->type() == GlobalProxyType)
         receiver = uncheckedDowncast<JSGlobalProxy>(receiver)->target();
+#if ENABLE(AOT)
+    if (JSObject* definedOn = AOT::RuntimeHooks::targetThatProxyDefinesOn(vm, receiver); definedOn && definedOn->type() != ProxyObjectType && definedOn->type() != CompiledObjectType)
+        receiver = definedOn;
+    RETURN_IF_EXCEPTION(scope, false);
+#endif
     scope.release();
     // The steps as the specification has them, in which the receiver's [[DefineOwnProperty]] decides: the shortcuts below put.
     if (receiver->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
@@ -2324,6 +2338,11 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
     VM& vm = globalObject->vm();
 
+#if ENABLE(AOT)
+    if (vm.aotState().hasObjectsBeingFilled) [[unlikely]]
+        AOT::RuntimeHooks::finishFillingObjects(vm);
+#endif
+
     // Every property the object has stays. Deleting one it does not have succeeds, as it does for any object.
     if (thisObject->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3209,7 +3228,15 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             auto key = Identifier::fromString(vm, value.m_key);
             PropertyOffset offset = getDirectOffset(vm, key, attributes);
             if (!isValidOffset(offset)) {
-                reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
+#if ENABLE(AOT)
+                // Compiled code may hold the object already. The property is that object.
+                JSObject* madeAhead = vm.hasCompiledCode() && !(value.attributes() & PropertyAttribute::Accessor) ? AOT::RuntimeHooks::takeStaticPropertyMadeAhead(this, key.impl()) : nullptr;
+                if (madeAhead) [[unlikely]] {
+                    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+                    putDirect(vm, key, madeAhead, attributesForStructure(value.attributes()));
+                } else
+#endif
+                    reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
                 // Leave the rest lazy on throw; the caller propagates.
                 if (vm.exceptionForInspection()) [[unlikely]] {
 #if ENABLE(AOT)

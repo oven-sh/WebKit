@@ -1,0 +1,101 @@
+# A second choice stands between a merge point and the test of what the merge point takes. The edges whose values pass the test share one copy of the two blocks, the others keep the blocks, and the test folds in both
+# FORM: Prepared optimizing
+# RUN: pass ThreadJumps
+# RUN(FOLDED): pass ThreadJumps SimplifyControlFlow RemoveTrivialParameters RetypeValues FoldConstants SimplifyControlFlow EliminateDeadCode
+# LOSS: MaxThreadedBlockValues x1 f4
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="everyEdgeDecides" parameters=[{type=i32}, {type=string}, {type=i32}, {type=int[0, 2]}, {type=boolean}] results=[{type=anything}] {
+    Switch v3 cases=[0, 1] -> case b1(v0), case b1(v1), otherwise b1(v2)
+  b1(v5):
+    Branch v4 -> taken b2(v0), notTaken b2(v2)
+  b2(v6):
+    v7 = TypeTest v5 testedType=i32
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    v9 = Add v8, v6
+    Return v9
+  b4():
+    Return v6
+# CHECK: Switch v3 cases=[0, 1] -> case [[copy]](v0), case b1(v1), otherwise [[copy]](v2)
+# CHECK: b1(v5
+# CHECK: [[copy]](
+# CHECK-NEXT: Branch v4 -> taken [[below]](v0), notTaken [[below]](v2)
+# CHECK: [[below]](
+# CHECK-NEXT: = TypeTest
+# FOLDED-NOT: TypeTest
+}
+
+# The test looks at the value through a cast that stands in the merge point.
+function f1 name="testedThroughACast" parameters=[{type=i32}, {type=string}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(v0), notTaken b1(v1)
+  b1(v4):
+    v5 = RequireObjectCoercible v4 name="length"
+    Branch v3 -> taken b2(v0), notTaken b2(v1)
+  b2(v6):
+    v7 = TypeTest v5 testedType=i32
+    Branch v7 -> taken b3(| 0), notTaken b4()
+  b3(v8):
+    Return v8
+  b4():
+    Return v6
+# CHECK: Branch v2 -> taken [[copy]](v0), notTaken b1(v1)
+# FOLDED-NOT: TypeTest
+}
+
+# An edge that leaves the test open keeps everything as it is.
+function f2 name="oneEdgeLeavesTheTestOpen" parameters=[{type=i32}, {type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(v0), notTaken b1(v1)
+  b1(v4):
+    Branch v3 -> taken b2(v0), notTaken b2(v1)
+  b2(v5):
+    v6 = TypeTest v4 testedType=i32
+    Branch v6 -> taken b3(| 0), notTaken b4()
+  b3(v7):
+    Return v7
+  b4():
+    Return v5
+# CHECK: Branch v2 -> taken b1(v0), notTaken b1(v1)
+# FOLDED: = TypeTest
+}
+
+# Another way leads to the block that tests: what it tests there did not come through the merge point alone.
+function f3 name="anotherEdgeLeadsToTheTest" parameters=[{type=i32}, {type=string}, {type=int[0, 2]}, {type=boolean}] results=[{type=anything}] {
+    Switch v2 cases=[0, 1] -> case b1(v0), case b1(v1), otherwise b2()
+  b1(v4):
+    Branch v3 -> taken b3(v0), notTaken b3(v1)
+  b2():
+    Jump -> next b3(v0)
+  b3(v5):
+    v6 = TypeTest v5 testedType=i32
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    Return v7
+  b5():
+    Return v5
+# CHECK: Switch v2 cases=[0, 1] -> case b1(v0), case b1(v1), otherwise b2()
+}
+
+# The two blocks together hold more than a copy may.
+function f4 name="tooMuchToCopy" parameters=[{type=i32}, {type=string}, {type=boolean}, {type=boolean}, {type=number}] results=[{type=anything}] {
+    Branch v2 -> taken b1(v0), notTaken b1(v1)
+  b1(v5):
+    v6 = Add v4, v4
+    v7 = Add v6, v4
+    v8 = Add v7, v4
+    v9 = Add v8, v4
+    Branch v3 -> taken b2(v6), notTaken b2(v9)
+  b2(v10):
+    v11 = Add v10, v4
+    v12 = Add v11, v4
+    v13 = Add v12, v4
+    v14 = Add v13, v4
+    v15 = TypeTest v5 testedType=i32
+    Branch v15 -> taken b3(| 0), notTaken b4()
+  b3(v16):
+    Return v16
+  b4():
+    Return v14
+# CHECK: Branch v2 -> taken b1(v0), notTaken b1(v1)
+}

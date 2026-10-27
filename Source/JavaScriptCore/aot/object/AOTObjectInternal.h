@@ -8,7 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTObject.h"
+#include "AOTObjectModel.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTState.h"
+#include "StructureInlines.h"
 #include "VM.h"
 
 namespace JSC { namespace AOT {
@@ -121,6 +124,101 @@ void removeFieldFromKeyOrder(VM&, State&, Object&, const FieldData&);
 void didChangeOwnProperties(VM&, Object&, VM::StructureChainIntegrityEvent, UniquedStringImpl* nameOrNull);
 bool interceptsIndexedAccesses(const Object&);
 void didChangeIndexedProperties(VM&, Object&, bool interceptedIndexedAccessesBefore);
+
+ALWAYS_INLINE bool isExtraKey(State& state, const Object& object, UniquedStringImpl* name)
+{
+    if (PropertyName(name).isPrivateName()) [[unlikely]]
+        return false;
+    return !(object.orderWord() & orderWordHasFieldOutsideSlot) || !object.fieldNamed(state, name);
+}
+
+// Every field of the key order, by its index, and every extra key, by its entry in the table of the extra properties, as they follow each other.
+void forEachKeyAsCreated(VM& vm, State& state, const Object& object, const Invocable<void(uint16_t)> auto& fieldFunctor, const auto& extraKeyFunctor)
+{
+    uint32_t numberOfFields = object.layout().numberOfFields;
+    Object::KeyOrderStorage storage;
+    std::span<const uint16_t> entries = object.keyOrder(state, storage);
+    std::span<const RefPtr<UniquedStringImpl>> namedKeys;
+    if (object.hasKeyOrderOfItsOwn())
+        namedKeys = object.compiledStructure().keysNamedByOrder();
+    ExtraKeyCounter positioned(numberOfFields);
+    uint32_t numberOfKeysListed = 0;
+    size_t next = 0;
+    UniquedStringImpl* lastKeyInFront = nullptr;
+    auto listFieldsUpToNextExtraKey = [&] {
+        lastKeyInFront = nullptr;
+        while (next < entries.size()) {
+            uint16_t entry = entries[next++];
+            if (entry < numberOfFields) {
+                fieldFunctor(entry);
+                continue;
+            }
+            if (!namedKeys.empty()) {
+                lastKeyInFront = namedKeys[entry - numberOfFields].get();
+                return;
+            }
+            positioned.add(entry);
+            if (positioned.count() > numberOfKeysListed)
+                return;
+        }
+    };
+    listFieldsUpToNextExtraKey();
+    if (JSObject* extra = object.extraProperties()) {
+        extra->structure()->forEachProperty(vm, [&](const auto& entry) {
+            if (!isExtraKey(state, object, entry.key()))
+                return true;
+            extraKeyFunctor(entry);
+            if (++numberOfKeysListed == positioned.count() || entry.key() == lastKeyInFront)
+                listFieldsUpToNextExtraKey();
+            return true;
+        });
+    }
+    for (uint16_t entry : entries.subspan(next)) {
+        if (entry < numberOfFields)
+            fieldFunctor(entry);
+    }
+}
+
+enum class KeysListed : uint8_t { Strings = 1, Symbols = 2, StringsAndSymbols = 3 };
+
+// The own keys that are neither indexes nor private names, as OrdinaryOwnPropertyKeys orders them. No name comes twice.
+void forEachOwnKey(VM& vm, State& state, const Object& object, KeysListed listed, DontEnumPropertiesMode mode, const Invocable<void(UniquedStringImpl*)> auto& functor)
+{
+    RuntimeLayoutTable& layouts = state.objects->layouts;
+    const LayoutData& layout = object.layout();
+    std::span<const FieldData> fields = layout.fields();
+    auto isIncluded = [&](unsigned attributes) ALWAYS_INLINE_LAMBDA {
+        return mode == DontEnumPropertiesMode::Include || !(attributes & PropertyAttribute::DontEnum);
+    };
+    bool hasSymbolKeys = layout.hasFieldsWithSymbolKeys;
+    auto listKeys = [&](bool symbols) {
+        forEachKeyAsCreated(vm, state, object, [&](uint16_t index) {
+            const FieldData& field = fields[index];
+            if (field.isPrivate() || !(symbols ? layouts.hasSymbolKey(field) : layouts.hasStringKey(field)))
+                return;
+            unsigned attributes = field.attributes();
+            if (!object.isInSlot(field)) {
+                FieldProperty property = findFieldProperty(vm, object, field);
+                if (!property)
+                    return;
+                attributes = property.attributes;
+            }
+            if (isIncluded(attributes))
+                functor(layouts.nameOf(vm, field));
+        }, [&](const auto& entry) ALWAYS_INLINE_LAMBDA {
+            bool isSymbol = entry.key()->isSymbol();
+            hasSymbolKeys |= isSymbol;
+            if (isSymbol == symbols && isIncluded(entry.attributes()))
+                functor(entry.key());
+        });
+    };
+    if (static_cast<uint8_t>(listed) & static_cast<uint8_t>(KeysListed::Strings))
+        listKeys(false);
+    else
+        hasSymbolKeys |= object.hasExtraProperties();
+    if (hasSymbolKeys && static_cast<uint8_t>(listed) & static_cast<uint8_t>(KeysListed::Symbols))
+        listKeys(true);
+}
 
 } } // namespace JSC::AOT
 

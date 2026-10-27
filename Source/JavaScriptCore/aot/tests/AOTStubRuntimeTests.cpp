@@ -729,6 +729,7 @@ struct CopiedField {
     SlotRepresentation from;
     SlotRepresentation to;
     uint64_t bits;
+    SlotFit fit { SlotFit::Always };
 };
 
 class CopiesByMoves {
@@ -781,7 +782,8 @@ public:
             const CopiedField& field = fields[index];
             uint32_t from = offsetOfFirstField + index * sizeof(uint64_t);
             uint32_t to = offsetOfFirstField + (maxNumberOfFields - 1 - index) * sizeof(uint64_t);
-            m_copy.moves.append(MappedCopy::Move { from, to, moveKindFor(field.from, field.to, false), static_cast<uint8_t>(widthOf(field.to)), false, false, field.from, field.to, 0, static_cast<uint16_t>(index) });
+            m_copy.moves.append(MappedCopy::Move { from, to, moveKindFor(field.from, field.to, field.fit), static_cast<uint8_t>(widthOf(field.to)), false, false, field.from, field.to, 0, static_cast<uint16_t>(index) });
+            m_copy.moves.last().testsUndefinedAndNull = field.fit == SlotFit::UnlessUndefinedOrNull;
             m_source.at<uint64_t>(from) = field.bits;
         }
         describeMovesForStub(m_copy);
@@ -883,6 +885,18 @@ static void testCopiesOfPropertiesByMovesFrom(StubKey head, [[maybe_unused]] uin
         }
     }
     copies.check({ });
+    for (auto [from, to] : std::initializer_list<std::pair<SlotRepresentation, SlotRepresentation>> { { Slot::OptionalInt32, Slot::OptionalInt32 }, { Slot::OptionalInt64, Slot::OptionalInt64 }, { Slot::OptionalDouble, Slot::OptionalDouble }, { Slot::OptionalBoolean, Slot::OptionalBoolean }, { Slot::JSValue, Slot::JSValue }, { Slot::OptionalInt32, Slot::JSValue }, { Slot::OptionalInt32, Slot::OptionalDouble } }) {
+        const SlotTraits traits = traitsOf(from);
+        for (uint64_t marker : { traits.absentBits, traits.undefinedBits, traits.nullBits }) {
+            copies.describe(std::array { alwaysMoved[0], CopiedField { from, to, marker, SlotFit::UnlessUndefinedOrNull } });
+            copies.emptyTarget();
+            AOT_TEST_CHECK(copies.copy().structureOfSourceForStub && !copies.run());
+        }
+        for (uint64_t bits : bitsOfAnyKind) {
+            copies.check(std::array { CopiedField { from, to, bits, SlotFit::UnlessUndefinedOrNull } });
+            copies.check(std::array { alwaysMoved[2], alwaysMoved[1], CopiedField { from, to, bits, SlotFit::UnlessUndefinedOrNull }, alwaysMoved[0] });
+        }
+    }
 
     // What the stub has no run for is left to the operation.
     for (auto [from, to] : std::initializer_list<std::pair<SlotRepresentation, SlotRepresentation>> { { Slot::Uint16, Slot::Uint16 }, { Slot::Double, Slot::OptionalDouble }, { Slot::Boolean, Slot::OptionalBoolean } }) {

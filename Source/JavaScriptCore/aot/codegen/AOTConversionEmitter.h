@@ -10,6 +10,7 @@
 #include "AOTOperationEmitter.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubsArithmetic.h"
+#include <limits>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -46,7 +47,10 @@ public:
     std::optional<Integer> exactIntegerBehind(Number);
     Integer widen(Word32, Range);
     Word32 narrow(Integer value) { return low32(value); }
-    Word32 toInt32(Number);
+    // A number beyond int64 is a multiple of 2^11, and what toInteger() makes of it, or of NaN, ends in as many zeros: whoever looks at so many of the lowest bits alone needs no test of the number.
+    enum class BitsOfInt32 : uint8_t { All, Lowest };
+    static constexpr unsigned numberOfLowestBits = std::numeric_limits<int64_t>::digits - (std::numeric_limits<double>::digits - 1);
+    Word32 toInt32(Number, BitsOfInt32 = BitsOfInt32::All);
     // What a read of bytes as a number answers: every NaN is the one NaN.
     Number purified(Number);
     // A NaN keeps the sign that arithmetic gave it and none of its other bits.
@@ -60,7 +64,7 @@ public:
     Operand fromBits(Integer, Representation);
     static uint64_t markerBits(uint16_t primitive, Representation);
     Condition isMarker(Operand);
-    Condition isMarker(Operand operand, uint64_t marker) { return equal(bitsOf(operand), integer(static_cast<int64_t>(marker))); }
+    Condition isMarker(Operand operand, uint64_t marker) { return equal(bitsOf(operand), static_cast<int64_t>(marker)); }
     Condition isAbsent(Operand);
     Operand withoutMarkers(Operand);
 
@@ -81,7 +85,7 @@ public:
 private:
     struct ExactInteger;
     std::optional<ExactInteger> findExactIntegerBehind(LValue number);
-    Word32 toInt32OfAnyNumber(Number);
+    Word32 toInt32OfAnyNumber(Number, BitsOfInt32);
     Operand convertMarkers(Operand source, const Type&, Representation to, std::optional<Operand> unmarked = std::nullopt);
     Integer integerPartOf(Operand, const Type&);
     Number numberPartOf(Operand, const Type&);
@@ -90,7 +94,7 @@ private:
     bool isSeldomEntered(const OperationContext&) const;
     CodeShape shapeAt(const OperationContext& context) const { return m_placeOnEdge ? m_placeOnEdge->shape : context.shape(); }
     Boxed boxByStub(BoxedNumberForm, LValue);
-    Integer quietNaNWithSignOf(Integer bits) { return Integer(m_out.shl(m_out.bitOr(m_out.lShr(bits.value(), m_out.constInt32(51)), m_out.constInt64(1)), m_out.constInt32(51))); }
+    Integer quietNaNWithSignOf(Integer bits) { return Integer(m_out.shl(m_out.bitOr(m_out.lShr(bits.value(), 51), 1), 51)); }
     Operand unboxOptional(Boxed, const Type&, Representation, NumberUnboxing);
 
     std::optional<PlaceOnEdge> m_placeOnEdge;

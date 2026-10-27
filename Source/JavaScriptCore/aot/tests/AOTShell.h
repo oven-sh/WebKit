@@ -14,6 +14,7 @@
 namespace JSC {
 
 class JSGlobalObject;
+class JSObject;
 class JSPromise;
 class VM;
 
@@ -32,6 +33,7 @@ std::span<const ASCIILiteral> shellFunctionNames();
 bool isKeyOfCompiledModule(const String&);
 // Null for a key that names no module of the image, or with an exception.
 JSPromise* fetchCompiledModule(JSGlobalObject*, const String& key);
+void addMissingImportMetaFunctions(JSGlobalObject*, JSObject* importMeta);
 extern const ModuleHost moduleHost;
 
 } // namespace JSC::AOT::Shell

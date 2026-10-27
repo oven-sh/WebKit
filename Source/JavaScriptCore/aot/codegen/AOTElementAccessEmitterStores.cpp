@@ -186,7 +186,8 @@ bool ElementAccessEmitter::replacesBoxedInt32(const ValueContext& store, const A
 void ElementAccessEmitter::replaceElement(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement)
 {
     if (replacesBoxedInt32(store, form)) {
-        m_out.store32(in<Word32>(store->valueOperand()).value(), elementAt(form, elements, index));
+        Word32 stored = in<Word32>(store->valueOperand());
+        m_out.store32(stored.value(), elementAt(form, elements, index));
         return;
     }
     storeRawElement(form, elements, index, rawElement);
@@ -359,7 +360,8 @@ Condition ElementAccessEmitter::tryStoreElement(const ValueContext& store, CellP
 void ElementAccessEmitter::generateHasSpareArrayCapacity(const ValueContext& value)
 {
     ArrayElements elements = elementsOf(in<CellPointer>(value->arrayOperand()));
-    defineTest(value, below(publicLength(elements), vectorLength(elements)));
+    Integer length = publicLength(elements);
+    defineTest(value, below(length, vectorLength(elements)));
 }
 
 void ElementAccessEmitter::generateReserveArrayCapacity(const ValueContext& value)
@@ -383,12 +385,12 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         LBasicBlock holdsAnyValue = newBlock();
         LBasicBlock liesInFrame = newBlock();
         LBasicBlock isOnHeap = newBlock();
-        branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(isOfOtherKind) });
+        branch(belowOrEqual(sub(shape, UndecidedShape), Int32Shape - UndecidedShape), { rareEdge(converts), normalEdge(isOfOtherKind) });
 
         m_out.appendTo(isOfOtherKind);
         uint32_t numberOfPlace = (m_id.index() + value.id().index()) % ArrayWords::numberOfCounts;
         TypedPointer count = mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.shortYoungArraysConverted) + numberOfPlace);
-        branch(below(Word32(m_out.load8ZeroExt32(count)), word32(ArrayWords::maxShortYoungArraysConverted)), { normalEdge(stillConverts), normalEdge(continuation) });
+        branch(below(Word32(m_out.load8ZeroExt32(count)), ArrayWords::maxShortYoungArraysConverted), { normalEdge(stillConverts), normalEdge(continuation) });
 
         m_out.appendTo(stillConverts);
         branch(equal(shape, word32(ContiguousShape)), { normalEdge(holdsAnyValue), normalEdge(continuation) });
@@ -403,10 +405,11 @@ void ElementAccessEmitter::generateConvertToDoubleStorage(const ValueContext& va
         m_out.jump(continuation);
 
         m_out.appendTo(isOnHeap);
-        m_out.store32(word32(static_cast<int32_t>(numberOfPlace)).value(), mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.placeThatConverts)));
+        Word32 place = word32(static_cast<int32_t>(numberOfPlace));
+        m_out.store32(place.value(), mutableInstanceField(AOT_INSTANCE_OFFSET(arrays.placeThatConverts)));
         m_out.jump(converts);
     } else
-        branch(belowOrEqual(sub(shape, word32(UndecidedShape)), word32(Int32Shape - UndecidedShape)), { rareEdge(converts), normalEdge(continuation) });
+        branch(belowOrEqual(sub(shape, UndecidedShape), Int32Shape - UndecidedShape), { rareEdge(converts), normalEdge(continuation) });
 
     m_out.appendTo(converts);
     callVoidOperation(value, RuntimeOperation::ConvertToDoubleStorage, { array }, { .isOnRarePath = true });

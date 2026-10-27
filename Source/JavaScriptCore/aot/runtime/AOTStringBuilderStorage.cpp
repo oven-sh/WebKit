@@ -13,7 +13,7 @@
 #include "AOTJSONHooks.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
-#include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
@@ -292,12 +292,12 @@ void StringBuilderStorage::reset()
 
 void StringBuilderStorage::updateLimit()
 {
-    m_limit = wouldOverwriteSharedCharacters() ? m_position : std::min<uint32_t>(capacity(), String::MaxLength - m_lengthOutsideBuffer);
+    m_limit = wouldOverwriteSharedCharacters() ? m_position : std::min<uint32_t>(capacity(), std::max<uint32_t>(String::MaxLength - m_lengthOutsideBuffer, m_position));
 }
 
 bool StringBuilderStorage::canGrowBy(size_t added) const
 {
-    return added <= String::MaxLength - length();
+    return static_cast<uint64_t>(length()) + added <= String::MaxLength;
 }
 
 // The bytes that are written behind the characters that are appended want room in the buffer. They are no part of the text, so the longest text says nothing about them.
@@ -306,6 +306,11 @@ bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
     ASSERT(length <= bytesWritten);
     if (bytesWritten <= m_limit - m_position)
         return true;
+    return tryMakeRoom(length, bytesWritten, 0);
+}
+
+NEVER_INLINE bool StringBuilderStorage::tryMakeRoom(size_t length, size_t bytesWritten, size_t roomForMore)
+{
     if (!canGrowBy(length))
         return false;
     size_t needed = m_position + bytesWritten;
@@ -319,13 +324,13 @@ bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
     if (m_jsonHolders && holderInTheMiddleRepeats(m_jsonHolders))
         return false;
     size_t grownCapacity = needed > currentCapacity ? currentCapacity * 2 : currentCapacity;
-    size_t newCapacity = std::max(needed, std::min<size_t>(std::max<size_t>(grownCapacity, m_limits.minCapacity), String::MaxLength));
+    size_t newCapacity = std::max(needed, std::min<size_t>(std::max<size_t>({ grownCapacity, m_limits.minCapacity, needed + roomForMore }), String::MaxLength));
     size_t expectedCapacity = std::exchange(m_capacityOfNextBuffer, 0);
     if (needed > m_limits.minCapacity)
         expectedCapacity = std::max<size_t>(expectedCapacity, std::exchange(m_words.capacityOfLastLargeBuffer, 0));
     if (expectedCapacity > newCapacity && tryReplaceBuffer(expectedCapacity))
         return true;
-    return tryReplaceBuffer(newCapacity);
+    return tryReplaceBuffer(newCapacity) || (roomForMore && tryReplaceBuffer(needed));
 }
 
 NEVER_INLINE bool StringBuilderStorage::tryReplaceBuffer(size_t newCapacity)
@@ -508,10 +513,34 @@ auto StringBuilderStorage::append(JSGlobalObject* globalObject, std::span<const 
 }
 
 // Compiled code writes whole words.
+Latin1Character* StringBuilderStorage::tryReserve(size_t length)
+{
+    return tryEnsureRoom(length, roundUpToMultipleOf<sizeof(uint64_t)>(length)) ? m_characters + m_position : nullptr;
+}
+
 Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, size_t length)
 {
-    if (tryEnsureRoom(length, roundUpToMultipleOf<sizeof(uint64_t)>(length))) [[likely]]
-        return m_characters + m_position;
+    if (Latin1Character* cursor = tryReserve(length)) [[likely]]
+        return cursor;
+    throwOutOfMemory(globalObject);
+    return nullptr;
+}
+
+Latin1Character* StringBuilderStorage::tryReserve(const Reservation& reservation)
+{
+    size_t bytesWritten = roundUpToMultipleOf<sizeof(uint64_t)>(reservation.length + reservation.maxLengthOfRest);
+    if (bytesWritten > m_limit - m_position) {
+        if (!tryMakeRoom(reservation.length, bytesWritten, reservation.roomForMore))
+            return nullptr;
+        m_limit = std::max(m_limit, static_cast<uint32_t>(m_position + bytesWritten));
+    }
+    return m_characters + m_position;
+}
+
+Latin1Character* StringBuilderStorage::reserve(JSGlobalObject* globalObject, const Reservation& reservation)
+{
+    if (Latin1Character* cursor = tryReserve(reservation)) [[likely]]
+        return cursor;
     throwOutOfMemory(globalObject);
     return nullptr;
 }
@@ -618,7 +647,7 @@ static JSString* stringOfIndex(VM& vm, Instance& instance, uint32_t index)
         string->tryGetValueImpl()->hash();
         return string;
     }
-    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance.state->stringKeys;
     if (JSString* string = keys.tryFindIntegerKey(index))
         return string;
     std::array<char, 10> digits;
@@ -653,7 +682,7 @@ ALWAYS_INLINE JSString* StringBuilderStorage::copyBufferToString(JSGlobalObject*
 
 static JSString* tryCreateKey(VM& vm, Instance& instance, std::span<const Latin1Character> characters)
 {
-    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance.state->stringKeys;
     if (JSString* key = tryCreateIndexKey(vm, instance, characters))
         return key;
     if (characters.size() <= keys.maxCachedKeyLength())
@@ -668,7 +697,7 @@ JSString* StringBuilderStorage::createStringFromBuffer(JSGlobalObject* globalObj
     std::span<const Latin1Character> characters { m_characters, m_position };
     if (m_position == 1)
         return jsSingleCharacterString(vm, characters[0]);
-    if (use == StringUse::LikelyKey) {
+    if (use != StringUse::Unknown) {
         if (JSString* key = tryCreateKey(vm, instance, characters))
             return key;
     }
@@ -688,7 +717,7 @@ JSString* StackStringBuilder::finish(JSGlobalObject* globalObject, Instance& ins
     std::span<const Latin1Character> characters = charactersOnStack(cursor);
     if (characters.size() <= 1)
         return characters.empty() ? jsEmptyString(vm) : jsSingleCharacterString(vm, characters[0]);
-    if (use == StringBuilderStorage::StringUse::LikelyKey) {
+    if (use != StringBuilderStorage::StringUse::Unknown) {
         if (JSString* key = tryCreateKey(vm, instance, characters))
             return key;
     }
@@ -837,7 +866,7 @@ ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFin
 {
     if (!holdsOnlyShortTextInOwnBuffer() || m_limit < StringKeyCache::minReadableBytes) [[unlikely]]
         return std::nullopt;
-    const StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    const StringKeyCache& keys = *instance.state->stringKeys;
     if (m_position > keys.maxCachedKeyLength()) [[unlikely]]
         return std::nullopt;
     StringKeyCache::Lookup lookup = keys.findKeyForText(std::span<const Latin1Character> { m_characters, m_position }, key, hash);
@@ -850,7 +879,7 @@ ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFin
 
 ALWAYS_INLINE JSString* StringBuilderStorage::finishWithNewKey(Instance& instance, unsigned hash)
 {
-    JSString* key = instance.state->propertyCaches->stringKeys().makeKey(*instance.vm, std::span<const Latin1Character> { m_characters, m_position }, hash);
+    JSString* key = instance.state->stringKeys->makeKey(*instance.vm, std::span<const Latin1Character> { m_characters, m_position }, hash);
     m_position = 0;
     returnToPool(instance);
     return key;
@@ -962,7 +991,7 @@ static ALWAYS_INLINE bool isIndexOfIntegerKey(JSValue primitive)
 
 JSString* StringBuilderStorage::tryFindKeyByParts(Instance& instance, std::span<const EncodedJSValue> primitives)
 {
-    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance.state->stringKeys;
     if (JSValue only = onlyPartWithCharacters(*instance.vm, primitives)) {
         if (isIndexOfIntegerKey(only))
             return keys.tryFindIntegerKey(only.asInt32());
@@ -975,7 +1004,7 @@ JSString* StringBuilderStorage::tryFindKeyByParts(Instance& instance, std::span<
 
 static JSString* tryConcatenateShortKey(VM& vm, Instance& instance, std::span<const EncodedJSValue> primitives)
 {
-    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance.state->stringKeys;
     if (JSValue only = onlyPartWithCharacters(vm, primitives)) {
         if (isIndexOfIntegerKey(only))
             return stringOfIndex(vm, instance, only.asInt32());
@@ -997,7 +1026,7 @@ static JSString* tryConcatenateShortKey(VM& vm, Instance& instance, std::span<co
 JSString* StringBuilderStorage::concatenate(JSGlobalObject* globalObject, Instance& instance, std::span<const EncodedJSValue> primitives, StringUse use)
 {
     VM& vm = globalObject->vm();
-    if (use == StringUse::LikelyKey) {
+    if (use != StringUse::Unknown) {
         if (JSString* key = tryConcatenateShortKey(vm, instance, primitives))
             return key;
     }
@@ -1031,7 +1060,8 @@ JSString* StringBuilderStorage::concatenate(JSGlobalObject* globalObject, Instan
 
 static ALWAYS_INLINE StringBuilderStorage::StringUse stringUse(uint32_t isLikelyKey)
 {
-    return isLikelyKey ? StringBuilderStorage::StringUse::LikelyKey : StringBuilderStorage::StringUse::Unknown;
+    ASSERT(isLikelyKey <= static_cast<uint32_t>(StringBuilderStorage::StringUse::LikelyName));
+    return static_cast<StringBuilderStorage::StringUse>(isLikelyKey);
 }
 
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilder(Instance* instance, JSCell* builder, uint32_t isLikelyKey)
@@ -1074,30 +1104,54 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderFinish);
     std::span<const Latin1Character> characters = reinterpret_cast<StackStringBuilder*>(builder)->charactersOnStack(byteCast<Latin1Character>(cursor));
-    OPERATION_RETURN(scope, instance->state->propertyCaches->stringKeys().makeKey(vm, characters, hash, { }));
+    OPERATION_RETURN(scope, instance->state->stringKeys->makeKey(vm, characters, hash, { }));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey))
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishTextOnStackWithCalls(Instance*, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey);
+
+template<StringKeyCache::EqualHashes equalHashes>
+static ALWAYS_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishTextOnStack(Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey)
 {
-    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
-    PropertyCaches* caches = instance->state->propertyCaches.getIfCreated();
-    if (stackBuilder.isOnStack() && caches) [[likely]] {
-        const StringKeyCache& keys = caches->stringKeys();
-        std::span<const Latin1Character> characters = stackBuilder.charactersOnStack(byteCast<Latin1Character>(cursor));
-        if (characters.size() - 2 <= keys.maxCachedKeyLength() - 2) [[likely]] {
-            JSString* key;
-            unsigned hash;
-            switch (keys.findKeyForText(characters, key, hash)) {
-            case StringKeyCache::Lookup::Found:
-                return { key, nullptr };
-            case StringKeyCache::Lookup::Absent:
-                [[clang::musttail]] return finishStackStringBuilderWithNewKey(instance, builder, cursor, hash);
-            case StringKeyCache::Lookup::AbsentIndex:
-                [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, true);
-            }
+    const StringKeyCache& keys = *instance->state->stringKeys.getIfCreated();
+    std::span<const Latin1Character> characters = reinterpret_cast<StackStringBuilder*>(builder)->charactersOnStack(byteCast<Latin1Character>(cursor));
+    if (characters.size() <= keys.maxCachedKeyLength()) [[likely]] {
+        JSString* key;
+        unsigned hash;
+        std::optional<StringKeyCache::Lookup> lookup = keys.tryFindKeyForText<equalHashes>(characters, key, hash);
+        if constexpr (equalHashes == StringKeyCache::EqualHashes::LeaveUndecided) {
+            if (!lookup) [[unlikely]]
+                [[clang::musttail]] return finishTextOnStackWithCalls(instance, builder, cursor, isLikelyKey);
+        }
+        switch (*lookup) {
+        case StringKeyCache::Lookup::Found:
+            return { key, nullptr };
+        case StringKeyCache::Lookup::Absent:
+            [[clang::musttail]] return finishStackStringBuilderWithNewKey(instance, builder, cursor, hash);
+        case StringKeyCache::Lookup::AbsentIndex:
+            [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, true);
         }
     }
     [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, isLikelyKey);
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishTextOnStackWithCalls(Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey)
+{
+    instance->state->stringKeys.operator*();
+    [[clang::musttail]] return finishTextOnStack<StringKeyCache::EqualHashes::AreToldApart>(instance, builder, cursor, isLikelyKey);
+}
+
+// The usual road calls nothing, so it saves no registers.
+JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey))
+{
+    auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
+    if (!stackBuilder.isOnStack()) [[unlikely]]
+        [[clang::musttail]] return finishStackStringBuilder(instance, builder, cursor, isLikelyKey);
+    std::span<const Latin1Character> characters = stackBuilder.charactersOnStack(byteCast<Latin1Character>(cursor));
+    if (characters.size() < 2)
+        return { characters.empty() ? jsEmptyString(*instance->vm) : jsSingleCharacterString(*instance->vm, characters[0]), nullptr };
+    if (!instance->state->stringKeys.getIfCreated()) [[unlikely]]
+        [[clang::musttail]] return finishTextOnStackWithCalls(instance, builder, cursor, isLikelyKey);
+    [[clang::musttail]] return finishTextOnStack<StringKeyCache::EqualHashes::LeaveUndecided>(instance, builder, cursor, isLikelyKey);
 }
 
 template<uint32_t count>
@@ -1121,7 +1175,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateShortKey(Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey)
 {
     ShortKeyCharacters characters;
-    StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance->state->stringKeys;
     if (tryWriteShortKeyInline(unsafeMakeSpan(parts, count), characters) && characters.length - 2 <= keys.maxCachedKeyLength() - 2) [[likely]] {
         // A rope is made anew each time, so nobody asks for these parts again.
         if (characters.hasRopePart)
@@ -1135,7 +1189,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
             return { key, nullptr };
         case StringKeyCache::Lookup::Absent: {
             AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatenate);
-            return { keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts()), nullptr };
+            return { keys.makeKey(vm, characters.span(), hash, keys.lastLookupByParts(), stringUse(isLikelyKey) == StringBuilderStorage::StringUse::LikelyName), nullptr };
         }
         case StringKeyCache::Lookup::AbsentIndex:
             break;
@@ -1151,7 +1205,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
             return { key, nullptr };
         [[clang::musttail]] return concatenateByContents(instance, count, parts, isLikelyKey);
     }
-    StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance->state->stringKeys;
     StringKeyCache::KeyByParts taken;
     if (!taken.tryTake(keys.cageBase(), unsafeMakeSpan(parts, count)))
         taken.countAndKinds = 0;
@@ -1163,10 +1217,9 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey))
 {
-    PropertyCaches* caches = instance->state->propertyCaches.getIfCreated();
-    if (!isLikelyKey || !caches) [[unlikely]]
+    if (!isLikelyKey) [[unlikely]]
         [[clang::musttail]] return concatenateByContents(instance, count, parts, isLikelyKey);
-    StringKeyCache& keys = caches->stringKeys();
+    StringKeyCache& keys = *instance->state->stringKeys;
     JSString* key;
     switch (count) {
     case 2: {
@@ -1347,6 +1400,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderReserve, uint8_t*, (Instance* 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderReserve);
     auto* storage = cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderReserve);
+    if (isReservationOfAtMost(size))
+        OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, { .length = 0, .maxLengthOfRest = decodeReservationOfAtMost(size) })));
     OPERATION_RETURN(scope, byteCast<uint8_t>(storage->reserve(globalObject, size)));
 }
 

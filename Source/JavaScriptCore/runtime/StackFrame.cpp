@@ -104,6 +104,8 @@ static String compiledFunctionName(VM& vm, const CompiledFrameData& compiledFram
 {
     if (description.codeType() == ModuleCode)
         return "module code"_s;
+    if (description.codeType() == EvalCode)
+        return "eval code"_s;
     if (!compiledFrame.frame.isAsyncFrame)
         return description.calculatedDisplayName(vm, compiledFrame.callee.get(), compiledFrame.frame.calleeLiesInFrame);
     String name = description.name(vm);

@@ -108,6 +108,7 @@ public:
     bool hasWeights() const { return m_hasWeights; }
     // Whether some block of the function is neither cold nor runs once.
     Expected<bool> hasWarmCode(const Program&, FunctionID) const;
+    Expected<bool> isCalledInLoop(const Program& program, FunctionID id) const { return !m_classOfEverything && m_entries.of(program, id).isCalledInLoop; }
     Expected<uint8_t> percentileOf(const Program&, FunctionID) const;
     Expected<HeatClass> classOf(Expected<double> heat) const;
     Expected<HeatClass> classOf(const Program& program, FunctionID id, Expected<double> frequencyInFunction) const { return classOf(program, id, activationsOf(program, id), frequencyInFunction); }

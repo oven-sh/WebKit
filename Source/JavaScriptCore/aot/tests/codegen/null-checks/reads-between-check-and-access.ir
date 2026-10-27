@@ -13,7 +13,7 @@ function f0 name="allocate" parameters=[{type=number}, {type=i32}] results=[{typ
     v3 = NewObject -, v2, v0, v1 layout=L0 fields=[0, 1, 2]
     Return v3
 }
-function f1 name="allocateOrCount" parameters=[{type=number}, {type=i32}, {type=boolean}] results=[{type=L0}, {type=i32}] {
+function f1 name="allocateOrCount" parameters=[{type=number}, {type=i32}, {type=boolean}] results=[{type=unspecified|L0}, {type=i32}] {
     Branch v2 -> taken b1(), notTaken b2()
   b1():
     v3 = Null
@@ -44,8 +44,10 @@ function f4 name="readsOneOfTwoResultsBetween" parameters=[{type=null|L0}, {type
     Branch v3 -> taken b1(), notTaken b2()
   b1():
     v6 = RequireObjectCoercible v0 name="value"
-    v7 = GetSlot v5 key="value" receivers=[L0] level=Proven
-    PutSlot v6, -, v7 key="value" receivers=[L0] level=Proven
+    v7 = Specified
+    v8 = AssumeType v5, v7 provenType=L0
+    v9 = GetSlot v8 key="value" receivers=[L0] level=Proven
+    PutSlot v6, -, v9 key="value" receivers=[L0] level=Proven
     Return
   b2():
     Return

@@ -12,6 +12,7 @@
 #include "AOTModuleWords.h"
 #include "AOTPlacement.h"
 #include "AOTStaticsEmitter.h"
+#include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -44,6 +45,18 @@ static bool keepsNamespaceInValueWord(const Module& module, ImportPhase phase)
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool ModuleEmitter::hasSingleNamespaceInValueWord(ModuleID id)
+{
+    const Module& module = m_program.at(id);
+    if (module.kind != ModuleKind::SourceText && module.kind != ModuleKind::Data)
+        return false;
+    if (module.exportsVariable || !m_placement.hasModuleValue(id))
+        return false;
+    return std::ranges::none_of(module.requests, [](const ModuleRequest& request) {
+        return request.kind == ModuleRequestKind::Require;
+    });
 }
 
 Word32 ModuleEmitter::moduleIndex(ModuleID module)
@@ -155,7 +168,8 @@ void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
     Word32 status(m_out.load8ZeroExt32(statusOf(module)));
     defineTest(value, selectByBranch<Condition>(belowOrEqual(status, inRecord), [&] {
         return either<Condition>(notEqual(status, inRecord), [&] {
-            m_out.store32As8(loadMutable32(AOT_INSTANCE_OFFSET(modules.evaluatingMark)).value(), statusOf(module));
+            Word32 evaluatingMark = loadMutable32(AOT_INSTANCE_OFFSET(modules.evaluatingMark));
+            m_out.store32As8(evaluatingMark.value(), statusOf(module));
             return boolean(true);
         }, [&] {
             return callOperation<Condition>(value, RuntimeOperation::BeginModuleEvaluation, { moduleIndex(module) }, { .isOnRarePath = true });
@@ -167,7 +181,8 @@ void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
 
 void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
 {
-    m_out.store32As8(m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), statusOf(value->module()));
+    LValue evaluated = m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated));
+    m_out.store32As8(evaluated, statusOf(value->module()));
 }
 
 // Whatever queues a job calls the run time, so the words of the queue are run-time state.
@@ -187,8 +202,9 @@ void ModuleEmitter::generateStopLoadingBehindFile(const ValueContext& value)
 void ModuleEmitter::generateEvaluateRequiredModule(const ValueContext& value)
 {
     ModuleID module = value->module();
+    // The operations around the site record who required whom, also where the module has run and the run time is not asked.
     auto askRunTime = [&](const CallOptions& options) {
-        callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(value->referrer()) }, options);
+        callOperation<Boxed>(value, RuntimeOperation::RequireModule, { moduleIndex(module), moduleIndex(ModuleID()) }, options);
     };
     if (value.shape() == CodeShape::Compact) {
         askRunTime({ });

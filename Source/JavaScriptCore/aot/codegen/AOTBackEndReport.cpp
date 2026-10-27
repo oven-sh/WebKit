@@ -66,6 +66,8 @@ static std::optional<Wire::DeclineKind> declineKindOf(B3::RemarkKind kind)
         return Wire::DeclineKind::LoopBoundNotClamped;
     case B3::RemarkKind::LoopVersioned:
     case B3::RemarkKind::LoopRotated:
+    case B3::RemarkKind::LoopVectorized:
+    case B3::RemarkKind::LoopUnrolled:
     case B3::RemarkKind::RangeChecksRemoved:
         return std::nullopt;
     }
@@ -110,10 +112,18 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::LoopsVersioned;
     case B3::Counter::LoopsRotated:
         return StatisticID::LoopsRotated;
+    case B3::Counter::LoopsVectorized:
+        return StatisticID::LoopsVectorized;
+    case B3::Counter::LoopsUnrolled:
+        return StatisticID::LoopsUnrolled;
     case B3::Counter::RangeChecksRemoved:
         return StatisticID::RangeChecksRemoved;
     case B3::Counter::LoopBoundsClamped:
         return StatisticID::LoopBoundsClamped;
+    case B3::Counter::LoopPollsRemoved:
+        return StatisticID::LoopPollsRemoved;
+    case B3::Counter::SumsKeptAsIntegers:
+        return StatisticID::SumsKeptAsIntegers;
     case B3::Counter::KnownInductionsUsed:
         return StatisticID::KnownInductionsUsed;
     case B3::Counter::TrapsFoldedIntoAccesses:

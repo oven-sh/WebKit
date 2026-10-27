@@ -24,6 +24,7 @@
 #include "AOTResultRules.h"
 #include "AOTSinkAllocationsInterpreter.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTSummarizeForInlining.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
@@ -102,7 +103,7 @@ static bool allocates(const Function& function, const Block& block)
 static bool mayBeAllocation(FunctionAnalyses& analyses, ValueID value)
 {
     const Function& function = analyses.function();
-    if (isAllocation(function, analyses.sameObjectThroughCasts(value)))
+    if (isAllocation(function, analyses.sameObjectThroughCasts(value).valueInFrontOfFacts()))
         return true;
     if (!mayBeReference(analyses.program().typeOf(function, value)))
         return false;
@@ -436,24 +437,30 @@ static void refinePartTypes(Function& worker, FreshResultShape& shape, TypeArena
     for (uint32_t part = 0; part < shape.partTypes.size(); ++part) {
         uint32_t result = shape.resultOfPart(part);
         TypeID refined;
+        bool isLeftOutOfSomeVariant = false;
         for (ValueID returned : returnedValues) {
             const Value& operand = worker.at(returnedOperandAt(returned, result));
+            isLeftOutOfSomeVariant |= types.at(operand.type).mayBeUnspecified();
             if (operand.opcode != Opcode::Unspecified)
                 refined = refined ? types.unionOf(refined, operand.type) : operand.type;
         }
+        if (refined)
+            refined = types.intern(types.at(refined).withoutPrimitives(Primitive::Unspecified));
         // A parameter of the function may have the type never with code behind it. A result may not: its read ends the block in every caller, and nothing stands in for it in the other variants.
         if (!refined || refined == TypeTable::never)
-            continue;
+            refined = shape.partTypes[part];
 
+        // A caller finds the part only behind the tag of a variant that has it. The type of the result says so.
+        TypeID returnedType = isLeftOutOfSomeVariant ? types.intern(types.at(refined).withPrimitives(Primitive::Unspecified)) : refined;
         for (ValueID returned : returnedValues) {
             Value& operand = worker.edit(returnedOperandAt(returned, result));
             if (operand.opcode != Opcode::Unspecified)
                 continue;
             operand.setValueType(refined);
-            operand.type = refined;
+            operand.type = returnedType;
         }
         shape.partTypes[part] = refined;
-        worker.results[result].changeType(Proven::byConstruction(refined));
+        worker.results[result].changeType(Proven::byConstruction(returnedType));
     }
 }
 
@@ -577,6 +584,16 @@ static ValueID appendRebuiltVariant(IRBuilder& builder, const FreshResultShape& 
     return rebuilt;
 }
 
+static void forEachPartOf(const FreshResultShape& shape, const FreshResultVariant& variant, NOESCAPE const Invocable<void(uint32_t part)> auto& functor)
+{
+    if (variant.kind == VirtualShapeKind::Cell)
+        functor(*shape.cellPart);
+    for (const FreshResultField& entry : variant.properties)
+        functor(entry.part);
+    for (const FreshResultField& entry : variant.parts)
+        functor(entry.part);
+}
+
 static ValueID appendRebuiltResult(IRBuilder& builder, const FreshResultShape& shape, ValueID call)
 {
     Vector<ValueID, 8> results;
@@ -589,10 +606,24 @@ static ValueID appendRebuiltResult(IRBuilder& builder, const FreshResultShape& s
             results.append(builder.append(WTF::move(read)));
         }
     }
-    if (!shape.hasTag())
-        return appendRebuiltVariant(builder, shape, shape.variants[0], results.span());
-
     Function& function = builder.function();
+    // The function has filled the parts of the variant whose tag it returns, and those of its only variant.
+    auto appendVariant = [&](const FreshResultVariant& variant) {
+        Vector<ValueID, 8> filledResults = results;
+        ValueID fact;
+        forEachPartOf(shape, variant, [&](uint32_t part) {
+            ValueID& result = filledResults[shape.resultOfPart(part)];
+            if (!builder.types().at(function.at(result).type).mayBeUnspecified())
+                return;
+            if (!fact)
+                fact = builder.append(IRBuilder::make(Opcode::Specified));
+            result = builder.append(makeCastBehindFact(function, builder.types(), result, fact));
+        });
+        return appendRebuiltVariant(builder, shape, variant, filledResults.span());
+    };
+    if (!shape.hasTag())
+        return appendVariant(shape.variants[0]);
+
     Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
     Vector<BlockID, 4> arms;
     for (const FreshResultVariant& variant : shape.variants)
@@ -605,7 +636,7 @@ static ValueID appendRebuiltResult(IRBuilder& builder, const FreshResultShape& s
     TypeID mergedType = TypeTable::never;
     for (size_t index = 0; index < arms.size(); ++index) {
         builder.moveToEndOf(arms[index]);
-        ValueID rebuilt = appendRebuiltVariant(builder, shape, shape.variants[index], results.span());
+        ValueID rebuilt = appendVariant(shape.variants[index]);
         mergedType = builder.types().unionOf(mergedType, function.at(rebuilt).type);
         builder.emitJump(continuation, { rebuilt });
     }
@@ -712,7 +743,7 @@ static bool givesFieldsClosuresMadeOnDemand(FunctionAnalyses& analyses, const Fr
             }
             if (!storesIntoNamedFields.contains(value.opcode))
                 continue;
-            ValueID receiver = sameObjectThroughCasts(function, value.operand(*receiverOf(value.opcode)));
+            ValueID receiver = sameObjectThroughCasts(function, value.operand(*receiverOf(value.opcode))).valueInFrontOfFacts();
             if (objects.get(receiver.index()) && canLeaveClosureUnmade(analyses, block, receiver, value.operand(*storedOf(value.opcode))))
                 return true;
         }
@@ -788,7 +819,7 @@ static ValueID returnedValueOf(const Function& function, const Terminator& termi
     switch (terminator.kind) {
     case TerminatorKind::Return:
         if (ValueID value = terminator.valueOperand())
-            return sameObjectThroughCasts(function, value);
+            return sameObjectThroughCasts(function, value).valueInFrontOfFacts();
         return { };
     case TerminatorKind::ReturnCall:
         return terminator.callOperand();

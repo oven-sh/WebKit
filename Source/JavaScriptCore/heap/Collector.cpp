@@ -306,6 +306,18 @@ void Collector::collectInCollectorThread()
     }
 }
 
+bool Collector::tryEnsureThreadForWork()
+{
+#if ENABLE(AOT)
+    if (!Thread::survivesFailedCreation())
+        return true;
+    Locker locker { *m_threadLock };
+    return !hasWorkWithLock() || m_thread->tryEnsureUnderlyingThread(locker);
+#else
+    return true;
+#endif
+}
+
 void Collector::collectInMutatorThread(Heap& conductor)
 {
     ASSERT(hasHeap(conductor));
@@ -669,6 +681,14 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
 
     switch (conn) {
     case GCConductor::Mutator: {
+        if (m_conductorMarksInConcurrentPhase) [[unlikely]] {
+            {
+                ParallelModeEnabler enabler(visitor);
+                visitor.drainInParallel(m_scheduler->timeToStop());
+            }
+            return changePhase(conn, CollectorPhase::Reloop);
+        }
+
         // When the mutator has the conn, we poll runConcurrentPhase() on every time someone says
         // stopIfNecessary(), so on every allocation slow path. When that happens we poll if it's time
         // to stop and do some work.

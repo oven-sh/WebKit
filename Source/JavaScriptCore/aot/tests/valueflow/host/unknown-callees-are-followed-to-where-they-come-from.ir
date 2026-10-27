@@ -1,0 +1,34 @@
+# take(function handler(request) { request.end(); request.body().close(); }); known()
+# The handler is handed to a function nobody knows, so its parameter is a value nobody knows. Both calls on it are listed under that one root:
+# the member of a receiver nobody knows is followed to the receiver, and the result of such a call to its callee. The call of `take` itself comes from the global object.
+# RUN: valueflow-why unknown-callees
+# CHECK: calls 4 of unknown callees 4: written in the program 4, in the library 0
+# CHECK: kinds
+# CHECK: 3{{*}}parameter of an escaped function
+# CHECK: shapes
+# CHECK: 3{{*}}parameter of an escaped function{{*}}an argument of Source, escaped by
+# CHECK: 1{{*}}member of a known object, UndescribedNativeResult{{*}}a built-in, has not escaped
+# RUN(NAMES): valueflow-why unknown-callees=names
+# NAMES: roots
+# NAMES: 3{{*}}parameter of an escaped function{{*}}f1 handler Source main.js escaped by
+# NAMES: 1{{*}}member of a known object, UndescribedNativeResult{{*}}GlobalThis
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="take" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="handler" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="end"
+    v2 = Call v1, v0
+    v3 = PropGet v0 key="body"
+    v4 = Call v3, v0
+    v5 = PropGet v4 key="close"
+    v6 = Call v5, v4
+    Return
+}

@@ -13,6 +13,7 @@
 #include "AOTLimits.h"
 #include "AOTSchemaEnums.h"
 #include "AOTVector.h"
+#include "CPUFeatureSet.h"
 #include <optional>
 #include <span>
 #include <wtf/Variant.h>
@@ -21,6 +22,12 @@
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+#if CPU(ARM64)
+static constexpr bool targetHasJSCVT = CPUFeatureSet::buildTarget().contains(CPUFeature::JSCVT);
+#else
+static constexpr bool targetHasJSCVT = false;
+#endif
 
 struct RunDirective {
     String prefix;

@@ -75,13 +75,16 @@ public:
         auto& alternatives = m_pattern.m_body->m_alternatives;
         unsigned count = alternatives.size();
         if (alternatives[0]->onceThrough()) {
-            count = 0;
-            while (count < alternatives.size() && alternatives[count]->onceThrough())
-                ++count;
-            program->triesOnlyOnce |= count == alternatives.size();
-            // From the second place on the bytecode runs the copies behind these, which lack what begins with ^.
-            if (m_countsTurns && count != alternatives.size())
-                return makeUnexpected(FlatProgramDecline::CopiedGroup);
+            unsigned triedOnce = 0;
+            while (triedOnce < alternatives.size() && alternatives[triedOnce]->onceThrough())
+                ++triedOnce;
+            program->triesOnlyOnce |= triedOnce == alternatives.size();
+            // Behind these stand copies that lack what begins with ^. The bytecode and the JIT try these and then the copies at the first place, and the copies alone from the second place on.
+            // That finds what these alone find at every place, in other turns.
+            if (!m_countsTurns)
+                count = triedOnce;
+            else if (triedOnce < alternatives.size())
+                m_firstRepeatedAlternative = alternatives[triedOnce].get();
         }
 
         if (!emitAlternatives(alternatives.span().first(count), { }))
@@ -95,8 +98,10 @@ public:
         program->numRegisters = m_nextRegister;
         program->framesOfRegisters = (m_nextRegister * sizeof(uint32_t) + sizeof(FlatFrame) - 1) / sizeof(FlatFrame);
 
-        removeUnneededLogging(*program);
         assignMemoRows();
+        // Machine::popChoice() can leave a RecordFailure frame behind. A capture-keyed entry needs the captures restored by the time that frame resumes.
+        if (!program->captureKeyedMemoRows)
+            removeUnneededLogging(*program);
         if (!m_countsTurns)
             program->stepsPerCharacterBeforeStoppingOnFullMachine = program->jitCountsTurns ? 32 : program->memoRows ? 8 : 0;
         program->needsFullMachine = std::ranges::any_of(program->ops, isStepBackward);
@@ -262,6 +267,252 @@ private:
     void isTurnThatMayTakeNothingSince(unsigned begin, unsigned startRegister) { m_turnsThatMayTakeNothing.append({ begin, here(), startRegister }); }
     void isLoopThatCountsTurnsSince(unsigned begin, unsigned counter, unsigned bound) { m_loopsThatCountTurns.append({ begin, here(), counter, bound }); }
 
+    // Backward liveness: the capture bounds that a backreference can read after each op before they are overwritten. Bit 2 * i is the start of m_referencedGroups[i], and bit 2 * i + 1 is its end.
+    // A search inside a lookahead stops at the end of the lookahead.
+    Vector<uint64_t> computeLiveCaptureBounds()
+    {
+        auto& ops = m_program->ops;
+        Vector<uint64_t> result(FillWith { }, ops.size(), 0);
+        auto& groups = m_referencedGroups;
+        if (groups.isEmpty())
+            return result;
+
+        auto boundsInSlots = [&](unsigned firstSlot, unsigned lastSlot) {
+            uint64_t bounds = 0;
+            for (unsigned i = 0; i < groups.size(); ++i) {
+                for (unsigned bound = 0; bound < 2; ++bound) {
+                    if (groups[i] + bound >= firstSlot && groups[i] + bound <= lastSlot)
+                        bounds |= 1ull << (2 * i + bound);
+                }
+            }
+            return bounds;
+        };
+        struct Effect {
+            uint64_t reads;
+            uint64_t sets;
+            bool fallsThrough;
+            bool jumpsToTarget;
+        };
+        auto effects = ops.map([&](const FlatOp& op) -> Effect {
+            switch (op.kind) {
+            case Kind::BackReference:
+            case Kind::BackReferenceIgnoringCase:
+                return { boundsInSlots(op.argument, op.argument + 1), 0, true, false };
+            case Kind::DotStarEnclosure:
+                // This either ends the search or is a backward step, which always fails.
+                if (static_cast<FlatStepBackward>(op.registerIndex) == FlatStepBackward::BackReference)
+                    return { boundsInSlots(op.argument, op.argument + 1), 0, false, false };
+                return { 0, 0, false, false };
+            case Kind::CaptureStart:
+            case Kind::CaptureEnd:
+            case Kind::LoggedCaptureStart:
+            case Kind::LoggedCaptureEnd:
+                return { 0, boundsInSlots(op.argument, op.argument), true, false };
+            case Kind::CaptureEmpty:
+            case Kind::CapturedRun:
+            case Kind::LoggedCaptureEmpty:
+            case Kind::LoggedCapturedRun:
+                return { 0, boundsInSlots(op.argument, op.argument + 1), true, false };
+            case Kind::ClearCaptures:
+            case Kind::LoggedClearCaptures:
+                return { 0, boundsInSlots(op.argument << 1, (op.target << 1) + 1), true, false };
+            // Every dispatch target of a ChoiceByTable is also reachable through its chain of targets.
+            case Kind::Choice:
+            case Kind::ChoiceByFirst:
+            case Kind::ChoiceByTable:
+            case Kind::GreedyLoopChoice:
+            case Kind::NegativeLookaheadBegin:
+            case Kind::JumpIfBelow:
+            case Kind::JumpIfNotBelow:
+            case Kind::NeedsInputElseJump:
+                return { 0, 0, true, true };
+            case Kind::Jump:
+            case Kind::LoopBack:
+            case Kind::LoopBackUnlessEmpty:
+                return { 0, 0, false, true };
+            case Kind::Match:
+            case Kind::RecordFailure:
+            case Kind::NegativeLookaheadEnd:
+                return { 0, 0, false, false };
+            case Kind::GreedyRun:
+            case Kind::LazyRun:
+            case Kind::GreedyRunBeforeKnownCharacters:
+            case Kind::LazyRunBeforeKnownCharacters:
+            case Kind::LoggedSavePosition:
+            case Kind::LoggedSetRegister:
+            case Kind::LoggedIncrement:
+            case Kind::Character:
+            case Kind::Text:
+            case Kind::CasedText:
+            case Kind::WideText:
+            case Kind::Set:
+            case Kind::SetCount:
+            case Kind::PossessiveRun:
+            case Kind::SavePosition:
+            case Kind::SetRegister:
+            case Kind::Increment:
+            case Kind::FailIfEmpty:
+            case Kind::NeedsInput:
+            case Kind::StepBack:
+            case Kind::InputStart:
+            case Kind::LineStart:
+            case Kind::InputEnd:
+            case Kind::LineEnd:
+            case Kind::WordBoundary:
+            case Kind::NotWordBoundary:
+            case Kind::CountTurn:
+            case Kind::LookaheadBegin:
+            case Kind::LookaheadEnd:
+            case Kind::LookaheadEndKeepingCaptures:
+                return { 0, 0, true, false };
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        });
+
+        // Index + 1 into m_lookaheads, which lists inner lookaheads first.
+        Vector<unsigned> innermostLookahead(FillWith { }, ops.size(), 0);
+        for (unsigned i = m_lookaheads.size(); i--;) {
+            auto [begin, end] = m_lookaheads[i];
+            std::ranges::fill(innermostLookahead.mutableSpan().subspan(begin + 1, end - begin - 2), i + 1);
+        }
+        Vector<uint64_t> live(FillWith { }, ops.size(), 0);
+        auto solve = [&](unsigned begin, unsigned end, unsigned lookahead) {
+            std::ranges::fill(live.mutableSpan().subspan(begin, end - begin), 0);
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (unsigned i = end; i-- > begin;) {
+                    const Effect& effect = effects[i];
+                    uint64_t behind = 0;
+                    if (effect.fallsThrough && i + 1 < end)
+                        behind |= live[i + 1];
+                    if (effect.jumpsToTarget && ops[i].target < end)
+                        behind |= live[ops[i].target];
+                    uint64_t here = (behind & ~effect.sets) | effect.reads;
+                    changed |= here != live[i];
+                    live[i] = here;
+                }
+            }
+            for (unsigned i = begin; i < end; ++i) {
+                if (innermostLookahead[i] == lookahead)
+                    result[i] = live[i];
+            }
+        };
+        solve(0, ops.size(), 0);
+        for (unsigned i = 0; i < m_lookaheads.size(); ++i)
+            solve(m_lookaheads[i].first + 1, m_lookaheads[i].second - 1, i + 1);
+        return result;
+    }
+
+    // An op with a single fixed-width path from the start of an attempt runs once per attempt, at a position where no other attempt runs it.
+    struct SinglePathOp {
+        bool hasSinglePath { false };
+        // Capture bounds set along the path, which differ in every attempt. Same bits as computeLiveCaptureBounds().
+        uint64_t boundsSetOnPath { 0 };
+    };
+    Vector<SinglePathOp> findSinglePathOps()
+    {
+        auto& ops = m_program->ops;
+        Vector<SinglePathOp> result(ops.size());
+        if (m_decodesSurrogatePairs)
+            return result;
+        auto boundsInSlots = [&](unsigned firstSlot, unsigned lastSlot) {
+            uint64_t bounds = 0;
+            for (unsigned i = 0; i < m_referencedGroups.size(); ++i) {
+                for (unsigned bound = 0; bound < 2; ++bound) {
+                    if (m_referencedGroups[i] + bound >= firstSlot && m_referencedGroups[i] + bound <= lastSlot)
+                        bounds |= 1ull << (2 * i + bound);
+                }
+            }
+            return bounds;
+        };
+        // The start of an attempt counts as a predecessor.
+        Vector<unsigned> predecessorCounts(FillWith { }, ops.size() + 1, 0);
+        ++predecessorCounts[0];
+        if (m_program->laterAttemptsBeginAt)
+            ++predecessorCounts[m_program->laterAttemptsBeginAt];
+        for (unsigned i = 0; i < ops.size(); ++i) {
+            switch (ops[i].kind) {
+            case Kind::Choice:
+            case Kind::ChoiceByFirst:
+            case Kind::ChoiceByTable:
+            case Kind::GreedyLoopChoice:
+            case Kind::NegativeLookaheadBegin:
+            case Kind::JumpIfBelow:
+            case Kind::JumpIfNotBelow:
+            case Kind::NeedsInputElseJump:
+                ++predecessorCounts[i + 1];
+                ++predecessorCounts[ops[i].target];
+                break;
+            case Kind::Jump:
+            case Kind::LoopBack:
+            case Kind::LoopBackUnlessEmpty:
+                ++predecessorCounts[ops[i].target];
+                break;
+            default:
+                ++predecessorCounts[i + 1];
+                break;
+            }
+        }
+        Vector<std::pair<unsigned, uint64_t>, 8> worklist { { 0, 0 } };
+        while (!worklist.isEmpty()) {
+            auto [i, bounds] = worklist.takeLast();
+            for (bool continues = true; continues; ++i) {
+                const FlatOp& op = ops[i];
+                if (predecessorCounts[i] > 1)
+                    break;
+                switch (op.kind) {
+                case Kind::Character:
+                case Kind::Text:
+                case Kind::CasedText:
+                case Kind::WideText:
+                case Kind::Set:
+                case Kind::SetCount:
+                case Kind::NeedsInput:
+                case Kind::InputStart:
+                case Kind::LineStart:
+                case Kind::InputEnd:
+                case Kind::LineEnd:
+                case Kind::WordBoundary:
+                case Kind::NotWordBoundary:
+                case Kind::LookaheadBegin:
+                    break;
+                case Kind::CaptureStart:
+                case Kind::CaptureEnd:
+                case Kind::LoggedCaptureStart:
+                case Kind::LoggedCaptureEnd:
+                    bounds |= boundsInSlots(op.argument, op.argument);
+                    break;
+                case Kind::CaptureEmpty:
+                case Kind::LoggedCaptureEmpty:
+                    bounds |= boundsInSlots(op.argument, op.argument + 1);
+                    break;
+                case Kind::Choice:
+                case Kind::ChoiceByFirst:
+                case Kind::ChoiceByTable:
+                    if (isStepBackward(ops[i + 1])) {
+                        continues = false;
+                        break;
+                    }
+                    result[i] = { true, bounds };
+                    worklist.append({ op.target, bounds });
+                    break;
+                case Kind::GreedyRun:
+                case Kind::LazyRun:
+                case Kind::GreedyRunBeforeKnownCharacters:
+                case Kind::LazyRunBeforeKnownCharacters:
+                    result[i] = { true, bounds };
+                    continues = false;
+                    break;
+                default:
+                    continues = false;
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
     void assignMemoRows()
     {
         if (m_searchDependsOnMoreThanPosition)
@@ -294,28 +545,91 @@ private:
             std::ranges::fill(loopAround.mutableSpan().subspan(begin, end - begin), static_cast<uint16_t>(loops.size() - 1));
             std::ranges::fill(rowsOfOp.mutableSpan().subspan(begin, end - begin), static_cast<unsigned>(rows));
         }
-        m_program->aroundMemoRow.append(FlatProgram::AroundMemoRow { 0, 0, false });
-        for (unsigned i = 0; i < ops.size() && m_program->memoRows + maxRowsOfOp < maxIndexCount; ++i) {
+        // A row only helps if the same search can start twice. A single-path choice never repeats, and neither does a single-path run whose search depends on a bound set along the path.
+        auto liveBoundsOfAllGroups = computeLiveCaptureBounds();
+        auto singlePathOps = findSinglePathOps();
+        auto canHaveRows = [&](unsigned i) {
             switch (ops[i].kind) {
             case Kind::Choice:
             case Kind::ChoiceByFirst:
             case Kind::ChoiceByTable:
+                if (singlePathOps[i].hasSinglePath)
+                    return false;
+                [[fallthrough]];
             case Kind::GreedyLoopChoice:
             case Kind::GreedyRun:
             case Kind::LazyRun:
             case Kind::GreedyRunBeforeKnownCharacters:
             case Kind::LazyRunBeforeKnownCharacters:
+                if (liveBoundsOfAllGroups[i] & singlePathOps[i].boundsSetOnPath)
+                    return false;
                 // The step behind such a Choice changes the position in its frame.
-                if (!hasTooManyRows[i] && !isStepBackward(ops[i + 1])) {
-                    ops[i].memoRow = static_cast<uint16_t>(m_program->memoRows + 1);
-                    m_program->memoRows += rowsOfOp[i];
-                    m_program->aroundMemoRow.grow(m_program->memoRows + 1);
-                    m_program->aroundMemoRow[ops[i].memoRow] = { turnAround[i], loopAround[i], isInsideLookahead[i] };
-                }
-                break;
+                return !hasTooManyRows[i] && !isStepBackward(ops[i + 1]);
             default:
-                break;
+                return false;
             }
+        };
+        // Entries hold the bounds of at most maxReferencedGroups groups. Past that, ops with live bounds get no row.
+        Vector<uint16_t> liveCaptureBounds(FillWith { }, ops.size(), 0);
+        Vector<bool> hasTooManyLiveBounds(FillWith { }, ops.size(), false);
+        {
+            uint64_t liveAtSomeRow = 0;
+            for (unsigned i = 0; i < ops.size(); ++i)
+                liveAtSomeRow |= canHaveRows(i) ? liveBoundsOfAllGroups[i] : 0;
+            Vector<unsigned, FlatProgram::maxReferencedGroups> liveGroups;
+            for (unsigned group = 0; group < m_referencedGroups.size(); ++group) {
+                if ((liveAtSomeRow >> (2 * group)) & 3)
+                    liveGroups.append(group);
+            }
+            bool hasTooManyLiveGroups = liveGroups.size() > FlatProgram::maxReferencedGroups;
+            for (unsigned i = 0; i < ops.size(); ++i) {
+                if (hasTooManyLiveGroups) {
+                    hasTooManyLiveBounds[i] = !!liveBoundsOfAllGroups[i];
+                    continue;
+                }
+                for (unsigned index = 0; index < liveGroups.size(); ++index)
+                    liveCaptureBounds[i] |= static_cast<uint16_t>(((liveBoundsOfAllGroups[i] >> (2 * liveGroups[index])) & 3) << (2 * index));
+            }
+            if (!hasTooManyLiveGroups) {
+                for (unsigned group : liveGroups)
+                    m_program->referencedGroups.append(m_referencedGroups[group]);
+            }
+        }
+        auto hasRunSuffixRow = [&](unsigned i) {
+            switch (ops[i].kind) {
+            case Kind::GreedyRun:
+            case Kind::LazyRun:
+            case Kind::GreedyRunBeforeKnownCharacters:
+            case Kind::LazyRunBeforeKnownCharacters:
+                return ops[i].argument == quantifyInfinite && !liveCaptureBounds[i];
+            default:
+                return false;
+            }
+        };
+        Vector<unsigned> opsWithRows;
+        for (unsigned i = 0; i < ops.size() && m_program->memoRows + 2 * maxRowsOfOp < maxIndexCount; ++i) {
+            if (!canHaveRows(i) || hasTooManyLiveBounds[i])
+                continue;
+            opsWithRows.append(i);
+            (liveCaptureBounds[i] ? m_program->captureKeyedMemoRows : m_program->positionKeyedMemoRows) += rowsOfOp[i];
+            if (hasRunSuffixRow(i))
+                m_program->runSuffixMemoRows += rowsOfOp[i];
+            m_program->memoRows = m_program->positionKeyedMemoRows + m_program->runSuffixMemoRows + m_program->captureKeyedMemoRows;
+        }
+        m_program->aroundMemoRow.grow(m_program->memoRows + 1);
+        unsigned nextPositionKeyedRow = 1;
+        unsigned nextRunSuffixRow = nextPositionKeyedRow + m_program->positionKeyedMemoRows;
+        unsigned nextCaptureKeyedRow = nextRunSuffixRow + m_program->runSuffixMemoRows;
+        for (unsigned i : opsWithRows) {
+            unsigned& next = liveCaptureBounds[i] ? nextCaptureKeyedRow : nextPositionKeyedRow;
+            FlatProgram::AroundMemoRow around { turnAround[i], loopAround[i], isInsideLookahead[i], liveCaptureBounds[i], 0 };
+            if (hasRunSuffixRow(i)) {
+                around.runSuffixRowOffset = static_cast<uint16_t>(nextRunSuffixRow - next);
+                nextRunSuffixRow += rowsOfOp[i];
+            }
+            ops[i].memoRow = static_cast<uint16_t>(next);
+            std::ranges::fill(m_program->aroundMemoRow.mutableSpan().subspan(next, rowsOfOp[i]), around);
+            next += rowsOfOp[i];
         }
     }
     void setTarget(unsigned op) { m_program->ops[op].target = here(); }
@@ -910,6 +1224,8 @@ private:
         Vector<unsigned, 8> jumpsToEnd;
         for (auto& alternative : alternatives) {
             bool isLast = &alternative == &alternatives.back();
+            if (alternative.get() == m_firstRepeatedAlternative)
+                m_program->laterAttemptsBeginAt = here();
             unsigned choice = isLast ? 0 : emit(Kind::Choice);
             if (alternative->m_minimumSize > context.testedFor)
                 emitNeedsInput(alternative->m_minimumSize + context.neededAfter);
@@ -1178,7 +1494,7 @@ private:
         const PatternDisjunction& disjunction = *term.parentheses.disjunction;
         if (!max)
             return true;
-        bool jitCountsTurns = jitCountsTurnsOf(term);
+        bool jitCountsTurns = jitCountsTurnsOf(term, m_knownBacktrackableContent);
         m_program->jitCountsTurns |= jitCountsTurns;
         bool makesNoChoice = term.quantityType == QuantifierType::FixedCount && !jitCountsTurns;
         if (m_countsTurns) {
@@ -1471,9 +1787,9 @@ private:
         if (m_readsBackward && m_decodesSurrogatePairs)
             return decline(FlatProgramDecline::Lookbehind);
         uint32_t group = term.backReferenceSubpatternId << 1;
-        if (!m_program->referencedGroups.contains(group))
-            m_program->referencedGroups.append(group);
-        m_searchDependsOnMoreThanPosition |= m_program->referencedGroups.size() > FlatProgram::maxReferencedGroups;
+        if (!m_referencedGroups.contains(group))
+            m_referencedGroups.append(group);
+        m_searchDependsOnMoreThanPosition |= m_referencedGroups.size() > maxTrackedReferencedGroups;
         auto emitReference = [&] {
             if (m_readsBackward) {
                 FlatOp& op = emitStepBackward(FlatStepBackward::BackReference);
@@ -1638,9 +1954,13 @@ private:
     Vector<std::tuple<unsigned, unsigned, unsigned>, 8> m_turnsThatMayTakeNothing;
     Vector<std::tuple<unsigned, unsigned, unsigned, unsigned>, 8> m_loopsThatCountTurns;
     bool m_searchDependsOnMoreThanPosition { false };
+    Vector<uint32_t, 8> m_referencedGroups;
+    static constexpr unsigned maxTrackedReferencedGroups = 32;
     bool m_decodesSurrogatePairs { false };
     bool m_readsBackward { false };
     unsigned m_nextRegister { 0 };
+    const PatternAlternative* m_firstRepeatedAlternative { nullptr };
+    KnownBacktrackableContent m_knownBacktrackableContent;
     const bool m_countsTurns;
 };
 
@@ -1654,37 +1974,59 @@ size_t FlatProgram::estimatedSizeInBytes() const
 }
 
 // As YarrGenerator::disjunctionContainsBacktrackableContent().
-static bool containsBacktrackableContent(const PatternDisjunction& disjunction)
+static bool containsBacktrackableContent(const PatternDisjunction& disjunction, KnownBacktrackableContent& known)
 {
-    if (disjunction.m_alternatives.size() > 1)
-        return true;
-    for (auto& alternative : disjunction.m_alternatives) {
-        for (auto& term : alternative->m_terms) {
-            if (term.quantityType != QuantifierType::FixedCount)
-                return true;
-            if (term.type == PatternTerm::Type::NumberedBackReference || term.type == PatternTerm::Type::NamedBackReference)
-                return true;
-            if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && containsBacktrackableContent(*term.parentheses.disjunction))
-                return true;
+    if (auto found = known.find(&disjunction); found != known.end())
+        return found->value;
+    bool result = [&] {
+        if (disjunction.m_alternatives.size() > 1)
+            return true;
+        for (auto& alternative : disjunction.m_alternatives) {
+            for (auto& term : alternative->m_terms) {
+                if (term.quantityType != QuantifierType::FixedCount)
+                    return true;
+                if (term.type == PatternTerm::Type::NumberedBackReference || term.type == PatternTerm::Type::NamedBackReference)
+                    return true;
+                if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && containsBacktrackableContent(*term.parentheses.disjunction, known))
+                    return true;
+            }
         }
-    }
-    return false;
+        return false;
+    }();
+    known.add(&disjunction, result);
+    return result;
 }
 
-bool jitCountsTurnsOf(const PatternTerm& term)
+bool jitCountsTurnsOf(const PatternTerm& term, KnownBacktrackableContent& known)
 {
     ASSERT(term.type == PatternTerm::Type::ParenthesesSubpattern);
     if ((term.quantityMaxCount == 1 && !term.parentheses.isCopy) || term.parentheses.isTerminal)
         return false;
     if (term.quantityType != QuantifierType::FixedCount)
         return true;
-    return term.parentheses.disjunction->m_alternatives.size() != 1 || (term.quantityMaxCount > 1 && containsBacktrackableContent(*term.parentheses.disjunction));
+    return term.parentheses.disjunction->m_alternatives.size() != 1 || (term.quantityMaxCount > 1 && containsBacktrackableContent(*term.parentheses.disjunction, known));
 }
 
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern& pattern, FlatProgramForm form)
 {
     ASSERT(pattern.m_executionMode == ExecutionMode::IncludeSubpatterns);
     return FlatProgramBuilder(pattern, form).build();
+}
+
+bool hasFlatProgramsThatRememberFailedSearches(StringView patternString, OptionSet<Flags> flags)
+{
+    ErrorCode errorCode { ErrorCode::NoError };
+    YarrPattern analyzed(patternString, flags, errorCode, ExecutionMode::IncludeSubpatterns, PatternAnalysis::Performed);
+    if (hasError(errorCode))
+        return false;
+    auto fast = compileFlatProgram(analyzed);
+    if (!fast || !(*fast)->jitCountsTurns)
+        return false;
+    YarrPattern asWritten(patternString, flags, errorCode, ExecutionMode::IncludeSubpatterns, PatternAnalysis::Skipped);
+    if (hasError(errorCode))
+        return false;
+    auto counting = compileFlatProgram(asWritten, FlatProgramForm::CountsTurns);
+    return counting && (*counting)->memoRows;
 }
 
 ASCIILiteral description(FlatProgramDecline reason)
@@ -1698,8 +2040,6 @@ ASCIILiteral description(FlatProgramDecline reason)
         return "duplicate named groups"_s;
     case FlatProgramDecline::UnsignedLengthPattern:
         return "unsigned length pattern"_s;
-    case FlatProgramDecline::CopiedGroup:
-        return "copied group"_s;
     case FlatProgramDecline::NestedTooDeep:
         return "nested too deep"_s;
     case FlatProgramDecline::TooManySetsOrRegisters:

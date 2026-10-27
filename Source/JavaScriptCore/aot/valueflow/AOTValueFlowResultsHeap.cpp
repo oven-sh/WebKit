@@ -161,6 +161,7 @@ void ValueFlowHeapIndex::indexNodesWrittenUnder(const ValueFlowResultInputs& inp
     const ValueSets& sets = inputs.sets();
     Vector<ValueSetID> throughUnknownObject;
     Vector<ValueSetID> throughUntrackedObject;
+    Vector<uint32_t> nodesOfManyMembers;
     for (uint32_t index = 0; index < entry.nodes.size(); ++index) {
         const WrittenNode& node = entry.nodes[index];
         if (sets.contains(node.objects, ValueFlowUniverse::unknownObject()))
@@ -168,7 +169,7 @@ void ValueFlowHeapIndex::indexNodesWrittenUnder(const ValueFlowResultInputs& inp
         if (sets.contains(node.objects, ValueFlowUniverse::untrackedObject()))
             throughUntrackedObject.append(node.value);
         if (ValueSets::isComplement(node.objects) || sets.size(node.objects) > mostMembersToIndex) {
-            entry.nodesOfManyMembers.append(index);
+            nodesOfManyMembers.append(index);
             continue;
         }
         sets.forEachMember(node.objects, [&](ValueFlowObjectID member) {
@@ -178,6 +179,28 @@ void ValueFlowHeapIndex::indexNodesWrittenUnder(const ValueFlowResultInputs& inp
     AOT::sort(entry.nodesOfMembers);
     entry.writtenThroughUnknownObject = maker.get().uniteAll(throughUnknownObject.span());
     entry.writtenThroughUntrackedObject = maker.get().uniteAll(throughUntrackedObject.span());
+    // The same value is written through one set after another as the set grows: whoever meets any of them finds that value, so they count as one.
+    AOT::sort(nodesOfManyMembers, { }, [&](uint32_t index) {
+        return std::pair { entry.nodes[index].value, index };
+    });
+    for (size_t first = 0; first < nodesOfManyMembers.size();) {
+        ValueSetID value = entry.nodes[nodesOfManyMembers[first]].value;
+        Vector<ValueSetID, 8> setsWrittenThrough;
+        for (; first < nodesOfManyMembers.size() && entry.nodes[nodesOfManyMembers[first]].value == value; ++first)
+            setsWrittenThrough.append(entry.nodes[nodesOfManyMembers[first]].objects);
+        entry.writtenThroughManyMembers.append({ maker.get().uniteAll(setsWrittenThrough.span()), value });
+    }
+    // A few sets hold nearly every object that has escaped, the others little: the small ones stand together, so that whoever is in none of them passes them by group.
+    AOT::sort(entry.writtenThroughManyMembers, { }, [&](const NodesWrittenUnderName::WrittenThroughManyMembers& written) {
+        return std::pair { sets.size(written.objects), written.value };
+    });
+    for (size_t first = 0; first < entry.writtenThroughManyMembers.size(); first += NodesWrittenUnderName::nodesInGroup) {
+        Vector<ValueSetID, NodesWrittenUnderName::nodesInGroup> setsOfGroup;
+        for (const auto& written : entry.writtenThroughManyMembers.subspan(first, std::min<size_t>(NodesWrittenUnderName::nodesInGroup, entry.writtenThroughManyMembers.size() - first)))
+            setsOfGroup.append(written.objects);
+        entry.membersOfGroupsOfNodes.append(maker.get().uniteAll(setsOfGroup.span()));
+    }
+    entry.membersOfNodesOfManyMembers = maker.get().uniteAll(entry.membersOfGroupsOfNodes.span());
     entry.isIndexed = true;
 }
 
@@ -288,9 +311,16 @@ ValueSetID ValueFlowHeapView::findWrittenUnder(ValueSetMaker& maker, ValueSetID 
         parts.append(entry.writtenThroughUnknownObject);
     if (entry.writtenThroughUntrackedObject != ValueSets::nothing && sets.meet(objects, m_lost))
         parts.append(entry.writtenThroughUntrackedObject);
-    for (uint32_t index : entry.nodesOfManyMembers) {
-        if (sets.meet(entry.nodes[index].objects, objects))
-            parts.append(entry.nodes[index].value);
+    if (sets.meet(entry.membersOfNodesOfManyMembers, objects)) {
+        for (size_t group = 0; group < entry.membersOfGroupsOfNodes.size(); ++group) {
+            if (!sets.meet(entry.membersOfGroupsOfNodes[group], objects))
+                continue;
+            size_t first = group * NodesWrittenUnderName::nodesInGroup;
+            for (const auto& written : entry.writtenThroughManyMembers.subspan(first, std::min<size_t>(NodesWrittenUnderName::nodesInGroup, entry.writtenThroughManyMembers.size() - first))) {
+                if (sets.meet(written.objects, objects))
+                    parts.append(written.value);
+            }
+        }
     }
     sets.forEachMember(objects, [&](ValueFlowObjectID member) {
         auto first = std::ranges::lower_bound(entry.nodesOfMembers, NodeOfMember { member.index(), 0 });
@@ -330,22 +360,43 @@ ValueSetID ValueFlowHeapView::prototypesOfHeirs(ValueSetMaker& maker, ValueSetID
 // What lies above a set is what lies above its members. Large sets share most of their members, so each member is asked once for all of them.
 ValueSetID ValueFlowHeapView::prototypesOfEachHeir(ValueSetMaker& maker, ValueSetID heirs) const
 {
-    AOT_THRESHOLD(uint32_t, fewestHeirsAskedOneByOne, 8);
+    AOT_THRESHOLD(uint32_t, fewestHeirsAskedOneByOne, 2);
+    AOT_THRESHOLD(uint32_t, fewestHeirsAskedByBlock, 128);
     const ValueSets& sets = m_inputs.sets();
     if (sets.size(heirs) < fewestHeirsAskedOneByOne)
         return prototypesOfHeirs(maker, heirs);
     Vector<ValueFlowObjectID, 64> onlyPrototypes;
     Vector<ValueSetID, 8> severalPrototypes;
-    sets.forEachMember(heirs, [&](ValueFlowObjectID heir) {
+    auto add = [&](ValueFlowObjectID heir) {
         ValueSetID above = prototypesOf(maker, maker.of(heir));
         if (ValueFlowObjectID prototype = sets.onlyMember(above))
             onlyPrototypes.append(prototype);
         else if (above != ValueSets::nothing && (severalPrototypes.isEmpty() || severalPrototypes.last() != above))
             severalPrototypes.append(above);
+    };
+    auto takeAllAdded = [&] {
+        AOT::sort(severalPrototypes);
+        removeRepeatedElements(severalPrototypes);
+        ValueSetID all = maker.unite(maker.of(onlyPrototypes.span()), maker.uniteAll(severalPrototypes.span()));
+        onlyPrototypes.shrink(0);
+        severalPrototypes.shrink(0);
+        return all;
+    };
+    if (sets.size(heirs) < fewestHeirsAskedByBlock) {
+        sets.forEachMember(heirs, add);
+        return takeAllAdded();
+    }
+    // Sets that share members share the blocks that hold them, so each block is walked once for all of them.
+    Vector<ValueSetID, 16> prototypesOfBlocks;
+    sets.forEachBlock(heirs, [&](uint64_t nameOfBlock) {
+        prototypesOfBlocks.append(m_index.prototypesOfBlocks().ensure(nameOfBlock, [&] {
+            sets.forEachMemberOfBlock(nameOfBlock, add);
+            return takeAllAdded();
+        }));
     });
-    AOT::sort(severalPrototypes);
-    removeRepeatedElements(severalPrototypes);
-    return maker.unite(maker.of(onlyPrototypes.span()), maker.uniteAll(severalPrototypes.span()));
+    AOT::sort(prototypesOfBlocks);
+    removeRepeatedElements(prototypesOfBlocks);
+    return maker.uniteAll(prototypesOfBlocks.span());
 }
 
 ValueSetID ValueFlowHeapView::prototypesOf(ValueSetMaker& maker, ValueSetID objects) const

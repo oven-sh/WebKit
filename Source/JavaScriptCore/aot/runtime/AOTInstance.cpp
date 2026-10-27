@@ -90,6 +90,7 @@
 #include <optional>
 #include <span>
 #include <type_traits>
+#include <utility>
 #include <wtf/Atomics.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/DataLog.h>
@@ -97,6 +98,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WTFConfig.h>
@@ -361,9 +363,19 @@ static void registerStackMirror(Instance* instance, VM& vm)
         makeCallsByValuePoll(*instance, tables->isRenamedAtRunTime.load(std::memory_order_acquire));
 #if CPU(X86_64) && OS(LINUX)
     VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
+    // The list grows outside the lock: a request to malloc may tell this thread that it owes an error, which takes the lock. This thread alone changes the list.
+    decltype(loopPollPages.pages) pages;
+    size_t numberOfPages;
+    {
+        Locker locker { loopPollPages.lock };
+        numberOfPages = loopPollPages.pages.size();
+    }
+    pages.reserveInitialCapacity(numberOfPages + 1);
     Locker locker { loopPollPages.lock };
     void* page = loopPollPage(instance);
-    loopPollPages.pages.append(page);
+    pages.appendVector(loopPollPages.pages);
+    pages.append(page);
+    loopPollPages.pages.swap(pages);
     if (vm.traps().stopsAtEveryPoll() || vm.traps().needsOutOfMemoryError())
         RELEASE_ASSERT(!mprotect(page, WTF::pageSize(), PROT_NONE));
 #endif
@@ -457,6 +469,28 @@ void Instance::captureCellHeaders()
     realm.emptyArgumentList = JSArray::create(*vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
 }
 
+#if USE(MIMALLOC)
+// The VM whose compiled code this thread runs.
+static thread_local VM* t_vmOfThread;
+static VM* s_vmOfFirstThread;
+
+static void didUseAddressSpaceBallastOnThisThread(bmalloc::api::UseOfAddressSpaceBallast use)
+{
+    using Use = bmalloc::api::UseOfAddressSpaceBallast;
+    static thread_local bool isTellingVM;
+    if (!t_vmOfThread || isTellingVM)
+        return;
+    // An error in the first thread ends the program. An error in a Worker ends the Worker, which gives back what it held. Where another thread was the first to find no room, the first thread is not told.
+    if (use != Use::LetGoOfFirstPiece && t_vmOfThread == s_vmOfFirstThread)
+        return;
+    // A thread that owes its error has heard, and has let go of nothing since.
+    if (use == Use::TakesWhatPiecesLeft && t_vmOfThread->traps().needsOutOfMemoryError())
+        return;
+    SetForScope scope { isTellingVM, true };
+    MarkedBlockCage::didUseAddressSpaceBallast(*t_vmOfThread);
+}
+#endif
+
 Instance* Instance::create(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
@@ -481,6 +515,7 @@ Instance* Instance::create(JSGlobalObject* realm)
 
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
+    instance->state->caches->addClearedEachCollection("last array looked at in vain"_s, asMutableByteSpan(instance->arrays.lastArrayLookedAtInVain));
     instance->state->caches->addClearedEachCollection("cloned structures"_s, asMutableByteSpan(instance->allocation.clonedStructures));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asMutableByteSpan(instance->allocation.copiesWithoutFrame));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
@@ -502,6 +537,19 @@ Instance* Instance::create(JSGlobalObject* realm)
     OSAllocator::protect(instance->boxedCalls().data(), InstanceLayout::bytesReservedForBoxedCalls, true, false);
 #endif
     releaseUnusedPagesOfThread();
+    keepAddressSpaceBallast();
+#if USE(MIMALLOC)
+    t_vmOfThread = &vm;
+    if (!s_vmOfFirstThread) {
+        s_vmOfFirstThread = &vm;
+        bmalloc::api::exemptThisThreadFromAddressSpaceBallast();
+    }
+    bmalloc::api::setAddressSpaceBallastHandler(didUseAddressSpaceBallastOnThisThread);
+    bmalloc::api::setAddressSpaceBallastKeeper([] {
+        keepAddressSpaceBallast();
+        return addressSpaceLeft(UncountedAddressSpace::IsTaken);
+    });
+#endif
     return instance;
 }
 
@@ -514,6 +562,10 @@ void Instance::destroy(Instance* instance)
         vmState.instances.removeFirst(instance);
         vmState.didChangeInstances();
         vmState.instancesToDestroy.removeFirst(instance);
+#if USE(MIMALLOC)
+        if (vmState.instances.isEmpty())
+            t_vmOfThread = nullptr;
+#endif
     }
     vmState.counters->add(instance->runtime.counters);
     if (instance->state) {
@@ -630,6 +682,7 @@ State::State(Instance& instance)
     , tables(instance.tables())
     , tableArena(pages, tables)
     , propertyCaches(*this)
+    , stringKeys(*this)
 {
     instance.state = this;
     caches = makeUnique<CacheRegistry>();
@@ -672,11 +725,17 @@ static void JIT_OPERATION_ATTRIBUTES operationNotUsedByImage()
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+template<RemovableFeature feature>
+static void JIT_OPERATION_ATTRIBUTES operationOfRemovedFeature()
+{
+    Bun__abortForRemovedFeature(static_cast<uint16_t>(feature));
+}
+
 template<Entry entry, auto operation>
 static ALWAYS_INLINE void* operationAddress()
 {
     if constexpr (featureOf(entry).has_value()) {
-        auto replacement = reinterpret_cast<decltype(operation)>(&operationNotUsedByImage);
+        auto replacement = reinterpret_cast<decltype(operation)>(&operationOfRemovedFeature<*featureOf(entry)>);
         return tagCFunctionPtr<void*, OperationPtrTag>(addressUnlessRemoved<*featureOf(entry), operation>(replacement));
     } else
         return tagCFunctionPtr<void*, OperationPtrTag>(operation);
@@ -744,6 +803,45 @@ static void fillOperations(void** entries)
 #undef AOT_FILL_OPERATION
 }
 
+#if USE(MIMALLOC) && HAVE_MUST_TAIL_CALL
+// Stores that leave the stubs' own roads may add a property, and what the engine then asks of malloc may not fail. While pieces of the ballast are missing such work would live on the rest of it.
+// So the thread gets its error ahead of the operation, where nothing has been changed yet. Only the table of a process under a limit on address space has these, and the operations have no test for it.
+template<Entry entry, auto operation, typename Function = std::remove_pointer_t<decltype(operation)>>
+struct CallWithWholeBallast;
+
+template<Entry entry, auto operation, typename Result, typename... Rest, bool isNoexcept>
+struct CallWithWholeBallast<entry, operation, Result(Instance*, Rest...) noexcept(isNoexcept)> {
+    static Result JIT_OPERATION_ATTRIBUTES call(Instance* instance, Rest... rest) noexcept(isNoexcept)
+    {
+        if (!bmalloc::api::hasWholeAddressSpaceBallast()) [[unlikely]] {
+            if constexpr (std::is_same_v<Result, size_t>) {
+                // The operation that can throw decides.
+                return static_cast<size_t>(LeafAnswer::TakeSlowPath);
+            } else {
+                AOT_OPERATION_BEGIN(instance, entry);
+                if (MarkedBlockCage::throwErrorForMissingAddressSpaceBallast(vm, globalObject, scope))
+                    OPERATION_RETURN(scope);
+            }
+        }
+        MUST_TAIL_CALL return operation(instance, rest...);
+    }
+};
+
+static void callStoresWithWholeBallast(void** entries)
+{
+#define AOT_CALL_WITH_WHOLE_BALLAST(name) \
+    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, CallWithWholeBallast<Entry::name, functionInTable<Entry::name, &name>>::call>();
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValGeneric)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByVal)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValAndCache)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByValAndCacheSloppy)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByIdAndCache)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutById)
+    AOT_CALL_WITH_WHOLE_BALLAST(operationAOTPutByIdSloppy)
+#undef AOT_CALL_WITH_WHOLE_BALLAST
+}
+#endif
+
 static void fillThunkAndPointers(void** entries, const Image& image)
 {
     auto set = [&](Entry entry, void* pointer) {
@@ -810,6 +908,10 @@ RuntimeTable::RuntimeTable(VM& vm)
 {
     const Image& image = *vm.aotState().image;
     (m_countsCalls ? fillOperations<true> : fillOperations<false>)(m_entries);
+#if USE(MIMALLOC) && HAVE_MUST_TAIL_CALL
+    if (hasAddressSpaceLimit() && !m_countsCalls)
+        callStoresWithWholeBallast(m_entries);
+#endif
     fillThunkAndPointers(m_entries, image);
     installOperationFrontEnds(m_entries, image);
     trapUnusedEntries(m_entries, image);
@@ -1118,6 +1220,7 @@ PagesForNewThread tryReservePagesForNewThread()
     const Image* image = Image::current();
     if (!hasAddressSpaceLimit() || !image)
         return { };
+    keepAddressSpaceBallast();
     unsigned numberOfThreads = ++s_numberOfThreadsStarting;
     void* pages = tryReservePagesForTables(*image, numberOfThreads, sizeToLeaveFree);
     if (!pages) {
@@ -1153,8 +1256,15 @@ void releaseUnusedPagesOfThread()
         OSAllocator::releaseDecommitted(t_pagesOfThread, t_sizeOfPagesOfThread, 0);
     t_pagesOfThread = nullptr;
     t_sizeOfPagesOfThread = 0;
-    if (std::exchange(t_isStarting, false))
-        --s_numberOfThreadsStarting;
+}
+
+void didStartThread(VM* vm)
+{
+    if (!std::exchange(t_isStarting, false)) [[likely]]
+        return;
+    if (vm)
+        vm->heap.cage().willRunProgram();
+    --s_numberOfThreadsStarting;
 }
 
 static void* tryTakePagesOfThread(size_t bytes)
@@ -1171,6 +1281,7 @@ PagesForNewThread tryReservePagesForNewThread() { return { }; }
 void releasePagesForNewThread(void*) { }
 void adoptPagesForNewThread(void*) { }
 void releaseUnusedPagesOfThread() { }
+void didStartThread(VM*) { }
 static void* tryTakePagesOfThread(size_t) { return nullptr; }
 #endif
 
@@ -1188,6 +1299,13 @@ void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
 {
     void* pages = tryReserveGuardedPages(bytes, usage);
+#if USE(MIMALLOC)
+    if (!pages) [[unlikely]] {
+        bmalloc::api::RequestWithBallast request;
+        while (!pages && request.tryMakeRoom())
+            pages = tryReserveGuardedPages(bytes, usage);
+    }
+#endif
     RELEASE_ASSERT(pages, bytes);
     return pages;
 }
@@ -1233,8 +1351,62 @@ void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
 {
     auto* words = reinterpret_cast<uint64_t*>(m_instance.statics());
     std::span<const StaticsRun> runs = m_tables.staticsRuns();
-    for (auto run = std::ranges::lower_bound(runs, firstWord, { }, &StaticsRun::firstWord); run != runs.end() && run->firstWord < endWord; ++run)
-        std::ranges::fill(std::span { words + run->firstWord, run->numberOfWords }, run->bits());
+    auto run = std::ranges::upper_bound(runs, firstWord, { }, &StaticsRun::firstWord);
+    if (run != runs.begin())
+        --run;
+    for (; run != runs.end() && run->firstWord < endWord; ++run) {
+        uint32_t first = std::max(run->firstWord, firstWord);
+        uint32_t end = std::min(run->firstWord + run->numberOfWords, endWord);
+        if (first < end)
+            std::ranges::fill(std::span { words + first, end - first }, run->bits());
+    }
+}
+
+uint32_t ProgramStatics::groupWithWord(uint32_t word) const
+{
+    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
+    auto next = std::ranges::upper_bound(groups, word, { }, &StaticsOfFiles::firstWord);
+    RELEASE_ASSERT(next != groups.begin());
+    return static_cast<uint32_t>(next - groups.begin()) - 1;
+}
+
+bool ProgramStatics::isFilled(uint32_t offset) const
+{
+    uint32_t word = offset / sizeof(uint64_t);
+    return word - m_firstWordFilledWithFiles >= m_numberOfWordsFilledWithFiles || m_filledFiles[groupWithWord(word)];
+}
+
+void ProgramStatics::fillVariablesOfFiles(uint32_t first)
+{
+    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
+    std::span<const uint32_t> importedGroups = m_tables.staticsOfImportedFiles();
+    RELEASE_ASSERT(first + 1 < groups.size());
+    if (m_filledFiles[first])
+        return;
+    m_filledFiles[first] = true;
+    Vector<uint32_t, 32> pending { first };
+    while (!pending.isEmpty()) {
+        uint32_t group = pending.takeLast();
+        initializeStatics(groups[group].firstWord, groups[group + 1].firstWord);
+        for (uint32_t imported : importedGroups.subspan(groups[group].firstImportedGroup, groups[group + 1].firstImportedGroup - groups[group].firstImportedGroup)) {
+            if (!std::exchange(m_filledFiles[imported], true))
+                pending.append(imported);
+        }
+    }
+}
+
+void ProgramStatics::fillVariablesOfAllFiles()
+{
+    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
+    for (uint32_t group = 0; group + 1 < groups.size(); ++group) {
+        if (!std::exchange(m_filledFiles[group], true))
+            initializeStatics(groups[group].firstWord, groups[group + 1].firstWord);
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillVariablesOfFiles, void, (Instance* instance, uint32_t group))
+{
+    instance->state->statics->fillVariablesOfFiles(group);
 }
 
 void ProgramStatics::initializeProgramStatics()
@@ -1257,6 +1429,7 @@ JSValue ProgramStatics::readVariable(Instance& instance, SlotData slot)
         return closures.closure(vm, FunctionID(offset));
     ProgramStatics& statics = *state.statics;
     statics.ensureProgramStaticsInitialized();
+    statics.ensureVariableIsFilled(offset);
     if (JSValue value = readSlot(slot.representation(), instance.statics() + offset, statics.m_strings))
         return value;
     if (std::optional<FunctionID> function = findFunctionVariable(statics.m_tables, offset))
@@ -1272,7 +1445,7 @@ JSValue ProgramStatics::readVariableWithoutAllocating(const Instance& instance, 
     if (slot.representation() == SlotRepresentation::DeferredClosure)
         return closures.closureIfCreated(FunctionID(offset));
     const ProgramStatics& statics = *state.statics;
-    if (!statics.m_programStaticsInitialized && offset < sizeFilledAtProgramEntry(statics.m_tables))
+    if ((!statics.m_programStaticsInitialized && offset < sizeFilledAtProgramEntry(statics.m_tables)) || !statics.isFilled(offset))
         return { };
     const uint8_t* address = instance.statics() + offset;
     if (readCreatesCell(instance, slot.representation(), address))
@@ -1290,6 +1463,7 @@ void ProgramStatics::writeVariable(Instance& instance, SlotData slot, JSValue va
     RELEASE_ASSERT(representation != SlotRepresentation::DeferredClosure);
     ProgramStatics& statics = *instance.state->statics;
     statics.ensureProgramStaticsInitialized();
+    statics.ensureVariableIsFilled(slot.offset);
     uint8_t* address = instance.statics() + slot.offset;
     if (!value) {
         RELEASE_ASSERT(traitsOf(representation).hasAbsent);
@@ -1363,7 +1537,14 @@ ProgramStatics::ProgramStatics(State& state)
     m_slots.setCardsAreWrittenWithoutRecord();
     uint8_t* statics = m_instance.statics();
     uint32_t filled = sizeFilledAtProgramEntry(m_tables);
-    initializeStatics(filled / sizeof(uint64_t), std::numeric_limits<uint32_t>::max());
+    uint32_t endOfWordsFilledNow = std::numeric_limits<uint32_t>::max();
+    if (std::span<const StaticsOfFiles> files = m_tables.staticsOfFiles(); !files.empty()) {
+        // Nothing behind them starts as anything but zero.
+        endOfWordsFilledNow = m_firstWordFilledWithFiles = files.front().firstWord;
+        m_numberOfWordsFilledWithFiles = files.back().firstWord - files.front().firstWord;
+        m_filledFiles = statics + files.back().firstWord * sizeof(uint64_t);
+    }
+    initializeStatics(filled / sizeof(uint64_t), endOfWordsFilledNow);
     // Compiled code may load from anywhere in the statics ahead of the branch that needs the value, so only stores are caught until the program is entered.
     m_readOnlyStaticsSize = static_cast<uint32_t>(WTF::roundDownToMultipleOf(pageSize(), static_cast<size_t>(filled)));
     if (m_readOnlyStaticsSize)

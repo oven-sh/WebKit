@@ -377,17 +377,19 @@ function f8 name="armIsUnspecified" parameters=[{type=string}, {type=number}, {t
     v13 = Unspecified valueType=string
     Jump -> next b5(v13)
   b5(v14):
-    v15 = Add v6, v14
-    v16 = Integer integer=1
-    v17 = Add v7, v16
-    Jump -> next b1(v15, v17, v8)
+    v15 = Specified
+    v16 = AssumeType v14, v15 provenType=string
+    v17 = Add v6, v16
+    v18 = Integer integer=1
+    v19 = Add v7, v18
+    Jump -> next b1(v17, v19, v8)
   b6():
     Return v6
 }
 # CHECK-LABEL: name="armIsUnspecified"
 # CHECK: StringBuilderAppend v6, v11, v0
 # CHECK-NEXT: Jump -> next b5(v6)
-# CHECK: v13: string = Unspecified valueType=string
+# CHECK: v13: string|unspecified = Unspecified valueType=string
 # CHECK-NOT: StringBuilderAppend {{*}}v13
 # CHECK: b5(v14: stringbuilder):
 

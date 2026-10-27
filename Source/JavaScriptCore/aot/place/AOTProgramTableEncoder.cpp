@@ -1735,12 +1735,6 @@ static std::optional<uint32_t> findNumberOfConstructorName(const TableEncoder& e
 
 static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(const TableEncoder& encoder, const LayoutData& classLayout, std::optional<uint32_t> nameOfConstructor)
 {
-    Vector<DeclaredClassMember> members;
-    auto indexOfMemberNamed = [&](uint32_t name) {
-        return members.findIf([&](const DeclaredClassMember& member) {
-            return member.name == name;
-        });
-    };
     auto cellOf = [&](uint32_t function) -> uint32_t {
         uint32_t cell = encoder.placement.closureCellNumber(FunctionID(function));
         return cell <= ClassRowEntry::maxNumber ? cell : 0;
@@ -1748,30 +1742,43 @@ static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(co
 
     if (!classLayout.classData().classConstructor)
         return std::nullopt;
-    // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
+    struct Definition {
+        uint32_t name;
+        MethodKind kind;
+        uint32_t cell;
+    };
+    Vector<Definition> definitions;
     for (const MethodData& method : classLayout.methods()) {
         uint32_t cell = cellOf(method.function);
         if (method.flags & (methodHasComputedName | methodIsCreatedAtDefinition) || !cell)
             return std::nullopt;
-        if (!FieldTableEntry::hasColumn(method.name))
-            continue;
-        if (indexOfMemberNamed(method.name) == notFound)
-            members.append(DeclaredClassMember { method.name });
-        DeclaredClassMember& member = members[indexOfMemberNamed(method.name)];
+        if (FieldTableEntry::hasColumn(method.name))
+            definitions.append(Definition { method.name, method.kind(), cell });
+    }
+    // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
+    AOT::stableSort(definitions, { }, &Definition::name);
+    Vector<DeclaredClassMember> members;
+    bool namesConstructor = false;
+    for (const Definition& definition : definitions) {
+        if (members.isEmpty() || members.last().name != definition.name) {
+            members.append(DeclaredClassMember { definition.name });
+            namesConstructor |= nameOfConstructor == definition.name;
+        }
+        DeclaredClassMember& member = members.last();
         member.method = 0;
-        switch (method.kind()) {
+        switch (definition.kind) {
         case MethodKind::Method:
-            member = DeclaredClassMember { method.name, cell };
+            member = DeclaredClassMember { definition.name, definition.cell };
             break;
         case MethodKind::Getter:
-            member.getter = cell;
+            member.getter = definition.cell;
             break;
         case MethodKind::Setter:
-            member.setter = cell;
+            member.setter = definition.cell;
             break;
         }
     }
-    if (nameOfConstructor && indexOfMemberNamed(*nameOfConstructor) == notFound) {
+    if (nameOfConstructor && !namesConstructor) {
         uint32_t cell = cellOf(classLayout.classData().classConstructor);
         if (!cell)
             return std::nullopt;
@@ -2146,6 +2153,32 @@ static void appendConstructEntrypoints(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::constructEntrypoints, constructEntrypoints);
 }
 
+static void appendPlacesOfTailCalls(TableEncoder& encoder)
+{
+    const Program& program = encoder.program;
+    std::span<const WrittenTailCall> calls = encoder.inputs.bodyFacts.placesOfTailCalls.span();
+    Vector<uint8_t> bytes;
+    TailCallPlace inFront;
+    for (size_t index = 0; index < calls.size(); ++index) {
+        const WrittenTailCall& call = calls[index];
+        bool isOneOfSeveral = (index && calls[index - 1].function == call.function) || (index + 1 < calls.size() && calls[index + 1].function == call.function);
+        TailCallPlace place;
+        place.function = call.function.index();
+        if (isOneOfSeveral && call.callee)
+            place.callee = call.callee.index();
+        if (!encoder.obfuscates()) {
+            ModuleID module = program.at(call.function).module;
+            LineColumn lineColumn = program.lineColumnFor(module, call.position);
+            place.sourcePlusOne = module.index() + 1;
+            place.line = lineColumn.line;
+            place.column = lineColumn.column;
+        }
+        place.append(bytes, inFront);
+        inFront = place;
+    }
+    encoder.setTable(ProgramTableIndex::placesOfTailCalls, bytes);
+}
+
 void encodeFunctionTables(TableEncoder& encoder)
 {
     Vector<FunctionTraceRecord> traces(encoder.program.functions.size(), [&](size_t index) {
@@ -2176,6 +2209,7 @@ void encodeFunctionTables(TableEncoder& encoder)
     appendClosureFunctionTables(encoder);
     appendFunctionTexts(encoder);
     appendConstructEntrypoints(encoder);
+    appendPlacesOfTailCalls(encoder);
 }
 
 namespace {
@@ -2198,6 +2232,7 @@ struct ModuleLists {
     Vector<IndirectExportData> indirectExports;
     Vector<SyntheticExportData> syntheticExports;
     Vector<RequiredNameData> requiredNames;
+    Vector<ExportStatementData> exportStatements;
 };
 
 struct EncodedRequestTargets {
@@ -2308,7 +2343,7 @@ static void setDisplayPath(TableEncoder& encoder, ModuleID id, const Module& mod
 {
     std::span<const uint8_t> displayPath = module.displayPath ? encoder.program.string(module.displayPath) : std::span<const uint8_t>();
     entry.charactersInFrontOfDisplayPath = ModuleData::hasNoDisplayPath;
-    if (encoder.obfuscates() || displayPath.empty())
+    if ((encoder.obfuscates() && !module.runtimeModule) || displayPath.empty())
         return;
     std::span<const uint8_t> publicPath = encoder.program.string(module.path);
     if (publicPath.size() >= displayPath.size()) {
@@ -2338,7 +2373,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     entry.requireResult = module.requireResult;
     entry.body = optionalNumber24(bodyEntrypointOf(encoder, module));
     RELEASE_ASSERT(!module.referrer || !module.runtimeModule);
-    entry.referrerOrRuntimeModule = optionalNumber24(module.referrer ? indexOrNone(module.referrer) : indexOrNone(module.runtimeModule));
+    entry.referrerRuntimeModuleOrLoadGroup = optionalNumber24(module.referrer ? indexOrNone(module.referrer) : indexOrNone(module.runtimeModule));
     if (module.exportsVariable)
         entry.value = placedVariableSlot(encoder, module.exportsVariable);
     else if (encoder.placement.hasModuleValue(id))
@@ -2350,7 +2385,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
         { module.flags.contains(ModuleFlags::EvaluatesItself) && entry.bodyFunction(), Flag::EvaluatesItself },
         { module.exportsVariable || encoder.placement.hasModuleValue(id), Flag::HasValue },
         { isBundlerHelperModule(program, module), Flag::IsLibraryCodeWithFilePath },
-        { module.kind == ModuleKind::RuntimeSource || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
+        { module.kind == ModuleKind::RuntimeSource || module.kind == ModuleKind::Runtime || module.flags.contains(ModuleFlags::IsLibrary) || isBundlerHelperModule(program, module), Flag::IsOfLibrary },
     };
     for (auto [holds, flag] : flags) {
         if (holds)
@@ -2471,8 +2506,11 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             lists.syntheticExports.append(entry);
         }
         for (const RequiredName& requiredName : module.requiredNames) {
-            if (!isNeverEvaluated(program, module))
-                lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
+            if (isNeverEvaluated(program, module))
+                continue;
+            if (requiredName.specifier)
+                lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), encoder.shownStringNumber(requiredName.exportName), encoder.shownStringNumber(requiredName.specifier) });
+            lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }
     for (const Entry& entry : program.entries)
@@ -2515,7 +2553,7 @@ static void appendTablesOfCompiledModules(TableEncoder& encoder)
     Vector<CompiledRuntimeModuleData> runtimeModules;
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!isFoundByPathOf(module.kind) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
+        if (!answersToPath(program, module) || (module.kind == ModuleKind::RuntimeSource && !hasCompiledBody(program, module)))
             continue;
         if (module.kind == ModuleKind::RuntimeSource && module.runtimeModule)
             runtimeModules.append({ module.runtimeModule.index(), index });
@@ -2551,6 +2589,7 @@ static void markFacesOfFiles(const TableEncoder& encoder, ModuleLists& lists)
             continue;
         uint32_t file = lists.requests[firstRequest].target();
         face.faceOfFile = lists.modules[file].kind == ModuleKind::CommonJs && std::ranges::equal(shownPath(program.modules[index]), shownPath(program.modules[file]));
+        lists.modules[file].shownByFace |= face.faceOfFile;
     }
 }
 
@@ -2608,6 +2647,10 @@ void encodeModuleTables(TableEncoder& encoder)
     if (plannedEntryPoint)
         entryPointLinkPlan = planLinkOfEntryPoint(lists.modules.mutableSpan(), lists.requests.span(), *plannedEntryPoint);
     LinkPlansOfRoots linkPlansOfRoots = planLinksOfRoots(lists.modules.mutableSpan(), lists.requests.span(), encoder.inputs.bodyFacts.importSites.span(), plannedEntryPoint);
+    Vector<ModuleImportSite> sitesThatAskRunTime = encoder.inputs.bodyFacts.importSites;
+    for (const RequireEdge& edge : encoder.placement.requireEdges())
+        sitesThatAskRunTime.append(ModuleImportSite { edge.referrer.index(), edge.target.index() });
+    Vector<uint32_t> groupsLoadedWithGroups = groupModulesLoadedTogether(lists.modules.mutableSpan(), lists.requests.span(), sitesThatAskRunTime.span());
     Vector<uint32_t> modulesOfUncompiledCode;
     for (uint32_t index = 0; index + 1 < lists.modules.size(); ++index) {
         if (lists.modules[index].isUncompiledCode())
@@ -2620,6 +2663,7 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::moduleRequests, lists.requests);
     encoder.setTable(ProgramTableIndex::linkRequests, encodeModuleNumbers(encoder, contracted.linkRequests));
     encoder.setTable(ProgramTableIndex::evaluationRequests, encodeModuleNumbers(encoder, contracted.evaluationRequests));
+    encoder.setTable(ProgramTableIndex::groupsLoadedWithGroups, encodeModuleNumbers(encoder, groupsLoadedWithGroups));
     encoder.setTable(ProgramTableIndex::entryPointLinkPlan, entryPointLinkPlan);
     encoder.setTable(ProgramTableIndex::linkPlanRoots, linkPlansOfRoots.roots);
     encoder.setTable(ProgramTableIndex::linkPlanStepsOfRoots, linkPlansOfRoots.steps);
@@ -2627,7 +2671,12 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::indirectExports, lists.indirectExports);
     encoder.setTable(ProgramTableIndex::syntheticExports, lists.syntheticExports);
     encoder.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);
+    encoder.setTable(ProgramTableIndex::exportStatements, lists.exportStatements);
     encoder.setTableFrom<ModuleFailureData>(ProgramTableIndex::moduleFailures, program.moduleFailures, [&](const ModuleFailure& failure) {
+        if (failure.exportSpecifier) {
+            uint32_t exportSpecifier = encoder.shownStringNumber(failure.exportSpecifier);
+            return ModuleFailureData::ofExportStatement(exportSpecifier, encoder.shownStringNumber(failure.specifier));
+        }
         return failure.exporter ? ModuleFailureData::ofAbsentExport(failure.exporter, encoder.shownStringNumber(failure.specifier)) : ModuleFailureData { failure.importer.index(), encoder.shownStringNumber(failure.specifier) };
     });
     appendTablesOfCompiledModules(encoder);
@@ -2754,6 +2803,64 @@ void encodeConstantTables(TableEncoder& encoder)
     });
 }
 
+static bool mayBeCalledAndConstructed(const Function& function)
+{
+    return function.kind == FunctionKind::Plain && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator });
+}
+
+static Vector<WrittenTailCall> findPlacesOfTailCalls(const Program& program, const BitVector& bodiesWithoutCode)
+{
+    auto hasCode = [&](size_t index) {
+        return program.functions[index].hasBody() && !bodiesWithoutCode.get(index);
+    };
+    BitVector isEnteredByValue(program.functions.size());
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        if (program.functions[index].role == FunctionRole::GenericEntrypoint && hasCode(index))
+            isEnteredByValue.quickSet(firstSourceOf(program, FunctionID(index)).index());
+    }
+
+    Vector<WrittenTailCall> places;
+    for (size_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (!hasCode(index) || !mayBeCalledAndConstructed(function))
+            continue;
+        FunctionID source = firstSourceOf(program, FunctionID(index));
+        // A function of the engine is shown at one place, wherever it stands.
+        if (!isEnteredByValue.quickGet(source.index()) || !program.at(source).module || program.at(source).enclosingRuntimeFunction)
+            continue;
+        for (const Block& block : function.blocks) {
+            if (block.terminator.kind != TerminatorKind::ReturnCall)
+                continue;
+            // The call takes every function from the stack that was copied in around it. The code was entered for the outermost of them that is shown.
+            const Value& call = function.at(block.terminator.callOperand());
+            std::optional<WrittenTailCall> place;
+            for (Origin origin = call.origin();;) {
+                FunctionID standing = origin.inlineFrame ? function.inlineFrames[origin.inlineFrame].callee : FunctionID(index);
+                if (standing && !program.at(standing).isHiddenInStackTraces() && firstSourceOf(program, standing) == source) {
+                    bool isCallOfFunction = origin.inlineFrame == call.origin().inlineFrame;
+                    place = { source, isCallOfFunction && call.opcode == Opcode::CallDirect ? firstSourceOf(program, call.function()) : FunctionID(), origin.position };
+                }
+                if (!origin.inlineFrame)
+                    break;
+                const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
+                origin.position = frame.callPosition;
+                origin.inlineFrame = frame.parent;
+            }
+            if (place)
+                places.append(*place);
+        }
+    }
+    auto placeOf = [](const WrittenTailCall& place) {
+        return std::pair { place.function.index(), place.position };
+    };
+    // Of two forms of one call the one that knows its callee comes first.
+    AOT::sort(places, { }, [&](const WrittenTailCall& place) {
+        return std::tuple { placeOf(place), !place.callee, place.callee ? place.callee.index() : 0 };
+    });
+    places.shrink(std::ranges::unique(places, { }, placeOf).begin() - places.begin());
+    return places;
+}
+
 BodyFactsForTables collectBodyFactsForTables(const Program& program, const BitVector& bodiesWithoutCode, BuildContext& build)
 {
     BodyFactsForTables facts;
@@ -2772,6 +2879,7 @@ BodyFactsForTables collectBodyFactsForTables(const Program& program, const BitVe
         }
     }
     facts.importSites = findImportSites(program, build.parallelLoops());
+    facts.placesOfTailCalls = findPlacesOfTailCalls(program, bodiesWithoutCode);
     return facts;
 }
 

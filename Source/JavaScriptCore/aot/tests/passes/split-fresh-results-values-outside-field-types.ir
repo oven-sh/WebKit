@@ -29,6 +29,8 @@ function f0 name="sized" parameters=[{type=anything}, {type=string}] results=[{t
 # CHECK: [[call]]:{{*}}= CallDirect v0, v1 function=[[worker]]
 # CHECK: Switch
 # CHECK: frequency=Rare:
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled1]] provenType=anything
 # CHECK-NEXT: [[filler]]:{{*}}= Integer
 # CHECK-NEXT: [[object]]:{{*}}= NewObject -, [[filler]], {{*}} layout=L0 fields=[0, 1]
 # CHECK-NEXT: PropSet [[object]], {{*}} key="n"

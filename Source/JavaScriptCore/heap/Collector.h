@@ -167,6 +167,8 @@ private:
     CollectionScope decideCollectionScope();
     void collectInCollectorThread();
     void collectInMutatorThread(Heap& conductor);
+    // A mutator gives the conn only to a thread that is there. False where there is work and the system refuses the thread.
+    bool tryEnsureThreadForWork();
 
     void startCollectingContinuously();
     void stopCollectingContinuously();
@@ -292,6 +294,8 @@ private:
     CurrentThreadState* m_conductingMutatorState { nullptr };
     // The heap whose mutator is conducting. Set by collectInMutatorThread() while it conducts, and null otherwise.
     Heap* m_conductingHeap { nullptr };
+    // The conducting mutator has nothing else to do, and no collector thread to hand the conn to: it marks through the concurrent phase too.
+    bool m_conductorMarksInConcurrentPhase { false };
 
     MonotonicTime m_beforeGC;
     MonotonicTime m_afterGC;

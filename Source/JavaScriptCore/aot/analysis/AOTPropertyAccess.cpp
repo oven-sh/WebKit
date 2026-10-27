@@ -496,6 +496,19 @@ PropertyAccessPlan planPropertyAccess(const PropertyAccessContext& context, cons
         return plan;
 
     const ReceiverCandidates& receivers = query.receivers;
+    // A class below nothing lays its private names on what its own constructor allocates.
+    if (query.isPrivate && query.access == Access::Has && receivers.isMadeByHostAlone && !context.program.at(query.declaringLayout).has(LayoutFlags::HasHeritage)) {
+        plan.form = AccessForm::Constant;
+        plan.operation = Opcode::Boolean;
+        plan.booleanConstant = false;
+        plan.level = KnowledgeLevel::Proven;
+        if (receivers.mayBeNullish) {
+            plan.requiredProofs.add(Proof::NotNullish);
+            plan.needsMissPath = true;
+            plan.level = KnowledgeLevel::Expected;
+        }
+        return plan;
+    }
     if (receivers.isProven() && receivers.hasOtherParts) {
         plan.form = AccessForm::Split;
         plan.level = receivers.level;

@@ -25,16 +25,16 @@ function f0 name="storedOnOnePathThenRead" parameters=[{type=anything}, {type=nu
 # CHECK-NEXT: Jump -> next b3([[stored0]], v0, v1)
 # CHECK: b2():
 # CHECK-NEXT: [[absent0]]: 1 = Integer integer=1
-# CHECK-NEXT: [[none0]]: number = Unspecified valueType=number
+# CHECK-NEXT: [[none0]]: number|unspecified = Unspecified valueType=number
 # CHECK-NEXT: Jump -> next b3([[absent0]], v0, [[none0]])
-# CHECK: b3([[tag0]]: i32, {{*}}: anything, [[b0]]: number):
+# CHECK: b3([[tag0]]: i32, {{*}}: anything, [[b0]]: number|unspecified):
 # CHECK: [[undefined0]]: undefined = Undefined
 # CHECK: [[mask0]]: 2 = Integer integer=2
 # CHECK-NEXT: [[masked0]]:{{*}}= BitAnd [[tag0]], [[mask0]]
 # CHECK-NEXT: [[isStored0]]: boolean = ToBoolean [[masked0]]
 # CHECK-NEXT: Branch [[isStored0]] -> taken [[merge0]]([[b0]]), notTaken [[merge0]]([[undefined0]])
-# CHECK: [[merge0]]([[read0]]: undefined|null|number):
-# CHECK-NEXT: v5: undefined|null|number ~ undefined|number = Upcast [[read0]] castType=undefined|null|number
+# CHECK: [[merge0]]([[read0]]: undefined|null|number|unspecified):
+# CHECK-NEXT: v5: undefined|null|number|unspecified ~ undefined|number = Upcast [[read0]] castType=undefined|null|number
 }
 
 function f1 name="storedOnBothPathsThenRead" parameters=[{type=anything}, {type=number}, {type=number}, {type=boolean}] results=[{type=anything}] {
@@ -75,7 +75,7 @@ function f2 name="storedOnOnePathThenPassedOn" parameters=[{type=anything}, {typ
   b5():
     Return v0
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag2]]: i32, [[a2]]: anything, [[b2]]: number):
+# CHECK: b3([[tag2]]: i32, [[a2]]: anything, [[b2]]: number|unspecified):
 # CHECK-NOT: NewObject
 # CHECK: b4():
 # CHECK-NEXT: Switch [[tag2]] cases=[1] -> case [[short2]](), otherwise [[long2]]()
@@ -85,7 +85,9 @@ function f2 name="storedOnOnePathThenPassedOn" parameters=[{type=anything}, {typ
 # CHECK-NEXT: [[shortCell2]]:{{*}}= NewObject -, [[a2]] layout=L0 fields=[0]
 # CHECK-NEXT: Jump -> next [[continuation2]]([[shortCell2]])
 # CHECK: [[long2]]():
-# CHECK-NEXT: [[longCell2]]:{{*}}= NewObject -, [[a2]], [[b2]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[b2There]]: number = AssumeType [[b2]], [[filled1]] provenType=number
+# CHECK-NEXT: [[longCell2]]:{{*}}= NewObject -, [[a2]], [[b2There]] layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next [[continuation2]]([[longCell2]])
 }
 
@@ -107,7 +109,7 @@ function f3 name="storeAfterMergeKeepsTagBits" parameters=[{type=anything}, {typ
   b5():
     Return v0
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag3]]: i32, [[a3]]: anything):
+# CHECK: b3([[tag3]]: i32, [[a3]]: anything|unspecified):
 # CHECK-NEXT: = ToBoolean v0
 # CHECK-NEXT: Branch v6
 # CHECK: b4():
@@ -115,7 +117,9 @@ function f3 name="storeAfterMergeKeepsTagBits" parameters=[{type=anything}, {typ
 # CHECK: [[short3]]():
 # CHECK-NEXT: = NewObject -, v1 layout=L0 fields=[2]
 # CHECK: [[long3]]():
-# CHECK-NEXT: = NewObject -, [[a3]], v1 layout=L0 fields=[0, 2]
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: [[a3There]]: anything = AssumeType [[a3]], [[filled2]] provenType=anything
+# CHECK-NEXT: = NewObject -, [[a3There]], v1 layout=L0 fields=[0, 2]
 }
 
 function f4 name="equalShapesLoseTheTag" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -161,7 +165,7 @@ function f5 name="testOfFieldIsTestOfTag" parameters=[{type=anything}, {type=num
   b5():
     Return v0
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag5]]: i32, {{*}}: anything, [[b5]]: number):
+# CHECK: b3([[tag5]]: i32, {{*}}: anything, [[b5]]: number|unspecified):
 # CHECK-NOT: IsSlotFilled
 # CHECK: [[mask5]]: 2 = Integer integer=2
 # CHECK-NEXT: [[masked5]]:{{*}}= BitAnd [[tag5]], [[mask5]]
@@ -170,8 +174,10 @@ function f5 name="testOfFieldIsTestOfTag" parameters=[{type=anything}, {type=num
 # CHECK: b4():
 # CHECK-NOT: GetSlot
 # CHECK-NOT: BitAnd
-# CHECK: v8: undefined|null|number ~ number = Upcast [[b5]] castType=undefined|null|number
-# CHECK-NEXT: Return v8
+# CHECK: v8: undefined|null|number|unspecified ~ number = Upcast [[b5]] castType=undefined|null|number
+# CHECK-NEXT: [[filled3]]: fact = Specified
+# CHECK-NEXT: [[v8There]]: undefined|null|number ~ number = AssumeType v8, [[filled3]] provenType=undefined|null|number
+# CHECK-NEXT: Return [[v8There]]
 }
 
 function f6 name="builtOnOnePathThenPassedOn" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -198,13 +204,16 @@ function f6 name="builtOnOnePathThenPassedOn" parameters=[{type=anything}, {type
 # CHECK: Jump -> next b3({{*}}, [[early6]], 
 # CHECK: b2():
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag6]]: i32, [[carried6]]: L0, [[a6]]: anything):
+# CHECK: b3([[tag6]]: i32, [[carried6]]: unspecified|L0, [[a6]]: anything|unspecified):
 # CHECK: b4():
 # CHECK-NEXT: Switch [[tag6]] cases=[{{*}}] -> case [[first6]](), otherwise [[second6]]()
-# CHECK: [[continuation6]]([[cell6]]: L0):
-# CHECK-NEXT: = Call v1, -, [[cell6]]
+# CHECK: [[continuation6]]([[cell6]]: unspecified|L0):
+# CHECK-NEXT: [[filled4]]: fact = Specified
+# CHECK-NEXT: [[cell6There]]: L0 = AssumeType [[cell6]], [[filled4]] provenType=L0
+# CHECK-NEXT: = Call v1, -, [[cell6There]]
 # CHECK: Jump -> next [[continuation6]]([[carried6]])
-# CHECK: [[late6]]:{{*}}= NewObject -, [[a6]] layout=L0 fields=[0]
+# CHECK: [[a6There]]: anything = AssumeType [[a6]], [[filled5]] provenType=anything
+# CHECK-NEXT: [[late6]]:{{*}}= NewObject -, [[a6There]] layout=L0 fields=[0]
 # CHECK-NEXT: Jump -> next [[continuation6]]([[late6]])
 }
 
@@ -278,5 +287,6 @@ function f9 name="twoLiteralsOfDifferentLengths" parameters=[{type=anything}, {t
 # CHECK-NOT: ElemGet
 # CHECK: = BitAnd [[tag9]], 
 # CHECK-NOT: ElemGet
-# CHECK: = Call v0, -, v6, v8
+# CHECK: [[element9]]: anything = AssumeType v8, [[filled9]] provenType=anything
+# CHECK-NEXT: = Call v0, -, v6, [[element9]]
 }

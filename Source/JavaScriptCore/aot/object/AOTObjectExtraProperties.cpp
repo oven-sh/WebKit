@@ -16,6 +16,7 @@
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "GetterSetter.h"
 #include "InternalFieldTuple.h"
 #include "JSCInlines.h"
@@ -80,6 +81,7 @@ static JSObject* createWithStructure(VM& vm, Structure* structure, std::span<con
 static JSObject* createExtraPropertiesWithAttributes(JSGlobalObject* realm, std::span<const Object::ExtraProperty> inOrder, unsigned attributes)
 {
     VM& vm = realm->vm();
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Structure* emptyStructure = Instance::of(realm)->realm.emptyExtraPropertiesStructure;
     Vector<UniquedStringImpl*, 16> names;
@@ -680,12 +682,14 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
 {
     bool isDefinition = flags.contains(ExtraPropertyStoreFlag::IsDefinition);
     bool namesStructure = flags.contains(ExtraPropertyStoreFlag::NamesExtraPropertiesStructure);
-    if (!flags.contains(ExtraPropertyStoreFlag::IsKnownNotToBeField) && fieldNamed(state(), name))
+    bool isMadeAtRunTime = flags.contains(ExtraPropertyStoreFlag::IsMadeAtRunTime);
+    if (!isMadeAtRunTime && !flags.contains(ExtraPropertyStoreFlag::IsKnownNotToBeField) && fieldNamed(state(), name))
         return { };
     unsigned attributes = 0;
     JSObject* extra = extraProperties();
-    PropertyOffset offset = extra ? extra->structure()->get(vm, name, attributes) : invalidOffset;
-    if (!isValidOffset(offset) && (parseIndex(name) || name.isPrivateName() || name == vm.propertyNames->underscoreProto))
+    ASSERT(!flags.contains(ExtraPropertyStoreFlag::IsKnownToBeAbsent) || !extra || !isValidOffset(extra->structure()->get(vm, name)));
+    PropertyOffset offset = extra && !flags.contains(ExtraPropertyStoreFlag::IsKnownToBeAbsent) ? extra->structure()->get(vm, name, attributes) : invalidOffset;
+    if (!isValidOffset(offset) && !isMadeAtRunTime && (parseIndex(name) || name.isPrivateName() || name == vm.propertyNames->underscoreProto))
         return { };
     if (isValidOffset(offset)) {
         if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) || (isDefinition && attributes))
@@ -696,21 +700,23 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
     if (isNotExtensible())
         return { };
     JSGlobalObject* realm = structure()->realm();
-    if (!isDefinition && !storeCreatesOwnProperty(realm, structure(), this, name.uid()))
+    if (!isDefinition && !storeCreatesOwnProperty(realm, structure(), this, name.uid(), isMadeAtRunTime ? StoredName::IsNotSpelledByProgram : StoredName::MayBeSpelledByProgram))
         return { };
-    willAddExtraProperty(vm, name);
+    willAddExtraProperty(vm, name, !isMadeAtRunTime);
     bool hadNone = !extra;
     if (hadNone)
         extra = constructEmptyObject(vm, Instance::of(realm)->realm.emptyExtraPropertiesStructure);
-    extra->putDirect(vm, name, value);
+    StructureID structureBefore = extra->structureID();
+    PutPropertySlot slot(extra);
+    extra->putDirect(vm, name, value, slot);
     if (hadNone)
         setExtraProperties(vm, extra, structureForNewExtraProperties(vm, *this, extra, namesStructure));
     else if (namesStructure)
         ensureStructureForExtraProperties(vm);
-    else
+    else if (extra->structureID() != structureBefore)
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
-    return { ExtraPropertyStore::Added, extra->structure()->get(vm, name) };
+    return { ExtraPropertyStore::Added, slot.cachedOffset() };
 }
 
 bool Object::repeatsExtraPropertyStore(VM& vm, PropertyName name) const
@@ -723,12 +729,13 @@ bool Object::repeatsExtraPropertyStore(VM& vm, PropertyName name) const
     return Structure::addPropertyTransitionToExistingStructure(structure, name, 0, offset);
 }
 
-void Object::willAddExtraProperty(VM& vm, PropertyName name)
+void Object::willAddExtraProperty(VM& vm, PropertyName name, bool isSpelledByProgram)
 {
     validateMutation(vm, *this, name, ObjectMutation::AddProperty);
     ObjectModel& objects = *state().objects;
     objects.layouts.willAddProperty(vm, layout(), name.uid());
-    objects.classes.didShadowMember(layout(), name.uid());
+    if (isSpelledByProgram)
+        objects.classes.didShadowMember(layout(), name.uid());
 }
 
 } } // namespace JSC::AOT

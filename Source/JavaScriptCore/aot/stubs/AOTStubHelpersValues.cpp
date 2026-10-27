@@ -254,6 +254,13 @@ Jump branchIfNotOfThisRealm(StubAssembler& jit, GPRReg structure)
     return jit.branchPtr(CCallHelpers::NotEqual, structure, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)));
 }
 
+void branchIfHasNamesOrIsNotOfThisRealm(StubAssembler& jit, GPRReg structure, JumpList& otherwise)
+{
+    static_assert(sizeof(Structure::SeenProperties) == sizeof(uint64_t));
+    otherwise.append(jit.branchTest64(CCallHelpers::NonZero, Address(structure, Structure::seenPropertiesOffset()), TrustedImm32(-1)));
+    otherwise.append(branchIfNotOfThisRealm(jit, structure));
+}
+
 Jump branchIfNotPristine(StubAssembler& jit, GPRReg cell)
 {
     return jit.branchTest8(CCallHelpers::Zero, Address(cell, JSCell::typeInfoFlagsOffset()), TrustedImm32(IsPristine));

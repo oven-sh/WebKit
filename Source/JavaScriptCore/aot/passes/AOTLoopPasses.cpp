@@ -11,7 +11,9 @@
 #include "AOTBuildContext.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfAccesses.h"
+#include "AOTFlowApply.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGenericCopy.h"
@@ -23,6 +25,7 @@
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
@@ -285,6 +288,164 @@ static Vector<ValueID, 4> passCountersOnEdges(FunctionPassContext& context, IRBu
     return narrowedCounters;
 }
 
+namespace {
+
+// By how much a value differs from what the loop had at the head of the turn.
+struct ChangeInTurn {
+    int64_t least { 0 };
+    int64_t most { 0 };
+};
+
+struct TallyFinder {
+    AOT_CLASS_THRESHOLD(unsigned, mostValuesBetweenTurns, 256);
+
+    FunctionPassContext& context;
+    const LoopInduction& loop;
+    ValueID parameter;
+    std::optional<unsigned> cycle { context.analyses.blockCycles().innermostCycleOf(loop.header) };
+    unsigned numberOfValues { 0 };
+
+    std::optional<ChangeInTurn> plus(ValueID base, std::optional<int64_t> constant, bool isSubtracted)
+    {
+        std::optional<ChangeInTurn> change = constant && Range::int32().contains(*constant) ? changeOf(base) : std::nullopt;
+        if (!change)
+            return std::nullopt;
+        int64_t step = isSubtracted ? -*constant : *constant;
+        return ChangeInTurn { change->least + step, change->most + step };
+    }
+
+    std::optional<ChangeInTurn> changeOfJoin(ValueLocation location)
+    {
+        // A join of an inner loop takes what that loop has made of the value in any number of turns.
+        FunctionAnalyses& analyses = context.analyses;
+        if (location.block == loop.header || analyses.blockCycles().innermostCycleOf(location.block) != cycle || context.function.at(location.block).isHandlerBlock())
+            return std::nullopt;
+        std::optional<ChangeInTurn> joined;
+        for (Edge edge : analyses.cfg().incomingEdges(location.block)) {
+            IncomingValue incoming = edge.isHandlerEdge() ? IncomingValue { IncomingValue::Kind::EdgeResult } : incomingValueOf(context.function, edge, location.index);
+            std::optional<ChangeInTurn> change = incoming.kind == IncomingValue::Kind::Argument ? changeOf(incoming.argument) : std::nullopt;
+            if (!change)
+                return std::nullopt;
+            joined = joined ? ChangeInTurn { std::min(joined->least, change->least), std::max(joined->most, change->most) } : *change;
+        }
+        return joined;
+    }
+
+    std::optional<ChangeInTurn> changeOf(ValueID id)
+    {
+        if (id == parameter)
+            return ChangeInTurn { };
+        if (++numberOfValues > mostValuesBetweenTurns)
+            return std::nullopt;
+        const Function& function = context.function;
+        const Value& value = function.at(id);
+        auto constant = [&](uint32_t index) { return integerConstantThroughCasts(context.program, function, value.operand(index)); };
+        if (value.opcode == Opcode::Parameter)
+            return changeOfJoin(context.analyses.useLists().locationOf(id));
+        if (value.opcode == Opcode::Increment || value.opcode == Opcode::Decrement)
+            return plus(value.operand(0), 1, value.opcode == Opcode::Decrement);
+        if (value.opcode == Opcode::Add)
+            return constant(1) ? plus(value.operand(0), constant(1), false) : plus(value.operand(1), constant(0), false);
+        if (value.opcode == Opcode::Sub)
+            return plus(value.operand(0), constant(1), true);
+        return isCastWithoutTest(value.opcode) ? changeOf(value.operand(0)) : std::nullopt;
+    }
+};
+
+struct Tally {
+    uint32_t parameterIndex;
+    Range range;
+    Vector<Edge, 2> edgesOfNextTurns;
+};
+
+} // anonymous namespace
+
+// An integer counter takes each value of its range at most once.
+static std::optional<int64_t> mostTurnsBehindFirst(FunctionPassContext& context, const LoopInduction& loop)
+{
+    std::optional<int64_t> fewest;
+    for (const InductionVariable& variable : loop.variables) {
+        const Type& type = context.program.typeOf(context.function, variable.parameter);
+        if (!type.isInteger() || !type.integers.isSubsetOf(Range::exact()) || variable.step.kind != InductionStepKind::Constant || !variable.step.constant)
+            continue;
+        int64_t turns = (type.integers.maximum - type.integers.minimum) / std::abs(variable.step.constant);
+        fewest = fewest ? std::min(*fewest, turns) : turns;
+    }
+    return fewest;
+}
+
+// `if (..) count++` in a loop over a list: nothing tests the tally, and it cannot outrun the counter.
+static Vector<Tally, 2> findTallies(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<Tally, 2> tallies;
+    for (const LoopInduction& loop : analyses.inductionVariables().loops()) {
+        std::optional<int64_t> turns;
+        const NaturalLoop& naturalLoop = analyses.naturalLoops().loop(loop.loopIndex);
+        const CompactList<ValueID>& parameters = function.at(loop.header).parameters;
+        for (uint32_t index = 0; index < parameters.size(); ++index) {
+            const Type& type = context.program.typeOf(function, parameters[index]);
+            if (!type.isNumberWithoutFraction() || type.isInteger())
+                continue;
+            if (!turns && !(turns = mostTurnsBehindFirst(context, loop)))
+                break;
+            Range starts = Range::empty();
+            ChangeInTurn change;
+            Vector<Edge, 2> edgesOfNextTurns;
+            bool isTally = std::ranges::all_of(analyses.cfg().incomingEdges(loop.header), [&](Edge edge) {
+                IncomingValue incoming = edge.isHandlerEdge() ? IncomingValue { IncomingValue::Kind::EdgeResult } : incomingValueOf(function, edge, index);
+                if (incoming.kind != IncomingValue::Kind::Argument)
+                    return false;
+                if (!analyses.naturalLoops().belongsTo(edge.from, naturalLoop)) {
+                    const Type& start = context.program.typeOf(function, incoming.argument);
+                    starts = starts.unionWith(start.integers);
+                    return start.isInteger();
+                }
+                // Typing has left the join wider than the bound that its edges were given. Where the block may also leave the loop, what it holds need not reach a next turn.
+                if (context.program.typeOf(function, incoming.argument).isInteger() || function.at(edge.from).terminator.kind != TerminatorKind::Jump)
+                    return false;
+                std::optional<ChangeInTurn> onEdge = TallyFinder { context, loop, parameters[index] }.changeOf(incoming.argument);
+                if (!onEdge)
+                    return false;
+                edgesOfNextTurns.append(edge);
+                change = { std::min(change.least, onEdge->least), std::max(change.most, onEdge->most) };
+                return true;
+            });
+            if (!isTally || starts.isEmpty() || !starts.isSubsetOf(Range::int32()) || *turns > UINT32_MAX)
+                continue;
+            // Each factor has at most 32 bits and a sign.
+            Range range { starts.minimum + change.least * *turns, starts.maximum + change.most * *turns };
+            if (range.isSubsetOf(Range::exact()))
+                tallies.append({ index, range, WTF::move(edgesOfNextTurns) });
+        }
+    }
+    return tallies;
+}
+
+// What a turn hands to the next lies within the bounds. What it has added to may stand one step outside, where the loop is left in the same turn.
+static Vector<ValueID, 4> boundTallies(FunctionPassContext& context, IRBuilder& builder, std::span<const Tally> tallies)
+{
+    Function& function = context.function;
+    Vector<ValueID, 4> bounded;
+    for (const Tally& tally : tallies) {
+        TypeID type = context.types.intern(Type::integer(tally.range));
+        for (Edge edge : tally.edgesOfNextTurns) {
+            ValueID handedOn = targetOf(function, edge).arguments[tally.parameterIndex];
+            ProgramPoint end = pointBeforeTerminatorOf(function, edge.from);
+            builder.setOrigin(function.at(edge.from).terminator.origin());
+            if (context.build.validates())
+                builder.insertBefore(end, makeValidateType(handedOn, type));
+            ValueID turnEndsHere = builder.insertBefore(end, IRBuilder::make(Opcode::Specified));
+            bounded.append(builder.insertBefore(end, makeAssumeType(handedOn, turnEndsHere, Proven::behindFact(type))));
+            replaceUse(function, Use { .kind = Use::Kind::EdgeArgument, .block = edge.from, .operandIndex = tally.parameterIndex, .targetIndex = edge.targetIndex }, bounded.last());
+        }
+    }
+    builder.applyInsertions();
+    context.analyses.didChangeValues();
+    return bounded;
+}
+
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasCycle() || !hasNumberParameter(context.program, context.function))
@@ -296,8 +457,17 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
     for (;;) {
         Vector<CounterCandidate, 4> candidates = findCounterCandidates(context, parametersOverStepLimit);
-        if (candidates.isEmpty())
-            break;
+        if (candidates.isEmpty()) {
+            Vector<Tally, 2> tallies = findTallies(context);
+            if (tallies.isEmpty())
+                break;
+            Vector<ValueID, 4> bounded = boundTallies(context, builder, tallies.span());
+            outcome = PassOutcome::Changed;
+            numberOfConvertedCounters += tallies.size();
+            if (narrowValueTypes({ context.program, context.id, context.function, context.analyses, context.types, context.build, &context.typingMemo }, bounded.span()).didChangeControlFlow())
+                parametersOverStepLimit.clearAll();
+            continue;
+        }
         Vector<ValueID, 4> narrowedCounters = passCountersOnEdges(context, builder, candidates.span());
         outcome = PassOutcome::Changed;
 
@@ -402,23 +572,36 @@ static ValueID readAheadAndAssumeInPlace(FunctionPassContext& context, IRBuilder
 
 // In the header what stands in front of a read is known, and so it is in the block behind a test of the header that holds when the loop is entered. Anything in the loop may have run in front of a read in another block.
 // A loop that is entered from a branch has no block in front of it for what leaves it: such an entry is listed where something would leave.
-static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& looksAtWhatMayBeUnspecified, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
+static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
 {
     const Program& program = context.program;
     Function& function = context.function;
     BlockID header = loop.header();
     if (isClosedOnlyByWaysBack(context.analyses, loop).predicted())
         return 0;
-    bool hasRead = false;
+    if (function.at(header).isHandlerBlock())
+        return 0;
     BitVector body(function.blocks.size());
-    for (unsigned i = 0; i < loop.size(); ++i) {
+    for (unsigned i = 0; i < loop.size(); ++i)
         body.quickSet(loop.at(i).index());
-        hasRead |= std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
+    auto hasInvariantOperands = [&](const Value& value) {
+        bool result = true;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            BlockID block = definingBlock[operand.index()];
+            result &= block && !body.get(block.index());
+        });
+        return result;
+    };
+    bool hasCandidate = false;
+    for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
+        hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            return lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean || (hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read);
+            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean)
+                return hasInvariantOperands(value);
+            return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
         });
     }
-    if (!hasRead || function.at(header).isHandlerBlock())
+    if (!hasCandidate)
         return 0;
     std::optional<Edge> entry = context.analyses.naturalLoops().findSingleEntry(loop);
     if (!entry || entry->isHandlerEdge())
@@ -439,14 +622,6 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         return 0;
 
     BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
-    auto hasInvariantOperands = [&](const Value& value) {
-        bool result = true;
-        value.forEachOperand([&](ValueID operand, uint32_t) {
-            BlockID block = definingBlock[operand.index()];
-            result &= block && !body.get(block.index());
-        });
-        return result;
-    };
     auto canGoAheadOfItsFact = [&](const Value& value) {
         return value.opcode == Opcode::GetModuleVariable && program.at(value.type).isJavaScriptValue() && !program.at(value.type).mayBeUnspecified();
     };
@@ -459,8 +634,6 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
-        if (looksAtWhatMayBeUnspecified.get(id.index()))
-            return false;
         if (value.opcode == Opcode::ToBoolean)
             return !keptReads.get(id.index()) && hasInvariantOperands(value);
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
@@ -587,20 +760,7 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
             definingBlock[id.index()] = blockID;
     }
 
-    // A value that may be unspecified is looked at only where the program looks at it. This and whether a loop turns once are asked before anything moves: the answers follow the uses of values.
-    BitVector looksAtWhatMayBeUnspecified;
-    UnspecifiedValues unspecified(context.analyses);
-    for (BlockID block : cfg.reversePostOrder()) {
-        for (ValueID id : function.at(block).values) {
-            if (!hoistableOpcodes.contains(function.at(id).opcode))
-                continue;
-            function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
-                if (unspecified.mayContain(operand))
-                    looksAtWhatMayBeUnspecified.set(id.index());
-            });
-        }
-    }
-
+    // Whether a loop turns once is asked before anything moves: the answer follows the uses of values.
     BitVector headersWhoseTestHoldsOnEntry;
     for (const NaturalLoop* loop : loopsInnermostFirst) {
         if (readsWhatMayChangeBehindHeader(context, *loop) && staysBehindFirstTest(context, *loop))
@@ -609,7 +769,7 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
 
     unsigned numberOfHoistedReads = 0;
     for (const NaturalLoop* loop : loopsInnermostFirst)
-        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, looksAtWhatMayBeUnspecified, headersWhoseTestHoldsOnEntry, entriesFromBranches);
+        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, headersWhoseTestHoldsOnEntry, entriesFromBranches);
     if (numberOfHoistedReads)
         context.analyses.didChangeValues();
     return numberOfHoistedReads;
@@ -853,17 +1013,12 @@ static bool mayBeHeaderOfShortLoop(const Program& program, const Function& funct
     return relationalOperators.contains(comparison.opcode) && (integerConstantThroughCasts(program, function, comparison.operand(0)) || integerConstantThroughCasts(program, function, comparison.operand(1)));
 }
 
-static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
+// An innermost loop that is small enough to stand in the function once more for each of the turns.
+static std::optional<ShortLoop> planTurnsInFrontOf(FunctionPassContext& context, const NaturalLoop& loop, uint64_t numberOfTurns)
 {
     const Function& function = context.function;
     NaturalLoops& loops = context.analyses.naturalLoops();
-    if (!mayBeHeaderOfShortLoop(context.program, function, function.at(loop.header())) || !isHotLoop(context, loop).predicted())
-        return std::nullopt;
-    std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
-    if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
-        return std::nullopt;
-
-    ShortLoop found { loop.header(), *numberOfTurns, { }, { }, { } };
+    ShortLoop found { loop.header(), numberOfTurns, { }, { }, { } };
     uint64_t bytes = 0;
     for (unsigned index = 0; index < loop.size(); ++index) {
         if (loops.innerMostLoopOf(loop.at(index)) != &loop)
@@ -871,7 +1026,7 @@ static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, cons
         found.region.append(loop.at(index));
         bytes += estimatedCodeBytes(context.program, function, function.at(loop.at(index)));
     }
-    if (bytes * *numberOfTurns > context.build.limit(LimitID::MaxBytesOfUnrolledLoop))
+    if (bytes * numberOfTurns > context.build.limit(LimitID::MaxBytesOfUnrolledLoop))
         return std::nullopt;
 
     for (Edge edge : context.analyses.cfg().incomingEdges(loop.header())) {
@@ -882,6 +1037,41 @@ static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, cons
     if (RegionCloner::checkCanDuplicate(context.analyses, found.region.span()) != CloneCheck::CanClone)
         return std::nullopt;
     return found;
+}
+
+static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
+{
+    if (!mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(loop.header())) || !isHotLoop(context, loop).predicted())
+        return std::nullopt;
+    std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
+    if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
+        return std::nullopt;
+    return planTurnsInFrontOf(context, loop, *numberOfTurns);
+}
+
+// A wider cycle may leave a turn for code that comes round to the turn again and passes the loop by. The mark of the turn is then the only one on that way.
+static bool comesBackPastNoOtherMark(FunctionPassContext& context, BlockID start)
+{
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    auto hasLoopMark = [&](BlockID block) {
+        return std::ranges::any_of(function.at(block).values, [&](ValueID id) {
+            return function.at(id).opcode == Opcode::LoopHint;
+        });
+    };
+    BitVector seen(function.blocks.size());
+    Vector<BlockID, 16> worklist { start };
+    while (!worklist.isEmpty()) {
+        for (BlockID next : cfg.successors(worklist.takeLast())) {
+            if (next == start)
+                return true;
+            if (seen.get(next.index()) || hasLoopMark(next))
+                continue;
+            seen.set(next.index());
+            worklist.append(next);
+        }
+    }
+    return false;
 }
 
 // The turns stand one behind the other, each a copy of the loop that goes on to the next one where the loop went back to its header. The loop itself stands behind the last: whoever folds the test of its counter finds that it is left at once.
@@ -903,16 +1093,109 @@ static void unroll(FunctionPassContext& context, const ShortLoop& loop)
             Edge leaving { turns[turn]->cloneOf(backEdge.from), backEdge.targetIndex };
             builder.redirectEdge(leaving, next, Arguments(targetOf(function, leaving).arguments));
         }
-        eraseLoopHints(builder, function, turns[turn]->cloneOf(loop.header));
     }
     context.analyses.didChangeControlFlow();
     RegionCloner::repairSSA(context.analyses, turns.span());
     context.analyses.didChangeControlFlow();
+    for (const std::unique_ptr<RegionCloner>& turn : turns) {
+        if (!comesBackPastNoOtherMark(context, turn->cloneOf(loop.header)))
+            eraseLoopHints(builder, function, turn->cloneOf(loop.header));
+    }
+}
+
+// What every turn runs on its way back to the header.
+static Vector<ValueID, 4> findInitializationsOfEveryTurn(FunctionPassContext& context, const ShortLoop& loop)
+{
+    const Function& function = context.function;
+    const Dominators& dominators = context.analyses.dominators();
+    Vector<ValueID, 4> found;
+    for (BlockID block : loop.region) {
+        bool runsInEveryTurn = std::ranges::all_of(loop.backEdges, [&](Edge backEdge) {
+            return backEdge.from == block || dominators.terminatorDominates(block, backEdge.from);
+        });
+        if (!runsInEveryTurn)
+            continue;
+        for (ValueID id : function.at(block).values) {
+            if (function.at(id).opcode == Opcode::InitializeBuiltin)
+                found.append(id);
+        }
+    }
+    return found;
+}
+
+// Behind an operation that runs other code, or that writes outside the program as InitializeBuiltin does, whatever the loop keeps at hand is read anew in any case.
+static bool keepsNothingAtHandAnyway(FunctionPassContext& context, const ShortLoop& loop)
+{
+    const Function& function = context.function;
+    static_assert(declaredBoundOf(Opcode::InitializeBuiltin).writes.contains(AbstractHeap::ExternalState));
+    auto reachesAsFar = [&](const Effects& effects) {
+        return effects.mayRunOtherCode() || effects.writes.contains(AbstractHeap::ExternalState);
+    };
+    return std::ranges::any_of(loop.region, [&](BlockID block) {
+        if (context.analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Rare)
+            return false;
+        return reachesAsFar(context.analyses.effectsOfTerminator(block).onAnyEdge()) || std::ranges::any_of(function.at(block).values, [&](ValueID id) {
+            return function.at(id).opcode != Opcode::InitializeBuiltin && reachesAsFar(context.analyses.effectsOf(id).onAnyEdge());
+        });
+    });
+}
+
+// Only the first InitializeBuiltin of a member does anything. Where every turn of a hot loop runs one, the first turn stands in front of the loop and keeps it, and the loop, which is entered from the end of that turn alone, has none.
+static PassOutcome takeFirstTurnsThatInitializeOutOfLoops(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin))
+        return PassOutcome::Unchanged;
+
+    Function& function = context.function;
+    auto initializes = [&](const NaturalLoop& loop) {
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            for (ValueID id : function.at(loop.at(index)).values) {
+                if (function.at(id).opcode == Opcode::InitializeBuiltin)
+                    return true;
+            }
+        }
+        return false;
+    };
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (uint64_t taken = 0; taken < context.build.limit(LimitID::MaxUnrolledLoopsPerFunction); ++taken) {
+        std::optional<ShortLoop> found;
+        Vector<ValueID, 4> initializations;
+        NaturalLoops& loops = context.analyses.naturalLoops();
+        for (unsigned index = 0; index < loops.numLoops() && !found; ++index) {
+            const NaturalLoop& loop = loops.loop(index);
+            if (!initializes(loop) || !isHotLoop(context, loop).predicted())
+                continue;
+            std::optional<ShortLoop> plan = planTurnsInFrontOf(context, loop, 1);
+            if (!plan || plan->entries.isEmpty() || keepsNothingAtHandAnyway(context, *plan))
+                continue;
+            initializations = findInitializationsOfEveryTurn(context, *plan);
+            if (!initializations.isEmpty())
+                found = WTF::move(plan);
+        }
+        if (!found)
+            break;
+        unroll(context, *found);
+
+        IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+        for (BlockID block : found->region) {
+            const BlockValues& values = function.at(block).values;
+            BitVector erasedIndexes;
+            for (size_t index = 0; index < values.size(); ++index) {
+                if (initializations.contains(values[index]))
+                    erasedIndexes.set(index);
+            }
+            if (!erasedIndexes.isEmpty())
+                builder.eraseValues(block, erasedIndexes);
+        }
+        context.analyses.didChangeValues();
+        outcome = PassOutcome::Changed;
+    }
+    return outcome;
 }
 
 PassOutcome unrollShortLoops(FunctionPassContext& context)
 {
-    PassOutcome outcome = PassOutcome::Unchanged;
+    PassOutcome outcome = takeFirstTurnsThatInitializeOutOfLoops(context);
     const CFG& cfg = context.analyses.cfg();
     bool mayHaveShortLoop = std::ranges::any_of(cfg.reversePostOrder(), [&](BlockID block) {
         return mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(block)) && std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) {

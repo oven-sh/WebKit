@@ -13,6 +13,7 @@
 #include "AOTLoopEntry.h"
 #include "AOTSelectionContext.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTStringRuleSupport.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -384,7 +385,7 @@ static ValueID appendFlattenIfString(IRBuilder& builder, ValueID value)
     ValueID flat = builder.append(Opcode::FlattenString, { branch.provenOnTaken });
     TypeID flatStringType = function.at(flat).type;
     BlockID join = builder.addBlock(frequency);
-    ValueID result = builder.addParameter(join, flatStringType);
+    ValueID result = builder.addParameter(join, builder.types().intern(builder.types().at(flatStringType).withPrimitives(Primitive::Unspecified)));
     builder.emitJump(join, Arguments { flat });
 
     builder.moveToEndOf(branch.notTaken);
@@ -418,6 +419,9 @@ static void emitFlatString(SelectionContext& context, GroupRewriter& rewriter, P
 static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, const StringCharacterMatch& match, ValueID flat)
 {
     ValueID root = match.group.root;
+    // The reader runs only where the value is a string, and there the flat string has been made.
+    if (flat && context.typeOf(flat).mayBeUnspecified())
+        flat = rewriter.insert(makeCastBehindFact(rewriter.function(), rewriter.builder().types(), flat, rewriter.insert(IRBuilder::make(Opcode::Specified))));
     if (!match.read) {
         Value& row = rewriter.function().edit(root);
         if (flat) {

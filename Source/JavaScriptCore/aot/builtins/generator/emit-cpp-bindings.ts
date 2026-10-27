@@ -134,7 +134,9 @@ function findClassesWithBindings(model: TableModel, origin: Origin): ModelClass[
   return model.classes.filter(
     builtinClass =>
       builtinClass.origin === origin &&
-      (builtinClass.instanceTest === "ClassInfoInherits" || builtinClass.pristineTest === "InstanceStructure"),
+      (builtinClass.instanceTest === "ClassInfoInherits" ||
+        builtinClass.pristineTest === "InstanceStructure" ||
+        builtinClass.prototypeCppExpression !== null),
   );
 }
 

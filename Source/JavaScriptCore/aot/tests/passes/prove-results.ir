@@ -1,0 +1,57 @@
+# A result that was only expected is proven once every way out of the body returns a value of the type. A caller then has nothing left to test, the arm for a result of another type goes, and its own result is proven in turn.
+# FORM: Prepared
+# RUN: pass ProveResults
+# STATISTIC: ResultsProvenByReturns = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returnsNumbersOnly" parameters=[{type=number}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Add v0, v0
+    Return v2
+  b2():
+    Return v0
+}
+# CHECK-LABEL: function f0 name="returnsNumbersOnly"{{*}}results=[{type=number}] 
+
+function f1 name="testsWhatItIsAnswered" parameters=[{type=number}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
+    v2 = CallDirect v0, v1 function=f0
+    v3 = TypeTest v2 testedType=number
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = Mul v4, v4
+    Return v5
+  b2(v6):
+    Return v6
+}
+# CHECK-LABEL: function f1 name="testsWhatItIsAnswered"{{*}}results=[{type=number}] 
+# CHECK-NEXT: b0(
+# CHECK-NEXT: [[answer]]: number = CallDirect v0, v1 function=f0
+# CHECK-NOT: Branch
+# CHECK: = Mul
+# CHECK-NOT: Branch
+# CHECK: Return
+
+function f2 name="mayReturnUndefined" parameters=[{type=number}, {type=boolean}] results=[{type=number flags=[IsExpected]}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v2 = Undefined
+    Return v2
+}
+# CHECK-LABEL: function f2 name="mayReturnUndefined"{{*}}results=[{type=number flags=[IsExpected]}] 
+
+function f3 name="handsOnWhatNobodyKnows" parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
+    v1 = Call v0, -
+    ReturnCall v1 requirement=Allowed
+}
+# CHECK-LABEL: function f3 name="handsOnWhatNobodyKnows"{{*}}results=[{type=number flags=[IsExpected]}] 
+
+function f4 name="callsAValueThatCanOnlyBeOneFunction" parameters=[{type=f0}, {type=number}, {type=boolean}] results=[{type=anything}] {
+    v3 = Call v0, -, v1, v2
+    Return v3
+}
+# CHECK-LABEL: function f4 name="callsAValueThatCanOnlyBeOneFunction"
+# CHECK: : number = Call v0, -, v1, v2

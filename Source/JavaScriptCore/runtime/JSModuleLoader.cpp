@@ -379,7 +379,15 @@ void JSModuleLoader::fetchSynchronously(JSGlobalObject* globalObject, JSPromise*
     ASSERT(vm.m_synchronousModuleQueue);
     ASSERT(fetchPromise->status() == JSPromise::Status::Pending);
 
+#if ENABLE(AOT)
+    // Whoever began the fetch was answered. A module of the image is found again as it was found then.
+    bool wasAskingHost = vm.hasCompiledCode() && AOT::ModuleRecord::setIsAskingHost(globalObject, true);
+#endif
     JSPromise* promise = fetch(globalObject, identifierToJSValue(vm, key), referrer, WTF::move(parameters), WTF::move(scriptFetcher));
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::ModuleRecord::setIsAskingHost(globalObject, wasAskingHost);
+#endif
     RETURN_IF_EXCEPTION(scope, void());
     if (promise->status() == JSPromise::Status::Fulfilled)
         fetchPromise->fulfillPromise(vm, promise->result());
@@ -727,7 +735,7 @@ AbstractModuleRecord* JSModuleLoader::getImportedModule(AbstractModuleRecord* re
     return iter->value.m_module.get();
 }
 
-JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, bool useImportMap)
+JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, bool useImportMap, JSPromise* deferredPromise)
 {
     // HostLoadImportedModule(referrer, moduleRequest, loadState, payload)
     // https://html.spec.whatwg.org/multipage/webappapis.html#hostloadimportedmodule
@@ -922,8 +930,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 #else
         JSPromise* promise = mapEntry->loadPromise();
 #endif
-        if (promise) {
-            if (mapEntry->record()) {
+        if (promise && (!deferredPromise || mapEntry->record())) {
+            if (mapEntry->record() && !deferredPromise) {
 #if ENABLE(AOT)
                 // Whoever asks for the entry point while its graph is loaded hears of it one step ahead of whoever asked for the program.
                 if (auto* compiled = promise->status() == JSPromise::Status::Pending ? dynamicDowncast<AOT::ModuleRecord>(mapEntry->record()) : nullptr; compiled && compiled->takeLoadPromiseBelowMainModule()) {
@@ -936,7 +944,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                 RETURN_IF_EXCEPTION(scope, nullptr);
             } else {
                 auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
-                JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
+                JSPromise* resultPromise = deferredPromise ? deferredPromise : JSPromise::create(vm, globalObject->promiseStructure());
                 resultPromise->markAsHandled();
                 promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, resultPromise, context);
                 promise = resultPromise;
@@ -945,6 +953,10 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             return promise;
         }
     } else {
+#if ENABLE(AOT)
+        if (auto file = vm.hasCompiledCode() ? AOT::ModuleRecord::fileToWaitFor(globalObject, resolved) : std::nullopt) [[unlikely]]
+            return AOT::ModuleRecord::deferRequest(globalObject, *file, ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Cached, referrer, moduleRequest, payload, nullptr, scriptFetcher), useImportMap);
+#endif
         mapEntry = ModuleRegistryEntry::create(vm, this, resolved, type, scriptFetcher);
         Locker locker { cellLock() };
         m_moduleMap.add(moduleMapKey, WriteBarrier<ModuleRegistryEntry>(vm, this, mapEntry));
@@ -979,12 +991,20 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto* context = ModuleLoadingContext::create(vm, this, ModuleLoadingContext::Step::Main, referrer, moduleRequest, payload, mapEntry, scriptFetcher);
-    JSPromise* loadPromise = JSPromise::create(vm, globalObject->promiseStructure());
+    JSPromise* loadPromise = deferredPromise ? deferredPromise : JSPromise::create(vm, globalObject->promiseStructure());
     loadPromise->markAsHandled();
 
     modulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
 
-    mapEntry->setLoadPromise(vm, loadPromise);
+    if (!deferredPromise || !mapEntry->loadPromise())
+        mapEntry->setLoadPromise(vm, loadPromise);
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) {
+        AOT::ModuleRecord::didRequestModule(globalObject, resolved, payload);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+#endif
 
     return loadPromise;
 }
@@ -1045,8 +1065,15 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                 state->appendVisited(vm, cyclic);
 #if ENABLE(AOT)
                 if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic)) {
-                    compiled->willLoadRequests();
+                    compiled->willLoadRequests(*state);
                     RETURN_IF_EXCEPTION(scope, void());
+                    // A file that the module imports ran meanwhile and had the loader go on from here.
+                    if (compiled->takeWentOnWhileRequestsWereListed(*state)) {
+                        if (state->isLoading())
+                            continue;
+                        state->setDrainingInnerLoad(false);
+                        RELEASE_AND_RETURN(scope, void());
+                    }
                 }
 #endif
                 // 2.b. Let requestedModulesCount be the number of elements in module.[[RequestedModules]].
@@ -1082,12 +1109,16 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     // 2.d.iii.1. Perform HostLoadImportedModule(module, request, state.[[HostDefined]], state).
                     unsigned loadedModulesCountBefore = module->loadedModules().size();
                     bool useImportMap = true;
+                    ModuleGraphLoadingState* loadOfRequest = state;
 #if ENABLE(AOT)
                     auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic);
                     useImportMap = !compiled;
                     uint8_t flagsBefore = compiled ? compiled->willAskHostForRequest() : 0;
+                    unsigned jobsUntilLoadHearsOfFailure = 0;
+                    if (compiled)
+                        loadOfRequest = compiled->loadThatWaitsFor(request.m_specifier, state, jobsUntilLoadHearsOfFailure);
 #endif
-                    JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, state, state->scriptFetcher(), useImportMap);
+                    JSPromise* promise = hostLoadImportedModule(globalObject, cyclic, request, loadOfRequest, state->scriptFetcher(), useImportMap);
 #if ENABLE(AOT)
                     if (compiled)
                         compiled->didAskHostForRequest(flagsBefore);
@@ -1104,8 +1135,16 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     bool needsErrorReaction = module->loadedModules().size() == loadedModulesCountBefore;
                     ASSERT(module->loadedModules().size() <= loadedModulesCountBefore + 1);
                     ASSERT(needsErrorReaction != module->loadedModules().contains(ModuleMapKey { request.m_specifier.impl(), request.type() }));
+#if ENABLE(AOT)
+                    for (; needsErrorReaction && jobsUntilLoadHearsOfFailure; --jobsUntilLoadHearsOfFailure) {
+                        JSPromise* settledOneJobLater = JSPromise::create(vm, globalObject->promiseStructure());
+                        settledOneJobLater->markAsHandled();
+                        settledOneJobLater->pipeFrom(vm, promise);
+                        promise = settledOneJobLater;
+                    }
+#endif
                     if (needsErrorReaction)
-                        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, state);
+                        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleGraphLoadingError, nullptr, loadOfRequest);
                     // 2.d.iv. If state.[[IsLoading]] is false, return UNUSED.
                     if (!state->isLoading())
                         break;
@@ -1132,6 +1171,10 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
             });
             // 5.c. Perform ! Call(state.[[PromiseCapability]].[[Resolve]], undefined, « undefined »).
             state->promise()->fulfill(vm, module);
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode())
+                AOT::ModuleRecord::didSettleLoad(globalObject, *state);
+#endif
             break;
         }
     }
@@ -1241,6 +1284,12 @@ void JSModuleLoader::continueModuleLoading(JSGlobalObject* globalObject, ModuleG
                         loaded->setStatus(CyclicModuleRecord::Status::Unlinked);
                 });
                 state->promise()->fulfill(vm, *module);
+#if ENABLE(AOT)
+                if (vm.hasCompiledCode()) {
+                    AOT::ModuleRecord::didSettleLoad(globalObject, *state);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
+#endif
             }
         } else if (state->drainingInnerLoad())
             state->enqueueInnerLoad(*module);
@@ -1253,7 +1302,10 @@ void JSModuleLoader::continueModuleLoading(JSGlobalObject* globalObject, ModuleG
         // 3.a. Set state.[[IsLoading]] to false.
         state->setIsLoading(false);
 #if ENABLE(AOT)
-        AOT::ModuleRecord::didFailToLoad(*state);
+        if (vm.hasCompiledCode()) {
+            AOT::ModuleRecord::didFailToLoad(globalObject, *state);
+            scope.assertNoExceptionExceptTermination();
+        }
 #endif
         // 3.b. Perform ! Call(state.[[PromiseCapability]].[[Reject]], undefined, « moduleCompletion.[[Value]] »).
         state->promise()->reject(vm, std::get<Exception*>(moduleCompletion)->value());
@@ -1309,8 +1361,8 @@ JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, Ab
     // 4. Perform InnerModuleLoading(state, module).
     innerModuleLoading(globalObject, state, module);
 #if ENABLE(AOT)
-    if (scope.exception()) [[unlikely]]
-        AOT::ModuleRecord::didFailToLoad(*state);
+    if (scope.exception() && vm.hasCompiledCode()) [[unlikely]]
+        AOT::ModuleRecord::didFailToLoad(globalObject, *state);
 #endif
     RETURN_IF_EXCEPTION(scope, nullptr);
     // 5. Return pc.[[Promise]].
@@ -1616,7 +1668,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 
     SourceProviderSourceType sourceType = sourceCode.provider()->sourceType();
 #if USE(BUN_JSC_ADDITIONS)
-    if (Options::disallowNonStaticCode()) [[unlikely]] {
+    if (vm.runsOnlyStaticCode()) [[unlikely]] {
         // Earlier than ScriptExecutable::prepareForExecutionImpl: what a module imports is loaded and evaluated before the module is. Every type but these four is parsed as JavaScript below.
         bool isParsedAsJavaScript = sourceType != SourceProviderSourceType::WebAssembly && sourceType != SourceProviderSourceType::JSON && sourceType != SourceProviderSourceType::Text && sourceType != SourceProviderSourceType::Synthetic;
         if (isParsedAsJavaScript && sourceCode.provider()->provenance() != SourceProvenance::Static) {

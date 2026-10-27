@@ -104,7 +104,7 @@ private:
     Operand unaryOnCheckedIntegers(const ValueContext&, UnaryOperator);
     Operand unaryOnNumbers(UnaryOperator, Number);
     Word32 bitwiseOnWords(BitwiseOperator, Word32, Word32);
-    template<typename Functor> Word32 int32ConvertedOnce(const ValueContext& user, ValueID number, const Functor& convert);
+    template<typename Functor> Word32 int32ConvertedOnce(const ValueContext& user, ValueID number, bool needsLowestBitsAlone, const Functor& convert);
 
     // Without a relation the operands are compared for equality.
     template<typename T> Condition compare(std::optional<Relation>, T, T);
@@ -117,6 +117,7 @@ private:
     struct Int32OfNumber {
         BlockID block;
         Word32 word;
+        bool hasLowestBitsAlone;
     };
     UncheckedKeyHashMap<uint32_t, Vector<Int32OfNumber, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_int32OfNumbers;
 

@@ -39,6 +39,8 @@
 #include "JSCJSValueInlines.h"
 #include <algorithm>
 #include <cmath>
+#include <ranges>
+#include <span>
 #include <utility>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -262,6 +264,22 @@ std::optional<ArrayMethodCall> arrayMethodCallOf(const Program& program, const F
     return ArrayMethodCall { method, id, call.receiver, Vector<ValueID, 2>(call.arguments) };
 }
 
+static bool answersOnlyNumbers(const BuiltinTable& table, BuiltinID function)
+{
+    if (!function)
+        return false;
+    bool isCalled = false;
+    for (const BuiltinOverload& overload : table.overloadsOf(function)) {
+        if (overload.mode != BuiltinCallMode::Call)
+            continue;
+        const BuiltinType& result = table.at(overload.result.type);
+        if (result.isAnything() || result.primitives != OptionSet<BuiltinPrimitive> { BuiltinPrimitive::Number } || !result.parts.empty())
+            return false;
+        isCalled = true;
+    }
+    return isCalled;
+}
+
 FunctionID findChainTraversal(const Program& program)
 {
     std::span<const BuiltinOverload> overloads = program.builtins().overloadsOf(Builtins::CompilerHelpersTraverseArray);
@@ -375,6 +393,8 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
             break;
         }
         FunctionID callee = call.arguments.isEmpty() ? FunctionID() : calleeOf(call.arguments[0]);
+        if (!callee && !call.arguments.isEmpty())
+            return answersOnlyNumbers(program.builtins(), typeOf(call.arguments[0]).singleBuiltin());
         return callee && program.at(callee).results.size() == 1 && arrayStorageAtAllocation(program.at(program.at(callee).results[0].expected().predicted())) != ArrayStorage::Contiguous;
     };
     auto takeEnd = [&](ArrayChain& chain, const ArrayMethodCall& last) {
@@ -434,7 +454,7 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
         ArrayMethodCall consumer = last;
         while (true) {
             ValueID receiver = consumer.receiver;
-            ValueID producer = analyses.sameObjectThroughCasts(receiver);
+            ValueID producer = analyses.sameObjectThroughCasts(receiver).valueInFrontOfFacts();
             std::optional<ArrayMethodCall> link = arrayMethodCallOf(program, function, producer);
             if (!link || analyses.useLists().blockOf(producer) != chain.block || !isUsedOnlyBy(receiver, consumer))
                 return receiver;
@@ -643,7 +663,7 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
     const BlockValues& values = context.function.at(chain.block).values;
     uint32_t end = analyses.useLists().locationOf(chain.lastCall).index;
     for (uint32_t index = point.index + 1; index < end; ++index) {
-        if (!isCallOfChain(analyses.sameObjectThroughCasts(values[index])) && analyses.effectsOf(values[index]).onAnyEdge().interferesWith(moved))
+        if (!isCallOfChain(analyses.sameObjectThroughCasts(values[index]).valueInFrontOfFacts()) && analyses.effectsOf(values[index]).onAnyEdge().interferesWith(moved))
             return ArrayChainDeclineReason::ValueBetweenLinksInterferes;
     }
     return ArrayChainDeclineReason::None;
@@ -1244,9 +1264,20 @@ struct ArrayUses {
             for (auto [length, block] : creations)
                 relations->assumeRange(length, Range::uint32(), block);
         }
-        return relations->isAtLeast(position, 0, at) == IntegerRelations::Answer::Proven && std::ranges::any_of(lengths->value, [&](ValueID length) {
+        if (relations->isAtLeast(position, 0, at) != IntegerRelations::Answer::Proven)
+            return false;
+
+        // A position is compared with a length that was read shortly before: the reads are asked about from the last one in front of the access to the first, and then those behind it.
+        const CFG& cfg = analyses.cfg();
+        const UseLists& useLists = analyses.useLists();
+        auto isAbovePosition = [&](ValueID length) {
             return relations->isAtMost(position, length, -1, at) == IntegerRelations::Answer::Proven;
-        });
+        };
+        std::span<const ValueID> reads = lengths->value.span();
+        size_t numberInFront = std::ranges::partition_point(reads, [&](ValueID length) {
+            return cfg.reversePostOrderIndex(useLists.blockOf(length)) <= cfg.reversePostOrderIndex(at);
+        }) - reads.begin();
+        return std::ranges::any_of(reads.first(numberInFront) | std::views::reverse, isAbovePosition) || std::ranges::any_of(reads.subspan(numberInFront), isAbovePosition);
     }
 };
 

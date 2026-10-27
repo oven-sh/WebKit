@@ -70,6 +70,8 @@ struct ReceiverCandidates {
     Expected<LayoutList> ofExpectedType;
     bool hasOtherParts { false };
     bool mayBeNullish { false };
+    // Apart from undefined and null the receiver is an instance of a built-in class, a function or a built-in object: nothing that a constructor of the program allocates.
+    bool isMadeByHostAlone { false };
 
     static ReceiverCandidates underGuard(std::span<const LayoutID> testedLayouts);
 

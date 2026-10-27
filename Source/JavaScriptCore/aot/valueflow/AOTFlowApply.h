@@ -62,10 +62,13 @@ void demoteTailCallsWithChecks(const Program&, FunctionID, Function&, TypeArena&
 void initializeMembersOfListedHolders(const Program&, const FlowResults&, FunctionID, Function&, TypeArena&, BuildContext&);
 
 Value makeAssumeType(ValueID operand, ProvenType);
+// What is true of the value from a place on, and not wherever the value is at hand: behind a test that is gone, where a call stood, where another name of the value was narrower.
+Value makeAssumeType(ValueID operand, ValueID fact, ProvenInEveryVersion);
 Value makeValidateType(ValueID operand, TypeID validatedType);
 Value makeValidateCallee(ValueID callee, TypeID validatedType);
 
 bool isWorthNarrowing(const Program&, const Type& current, const Type& narrowed);
+bool leavesOutOnlyInstancesOfBuiltinClasses(const Type& expected, const Type& held, TypeArena&);
 
 } } } // namespace JSC::AOT::Typed
 

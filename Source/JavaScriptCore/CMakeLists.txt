@@ -2044,6 +2044,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     yarr/YarrParser.h
     yarr/YarrPattern.h
     yarr/YarrRequiredText.h
+    yarr/YarrSyntaxChecker.h
     yarr/YarrUnicodeProperties.h
 
     bytecode/Opcode.h

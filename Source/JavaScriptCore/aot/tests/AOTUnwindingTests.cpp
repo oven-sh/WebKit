@@ -28,6 +28,7 @@ entry module=m0
 layout L0 name="Copy"
 layout L1 name="Rest"
 layout L2 name="CopyInHandler"
+layout L3 kind=Instance name="MarksEntry" module=m0 constructor=f27
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="registry" [isFreeName]
@@ -75,6 +76,16 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PropSet v1, v42 key="assignsSource"
     v44 = NewClosure function=f21
     PropSet v1, v44 key="copiesOneFrameDown"
+    v46 = NewClosure function=f24
+    PropSet v1, v46 key="marksEntry"
+    v48 = NewClosure function=f25
+    PropSet v1, v48 key="marksEntryWithNineParameters"
+    v50 = NewClosure function=f26
+    PropSet v1, v50 key="marksBehindAwait"
+    v52 = NewClosure function=f27
+    v53 = NewClass v52 layout=L3
+    v54 = FinishClass v53 layout=L3
+    PropSet v1, v54 key="MarksEntry"
     Return
 }
 function f1 name="catchesOwn" parameters=[{type=anything}] results=[{type=anything}] {
@@ -345,6 +356,37 @@ function f23 name="assignsSource" results=[{type=anything}] {
     v6 = PropGet v0 key="describeCopy" [isFreeName]
     v7 = Call v6, -, v5 @255
     Return v7
+}
+function f24 name="marksEntry" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="registry" [isFreeName]
+    v2 = Boolean boolean=true
+    PropSet v1, v2 key="wasEntered"
+    Return
+}
+function f25 name="marksEntryWithNineParameters" parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="registry" [isFreeName]
+    v11 = Boolean boolean=true
+    PropSet v10, v11 key="wasEntered"
+    Return v8
+}
+function f26 name="marksBehindAwait" flags=[IsAsync] parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Await v0 @260
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="registry" [isFreeName]
+    v4 = Boolean boolean=true
+    PropSet v3, v4 key="wasEntered"
+    Return
+}
+function f27 name="MarksEntry" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="registry" [isFreeName]
+    v3 = Boolean boolean=true
+    PropSet v2, v3 key="wasEntered"
+    v5 = GetConstructPrototype v0 layout=L3
+    v6 = NewObject v5 layout=L3
+    Return v6
 }
 )IR"_s;
 
@@ -765,6 +807,57 @@ static void testTerminationOfLoopWithoutCalls()
 )"_s);
 }
 
+// The engine's own code looks for a request at the entry of every function, the body of a resumed coroutine included.
+static void testTerminationRequestedAheadOfAnEntryFromNativeCode()
+{
+    checkShellOutput(R"js(
+    function ones(length) {
+        let list = [];
+        for (let index = 0; index < length; index++)
+            list.push(1);
+        return list;
+    }
+    function report(label, enter) {
+        // Until the places that the callee reads and writes by name are remembered, it calls the run time, which looks for a request too.
+        for (let turn = 0; turn < 3; turn++) {
+            registry.wasEntered = false;
+            enter(function call(callee, ...list) { return callee(...list); }, function construct(callee, ...list) { return new callee(...list); });
+            drainMicrotasks();
+        }
+        let runs = registry.wasEntered;
+        registry.wasEntered = false;
+        let wasPending = callAndCancelTermination(() => enter(requestTerminationAndCall, requestTerminationAndConstruct));
+        print(label + ": runs " + runs + ", termination was pending " + wasPending + ", ran under it " + registry.wasEntered);
+    }
+    for (let count of [0, 1, 9, 300]) {
+        report("a call with " + count, call => call(registry.marksEntry, ...ones(count)));
+        report("a call of nine parameters with " + count, call => call(registry.marksEntryWithNineParameters, ...ones(count)));
+        report("a construction of a function with " + count, (call, construct) => construct(registry.marksEntry, ...ones(count)));
+        report("a construction of a class with " + count, (call, construct) => construct(registry.MarksEntry, ...ones(count)));
+    }
+    report("a job that resumes an async function", call => { registry.marksBehindAwait(1); call(drainMicrotasks); });
+    print("the script went on");
+)js"_s, R"(a call with 0: runs true, termination was pending true, ran under it false
+a call of nine parameters with 0: runs true, termination was pending true, ran under it false
+a construction of a function with 0: runs true, termination was pending true, ran under it false
+a construction of a class with 0: runs true, termination was pending true, ran under it false
+a call with 1: runs true, termination was pending true, ran under it false
+a call of nine parameters with 1: runs true, termination was pending true, ran under it false
+a construction of a function with 1: runs true, termination was pending true, ran under it false
+a construction of a class with 1: runs true, termination was pending true, ran under it false
+a call with 9: runs true, termination was pending true, ran under it false
+a call of nine parameters with 9: runs true, termination was pending true, ran under it false
+a construction of a function with 9: runs true, termination was pending true, ran under it false
+a construction of a class with 9: runs true, termination was pending true, ran under it false
+a call with 300: runs true, termination was pending true, ran under it false
+a call of nine parameters with 300: runs true, termination was pending true, ran under it false
+a construction of a function with 300: runs true, termination was pending true, ran under it false
+a construction of a class with 300: runs true, termination was pending true, ran under it false
+a job that resumes an async function: runs true, termination was pending true, ran under it false
+the script went on
+)"_s);
+}
+
 std::span<const NativeTest> unwindingTests()
 {
     static constexpr NativeTest tests[] = {
@@ -780,6 +873,7 @@ std::span<const NativeTest> unwindingTests()
         { "unwinding/values-live-across-the-call-are-restored"_s, testValuesLiveAcrossTheCallAreRestored },
         { "unwinding/termination-passes-every-handler"_s, testTerminationPassesEveryHandler },
         { "unwinding/termination-of-loop-without-calls"_s, testTerminationOfLoopWithoutCalls },
+        { "unwinding/termination-requested-ahead-of-an-entry-from-native-code"_s, testTerminationRequestedAheadOfAnEntryFromNativeCode },
     };
     return tests;
 }

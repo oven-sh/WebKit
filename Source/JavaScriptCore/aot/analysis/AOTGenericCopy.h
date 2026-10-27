@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTLiveness.h"
 #include "AOTNaturalLoops.h"
 #include "AOTRegionCloner.h"
 #include "AOTVector.h"
@@ -117,6 +118,7 @@ private:
     struct AnswersByBlock {
         BitVector isKnown;
         BitVector answer;
+        Liveness::AnswersAboutValues aboutLiveValues;
     };
 
     bool isInRegion(BlockID block) const { return m_isInRegion.get(block.index()); }

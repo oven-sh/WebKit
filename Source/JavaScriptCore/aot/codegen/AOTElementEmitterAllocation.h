@@ -47,6 +47,7 @@ private:
     RawElements rawElementsOf(std::span<const ValueID> elements, const ArrayStorageForm&, LBasicBlock doesNotFit);
     void storeElements(CellPointer newArray, const ArrayStorageForm&, std::span<const Operand> rawElements, std::span<const uint32_t> indexes);
     Number numberOrMarker(ValueID);
+    bool isNumberOrMarker(ValueID);
 };
 
 static_assert(sizeof(ArrayAllocationEmitter) == sizeof(OperationEmitter));

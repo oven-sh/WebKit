@@ -1,0 +1,29 @@
+# Reflect.set({}, "escape", one, globalThis); Reflect.set(globalThis, "unescape", two, globalThis); escape(); unescape()
+# RUN: valueflow-solve calls
+# CHECK: f0 v10 -> Escape f1
+# CHECK: f0 v12 -> Unescape f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module parameters=[] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = NewDictionary
+    v4 = String string="escape"
+    v5 = String string="unescape"
+    v6 = Builtin builtin=ReflectSet
+    v7 = Call v6, -, v3, v4, v1, v0
+    v8 = Call v6, -, v0, v5, v2, v0
+    v9 = PropGet v0 key="escape" [isFreeName]
+    v10 = Call v9, -
+    v11 = PropGet v0 key="unescape" [isFreeName]
+    v12 = Call v11, -
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="two" results=[{type=anything}] {
+    Return
+}

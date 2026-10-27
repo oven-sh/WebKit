@@ -43,6 +43,8 @@ ASCIILiteral nameOf(StaticsRegion region)
         return "FilledAtInstanceCreation"_s;
     case StaticsRegion::FilledAtProgramEntry:
         return "FilledAtProgramEntry"_s;
+    case StaticsRegion::FilledWithFile:
+        return "FilledWithFile"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

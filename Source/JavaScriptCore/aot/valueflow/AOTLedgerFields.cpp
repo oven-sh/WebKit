@@ -19,45 +19,51 @@ LedgerOfFields::LedgerOfFields(const Program& program)
     for (uint32_t index = 0; index < program.layouts.size(); ++index)
         m_firstFieldOfLayout[index + 1] = m_firstFieldOfLayout[index] + program.layouts[index].fields.size();
     m_open = Vector<OptionSet<Actor>>(FillWith { }, m_firstFieldOfLayout.last(), actorsThatCanWrite(PlaceKind::Field));
-    m_isSignedFor = BitVector(m_firstFieldOfLayout.last());
+    m_isSignedFor = Vector<bool>(FillWith { }, m_firstFieldOfLayout.last(), false);
 }
 
-void LedgerOfFields::sign(FieldReference declaration, OptionSet<Actor> open, std::span<const Write> writes)
+void LedgerOfFields::sign(Notes& notes, FieldReference declaration, OptionSet<Actor> open, std::span<const Write> writes)
 {
     uint32_t field = numberOf(declaration);
-    if (m_isSignedFor.set(field))
+    if (std::exchange(m_isSignedFor[field], true))
         m_open[field].add(open);
     else
         m_open[field] = open;
     for (const Write& write : writes)
-        m_noted.append({ field, write });
+        notes.append({ field, write });
 }
 
-void LedgerOfFields::note(Vector<WriteToField>&& writes)
+void LedgerOfFields::close(const ParallelLoops& loops, Vector<Notes>&& lists)
 {
-    m_noted.reserveCapacity(m_noted.size() + writes.size());
-    for (const WriteToField& noted : writes)
-        m_noted.append({ numberOf(noted.declaration), noted.write });
-}
-
-void LedgerOfFields::close(const ParallelLoops&)
-{
-    AOT::stableSort(m_noted, { }, &NumberedWrite::field);
-    m_firstWriteOfField = Vector<uint32_t>(FillWith { }, m_open.size() + 1, 0u);
-    for (const NumberedWrite& noted : m_noted)
-        ++m_firstWriteOfField[noted.field + 1];
-    for (size_t field = 0; field < m_open.size(); ++field)
-        m_firstWriteOfField[field + 1] += m_firstWriteOfField[field];
-    m_writes = Vector<Write>(m_noted.size(), [&](size_t index) {
-        return m_noted[index].write;
+    ParallelArray<NumberedWrite> noted = ParallelArray<NumberedWrite>::concatenationOf(loops, WTF::move(lists));
+    uint32_t size = noted.size();
+    constexpr uint32_t writesPerShare = 1 << 12;
+    auto forEachPositionInParallel = [&](const Invocable<void(uint32_t)> auto& functor) {
+        forEachIndexInParallel(loops, (size + writesPerShare - 1) / writesPerShare, [&](unsigned share) {
+            for (uint32_t position = share * writesPerShare; position < std::min(size, (share + 1) * writesPerShare); ++position)
+                functor(position);
+        });
+    };
+    Vector<uint64_t> order = createVectorWithCapacityInParallel<uint64_t>(loops, size);
+    order.grow(size);
+    forEachPositionInParallel([&](uint32_t position) {
+        order[position] = static_cast<uint64_t>(noted[position].field) << 32 | position;
     });
-    m_noted.clear();
+    parallelSort(loops, order.mutableSpan(), std::less<uint64_t>());
+    m_firstWriteOfField = Vector<uint32_t>(FillWith { }, m_open.size() + 1, size);
+    forEachPositionInParallel([&](uint32_t position) {
+        for (uint64_t field = position ? (order[position - 1] >> 32) + 1 : 0; field <= order[position] >> 32; ++field)
+            m_firstWriteOfField[field] = position;
+    });
+    m_writes = ParallelArray<Write>(loops, size, [&](unsigned position) {
+        return noted[static_cast<uint32_t>(order[position])].write;
+    });
 }
 
 Writers LedgerOfFields::writersOf(FieldReference declaration) const
 {
     uint32_t field = numberOf(declaration);
-    return { m_writes.subspan(m_firstWriteOfField[field], m_firstWriteOfField[field + 1] - m_firstWriteOfField[field]), m_open[field] };
+    return { m_writes.span().subspan(m_firstWriteOfField[field], m_firstWriteOfField[field + 1] - m_firstWriteOfField[field]), m_open[field] };
 }
 
 std::optional<Writers> LedgerOfFields::writersOf(const Place& place) const

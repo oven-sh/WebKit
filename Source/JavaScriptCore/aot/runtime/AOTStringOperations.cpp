@@ -16,7 +16,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
-#include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
 #include "AOTStringEmitter.h"
@@ -27,6 +27,7 @@
 #include "IntlObject.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
+#include "KeyAtomStringCacheInlines.h"
 #include "MathCommon.h"
 #include "NumberPrototype.h"
 #include "NumericStrings.h"
@@ -323,6 +324,17 @@ extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTCharactersEqualI
 extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTHashStringImpl(void* impl)
 {
     return static_cast<StringImpl*>(impl)->hash();
+}
+
+// jsSubstringOfResolved() keeps the string that it makes of two ASCII characters. Makes none: 0 where none is kept.
+extern "C" size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTFindKeptStringOfTwoCharacters(void* vmPointer, uint32_t units)
+{
+    VM& vm = *static_cast<VM*>(vmPointer);
+    Latin1Character characters[] = { static_cast<Latin1Character>(units), static_cast<Latin1Character>(units >> 16) };
+    WTF::HashTranslatorCharBuffer<Latin1Character> buffer { std::span<const Latin1Character> { characters } };
+    return std::bit_cast<size_t>(vm.keyAtomStringCache.make(vm, buffer, [](VM&, auto&) -> JSString* {
+        return nullptr;
+    }));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFindLongSeparators8, size_t, (Instance*, const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t* positions, uint32_t wanted))
@@ -649,7 +661,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* i
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     int64_t value = static_cast<int64_t>(bits);
     if (value >= static_cast<int64_t>(NumericStrings::cacheSize) && value <= INT32_MAX) {
-        StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+        StringKeyCache& keys = *instance->state->stringKeys;
         JSString* string = keys.tryFindIntegerKey(static_cast<uint32_t>(value));
         if (!string) {
             std::array<Latin1Character, 10> digits;
@@ -679,7 +691,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance
     // Most numbers that become text are ids and counts. Their text is asked for by the integer, as the stub IntegerToString asks, so that every road gives the same string.
     int32_t integer = truncateDoubleToInt32(value);
     if (integer == value && integer >= static_cast<int32_t>(NumericStrings::cacheSize)) {
-        if (JSString* key = instance->state->propertyCaches->stringKeys().tryFindIntegerKey(static_cast<uint32_t>(integer)))
+        if (JSString* key = instance->state->stringKeys->tryFindIntegerKey(static_cast<uint32_t>(integer)))
             return key;
         return operationAOTIntToString(instance, static_cast<uint64_t>(integer));
     }
@@ -840,13 +852,13 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
 JSC_DEFINE_JIT_OPERATION(operationAOTStringToLowerCase, JSCell*, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringToLowerCase);
-    OPERATION_RETURN(scope, convertCase<LetterCase::Lower>(globalObject, vm, instance->state->propertyCaches->stringKeys(), cellArgument<JSString>(cell, Entry::operationAOTStringToLowerCase)));
+    OPERATION_RETURN(scope, convertCase<LetterCase::Lower>(globalObject, vm, *instance->state->stringKeys, cellArgument<JSString>(cell, Entry::operationAOTStringToLowerCase)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringToUpperCase, JSCell*, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringToUpperCase);
-    OPERATION_RETURN(scope, convertCase<LetterCase::Upper>(globalObject, vm, instance->state->propertyCaches->stringKeys(), cellArgument<JSString>(cell, Entry::operationAOTStringToUpperCase)));
+    OPERATION_RETURN(scope, convertCase<LetterCase::Upper>(globalObject, vm, *instance->state->stringKeys, cellArgument<JSString>(cell, Entry::operationAOTStringToUpperCase)));
 }
 
 template<typename CharacterType>

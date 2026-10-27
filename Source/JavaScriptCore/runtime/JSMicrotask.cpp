@@ -82,6 +82,7 @@ extern "C" __attribute__((weak)) void Bun__reportUnhandledError(JSC::JSGlobalObj
 #include "WebAssemblyCompileOptions.h"
 #endif
 #include <wtf/NoTailCalls.h>
+#include <wtf/Scope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -1172,7 +1173,10 @@ static void moduleGraphLoadingError(JSGlobalObject* globalObject, VM& vm, ThrowS
             RETURN_IF_EXCEPTION(scope, void());
         }
 #if ENABLE(AOT)
-        AOT::ModuleRecord::didFailToLoad(*state);
+        if (vm.hasCompiledCode()) {
+            AOT::ModuleRecord::didFailToLoad(globalObject, *state);
+            scope.assertNoExceptionExceptTermination();
+        }
 #endif
         state->promise()->reject(vm, errorValue);
     }
@@ -1186,6 +1190,21 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
     auto* context = uncheckedDowncast<ModuleLoadingContext>(arguments[2]);
     auto* loadPromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
+
+#if ENABLE(AOT)
+    // hostLoadImportedModule() may have left another promise in the entry, for whoever asked for the entry point while its graph was loaded. However a step ends the load, that promise ends with it.
+    auto settleLoadPromiseInEntry = makeScopeExit([&] {
+        if (loadPromise->status() == JSPromise::Status::Pending || context->step() == ModuleLoadingContext::Step::Cached || !vm.hasCompiledCode())
+            return;
+        JSPromise* promiseInEntry = context->entry()->loadPromise();
+        if (promiseInEntry == loadPromise || promiseInEntry->status() != JSPromise::Status::Pending)
+            return;
+        if (loadPromise->status() == JSPromise::Status::Fulfilled)
+            promiseInEntry->fulfill(vm, loadPromise->result());
+        else
+            promiseInEntry->reject(vm, loadPromise->result());
+    });
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // A rejected load never reaches finishLoadingImportedModule(), so drop the cached key here.
@@ -1201,6 +1220,10 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = downcast<AbstractModuleRecord>(arguments[1]);
             context->module(vm, module);
+#if ENABLE(AOT)
+            if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
+                compiled->willBeLoadedByImport();
+#endif
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
@@ -1208,8 +1231,13 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             }
             context->setStep(ModuleLoadingContext::Step::Requested);
             requestedPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
-        } else
+        } else {
             loadPromise->reject(vm, arguments[1]);
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode())
+                RELEASE_AND_RETURN(scope, AOT::ModuleRecord::didFailToMakeModule(globalObject, context->entry()->key()));
+#endif
+        }
         return;
     }
     case ModuleLoadingContext::Step::Requested: {
@@ -1262,10 +1290,6 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             JSValue errorValue = arguments[1];
             entry->setEvaluationError(globalObject, errorValue);
             loadPromise->reject(vm, errorValue);
-#if ENABLE(AOT)
-            if (entry->loadPromise() != loadPromise && entry->loadPromise()->status() == JSPromise::Status::Pending)
-                entry->loadPromise()->reject(vm, errorValue);
-#endif
         }
         return;
     }

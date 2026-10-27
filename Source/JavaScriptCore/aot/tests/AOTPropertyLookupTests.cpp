@@ -238,17 +238,22 @@ static void testDictionary(LoadedProgram& program)
     AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, object, other, ChainWalkMode::AllocatesNothing)));
     AOT_TEST_CHECK(object->structure()->isDictionary());
 
-    PropertyAnswer answer = readAndClassify(program, object, other);
-    AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && !object->structure()->isDictionary());
+    // Nothing of a cacheable dictionary moves when it is made flat, so the look that makes it flat is answered.
+    AOT_TEST_CHECK(isAbsent(readAndClassify(program, object, other)) && !object->structure()->isDictionary());
     AOT_TEST_CHECK(findsOwnValue(program, object, label));
     AOT_TEST_CHECK(isAbsent(readAndClassify(program, object, other)));
 
     JSObject* readFirstForWhatItHolds = constructEmptyObject(program.realm());
     readFirstForWhatItHolds->putDirect(vm, label, jsNumber(7));
     readFirstForWhatItHolds->convertToDictionary(vm);
-    answer = readAndClassify(program, readFirstForWhatItHolds, label);
-    AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && !readFirstForWhatItHolds->structure()->isDictionary());
-    AOT_TEST_CHECK(findsOwnValue(program, readFirstForWhatItHolds, label));
+    AOT_TEST_CHECK(findsOwnValue(program, readFirstForWhatItHolds, label) && !readFirstForWhatItHolds->structure()->isDictionary());
+
+    JSObject* givesNamesUp = constructEmptyObject(program.realm());
+    givesNamesUp->putDirect(vm, label, jsNumber(7));
+    givesNamesUp->convertToUncacheableDictionary(vm);
+    PropertyAnswer answer = readAndClassify(program, givesNamesUp, label);
+    AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && !givesNamesUp->structure()->isDictionary());
+    AOT_TEST_CHECK(findsOwnValue(program, givesNamesUp, label));
 
     object->convertToDictionary(vm);
     AOT_TEST_CHECK(findsOwnValue(program, object, label));
@@ -538,6 +543,17 @@ static void fetchStructures(LoadedProgram& program)
         makeStructure(program);
 }
 
+// The first object that is given a name keeps it in a table of its own. The next one makes the Structure that those behind it share.
+static JSObject* constructSecondObjectWith(LoadedProgram& program, Structure* emptyStructure, const Identifier& name, JSValue value)
+{
+    VM& vm = program.vm();
+    constructEmptyObject(vm, emptyStructure)->putDirect(vm, name, value);
+    JSObject* object = constructEmptyObject(vm, emptyStructure);
+    object->putDirect(vm, name, value);
+    AOT_TEST_CHECK(!object->structure()->isDictionary());
+    return object;
+}
+
 static void testLeafOperationsAnswerByName(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -546,9 +562,10 @@ static void testLeafOperationsAnswerByName(LoadedProgram& program)
     Identifier nameWithDigit = Identifier::fromString(vm, "3d"_s);
     Identifier addedName = Identifier::fromString(vm, "4e"_s);
     Identifier absentName = Identifier::fromString(vm, "5f"_s);
-    JSObject* object = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
-    object->putDirect(vm, nameWithDigit, jsNumber(7));
+    JSObject* object = constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), nameWithDigit, jsNumber(7));
     Structure* structure = object->structure();
+    // What an object is given right behind the name that made its Structure makes Structures too. Here another object has come in between.
+    constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), Identifier::fromString(vm, "8i"_s), jsNumber(0));
     auto keyFor = [&](const Identifier& name) {
         JSString* key = jsNontrivialString(vm, makeString(name.string().string().left(1), name.string().string().substring(1)));
         AOT_TEST_CHECK(!key->tryGetValueImpl()->isAtom());
@@ -612,8 +629,7 @@ static void testLeafStoreMakesStructureOnlyOutOfBlockAtHand(LoadedProgram& progr
     VM& vm = program.vm();
     Identifier heldName = Identifier::fromString(vm, "6g"_s);
     Identifier addedName = Identifier::fromString(vm, "7h"_s);
-    JSObject* object = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
-    object->putDirect(vm, heldName, jsNumber(1));
+    JSObject* object = constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), heldName, jsNumber(1));
     Structure* structure = object->structure();
     auto keyFor = [&](const Identifier& name) {
         return jsNontrivialString(vm, makeString(name.string().string().left(1), name.string().string().substring(1)));
@@ -1123,6 +1139,8 @@ static void testStoresBelowEmptySlotOfCompiledPrototype(LoadedProgram& program)
     };
 
     AOT_TEST_CHECK(!prototype->hasExtraProperties());
+    // The first object that is given a name keeps it in a table of its own. The next one makes the Structure that those behind it share.
+    AOT_TEST_CHECK(storeAndClassify(program, constructEmptyObject(realm, prototype), label, jsNumber(1)).kind == PropertyAnswerKind::Uncacheable);
     PropertyAnswer addition = storeAndFile();
     AOT_TEST_CHECK(addition.kind == PropertyAnswerKind::Addition && dependsOnlyOn(addition, prototype));
     AOT_TEST_CHECK(find() && find()->kind == Slot::Kind::Transition && find()->has(Slot::dependsOnChain));
@@ -1332,7 +1350,7 @@ static void testPairsThatMissInTurnAreAllFiled(LoadedProgram& program)
 static void testAdditionsByKeyThatTakeTurnsAllGetStructures(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    PropertyCaches& caches = *program.state().propertyCaches;
+    FirstAdditions& additions = firstAdditionsOf(program.state());
     Structure* structure = program.realm()->nullPrototypeObjectStructure();
     unsigned numberOfNamesMade = 0;
     auto makeName = [&] {
@@ -1345,7 +1363,7 @@ static void testAdditionsByKeyThatTakeTurnsAllGetStructures(LoadedProgram& progr
         unsigned turns = 0;
         for (; !waiting.isEmpty() && turns < maxTurns; ++turns) {
             waiting.removeAllMatching([&](const Identifier& name) {
-                return caches.shouldMakeStructureForAdditionByKey(structure, name.impl());
+                return additions.shouldMakeStructure(structure, name.impl());
             });
         }
         return waiting.isEmpty() ? turns : UINT_MAX;
@@ -1355,7 +1373,7 @@ static void testAdditionsByKeyThatTakeTurnsAllGetStructures(LoadedProgram& progr
 
     constexpr unsigned numberOfNamesThatComeOnce = 1 << 16;
     for (unsigned i = 0; i < numberOfNamesThatComeOnce; ++i)
-        caches.shouldMakeStructureForAdditionByKey(structure, makeName().impl());
+        additions.shouldMakeStructure(structure, makeName().impl());
     AOT_TEST_CHECK(countTurnsUntilAllGetStructures(2, 64) <= 64);
     AOT_TEST_CHECK(countTurnsUntilAllGetStructures(2048, 128) <= 128);
 
@@ -1365,12 +1383,12 @@ static void testAdditionsByKeyThatTakeTurnsAllGetStructures(LoadedProgram& progr
 
 static void testAdditionByKeyThatCameAgainGetsStructureWheneverItReturns(LoadedProgram& program)
 {
-    PropertyCaches& caches = *program.state().propertyCaches;
+    FirstAdditions& additions = firstAdditionsOf(program.state());
     Structure* structure = program.realm()->nullPrototypeObjectStructure();
     Identifier name = Identifier::fromString(program.vm(), "nameThatReturns"_s);
-    AOT_TEST_CHECK(!caches.shouldMakeStructureForAdditionByKey(structure, name.impl()));
+    AOT_TEST_CHECK(!additions.shouldMakeStructure(structure, name.impl()));
     for (unsigned i = 0; i < 3; ++i)
-        AOT_TEST_CHECK(caches.shouldMakeStructureForAdditionByKey(structure, name.impl()));
+        AOT_TEST_CHECK(additions.shouldMakeStructure(structure, name.impl()));
 }
 
 static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
@@ -1405,6 +1423,10 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     above->putDirect(vm, label, jsNumber(1));
     AOT_TEST_CHECK(validFilterOf(below) == ofBelow && ofBelow->letsStoresPass(*number) && !tables.wasChangedOnSomeChain(*number));
 
+    // The object above keeps the name in a table of its own while it is given its names. To make it flat changes nothing that a name finds, and the filters outlive that too.
+    AOT_TEST_CHECK(above->structure()->isDictionary() && flattenOnce(vm, above) && !above->structure()->isDictionary());
+    AOT_TEST_CHECK(validFilterOf(below) == ofBelow && ofBelow->letsStoresPass(*number) && !tables.wasChangedOnSomeChain(*number));
+
     // A filter lasts as long as its Structure: nothing files it anew for a store that the tables answer.
     for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
         vm.heap.collectSync(scope);
@@ -1413,8 +1435,14 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     }
 
     // What the lowest object has itself is nothing to a store that has found that the object lacks the name.
-    JSObject* owner = constructEmptyObject(realm);
-    owner->putDirect(vm, label, jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    // The number of a Structure leads to the place of its filter, and two Structures may have one place. This one has another place than the Structure of the object below, whose filter is asked for again.
+    JSObject* owner = nullptr;
+    unsigned numberOfOwners = 0;
+    do {
+        owner = constructEmptyObject(realm);
+        owner->putDirect(vm, Identifier::fromString(vm, makeString("other"_s, numberOfOwners++)), jsNumber(0));
+        owner->putDirect(vm, label, jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    } while (AbsenceFilter::indexFor(owner->structureID().bits()) == AbsenceFilter::indexFor(below->structureID().bits()));
     const AbsenceFilter* ofOwner = filterOf(owner);
     AOT_TEST_CHECK(ofOwner && ofOwner->letsStoresPass(*number));
 
@@ -1436,6 +1464,17 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
 
     // No list of names speaks for an object that has a say of its own in a store that comes past it.
     AOT_TEST_CHECK(!filterOf(makeBelow(ProxyObject::create(realm, constructEmptyObject(realm), constructEmptyObject(realm)))));
+
+    // Of two Structures that have one place the one whose filter is filed later takes it, and the other has no filter until it is filed anew.
+    JSObject* earlier = makeBelow(constructEmptyObject(realm));
+    const AbsenceFilter* place = filterOf(earlier);
+    JSObject* later = nullptr;
+    do {
+        later = makeBelow(constructEmptyObject(realm));
+    } while (AbsenceFilter::indexFor(later->structureID().bits()) != AbsenceFilter::indexFor(earlier->structureID().bits()));
+    AOT_TEST_CHECK(place && validFilterOf(earlier) == place && !validFilterOf(later));
+    AOT_TEST_CHECK(filterOf(later) == place && !validFilterOf(earlier));
+    AOT_TEST_CHECK(filterOf(earlier) == place && !validFilterOf(later));
 }
 
 template<LoadedProgramTest body>

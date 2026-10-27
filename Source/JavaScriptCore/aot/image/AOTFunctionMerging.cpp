@@ -329,6 +329,7 @@ static uint32_t endInJumpToNextBody(CompiledCode& code, FunctionID next)
     body.relocations.last().offset = moved(jump.offset);
     body.entries[0].offset += sizeBehindJump;
     body.units = { };
+    body.smallLoops = { };
     return sizeBehindJump;
 }
 
@@ -602,8 +603,10 @@ static bool tryDescribeCandidate(uint32_t position, const FoldingInputs& inputs,
         key.append(packWords(entry.offset, entry.id));
     for (const ReturnSite& returnSite : body.returnSites)
         key.append(packWords(returnSite.offset, returnSite.site.bits));
-    for (const FirstReadSite& firstReadSite : body.firstReadSites)
+    for (const FirstReadSite& firstReadSite : body.firstReadSites) {
         key.append(packWords(firstReadSite.returnOffset, firstReadSite.site));
+        key.append(firstReadSite.columnDelta);
+    }
     return true;
 }
 

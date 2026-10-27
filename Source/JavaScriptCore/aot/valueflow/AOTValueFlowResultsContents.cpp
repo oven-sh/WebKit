@@ -325,11 +325,12 @@ private:
 
     void collectContainers()
     {
-        m_containers = collectInParallel<Container>(m_inputs.loops(), universe().numberOfObjects(), [&](unsigned index, Vector<Container>& found) {
-            BuiltinClassID builtinClass = classOfFollowedContainer(m_inputs, ValueFlowObjectID(index));
+        m_containers = collectInParallel<Container>(m_inputs.loops(), universe().numberOfObjectsMadeWithClasses(), [&](unsigned position, Vector<Container>& found) {
+            ValueFlowObjectID object = universe().objectMadeWithClassAt(position);
+            BuiltinClassID builtinClass = classOfFollowedContainer(m_inputs, object);
             if (!builtinClass)
                 return;
-            found.append(Container { ValueFlowObjectID(index), builtinClass, markedMutationsOf(m_inputs, ValueFlowObjectID(index)), { } });
+            found.append(Container { object, builtinClass, markedMutationsOf(m_inputs, object), { } });
             if (builtinClass == BuiltinClasses::Array || builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::Promise)
                 found.last().stored.fill(ValueSets::nothing, builtins().numberOfSlotsInType(builtinClass));
         });
@@ -390,6 +391,7 @@ private:
             case ValueFlowNameKind::RestArgument:
             case ValueFlowNameKind::AddedNames:
             case ValueFlowNameKind::FoundThroughEscapedInstances:
+            case ValueFlowNameKind::NamesOfMethods:
                 return false;
             }
         });

@@ -2858,6 +2858,90 @@ public:
         m_formatter.twoByteOp(OP2_ADDPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
     }
 
+    void addpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/addpd
+        // 66 0F 58 /r ADDPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_ADDPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void subps_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/subps
+        // NP 0F 5C /r SUBPS xmm1, xmm2/m128
+        m_formatter.twoByteOp(OP2_SUBPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void subpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/subpd
+        // 66 0F 5C /r SUBPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_SUBPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void mulps_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/mulps
+        // NP 0F 59 /r MULPS xmm1, xmm2/m128
+        m_formatter.twoByteOp(OP2_MULPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void mulpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/mulpd
+        // 66 0F 59 /r MULPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_MULPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void divps_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/divps
+        // NP 0F 5E /r DIVPS xmm1, xmm2/m128
+        m_formatter.twoByteOp(OP2_DIVPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void divpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/divpd
+        // 66 0F 5E /r DIVPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_DIVPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void sqrtps_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/sqrtps
+        // NP 0F 51 /r SQRTPS xmm1, xmm2/m128
+        m_formatter.twoByteOp(OP2_SQRTPS_VpsWps, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void sqrtpd_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/sqrtpd
+        // 66 0F 51 /r SQRTPD xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_SQRTPD_VpdWpd, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void pmullw_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/pmullw
+        // 66 0F D5 /r PMULLW xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PMULLW_VdqWdq, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void pmulld_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/pmulld:pmullq
+        // 66 0F 38 40 /r PMULLD xmm1, xmm2/m128 | SSE4_1
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_38, OP3_PMULLD_VdqWdq, (RegisterID)vd, (RegisterID)vn);
+    }
+
     void paddb_rr(XMMRegisterID vn, XMMRegisterID vd)
     {
         // https://www.felixcloutier.com/x86/paddb:paddw:paddd:paddq

@@ -391,8 +391,12 @@ static void testSecondObjectRepeatsAddition(LoadedProgram& program)
 
     JSObject* ordinary = constructEmptyObject(program.realm());
     AOT_TEST_CHECK(!repeatsPropertyAddition(ordinary->structure(), first.impl()));
+    // The first ordinary object that is given a name keeps it in a table of its own. The next one makes the Structure, and the third repeats what the second did.
     ordinary->putDirect(vm, first, jsNumber(1));
-    AOT_TEST_CHECK(repeatsPropertyAddition(constructEmptyObject(program.realm())->structure(), first.impl()) && !repeatsPropertyAddition(ordinary->structure(), second.impl()));
+    AOT_TEST_CHECK(ordinary->structure()->isDictionary() && !repeatsPropertyAddition(constructEmptyObject(program.realm())->structure(), first.impl()));
+    JSObject* nextOrdinary = constructEmptyObject(program.realm());
+    nextOrdinary->putDirect(vm, first, jsNumber(1));
+    AOT_TEST_CHECK(repeatsPropertyAddition(constructEmptyObject(program.realm())->structure(), first.impl()) && !repeatsPropertyAddition(nextOrdinary->structure(), second.impl()));
 }
 
 template<LoadedProgramTest body>

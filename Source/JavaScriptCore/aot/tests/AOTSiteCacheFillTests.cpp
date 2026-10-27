@@ -117,7 +117,8 @@ static void testDictionaryNeverFlattenedGetsRow(LoadedProgram& program)
     PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
     object->getPropertySlot(program.realm(), fixture.shared, slot);
     PropertyAnswer first = classifyRead({ program.realm(), object, object->structure(), fixture.shared.impl(), slot });
-    AOT_TEST_CHECK(first.didFlatten && !object->structure()->isDictionary());
+    // Nothing of a cacheable dictionary moves when it is made flat, so the look that makes it flat is answered.
+    AOT_TEST_CHECK(first.kind == PropertyAnswerKind::Value && !first.didFlatten && !object->structure()->isDictionary());
     AOT_TEST_CHECK(holdsOwnValueOf(fixture.readAndFill(object), object));
     AOT_TEST_CHECK(fixture.hasRow(object));
 }

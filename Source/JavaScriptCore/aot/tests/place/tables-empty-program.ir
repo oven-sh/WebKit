@@ -47,8 +47,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: constructors 0 0
 # CHECK-NEXT: boundFunctions 0 0
 # CHECK-NEXT: constructEntrypoints 0 0
+# CHECK-NEXT: placesOfTailCalls 0 0
 # CHECK-NEXT: staticsLayout 1 8
 # CHECK-NEXT: staticsRuns 0 0
+# CHECK-NEXT: staticsOfFiles 0 0
+# CHECK-NEXT: staticsOfImportedFiles 0 0
 # CHECK-NEXT: staticsRoots 0 0
 # CHECK-NEXT: staticsNarrowRoots 0 0
 # CHECK-NEXT: staticsClearedEachCollection 0 0
@@ -74,6 +77,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: moduleRequests 0 0
 # CHECK-NEXT: linkRequests 0 0
 # CHECK-NEXT: evaluationRequests 0 0
+# CHECK-NEXT: groupsLoadedWithGroups 0 0
 # CHECK-NEXT: entryPointLinkPlan 0 0
 # CHECK-NEXT: linkPlanRoots 0 0
 # CHECK-NEXT: linkPlanStepsOfRoots 0 0
@@ -81,6 +85,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: indirectExports 0 0
 # CHECK-NEXT: syntheticExports 0 0
 # CHECK-NEXT: requiredNames 0 0
+# CHECK-NEXT: exportStatements 0 0
 # CHECK-NEXT: moduleFailures 0 0
 # CHECK-NEXT: modulesByPath 1 2
 # CHECK-NEXT: modulesOfUncompiledCode 0 0

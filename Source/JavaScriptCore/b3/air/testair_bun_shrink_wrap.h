@@ -1127,7 +1127,7 @@ struct RandomFrameBorders {
         crowdSize = code.regsInPriorityOrder(GP).size() + 1;
         Vector<BasicBlock*> airBlocks;
         for (unsigned i = 0; i < blocks.size(); ++i)
-            airBlocks.append(code.addBlock());
+            airBlocks.append(code.addBlock(i ? 1.0 / 64 : 1));
         Tmp path = code.newTmp(GP);
         Tmp counter = code.newTmp(GP);
         Vector<Tmp> values;

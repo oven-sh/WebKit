@@ -125,6 +125,7 @@ b3/air/AirValidate.cpp
 
 b3/B3AbstractHeap.cpp
 b3/B3AbstractHeapRepository.cpp
+b3/B3AffineIndex.cpp @no-unify
 b3/B3Arena.cpp @no-unify
 b3/B3ArgumentRegValue.cpp
 b3/B3AtomicValue.cpp
@@ -234,6 +235,7 @@ b3/B3SwitchValue.cpp
 b3/B3TZoneImpls.cpp
 b3/B3ThreadJumps.cpp @no-unify
 b3/B3Type.cpp
+b3/B3UnrollLoops.cpp @no-unify
 b3/B3UpsilonValue.cpp
 b3/B3UseCounts.cpp
 b3/B3Validate.cpp
@@ -243,6 +245,7 @@ b3/B3ValueRep.cpp
 b3/B3Variable.cpp
 b3/B3VariableLiveness.cpp
 b3/B3VariableValue.cpp
+b3/B3VectorizeLoops.cpp @no-unify
 b3/B3VersionLoops.cpp @no-unify
 b3/B3WasmAddressValue.cpp
 b3/B3WasmBoundsCheckValue.cpp

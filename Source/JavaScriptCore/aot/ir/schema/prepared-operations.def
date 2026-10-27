@@ -30,6 +30,7 @@ operation IsEnumeratorCurrent (enumerator: Enumerator/inspects, object: Any/insp
 family GuardValue Prepared..Placed
 operation AllGuards (guards...: Guard/inspects) -> natural(Guard) ; none ; relies = none ; interpreted = Guards
 operation Entered (function: Function(Dispatch)) -> natural(Fact) ; none
+operation Specified () -> natural(Fact) ; none
 
 family SlotAccess Prepared..Placed ; receiver = object ; accessClass = Slot
 operation GetSlot (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; interpreted = Read ; replaces = PropGet, PrivateGet
@@ -49,6 +50,13 @@ family OwnAccess Prepared..Placed
 operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, calledBuiltin?: Builtin, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache
 
 family Access Prepared..Placed
+operation MayBindAnswersOfGetAndSetTraps (target: Object/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; branches = May
+operation MayBindAnswersOfHasTraps (target: Object/inspects) -> natural(boolean) ; reads(ShapeWords, OrderWords) ; branches = May
+operation ValidateAnswerOfGetTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = ValidateAnswerOfGetTrap
+operation ValidateDenialOfHasTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateDenialOfHasTrap
+operation ValidateConsentOfDeleteTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateConsentOfDeleteTrap
+operation HasOwnByAnswerOfDescriptorTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> natural(boolean) ; unknownCode ; runtime = HasOwnByAnswerOfDescriptorTrap
+operation FinishStoreByTrap (mode: ECMAMode, target: Object/retains, property: Any/retains, value: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = FinishStoreByTrap
 operation TryCopyFields (object: Object/inspects, source: Object/inspects+retainsContents, layout: Layout) -> natural(boolean) ; reads(ShapeWords, ObjectFields, OrderWords, NamedProperties) writes(ObjectFields, OrderWords) ; branches = May ; replaces = CopyDataProperties
 operation GetGlobalBinding (key: PropertyKey, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings isForTypeOf] -> unknown ; unknownCode ; accessClass = Slot ; replaces = PropGet ; runtime = GetGlobalBinding
 operation SetGlobalBinding (key: PropertyKey, mode: ECMAMode, value: Any/retains, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings] -> none ; unknownCode ; accessClass = Slot ; replaces = PropSet ; runtime = SetGlobalBinding
@@ -88,7 +96,7 @@ operation RecordCallee (closure: Callable/retains) -> none ; writes(ExternalStat
 operation AreFunctionNamesUnchanged () -> natural(boolean) ; reads(RuntimeState) ; proves = MemberUnchanged ; branches = May
 
 family BuiltinCall Prepared..Placed
-operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDoneInPlace] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread ; hasOwnFoldingRule = true
+operation CallBuiltin (overload: BuiltinOverload, builtinCallForm: BuiltinCallForm, prefixLength?: UInt32, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, calleeName?: String, expectedResult?: ExpectedResult, accessSite?: AccessSite, allocationSite?: AllocationSite, from Selected literalSeparator?: String) [needsPristineReceiver isDoneInPlace] -> declared(overload) ; unknownCode by Builtin ; accessClass = DirectCall ; interpreted = Allocation ; replaces = Call, Construct, PropGet, PropSet, CallList, CallBuiltin, NewArray, AppendSpread ; hasOwnFoldingRule = true
 operation DivideIntegers (dividend: Integer/inspects, divisor: Integer/inspects, rounding: QuotientRounding) -> natural(integer) ; none
 operation ToInt32 (value: Number/inspects) -> natural(int32) ; none ; runtime = ToInt32
 operation ToUint32 (value: Number/inspects) -> natural(uint32) ; none ; runtime = ToInt32

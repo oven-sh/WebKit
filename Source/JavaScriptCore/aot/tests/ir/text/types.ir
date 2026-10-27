@@ -111,11 +111,11 @@
 # CHECK-NEXT: function f1 name="g" module=m0 thisType={type=anything} results=[{type=undefined}]
 # CHECK-NEXT: function f2 name="local" module=m0 thisType={type=anything} results=[{type=undefined}]
 # CHECK-NEXT:   b0():
-# CHECK-NEXT:     v0: guard = Unspecified valueType=guard
-# CHECK-NEXT:     v1: flatstring = Unspecified valueType=flatstring
-# CHECK-NEXT:     v2: codeaddress = Unspecified valueType=codeaddress
-# CHECK-NEXT:     v3: jsonholders = Unspecified valueType=jsonholders
-# CHECK-NEXT:     v4: buildercursor = Unspecified valueType=buildercursor
+# CHECK-NEXT:     v0: unspecified|guard = Unspecified valueType=guard
+# CHECK-NEXT:     v1: unspecified|flatstring = Unspecified valueType=flatstring
+# CHECK-NEXT:     v2: unspecified|codeaddress = Unspecified valueType=codeaddress
+# CHECK-NEXT:     v3: unspecified|jsonholders = Unspecified valueType=jsonholders
+# CHECK-NEXT:     v4: unspecified|buildercursor = Unspecified valueType=buildercursor
 # CHECK-NEXT:     Return
 # CHECK-NEXT: }
 # CHECK-NEXT: round trip: same

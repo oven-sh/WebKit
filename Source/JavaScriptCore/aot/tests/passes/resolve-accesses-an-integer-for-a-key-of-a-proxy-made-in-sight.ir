@@ -1,0 +1,51 @@
+# const made = new Proxy({ alpha: +input }, { get(target, key, receiver) { return Reflect.get(target, key, receiver); } });
+# globalThis.answer = made[input | 0];
+#
+# The trap is handed the text of the integer. Without a trap the target is asked under the integer itself.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=24 fields=[{key="alpha" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=44 fields=[{key="get" declared={type=function flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject layout=L0
+    PropDefine v3, v2 key="alpha"
+    v5 = FinishObject v3
+    v6 = NewClosure function=f1
+    v7 = NewObject layout=L1
+    PropDefine v7, v6 key="get"
+    v9 = FinishObject v7
+    v10 = Builtin builtin=Proxy
+    v11 = Construct v10, -, v5, v9 calleeName="Proxy"
+    v12 = Integer
+    v13 = BitOr v2, v12
+    v14 = ElemGet v11, v13
+    PropSet v0, v14 key="answer"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="get" module=m0 position=63 kind=Method flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=ReflectGet
+    v4 = Call v3, -, v0, v1, v2 calleeName="get"
+    Return v4
+}
+
+# CHECK-LABEL: function f0
+# CHECK: [[target]]: L0 = FinishObject
+# CHECK: [[handler]]: L1 = FinishObject
+# CHECK: [[proxy]]: Proxy = CallBuiltin
+# CHECK: = TypeTest {{*}} testedType=int|string|symbol
+# CHECK: ([[key]]: i32):
+# CHECK-NEXT: [[name]]: string|symbol = ToPropertyKey [[key]]
+# CHECK: = SuperGet [[target]], [[proxy]], [[key]]
+# CHECK: = Call {{*}}, [[handler]], [[target]], [[name]], [[proxy]] callees=[f1
+# CHECK: ValidateAnswerOfGetTrap [[target]], [[name]],
+# CHECK-LABEL: function f1

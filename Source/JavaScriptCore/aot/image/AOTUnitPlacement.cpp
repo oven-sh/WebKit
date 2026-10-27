@@ -34,6 +34,9 @@ public:
         RELEASE_ASSERT(inputs.uses.empty() || inputs.firstUseByUnit.size() == inputs.sizes.size() + 1);
         RELEASE_ASSERT(inputs.usesOfCopyables.empty() || inputs.firstUseByCopyable.size() == inputs.copyables.size() + 1);
         RELEASE_ASSERT(inputs.alignments.size() == 1 || inputs.alignments.size() == inputs.sizes.size());
+        RELEASE_ASSERT(inputs.rangesKeptInLine.empty() || inputs.firstRangeByUnit.size() == inputs.sizes.size() + 1);
+        for (const RangeInUnit& range : inputs.rangesKeptInLine)
+            RELEASE_ASSERT(range.begin < range.end && range.end - range.begin <= inputs.lineSize);
         for (size_t alignment : inputs.alignments)
             RELEASE_ASSERT(isPowerOfTwo(alignment));
         RELEASE_ASSERT(inputs.sizes.empty() || !(inputs.shiftOfFirstUnit % alignmentOf(0)));
@@ -125,7 +128,30 @@ private:
     {
         size_t alignedOffset = m_inputs.alignedOffsets[unit];
         size_t start = WTF::roundUpToMultipleOf(alignmentOf(unit), position + alignedOffset) - alignedOffset;
-        return unit ? start : start + m_inputs.shiftOfFirstUnit;
+        if (!unit)
+            start += m_inputs.shiftOfFirstUnit;
+        return start + paddingThatKeepsRangesInLines(start, unit);
+    }
+
+    // The fewest bytes with which no range of the unit straddles a line, or else with which the first one does not.
+    size_t paddingThatKeepsRangesInLines(size_t start, size_t unit) const
+    {
+        if (m_inputs.rangesKeptInLine.empty() || (unit && m_inputs.fallsIntoNext.get(unit - 1)))
+            return 0;
+        uint32_t first = m_inputs.firstRangeByUnit[unit];
+        std::span<const RangeInUnit> ranges = m_inputs.rangesKeptInLine.subspan(first, m_inputs.firstRangeByUnit[unit + 1] - first);
+        if (ranges.empty())
+            return 0;
+        for (std::span<const RangeInUnit> kept : { ranges, ranges.first(1) }) {
+            for (size_t padding = 0; padding < m_inputs.lineSize; padding += alignmentOf(unit)) {
+                bool straddles = std::ranges::any_of(kept, [&](const RangeInUnit& range) {
+                    return (start + padding + range.begin) / m_inputs.lineSize != (start + padding + range.end - 1) / m_inputs.lineSize;
+                });
+                if (!straddles)
+                    return padding;
+            }
+        }
+        return 0;
     }
 
     size_t positionAfterBatch() const

@@ -185,7 +185,7 @@ void ClosureTestEmitter::branchOnIndexInRuns(Word32 index, std::span<const Entry
     }
     for (size_t position = 0; position < runs.size(); ++position) {
         const EntrypointRun& run = runs[position];
-        Condition isInRun = run.first == run.last ? equal(index, word32(run.first)) : belowOrEqual(sub(index, word32(run.first)), word32(run.last - run.first));
+        Condition isInRun = run.first == run.last ? equal(index, run.first) : belowOrEqual(sub(index, run.first), run.last - run.first);
         if (position + 1 == runs.size()) {
             branch(isInRun, targets);
             return;
@@ -248,7 +248,7 @@ void ClosureTestEmitter::branchOnIsClosureOfAny(CellPointer cell, std::span<cons
     if (hasSlimMember && inputs().flow.programInstances() == ProgramInstances::AtMostOne) {
         Word32 upperHalf = upperHalfOfWordAtSlimClosureWord(cell);
         LBasicBlock isNotAsCreated = newBlock();
-        continueIf(equal(bitAnd(upperHalf, word32(closureWordMarker | compiledObjectShapeBit)), word32(closureWordMarker)), normalEdge(isNotAsCreated));
+        continueIf(equal(bitAnd(upperHalf, closureWordMarker | compiledObjectShapeBit), closureWordMarker), normalEdge(isNotAsCreated));
         functionIndex.add(bitAnd(upperHalf, word32(ClosureWord::functionMask)));
         m_out.appendTo(isNotAsCreated);
         structures.removeAllMatching([](const InitialStructure& structure) {
@@ -292,7 +292,8 @@ uint32_t ClosureTestEmitter::upperHalfOfClosureWordOf(FunctionID genericEntrypoi
 Condition ClosureTestEmitter::hasClosureWordOf(CellPointer closure, bool isSlim, FunctionID genericEntrypoint)
 {
     const B3::AbstractHeap& word = isSlim ? m_heaps.AOTSlimClosure_word : m_heaps.AOTClosure_entry;
-    return equal(Word32(m_out.load32(m_out.address(closure.value(), word, sizeof(uint32_t)))), word32(upperHalfOfClosureWordOf(genericEntrypoint)));
+    Word32 upperHalf(m_out.load32(m_out.address(closure.value(), word, sizeof(uint32_t))));
+    return equal(upperHalf, upperHalfOfClosureWordOf(genericEntrypoint));
 }
 
 Condition ClosureTestEmitter::isSlimClosureAsCreated(CellPointer cell)
@@ -303,14 +304,15 @@ Condition ClosureTestEmitter::isSlimClosureAsCreated(CellPointer cell)
 
 Condition ClosureTestEmitter::hasFunctionCellType(CellPointer cell)
 {
-    return logicalOr(hasCellTypeIn(cell, functionTypes), hasCellTypeIn(cell, slimClosureTypes));
+    Condition isFunction = hasCellTypeIn(cell, functionTypes);
+    return logicalOr(isFunction, hasCellTypeIn(cell, slimClosureTypes));
 }
 
 Condition ClosureTestEmitter::isTableCell(CellPointer cell, FunctionID genericEntrypoint)
 {
     if (m_options.recorded.useWideReferences())
         return equal(cell, closureIfCreated(genericEntrypoint));
-    return equal(cell, decode(NarrowReference(add(closureTableEntry(genericEntrypoint), word32(1)).value())));
+    return equal(cell, decode(NarrowReference(add(closureTableEntry(genericEntrypoint), 1).value())));
 }
 
 CellPointer ClosureTestEmitter::closureIfCreated(FunctionID genericEntrypoint)
@@ -318,7 +320,9 @@ CellPointer ClosureTestEmitter::closureIfCreated(FunctionID genericEntrypoint)
     if (m_options.recorded.useWideReferences())
         return CellPointer(m_out.load64(closureCellOf(genericEntrypoint)));
     Word32 entry = closureTableEntry(genericEntrypoint);
-    return select(isZero(entry), CellPointer(m_out.constInt64(0)), decode(NarrowReference(add(entry, word32(1)).value())));
+    Condition isNotCreated = isZero(entry);
+    CellPointer none(m_out.constInt64(0));
+    return select(isNotCreated, none, decode(NarrowReference(add(entry, 1).value())));
 }
 
 Word32 ClosureTestEmitter::closureTableEntry(FunctionID genericEntrypoint)
@@ -345,7 +349,8 @@ ptrdiff_t ClosureTestEmitter::offsetOfClosureHeader(FunctionKindData kind) const
 
 Condition ClosureTestEmitter::hasClosureStructure(CellPointer cell, FunctionID function)
 {
-    return equal(loadStructureID(cell), loadImmutable32(offsetOfClosureHeader(m_placement.functionKind(function))));
+    Word32 structureID = loadStructureID(cell);
+    return equal(structureID, loadImmutable32(offsetOfClosureHeader(m_placement.functionKind(function))));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -12,6 +12,7 @@
 #include "AOTResultRules.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTTypeTestSite.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -94,7 +95,7 @@ static std::optional<ListCallSite> planCallOfSpreadArray(FunctionPassContext& co
         return std::nullopt;
 
     ValueID iterable = function.at(spread).iterableOperand();
-    ValueID list = analyses.sameObjectThroughCasts(function.at(site.value).listOperand());
+    ValueID list = sameObjectBehindFacts(function, function.at(site.value).listOperand());
     if (!canMoveToCall(analyses, function, site, list, spread))
         return std::nullopt;
 

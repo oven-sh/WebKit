@@ -29,6 +29,7 @@
 
 #include "B3Common.h"
 #include <span>
+#include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -45,7 +46,10 @@ namespace Air { class Code; }
 // generation.
 JS_EXPORT_PRIVATE void prepareForGeneration(Procedure&);
 
-JS_EXPORT_PRIVATE void prepareForGeneration(std::span<Procedure* const>);
+// Called after each B3 step that ran, once the cleanups it requested are done, with the name listEnabledSteps() reports.
+using StepObserver = ScopedLambda<void(Procedure&, ASCIILiteral step)>;
+
+JS_EXPORT_PRIVATE void prepareForGeneration(std::span<Procedure* const>, const StepObserver* = nullptr);
 JS_EXPORT_PRIVATE Vector<ASCIILiteral> listEnabledSteps(Procedure&);
 
 // This takes a B3::Procedure that has been prepared for generation (i.e. it has been lowered to Air and

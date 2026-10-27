@@ -38,11 +38,14 @@ static constexpr uint32_t imageFormatVersion = 2;
 static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
 static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
+static constexpr size_t sizeOfInstructionCacheLine = 64;
+// On x86-64. On arm64 a loop turns as fast in two lines as in one.
+static constexpr bool keepsSmallLoopsInLines = isX86_64();
 static constexpr size_t imageSectionAlignment = 16;
 static constexpr size_t imageConstantsAlignment = 16;
 static constexpr size_t imageFFIDirectoryAlignment = 4;
 constexpr uint32_t alignmentOfConstant(size_t size) { return static_cast<uint32_t>(std::min(imageConstantsAlignment, size_t { 1 } << std::countr_zero(size))); }
-static_assert(!(imagePageSize % imageSectionAlignment));
+static_assert(!(imagePageSize % imageSectionAlignment) && !(imagePageSize % sizeOfInstructionCacheLine));
 
 static constexpr size_t sizeOfNearCall = isX86_64() ? 5 : sizeof(uint32_t);
 static constexpr size_t sizeOfJump = isX86_64() ? 5 : sizeof(uint32_t);
@@ -120,6 +123,7 @@ struct ImageCodeRanges {
 
 // Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, and without LoadsModulesByName only while no module is found by a name.
 // Without LoadsCodeOutsideImage they hold only while no file with code is loaded but those that the build lists as staying outside.
+// Without FindsDataFilesByName they hold only while no data file of the image is found by a name.
 enum class ImageFlag : uint32_t {
     IsObfuscated = 1 << 0,
     AdmitsUnknownJavaScript = 1 << 1,
@@ -127,6 +131,7 @@ enum class ImageFlag : uint32_t {
     AdmitsLibraryText = 1 << 3,
     ShowsWaysBetweenModuleObjects = 1 << 4,
     LoadsCodeOutsideImage = 1 << 5,
+    FindsDataFilesByName = 1 << 6,
 };
 
 // codeOffset and sections[].offset count from the header.
@@ -172,6 +177,7 @@ enum class ImageFunctionFlag : uint8_t {
     // At its entry, in front of the stack words of its caller and above its return address.
     SpillsArgumentRegisters = 1 << 5,
     HasCallsOfOwnFunctionObjects = 1 << 6,
+    HasConstructedCallees = 1 << 7,
 };
 
 // function() is a FunctionID index. An image function index is a position in ImageSection::Functions.
@@ -261,6 +267,8 @@ struct SideTableInputs {
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
     std::span<const uint8_t> handlers;
     std::span<const uint32_t> callsOfOwnFunctionObjects;
+    // A site and a FunctionID index.
+    std::span<const std::pair<uint32_t, uint32_t>> constructedCallees;
     std::span<const uint8_t> callSites;
 };
 
@@ -271,6 +279,7 @@ struct SideTableParts {
 
     bool hasFrameAt(uint32_t offset) const;
     bool callsOwnFunctionObjectAt(uint32_t site) const;
+    std::optional<uint32_t> constructedCalleeAt(uint32_t site) const;
 
     std::span<const uint8_t> frameRanges;
     uint32_t frame { 0 };
@@ -279,6 +288,8 @@ struct SideTableParts {
     std::span<const uint8_t> handlers;
     // Each site as its distance from the one in front.
     std::span<const uint8_t> callsOfOwnFunctionObjects;
+    // Each site as its distance from the one in front, and its function.
+    std::span<const uint8_t> constructedCallees;
     const uint8_t* callSites { nullptr };
 };
 
@@ -311,6 +322,11 @@ inline SideTableParts SideTableParts::read(const ImageFunction& function, const 
         parts.callsOfOwnFunctionObjects = unsafeMakeSpan(cursor, size);
         cursor += size;
     }
+    if (function.has(ImageFunctionFlag::HasConstructedCallees)) {
+        size_t size = static_cast<size_t>(readVarint(cursor));
+        parts.constructedCallees = unsafeMakeSpan(cursor, size);
+        cursor += size;
+    }
     if (function.has(ImageFunctionFlag::HasCallSites))
         parts.callSites = cursor;
     return parts;
@@ -322,6 +338,7 @@ inline OptionSet<ImageFunctionFlag> SideTableInputs::flags() const
     flags.set(ImageFunctionFlag::HasFrameMaps, frameMapRange && frameMapRange->second);
     flags.set(ImageFunctionFlag::HasHandlers, !handlers.empty());
     flags.set(ImageFunctionFlag::HasCallsOfOwnFunctionObjects, !callsOfOwnFunctionObjects.empty());
+    flags.set(ImageFunctionFlag::HasConstructedCallees, !constructedCallees.empty());
     flags.set(ImageFunctionFlag::HasCallSites, !callSites.empty());
     return flags;
 }
@@ -351,6 +368,17 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
         appendVarint(stream, distances.size());
         stream.appendVector(distances);
     }
+    if (flags.contains(ImageFunctionFlag::HasConstructedCallees)) {
+        Vector<uint8_t> rows;
+        uint32_t previous = 0;
+        for (auto [site, function] : inputs.constructedCallees) {
+            RELEASE_ASSERT(site > previous);
+            appendVarint(rows, site - std::exchange(previous, site));
+            appendVarint(rows, function);
+        }
+        appendVarint(stream, rows.size());
+        stream.appendVector(rows);
+    }
     stream.append(inputs.callSites);
 }
 
@@ -362,6 +390,20 @@ inline bool SideTableParts::callsOwnFunctionObjectAt(uint32_t site) const
     while (cursor < end && listed < site)
         listed += readVarint(cursor);
     return site && listed == site;
+}
+
+inline std::optional<uint32_t> SideTableParts::constructedCalleeAt(uint32_t site) const
+{
+    const uint8_t* cursor = constructedCallees.data();
+    const uint8_t* end = cursor + constructedCallees.size();
+    uint64_t listed = 0;
+    while (cursor < end && listed < site) {
+        listed += readVarint(cursor);
+        uint32_t function = static_cast<uint32_t>(readVarint(cursor));
+        if (listed == site)
+            return function;
+    }
+    return std::nullopt;
 }
 
 inline void SideTableParts::appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change)

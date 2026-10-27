@@ -582,8 +582,10 @@ Condition TypeTestEmitter::isExactIntegerIn(Number number, Integer truncated, Ra
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     // An integer outside of int32 is not what the low half of it makes, so one comparison answers both questions.
-    if (range == Range::int32())
-        return equal(conversions.bitsOf(toNumber(low32(truncated))), conversions.bitsOf(number));
+    if (range == Range::int32()) {
+        Integer bitsOfLowHalf = conversions.bitsOf(toNumber(low32(truncated)));
+        return equal(bitsOfLowHalf, conversions.bitsOf(number));
+    }
     Integer bitsOfTruncated = conversions.bitsOf(toNumber(truncated));
     Condition isExact = equal(bitsOfTruncated, conversions.bitsOf(number));
     return logicalAnd(isExact, isInRange(truncated, range));

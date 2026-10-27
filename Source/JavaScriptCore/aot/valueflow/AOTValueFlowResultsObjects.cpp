@@ -246,8 +246,8 @@ static ObjectsOfLayouts collectObjectsOfLayouts(const ValueFlowResultInputs& inp
 
     ValueSetMakers makers(inputs);
     ValueFlowHeapView heap(inputs);
-    Vector<Found> allFound = collectWithMakers<Found>(inputs, makers, universe.numberOfObjects(), [&](unsigned index, ValueSetMaker& maker, Vector<Found>& found) {
-        ValueFlowObjectID object(index);
+    Vector<Found> allFound = collectWithMakers<Found>(inputs, makers, universe.numberOfSiteAndLayoutObjects(), [&](unsigned position, ValueSetMaker& maker, Vector<Found>& found) {
+        ValueFlowObjectID object = universe.siteOrLayoutObjectAt(position);
         if (!isAllocatedObject(inputs, layoutsWithInstances, object))
             return;
         LayoutID layout = universe.layoutOf(object);
@@ -335,8 +335,8 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, const Prototype
     };
 
     Vector<ValueFlowObjectID> objectsAskedAbout[std::size(mutationCauses)];
-    for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
-        ValueFlowObjectID object(index);
+    for (uint32_t position = 0; position < universe.numberOfSiteAndLayoutObjects(); ++position) {
+        ValueFlowObjectID object = universe.siteOrLayoutObjectAt(position);
         if (!isAllocatedObject(inputs, layoutsWithInstances, object) || flowOf(object).allocationClasses.isEmpty() || hasFunction(flowOf(object).witness))
             continue;
         if (const MutationCause* cause = std::ranges::find(mutationCauses, flowOf(object).cause, &MutationCause::cause); cause != std::end(mutationCauses))

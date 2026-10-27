@@ -193,6 +193,8 @@ function formatBuiltin(builtin: ModelBuiltin): string {
     ["firstOverload", formatId("BuiltinOverloadID", overloads.length === 0 ? null : overloads[0])],
     ["overloadCount", formatUnlessZero(overloads.length)],
     ["isNamedByText", builtin.hostNumber === noHostNumber ? null : "true"],
+    ["isAddedAtFirstRead", builtin.isAddedAtFirstRead ? "true" : null],
+    ["isAddedAsEnumerable", builtin.isAddedAsEnumerable ? "true" : null],
   ]);
 }
 

@@ -2477,9 +2477,13 @@ class ByteCompiler {
     };
 
 public:
-    ByteCompiler(YarrPattern& pattern)
+    // See BytecodePattern::m_countsWhatJITCounts.
+    enum class Counts : bool { WhatBytecodeCounts, WhatJITCounts };
+
+    ByteCompiler(YarrPattern& pattern, Counts counts = Counts::WhatBytecodeCounts)
         : m_pattern(pattern)
         , m_currentFlags(pattern.m_flags)
+        , m_countsWhatJITCounts(counts == Counts::WhatJITCounts)
     {
     }
 
@@ -2502,7 +2506,9 @@ public:
             ByteTermDumper(&m_pattern).dumpDisjunction(m_bodyDisjunction.get());
 #endif
 
-        return makeUnique<BytecodePattern>(WTF::move(m_bodyDisjunction), m_allParenthesesInfo, m_pattern, allocator, lock, m_pattern.offsetVectorBaseForNamedCaptures(), m_pattern.offsetsSize());
+        auto bytecode = makeUnique<BytecodePattern>(WTF::move(m_bodyDisjunction), m_allParenthesesInfo, m_pattern, allocator, lock, m_pattern.offsetVectorBaseForNamedCaptures(), m_pattern.offsetsSize());
+        bytecode->m_countsWhatJITCounts = m_countsWhatJITCounts;
+        return bytecode;
     }
 
     void checkInput(unsigned count)
@@ -3018,7 +3024,8 @@ public:
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, inputOffset, matchDirection))
                             return error;
                         atomParenthesesSubpatternEnd(term.parentheses.lastSubpatternId, delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType, term.parentheses.disjunction->m_callFrameSize);
-                        m_allParenthesesInfo.last()->m_jitCountsTurns = jitCountsTurnsOf(term);
+                        if (m_countsWhatJITCounts)
+                            m_allParenthesesInfo.last()->m_jitCountsTurns = jitCountsTurnsOf(term, m_knownBacktrackableContent);
                     }
                     break;
                 }
@@ -3096,6 +3103,8 @@ private:
     Vector<ParenthesesStackEntry> m_parenthesesStack;
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     OptionSet<Flags> m_currentFlags;
+    const bool m_countsWhatJITCounts;
+    KnownBacktrackableContent m_knownBacktrackableContent;
 };
 
 void ByteTermDumper::dumpTerm(size_t idx, ByteTerm term)
@@ -3420,10 +3429,9 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
     auto flatProgram = compileFlatProgram(pattern);
     if (!flatProgram) {
         dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs in the bytecode interpreter: ", description(flatProgram.error()));
-        auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+        auto bytecode = ByteCompiler(pattern, ByteCompiler::Counts::WhatJITCounts).compile(allocator, lock, errorCode);
         if (bytecode) {
             bytecode->m_flatProgramDecline = flatProgram.error();
-            bytecode->m_countsWhatJITCounts = true;
             bytecode->m_requiredTexts = WTF::move(requiredTexts);
         }
         return bytecode;
@@ -3440,9 +3448,8 @@ NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, 
     dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs on a flat program");
     if (Options::validateRegExpFlatProgram()) [[unlikely]] {
         ErrorCode ignoredErrorCode { ErrorCode::NoError };
-        if (auto bytecode = ByteCompiler(pattern).compile(allocator, lock, ignoredErrorCode)) {
+        if (auto bytecode = ByteCompiler(pattern, ByteCompiler::Counts::WhatJITCounts).compile(allocator, lock, ignoredErrorCode)) {
             bytecode->m_flatProgram = WTF::move(*flatProgram);
-            bytecode->m_countsWhatJITCounts = true;
             bytecode->m_source = source;
             bytecode->m_requiredTexts = WTF::move(requiredTexts);
             return bytecode;
@@ -3494,10 +3501,9 @@ static std::optional<JSRegExpResult> matchCountingTurns(BytecodePattern* bytecod
         YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode, ExecutionMode::IncludeSubpatterns, analysis);
         if (hasError(errorCode))
             return std::nullopt;
-        if (auto program = compileFlatProgram(pattern, FlatProgramForm::CountsTurns)) {
-            (*program)->setRequiredTexts(bytecode->m_requiredTexts);
+        // It makes an attempt at every place, as the JIT does, which may run out of turns at a place that holds no match.
+        if (auto program = compileFlatProgram(pattern, FlatProgramForm::CountsTurns))
             bytecode->m_flatProgramThatCountsTurns = WTF::move(*program);
-        }
     }
     FlatProgram* program = bytecode->m_flatProgramThatCountsTurns.get();
     if (!program)
@@ -3515,7 +3521,7 @@ static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& pr
     JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
     unsigned bytecodeRemainingTurns { 0 };
     Vector<unsigned, 32> bytecodeOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
-    interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult, bytecodeRemainingTurns);
+    interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult, bytecodeRemainingTurns, program.jitCountsTurns);
     validateFlatProgramResult(program, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
     if (flatResult == JSRegExpResult::JITCodeFailure) {
         Vector<unsigned, 32> secondOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
@@ -3559,12 +3565,6 @@ static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecod
         unsigned remainingTurns { 0 };
         if (auto result = matchCountingTurns(bytecode, input, start, output, remainingTurns))
             return *result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
-        if (program.jitCountsTurns) {
-            // It has handed over early: see FlatMatchPolicy.
-            flatResult = matchFlatProgramWithSurrogates(program, input, start, output, FlatMatchPolicy::RunsToMatchLimit);
-            if (!hasGivenUp(flatResult))
-                return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
-        }
     }
     if (!bytecode->m_body) {
         if (!bytecode->m_bytecodeBehindFlatProgram) {
@@ -3574,17 +3574,16 @@ static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecod
             YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode);
             if (hasError(errorCode))
                 return offsetNoMatch;
-            bytecode->m_bytecodeBehindFlatProgram = ByteCompiler(pattern).compile(bytecode->m_allocator, bytecode->m_lock, errorCode);
+            bytecode->m_bytecodeBehindFlatProgram = ByteCompiler(pattern, ByteCompiler::Counts::WhatJITCounts).compile(bytecode->m_allocator, bytecode->m_lock, errorCode);
             if (!bytecode->m_bytecodeBehindFlatProgram)
                 return offsetNoMatch;
-            bytecode->m_bytecodeBehindFlatProgram->m_countsWhatJITCounts = true;
             bytecode->m_bytecodeBehindFlatProgram->m_requiredTexts = bytecode->m_requiredTexts;
         }
         bytecode = bytecode->m_bytecodeBehindFlatProgram.get();
     }
     JSRegExpResult result { JSRegExpResult::NoMatch };
     unsigned remainingTurns { 0 };
-    return interpretBytecode(bytecode, input, start, output, result, remainingTurns);
+    return interpretBytecode(bytecode, input, start, output, result, remainingTurns, program.jitCountsTurns);
 }
 
 static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)

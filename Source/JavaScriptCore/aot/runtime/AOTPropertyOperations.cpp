@@ -21,6 +21,7 @@
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTSchemaEnums.h"
 #include "AOTUnwinding.h"
 #include "DeferGCInlines.h"
@@ -181,6 +182,8 @@ static ALWAYS_INLINE size_t deleteNamedProperty(JSGlobalObject* globalObject, JS
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (vm.aotState().hasObjectsBeingFilled) [[unlikely]]
+        RuntimeHooks::finishFillingObjects(vm);
     if (Structure* structure = object->structure(); object->type() == FinalObjectType && structure->isDictionary() && !structure->isUncacheableDictionary()) {
         // Every name that a cacheable dictionary gives up makes a Structure and a copy of its table.
         unsigned attributes;
@@ -296,7 +299,7 @@ static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue ba
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!base.isObject())
-        throwException(globalObject, scope, member ? createSuperBaseNotAnObjectError(globalObject, base, *member) : createNotAnObjectError(globalObject, base));
+        throwException(globalObject, scope, createSuperBaseNotAnObjectError(globalObject, base, member));
     return base.getObject();
 }
 

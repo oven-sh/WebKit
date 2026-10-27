@@ -132,6 +132,11 @@ public:
 
     void join();
 
+#if ENABLE(AOT)
+    // Starts the underlying thread if there is none. False where Thread::survivesFailedCreation() and the system refuses a thread.
+    WTF_EXPORT_PRIVATE bool tryEnsureUnderlyingThread(const AbstractLocker&);
+#endif
+
     virtual ASCIILiteral name() const { return "WTF::AutomaticThread"_s; }
 
 protected:
@@ -199,7 +204,12 @@ protected:
 private:
     friend class AutomaticThreadCondition;
 
+#if ENABLE(AOT)
+    enum class FailedCreation : bool { Crashes, IsReported };
+    void start(const AbstractLocker&, FailedCreation = FailedCreation::Crashes);
+#else
     void start(const AbstractLocker&);
+#endif
 
 protected:
     Box<Lock> m_lock;

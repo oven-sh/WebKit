@@ -1,0 +1,86 @@
+# Two ways test two positions of one view and meet: the guard and the position are parameters of the block, and on each way the guard that is handed over is about the position that is handed over.
+# A read at that parameter under that guard is inside the view. Not where a way hands over another position than it has tested, and not at a position that a turn of a loop has bound anew
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="goodGuardAndPositionOfEachWay" parameters=[{type=Uint8Array}, {type=int[0, 1000]}, {type=int[0, 1000]}, {type=boolean}] results=[{type=anything}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+    Branch v4 -> taken b3(v1 | 0), notTaken b4()
+  b2():
+    v5 = IsInsideView v0, v2 typedArrayType=2 [keyIsIntegral]
+    Branch v5 -> taken b3(v2 | 0), notTaken b4()
+  b3(v6, v7):
+    v8 = GetTypedArrayElement v0, v6, v7 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Return v8
+  b4():
+    v9 = Undefined
+    Return v9
+}
+function f1 name="badPositionOfTheOtherWay" parameters=[{type=Uint8Array}, {type=int[0, 1000]}, {type=int[0, 1000]}, {type=boolean}] results=[{type=anything}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+    Branch v4 -> taken b3(v2 | 0), notTaken b4()
+  b2():
+    v5 = IsInsideView v0, v2 typedArrayType=2 [keyIsIntegral]
+    Branch v5 -> taken b3(v2 | 0), notTaken b4()
+  b3(v6, v7):
+    v8 = GetTypedArrayElement v0, v6, v7 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Return v8
+  b4():
+    v9 = Undefined
+    Return v9
+}
+function f2 name="badPositionThatOnlyOneWayHasTested" parameters=[{type=Uint8Array}, {type=int[0, 1000]}, {type=int[0, 1000]}, {type=boolean}] results=[{type=anything}] {
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+    Branch v4 -> taken b3(v1 | 0), notTaken b4()
+  b2():
+    v5 = IsInsideView v0, v2 typedArrayType=2 [keyIsIntegral]
+    Branch v5 -> taken b3(v2 | 0), notTaken b4()
+  b3(v6, v7):
+    v8 = GetTypedArrayElement v0, v1, v7 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    Return v8
+  b4():
+    v9 = Undefined
+    Return v9
+}
+function f3 name="badPositionOfTheTurnBefore" parameters=[{type=Uint8Array}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+    Branch v2 -> taken b1(v1 | 0), notTaken b3()
+  b1(v3: int[0, 1000], v4):
+    LoopHint
+    v6 = GetTypedArrayElement v0, v3, v4 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    v7 = Integer integer=1
+    v8 = Add v3, v7
+    v9 = AssumeType v8 provenType=int[0, 1000]
+    v10 = IsInsideView v0, v3 typedArrayType=2 [keyIsIntegral]
+    Branch v10 -> taken b2(| 0), notTaken b3()
+  b2(v11):
+    Jump -> next b1(v9, v11)
+  b3():
+    v12 = Undefined
+    Return v12
+}
+function f4 name="goodPositionTestedForTheNextTurn" parameters=[{type=Uint8Array}, {type=int[0, 1000]}] results=[{type=anything}] {
+    v2 = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
+    Branch v2 -> taken b1(v1 | 0), notTaken b3()
+  b1(v3: int[0, 1000], v4):
+    LoopHint
+    v6 = GetTypedArrayElement v0, v3, v4 typedArrayType=2 level=Proven [keyIsIntegral, isInsideView]
+    v7 = Integer integer=1
+    v8 = Add v3, v7
+    v9 = AssumeType v8 provenType=int[0, 1000]
+    v10 = IsInsideView v0, v9 typedArrayType=2 [keyIsIntegral]
+    Branch v10 -> taken b2(| 0), notTaken b3()
+  b2(v11):
+    Jump -> next b1(v9, v11)
+  b3():
+    v12 = Undefined
+    Return v12
+}

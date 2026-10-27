@@ -20,14 +20,16 @@ function f0 name="goodBuiltOnceInsideTheLoop" parameters=[{type=anything}] resul
   b3():
     Jump -> next b4(v5, v6)
   b4(v10, v11):
-    v12 = GetSlot v10, v11 key="x" receivers=[L0] level=Proven
-    v13 = ToBoolean v12
-    Branch v13 -> taken b5(), notTaken b6()
+    v12 = Specified
+    v13 = AssumeType v10, v12 provenType=object
+    v14 = GetSlot v13, v11 key="x" receivers=[L0] level=Proven
+    v15 = ToBoolean v14
+    Branch v15 -> taken b5(), notTaken b6()
   b5():
-    v14 = Integer integer=2
-    Jump -> next b1(v14, v10, v11)
+    v16 = Integer integer=2
+    Jump -> next b1(v16, v10, v11)
   b6():
-    Return v12
+    Return v14
 }
 function f1 name="goodBuiltInOneOfTwoFormsInsideTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
     v2 = Unspecified valueType=object
@@ -53,14 +55,16 @@ function f1 name="goodBuiltInOneOfTwoFormsInsideTheLoop" parameters=[{type=anyth
   b6():
     Jump -> next b7(v7, v8)
   b7(v14, v15):
-    v16 = GetSlot v14, v15 key="x" receivers=[L0] level=Proven
-    v17 = ToBoolean v16
-    Branch v17 -> taken b8(), notTaken b9()
+    v16 = Specified
+    v17 = AssumeType v14, v16 provenType=object
+    v18 = GetSlot v17, v15 key="x" receivers=[L0] level=Proven
+    v19 = ToBoolean v18
+    Branch v19 -> taken b8(), notTaken b9()
   b8():
-    v18 = Integer integer=4
-    Jump -> next b3(v18, v14, v15)
+    v20 = Integer integer=4
+    Jump -> next b3(v20, v14, v15)
   b9():
-    Return v16
+    Return v18
 }
 function f2 name="badAnotherObjectComesRoundTheLoop" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
     v2 = Unspecified valueType=object
@@ -77,14 +81,16 @@ function f2 name="badAnotherObjectComesRoundTheLoop" parameters=[{type=anything}
   b3():
     Jump -> next b4(v6, v7)
   b4(v11, v12):
-    v13 = GetSlot v11, v12 key="x" receivers=[L0] level=Proven
-    v14 = ToBoolean v13
-    Branch v14 -> taken b5(), notTaken b6()
+    v13 = Specified
+    v14 = AssumeType v11, v13 provenType=object
+    v15 = GetSlot v14, v12 key="x" receivers=[L0] level=Proven
+    v16 = ToBoolean v15
+    Branch v16 -> taken b5(), notTaken b6()
   b5():
-    v15 = Integer integer=2
-    Jump -> next b1(v15, v1, v12)
+    v17 = Integer integer=2
+    Jump -> next b1(v17, v1, v12)
   b6():
-    Return v13
+    Return v15
 }
 function f3 name="badNoGuardComesRoundTheLoop" parameters=[{type=anything}] results=[{type=anything}] {
     v1 = Unspecified valueType=object
@@ -101,15 +107,17 @@ function f3 name="badNoGuardComesRoundTheLoop" parameters=[{type=anything}] resu
   b3():
     Jump -> next b4(v5, v6)
   b4(v10, v11):
-    v12 = GetSlot v10, v11 key="x" receivers=[L0] level=Proven
-    v13 = ToBoolean v12
-    Branch v13 -> taken b5(), notTaken b6()
+    v12 = Specified
+    v13 = AssumeType v10, v12 provenType=object
+    v14 = GetSlot v13, v11 key="x" receivers=[L0] level=Proven
+    v15 = ToBoolean v14
+    Branch v15 -> taken b5(), notTaken b6()
   b5():
-    v14 = Integer integer=2
-    v15 = AllGuards
-    Jump -> next b1(v14, v10, v15)
+    v16 = Integer integer=2
+    v17 = AllGuards
+    Jump -> next b1(v16, v10, v17)
   b6():
-    Return v12
+    Return v14
 }
 function f4 name="badAnObjectWithoutGuardAtTheEntry" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
     v2 = AllGuards
@@ -158,12 +166,14 @@ function f5 name="badSlotFilledInOneOfTwoForms" parameters=[{type=anything}, {ty
   b6():
     Jump -> next b7(v7, v8)
   b7(v14, v15):
-    v16 = GetSlot v14, v15 key="y" receivers=[L0] level=Proven
-    v17 = ToBoolean v16
-    Branch v17 -> taken b8(), notTaken b9()
+    v16 = Specified
+    v17 = AssumeType v14, v16 provenType=object
+    v18 = GetSlot v17, v15 key="y" receivers=[L0] level=Proven
+    v19 = ToBoolean v18
+    Branch v19 -> taken b8(), notTaken b9()
   b8():
-    v18 = Integer integer=4
-    Jump -> next b3(v18, v14, v15)
+    v20 = Integer integer=4
+    Jump -> next b3(v20, v14, v15)
   b9():
-    Return v16
+    Return v18
 }

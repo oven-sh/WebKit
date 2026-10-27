@@ -227,9 +227,10 @@ static Type zeroesJoined(const Type& other)
 
 static Type narrowByStrictEquality(const TypingContext& context, const Type& source, const Type& other, EdgeSide side)
 {
-    if (side == EdgeSide::Taken)
-        return source.intersectWith(zeroesJoined(other), context.types);
-    return other.isSingleValue() ? source.without(other, context.types) : source;
+    if (side == EdgeSide::NotTaken)
+        return other.isSingleValue() ? source.without(other, context.types) : source;
+    Type common = zeroesJoined(other).intersectWith(source, context.types);
+    return common.isSubsetOf(source, context.program) ? common : source;
 }
 
 static Type narrowByLooseEquality(const TypingContext& context, const Type& source, const Type& other, EdgeSide side)

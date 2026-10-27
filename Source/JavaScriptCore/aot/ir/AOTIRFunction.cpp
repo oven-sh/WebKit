@@ -121,6 +121,26 @@ Wire::SourceLocation Function::locationOf(Origin origin) const
     return locationInModule(module, inlineFrames[outermostFrame].callPosition);
 }
 
+Origin Function::enterFrameOfBuiltin(FunctionID self, Origin call, BuiltinID builtin)
+{
+    if (inlineFrames.isEmpty())
+        inlineFrames.append(InlineFrame { });
+    const InlineFrame& caller = inlineFrames[call.inlineFrame];
+    if (caller.calledBuiltin)
+        return call;
+    // The steps keep the position of the call, so the frame names the function that holds the call.
+    inlineFrames.append(InlineFrame {
+        .callee = call.inlineFrame ? caller.callee : self,
+        .callPosition = call.position,
+        .parent = call.inlineFrame,
+        .isTailCall = call.isTailCall,
+        .callIsPartOfConstruction = call.isPartOfConstruction,
+        .module = call.inlineFrame ? caller.module : module,
+        .calledBuiltin = builtin,
+    });
+    return { .position = call.position, .inlineFrame = static_cast<uint32_t>(inlineFrames.size() - 1) };
+}
+
 std::optional<uint32_t> Function::writtenPositionOf(ValueID id) const
 {
     auto found = std::ranges::lower_bound(writtenPositions, id.index(), { }, [](const WrittenPosition& written) { return written.value.index(); });

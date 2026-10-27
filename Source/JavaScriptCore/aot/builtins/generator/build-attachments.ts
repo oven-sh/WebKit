@@ -28,7 +28,7 @@ import type {
   ModelType,
   TableFeature,
 } from "./model.ts";
-import { compareBytes, joinPath, pathOfNativeBinding, tokenOf } from "./paths.ts";
+import { compareBytes, isHiddenRootComponent, joinPath, pathOfNativeBinding, tokenOf } from "./paths.ts";
 import {
   hostReadContexts,
   type BoxedStubName,
@@ -280,6 +280,10 @@ function resolveFeatureUse(
   return condition === null ? null : { feature, overload, isGuard: false, condition };
 }
 
+// A program comes to it by names alone, and reading a name gives what it gives in an executable that has every feature: no feature guards it.
+const isAccessorReadByName = ({ kind, holder, path }: ModelBuiltin): boolean =>
+  kind === "Accessor" && holder !== null && holder.kind !== "Prototype" && !isHiddenRootComponent(path[0]);
+
 function buildFeatureUses(context: AttachmentContext, builtin: ModelBuiltin): ModelFeatureUse[] {
   const { builder } = context;
   const written: { overload: ModelOverload | null; spec: FeatureUseSpec; source: Source }[] = [];
@@ -308,7 +312,9 @@ function buildFeatureUses(context: AttachmentContext, builtin: ModelBuiltin): Mo
     }
     uses.push(use);
   }
-  const guard = uses.findIndex(use => use.condition === null && use.overload === null);
+  const guard = isAccessorReadByName(builtin)
+    ? -1
+    : uses.findIndex(use => use.condition === null && use.overload === null);
   return uses.map((use, index) => ({ ...use, isGuard: index === guard }));
 }
 
@@ -340,11 +346,16 @@ function holdsOnlyPrimitives({ kind, flags, overloads }: ModelBuiltin): boolean 
   return overloads.every(({ mode, result }) => mode === "Get" && isPrimitive(result.type));
 }
 
+// The object is there as soon as its constructor is. The flow analysis lets the constructor escape where the property is read.
+const holdsPrototypeObjectOfConstructor = ({ kind, holder, name }: ModelBuiltin): boolean =>
+  kind === "DataProperty" && holder?.kind === "Constructor" && name.kind === "Text" && name.text === "prototype";
+
 function inheritFeatureUses(context: AttachmentContext): void {
   const inherited: [MutableBuiltin, ModelFeatureUse[]][] = [];
   for (const builtin of context.builder.builtins) {
     if (builtin.sameObjectAs !== null || writtenColumn(context.builder, builtin, "usesFeature").length > 0) continue;
     if (builtin.attachments.featureUses.length > 0 || holdsOnlyPrimitives(builtin)) continue;
+    if (holdsPrototypeObjectOfConstructor(builtin) || isAccessorReadByName(builtin)) continue;
     const holderUses = findHolderFeatureUses(context.builder, builtin);
     if (holderUses.length > 0) inherited.push([builtin, withoutConditions(holderUses)]);
   }

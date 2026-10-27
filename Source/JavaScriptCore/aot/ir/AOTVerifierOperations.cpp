@@ -329,7 +329,10 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
 {
     switch (value.opcode) {
     case Opcode::Upcast:
-        need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
+        if (typeOf(value.valueOperand()).mayBeUnspecified())
+            need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()).withPrimitives(Primitive::Unspecified));
+        else
+            need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
         return;
     case Opcode::Expect:
         if (hasClassProofs(m_program.at(value.expectedType().predicted())))
@@ -354,7 +357,7 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
         const ClassPart* part = m_program.at(value.provenType()).singleBuiltinClass();
         if (!part || !part->contentsAreProven || !holdsOnlyNumbers(part->arrayStorage))
             return;
-        const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.valueOperand()));
+        const Value& array = m_function.at(analyses().sameObjectThroughCasts(value.valueOperand()).valueInFrontOfFacts());
         if (array.opcode == Opcode::NewArray && array.arrayStorage() != part->arrayStorage)
             fail(InternalErrorKind::StoredTypeMismatch, block, id, value.valueOperand().index());
         return;

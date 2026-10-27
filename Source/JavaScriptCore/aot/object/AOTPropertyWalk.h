@@ -23,6 +23,10 @@ class Symbol;
 class VM;
 struct ClassInfo;
 
+namespace AOT {
+struct CachedPropertyList;
+}
+
 namespace AOT::PropertyWalk {
 
 struct OwnProperty {
@@ -52,6 +56,7 @@ JS_EXPORT_PRIVATE void prepareHoldersBeforeLookupsUnder(JSGlobalObject*, Symbol*
 JS_EXPORT_PRIVATE bool hasOwnEnumerableProperty(JSGlobalObject*, JSObject* compiledObject);
 JSCellButterfly* tryGetCachedOwnKeys(VM&, JSObject*, Filter);
 Presence hasOwnProperty(JSObject*, UniquedStringImpl*);
+const CachedPropertyList* tryGetListOfOwnProperties(VM&, JSObject* compiledObject, JSObject*& extraProperties);
 Presence hasPropertyOnChain(Structure*, UniquedStringImpl*);
 // A compiled object whose Structure says nothing about its extra properties gets the Structure that lists them. Whether it has another Structure now. Collects nothing.
 bool listExtraPropertiesInStructure(VM&, JSObject*);

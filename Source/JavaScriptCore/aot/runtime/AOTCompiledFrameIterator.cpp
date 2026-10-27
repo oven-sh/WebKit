@@ -19,9 +19,11 @@
 #include "AOTInstance.h"
 #include "AOTModules.h"
 #include "AOTOperationData.h"
+#include "AOTProgramTables.h"
 #include "AOTSavedFrame.h"
 #include "AOTShownFrameFilter.h"
 #include "AOTStackTrace.h"
+#include "AOTStubFrames.h"
 #include "CallFrameInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSCellInlines.h"
@@ -230,6 +232,8 @@ LogicalFrame innermostLogicalFrame(const Image& image, InlineFrameReader& reader
     if (!site.inlineFrame)
         return { image.rootFunctionOf(site.code.index()), site.callSite, 0, false, site.isTailDeleted };
     const InlineFrameRecord& record = reader.at(image, site.code.index(), site.inlineFrame);
+    if (record.function.index() >= image.programTables().numberOfFunctions()) [[unlikely]]
+        return { record.function, record.callSite, record.parent, false, false, true, record.isTailCall };
     return { record.function, site.callSite, site.inlineFrame, record.isConstruct, site.isTailDeleted };
 }
 
@@ -333,12 +337,60 @@ CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool 
     enterMachineFrame(findFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
 
+FunctionID functionConstructedAt(const Image& image, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame)
+{
+    ASSERT(site.site.isConstruct());
+    if (plainFunctionConstructFrame)
+        return functionOf(*std::bit_cast<JSCell**>(std::bit_cast<uintptr_t>(plainFunctionConstructFrame) + PlainFunctionConstructFrame::offsetOfCallee)).value_or(FunctionID());
+    return image.constructedCalleeAt(site.code.index(), site.site.callSite).value_or(FunctionID());
+}
+
+bool isCodeOf(const Image& image, CompiledFunctionID code, FunctionID function)
+{
+    return sourceFunctionOf(image.rootFunctionOf(code.index())) == sourceFunctionOf(function);
+}
+
+std::optional<TraceFrame> frameOfConstructedFunctionThatLeft(const Image& image, FunctionID constructed, CompiledFunctionID enteredSince)
+{
+    FunctionID function = sourceFunctionOf(constructed);
+    // Nothing on the stack says which of several calls it left by. The callee that stands there now speaks for the call that names it.
+    uint32_t calleeOnStack = enteredSince ? sourceFunctionOf(image.rootFunctionOf(enteredSince.index())).index() : TailCallPlace::noCallee;
+    std::optional<uint32_t> found;
+    uint32_t number = 0;
+    forEachTailCallPlace(image.programTables().placesOfTailCalls(), [&](const TailCallPlace& place) {
+        if (place.function > function.index())
+            return IterationStatus::Done;
+        if (place.function == function.index()) {
+            if (!found)
+                found = number;
+            if (place.callee != TailCallPlace::noCallee && place.callee == calleeOnStack) {
+                found = number;
+                return IterationStatus::Done;
+            }
+        }
+        ++number;
+        return IterationStatus::Continue;
+    });
+    if (!found)
+        return std::nullopt;
+    uint32_t numberInFrames = image.header().counts.functions + *found;
+    return TraceFrame { CompiledFunctionID(numberInFrames), function, CallSiteIndex(0), false, true, false, false, true, false };
+}
+
 bool CompiledFrameIterator::RunEnd::constructs(FunctionID outermost) const
 {
     if (!isConstruct)
         return false;
     CalleeBits callee = adapterFrame->callee();
     return callee.isCell() && isClosureOf(callee.asCell(), outermost);
+}
+
+FunctionID CompiledFrameIterator::RunEnd::constructedFunction() const
+{
+    if (!isConstruct)
+        return { };
+    CalleeBits callee = adapterFrame->callee();
+    return callee.isCell() ? functionOf(callee.asCell()).value_or(FunctionID()) : FunctionID();
 }
 
 // An operation that a function calls at the site of a tail call stands for the callee, a built-in. What the operation calls runs after the tail call.
@@ -456,6 +508,9 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         case StubFrameKind::EngineCallee:
             cursor.engineCalleeStubFrame = cursor.callFrame;
             break;
+        case StubFrameKind::PlainFunctionConstruct:
+            cursor.plainFunctionConstructFrame = cursor.callFrame;
+            break;
         case StubFrameKind::Adapter:
         case StubFrameKind::HandlerOfJob:
         case StubFrameKind::ConstructAdapter:
@@ -502,23 +557,73 @@ void CompiledFrameIterator::readFrame() const
     m_hasReadFrame = true;
 }
 
+std::optional<TraceFrame> CompiledFrameIterator::findConstructedFunctionThatLeft()
+{
+    Cursor cursor = m_cursor;
+    cursor.plainFunctionConstructFrame = nullptr;
+    Exit exit;
+    RunEnd runEnd;
+    const CallSiteCache::Entry* caller = findCallerFunctionFrame(cursor, exit, runEnd);
+    FunctionID constructed;
+    if (!caller)
+        constructed = runEnd.constructedFunction();
+    else if (caller->site.isConstruct())
+        constructed = functionConstructedAt(*m_image, *caller, cursor.plainFunctionConstructFrame);
+    if (!constructed || isCodeOf(*m_image, m_callSite.code, constructed))
+        return std::nullopt;
+    return frameOfConstructedFunctionThatLeft(*m_image, constructed, m_callSite.code);
+}
+
+void CompiledFrameIterator::listConstructedFunctionsThatLeft()
+{
+    m_listsConstructedFunctionsThatLeft = true;
+    if (m_isAtEnd || !m_cursor.plainFunctionConstructFrame || !m_callSite.site.isConstruct())
+        return;
+    if (FunctionID constructed = functionConstructedAt(*m_image, m_callSite, m_cursor.plainFunctionConstructFrame))
+        m_constructedFunctionThatLeft = frameOfConstructedFunctionThatLeft(*m_image, constructed, { });
+    m_constructedFunctionLeftOnTop = m_constructedFunctionThatLeft.has_value();
+}
+
 void CompiledFrameIterator::advance()
 {
     if (m_isAtEnd)
         return;
-    if (!frame().inlineFrame) {
+    if (m_constructedFunctionThatLeft) [[unlikely]] {
+        m_constructedFunctionThatLeft = std::nullopt;
+        if (std::exchange(m_constructedFunctionLeftOnTop, false))
+            return;
+        advanceToCallerMachineFrame();
+        return;
+    }
+    m_calleeFunction = frame().function;
+    if (!m_frame.inlineFrame) {
+        if (m_listsConstructedFunctionsThatLeft && !m_cursor.isAmongFramesThatWait) {
+            m_constructedFunctionThatLeft = findConstructedFunctionThatLeft();
+            if (m_constructedFunctionThatLeft) [[unlikely]]
+                return;
+        }
         advanceToCallerMachineFrame();
         return;
     }
     LogicalFrame current { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted };
     LogicalFrame caller = callerOfInlinedFrame(*m_image, m_inlineFrames, m_frame.code, current);
+    m_frame.calledBuiltin = { };
+    if (caller.isOfCalledBuiltin) [[unlikely]] {
+        if (!m_cursor.isAmongFramesThatWait)
+            m_frame.calledBuiltin = builtinOfFunctionInFrames(caller.function);
+        caller = callerOfInlinedFrame(*m_image, m_inlineFrames, m_frame.code, caller);
+    }
     m_frame.function = caller.function;
     m_frame.callSite = caller.callSite;
     m_frame.inlineFrame = caller.inlineFrame;
     m_frame.isTailDeleted = caller.isTailDeleted;
-    m_frame.calledBuiltin = { };
     m_frame.visibility = m_cursor.isAmongFramesThatWait ? TraceVisibility::Hidden : FunctionDescription(caller.function).visibility();
     m_isInlinedConstructCall = caller.isInlinedConstructCall;
+}
+
+bool CompiledFrameIterator::tailCalledOwnBody() const
+{
+    return m_calleeFunction && isFormThatLeftByTailCall(frame().function, FunctionDescription(m_calleeFunction).sourceFunction(), m_frame.isTailDeleted);
 }
 
 bool CompiledFrameIterator::isAboveFramesThatWait() const
@@ -539,6 +644,7 @@ void CompiledFrameIterator::advanceToCallerMachineFrame()
     m_cursor.asyncGeneratorStubFrame = nullptr;
     m_cursor.asyncGeneratorBodyFrame = nullptr;
     m_cursor.engineCalleeStubFrame = nullptr;
+    m_cursor.plainFunctionConstructFrame = nullptr;
     m_calleeWasEntered = true;
     enterMachineFrame(findCallerFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
@@ -559,11 +665,14 @@ bool CompiledFrameIterator::isConstructCall()
     Exit exit;
     RunEnd runEnd;
     for (;;) {
+        cursor.plainFunctionConstructFrame = nullptr;
         const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd);
         if (!entry)
             return runEnd.constructs(source);
-        if (entry->site.isConstruct())
-            return true;
+        if (entry->site.isConstruct()) {
+            FunctionID constructed = functionConstructedAt(*m_image, *entry, cursor.plainFunctionConstructFrame);
+            return !constructed || sourceFunctionOf(constructed) == source;
+        }
         if (entry->innermostVisibility == TraceVisibility::Visible)
             return false;
         LogicalFrame caller { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false };
@@ -852,7 +961,7 @@ const CallSiteCache::Entry* CallSiteCache::withMethodReadSite(const Image& image
         return entry;
     ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(throwSite->throwSite[0]);
     if (word.isCallSite() && word.registerNumber)
-        const_cast<Entry*>(entry)->site.firstReadSite = methodReadSite(entry->site.callSite, word.registerNumber - 1);
+        const_cast<Entry*>(entry)->site.firstReadSite = firstReadSiteInFrontOf(entry->site.callSite, word.registerNumber - 1);
     return entry;
 }
 

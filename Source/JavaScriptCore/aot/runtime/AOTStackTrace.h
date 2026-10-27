@@ -114,6 +114,8 @@ JS_EXPORT_PRIVATE bool tryGetStackTrace(VM&, JSCell* owner, WTF::Vector<StackFra
 // Ends the process unless a walk that visits each compiled frame by itself lists the same frames.
 void validateFrames(VM&, JSCell* owner, const WTF::Vector<StackFrame>& actual, size_t maxStackSize, JSCell* lastConstructorToSkip);
 JS_EXPORT_PRIVATE std::optional<TraceFrame> tryGetFrameOfClassCalledWithoutNew(VM&, CallFrame*);
+// What a stack trace lists for a function that was constructed and whose frame a tail call has taken from the stack. `enteredSince` is the code that stands in its place, if compiled code does.
+std::optional<TraceFrame> frameOfConstructedFunctionThatLeft(const Image&, FunctionID constructed, CompiledFunctionID enteredSince);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> positionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE LineColumn obfuscatedPositionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE String sourceURLOf(ModuleID);

@@ -620,7 +620,8 @@ static void testPaddingOfFrameCellCountsAsWritten()
     B3::BasicBlock* root = proc.addBlock();
     appendReturn(proc, root);
     SlotsOfCells cells { { proc.addStackSlot(layout.size), &layout }, { proc.addStackSlot(16), nullptr } };
-    AOT_TEST_CHECK(reportReadsOfUnwrittenStackSlots(Typed::FunctionID(0u), cells, true).run->run(proc));
+    proc.addStackSlot(24);
+    AOT_TEST_CHECK(reportReadsOfUnwrittenStackSlots(Typed::FunctionID(0u), cells).run->run(proc));
     B3::validate(proc);
 
     Vector<uint64_t> words;
@@ -630,7 +631,7 @@ static void testPaddingOfFrameCellCountsAsWritten()
     }
     uint64_t unwritten = words[0];
     AOT_TEST_CHECK(unwritten >> 32 == static_cast<uint32_t>(unwritten) && static_cast<uint8_t>(unwritten));
-    AOT_TEST_CHECK(words == Vector<uint64_t>({ unwritten, unwritten, unwritten & 0xffffffffull, unwritten, unwritten & 0xffffffff000000ffull, 0, unwritten, unwritten }));
+    AOT_TEST_CHECK(words == Vector<uint64_t>({ unwritten, unwritten, unwritten & 0xffffffffull, unwritten, unwritten & 0xffffffff000000ffull, 0, unwritten, unwritten, 0, 0, 0 }));
 }
 
 namespace {
@@ -782,6 +783,48 @@ static void testMergeTestOfBitsIntoOrderOfWord()
     AOT_TEST_CHECK(isLeftAlone(highBits, { .secondRelation = B3::Above, .secondConstant = 0 }));
     AOT_TEST_CHECK(isLeftAlone(highBits, { .secondRelation = B3::NotEqual, .secondConstant = 0x40000 }));
     AOT_TEST_CHECK(isLeftAlone(1, { .secondRelation = B3::Below, .secondConstant = highBits }));
+}
+
+// Two tests of bits of one word that was read from memory. What tells the two ways out apart reads the word again, unless something is written behind the first read, and the log holds the second read against the first.
+static void testMergedTestsOfBitsTellTheLogOfTheWordReadAgain()
+{
+    for (bool storesBehindRead : { false, true }) {
+        for (bool overlooksWrites : { false, true }) {
+            B3::Policy policy;
+            policy.validation.logsMovedLoads = true;
+            policy.validation.overlooksWritesBehindWordsReadAgain = overlooksWrites;
+            B3::Procedure proc(policy);
+            TwoTests blocks { proc.addBlock(), proc.addBlock(), proc.addBlock(), proc.addBlock(), proc.addBlock(), nullptr };
+            B3::Origin origin = originOf(otherOrigin);
+            B3::Value* address = blocks.first->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+            blocks.word = blocks.first->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int32, origin, address);
+            if (storesBehindRead)
+                blocks.first->appendNew<B3::MemoryValue>(proc, B3::Store, origin, blocks.first->appendNew<B3::Const32Value>(proc, origin, 0), address);
+            auto appendTestOfBits = [&](B3::BasicBlock* block, int32_t mask, B3::BasicBlock* leaving, B3::BasicBlock* staying) {
+                block->appendNew<B3::Value>(proc, B3::Branch, origin, block->appendNew<B3::Value>(proc, B3::BitAnd, origin, blocks.word, block->appendNew<B3::Const32Value>(proc, origin, mask)));
+                block->setSuccessors(B3::FrequentedBlock(leaving, B3::FrequencyClass::Rare), B3::FrequentedBlock(staying));
+            };
+            appendTestOfBits(blocks.first, 1, blocks.firstTarget, blocks.second);
+            appendTestOfBits(blocks.second, 2, blocks.secondTarget, blocks.likely);
+            appendReturn(proc, blocks.likely);
+            appendReturn(proc, blocks.firstTarget);
+            appendReturn(proc, blocks.secondTarget);
+            proc.resetReachability();
+
+            AOT_TEST_CHECK(mergeImpliedBranches(proc));
+            B3::validate(proc);
+            bool readsAgain = !storesBehindRead || overlooksWrites;
+            B3::BasicBlock* dispatch = blocks.first->taken().block();
+            AOT_TEST_CHECK(dispatch != blocks.firstTarget && dispatch != blocks.secondTarget);
+            AOT_TEST_CHECK((dispatch->at(0)->opcode() == B3::Load) == readsAgain);
+
+            AOT_TEST_CHECK(proc.movedLoadLog().insertChecks(proc, nullptr) == readsAgain);
+            if (!readsAgain)
+                continue;
+            B3::Value* check = dispatch->at(dispatch->size() - 2);
+            AOT_TEST_CHECK(check->opcode() == B3::Patchpoint && check->child(0) == address && check->child(1) == blocks.word);
+        }
+    }
 }
 
 static void testMergeIntoBranchWithTwoLikelyWays()
@@ -1366,6 +1409,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "merge-needs-second-test-to-fail"_s, testMergeNeedsSecondTestToFail },
         { "merge-compares-signed-and-unsigned"_s, testMergeComparesSignedAndUnsigned },
         { "merge-test-of-bits-into-order-of-word"_s, testMergeTestOfBitsIntoOrderOfWord },
+        { "merged-tests-of-bits-tell-the-log-of-the-word-read-again"_s, testMergedTestsOfBitsTellTheLogOfTheWordReadAgain },
         { "merge-into-branch-with-two-likely-ways"_s, testMergeIntoBranchWithTwoLikelyWays },
         { "merge-keeps-likely-branch"_s, testMergeKeepsLikelyBranch },
         { "merge-moves-no-load-in-front-of-test"_s, testMergeMovesNoLoadInFrontOfTest },

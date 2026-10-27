@@ -52,7 +52,8 @@ void PromiseIntrinsicEmitter::generateCreatePromise(const ValueContext& value)
 
 Condition PromiseIntrinsicEmitter::hasPromiseStructure(CellPointer cell)
 {
-    return equal(loadStructureID(cell), loadImmutable32(offsetOfPromiseHeader));
+    Word32 structureID = loadStructureID(cell);
+    return equal(structureID, loadImmutable32(offsetOfPromiseHeader));
 }
 
 void PromiseIntrinsicEmitter::fulfillWithoutBarrier(CellPointer promise, Boxed value)

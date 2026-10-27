@@ -75,8 +75,9 @@ struct ModuleData {
     SyntheticExportRule exportRule : 2;
     RequireResult requireResult : 2;
     Number24 body;
-    // Of a module outside the image: the module that names it. Of a module of the library: its number in the host's registry. No other module has either.
-    Number24 referrerOrRuntimeModule;
+    // Of a module outside the image: the module that names it. Of a module of the library: its number in the host's registry.
+    // Of an ES module of the program: the head of its group, if that is another module. Of a head: the number of modules and the place of its list in ProgramTables::groupsLoadedWithGroups(), if it has one.
+    Number24 referrerRuntimeModuleOrLoadGroup;
     Number24 firstRequest;
     Number24 firstExport;
     Number24 firstSyntheticExport;
@@ -87,9 +88,9 @@ struct ModuleData {
     uint8_t loadedByLoader : 1;
     uint8_t faceOfFile : 1;
     uint8_t importedByModule : 1;
-    uint8_t firstEntryPoint : 1;
-    uint8_t loadedWithFirstEntryPoint : 1;
     uint8_t importedWhileItRuns : 1;
+    uint8_t beginsLoads : 1;
+    uint8_t shownByFace : 1;
     uint8_t unusedBits : 1;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
@@ -112,12 +113,11 @@ struct ModuleData {
     bool isLoadedByLoader() const { return loadedByLoader; }
     // Its first request is the CommonJS file that it stands for where ES modules import the file.
     bool isFaceOfFile() const { return faceOfFile; }
+    bool hasFace() const { return shownByFace; }
     // Some module requests it with what it writes, and not by a require(): a graph of imports can come to it from above.
     bool isImportedByModule() const { return importedByModule; }
-    // The entry point that the program starts with.
-    bool isFirstEntryPoint() const { return firstEntryPoint; }
-    // A graph of imports leads to it from that entry point: whoever loads the one loads the other.
-    bool isLoadedWithFirstEntryPoint() const { return loadedWithFirstEntryPoint; }
+    // Something other than the import of a module may be the first to ask for it: the host, an import(), a require().
+    bool mayBeginLoad() const { return beginsLoads; }
     // A CommonJS file that leads by a require() to an ES module that imports it. No code of the image takes what a require() of it answers for what the file exports.
     bool mayBeImportedWhileItRuns() const { return importedWhileItRuns; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
@@ -128,6 +128,7 @@ struct ModuleData {
     bool hasLinkPlan() const { return isEntryPoint() && isLinkedWithEntryPoint(); }
 
     bool hasExportTable() const;
+    bool isESModuleOfProgram() const { return kind == ModuleKind::SourceText && !isOfLibrary(); }
     bool isUncompiledCode() const { return kind == ModuleKind::External && externalKind == ExternalKind::UncompiledCode; }
     bool isHostValue() const { return kind == ModuleKind::External && externalKind == ExternalKind::HostValue; }
     bool capturesExports() const;
@@ -136,10 +137,10 @@ struct ModuleData {
     bool holdsNamespaceInValue() const { return hasValue() && (hasExportTable() || isUncompiledCode()); }
 
     std::optional<FunctionID> bodyFunction() const { return optionalIDInImage<FunctionID>(body); }
-    std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
+    std::optional<ModuleID> referrerModule() const { return kind == ModuleKind::External ? optionalIDInImage<ModuleID>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
     // Of a text that the program evaluates: the file that evaluates it.
-    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerOrRuntimeModule) : std::nullopt; }
-    std::optional<uint32_t> registryID() const { return kind == ModuleKind::External || kind == ModuleKind::CommonJs ? std::nullopt : optionalIDInImage<uint32_t>(referrerOrRuntimeModule); }
+    std::optional<ModuleID> evaluatorModule() const { return kind == ModuleKind::CommonJs ? optionalIDInImage<ModuleID>(referrerRuntimeModuleOrLoadGroup) : std::nullopt; }
+    std::optional<uint32_t> registryID() const { return kind == ModuleKind::External || kind == ModuleKind::CommonJs || isESModuleOfProgram() ? std::nullopt : optionalIDInImage<uint32_t>(referrerRuntimeModuleOrLoadGroup); }
 };
 
 inline bool ModuleData::hasExportTable() const
@@ -348,17 +349,37 @@ struct RequiredNameData {
     ModuleID exporterModule() const { return ModuleID(static_cast<uint32_t>(exporter)); }
 };
 
+// `export { name as exportName } from "specifier"` asks for a required name: what the error of a link that does not find the name quotes. Sorted by the number of the required name.
+struct ExportStatementData {
+    uint32_t requiredName;
+    uint32_t exportName;
+    uint32_t specifier;
+
+    StringID exportNameString() const { return StringID(exportName); }
+    StringID specifierString() const { return StringID(specifier); }
+};
+
 // A specifier that an importer could not resolve at the build, or a name that a module turned out to lack: then the module stands in the place of the importer and the name in that of the specifier.
+// Where `export { .. as name } from "specifier"` asks for what the module lacks: what the statement is written from stands in the place of the importer, and the name that it exports in that of the specifier.
 struct ModuleFailureData {
     static constexpr uint32_t isAbsentExportBit = 1u << 31;
+    static constexpr uint32_t isAskedByExportStatementBit = 1u << 30;
+    static constexpr uint32_t bits = isAbsentExportBit | isAskedByExportStatementBit;
 
     static ModuleFailureData ofAbsentExport(ModuleID exporter, uint32_t name) { return { exporter.index() | isAbsentExportBit, name }; }
+    static ModuleFailureData ofExportStatement(uint32_t exportSpecifier, uint32_t exportName)
+    {
+        RELEASE_ASSERT(!(exportSpecifier & bits));
+        return { exportSpecifier | bits, exportName };
+    }
 
     uint32_t importer;
     uint32_t specifier;
 
     bool isAbsentExport() const { return importer & isAbsentExportBit; }
-    ModuleID importerModule() const { return ModuleID(importer & ~isAbsentExportBit); }
+    bool isAskedByExportStatement() const { return importer & isAskedByExportStatementBit; }
+    ModuleID importerModule() const { ASSERT(!isAskedByExportStatement()); return ModuleID(importer & ~bits); }
+    StringID exportSpecifierString() const { ASSERT(isAskedByExportStatement()); return StringID(importer & ~bits); }
     StringID specifierString() const { return StringID(specifier); }
 };
 
@@ -383,6 +404,7 @@ static_assert(sizeof(ModuleExportData) == 8 && isImageRecord<ModuleExportData>);
 static_assert(sizeof(IndirectExportData) == 8 && isImageRecord<IndirectExportData>);
 static_assert(sizeof(SyntheticExportData) == 8 && isImageRecord<SyntheticExportData>);
 static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
+static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(CompiledRuntimeModuleData) == 8 && isImageRecord<CompiledRuntimeModuleData>);
 static_assert(sizeof(CompiledRuntimeFunctionData) == 12 && isImageRecord<CompiledRuntimeFunctionData>);
@@ -397,6 +419,7 @@ static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<uns
     v(moduleRequests, ModuleRequestData) \
     v(linkRequests, uint16_t) \
     v(evaluationRequests, uint16_t) \
+    v(groupsLoadedWithGroups, uint16_t) \
     v(entryPointLinkPlan, LinkPlanStepData) \
     v(linkPlanRoots, LinkPlanRootData) \
     v(linkPlanStepsOfRoots, LinkPlanStepData) \
@@ -404,6 +427,7 @@ static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<uns
     v(indirectExports, IndirectExportData) \
     v(syntheticExports, SyntheticExportData) \
     v(requiredNames, RequiredNameData) \
+    v(exportStatements, ExportStatementData) \
     v(moduleFailures, ModuleFailureData) \
     v(modulesByPath, uint16_t) \
     v(modulesOfUncompiledCode, uint32_t) \

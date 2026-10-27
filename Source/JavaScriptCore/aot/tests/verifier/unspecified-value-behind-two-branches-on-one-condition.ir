@@ -20,14 +20,16 @@ function f0 name="goodTestWhereTheSameConditionChoseTheTag" parameters=[{type=bo
   b5():
     v6 = Unspecified valueType=null|L0
     Jump -> next b6(v4, v6)
-  b6(v7: int[1, 16], v8: null|L0):
+  b6(v7: int[1, 16], v8: null|unspecified|L0):
     Switch v7 cases=[1] -> case b7(), otherwise b8()
   b7():
     v9 = Null
     Return v9
   b8():
-    v10 = TypeTest v8 testedType=null
-    Return v10
+    v10 = Specified
+    v11 = AssumeType v8, v10 provenType=null|L0
+    v12 = TypeTest v11 testedType=null
+    Return v12
 }
 function f1 name="goodTestWhereTheConditionComesFromAnEarlierTag" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
     Branch v0 -> taken b1(), notTaken b2()
@@ -55,14 +57,16 @@ function f1 name="goodTestWhereTheConditionComesFromAnEarlierTag" parameters=[{t
   b8():
     v11 = Unspecified valueType=null|L0
     Jump -> next b9(v9, v11)
-  b9(v12: int[1, 16], v13: null|L0):
+  b9(v12: int[1, 16], v13: null|unspecified|L0):
     Switch v12 cases=[1] -> case b10(), otherwise b11()
   b10():
     v14 = Null
     Return v14
   b11():
-    v15 = TypeTest v13 testedType=null
-    Return v15
+    v15 = Specified
+    v16 = AssumeType v13, v15 provenType=null|L0
+    v17 = TypeTest v16 testedType=null
+    Return v17
 }
 function f2 name="goodTestWhereTheSameSubjectChoseTheTag" parameters=[{type=boolean}, {type=L0}, {type=boolean}] results=[{type=anything}] {
     Branch v0 -> taken b1(), notTaken b2()
@@ -92,13 +96,15 @@ function f2 name="goodTestWhereTheSameSubjectChoseTheTag" parameters=[{type=bool
   b10():
     v10 = Unspecified valueType=undefined|null|L0
     Jump -> next b11(v8, v10)
-  b11(v11: int[1, 16], v12: undefined|null|L0):
+  b11(v11: int[1, 16], v12: undefined|null|unspecified|L0):
     Switch v11 cases=[1, 4] -> case b12(), case b12(), otherwise b13()
   b12():
     Return
   b13():
-    v13 = TypeTest v12 testedType=undefined|null
-    Return v13
+    v13 = Specified
+    v14 = AssumeType v12, v13 provenType=undefined|null|L0
+    v15 = TypeTest v14 testedType=undefined|null
+    Return v15
 }
 function f3 name="badTestWhereAnotherConditionChoseTheTag" parameters=[{type=boolean}, {type=L0}, {type=boolean}] results=[{type=anything}] {
     Branch v0 -> taken b1(), notTaken b2()
@@ -116,7 +122,7 @@ function f3 name="badTestWhereAnotherConditionChoseTheTag" parameters=[{type=boo
   b5():
     v7 = Unspecified valueType=null|L0
     Jump -> next b6(v5, v7)
-  b6(v8: int[1, 16], v9: null|L0):
+  b6(v8: int[1, 16], v9: null|unspecified|L0):
     Switch v8 cases=[1] -> case b7(), otherwise b8()
   b7():
     v10 = Null
@@ -139,7 +145,7 @@ function f4 name="badTestWhereTheConditionIsMadeAnewInALoop" parameters=[{type=L
   b3():
     v7 = Unspecified valueType=null|L0
     Jump -> next b4(v2, v7)
-  b4(v8: int[1, 8], v9: null|L0):
+  b4(v8: int[1, 8], v9: null|unspecified|L0):
     Switch v8 cases=[1] -> case b5(), otherwise b6()
   b5():
     v10 = Null

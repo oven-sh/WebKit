@@ -64,8 +64,18 @@ public:
         std::span<const ValueID> m_values;
     };
 
+    // What has been found out about one set of values. Blocks share most of what is live at their heads, and a part that several share is looked through once.
+    class AnswersAboutValues {
+    private:
+        friend class Liveness;
+
+        const Liveness* m_liveness { nullptr };
+        Vector<uint8_t> m_answersOfSharedSets;
+    };
+
     LiveValues liveAtHead(BlockID) const LIFETIME_BOUND;
     bool isAnyLiveAtHead(BlockID) const;
+    bool isAnyLiveAtHead(BlockID, const BitVector& values, AnswersAboutValues&) const;
     bool isLiveAtHead(ValueID, BlockID) const;
 
     class LocalCalc {
@@ -138,6 +148,9 @@ private:
         Set unite(Set first, Set second) { return unite(first, second, m_numberOfInnerLevels); }
         bool contains(Set, uint32_t key) const;
         void forEach(Set set, NOESCAPE const Invocable<void(uint32_t)> auto& functor) const { forEach(set, 0, m_numberOfInnerLevels, functor); }
+        size_t numberOfSets() const { return m_nodes.size(); }
+        // `answers` has an entry for each set, zero at first, and goes with one functor.
+        bool containsAny(Set set, Vector<uint8_t>& answers, NOESCAPE const Invocable<bool(uint32_t)> auto& functor) const { return containsAny(set, 0, m_numberOfInnerLevels, answers, functor); }
 
     private:
         static constexpr unsigned slotsPerNode = 8;
@@ -168,6 +181,29 @@ private:
                 for (uint32_t bits = node[slot]; bits; bits &= bits - 1)
                     functor(firstKey + slot * bitsPerLeafWord + std::countr_zero(bits));
             }
+        }
+
+        bool containsAny(Set set, uint32_t firstKey, unsigned level, Vector<uint8_t>& answers, NOESCAPE const Invocable<bool(uint32_t)> auto& functor) const
+        {
+            constexpr uint8_t notAsked = 0;
+            constexpr uint8_t no = 1;
+            constexpr uint8_t yes = 2;
+            if (!set)
+                return false;
+            if (answers[set] != notAsked)
+                return answers[set] == yes;
+            const Node& node = m_nodes[set];
+            bool found = false;
+            for (unsigned slot = 0; slot < slotsPerNode && !found; ++slot) {
+                if (level) {
+                    found = containsAny(node[slot], firstKey + (slot << (bitsPerLeafKey + bitsPerSlotIndex * (level - 1))), level - 1, answers, functor);
+                    continue;
+                }
+                for (uint32_t bits = node[slot]; bits && !found; bits &= bits - 1)
+                    found = functor(firstKey + slot * bitsPerLeafWord + std::countr_zero(bits));
+            }
+            answers[set] = found ? yes : no;
+            return found;
         }
 
         Vector<Node> m_nodes;

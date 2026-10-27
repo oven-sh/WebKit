@@ -23,15 +23,8 @@
 #include "MarkedBlockCage.h"
 #include "MarkedSpace.h"
 #include "Structure.h"
-#include <array>
 
 namespace JSC { namespace AOT {
-
-static uint32_t firstWordOf(const LayoutData& layout)
-{
-    static_assert(!(sizeof(LayoutData) % sizeof(uint32_t)));
-    return std::bit_cast<std::array<uint32_t, sizeof(LayoutData) / sizeof(uint32_t)>>(layout)[0];
-}
 
 static constexpr bool copyChunkWritesScratches = !isX86_64();
 
@@ -286,8 +279,8 @@ static void copyByChunks(StubAssembler& jit, const ChunkCopy& copy, JumpList& ca
     expectedBits.kindBits = static_cast<uint32_t>(LayoutKind::Record);
     jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), layout);
     jit.load32(Address(layout), word);
-    jit.and32(TrustedImm32(static_cast<int32_t>(firstWordOf(testedBits))), word);
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(firstWordOf(expectedBits)))));
+    jit.and32(TrustedImm32(static_cast<int32_t>(testedBits.firstWord())), word);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(expectedBits.firstWord()))));
     callsOperation.append(branchIfBarrierIsNeeded(jit, target, word));
 
     constexpr int32_t wordSize = sizeof(uint64_t);
@@ -501,8 +494,8 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
     expectedBits.kindBits = static_cast<uint32_t>(LayoutKind::Record);
     jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), layout);
     jit.load32(Address(layout), word);
-    jit.and32(TrustedImm32(static_cast<int32_t>(firstWordOf(testedBits))), word);
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(firstWordOf(expectedBits)))));
+    jit.and32(TrustedImm32(static_cast<int32_t>(testedBits.firstWord())), word);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(expectedBits.firstWord()))));
 
     jit.load32(Address(layout, OBJECT_OFFSETOF(LayoutData, shape)), shapeWord);
     jit.neg32(shapeWord);

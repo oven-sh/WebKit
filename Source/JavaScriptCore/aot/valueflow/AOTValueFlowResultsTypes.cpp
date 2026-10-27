@@ -288,8 +288,8 @@ NumbersOfPositions::NumbersOfPositions(const ValueFlowResultInputs& inputs, Valu
     m_firstResult = Vector<uint32_t>(program.functions.size(), [&](size_t index) { return take(program.functions[index].results.size()); });
     m_firstMap = next;
     ValueSetID filledAsRecordsSay = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::MapsFilledAsRecordsSay));
-    m_maps = collectInParallel<ValueFlowObjectID>(inputs.loops(), inputs.universe().numberOfObjects(), [&](unsigned index, Vector<ValueFlowObjectID>& maps) {
-        ValueFlowObjectID object(index);
+    m_maps = collectInParallel<ValueFlowObjectID>(inputs.loops(), inputs.universe().numberOfSiteObjects(), [&](unsigned position, Vector<ValueFlowObjectID>& maps) {
+        ValueFlowObjectID object = inputs.universe().siteObjectAt(position);
         if (classOfFollowedContainer(inputs, object) != BuiltinClasses::Map || inputs.sets().contains(filledAsRecordsSay, object))
             return;
         if (program.at(inputs.universe().functionOf(object)).at(inputs.universe().siteOf(object)->value).opcode == Opcode::Construct)
@@ -1793,8 +1793,12 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
                 update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving), .holdsInEveryVersion = true });
                 replacedChecks.append(observed.test);
             }
+        } else if (std::optional<Type> arriving = positions.typeWhereOnlyInstancesOfBuiltinClassesAreTurnedAway(held, program.at(test.expectedType().predicted()))) {
+            update.claims.append(FlowClaimUpdate { .claim = observed.test, .arriving = types.intern(*arriving), .holdsInEveryVersion = true });
+            replacedChecks.append(observed.test);
         }
-        if (update.claims.size() == numberOfClaimsBefore && positions.turnsAwayConstructedObject(inputs.seenValuesOf(maker, observed.operand), program.at(test.expectedType().predicted())))
+        const Type& expected = program.at(test.expectedType().predicted());
+        if (update.claims.size() == numberOfClaimsBefore && (positions.turnsAwayConstructedObject(inputs.seenValuesOf(maker, observed.operand), expected) || positions.turnsAwayEveryObject(held, expected)))
             update.claims.append(FlowClaimUpdate { .claim = observed.test, .mayFail = true });
     }
 

@@ -159,6 +159,48 @@ void RewriteSession::rebuildBlockValues()
         rebuild(m_function.edit(BlockID(index)));
 }
 
+void RewriteSession::eraseOperandsLeftUnused()
+{
+    if (m_formerOperands.isEmpty())
+        return;
+    FunctionAnalyses& analyses = m_context.analyses();
+    const UseLists& useLists = analyses.useLists();
+    BitVector isErased(m_function.values.size());
+    Vector<ValueLocation> erased;
+    auto isReadOnlyByErasedValues = [&](ValueID id) {
+        return std::ranges::all_of(useLists.usesOf(id), [&](const Use& use) {
+            return use.kind == Use::Kind::Operand && isErased.get(use.user.index());
+        });
+    };
+    while (!m_formerOperands.isEmpty()) {
+        ValueID id = m_formerOperands.takeLast();
+        ValueLocation location = useLists.locationOf(id);
+        if (location.placement != ValuePlacement::InBlock || isErased.get(id.index()))
+            continue;
+        if (!isReadOnlyByErasedValues(id) || !analyses.isRemovableWhenUnused(id))
+            continue;
+        isErased.set(id.index());
+        erased.append(location);
+        m_function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+            m_formerOperands.append(operand);
+        });
+    }
+    if (erased.isEmpty())
+        return;
+
+    AOT::sort(erased, std::ranges::less { }, [](const ValueLocation& location) {
+        return location.block.index();
+    });
+    for (size_t next = 0; next < erased.size();) {
+        BlockID block = erased[next].block;
+        BitVector indexes;
+        for (; next < erased.size() && erased[next].block == block; ++next)
+            indexes.set(erased[next].index);
+        m_builder.eraseValues(block, indexes);
+    }
+    m_needsCompaction = true;
+}
+
 // With nothing queued the builder drops every analysis of values.
 void RewriteSession::applyInsertions()
 {
@@ -204,6 +246,7 @@ void RewriteSession::finish()
     }
     analyses.didChangeValuesButNotUses();
     analyses.setEveryChangeIsReported(false);
+    eraseOperandsLeftUnused();
 
     updateClaims();
     m_context.didFinishRewrites(m_rule, static_cast<uint32_t>(m_groups.size()), m_needsCompaction);

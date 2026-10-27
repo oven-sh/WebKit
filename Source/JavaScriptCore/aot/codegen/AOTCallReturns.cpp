@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTCallEmitter.h"
+#include "AOTBuiltinMembers.h"
 
 #if ENABLE(AOT)
 
@@ -261,6 +262,44 @@ void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context,
     m_out.appendTo(continuation);
 }
 
+bool CallEmitter::mayForwardCallToReceiver(const ValueContext& value)
+{
+    if (!value->calleeKey() || !value->calleeName() || !value->thisValueOperand())
+        return false;
+    BuiltinID member = findOwnMember(m_program, Builtins::FunctionPrototype, value->calleeKey());
+    if (member != Builtins::FunctionPrototypeCall && member != Builtins::FunctionPrototypeApply)
+        return false;
+    if (!typeOf(value->calleeOperand()).overlaps(Type::forBuiltin(member), m_program))
+        return false;
+    return !typeOf(value->thisValueOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program);
+}
+
+void CallEmitter::requireCallableBeforeTailCall(const ValueContext& value, Boxed callee, Boxed thisValue)
+{
+    if (!mayForwardCallToReceiver(value)) {
+        if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
+            requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value));
+        return;
+    }
+
+    CallOptions options { .throwSite = siteThatNamesCallee(value), .isOnRarePath = true };
+    if (typeOf(value->calleeOperand()).singleBuiltin()) {
+        callStub(value, throwUnlessForwardedCalleeIsCallable(), { callee.value(), thisValue.value() }, options);
+        return;
+    }
+
+    LBasicBlock slowPath = newBlock();
+    LBasicBlock continuation = newBlock();
+    branchUnless(isCell(callee), slowPath);
+    m_out.branch(emitter<ClosureTestEmitter>().isSlimClosureAsCreated(unboxCell(callee)).value(), normalEdge(continuation), rareEdge(slowPath));
+
+    m_out.appendTo(slowPath);
+    callStub(value, throwUnlessForwardedCalleeIsCallable(), { callee.value(), thisValue.value() }, options);
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+}
+
 // The frame holds closures that the call lends. It stays until a callee returns that cannot come round to this call again by tail calls alone. Goes on where the callee is any other.
 void CallEmitter::callAndReturnIfCalleeEndsItsTailCalls(const ValueContext& value, const ValueCall& call)
 {
@@ -282,8 +321,7 @@ void CallEmitter::callAndReturnIfCalleeEndsItsTailCalls(const ValueContext& valu
 
 void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call)
 {
-    if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        requireCallableBeforeTailCall(value, call.callee, siteThatNamesCallee(value));
+    requireCallableBeforeTailCall(value, call.callee, call.thisValue);
 
     unsigned count = static_cast<unsigned>(call.arguments.size());
     Vector<LValue, 8> values;

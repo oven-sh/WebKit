@@ -150,6 +150,8 @@ void addModuleListDamages(const ReaderFixture& fixture, RecordDamages& damages)
     auto requiredName = offsetsOf<Wire::RequiredName>(fixture, List::RequiredNames, 0);
     damages.id("RequiredName.module"_s, requiredName(offsetof(Wire::RequiredName, module)), List::Modules);
     damages.id("RequiredName.name"_s, requiredName(offsetof(Wire::RequiredName, name)), List::Strings);
+    damages.optionalID("RequiredName.exportName"_s, requiredName(offsetof(Wire::RequiredName, exportName)), List::Strings);
+    damages.optionalID("RequiredName.specifier"_s, requiredName(offsetof(Wire::RequiredName, specifier)), List::Strings);
 }
 
 void testModuleRecords()

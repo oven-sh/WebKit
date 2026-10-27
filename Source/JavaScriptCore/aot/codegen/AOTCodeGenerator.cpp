@@ -23,6 +23,7 @@
 #include "AOTPromisedResults.h"
 #include "AOTRepresentationEmitter.h"
 #include "AOTRepresentationRules.h"
+#include "AOTRuntimeCallEmitter.h"
 #include "AOTRuntimeValidationEmitter.h"
 #include "AOTSchemaOperationColumns.h"
 #include "AOTSlotAccessEmitter.h"
@@ -125,8 +126,9 @@ GenerationResult CodeGenerator::run()
     createPhis();
     if (std::optional<uint32_t> number = m_inputs.program.branchCounters.counterOfEntries(m_inputs.id)) {
         TypedPointer counter = emitter<StaticsEmitter>().branchCounter(*number);
-        m_out.store64(m_out.add(m_out.load64(counter), m_out.constInt64(1)), counter);
+        m_out.store64(m_out.add(m_out.load64(counter), 1), counter);
     }
+    emitter<StaticsEmitter>().fillVariablesOfEnteredFile();
     m_out.jump(blockFor(entryBlock));
 
     for (BlockID block : analyses().cfg().reversePostOrder()) {
@@ -430,6 +432,7 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 
 void CodeGenerator::finishProcedure()
 {
+    emitter<RuntimeCallEmitter>().stateWhichCallsChangeSlotsOfSites();
     m_heaps.computeRangesAndDecorateInstructions();
     if (!build().recordedOptions().has(TestingSwitch::FoldLoadsPastCollections))
         m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());
@@ -584,6 +587,10 @@ Operand CodeGenerator::getIn(ValueID id, Representation wanted)
     return converted;
 }
 
+// Such an operation narrows a reference where it stores it. In front of the operation all the narrow forms would be held at one time, and an object may have more fields than there are registers.
+static bool narrowsReferencesWhereItStoresThem(const Value& operation) { return operation.opcode == Opcode::NewObject; }
+static bool narrowsReferencesWhereItStoresThem(const Terminator&) { return false; }
+
 template<typename Operation>
 void CodeGenerator::convertOperandsOf(const OperationContext& context, const Operation& operation)
 {
@@ -598,6 +605,8 @@ void CodeGenerator::convertOperandsOf(const OperationContext& context, const Ope
         // An operation that takes a double with any NaN computes with it as with any number.
         bool isTakenAsNumber = holdsAnyNaN(wanted);
         if (!hasRegister(wanted) || (defined == wanted && !isTakenAsNumber))
+            continue;
+        if (defined == Representation::Cell && wanted == Representation::Cell32 && narrowsReferencesWhereItStoresThem(operation))
             continue;
         // The operation makes such an operand itself.
         if (hasRegister(defined) && !m_values[operand.index()])

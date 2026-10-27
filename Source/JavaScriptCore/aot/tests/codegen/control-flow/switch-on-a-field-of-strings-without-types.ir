@@ -1,0 +1,146 @@
+# function areaOf(shape) {
+#   switch (shape.kind) {
+#     case "circle": return 3 * shape.radius * shape.radius;
+#     case "square": return shape.side * shape.side;
+#     case "rectangle": return shape.width * shape.height;
+#   }
+# }
+# const shapes = [
+#   { kind: "circle", radius: +input },
+#   { kind: "square", side: +input },
+#   { kind: "rectangle", width: +input, height: +input },
+# ];
+# globalThis.answer = areaOf(shapes[input | 0]);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="height" declared={type=undefined|number flags=[IsExpected]}}, {key="kind" declared={type=anything}}, {key="radius" declared={type=undefined|number flags=[IsExpected]}}, {key="side" declared={type=undefined|number flags=[IsExpected]}}, {key="width" declared={type=undefined|number flags=[IsExpected]}}] flags=[IsNeverAllocated] declaredOrder=[1, 2, 3, 4, 0] ownFieldCount=5 flow={allocation=NeverAllocated}
+layout L1 module=m0 position=241 fields=[{key="kind" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="radius" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=2
+layout L2 module=m0 position=279 fields=[{key="kind" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="side" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] ownFieldCount=2
+layout L3 module=m0 position=315 fields=[{key="height" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="kind" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="width" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] supertypes=[L0] declaredOrder=[1, 2, 0] ownFieldCount=3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string="circle"
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = NewObject layout=L1
+    PropDefine v4, v3 key="kind"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = ToNumber v7
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    PropDefine v4, v9 key="radius"
+    v11 = FinishObject v4
+    v12 = String string="square"
+    v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+    v14 = NewObject layout=L2
+    PropDefine v14, v13 key="kind"
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="input" [isFreeName]
+    v18 = ToNumber v17
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    PropDefine v14, v19 key="side"
+    v21 = FinishObject v14
+    v22 = String string="rectangle"
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
+    v24 = NewObject layout=L3
+    PropDefine v24, v23 key="kind"
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="input" [isFreeName]
+    v28 = ToNumber v27
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
+    PropDefine v24, v29 key="width"
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="input" [isFreeName]
+    v33 = ToNumber v32
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    PropDefine v24, v34 key="height"
+    v36 = FinishObject v24
+    v37 = NewArray v11, v21, v36 contents=undefined|null|L1|L2|L3
+    v38 = Convert v37 declared={type=undefined|null|Array<undefined|null|L1|L2|L3> flags=[IsExpected]}
+    v39 = Convert v38 declared={type=undefined|null|Array<undefined|null|L1|L2|L3> flags=[IsExpected]}
+    v40 = Builtin builtin=GlobalThis
+    v41 = PropGet v40 key="globalThis" [isFreeName]
+    v42 = Convert v41 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v43 = Builtin builtin=GlobalThis
+    v44 = PropGet v43 key="input" [isFreeName]
+    v45 = Integer
+    v46 = BitOr v44, v45
+    v47 = ElemGet v39, v46
+    v48 = Convert v47 declared={type=undefined|null|L1|L2|L3 flags=[IsExpected]}
+    v49 = Call v1, -, v48 calleeName="areaOf"
+    v50 = Convert v49 declared={type=undefined|number flags=[IsExpected]}
+    PropSet v42, v50 key="answer"
+    v52 = Undefined
+    Return v52
+}
+function f1 name="areaOf" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L1|L2|L3 flags=[IsExpected]}] results=[{type=undefined|number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L1|L2|L3):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="kind"
+    SwitchString v1 strings=["circle", "square", "rectangle"] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8()
+  b2(v2):
+    v3 = NarrowByField v0, v2 key="kind"
+    Jump -> next b3()
+  b3():
+    v4 = Integer integer=3
+    v5 = PropGet v3 key="radius"
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    v7 = Mul v4, v6
+    v8 = PropGet v3 key="radius"
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = Mul v7, v9
+    v11 = Convert v10 declared={type=undefined|number flags=[IsExpected]}
+    Return v11
+  b4(v12):
+    v13 = NarrowByField v0, v12 key="kind"
+    Jump -> next b5()
+  b5():
+    v14 = PropGet v13 key="side"
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = PropGet v13 key="side"
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Mul v15, v17
+    v19 = Convert v18 declared={type=undefined|number flags=[IsExpected]}
+    Return v19
+  b6(v20):
+    v21 = NarrowByField v0, v20 key="kind"
+    Jump -> next b7()
+  b7():
+    v22 = PropGet v21 key="width"
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = PropGet v21 key="height"
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    v26 = Mul v23, v25
+    v27 = Convert v26 declared={type=undefined|number flags=[IsExpected]}
+    Return v27
+  b8():
+    Jump -> next b9()
+  b9():
+    v28 = Undefined
+    v29 = Convert v28 declared={type=undefined|number flags=[IsExpected]}
+    Return v29
+}
+
+# Without types the field holds a string. The switch asks whether it is a rope, reads its length once, and compares the characters only with the cases of that length:
+# "circle" and "square" are six characters, each compared as one 48-bit constant. No case is looked up in a table of strings, and no string is compared by a call into the run time.
+# CHECK-LABEL: name="areaOf" role=Source
+# CHECK: Int64 b@[[kind]] = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Int64 b@[[text]] = Load(b@[[kind]], offset = 8, ControlDependent|Reads:JSRopeString_fiber0)
+# CHECK: Int32 b@{{*}} = Load(b@[[text]], offset = 4, ControlDependent|ReadsImmutable|Reads:StringImpl_length)
+# CHECK: Int32 b@[[hasSixCharacters]] = Equal(b@{{*}}, $6(
+# CHECK: Branch(b@[[hasSixCharacters]], Terminal)
+# CHECK: Patchpoint(b@[[kind]]:Register({{*}}), $111516199315811(b@{{*}}):Register({{*}}), resultConstraints = WarmAny, Terminal|ControlDependent
+# CHECK: Patchpoint(b@[[kind]]:Register({{*}}), $111541935763827(b@{{*}}):Register({{*}}), resultConstraints = WarmAny, Terminal|ControlDependent
+# Inside a case the object is asked for its shape before a field of that case is read.
+# CHECK: Int32 b@[[shapeWord]] = Load(b@[[shape]], offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord, {{*}}:TypeTest)
+# CHECK: Double b@{{*}} = Load(b@[[shape]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-LABEL: end of function

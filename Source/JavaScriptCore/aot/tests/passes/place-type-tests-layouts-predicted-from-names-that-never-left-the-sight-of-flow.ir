@@ -1,0 +1,21 @@
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="KeptInSight" fields=[{key="rank" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown}}}] flow={baseState=None}
+layout L1 name="HandedOut" fields=[{key="grade" declared={type=number} flags=[IsRequired]}] flow={baseState=None}
+
+function f0 name="everyWriterIsKnown" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="rank"
+    Return v1
+# CHECK-NOT: L0
+# CHECK: = PropGet {{*}} key="rank"
+# CHECK-NOT: L0
+}
+
+function f1 name="anybodyMayWrite" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="grade"
+    Return v1
+# CHECK: = TypeTest {{*}} testedType=L1
+# CHECK: = GetSlot {{*}} key="grade" receivers=[L1] level=Expected
+}

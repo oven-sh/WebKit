@@ -1,0 +1,31 @@
+# class Kept { constructor(v) { this.a = v; this.mark = v } }  Kept.prototype.mark = 0;  Object.freeze(Kept.prototype);  new Kept(1).a
+# What is frozen refuses a store under each name that it has, also for the objects below it, and has nothing to say about any other name. The prototype object has `mark`.
+# So the store under `mark` may be stopped, and the store under `a` is not: every Kept has that field from its creation.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Kept" {{*}}fields=[{key="a" {{*}}initialization=SetAtCreation} occupancy=AlwaysFilled {{*}}}, {key="mark" {{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead} stability={{*}}constructorOrders=[{fields=[0]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Kept" constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="mark" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = PropGet v2 key="prototype"
+    v4 = Integer integer=0
+    PropSet v3, v4 key="mark" mode=Strict
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectFreeze
+    v8 = Call v7, v6, v3
+    v9 = Integer integer=1
+    v10 = Construct v2, -, v9
+    v11 = PropGet v10 key="a"
+    Return
+}
+function f1 name="Kept" module=m0 kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="a" mode=Strict
+    PropSet v3, v1 key="mark" mode=Strict
+    Return v3
+}

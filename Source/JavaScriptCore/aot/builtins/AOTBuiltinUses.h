@@ -30,6 +30,7 @@ struct BuiltinUseInputs {
     bool keepsFunctionNames { false };
     bool asksOnlyForProvenPlans { false };
     bool* asksAboutPlace { nullptr };
+    FunctionAnalyses* identities { nullptr };
 
     TypingContext typing() const { return { program, function, types }; }
     BuiltinLookupContext lookup() const { return { program, flow }; }
@@ -50,6 +51,8 @@ struct UseRequirement {
 struct BuiltinUsePlan {
     BuiltinUseKind kind { BuiltinUseKind::None };
     BuiltinID member;
+    // Of a read: the entry under the name that is read, which its holder may add at that moment. Another name of the same object stays as it is.
+    BuiltinID location;
     PropertyKeyID key;
     std::optional<Value> constant;
     BuiltinCallPlan call;
@@ -61,6 +64,8 @@ struct BuiltinUsePlan {
     ValueID newTarget;
     TypeID assumedResult;
     bool isNeverInlined { false };
+    // A private name of the engine finds the member, and the property that the program sees stays as it is.
+    bool readsPrivateAlias { false };
     Vector<UseRequirement, 2> requirements;
 
     explicit operator bool() const { return kind != BuiltinUseKind::None; }

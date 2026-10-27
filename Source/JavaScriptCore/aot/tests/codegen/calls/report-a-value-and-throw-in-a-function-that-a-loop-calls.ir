@@ -1,0 +1,175 @@
+# declare const input: any;
+# const log: any = input;
+# function checkBoth(first: number, second: number): number {
+#   if (first < 0) {
+#     log.sink.report("negative", first);
+#     throw new RangeError("negative");
+#   }
+#   if (second < 0) {
+#     log.sink.report("negative", second);
+#     throw new RangeError("negative");
+#   }
+#   return first + second;
+# }
+# let total = 0;
+# for (let index = 0; index < input; index++) total += checkBoth(index, total);
+# (globalThis as any).answer = total;
+# FORM: AsRead
+# OPTIONS: disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+# REQUIRES(CALLS): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=345 kind=Variable
+typesite w1 module=m0 position=69 kind=Parameter function=f1
+typesite w2 module=m0 position=84 kind=Parameter function=f1
+typesite w3 module=m0 position=50 kind=Result
+typesite w4 module=m0 position=365 kind=Variable
+typesite w5 module=m0 position=409 kind=CallResult
+variable g0 name="log" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
+    PutModuleVariable v4 variable=g0
+    v6 = Integer
+    v7 = Convert v6 declared={type=number site=w0}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number site=w4}
+    Jump -> next b2(v7, v9)
+  b2(v10: number, v11: number):
+    LoopHint
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="input" [isFreeName]
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Less v11, v15
+    Branch v16 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v17):
+    Jump -> next b4()
+  b4():
+    v18 = Call v1, -, v17, v10 calleeName="checkBoth"
+    v19 = Convert v18 declared={type=number site=w5}
+    v20 = Add v10, v19
+    v21 = Convert v20 declared={type=number site=w0}
+    Jump -> next b5()
+  b5():
+    v22 = Increment v17
+    v23 = Convert v22 declared={type=number site=w4}
+    Jump -> next b2(v21, v23)
+  b6(v24):
+    Jump -> next b7()
+  b7():
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="globalThis" [isFreeName]
+    v27 = Convert v26 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v28 = Convert v27 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v28, v10 key="answer"
+    v30 = Undefined
+    Return v30
+}
+function f1 name="checkBoth" module=m0 position=50 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w1}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Less v0, v2
+    Branch v3 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v4):
+    Jump -> next b3()
+  b3():
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="log"
+    v7 = Convert v6 declared={type=undefined|null|object flags=[IsExpected]}
+    v8 = PropGet v7 key="sink"
+    v9 = Convert v8 declared={type=undefined|null|object flags=[IsExpected]}
+    v10 = PropGet v9 key="report"
+    v11 = Convert v10 declared={type=undefined|null|function flags=[IsExpected]}
+    v12 = String string="negative"
+    v13 = Call v11, v9, v12, v4 calleeKey="report" calleeName="log.sink.report"
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="RangeError" [isFreeName]
+    v16 = Convert v15 declared={type=builtin(RangeError) flags=[IsExpected]}
+    v17 = String string="negative"
+    v18 = Construct v16, -, v17 calleeName="RangeError"
+    v19 = Convert v18 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    Throw v19
+  b4(v20):
+    Jump -> next b5()
+  b5():
+    v21 = Integer
+    v22 = Less v1, v21
+    Branch v22 -> taken b6(| 0), notTaken b8(| 0)
+  b6(v23):
+    Jump -> next b7()
+  b7():
+    v24 = GetModuleVariable variable=g0
+    v25 = CheckInitialized v24 name="log"
+    v26 = Convert v25 declared={type=undefined|null|object flags=[IsExpected]}
+    v27 = PropGet v26 key="sink"
+    v28 = Convert v27 declared={type=undefined|null|object flags=[IsExpected]}
+    v29 = PropGet v28 key="report"
+    v30 = Convert v29 declared={type=undefined|null|function flags=[IsExpected]}
+    v31 = String string="negative"
+    v32 = Call v30, v28, v31, v23 calleeKey="report" calleeName="log.sink.report"
+    v33 = Builtin builtin=GlobalThis
+    v34 = PropGet v33 key="RangeError" [isFreeName]
+    v35 = Convert v34 declared={type=builtin(RangeError) flags=[IsExpected]}
+    v36 = String string="negative"
+    v37 = Construct v35, -, v36 calleeName="RangeError"
+    v38 = Convert v37 declared={type=undefined|null|RangeError flags=[IsExpected, OmitsNull, OmitsUndefined]}
+    Throw v38
+  b8(v39):
+    Jump -> next b9()
+  b9():
+    v40 = Add v20, v39
+    v41 = Convert v40 declared={type=number site=w3}
+    Return v41
+}
+
+# A loop calls the function, so it is hot, and the two blocks that end in a throw are rare. The likely way is two comparisons, an addition and the return.
+# CHECK-LABEL: name="checkBoth" role=Source
+# CHECK: Double b@[[first]] = ArgumentReg(
+# CHECK: Int32 b@[[firstIsNegative]] = LessThan(b@[[first]],
+# CHECK-NEXT: Branch(b@[[firstIsNegative]], Terminal,
+# CHECK: Double b@[[second]] = ArgumentReg(
+# CHECK: Int32 b@[[secondIsNegative]] = LessThan(b@[[second]],
+# CHECK-NEXT: Branch(b@[[secondIsNegative]], Terminal,
+# CHECK: Double b@[[sum]] = Add(b@[[first]], b@[[second]],
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# What the rare blocks do in front of the throw is the same but for the number, so it is moved into one shared body. Each block is a direct call of it, with the number unboxed in a register, and the throw.
+# CHECK: BB#{{*}}: ; frequency = 0.00
+# CHECK: Void b@{{*}} = Patchpoint(b@[[second]]:Register({{*}}), resultConstraints = WarmAny, {{*}}:CallDirect)
+# CHECK-NEXT: :ThrowNewError)
+# CHECK: BB#{{*}}: ; frequency = 0.00
+# CHECK: Void b@{{*}} = Patchpoint(b@[[first]]:Register({{*}}), resultConstraints = WarmAny, {{*}}:CallDirect)
+# CHECK-NEXT: :ThrowNewError)
+# CHECK-LABEL: end of function
+# The reads by name, the call by value and the boxing of the number are in the shared body alone.
+# NONE-LABEL: name="checkBoth" role=Source
+# NONE-NOT: Patchpoint(
+# NONE: Return(
+# NONE-NOT: :PropGet)
+# NONE-NOT: :Call)
+# NONE-NOT: BitwiseCast(
+# NONE-NOT: Reads:ModuleVariables
+# NONE-LABEL: end of function
+# CALLS-LABEL: f1: size=
+# CALLS-NEXT: function [[body]] x2
+# CALLS: [[body]]: size=
+# CALLS: stub CallValue
+# X64: instructions: 5, patchpoints: 0, rare instructions: 7
+# ARM64: instructions: 4, patchpoints: 0, rare instructions: 7

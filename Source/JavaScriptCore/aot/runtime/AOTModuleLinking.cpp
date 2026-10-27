@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinCells.h"
 #include "AOTBuiltinTable.h"
 #include "AOTInstance.h"
 #include "AOTModuleLinkWalk.h"
@@ -91,22 +92,23 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
             case StarExportResolution::Type::Resolved:
                 continue;
             case StarExportResolution::Type::Ambiguous:
-                RELEASE_AND_RETURN(scope, throwExportAmbiguous(exporter, requiredName.name));
+                RELEASE_AND_RETURN(scope, throwExportAmbiguous(requiredName));
             case StarExportResolution::Type::NotFound:
             case StarExportResolution::Type::Error:
                 if (requiredName.mayBeAbsent)
                     continue;
-                RELEASE_AND_RETURN(scope, throwExportNotFound(exporter, requiredName.name));
+                RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
         }
     }
 }
 
-static bool isNativeModule(const ModuleData& data)
+bool Modules::isNativeModule(ModuleID module) const
 {
-    if (data.kind != ModuleKind::Runtime)
+    const ModuleData& moduleData = data(module);
+    if (moduleData.kind != ModuleKind::Runtime || !host().captureNativeModuleExports)
         return false;
-    return !BuiltinTable::singleton().at(RuntimeModuleID(*data.registryID())).flags.contains(RuntimeModuleFlag::HasSource);
+    return !BuiltinTable::singleton().at(RuntimeModuleID(*moduleData.registryID())).flags.contains(RuntimeModuleFlag::HasSource);
 }
 
 // Of a module that needs a link. Any other one captures exports or is uncompiled, and that is all a link does with it.
@@ -266,7 +268,7 @@ bool Modules::checkIsSettledForLinks(ModuleID module) const
     bool isSettled = !moduleData.needsLink();
     if (!isSettled && moduleData.capturesExports()) {
         LoadedModule* loaded = status(module) == ModuleStatus::Evaluated ? loadedIfExists(module) : nullptr;
-        isSettled = loaded && (loaded->capturedExports || loaded->capturedFields) && !loaded->bindsEarlierCapture;
+        isSettled = loaded && (loaded->capturedExports || loaded->capturedFields) && !loaded->bindsEarlierCapture && !loaded->isBeingLoadedByLoader;
     } else if (!isSettled)
         isSettled = !moduleData.isUncompiledCode() && status(module) != ModuleStatus::Unlinked;
     if (isSettled)
@@ -280,7 +282,7 @@ bool Modules::loadRuntimeModules(ModuleID root)
     return loadRuntimeModules(ModuleLinkWalk(*this, root));
 }
 
-bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk)
+bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk, NativeModuleLoading nativeModuleLoading)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
@@ -288,9 +290,16 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk)
     walk.replay(scope, [&](ModuleID module) {
         return status(module) == ModuleStatus::Unlinked;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
-        if (leaf != ModuleLinkWalk::Leaf::CapturesExports)
+        if (leaf != ModuleLinkWalk::Leaf::CapturesExports || data(module).exportRule != SyntheticExportRule::RuntimeModule)
             return;
-        if (data(module).exportRule == SyntheticExportRule::RuntimeModule && status(module) != ModuleStatus::Evaluated) {
+        if (isNativeModule(module)) {
+            if (nativeModuleLoading == NativeModuleLoading::Eager && !didCaptureExports(module)) {
+                didRunModule = true;
+                captureExports(module);
+            }
+            return;
+        }
+        if (status(module) != ModuleStatus::Evaluated) {
             didRunModule = true;
             execute(module);
         }
@@ -368,8 +377,11 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             }
             if (data(module).capturesExportsBehindEvaluation() && !resolvesNames)
                 captureExportsBehindEvaluation(module);
-            else
+            else {
                 captureExports(module);
+                if (LoadedModule* loaded = loadedIfExists(module))
+                    loaded->isBeingLoadedByLoader = false;
+            }
             return;
         }
         ASSERT(needsPath);
@@ -503,6 +515,30 @@ JSValue Modules::evaluateForCapture(ModuleID module)
     RELEASE_AND_RETURN(scope, exportsSeenByLoader(*file));
 }
 
+// Bun's module loader runs the generator once per realm and caches what it throws. require() does not go through it.
+JSObject* Modules::generateNativeModuleExports(ModuleID module, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values)
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (status(module) == ModuleStatus::Failed) {
+        scope.release();
+        throwEvaluationError(module);
+        return nullptr;
+    }
+    JSObject* deferredExportsSource = host().captureNativeModuleExports(m_instance.globalObject, *data(module).registryID(), names, values);
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        if (!vm.isTerminationException(exception) && !didCaptureExports(module))
+            setFailed(module, exception->value());
+        return nullptr;
+    }
+    if (status(module) == ModuleStatus::Unlinked || status(module) == ModuleStatus::Linked)
+        setStatus(module, ModuleStatus::Evaluated);
+    size_t defaultExport = names.find(vm.propertyNames->defaultKeyword);
+    if (defaultExport != notFound && values.at(defaultExport).isObject())
+        m_state.builtinCells->didLoadNativeModule(RuntimeModuleID(*data(module).registryID()), asObject(values.at(defaultExport)));
+    return deferredExportsSource;
+}
+
 void Modules::captureExports(ModuleID module)
 {
     VM& vm = *m_instance.vm;
@@ -513,24 +549,27 @@ void Modules::captureExports(ModuleID module)
     if (loaded.capturedExports || loaded.capturedFields)
         return;
 
-    JSValue value = evaluateForCapture(module);
-    RETURN_IF_EXCEPTION(scope, void());
-    // The body can require() an ES module that imports this module back. That link captured the exports as they were then.
-    if (loaded.capturedExports || loaded.capturedFields)
-        return;
-    bool hasCapturedFields = tryCaptureFields(module, value);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (hasCapturedFields)
-        RELEASE_AND_RETURN(scope, fillCapturedExports(module));
-
     WTF::Vector<Identifier, 4> names;
     MarkedArgumentBuffer values;
-    KeyListingThatShowsNoOrder listing(value.getObject());
-    auto* captureNativeModuleExports = host().captureNativeModuleExports;
-    JSObject* deferredExportsSource = captureNativeModuleExports && isNativeModule(data(module))
-        ? captureNativeModuleExports(realm, *data(module).registryID(), names, values)
-        : host().captureSyntheticExports(realm, captureRuleOf(data(module)), value, names, values);
-    RETURN_IF_EXCEPTION(scope, void());
+    JSObject* deferredExportsSource = nullptr;
+    if (isNativeModule(module)) {
+        deferredExportsSource = generateNativeModuleExports(module, names, values);
+        RETURN_IF_EXCEPTION(scope, void());
+    } else {
+        JSValue value = evaluateForCapture(module);
+        RETURN_IF_EXCEPTION(scope, void());
+        // The body can require() an ES module that imports this module back. That link captured the exports as they were then.
+        if (loaded.capturedExports || loaded.capturedFields)
+            return;
+        bool hasCapturedFields = tryCaptureFields(module, value);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (hasCapturedFields)
+            RELEASE_AND_RETURN(scope, fillCapturedExports(module));
+
+        KeyListingThatShowsNoOrder listing(value.getObject());
+        deferredExportsSource = host().captureSyntheticExports(realm, captureRuleOf(data(module)), value, names, values);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     if (values.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(realm, scope);
         return;

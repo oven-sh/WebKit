@@ -1,0 +1,52 @@
+# The length of an array may be set to more than the array holds, so it is the length of data only where something says that the array holds as much.
+# Nothing says so of an array that comes from outside and is not read: the loop of f1 polls. A view always holds its length: the likely loop of f2 has no poll.
+# FORM: AsRead
+# f4 is the typed body of f1: one loop. f5 is that of f2: its one poll is that of the rare copy, which reads `length` by name.
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
+# REQUIRES: x86_64 faulting-loop-polls
+# RUN: generate-code
+# CHECK: f4: size={{*}} polls=1
+# CHECK: f5: size={{*}} polls=1
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=110 kind=Parameter
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f2
+    v4 = Add v2, v3
+    Return v4
+}
+function f1 name="countsUpToTheLengthOfAnArray" module=m0 position=5 flags=[IsChecked] length=1 parameters=[{type=Array<number> site=w0}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = BitXor v3, v2
+    v8 = Increment v2
+    Jump -> next b1(v8, v7)
+  b3():
+    Return v3
+}
+function f2 name="countsUpToTheLengthOfAView" module=m0 position=105 flags=[IsChecked] length=1 parameters=[{type=Uint8Array site=w1}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = PropGet v0 key="length"
+    v6 = Less v2, v5
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = BitXor v3, v2
+    v8 = Increment v2
+    Jump -> next b1(v8, v7)
+  b3():
+    Return v3
+}

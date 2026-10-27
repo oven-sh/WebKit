@@ -37,6 +37,8 @@ struct CallOptions {
     std::optional<ThrowSite> throwSite { };
     // The callee runs steps of this function, which has no frame of its own. A stack trace lists the function above the caller.
     BuiltinID calledBuiltin { };
+    // The callee of a direct construct that may leave its frame by a tail call.
+    FunctionID constructedCallee { };
     bool constructs { false };
     bool isTailCall { false };
     bool callsOwnFunctionObject { false };

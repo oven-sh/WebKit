@@ -3,7 +3,7 @@
 # RUN: pass SinkAllocations
 
 module m0 path="main.js" displayPath="main.js"
-layout L0 name="Handlers" fields=[{key="run" declared={type=f2} flags=[IsRequired] flow={location={stores=AtMostOnce initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="name" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0]}
+layout L0 name="Handlers" fields=[{key="run" declared={type=f2} flags=[IsRequired] flow={location={stores=AtMostOnce initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="name" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0]}
 
 function f0 name="otherFieldReadAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=f2}] results=[{type=anything}] {
     v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]

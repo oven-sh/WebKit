@@ -305,14 +305,14 @@ static void writeSymbols(const Typed::PipelineOutput& pipeline, const BuiltImage
         writeMapFile(options.logging.mapFilePath, symbols.span(), inputs, output.image.span(), context);
 }
 
-static void writeReports(const Typed::PipelineOutput& pipeline, const BuiltImage& built, std::span<OperationCounts> operationCountsByFunction, std::span<const SiteCounts> sitesByFunctionAsRead, BuildContext& context, CompileOutput& output)
+static void writeReports(const Typed::PipelineOutput& pipeline, const BuiltImage& built, const CodeGenerationPlan& plan, std::span<OperationCounts> operationCountsByFunction, std::span<const SiteCounts> sitesByFunctionAsRead, BuildContext& context, CompileOutput& output)
 {
     PhaseTimes times(context, Stage::BuildImage);
     const CompileOptions& options = context.options();
     const Typed::Program& program = *pipeline.program;
 
     if (options.obfuscates()) {
-        output.obfuscatedSites = collectObfuscatedSites(built.functions, program, context);
+        output.obfuscatedSites = collectObfuscatedSites(built.functions, program, context, plan.bodyFactsForTables.placesOfTailCalls.span());
         times.didFinish("collect obfuscated sites"_s);
     }
     if (hasFlag(options.reports, ReportSet::Functions)) {
@@ -347,7 +347,7 @@ static void generateImage(Typed::PipelineOutput& pipeline, PreparedProgram& prep
     pipeline.releaseCodeGenerationInputs(context);
     BuiltImage built = createImage(pipeline, generated, context, output);
     if (!context.diagnostics().hasErrors())
-        writeReports(pipeline, built, generated.code.operationCountsByFunction.mutableSpan(), sitesByFunctionAsRead.span(), context, output);
+        writeReports(pipeline, built, generated.plan, generated.code.operationCountsByFunction.mutableSpan(), sitesByFunctionAsRead.span(), context, output);
     if (whatTheBuildLeaves == WhatTheBuildLeaves::DiesBeforeTheCallReturns) {
         PhaseTimes times(context, Stage::BuildImage);
         built.functions.clearOnAllThreads(context);

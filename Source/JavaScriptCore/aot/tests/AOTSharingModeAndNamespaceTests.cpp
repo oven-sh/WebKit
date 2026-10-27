@@ -32,6 +32,7 @@
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -317,6 +318,15 @@ static NEVER_INLINE void addTwoPropertiesInARow(LoadedProgram& program, HiddenCe
     hidden[1] = hide(second);
 }
 
+// A collection takes every word of the stack above it for a reference. What a function that has returned left there lies under the frames of the collection, which do not write every word of theirs,
+// and which frames those are depends on which thread collects.
+static NEVER_INLINE void overwriteFramesOfFunctionsThatReturned()
+{
+    volatile uint8_t bytes[16 * KB];
+    for (size_t i = 0; i < sizeof(bytes); ++i)
+        bytes[i] = 0;
+}
+
 static void testAdditionThatWaitsForItsFirstStructure(LoadedProgram& program)
 {
     if (framesAreThoseOfAddressSanitizer)
@@ -325,9 +335,11 @@ static void testAdditionThatWaitsForItsFirstStructure(LoadedProgram& program)
     auto hiddenOffTheStack = makeUniqueWithoutFastMallocCheck<HiddenCells>();
     vm.heap.collectNow(Sync, CollectionScope::Full);
     addTwoPropertiesInARow(program, *hiddenOffTheStack);
+    overwriteFramesOfFunctionsThatReturned();
     vm.heap.collectNow(Sync, CollectionScope::Eden);
     AOT_TEST_CHECK(numberOfMarkedCells(vm, *hiddenOffTheStack, 2) == 2);
-    // A full collection ends every Structure that no object has.
+    // A full collection ends every Structure that no object has. The young collection may have run on this thread, with both in its hands.
+    overwriteFramesOfFunctionsThatReturned();
     vm.heap.collectNow(Sync, CollectionScope::Full);
     AOT_TEST_CHECK(!numberOfMarkedCells(vm, *hiddenOffTheStack, 2));
 }

@@ -14,6 +14,7 @@
 #include "PropertyOffset.h"
 #include <optional>
 #include <wtf/Noncopyable.h>
+#include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {
 
@@ -143,7 +144,8 @@ Structure* structureForPrimitive(JSGlobalObject*, JSValue primitive);
 constexpr bool isProxyType(JSType type) { return type == ProxyObjectType || type == GlobalProxyType; }
 bool isNeverCachedName(VM&, UniquedStringImpl*);
 // See PropertyCaches::prepareHoldersBeforeLookupsUnder().
-bool isPreparedBeforeLookups(VM&, UniquedStringImpl*);
+bool isPreparedBeforeLookupsSlow(VM&, UniquedStringImpl* symbol);
+ALWAYS_INLINE bool isPreparedBeforeLookups(VM& vm, UniquedStringImpl* uid) { return uid->isSymbol() && isPreparedBeforeLookupsSlow(vm, uid); }
 // Calls what the library has registered for the name, if anything, on the compiled object. May throw.
 void prepareForLookup(JSGlobalObject*, JSObject* compiledObject, UniquedStringImpl*);
 // The same for each field of the object, before its values are handed out one after the other.
@@ -152,10 +154,22 @@ void prepareForWalk(JSGlobalObject*, JSObject*);
 class LookByName {
     WTF_MAKE_NONCOPYABLE(LookByName);
 public:
-    LookByName(VM&, JSValue holder, UniquedStringImpl*);
-    ~LookByName();
+    ALWAYS_INLINE LookByName(VM& vm, JSValue holder, UniquedStringImpl* uid)
+    {
+        if (uid->isSymbol()) [[unlikely]]
+            begin(vm, holder, uid);
+    }
+
+    ALWAYS_INLINE ~LookByName()
+    {
+        if (m_caches) [[unlikely]]
+            end();
+    }
 
 private:
+    void begin(VM&, JSValue holder, UniquedStringImpl* symbol);
+    void end();
+
     PropertyCaches* m_caches { nullptr };
     JSCell* m_previous { nullptr };
 };

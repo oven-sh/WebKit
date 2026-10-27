@@ -124,7 +124,7 @@ void didReplaceBody(ReasonsForOperationsThatWent& reasons)
     reasons.didReplaceBody();
 }
 
-Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext& context, const Function& before, const Function& after, const ReasonsForOperationsThatWent& reasons)
+Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext& context, const Function& before, const Function& after, ReasonsForOperationsThatWent& reasons)
 {
     Vector<OperationThatWent> result;
     if (reasons.hasLostTrack() || !before.hasBody() || !after.hasBody() || before.bodyIsReleased || after.bodyIsReleased || !hasTypedValues(before) || !hasTypedValues(after))
@@ -225,8 +225,12 @@ Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContex
                 continue;
             Effects effects = effectsOf(context, before, value).onAnyEdge();
             bool isSeen = isSeenByProgram(effects) && !cannotHappenGivenOperands(context.program, before, value);
-            if (!isSeen && !isOwedToCheck(value))
+            if (!isSeen && !isOwedToCheck(value)) {
+                // Whoever has listened for longer knows the operands by the types that they had when it began. Each run in between has answered for what it made of them.
+                if (reasons.outer())
+                    reasons.addForOperationThatWent(id, InPlaceOfOperation::NothingByProofOfThePass);
                 continue;
+            }
             if (reasons.hasReasonFor(id) || hasNewOperationAtPlaceOf(value))
                 continue;
             result.append({ id, blockID, value.opcode, OperationThatWent::How::IsGone, isSeen ? OperationThatWent::Under::TypesAsTheyStand : OperationThatWent::Under::TypesWithoutChecks });

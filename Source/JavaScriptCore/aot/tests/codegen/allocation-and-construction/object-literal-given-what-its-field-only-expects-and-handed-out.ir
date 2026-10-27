@@ -1,0 +1,49 @@
+# declare const input: any;
+# const given: number = input;
+# const pair = { a: given, b: 2 };
+# (globalThis as any).answer = pair.a;
+# (globalThis as any).kept = pair;
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=32 kind=Variable
+typesite w1 module=m0 position=61 kind=Variable
+layout L0 module=m0 position=68 fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Convert v1 declared={type=number flags=[IsExpected]}
+    v3 = Convert v2 declared={type=number site=w0} illTypedCause=FromLooseType
+    v4 = Integer integer=2
+    v5 = Convert v4 declared={type=number}
+    v6 = NewObject -, v3, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = Convert v7 declared={type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="globalThis" [isFreeName]
+    v11 = Convert v10 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v13 = PropGet v8 key="a"
+    PropSet v12, v13 key="answer"
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="globalThis" [isFreeName]
+    v17 = Convert v16 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v18, v8 key="kept"
+    v20 = Undefined
+    Return v20
+}
+
+# The object is stored where any code finds it, so it is made. What it is given for the field goes through the store by name, which tests it.
+# CHECK-LABEL: function f0 role=Source
+# CHECK: b@[[given]] = Patchpoint({{*}}:PropGet)
+# CHECK: b@[[pair]] = Patchpoint({{*}}:NewObject)
+# CHECK: Patchpoint(b@[[pair]]:{{*}}b@[[given]]:{{*}}:PropSet)
+# CHECK: Patchpoint({{*}}b@[[pair]]:ColdAny{{*}}:SetGlobalBinding)
+# CHECK-LABEL: end of function f0

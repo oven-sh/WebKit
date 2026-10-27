@@ -165,9 +165,12 @@ void ArrayBuiltinEmitter::replaceElements(const InlineCall& call, const InlineSp
     ArrayElements storage = elements().elementsOf(array);
     if (added != removed) {
         CopyDirection direction = added > removed ? CopyDirection::Backward : CopyDirection::Forward;
-        copyElements(form, { storage, add(from, integer(removed)) }, { storage, add(from, integer(added)) }, splice.tail, direction);
-        for (int64_t i = 0; i < removed - added; ++i)
-            elements().storeRawElement(form, storage, add(splice.newLength, integer(i)), elements().rawHole(form));
+        Integer tailBefore = add(from, removed);
+        copyElements(form, { storage, tailBefore }, { storage, add(from, added) }, splice.tail, direction);
+        for (int64_t i = 0; i < removed - added; ++i) {
+            Integer position = add(splice.newLength, i);
+            elements().storeRawElement(form, storage, position, elements().rawHole(form));
+        }
     }
     for (size_t i = 0; i < inserted.size(); ++i)
         elements().storeRawElement(form, storage, add(from, integer(i)), inserted[i]);
@@ -184,8 +187,9 @@ void ArrayBuiltinEmitter::spliceInline(const InlineCall& call, Integer start, in
     ArrayElements storage = elements().elementsOf(array);
     Integer length = elements().publicLength(storage);
     Integer fromEnd = add(start, length);
-    Integer clampedFromEnd = select(lessThan(fromEnd, integer(0)), integer(0), fromEnd);
-    Integer from = select(lessThan(start, integer(0)), clampedFromEnd, select(lessThan(start, length), start, length));
+    Integer clampedFromEnd = select(lessThan(fromEnd, 0), 0, fromEnd);
+    Condition countsFromEnd = lessThan(start, 0);
+    Integer from = select(countsFromEnd, clampedFromEnd, select(lessThan(start, length), start, length));
     Integer tail = sub(length, add(from, integer(removed)));
     Integer maxTail = added == removed ? length : integer(maxLengthForElementwiseMove);
     branchUnless(belowOrEqual(tail, maxTail), outOfLine);
@@ -291,7 +295,9 @@ ArrayBuiltinEmitter::RemovedPrefix ArrayBuiltinEmitter::loadRemovedPrefix(const 
             continue;
         }
         Operand rawElement = elements().loadRawElement(form, splice.elements, add(splice.from, integer(i)));
-        prefix.elements.append(select(elements().isHole(form, rawElement), undefined(), elements().boxRawElement(form, rawElement)));
+        Condition isHole = elements().isHole(form, rawElement);
+        Boxed whenHole = undefined();
+        prefix.elements.append(select(isHole, whenHole, elements().boxRawElement(form, rawElement)));
     }
     return prefix;
 }

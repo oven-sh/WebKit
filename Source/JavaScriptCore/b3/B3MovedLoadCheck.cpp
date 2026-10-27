@@ -17,6 +17,7 @@
 #include "B3ProcedureInlines.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
+#include "B3VariableValue.h"
 #include "CCallHelpers.h"
 #include <algorithm>
 #include <wtf/HashSet.h>
@@ -103,6 +104,8 @@ PatchpointValue* createMovedLoadCheck(Procedure& proc, const MovedLoad& load, Va
                 jit.branchTest64(CCallHelpers::Zero, given, CCallHelpers::TrustedImm64(static_cast<int64_t>(bits))).linkTo(done, &jit);
                 counts.link(&jit);
             }
+            if (load.mayGetFilled)
+                (is64Bit ? jit.branchTest64(CCallHelpers::Zero, given) : jit.branchTest32(CCallHelpers::Zero, given)).linkTo(done, &jit);
             for (const WordChange& change : load.changesThatDoNotCount) {
                 RELEASE_ASSERT(!is64Bit);
                 CCallHelpers::Jump isOther = jit.branch32(CCallHelpers::NotEqual, given, CCallHelpers::TrustedImm32(static_cast<int32_t>(change.before)));
@@ -145,6 +148,14 @@ void MovedLoadLog::name(Value* value, unsigned entry)
         m_entriesNaming.add(value, Vector<unsigned, 2>()).iterator->value.append(entry);
 }
 
+void MovedLoadLog::rename(Value*& named, Value* replacement, unsigned entry)
+{
+    if (auto found = m_entriesNaming.find(named); found != m_entriesNaming.end())
+        found->value.removeFirst(entry);
+    named = replacement;
+    name(replacement, entry);
+}
+
 void MovedLoadLog::add(const MovedLoad& load, BasicBlock* block, unsigned index, Value* address, Value* givenToUsers, Value* store)
 {
     Value* before = nullptr;
@@ -183,21 +194,131 @@ void MovedLoadLog::didClone(Value* original, Value* clone)
     auto found = m_entriesNaming.find(original);
     if (found == m_entriesNaming.end())
         return;
-    Vector<unsigned, 2> entries = found->value;
-    for (unsigned index : entries) {
+    if (m_depthOfRegionCopies) {
+        m_copiesInRegion.set(original, clone);
+        return;
+    }
+    // A Get gives what its variable holds where it stands, however many there are of it.
+    if (m_depthOfCopiesBesideOriginals || original->opcode() == Get)
+        return;
+    // Where there are two of a value, its users may be handed a Phi of the two, and the log does not hear of that.
+    for (unsigned index : found->value) {
+        Entry& entry = m_entries[index];
+        if (entry.address == original || entry.givenToUsers == original)
+            drop(entry);
+    }
+}
+
+void MovedLoadLog::willCopy(Procedure& proc, const IndexSet<BasicBlock*>& blocks)
+{
+    if (isEmpty())
+        return;
+    // An entry may name a value that is gone: see insertChecks().
+    UncheckedKeyHashMap<Value*, BasicBlock*> blockOf;
+    for (BasicBlock* block : proc) {
+        for (Value* value : *block) {
+            if (m_entriesNaming.contains(value))
+                blockOf.add(value, block);
+        }
+    }
+    for (Entry& entry : m_entries) {
+        if (!entry.address)
+            continue;
+        BasicBlock* place = entry.before ? blockOf.get(entry.before) : entry.block;
+        BasicBlock* blockOfAddress = blockOf.get(entry.address);
+        BasicBlock* blockOfGiven = blockOf.get(entry.givenToUsers);
+        auto keepsItsMeaning = [&](BasicBlock* block) {
+            return block && (block == place || !blocks.contains(block));
+        };
+        if (!place || !keepsItsMeaning(blockOfAddress) || !keepsItsMeaning(blockOfGiven))
+            drop(entry);
+    }
+}
+
+void MovedLoadLog::didDemote(Procedure& proc, const UncheckedKeyHashMap<Value*, Variable*>& variables)
+{
+    if (isEmpty())
+        return;
+    UncheckedKeyHashMap<Value*, Vector<unsigned, 2>> entriesBehind;
+    UncheckedKeyHashMap<BasicBlock*, Vector<unsigned, 2>> entriesAtHead;
+    for (unsigned index = 0; index < m_entries.size(); ++index) {
+        const Entry& entry = m_entries[index];
+        if (!entry.address || (!variables.contains(entry.address) && !variables.contains(entry.givenToUsers)))
+            continue;
+        if (entry.before)
+            entriesBehind.add(entry.before, Vector<unsigned, 2>()).iterator->value.append(index);
+        else
+            entriesAtHead.add(entry.block, Vector<unsigned, 2>()).iterator->value.append(index);
+    }
+    if (entriesBehind.isEmpty() && entriesAtHead.isEmpty())
+        return;
+
+    InsertionSet insertionSet(proc);
+    Vector<unsigned, 8> entriesInFrontOfPlace;
+    for (BasicBlock* block : proc) {
+        entriesInFrontOfPlace = entriesAtHead.get(block);
+        for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
+            Value* value = block->at(valueIndex);
+            if (staysInPlace(value)) {
+                for (unsigned index : entriesInFrontOfPlace) {
+                    Entry& entry = m_entries[index];
+                    for (Value** named : { &entry.address, &entry.givenToUsers }) {
+                        if (Variable* variable = variables.get(*named))
+                            rename(*named, insertionSet.insert<VariableValue>(valueIndex, Get, entry.load.origin, variable), index);
+                    }
+                }
+                entriesInFrontOfPlace.shrink(0);
+            }
+            if (auto found = entriesBehind.find(value); found != entriesBehind.end())
+                entriesInFrontOfPlace.appendVector(found->value);
+        }
+        insertionSet.execute(block);
+    }
+}
+
+void MovedLoadLog::willCopyRegion()
+{
+    if (!m_depthOfRegionCopies++)
+        m_numberOfEntriesBeforeRegionCopy = m_entries.size();
+}
+
+void MovedLoadLog::didCopy(BasicBlock* original, BasicBlock* copy)
+{
+    RELEASE_ASSERT(m_depthOfRegionCopies);
+    if (!isEmpty())
+        m_blockCopiesInRegion.set(original, copy);
+}
+
+void MovedLoadLog::didCopyRegion()
+{
+    RELEASE_ASSERT(m_depthOfRegionCopies);
+    if (--m_depthOfRegionCopies)
+        return;
+    auto copies = std::exchange(m_copiesInRegion, { });
+    auto blockCopies = std::exchange(m_blockCopiesInRegion, { });
+    auto copyOf = [&](Value* value) {
+        Value* copy = value ? copies.get(value) : nullptr;
+        return copy ? copy : value;
+    };
+    for (unsigned index = 0; index < m_numberOfEntriesBeforeRegionCopy; ++index) {
         Entry copy = m_entries[index];
         if (!copy.address)
             continue;
-        // Where there are two of a value, its users may be handed a Phi of the two, and the log does not hear of that.
-        if (copy.address == original || copy.givenToUsers == original) {
-            drop(m_entries[index]);
+        if (!(copy.before ? copies.contains(copy.before) : blockCopies.contains(copy.block)))
             continue;
-        }
-        if (copy.before != original)
+        // What stands in the block of the place and is left out of the copy has nothing to stand for it there.
+        BasicBlock* place = copy.before ? copy.before->owner : copy.block;
+        auto isLeftOut = [&](Value* value) {
+            return !copies.contains(value) && value->owner == place;
+        };
+        if (isLeftOut(copy.address) || isLeftOut(copy.givenToUsers))
             continue;
-        copy.before = clone;
-        if (copy.store == original)
-            copy.store = clone;
+        copy.address = copyOf(copy.address);
+        copy.givenToUsers = copyOf(copy.givenToUsers);
+        copy.store = copyOf(copy.store);
+        copy.before = copyOf(copy.before);
+        if (BasicBlock* block = blockCopies.get(copy.block))
+            copy.block = block;
         unsigned entry = m_entries.size();
         m_entries.append(copy);
         for (Value* value : { copy.address, copy.givenToUsers, copy.store, copy.before })
@@ -220,7 +341,13 @@ void MovedLoadLog::willDelete(Value* value)
 {
     if (isEmpty())
         return;
-    dropEntriesWrittenBy(value);
+    if (!m_isDeletingUnreachableCode)
+        dropEntriesWrittenBy(value);
+    if (m_depthOfRegionCopies) {
+        m_copiesInRegion.removeIf([&](auto& pair) {
+            return pair.value == value;
+        });
+    }
     Vector<unsigned, 2> entries = m_entriesNaming.take(value);
     Value* standsFor = value->opcode() == Identity ? value->child(0) : nullptr;
     for (unsigned index : entries) {

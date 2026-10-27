@@ -1,0 +1,33 @@
+# A likely key that is the key of accesses to properties and of nothing else is made as a name. One that a Map is asked for is not: a Map goes by the characters
+# FORM: Selected
+# RUN: generate-code calls KeysMadeAsNames
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stored" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    ElemSet v0, v3, v2
+    Return v2
+}
+function f1 name="deleted" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = ElemDelete v0, v3
+    Return v4
+}
+function f2 name="readThroughCast" parameters=[{type=anything}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = Upcast v3 castType=anything
+    v5 = ElemGet v0, v4
+    Return v5
+}
+function f3 name="askedOfMap" parameters=[{type=Map}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = Strcat v1, v2 [isLikelyKey]
+    v4 = CallBuiltin v0, v3 overload=MapPrototypeGet/0
+    Return v4
+}
+function f4 name="askedOfBoth" parameters=[{type=Map}, {type=string}, {type=number}, {type=anything}] results=[{type=anything}] {
+    v4 = Strcat v1, v2 [isLikelyKey]
+    v5 = CallBuiltin v0, v4 overload=MapPrototypeGet/0
+    ElemSet v3, v4, v5
+    Return v5
+}
+# CHECK: statistic KeysMadeAsNames 3

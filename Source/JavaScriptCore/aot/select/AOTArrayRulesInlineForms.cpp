@@ -37,6 +37,12 @@ static bool isArrayType(const Type& type)
     return part && part->builtinClass == BuiltinClasses::Array;
 }
 
+static bool searchesForString(const InlineBuiltinSite& site)
+{
+    const Type* searched = argumentTypeOf(site, 0);
+    return searched && site.arguments().size() == 1 && searched->isAnyString();
+}
+
 // Code in line serves a number, and what is compared by identity: an object, a function, a symbol, a boolean, undefined, null.
 static bool canSearchInline(const InlineBuiltinSite& site)
 {
@@ -88,6 +94,8 @@ InlineForm chooseFormOfArrayBuiltin(const InlineBuiltinSite& site)
         return twoWayIf(site, isNumberArgument(site, 0));
     case InlineBuiltin::ArrayIndexOf:
     case InlineBuiltin::ArrayIncludes:
+        if (searchesForString(site))
+            return InlineForm::Whole;
         return twoWayIf(site, canSearchInline(site));
     case InlineBuiltin::ArrayJoin:
         return twoWayIf(site, canJoinInline(site));

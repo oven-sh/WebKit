@@ -865,6 +865,7 @@ static void emitEngineCallFrame(StubAssembler& jit, GPRReg count, GPRReg frame, 
 #endif
     jit.addPtr(TrustedImm32(outgoingFrameSlot(CallFrameSlot::thisArgument, sizeof(Register)).offset), sp, frame);
     Jump none = jit.branchTest32(CCallHelpers::Zero, count);
+    jit.zeroExtend32ToWord(count, count);
     emitCopyFromLastWord(jit, Address(fp, static_cast<int32_t>(offsetOfStackWordsFromFrame)), Address(frame), count, word);
     none.link(&jit);
 }
@@ -897,7 +898,7 @@ static void emitCallNativeFunctionByOperation(StubAssembler& jit, GPRReg count, 
     jit.shuffleRegisters<GPRReg, 3>({ calleeGPR, thisGPR, count }, { operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3) });
     jit.addPtr(TrustedImm32(static_cast<int32_t>(offsetOfStackWordsFromFrame)), fp, operationArgumentGPR(4));
     jit.move(instanceGPR, operationArgumentGPR(0));
-    jit.callOperation(Entry::operationAOTCallNativeFunction, jit.reuseScratch(StubRegister::Operation));
+    jit.callOperation(Entry::operationAOTCallEngineCallee, jit.reuseScratch(StubRegister::Operation));
     emitReturnFromOperationBelowSpilledArguments(jit);
 
     isNotNative.link(&jit);

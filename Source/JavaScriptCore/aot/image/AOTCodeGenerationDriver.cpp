@@ -202,7 +202,7 @@ static void shrinkToFit(CompiledCode& code)
     };
     auto& body = code.body;
     auto& sites = code.sites;
-    shrink(body.bytes, body.entries, body.localSites, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.argumentMoves, body.constants, body.jumpTables);
+    shrink(body.bytes, body.entries, body.localSites, body.relocations, body.returnSites, body.firstReadSites, body.callees, body.stubKeys, body.argumentMoves, body.constants, body.jumpTables, body.smallLoops);
     shrink(code.frame.frameRanges, code.frame.prologueChecks);
     shrink(sites.positions, sites.inlineFrames, sites.flaggedSites, sites.handlers, sites.faultingAccesses, sites.pollSites, sites.frameMapWords);
 }

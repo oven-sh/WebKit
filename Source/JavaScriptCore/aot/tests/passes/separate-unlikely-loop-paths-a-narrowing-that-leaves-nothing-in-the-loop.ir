@@ -1,0 +1,61 @@
+# The path that makes a Square leaves for the copy, so the loop turns with a Circle alone. No member is left for the arm of the Square, whose read is resolved for that layout:
+# NarrowByField keeps the type of its holder there, and the arm is cut at it. The variable goes around the loop, for which casts are simplified before anything is cut
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot check=VerifyEachPass
+# RUN: pass SeparateUnlikelyLoopPaths VerifyProgram
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
+
+module m0 path="main.ts" displayPath="main.ts"
+variable g0 name="total" declared={type=number}
+layout L0 name="Circle" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="radius" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+layout L1 name="Square" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="side" declared={type=number} flags=[IsRequired] flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
+function f0 name="walk" parameters=[{type=i32}, {type=number}] results=[{type=undefined}] {
+  b0(v0: i32, v1: number):
+    v2 = Integer integer=1
+    v3 = NewObject -, v2, v1 layout=L0 fields=[0, 1]
+    v4 = Integer
+    Jump -> next b1(v3, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = Integer integer=40
+    v9 = Less v6, v8
+    Branch v9 -> taken b2(| 0), notTaken b9()
+  b2(v10):
+    v11 = StrictEq v10, v0
+    Branch v11 -> taken b3(), notTaken b4()
+  b3() frequency=Unlikely:
+    v12 = Integer integer=2
+    v13 = NewObject -, v12, v1 layout=L1 fields=[0, 1]
+    Jump -> next b5(v13)
+  b4():
+    Jump -> next b5(v5)
+  b5(v14):
+    v15 = GetSlot v14 key="kind" receivers=[L0, L1] level=Proven
+    v16 = Integer integer=2
+    v17 = StrictEq v15, v16
+    Branch v17 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v18):
+    v19 = NarrowByField v14, v18 key="kind"
+    v20 = GetSlot v19 key="side" receivers=[L1] level=Proven
+    Jump -> next b8(v20)
+  b7(v21):
+    v22 = NarrowByField v14, v21 key="kind"
+    v23 = GetSlot v22 key="radius" receivers=[L0] level=Proven
+    Jump -> next b8(v23)
+  b8(v24):
+    v25 = GetModuleVariable variable=g0
+    v26 = Add v25, v24
+    PutModuleVariable v26 variable=g0
+    v28 = Increment v10
+    Jump -> next b1(v14, v28)
+  b9():
+    Return
+# CHECK: = NewObject {{*}} layout=L1
+# CHECK: ([[circle]]: L0):
+# CHECK-NEXT: = GetSlot [[circle]] key="kind" receivers=[L0, L1] level=Proven
+# CHECK: -> taken [[square]](| 0), notTaken
+# CHECK-NEXT: [[square]]({{*}}: 2):
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: : 1):
+# CHECK-NEXT: = GetSlot [[circle]] key="radius" receivers=[L0] level=Proven
+}

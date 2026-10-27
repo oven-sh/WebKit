@@ -1008,10 +1008,15 @@ private:
             auto jumps = m_jumpsTo.find(branch.target);
             if (jumps == m_jumpsTo.end())
                 continue;
-            for (unsigned position : jumps->value) {
-                if (position == branch.position || distance(endOf(position) - sizeOfJump, endOf(branch.position)) > reach)
+            // The positions ascend, and so do the ends of their blocks.
+            unsigned end = endOf(branch.position);
+            auto inReach = std::ranges::lower_bound(jumps->value, (end > reach ? end - reach : 0) + sizeOfJump, { }, [&](unsigned position) {
+                return endOf(position);
+            });
+            for (; inReach != jumps->value.end() && endOf(*inReach) <= end + reach + sizeOfJump; ++inReach) {
+                if (*inReach == branch.position)
                     continue;
-                route(branch, splitOffFinalJump(position));
+                route(branch, splitOffFinalJump(*inReach));
                 break;
             }
         }
@@ -1036,10 +1041,17 @@ private:
             auto firstGap = std::ranges::lower_bound(m_gaps, endOf(first.position) > reach ? endOf(first.position) - reach : 0, { }, [&](unsigned gap) {
                 return endOf(gap);
             });
+            // The branches that wait stand in the order of the code: those that reach a place stand in a row.
+            auto waitingNear = [&](unsigned place) {
+                auto endOfBranch = [&](unsigned index) { return endOf(m_branches[index].position); };
+                auto begin = std::ranges::lower_bound(waiting, place > reach ? place - reach : 0, { }, endOfBranch);
+                auto end = std::ranges::upper_bound(begin, waiting.end(), place + reach, { }, endOfBranch);
+                return std::span<const unsigned>(begin, end);
+            };
             for (auto gap = firstGap; gap != m_gaps.end() && endOf(*gap) <= endOf(first.position) + reach; ++gap) {
                 unsigned numberOfBranches = 0;
-                for (unsigned index : waiting)
-                    numberOfBranches += !m_branches[index].isRouted && distance(endOf(*gap), endOf(m_branches[index].position)) <= reach;
+                for (unsigned index : waitingNear(endOf(*gap)))
+                    numberOfBranches += !m_branches[index].isRouted;
                 if (numberOfBranches > mostBranches) {
                     mostBranches = numberOfBranches;
                     bestGap = *gap;
@@ -1051,8 +1063,8 @@ private:
             jump->append(Jump, m_order[first.position]->last().origin);
             jump->setSuccessors(FrequentedBlock(first.target, m_order[first.position]->successor(0).frequency()));
             m_blocksBehind.add(*bestGap, Vector<BasicBlock*, 1>()).iterator->value.append(jump);
-            for (unsigned index : waiting) {
-                if (!m_branches[index].isRouted && distance(endOf(*bestGap), endOf(m_branches[index].position)) <= reach)
+            for (unsigned index : waitingNear(endOf(*bestGap))) {
+                if (!m_branches[index].isRouted)
                     route(m_branches[index], jump);
             }
         }

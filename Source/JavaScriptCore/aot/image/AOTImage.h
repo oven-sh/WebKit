@@ -88,6 +88,8 @@ public:
     }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
+    // For a thread whose VM runs no compiled program.
+    JS_EXPORT_PRIVATE static void useNoneOnThisThread();
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
     // Takes no lock and does not depend on the calling thread.
     static const Image* findByCodeAddress(const void*);
@@ -118,6 +120,7 @@ public:
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
+    bool findsDataFilesByName() const { return header().has(ImageFlag::FindsDataFilesByName); }
     bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }
@@ -157,6 +160,8 @@ public:
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
     // The function has made the function object that it calls at the site itself and has handed it to nobody. The site of an inline frame stands for the call whose place the frame has taken.
     bool callsOwnFunctionObjectAt(uint32_t function, CallSiteIndex) const;
+    // The callee of a direct construct that may leave its frame by a tail call.
+    std::optional<FunctionID> constructedCalleeAt(uint32_t function, CallSiteIndex) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;
 
     std::optional<FaultSite> faultSiteAt(const void* pc) const;

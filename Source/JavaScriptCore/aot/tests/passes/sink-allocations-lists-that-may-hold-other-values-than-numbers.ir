@@ -119,25 +119,27 @@ function f5 name="noElementIsAskedWhereOneMayBeUnspecified" parameters=[{type=bo
     v4 = Unspecified valueType=undefined|i32
     v5 = Integer integer=2
     Jump -> next b2(v4, v5)
-  b2(v6: undefined|i32, v7: i32):
-    v8 = NewArray v6 contents=undefined|i32
-    v9 = AssumeType v8 provenType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
-    v10 = Integer integer=2
-    v11 = BitAnd v7, v10
-    v12 = ToBoolean v11
-    Branch v12 -> taken b3(), notTaken b4()
+  b2(v6: undefined|i32|unspecified, v7: i32):
+    v8 = Specified
+    v9 = AssumeType v6, v8 provenType=undefined|i32
+    v10 = NewArray v9 contents=undefined|i32
+    v11 = AssumeType v10 provenType=Array<undefined|i32, proven, pristine[Storage, Names, Dense]>
+    v12 = Integer integer=2
+    v13 = BitAnd v7, v12
+    v14 = ToBoolean v13
+    Branch v14 -> taken b3(), notTaken b4()
   b3():
-    v13 = Undefined
-    Return v13
+    v15 = Undefined
+    Return v15
   b4():
-    v14 = HasArrayStorage v9 arrayStorage=Int32
-    Branch v14 -> taken b5(| 0), notTaken b6()
-  b5(v15):
-    v16 = GetArrayElement v9, v2, v15 arrayStorage=Int32 level=Expected [keyIsIntegral]
-    Return v16
+    v16 = HasArrayStorage v11 arrayStorage=Int32
+    Branch v16 -> taken b5(| 0), notTaken b6()
+  b5(v17):
+    v18 = GetArrayElement v11, v2, v17 arrayStorage=Int32 level=Expected [keyIsIntegral]
+    Return v18
   b6() frequency=Rare:
-    v17 = ElemGet v9, v2 [keyIsIntegral]
-    Return v17
+    v19 = ElemGet v11, v2 [keyIsIntegral]
+    Return v19
 }
 # TWICE-LABEL: function f5 name="noElementIsAskedWhereOneMayBeUnspecified"
 # ONCE-LABEL: function f5 name="noElementIsAskedWhereOneMayBeUnspecified"

@@ -87,6 +87,17 @@ static void testRequiresSelectsRuns()
     expectRunLines(codeOfOtherSystems, Architecture::X86_64, { 1, 2 });
 #endif
 
+    static constexpr ASCIILiteral codeOfWindows =
+        "# RUN: print\n"
+        "# RUN(ARM): print\n"
+        "# REQUIRES(ARM): arm64 windows\n"
+        "# ARM: a\n"_s;
+#if OS(WINDOWS)
+    expectRunLines(codeOfWindows, Architecture::ARM64, { 1, 2 });
+#else
+    expectRunLines(codeOfWindows, Architecture::ARM64, { 1 });
+#endif
+
     static constexpr ASCIILiteral codeWithFaultingPolls =
         "# RUN: print\n"
         "# RUN(X64): print\n"
@@ -106,6 +117,16 @@ static void testRequiresSelectsRuns()
         expectRunLines(loadsCodeOutsideImage, Architecture::X86_64, { 1 });
     else
         expectRunLines(loadsCodeOutsideImage, Architecture::X86_64, { 1, 2 });
+
+    static constexpr ASCIILiteral convertsWithSlowPath =
+        "# RUN: print\n"
+        "# RUN(SLOW): print\n"
+        "# REQUIRES(SLOW): no-jscvt\n"
+        "# SLOW: a\n"_s;
+    if (targetHasJSCVT)
+        expectRunLines(convertsWithSlowPath, Architecture::ARM64, { 1 });
+    else
+        expectRunLines(convertsWithSlowPath, Architecture::ARM64, { 1, 2 });
 }
 
 static void testRequiresMalformed()
@@ -117,6 +138,7 @@ static void testRequiresMalformed()
     expectErrorLines("# RUN: print\n# REQUIRES: not-windows not-windows\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: faulting-loop-polls faulting-loop-polls\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES: code-outside-image code-outside-image\n"_s, { 2 });
+    expectErrorLines("# RUN: print\n# REQUIRES: no-jscvt no-jscvt\n"_s, { 2 });
     expectErrorLines("# RUN: print\n# REQUIRES(OTHER): arm64\n"_s, { 2 });
     expectErrorLines("# RUN(ONLY): print\n# ONLY: x\n# REQUIRES: arm64\n"_s, { 3 });
     expectErrorLines("# RUN: print\n# REQUIRES: arm64\n# REQUIRES: x86_64\n"_s, { 3 });

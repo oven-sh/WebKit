@@ -240,7 +240,7 @@ bool TextParser::TypeParts::hasMixedInternalValue(const Wire::Type& wire) const
         return false;
     if (hasOpaque && hasEnvironment)
         return true;
-    if (wire.primitives & ~wirePrimitivesOf(Primitive::Absent) || wire.flags || numberBits)
+    if (wire.primitives & ~wirePrimitivesOf(Primitive::Absent) || wire.flags || numberBits & ~Primitive::Unspecified)
         return true;
     return !strings.isEmpty() || !layouts.isEmpty() || !builtins.isEmpty() || !classes.isEmpty() || !functions.isEmpty() || !symbolKeyWords.isEmpty();
 }

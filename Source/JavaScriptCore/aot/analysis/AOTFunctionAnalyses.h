@@ -158,7 +158,7 @@ public:
     bool isInCycle(BlockID block) { return cfg().hasCycle() && blockCycles().isInCycle(block); }
 
     ValueID identityOf(ValueID);
-    ValueID sameObjectThroughCasts(ValueID id) const { return Typed::sameObjectThroughCasts(m_function, id); }
+    RootThroughCasts sameObjectThroughCasts(ValueID id) const { return Typed::sameObjectThroughCasts(m_function, id); }
     ValueID definitionThroughUpcasts(ValueID id) const { return Typed::definitionThroughUpcasts(m_function, id); }
 
     bool dominates(ValueID definition, ProgramPoint);
@@ -190,7 +190,7 @@ public:
     {
         m_runningPass = pass;
         if (m_values.identities && !m_values.identities->isComplete())
-            completeIdentitiesBeforePass();
+            dropIncompleteIdentitiesBeforePass();
     }
     void didRunPass()
     {
@@ -265,7 +265,7 @@ private:
     void didBuild(FunctionAnalysis);
     void didBringUseListsUpToDate(const UseLists::Update&);
     void verifyUseLists() const;
-    void completeIdentitiesBeforePass();
+    void dropIncompleteIdentitiesBeforePass();
     void verifyIdentities(const CFG&) const;
     void verifyLiveness() const;
     void verifyFrequencies();

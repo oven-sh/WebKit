@@ -234,7 +234,7 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
     uint32_t& lookedAtInVain = instance->arrays.elementsLookedAtInVain;
     // The place has said which it is.
     uint8_t& shortYoungArraysConverted = instance->arrays.shortYoungArraysConverted[instance->arrays.placeThatConverts % ArrayWords::numberOfCounts];
-    if (lookedAtInVain >= ArrayWords::maxElementsLookedAtInVain) {
+    if (lookedAtInVain >= ArrayWords::maxElementsLookedAtInVain || array == instance->arrays.lastArrayLookedAtInVain) {
         shortYoungArraysConverted = ArrayWords::maxShortYoungArraysConverted;
         return;
     }
@@ -249,6 +249,7 @@ static void convertStorageOfNumbers(Instance* instance, JSGlobalObject* globalOb
     unsigned numberOfLeadingNumbers = isPlainArray ? countLeadingNumbersAndHoles(values, holdsNumber) : 0;
     if (numberOfLeadingNumbers < publicLength || !holdsNumber) {
         lookedAtInVain = std::min<uint64_t>(static_cast<uint64_t>(lookedAtInVain) + costOfLook + numberOfLeadingNumbers, ArrayWords::maxElementsLookedAtInVain);
+        instance->arrays.lastArrayLookedAtInVain = array;
         return;
     }
 

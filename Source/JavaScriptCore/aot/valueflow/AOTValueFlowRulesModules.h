@@ -67,6 +67,10 @@ enum class UnseenCodeReach : uint8_t {
     Realm,
 };
 void letUnseenCodeRun(ValueFlowRuleContext&, UnseenCodeReach);
+// In the host nodes that hold names: a key constant is that name; these two stand for every index and for every name.
+inline ValueSetID markOfAnyIndex(const ValueFlowUniverse& universe) { return universe.untrackedObjectAlone(); }
+inline ValueSetID markOfAnyName(const ValueFlowUniverse& universe) { return universe.unknownObjectAlone(); }
+
 inline void letUnknownCodeWrite(ValueFlowRuleContext& context) { raiseHostFlag(context, ValueFlowHostNode::UnknownCodeWrites); }
 inline bool mayUnknownCodeWrite(ValueFlowRuleContext& context) { return isHostFlagRaised(context, ValueFlowHostNode::UnknownCodeWrites) || isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns); }
 inline void letWhateverHasEscapedBeCalled(ValueFlowRuleContext& context) { raiseHostFlag(context, ValueFlowHostNode::ValueNobodyKnowsIsCalled); }

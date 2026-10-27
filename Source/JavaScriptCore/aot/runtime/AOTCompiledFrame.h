@@ -11,6 +11,7 @@
 
 #include "AOTCallSiteCache.h"
 #include "AOTCompiledFrameExit.h"
+#include "AOTTraceFrame.h"
 #include "CallFrame.h"
 #include "LineColumn.h"
 #include <bit>
@@ -167,6 +168,8 @@ struct LogicalFrame {
     // The site and the inline frame are those of the caller.
     bool isOfCalledBuiltin { false };
     bool callerIsTailDeleted { false };
+    // It is listed because its function was constructed, once the walk has gone past it.
+    bool isListedBehindTailCall { false };
 };
 
 struct LogicalFrameSite {
@@ -176,6 +179,12 @@ struct LogicalFrameSite {
     bool isTailDeleted { false };
     BuiltinID calledBuiltin { };
 };
+
+// After a tail call the frame above a construct belongs to another function than the one that was constructed.
+// Which function the site has constructed, where something says so: the frame of the stub between the site and its callee, or the site.
+FunctionID functionConstructedAt(const Image&, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame);
+// The code was entered for the function, by whichever of its forms.
+bool isCodeOf(const Image&, CompiledFunctionID, FunctionID);
 
 LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const LogicalFrameSite&);
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);
@@ -211,8 +220,9 @@ public:
     using Exit = CompiledFrameExit;
 
     struct RunEnd {
-        // After a tail call the outermost frame of the run belongs to another function than the one that was constructed.
         JS_EXPORT_PRIVATE bool constructs(FunctionID outermost) const;
+        // The compiled function that was constructed, if one was.
+        FunctionID constructedFunction() const;
 
         CallFrame* adapterFrame { nullptr };
         bool isConstruct { false };
@@ -273,6 +283,11 @@ public:
     // The frame is the last one shown of its run: the functions below wait for the step of an async generator that it belongs to.
     JS_EXPORT_PRIVATE bool isAboveFramesThatWait() const;
     JS_EXPORT_PRIVATE bool isConstructCall();
+    // The frame above, which advance() came from, is the same activation: the frame tail-called the body of its own function.
+    JS_EXPORT_PRIVATE bool tailCalledOwnBody() const;
+    // A walk that lists a stack trace stops once more between two machine frames, or behind the last, where a function was constructed and has left by a tail call. frame() is still the frame above.
+    JS_EXPORT_PRIVATE void listConstructedFunctionsThatLeft();
+    const std::optional<TraceFrame>& constructedFunctionThatLeft() const { return m_constructedFunctionThatLeft; }
     // The function object that runs in the frame, where its function records it. Null: it lies in a frame.
     JS_EXPORT_PRIVATE std::optional<JSObject*> recordedCallee();
     void* callerStackPointer() const { return AOT::stackPointerOfCaller(m_cursor.callFrame, m_cursor.bytesAboveReturnAddress); }
@@ -287,6 +302,7 @@ public:
     // The frame that returns to that stub frame: the body's, or that of the stub that throws because the stack has no room for the body's.
     CallFrame* asyncGeneratorBodyFrameLeft() const { return m_cursor.asyncGeneratorBodyFrame; }
     CallFrame* engineCalleeStubFrameLeft() const { return m_cursor.engineCalleeStubFrame; }
+    CallFrame* plainFunctionConstructFrameLeft() const { return m_cursor.plainFunctionConstructFrame; }
 
 private:
     struct Cursor {
@@ -307,6 +323,7 @@ private:
         CallFrame* asyncGeneratorStubFrame { nullptr };
         CallFrame* asyncGeneratorBodyFrame { nullptr };
         CallFrame* engineCalleeStubFrame { nullptr };
+        CallFrame* plainFunctionConstructFrame { nullptr };
         bool isAmongFramesThatWait { false };
     };
 
@@ -325,6 +342,7 @@ private:
     const CallSiteCache::Entry* findFunctionFrame(Cursor&, Exit&, RunEnd&);
     const CallSiteCache::Entry* findCallerFunctionFrame(Cursor&, Exit&, RunEnd&);
     void enterMachineFrame(const CallSiteCache::Entry*);
+    std::optional<TraceFrame> findConstructedFunctionThatLeft();
     JS_EXPORT_PRIVATE void readFrame() const;
 
     VM* m_vm;
@@ -338,6 +356,11 @@ private:
     mutable bool m_hasReadFrame { false };
     bool m_calleeWasEntered;
     bool m_isAtEnd { false };
+    bool m_listsConstructedFunctionsThatLeft { false };
+    // It left before the first frame of the run was entered, so the walk has yet to show that frame.
+    bool m_constructedFunctionLeftOnTop { false };
+    std::optional<TraceFrame> m_constructedFunctionThatLeft;
+    FunctionID m_calleeFunction;
     Exit m_exit;
     RunEnd m_runEnd;
     InlineFrameReader m_inlineFrames;

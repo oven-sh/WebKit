@@ -176,6 +176,16 @@ struct WrittenPositionOfSite {
     uint32_t position { 0 };
 };
 
+// Proxies that the program makes are seen to arrive as the receiver of the access, and little else. The layouts are those seen to arrive as the handler and as the target where those proxies are made.
+// A list is empty where nothing with a layout is seen and where more kinds are seen than a place can tell apart. A prediction: other proxies may arrive, and other objects.
+struct FlowProxiesSeenAtSite {
+    AccessSiteID site;
+    Vector<LayoutID, 4> handlers;
+    Vector<LayoutID, 4> targets;
+    // Lists are seen among the targets, beside what has one of the layouts.
+    bool seesListsAsTargets { false };
+};
+
 struct FlowSiteTables {
     Vector<AccessSite> accessSites;
     // Sorted by site. The location of a site is where an error is reported; only a site that the source text has elsewhere is listed.
@@ -184,6 +194,8 @@ struct FlowSiteTables {
     Vector<bool> callsOfBoundFunctions;
     // Empty where no array has such a kind.
     Vector<bool> receiversThatMayHaveDecidedStorage;
+    // Sorted by site.
+    Vector<FlowProxiesSeenAtSite> proxiesSeenAtSites;
     // Sorted by site, use, target and number of bound arguments.
     Vector<FlowBoundFunctionAtSite> boundFunctionsAtSites;
     Vector<AllocationSite> allocationSites;
@@ -229,6 +241,7 @@ struct FlowProgramTables {
     Vector<ModuleFlow> modules;
     Vector<UnseenCodeRecord> unseenCode;
     Vector<UnseenCodeRecord> loadsOfMachineCode;
+    bool findsFilesOfProgramByName { true };
     ProgramInstances instances { ProgramInstances::Unknown };
     Vector<PropertyKeyID> keysStoredThroughUnknownReceivers;
     Vector<PropertyKeyID> keysDefinedOnObjectsWithoutKnownLayout;
@@ -297,6 +310,7 @@ public:
     void setFrameArrayParameters(FrameArrayParameters&& table) { m_frameArrayParameters = WTF::move(table); }
     bool isSiteOfWholeLiterals(AllocationSiteID site) const { return site && m_sitesOfWholeLiterals.get(site.index()); }
     void setSitesOfWholeLiterals(BitVector&& sites) { m_sitesOfWholeLiterals = WTF::move(sites); }
+    const FlowProxiesSeenAtSite* findProxiesSeenAt(AccessSiteID) const LIFETIME_BOUND;
     const Vector<KnownValue>* constantListIn(VariableID variable) const LIFETIME_BOUND { return m_constantLists.find(variable); }
     void setConstantLists(ConstantLists&& table) { m_constantLists = WTF::move(table); }
     std::span<const FlowIndirectCall> indirectCalls() const LIFETIME_BOUND { return m_tables.functions.indirectCalls.span(); }
@@ -364,6 +378,7 @@ public:
     bool unseenScriptsCanRun() const { return m_unseenScriptsCanRun; }
     std::span<const UnseenCodeRecord> unseenCode() const LIFETIME_BOUND { return m_tables.wholeProgram.unseenCode.span(); }
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.wholeProgram.loadsOfMachineCode.span(); }
+    bool findsFilesOfProgramByName() const { return !hasResults() || m_tables.wholeProgram.findsFilesOfProgramByName; }
     std::span<const BuiltinUseRecord> builtinUses() const LIFETIME_BOUND { return m_tables.builtins.uses.span(); }
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.builtins.featureUses.span(); }
     std::span<const FlowLocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.builtins.localeUses.span(); }

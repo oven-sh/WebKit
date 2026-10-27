@@ -40,6 +40,8 @@ public:
 
     bool run()
     {
+        // No edge changes.
+        MovedLoadLog::OriginalsKeepTheirMeaning originalsKeepTheirMeaning(m_proc.movedLoadLog());
         for (unsigned i = m_preOrder.size(); i--;) {
             BasicBlock* block = m_preOrder[i];
             Value* comparisonFusedIntoBranch = nullptr;

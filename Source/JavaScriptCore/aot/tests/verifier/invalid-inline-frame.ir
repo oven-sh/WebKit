@@ -1,7 +1,7 @@
-# an inline frame must exist, name its callee and the callee's module, and come after its parent
+# an inline frame must exist, name its callee and the callee's module, and come after its parent; the frame of a built-in function does not lie right inside another
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: InvalidInlineFrame 5
+# DIAGNOSTIC: InvalidInlineFrame 6
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="badValueFrame" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 module=m0}] {
@@ -25,3 +25,10 @@ function f5 name="good" results=[{type=undefined}] inlineFrames=[{}, {callee=f6 
     Return @3:2
 }
 function f6 name="callee" results=[{type=undefined}]
+function f7 name="badBuiltinInsideBuiltin" results=[{type=undefined}] inlineFrames=[{}, {callee=f7 module=m0 calledBuiltin=ObjectHasOwn}, {callee=f7 parent=1 module=m0 calledBuiltin=ObjectHasOwn}] {
+    Return
+}
+function f8 name="goodBuiltin" results=[{type=undefined}] inlineFrames=[{}, {callee=f8 module=m0 calledBuiltin=ObjectHasOwn}, {callee=f6 parent=1 module=m0}, {callee=f6 parent=2 module=m0 calledBuiltin=ObjectHasOwn}] {
+    v0 = Undefined @3:3
+    Return
+}

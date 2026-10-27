@@ -301,6 +301,27 @@ BitVector CFG::blocksReachableFrom(BlockID start, const BitVector& barrier) cons
     return result;
 }
 
+bool CFG::reachesAnyOf(BlockID start, const BitVector& barrier, const BitVector& blocks) const
+{
+    RELEASE_ASSERT(start.index() < m_numberOfBlocks);
+    if (blocks.get(start.index()))
+        return true;
+    BitVector isVisited(m_numberOfBlocks);
+    isVisited.set(start.index());
+    Vector<unsigned, 16> worklist { start.index() };
+    while (!worklist.isEmpty()) {
+        for (BlockID target : successors(BlockID(worklist.takeLast()))) {
+            unsigned block = target.index();
+            if (barrier.get(block) || isVisited.set(block))
+                continue;
+            if (blocks.get(block))
+                return true;
+            worklist.append(block);
+        }
+    }
+    return false;
+}
+
 bool CFG::isInCycleAvoiding(BlockID block, BlockID avoidedBlock) const
 {
     RELEASE_ASSERT(block.index() < m_numberOfBlocks && avoidedBlock.index() < m_numberOfBlocks);

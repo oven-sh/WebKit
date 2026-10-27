@@ -1,4 +1,5 @@
-# A narrow reference is tested in a block in front of a call and returned from the next block: it is live at the end of a block that also uses it, so it has a pointer beside it
+# A narrow reference is tested in a block in front of a call and returned from the next block: it is live at the end of a block that also uses it, so it has a pointer beside it.
+# Behind the call the pointer serves, and what the allocation in main stores is compressed behind the allocation: no word is there over a call or an allocation
 # FORM: AsRead
 # RUN: compile NarrowReferenceGuards NarrowReferencesAcrossSafepoints
 # RUN(CHOSEN): pipeline ChooseRepresentations
@@ -6,7 +7,7 @@
 # OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
 # CHECK: image not empty
 # CHECK: statistic NarrowReferenceGuards 1
-# CHECK-NEXT: statistic NarrowReferencesAcrossSafepoints 1
+# CHECK-NEXT: statistic NarrowReferencesAcrossSafepoints 0
 # CHOSEN-LABEL: name="testThenCallThenReturn"
 # CHOSEN: [[word]]: null|L0 @Cell32 = GetSlot
 # CHOSEN: TypeTest [[word]]

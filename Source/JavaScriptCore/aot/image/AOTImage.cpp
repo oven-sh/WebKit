@@ -33,6 +33,9 @@ std::atomic<const Image*> Image::s_current { nullptr };
 std::atomic<const Image*> Image::s_lastPublished { nullptr };
 
 static thread_local const Image* t_currentImage { nullptr };
+static thread_local bool t_usesNoImage { false };
+// Of a process with one image: a thread that has named none runs that one, or helps a thread that does.
+static std::atomic<const Image*> s_onlyImage { nullptr };
 static Lock s_publishedImagesLock;
 static Vector<const Image*>& publishedImages() WTF_REQUIRES_LOCK(s_publishedImagesLock)
 {
@@ -42,12 +45,21 @@ static Vector<const Image*>& publishedImages() WTF_REQUIRES_LOCK(s_publishedImag
 
 const Image* Image::currentOfThread()
 {
-    return t_currentImage;
+    if (t_currentImage || t_usesNoImage)
+        return t_currentImage;
+    return s_onlyImage.load(std::memory_order_acquire);
 }
 
 void Image::setCurrentOfThread(const Image* image)
 {
     t_currentImage = image;
+}
+
+void Image::useNoneOnThisThread()
+{
+    t_currentImage = nullptr;
+    t_usesNoImage = true;
+    s_current.store(differsByThread(), std::memory_order_release);
 }
 
 const Image* Image::find(std::span<const uint8_t> bytes)
@@ -259,6 +271,7 @@ void Image::publish(std::unique_ptr<Image>&& unpublishedImage, std::span<const u
     t_currentImage = image.get();
     image->m_publishedBefore = s_lastPublished.load(std::memory_order_relaxed);
     s_lastPublished.store(image.get(), std::memory_order_release);
+    s_onlyImage.store(images.isEmpty() ? image.get() : nullptr, std::memory_order_release);
     s_current.store(images.isEmpty() ? image.get() : differsByThread(), std::memory_order_release);
     images.append(image.release());
 }

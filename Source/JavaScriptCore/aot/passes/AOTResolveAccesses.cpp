@@ -9,10 +9,13 @@
 #if ENABLE(AOT)
 
 #include "AOTBindGlobalNames.h"
+#include "AOTBlockFrequencies.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinCalls.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinUses.h"
+#include "AOTCalleeSet.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
@@ -30,12 +33,14 @@
 #include "AOTObservableOperations.h"
 #include "AOTProgramPasses.h"
 #include "AOTPropertyAccessCache.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResultRules.h"
 #include "AOTSlotPlan.h"
 #include "AOTSort.h"
 #include "AOTSplitUnions.h"
+#include "AOTStringArena.h"
 #include "AOTThreshold.h"
 #include "AOTTypedArrayKinds.h"
 #include "AOTTypePropagation.h"
@@ -43,6 +48,7 @@
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include "ProxyObject.h"
 #include <algorithm>
 #include <array>
 #include <ranges>
@@ -248,13 +254,6 @@ static CalleeSetID calleesOfGetterInSlot(FunctionPassContext& context, const Pro
     return context.types.intern(CalleeSet::complete(Vector<FunctionID>(getters->span()), { }));
 }
 
-static Value makeBuiltinConstant(BuiltinID builtin)
-{
-    Value constant = IRBuilder::make(Opcode::Builtin);
-    constant.setBuiltin(builtin);
-    return constant;
-}
-
 Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPlan& plan, const SlotStamp& stamp)
 {
     const Program& program = context.program;
@@ -265,7 +264,7 @@ Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPl
         return Effects::none();
     case AccessForm::Builtin: {
         Effects effects = declaredBoundOf(Opcode::Builtin);
-        if (tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, makeBuiltinConstant(plan.member.builtin)))
+        if (tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, plan.member.builtin))
             effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
         return effects;
     }
@@ -418,7 +417,7 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
             value->setBoolean(plan.booleanConstant);
         break;
     case AccessForm::Builtin:
-        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, makeBuiltinConstant(plan.member.builtin)))
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, plan.member.builtin))
             insertBeforeAccess(WTF::move(*initialization));
         value->become(Opcode::Builtin);
         value->setBuiltin(plan.member.builtin);
@@ -836,6 +835,23 @@ static bool isProvenToFindMoreThanUndefined(FunctionPassContext& context, ValueI
     });
 }
 
+static bool isProvenToFindFunctions(FunctionPassContext& context, ValueID read, unsigned edgesToFollow = 2)
+{
+    const Function& function = context.function;
+    return std::ranges::any_of(context.analyses.useLists().usesOf(read), [&](const Use& use) {
+        if (use.kind == Use::Kind::EdgeArgument && edgesToFollow)
+            return isProvenToFindFunctions(context, function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex], edgesToFollow - 1);
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (user.opcode != Opcode::AssumeType)
+            return false;
+        const Type& found = context.program.at(user.provenType());
+        bool holdsFunctions = found.anyFunction || !found.functions.isEmpty() || !found.builtins.isEmpty();
+        return holdsFunctions && !(found.primitives & ~Primitive::Undefined) && !found.anyObject && !found.layouts && found.classes.isEmpty();
+    });
+}
+
 static bool testsPrototypeOfReadWhereItStands(FunctionPassContext& context, const ValueSite& site, const PropertyAccessPlan& plan)
 {
     const Value& read = context.function.at(site.value);
@@ -879,6 +895,18 @@ static ValueID appendCallOfGetterInSlot(FunctionPassContext& context, IRBuilder&
     call.setThisValueOperand(object);
     call.setCallees(calleesOfGetterInSlot(context, plan, stamp.key));
     call.setAccessSite(stamp.accessSite);
+    return builder.append(WTF::move(call));
+}
+
+// The receiver may be anything, so whoever resolves the call sees to what the getter takes for `this`.
+static ValueID appendCallOfGetterInSlotFor(FunctionPassContext& context, IRBuilder& builder, const PropertyAccessPlan& plan, const SlotStamp& stamp, ValueID object, ValueID guard, ValueID receiver)
+{
+    Value read = IRBuilder::make(Opcode::GetSlotGetter, { object, guard });
+    setSlotStamp(read, { stamp.key, stamp.receivers, stamp.level, { } });
+    Value call = IRBuilder::make(Opcode::Call);
+    call.setCalleeOperand(builder.append(WTF::move(read)));
+    call.setThisValueOperand(receiver);
+    call.setCallees(calleesOfGetterInSlot(context, plan, stamp.key));
     return builder.append(WTF::move(call));
 }
 
@@ -1099,12 +1127,684 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
     context.analyses.didChangeValues();
 }
 
+struct ProxyInSight {
+    ValueID target;
+    ValueID handler;
+};
+
+// Nobody can revoke what `new Proxy(target, handler)` makes, so it has that target and that handler for ever.
+static std::optional<ProxyInSight> findProxyMadeInSight(const Program& program, const Function& function, ValueID value)
+{
+    const Value& made = function.at(sameObjectThroughCasts(function, value));
+    if (made.opcode != Opcode::CallBuiltin)
+        return std::nullopt;
+    BuiltinCall call = builtinCallOf(program, made);
+    const BuiltinOverload& overload = program.builtins().at(call.overload);
+    if (program.builtins().canonicalID(overload.builtin) != Builtins::Proxy || overload.mode != BuiltinCallMode::Construct || call.form != BuiltinCallForm::Whole || call.arguments.size() < 2)
+        return std::nullopt;
+    return ProxyInSight { call.arguments[0], call.arguments[1] };
+}
+
+// The function of Reflect that does what the access does. The trap that the access calls has its name.
+static BuiltinID findFunctionOfReflectFor(Opcode access)
+{
+    if (access == Opcode::PropGet || access == Opcode::ElemGet)
+        return Builtins::ReflectGet;
+    if (access == Opcode::PropSet || access == Opcode::ElemSet)
+        return Builtins::ReflectSet;
+    if (access == Opcode::PropHas || access == Opcode::ElemHas)
+        return Builtins::ReflectHas;
+    if (deletions.contains(access))
+        return Builtins::ReflectDeleteProperty;
+    if (access == Opcode::PropHasOwn)
+        return Builtins::ReflectGetOwnPropertyDescriptor;
+    return { };
+}
+
+// The function that a literal in sight is given under the name. Whoever has the object may have stored another since.
+static FunctionID findFunctionGivenAtBirth(const Program& program, const Function& function, ValueID object, PropertyKeyID key)
+{
+    const Value& allocation = function.at(sameObjectThroughCasts(function, object));
+    if (allocation.opcode != Opcode::NewObject)
+        return { };
+    std::optional<uint32_t> field = program.at(allocation.layout()).findField(key);
+    if (!field)
+        return { };
+    auto fields = allocation.fields();
+    auto listed = std::ranges::find(fields, *field);
+    if (listed == fields.end())
+        return { };
+    return program.typeOf(function, allocation.variadicOperands()[listed - fields.begin()]).singleFunction();
+}
+
+// The functions that the objects hold under the name, as far as their fields say.
+static Vector<FunctionID> findFunctionsInFields(const Program& program, std::span<const LayoutID> layouts, PropertyKeyID key)
+{
+    Vector<FunctionID> functions;
+    for (LayoutID layout : layouts) {
+        std::optional<FieldReference> reference = findField(program, layout, key, BaseChain::Proven);
+        if (!reference)
+            continue;
+        const Field& field = fieldAt(program, *reference);
+        if (FunctionID deferred = field.flow.location.deferredFunction)
+            insertInUniquedSortedVector(functions, deferred);
+        for (FunctionID function : program.at(slotTypeOf(program, field)).functions)
+            insertInUniquedSortedVector(functions, function);
+    }
+    return functions;
+}
+
+// Goes on where every test passes. A test behind a test of the object's type asks what passed that test. Answers the object as the last such test proved it.
+static ValueID emitTestsOfObject(IRBuilder& builder, std::span<Value> tests, ValueID object, BlockID whenFailed, Expected<BlockFrequency> frequency, Expected<BlockFrequency> frequencyOfFailure, ValueID* guardOfFilledSlot = nullptr)
+{
+    ValueID proven = object;
+    for (Value& test : tests) {
+        bool provesType = !provesForStretch(provesOf(test.opcode));
+        bool provesFilledSlot = provesOf(test.opcode) == Proof::SlotFilled;
+        if (test.operand(testedOperandIndex) == object)
+            test.setOperand(testedOperandIndex, proven);
+        else
+            provesType = false;
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(WTF::move(test)), testedOperandIndex, frequency, frequencyOfFailure);
+        builder.moveToEndOf(branch.notTaken);
+        builder.emitJump(whenFailed);
+        builder.moveToEndOf(branch.taken);
+        if (provesType)
+            proven = branch.provenOnTaken;
+        if (provesFilledSlot && guardOfFilledSlot)
+            *guardOfFilledSlot = branch.provenOnTaken;
+    }
+    return proven;
+}
+
+struct TestsOfAbsentTrap {
+    // Where all of them pass, an empty slot reads as undefined.
+    Vector<Value, 4> tests;
+    Value isSlotFilled;
+};
+
+static std::optional<TestsOfAbsentTrap> createTestsOfAbsentTrap(FunctionPassContext& context, ValueID handler, PropertyKeyID nameOfTrap)
+{
+    Value read = IRBuilder::make(Opcode::PropGet, { handler });
+    read.setKey(nameOfTrap);
+    std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, read);
+    if (!query || !query->receivers.isProven())
+        return std::nullopt;
+    query->expectsEmptySlot = true;
+    PropertyAccessPlan plan = planPropertyAccess({ context.program, &context.inputs.flow }, *query);
+    if (!plan.isResolved() || plan.form != AccessForm::Slot || plan.requiredProofs.contains(Proof::SlotFilled))
+        return std::nullopt;
+    SlotStamp stamp = createSlotStamp(context, read, plan);
+    return TestsOfAbsentTrap { createAccessTests(context, plan, { handler, { }, stamp }).tests, makeObjectTest(Proof::SlotFilled, handler, stamp) };
+}
+
+enum class ReceiverOfAccess : bool { MayBeProxy, IsProxy };
+
+// A key of one of these kinds becomes the name that a trap is handed without running any code.
+static constexpr uint16_t keysThatBecomeNamesWithoutCode = Primitive::AnyString | Primitive::AnySymbol | Primitive::Integer;
+
+// As ProxyObject.cpp performProxyGet(), performHasProperty(), performPut(), performDelete() and performInternalMethodGetOwnProperty(). The trap is read off the handler and called as the program would read and call it, so what is known of the handler and of the target is known here.
+static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& builder, ProgramPoint point, const std::optional<ProxyInSight>& proxyInSight, const FlowProxiesSeenAtSite* proxiesSeen, ReceiverOfAccess receiver)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    const Value access = function.at(function.at(point.block).values[point.index]);
+    const BuiltinID functionOfReflect = findFunctionOfReflectFor(access.opcode);
+    const bool reads = functionOfReflect == Builtins::ReflectGet;
+    const bool stores = functionOfReflect == Builtins::ReflectSet;
+    const bool deletes = functionOfReflect == Builtins::ReflectDeleteProperty;
+    const bool asksForOwnProperty = functionOfReflect == Builtins::ReflectGetOwnPropertyDescriptor;
+    const bool isByName = PayloadWord::key(access.opcode).has_value();
+    ValueID proxy = access.objectOperand();
+    const Expected<BlockFrequency> frequency = function.at(point.block).frequency;
+    const Expected<BlockFrequency> unlikely = rarerOf(frequency, BlockFrequency::Unlikely);
+    const Expected<BlockFrequency> rare = rarerOf(frequency, BlockFrequency::Rare);
+    PropertyKeyID nameOfTrap = program.keyOf(program.builtins().at(functionOfReflect).name);
+
+    IRBuilder::Expansion expansion = builder.beginExpansion(point);
+    const BuiltinID calledBuiltin = Value::opcodesWithCalledBuiltin.contains(access.opcode) ? access.calledBuiltin() : BuiltinID();
+    builder.setOrigin(calledBuiltin ? function.enterFrameOfBuiltin(context.id, access.origin(), calledBuiltin) : access.origin());
+    auto throwTypeError = [&](ASCIILiteral message) {
+        Value error = IRBuilder::make(Opcode::ThrowNewError);
+        error.setErrorKind(ErrorKind::TypeError);
+        error.setMessage(context.strings.intern(StringView(message)));
+        builder.append(WTF::move(error));
+        builder.emitUnreachable();
+    };
+    BlockID done = builder.addBlock(frequency);
+    ValueID answer = stores ? ValueID() : builder.addParameter(done, reads ? TypeTable::anything : TypeTable::boolean);
+    auto finishWith = [&](ValueID value) {
+        if (stores)
+            builder.emitJump(done);
+        else
+            builder.emitJump(done, { value });
+    };
+    // Where something is not what it is expected to be, the access is made as it is written.
+    BlockID asWritten;
+    auto blockOfAccessAsWritten = [&](Expected<BlockFrequency> frequencyOfFailure) {
+        if (!asWritten)
+            asWritten = builder.addBlock(frequencyOfFailure);
+        return asWritten;
+    };
+    auto goOnWhere = [&](ValueID value, TypeID tested, Expected<BlockFrequency> frequencyOfFailure) {
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.appendTypeTest(value, tested), 0, frequency, frequencyOfFailure);
+        builder.moveToEndOf(branch.notTaken);
+        builder.emitJump(blockOfAccessAsWritten(frequencyOfFailure));
+        builder.moveToEndOf(branch.taken);
+        return branch.provenOnTaken;
+    };
+    if (receiver == ReceiverOfAccess::MayBeProxy)
+        proxy = goOnWhere(proxy, context.types.intern(Type::builtinClass(BuiltinClasses::Proxy)), frequency);
+    auto appendFieldRead = [&](ProxyObject::Field field) {
+        Value read = IRBuilder::make(Opcode::GetInternalField, { proxy });
+        read.setIndex(static_cast<uint32_t>(field));
+        return builder.append(WTF::move(read));
+    };
+
+    // A key that is a text or a symbol is what the trap is handed, and an integer is handed as its text. Any other is first made a name in a way that may run code: that is left to the access as it is written.
+    // The target is asked under the key itself.
+    ValueID name;
+    ValueID key;
+    if (isByName) {
+        Value nameOfAccess = IRBuilder::make(Opcode::String);
+        nameOfAccess.setString(program.at(access.key()).text);
+        name = builder.append(WTF::move(nameOfAccess));
+    } else {
+        key = goOnWhere(access.propertyOperand(), context.types.intern(Type::fromPrimitives(keysThatBecomeNamesWithoutCode)), unlikely);
+        name = program.typeOf(function, access.propertyOperand()).primitives & Primitive::Integer ? builder.append(Opcode::ToPropertyKey, { key }) : key;
+    }
+    ValueID target;
+    BlockID withoutTrap = builder.addBlock(frequency);
+
+    // Every way out of it ends in a jump or throws.
+    auto askHandler = [&](ValueID handler, Vector<FunctionID>&& expectedTraps) {
+        Expected<BlockFrequency> frequencyOfRead = frequency;
+        // A handler that nobody has seen given the trap is first asked whether it is still without it.
+        if (expectedTraps.isEmpty()) {
+            if (std::optional<TestsOfAbsentTrap> absence = createTestsOfAbsentTrap(context, handler, nameOfTrap)) {
+                BlockID mayHaveTrap = builder.addBlock(unlikely);
+                absence->isSlotFilled.setOperand(testedOperandIndex, emitTestsOfObject(builder, absence->tests.mutableSpan(), handler, mayHaveTrap, frequency, unlikely));
+                IRBuilder::ProvenBranch isFilled = builder.emitBranchWithProof(builder.append(WTF::move(absence->isSlotFilled)), testedOperandIndex, unlikely, frequency);
+                builder.moveToEndOf(isFilled.taken);
+                builder.emitJump(mayHaveTrap);
+                builder.moveToEndOf(isFilled.notTaken);
+                builder.emitJump(withoutTrap);
+                builder.moveToEndOf(mayHaveTrap);
+                frequencyOfRead = unlikely;
+            }
+        }
+        Value readOfTrap = IRBuilder::make(Opcode::PropGet, { handler });
+        readOfTrap.setKey(nameOfTrap);
+        ValueID trap = builder.append(WTF::move(readOfTrap));
+        IRBuilder::ProvenBranch isFunction = builder.emitBranchWithProof(builder.appendTypeTest(trap, TypeTable::function), 0, frequencyOfRead, frequencyOfRead);
+
+        builder.moveToEndOf(isFunction.taken);
+        Value call = IRBuilder::make(Opcode::Call);
+        call.setCalleeOperand(isFunction.provenOnTaken);
+        call.setThisValueOperand(handler);
+        if (!expectedTraps.isEmpty())
+            call.setCallees(context.types.intern(CalleeSet::open(WTF::move(expectedTraps), { })));
+        if (reads)
+            call.setArgumentsOperands(std::array { target, name, proxy });
+        else if (stores)
+            call.setArgumentsOperands(std::array { target, name, access.valueOperand(), proxy });
+        else
+            call.setArgumentsOperands(std::array { target, name });
+        ValueID answerOfTrap = builder.append(WTF::move(call));
+        if (reads) {
+            IRBuilder::BranchBlocks mayBind = builder.emitBranch(builder.append(Opcode::MayBindAnswersOfGetAndSetTraps, { target }), rare, frequencyOfRead);
+            builder.moveToEndOf(mayBind.taken);
+            builder.append(Opcode::ValidateAnswerOfGetTrap, { target, name, answerOfTrap });
+            finishWith(answerOfTrap);
+            builder.moveToEndOf(mayBind.notTaken);
+            finishWith(answerOfTrap);
+        } else if (stores) {
+            // A trap that says no makes a strict store throw.
+            BlockID finishes = builder.addBlock(rare);
+            IRBuilder::BranchBlocks saysYes = builder.emitBranch(builder.append(Opcode::ToBoolean, { answerOfTrap }), frequencyOfRead, rare);
+            builder.moveToEndOf(saysYes.notTaken);
+            builder.emitJump(finishes);
+            builder.moveToEndOf(saysYes.taken);
+            builder.emitBranch(builder.append(Opcode::MayBindAnswersOfGetAndSetTraps, { target }), Target { finishes, { }, { } }, Target { done, { }, { } });
+            builder.moveToEndOf(finishes);
+            Value finish = IRBuilder::make(Opcode::FinishStoreByTrap, { target, name, access.valueOperand(), answerOfTrap });
+            finish.setMode(access.mode());
+            builder.append(WTF::move(finish));
+            finishWith({ });
+        } else if (deletes) {
+            IRBuilder::BranchBlocks saysYes = builder.emitBranch(builder.append(Opcode::ToBoolean, { answerOfTrap }), frequencyOfRead, access.mode() == ECMAMode::Strict ? rare : frequencyOfRead);
+            builder.moveToEndOf(saysYes.notTaken);
+            if (access.mode() == ECMAMode::Strict)
+                throwTypeError(UnableToDeletePropertyError);
+            else
+                finishWith(builder.appendBoolean(false));
+            builder.moveToEndOf(saysYes.taken);
+            IRBuilder::BranchBlocks mayBind = builder.emitBranch(builder.append(Opcode::MayBindAnswersOfHasTraps, { target }), rare, frequencyOfRead);
+            builder.moveToEndOf(mayBind.taken);
+            builder.append(Opcode::ValidateConsentOfDeleteTrap, { target, name });
+            finishWith(builder.appendBoolean(true));
+            builder.moveToEndOf(mayBind.notTaken);
+            finishWith(builder.appendBoolean(true));
+        } else if (asksForOwnProperty) {
+            // A descriptor is always held against the target. That there is none is, where the target binds.
+            BlockID isHeldAgainstTarget = builder.addBlock(frequencyOfRead);
+            IRBuilder::BranchBlocks saysNone = builder.emitBranch(builder.appendTypeTest(answerOfTrap, TypeTable::undefined), frequencyOfRead, frequencyOfRead);
+            builder.moveToEndOf(saysNone.notTaken);
+            builder.emitJump(isHeldAgainstTarget);
+            builder.moveToEndOf(saysNone.taken);
+            IRBuilder::BranchBlocks mayBind = builder.emitBranch(builder.append(Opcode::MayBindAnswersOfHasTraps, { target }), rare, frequencyOfRead);
+            builder.moveToEndOf(mayBind.taken);
+            builder.emitJump(isHeldAgainstTarget);
+            builder.moveToEndOf(mayBind.notTaken);
+            finishWith(builder.appendBoolean(false));
+            builder.moveToEndOf(isHeldAgainstTarget);
+            finishWith(builder.append(Opcode::HasOwnByAnswerOfDescriptorTrap, { target, name, answerOfTrap }));
+        } else {
+            IRBuilder::BranchBlocks saysYes = builder.emitBranch(builder.append(Opcode::ToBoolean, { answerOfTrap }), frequencyOfRead, frequencyOfRead);
+            builder.moveToEndOf(saysYes.taken);
+            finishWith(builder.appendBoolean(true));
+            builder.moveToEndOf(saysYes.notTaken);
+            IRBuilder::BranchBlocks mayBind = builder.emitBranch(builder.append(Opcode::MayBindAnswersOfHasTraps, { target }), rare, frequencyOfRead);
+            builder.moveToEndOf(mayBind.taken);
+            builder.append(Opcode::ValidateDenialOfHasTrap, { target, name });
+            finishWith(builder.appendBoolean(false));
+            builder.moveToEndOf(mayBind.notTaken);
+            finishWith(builder.appendBoolean(false));
+        }
+
+        builder.moveToEndOf(isFunction.notTaken);
+        IRBuilder::BranchBlocks isAbsent = builder.emitBranch(builder.appendTypeTest(trap, TypeTable::nullish), frequencyOfRead, rare);
+        builder.moveToEndOf(isAbsent.notTaken);
+        throwTypeError(reads ? "'get' property of a Proxy's handler should be callable"_s : stores ? "'set' property of a Proxy's handler should be callable"_s : deletes ? "'deleteProperty' property of a Proxy's handler should be callable"_s : asksForOwnProperty ? "'getOwnPropertyDescriptor' property of a Proxy's handler should be callable"_s : "'has' property of a Proxy's handler should be callable"_s);
+        builder.moveToEndOf(isAbsent.taken);
+        builder.emitJump(withoutTrap);
+    };
+
+    if (proxyInSight) {
+        target = proxyInSight->target;
+        Vector<FunctionID> expectedTraps;
+        if (FunctionID expected = findFunctionGivenAtBirth(program, function, proxyInSight->handler, nameOfTrap))
+            expectedTraps.append(expected);
+        askHandler(proxyInSight->handler, WTF::move(expectedTraps));
+    } else {
+        ValueID heldHandler = appendFieldRead(ProxyObject::Field::Handler);
+        ValueID heldTarget = appendFieldRead(ProxyObject::Field::Target);
+        const auto& handlers = proxiesSeen->handlers;
+        ASSERT(!handlers.isEmpty());
+        // Other proxies may arrive than those seen, so what is read out of one is tested. A proxy that has been revoked holds null for both. They are left to the access as it was written.
+        TypeID typeOfTargetsSeen = TypeTable::object;
+        if (!proxiesSeen->targets.isEmpty())
+            typeOfTargetsSeen = context.types.intern(Type::forLayouts(proxiesSeen->targets.span(), context.types));
+        if (proxiesSeen->seesListsAsTargets) {
+            TypeID list = context.types.intern(Type::builtinClass(BuiltinClasses::Array));
+            typeOfTargetsSeen = proxiesSeen->targets.isEmpty() ? list : context.types.unionOf(typeOfTargetsSeen, list);
+        }
+        target = goOnWhere(heldTarget, typeOfTargetsSeen, unlikely);
+        {
+            // Each kind of handler is asked by itself, so that its trap is known.
+            for (LayoutID layout : handlers) {
+                IRBuilder::ProvenBranch isOfLayout = builder.emitBranchWithProof(builder.appendTypeTest(heldHandler, context.types.intern(Type::forLayout(layout, context.types))), 0, frequency, handlers.size() == 1 ? unlikely : frequency);
+                builder.moveToEndOf(isOfLayout.taken);
+                askHandler(isOfLayout.provenOnTaken, findFunctionsInFields(program, singleElementSpan(layout), nameOfTrap));
+                builder.moveToEndOf(isOfLayout.notTaken);
+            }
+            builder.emitJump(blockOfAccessAsWritten(unlikely));
+        }
+    }
+
+    // Without a trap the target is asked, for the proxy.
+    builder.moveToEndOf(withoutTrap);
+    if (reads) {
+        Value read = IRBuilder::make(Opcode::SuperGet);
+        read.setBaseOperand(target);
+        read.setReceiverOperand(proxy);
+        if (isByName)
+            read.setKey(access.key());
+        else
+            read.setComputedKeyOperand(key);
+        finishWith(builder.append(WTF::move(read)));
+    } else if (stores) {
+        Value store = IRBuilder::make(Opcode::SuperSet);
+        store.setMode(access.mode());
+        store.setBaseOperand(target);
+        store.setReceiverOperand(proxy);
+        store.setValueOperand(access.valueOperand());
+        if (isByName)
+            store.setKey(access.key());
+        else
+            store.setComputedKeyOperand(key);
+        builder.append(WTF::move(store));
+        finishWith({ });
+    } else if (deletes) {
+        Value deletion = IRBuilder::make(isByName ? Opcode::PropDelete : Opcode::ElemDelete);
+        deletion.setObjectOperand(target);
+        deletion.setMode(access.mode());
+        if (isByName)
+            deletion.setKey(access.key());
+        else
+            deletion.setPropertyOperand(key);
+        finishWith(builder.append(WTF::move(deletion)));
+    } else if (asksForOwnProperty) {
+        Value test = IRBuilder::make(Opcode::PropHasOwn, { target });
+        test.setKey(access.key());
+        finishWith(builder.append(WTF::move(test)));
+    } else if (isByName) {
+        Value test = IRBuilder::make(Opcode::PropHas, { target });
+        test.setKey(access.key());
+        finishWith(builder.append(WTF::move(test)));
+    } else
+        finishWith(builder.append(Opcode::ElemHas, { target, key }));
+
+    builder.setOrigin(access.origin());
+    if (asWritten) {
+        builder.moveToEndOf(asWritten);
+        ValueID written = builder.append(Value(access));
+        // It is not asked again whether its receiver is a proxy.
+        context.refusedSites.add(RefusalKind::Access, function, written, RefusedSites::stateOf(function, written));
+        finishWith(written);
+    }
+
+    builder.moveToEndOf(done);
+    if (stores)
+        builder.endExpansion(expansion, std::span<const ValueID> { });
+    else
+        builder.endExpansion(expansion, answer);
+}
+
+// Whether the access is what an expansion has left as it is written: the way to it leads over the failure of a test that an expansion places, of its receiver for a proxy, of what that proxy holds, or of its key for a name.
+// Values are numbered anew between the rounds and other tests come to stand in front of the access, so the shape of the code says it and nothing that is kept beside the code.
+static bool standsBehindFailedTestOfExpansion(FunctionPassContext& context, const ValueSite& site)
+{
+    AOT_THRESHOLD(unsigned, mostBlocksAboveAccess, 16);
+    AOT_THRESHOLD(unsigned, mostEmptyBlocksBehindTest, 3);
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    const Dominators& dominators = context.analyses.dominators();
+    const ValueIdentities& identities = context.analyses.identities();
+    const Value& access = function.at(site.value);
+    ValueID receiver = identities.identityOf(access.objectOperand());
+    ValueID key = PayloadWord::key(access.opcode) ? ValueID() : identities.identityOf(access.propertyOperand());
+    auto isPlacedByExpansion = [&](const Value& test) {
+        if (test.opcode != Opcode::TypeTest)
+            return false;
+        ValueID tested = identities.identityOf(test.operand(0));
+        const Type& type = program.at(test.testedType());
+        if (tested == receiver) {
+            const ClassPart* part = type.singleBuiltinClass();
+            return part && part->builtinClass == BuiltinClasses::Proxy;
+        }
+        if (tested == key)
+            return !type.anyObject && !type.singleBuiltinClass() && type.primitives == keysThatBecomeNamesWithoutCode;
+        const Value& definition = function.at(tested);
+        return definition.opcode == Opcode::GetInternalField && identities.identityOf(definition.operand(0)) == receiver;
+    };
+    auto isEnteredByFailure = [&](BlockID entered) {
+        for (BlockID predecessor : cfg.predecessors(entered)) {
+            BlockID below = entered;
+            BlockID block = predecessor;
+            for (unsigned steps = 0; steps <= mostEmptyBlocksBehindTest; ++steps) {
+                const Terminator& terminator = function.at(block).terminator;
+                if (terminator.kind == TerminatorKind::Branch) {
+                    if (terminator.targets[0].block != below && isPlacedByExpansion(function.at(terminator.conditionOperand())))
+                        return true;
+                    break;
+                }
+                std::span<const BlockID> above = cfg.predecessors(block);
+                if (terminator.kind != TerminatorKind::Jump || !function.at(block).values.isEmpty() || above.size() != 1)
+                    break;
+                below = block;
+                block = above[0];
+            }
+        }
+        return false;
+    };
+    BlockID block = site.block;
+    for (unsigned steps = 0; block && steps < mostBlocksAboveAccess; ++steps) {
+        if (isEnteredByFailure(block))
+            return true;
+        block = dominators.idom(block);
+    }
+    return false;
+}
+
+static bool expandAccessesThroughProxies(FunctionPassContext& context, IRBuilder& builder)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    std::optional<ValueSite> found;
+    std::optional<ProxyInSight> proxy;
+    ReceiverOfAccess receiver = ReceiverOfAccess::IsProxy;
+    // A body is pasted into its callers as it stands in front of the rounds, and there the proxy may be in sight.
+    const bool expandsOutOfSight = context.isInRounds && context.inputs.heat.hasWarmCode(program, context.id).predicted();
+    const FlowProxiesSeenAtSite* proxiesSeen = nullptr;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        const Value& access = function.at(site.value);
+        if (found || !findFunctionOfReflectFor(access.opcode) || (FlagMask::isFreeName(access.opcode) && access.isFreeName()) || (PayloadWord::key(access.opcode) && program.at(access.key()).kind != PropertyKeyKind::Text))
+            return;
+        if (!PayloadWord::key(access.opcode) && !(program.typeOf(function, access.propertyOperand()).primitives & keysThatBecomeNamesWithoutCode))
+            return;
+        const Type& typeOfReceiver = program.typeOf(function, access.objectOperand());
+        const ClassPart* part = typeOfReceiver.singleBuiltinClass();
+        bool isProxyIfObject = part && part->builtinClass == BuiltinClasses::Proxy;
+        if (!isProxyIfObject && !typeOfReceiver.anyObject)
+            return;
+        std::optional<ProxyInSight> inSight = isProxyIfObject ? findProxyMadeInSight(program, function, access.objectOperand()) : std::nullopt;
+        const FlowProxiesSeenAtSite* seen = nullptr;
+        if (!inSight) {
+            // Flow has seen proxies of the program arrive here, and knows the handlers they were made with: only then can a trap be called directly. Elsewhere, and in code that seldom runs, the run time asks in fewer bytes.
+            // An access that is written out here for the target of a proxy has no site, so it is not written out again.
+            seen = expandsOutOfSight ? context.inputs.flow.findProxiesSeenAt(access.accessSite()) : nullptr;
+            if (!seen || seen->handlers.isEmpty())
+                return;
+            BlockID block = site.point().block;
+            if (function.at(block).frequency.predicted() != BlockFrequency::Normal || isCold(heatClassOf(context, block)).predicted())
+                return;
+        }
+        if (context.refusedSites.contains(RefusalKind::Access, site.value, RefusedSites::stateOf(function, site.value)) || standsBehindFailedTestOfExpansion(context, site))
+            return;
+        proxy = inSight;
+        proxiesSeen = seen;
+        // `let proxy; try { proxy = new Proxy(..); } catch { }` leaves undefined or a proxy.
+        receiver = isProxyIfObject && typeOfReceiver.isObject() ? ReceiverOfAccess::IsProxy : ReceiverOfAccess::MayBeProxy;
+        found = site;
+    });
+    if (!found)
+        return false;
+    expandAccessThroughProxy(context, builder, found->point(), proxy, proxiesSeen, receiver);
+    return true;
+}
+
+// An access was written out before the call that makes the proxy was inlined.
+static bool forwardReadsOutOfProxiesInSight(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    Vector<std::pair<ValueID, ValueID>, 4> found;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        const Value& read = function.at(site.value);
+        if (read.opcode != Opcode::GetInternalField)
+            return;
+        if (std::optional<ProxyInSight> proxy = findProxyMadeInSight(context.program, function, read.objectOperand()))
+            found.append({ site.value, read.index() == static_cast<uint32_t>(ProxyObject::Field::Handler) ? proxy->handler : proxy->target });
+    });
+    for (auto [read, held] : found)
+        becomeUpcast(function, read, held);
+    return !found.isEmpty();
+}
+
+// The operand that an access holds a key in that is worked out, if it has one.
+static ValueID findOperandOfKey(const Value& access)
+{
+    if (access.opcode == Opcode::SuperGet)
+        return access.computedKeyOperand();
+    if (elementAccessOf(access.opcode) || access.opcode == Opcode::GetByValWithThis)
+        return access.propertyOperand();
+    return { };
+}
+
+// What is asked under the text of an integer is asked under the integer: a trap is handed the text, and hands it on to its target.
+static bool askUnderIntegersThemselves(FunctionPassContext& context)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    Vector<std::pair<ValueID, ValueID>, 4> found;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        ValueID key = findOperandOfKey(function.at(site.value));
+        if (!key)
+            return;
+        const Value& definition = function.at(definitionThroughUpcasts(function, key));
+        if (definition.opcode == Opcode::ToPropertyKey && program.typeOf(function, definition.valueOperand()).isInteger())
+            found.append({ site.value, definition.valueOperand() });
+    });
+    for (auto [id, integer] : found) {
+        Value& access = function.edit(id);
+        if (access.opcode == Opcode::SuperGet)
+            access.setComputedKeyOperand(integer);
+        else
+            access.setPropertyOperand(integer);
+    }
+    return !found.isEmpty();
+}
+
+// `Reflect.get(object, "name", object)` is `object.name`.
+static bool readByNameWhereReceiverIsTheObject(FunctionPassContext& context)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    Vector<std::pair<ValueID, PropertyKeyID>, 4> found;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        const Value& read = function.at(site.value);
+        if (read.opcode != Opcode::GetByValWithThis || sameObjectThroughCasts(function, read.objectOperand()) != sameObjectThroughCasts(function, read.thisValueOperand()))
+            return;
+        if (PropertyKeyID key = internKey(context.types, constantNameOf(program, program.sourceFunctionOf(function, read), program.typeOf(function, read.propertyOperand()))))
+            found.append({ site.value, key });
+    });
+    for (auto [id, key] : found) {
+        Value& read = function.edit(id);
+        ValueID object = read.objectOperand();
+        read.become(Opcode::PropGet);
+        read.setObjectOperand(object);
+        read.setKey(key);
+    }
+    return !found.isEmpty();
+}
+
+// A property of the object's own that lies in its slot is a value, whoever asks for it: the read by name behind the tests finds what they found. A getter that lies there is called for the receiver.
+static bool expandReadForAnotherReceiver(FunctionPassContext& context, IRBuilder& builder)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    std::optional<ValueSite> found;
+    Vector<Value, 4> tests;
+    ValueID base;
+    ValueID receiver;
+    PropertyKeyID key;
+    std::optional<PropertyAccessPlan> planOfGetter;
+    SlotStamp stamp;
+    context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
+        const Value& read = function.at(site.value);
+        if (found || !readsForAnotherReceiver.contains(read.opcode))
+            return;
+        if (read.opcode == Opcode::SuperGet) {
+            base = read.baseOperand();
+            receiver = read.receiverOperand();
+            key = read.baseOperand() == read.receiverOperand() ? PropertyKeyID() : read.key();
+        } else {
+            base = read.objectOperand();
+            receiver = read.thisValueOperand();
+            key = internKey(context.types, constantNameOf(program, program.sourceFunctionOf(function, read), program.typeOf(function, read.propertyOperand())));
+        }
+        if (!key)
+            return;
+        // What is left where a test fails stands in such a block.
+        if (function.at(site.point().block).frequency.predicted() != BlockFrequency::Normal)
+            return;
+        uint32_t state = RefusedSites::stateOf(function, site.value);
+        if (context.refusedSites.contains(RefusalKind::Access, site.value, state))
+            return;
+        // The length of a list is a value of the list's own.
+        const Type& typeOfBase = program.typeOf(function, base);
+        const ClassPart* classOfBase = typeOfBase.isObject() ? typeOfBase.singleBuiltinClass() : nullptr;
+        if (classOfBase && classOfBase->builtinClass == BuiltinClasses::Array && program.at(key).kind == PropertyKeyKind::Text && program.at(key).text == context.strings.intern(StringView("length"_s))) {
+            tests.clear();
+            planOfGetter = std::nullopt;
+            found = site;
+            return;
+        }
+        Value readForObject = IRBuilder::make(Opcode::PropGet, { base });
+        readForObject.setKey(key);
+        std::optional<PropertyAccessQuery> query = namedAccessQueryOf(context, readForObject);
+        std::optional<PropertyAccessPlan> plan;
+        if (query && query->receivers.isProven())
+            plan = planPropertyAccess({ program, &context.inputs.flow }, *query);
+        bool findsValue = plan && plan->isResolved() && plan->form == AccessForm::Slot && (plan->needsNoTest() || plan->requiredProofs.contains(Proof::SlotFilled));
+        bool findsGetter = plan && plan->isResolved() && plan->form == AccessForm::GetterInSlot && plan->requiredProofs.contains(Proof::SlotFilled);
+        if (!findsValue && !findsGetter) {
+            context.refusedSites.add(RefusalKind::Access, function, site.value, state);
+            return;
+        }
+        stamp = createSlotStamp(context, readForObject, *plan);
+        tests = createAccessTests(context, *plan, { base, { }, stamp }).tests;
+        if (findsGetter)
+            planOfGetter = WTF::move(plan);
+        found = site;
+    });
+    if (!found)
+        return false;
+
+    if (tests.isEmpty()) {
+        Value& read = function.edit(found->value);
+        read.become(Opcode::PropGet);
+        read.setObjectOperand(base);
+        read.setKey(key);
+        return true;
+    }
+
+    ProgramPoint point = found->point();
+    const Value read = function.at(found->value);
+    Expected<BlockFrequency> frequency = function.at(point.block).frequency;
+    Expected<BlockFrequency> unlikely = rarerOf(frequency, BlockFrequency::Unlikely);
+    IRBuilder::Expansion expansion = builder.beginExpansion(point);
+    builder.setOrigin(read.origin());
+    BlockID done = builder.addBlock(frequency);
+    ValueID answer = builder.addParameter(done, TypeTable::anything);
+    BlockID otherwise = builder.addBlock(unlikely);
+    ValueID guardOfFilledSlot;
+    ValueID testedBase = emitTestsOfObject(builder, tests.mutableSpan(), base, otherwise, frequency, unlikely, &guardOfFilledSlot);
+    if (planOfGetter) {
+        builder.emitJump(done, { appendCallOfGetterInSlotFor(context, builder, *planOfGetter, stamp, testedBase, guardOfFilledSlot, receiver) });
+    } else {
+        Value readForObject = IRBuilder::make(Opcode::PropGet, { testedBase });
+        readForObject.setKey(key);
+        builder.emitJump(done, { builder.append(WTF::move(readForObject)) });
+    }
+
+    builder.moveToEndOf(otherwise);
+    builder.emitJump(done, { builder.append(Value(read)) });
+
+    builder.moveToEndOf(done);
+    builder.endExpansion(expansion, answer);
+    return true;
+}
+
 PassOutcome resolveAccesses(FunctionPassContext& context)
 {
     const Program& program = context.program;
     Function& function = context.function;
     IRBuilder builder({ context.build, program, &context.inputs.flow, &context.inputs.effects, context.id }, function, context.types, &context.analyses);
     bool didListStores = listFirstStoresAtAllocations(context, builder);
+    // An expansion moves what stands behind it, so each looks for its site anew. All are made before a test is placed for one of them.
+    bool makesProxies = !context.inputs.flow.usesOf(Builtins::Proxy).isEmpty() || !context.inputs.flow.usesOf(Builtins::ProxyRevocable).isEmpty();
+    auto holds = [&](Opcode opcode) {
+        return !context.opcodesWhereRunBegins || context.opcodesWhereRunBegins->contains(opcode);
+    };
+    bool didExpand = holds(Opcode::GetByValWithThis) && readByNameWhereReceiverIsTheObject(context);
+    didExpand |= holds(Opcode::ToPropertyKey) && askUnderIntegersThemselves(context);
+    didExpand |= makesProxies && holds(Opcode::GetInternalField) && forwardReadsOutOfProxiesInSight(context);
+    while ((makesProxies && expandAccessesThroughProxies(context, builder)) || expandReadForAnotherReceiver(context, builder))
+        didExpand = true;
+    if (didExpand)
+        return PassOutcome::Changed;
 
     Vector<NamedAccessSite> namedSites;
     Vector<NamedAccessSite> readsOfFieldsThatMayBeEmpty;
@@ -1114,6 +1814,9 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
     PropertyAccessCache* cache = program.propertyAccessCache();
     context.forEachSiteIn(SiteList::Accesses, [&](const ValueSite& site) {
         const Value& access = function.at(site.value);
+        // expandReadForAnotherReceiver(), forwardReadsOutOfProxiesInSight() and expandAccessesThroughProxies() have looked at them.
+        if (readsForAnotherReceiver.contains(access.opcode) || access.opcode == Opcode::GetInternalField || access.opcode == Opcode::PropDelete)
+            return;
         uint32_t state = RefusedSites::stateOf(function, site.value);
         if (context.refusedSites.contains(RefusalKind::Access, site.value, state))
             return;
@@ -1143,6 +1846,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
             PropertyAccessContext accessContext { program, &context.inputs.flow };
             PropertyAccessPlan plan = planPropertyAccess(accessContext, *query);
             bool isRefused = isRefusedWhereverItStands(plan);
+            bool isRefusedForItsUses = false;
             if (query->planFollowsFromIsOnlyCalled && access.opcode == Opcode::PropGet) {
                 // Who uses what is read is asked, of the lists of all uses in the function, only where the two answers lead to two ends.
                 query->isOnlyCalled = true;
@@ -1152,6 +1856,8 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
                     query->isOnlyCalled = isNobodysObject(context.analyses, site.value);
                     if (query->isOnlyCalled)
                         plan = WTF::move(planOfCalledRead);
+                    else
+                        isRefusedForItsUses = true;
                 }
             }
             if (isRefused) {
@@ -1169,7 +1875,7 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
                 storesUnderPrototypesThatMayBeReplaced.append({ site, WTF::move(*query), WTF::move(plan) });
             else if (testsPrototypeOfReadWhereItStands(context, site, plan))
                 readsUnderPrototypesThatMayBeReplaced.append({ site, WTF::move(*query), WTF::move(plan) });
-            else
+            else if (!isRefusedForItsUses)
                 refuse(plan.limit);
             return;
         }
@@ -1455,7 +2161,7 @@ static bool storesFieldThatAllocationLeftOut(TestSiteReporter& reporter, const V
 static bool storesWhatWasMadeOfField(const Program& program, const Function& function, const Value& store, PropertyKeyID key)
 {
     static constexpr size_t maxValuesWalked = 8;
-    ValueID object = sameObjectThroughCasts(function, store.operand(*receiverOf(store.opcode)));
+    RootThroughCasts object = sameObjectThroughCasts(function, store.operand(*receiverOf(store.opcode)));
     Vector<ValueID, maxValuesWalked> walked;
     walked.append(store.operand(*storedOf(store.opcode)));
     for (size_t next = 0; next < walked.size(); ++next) {
@@ -1548,6 +2254,8 @@ void reportPropertyAccessTests(TestSiteReporter& reporter)
             tested = planForReceiversThatClaimNoAbsence(reporter, access, *query, refused);
         }
         if (!tested || testsPrototypeThatWasJustReplaced(reporter, access, *tested) || isReadOfUntypedFieldInColdCode(reporter, access, *tested))
+            return;
+        if (tested->plan.member.kind == MemberKind::Absent && access.opcode == Opcode::PropGet && isProvenToFindFunctions(reporter.context(), reporter.use()))
             return;
         const Value* receiverTest = tested->tests.findReceiverLayoutTest();
         if (receiverTest && leavesTestOfPrototypeToStore(reporter.context(), access, *query, tested->plan) && isWorthArms(reporter.context(), reporter.point().block)) {
@@ -1854,7 +2562,7 @@ PassOutcome addCasesOfFieldsWithoutStorage(FunctionPassContext& context)
 static bool testsCoverPlan(std::span<const Value> tests, const PropertyAccessPlan& plan, PropertyKeyID key)
 {
     auto findsWhatPlanExpectsInSlot = [&](const Value& test) {
-        return test.key() == key && (!plan.testsDeclaredType || test.holdsDeclaredType());
+        return test.key() == key && (plan.stores() || !plan.testsDeclaredType || test.holdsDeclaredType());
     };
     bool coverProofs = std::ranges::all_of(allMembersOf<Proof>, [&](Proof proof) {
         return !plan.requiredProofs.contains(proof) || std::ranges::any_of(tests, [&](const Value& test) {
@@ -2800,12 +3508,17 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
     const Type& expected = program.expectedOrTypeOf(function, receiver).predicted();
     AccessesResolvedOnParts evidence = countAccessesResolvedOnParts(context, singleElementSpan(receiver), parts);
     Vector<ChosenPart, 4> chosen;
+    bool restResolvesOnLikelyPart = false;
     for (size_t index = 0; index < parts.size(); ++index) {
         const UnionPart& part = parts[index];
-        if (!canSeparateByTest(program, context.types, whole, parts, part) || !resolvesOnPart(context, value, part) || waitsForTestThatNobodyPlaces(context, site.block, value, part))
+        if (!resolvesOnPart(context, value, part) || waitsForTestThatNobodyPlaces(context, site.block, value, part))
             continue;
         // A class without an instance test overlaps every class, so a class is expected where the expected type names it.
         bool isLikely = part.kind == UnionPartKind::BuiltinClass ? !!expected.findClassPart(part.type.classes[0].builtinClass) : part.type.overlaps(expected, program);
+        if (!canSeparateByTest(program, context.types, whole, parts, part)) {
+            restResolvesOnLikelyPart |= isLikely;
+            continue;
+        }
         chosen.append(ChosenPart { &part, isLikely, evidence.countOfPart[index] });
     }
     // What is expected is tested first, then the part that serves most of what the function does with the value.
@@ -2817,8 +3530,11 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
             return a.numberOfResolvedAccesses > b.numberOfResolvedAccesses;
         return isAccessedByNumber && a.part->type.hasObjects() && !b.part->type.hasObjects();
     });
-    if (context.exceeds(LimitID::MaxDispatchCases, chosen.size(), site.value))
-        chosen.shrink(static_cast<size_t>(context.limit(LimitID::MaxDispatchCases)));
+    if (context.exceeds(LimitID::MaxDispatchCases, chosen.size(), site.value)) {
+        size_t limit = static_cast<size_t>(context.limit(LimitID::MaxDispatchCases));
+        restResolvesOnLikelyPart |= limit < chosen.size() && chosen[limit].isLikely;
+        chosen.shrink(limit);
+    }
     if (chosen.isEmpty())
         return std::nullopt;
 
@@ -2827,7 +3543,8 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
     bool hasCompleteStamp = PayloadWord::receivers(value.opcode) && value.receivers() && program.at(value.receivers()).listsEveryLayout();
 
     // What is expected goes somewhere: where no arm takes it, the rest does.
-    PlannedSplit plan { site, operandIndex, { receiver, { }, chosen.size() < parts.size(), chosen.first().isLikely ? unlikelyFrequency : frequency }, { }, { }, { } };
+    bool restIsLikely = restResolvesOnLikelyPart || !chosen.first().isLikely;
+    PlannedSplit plan { site, operandIndex, { receiver, { }, chosen.size() < parts.size(), restIsLikely ? frequency : unlikelyFrequency }, { }, { }, { } };
     for (const ChosenPart& arm : chosen) {
         plan.split.arms.append(SplitArm { context.types.intern(testedTypeOf(*arm.part)), arm.isLikely ? frequency : unlikelyFrequency });
         bool stampsLayouts = arm.part->kind == UnionPartKind::Layouts && !hasCompleteStamp;
@@ -2853,10 +3570,13 @@ static std::optional<PlannedSplit> planSplitByArms(FunctionPassContext& context,
 
     const Value& value = context.function.at(site.value);
     const MemberPartition& partition = access.partition;
+    PropertyAccessQuery queryOfArm = query;
+    bool isOnlyAskedOrCalled = value.opcode == Opcode::PropGet && isNobodysObject(context.analyses, site.value);
+    queryOfArm.isOnlyCalled = query.isOnlyCalled || isOnlyAskedOrCalled;
     DispatchPlan dispatch = planDispatch(context, partition, query.receivers, site.value, [&](const MemberArm& arm) {
-        PropertyAccessPlan plan = planWithReceivers(context, query, query.start, { .proof = query.receivers.proof, .level = query.receivers.level, .proven = arm.layouts });
+        PropertyAccessPlan plan = planWithReceivers(context, queryOfArm, query.start, { .proof = query.receivers.proof, .level = query.receivers.level, .proven = arm.layouts });
         // `response.emit === ownEmit`: behind the tests of its class the method is a constant, and the comparison folds.
-        bool comparesMethod = plan.form == AccessForm::Method && !plan.capturesReceiver && isOnlyComparedByIdentity(context, site.value);
+        bool comparesMethod = plan.form == AccessForm::Method && !plan.capturesReceiver && (isOnlyAskedOrCalled || isOnlyComparedByIdentity(context, site.value));
         return isAccessArmForm(plan.form) || comparesMethod;
     });
     if (dispatch.arms.isEmpty())

@@ -185,6 +185,48 @@ static void findOpensOfUndecidedStorage(const ValueFlowResultInputs& inputs, Flo
     });
 }
 
+namespace {
+
+struct ProxyMadeAtSite {
+    ValueFlowObjectID object;
+    ValueSetID handlers;
+    ValueSetID targets;
+};
+
+} // anonymous namespace
+
+// Sorted by object. A call that native code makes, or one with a list for its arguments, has no entry.
+static Vector<ProxyMadeAtSite> findProxiesMadeAtSites(const ValueFlowResultInputs& inputs)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    const BuiltinTable& builtins = inputs.program.builtins();
+    if (!builtins.contains(Builtins::Proxy) || !builtins.contains(Builtins::ProxyRevocable))
+        return { };
+    if (inputs.solver().usesOf(Builtins::Proxy).isEmpty() && inputs.solver().usesOf(Builtins::ProxyRevocable).isEmpty())
+        return { };
+    ValueSetMakers makers(inputs);
+    Vector<ProxyMadeAtSite> made = collectWithMakers<ProxyMadeAtSite>(inputs, makers, inputs.program.functions.size(), [&](unsigned function, ValueSetMaker& maker, Vector<ProxyMadeAtSite>& found) {
+        if (!inputs.isReached(FunctionID(function)))
+            return;
+        for (const ValueFlowStatement& call : inputs.bodies().statementsOf(function)) {
+            if (call.kind != ValueFlowStatementKind::Operation || (call.opcode != Opcode::Construct && call.opcode != Opcode::Call))
+                continue;
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(call);
+            constexpr unsigned firstArgument = 2;
+            if (operands.size() < firstArgument + 2)
+                continue;
+            ValueSetID callees = inputs.possibleValuesOf(maker, operands[0]);
+            bool answersProxy = call.opcode == Opcode::Construct;
+            if (ValueSets::isComplement(callees) || !inputs.sets().contains(callees, universe.objectOf(answersProxy ? Builtins::Proxy : Builtins::ProxyRevocable)))
+                continue;
+            if (ValueFlowObjectID object = universe.siteObject(call, answersProxy ? 0 : 1))
+                found.append({ object, inputs.seenValuesOf(maker, operands[firstArgument + 1]), inputs.seenValuesOf(maker, operands[firstArgument]) });
+        }
+    });
+    AOT::sort(made, { }, &ProxyMadeAtSite::object);
+    return made;
+}
+
 void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types, FlowResultTables& tables)
 {
     using ListedReceiversKnownToWorker = HashMap<uint64_t, const ListedReceivers*, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
@@ -193,7 +235,12 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         ListedReceiversKnownToWorker blocks;
         Vector<uint32_t> lastListing;
         uint32_t numberOfListings { 0 };
+        // Many accesses have the same receivers, and many of those the same key.
+        HashMap<uint32_t, FlowSiteLoss, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lossesOfReceivers;
+        HashMap<uint64_t, std::optional<LayoutSet>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> receiversSeenUnderKeys;
+        Vector<FlowProxiesSeenAtSite> proxiesSeenAtSites;
     };
+    AOT_THRESHOLD(uint32_t, fewestMembersToRemember, 32);
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
     const ValueSets& sets = inputs.sets();
@@ -301,6 +348,13 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         const ListedReceivers& listed = listedReceiversOf(receiver);
         if (listed.layouts.isEmpty())
             return std::nullopt;
+        std::optional<LayoutSet>* remembered = nullptr;
+        if (listed.layouts.size() >= fewestMembersToRemember) {
+            auto known = listingsOfWorker[receiver.worker].receiversSeenUnderKeys.add(static_cast<uint64_t>(receiver.seen.index()) << 32 | key.index(), std::nullopt);
+            if (!known.isNewEntry)
+                return known.iterator->value;
+            remembered = &known.iterator->value;
+        }
         if (BuiltinMemberName name = builtinMemberNameOf(program, key); name && !name.isPrivateAlias) {
             for (BuiltinClassID builtinClass : listed.builtinClasses) {
                 if (program.builtins().findForInstance(builtinClass, name.name).outcome == BuiltinMemberLookup::Outcome::Found)
@@ -336,6 +390,8 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             return std::nullopt;
         LayoutSet receivers = LayoutSet::open(WTF::move(seen));
         canonicalize(receivers);
+        if (remembered)
+            *remembered = receivers;
         return receivers;
     };
 
@@ -344,8 +400,71 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         tables.sites.receiversThatMayHaveDecidedStorage.fill(true, tables.application->accessSites.numberOfSites());
         findOpensOfUndecidedStorage(inputs, *tables.application, arraysThatMustNotBeConverted);
     }
+    Vector<ProxyMadeAtSite> proxiesMade = findProxiesMadeAtSites(inputs);
+    ValueSetID objectsOfProxiesMade = ValueSets::nothing;
+    {
+        ValueSetMakers makers(inputs);
+        for (const ProxyMadeAtSite& made : proxiesMade)
+            objectsOfProxiesMade = makers.of(0).unite(objectsOfProxiesMade, makers.of(0).of(made.object));
+    }
+    // A value that many places hand on to many others brings a proxy wherever it brings everything else. A proxy is the usual receiver where little else is seen to arrive.
+    AOT_THRESHOLD(uint32_t, mostOtherObjectsSeenBesideProxies, 4);
+    auto noteProxiesSeenAt = [&](const StampedOperand& receiver) {
+        if (objectsOfProxiesMade == ValueSets::nothing || ValueSets::isComplement(receiver.seen) || !sets.meet(receiver.seen, objectsOfProxiesMade))
+            return;
+        if (sets.size(receiver.maker.intersect(receiver.seen, receiver.maker.intersect(universe.knownObjects(), ValueSets::complement(objectsOfProxiesMade)))) > mostOtherObjectsSeenBesideProxies)
+            return;
+        ValueSetID handlers = ValueSets::nothing;
+        ValueSetID targets = ValueSets::nothing;
+        sets.forEachMember(receiver.maker.intersect(receiver.seen, objectsOfProxiesMade), [&](ValueFlowObjectID object) {
+            const ProxyMadeAtSite& made = *std::ranges::lower_bound(proxiesMade, object, { }, &ProxyMadeAtSite::object);
+            handlers = receiver.maker.unite(handlers, made.handlers);
+            targets = receiver.maker.unite(targets, made.targets);
+        });
+        bool seesLists = false;
+        auto layoutsIn = [&](ValueSetID objects) {
+            Vector<LayoutID, 4> layouts;
+            seesLists = false;
+            if (ValueSets::isComplement(objects))
+                return layouts;
+            bool areTooMany = false;
+            sets.forEachMember(objects, [&](ValueFlowObjectID object) {
+                uint32_t layout = layoutsOfMembers[object.index()];
+                if (!layout && universe.isObject(object) && !ValueFlowResultInputs::isPlaceholder(object)) {
+                    Type type = receiver.positions.typeOfObject(object);
+                    const ClassPart* part = type.singleBuiltinClass();
+                    // What is neither is not told apart: no list of targets is kept.
+                    if (part && part->builtinClass == BuiltinClasses::Array)
+                        seesLists = true;
+                    else
+                        areTooMany = true;
+                }
+                if (!layout || layouts.contains(LayoutID(layout - 1)))
+                    return;
+                if (layouts.size() == layouts.capacity())
+                    areTooMany = true;
+                else
+                    layouts.append(LayoutID(layout - 1));
+            });
+            if (areTooMany) {
+                layouts.clear();
+                seesLists = false;
+            }
+            std::ranges::sort(layouts);
+            return layouts;
+        };
+        Vector<LayoutID, 4> layoutsOfHandlers = layoutsIn(handlers);
+        // A handler that is a list has no trap that anybody knows.
+        if (seesLists)
+            layoutsOfHandlers.clear();
+        Vector<LayoutID, 4> layoutsOfTargets = layoutsIn(targets);
+        FlowProxiesSeenAtSite seenAtSite { application.accessSites.siteOfValue(receiver.id, receiver.statement.site), WTF::move(layoutsOfHandlers), WTF::move(layoutsOfTargets) };
+        seenAtSite.seesListsAsTargets = seesLists;
+        listingsOfWorker[receiver.worker].proxiesSeenAtSites.append(WTF::move(seenAtSite));
+    };
     stampOperands<hasReceiverStamp, receiverOperandOf, &FlowBodyUpdate::accesses>(inputs, types, tables, FlowResultKind::ReceiverSets, StatisticID::FlowAccessesOfUnknownReceivers, [&](const StampedOperand& receiver) {
         ValueID site = receiver.statement.site;
+        noteProxiesSeenAt(receiver);
         if (arraysThatMustNotBeConverted != ValueSets::nothing && receiver.maker.intersect(receiver.held, arraysThatMustNotBeConverted) == ValueSets::nothing)
             tables.sites.receiversThatMayHaveDecidedStorage[tables.application->accessSites.siteOfValue(receiver.id, site).index()] = false;
         if (std::optional<LayoutSet> receivers = receiver.positions.receiversAt(receiver.held)) {
@@ -354,7 +473,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
         }
         if (std::optional<LayoutSet> receivers = receiversSeenToArrive(receiver))
             receiver.update.accesses.append(FlowAccessStamp { site, receiver.types.intern(WTF::move(*receivers)) });
-        FlowSiteLoss loss = lossOfStampedOperand(receiver, [&](FlowSiteLoss& loss) {
+        auto explain = [&](FlowSiteLoss& loss) {
             loss.cause = UnprovenCause::NonLayoutObject;
             bool mayBeBuiltinObject = false;
             sets.forEachMember(receiver.maker.intersect(receiver.held, universe.knownObjects()), [&](ValueFlowObjectID object) {
@@ -370,16 +489,29 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
                     return;
                 }
                 loss.witness = witness;
-                if (isDataFromOutside(inputs, object))
+                if (receiver.positions.isDataFromOutside(object))
                     loss.cause = UnprovenCause::DataFromOutside;
             });
             // No line of the program makes a built-in object, so the access is the place to show.
             if (mayBeBuiltinObject)
                 loss = { .cause = UnprovenCause::NonLayoutObject, .hasOtherRoots = hasFunction(loss.witness) };
+        };
+        FlowSiteLoss loss = lossOfStampedOperand(receiver, [&](FlowSiteLoss& loss) {
+            if (loss != FlowSiteLoss { } || sets.size(receiver.held) < fewestMembersToRemember) {
+                explain(loss);
+                return;
+            }
+            auto known = listingsOfWorker[receiver.worker].lossesOfReceivers.add(receiver.held.index(), FlowSiteLoss { });
+            if (known.isNewEntry)
+                explain(known.iterator->value);
+            loss = known.iterator->value;
         });
         loss.seesConstructedObject = !ValueSets::isComplement(receiver.seen) && sets.meet(receiver.positions.withoutWhatPlaceholdersCover(receiver.seen), universe.constructedObjects());
         tables.sites.accessSiteLosses[application.accessSites.siteOfValue(receiver.id, site).index()] = loss;
     });
+    for (Listings& listings : listingsOfWorker)
+        tables.sites.proxiesSeenAtSites.appendVector(WTF::move(listings.proxiesSeenAtSites));
+    AOT::sort(tables.sites.proxiesSeenAtSites, { }, &FlowProxiesSeenAtSite::site);
 }
 
 static bool callsValue(const ValueFlowStatement& statement)

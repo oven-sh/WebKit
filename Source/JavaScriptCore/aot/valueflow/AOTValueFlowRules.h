@@ -66,6 +66,7 @@ struct ValueFlowProtocolCall {
 };
 void callInProtocol(ValueFlowRuleContext&, const ValueFlowProtocolCall&);
 ClimbingSet escapedMembersUnder(ValueFlowRuleContext&, PropertyKeyID);
+ValueFlowNodeID heldPrototypeObjectsOfLibraryClasses(ValueFlowRuleContext&);
 
 void runIterationOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 void runStepOfLibrary(const ValueFlowStatement&, ValueFlowRuleContext&);

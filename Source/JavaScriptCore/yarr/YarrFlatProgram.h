@@ -34,6 +34,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -224,6 +225,8 @@ public:
     unsigned framesOfRegisters { 0 }; // The registers lie below the frames, in as many frames' room.
     std::optional<unsigned> endAnchoredFixedSize;
     bool triesOnlyOnce { false };
+    // FlatProgramForm::CountsTurns: the op that every attempt but the first begins at. In front of it stand the alternatives that are tried at the first place alone.
+    unsigned laterAttemptsBeginAt { 0 };
     // Of a pattern in unicode mode with a step that can consume a surrogate. There a lead surrogate and the trail surrogate behind it are one character, and that trail surrogate alone is none.
     // A match that meets a surrogate, in a step that tests for a class or goes back, where an attempt begins or where one might, is made again by the full machine.
     bool decodesSurrogatePairs { false };
@@ -238,12 +241,18 @@ public:
     uint8_t stepsPerCharacterBeforeStoppingOnFullMachine { 0 };
     bool needsFullMachine { false };
     bool isEnteredOutOfLine { false };
+    // Rows are numbered in this order: position-keyed, run-suffix, capture-keyed.
     unsigned memoRows { 0 };
-    // Where the pattern has references, the rest of a search depends on what the groups that they name hold too. An entry of the table has their bounds beside it, and says nothing while they hold anything else.
-    // The first of each group's two places in the output.
+    unsigned positionKeyedMemoRows { 0 };
+    // An unbounded run retries its continuation at every position of a stretch of matching characters. A run-suffix row marks the positions from which every later retry in the stretch has failed,
+    // with the turns those retries used, so runs that overlap scan the stretch once. These rows are dropped first when the table would be too large.
+    unsigned runSuffixMemoRows { 0 };
+    // Rows whose search also depends on capture bounds that a backreference can still read. See AroundMemoRow::liveCaptureBounds.
+    unsigned captureKeyedMemoRows { 0 };
+    // The output index of the start of each group that has live bounds.
     Vector<uint32_t> referencedGroups;
-    static constexpr unsigned maxReferencedGroups = 4;
-    unsigned memoEntrySize() const { return 1 + 2 * referencedGroups.size(); }
+    static constexpr unsigned maxReferencedGroups = 8;
+    unsigned captureKeyedSlotSize() const { return 2 + 2 * referencedGroups.size(); }
     // Inside a turn of a group that may take nothing, the rest of the search depends on the position alone only once the turn has taken something: once the register that holds where the turn began
     // differs from the position. An op's row names the innermost such turn around it, which names the next one out. 0: none.
     struct TurnThatMayTakeNothing {
@@ -261,10 +270,15 @@ public:
     Vector<LoopThatCountsTurns> loopsThatCountTurns;
     // Inside a lookahead a search ends in a third way: the lookahead is through, and what is left of the search is dropped. So a place there is entered in the table when the search from it
     // has failed, not when it begins.
+    // Every row of an op shares one value.
     struct AroundMemoRow {
-        uint16_t turnThatMayTakeNothing;
-        uint16_t loopThatCountsTurns;
-        bool isInsideLookahead;
+        uint16_t turnThatMayTakeNothing { 0 };
+        uint16_t loopThatCountsTurns { 0 };
+        bool isInsideLookahead { false };
+        // Bit 2 * i is the start of referencedGroups[i], and bit 2 * i + 1 is its end.
+        uint16_t liveCaptureBounds { 0 };
+        // The distance to this row's run-suffix row, or 0 if it has none.
+        uint16_t runSuffixRowOffset { 0 };
     };
     Vector<AroundMemoRow> aroundMemoRow;
     unsigned recordFailureOp { 0 };
@@ -285,15 +299,14 @@ enum class FlatProgramForm : bool { Fast, CountsTurns };
 // it fails again: a table of rows by positions says where, and how many turns the failed search began. With the table a match takes time in proportion to ops times positions.
 // A program that counts turns keeps the table from the start: it takes the turns of a search that it leaves out off matchLimit, and so gives up exactly where it would without the table.
 // A fast program of a pattern whose turns the JIT does not count starts over with the table. Any other fast program gives up, since with the table its steps would say nothing about the JIT's turns:
-// HandsOverEarly. RunsToMatchLimit is for where nothing stands behind it that counts turns. RemembersFromStart is for the checking mode.
-enum class FlatMatchPolicy : uint8_t { HandsOverEarly, RunsToMatchLimit, RemembersFromStart };
+// HandsOverEarly. RemembersFromStart is for the checking mode.
+enum class FlatMatchPolicy : uint8_t { HandsOverEarly, RemembersFromStart };
 
 enum class FlatProgramDecline : uint8_t {
     ClassWithStrings,
     Lookbehind,
     DuplicateNamedGroups,
     UnsignedLengthPattern,
-    CopiedGroup,
     NestedTooDeep,
     TooManySetsOrRegisters,
     NoTurnsToCount,
@@ -305,8 +318,12 @@ struct RegExpMatchOutcome {
 };
 
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern&, FlatProgramForm = FlatProgramForm::Fast);
+// Whether the pattern has a program of each form, and the one that counts turns keeps a table.
+bool hasFlatProgramsThatRememberFailedSearches(StringView pattern, OptionSet<Flags>);
 // Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
-bool jitCountsTurnsOf(const PatternTerm&);
+// It depends on whether the group has anything to go back into. What has been found out about a disjunction is kept, so that each is walked once however deep groups are nested.
+using KnownBacktrackableContent = UncheckedKeyHashMap<const PatternDisjunction*, bool>;
+bool jitCountsTurnsOf(const PatternTerm&, KnownBacktrackableContent&);
 void removeUnneededLogging(FlatProgram&);
 // For ops that run with nothing to undo: each becomes the form that pushes no undo frame.
 void removeLogging(std::span<FlatOp>);

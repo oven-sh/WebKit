@@ -20,6 +20,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
+#include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeFunctions.h"
@@ -27,6 +28,7 @@
 #include "AOTStackTrace.h"
 #include "AOTState.h"
 #include "AOTStubDescriptor.h"
+#include "AOTStubsCallAdapters.h"
 #include "AOTThreshold.h"
 #include "AOTUnwinding.h"
 #include "CallFrameInlines.h"
@@ -52,6 +54,8 @@
 #include "VMEntryRecord.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
+#include <algorithm>
+#include <array>
 #include <wtf/StackPointer.h>
 
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
@@ -249,6 +253,7 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
 }
 
 static StringView nameOfCalleeAtCallSite(VM&);
+static StringView nameOfForwardedCallee(VM&);
 
 template<bool isParent>
 static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue callee, JSValue newTarget, const ArgList& arguments)
@@ -287,7 +292,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance,
     JSValue function = JSValue::decode(callee);
     auto callData = JSC::getCallData(function);
     if (callData.type == CallData::Type::None) {
-        throwNotAFunctionError(globalObject, scope, function);
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, function, nameOfForwardedCallee(vm)));
         OPERATION_RETURN(scope, encodedJSValue());
     }
     MarkedArgumentBuffer arguments;
@@ -298,13 +303,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance,
     OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
 }
 
-// Under validation, for the calls of native functions that would go through the engine's own trampoline: the interpreter compares the call with the entry of the built-in.
-JSC_DEFINE_JIT_OPERATION(operationAOTCallNativeFunction, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* argumentValues))
+// For a long list, and under validation for the calls of native functions that would go through the engine's own trampoline: the interpreter compares the call with the entry of the built-in.
+JSC_DEFINE_JIT_OPERATION(operationAOTCallEngineCallee, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue thisValue, uint32_t count, const EncodedJSValue* argumentValues))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCallNativeFunction);
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCallEngineCallee);
     ArgList arguments(const_cast<EncodedJSValue*>(argumentValues), count);
     JSValue function = JSValue::decode(callee);
-    OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, JSC::getCallData(function), JSValue::decode(thisValue), arguments)));
+    auto callData = JSC::getCallData(function);
+    if (callData.type == CallData::Type::None) {
+        throwNotAFunctionError(globalObject, scope, function);
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
+    OPERATION_RETURN(scope, JSValue::encode(call(globalObject, function, callData, JSValue::decode(thisValue), arguments)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyCall, UGPRPair, (Instance* instance, CallFrame* hostCallFrame, uint32_t makesList))
@@ -420,10 +430,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instan
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArgumentList);
     JSValue function = JSValue::decode(callee);
-    if (!function.isCallable()) {
-        throwNotAFunctionError(globalObject, scope, function);
-        OPERATION_RETURN(scope, nullptr);
-    }
+    // The call that follows throws. Its call site has the name of the callee.
+    if (!function.isCallable())
+        OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
         OPERATION_RETURN(scope, list);
     MarkedArgumentBuffer arguments;
@@ -488,12 +497,53 @@ static StringView nameOfCalleeAtCallSite(VM& vm)
     return nameOfCalleeAt(frames->callSite());
 }
 
+// `f.apply(receiver, list)` and `f.call(receiver)` name `f.apply` and `f.call` where `f` refuses the call, as bytecode does, which calls `f` at that place.
+// The built-in function is a function of the library. Its frame stands above the place unless it has left by its tail call, and entered in any other way it names nothing.
+static StringView nameOfCalleeForwardedBy(auto& frames)
+{
+    FunctionID function = frames->frame().function;
+    std::optional<uint32_t> builtin = builtinOfFunctionInFrames(function) ? std::nullopt : Image::current()->programTables().builtinImplementedBy(function.index());
+    if (!builtin)
+        return { };
+    ASCIILiteral member = BuiltinID(*builtin) == Builtins::FunctionPrototypeApply ? ".apply"_s : BuiltinID(*builtin) == Builtins::FunctionPrototypeCall ? ".call"_s : ""_s;
+    frames->advanceToCallerMachineFrame();
+    StringView name = frames->isAtEnd() ? StringView() : nameOfCalleeAt(frames->callSite());
+    return !member.isEmpty() && name.endsWith(member) ? name : StringView();
+}
+
+static StringView nameOfForwardedCallee(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
+    if (!frames || frames->isAtEnd())
+        return { };
+    StringView name = nameOfCalleeAt(frames->callSite());
+    return name.isEmpty() ? nameOfCalleeForwardedBy(frames) : name;
+}
+
+StringView nameOfCalleeForwardedOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return { };
+    return nameOfCalleeForwardedBy(frames);
+}
+
 StringView instanceofExpressionOnTop(VM& vm)
 {
     auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
     if (!frames || frames->isAtEnd())
         return { };
     return nameOfCalleeAt(frames->callSite());
+}
+
+bool readOnTopTestsObjectOfUpdate(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return false;
+    const CallSiteCache::Entry& callSite = frames->callSite();
+    std::optional<SourcePosition> position = Image::current()->positionOf(callSite.code.index(), callSite.site.callSite);
+    return position && position->startIsForCallers;
 }
 
 StringView nameOfConstructorThatRunsOnTop(VM& vm)
@@ -528,7 +578,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallable, void, (Instance* insta
     DeferGCForAWhile deferGC(vm);
     JSValue value = calleeOfDecodedReference(instance, callee);
     if (!value.isCallable())
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfCalleeAtCallSite(vm)));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfForwardedCallee(vm)));
     OPERATION_RETURN(scope);
 }
 
@@ -541,6 +591,27 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallableNamed, void, (Instance* 
         StringView nameAtCallSite = nameOfCalleeAtCallSite(vm);
         throwException(globalObject, scope, nameAtCallSite.isNull() ? createNotAFunctionError(globalObject, value, identifierAt(instance, name)) : createNotAFunctionError(globalObject, value, nameAtCallSite));
     }
+    OPERATION_RETURN(scope);
+}
+
+static bool forwardsCallToReceiver(JSValue callee)
+{
+    std::optional<FunctionID> function = functionOf(callee.asCell());
+    if (!function)
+        return false;
+    std::optional<uint32_t> builtin = Image::current()->programTables().builtinImplementedBy(sourceFunctionOf(*function).index());
+    return builtin && (BuiltinID(*builtin) == Builtins::FunctionPrototypeCall || BuiltinID(*builtin) == Builtins::FunctionPrototypeApply);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessForwardedCalleeIsCallable, void, (Instance* instance, EncodedJSValue callee, EncodedJSValue receiver))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessForwardedCalleeIsCallable);
+    DeferGCForAWhile deferGC(vm);
+    JSValue value = calleeOfDecodedReference(instance, callee);
+    if (value.isCallable() && forwardsCallToReceiver(value))
+        value = calleeOfDecodedReference(instance, receiver);
+    if (!value.isCallable())
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfCalleeAtCallSite(vm)));
     OPERATION_RETURN(scope);
 }
 
@@ -774,7 +845,15 @@ static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callD
         break;
     }
     ProtoCallFrame protoCallFrame;
-    protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + args.size(), args.data());
+    if (args.size() <= adapterArgumentCountWithOutOfLineArguments) {
+        protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + args.size(), args.data());
+        return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
+    }
+    std::array<EncodedJSValue, adapterArgumentCountWithOutOfLineArguments> frameArguments;
+    std::copy_n(args.data(), numberOfArgumentGPRs, frameArguments.begin());
+    frameArguments[numberOfArgumentGPRs] = static_cast<EncodedJSValue>(static_cast<uint64_t>(outOfLineArgumentCountTag) << outOfLineArgumentCountTagShift | args.size());
+    frameArguments[numberOfArgumentGPRs + 1] = std::bit_cast<EncodedJSValue>(args.data());
+    protoCallFrame.init(nullptr, callData.compiled.realm, callee, thisSlot, context, 1 + frameArguments.size(), frameArguments.data());
     return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
 }
 

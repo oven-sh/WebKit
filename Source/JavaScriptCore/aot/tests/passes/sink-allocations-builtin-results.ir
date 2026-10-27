@@ -356,7 +356,7 @@ function f19 name="execOrNull" parameters=[{type=RegExp}, {type=string}, {type=b
 # CHECK-NEXT: Jump -> next b3([[tag19]], [[group19]],
 # CHECK: [[absent19]]: 1 = Integer integer=1
 # CHECK: Jump -> next b3([[absent19]],
-# CHECK-NEXT: b3([[merged19]]: i32, [[carried19]]: undefined|string,
+# CHECK-NEXT: b3([[merged19]]: i32, [[carried19]]: undefined|string|unspecified,
 # CHECK: = BitAnd [[merged19]],
 # CHECK-NOT: ElemGet
 # CHECK: v9:{{*}}= Upcast [[carried19]]

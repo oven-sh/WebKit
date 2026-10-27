@@ -34,7 +34,8 @@ Word32 ArgumentsEmitter::restLength(uint32_t firstArgument)
     if (!firstArgument)
         return count;
     Word32 skipped = word32(static_cast<int32_t>(firstArgument));
-    return select(below(skipped, count), sub(count, skipped), word32(0));
+    Condition hasRest = below(skipped, count);
+    return select(hasRest, sub(count, skipped), 0);
 }
 
 Pointer ArgumentsEmitter::restList(uint32_t firstArgument)
@@ -48,7 +49,8 @@ void ArgumentsEmitter::generateGetArgument(const ValueContext& value)
 {
     uint32_t index = value->argumentIndex();
     Pointer list = restList(0);
-    define(value, either<Boxed>(below(word32(static_cast<int32_t>(index)), emitter<EntryEmitter>().argumentCount()), [&] {
+    Word32 position = word32(static_cast<int32_t>(index));
+    define(value, either<Boxed>(below(position, emitter<EntryEmitter>().argumentCount()), [&] {
         return Boxed(m_out.load64(m_out.address(m_heaps.argumentBuffer, list.value(), static_cast<ptrdiff_t>(index) * sizeOfStackWord)));
     }, [&] {
         return undefined();
@@ -65,10 +67,12 @@ void ArgumentsEmitter::generateCreateRest(const ValueContext& value)
     uint32_t firstArgument = value->firstArgument();
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
     if (value->storage() == AllocationStorage::Heap) {
-        define(value, cells.newArrayFromBuffer(value, restLength(firstArgument), restList(firstArgument)));
+        Word32 length = restLength(firstArgument);
+        define(value, cells.newArrayFromBuffer(value, length, restList(firstArgument)));
         return;
     }
-    define(value, cells.newArrayInFrameFromBuffer(value, restLength(firstArgument), restList(firstArgument), static_cast<unsigned>(build().limit(LimitID::MaxFrameArrayLength))));
+    Word32 length = restLength(firstArgument);
+    define(value, cells.newArrayInFrameFromBuffer(value, length, restList(firstArgument), static_cast<unsigned>(build().limit(LimitID::MaxFrameArrayLength))));
 }
 
 Integer ArgumentsEmitter::indexOfBoxedKey(Boxed key, LBasicBlock isNotIndex)

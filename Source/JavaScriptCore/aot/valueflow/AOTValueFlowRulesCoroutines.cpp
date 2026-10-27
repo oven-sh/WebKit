@@ -39,7 +39,7 @@ void runCoroutine(const ValueFlowStatement& statement, ValueFlowRuleContext& con
     if (context.holdsAnyOf(coroutine, ValueFlowProgramNodes::escaped()))
         context.add(sent, unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction));
 
-    context.connect(nodes.thrown(function), ValueFlowProgramNodes::escaped());
+    carryOut(context, nodes.thrown(function));
 
     ValueFlowNodeID prototype = context.lookup(only(context, universe.closureOf(function)), nameOf(context, BuiltinNames::prototype));
     context.connect(context.masked(prototype, universe.objects()), context.written(coroutine, prototypeLinkName));

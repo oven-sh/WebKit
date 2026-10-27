@@ -1,0 +1,113 @@
+# function pad(text: string, wide: boolean): number {
+#   return wide ? text.length + 8 : text.length;
+# }
+# function padBoth(text: string, wide: boolean): number {
+#   return pad(text, wide) + pad(text, !wide);
+# }
+# declare const input: any;
+# (globalThis as any).answer = padBoth(String(input), !!input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f2
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f2
+# REQUIRES(NONE): unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=13 kind=Parameter function=f1
+typesite w1 module=m0 position=27 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=118 kind=Parameter function=f2
+typesite w4 module=m0 position=132 kind=Parameter function=f2
+typesite w5 module=m0 position=101 kind=Result
+typesite w6 module=m0 position=267 kind=CallResult
+typesite w7 module=m0 position=259 kind=CallResult
+typesite w8 module=m0 position=68 kind=PropertyRead
+typesite w9 module=m0 position=86 kind=PropertyRead
+typesite w10 module=m0 position=166 kind=CallResult
+typesite w11 module=m0 position=184 kind=CallResult
+variable g0 name="pad" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=String
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Call v6, -, v8 calleeName="String"
+    v10 = Convert v9 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = ToBoolean v12
+    v14 = LogicalNot v13
+    v15 = ToBoolean v14
+    v16 = LogicalNot v15
+    v17 = Call v1, -, v10, v16 calleeName="padBoth"
+    v18 = Convert v17 declared={type=number site=w7}
+    PropSet v5, v18 key="answer"
+    v20 = Undefined
+    Return v20
+}
+function f1 name="pad" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: boolean):
+    Jump -> next b1()
+  b1():
+    v2 = ToBoolean v1
+    Branch v2 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v3):
+    Jump -> next b3()
+  b3():
+    v4 = PropGet v0 key="length"
+    v5 = Convert v4 declared={type=number site=w8} illTypedCause=Assertion
+    v6 = Integer integer=8
+    v7 = Add v5, v6
+    Jump -> next b6(v7)
+  b4(v8):
+    Jump -> next b5()
+  b5():
+    v9 = PropGet v0 key="length"
+    v10 = Convert v9 declared={type=number site=w9} illTypedCause=Assertion
+    Jump -> next b6(v10)
+  b6(v11):
+    v12 = Convert v11 declared={type=number site=w2}
+    Return v12
+}
+function f2 name="padBoth" module=m0 position=101 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=boolean site=w4}] results=[{type=number site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: boolean):
+    Jump -> next b1()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v2, -, v0, v1 calleeName="pad"
+    v4 = Convert v3 declared={type=number site=w10}
+    v5 = GetModuleVariable variable=g0
+    v6 = ToBoolean v1
+    v7 = LogicalNot v6
+    v8 = Call v5, -, v0, v7 calleeName="pad"
+    v9 = Convert v8 declared={type=number site=w11}
+    v10 = Add v4, v9
+    v11 = Convert v10 declared={type=number site=w5}
+    Return v11
+}
+
+# The string goes as a pointer and the boolean as 0 or 1. Its negation is one exclusive or, and neither is boxed.
+# CHECK-LABEL: name="padBoth" role=Source
+# CHECK: Int32 b@[[wide]] = Trunc(
+# CHECK: Int64 b@[[text]] = ArgumentReg(
+# CHECK-NEXT: Double b@[[first]] = Patchpoint(b@[[text]]:Register({{*}}), b@[[wide]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK: Int32 b@[[narrow]] = BitXor(b@[[wide]], $1(
+# CHECK-NEXT: Double b@[[second]] = Patchpoint(b@[[text]]:Register({{*}}), b@[[narrow]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK-NEXT: Double b@[[sum]] = Add(b@[[first]], b@[[second]],
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-LABEL: end of function
+# NONE-LABEL: name="padBoth" role=Source
+# NONE-NOT: Branch(
+# NONE-NOT: Select(
+# NONE-NOT: BitOr(
+# NONE-LABEL: end of function

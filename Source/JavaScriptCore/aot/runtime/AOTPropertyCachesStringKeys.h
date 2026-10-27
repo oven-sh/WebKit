@@ -21,6 +21,7 @@
 #include <utility>
 #include <wtf/BitSet.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/RapidHash.h>
 
@@ -31,6 +32,7 @@ struct State;
 
 class StringKeyCache {
     WTF_MAKE_NONCOPYABLE(StringKeyCache);
+    WTF_MAKE_TZONE_ALLOCATED(StringKeyCache);
 public:
     static constexpr size_t maxCaseConvertedStringLength = 64;
 
@@ -141,7 +143,10 @@ public:
 
     size_t maxCachedKeyLength() const { return m_maxCachedKeyLength; }
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
-    ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
+    enum class EqualHashes : uint8_t { AreToldApart, LeaveUndecided };
+    // Calls nothing where equal hashes leave it undecided, which is then no answer.
+    template<EqualHashes equalHashes>
+    ALWAYS_INLINE std::optional<JSString*> lookUpCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
     {
         size_t tableSize = m_cachedKeys.size();
         if (!tableSize) [[unlikely]]
@@ -152,14 +157,19 @@ public:
             entry = pair[1];
             if (entry >> 32 != hash)
                 return nullptr;
-        } else if (pair[1] >> 32 == hash) [[unlikely]]
-            return findAmongEqualHashes(pair, characters);
+        } else if (pair[1] >> 32 == hash) [[unlikely]] {
+            if constexpr (equalHashes == EqualHashes::LeaveUndecided)
+                return std::nullopt;
+            else
+                return findAmongEqualHashes(pair, characters);
+        }
         return matchingKey(entry, characters);
     }
+    ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const { return *lookUpCachedKey<EqualHashes::AreToldApart>(characters, hash); }
     JSString* makeKey(VM&, std::span<const Latin1Character>, unsigned hash);
-    ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts)
+    ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts, bool isName = false)
     {
-        JSString* key = jsNontrivialString(vm, String(StringImpl::create(characters, hash)));
+        JSString* key = jsNontrivialString(vm, isName ? nameWith(characters, hash) : String(StringImpl::create(characters, hash)));
         if (!canEncode(key)) [[unlikely]]
             return key;
         addCachedKey(key, hash);
@@ -191,7 +201,8 @@ public:
 
     enum class Lookup : uint8_t { Found, Absent, AbsentIndex };
     // Integer keys are only cached by value. The hash is set when the result is Absent.
-    ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const
+    template<EqualHashes equalHashes = EqualHashes::AreToldApart>
+    ALWAYS_INLINE std::optional<Lookup> tryFindKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const
     {
         ASSERT(characters.size() >= 2 && characters.size() <= m_maxCachedKeyLength);
         if (characters.size() <= maxIndexLength) {
@@ -201,9 +212,13 @@ public:
             }
         }
         hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
-        key = tryFindCachedKey(characters, hash);
+        std::optional<JSString*> found = lookUpCachedKey<equalHashes>(characters, hash);
+        if (!found) [[unlikely]]
+            return std::nullopt;
+        key = *found;
         return key ? Lookup::Found : Lookup::Absent;
     }
+    ALWAYS_INLINE Lookup findKeyForText(std::span<const Latin1Character> characters, JSString*& key, unsigned& hash) const { return *tryFindKeyForText(characters, key, hash); }
     JSString* caseConvertedString(VM&, std::span<const Latin1Character>);
     // What the conversion of this very string gave the last time: a program lowers the same header names and method names over and over. A string never changes, so the answer holds while both live.
     enum class LetterCase : uint8_t { Lower, Upper };
@@ -237,6 +252,11 @@ private:
     AOT_CLASS_THRESHOLD(size_t, maxKeysByPartsTableSize, 1 << 14);
 
     static size_t firstIndex(unsigned hash, size_t tableSize) { return hash & (tableSize - 1) & ~static_cast<size_t>(1); }
+    static String nameWith(std::span<const Latin1Character> characters, unsigned hash)
+    {
+        WTF::HashTranslatorCharBuffer<Latin1Character> buffer { characters, hash };
+        return String(AtomStringImpl::add(buffer));
+    }
     bool canEncode(const JSCell* cell) const { return std::bit_cast<uintptr_t>(cell) - m_cageBase < m_cageSize; }
     uint32_t encode(const JSCell* cell) const { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(cell) >> MarkedBlockCage::shift); }
     ALWAYS_INLINE void addCachedKey(JSString* key, unsigned hash)

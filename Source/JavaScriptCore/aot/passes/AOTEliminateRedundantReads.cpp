@@ -279,7 +279,7 @@ struct RedundantReadElimination {
         if (!accessedHeapSet.contains(access.location.heap()))
             return std::nullopt;
         RELEASE_ASSERT(access.kind != MemoryAccess::Kind::Read || opcodesReadingAccessedHeaps.contains(value.opcode));
-        ValueID base = access.base ? m_analyses.sameObjectThroughCasts(access.base) : ValueID();
+        ValueID base = access.base ? m_analyses.sameObjectThroughCasts(access.base).valueInFrontOfFacts() : ValueID();
         return Access { .location = access.location, .base = base, .id = id, .stored = access.stored, .point = point };
     }
 
@@ -1321,6 +1321,18 @@ static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
     };
     const Program& program = context.program;
     Function& function = context.function;
+    auto isBrandOperation = [&](const Value& value) {
+        return (value.opcode == Opcode::PrivateGet || value.opcode == Opcode::PrivateDefine) && program.at(value.layout()).fields[value.field()].flags.contains(FieldFlags::IsBrand);
+    };
+    size_t numberOfBrandOperations = 0;
+    for (const Block& block : function.blocks) {
+        numberOfBrandOperations += std::ranges::count_if(block.values, [&](ValueID id) {
+            return isBrandOperation(function.at(id));
+        });
+    }
+    if (numberOfBrandOperations < 2)
+        return PassOutcome::Unchanged;
+
     const Dominators& dominators = context.analyses.dominators();
     Vector<Brand, 8> taken;
     Vector<size_t, 16> numberTakenAtEntry;
@@ -1332,11 +1344,9 @@ static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
         BitVector erasedIndexes;
         for (size_t index = 0; index < values.size(); ++index) {
             const Value& value = function.at(values[index]);
-            if (value.opcode != Opcode::PrivateGet && value.opcode != Opcode::PrivateDefine)
+            if (!isBrandOperation(value))
                 continue;
-            if (!program.at(value.layout()).fields[value.field()].flags.contains(FieldFlags::IsBrand))
-                continue;
-            Brand brand { sameObjectThroughCasts(function, value.objectOperand()), sameObjectThroughCasts(function, value.tokenOperand()), value.layout(), value.field(), block };
+            Brand brand { sameObjectThroughCasts(function, value.objectOperand()).valueInFrontOfFacts(), sameObjectThroughCasts(function, value.tokenOperand()).valueInFrontOfFacts(), value.layout(), value.field(), block };
             // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
             bool isTaken = std::ranges::any_of(taken, [&](const Brand& earlier) {
                 return earlier.object == brand.object && earlier.token == brand.token && earlier.layout == brand.layout && earlier.field == brand.field
@@ -1376,8 +1386,23 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
         BuiltinID builtin;
         BlockID block;
     };
-    const BuiltinTable& builtins = context.program.builtins();
+    // Two names of one object are two members: each is added where it is first read.
     Function& function = context.function;
+    Vector<BuiltinID, 8> initializedBuiltins;
+    bool hasRepeatedBuiltin = false;
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::InitializeBuiltin)
+                continue;
+            BuiltinID builtin = value.builtin();
+            hasRepeatedBuiltin |= initializedBuiltins.contains(builtin);
+            initializedBuiltins.append(builtin);
+        }
+    }
+    if (!hasRepeatedBuiltin)
+        return PassOutcome::Unchanged;
+
     const Dominators& dominators = context.analyses.dominators();
     Vector<Initialization, 8> done;
     Vector<size_t, 16> numberDoneAtEntry;
@@ -1390,7 +1415,7 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
             const Value& value = function.at(values[index]);
             if (value.opcode != Opcode::InitializeBuiltin)
                 continue;
-            BuiltinID builtin = builtins.canonicalID(value.builtin());
+            BuiltinID builtin = value.builtin();
             bool isDone = std::ranges::any_of(done, [&](const Initialization& earlier) {
                 return earlier.builtin == builtin && (earlier.block == block || dominators.terminatorDominates(earlier.block, block));
             });
@@ -1420,7 +1445,10 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
         outcome = RedundantReadElimination { context }.run();
-    return outcome | dropRepeatedMapSets(context) | dropRepeatedBrandTests(context) | dropRepeatedInitializations(context);
+    outcome |= dropRepeatedMapSets(context);
+    outcome |= dropRepeatedBrandTests(context);
+    outcome |= dropRepeatedInitializations(context);
+    return outcome;
 }
 
 namespace {
@@ -1533,6 +1561,8 @@ struct VariableCarrier : LoopEditor {
         bool isWrittenOnLeavingPath { false };
         // Whoever gets to the end of the block ahead of the loop has read the variable or is about to, whichever way the tests turn out.
         bool isReadWheneverLoopIsEntered { false };
+        // The read ahead of the loop is a copy of one of the reads, and names what that one names.
+        bool isReadThroughCastInLoop { false };
     };
 
     // False for a loop that is entered from its copy, behind a whole turn: what every turn reads has been read when it is read ahead of the loop.
@@ -1585,9 +1615,15 @@ struct VariableCarrier : LoopEditor {
     bool isReadBy(const CarriedVariable& variable, Opcode opcode)
     {
         const UseLists& uses = m_analyses.useLists();
-        return std::ranges::any_of(variable.reads, [&](ValueID read) {
-            return std::ranges::any_of(uses.usesOf(read), [&](const Use& use) {
+        auto isUsedBy = [&](ValueID value) {
+            return std::ranges::any_of(uses.usesOf(value), [&](const Use& use) {
                 return use.kind == Use::Kind::Operand && m_function.at(use.user).opcode == opcode;
+            });
+        };
+        // A read that gives a word which may be anything is looked at through the cast that names the fact.
+        return std::ranges::any_of(variable.reads, [&](ValueID read) {
+            return isUsedBy(read) || std::ranges::any_of(uses.usesOf(read), [&](const Use& use) {
+                return use.kind == Use::Kind::Operand && m_function.at(use.user).opcode == Opcode::AssumeType && m_function.at(use.user).factOperand() && isUsedBy(use.user);
             });
         });
     }
@@ -1616,7 +1652,8 @@ struct VariableCarrier : LoopEditor {
                 ValueID id = values[index];
                 MemoryAccess access = memoryAccessOf(m_function, m_function.at(id));
                 if (stays && access && carriedHeaps.contains(access.location.heap()) && !access.location.isEntireHeap()) {
-                    ValueID base = access.base ? m_analyses.sameObjectThroughCasts(access.base) : ValueID();
+                    // A cast that names a fact says from where on the word may be looked at: what stands in front of it is another base.
+                    ValueID base = access.base ? sameObjectBehindFacts(m_function, access.base) : ValueID();
                     accesses.append(VariableAccess { access.location, base, id, access.stored, { block, index } });
                     continue;
                 }
@@ -1699,6 +1736,8 @@ struct VariableCarrier : LoopEditor {
                 variable = &m_variables.last();
             }
             variable->reads.append(access.id);
+            if (ValueID namedBase = memoryAccessOf(m_function, m_function.at(access.id)).base)
+                variable->isReadThroughCastInLoop |= loops.belongsTo(useLists.locationOf(namedBase).block, loop);
             variable->isReadInEveryTurn = variable->isReadInEveryTurn.predicted() || ((!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span()));
             variable->isReadWheneverLoopIsEntered |= isReachedWheneverLoopIsEntered(access);
         }
@@ -1756,7 +1795,7 @@ struct VariableCarrier : LoopEditor {
         };
         // HoistLoopInvariantReads moves a read that is all there is to a variable.
         m_variables.removeAllMatching([&](const CarriedVariable& variable) {
-            if (!variable.isReadInEveryTurn.predicted() || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
+            if (variable.isReadThroughCastInLoop || !variable.isReadInEveryTurn.predicted() || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
                 return true;
             return variable.stores.isEmpty() && !variable.isWrittenOnLeavingPath && !isReadBy(variable, Opcode::TypeTest) && !isReadBy(variable, Opcode::GetCapture);
         });
@@ -1953,8 +1992,9 @@ struct VariableCarrier : LoopEditor {
     // The variable has its declared type ahead of the loop where a fact that one of the reads names is defined there, where one of them needs none, or where the first turn is sure to get to one of them.
     FactAheadOfLoop findFactAheadOfLoop(const CarriedVariable& variable, ProgramPoint aheadOfLoop)
     {
+        // A read of an environment field names no fact: the copy of it ahead of the loop says what the read says.
         bool someReadLeansOnFact = std::ranges::any_of(variable.reads, [&](ValueID id) {
-            return holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, m_function.at(id));
+            return m_function.at(id).opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program, m_function, m_function.at(id));
         });
         if (!someReadLeansOnFact)
             return { };
@@ -2040,7 +2080,7 @@ struct VariableCarrier : LoopEditor {
             };
             bool holdsNothingElse = std::ranges::all_of(block.values.span().first(block.values.size() - 1), [&](ValueID value) {
                 Opcode opcode = m_function.at(value).opcode;
-                return opcode == Opcode::LoopHint || opcode == Opcode::Entered || isCastBehindFact(value);
+                return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value);
             });
             if (test.opcode != Opcode::TypeTest || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
                 break;
@@ -2182,7 +2222,7 @@ struct VariableCarrier : LoopEditor {
                 MemoryAccess access = memoryAccessOf(m_function, m_function.at(value));
                 DelayedVariable* stored = nullptr;
                 if (access.kind == MemoryAccess::Kind::Write) {
-                    ValueID base = access.base ? m_analyses.sameObjectThroughCasts(access.base) : ValueID();
+                    ValueID base = access.base ? sameObjectBehindFacts(m_function, access.base) : ValueID();
                     for (DelayedVariable& candidate : delayed) {
                         if (candidate.variable.location == access.location && candidate.variable.base == base)
                             stored = &candidate;
@@ -2684,10 +2724,9 @@ struct LoopPathSeparator : LoopEditor {
         plan.letsVariablesBeCarried = isHot && mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
-        UnspecifiedValues unspecifiedValues(m_analyses);
         plan.carriedValuesThatMayBeUnspecified = BitVector(parameters.size());
         for (size_t index = 0; index < parameters.size(); ++index) {
-            if (unspecifiedValues.mayContain(parameters[index]))
+            if (typeOf(parameters[index]).mayBeUnspecified())
                 plan.carriedValuesThatMayBeUnspecified.set(index);
         }
         bool movesTest = isHot && std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {

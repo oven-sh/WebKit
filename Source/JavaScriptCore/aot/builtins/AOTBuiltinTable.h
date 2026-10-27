@@ -507,6 +507,8 @@ struct Builtin {
     BuiltinOverloadID firstOverload { };
     uint16_t overloadCount { 0 };
     bool isNamedByText { false };
+    bool isAddedAtFirstRead { false };
+    bool isAddedAsEnumerable { false };
 };
 
 struct BuiltinSlot {
@@ -952,7 +954,7 @@ public:
     std::optional<BuiltinDispatchTarget> dispatchOf(BuiltinID, BuiltinCallMode) const;
     const BuiltinParameter* parameterFor(const BuiltinOverload&, BuiltinOperand position) const;
 
-    BuiltinTableIDRange<BuiltinID> membersOf(BuiltinID holder) const;
+    JS_EXPORT_PRIVATE BuiltinTableIDRange<BuiltinID> membersOf(BuiltinID holder) const;
     BuiltinID findGlobal(BuiltinName name) const { return findOwnMember(Builtins::GlobalThis, name); }
     BuiltinID findOwnMember(BuiltinID holder, BuiltinName) const;
     BuiltinMemberLookup findMember(BuiltinID holder, BuiltinName) const;
@@ -1033,7 +1035,7 @@ public:
     bool isRegisteredSymbolName(BuiltinName) const;
     std::span<const uint8_t> textOf(BuiltinName) const;
     JS_EXPORT_PRIVATE String textOf(BuiltinID) const;
-    Identifier identifierOf(VM&, BuiltinName) const;
+    JS_EXPORT_PRIVATE Identifier identifierOf(VM&, BuiltinName) const;
     std::optional<double> numberOf(BuiltinID) const;
     std::optional<StringView> stringOf(BuiltinID) const;
     BuiltinName nameOfString(BuiltinID stringConstant) const { return nameOfString(stringConstant, targetOfThisBuild()); }
