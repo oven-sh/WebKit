@@ -153,10 +153,8 @@ static std::optional<ForwardedCallPlan> planForwardedCall(const Program& program
     }
 
     ValueID list = operands->list ? call.operandAt(*operands->list) : ValueID();
-    if (list && !program.typeOf(function, list).isUndefinedOrNull()) {
+    if (list && !program.typeOf(function, list).isUndefinedOrNull())
         plan.list = list;
-        plan.operandOfList = operands->list;
-    }
 
     size_t numberOfArguments = call.arguments.size();
     size_t firstForwardedArgument = operands->firstArgument ? std::min<size_t>(*operands->firstArgument, numberOfArguments) : numberOfArguments;

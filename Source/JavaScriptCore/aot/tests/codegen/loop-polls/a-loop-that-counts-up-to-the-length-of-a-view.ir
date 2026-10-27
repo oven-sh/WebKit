@@ -1,10 +1,10 @@
-# The length of a typed array comes out of an inline read that may miss, so what the counter is compared with is a block parameter. The turns of the likely loop can be counted all the same: none of them polls.
+# The length of a typed array comes out of an inline read that may miss, so what the counter is compared with is a block parameter. It is a length of data all the same: the likely loop has no poll.
 # FORM: AsRead
-# f3 is the typed body of f1. One poll is that of the rare copy, which reads `length` by name. The others stand where the likely loop has more turns in front of it than may pass without a poll.
+# f3 is the typed body of f1: its one poll is that of the rare copy, which reads `length` by name.
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops
 # REQUIRES: x86_64 faulting-loop-polls
 # RUN: generate-code
-# CHECK: f3: size={{*}} polls=3
+# CHECK: f3: size={{*}} polls=1
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

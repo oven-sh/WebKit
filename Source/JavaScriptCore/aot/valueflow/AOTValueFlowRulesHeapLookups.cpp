@@ -553,28 +553,17 @@ ValueFlowNodeID HeapRule::readWhatStaysBehindUnder(ValueFlowName name)
     return holdsAnything(found) ? m_context.readWhatWasWritten(found, name) : ValueFlowNodeID();
 }
 
-bool HeapRule::mayBeFoundThroughPlaceholder(BuiltinID member)
+bool HeapRule::isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey& key)
 {
     if (m_tables.letsInUnseenCode(member) || isFoundByNameAlone(m_builtins.canonicalID(member)))
         return false;
     if (BuiltinID holder = m_builtins.at(member).holder; holder && isNativeModuleThatNobodyNames(m_universe.objectOf(holder)))
         return false;
-    return !isMemberOfBun(member);
-}
-
-bool HeapRule::isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey& key)
-{
-    if (!mayBeFoundThroughPlaceholder(member))
-        return false;
     const Builtin& entry = m_builtins.at(member);
+    if (isMemberOfBun(member))
+        return false;
     bool isFoundUnderOwnName = entry.kind != BuiltinKind::Constructor || (entry.holder && m_builtins.at(entry.holder).kind == BuiltinKind::Namespace);
     return (key.keyClass == HeapKeyClass::Name && isFoundUnderOwnName) || entry.origin != BuiltinOrigin::Host;
-}
-
-// A key nobody knows hands out no member of the host. Reading an accessor still calls its getter.
-bool HeapRule::runsGetterThroughPlaceholder(BuiltinID member, const HeapKey& key)
-{
-    return m_builtins.at(member).kind == BuiltinKind::Accessor && mayBeFoundThroughPlaceholder(member) && !isHandedOutThroughPlaceholder(member, key);
 }
 
 ClimbingSet HeapRule::objectsHeldFromCreation(ClimbingSet objects)
@@ -1511,16 +1500,6 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             handedOutAsUnknownObject.append(objectOfMember(member, module));
         });
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
-        // A read runs getters on the holders where a store runs setters. What they answer is among the values nobody knows.
-        forEachMemberUnder(holdersOfAccessorsThatRunOnUnknownObject(key), key, [&](BuiltinID member, ModuleID) {
-            if (!runsGetterThroughPlaceholder(member, key))
-                return;
-            use(member, BuiltinUse::Read);
-            for (const BuiltinOverload& overload : m_builtins.overloadsOf(m_builtins.canonicalID(member))) {
-                if (overload.mode == BuiltinCallMode::Get)
-                    noteInstancesIn(m_context, overload.result.type);
-            }
-        });
     } else if (chain.holdsUnknownObject) {
         connect(m_context.lookup(unknownObjectAlone(), value), result);
         if (!m_context.isLookupForCall())

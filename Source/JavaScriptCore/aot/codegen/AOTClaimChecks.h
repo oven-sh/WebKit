@@ -38,12 +38,7 @@ JS_EXPORT_PRIVATE void checkClaimsAtRunTime(B3::Policy&, Typed::FunctionID, cons
 
 // Each phase that moves a load or puts another value in its place writes into a log where the load stood. The procedure holds nothing of the log, so the code is that of an ordinary build.
 // Behind the last phase that moves a value a second read goes in at each place that is still there.
-// --aot-check=DecidedComparisons: a phase that puts an answer in the place of a comparison of two integers writes the two into the same log, and they are compared at that place. They stay alive for it.
-struct WhatIsLogged {
-    bool loads { true };
-    bool decidedComparisons { false };
-};
-JS_EXPORT_PRIVATE void checkMovedLoadsAtRunTime(B3::Policy&, Typed::FunctionID, const std::unique_ptr<B3::Procedure>&, const GuardTests&, WhatIsLogged = { });
+JS_EXPORT_PRIVATE void checkMovedLoadsAtRunTime(B3::Policy&, Typed::FunctionID, const std::unique_ptr<B3::Procedure>&, const GuardTests&);
 
 } } // namespace JSC::AOT
 

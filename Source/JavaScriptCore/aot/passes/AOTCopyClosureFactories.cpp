@@ -15,7 +15,6 @@
 #include "AOTIRBuilder.h"
 #include "AOTRegionCloner.h"
 #include "AOTSchemaWalkers.h"
-#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
@@ -613,7 +612,7 @@ struct Copier {
             for (const Value& value : program.functions[index].values)
                 forEachReference(value, finder);
         });
-        AOT::sort(*classReferences);
+        std::ranges::sort(*classReferences);
         classReferences->shrink(std::ranges::unique(*classReferences).begin() - classReferences->begin());
     }
 
@@ -713,7 +712,7 @@ struct Copier {
             hasChanged |= std::exchange(member, copyOfClass(member)) != member;
         if (!hasChanged)
             return id;
-        AOT::sort(members);
+        std::ranges::sort(members);
         return types.intern(program.at(id).withMembers(WTF::move(members)));
     }
 
@@ -888,7 +887,7 @@ struct Copier {
             }
             if (!below.supertypes.contains(copy))
                 below.supertypes.append(copy);
-            AOT::sort(below.supertypes);
+            std::ranges::sort(below.supertypes);
         });
     }
 
@@ -924,7 +923,7 @@ struct Copier {
         layout.base = base;
         if (!layout.supertypes.contains(base))
             layout.supertypes.append(base);
-        AOT::sort(layout.supertypes);
+        std::ranges::sort(layout.supertypes);
         classesPutBelowOthers.append({ copy, base });
     }
 
@@ -970,7 +969,7 @@ struct Copier {
     {
         if (classesPutBelowOthers.isEmpty())
             return;
-        AOT::sort(classesPutBelowOthers, { }, [](const auto& entry) { return std::pair(entry.second, entry.first); });
+        std::ranges::sort(classesPutBelowOthers, { }, [](const auto& entry) { return std::pair(entry.second, entry.first); });
         ClassesBelow classesBelow { program, classesPutBelowOthers.span() };
         UncheckedKeyHashMap<uint32_t, Vector<LayoutID>> added;
         BitVector hasClassesAdded;
@@ -993,7 +992,7 @@ struct Copier {
             if (members.isEmpty())
                 continue;
             members.appendVector(set.written());
-            AOT::sort(members);
+            std::ranges::sort(members);
             members.shrink(std::ranges::unique(members).begin() - members.begin());
             if (members.size() != set.written().size())
                 table.layoutSets[index] = types.intern(set.withMembers(WTF::move(members)));

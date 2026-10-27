@@ -903,10 +903,15 @@ void HeapRule::runOperation()
             return;
 
         ClimbingSet sources = m_context.valueOf(source);
-        ClimbingSet records = m_context.restrict(known(sources), m_universe.records());
-        AOT_THRESHOLD(uint32_t, mostRecordsListedAtOnce, 16);
-        if (!m_context.holdsMoreMembersThan(records, mostRecordsListedAtOnce) || isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
-            add(m_statement.result, records);
+        Members records;
+        m_context.forEachMember(known(sources), [&](ValueFlowObjectID object) {
+            ValueFlowObjectKind objectKind = m_universe.kindOf(object);
+            LayoutID layout = objectKind == ValueFlowObjectKind::Site || objectKind == ValueFlowObjectKind::Instance ? m_universe.layoutOf(object) : LayoutID();
+            if (layout && m_program.at(layout).kind == LayoutKind::Record)
+                records.append(object);
+        });
+        if (!records.isEmpty() && isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
+            add(m_statement.result, m_context.maker().of(records.span()));
         add(m_statement.result, m_context.restrict(known(sources), m_universe.objectsThatMayBeAnything()));
         if (mayBeUnknownObject(sources))
             add(m_statement.result, unknownObjectAlone());

@@ -594,7 +594,6 @@ private:
     void defineMembers(JSObject* target, std::span<const MethodData>);
     void defineMember(JSObject* target, const MethodData&, const Identifier& key, JSObject* function);
     bool hasAssumedBase() const;
-    bool inheritsFromPrototypeOfAssumedBase() const;
     void armGuards();
 #if ASSERT_ENABLED
     bool hasMemberEnvironment() const;
@@ -950,13 +949,6 @@ bool ClassDefinition::hasAssumedBase() const
     return baseConstructor && m_classObjectParent == m_state.objects->closures.closureIfCreated(baseConstructor);
 }
 
-// A constructor function may have been given another prototype object since its class was defined.
-bool ClassDefinition::inheritsFromPrototypeOfAssumedBase() const
-{
-    const LayoutData* base = m_classes.assumedBaseOf(m_classLayout);
-    return !base || ClassTable::isDefinedByClass(*base) || m_prototypeParent == JSValue(m_classes.classPrototypeIfExists(*base));
-}
-
 void ClassDefinition::armGuards()
 {
     using HolderState = ClassTable::HolderState;
@@ -967,12 +959,10 @@ void ClassDefinition::armGuards()
         m_classes.classPrototypeOfBase(m_vm, *base);
     m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Prototype, m_prototype, createsPrototypeMembers() ? stateOfPrototype : HolderState::NotTouched);
     m_classes.armMemberGuards(m_vm, m_classLayout, ClassSide::Static, m_classObject, createsClassObject() ? stateOfClassObject : HolderState::NotTouched);
-    if (m_requestedPart != ClassPart::Everything)
+    if (m_requestedPart != ClassPart::Everything || hasAssumedBase())
         return;
-    if (!hasAssumedBase())
-        m_classes.didChangePrototypeLink(m_classLayout, ClassSide::Static);
-    if (!hasAssumedBase() || !inheritsFromPrototypeOfAssumedBase())
-        m_classes.didChangePrototypeLink(m_classLayout, ClassSide::Prototype);
+    m_classes.didChangePrototypeLink(m_classLayout, ClassSide::Static);
+    m_classes.didChangePrototypeLink(m_classLayout, ClassSide::Prototype);
 }
 
 } // namespace

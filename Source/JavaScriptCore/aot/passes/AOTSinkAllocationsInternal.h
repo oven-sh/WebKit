@@ -458,12 +458,6 @@ public:
     KeyOrderTable& orders() { return m_orders; }
     const KeyOrderTable& orders() const { return m_orders; }
     SinkingDecisions& decisions() { return m_decisions; }
-    std::span<const ValueID> guardsOfNoObjectIn(ValueID guards) const LIFETIME_BOUND
-    {
-        auto found = m_guardsOfNoObject.find(guards.index() + 1);
-        return found == m_guardsOfNoObject.end() ? std::span<const ValueID> { } : found->value.span();
-    }
-    void setGuardsOfNoObjectIn(ValueID guards, Vector<ValueID, 2>&& others) { m_guardsOfNoObject.set(guards.index() + 1, WTF::move(others)); }
     const SinkingInputs& inputs() const { return m_inputs; }
     // Before anything is asked about the values or the terminator of the block.
     void prepare(BlockID block)
@@ -621,7 +615,6 @@ private:
     mutable std::optional<Vector<VirtualObjectID>> m_objectsWhoseCreationMayBeOrderedWithGuards;
     KeyOrderTable m_orders;
     SinkingDecisions m_decisions;
-    UncheckedKeyHashMap<uint32_t, Vector<ValueID, 2>> m_guardsOfNoObject;
     SinkingInputs m_inputs;
     SinkingNames m_names;
     struct RelevantValues {

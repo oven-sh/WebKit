@@ -159,9 +159,8 @@ operation StringBuilderLength (builder: StringBuilder/inspects) -> natural(int[0
 operation StringBuilderToString (builder: StringBuilder/inspects) -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderToString
 operation StringBuilderFinish (builder: StringBuilder/inspects) [isLikelyKey] -> natural(string) ; AppendsToBuilder ; runtime = StringBuilderFinish
 operation StringBuilderDiscard (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents, RuntimeState) writes(StringBuilderContents, RuntimeState) ; runtime = StringBuilderDiscard
-operation StringBuilderCheckpoint (builder: StringBuilder/inspects) -> natural(int32) ; reads(StringBuilderContents)
+operation StringBuilderCheckpoint (builder: StringBuilder/inspects) -> natural(int[0, 2147483647]) ; reads(StringBuilderContents)
 operation StringBuilderRollBack (builder: StringBuilder/inspects, checkpoint: Integer/inspects) -> none ; writes(StringBuilderContents) ; runtime = StringBuilderRollBack
-operation StringBuilderCheckLength (builder: StringBuilder/inspects) -> none ; reads(StringBuilderContents) writes(StringBuilderContents) throws ; runtime = StringBuilderCheckLength
 
 family RuntimeValidation Prepared..Placed
 engine operation ValidateType (value: Any/inspects, validatedType: Type) -> none ; writes(ValidationState) ; AsRead..Placed ; flow = Copies

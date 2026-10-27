@@ -11,7 +11,6 @@
 #include "AOTOrderedInterning.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
-#include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <atomic>
@@ -681,8 +680,6 @@ Failure Reader::computeFunctionFamilies()
     Failure failureInBuiltins = firstOf(readInChunks(loops, numberOfFunctions, functionsPerChunk, [&](uint32_t index) -> Failure {
         RecordChecker checker(*this, { .kind = InternalErrorKind::Unknown, .function = FunctionID(index), .count = index });
         convertedBuiltins[index] = readBuiltins(checker, m_sections.functions[index].builtinMembers);
-        for (BuiltinID member : convertedBuiltins[index])
-            checker.require(isCallableBuiltin(m_builtins, member), InternalErrorKind::IdOutOfRange);
         return checker.takeFailure();
     }));
     if (failureInBuiltins)
@@ -768,8 +765,6 @@ static SortedSet<BuiltinID> readBuiltins(RecordChecker& checker, Wire::Span span
         if (previous)
             checker.requireAscending(previous, builtin);
         previous = builtin;
-        // A constant is a primitive value. A type says which kind of primitive.
-        checker.require(builtins.at(builtin).kind != BuiltinKind::Constant, InternalErrorKind::IdOutOfRange);
         canonicalIDs.append(builtins.canonicalID(builtin));
     }
     return SortedSet<BuiltinID>(canonicalIDs.span());

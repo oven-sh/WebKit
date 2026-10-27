@@ -81,7 +81,6 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_SET(frame, shrinkWraps);
     AIR_POLICY_PRINT_IF_SET(frame, setsUpFrameAtEntry);
     AIR_POLICY_PRINT_IF_DIFFERENT(frame, maxBytesAllocatedBeforeStackCheck);
-    AIR_POLICY_PRINT_IF_DIFFERENT(frame, smallestFrameTestedAtSetup);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(frame, registersClobberedByFrameSetup);
     AIR_POLICY_PRINT_IF_SET(frame, mayPlaceSlotsAboveFrameRecord);
     AIR_POLICY_PRINT_IF_SET(frame, mayPushCalleeSaves);

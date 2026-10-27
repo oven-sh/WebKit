@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTAnalysisTestCommands.h"
 #include "AOTCodeSites.h"
 #include "AOTNativeTest.h"
 #include "AOTRuntimeTable.h"
@@ -204,31 +203,6 @@ static void testRepeatMalformed()
     expectErrorLines("# RUN: print\n# CHECK: x\n# PROGRAM-OF: a-text-has-no-folder.ir\n"_s, { 3 });
 }
 
-static void testWordsOfCommands()
-{
-    Vector<String> words = String("3 f0 v3 f0:v3 f4:v0 b0:2 f0 v3:f0 f:v3 f0:"_s).split(' ');
-
-    AOT_TEST_CHECK(parseIndexBelow(words[0], 4) == 3u);
-    AOT_TEST_CHECK(!parseIndexBelow(words[0], 3));
-    AOT_TEST_CHECK(parseIndexBelow(words[0], UINT32_MAX) == 3u);
-
-    AOT_TEST_CHECK(idParser<FunctionID>('f', 1)(words[1]) == FunctionID(0u));
-    AOT_TEST_CHECK(idParser<FunctionID>('f', UINT32_MAX)(words[1]) == FunctionID(0u));
-    AOT_TEST_CHECK(idParser<ValueID>('v', UINT32_MAX)(words[2]) == ValueID(3u));
-    AOT_TEST_CHECK(!idParser<ValueID>('v', UINT32_MAX)(words[1]));
-
-    AOT_TEST_CHECK(pairParser(':', idParser<FunctionID>('f', 1), idParser<ValueID>('v', 4))(words[3]) == std::pair(FunctionID(0u), ValueID(3u)));
-    AOT_TEST_CHECK(pairParser(':', idParser<BlockID>('b', 1), indexParser(UINT32_MAX))(words[5]) == std::pair(BlockID(0u), 2u));
-
-    auto parseValueOfFunction = pairParser(':', idParser<FunctionID>('f', UINT32_MAX), idParser<ValueID>('v', UINT32_MAX));
-    AOT_TEST_CHECK(parseValueOfFunction(words[3]) == std::pair(FunctionID(0u), ValueID(3u)));
-    AOT_TEST_CHECK(parseValueOfFunction(words[4]) == std::pair(FunctionID(4u), ValueID(0u)));
-    unsigned taken = 0;
-    for (const String& word : words)
-        taken += !!parseValueOfFunction(word);
-    AOT_TEST_CHECK(taken == 2);
-}
-
 std::span<const NativeTest> testFileTests()
 {
     static constexpr NativeTest tests[] = {
@@ -238,7 +212,6 @@ std::span<const NativeTest> testFileTests()
         { "test-file/repeat-malformed"_s, testRepeatMalformed },
         { "test-file/check-lines-inside-function-have-label"_s, testCheckLinesInsideFunctionHaveLabel },
         { "runner/skips-other-architecture"_s, testRunnerSkipsOtherArchitecture },
-        { "test-commands/words"_s, testWordsOfCommands },
     };
     return tests;
 }

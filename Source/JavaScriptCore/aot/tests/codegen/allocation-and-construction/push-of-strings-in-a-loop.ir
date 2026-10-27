@@ -104,16 +104,14 @@ function f1 name="repeat" module=m0 flags=[IsChecked, HasExplicitName] length=2 
 # NONE-NOT: Reads:JSObject_butterfly
 # NONE-NOT: Reads:Butterfly_vectorLength
 # NONE-NOT: Reads:JSCell
-# The turns can be counted ahead of the loop: where they are few it goes without its poll, and a copy of it that polls takes the others.
+# NONE-COUNT-1: Patchpoint({{*}}isLoopPoll
 # NONE-NOT: Patchpoint(
 # NONE-LABEL: end of loop
 # CALLS: f1: size=
 # CALLS: stub NewArrayWithLength.Contiguous x1
 # X64-NOT: , instructions:
-# X64: loop #{{*}}, instructions: 9, patchpoints: 0
-# X64: loop #{{*}}, instructions: 9, patchpoints: 1, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 9, patchpoints: 1
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 1, {{*}}entered rarely
+# ARM64: loop #{{*}}, instructions: 10, patchpoints: 1
 # ARM64-NOT: , instructions:

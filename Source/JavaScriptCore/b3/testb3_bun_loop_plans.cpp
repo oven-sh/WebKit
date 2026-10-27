@@ -708,14 +708,19 @@ static void readLimitsOutOfLengthOfView(Procedure& proc) { readLimitsOutOf(proc,
 
 static void testVersionLoopsRemovesRangeChecksOfCountersThatMeet()
 {
+    Policy policy = loopPolicy();
+    policy.loops.omitsPollsFromLoopsThatEndWithinData = true;
     for (B3::Opcode relation : { LessThan, LessEqual }) {
         for (int64_t lowOffset : { 0, -1, 2 }) {
             for (int64_t highOffset : { 0, 1, -2 }) {
-                MeetingCountersLoop loop(loopPolicy(), relation, lowOffset, highOffset);
+                bool limitIsLength = lowOffset != 2;
+                MeetingCountersLoop loop(policy, relation, lowOffset, highOffset);
+                if (limitIsLength)
+                    readLimitsOutOfLengthOfView(loop.proc);
                 CHECK(versionLoopsAndValidate(loop.proc));
                 CHECK_EQ(loop.proc.report().countOf(Counter::RangeChecksRemoved), 2u);
                 checkRangeCheckCountInEachLoop(loop.proc, { 0, 2 });
-                checkValueCountInEachLoop(loop.proc, isLoopPoll, "polls"_s, { 1u, 1u });
+                checkValueCountInEachLoop(loop.proc, isLoopPoll, "polls"_s, { limitIsLength ? 0u : 1u, 1u });
                 auto code = compileProc(loop.proc);
                 for (int64_t length : { 0, 1, 9, 10, 11, 12, 13, 30 }) {
                     for (int64_t low : { -3, -1, 0, 1, 2, 5 }) {
@@ -741,8 +746,7 @@ static void testVersionLoopsKeepsRangeChecksOfCountersThatMayWrap()
     CHECK_EQ(run(*code, 10, array.words, 0), -1);
 }
 
-// However many elements a view holds, its length is no small number of turns. What bounds the turns between two polls is decided where the turns are counted, in unrollLoops.
-static void testVersionLoopsFastLoopKeepsItsPoll()
+static void testVersionLoopsFastLoopThatCannotOutrunDataDoesNotPoll()
 {
     struct Direction {
         B3::Opcode relation;
@@ -750,19 +754,54 @@ static void testVersionLoopsFastLoopKeepsItsPoll()
         int64_t first;
         int64_t bound;
     };
-    for (Direction direction : { Direction { LessThan, 1, 0, 10 }, Direction { GreaterThan, -1, 9, -1 } }) {
-        LoopProcedure procedure(loopPolicy(), direction.relation, direction.step, direction.first);
-        auto& [proc, graph, state, loop] = procedure;
-        buildLoopWithRangeCheck(graph, loop, state);
-        readLimitsOutOfLengthOfView(proc);
+    for (bool omitsPolls : { false, true }) {
+        for (bool limitIsLength : { false, true }) {
+            for (Direction direction : { Direction { LessThan, 1, 0, 10 }, Direction { GreaterThan, -1, 9, -1 } }) {
+                Policy policy = loopPolicy();
+                policy.loops.omitsPollsFromLoopsThatEndWithinData = omitsPolls;
+                LoopProcedure procedure(policy, direction.relation, direction.step, direction.first);
+                auto& [proc, graph, state, loop] = procedure;
+                buildLoopWithRangeCheck(graph, loop, state);
+                if (limitIsLength)
+                    readLimitsOutOfLengthOfView(proc);
 
-        CHECK(versionLoopsAndValidate(proc));
-        CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
-        checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { 1u, 1u });
-        auto code = compileProc(proc);
-        CheckedArray array(20, 0);
-        CHECK_EQ(run(*code, direction.bound, array.words), sumBelowUnsignedBound(array, 10));
-        CHECK_EQ(state.numberOfPolls, 10);
+                bool polls = !omitsPolls || !limitIsLength;
+                CHECK(versionLoopsAndValidate(proc));
+                CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
+                checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { polls ? 1u : 0u, 1u });
+                auto code = compileProc(proc);
+                CheckedArray array(20, 0);
+                CHECK_EQ(run(*code, direction.bound, array.words), sumBelowUnsignedBound(array, 10));
+                CHECK_EQ(state.numberOfPolls, polls ? 10 : 0);
+                state = { };
+                CheckedArray shortArray(5, 0);
+                CHECK_EQ(run(*code, direction.bound, shortArray.words), -1);
+                CHECK(state.numberOfPolls > 0);
+            }
+        }
+    }
+}
+
+// The length of an array may say more than the array has room for. The word behind the length says how much that is: the version that does not poll is for an array that holds its length.
+static void testVersionLoopsFastLoopBelowLengthOfArrayIsForArrayThatHoldsIt()
+{
+    Policy policy = loopPolicy();
+    policy.loops.omitsPollsFromLoopsThatEndWithinData = true;
+    LoopProcedure procedure(policy, LessThan, 1, 0);
+    auto& [proc, graph, state, loop] = procedure;
+    buildLoopWithRangeCheck(graph, loop, state);
+    readLimitsOutOf(proc, &AbstractHeapRepository::Butterfly_publicLength);
+
+    CHECK(versionLoopsAndValidate(proc));
+    CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
+    checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { 0u, 1u });
+    auto code = compileProc(proc);
+    for (int64_t room : { 0, 19, 20, 21 }) {
+        CheckedArray array(20 | (room << 32), 0);
+        CheckedArray expected(20, 0);
+        state = { };
+        CHECK_EQ(run(*code, 10, array.words), sumBelowUnsignedBound(expected, 10));
+        CHECK_EQ(state.numberOfPolls, room >= 20 ? 0 : 10);
     }
 }
 
@@ -779,7 +818,9 @@ static void testVersionLoopsAsksInFrontOfLoopAboutValuesOnPathThatLoopAroundCopi
         List* list;
     };
     for (bool readsLengthTwice : { false, true }) {
-        LoopProcedure procedure(loopPolicy());
+        Policy policy = loopPolicy();
+        policy.loops.omitsPollsFromLoopsThatEndWithinData = true;
+        LoopProcedure procedure(policy);
         auto& [proc, graph, state, outer] = procedure;
         BasicBlock* beforeInner = proc.addBlock();
         BasicBlock* innerHeader = proc.addBlock();
@@ -812,6 +853,7 @@ static void testVersionLoopsAsksInFrontOfLoopAboutValuesOnPathThatLoopAroundCopi
 
         CHECK(versionLoopsAndValidate(proc));
         CHECK_EQ(proc.report().countOf(Counter::LoopsVersioned), 2u);
+        CHECK_EQ(proc.report().countOf(Counter::LoopPollsRemoved), 1u);
         auto code = compileProc(proc);
         for (int32_t length : { 0, 1, 5 }) {
             for (int32_t room : { 0, 5, 6 }) {
@@ -822,11 +864,52 @@ static void testVersionLoopsAsksInFrontOfLoopAboutValuesOnPathThatLoopAroundCopi
                         int64_t entries = (bound + 3) / 4;
                         state = { };
                         CHECK_EQ(run(*code, bound, reinterpret_cast<int64_t*>(&memory), key), entries * sumBelow(length) + (key == 7 ? 0 : 1000 * (bound + entries * length)));
-                        CHECK_EQ(state.numberOfPolls, entries * length);
+                        CHECK_EQ(state.numberOfPolls, key == 7 && room >= length ? 0 : entries * length);
                     }
                 }
             }
         }
+    }
+}
+
+static void testVersionLoopsKeepsPollThatThrowsWhatIsOwed()
+{
+    Policy policy = loopPolicy();
+    policy.loops.omitsPollsFromLoopsThatEndWithinData = true;
+    LoopProcedure procedure(policy, LessThan, 1, 0);
+    auto& [proc, graph, state, loop] = procedure;
+    buildLoopWithRangeCheck(graph, loop, state);
+    readLimitsOutOfLengthOfView(proc);
+    for (Value* value : proc.values()) {
+        if (isLoopPoll(value))
+            value->as<PatchpointValue>()->throwsWhatIsOwed = true;
+    }
+
+    CHECK(versionLoopsAndValidate(proc));
+    CHECK_EQ(proc.report().countOf(Counter::RangeChecksRemoved), 1u);
+    checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { 1u, 1u });
+}
+
+// The client may know more of a loop than its limits show. Then the fast version needs neither a length among them nor a guard.
+static void testVersionLoopsOmitsPollWhoseLikelyTurnsEndWithinData()
+{
+    for (bool omitsPolls : { false, true }) {
+        Policy policy = loopPolicy();
+        policy.loops.omitsPollsFromLoopsThatEndWithinData = omitsPolls;
+        LoopProcedure procedure(policy, LessThan, 1, 0);
+        auto& [proc, graph, state, loop] = procedure;
+        buildLoopWithRangeCheck(graph, loop, state);
+        for (Value* value : proc.values()) {
+            if (isLoopPoll(value))
+                value->as<PatchpointValue>()->likelyTurnsEndWithinData = true;
+        }
+
+        CHECK(versionLoopsAndValidate(proc));
+        checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { omitsPolls ? 0u : 1u, 1u });
+        auto code = compileProc(proc);
+        CheckedArray array(20, 0);
+        CHECK_EQ(run(*code, 10, array.words), sumBelowUnsignedBound(array, 10));
+        CHECK_EQ(state.numberOfPolls, omitsPolls ? 0 : 10);
     }
 }
 
@@ -1142,8 +1225,11 @@ void addBunLoopPlanTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsFirstIterationLeaves());
     RUN(testVersionLoopsRemovesRangeCheckOfDecreasingLoop());
     RUN(testVersionLoopsRemovesRangeChecksOfNeighborsInDecreasingLoop());
-    RUN(testVersionLoopsFastLoopKeepsItsPoll());
+    RUN(testVersionLoopsFastLoopThatCannotOutrunDataDoesNotPoll());
+    RUN(testVersionLoopsFastLoopBelowLengthOfArrayIsForArrayThatHoldsIt());
     RUN(testVersionLoopsAsksInFrontOfLoopAboutValuesOnPathThatLoopAroundCopies());
+    RUN(testVersionLoopsKeepsPollThatThrowsWhatIsOwed());
+    RUN(testVersionLoopsOmitsPollWhoseLikelyTurnsEndWithinData());
     RUN(testVersionLoopsRemovesRangeChecksOfCountersThatMeet());
     RUN(testVersionLoopsKeepsRangeChecksOfCountersThatMayWrap());
     RUN(testVersionLoopsRemovesRangeCheckOfLaggingIndex());

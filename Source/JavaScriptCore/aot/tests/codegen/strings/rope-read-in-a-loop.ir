@@ -104,12 +104,13 @@ function f1 name="checksum" module=m0 flags=[IsChecked, HasExplicitName] length=
 # CHECK-NEXT: Load(b@[[header]], offset = 16, ControlDependent|ReadsImmutable|Reads:StringImpl_hashAndFlags, {{*}}:FlattenString)
 # CHECK-NOT: Reads:StringImpl
 # CHECK-LABEL: end of function
-# No loop asks again whether the text is a rope.
+# No loop asks again whether the text is a rope, and none calls.
 # HOT-LABEL: name="checksum" role=Source
 # HOT-NOT: Reads:JSRopeString
 # HOT-NOT: Reads:StringImpl
+# HOT-NOT: ExitsSideways
 # HOT-LABEL: end of function
 # CALLS-LABEL: f3: size=
-# CALLS: stub Concatenate.n2 x1
+# CALLS-NEXT: stub Concatenate.n2 x1
 # CALLS-NEXT: stub FlattenString x1
 # CALLS-NEXT: f4: size=

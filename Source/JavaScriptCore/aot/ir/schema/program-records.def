@@ -3,13 +3,13 @@ enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObj
     | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
 }
 flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType | engine IsDerived IsOfCreatedObject }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted IsFilledByCreator IsCountedWith }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted IsFilledByCreator }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
 record Field wire {
     key: PropertyKey? computedKey: UInt32? declared: DeclaredType flags: FieldFlags form: FieldForm originLayout: Layout? originField: UInt32?
-    | engine flow: FieldFlow slotType: Type? setterType: Type? typeBeforeNarrowing: Type?
+    | engine flow: FieldFlow slotType: Type? setterType: Type?
 }
 record StaticField wire { key: PropertyKey? computedKey: UInt32? variable: Variable }
 record Layout wire extendedEngine {

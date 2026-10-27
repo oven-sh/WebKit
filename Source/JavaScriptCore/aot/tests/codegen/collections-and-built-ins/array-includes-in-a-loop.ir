@@ -157,10 +157,9 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
 # LOOP-LABEL: end of loop
 # The stub call is the only call that can throw.
 # CALLS-LABEL: loop #
-# The stub may write the length, which is read again on every turn: nothing counts the turns ahead of the loop, so the loop polls on each of them.
-# CALLS-COUNT-2: ExitsSideways
+# CALLS-COUNT-1: ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 11, patchpoints: 3
-# ARM64: loop #{{*}}, instructions: 10, patchpoints: 3
+# X64: loop #{{*}}, instructions: 11, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 10, patchpoints: 2

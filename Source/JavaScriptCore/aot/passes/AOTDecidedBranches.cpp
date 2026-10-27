@@ -912,18 +912,12 @@ KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranche
 
 void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge decided)
 {
-    BlockID target = targetOf(function, decided).block;
-    Expected<BlockFrequency> expected = function.at(target).frequency;
+    Expected<BlockFrequency> expected = function.at(targetOf(function, decided).block).frequency;
     Expected<BlockFrequency> actual = function.at(decided.from).frequency;
-    if (!isRarerThan(expected, actual).predicted() || !analyses.cfg().isReachable(decided.from))
-        return;
-    bool isEnteredAnotherWay = std::ranges::any_of(analyses.cfg().incomingEdges(target), [&](Edge edge) {
-        return edge != decided && function.at(edge.from).frequency.predicted() != BlockFrequency::Rare;
-    });
-    if (isEnteredAnotherWay)
+    if (!isRarerThan(expected, actual).predicted())
         return;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominators().dominates(target, block))
+        if (function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominates(decided, block))
             function.edit(block, BlockEdit::Rest).frequency = actual;
     }
 }

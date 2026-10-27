@@ -241,18 +241,6 @@ private:
         return false;
     }
 
-    // Whatever comes to the block has come through the blocks above it that have one way in.
-    static bool pollsOnWayTo(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* block)
-    {
-        for (; block != loop.header() && loops.innerMostLoopOf(block) == &loop; block = block->predecessor(0)) {
-            if (hasPoll(block))
-                return true;
-            if (block->numPredecessors() != 1)
-                return false;
-        }
-        return false;
-    }
-
     const EdgesBack& edgesBackOf(NaturalLoops& loops, const NaturalLoop& loop)
     {
         std::optional<EdgesBack>& result = m_edgesBack[loop.index()];
@@ -264,7 +252,7 @@ private:
         for (BasicBlock* predecessor : loop.header()->predecessors()) {
             if (likelyBlocks.contains(predecessor) && hasLikelyEdgeTo(predecessor, loop.header())) {
                 result->likely.append(predecessor);
-                result->hasLikelyWithoutPoll |= !pollsOnWayTo(loops, loop, predecessor);
+                result->hasLikelyWithoutPoll |= !hasPoll(predecessor);
             } else if (loops.belongsTo(predecessor, loop) && !hasPoll(predecessor))
                 result->unlikelyWithoutPoll.append(predecessor);
         }
@@ -282,7 +270,9 @@ private:
                     continue;
                 if (!wayBack)
                     wayBack = m_proc.addBlock();
-                wayBack->append(m_proc.clone(value));
+                auto* poll = m_proc.clone(value)->as<PatchpointValue>();
+                poll->likelyTurnsEndWithinData = false;
+                wayBack->append(poll);
             }
         }
         if (!wayBack)

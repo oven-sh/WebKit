@@ -32,7 +32,6 @@ struct FunctionBackEndTraits {
     bool isAsync { false };
     bool rejectsOnThrow { false };
     bool hasHandlers { false };
-    unsigned smallestFrameTestedAtSetup { 0 };
     bool isCold { false };
     bool runsOnce { false };
     bool isHot { false };

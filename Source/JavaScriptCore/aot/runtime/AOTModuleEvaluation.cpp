@@ -2018,16 +2018,8 @@ void Modules::evaluateWithOwnStack(ModuleID root)
     innerModuleEvaluation(root, context);
     Exception* exception = scope.exception();
     ASSERT(exception || stack.isEmpty());
-    // An import() of the root that was called while the root ran has given it a capability, which CyclicModuleRecord::evaluate() would settle here.
-    ModuleRecord* record = recordIfExists(root);
-    JSPromise* capability = record ? record->topLevelCapability() : nullptr;
-    if (capability && capability->status() != JSPromise::Status::Pending)
-        capability = nullptr;
-    if (!exception) {
-        if (capability) [[unlikely]]
-            capability->fulfill(vm, jsUndefined());
+    if (!exception)
         return;
-    }
     for (AbstractModuleRecord* member : stack) {
         auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(member);
         cyclic->setStatus(CyclicModuleRecord::Status::Evaluated);
@@ -2035,8 +2027,6 @@ void Modules::evaluateWithOwnStack(ModuleID root)
         if (auto* compiled = dynamicDowncast<ModuleRecord>(member))
             compiled->retain();
     }
-    if (capability && !vm.isTerminationException(exception)) [[unlikely]]
-        capability->reject(vm, exception->value());
 }
 
 JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* linkWalk, bool isLinked)

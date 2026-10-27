@@ -34,8 +34,6 @@ inline TypeID recordedTypeOf(const Program& program, const Field& field) { retur
 // The slot of a number or a boolean keeps the markers for undefined and null whatever the type of its field says, until flow proves that nothing outside the type is stored.
 // The types of reads and stores, the plan of the slots and the check of the plan all ask here.
 bool slotHoldsUndefinedAndNull(const Program&, FieldReference);
-// What a read of the slot may find: a value of the slot's type or a marker that the slot keeps.
-Type slotContentsTypeOf(const Program&, FieldReference);
 // A number or a boolean that every constructor stores before the object leaves its hands.
 bool holdsRawValueFromBirth(const Program&, FieldReference);
 

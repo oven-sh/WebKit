@@ -16,7 +16,6 @@
 #include "AOTNameClass.h"
 #include "AOTObject.h"
 #include "AOTRuntimeReporter.h"
-#include "AOTSort.h"
 #include "AOTState.h"
 #include "DeferGCInlines.h"
 #include "ErrorInstance.h"
@@ -364,7 +363,7 @@ void writeCheckedNativeCalls()
         return;
     Locker locker { calls->lock };
     Vector<String> entries = copyToVector(calls->counts.keys());
-    AOT::sort(entries, codePointCompareLessThan);
+    std::ranges::sort(entries, codePointCompareLessThan);
     StringPrintStream out;
     for (const String& entry : entries) {
         auto [returned, threw, changedOperand, hadExpectation] = calls->counts.get(entry);

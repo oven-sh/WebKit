@@ -77,23 +77,30 @@ static void collectAccesses(FlowScopeIndex& index)
                 auto add = [&](Kind kind, uint32_t subject, FunctionReferenceKind reference = FunctionReferenceKind::Call) {
                     rows.append({ kind, reference, subject, FunctionID(functionIndex), id });
                 };
-                forEachReferenceWithRole(value, WTF::makeVisitor([&](VariableID variable) {
-                    add(value.opcode == Opcode::GetModuleVariable ? Kind::Read : value.opcode == Opcode::PutModuleVariable ? Kind::Store : Kind::OpaqueVariable, variable.index());
-                }, [&](LayoutID layout) {
-                    if (program.at(layout).kind != LayoutKind::Environment)
+                forEachVariable(value, [&](VariableID variable) {
+                    if (variable)
+                        add(value.opcode == Opcode::GetModuleVariable ? Kind::Read : value.opcode == Opcode::PutModuleVariable ? Kind::Store : Kind::OpaqueVariable, variable.index());
+                });
+                forEachLayout(value, [&](LayoutID layout) {
+                    if (!layout || program.at(layout).kind != LayoutKind::Environment)
                         return;
                     if (value.opcode == Opcode::GetEnvironmentField || value.opcode == Opcode::PutEnvironmentField)
                         add(value.opcode == Opcode::GetEnvironmentField ? Kind::Read : Kind::Store, *index.numbering.locationOf(layout, value.field()));
                     else
                         add(value.opcode == Opcode::NewObject ? Kind::Allocation : Kind::OpaqueLayout, layout.index());
-                }, [&](FunctionID referenced, FunctionReferenceKind kind) {
-                    add(Kind::Mention, referenced.index(), kind);
-                }, [&](ModuleID module, ModuleReferenceKind kind) {
-                    if (readsModuleValue(value.opcode, kind))
+                });
+                forEachFunctionReference(value, [&](FunctionID referenced, FunctionReferenceKind kind) {
+                    if (referenced)
+                        add(Kind::Mention, referenced.index(), kind);
+                });
+                forEachModuleReference(value, [&](ModuleID module, ModuleReferenceKind kind) {
+                    if (module && readsModuleValue(value.opcode, kind))
                         add(Kind::ModuleValueRead, module.index());
-                }, [&](EvalScopeID scope) {
-                    add(Kind::EvalScope, scope.index());
-                }, [](auto...) { }));
+                });
+                forEachEvalScope(value, [&](EvalScopeID scope) {
+                    if (scope)
+                        add(Kind::EvalScope, scope.index());
+                });
             }
         }
     });

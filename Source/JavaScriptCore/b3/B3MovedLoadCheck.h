@@ -12,7 +12,6 @@
 #include "B3Origin.h"
 #include "B3Type.h"
 #include "GPRInfo.h"
-#include <algorithm>
 #include <limits>
 #include <optional>
 #include <span>
@@ -68,8 +67,6 @@ struct MovedLoad {
 // Reads the location again and reports unless it holds what the users of the load are given. No load or store waits for it, and no function gets a frame for it: the report does not come back.
 using DifferenceReport = SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>;
 JS_EXPORT_PRIVATE PatchpointValue* createMovedLoadCheck(Procedure&, const MovedLoad&, Value* address, Value* givenToUsers, RefPtr<DifferenceReport>);
-// Compares the two integers and reports unless the answer is the one that a phase has put in the place of the comparison. The report is handed the two.
-JS_EXPORT_PRIVATE PatchpointValue* createDecidedComparisonCheck(Procedure&, Opcode, Origin, Value* left, Value* right, bool answer, RefPtr<DifferenceReport>);
 
 // Where loads stood. The procedure holds nothing of it, so every phase does what it does without the log.
 class MovedLoadLog {
@@ -78,26 +75,6 @@ public:
 
     // `index`: where in the block the load stands or stood. `store`: the store that the users' value comes from, if it comes from one.
     void add(const MovedLoad&, BasicBlock*, unsigned index, Value* address, Value* givenToUsers, Value* store = nullptr);
-    // For a phase that puts `answer` in the place of a comparison of two integers, or takes one way out of the branch on it. Only where the policy asks for the log. `index`: where in the block the comparison stands or stood.
-    JS_EXPORT_PRIVATE void addDecidedComparison(const Procedure&, const Value* comparison, BasicBlock*, unsigned index, Value* left, Value* right, bool answer);
-    // With the comparison gone often nothing uses what it compared. These stay in the procedure for the check, so the code is not quite that of an ordinary build.
-    // Such a block stays though it only jumps.
-    bool holdsDecidedComparisonAtHeadOf(const BasicBlock* block) const
-    {
-        return std::ranges::any_of(m_entries, [&](const Entry& entry) {
-            return entry.address && entry.answerOfComparison && !entry.before && entry.block == block;
-        });
-    }
-    template<typename Functor>
-    void forEachOperandOfDecidedComparison(const Functor& functor) const
-    {
-        for (const Entry& entry : m_entries) {
-            if (!entry.address || !entry.answerOfComparison)
-                continue;
-            functor(entry.address);
-            functor(entry.givenToUsers);
-        }
-    }
     // For a load that has left a loop: none of what stays in the loop writes what it reads.
     void addBehindEachValueThatStaysIn(BasicBlock*, const MovedLoad&, Value* address, Value* givenToUsers);
 
@@ -140,8 +117,6 @@ public:
     // What stood in front of the split is in `head` now.
     void didSplitForward(BasicBlock*, BasicBlock* head);
     void willDelete(BasicBlock*);
-    // What is in `block` goes to the end of `predecessor`, which has lost its terminal.
-    void willAppendValuesOf(BasicBlock*, BasicBlock* predecessor);
     // While what nothing leads to is deleted. A write that does not run is not missed.
     class UnreachableCodeIsDeleted {
         WTF_MAKE_NONCOPYABLE(UnreachableCodeIsDeleted);
@@ -160,34 +135,26 @@ public:
     JS_EXPORT_PRIVATE void willMove(Value* write);
 
     // For behind the last phase that moves a value. An entry whose place or values are no longer there is left out.
-    JS_EXPORT_PRIVATE bool insertChecks(Procedure&, RefPtr<DifferenceReport>, RefPtr<DifferenceReport> forDecidedComparisons = nullptr);
+    JS_EXPORT_PRIVATE bool insertChecks(Procedure&, RefPtr<DifferenceReport>);
 
 private:
     struct Entry {
         bool names(const Value* value) const { return address == value || givenToUsers == value || store == value || before == value; }
 
-        // Of a comparison: its opcode, the type of what it compares, its origin.
         MovedLoad load;
-        // Of a comparison: the left and the right operand.
         Value* address;
         Value* givenToUsers;
         Value* store;
         // The last value in front of the load that stays where it is. Without one the load's block begins with values that may move.
         Value* before;
         BasicBlock* block;
-        std::optional<bool> answerOfComparison { };
     };
 
     void willCopyRegion();
     void didCopyRegion();
-    static Value* lastValueThatStaysInFrontOf(BasicBlock*, unsigned index);
-    void append(const Entry&);
     void name(Value*, unsigned entry);
     void rename(Value*& named, Value* replacement, unsigned entry);
-    void drop(Entry& entry)
-    {
-        entry.address = nullptr;
-    }
+    void drop(Entry& entry) { entry.address = nullptr; }
     void dropEntriesWrittenBy(const Value*);
 
     Vector<Entry> m_entries;

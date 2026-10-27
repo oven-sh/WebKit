@@ -77,14 +77,7 @@ function f1 name="sumBelow" module=m0 flags=[IsChecked, HasExplicitName] length=
     Return v17
 }
 
-# The turns are counted in front of the loop: where they are few it goes without its poll, and a copy of it that polls once a turn takes the others.
-# CHECK-LABEL: steps by 1
-# CHECK-NOT: Branch(
-# CHECK-NOT: Patchpoint(
-# CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
-# CHECK-NOT: Branch(
-# CHECK-NOT: Patchpoint(
-# CHECK-LABEL: end of loop
+# The limit is a number of the caller, not the length of anything in memory, so the loop polls once a turn.
 # CHECK-LABEL: steps by 1
 # CHECK-NOT: Branch(
 # CHECK-NOT: Patchpoint(
@@ -96,7 +89,5 @@ function f1 name="sumBelow" module=m0 flags=[IsChecked, HasExplicitName] length=
 # CHECK-NOT: Patchpoint(
 # CHECK-LABEL: end of loop
 # x86-64 clears the register before it converts the counter to a double.
-# X64: loop #{{*}}, instructions: 5, patchpoints: 0
 # X64: loop #{{*}}, instructions: 5, patchpoints: 1
-# ARM64: loop #{{*}}, instructions: 4, patchpoints: 0
 # ARM64: loop #{{*}}, instructions: 4, patchpoints: 1

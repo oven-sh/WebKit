@@ -583,23 +583,6 @@ private:
         }
 
     private:
-        // A graph that makes a list for successors() says the two things that the numbering asks at each step without one.
-        unsigned numSuccessorsOf(typename Graph::Node block)
-        {
-            if constexpr (requires { m_graph.numSuccessors(block); })
-                return m_graph.numSuccessors(block);
-            else
-                return m_graph.successors(block).size();
-        }
-
-        typename Graph::Node successorAt(typename Graph::Node block, unsigned index)
-        {
-            if constexpr (requires { m_graph.successorAt(block, index); })
-                return m_graph.successorAt(block, index);
-            else
-                return m_graph.successors(block)[index];
-        }
-
         void computeDepthFirstPreNumbering()
         {
             // Use a block worklist that also tracks the index inside the successor list. This is
@@ -626,20 +609,19 @@ private:
                 // We initially push with successorIndex = 0 regardless of whether or not we have any
                 // successors. This is so that we can assign our prenumber. Subsequently we get pushed
                 // with higher successorIndex values, but only if they are in range.
-                unsigned numSuccessors = numSuccessorsOf(block);
-                ASSERT(!successorIndex || successorIndex < numSuccessors);
+                ASSERT(!successorIndex || successorIndex < m_graph.successors(block).size());
 
                 if (!successorIndex) {
                     m_data[block].semiNumber = m_blockByPreNumber.size();
                     m_blockByPreNumber.append(block);
                 }
             
-                if (successorIndex < numSuccessors) {
+                if (successorIndex < m_graph.successors(block).size()) {
                     unsigned nextSuccessorIndex = successorIndex + 1;
-                    if (nextSuccessorIndex < numSuccessors)
+                    if (nextSuccessorIndex < m_graph.successors(block).size())
                         worklist.forcePush(block, nextSuccessorIndex);
 
-                    typename Graph::Node successorBlock = successorAt(block, successorIndex);
+                    typename Graph::Node successorBlock = m_graph.successors(block)[successorIndex];
                     if (worklist.push(successorBlock, 0))
                         m_data[successorBlock].parent = block;
                 }

@@ -33,8 +33,6 @@ ClimbingSet unknownObject(ValueFlowRuleContext&, ValueFlowUnknownSource);
 void connect(ValueFlowRuleContext&, const ValueFlowSources&, ValueFlowNodeID target);
 ClimbingSet valueOf(ValueFlowRuleContext&, const ValueFlowSources&);
 ClimbingSet withSourcesOfCopies(ValueFlowRuleContext&, ClimbingSet knownObjects);
-// Beside the unknown object an object that lets in unseen code stays listed for the sake of its calls. In the heap the unknown object stands for it once it has escaped.
-ClimbingSet knownObjectsThatAreFollowed(ValueFlowRuleContext&, ClimbingSet);
 
 bool awaitsUse(const Program&, ModuleID);
 void useModule(ValueFlowRuleContext&, ModuleID);
@@ -80,7 +78,6 @@ inline bool mayCallWhateverHasEscaped(ValueFlowRuleContext& context) { return is
 void letAnythingHappenTo(ValueFlowRuleContext&, ClimbingSet objects);
 void letModulesBeLoadedByName(ValueFlowRuleContext&, ValueFlowHostNode answers);
 bool mayAnswerToName(const Program&, ModuleID);
-bool isAskedOfHostByName(const Module&);
 void enterLoaderOfHost(ValueFlowRuleContext&);
 
 } } } // namespace JSC::AOT::Typed

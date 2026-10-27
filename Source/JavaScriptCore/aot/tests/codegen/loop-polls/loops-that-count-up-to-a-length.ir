@@ -1,5 +1,5 @@
-# An innermost loop whose turns can be counted in front of it, and which on its likely paths runs nothing that may not complete, does not poll on its turns: it polls once in a bounded number of them, on a rare path.
-# A loop around such a loop and a loop that calls a function with a loop of its own poll on every turn.
+# An innermost loop that counts up to the length of a string or an array that it reads, and on its likely paths runs nothing that may not complete, ends within the data it walks, as indexOf does: it has no poll.
+# A loop around such a loop, a loop that calls a function with a loop of its own, and a loop that counts up to any other number keep theirs.
 # FORM: AsRead
 # f6, f7 and f8 are the typed bodies of f1, f2 and f3.
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:RotateLoops disable=b3:UnrollLoops
@@ -9,15 +9,15 @@
 # RUN(ARM64): generate-code calls
 # REQUIRES(ARM64): arm64
 # X64: f4: size={{*}} polls=2
-# X64: f6: size={{*}} polls=2
-# X64: f7: size={{*}} polls=3
+# X64: f6: size={{*}} polls=0
+# X64: f7: size={{*}} polls=1
 # X64: f8: size={{*}} polls=1
 # ARM64-LABEL: f4: size=
 # ARM64: operation operationAOTPollSlow x2
 # ARM64-LABEL: f6: size=
-# ARM64: operation operationAOTPollSlow x2
+# ARM64-NOT: operationAOTPollSlow
 # ARM64-LABEL: f7: size=
-# ARM64: operation operationAOTPollSlow x3
+# ARM64: operation operationAOTPollSlow x1
 # ARM64-LABEL: f8: size=
 # ARM64: operation operationAOTPollSlow x1
 

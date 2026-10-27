@@ -58,7 +58,7 @@ static ValueID findStrongestLink(const Program& program, const Function& functio
     ValueID strongest;
     for (ValueID id : CastChain(function, callee)) {
         const Type& type = program.typeOf(function, id);
-        if (type.functions.isEmpty() || type.anyFunction || type.anyObject || type.mayBeUnspecified())
+        if (type.functions.isEmpty() || type.anyFunction || type.anyObject)
             continue;
         const Type* current = strongest ? &program.typeOf(function, strongest) : nullptr;
         if (!current || (type.functions.size() != current->functions.size() ? type.functions.size() < current->functions.size() : type != *current && type.isSubsetOf(*current, program)))

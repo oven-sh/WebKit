@@ -1272,7 +1272,7 @@ ValueFlowGraph::ShardsInOrder ValueFlowGraph::longestFirst(const std::array<size
 {
     ShardsInOrder shards;
     std::iota(shards.begin(), shards.end(), 0);
-    AOT::stableSort(shards, std::ranges::greater(), [&](uint8_t shard) {
+    std::ranges::stable_sort(shards, std::ranges::greater(), [&](uint8_t shard) {
         return sizes[shard];
     });
     return shards;

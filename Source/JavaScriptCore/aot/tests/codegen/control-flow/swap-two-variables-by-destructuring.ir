@@ -99,12 +99,12 @@ function f1 name="fibonacci" module=m0 flags=[IsChecked, HasExplicitName] length
     Return v32
 }
 
-# `[a, b] = [b, a + b]` makes no array. The old b becomes the new a and the sum becomes the new b at the back edge: one addition and the counter.
-# The turns are counted in front of the loop: where they are few it goes without its poll, and a copy of it that polls takes the others.
+# `[a, b] = [b, a + b]` makes no array. The old b becomes the new a and the sum becomes the new b at the back edge: one addition, the poll, the counter.
 # CHECK-LABEL: steps by 1
 # CHECK: Double b@[[a]] = Phi(
 # CHECK-NEXT: Double b@[[b]] = Phi(
 # CHECK: Double b@[[sum]] = Add(b@[[a]], b@[[b]], {{*}}:Add)
+# CHECK-NEXT: Patchpoint({{*}}isLoopPoll{{*}}:LoopHint)
 # CHECK-NOT: Patchpoint
 # CHECK-NOT: Reads:
 # CHECK-NOT: Writes:
@@ -112,7 +112,5 @@ function f1 name="fibonacci" module=m0 flags=[IsChecked, HasExplicitName] length
 # CHECK-NEXT: Upsilon(b@[[sum]], ^[[b]], WritesLocalState
 # CHECK-NOT: Patchpoint
 # CHECK-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 6, patchpoints: 0, {{*}} steps by 1
 # X64: loop #{{*}}, instructions: 6, patchpoints: 1, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 6, patchpoints: 0, {{*}} steps by 1
 # ARM64: loop #{{*}}, instructions: 6, patchpoints: 1, {{*}} steps by 1

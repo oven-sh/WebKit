@@ -76,7 +76,6 @@ FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, F
         .isAsync = function.has(FunctionFlags::IsAsync),
         .rejectsOnThrow = rejectsOnThrow(inputs.program, function),
         .hasHandlers = std::ranges::any_of(function.blocks, [](const Block& block) { return !!block.handler; }),
-        .smallestFrameTestedAtSetup = smallestFrameTestedAtSetup(inputs.stackChecks.of(id)),
         .isCold = isCold(inputs.heat.of(inputs.program, id)).predicted(),
         .runsOnce = inputs.heat.of(inputs.program, id).predicted() == HeatClass::RunsOnce,
         .isHot = isHot(inputs.heat.of(inputs.program, id)).predicted(),
@@ -266,8 +265,8 @@ bool FunctionCodeGenerator::generateB3()
         checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells);
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
-    if (options.checksMovedLoads || options.checksDecidedComparisons) {
-        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests, { .loads = options.checksMovedLoads, .decidedComparisons = options.checksDecidedComparisons });
+    if (options.checksMovedLoads) {
+        checkMovedLoadsAtRunTime(policy, m_id, m_procedure, m_records.guardTests);
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));
     }
 #if AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE
@@ -320,7 +319,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
     if (options.recorded.has(TestingSwitch::OverwriteDeadValuesAtCollections))
         overwriteDeadValuesAtSafepoints(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()));
     // Checks that a build adds to the generated code read addresses in ways that no product does.
-    bool isCodeOfProduct = !AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE && !options.checksClaimsToBackEnd && !options.checksMovedLoads && !options.checksDecidedComparisons;
+    bool isCodeOfProduct = !AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE && !options.checksClaimsToBackEnd && !options.checksMovedLoads;
     if (options.validatesReferences && isX86_64() && isCodeOfProduct)
         findInnerPointerViolations(proc.code(), innerPointerRulesOf(proc, !options.recorded.useWideReferences()), m_innerPointerFindings);
 

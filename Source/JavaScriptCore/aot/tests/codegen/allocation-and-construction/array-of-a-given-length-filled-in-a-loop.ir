@@ -99,14 +99,15 @@ function f1 name="squares" module=m0 flags=[IsChecked, HasExplicitName] length=1
 # NONE-LABEL: steps by 1
 # NONE-NOT: Reads:
 # NONE-NOT: BitwiseCast(
+# NONE-COUNT-1: Patchpoint({{*}}isLoopPoll
 # NONE-NOT: Patchpoint(
 # NONE-LABEL: end of loop
 # CALLS: f1: size=
 # CALLS: stub NewArrayWithLength.Double x1
 # CALLS-NOT: stub NewArray
 # CALLS: f{{*}}: size=
-# Four turns are written out. They poll between stretches of many turns, and the few turns that are left behind them do not poll. Each turn keeps both tests.
-# X64: loop #{{*}}, instructions: 29, patchpoints: 0, {{*}} steps by 4
-# X64: loop #{{*}}, instructions: 8, patchpoints: 0, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 26, patchpoints: 0, {{*}} steps by 4
-# ARM64: loop #{{*}}, instructions: 8, patchpoints: 0, {{*}} steps by 1
+# Four turns are written out, with one poll for the four. Each turn keeps both tests.
+# X64: loop #{{*}}, instructions: 8, patchpoints: 1, {{*}} steps by 1
+# X64: loop #{{*}}, instructions: 29, patchpoints: 1, {{*}} steps by 4
+# ARM64: loop #{{*}}, instructions: 8, patchpoints: 1, {{*}} steps by 1
+# ARM64: loop #{{*}}, instructions: 26, patchpoints: 1, {{*}} steps by 4

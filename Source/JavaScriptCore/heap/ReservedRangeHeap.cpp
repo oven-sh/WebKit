@@ -516,15 +516,6 @@ void* ReservedRangeHeap::tryAllocateSlow(size_t alignment, size_t size)
 #endif
 }
 
-size_t ReservedRangeHeap::addressSpaceToGrow()
-{
-#if OS(LINUX) && USE(MIMALLOC)
-    return minSegmentSize + addressSpaceToLeaveBesideSegment;
-#else
-    return 0;
-#endif
-}
-
 bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
 {
 #if OS(LINUX) && USE(MIMALLOC)

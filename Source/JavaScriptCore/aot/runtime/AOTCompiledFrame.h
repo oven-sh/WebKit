@@ -182,20 +182,12 @@ struct LogicalFrameSite {
 
 // After a tail call the frame above a construct belongs to another function than the one that was constructed.
 // Which function the site has constructed, where something says so: the frame of the stub between the site and its callee, or the site.
-FunctionID findFunctionConstructedAt(const Image&, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame);
-ALWAYS_INLINE FunctionID functionConstructedAt(const Image& image, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame)
-{
-    ASSERT(site.site.isConstruct());
-    if (!plainFunctionConstructFrame && !site.namesConstructedCallee) [[likely]]
-        return { };
-    return findFunctionConstructedAt(image, site, plainFunctionConstructFrame);
-}
+FunctionID functionConstructedAt(const Image&, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame);
 // The code was entered for the function, by whichever of its forms.
 bool isCodeOf(const Image&, CompiledFunctionID, FunctionID);
 
 LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const LogicalFrameSite&);
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);
-OutermostVisibleFunction findOutermostVisibleFunction(const Image&, InlineFrameReader&, const CallSiteCache::Entry&, bool calleeWasEntered);
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction);
 // The frame, or a hidden one of the same function below it, stands in the code of a caller that made the function object itself and handed it to nobody.
 bool isCopiedForOwnFunctionObject(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame);

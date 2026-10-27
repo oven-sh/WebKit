@@ -34,7 +34,6 @@ struct FrameStateViolation {
         FrameTornDownTwice,
         ReturnsWithFrame,
         NeedsFrame,
-        WritesAheadOfFrame,
     };
 
     Kind kind;
@@ -45,7 +44,6 @@ struct FrameStateViolation {
 JS_EXPORT_PRIVATE uint64_t savedCalleeSaveBits(const Code&);
 JS_EXPORT_PRIVATE FrameNeeds frameNeedsOf(Inst&, uint64_t savedCalleeSaves);
 JS_EXPORT_PRIVATE bool isIncomingArgumentAddress(const Arg&);
-JS_EXPORT_PRIVATE bool writesMemoryOutsideFrame(Inst&);
 
 class FrameStates {
 public:

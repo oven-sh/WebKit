@@ -56,11 +56,9 @@ public:
     {
         bool mayHaveWideConstants = m_proc.hasEverAdded(ConstDouble) || m_proc.hasEverAdded(Const128);
         if (mayHaveWideConstants) {
-            // A vector that may not be held across a patchpoint stays in the block that asks for it.
-            bool movesVectors = !m_proc.policy().air.registers.patchpointsKeepOnlyLowerHalvesOfVectors;
             hoistConstants(
                 [&] (const Value* value) -> bool {
-                    return value->opcode() == ConstDouble || (value->opcode() == Const128 && movesVectors);
+                    return value->opcode() == ConstDouble || value->opcode() == Const128;
                 });
 
             lowerMaterializationCostHeavyConstants();

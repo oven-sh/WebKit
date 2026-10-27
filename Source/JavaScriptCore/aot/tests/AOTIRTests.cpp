@@ -350,16 +350,6 @@ static void positionsThatManyOperationsDeclareAreReadFromOneTable()
         AOT_TEST_CHECK(!PayloadWord::key(static_cast<Opcode>(noMember)) && !OperandPosition::value(static_cast<Opcode>(noMember)));
 }
 
-static void operationsThatHoldTheSameReferencesAreWalkedByOneCase()
-{
-    for (Opcode opcode : allMembersOf<Opcode>)
-        AOT_TEST_CHECK((CaseTable<Opcode, caseOfWalkValue>::at(opcode)) == caseOfWalkValue(opcode));
-    for (TerminatorKind kind : allMembersOf<TerminatorKind>)
-        AOT_TEST_CHECK((CaseTable<TerminatorKind, caseOfWalkTerminator>::at(kind)) == caseOfWalkTerminator(kind));
-    AOT_TEST_CHECK(caseOfWalkValue(Opcode::Add) == caseOfWalkValue(Opcode::Sub) && caseOfWalkValue(Opcode::String) == caseOfWalkValue(Opcode::BigInt));
-    AOT_TEST_CHECK(caseOfWalkValue(Opcode::Add) != caseOfWalkValue(Opcode::String) && caseOfWalkValue(Opcode::String) != caseOfWalkValue(Opcode::NewClosure));
-}
-
 static void valueOperandsOfCall()
 {
     Value call(Opcode::Call);
@@ -1072,7 +1062,6 @@ static void forEachTypeVisitsEveryPosition()
     v(compactListStoresSingleElementInline) v(inlineListSpillsAndShrinksToFit) v(inlineListCopiesElementsInPlace) v(inlineListMovesAndDestroysElements) v(outOfLineOptionalMatchesStdOptional) \
     v(effectsDumpUsesSchemaGrammar) v(effectsDumpCountsLocationsOfPartialHeap) v(effectsOnEdgesDumpShowsHandlerThatDiffers) v(abstractHeapSetIterationAscends) \
     v(parseEnumFindsEveryOpcode) v(parseEnumRejectsUnknownNames) v(positionsThatManyOperationsDeclareAreReadFromOneTable) \
-    v(operationsThatHoldTheSameReferencesAreWalkedByOneCase) \
     v(valueOperandsOfCall) v(valueAbsentOperandKeepsIndex) v(valueFourNamedOperands) v(valueVariadicOperandsFollowFiveNamedOperands) \
     v(valueRemoveVariadicOperandKeepsNamedOperands) v(valueBecomeKeepsTypesOriginAndRepresentation) v(valueWithoutExpectedTypeFallsBackToItsType) \
     v(valueExpectedTypeSurvivesRelayout) v(flagsAndInlineFrameFitBitFields) v(valueSpansSurviveMove) \

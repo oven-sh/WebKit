@@ -35,26 +35,13 @@ template<typename, typename> class BuiltinTableID;
 // sort() asks the questions and makes the moves of libstdc++'s std::sort, so equal elements end up where that leaves them, whichever
 // standard library this is compiled with.
 
-// The steps are virtual functions so that the linker folds those of two orders that compile to the same code.
-class SortSteps {
-public:
-    virtual void insertionSort(void* first, void* endOfGuarded, void* last) const = 0;
-    virtual void* partition(void*, void*) const { RELEASE_ASSERT_NOT_REACHED(); }
-    virtual void merge(void*, void*, void*, void*, void*) const { RELEASE_ASSERT_NOT_REACHED(); }
-    virtual bool isLess(void*, void*) const { RELEASE_ASSERT_NOT_REACHED(); }
-
-    size_t elementSize() const { return m_elementSize; }
-
-protected:
-    explicit SortSteps(size_t elementSize)
-        : m_elementSize(elementSize)
-    {
-    }
-
-    ~SortSteps() = default;
-
-private:
-    size_t m_elementSize;
+struct SortSteps {
+    void (*insertionSort)(void* order, void* first, void* endOfGuarded, void* last);
+    void* (*partition)(void* order, void* first, void* last);
+    void (*merge)(void* order, void* first, void* endOfFirst, void* second, void* endOfSecond, void* output);
+    bool (*isLess)(void* order, void* first, void* second);
+    void* order;
+    size_t elementSize;
 };
 
 inline constexpr size_t longestInsertionSort = 16;
@@ -71,11 +58,11 @@ inline NEVER_INLINE SortedIndices indicesInOrder(size_t size)
 
 inline NEVER_INLINE void heapSort(const SortSteps& steps, char* first, char* last)
 {
-    size_t elementSize = steps.elementSize();
+    size_t elementSize = steps.elementSize;
     ptrdiff_t size = (last - first) / elementSize;
     SortedIndices heap = indicesInOrder(size);
     auto isLess = [&](uint32_t a, uint32_t b) {
-        return steps.isLess(first + a * elementSize, first + b * elementSize);
+        return steps.isLess(steps.order, first + a * elementSize, first + b * elementSize);
     };
     auto adjust = [&](ptrdiff_t hole, ptrdiff_t length, uint32_t value) {
         ptrdiff_t top = hole;
@@ -112,13 +99,13 @@ inline NEVER_INLINE void heapSort(const SortSteps& steps, char* first, char* las
 
 inline NEVER_INLINE void partitionUntilShort(const SortSteps& steps, char* first, char* last, unsigned depthLimit)
 {
-    while (static_cast<size_t>(last - first) > longestInsertionSort * steps.elementSize()) {
+    while (static_cast<size_t>(last - first) > longestInsertionSort * steps.elementSize) {
         if (!depthLimit) {
             heapSort(steps, first, last);
             return;
         }
         --depthLimit;
-        char* cut = static_cast<char*>(steps.partition(first, last));
+        char* cut = static_cast<char*>(steps.partition(steps.order, first, last));
         partitionUntilShort(steps, cut, last, depthLimit);
         last = cut;
     }
@@ -126,17 +113,17 @@ inline NEVER_INLINE void partitionUntilShort(const SortSteps& steps, char* first
 
 inline NEVER_INLINE void sortLongRange(const SortSteps& steps, char* first, size_t size)
 {
-    char* last = first + size * steps.elementSize();
+    char* last = first + size * steps.elementSize;
     partitionUntilShort(steps, first, last, 2 * (std::bit_width(size) - 1));
-    steps.insertionSort(first, first + longestInsertionSort * steps.elementSize(), last);
+    steps.insertionSort(steps.order, first, first + longestInsertionSort * steps.elementSize, last);
 }
 
 inline NEVER_INLINE void stableSortLongRange(const SortSteps& steps, char* first, size_t size)
 {
-    size_t elementSize = steps.elementSize();
+    size_t elementSize = steps.elementSize;
     for (size_t begin = 0; begin < size; begin += stableSortChunkSize) {
         char* end = first + std::min(begin + stableSortChunkSize, size) * elementSize;
-        steps.insertionSort(first + begin * elementSize, end, end);
+        steps.insertionSort(steps.order, first + begin * elementSize, end, end);
     }
     Vector<uint64_t, 128> buffer((size * elementSize + sizeof(uint64_t) - 1) / sizeof(uint64_t));
     char* from = first;
@@ -144,7 +131,7 @@ inline NEVER_INLINE void stableSortLongRange(const SortSteps& steps, char* first
     for (size_t width = stableSortChunkSize; width < size; width *= 2) {
         for (size_t begin = 0; begin < size; begin += 2 * width) {
             char* middle = from + std::min(begin + width, size) * elementSize;
-            steps.merge(from + begin * elementSize, middle, middle, from + std::min(begin + 2 * width, size) * elementSize, to + begin * elementSize);
+            steps.merge(steps.order, from + begin * elementSize, middle, middle, from + std::min(begin + 2 * width, size) * elementSize, to + begin * elementSize);
         }
         std::swap(from, to);
     }
@@ -156,31 +143,33 @@ template<typename T>
 inline constexpr bool sortsAsBytes = alignof(T) <= alignof(uint64_t) && movesAsBytes<T>;
 
 template<typename T, typename IsLess, typename Projection>
-class OrderedSteps : public SortSteps {
+class OrderedSteps {
 public:
-    using Element = T;
-
     OrderedSteps(IsLess& isLess, Projection& projection)
-        : SortSteps(sizeof(T))
-        , m_isLess(isLess)
+        : m_isLess(isLess)
         , m_projection(projection)
     {
     }
 
-    NEVER_INLINE void insertionSort(void* erasedFirst, void* erasedEndOfGuarded, void* erasedLast) const final
+    SortSteps stepsOfSort() { return { insertionSort, partition, nullptr, isLessOutOfLine, this, sizeof(T) }; }
+    SortSteps stepsOfStableSort() { return { insertionSort, nullptr, merge, nullptr, this, sizeof(T) }; }
+    SortSteps stepsOfSortAndMerge() { return { insertionSort, partition, merge, isLessOutOfLine, this, sizeof(T) }; }
+
+    static NEVER_INLINE void insertionSort(void* erasedOrder, void* erasedFirst, void* erasedEndOfGuarded, void* erasedLast)
     {
+        auto& order = *static_cast<OrderedSteps*>(erasedOrder);
         T* first = static_cast<T*>(erasedFirst);
         T* endOfGuarded = static_cast<T*>(erasedEndOfGuarded);
         T* last = static_cast<T*>(erasedLast);
         for (T* current = first + 1; current < last; ++current) {
             Held held(current);
-            if (current < endOfGuarded && comesBefore(held.value(), *first)) {
+            if (current < endOfGuarded && order.isLess(held.value(), *first)) {
                 memmove(static_cast<void*>(first + 1), static_cast<void*>(first), reinterpret_cast<char*>(current) - reinterpret_cast<char*>(first));
                 held.moveTo(first);
                 continue;
             }
             T* hole = current;
-            for (T* previous = hole - 1; comesBefore(held.value(), *previous); --previous) {
+            for (T* previous = hole - 1; order.isLess(held.value(), *previous); --previous) {
                 move(hole, previous);
                 hole = previous;
             }
@@ -188,7 +177,7 @@ public:
         }
     }
 
-protected:
+private:
     class Held {
     public:
         explicit Held(T* from) { memcpy(m_bytes, static_cast<void*>(from), sizeof(T)); }
@@ -208,66 +197,56 @@ protected:
         held.moveTo(second);
     }
 
-    ALWAYS_INLINE bool comesBefore(T& first, T& second) const { return std::invoke(m_isLess, std::invoke(m_projection, first), std::invoke(m_projection, second)); }
+    ALWAYS_INLINE bool isLess(T& first, T& second) { return std::invoke(m_isLess, std::invoke(m_projection, first), std::invoke(m_projection, second)); }
 
-private:
-    IsLess& m_isLess;
-    Projection& m_projection;
-};
-
-template<typename T, typename IsLess, typename Projection>
-class PartitioningSteps : public OrderedSteps<T, IsLess, Projection> {
-    using Base = OrderedSteps<T, IsLess, Projection>;
-public:
-    using Base::Base;
-
-    bool isLess(void* first, void* second) const final { return this->comesBefore(*static_cast<T*>(first), *static_cast<T*>(second)); }
-
-    void* partition(void* erasedFirst, void* erasedLast) const final
+    static bool isLessOutOfLine(void* order, void* first, void* second)
     {
+        return static_cast<OrderedSteps*>(order)->isLess(*static_cast<T*>(first), *static_cast<T*>(second));
+    }
+
+    static void* partition(void* erasedOrder, void* erasedFirst, void* erasedLast)
+    {
+        auto& order = *static_cast<OrderedSteps*>(erasedOrder);
         T* first = static_cast<T*>(erasedFirst);
         T* last = static_cast<T*>(erasedLast);
         T* lesser = first + 1;
         T* greater = first + (last - first) / 2;
         T* c = last - 1;
-        if (!this->comesBefore(*lesser, *greater))
+        if (!order.isLess(*lesser, *greater))
             std::swap(lesser, greater);
-        Base::swap(first, this->comesBefore(*greater, *c) ? greater : this->comesBefore(*lesser, *c) ? c : lesser);
+        swap(first, order.isLess(*greater, *c) ? greater : order.isLess(*lesser, *c) ? c : lesser);
         T* low = first + 1;
         T* high = last;
         while (true) {
-            while (this->comesBefore(*low, *first))
+            while (order.isLess(*low, *first))
                 ++low;
             --high;
-            while (this->comesBefore(*first, *high))
+            while (order.isLess(*first, *high))
                 --high;
             if (!(low < high))
                 return low;
-            Base::swap(low, high);
+            swap(low, high);
             ++low;
         }
     }
-};
 
-template<typename Steps>
-class MergingSteps final : public Steps {
-    using T = typename Steps::Element;
-public:
-    using Steps::Steps;
-
-    void merge(void* erasedFirst, void* erasedEndOfFirst, void* erasedSecond, void* erasedEndOfSecond, void* erasedOutput) const final
+    static void merge(void* erasedOrder, void* erasedFirst, void* erasedEndOfFirst, void* erasedSecond, void* erasedEndOfSecond, void* erasedOutput)
     {
+        auto& order = *static_cast<OrderedSteps*>(erasedOrder);
         T* first = static_cast<T*>(erasedFirst);
         T* endOfFirst = static_cast<T*>(erasedEndOfFirst);
         T* second = static_cast<T*>(erasedSecond);
         T* endOfSecond = static_cast<T*>(erasedEndOfSecond);
         T* output = static_cast<T*>(erasedOutput);
         for (; first != endOfFirst && second != endOfSecond; ++output)
-            Steps::move(output, this->comesBefore(*second, *first) ? second++ : first++);
+            move(output, order.isLess(*second, *first) ? second++ : first++);
         size_t restOfFirst = reinterpret_cast<char*>(endOfFirst) - reinterpret_cast<char*>(first);
         memcpy(static_cast<void*>(output), static_cast<void*>(first), restOfFirst);
         memcpy(reinterpret_cast<char*>(output) + restOfFirst, static_cast<void*>(second), reinterpret_cast<char*>(endOfSecond) - reinterpret_cast<char*>(second));
     }
+
+    IsLess& m_isLess;
+    Projection& m_projection;
 };
 
 template<typename Integer>
@@ -328,14 +307,14 @@ void sortElements(T* elements, size_t size, IsLess& isLess, Projection& projecti
         sortElements<equalElements>(indices.mutableSpan().data(), size, isLessAt, identity);
         moveIntoOrder(elements, WTF::move(indices));
     } else {
-        constexpr bool isStable = equalElements == EqualElements::KeepTheirOrder;
-        std::conditional_t<isStable, MergingSteps<OrderedSteps<T, IsLess, Projection>>, PartitioningSteps<T, IsLess, Projection>> steps(isLess, projection);
+        using Steps = OrderedSteps<T, IsLess, Projection>;
+        Steps order(isLess, projection);
         if (size <= longestInsertionSort)
-            steps.insertionSort(elements, elements + size, elements + size);
-        else if constexpr (isStable)
-            stableSortLongRange(steps, reinterpret_cast<char*>(elements), size);
+            Steps::insertionSort(&order, elements, elements + size, elements + size);
+        else if constexpr (equalElements == EqualElements::KeepTheirOrder)
+            stableSortLongRange(order.stepsOfStableSort(), reinterpret_cast<char*>(elements), size);
         else
-            sortLongRange(steps, reinterpret_cast<char*>(elements), size);
+            sortLongRange(order.stepsOfSort(), reinterpret_cast<char*>(elements), size);
     }
 }
 

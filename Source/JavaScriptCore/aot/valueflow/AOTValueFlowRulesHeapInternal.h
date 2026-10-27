@@ -13,7 +13,6 @@
 #include "AOTPrototypesAtCreation.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
-#include "AOTValueFlowRulesModules.h"
 #include "AOTVector.h"
 #include <wtf/ScopedLambda.h>
 
@@ -116,7 +115,7 @@ private:
     ValueSetID only(ValueFlowObjectID object) { return m_context.maker().of(object); }
     ClimbingSet unknownObjectAlone() const { return ClimbingSet(m_universe.unknownObjectAlone()); }
     ClimbingSet untrackedObjectAlone() const { return ClimbingSet(m_universe.untrackedObjectAlone()); }
-    ClimbingSet known(ClimbingSet set) { return knownObjectsThatAreFollowed(m_context, set); }
+    ClimbingSet known(ClimbingSet set) { return m_context.restrict(set, m_universe.knownObjects()); }
     bool mayBeUnknownObject(ClimbingSet set) const { return m_context.contains(set, ValueFlowUniverse::unknownObject()); }
     bool mayBeUntrackedObject(ClimbingSet set) const { return m_context.contains(set, ValueFlowUniverse::untrackedObject()); }
     ClimbingSet escapedAmong(ClimbingSet objects) { return m_context.valueWithin(objects, ValueFlowProgramNodes::escaped()); }
@@ -211,9 +210,7 @@ private:
     ClimbingSet holdersOfAccessorsThatRunOnUnknownObject(const HeapKey&);
     ClimbingSet foundThroughUntrackedObject(ValueSetID objects);
     ValueFlowNodeID readWhatStaysBehindUnder(ValueFlowName);
-    bool mayBeFoundThroughPlaceholder(BuiltinID member);
     bool isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey&);
-    bool runsGetterThroughPlaceholder(BuiltinID member, const HeapKey&);
     bool mayHoldUndeclaredProperty(ClimbingSet objects, const HeapKey&);
     bool mayHoldWhatNobodyHasAccountedFor(const HeapChain&, const HeapKey&);
     bool m_undescribedNativeCodeIsOfEngine { false };

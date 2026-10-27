@@ -105,7 +105,6 @@ runtime StringBuilderAppendJSON : size_t (JSCell* builder, EncodedJSValue value,
 runtime StringBuilderAppendJSONMembers : size_t (JSCell* builder, EncodedJSValue object, EncodedJSValue names, uint32_t start, EncodedJSValue holder) ; unknownCode
 runtime StringBuilderReserve : uint8_t* (JSCell* builder, uint64_t size) ; reads(all) writes(StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StringBuilderRollBack : void (JSCell* builder, uint32_t checkpoint) ; reads(all) writes(StringBuilderContents, RuntimeState)
-runtime StringBuilderCheckLength : void (JSCell* builder) ; reads(all) writes(StringBuilderContents, RuntimeState) throws
 runtime JSONEnterWatchedLevel : size_t (JSCell* builder, EncodedJSValue holder, void* frame) ; reads(all) writes(StringBuilderContents, RuntimeState)
 runtime StringBuilderToString, StringBuilderFinish : JSCell* (JSCell* builder, uint32_t isLikelyKey) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime StringBuilderDiscard : void (JSCell* builder) ; reads(all) writes(StringBuilderContents, RuntimeState)

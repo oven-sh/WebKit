@@ -9,9 +9,9 @@
 # FORM: AsRead
 # RUN: pass TypeValues NarrowFieldTypes VerifyProgram
 # STATISTIC: FieldsNarrowedToInt32 = 3
-# CHECK: layout L0 name="Range" module=m0 fields=[{key="position" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number},
-# CHECK: layout L1 name="Entry" module=m0 fields=[{key="index" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number},
-# CHECK: layout L2 name="Numbered" module=m0 fields=[{key="id" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number},
+# CHECK: layout L0 name="Range" module=m0 fields=[{key="position" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced]},
+# CHECK: layout L1 name="Entry" module=m0 fields=[{key="index" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced]},
+# CHECK: layout L2 name="Numbered" module=m0 fields=[{key="id" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced]},
 # CHECK: layout L3 name="Particle" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired, IsEnforced]},
 # CHECK: layout L4 name="Cell" module=m0 fields=[{key="column" declared={type=number} flags=[IsRequired, IsEnforced]},
 # CHECK: layout L5 name="Split" module=m0 fields=[{key="middle" declared={type=number} flags=[IsRequired, IsEnforced]},

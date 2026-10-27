@@ -1,5 +1,5 @@
-# Several turns of a small counted loop that walks data are written out one behind the other. They run in stretches of a bounded number of turns and poll between two stretches,
-# and the loop that is left for the last turns, fewer than are written out, does not poll
+# Several turns of a small counted loop that walks data are written out one behind the other. Nothing says that the loop ends within the data, so it polls: the turns poll once together,
+# and the loop that is left for the last turns polls once a turn
 # FORM: Placed
 # OPTIONS: heat=EverythingIsHot
 # A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
@@ -8,10 +8,10 @@
 # RUN(ARM64): generate-code calls
 # REQUIRES(ARM64): arm64
 # STATISTIC: LoopsUnrolled = 1
-# STATISTIC: LoopPollsRemoved = 1
-# X64: f0: size={{*}} polls=2
+# STATISTIC: LoopPollsRemoved = 0
+# X64: f0: size={{*}} polls=3
 # ARM64-LABEL: f0: size=
-# ARM64: operation operationAOTPollSlow x2
+# ARM64: operation operationAOTPollSlow x3
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="walkedInACircle" parameters=[{type=Float64Array<anything, pristine[Storage, Names]>}, {type=int[0, 2147483647]}, {type=number}] results=[{type=number}] {

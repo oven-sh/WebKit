@@ -271,11 +271,9 @@ static bool saysWhatCountsOfGuardByte(const GuardTests& tests, B3::MovedLoad& mo
     return true;
 }
 
-void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const std::unique_ptr<B3::Procedure>& procedure, const GuardTests& guardTests, WhatIsLogged logged)
+void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, const std::unique_ptr<B3::Procedure>& procedure, const GuardTests& guardTests)
 {
-    policy.validation.logsMovedLoads = logged.loads;
-    policy.validation.logsDecidedComparisons = logged.decidedComparisons;
-    policy.reportsMovedLoad = reportOf(BrokenClaim::LoadMayMove, function);
+    policy.validation.logsMovedLoads = true;
     policy.saysWhatCountsOfMovedLoad = createSharedTask<bool(const B3::MemoryValue&, B3::MovedLoad&)>([&procedure, &guardTests](const B3::MemoryValue& load, B3::MovedLoad& moved) {
         AOTHeaps& heaps = AOTHeaps::of(*procedure);
         auto isIn = [&](const B3::AbstractHeap& heap) {
@@ -297,7 +295,7 @@ void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, co
         B3::ClientPhase::Point::AfterSinking,
         "checkMovedLoadsAtRunTime"_s,
         createSharedTask<bool(B3::Procedure&)>([function](B3::Procedure& proc) {
-            return proc.movedLoadLog().insertChecks(proc, reportOf(BrokenClaim::LoadMayMove, function), reportOf(BrokenClaim::ComparisonIsDecided, function));
+            return proc.movedLoadLog().insertChecks(proc, reportOf(BrokenClaim::LoadMayMove, function));
         })
     });
 }

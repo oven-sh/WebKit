@@ -663,9 +663,9 @@ static void testHeapSortBehindTooManyPartitions()
         Vector<Record> expected = sorted;
         std::ranges::less isLess;
         auto projection = &Record::key;
-        PartitioningSteps<Record, std::ranges::less, decltype(projection)> steps(isLess, projection);
+        OrderedSteps<Record, std::ranges::less, decltype(projection)> order(isLess, projection);
         char* first = reinterpret_cast<char*>(sorted.mutableSpan().data());
-        heapSort(steps, first, first + sorted.size() * sizeof(Record));
+        heapSort(order.stepsOfSort(), first, first + sorted.size() * sizeof(Record));
         AOT_TEST_CHECK(std::ranges::is_sorted(sorted, { }, &Record::key));
 #if defined(__GLIBCXX__)
         std::ranges::partial_sort(expected, expected.end(), { }, &Record::key);

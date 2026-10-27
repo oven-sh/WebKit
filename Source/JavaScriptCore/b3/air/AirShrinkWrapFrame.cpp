@@ -100,7 +100,6 @@ private:
     bool continuesLikelyPath(BasicBlock* from, const FrequentedBlock& edge) const;
     bool closeOverLikelyPaths();
     bool closeOverCertainPaths();
-    bool closeOverWritesAheadOfFrame();
     bool growOverLiveScratchRegisters(const RegLiveness&);
     void closeRegion(const RegLiveness*);
     void rewriteIncomingArgumentAddresses();
@@ -122,7 +121,6 @@ private:
     BitVector m_isOnLikelyPath;
     BitVector m_addressesIncomingArguments;
     BitVector m_takesSlotAddress;
-    BitVector m_isKnownNotToWriteMemory;
     BitVector m_setsUpFrameAtHead;
     Vector<SplitEdge> m_latestSplitByTarget;
     uint64_t m_savedCalleeSaves { 0 };
@@ -140,7 +138,6 @@ FrameShrinkWrapper::FrameShrinkWrapper(Code& code, const StackColoring& coloring
     , m_isOnLikelyPath(code.size())
     , m_addressesIncomingArguments(code.size())
     , m_takesSlotAddress(code.size())
-    , m_isKnownNotToWriteMemory(code.size())
     , m_setsUpFrameAtHead(code.size())
 {
 }
@@ -511,35 +508,6 @@ bool FrameShrinkWrapper::closeOverCertainPaths()
     return changed;
 }
 
-bool FrameShrinkWrapper::closeOverWritesAheadOfFrame()
-{
-    unsigned smallestFrameTested = m_code.policy().frame.smallestFrameTestedAtSetup;
-    if (smallestFrameTested && computeFrameSizeBound() < smallestFrameTested)
-        return false;
-    if (m_code.proc().policy().validation.setsUpFrameBehindWrites) [[unlikely]]
-        return false;
-
-    BitVector reachesRegion = m_isInRegion;
-    Vector<BasicBlock*, 16> worklist;
-    for (size_t blockIndex : m_isInRegion)
-        worklist.append(m_code[blockIndex]);
-    bool changed = false;
-    while (!worklist.isEmpty()) {
-        for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
-            if (reachesRegion.quickSet(predecessor->index()))
-                continue;
-            worklist.append(predecessor);
-            if (m_isKnownNotToWriteMemory.quickGet(predecessor->index()))
-                continue;
-            if (std::ranges::any_of(*predecessor, writesMemoryOutsideFrame))
-                changed |= addToRegion(predecessor);
-            else
-                m_isKnownNotToWriteMemory.quickSet(predecessor->index());
-        }
-    }
-    return changed;
-}
-
 bool FrameShrinkWrapper::growOverLiveScratchRegisters(const RegLiveness& liveness)
 {
     Vector<BasicBlock*, 16> worklist;
@@ -568,7 +536,6 @@ void FrameShrinkWrapper::closeRegion(const RegLiveness* liveness)
     do {
         changed = closeOverLikelyPaths();
         changed |= closeOverCertainPaths();
-        changed |= closeOverWritesAheadOfFrame();
         if (liveness && m_scratchRegisters)
             changed |= growOverLiveScratchRegisters(*liveness);
     } while (changed);

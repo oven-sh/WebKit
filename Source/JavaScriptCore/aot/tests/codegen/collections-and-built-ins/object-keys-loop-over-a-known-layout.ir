@@ -134,16 +134,13 @@ function f1 name="sum" module=m0 position=50 flags=[IsChecked, HasExplicitName] 
 # LOOP: Double b@{{*}} = Load(b@[[point]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # LOOP: Double b@{{*}} = Load(b@[[point]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # LOOP-LABEL: end of loop
-# Nothing in this loop but its poll can throw or allocate, and the length of the list is not loaded again. Beside a call a poll costs little, so it stays in the turn.
+# Nothing in this loop can throw or allocate, and the length of the list is not loaded again.
 # CALLS-LABEL: steps by 1
 # CALLS-LABEL: steps by 1
-# CALLS-NOT: Reads:Butterfly_publicLength
-# CALLS-NOT: Reads:JSObject_butterfly
-# CALLS-COUNT-1: ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS-NOT: Reads:Butterfly_publicLength
 # CALLS-NOT: Reads:JSObject_butterfly
 # CALLS-LABEL: end of loop
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 12, patchpoints: 3, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 12, patchpoints: 3, {{*}} steps by 1
+# X64: loop #{{*}}, instructions: 12, patchpoints: 2, {{*}} steps by 1
+# ARM64: loop #{{*}}, instructions: 12, patchpoints: 2, {{*}} steps by 1

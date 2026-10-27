@@ -661,13 +661,12 @@ private:
 
     void scanNames(const auto& valueOrTerminator)
     {
-        forEachReference(valueOrTerminator, WTF::makeVisitor([&](PropertyKeyID key) {
+        forEachPropertyKey(valueOrTerminator, [&](PropertyKeyID key) {
             setBit(m_shared.keysNamed, key.index());
-        }, [&](StringID string) {
+        });
+        forEachString(valueOrTerminator, [&](StringID string) {
             setBit(m_shared.stringsNamed, string.index());
-        }, [&](VariableID variable) {
-            m_uses.variablesNamed.append(variable);
-        }, [](auto) { }));
+        });
     }
 
     void scanValue(BlockID block, const Value& value)
@@ -706,6 +705,9 @@ private:
         }
         if (Value::opcodesWithData.contains(opcode))
             scanData(block, value);
+        forEachVariable(value, [&](VariableID variable) {
+            m_uses.variablesNamed.append(variable);
+        });
         if (opcode == Opcode::GetModuleVariable && m_inputs.zeroEncodingCandidates.quickGet(value.variable().index()))
             m_readsZeroEncodingCandidate = true;
         scanNames(value);

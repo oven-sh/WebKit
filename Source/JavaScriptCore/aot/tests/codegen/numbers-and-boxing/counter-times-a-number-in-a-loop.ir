@@ -83,7 +83,7 @@ function f1 name="ramp" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # HOT-LABEL: steps by 8
 # HOT: Int64 b@[[k]] = Phi(
 # HOT: Double b@[[number]] = IToD(b@[[k]], {{*}}:Mul)
-# HOT-NEXT: Double b@[[product]] = Mul(b@[[slope]], b@[[number]], {{*}}:Mul)
+# HOT-NEXT: Double b@[[product]] = Mul(b@[[number]], b@[[slope]], {{*}}:Mul)
 # HOT: Store(b@[[product]], b@{{*}}, ControlDependent|Writes:TypedArrayElements
 # REPEAT: turn = 1..7
 # HOT: Int64 b@[[k%(turn)]] = Add(b@[[k]], $%(turn)(b@{{*}}), {{*}}:Increment)

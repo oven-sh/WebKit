@@ -480,12 +480,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instan
     OPERATION_RETURN(scope);
 }
 
+#if !HAVE_MUST_TAIL_CALL
+static NEVER_INLINE NOT_TAIL_CALLED ExceptionOperationResult<void> copyDataPropertiesInFrame(CallerFrameAndPC* frameRecord, Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys)
+{
+    AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, Entry::operationAOTCopyDataProperties);
+    scope.release();
+    copyDataPropertiesAsBeforeOrByAnyWay(instance, globalObject, vm, target, source, excludedRun, count, excludedKeys);
+    OPERATION_RETURN(scope);
+}
+#endif
+
 // The stub in front calls it where a copy that takes no frame is kept at the place of this one.
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     if (!count && tryCopyByFieldMapWithoutFrame(*instance, target, source, excludedRun)) [[likely]]
         return { nullptr };
-    AOT_MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
+#if HAVE_MUST_TAIL_CALL
+    MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
+#else
+    return copyDataPropertiesInFrame(AOT_OPERATION_FRAME_RECORD(), instance, target, source, excludedRun, count, excludedKeys);
+#endif
 }
 
 static JSObject* tryCopyWithoutNames(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)

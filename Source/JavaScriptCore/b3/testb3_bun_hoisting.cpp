@@ -630,125 +630,6 @@ static void testMovedLoadLogDoesNotMissWritesThatNothingLeadsTo()
     CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
 }
 
-static RefPtr<DifferenceReport> reportThatReturns(int64_t answer)
-{
-    return createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([answer](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
-        jit.move(CCallHelpers::TrustedImm64(answer), GPRInfo::returnValueGPR);
-        jit.emitFunctionEpilogue();
-        jit.ret();
-    });
-}
-
-static void testDecidedComparisonCheckComparesAsTheComparisonDid()
-{
-    constexpr int64_t reported = 42;
-    constexpr int64_t operands[] = { 0, 1, -1, 5, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() };
-    auto holds = [](B3::Opcode opcode, int64_t left, int64_t right) {
-        uint64_t unsignedLeft = left;
-        uint64_t unsignedRight = right;
-        switch (opcode) {
-        case Equal:
-            return left == right;
-        case NotEqual:
-            return left != right;
-        case LessThan:
-            return left < right;
-        case GreaterThan:
-            return left > right;
-        case LessEqual:
-            return left <= right;
-        case GreaterEqual:
-            return left >= right;
-        case Above:
-            return unsignedLeft > unsignedRight;
-        case Below:
-            return unsignedLeft < unsignedRight;
-        case AboveEqual:
-            return unsignedLeft >= unsignedRight;
-        default:
-            return unsignedLeft <= unsignedRight;
-        }
-    };
-    for (B3::Opcode opcode : { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Above, Below, AboveEqual, BelowEqual }) {
-        for (bool is64Bit : { false, true }) {
-            for (bool answer : { false, true }) {
-                Procedure proc;
-                Graph graph { proc };
-                BasicBlock* root = proc.addBlock();
-                auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root).eager();
-                Value* left = is64Bit ? arguments[0] : graph.make(root, Trunc, arguments[0]);
-                Value* right = is64Bit ? arguments[1] : graph.make(root, Trunc, arguments[1]);
-                root->append(createDecidedComparisonCheck(proc, opcode, Origin(), left, right, answer, reportThatReturns(reported)));
-                graph.ret(root, graph.int64(root, 0));
-                auto code = compileProc(proc);
-                for (int64_t first : operands) {
-                    for (int64_t second : operands)
-                        CHECK_EQ(invoke<int64_t>(*code, first, second), holds(opcode, first, second) == answer ? 0 : reported);
-                }
-            }
-        }
-    }
-}
-
-// With the comparison gone nothing uses the sum, and the block that held it only jumps.
-static void testDecidedComparisonOutlivesWhatItCompared()
-{
-    constexpr int64_t reported = 42;
-    Policy policy;
-    policy.validation.logsDecidedComparisons = true;
-    Procedure proc(policy);
-    Graph graph { proc };
-    BasicBlock* root = proc.addBlock();
-    BasicBlock* other = proc.addBlock();
-    BasicBlock* middle = proc.addBlock();
-    BasicBlock* last = proc.addBlock();
-    auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t>(proc, root).eager();
-    Value* sum = graph.make(root, Add, arguments[0], graph.int64(root, 1));
-    graph.branch(root, arguments[2], middle, other);
-    graph.jump(other, last);
-    Value* comparison = graph.make(middle, Below, sum, arguments[1]);
-    proc.movedLoadLog().addDecidedComparison(proc, comparison, middle, middle->size(), sum, arguments[1], true);
-    graph.jump(middle, last);
-    graph.ret(last, graph.int64(last, 0));
-    proc.resetReachability();
-
-    reduceStrength(proc);
-    eliminateDeadCode(proc);
-    validate(proc);
-    CHECK_EQ(numberOfValues(proc, Below), 0u);
-    CHECK_EQ(numberOfValues(proc, Add), 1u);
-    CHECK(proc.movedLoadLog().insertChecks(proc, nullptr, reportThatReturns(reported)));
-    auto code = compileProc(proc, 1);
-    CHECK_EQ(invoke<int64_t>(*code, 3, 5, 1), 0);
-    CHECK_EQ(invoke<int64_t>(*code, 4, 5, 1), reported);
-    CHECK_EQ(invoke<int64_t>(*code, 4, 5, 0), 0);
-}
-
-// A load stood at the head of a block whose values go to the end of the block in front of it.
-static void testMovedLoadLogFollowsBlocksThatAreJoined()
-{
-    constexpr int64_t reported = 42;
-    Procedure proc;
-    Graph graph { proc };
-    BasicBlock* root = proc.addBlock();
-    BasicBlock* next = proc.addBlock();
-    auto arguments = cCallArgumentValues<int64_t*, int64_t>(proc, root).eager();
-    Value* loaded = graph.load(root, Int64, arguments[0], 0, firstHeap);
-    graph.store(root, graph.make(root, Add, loaded, arguments[1]), arguments[0], 0, firstHeap);
-    graph.jump(root, next);
-    proc.movedLoadLog().add(*MovedLoad::describe(loaded), next, 0, arguments[0], loaded);
-    graph.ret(next, loaded);
-    proc.resetReachability();
-
-    reduceStrength(proc);
-    CHECK_EQ(numberOfBlocks(proc), 1u);
-    CHECK(proc.movedLoadLog().insertChecks(proc, reportThatReturns(reported)));
-    auto code = compileProc(proc, 1);
-    int64_t word = 5;
-    CHECK_EQ(invoke<int64_t>(*code, &word, 0), 5);
-    CHECK_EQ(invoke<int64_t>(*code, &word, 1), reported);
-}
-
 static void testHoistFromLargeLoop()
 {
     Procedure proc(likelyPathsPolicy(true));
@@ -981,9 +862,6 @@ void addBunHoistingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testMovedLoadLogFollowsCopiedBlocks());
     RUN(testMovedLoadLogNamesWhatReachesThePlace());
     RUN(testMovedLoadLogDoesNotMissWritesThatNothingLeadsTo());
-    RUN(testDecidedComparisonCheckComparesAsTheComparisonDid());
-    RUN(testDecidedComparisonOutlivesWhatItCompared());
-    RUN(testMovedLoadLogFollowsBlocksThatAreJoined());
     RUN(testHoistFromLargeLoop());
     RUN(testHoistWithEarlyLikelyExit());
     RUN(testHoistAcrossInnerLoop());

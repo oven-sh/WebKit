@@ -31,7 +31,7 @@ function f0 name="handlerAppends" parameters=[{type=string}, {type=number}] resu
 # CHECK-LABEL: name="handlerAppends"
 # CHECK: b2() handler=b3():
 # CHECK-NEXT: v8: "n" = String string="n"
-# CHECK-NEXT: [[c0]]: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: [[c0]]: int[0, 2147483647] = StringBuilderCheckpoint v4
 # CHECK-NEXT: Jump -> next [[covered0]]()
 # CHECK: b3() role=CatchHandler:
 # CHECK: StringBuilderAppend v4, v10
@@ -63,7 +63,7 @@ function f1 name="handlerTakesTheBuilder" parameters=[{type=string}, {type=numbe
 }
 # CHECK-LABEL: name="handlerTakesTheBuilder"
 # CHECK: b2() handler=b4(v4):
-# CHECK-NEXT: [[c1]]: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: [[c1]]: int[0, 2147483647] = StringBuilderCheckpoint v4
 # CHECK: StringBuilderAppend v4, v0, v5
 # CHECK: role=CleanupHandler frequency=Rare handler=b4(v4):
 # CHECK: StringBuilderRollBack v4, [[c1]]

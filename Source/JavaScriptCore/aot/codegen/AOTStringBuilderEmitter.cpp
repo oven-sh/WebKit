@@ -376,18 +376,6 @@ void StringBuilderEmitter::generateStringBuilderRollBack(const ValueContext& val
     callVoidOperation(value, RuntimeOperation::StringBuilderRollBack, { in<CellPointer>(value->builderOperand()), emitter<StringEmitter>().word32Of(value->checkpointOperand()) });
 }
 
-// The limit lies past the longest string only behind a reservation of which some may stay unused. Any other limit has let in nothing longer.
-void StringBuilderEmitter::generateStringBuilderCheckLength(const ValueContext& value)
-{
-    CellPointer builder = in<CellPointer>(value->builderOperand());
-    Word32 limit(m_out.load32(storageField(builder, Storage::offsetOfLimit())));
-    Word32 lengthOutsideBuffer(m_out.load32(storageField(builder, Storage::offsetOfLengthOutsideBuffer())));
-    Word32 length = add(limit, lengthOutsideBuffer);
-    ifElse(belowOrEqual(length, word32(String::MaxLength)), [] { }, [&] {
-        callVoidOperation(value, RuntimeOperation::StringBuilderCheckLength, { builder }, { .isOnRarePath = true });
-    });
-}
-
 Word32 StringBuilderEmitter::lengthOf(CellPointer builder)
 {
     Word32 position(m_out.load32(storageField(builder, Storage::offsetOfPosition())));

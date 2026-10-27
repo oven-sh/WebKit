@@ -78,7 +78,6 @@ void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const Va
 void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
 void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext&);
 void noteCallOfBuiltin(BuiltinID, ValueFlowCallKind, ValueFlowRuleContext&);
-void noteInstancesIn(ValueFlowRuleContext&, BuiltinTypeID);
 void connectEnumerableMembersOf(ClimbingSet hostObjects, ValueFlowNodeID to, ValueFlowRuleContext&);
 void carryOut(ValueFlowRuleContext&, ValueFlowNodeID values);
 void carryOut(ValueFlowRuleContext&, const ValueFlowOperand& values);

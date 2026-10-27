@@ -837,11 +837,10 @@ bool RuntimeCallEmitter::mayConvertCells(const Effects& effects)
 }
 
 // A slot says what a lookup found. It changes where the operation that it belongs to finds no answer in it, where code of the program runs, and where something is written that a lookup may come by.
-// A collection empties the slot of a Structure that has died, and whatever makes a cell may make a Structure where that one lay: it would pass for the old one by its number.
 RuntimeCallEmitter::SlotsOfSites RuntimeCallEmitter::slotsOfSitesBehindStub(const OperationContext* context, const Effects& effects) const
 {
     bool hasSlotOfItsOwn = context && context->valueID() && siteCachesOf(m_function.at(context->valueID()).opcode);
-    return hasSlotOfItsOwn || effects.mayCollect || !effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre;
+    return hasSlotOfItsOwn || !effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre;
 }
 
 void RuntimeCallEmitter::stateWhichCallsChangeSlotsOfSites()

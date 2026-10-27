@@ -163,7 +163,7 @@ void callInProtocol(ValueFlowRuleContext& context, const ValueFlowProtocolCall& 
         context.add(group.otherArguments, call.otherArguments);
         if (call.result)
             context.connect(group.result, call.result);
-        carryOut(context, group.thrown);
+        context.connect(group.thrown, escaped);
     });
 }
 

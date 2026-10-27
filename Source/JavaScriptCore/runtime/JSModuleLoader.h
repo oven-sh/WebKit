@@ -313,7 +313,6 @@ private:
     ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 #if ENABLE(AOT)
     bool m_realmLoadedModuleUnderAnotherKey { false };
-    UniquedStringImpl* m_rootThatTakesOwnLoadSteps { nullptr };
 #endif
 
     WriteBarrier<JSScope> m_moduleScope;

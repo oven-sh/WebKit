@@ -68,9 +68,6 @@ static LiveValues markLiveValues(Procedure& proc)
             stack.append(value);
         }
     };
-    proc.movedLoadLog().forEachOperandOfDecidedComparison([&](Value* value) {
-        states[value->index()] = State::Needed;
-    });
     for (unsigned blockIndex = proc.size(); blockIndex--;) {
         BasicBlock* block = proc[blockIndex];
         if (!block)

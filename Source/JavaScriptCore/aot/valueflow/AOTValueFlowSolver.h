@@ -491,9 +491,6 @@ private:
         bool isUnionOfParts { false };
         bool isOfThisTurn { false };
         bool hasStatementRunWhereMade { false };
-        // Of a union of two blocks: one more than the higher rank of the two. A record that is no such union is a block of rank 0.
-        static constexpr uint8_t partsAreBlocksOfFallingRank = UINT8_MAX;
-        uint8_t rank { 0 };
         uint32_t firstPart { 0 };
         uint32_t numberOfParts { 0 };
         uint32_t firstUseOfParts { UINT32_MAX };

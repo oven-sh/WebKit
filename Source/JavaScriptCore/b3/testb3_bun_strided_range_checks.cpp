@@ -467,9 +467,10 @@ static void readLengthsFromViews(Procedure& proc)
     }
 }
 
-static void testVersionLoopsStridedFastLoopKeepsItsPoll()
+static void testVersionLoopsStridedFastLoopWithinViewDoesNotPoll()
 {
     Policy policy = loopPolicy();
+    policy.loops.omitsPollsFromLoopsThatEndWithinData = true;
     for (bool limitIsLength : { false, true }) {
         for (std::optional<int32_t> constantScale : { std::optional<int32_t> { }, std::optional<int32_t> { 3 }, std::optional<int32_t> { -3 } }) {
             StridedLoopShape shape;
@@ -479,7 +480,7 @@ static void testVersionLoopsStridedFastLoopKeepsItsPoll()
                 readLengthsFromViews(loop.proc);
             CHECK(versionLoopsAndValidate(loop.proc));
             CHECK_EQ(loop.proc.report().countOf(Counter::RangeChecksRemoved), 1u);
-            checkValueCountInEachLoop(loop.proc, isLoopPoll, "polls"_s, { 1u, 1u });
+            checkValueCountInEachLoop(loop.proc, isLoopPoll, "polls"_s, { limitIsLength ? 0u : 1u, 1u });
             auto code = compileProc(loop.proc);
             for (int32_t scale : { 3, 1, 0, -3 }) {
                 for (int32_t bound : { 0, 1, 10, 24, 1000 }) {
@@ -488,7 +489,8 @@ static void testVersionLoopsStridedFastLoopKeepsItsPoll()
                     ExpectedRun expected = expectedRun(shape, memory, 0, bound);
                     loop.state = { };
                     CHECK_EQ(run(*code, bound, reinterpret_cast<int64_t*>(&memory), 0), expected.result);
-                    CHECK_EQ(loop.state.numberOfPolls, expected.numberOfTurns);
+                    bool takesFastLoop = expected.result != -1 && bound && (constantScale || scale > 0);
+                    CHECK_EQ(loop.state.numberOfPolls, limitIsLength && takesFastLoop ? 0 : expected.numberOfTurns);
                 }
             }
         }
@@ -585,7 +587,7 @@ void addBunStridedRangeCheckTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsOmitsStridedLimitGuardOnlyWhenToldTo());
     RUN(testVersionLoopsKeepsStridedRangeCheckWhoseLimitIsStoredInLoop());
     RUN(testVersionLoopsLeavesStridedFastLoopWhenLimitIsClobbered());
-    RUN(testVersionLoopsStridedFastLoopKeepsItsPoll());
+    RUN(testVersionLoopsStridedFastLoopWithinViewDoesNotPoll());
 }
 
 #endif // ENABLE(B3_JIT)

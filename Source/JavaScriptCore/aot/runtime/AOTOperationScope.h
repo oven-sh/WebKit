@@ -75,10 +75,6 @@ private:
 #define AOT_FRAME_RECORD_OF_THIS_FUNCTION() std::bit_cast<JSC::CallerFrameAndPC*>(__builtin_frame_address(0))
 #endif
 
-// An operation finds its caller's frame directly above its own, so a wrapper enters the operation with a jump, not a call.
-// MUST_TAIL_CALL expands to nothing on Windows, but clang guarantees the tail call there too when caller and callee have the same signature.
-#define AOT_MUST_TAIL_CALL [[clang::musttail]]
-
 #if ASSERT_ENABLED
 // Where assertions are on, the run-time table calls an operation that is declared not to collect through a function that holds one of these.
 // The frame of that function lies between the frame of the operation and the frame of the caller.

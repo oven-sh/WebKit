@@ -112,21 +112,6 @@ public:
         return result;
     }
 
-    // What successors(node).size() and successors(node)[index] say, without the list.
-    unsigned numSuccessors(const Node& node) const
-    {
-        if (node.isRoot())
-            return m_rootSuccessorList.size();
-        return m_graph.predecessors(node.node()).size();
-    }
-
-    Node successorAt(const Node& node, unsigned index) const
-    {
-        if (node.isRoot())
-            return m_rootSuccessorList[index];
-        return m_graph.predecessors(node.node())[index];
-    }
-
     List predecessors(const Node& node) const
     {
         if (node.isRoot())

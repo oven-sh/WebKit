@@ -300,9 +300,9 @@ static constexpr Step steps[] = {
             return cleanupsIfChanged(rotateLoops(procedure, &state.topTestedVersionHeaders), { Cleanup::FixSSA, Cleanup::FoldPathConstants, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
         } },
     { "unrollLoops"_s,
-        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && (procedure.policy().loops.unrolls || procedure.policy().loops.pollsBetweenStretches); },
+        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.unrolls; },
         [](Procedure& procedure, PipelineState&) {
-            return cleanupsIfChanged(unrollLoops(procedure, procedure.policy().loops.unrolls ? WritesOutTurns::Yes : WritesOutTurns::No), { Cleanup::FixSSA, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
+            return cleanupsIfChanged(unrollLoops(procedure), { Cleanup::FixSSA, Cleanup::SimplifyTerminals, Cleanup::EliminateDeadCode });
         } },
 #if ENABLE(WEBASSEMBLY)
     { "eliminateWasmGCAllocations"_s,
@@ -370,9 +370,6 @@ static constexpr Step steps[] = {
     { "clientPhasesBeforeLowerToAir"_s,
         [](Procedure& procedure, const PipelineState&) { return hasClientPhase(procedure, ClientPhase::Point::BeforeLowerToAir); },
         runClientPhases<ClientPhase::Point::BeforeLowerToAir> },
-    { "checkNoVectorLivesAcrossPatchpoint"_s,
-        [](Procedure& procedure, const PipelineState&) { return procedure.usesSIMD() && procedure.policy().air.registers.patchpointsKeepOnlyLowerHalvesOfVectors; },
-        runPass<checkNoVectorLivesAcrossPatchpoint> },
     { "lowerToAir"_s, always,
         [](Procedure& procedure, PipelineState&) -> Cleanups {
             lowerToAir(procedure);

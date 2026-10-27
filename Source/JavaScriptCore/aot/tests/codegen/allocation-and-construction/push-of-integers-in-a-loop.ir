@@ -97,7 +97,7 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # NONE-NOT: Reads:Butterfly_vectorLength
 # NONE-NOT: Reads:JSCell
 # NONE-NOT: :CallDirect
-# The turns can be counted ahead of the loop: where they are few it goes without its poll, and a copy of it that polls takes the others.
+# NONE-COUNT-1: Patchpoint({{*}}isLoopPoll
 # NONE-NOT: Patchpoint(
 # NONE-LABEL: end of loop
 # The list is made with room for all the elements, since the loop says how many there will be. Growing is out of the loop.
@@ -111,10 +111,8 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CALLS: f{{*}}: size=
 # Four of the nine are for the length, which stays in the storage: the load, the test, the addition, the store.
 # X64-NOT: , instructions:
-# X64: loop #{{*}}, instructions: 9, patchpoints: 0
-# X64: loop #{{*}}, instructions: 9, patchpoints: 1, {{*}}entered rarely
+# X64: loop #{{*}}, instructions: 9, patchpoints: 1
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
-# ARM64: loop #{{*}}, instructions: 8, patchpoints: 0
-# ARM64: loop #{{*}}, instructions: 8, patchpoints: 1, {{*}}entered rarely
+# ARM64: loop #{{*}}, instructions: 8, patchpoints: 1
 # ARM64-NOT: , instructions:

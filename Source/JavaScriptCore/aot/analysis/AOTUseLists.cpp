@@ -8,7 +8,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -254,7 +253,7 @@ std::span<const Use> UseLists::layOutBehindUpdates(ValueID id) const
             places.append(PlaceInOrder { orderOf(uses()[place]), place });
         }
         if (!std::ranges::is_sorted(places, { }, &PlaceInOrder::order))
-            AOT::sort(places, { }, &PlaceInOrder::order);
+            std::ranges::sort(places, { }, &PlaceInOrder::order);
         link = &range.first;
         for (uint32_t index = 0; index < size; ++index) {
             uint32_t place = places[index].place;

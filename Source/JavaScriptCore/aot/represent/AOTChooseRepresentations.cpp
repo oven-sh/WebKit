@@ -471,7 +471,7 @@ private:
                 }
             }
         }
-        AOT::sort(m_repeatedArguments, { }, &RepeatedArgument::place);
+        std::ranges::sort(m_repeatedArguments, { }, &RepeatedArgument::place);
     }
 
     void admitNarrowReferences()

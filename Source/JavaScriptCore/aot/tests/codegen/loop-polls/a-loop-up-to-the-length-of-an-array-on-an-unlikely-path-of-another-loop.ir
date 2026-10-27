@@ -1,5 +1,6 @@
-# Both loops get a fast version. The inner loop counts up to the length of a list and stands on an unlikely path of the outer loop. The length, and the storage
-# that it is read from, are read in front of the inner loop, on the path that goes round it where it has no turns. The fast version of the outer loop copies that path.
+# Both loops get a fast version. The inner loop counts up to the length of a list and stands on an unlikely path of the outer loop. Its fast version does not poll, behind a
+# test that the list has room for its length. The length, and the storage that it is read from, are read in front of the inner loop, on the path that goes round it where it has no
+# turns. The fast version of the outer loop copies that path, so the test takes both from whichever copy ran.
 # function f(x, y, l0) {
 #   let n0 = x, n1 = y, l1 = l0.slice();
 #   l0[2] = 5;
@@ -18,6 +19,9 @@
 # RUN: lower-to-b3 after=versionLoops f1
 # REQUIRES: unsanitized-code
 # CHECK-LABEL: name="f" role=Source
+# CHECK: Int32 b@[[length]] = Phi(ReadsLocalState, v{{*}}:CallInline)
+# CHECK: Int32 b@[[room]] = Load(b@{{*}}, offset = -4, {{*}}Reads:Butterfly_vectorLength
+# CHECK-NEXT: BelowEqual(b@[[length]], b@[[room]]
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

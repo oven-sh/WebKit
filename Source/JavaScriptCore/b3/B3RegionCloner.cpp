@@ -61,11 +61,6 @@ void RegionCloner::demoteEscapingValues(PhiTreatment treatment, ValueOwners owne
             }
         }
     }
-    // The place of a comparison that was decided is a user of what it compared.
-    m_proc.movedLoadLog().forEachOperandOfDecidedComparison([&](Value* value) {
-        if (m_declaredBlocks.contains(value->owner))
-            valuesToDemote.add(value);
-    });
     if (!valuesToDemote.isEmpty()) {
         demoteValues(m_proc, valuesToDemote);
         m_didChange = true;

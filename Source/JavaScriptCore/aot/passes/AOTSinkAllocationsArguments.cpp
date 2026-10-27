@@ -588,7 +588,7 @@ void ObjectInterpreter::forwardArguments(ValueID call, const ForwardedCallPlan& 
     uint32_t listIndex = 0;
     Vector<std::pair<ValueID, uint32_t>, 2> otherOperands;
     function().at(call).forEachOperand([&](ValueID operand, uint32_t index) {
-        if (builtinOperandAt(function().at(call), index) == plan.operandOfList)
+        if (operand == plan.list)
             listIndex = index;
         else
             otherOperands.append({ operand, index });

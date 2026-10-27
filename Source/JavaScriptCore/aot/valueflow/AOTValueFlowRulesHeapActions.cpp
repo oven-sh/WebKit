@@ -131,9 +131,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         if (!keepsAccessors)
             callAccessors(getters, ValueFlowCallKind::Get, readSources, nullptr, node);
     }
-    // The arguments of a strict function hold an accessor of native code under `callee`.
-    bool copiesArguments = m_context.meet(withSourcesOfCopies(m_context, known(sources)), m_tables.argumentsObjects());
-    if (keepsAccessors && (mayBeUnknownObject(sources) || holdsAnything(hostObjects) || copiesArguments || m_context.meet(sources, m_universe.builtinObjects())))
+    if (keepsAccessors && (mayBeUnknownObject(sources) || holdsAnything(hostObjects) || m_context.meet(sources, m_universe.builtinObjects())))
         connect(target, ValueFlowProgramNodes::escaped());
 
     if (storesThroughSetters) {

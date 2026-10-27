@@ -44,7 +44,6 @@ struct FlowListedValue {
     uint32_t field { 0 };
     FunctionID function;
     ValueID allocation;
-    uint16_t primitivesOutside { 0 };
 };
 
 struct FlowAppendedField {
