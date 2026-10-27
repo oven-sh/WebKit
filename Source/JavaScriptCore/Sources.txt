@@ -125,6 +125,7 @@ b3/air/AirValidate.cpp
 
 b3/B3AbstractHeap.cpp
 b3/B3AbstractHeapRepository.cpp
+b3/B3AffineIndex.cpp @no-unify
 b3/B3Arena.cpp @no-unify
 b3/B3ArgumentRegValue.cpp
 b3/B3AtomicValue.cpp

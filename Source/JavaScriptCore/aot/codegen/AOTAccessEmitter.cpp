@@ -300,6 +300,11 @@ void AccessEmitter::generateValidateDenialOfHasTrap(const ValueContext& value)
     callVoidOperation(value, RuntimeOperation::ValidateDenialOfHasTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()) }, { .isOnRarePath = true });
 }
 
+void AccessEmitter::generateValidateConsentOfDeleteTrap(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::ValidateConsentOfDeleteTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()) }, { .isOnRarePath = true });
+}
+
 void AccessEmitter::generateFinishStoreByTrap(const ValueContext& value)
 {
     callVoidOperation(value, RuntimeOperation::FinishStoreByTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->valueOperand()), in<Boxed>(value->answerOperand()), word32(value->mode() == ECMAMode::Strict) }, { .isOnRarePath = true });

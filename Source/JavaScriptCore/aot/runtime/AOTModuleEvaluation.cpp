@@ -1232,7 +1232,7 @@ void Modules::noteModulesLoadedWith(ModuleID root)
 ALWAYS_INLINE bool Modules::isLeftAsLoaded(ModuleID module) const
 {
     ModuleRecord* record = isCommonJSFileOrFace(module) ? nullptr : recordIfExists(module);
-    return record && record->status() == CyclicModuleRecord::Status::Unlinked;
+    return record && record->status() == CyclicModuleRecord::Status::Unlinked && !data(module).capturesExports();
 }
 
 // Most of what a large graph requests is an ES module without a record.
@@ -1607,47 +1607,36 @@ void Modules::layWayOfLoad(PlanOfLoad& plan, LevelOfLoad* above)
     }
 
     std::optional<ModuleID> below;
-    std::optional<ModuleID> firstFileInFront;
-    std::optional<ModuleID> firstFileBehind;
+    Vector<LevelOfLoad::FileOfNextLevel, 4> filesInFront;
+    Vector<LevelOfLoad::FileOfNextLevel, 4> filesBehind;
     for (size_t depth = levels.size(); depth-- > highestLevel; onWay = &found[onWay->importer]) {
         auto planned = makeUnique<LevelOfLoad>();
         planned->next = below;
-        planned->firstFileInFrontOfNext = std::exchange(firstFileInFront, std::nullopt);
-        planned->firstFileBehindNext = std::exchange(firstFileBehind, std::nullopt);
+        planned->filesInFrontOfNext = std::exchange(filesInFront, { });
+        planned->filesBehindNext = std::exchange(filesBehind, { });
         planned->plan = &plan;
         planned->depth = depth;
-        // While a file runs the loader waits for it, so whatever the file requires, the module that imports it is not loaded before the file has ended.
-        std::unique_ptr<LevelOfLoad> inFront;
-        std::unique_ptr<LevelOfLoad> behind;
+        planned->place = onWay - found.span().data();
         if (levels[depth].hasFiles) {
+            // Where a way was laid again, the module where the loader stands need not import what the way goes on with.
+            uint32_t placeOfModuleThatAsks = above && depth == highestLevel ? above->place : onWay->importer;
             for (Found& file : plan.level(depth)) {
                 if (!file.isFile || &file == onWay || !isLeftToLoad(plan, file))
                     continue;
-                if (onWay->isFile) {
-                    planned->files.append(file.module);
-                    continue;
-                }
-                auto& filesOnThatSide = &file < onWay ? inFront : behind;
-                if (filesOnThatSide)
-                    filesOnThatSide->files.append(file.module);
-                else {
-                    filesOnThatSide = makeUnique<LevelOfLoad>();
-                    (&file < onWay ? firstFileInFront : firstFileBehind) = file.module;
-                }
+                if (isCommonJSFileOrFace(file.module))
+                    (&file < onWay ? filesInFront : filesBehind).append({ file.module, file.importer == placeOfModuleThatAsks });
+                else
+                    planned->filesWithoutCode.append(file.module);
             }
         }
-        if (inFront)
-            m_levelsOfLoads.set(*firstFileInFront, WTF::move(inFront));
-        if (behind)
-            m_levelsOfLoads.set(*firstFileBehind, WTF::move(behind));
         m_levelsOfLoads.set(onWay->module, WTF::move(planned));
         below = onWay->module;
     }
     if (!above)
         return;
     above->next = below;
-    above->firstFileInFrontOfNext = firstFileInFront;
-    above->firstFileBehindNext = firstFileBehind;
+    above->filesInFrontOfNext = WTF::move(filesInFront);
+    above->filesBehindNext = WTF::move(filesBehind);
 }
 
 // The loader asks for a level. The root is reported as loaded when the last of the requests so far has been heard of.
@@ -1693,94 +1682,49 @@ bool Modules::isLeftToLoad(PlanOfLoad& plan, PlanOfLoad::Found& found)
 void Modules::takeUpWaysOfLoads()
 {
     m_levelsOfLoads.removeIf([&](auto& entry) {
-        LevelOfLoad& level = *entry.value;
-        if (level.isAskedFor)
-            return false;
-        if (level.plan && level.firstError)
-            level.plan->firstErrorOnWayTakenUp.set(*m_instance.vm, level.firstError.get());
-        return true;
+        return !entry.value->isAskedFor;
     });
 }
 
 // A require() has come between. What is left of the graph is as far from the root as it was.
 void Modules::layWayOfLoadAgain(LevelOfLoad& level)
 {
-    VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
     auto take = [&](std::optional<ModuleID> onWay) {
         return onWay ? m_levelsOfLoads.take(*onWay) : nullptr;
     };
-    JSValue firstError = level.plan->firstErrorOnWayTakenUp.get();
-    level.plan->firstErrorOnWayTakenUp.clear();
     level.plan->isWhole = false;
     for (uint32_t place : std::exchange(level.plan->knownToBeLeft, { }))
         level.plan->found[place].isKnownToBeLeft = false;
-    take(level.firstFileInFrontOfNext);
-    take(level.firstFileBehindNext);
-    for (std::unique_ptr<LevelOfLoad> below = take(level.next); below; below = take(below->next)) {
-        if (!firstError)
-            firstError = below->firstError.get();
-        take(below->firstFileInFrontOfNext);
-        take(below->firstFileBehindNext);
-    }
+    for (std::unique_ptr<LevelOfLoad> below = take(level.next); below; below = take(below->next)) { }
     layWayOfLoad(*level.plan, &level);
-    if (!firstError)
+}
+
+void Modules::generateNativeModuleForLoader(ModuleID module)
+{
+    if (!isNativeModule(module) || didCaptureExports(module))
         return;
-    if (auto below = level.next ? m_levelsOfLoads.find(*level.next) : m_levelsOfLoads.end(); below != m_levelsOfLoads.end()) {
-        below->value->firstError.set(vm, firstError);
-        return;
-    }
-    throwException(m_instance.globalObject, scope, firstError);
+    ensureLoaded(module).isBeingLoadedByLoader = true;
+    captureExports(module);
 }
 
 void Modules::evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded)
 {
-    VM& vm = *m_instance.vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (runsWhenLoaded)
         evaluateLoadedCommonJSFile(moduleOnWay);
-    else if (isNativeModule(moduleOnWay))
-        captureExports(moduleOnWay);
+    else
+        generateNativeModuleForLoader(moduleOnWay);
+    scope.release();
     auto found = m_levelsOfLoads.find(moduleOnWay);
-    if (found == m_levelsOfLoads.end()) [[likely]] {
-        scope.release();
+    if (found == m_levelsOfLoads.end()) [[likely]]
         return;
-    }
-
-    // `bun run` loads the rest of the graph, and with it runs the other files, before it reports an error.
-    JSValue firstError = found->value->firstError.get();
-    auto noteError = [&] {
-        Exception* exception = scope.exception();
-        if (!exception) [[likely]]
-            return true;
-        if (vm.isTerminationException(exception))
-            return false;
-        if (!firstError)
-            firstError = exception->value();
-        return scope.tryClearException();
-    };
-    if (!noteError())
-        return;
-    Vector<ModuleID, 4> files = std::exchange(found->value->files, { });
-    std::optional<ModuleID> next = found->value->next;
-    for (ModuleID file : files) {
-        evaluateLoadedCommonJSFile(file);
-        if (!noteError())
-            return;
+    for (ModuleID file : std::exchange(found->value->filesWithoutCode, { }))
         m_filesLoadedWithoutLoader.set(file.index());
-    }
     // The loader asks a file for no requests, nor the module that stands for one: it has run by now.
     if (!isLoadedWithRequests(moduleOnWay) || isCommonJSFileOrFace(moduleOnWay)) {
         m_filesLoadedWithoutLoader.set(moduleOnWay.index());
         m_levelsOfLoads.remove(moduleOnWay);
     }
-    if (!firstError)
-        return;
-    if (auto below = next ? m_levelsOfLoads.find(*next) : m_levelsOfLoads.end(); below != m_levelsOfLoads.end()) {
-        below->value->firstError.set(vm, firstError);
-        return;
-    }
-    throwException(m_instance.globalObject, scope, firstError);
 }
 
 // While the loader goes through a graph whose files ran ahead of it, it comes to each of them.

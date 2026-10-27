@@ -32,6 +32,7 @@
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
 #include "DisallowVMEntry.h"
+#include "ErrorInstance.h"
 #include "ExceptionHelpers.h"
 #include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
@@ -356,19 +357,29 @@ JSString* Modules::pathString(ModuleID module)
     return jsString(*m_instance.vm, m_table.pathText(module));
 }
 
-void Modules::throwExportNotFound(ModuleID exporter, uint32_t nameIdentifier)
+void Modules::throwExportNotFound(const RequiredNameData& requiredName)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    Identifier name = identifier(nameIdentifier);
+    if (const ExportStatementData* statement = m_table.findExportStatement(requiredName)) {
+        throwException(realm, scope, createExportStatementFindsNothingError(realm, ProgramStrings::text(m_table.programTables(), statement->exportNameString()), ProgramStrings::text(m_table.programTables(), statement->specifierString())));
+        return;
+    }
+    Identifier name = identifier(requiredName.name);
+    String path = m_table.pathText(requiredName.exporterModule());
     bool isDefault = name == m_instance.vm->propertyNames->defaultKeyword;
-    throwException(realm, scope, isDefault ? createMissingDefaultExportError(realm, m_table.pathText(exporter)) : createExportNotFoundError(realm, name.string(), m_table.pathText(exporter)));
+    throwException(realm, scope, isDefault ? createMissingDefaultExportError(realm, path) : createExportNotFoundError(realm, name.string(), path));
 }
 
-void Modules::throwExportAmbiguous(ModuleID exporter, uint32_t nameIdentifier)
+void Modules::throwExportAmbiguous(const RequiredNameData& requiredName)
 {
+    JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    throwException(m_instance.globalObject, scope, createAmbiguousExportError(m_instance.globalObject, identifier(nameIdentifier).string(), m_table.pathText(exporter)));
+    if (const ExportStatementData* statement = m_table.findExportStatement(requiredName)) {
+        throwException(realm, scope, createExportStatementFindsSeveralError(realm, ProgramStrings::text(m_table.programTables(), statement->exportNameString()), ProgramStrings::text(m_table.programTables(), statement->specifierString())));
+        return;
+    }
+    throwException(realm, scope, createAmbiguousExportError(realm, identifier(requiredName.name).string(), m_table.pathText(requiredName.exporterModule())));
 }
 
 JSPromise* Modules::rejectedPromiseWithPendingException(JSGlobalObject* realm, ThrowScope& scope)
@@ -675,11 +686,16 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
     auto scope = DECLARE_THROW_SCOPE(vm);
     const ModuleFailureData& failure = m_table.failure(id);
     String specifier = ProgramStrings::text(m_table.programTables(), failure.specifierString());
-    String importer = m_table.pathText(failure.importerModule());
     if (failure.isAbsentExport()) {
-        throwException(realm, scope, createExportNotFoundError(realm, specifier, importer));
+        JSObject* error = failure.isAskedByExportStatement()
+            ? createExportStatementFindsNothingError(realm, specifier, ProgramStrings::text(m_table.programTables(), failure.exportSpecifierString()))
+            : createExportNotFoundError(realm, specifier, m_table.pathText(failure.importerModule()));
+        // A link finds the name missing, and no code runs while modules are linked.
+        uncheckedDowncast<ErrorInstance>(error)->setStackFrames(vm, { });
+        throwException(realm, scope, error);
         return;
     }
+    String importer = m_table.pathText(failure.importerModule());
     Identifier key;
     {
         DisallowVMEntry disallowVMEntry(vm);
@@ -687,7 +703,7 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
     }
     RETURN_IF_EXCEPTION(scope, void());
     if (host().createLoadError) {
-        JSValue error = host().createLoadError(realm, key.string());
+        JSValue error = host().createLoadError(realm, key.string(), isForRequire);
         RETURN_IF_EXCEPTION(scope, void());
         if (error) {
             throwException(realm, scope, error);
@@ -726,6 +742,7 @@ static constexpr InternalMicrotask jobsOfImportOfEvaluatedModule[] = {
 
 // Behind the fetch of the root, the making of its record and the entry of the record in the registry.
 static constexpr uint32_t jobInWhichLoaderAsksRoot = 4;
+static constexpr uint32_t jobsFromRequestToGenerator = 2;
 // The first two find the module loaded and run what is left to run of it.
 static constexpr size_t numberOfJobsBehindEvaluation = std::size(jobsOfImportOfEvaluatedModule) - 2;
 
@@ -1115,7 +1132,7 @@ bool Modules::continueCountedImport(JSPromise* importPromise, JSValue module, JS
     CountedImport& counted = m_countedImports[index];
     uint32_t job = counted.jobsRun + 1;
     // Most of the jobs only pass the turn on.
-    if (job > 1 && job != jobInWhichLoaderAsksRoot && job != counted.jobOfEvaluation && !counted.jobsOfLoader && !m_instance.vm->defaultMicrotaskQueue().isEmpty()) {
+    if (job > 1 && job != jobInWhichLoaderAsksRoot && job != counted.jobOfEvaluation && job != counted.jobOfNextNativeModule && !counted.jobsOfLoader && !m_instance.vm->defaultMicrotaskQueue().isEmpty()) {
         counted.jobsRun = job;
         if (!m_orderOfCountedJobs.isEmpty())
             m_orderOfCountedJobs.append(counted.serial);
@@ -1127,6 +1144,21 @@ bool Modules::continueCountedImport(JSPromise* importPromise, JSValue module, JS
     m_countedImports.removeAt(index);
     decideHowCountedImportGoesOn(import);
     return true;
+}
+
+// Each level of a graph is requested four jobs after the level above it.
+uint32_t Modules::findJobOfNextNativeModule(PlanOfLoad& plan, uint32_t currentJob) const
+{
+    for (uint32_t level = 1; level < plan.levels.size(); ++level) {
+        uint32_t job = level * jobInWhichLoaderAsksRoot + jobsFromRequestToGenerator;
+        if (job <= currentJob)
+            continue;
+        for (const PlanOfLoad::Found& found : plan.level(level)) {
+            if (isNativeModule(found.module) && !didCaptureExports(found.module))
+                return job;
+        }
+    }
+    return 0;
 }
 
 void Modules::forgetCountedImport(const CountedImport& import)
@@ -1216,6 +1248,25 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
         // The loader hears that the root is loaded in the next job, and links and evaluates in the one behind that.
         import.jobOfEvaluation = jobInWhichLoaderAsksRoot + jobsOfLevels + 2;
         import.plan = WTF::move(plan);
+        import.jobOfNextNativeModule = findJobOfNextNativeModule(*import.plan, job);
+    }
+    if (!isEvaluatedNow && job == import.jobOfNextNativeModule) {
+        Vector<ModuleID, 4> nativeModules;
+        for (const PlanOfLoad::Found& found : import.plan->level((job - jobsFromRequestToGenerator) / jobInWhichLoaderAsksRoot))
+            nativeModules.append(found.module);
+        for (ModuleID nativeModule : nativeModules) {
+            generateNativeModuleForLoader(nativeModule);
+            Exception* exception = scope.exception();
+            if (!exception) [[likely]]
+                continue;
+            if (vm.isTerminationException(exception))
+                return;
+            // The link throws the error again.
+            TRY_CLEAR_EXCEPTION(scope, void());
+        }
+        if (import.jobsOfLoader || storedStatus(module) != StoredModuleStatus::Unlinked)
+            return goOnWithLoader();
+        import.jobOfNextNativeModule = findJobOfNextNativeModule(*import.plan, job);
     }
     isEvaluatedNow |= job == import.jobOfEvaluation;
     if (!isEvaluatedNow) {
@@ -1537,14 +1588,10 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
     });
 }
 
-// `bun run` reads what is imported from a module with an open namespace from the object that stands for the namespace, and requests nothing.
 bool Modules::isBuiltinModuleOfLoader(ModuleID module) const
 {
     const ModuleData& moduleData = data(module);
-    if (moduleData.exportRule != SyntheticExportRule::RuntimeModule)
-        return false;
-    std::optional<uint32_t> registryID = moduleData.registryID();
-    return registryID && !BuiltinTable::singleton().at(RuntimeModuleID(*registryID)).flags.contains(RuntimeModuleFlag::HasOpenNamespace);
+    return moduleData.exportRule == SyntheticExportRule::RuntimeModule && moduleData.registryID();
 }
 
 // The loader of `bun run` fetches a built-in module for the first graph that imports it, in steps of its own, and has it from then on. A require() does not ask the loader.
@@ -1553,7 +1600,24 @@ bool Modules::isBuiltinModuleNewToLoader(ModuleID module) const
     return !isSettledForLinks(module) && !m_filesLoadedWithoutLoader.get(module.index()) && isBuiltinModuleOfLoader(module);
 }
 
-void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
+// `bun run` rejects the load of a module where the first of its requests fails, and the importer of that module hears of it two jobs later, and so on up to the root.
+ModuleGraphLoadingState* Modules::loadThatWaitsFor(ModuleID requester, const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure)
+{
+    if (m_filesAskedForOnBehalfOfRoot.isEmpty()) [[likely]]
+        return loadOfRequester;
+    size_t index = m_filesAskedForOnBehalfOfRoot.findIf([&](const FileAskedForOnBehalfOfRoot& file) { return file.requester == requester && file.key == key; });
+    if (index == notFound)
+        return loadOfRequester;
+    FileAskedForOnBehalfOfRoot file = WTF::move(m_filesAskedForOnBehalfOfRoot[index]);
+    m_filesAskedForOnBehalfOfRoot.removeAt(index);
+    auto* loadOfRoot = uncheckedDowncast<ModuleGraphLoadingState>(file.plan->load.get());
+    loadOfRequester->setPendingModulesCount(loadOfRequester->pendingModulesCount() - 1);
+    loadOfRoot->setPendingModulesCount(loadOfRoot->pendingModulesCount() + 1);
+    jobsUntilLoadHearsOfFailure = 2 * (file.depth - 1);
+    return loadOfRoot;
+}
+
+void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, ModuleGraphLoadingState& load)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     if (!isLoadedWithRequests(module) || !record->requestedModules().isEmpty())
@@ -1562,10 +1626,8 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         std::unique_ptr<LevelOfLoad> level = m_levelsOfLoads.take(module);
         if (!level)
             return false;
-        if (level->next && level->plan && (!m_levelsOfLoads.contains(*level->next) || !isStillToBeLoaded(*level->next))) {
+        if (level->next && level->plan && (!m_levelsOfLoads.contains(*level->next) || !isStillToBeLoaded(*level->next)))
             layWayOfLoadAgain(*level);
-            RETURN_IF_EXCEPTION(scope, true);
-        }
         // Nobody sees how many steps are taken before require() returns.
         if (level->next && level->plan && !m_instance.vm->m_synchronousModuleQueue)
             countStepsOfLevel(*level->plan, level->depth + 1);
@@ -1573,15 +1635,34 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
             for (const PlanOfLoad::Found& found : level->plan->level(level->depth + 1))
                 noteRequestByLoader(found.module);
         }
-        for (std::optional<ModuleID> target : { level->firstFileInFrontOfNext, level->next, level->firstFileBehindNext }) {
-            if (!target)
-                continue;
-            if (auto asked = m_levelsOfLoads.find(*target); asked != m_levelsOfLoads.end())
-                asked->value->isAskedFor = true;
-            Identifier key = keyOfRequest(*target);
+        auto append = [&](ModuleID target) {
+            Identifier key = keyOfRequest(target);
             record->appendRequestedModule(key, nullptr, ModulePhase::Evaluation);
-            record->didRequestCompiledModule(key, *target);
+            record->didRequestCompiledModule(key, target);
+            return key;
+        };
+        auto appendFiles = [&](const Vector<LevelOfLoad::FileOfNextLevel, 4>& files) {
+            for (const LevelOfLoad::FileOfNextLevel& file : files) {
+                // The loader has the file once it has run, and takes no step for it again.
+                m_filesLoadedWithoutLoader.set(file.module.index());
+                // A require() has come between.
+                if (status(file.module) == ModuleStatus::Evaluated)
+                    continue;
+                noteLoadOfFile(file.module);
+                RETURN_IF_EXCEPTION(scope, void());
+                Identifier key = append(file.module);
+                if (!file.isImportedByModuleOnWay)
+                    m_filesAskedForOnBehalfOfRoot.append(FileAskedForOnBehalfOfRoot { module, key, level->plan, level->depth + 1 });
+            }
+        };
+        appendFiles(level->filesInFrontOfNext);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (level->next) {
+            if (auto asked = m_levelsOfLoads.find(*level->next); asked != m_levelsOfLoads.end())
+                asked->value->isAskedFor = true;
+            append(*level->next);
         }
+        appendFiles(level->filesBehindNext);
         return true;
     };
     if (!m_levelsOfLoads.isEmpty() && appendNextOnWay())
@@ -1603,6 +1684,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         for (LoadInFlight& load : m_loadsInFlight)
             load.isWalked |= load.root == module;
         if (!data(module).isLoadedByLoader() && m_rootWhoseFilesRanAhead != module && !mustWaitForFile && planLevelsOfLoad(module)) {
+            m_levelsOfLoads.get(module)->plan->load.set(*m_instance.vm, &load);
             appendNextOnWay();
             return;
         }
@@ -2222,9 +2304,14 @@ unsigned ModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObject, Modul
     return context.index;
 }
 
-void ModuleRecord::willLoadRequests()
+void ModuleRecord::willLoadRequests(ModuleGraphLoadingState& load)
 {
-    modules().appendRequestsForLoader(m_module, this);
+    modules().appendRequestsForLoader(m_module, this, load);
+}
+
+ModuleGraphLoadingState* ModuleRecord::loadThatWaitsFor(const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure)
+{
+    return modules().loadThatWaitsFor(m_module, key, loadOfRequester, jobsUntilLoadHearsOfFailure);
 }
 
 void ModuleRecord::didLoad()

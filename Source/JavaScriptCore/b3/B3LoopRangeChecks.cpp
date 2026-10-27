@@ -39,9 +39,8 @@ std::optional<RangeCheck> rangeCheckFor(Value* comparison)
     }
 }
 
-static bool isBound(const LoopInvariance& invariance, Value* bound, Value* value)
+static bool isSameValueInPreHeader(const LoopInvariance& invariance, Value* other, Value* value)
 {
-    Value* other = bound;
     while (true) {
         value = invariance.canonicalValue(value);
         other = invariance.canonicalValue(other);
@@ -72,8 +71,8 @@ static void decideComparisonsWithBound(const RangeCheckInputs& inputs, RangeChec
         for (Value* value : *block) {
             if (value->numChildren() != 2)
                 continue;
-            Value* left = isBound(invariance, bound, value->child(0)) ? bound : value->child(0);
-            Value* right = isBound(invariance, bound, value->child(1)) ? bound : value->child(1);
+            Value* left = isSameValueInPreHeader(invariance, bound, value->child(0)) ? bound : value->child(0);
+            Value* right = isSameValueInPreHeader(invariance, bound, value->child(1)) ? bound : value->child(1);
             TriState outcome = evaluateComparisonWithBound(loop, value->opcode(), left, right);
             if (outcome != TriState::Indeterminate)
                 plan.decidedComparisons.add(value, outcome == TriState::True);
@@ -172,6 +171,121 @@ static std::optional<int64_t> offsetFromCounter(const RangeCheckInputs& inputs, 
     return offset;
 }
 
+namespace {
+
+struct CounterEnd {
+    Value* value { nullptr };
+    int64_t addend { 0 };
+};
+
+} // anonymous namespace
+
+static CounterEnd minCounter(const CountedLoop& loop)
+{
+    if (loop.increases())
+        return { loop.start, 0 };
+    return { loop.bound, loop.includesEqual() ? 0 : 1 };
+}
+
+static CounterEnd maxCounter(const CountedLoop& loop)
+{
+    if (!loop.increases())
+        return { loop.start, 0 };
+    return { loop.bound, loop.includesEqual() ? 0 : -1 };
+}
+
+static CheckedRange rangeOf(const Procedure& proc, const CountedLoop& loop, CounterEnd end)
+{
+    return checkedAdd(intervalFor(proc, end.value, loop.signedness()), checkedConstant(end.addend));
+}
+
+static bool planStridedGuards(const Procedure& proc, const CountedLoop& loop, StridedRangeCheck& check)
+{
+    CheckedRange scale = checkedRangeOf(proc, check.index.scale);
+    CheckedRange offset = checkedRangeOf(proc, check.index.offset);
+    if (!scale || (!scale->min && !scale->max))
+        return false;
+    check.isIncreasing = scale->max > 0;
+    check.needsScaleGuard = check.isIncreasing ? scale->min <= 0 : !scale->max;
+    if (check.isIncreasing)
+        scale->min = std::max<Int128>(scale->min, 1);
+    else
+        scale->max = std::min<Int128>(scale->max, -1);
+
+    auto indexAt = [&](CounterEnd end, int64_t constant) {
+        return checkedAdd(checkedAdd(checkedMultiply(scale, rangeOf(proc, loop, end)), offset), checkedConstant(constant));
+    };
+    CheckedRange lowest = indexAt(check.isIncreasing ? minCounter(loop) : maxCounter(loop), check.minOffset);
+    CheckedRange highest = indexAt(check.isIncreasing ? maxCounter(loop) : minCounter(loop), check.maxOffset);
+    if (!lowest || !highest || lowest->max < 0)
+        return false;
+    check.needsLowerGuard = lowest->min < 0;
+    int64_t maxInt32Limit = maxLimitForRangeChecks(Int32);
+    check.needsLimitGuard = check.isSignExtended && highest->max > maxInt32Limit && intervalFor(proc, check.limit, Signedness::Unsigned).max > maxInt32Limit;
+    return true;
+}
+
+static void planStridedRangeCheck(const RangeCheckInputs& inputs, RangeCheckPlan& plan, Value* comparison, const RangeCheck& rangeCheck, Value* limit)
+{
+    const Procedure& proc = inputs.proc;
+    const CountedLoop& loop = inputs.loop;
+    const LoopInvariance& invariance = inputs.invariance;
+    CheckedRange lowestCounter = rangeOf(proc, loop, minCounter(loop));
+    CheckedRange highestCounter = rangeOf(proc, loop, maxCounter(loop));
+    if (!lowestCounter || !highestCounter || lowestCounter->min > highestCounter->max)
+        return;
+
+    Value* index = rangeCheck.index->foldIdentity();
+    bool isSignExtended = index->opcode() == SExt32;
+    if (isSignExtended || index->opcode() == ZExt32)
+        index = index->child(0);
+    auto affineIndex = affineIndexOf({ proc, loop.inductionVariable, { lowestCounter->min, highestCounter->max }, [&](Value* value) -> Value* {
+        if (!invariance.isInvariant(value))
+            return nullptr;
+        Value* canonical = invariance.canonicalValue(value);
+        if (!invariance.isAvailableInPreHeader(canonical) || isStoredInLoop(*inputs.region.loop, canonical))
+            return nullptr;
+        return canonical;
+    } }, index);
+    if (!affineIndex)
+        return;
+    int64_t offset = std::exchange(affineIndex->offset.constant, 0);
+
+    size_t found = plan.stridedChecks.findIf([&](auto& check) {
+        return isSameValueInPreHeader(invariance, check.limit, limit) && check.index.scale == affineIndex->scale && check.index.offset == affineIndex->offset;
+    });
+    StridedRangeCheck check;
+    if (found != notFound)
+        check = plan.stridedChecks[found];
+    else {
+        if (plan.bounds.size() + plan.stridedChecks.size() >= proc.limit(Limit::MaxRangeCheckBoundsPerLoop)) {
+            proc.didReachLimit(Limit::MaxRangeCheckBoundsPerLoop, comparison->origin());
+            return;
+        }
+        check = { WTF::move(*affineIndex), limit, offset, offset };
+    }
+    check.minOffset = std::min(check.minOffset, offset);
+    check.maxOffset = std::max(check.maxOffset, offset);
+    check.isSignExtended |= isSignExtended;
+    if (!planStridedGuards(proc, loop, check))
+        return;
+
+    if (found != notFound)
+        plan.stridedChecks[found] = WTF::move(check);
+    else {
+        plan.stridedChecks.append(WTF::move(check));
+        noteWhatBoundsTurns(proc, limit, plan);
+    }
+    plan.decidedComparisons.add(comparison, rangeCheck.isTrueInBounds);
+}
+
+static Opcode safeBoundRelation(const CountedLoop& loop)
+{
+    if (loop.increases())
+        return loop.isUnsigned() ? BelowEqual : LessEqual;
+    return loop.isUnsigned() ? AboveEqual : GreaterEqual;
+}
+
 static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan)
 {
     const Procedure& proc = inputs.proc;
@@ -188,17 +302,21 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
             if (!rangeCheck || plan.decidedComparisons.contains(value) || invariance.plan().isHoisted(value))
                 continue;
             Value* limit = rangeCheck->limit;
-            if (rangeCheck->index->type() != loop.type() || !invariance.isInvariant(limit) || value == loop.test->last()->child(0))
-                continue;
-            auto offset = offsetFromCounter(inputs, rangeCheck->index);
-            if (!offset)
-                continue;
-            if (maxStart + *offset < 0)
+            if (!invariance.isInvariant(limit) || value == loop.test->last()->child(0))
                 continue;
             if (isStoredInLoop(*inputs.region.loop, limit))
                 continue;
             limit = invariance.canonicalValue(limit);
             if (!invariance.isAvailableInPreHeader(limit))
+                continue;
+            std::optional<int64_t> offset;
+            if (rangeCheck->index->type() == loop.type())
+                offset = offsetFromCounter(inputs, rangeCheck->index);
+            if (!offset) {
+                planStridedRangeCheck(inputs, plan, value, *rangeCheck, limit);
+                continue;
+            }
+            if (maxStart + *offset < 0)
                 continue;
             size_t found = plan.bounds.findIf([&](auto& bound) { return bound.limit == limit; });
             if (found == notFound) {
@@ -215,6 +333,14 @@ static void findRangeChecks(const RangeCheckInputs& inputs, RangeCheckPlan& plan
             plan.decidedComparisons.add(value, rangeCheck->isTrueInBounds);
         }
     }
+
+    if (plan.stridedChecks.isEmpty() || plan.clampsBound())
+        return;
+    Signedness signedness = loop.signedness();
+    if (!loop.isTopTested && !plan.relationHoldsOnEntry)
+        plan.entryGuards.append({ loop.relation, loop.start, signedness, loop.bound, signedness, 0 });
+    if (!loop.cannotWrap())
+        plan.entryGuards.append({ safeBoundRelation(loop), loop.bound, signedness, nullptr, Signedness::Signed, static_cast<int64_t>(loop.farthestSafeBound) });
 }
 
 RangeCheckPlan planRangeChecks(const RangeCheckInputs& inputs)
@@ -398,6 +524,55 @@ void appendEntryGuards(FastPreHeader& front, Origin origin, std::span<const Entr
     }
 }
 
+void appendStridedRangeCheckGuards(FastPreHeader& front, std::span<const StridedRangeCheck> checks, const CountedLoop& loop, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
+{
+    Procedure& proc = front.procedure();
+    Origin origin = loop.test->last()->origin();
+    auto constant = [&](int64_t value) {
+        return front.appendIntConstant(origin, Int64, value);
+    };
+    auto append = [&](Opcode opcode, Value* left, Value* right) -> Value* {
+        return front.last()->appendNew<Value>(proc, opcode, origin, left, right);
+    };
+    auto addConstant = [&](Value* value, int64_t addend) {
+        return addend ? append(Add, value, constant(addend)) : value;
+    };
+    auto widen = [&](Value* value, Signedness signedness) -> Value* {
+        value = valueInPreHeader(value);
+        if (value->type() == Int64)
+            return value;
+        return front.last()->appendNew<Value>(proc, signedness == Signedness::Signed ? SExt32 : ZExt32, origin, value);
+    };
+    auto appendSum = [&](const InvariantSum& sum) -> Value* {
+        Value* result = nullptr;
+        for (const InvariantTerm& term : sum.terms) {
+            Value* product = widen(term.first, Signedness::Signed);
+            if (term.second)
+                product = append(Mul, product, widen(term.second, Signedness::Signed));
+            product = append(Mul, product, constant(term.coefficient));
+            result = result ? append(Add, result, product) : product;
+        }
+        return result ? addConstant(result, sum.constant) : constant(sum.constant);
+    };
+
+    for (const StridedRangeCheck& check : checks) {
+        Value* scale = appendSum(check.index.scale);
+        if (check.needsScaleGuard)
+            front.appendGuard(origin, check.isIncreasing ? GreaterThan : LessThan, scale, constant(0));
+        Value* offset = appendSum(check.index.offset);
+        auto indexAt = [&](CounterEnd end, int64_t addend) {
+            Value* counter = addConstant(widen(end.value, loop.signedness()), end.addend);
+            return addConstant(append(Add, append(Mul, scale, counter), offset), addend);
+        };
+        if (check.needsLowerGuard)
+            front.appendGuard(origin, GreaterEqual, indexAt(check.isIncreasing ? minCounter(loop) : maxCounter(loop), check.minOffset), constant(0));
+        Value* limit = widen(check.limit, Signedness::Unsigned);
+        if (check.needsLimitGuard)
+            front.appendGuard(origin, BelowEqual, limit, constant(maxLimitForRangeChecks(Int32)));
+        front.appendGuard(origin, LessThan, indexAt(check.isIncreasing ? maxCounter(loop) : minCounter(loop), check.maxOffset), limit);
+    }
+}
+
 void appendGuardThatArrayHoldsLength(FastPreHeader& front, Origin origin, MemoryValue* length, const ScopedLambda<Value*(Value*)>& valueInPreHeader)
 {
     Procedure& proc = front.procedure();
@@ -405,13 +580,6 @@ void appendGuardThatArrayHoldsLength(FastPreHeader& front, Origin origin, Memory
     auto offset = static_cast<MemoryValue::OffsetType>(length->offset() + heaps.Butterfly_vectorLength.offset() - heaps.Butterfly_publicLength.offset());
     Value* room = front.last()->appendNew<MemoryValue>(proc, Load, Int32, origin, valueInPreHeader(length->lastChild()), offset, heaps.rangeOf(heaps.Butterfly_vectorLength));
     front.appendGuard(origin, BelowEqual, valueInPreHeader(length), room);
-}
-
-static Opcode safeBoundRelation(const CountedLoop& loop)
-{
-    if (loop.increases())
-        return loop.isUnsigned() ? BelowEqual : LessEqual;
-    return loop.isUnsigned() ? AboveEqual : GreaterEqual;
 }
 
 static Value* appendClampedBound(FastPreHeader& front, const RangeCheckPlan& plan, const CountedLoop& loop, Value* bound, const ScopedLambda<Value*(Value*)>& valueInPreHeader)

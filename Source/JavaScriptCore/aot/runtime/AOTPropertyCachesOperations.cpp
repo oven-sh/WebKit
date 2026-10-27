@@ -502,6 +502,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateDenialOfHasTrap, void, (Instance* i
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateConsentOfDeleteTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateConsentOfDeleteTrap);
+    ProxyObject::finishDelete(globalObject, asObject(JSValue::decode(target)), JSValue::decode(property));
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTFinishStoreByTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property, EncodedJSValue value, EncodedJSValue answer, uint32_t isStrict))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishStoreByTrap);
@@ -719,7 +726,8 @@ static bool hasAndCache(Instance* instance, JSObject* object, const CachedName& 
     auto scope = DECLARE_THROW_SCOPE(vm);
     PropertyCaches& caches = *instance->state->propertyCaches;
     PropertyName propertyName(name.uid);
-    bool shouldFile = caches.shouldFile(object->structureID(), name.uid, SlotAccess::Read);
+    // What is filed for a proxy sends a read and an `in` to its traps. Whether it has a property of its own no stub asks a trap, so what would be filed would be filed at each question.
+    bool shouldFile = (isIn || object->type() != ProxyObjectType) && caches.shouldFile(object->structureID(), name.uid, SlotAccess::Read);
     if (caches.countsNames()) [[unlikely]]
         caches.countMiss(isIn ? "in"_s : "has own"_s, shouldFile, object, name.uid);
     if (shouldFile) {

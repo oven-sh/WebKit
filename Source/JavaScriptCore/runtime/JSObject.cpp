@@ -3228,7 +3228,15 @@ void JSObject::reifyAllStaticProperties(JSGlobalObject* globalObject)
             auto key = Identifier::fromString(vm, value.m_key);
             PropertyOffset offset = getDirectOffset(vm, key, attributes);
             if (!isValidOffset(offset)) {
-                reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
+#if ENABLE(AOT)
+                // Compiled code may hold the object already. The property is that object.
+                JSObject* madeAhead = vm.hasCompiledCode() && !(value.attributes() & PropertyAttribute::Accessor) ? AOT::RuntimeHooks::takeStaticPropertyMadeAhead(this, key.impl()) : nullptr;
+                if (madeAhead) [[unlikely]] {
+                    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+                    putDirect(vm, key, madeAhead, attributesForStructure(value.attributes()));
+                } else
+#endif
+                    reifyStaticProperty(vm, hashTable->classForThis, key, value, *this);
                 // Leave the rest lazy on throw; the caller propagates.
                 if (vm.exceptionForInspection()) [[unlikely]] {
 #if ENABLE(AOT)

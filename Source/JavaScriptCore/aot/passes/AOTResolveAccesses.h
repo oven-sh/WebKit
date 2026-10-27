@@ -19,7 +19,8 @@ namespace JSC { namespace AOT { namespace Typed {
 // The operations that resolveAccesses() looks at. A deletion by a constant key becomes a deletion by name.
 // They name another receiver than the object at which the lookup starts.
 inline constexpr OpcodeSet readsForAnotherReceiver { Opcode::SuperGet, Opcode::GetByValWithThis };
-inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | readsForAnotherReceiver | OpcodeSet { Opcode::ElemDelete, Opcode::GetInternalField };
+inline constexpr OpcodeSet deletions { Opcode::PropDelete, Opcode::ElemDelete };
+inline constexpr OpcodeSet accessesToResolve = accessesByNameOrKey | readsForAnotherReceiver | deletions | OpcodeSet { Opcode::GetInternalField };
 
 struct AccessOperands {
     ValueID receiver;

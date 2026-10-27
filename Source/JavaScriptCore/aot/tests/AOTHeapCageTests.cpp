@@ -614,6 +614,19 @@ static void checkRequestsThatMayNotFailUseBallast()
     bmalloc::api::setAddressSpaceBallastHandler(nullptr);
 }
 
+static void checkAddressSpaceThatCannotBeCountedCountsAsTaken()
+{
+    AOT_TEST_CHECK(addressSpaceLeft() && addressSpaceLeft() != std::numeric_limits<size_t>::max());
+    struct rlimit limit;
+    AOT_TEST_CHECK(!getrlimit(RLIMIT_NOFILE, &limit));
+    struct rlimit noMoreFiles { 0, limit.rlim_max };
+    AOT_TEST_CHECK(!setrlimit(RLIMIT_NOFILE, &noMoreFiles));
+    size_t left = addressSpaceLeft();
+    AOT_TEST_CHECK(!setrlimit(RLIMIT_NOFILE, &limit));
+    AOT_TEST_CHECK(!left);
+    AOT_TEST_CHECK(addressSpaceLeft());
+}
+
 // All the address space is taken. What a request that may not fail has let go of is not handed to a large request that may fail, on this thread or another, while small requests are
 // served. Once address space has come back, a large request is served and the ballast is whole.
 static void checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail()
@@ -1262,6 +1275,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
 #if USE(MIMALLOC)
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
+        { "heap-cage/ballast/address-space-that-cannot-be-counted-counts-as-taken"_s, runInProcessWithSharedRange<checkAddressSpaceThatCannotBeCountedCountsAsTaken> },
         { "heap-cage/ballast/what-it-lets-go-of-stays-with-requests-that-may-not-fail"_s, runInProcessWithSharedRange<checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail> },
         { "heap-cage/cage/error-owed-for-structures-then-storage-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Structures>> },
         { "heap-cage/cage/error-owed-for-storage-then-structures-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Storage>> },

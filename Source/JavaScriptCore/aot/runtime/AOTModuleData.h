@@ -349,17 +349,37 @@ struct RequiredNameData {
     ModuleID exporterModule() const { return ModuleID(static_cast<uint32_t>(exporter)); }
 };
 
+// `export { name as exportName } from "specifier"` asks for a required name: what the error of a link that does not find the name quotes. Sorted by the number of the required name.
+struct ExportStatementData {
+    uint32_t requiredName;
+    uint32_t exportName;
+    uint32_t specifier;
+
+    StringID exportNameString() const { return StringID(exportName); }
+    StringID specifierString() const { return StringID(specifier); }
+};
+
 // A specifier that an importer could not resolve at the build, or a name that a module turned out to lack: then the module stands in the place of the importer and the name in that of the specifier.
+// Where `export { .. as name } from "specifier"` asks for what the module lacks: what the statement is written from stands in the place of the importer, and the name that it exports in that of the specifier.
 struct ModuleFailureData {
     static constexpr uint32_t isAbsentExportBit = 1u << 31;
+    static constexpr uint32_t isAskedByExportStatementBit = 1u << 30;
+    static constexpr uint32_t bits = isAbsentExportBit | isAskedByExportStatementBit;
 
     static ModuleFailureData ofAbsentExport(ModuleID exporter, uint32_t name) { return { exporter.index() | isAbsentExportBit, name }; }
+    static ModuleFailureData ofExportStatement(uint32_t exportSpecifier, uint32_t exportName)
+    {
+        RELEASE_ASSERT(!(exportSpecifier & bits));
+        return { exportSpecifier | bits, exportName };
+    }
 
     uint32_t importer;
     uint32_t specifier;
 
     bool isAbsentExport() const { return importer & isAbsentExportBit; }
-    ModuleID importerModule() const { return ModuleID(importer & ~isAbsentExportBit); }
+    bool isAskedByExportStatement() const { return importer & isAskedByExportStatementBit; }
+    ModuleID importerModule() const { ASSERT(!isAskedByExportStatement()); return ModuleID(importer & ~bits); }
+    StringID exportSpecifierString() const { ASSERT(isAskedByExportStatement()); return StringID(importer & ~bits); }
     StringID specifierString() const { return StringID(specifier); }
 };
 
@@ -384,6 +404,7 @@ static_assert(sizeof(ModuleExportData) == 8 && isImageRecord<ModuleExportData>);
 static_assert(sizeof(IndirectExportData) == 8 && isImageRecord<IndirectExportData>);
 static_assert(sizeof(SyntheticExportData) == 8 && isImageRecord<SyntheticExportData>);
 static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
+static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(CompiledRuntimeModuleData) == 8 && isImageRecord<CompiledRuntimeModuleData>);
 static_assert(sizeof(CompiledRuntimeFunctionData) == 12 && isImageRecord<CompiledRuntimeFunctionData>);
@@ -406,6 +427,7 @@ static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<uns
     v(indirectExports, IndirectExportData) \
     v(syntheticExports, SyntheticExportData) \
     v(requiredNames, RequiredNameData) \
+    v(exportStatements, ExportStatementData) \
     v(moduleFailures, ModuleFailureData) \
     v(modulesByPath, uint16_t) \
     v(modulesOfUncompiledCode, uint32_t) \

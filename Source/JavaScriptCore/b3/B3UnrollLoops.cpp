@@ -540,6 +540,30 @@ private:
         return true;
     }
 
+    // Between two reads of a turn may lie a way that is not written out and comes back in front of the second. Every way to the later read leads through the block of the earlier one.
+    static bool writesOnSidePathBetween(const Plan& plan, const MemoryValue* earlier, const MemoryValue* load)
+    {
+        if (earlier->owner == load->owner)
+            return false;
+        IndexSet<BasicBlock*> reached;
+        Vector<BasicBlock*, 8> worklist { load->owner };
+        while (!worklist.isEmpty()) {
+            for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
+                if (predecessor == earlier->owner || !reached.add(predecessor))
+                    continue;
+                worklist.append(predecessor);
+                if (plan.blocks.contains(predecessor))
+                    continue;
+                for (Value* value : *predecessor) {
+                    Effects effects = value->effects();
+                    if (effects.fence || effects.writes.overlaps(load->range()))
+                        return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // A turn may read one place twice, once to see what is there and once to take it. In the loop itself the later walk over all values finds that. In the turns that are written out
     // each read gets an address of its own making, and the walk compares addresses by the value that computes them.
     unsigned mergeRepeatedLoads(const Plan& plan)
@@ -568,7 +592,7 @@ private:
                 if (!computesSameValue(earlier->lastChild(), load->lastChild(), Limits::maxDepthOfAddressInUnrolledLoop) || earlier->offset() != load->offset() || earlier->range() != load->range())
                     continue;
                 bool comesFirst = earlier->owner == load->owner ? earlier->owner->values().find(earlier) < load->owner->values().find(load) : dominators.strictlyDominates(earlier->owner, load->owner);
-                if (!comesFirst)
+                if (!comesFirst || writesOnSidePathBetween(plan, earlier, load))
                     continue;
                 load->replaceWithIdentity(earlier);
                 ++numberOfMergedLoads;

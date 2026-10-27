@@ -134,6 +134,7 @@ inline constexpr int64_t maxLoopBoundForRangeChecks = 1ll << 62;
 static_assert(maxLoopBoundForRangeChecks < std::numeric_limits<int64_t>::max() - maxRangeCheckOffset - maxCountedLoopStep);
 
 inline constexpr int64_t maxTurnsWithoutPoll = 1 << 20;
+inline constexpr unsigned maxTermsPerInvariantSum = 4;
 
 inline constexpr int64_t minPageSize = 4096;
 

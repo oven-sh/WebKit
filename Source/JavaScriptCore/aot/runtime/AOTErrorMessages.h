@@ -79,6 +79,9 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 #endif
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);
+// `export { exportName } from "specifier"`, worded as the link of a module that is not compiled words it.
+JSObject* createExportStatementFindsNothingError(JSGlobalObject*, const String& exportName, const String& specifier);
+JSObject* createExportStatementFindsSeveralError(JSGlobalObject*, const String& exportName, const String& specifier);
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject*);
 String functionNotCompiledMessage(const String& functionName);
 String functionNotCompiledMessage(const String& path, unsigned line);

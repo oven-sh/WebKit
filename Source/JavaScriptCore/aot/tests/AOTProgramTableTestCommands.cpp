@@ -718,8 +718,15 @@ static void printModules(const TablesContext& context)
     auto requiredNames = tables.requiredNames();
     for (uint32_t index = 0; index < requiredNames.size(); ++index)
         RecordLine(context, "requiredName"_s, index).field("exporter"_s, requiredNames[index].exporterModule()).identifier("name"_s, requiredNames[index].name).flag("mayBeAbsent"_s, requiredNames[index].mayBeAbsent);
-    for (const ModuleFailureData& failure : tables.moduleFailures())
+    for (const ExportStatementData& statement : tables.exportStatements())
+        RecordLine(context, "exportStatement"_s).field("requiredName"_s, statement.requiredName).field("exportName"_s, statement.exportNameString()).field("specifier"_s, statement.specifierString());
+    for (const ModuleFailureData& failure : tables.moduleFailures()) {
+        if (failure.isAskedByExportStatement()) {
+            RecordLine(context, "failure"_s).field("exportSpecifier"_s, failure.exportSpecifierString()).field("exportName"_s, failure.specifierString());
+            continue;
+        }
         RecordLine(context, "failure"_s).field("importer"_s, failure.importerModule()).field("specifier"_s, failure.specifierString());
+    }
     RecordLine(context, "modulesByPath"_s).list("modules"_s, ModuleNumbers(tables.modulesByPath(), tables.modules().size()), [&](uint32_t module) {
         context.printer.print(ModuleID(module));
     });

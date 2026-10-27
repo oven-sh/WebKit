@@ -125,9 +125,9 @@ function f1 name="rowsWithout" module=m0 flags=[IsChecked, HasExplicitName] leng
 }
 
 # `continue outer` is one edge from the comparison in the inner loop to the step of the outer loop. No flag is set in the inner loop and none is tested behind it.
-# The inner loop has three branches: the index against the length, the comparison, the counter.
+# The inner loop has two branches: the comparison and the counter. The index is checked against the length in front of the loop.
 # CHECK-LABEL: in loop #{{*}} steps by 1
-# CHECK: Branch(b@{{*}}, Terminal, {{*}}:IsInsideView)
+# CHECK-NOT: Branch(
 # CHECK: Double b@[[element]] = Load(b@{{*}}, ControlDependent|Reads:TypedArrayElements
 # CHECK: Int32 b@[[isUnwanted]] = Equal(b@{{*}}, b@[[element]], {{*}}:StrictEq)
 # CHECK-NEXT: Branch(b@[[isUnwanted]], Terminal, {{*}}:StrictEq)
@@ -135,6 +135,6 @@ function f1 name="rowsWithout" module=m0 flags=[IsChecked, HasExplicitName] leng
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-NOT: Branch(
 # CHECK-LABEL: end of loop
-# The two patchpoints are the one that keeps the array alive, which is no code, and the poll.
-# X64: loop #{{*}}, instructions: 6, patchpoints: 2, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 6, patchpoints: 2, {{*}} steps by 1
+# The patchpoint keeps the array alive and is no code. The length of the view bounds the iterations, so the loop does not poll.
+# X64: loop #{{*}}, instructions: 5, patchpoints: 1, {{*}} steps by 1
+# ARM64: loop #{{*}}, instructions: 5, patchpoints: 1, {{*}} steps by 1

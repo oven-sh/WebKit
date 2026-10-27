@@ -235,6 +235,14 @@ static void testRotateLoopsNestedLoops()
     checkSumsIntegersBelowBound(proc);
 }
 
+static unsigned numberOfPollsIn(BasicBlock* block)
+{
+    unsigned result = 0;
+    for (Value* value : *block)
+        result += isLoopPoll(value);
+    return result;
+}
+
 static void testRotateLoopsMovesPollInHeaderToBottomTest()
 {
     for (bool hasUnlikelyBackEdge : { false, true }) {
@@ -267,13 +275,14 @@ static void testRotateLoopsMovesPollInHeaderToBottomTest()
         validate(proc);
         CHECK_EQ(numberOfValues(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
         CHECK_EQ(valueCountInLoops(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
+        CHECK_EQ(numberOfPollsIn(header), 0u);
         CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(5)), 5);
-        CHECK_EQ(state.numberOfPolls, hasUnlikelyBackEdge ? 6 : 5);
+        CHECK_EQ(state.numberOfPolls, 5);
     }
 }
 
-// A rare edge leaves the loop and leads back in front of its top. Where that cycle has no poll of its own, its turns poll in the test that stays in front of the rotated loop.
-static void testRotateLoopsKeepsPollInFrontOfLoopOnCycleWithoutPoll()
+// A rare edge leaves the loop and leads back in front of its top. Where that cycle has no poll of its own, its turns poll on the way back, and what enters the loop from outside polls nowhere.
+static void testRotateLoopsPollsOnWayBackOfCycleWithoutPoll()
 {
     for (bool cycleHasPoll : { false, true }) {
         Procedure proc(remarkPolicy());
@@ -306,14 +315,53 @@ static void testRotateLoopsKeepsPollInFrontOfLoopOnCycleWithoutPoll()
         CHECK(rotateLoops(proc));
         fixSSA(proc);
         validate(proc);
-        unsigned numberOfPollsInFrontOfLoop = 0;
-        for (Value* value : *header)
-            numberOfPollsInFrontOfLoop += isLoopPoll(value);
-        CHECK_EQ(numberOfPollsInFrontOfLoop, cycleHasPoll ? 0u : 1u);
+        CHECK_EQ(numberOfPollsIn(header), 0u);
         CHECK_EQ(numberOfValues(proc, Patchpoint), 2u);
+        CHECK_EQ(wayBack->numSuccessors(), 1u);
+        CHECK_EQ(numberOfPollsIn(wayBack->successorBlock(0)), 1u);
+        CHECK_EQ(wayBack->successorBlock(0) == entry, cycleHasPoll);
         CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(6)), 6);
-        CHECK_EQ(state.numberOfPolls, 7);
+        CHECK_EQ(state.numberOfPolls, cycleHasPoll ? 7 : 6);
     }
+}
+
+// The loop around has no poll, and its turns are likely: they are as many as the entries into the inner loop, so they poll in the test that stays in front of it.
+static void testRotateLoopsKeepsPollInFrontOfLoopInsideLikelyCycleWithoutPoll()
+{
+    Procedure proc(remarkPolicy());
+    Graph graph { proc };
+    PollState state;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* outerHeader = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* outerLatch = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* turns = proc.addVariable(Int64);
+    Value* bound = cCallArgumentValues<int64_t>(proc, root)[0];
+    graph.set(root, index, graph.int64(root, 0));
+    graph.set(root, turns, graph.int64(root, 0));
+    graph.jump(root, outerHeader);
+    graph.jump(outerHeader, header);
+    appendPoll(graph, header, state);
+    graph.branch(header, graph.make(header, BitAnd, graph.get(header, index), graph.int64(header, 1)), body, outerLatch);
+    graph.increase(body, index, 1);
+    graph.jump(body, header);
+    graph.increase(outerLatch, index, 1);
+    graph.increase(outerLatch, turns, 1);
+    graph.branch(outerLatch, graph.make(outerLatch, LessThan, graph.get(outerLatch, turns), bound), outerHeader, exit);
+    graph.ret(exit, graph.get(exit, turns));
+    proc.resetReachability();
+    fixSSA(proc);
+
+    CHECK(rotateLoops(proc));
+    fixSSA(proc);
+    validate(proc);
+    CHECK_EQ(numberOfPollsIn(header), 1u);
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 2u);
+    CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(4)), 4);
+    CHECK_EQ(state.numberOfPolls, 7);
 }
 
 static void testRotateLoopsWritesRemark()
@@ -612,7 +660,8 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsHonorsHeaderFilter());
     RUN(testRotateLoopsNestedLoops());
     RUN(testRotateLoopsMovesPollInHeaderToBottomTest());
-    RUN(testRotateLoopsKeepsPollInFrontOfLoopOnCycleWithoutPoll());
+    RUN(testRotateLoopsPollsOnWayBackOfCycleWithoutPoll());
+    RUN(testRotateLoopsKeepsPollInFrontOfLoopInsideLikelyCycleWithoutPoll());
     RUN(testRotateLoopsWritesRemark());
     RUN(testRotateLoopsCountsRareBlockLimit());
     RUN(testRotateLoopsSkipsGuardWhoseRarePathRejoinsBody());

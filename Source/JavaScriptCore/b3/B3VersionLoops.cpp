@@ -209,6 +209,11 @@ private:
         appendEntryGuards(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.entryGuards.span(), [&](Value* value) {
             return hoistedValueOrSelf(version, value);
         });
+        if (!plan.rangeChecks.stridedChecks.isEmpty()) {
+            appendStridedRangeCheckGuards(*version.front, plan.rangeChecks.stridedChecks.span(), *plan.countedLoop, [&](Value* value) {
+                return hoistedValueOrSelf(version, value);
+            });
+        }
         if (omitsPollBehindGuard(plan)) {
             appendGuardThatArrayHoldsLength(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.lengthThatArrayMustHold, [&](Value* value) {
                 return hoistedValueOrSelf(version, value);

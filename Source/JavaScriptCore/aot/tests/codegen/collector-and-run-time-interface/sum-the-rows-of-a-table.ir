@@ -134,13 +134,13 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Return v36
 }
 
-# The inner loop ends within the row, so its fast copies do not poll. The outer loop counts up to a length too, but a turn of it runs a whole loop, so it polls once a row.
-# An unlikely path of the outer loop comes back in front of it. That way round has no other poll, so the test in front of the outer loop polls as well: the first poll of the function.
-# The last one belongs to the copy of the inner loop that keeps its checks.
+# The inner loop ends within the row, so its fast copies do not poll. The outer loop counts up to a length too, but a turn of it runs a whole loop, so it polls once a row: the first poll of the function.
+# The second one belongs to the copy of the inner loop that keeps its checks.
+# An unlikely path of the outer loop comes back in front of it. That way round has no other poll, so it polls on the way back: the last poll. What enters the outer loop from outside polls nowhere.
 # CHECK-LABEL: name="total" role=Source
 # CHECK: Patchpoint({{*}}isLoopPoll, {{*}}, [[outer]]:LoopHint)
-# CHECK: Patchpoint({{*}}isLoopPoll, {{*}}, [[outer]]:LoopHint)
 # CHECK: Patchpoint({{*}}isLoopPoll, {{*}}:LoopHint)
+# CHECK: Patchpoint({{*}}isLoopPoll, {{*}}, [[outer]]:LoopHint)
 # CHECK-NOT: isLoopPoll
 # CHECK-LABEL: end of function
 # INNER-LABEL: steps by 8

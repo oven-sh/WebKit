@@ -7,6 +7,7 @@
 
 #if ENABLE(B3_JIT)
 
+#include "B3AffineIndex.h"
 #include "B3IntRange.h"
 #include "B3Limits.h"
 #include "B3NaturalLoops.h"
@@ -53,9 +54,23 @@ struct EntryGuard {
     int64_t addend { 0 };
 };
 
+// Checks of index + k against one limit, for constants k in [minOffset, maxOffset].
+struct StridedRangeCheck {
+    AffineIndex index;
+    Value* limit { nullptr };
+    int64_t minOffset { 0 };
+    int64_t maxOffset { 0 };
+    bool isSignExtended { false };
+    bool isIncreasing { true };
+    bool needsScaleGuard { false };
+    bool needsLowerGuard { false };
+    bool needsLimitGuard { false };
+};
+
 struct RangeCheckPlan {
     UncheckedKeyHashMap<Value*, bool> decidedComparisons;
     Vector<RangeCheckBound, 4> bounds;
+    Vector<StridedRangeCheck, 2> stridedChecks;
     Vector<EntryGuard, 8> entryGuards;
     bool relationHoldsOnEntry { false };
     // The number of turns is at most each limit, and at most the bound of a counter that starts at zero or above. One of these is the length of a view, of the characters of a string
@@ -65,6 +80,7 @@ struct RangeCheckPlan {
     MemoryValue* lengthThatArrayMustHold { nullptr };
 
     bool clampsBound() const { return !bounds.isEmpty(); }
+    bool dependsOnLoopTest() const { return clampsBound() || !stridedChecks.isEmpty(); }
 };
 
 struct RangeCheckInputs {
@@ -90,6 +106,7 @@ struct MeetingCountersInputs {
 // For a loop that goes on while a counter that rises is below one that falls. Neither leaves the stretch between where the two started.
 RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs&);
 void appendEntryGuards(FastPreHeader&, Origin, std::span<const EntryGuard>, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
+void appendStridedRangeCheckGuards(FastPreHeader&, std::span<const StridedRangeCheck>, const CountedLoop&, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 void appendGuardThatArrayHoldsLength(FastPreHeader&, Origin, MemoryValue* length, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 
 inline int64_t maxLimitForRangeChecks(Type type)

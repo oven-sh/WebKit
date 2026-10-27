@@ -182,6 +182,8 @@ struct FlowProxiesSeenAtSite {
     AccessSiteID site;
     Vector<LayoutID, 4> handlers;
     Vector<LayoutID, 4> targets;
+    // Lists are seen among the targets, beside what has one of the layouts.
+    bool seesListsAsTargets { false };
 };
 
 struct FlowSiteTables {

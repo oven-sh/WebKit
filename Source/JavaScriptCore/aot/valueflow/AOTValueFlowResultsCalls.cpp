@@ -421,13 +421,24 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
             handlers = receiver.maker.unite(handlers, made.handlers);
             targets = receiver.maker.unite(targets, made.targets);
         });
+        bool seesLists = false;
         auto layoutsIn = [&](ValueSetID objects) {
             Vector<LayoutID, 4> layouts;
+            seesLists = false;
             if (ValueSets::isComplement(objects))
                 return layouts;
             bool areTooMany = false;
             sets.forEachMember(objects, [&](ValueFlowObjectID object) {
                 uint32_t layout = layoutsOfMembers[object.index()];
+                if (!layout && universe.isObject(object) && !ValueFlowResultInputs::isPlaceholder(object)) {
+                    Type type = receiver.positions.typeOfObject(object);
+                    const ClassPart* part = type.singleBuiltinClass();
+                    // What is neither is not told apart: no list of targets is kept.
+                    if (part && part->builtinClass == BuiltinClasses::Array)
+                        seesLists = true;
+                    else
+                        areTooMany = true;
+                }
                 if (!layout || layouts.contains(LayoutID(layout - 1)))
                     return;
                 if (layouts.size() == layouts.capacity())
@@ -435,12 +446,21 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
                 else
                     layouts.append(LayoutID(layout - 1));
             });
-            if (areTooMany)
+            if (areTooMany) {
                 layouts.clear();
+                seesLists = false;
+            }
             std::ranges::sort(layouts);
             return layouts;
         };
-        listingsOfWorker[receiver.worker].proxiesSeenAtSites.append({ application.accessSites.siteOfValue(receiver.id, receiver.statement.site), layoutsIn(handlers), layoutsIn(targets) });
+        Vector<LayoutID, 4> layoutsOfHandlers = layoutsIn(handlers);
+        // A handler that is a list has no trap that anybody knows.
+        if (seesLists)
+            layoutsOfHandlers.clear();
+        Vector<LayoutID, 4> layoutsOfTargets = layoutsIn(targets);
+        FlowProxiesSeenAtSite seenAtSite { application.accessSites.siteOfValue(receiver.id, receiver.statement.site), WTF::move(layoutsOfHandlers), WTF::move(layoutsOfTargets) };
+        seenAtSite.seesListsAsTargets = seesLists;
+        listingsOfWorker[receiver.worker].proxiesSeenAtSites.append(WTF::move(seenAtSite));
     };
     stampOperands<hasReceiverStamp, receiverOperandOf, &FlowBodyUpdate::accesses>(inputs, types, tables, FlowResultKind::ReceiverSets, StatisticID::FlowAccessesOfUnknownReceivers, [&](const StampedOperand& receiver) {
         ValueID site = receiver.statement.site;

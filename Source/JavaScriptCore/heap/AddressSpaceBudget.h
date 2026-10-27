@@ -25,7 +25,7 @@
 
 namespace JSC {
 
-// Returns SIZE_MAX when there is no limit, and on every system but Linux. Allocates nothing.
+// Returns SIZE_MAX when there is no limit, and on every system but Linux. Allocates nothing. What cannot be counted counts as taken.
 inline size_t addressSpaceLeft()
 {
 #if OS(LINUX)
@@ -41,6 +41,8 @@ inline size_t addressSpaceLeft()
             mappedPages = mappedPages * 10 + (text[i] - '0');
         close(file);
     }
+    if (!mappedPages)
+        return 0;
     size_t mapped = mappedPages * pageSize();
     return limit.rlim_cur > mapped ? limit.rlim_cur - mapped : 0;
 #else

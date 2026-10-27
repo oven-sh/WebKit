@@ -85,6 +85,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: indirectExports 0 0
 # CHECK-NEXT: syntheticExports 0 0
 # CHECK-NEXT: requiredNames 0 0
+# CHECK-NEXT: exportStatements 0 0
 # CHECK-NEXT: moduleFailures 0 0
 # CHECK-NEXT: modulesByPath 1 2
 # CHECK-NEXT: modulesOfUncompiledCode 0 0

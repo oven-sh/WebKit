@@ -1735,12 +1735,6 @@ static std::optional<uint32_t> findNumberOfConstructorName(const TableEncoder& e
 
 static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(const TableEncoder& encoder, const LayoutData& classLayout, std::optional<uint32_t> nameOfConstructor)
 {
-    Vector<DeclaredClassMember> members;
-    auto indexOfMemberNamed = [&](uint32_t name) {
-        return members.findIf([&](const DeclaredClassMember& member) {
-            return member.name == name;
-        });
-    };
     auto cellOf = [&](uint32_t function) -> uint32_t {
         uint32_t cell = encoder.placement.closureCellNumber(FunctionID(function));
         return cell <= ClassRowEntry::maxNumber ? cell : 0;
@@ -1748,30 +1742,43 @@ static std::optional<Vector<DeclaredClassMember>> collectDeclaredClassMembers(co
 
     if (!classLayout.classData().classConstructor)
         return std::nullopt;
-    // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
+    struct Definition {
+        uint32_t name;
+        MethodKind kind;
+        uint32_t cell;
+    };
+    Vector<Definition> definitions;
     for (const MethodData& method : classLayout.methods()) {
         uint32_t cell = cellOf(method.function);
         if (method.flags & (methodHasComputedName | methodIsCreatedAtDefinition) || !cell)
             return std::nullopt;
-        if (!FieldTableEntry::hasColumn(method.name))
-            continue;
-        if (indexOfMemberNamed(method.name) == notFound)
-            members.append(DeclaredClassMember { method.name });
-        DeclaredClassMember& member = members[indexOfMemberNamed(method.name)];
+        if (FieldTableEntry::hasColumn(method.name))
+            definitions.append(Definition { method.name, method.kind(), cell });
+    }
+    // ClassTable::DeclaredMember::define(): a later definition of a name replaces an earlier one, and the halves of an accessor add up.
+    AOT::stableSort(definitions, { }, &Definition::name);
+    Vector<DeclaredClassMember> members;
+    bool namesConstructor = false;
+    for (const Definition& definition : definitions) {
+        if (members.isEmpty() || members.last().name != definition.name) {
+            members.append(DeclaredClassMember { definition.name });
+            namesConstructor |= nameOfConstructor == definition.name;
+        }
+        DeclaredClassMember& member = members.last();
         member.method = 0;
-        switch (method.kind()) {
+        switch (definition.kind) {
         case MethodKind::Method:
-            member = DeclaredClassMember { method.name, cell };
+            member = DeclaredClassMember { definition.name, definition.cell };
             break;
         case MethodKind::Getter:
-            member.getter = cell;
+            member.getter = definition.cell;
             break;
         case MethodKind::Setter:
-            member.setter = cell;
+            member.setter = definition.cell;
             break;
         }
     }
-    if (nameOfConstructor && indexOfMemberNamed(*nameOfConstructor) == notFound) {
+    if (nameOfConstructor && !namesConstructor) {
         uint32_t cell = cellOf(classLayout.classData().classConstructor);
         if (!cell)
             return std::nullopt;
@@ -2225,6 +2232,7 @@ struct ModuleLists {
     Vector<IndirectExportData> indirectExports;
     Vector<SyntheticExportData> syntheticExports;
     Vector<RequiredNameData> requiredNames;
+    Vector<ExportStatementData> exportStatements;
 };
 
 struct EncodedRequestTargets {
@@ -2498,8 +2506,11 @@ static ModuleLists collectModuleLists(TableEncoder& encoder)
             lists.syntheticExports.append(entry);
         }
         for (const RequiredName& requiredName : module.requiredNames) {
-            if (!isNeverEvaluated(program, module))
-                lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
+            if (isNeverEvaluated(program, module))
+                continue;
+            if (requiredName.specifier)
+                lists.exportStatements.append({ static_cast<uint32_t>(lists.requiredNames.size()), encoder.shownStringNumber(requiredName.exportName), encoder.shownStringNumber(requiredName.specifier) });
+            lists.requiredNames.append({ requiredName.module.index(), requiredName.mayBeAbsent, encoder.identifierNumberOfText(requiredName.name, "what another module must export for"_s, id) });
         }
     }
     for (const Entry& entry : program.entries)
@@ -2660,7 +2671,10 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::indirectExports, lists.indirectExports);
     encoder.setTable(ProgramTableIndex::syntheticExports, lists.syntheticExports);
     encoder.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);
+    encoder.setTable(ProgramTableIndex::exportStatements, lists.exportStatements);
     encoder.setTableFrom<ModuleFailureData>(ProgramTableIndex::moduleFailures, program.moduleFailures, [&](const ModuleFailure& failure) {
+        if (failure.exportSpecifier)
+            return ModuleFailureData::ofExportStatement(encoder.shownStringNumber(failure.exportSpecifier), encoder.shownStringNumber(failure.specifier));
         return failure.exporter ? ModuleFailureData::ofAbsentExport(failure.exporter, encoder.shownStringNumber(failure.specifier)) : ModuleFailureData { failure.importer.index(), encoder.shownStringNumber(failure.specifier) };
     });
     appendTablesOfCompiledModules(encoder);

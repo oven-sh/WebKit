@@ -95,9 +95,9 @@ function f1 name="sumOfNeighbors" module=m0 flags=[IsChecked, HasExplicitName] l
 # HOT: Double b@[[there]] = Load(b@[[address]], offset = 8, ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
 # HOT: Double b@{{*}} = Mul(b@[[here]], b@[[there]], {{*}}:Mul)
 # HOT-LABEL: end of loop
-# A turn has three branches: whether k is still a 32-bit integer, the loop condition, and whether k lies inside the view. list[k + 1] has none of its own.
+# An iteration has two branches: whether k is still a 32-bit integer, and the loop condition. Neither element has a bounds check in the loop.
 # BRANCHES-LABEL: loop #
-# BRANCHES-COUNT-3: Branch(
+# BRANCHES-COUNT-2: Branch(
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of loop
 # NONE-LABEL: loop #
@@ -105,5 +105,5 @@ function f1 name="sumOfNeighbors" module=m0 flags=[IsChecked, HasExplicitName] l
 # NONE-NOT: IToD
 # NONE-NOT: Reads:JSArrayBufferView
 # NONE-LABEL: end of loop
-# X64: instructions: 10, patchpoints: 2
-# ARM64: instructions: 12, patchpoints: 2
+# X64: instructions: 8, patchpoints: 2
+# ARM64: instructions: 10, patchpoints: 2

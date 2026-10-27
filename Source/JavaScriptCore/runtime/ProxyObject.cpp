@@ -252,6 +252,18 @@ static ALWAYS_INLINE bool mayBindGetTrapResult(JSObject* target)
     return true;
 }
 
+// Only a target that is closed, or has a property that is not configurable, binds what the other traps may answer.
+static ALWAYS_INLINE bool isClosedOrHasFixedProperties(JSObject* target)
+{
+    if (!target->structure()->isNonExtensibleOrHasNonConfigurableProperties())
+        return false;
+#if ENABLE(AOT)
+    if (isExtensibleCompiledObjectWithConfigurablePropertiesOnly(target))
+        return false;
+#endif
+    return true;
+}
+
 static JSValue performProxyGet(JSGlobalObject* globalObject, ProxyObject* proxyObject, JSValue receiver, PropertyName propertyName)
 {
     NO_TAIL_CALLS();
@@ -380,7 +392,7 @@ bool ProxyObject::finishHas(JSGlobalObject* globalObject, JSValue trapResult, JS
     RETURN_IF_EXCEPTION(scope, false);
     if (trapResultAsBool)
         return true;
-    if (target->structure()->isNonExtensibleOrHasNonConfigurableProperties() && !isExtensibleCompiledObjectWithConfigurablePropertiesOnly(target)) {
+    if (isClosedOrHasFixedProperties(target)) {
         Identifier name = key.toPropertyKey(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         validateNegativeHasTrapResult(globalObject, target, name);
@@ -529,7 +541,7 @@ bool ProxyObject::performInternalMethodGetOwnProperty(JSGlobalObject* globalObje
     JSValue trapResult = call(globalObject, getOwnPropertyDescriptorMethod, callData, handler, ArgList { arguments.data(), arguments.size() });
     RETURN_IF_EXCEPTION(scope, false);
 
-    if (trapResult.isUndefined() && !target->structure()->isNonExtensibleOrHasNonConfigurableProperties())
+    if (trapResult.isUndefined() && !isClosedOrHasFixedProperties(target))
         return false;
 
     if (!trapResult.isUndefined() && !trapResult.isObject()) {
@@ -645,7 +657,7 @@ bool ProxyObject::performHasProperty(JSGlobalObject* globalObject, PropertyName 
     if (trapResultAsBool)
         return true;
 
-    if (target->structure()->isNonExtensibleOrHasNonConfigurableProperties()) {
+    if (isClosedOrHasFixedProperties(target)) {
         validateNegativeHasTrapResult(globalObject, target, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -772,7 +784,7 @@ bool ProxyObject::performPut(JSGlobalObject* globalObject, JSValue putValue, JSV
         return false;
     }
 
-    if (target->structure()->hasNonConfigurableReadOnlyOrGetterSetterProperties()) {
+    if (mayBindGetTrapResult(target)) {
         validatePositiveSetTrapResult(globalObject, target, propertyName, putValue);
         RETURN_IF_EXCEPTION(scope, false);
     }
@@ -991,8 +1003,19 @@ bool ProxyObject::performDelete(JSGlobalObject* globalObject, PropertyName prope
     if (!trapResultAsBool)
         return false;
 
-    if (!target->structure()->isNonExtensibleOrHasNonConfigurableProperties())
+    if (!isClosedOrHasFixedProperties(target))
         return true;
+
+    validatePositiveDeleteTrapResult(globalObject, target, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return true;
+}
+
+void ProxyObject::validatePositiveDeleteTrapResult(JSGlobalObject* globalObject, JSObject* target, PropertyName propertyName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     PropertyDescriptor descriptor;
     bool result = target->getOwnPropertyDescriptor(globalObject, propertyName, descriptor);
@@ -1000,20 +1023,29 @@ bool ProxyObject::performDelete(JSGlobalObject* globalObject, PropertyName prope
     if (result) {
         if (!descriptor.configurable()) {
             throwTypeError(globalObject, scope, "Proxy handler's 'deleteProperty' method should return false when the target's property is not configurable"_s);
-            return false;
+            return;
         }
         bool targetIsExtensible = target->isExtensible(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, void());
         if (!targetIsExtensible) {
             throwTypeError(globalObject, scope, "Proxy handler's 'deleteProperty' method should return false when the target has property and is not extensible"_s);
-            return false;
+            return;
         }
     }
-
-    RETURN_IF_EXCEPTION(scope, false);
-
-    return true;
 }
+
+#if ENABLE(AOT)
+void ProxyObject::finishDelete(JSGlobalObject* globalObject, JSObject* target, JSValue key)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isClosedOrHasFixedProperties(target))
+        return;
+    Identifier name = key.toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, validatePositiveDeleteTrapResult(globalObject, target, name));
+}
+#endif
 
 bool ProxyObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
@@ -1204,7 +1236,7 @@ bool ProxyObject::performDefineOwnProperty(JSGlobalObject* globalObject, Propert
     }
 
     bool settingConfigurableToFalse = descriptor.configurablePresent() && !descriptor.configurable();
-    if (!settingConfigurableToFalse && !target->structure()->isNonExtensibleOrHasNonConfigurableProperties())
+    if (!settingConfigurableToFalse && !isClosedOrHasFixedProperties(target))
         return true;
 
     PropertyDescriptor targetDescriptor;
@@ -1363,7 +1395,7 @@ void ProxyObject::performGetOwnPropertyNames(JSGlobalObject* globalObject, Prope
         RETURN_IF_EXCEPTION(scope, void());
     }
 
-    if (!target->structure()->isNonExtensibleOrHasNonConfigurableProperties())
+    if (!isClosedOrHasFixedProperties(target))
         return;
 
     bool targetIsExensible = target->isExtensible(globalObject);

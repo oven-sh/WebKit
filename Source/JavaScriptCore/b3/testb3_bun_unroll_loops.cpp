@@ -376,6 +376,61 @@ static void testUnrollLoopsReadsOnePlaceOnceATurn()
     }
 }
 
+// A way that is seldom taken tests what the turn has read, stores, and comes back in front of the turn's second read of the same place.
+static void testUnrollLoopsReadsAgainBehindSidePathThatStores()
+{
+    constexpr int64_t numberOfWords = 40;
+    for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+        for (bool isRare : { false, true }) {
+            for (Type type : { Int32, Int64 }) {
+                for (bool storesThere : { false, true }) {
+                    CountedSum sum(LessThan, 1, 0, loopPolicy(), Walks::Nothing);
+                    auto& [proc, graph, loop, relation, step, firstIndex] = sum;
+                    BasicBlock* side = proc.addBlock();
+                    BasicBlock* last = proc.addBlock();
+                    auto address = [&](BasicBlock* block) {
+                        return graph.make(block, Add, loop.pointer, graph.make(block, Shl, graph.get(block, loop.index), graph.int32(block, 3)));
+                    };
+                    auto read = [&](BasicBlock* block) {
+                        Value* word = graph.load(block, type, address(block), 0, firstHeap);
+                        return type == Int32 ? graph.make(block, ZExt32, word) : word;
+                    };
+                    graph.branch(loop.body, graph.make(loop.body, Equal, read(loop.body), loop.extra), isRare ? rarely(side) : unlikely(side), FrequentedBlock(last));
+                    Value* stored = type == Int32 ? graph.int32(side, 3) : graph.int64(side, 3);
+                    if (storesThere)
+                        graph.store(side, stored, address(side), 0, firstHeap);
+                    else
+                        graph.store(side, stored, address(side), numberOfWords * 8, secondHeap);
+                    graph.jump(side, last);
+                    graph.increase(last, loop.sum, read(last));
+                    sum.finish(last, place);
+
+                    CHECK(unrollLoopsAndValidate(proc));
+                    auto code = compileProc(proc);
+                    for (int64_t bound = 0; bound <= numberOfWords; ++bound) {
+                        for (int64_t markedEvery : { 1, 2, 3, 7, 100 }) {
+                            int64_t words[2 * numberOfWords] = { };
+                            int64_t expected = 0;
+                            for (int64_t index = 0; index < numberOfWords; ++index) {
+                                bool isMarked = !((index + 1) % markedEvery);
+                                words[index] = isMarked ? 100 : index;
+                                if (index < bound)
+                                    expected += isMarked && storesThere ? 3 : words[index];
+                            }
+                            CHECK_EQ(run(*code, bound, words, 100), expected);
+                            for (int64_t index = 0; index < numberOfWords; ++index) {
+                                bool wasStored = index < bound && !((index + 1) % markedEvery);
+                                CHECK_EQ(words[index], wasStored && storesThere ? 3 : (index + 1) % markedEvery ? index : 100);
+                                CHECK_EQ(words[numberOfWords + index], wasStored && !storesThere ? 3 : 0);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void testUnrollLoopsSkipsLoopWithLikelySecondWayOut()
 {
     CountedSum sum(LessThan, 1, 0);
@@ -753,6 +808,7 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUnrollLoopsSkipsLoopWithCall());
     RUN(testUnrollLoopsSkipsLoopThatWalksNothing());
     RUN(testUnrollLoopsReadsOnePlaceOnceATurn());
+    RUN(testUnrollLoopsReadsAgainBehindSidePathThatStores());
     RUN(testUnrollLoopsSkipsLoopWithLikelySecondWayOut());
     RUN(testUnrollLoopsStoresInOrder());
     RUN(testUnrollLoopsSkipsLoopThatStoresWordsOrPicksAmongThem());

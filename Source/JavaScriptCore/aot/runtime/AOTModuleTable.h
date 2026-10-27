@@ -56,6 +56,8 @@ public:
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }
     std::span<const RequiredNameData> requiredNames(ModuleID module) const { return listOf(m_tables->requiredNames(), module, &ModuleData::firstRequiredName); }
+    // The export statement that asks for the name. An import asks for any other one.
+    const ExportStatementData* findExportStatement(const RequiredNameData&) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
 
     std::optional<ModuleID> findByPath(StringView publicPath) const;
@@ -133,6 +135,14 @@ inline const IndirectExportData& ModuleTable::indirectExport(const ModuleExportD
     std::span<const IndirectExportData> indirectExports = m_tables->indirectExports();
     RELEASE_ASSERT(moduleExport.indirectExport < indirectExports.size());
     return indirectExports[moduleExport.indirectExport];
+}
+
+inline const ExportStatementData* ModuleTable::findExportStatement(const RequiredNameData& requiredName) const
+{
+    uint32_t number = static_cast<uint32_t>(&requiredName - m_tables->requiredNames().data());
+    std::span<const ExportStatementData> statements = m_tables->exportStatements();
+    auto found = std::ranges::lower_bound(statements, number, { }, &ExportStatementData::requiredName);
+    return found != statements.end() && found->requiredName == number ? &*found : nullptr;
 }
 
 } } // namespace JSC::AOT

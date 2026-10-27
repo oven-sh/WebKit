@@ -29,6 +29,7 @@ using AOT::didCreateStaticProperty;
 using AOT::didRefuseChange;
 // Null for an object that start-up has not locked.
 using AOT::messageOfRefusalByLockedObject;
+using AOT::takeStaticPropertyMadeAhead;
 
 void willInitializeRealm(JSGlobalObject*);
 // The Structure that every host function of the realm is born with, made of the one that the engine would give them.

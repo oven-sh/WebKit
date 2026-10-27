@@ -53,9 +53,12 @@ using CellLookup = std::expected<JSCell*, BuiltinLookupFailure>;
 static bool hasValueCell(const BuiltinTable& table, BuiltinID id)
 {
     const Builtin& member = table.at(id);
-    // The build knows the value of a constant. The word of one that its holder adds when it is first read says that the holder has it.
-    return (member.kind == BuiltinKind::DataProperty || (member.kind == BuiltinKind::Constant && member.isAddedAtFirstRead))
-        && member.scope == BuiltinScope::Realm
+    if (member.scope != BuiltinScope::Realm)
+        return false;
+    // Its holder adds it when the program first reads it. Compiled code may have the object, or know the value, long before.
+    if (member.isAddedAtFirstRead)
+        return true;
+    return member.kind == BuiltinKind::DataProperty
         && member.mutability == BuiltinMutability::ConstantUnlessWritten
         && member.flags.contains(BuiltinFlag::IsLazilyCreated)
         && !member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);

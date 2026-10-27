@@ -127,8 +127,8 @@ public:
     JSString* resolve(ModuleID, ResolvedSpecifierForm);
     const SourceOrigin& sourceOrigin(ModuleID);
     void throwFailure(ModuleFailureID, bool isForRequire);
-    void throwExportNotFound(ModuleID exporter, uint32_t nameIdentifier);
-    void throwExportAmbiguous(ModuleID exporter, uint32_t nameIdentifier);
+    void throwExportNotFound(const RequiredNameData&);
+    void throwExportAmbiguous(const RequiredNameData&);
     void didRequestFromHost(ModuleID module) { m_firstModuleRequestedByHost = m_firstModuleRequestedByHost.value_or(module); }
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
     // `bun run` loads the entry point as the one import of the module bun:main: the graph is loaded one step of the loader behind the entry point. Says so once.
@@ -185,7 +185,8 @@ public:
     bool isBuiltinModuleNewToLoader(ModuleID) const;
     bool needsLoaderForRequire(ModuleID);
     bool canTellHowGraphIsLoaded(ModuleID root);
-    void appendRequestsForLoader(ModuleID, ModuleRecord*);
+    void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
+    ModuleGraphLoadingState* loadThatWaitsFor(ModuleID requester, const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure);
     ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*);
     void collectKeysOfUncompiledCode(ModuleID, OrderedHashSet<UniquedStringImpl*>& keys);
     bool comesToCodeThatDoesNotLoad(ModuleID root);
@@ -294,6 +295,7 @@ private:
         bool wasLoadedWhileItRan { false };
         bool isAnsweredWithNamespace { false };
         bool bindsEarlierCapture { false };
+        bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
         Vector<ModuleID> requiredModules;
@@ -339,6 +341,7 @@ private:
     bool isNativeModule(ModuleID) const;
     JSObject* generateNativeModuleExports(ModuleID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
     JSValue requireNativeModule(ModuleID);
+    void generateNativeModuleForLoader(ModuleID);
     void bindLatestCapture(ModuleID);
     void captureExportsBehindEvaluation(ModuleID);
     void captureExportsOfFilesBeingEvaluated(ModuleID root);
@@ -481,8 +484,9 @@ private:
     Vector<LoadInFlight, 2> m_loadsInFlight;
     Vector<ModuleID, 4> m_modulesWhoseRecordsLoaderHolds;
     BitVector m_modulesBelowWalkedRoots;
-    // `bun run` loads a graph level by level, and the steps of one level follow each other with no other job between them. So the loader need only go down one way to the lowest level:
-    // when it comes to the module of a level on that way, the files of the level that stand in front of the module run. It comes to the first file behind the module too, and those behind that one run with it.
+    // `bun run` loads a graph level by level, and the steps of one level follow each other with no other job between them. The steps for an ES module run no code of the program, so of the ES modules
+    // the loader need only go down one way to the lowest level. With the module of a level on that way it asks for every CommonJS file of the level that is left to run, in their order:
+    // while a file runs the loader has it in its hands as under `bun run`, for whatever the file or another graph asks of the loader, and a file that throws fails alone.
     // What lay below the root and was not loaded when the loader came to the root. A require() may load a part of it before the loader comes there: what is left stands on the level where it stood.
     struct PlanOfLoad : RefCounted<PlanOfLoad> {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlanOfLoad);
@@ -518,7 +522,8 @@ private:
         bool asksAcrossLevels { false };
         // Nothing of it was loaded since.
         bool isWhole { true };
-        Strong<Unknown> firstErrorOnWayTakenUp;
+        // Of the root.
+        Strong<JSCell> load;
 
         std::span<Found> level(size_t depth) { return found.mutableSpan().subspan(levels[depth].first, (depth + 1 == levels.size() ? found.size() : levels[depth + 1].first) - levels[depth].first); }
     };
@@ -532,6 +537,7 @@ private:
         uint32_t jobsRun { 0 };
         // Known from the job in which the loader would ask the root for its requests.
         uint32_t jobOfEvaluation { 0 };
+        uint32_t jobOfNextNativeModule { 0 };
         RefPtr<PlanOfLoad> plan { };
         // The loader has the graph in its hands.
         RefPtr<MicrotaskQueue> jobsOfLoader { };
@@ -540,6 +546,7 @@ private:
         bool isLoaded { false };
     };
     void decideHowCountedImportGoesOn(CountedImport&);
+    uint32_t findJobOfNextNativeModule(PlanOfLoad&, uint32_t currentJob) const;
     void forgetCountedImport(const CountedImport&);
     Vector<CountedImport, 2> m_countedImports;
     // Out of the list while their own jobs run.
@@ -560,16 +567,31 @@ private:
     struct LevelOfLoad {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LevelOfLoad);
 
+        struct FileOfNextLevel {
+            ModuleID module;
+            // The load of any other importer is not in the hands of the loader: the load of the root waits for the file.
+            bool isImportedByModuleOnWay;
+        };
         std::optional<ModuleID> next;
-        std::optional<ModuleID> firstFileInFrontOfNext;
-        std::optional<ModuleID> firstFileBehindNext;
-        Vector<ModuleID, 4> files;
-        Strong<Unknown> firstError;
+        Vector<FileOfNextLevel, 4> filesInFrontOfNext;
+        Vector<FileOfNextLevel, 4> filesBehindNext;
+        // Of this level, with no code of the program to run.
+        Vector<ModuleID, 4> filesWithoutCode;
         RefPtr<PlanOfLoad> plan;
         uint32_t depth { 0 };
+        // Of the module on the way, in the plan.
+        uint32_t place { 0 };
         bool isAskedFor { false };
     };
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LevelOfLoad>> m_levelsOfLoads;
+    // From where a module on a way lists its requests to where the loader asks for them, in the same step.
+    struct FileAskedForOnBehalfOfRoot {
+        ModuleID requester;
+        Identifier key;
+        RefPtr<PlanOfLoad> plan;
+        uint32_t depth;
+    };
+    Vector<FileAskedForOnBehalfOfRoot, 4> m_filesAskedForOnBehalfOfRoot;
     Vector<uint32_t> m_placesSeenByPlans;
     uint32_t m_firstPlaceOfNextPlan { 1 };
     // Their imported files ran without the loader. The set is filled from the list when it is asked.

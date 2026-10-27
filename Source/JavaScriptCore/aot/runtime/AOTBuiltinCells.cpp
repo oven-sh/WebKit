@@ -171,8 +171,50 @@ JSObject* BuiltinCells::findKnownObject(BuiltinID id) const
     return filled ? filled->getObject() : nullptr;
 }
 
+static void lockMemberOfLockedHolder(JSGlobalObject*, JSObject* holder, UniquedStringImpl* key, JSObject* member);
+
+// A holder adds some members when the program first reads them, which shows in the order of its keys. Compiled code that asks for such an object reads nothing:
+// where the image has a word for the read, and it is empty, the object is made beside the holder, which takes it when the read comes.
+std::expected<JSCell*, BuiltinLookupFailure> BuiltinCells::findInKnownHolder(BuiltinCellKey key, JSObject* holder)
+{
+    JSGlobalObject* realm = m_instance.globalObject;
+    std::optional<uint32_t> numberOfRead = key.kind() == BuiltinCellKey::Kind::Object ? numberOf(BuiltinCellKey::value(key.builtin())) : std::nullopt;
+    if (!numberOfRead || m_cells[*numberOfRead])
+        return findInHolder(realm, key, holder);
+
+    VM& vm = realm->vm();
+    const BuiltinTable& table = BuiltinTable::singleton();
+    Identifier name = table.identifierOf(vm, table.at(key.builtin()).name);
+    if (!reportsCreationOfMember(holder, name.impl()) || isValidOffset(holder->getDirectOffset(vm, name)))
+        return findInHolder(realm, key, holder);
+    for (const MemberMadeAhead& made : m_membersMadeAhead) {
+        if (made.holder == holder && made.key == name)
+            return static_cast<JSCell*>(made.member);
+    }
+    auto made = makeMemberOfStaticTable(realm, key, holder);
+    if (!made || !(*made)->isObject())
+        return made;
+    m_state.immortalCells->add(holder);
+    m_state.immortalCells->add(*made);
+    m_membersMadeAhead.append(MemberMadeAhead { holder, name, asObject(*made) });
+    lockMemberOfLockedHolder(realm, holder, name.impl(), asObject(*made));
+    return made;
+}
+
+JSObject* BuiltinCells::takeMemberMadeAhead(JSObject* holder, UniquedStringImpl* key)
+{
+    size_t index = m_membersMadeAhead.findIf([&](const MemberMadeAhead& made) {
+        return made.holder == holder && made.key.impl() == key;
+    });
+    if (index == notFound)
+        return nullptr;
+    JSObject* member = m_membersMadeAhead[index].member;
+    m_membersMadeAhead.removeAt(index);
+    return member;
+}
+
 // The program may have replaced a step of the path, so the lookup starts at the nearest holder that was found before the program ran.
-std::expected<JSCell*, BuiltinLookupFailure> BuiltinCells::find(BuiltinCellKey key) const
+std::expected<JSCell*, BuiltinLookupFailure> BuiltinCells::find(BuiltinCellKey key)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     const BuiltinTable& table = BuiltinTable::singleton();
@@ -184,6 +226,16 @@ std::expected<JSCell*, BuiltinLookupFailure> BuiltinCells::find(BuiltinCellKey k
             return static_cast<JSCell*>(object);
     }
     BuiltinID holder = table.at(id).holder;
+    // The program reads the member here. The word says no more than that, so any cell will do.
+    if (key.kind() == BuiltinCellKey::Kind::Value) {
+        JSCell* holderCell = findObject(holder);
+        if (!holderCell)
+            return makeUnexpected(BuiltinLookupFailure::HolderIsMissing);
+        auto read = findValueInHolder(realm, asObject(holderCell), table.identifierOf(realm->vm(), table.at(id).name));
+        if (!read)
+            return makeUnexpected(read.error());
+        return read->isCell() ? read->asCell() : holderCell;
+    }
     if (m_writtenMembers.quickGet(id.index())) {
         JSObject* object = holder == Builtins::GlobalThis ? realm : findKnownObject(holder);
         if (!object)
@@ -197,9 +249,9 @@ std::expected<JSCell*, BuiltinLookupFailure> BuiltinCells::find(BuiltinCellKey k
     if (!holder || holder == Builtins::GlobalThis)
         return findInRealm(realm, key);
     if (JSObject* object = findKnownObject(holder))
-        return findInHolder(realm, key, object);
+        return findInKnownHolder(key, object);
     if (auto holderCell = find(BuiltinCellKey::object(holder)))
-        return findInHolder(realm, key, asObject(*holderCell));
+        return findInKnownHolder(key, asObject(*holderCell));
     // No path from the global object leads into a built-in module.
     if (findModuleWithNamespace(table, rootOf(table, holder)))
         return makeUnexpected(BuiltinLookupFailure::HolderIsMissing);
@@ -261,7 +313,6 @@ static JSFunction* makeFunctionOfMissingHost(JSGlobalObject* realm, const Builti
 JSCell* BuiltinCells::cell(uint32_t number)
 {
     std::span<const uint32_t> keys = m_tables.builtinCells();
-    RELEASE_ASSERT(number < m_numberOfFirstValue);
     if (JSCell* filled = m_cells[number])
         return filled;
     if (m_isUnavailable.get(number))
@@ -1077,6 +1128,11 @@ void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue v
         created->state->builtinCells->didCreateMember(holder, key, asObject(value));
         created->state->builtinFamilies->locationWatch->didCreateMember(holder, key, asObject(value));
     }
+    lockMemberOfLockedHolder(realm, holder, key, asObject(value));
+}
+
+static void lockMemberOfLockedHolder(JSGlobalObject* realm, JSObject* holder, UniquedStringImpl* key, JSObject* made)
+{
     Instance* instance = findInstanceThatLocks(realm);
     if (!instance)
         return;
@@ -1087,9 +1143,15 @@ void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue v
     BuiltinID member = name ? table.findOwnMember(holderID, name) : BuiltinID();
     if (!member)
         return;
-    instance->state->builtinCells->didMakeMember(member, asObject(value));
+    instance->state->builtinCells->didMakeMember(member, made);
     BuiltinLocker locker(*instance);
-    locker.lock(member, asObject(value));
+    locker.lock(member, made);
+}
+
+JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key)
+{
+    Instance* instance = Instance::of(holder->realm());
+    return instance && instance->state ? instance->state->builtinCells->takeMemberMadeAhead(holder, key) : nullptr;
 }
 
 void hostDidCreateStructure(JSGlobalObject* realm, Structure* structure)

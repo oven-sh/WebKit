@@ -92,7 +92,8 @@ static bool hasRequiredIDs(const Module& module)
         && std::ranges::all_of(module.exports, isSet, &ModuleExport::name)
         && std::ranges::all_of(module.syntheticExports, isSet, &SyntheticExport::name)
         && std::ranges::all_of(module.requiredNames, isSet, &RequiredName::module)
-        && std::ranges::all_of(module.requiredNames, isSet, &RequiredName::name);
+        && std::ranges::all_of(module.requiredNames, isSet, &RequiredName::name)
+        && std::ranges::all_of(module.requiredNames, [](const RequiredName& required) { return !required.exportName == !required.specifier; });
 }
 
 static bool isCommonJsRule(SyntheticExportRule rule)
@@ -455,7 +456,7 @@ void ProgramVerifier::verifyModuleFailures()
 {
     for (unsigned index = 0; index < m_program.moduleFailures.size(); ++index) {
         const ModuleFailure& failure = m_program.moduleFailures[index];
-        if (!failure.importer || !failure.specifier)
+        if (!failure.importer || !failure.specifier || (failure.exportSpecifier && !failure.exporter))
             fail({ .kind = InternalErrorKind::InvalidModuleFailure, .count = index });
     }
 }

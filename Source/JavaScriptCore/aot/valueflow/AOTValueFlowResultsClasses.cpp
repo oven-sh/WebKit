@@ -579,6 +579,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
             return write.form == WriteForm::Freeze;
         });
     }
+    bool isNeverFrozen[2] { Claims::isNeverFrozen(writersOfEveryOwnProperty[0]), Claims::isNeverFrozen(writersOfEveryOwnProperty[1]) };
     auto keepsMembersUnder = [&](ClassSide side, std::span<const ClassMember> membersUnderOneKey, PropertyKeyID key) {
         if (!looksThroughStores[static_cast<unsigned>(side)] && !isAsMade[static_cast<unsigned>(side)])
             return false;
@@ -629,7 +630,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
         for (ClassMember& member : group) {
             if (holdsWhatWasDefined && isThereFromTheStart && hasOneDefinition)
                 member.mutability = MemberMutability::Fixed;
-            member.isWritableData = holdsWhatWasDefined && isEveryValueData && Claims::isNeverFrozen(writersOfEveryOwnProperty[side]);
+            member.isWritableData = holdsWhatWasDefined && isEveryValueData && isNeverFrozen[side];
             bool isDefinedByClass = std::ranges::binary_search(definedFunctions, member.function);
             if (followsUses && member.function && isDefinedByClass && isOnlyCalled(member.function))
                 member.closureUse = ClosureUse::CalledOnly;

@@ -160,7 +160,7 @@ static bool isLoopTestSameOnRarePaths(const LoopVersionPlan& plan)
 std::optional<GaveUp> LoopVersionPlanner::finishPlan(LoopVersionPlan& plan)
 {
     plan.excursion = findExcursion(m_proc, m_loops, plan.region, plan.hoisted);
-    if (plan.rewritesLoopTest() && plan.excursion.contains(plan.countedLoop->test) && !isLoopTestSameOnRarePaths(plan))
+    if (plan.rangeChecks.dependsOnLoopTest() && plan.excursion.contains(plan.countedLoop->test) && !isLoopTestSameOnRarePaths(plan))
         plan.excursion = { };
     if (plan.firstIterationSlowPath && !plan.excursion.contains(plan.firstIterationSlowPath) && !plan.unswitched && plan.isEnteredFromPreHeader)
         return GaveUp(GaveUpReason::NoSingleLikelyPath);

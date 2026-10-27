@@ -32,6 +32,7 @@ public:
     void generateMayBindAnswersOfHasTraps(const ValueContext& value) { defineTest(value, mayBindAnswersOfTraps(value->targetOperand(), Structure::s_didPreventExtensionsBits | Structure::s_hasNonConfigurablePropertiesBits)); }
     void generateValidateAnswerOfGetTrap(const ValueContext&);
     void generateValidateDenialOfHasTrap(const ValueContext&);
+    void generateValidateConsentOfDeleteTrap(const ValueContext&);
     void generateFinishStoreByTrap(const ValueContext&);
     void generateElemGet(const ValueContext&);
     void generateElemSet(const ValueContext&);

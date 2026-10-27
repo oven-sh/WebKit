@@ -12,6 +12,8 @@
 # REQUIRES(BODY): unsanitized-code
 # RUN(STORES): lower-to-b3 optimized loops f1
 # REQUIRES(STORES): unsanitized-code
+# RUN(UNCHECKED): lower-to-b3 optimized loops f1
+# REQUIRES(UNCHECKED): unsanitized-code
 # RUN(X64): lower-to-air loops f1
 # REQUIRES(X64): x86_64 faulting-loop-polls unsanitized-code
 # RUN(ARM64): lower-to-air loops f1
@@ -146,15 +148,17 @@ function f1 name="turn" module=m0 position=108 flags=[IsChecked, HasExplicitName
 # LOWERED-NEXT: Int64 b@[[address]] = Add(b@[[vector]], b@[[offset]], [[read]]:GetTypedArrayElement)
 # LOWERED-NEXT: Double b@[[element]] = Load(b@[[address]], ControlDependent|Reads:TypedArrayElements, [[read]]:GetTypedArrayElement)
 
-# The indexes are r * 16 + c and c * 16 + r. The inner loop is unrolled four times. Its bounds checks are still there.
+# The indexes are r * 16 + c and c * 16 + r. The inner loop is unrolled four times. Both bounds checks are guards in front of the inner loop.
 # BODY-LABEL: steps by 4
 # BODY-COUNT-4: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # BODY-NOT: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
 # BODY-LABEL: end of loop
+# UNCHECKED-LABEL: steps by 4
+# UNCHECKED-NOT: Terminal, {{*}}:IsInsideView)
+# UNCHECKED-LABEL: end of loop
 # STORES-LABEL: steps by 4
 # STORES-COUNT-4: = Store(b@{{*}}Writes:TypedArrayElements
 # STORES-NOT: = Store(b@{{*}}Writes:TypedArrayElements
 # STORES-LABEL: end of loop
-# The rare instructions are one copy of what lies behind the rare edges and of the rest of the turn. Behind it the turns that are written out are entered again.
-# X64: instructions: 40, patchpoints: 8, rare instructions: 17
-# ARM64: instructions: 26, patchpoints: 8, rare instructions: 17
+# X64: instructions: 26, patchpoints: 8, {{*}} steps by 4
+# ARM64: instructions: 18, patchpoints: 8, {{*}} steps by 4

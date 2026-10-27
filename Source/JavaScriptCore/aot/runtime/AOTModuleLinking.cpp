@@ -92,12 +92,12 @@ void Modules::checkRequiredNames(std::span<const ModuleID> modules)
             case StarExportResolution::Type::Resolved:
                 continue;
             case StarExportResolution::Type::Ambiguous:
-                RELEASE_AND_RETURN(scope, throwExportAmbiguous(exporter, requiredName.name));
+                RELEASE_AND_RETURN(scope, throwExportAmbiguous(requiredName));
             case StarExportResolution::Type::NotFound:
             case StarExportResolution::Type::Error:
                 if (requiredName.mayBeAbsent)
                     continue;
-                RELEASE_AND_RETURN(scope, throwExportNotFound(exporter, requiredName.name));
+                RELEASE_AND_RETURN(scope, throwExportNotFound(requiredName));
             }
         }
     }
@@ -268,7 +268,7 @@ bool Modules::checkIsSettledForLinks(ModuleID module) const
     bool isSettled = !moduleData.needsLink();
     if (!isSettled && moduleData.capturesExports()) {
         LoadedModule* loaded = status(module) == ModuleStatus::Evaluated ? loadedIfExists(module) : nullptr;
-        isSettled = loaded && (loaded->capturedExports || loaded->capturedFields) && !loaded->bindsEarlierCapture;
+        isSettled = loaded && (loaded->capturedExports || loaded->capturedFields) && !loaded->bindsEarlierCapture && !loaded->isBeingLoadedByLoader;
     } else if (!isSettled)
         isSettled = !moduleData.isUncompiledCode() && status(module) != ModuleStatus::Unlinked;
     if (isSettled)
@@ -377,8 +377,11 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             }
             if (data(module).capturesExportsBehindEvaluation() && !resolvesNames)
                 captureExportsBehindEvaluation(module);
-            else
+            else {
                 captureExports(module);
+                if (LoadedModule* loaded = loadedIfExists(module))
+                    loaded->isBeingLoadedByLoader = false;
+            }
             return;
         }
         ASSERT(needsPath);

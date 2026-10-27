@@ -437,11 +437,24 @@ static JSObject* createNotAnObjectErrorQuoting(const String& source, JSGlobalObj
     return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
 }
 
+// `o.name`, `o.#name`. Any other key stands in brackets: `o["two words"]`.
+static bool isWrittenBehindDot(StringView member)
+{
+    if (member.isEmpty() || isASCIIDigit(member[0]))
+        return false;
+    for (unsigned index = 0; index < member.length(); ++index) {
+        char16_t character = member[index];
+        if (isASCII(character) && !isASCIIAlphanumeric(character) && character != '_' && character != '$' && (character != '#' || index))
+            return false;
+    }
+    return true;
+}
+
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, StringView member)
 {
     String source;
     if (String description = describe(globalObject, base); !member.isNull() && !description.isNull())
-        source = tryMakeString(description, '.', member);
+        source = isWrittenBehindDot(member) ? tryMakeString(description, '.', member) : tryMakeString(description, "[\""_s, member, "\"]"_s);
     return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
@@ -585,6 +598,16 @@ JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderCha
 JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer, ASCIILiteral code)
 {
     return createErrorWithCode(globalObject, makeString("Cannot find module '"_s, specifier, "' from '"_s, importer, "'"_s), code);
+}
+
+JSObject* createExportStatementFindsNothingError(JSGlobalObject* globalObject, const String& exportName, const String& specifier)
+{
+    return createSyntaxError(globalObject, makeString("export '"_s, exportName, "' not found in '"_s, specifier, "'"_s));
+}
+
+JSObject* createExportStatementFindsSeveralError(JSGlobalObject* globalObject, const String& exportName, const String& specifier)
+{
+    return createSyntaxError(globalObject, makeString("Cannot export '"_s, exportName, "' multiple times in '"_s, specifier, "'"_s));
 }
 
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject* globalObject)
