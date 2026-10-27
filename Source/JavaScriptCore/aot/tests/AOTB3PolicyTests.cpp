@@ -83,7 +83,7 @@ static void checkUpstreamPolicy(const B3::UpstreamPolicy& upstream)
     AOT_TEST_CHECK(!upstream.canonicalizesIncrements);
     AOT_TEST_CHECK(!upstream.eliminatesWasmGCAllocations);
     AOT_TEST_CHECK(!upstream.usesWasmFaultSignalHandler);
-    AOT_TEST_CHECK(!upstream.allowsSIMD);
+    AOT_TEST_CHECK(upstream.allowsSIMD);
     AOT_TEST_CHECK(!upstream.forcesSIMD);
 }
 
@@ -116,6 +116,7 @@ static void checkOptimizationPolicy(const B3::Policy& policy)
     AOT_TEST_CHECK(policy.loops.versions);
     AOT_TEST_CHECK(policy.loops.clampsLoopBounds);
     AOT_TEST_CHECK(policy.loops.omitsPollsFromLoopsThatEndWithinData);
+    AOT_TEST_CHECK(policy.loops.vectorizes);
     AOT_TEST_CHECK(!policy.loops.unrolls);
     AOT_TEST_CHECK(policy.loops.hoistsOnlyFromLikelyPaths);
     AOT_TEST_CHECK(policy.loops.hoistsImmutableLoadsPastWrites);

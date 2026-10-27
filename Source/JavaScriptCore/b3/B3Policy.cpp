@@ -69,6 +69,7 @@ void Policy::disable(PolicySwitch policySwitch)
     CLEAR_FIELD_CASE(FoldComparisonsWithBounds, loops.foldsComparisonsWithBounds);
     CLEAR_FIELD_CASE(VersionLoops, loops.versions);
     CLEAR_FIELD_CASE(ClampLoopBounds, loops.clampsLoopBounds);
+    CLEAR_FIELD_CASE(VectorizeLoops, loops.vectorizes);
     CLEAR_FIELD_CASE(UnrollLoops, loops.unrolls);
     CLEAR_FIELD_CASE(BitTests, switchLowering.usesBitTests);
     CLEAR_FIELD_CASE(KnownRanges, knownProperties.trustsKnownRanges);
@@ -244,6 +245,7 @@ static void dumpLoops(PrintStream& out, CommaPrinter& comma, const LoopPolicy& l
     PRINT_IF_SET(loops, versions);
     PRINT_IF_SET(loops, clampsLoopBounds);
     PRINT_IF_SET(loops, omitsPollsFromLoopsThatEndWithinData);
+    PRINT_IF_SET(loops, vectorizes);
     PRINT_IF_SET(loops, unrolls);
     PRINT_IF_DIFFERENT(loops, minFrequencyOfUnrolledLoop);
     PRINT_IF_SET(loops, hoistsOnlyFromLikelyPaths);

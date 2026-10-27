@@ -686,7 +686,8 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
         return { };
     unsigned attributes = 0;
     JSObject* extra = extraProperties();
-    PropertyOffset offset = extra ? extra->structure()->get(vm, name, attributes) : invalidOffset;
+    ASSERT(!flags.contains(ExtraPropertyStoreFlag::IsKnownToBeAbsent) || !extra || !isValidOffset(extra->structure()->get(vm, name)));
+    PropertyOffset offset = extra && !flags.contains(ExtraPropertyStoreFlag::IsKnownToBeAbsent) ? extra->structure()->get(vm, name, attributes) : invalidOffset;
     if (!isValidOffset(offset) && (parseIndex(name) || name.isPrivateName() || name == vm.propertyNames->underscoreProto))
         return { };
     if (isValidOffset(offset)) {
@@ -704,15 +705,17 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
     bool hadNone = !extra;
     if (hadNone)
         extra = constructEmptyObject(vm, Instance::of(realm)->realm.emptyExtraPropertiesStructure);
-    extra->putDirect(vm, name, value);
+    StructureID structureBefore = extra->structureID();
+    PutPropertySlot slot(extra);
+    extra->putDirect(vm, name, value, slot);
     if (hadNone)
         setExtraProperties(vm, extra, structureForNewExtraProperties(vm, *this, extra, namesStructure));
     else if (namesStructure)
         ensureStructureForExtraProperties(vm);
-    else
+    else if (extra->structureID() != structureBefore)
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
-    return { ExtraPropertyStore::Added, extra->structure()->get(vm, name) };
+    return { ExtraPropertyStore::Added, slot.cachedOffset() };
 }
 
 bool Object::repeatsExtraPropertyStore(VM& vm, PropertyName name) const

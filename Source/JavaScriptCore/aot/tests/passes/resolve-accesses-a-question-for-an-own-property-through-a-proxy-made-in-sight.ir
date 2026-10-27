@@ -1,0 +1,62 @@
+# const made = new Proxy({ alpha: +input }, { getOwnPropertyDescriptor(target, key) { return key === "alpha" ? undefined : { configurable: true }; } });
+# globalThis.answer = Object.hasOwn(made, "alpha");
+#
+# The trap is read off the handler and called as the program would call it. A descriptor that it answers is held against the target. That there is none is held against it only where the target binds what traps may answer.
+# Without a trap the target is asked.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 position=24 fields=[{key="alpha" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=44 fields=[{key="getOwnPropertyDescriptor" declared={type=function flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m0 position=120 fields=[{key="configurable" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject layout=L0
+    PropDefine v3, v2 key="alpha"
+    v5 = FinishObject v3
+    v6 = NewClosure function=f1
+    v7 = NewObject layout=L1
+    PropDefine v7, v6 key="getOwnPropertyDescriptor"
+    v9 = FinishObject v7
+    v10 = Builtin builtin=Proxy
+    v11 = Construct v10, -, v5, v9 calleeName="Proxy"
+    v12 = Builtin builtin=ObjectHasOwn
+    v13 = String string="alpha"
+    v14 = Call v12, -, v11, v13 calleeName="hasOwn"
+    PropSet v0, v14 key="answer"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="getOwnPropertyDescriptor" module=m0 position=63 kind=Method flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="alpha"
+    v3 = StrictEq v1, v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Undefined
+    Return v4
+  b2():
+    v5 = Boolean boolean=true
+    v6 = NewObject layout=L2
+    PropDefine v6, v5 key="configurable"
+    v8 = FinishObject v6
+    Return v8
+}
+
+# CHECK-LABEL: function f0
+# CHECK: [[target]]: L0 = FinishObject
+# CHECK: [[handler]]: L1 = FinishObject
+# CHECK: [[name]]: "alpha" = String string="alpha"
+# CHECK: = PropHasOwn [[target]] key="alpha" calledBuiltin=ObjectHasOwn
+# CHECK: [[answer]]: {{*}} = Call {{*}}, [[handler]], [[target]], [[name]] callees=[f1
+# CHECK-NEXT: = TypeTest [[answer]] testedType=undefined
+# CHECK: = HasOwnByAnswerOfDescriptorTrap [[target]], [[name]], [[answer]]
+# CHECK: = MayBindAnswersOfHasTraps [[target]]
+# CHECK: ThrowNewError errorKind=TypeError message="'getOwnPropertyDescriptor' property of a Proxy's handler should be callable"
+# CHECK-LABEL: function f1

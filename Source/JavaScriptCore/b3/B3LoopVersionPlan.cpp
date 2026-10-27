@@ -193,6 +193,8 @@ std::expected<LoopVersionPlan, GaveUp> LoopVersionPlanner::tryPlan(const HotRegi
         plan.rangeChecks = planRangeChecksOfMeetingCounters({ m_proc, m_loops, m_phiChildren, plan.region, attempt.invariance });
         plan.numberOfRemovedValues += countRemovedComparisons(attempt);
     }
+    if (plan.rangeChecks.decidedComparisons.isEmpty() && !hoistsEnough(attempt))
+        return std::unexpected(GaveUp(GaveUpReason::NothingToHoist));
     if (auto gaveUp = checkSpeculativeHoistBudget(attempt))
         return std::unexpected(*gaveUp);
 
@@ -372,10 +374,16 @@ bool LoopVersionPlanner::isNeverNegative(Value* value)
     return !!upsilons.size();
 }
 
+bool LoopVersionPlanner::hoistsEnough(const Attempt& attempt)
+{
+    const HoistPlan& hoisted = attempt.invariance.plan();
+    return hoisted.hoistsGuard || hoisted.numberOfHoistedValues >= Limits::minHoistedValuesPerLoopVersion;
+}
+
 std::optional<GaveUp> LoopVersionPlanner::checkHoistThresholds(const Attempt& attempt) const
 {
     const HoistPlan& hoisted = attempt.invariance.plan();
-    if ((!hoisted.hoistsGuard && hoisted.numberOfHoistedValues < Limits::minHoistedValuesPerLoopVersion) || (attempt.unswitched && !hoisted.isHoisted(attempt.unswitched->block->last())))
+    if (attempt.unswitched && !hoisted.isHoisted(attempt.unswitched->block->last()))
         return GaveUp(GaveUpReason::NothingToHoist);
     if (attempt.plan.numberOfClonedValues - hoisted.numberOfHoistedValues + hoisted.numberOfPeeledValues > m_proc.limit(Limit::MaxClonedValuesPerLoopVersion)) {
         m_proc.didReachLimit(Limit::MaxClonedValuesPerLoopVersion, attempt.plan.region.header->at(0)->origin());

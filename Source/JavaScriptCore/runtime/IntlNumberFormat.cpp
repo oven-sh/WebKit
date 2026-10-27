@@ -30,6 +30,7 @@
 #include "config.h"
 #include "IntlNumberFormat.h"
 
+#include "AOTRemovableFeature.h"
 #include "Error.h"
 #include "IntlNumberFormatInlines.h"
 #include "IntlObjectInlines.h"
@@ -54,6 +55,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 const ClassInfo IntlNumberFormat::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlNumberFormat) };
+
+NEVER_INLINE void IntlNumberFormat::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlNumberFormat, &IntlNumberFormat::destroy);
+    static_cast<IntlNumberFormat*>(cell)->IntlNumberFormat::~IntlNumberFormat();
+}
 
 namespace IntlNumberFormatInternal {
 static constexpr bool verbose = false;

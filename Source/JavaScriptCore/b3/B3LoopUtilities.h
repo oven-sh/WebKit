@@ -30,6 +30,22 @@ inline bool isLoopPoll(const Value* value)
     return patchpoint && patchpoint->isLoopPoll;
 }
 
+// A patchpoint that is given no register has nothing to compute with: it only holds its operands alive.
+inline bool onlyKeepsValuesAlive(const Value* value)
+{
+    auto* patchpoint = value->as<PatchpointValue>();
+    if (!patchpoint || patchpoint->type() != Void || patchpoint->numGPScratchRegisters || patchpoint->numFPScratchRegisters || patchpoint->isLoopPoll)
+        return false;
+    if (!patchpoint->earlyClobbered().isEmpty() || !patchpoint->lateClobbered().isEmpty())
+        return false;
+    for (unsigned index = 0; index < patchpoint->numChildren(); ++index) {
+        ValueRep::Kind kind = patchpoint->constrainedChild(index).rep().kind();
+        if (kind != ValueRep::ColdAny && kind != ValueRep::LateColdAny)
+            return false;
+    }
+    return true;
+}
+
 inline bool canCloneForLoop(const Value* value)
 {
     if (value->kind().isCloningForbidden() || value->type().isTuple())

@@ -337,10 +337,6 @@ void RuntimeHooks::didMakeStructureForAddition(VM&, Structure* made)
         state->firstAdditions->didMakeStructure(made);
 }
 
-bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid)
-{
-    return storeThroughChain(walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid)) == StoreThroughChain::CreatesOwnProperty;
-}
 
 bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid, const ChainDependent& dependent)
 {
@@ -400,6 +396,41 @@ enum class StepResult : uint8_t { Continue, Stop };
 static bool canWalkThrough(Structure* structure)
 {
     return !isProxyType(structure->typeInfo().type()) && !structure->needImpurePropertyWatchpoint() && !structure->isDictionary() && (structure->isCompiledStructure() || structure->propertyAccessesAreCacheable());
+}
+
+// What walkChain() answers where every object above is an ordinary one or a class prototype without members yet, and none has the name. Nothing of the walk is kept, so nothing is listed.
+static bool findsNothingAbove(JSGlobalObject* globalObject, Structure* receiverStructure, UniquedStringImpl* uid)
+{
+    if (parseIndex(PropertyName(uid)))
+        return false;
+    Instance* instance = Instance::of(globalObject);
+    for (Structure* below = receiverStructure; !below->typeInfo().overridesGetPrototype() && !(below->isObject() && below->hasPolyProto());) {
+        JSObject* object = below->prototypeForLookup(globalObject).getObject();
+        if (!object)
+            return true;
+        Structure* structure = object->structure();
+        if (object->classInfo() == ClassPrototype::info()) {
+            if (Instance::of(structure->realm()) != instance || object->butterfly() || ClassPrototype::hasMember(object, uid))
+                return false;
+        } else {
+            TypeInfo typeInfo = structure->typeInfo();
+            if (!canWalkThrough(structure) || structure->isCompiledStructure() || !structure->propertyAccessesAreCacheableForAbsence() || typeInfo.overridesGetOwnPropertySlot() || typeInfo.overridesPut())
+                return false;
+            unsigned attributes;
+            std::optional<PropertyOffset> offset = structure->getWithoutMaterializing(uid, attributes);
+            if (!offset || isValidOffset(*offset) || (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(uid)))
+                return false;
+        }
+        below = structure;
+    }
+    return false;
+}
+
+bool storeCreatesOwnProperty(JSGlobalObject* globalObject, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl* uid)
+{
+    if (findsNothingAbove(globalObject, receiverStructure, uid)) [[likely]]
+        return true;
+    return storeThroughChain(walkChain({ globalObject, receiverStructure, receiverOrNull, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, uid)) == StoreThroughChain::CreatesOwnProperty;
 }
 
 // A slot filed for an Unknown walk is dropped when this object changes. An object with immutable properties still reifies its static ones.

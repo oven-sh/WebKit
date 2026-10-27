@@ -15,6 +15,8 @@
 # REQUIRES(ARM64): arm64 unsanitized-code
 # RUN(UNCHECKED): lower-to-b3 optimized loops f1
 # REQUIRES(UNCHECKED): unsanitized-code
+# RUN(REDUCED): lower-to-b3 optimized loops f1
+# REQUIRES(REDUCED): unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -105,5 +107,9 @@ function f1 name="sumOfColumn" module=m0 flags=[IsChecked, HasExplicitName] leng
 # UNCHECKED-NOT: Terminal, {{*}}:IsInsideView)
 # UNCHECKED-NOT: isLoopPoll
 # UNCHECKED-LABEL: end of loop
-# X64: instructions: 34, patchpoints: 8, {{*}} steps by 8
-# ARM64: instructions: 34, patchpoints: 8, {{*}} steps by 8
+# The index is a second induction variable that steps by width: nothing is multiplied in the loop.
+# REDUCED-LABEL: steps by 8
+# REDUCED-NOT: = Mul(
+# REDUCED-LABEL: end of loop
+# X64: instructions: 18, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 26, patchpoints: 8, {{*}} steps by 8

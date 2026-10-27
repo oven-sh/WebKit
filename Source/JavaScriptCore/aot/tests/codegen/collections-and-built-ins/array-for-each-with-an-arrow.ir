@@ -195,5 +195,5 @@ function f5 name="forEach" module=m1 position=3958 kind=Method role=Library flag
 # WHOLE-LABEL: name="total" role=Source
 # WHOLE-NOT: :NewClosure
 # WHOLE-LABEL: end of function
-# X64: instructions: 34, patchpoints: 0, {{*}} steps by 8
-# ARM64: instructions: 43, patchpoints: 0, {{*}} steps by 8
+# X64: instructions: 19, patchpoints: 0, {{*}} steps by 8
+# ARM64: instructions: 28, patchpoints: 0, {{*}} steps by 8

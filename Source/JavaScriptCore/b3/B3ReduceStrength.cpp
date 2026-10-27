@@ -4807,7 +4807,7 @@ private:
     Value* insertOrReusePartOfAddress(Opcode opcode, Value* left, Value* right)
     {
         Value* inserted = m_insertionSet.insert<Value>(m_index, opcode, m_value->origin(), left, right);
-        if (!m_numbering || isX86())
+        if (!m_numbering || (isX86() && inserted->type() != Int32))
             return inserted;
         Value* representative = inserted;
         // The first turn has the sum as the program's code made it, which may be the other way round. With two sums the shift has two users and is an instruction of its own.

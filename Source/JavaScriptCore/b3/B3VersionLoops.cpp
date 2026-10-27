@@ -91,6 +91,8 @@ private:
         RegionCloner::BlockMap excursionCopies;
         Value* testedCopy { nullptr };
         Value* testedCopyInExcursion { nullptr };
+        Vector<StridedIndexStart, 2> stridedIndexStarts;
+        Vector<Variable*, 2> stridedIndexVariables;
     };
 
     void findSingleDefinitions()
@@ -210,9 +212,15 @@ private:
             return hoistedValueOrSelf(version, value);
         });
         if (!plan.rangeChecks.stridedChecks.isEmpty()) {
-            appendStridedRangeCheckGuards(*version.front, plan.rangeChecks.stridedChecks.span(), *plan.countedLoop, [&](Value* value) {
+            version.stridedIndexStarts = appendStridedRangeCheckGuards(*version.front, plan.rangeChecks.stridedChecks.span(), *plan.countedLoop, [&](Value* value) {
                 return hoistedValueOrSelf(version, value);
             });
+            for (const StridedIndexStart& start : version.stridedIndexStarts) {
+                Variable* variable = start.first ? m_proc.addVariable(Int64) : nullptr;
+                version.stridedIndexVariables.append(variable);
+                if (variable)
+                    version.front->last()->appendNew<VariableValue>(m_proc, Set, start.first->origin(), variable, start.first);
+            }
         }
         if (omitsPollBehindGuard(plan)) {
             appendGuardThatArrayHoldsLength(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.lengthThatArrayMustHold, [&](Value* value) {
@@ -321,6 +329,11 @@ private:
                 m_cloner.substitute(map, value, copy->appendNew<Const32Value>(m_proc, value->origin(), outcome->value));
                 return;
             }
+            if (auto reduced = plan.rangeChecks.reducedIndices.find(value); reduced != plan.rangeChecks.reducedIndices.end()) {
+                Value* index = copy->appendNew<VariableValue>(m_proc, Get, value->origin(), version.stridedIndexVariables[reduced->value.checkIndex]);
+                m_cloner.substitute(map, value, copy->appendNew<Value>(m_proc, Add, value->origin(), index, copy->appendNew<Const64Value>(m_proc, value->origin(), reduced->value.offset)));
+                return;
+            }
         }
         Value* clone = m_cloner.appendClone(value, copy, map);
         if (!plan.rewritesLoopTest())
@@ -331,6 +344,25 @@ private:
             version.testedCopy = clone;
         else
             version.testedCopyInExcursion = clone;
+    }
+
+    void appendStridedIndexSteps(Version& version, BasicBlock* block)
+    {
+        for (unsigned i = 0; i < version.stridedIndexVariables.size(); ++i) {
+            Variable* variable = version.stridedIndexVariables[i];
+            if (!variable)
+                continue;
+            Value* stride = version.stridedIndexStarts[i].stride;
+            Value* index = block->appendNew<VariableValue>(m_proc, Get, stride->origin(), variable);
+            block->appendNew<VariableValue>(m_proc, Set, stride->origin(), variable, block->appendNew<Value>(m_proc, Add, stride->origin(), index, stride));
+        }
+    }
+
+    static bool stepsStridedIndices(const LoopVersionPlan& plan, BasicBlock* block)
+    {
+        if (plan.rangeChecks.indexStepBlock)
+            return block == plan.rangeChecks.indexStepBlock;
+        return block->last()->opcode() == Jump && block->successorBlock(0) == plan.region.header;
     }
 
     void fillCopies(Version& version, const Vector<BasicBlock*, 8>& blocks, const RegionCloner::BlockMap& copies, BasicBlock* nextIterationHeader, const RegionCloner::BlockMap* otherCopies, CopyKind kind)
@@ -344,6 +376,8 @@ private:
                 if (value != terminal)
                     copyValue(version, value, copy, map, kind);
             }
+            if (kind == CopyKind::FastLoop && stepsStridedIndices(plan, block))
+                appendStridedIndexSteps(version, copy);
             if (isReplaced(version, terminal, kind)) {
                 copy->appendNew<Value>(m_proc, Jump, terminal->origin());
                 copy->setSuccessors(FrequentedBlock(plan.hoisted.likelySuccessors.get(terminal)));
@@ -382,6 +416,7 @@ private:
         version.front->last()->appendNew<Value>(m_proc, Jump, header->at(0)->origin());
         version.front->last()->setSuccessors(FrequentedBlock(fastHeader));
         if (excursionEnd) {
+            appendStridedIndexSteps(version, excursionEnd);
             excursionEnd->appendNew<Value>(m_proc, Jump, header->at(0)->origin());
             excursionEnd->setSuccessors(FrequentedBlock(fastHeader));
         }

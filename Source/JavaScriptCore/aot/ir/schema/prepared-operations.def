@@ -55,6 +55,7 @@ operation MayBindAnswersOfHasTraps (target: Object/inspects) -> natural(boolean)
 operation ValidateAnswerOfGetTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = ValidateAnswerOfGetTrap
 operation ValidateDenialOfHasTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateDenialOfHasTrap
 operation ValidateConsentOfDeleteTrap (target: Object/retains, property: Any/retains) -> none ; unknownCode ; runtime = ValidateConsentOfDeleteTrap
+operation HasOwnByAnswerOfDescriptorTrap (target: Object/retains, property: Any/retains, answer: Any/retains) -> natural(boolean) ; unknownCode ; runtime = HasOwnByAnswerOfDescriptorTrap
 operation FinishStoreByTrap (mode: ECMAMode, target: Object/retains, property: Any/retains, value: Any/retains, answer: Any/retains) -> none ; unknownCode ; runtime = FinishStoreByTrap
 operation TryCopyFields (object: Object/inspects, source: Object/inspects+retainsContents, layout: Layout) -> natural(boolean) ; reads(ShapeWords, ObjectFields, OrderWords, NamedProperties) writes(ObjectFields, OrderWords) ; branches = May ; replaces = CopyDataProperties
 operation GetGlobalBinding (key: PropertyKey, level: KnowledgeLevel, accessSite?: AccessSite, from Placed binding?: GlobalBinding) [seesScriptBindings isForTypeOf] -> unknown ; unknownCode ; accessClass = Slot ; replaces = PropGet ; runtime = GetGlobalBinding

@@ -51,6 +51,24 @@ extern "C" void mi_register_address_space_keeper(const struct mi_address_space_k
 {
 }
 
+// The consumer's mimalloc keeps pieces of its arenas aside. The vendored one does not.
+extern "C" bool mi_keep_piece_aside(size_t) noexcept
+{
+    return false;
+}
+
+extern "C" bool mi_release_piece_kept_aside(void) noexcept
+{
+    return false;
+}
+
+// The consumer's mimalloc has a word for the embedder in its record of each thread. The vendored one does not.
+extern "C" size_t* mi_thread_embedder_word(void) noexcept
+{
+    static thread_local size_t word;
+    return &word;
+}
+
 // A value above 1 skips the teardown at process exit, like the consumer's MI_NO_PROCESS_DETACH.
 __attribute__((constructor)) static void skipProcessTeardown()
 {

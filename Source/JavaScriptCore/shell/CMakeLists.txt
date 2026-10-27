@@ -226,6 +226,7 @@ if (DEVELOPER_MODE OR ENABLE_BUN_TEST_PROGRAMS)
         ../b3/testb3_bun_strided_range_checks.cpp
         ../b3/testb3_bun_thread_jumps.cpp
         ../b3/testb3_bun_unroll_loops.cpp
+        ../b3/testb3_bun_vectorize_loops.cpp
         ../b3/testb3_bun_version_counted_loops.cpp
         ../b3/testb3_bun_version_loops.cpp
         ${aotProgramSources}

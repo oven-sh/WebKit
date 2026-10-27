@@ -614,17 +614,24 @@ static void checkRequestsThatMayNotFailUseBallast()
     bmalloc::api::setAddressSpaceBallastHandler(nullptr);
 }
 
+// Who asks for address space of its own takes the whole limit for free, and who decides for others takes it for taken.
 static void checkAddressSpaceThatCannotBeCountedCountsAsTaken()
 {
-    AOT_TEST_CHECK(addressSpaceLeft() && addressSpaceLeft() != std::numeric_limits<size_t>::max());
+    struct rlimit addressSpace;
+    AOT_TEST_CHECK(!getrlimit(RLIMIT_AS, &addressSpace) && addressSpace.rlim_cur != RLIM_INFINITY);
+    size_t counted = addressSpaceLeft();
+    AOT_TEST_CHECK(counted && counted < addressSpace.rlim_cur);
+    AOT_TEST_CHECK(addressSpaceLeft(UncountedAddressSpace::IsTaken) && addressSpaceLeft(UncountedAddressSpace::IsTaken) < addressSpace.rlim_cur);
+
     struct rlimit limit;
     AOT_TEST_CHECK(!getrlimit(RLIMIT_NOFILE, &limit));
     struct rlimit noMoreFiles { 0, limit.rlim_max };
     AOT_TEST_CHECK(!setrlimit(RLIMIT_NOFILE, &noMoreFiles));
-    size_t left = addressSpaceLeft();
+    size_t leftForOwnRequests = addressSpaceLeft();
+    size_t leftForOthers = addressSpaceLeft(UncountedAddressSpace::IsTaken);
     AOT_TEST_CHECK(!setrlimit(RLIMIT_NOFILE, &limit));
-    AOT_TEST_CHECK(!left);
-    AOT_TEST_CHECK(addressSpaceLeft());
+    AOT_TEST_CHECK(leftForOwnRequests == addressSpace.rlim_cur);
+    AOT_TEST_CHECK(!leftForOthers);
 }
 
 // All the address space is taken. What a request that may not fail has let go of is not handed to a large request that may fail, on this thread or another, while small requests are
@@ -635,7 +642,7 @@ static void checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail()
     AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
     bmalloc::api::setAddressSpaceBallastKeeper([] {
         keepAddressSpaceBallast();
-        return addressSpaceLeft();
+        return addressSpaceLeft(UncountedAddressSpace::IsTaken);
     });
 
     auto largeRequestFindsMemory = [] {

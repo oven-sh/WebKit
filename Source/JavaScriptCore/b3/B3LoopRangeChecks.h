@@ -60,17 +60,32 @@ struct StridedRangeCheck {
     Value* limit { nullptr };
     int64_t minOffset { 0 };
     int64_t maxOffset { 0 };
-    bool isSignExtended { false };
+    bool mustFitInt32 { false };
+    bool isStrengthReduced { false };
     bool isIncreasing { true };
     bool needsScaleGuard { false };
     bool needsLowerGuard { false };
     bool needsLimitGuard { false };
 };
 
+// The value equals the index of stridedChecks[checkIndex] plus offset.
+struct ReducedIndex {
+    unsigned checkIndex { 0 };
+    int64_t offset { 0 };
+};
+
+struct StridedIndexStart {
+    Value* first { nullptr };
+    Value* stride { nullptr };
+};
+
 struct RangeCheckPlan {
     UncheckedKeyHashMap<Value*, bool> decidedComparisons;
     Vector<RangeCheckBound, 4> bounds;
     Vector<StridedRangeCheck, 2> stridedChecks;
+    UncheckedKeyHashMap<Value*, ReducedIndex> reducedIndices;
+    // Where the reduced indices advance. Null: on each back edge.
+    BasicBlock* indexStepBlock { nullptr };
     Vector<EntryGuard, 8> entryGuards;
     bool relationHoldsOnEntry { false };
     // The number of turns is at most each limit, and at most the bound of a counter that starts at zero or above. One of these is the length of a view, of the characters of a string
@@ -106,7 +121,7 @@ struct MeetingCountersInputs {
 // For a loop that goes on while a counter that rises is below one that falls. Neither leaves the stretch between where the two started.
 RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs&);
 void appendEntryGuards(FastPreHeader&, Origin, std::span<const EntryGuard>, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
-void appendStridedRangeCheckGuards(FastPreHeader&, std::span<const StridedRangeCheck>, const CountedLoop&, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
+Vector<StridedIndexStart, 2> appendStridedRangeCheckGuards(FastPreHeader&, std::span<const StridedRangeCheck>, const CountedLoop&, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 void appendGuardThatArrayHoldsLength(FastPreHeader&, Origin, MemoryValue* length, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 
 inline int64_t maxLimitForRangeChecks(Type type)

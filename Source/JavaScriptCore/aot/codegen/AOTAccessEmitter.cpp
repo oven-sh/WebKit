@@ -305,6 +305,11 @@ void AccessEmitter::generateValidateConsentOfDeleteTrap(const ValueContext& valu
     callVoidOperation(value, RuntimeOperation::ValidateConsentOfDeleteTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()) }, { .isOnRarePath = true });
 }
 
+void AccessEmitter::generateHasOwnByAnswerOfDescriptorTrap(const ValueContext& value)
+{
+    define(value, callOperation<Condition>(value, RuntimeOperation::HasOwnByAnswerOfDescriptorTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->answerOperand()) }));
+}
+
 void AccessEmitter::generateFinishStoreByTrap(const ValueContext& value)
 {
     callVoidOperation(value, RuntimeOperation::FinishStoreByTrap, { in<Boxed>(value->targetOperand()), in<Boxed>(value->propertyOperand()), in<Boxed>(value->valueOperand()), in<Boxed>(value->answerOperand()), word32(value->mode() == ECMAMode::Strict) }, { .isOnRarePath = true });

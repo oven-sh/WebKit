@@ -171,19 +171,9 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
     validateKeyListing(vm, typed);
     State& state = typed.state();
     Structure* extraStructure = extra->structure();
-    Vector<OrderedKey, 16> extraKeys;
-    extraStructure->forEachProperty(vm, [&](const auto& entry) {
-        UniquedStringImpl* name = entry.key();
-        if (!PropertyName(name).isPrivateName() && !typed.fieldNamed(state, name))
-            extraKeys.append(OrderedKey { name, nullptr, entry.offset(), entry.attributes() });
-        return true;
-    });
-
-    const LayoutData& layout = typed.layout();
-    std::span fields = layout.fields();
-    Object::KeyOrderStorage storage;
+    std::span fields = typed.layout().fields();
     Vector<OrderedKey, 32> ordered;
-    size_t nextExtraKey = Object::forEachPositionedKey(typed.keyOrder(state, storage), layout.numberOfFields, extraKeys.size(), [&](uint16_t index) {
+    forEachKeyAsCreated(vm, state, typed, [&](uint16_t index) {
         const FieldData& field = fields[index];
         if (!state.objects->layouts.hasStringKey(field) && !state.objects->layouts.hasSymbolKey(field))
             return;
@@ -196,10 +186,9 @@ static Vector<OrderedKey, 32> collectKeysInOrder(VM& vm, const Object& typed, JS
         PropertyOffset offset = extraStructure->get(vm, name, extraAttributes);
         if (isValidOffset(offset))
             ordered.append(OrderedKey { name, nullptr, offset, extraAttributes });
-    }, [&](size_t ordinal) {
-        ordered.append(extraKeys[ordinal]);
+    }, [&](const auto& entry) {
+        ordered.append(OrderedKey { entry.key(), nullptr, entry.offset(), entry.attributes() });
     });
-    ordered.append(extraKeys.span().subspan(nextExtraKey));
     return ordered;
 }
 

@@ -793,6 +793,10 @@ static void testStubBlobOfEveryKey()
         checkBlob(built);
         for (StubKey key : calledKeys)
             AOT_TEST_CHECK(built.blob.offsetOf(key));
+        for (SlotHandlerTable table : allSlotHandlerTables) {
+            for (StubKey handler : slotHandlerKeys(table))
+                AOT_TEST_CHECK(built.blob.offsetOf(handler));
+        }
     }
 }
 
@@ -804,6 +808,8 @@ static void testStubBlobOfNoKey()
         return !built.blob.offsetOf(key);
     });
     AOT_TEST_CHECK(omitsCalledKey);
+    for (StubKey handler : stubKeysWithLinkage(StubLinkage::SlotHandler))
+        AOT_TEST_CHECK(!built.blob.offsetOf(handler));
     AOT_TEST_CHECK(built.blob.code.bytes.size() < buildWithEveryKey(StubOptions { }).blob.code.bytes.size());
 }
 

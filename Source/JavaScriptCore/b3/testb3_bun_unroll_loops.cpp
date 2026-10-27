@@ -153,54 +153,66 @@ static void testUnrollLoopsBoundWithoutRoomForOtherTurns()
 
 static void testUnrollLoopsDropsBranchThatRepeatsTestAtTop()
 {
+    constexpr int64_t reported = -1000;
+    struct Case {
+        bool readsBoundAgain;
+        bool storesBetweenReads;
+        bool overlooksStore;
+    };
     // The bound as the test has it, and read once more from where the test's bound was read.
-    for (bool readsBoundAgain : { false, true }) {
-        for (bool storesBetweenReads : { false, true }) {
-            if (storesBetweenReads && !readsBoundAgain)
-                continue;
-            Procedure proc(loopPolicy());
-            Graph graph { proc };
-            BasicBlock* root = proc.addBlock();
-            BasicBlock* header = proc.addBlock();
-            BasicBlock* body = proc.addBlock();
-            BasicBlock* stays = proc.addBlock();
-            BasicBlock* out = proc.addBlock();
-            BasicBlock* exit = proc.addBlock();
-            Variable* index = proc.addVariable(Int64);
-            Variable* sum = proc.addVariable(Int64);
-            auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
-            Value* pointer = arguments[1];
-            Value* bound = graph.load(root, Int64, pointer, 0, firstHeap);
-            if (storesBetweenReads)
-                graph.store(root, arguments[2], pointer, 0, firstHeap);
-            Value* limit = readsBoundAgain ? graph.load(root, Int64, pointer, 0, firstHeap) : bound;
-            graph.set(root, index, graph.int64(root, 0));
-            graph.set(root, sum, graph.int64(root, 0));
-            graph.jump(root, header);
-            graph.branch(header, graph.make(header, LessThan, graph.get(header, index), bound), body, exit);
-            graph.branch(body, graph.make(body, GreaterThan, limit, graph.get(body, index)), FrequentedBlock(stays), rarely(out));
-            graph.increase(stays, sum, graph.get(stays, index));
-            graph.increase(stays, sum, CountedSum::zeroReadAt(graph, stays, index));
-            graph.increase(stays, index, 1);
-            graph.jump(stays, header);
-            graph.ret(out, graph.make(out, Sub, graph.int64(out, -1), graph.get(out, sum)));
-            graph.ret(exit, graph.get(exit, sum));
-            proc.resetReachability();
-            fixSSA(proc);
-            validate(proc);
+    for (auto [readsBoundAgain, storesBetweenReads, overlooksStore] : { Case { false, false, false }, Case { true, false, false }, Case { true, true, false }, Case { true, true, true } }) {
+        Policy policy = loopPolicy();
+        policy.validation.logsMovedLoads = true;
+        policy.validation.overlooksWritesBetweenReadsOfBound = overlooksStore;
+        Procedure proc(policy);
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* stays = proc.addBlock();
+        BasicBlock* out = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Variable* sum = proc.addVariable(Int64);
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root).eager();
+        Value* pointer = arguments[1];
+        Value* bound = graph.load(root, Int64, pointer, 0, firstHeap);
+        if (storesBetweenReads)
+            graph.store(root, arguments[2], pointer, 0, firstHeap);
+        Value* limit = readsBoundAgain ? graph.load(root, Int64, pointer, 0, firstHeap) : bound;
+        graph.set(root, index, graph.int64(root, 0));
+        graph.set(root, sum, graph.int64(root, 0));
+        graph.jump(root, header);
+        graph.branch(header, graph.make(header, LessThan, graph.get(header, index), bound), body, exit);
+        graph.branch(body, graph.make(body, GreaterThan, limit, graph.get(body, index)), FrequentedBlock(stays), rarely(out));
+        graph.increase(stays, sum, graph.get(stays, index));
+        graph.increase(stays, sum, CountedSum::zeroReadAt(graph, stays, index));
+        graph.increase(stays, index, 1);
+        graph.jump(stays, header);
+        graph.ret(out, graph.make(out, Sub, graph.int64(out, -1), graph.get(out, sum)));
+        graph.ret(exit, graph.get(exit, sum));
+        proc.resetReachability();
+        fixSSA(proc);
+        validate(proc);
 
-            CHECK(unrollLoopsAndValidate(proc));
-            if (storesBetweenReads)
-                checkValueCountInEachLoop(proc, Branch, { 2, 1 + Limits::maxTurnsPerUnrolledLoop });
-            else
-                checkValueCountInEachLoop(proc, Branch, { 1, 2 });
-            auto code = compileProc(proc);
-            for (int64_t turnsOfLoop = 0; turnsOfLoop < 40; ++turnsOfLoop) {
-                for (int64_t stored : { 0, 5, 100 }) {
-                    int64_t word = turnsOfLoop;
-                    int64_t limitInRun = storesBetweenReads ? stored : turnsOfLoop;
-                    CHECK_EQ(run(*code, 0, &word, stored), limitInRun < turnsOfLoop ? -1 - sumBelow(limitInRun) : sumBelow(turnsOfLoop));
-                }
+        CHECK(unrollLoopsAndValidate(proc));
+        if (storesBetweenReads && !overlooksStore)
+            checkValueCountInEachLoop(proc, Branch, { 2, 1 + Limits::maxTurnsPerUnrolledLoop });
+        else
+            checkValueCountInEachLoop(proc, Branch, { 1, 2 });
+        bool isChecked = proc.movedLoadLog().insertChecks(proc, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+            jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
+            jit.emitFunctionEpilogue();
+            jit.ret();
+        }));
+        CHECK_EQ(isChecked, readsBoundAgain && (!storesBetweenReads || overlooksStore));
+        auto code = compileProc(proc);
+        for (int64_t turnsOfLoop = 0; turnsOfLoop < 40; ++turnsOfLoop) {
+            for (int64_t stored : { 0, 5, 100 }) {
+                int64_t word = turnsOfLoop;
+                int64_t limitInRun = storesBetweenReads ? stored : turnsOfLoop;
+                int64_t expected = limitInRun < turnsOfLoop ? -1 - sumBelow(limitInRun) : sumBelow(turnsOfLoop);
+                CHECK_EQ(run(*code, 0, &word, stored), overlooksStore && stored != turnsOfLoop ? reported : expected);
             }
         }
     }
@@ -344,8 +356,10 @@ static void testUnrollLoopsSkipsLoopThatWalksNothing()
 
 static void testUnrollLoopsReadsOnePlaceOnceATurn()
 {
+    Policy policy = loopPolicy();
+    policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
     for (bool storesBetween : { false, true }) {
-        CountedSum sum(LessThan, 1, 0, loopPolicy(), Walks::Nothing);
+        CountedSum sum(LessThan, 1, 0, policy, Walks::Nothing);
         auto& [proc, graph, loop, relation, step, firstIndex] = sum;
         auto address = [&] {
             return graph.make(loop.body, Add, loop.pointer, graph.make(loop.body, Shl, graph.get(loop.body, loop.index), graph.int32(loop.body, 2)));
@@ -360,8 +374,10 @@ static void testUnrollLoopsReadsOnePlaceOnceATurn()
         sum.finish(loop.body, TestPlace::Bottom);
 
         CHECK(unrollLoopsAndValidate(proc));
+        proc.setOptLevel(2);
+        reduceStrength(proc);
         eliminateDeadCode(proc);
-        CHECK_EQ(numberOfValues(proc, Load), storesBetween ? 2 * (1 + Limits::minTurnsPerUnrolledLoop) : 1 + Limits::maxTurnsPerUnrolledLoop);
+        CHECK_EQ(numberOfValues(proc, Load), 1 + (storesBetween ? Limits::minTurnsPerUnrolledLoop : Limits::maxTurnsPerUnrolledLoop));
         auto code = compileProc(proc);
         for (int64_t bound = 1; bound <= 40; ++bound) {
             int32_t words[40];

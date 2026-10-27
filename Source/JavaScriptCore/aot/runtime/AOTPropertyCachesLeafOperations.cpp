@@ -389,19 +389,27 @@ static LeafAnswer putToCompiledObject(Instance* instance, Object* object, Unique
     VM& vm = *instance->vm;
     PropertyCaches& caches = *instance->state->propertyCaches;
     Structure* structure = object->structure();
-    bool isCached = caches.findByKey(structure, uid, SlotAccess::Store);
-    const FieldData* field = object->fieldNamed(object->state(), uid);
+    // Every field has a name that the program spells.
+    const FieldData* field = vm.aotState().identifiers->numberOf(uid) ? object->fieldNamed(object->state(), uid) : nullptr;
     if (!field) {
+        using Flag = Object::ExtraPropertyStoreFlag;
         JSObject* extra = object->extraProperties();
-        bool canHaveSlot = !extra || !extra->structure()->isDictionary() || isHeldByCacheableDictionary(extra->structure(), uid);
-        if (canHaveSlot && !isCached)
+        bool canHaveSlot = true;
+        bool isKnownToBeAbsent = false;
+        if (Structure* extraStructure = extra ? extra->structure() : nullptr; extraStructure && extraStructure->isDictionary()) {
+            unsigned attributes;
+            auto offset = extraStructure->isUncacheableDictionary() ? std::nullopt : extraStructure->getWithoutMaterializing(uid, attributes);
+            canHaveSlot = offset && isValidOffset(*offset);
+            isKnownToBeAbsent = offset && !isValidOffset(*offset);
+        }
+        if (canHaveSlot && !caches.findByKey(structure, uid, SlotAccess::Store))
             return LeafAnswer::TakeSlowPath;
-        auto stored = object->tryStoreExtraProperty(vm, uid, value, { Object::ExtraPropertyStoreFlag::IsKnownNotToBeField });
+        auto stored = object->tryStoreExtraProperty(vm, uid, value, isKnownToBeAbsent ? OptionSet<Flag> { Flag::IsKnownNotToBeField, Flag::IsKnownToBeAbsent } : OptionSet<Flag> { Flag::IsKnownNotToBeField });
         return stored.kind == Object::ExtraPropertyStore::NotHandled ? LeafAnswer::TakeSlowPath : LeafAnswer::Yes;
     }
     if (field->flags & (fieldIsReadOnly | fieldIsAccessor) || field->slot.representation() == SlotRepresentation::DeferredClosure || value.isObject() || object->hasFlagsInOrderWord() || !object->readInline(*field) || !object->tryStore(vm, *field, value))
         return LeafAnswer::TakeSlowPath;
-    if (!isCached && caches.shouldFile(structure->id(), uid, SlotAccess::Store)) {
+    if (!caches.findByKey(structure, uid, SlotAccess::Store) && caches.shouldFile(structure->id(), uid, SlotAccess::Store)) {
         PutPropertySlot slot(object, true);
         caches.cache({ structure, { uid, std::nullopt }, SlotAccess::Store }, classifyCompiledObjectStore({ instance->globalObject, object, structure, uid, slot, PutMode::Strict }, *object));
     }

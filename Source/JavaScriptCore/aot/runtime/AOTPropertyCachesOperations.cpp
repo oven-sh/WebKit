@@ -502,6 +502,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateDenialOfHasTrap, void, (Instance* i
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnByAnswerOfDescriptorTrap, size_t, (Instance* instance, EncodedJSValue target, EncodedJSValue property, EncodedJSValue answer))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasOwnByAnswerOfDescriptorTrap);
+    OPERATION_RETURN(scope, ProxyObject::hasOwnByAnswerOfTrap(globalObject, asObject(JSValue::decode(target)), JSValue::decode(property), JSValue::decode(answer)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTValidateConsentOfDeleteTrap, void, (Instance* instance, EncodedJSValue target, EncodedJSValue property))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTValidateConsentOfDeleteTrap);

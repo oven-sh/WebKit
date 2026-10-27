@@ -118,22 +118,6 @@ private:
         int64_t step { 0 };
     };
 
-    // A patchpoint that is given no register has nothing to compute with: it only holds its operands alive.
-    static bool onlyKeepsValuesAlive(const Value* value)
-    {
-        auto* patchpoint = value->as<PatchpointValue>();
-        if (!patchpoint || patchpoint->type() != Void || patchpoint->numGPScratchRegisters || patchpoint->numFPScratchRegisters || isLoopPoll(value))
-            return false;
-        if (!patchpoint->earlyClobbered().isEmpty() || !patchpoint->lateClobbered().isEmpty())
-            return false;
-        for (unsigned index = 0; index < patchpoint->numChildren(); ++index) {
-            ValueRep::Kind kind = patchpoint->constrainedChild(index).rep().kind();
-            if (kind != ValueRep::ColdAny && kind != ValueRep::LateColdAny)
-                return false;
-        }
-        return true;
-    }
-
     // Beside a call the test of the counter costs little.
     static bool isCall(const Value* value)
     {
@@ -314,7 +298,7 @@ private:
     }
 
     // Two reads of one place in front of the loop, with nothing between them that writes there.
-    static bool readsWhatBoundRead(Value* value, Value* bound)
+    bool readsWhatBoundRead(Value* value, Value* bound)
     {
         MemoryValue* load = value->as<MemoryValue>();
         MemoryValue* other = bound->as<MemoryValue>();
@@ -326,7 +310,7 @@ private:
             unsigned numberOfBlocks = 0;
             for (BasicBlock* block = second->owner;; block = block->predecessor(0)) {
                 for (Value* between : *block) {
-                    if (between->effects().writes.overlaps(first->range()) || between->effects().fence)
+                    if ((between->effects().writes.overlaps(first->range()) || between->effects().fence) && !m_proc.policy().validation.overlooksWritesBetweenReadsOfBound)
                         return false;
                 }
                 if (block == first->owner)
@@ -335,11 +319,19 @@ private:
                     return false;
             }
         };
-        return nothingWritesBetween(load, other) || nothingWritesBetween(other, load);
+        auto readsWhatWasRead = [&](MemoryValue* first, MemoryValue* second) {
+            size_t index = second->owner->values().find(second);
+            if ((first->owner == second->owner && first->owner->values().find(first) > index) || !nothingWritesBetween(first, second))
+                return false;
+            if (std::optional<MovedLoad> moved = MovedLoad::of(m_proc, second))
+                m_proc.movedLoadLog().add(*moved, second->owner, static_cast<unsigned>(index), second->lastChild(), first);
+            return true;
+        };
+        return readsWhatWasRead(load, other) || readsWhatWasRead(other, load);
     }
 
     // A range check against the bound of the loop is such a test. In the loop itself it falls to the test above it; where the turns are written out that test is gone.
-    static void findRepeatedTests(Plan& plan)
+    void findRepeatedTests(Plan& plan)
     {
         if (!plan.testsCounterBeforeStep)
             return;
@@ -540,66 +532,39 @@ private:
         return true;
     }
 
-    // Between two reads of a turn may lie a way that is not written out and comes back in front of the second. Every way to the later read leads through the block of the earlier one.
-    static bool writesOnSidePathBetween(const Plan& plan, const MemoryValue* earlier, const MemoryValue* load)
+    // Answers how many reads the later walk over all values is likely to take away.
+    unsigned shareAddressesOfRepeatedLoads(const Plan& plan)
     {
-        if (earlier->owner == load->owner)
-            return false;
-        IndexSet<BasicBlock*> reached;
-        Vector<BasicBlock*, 8> worklist { load->owner };
-        while (!worklist.isEmpty()) {
-            for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
-                if (predecessor == earlier->owner || !reached.add(predecessor))
-                    continue;
-                worklist.append(predecessor);
-                if (plan.blocks.contains(predecessor))
-                    continue;
-                for (Value* value : *predecessor) {
-                    Effects effects = value->effects();
-                    if (effects.fence || effects.writes.overlaps(load->range()))
-                        return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // A turn may read one place twice, once to see what is there and once to take it. In the loop itself the later walk over all values finds that. In the turns that are written out
-    // each read gets an address of its own making, and the walk compares addresses by the value that computes them.
-    unsigned mergeRepeatedLoads(const Plan& plan)
-    {
-        RangeSet<HeapRange> written;
+        RangeSet<HeapRange> likelyWritten;
+        bool hasFence = false;
         Vector<MemoryValue*, 8> loads;
         for (BasicBlock* block : plan.blocks) {
             for (Value* value : *block) {
                 Effects effects = value->effects();
-                if (effects.fence)
-                    return 0;
-                effects.writes.addTo(written);
+                hasFence |= effects.fence;
+                effects.writes.addTo(likelyWritten);
                 MemoryValue* memory = value->as<MemoryValue>();
                 if (memory && memory->isLoad() && !memory->hasFence())
                     loads.append(memory);
             }
         }
         Dominators& dominators = m_proc.dominators();
-        unsigned numberOfMergedLoads = 0;
+        unsigned numberOfRepeatedLoads = 0;
         for (MemoryValue* load : loads) {
-            if (written.overlaps(load->range()))
-                continue;
             for (MemoryValue* earlier : loads) {
-                if (earlier == load || earlier->opcode() == Identity || earlier->kind() != load->kind() || earlier->type() != load->type())
+                if (earlier == load || earlier->kind() != load->kind() || earlier->type() != load->type())
                     continue;
                 if (!computesSameValue(earlier->lastChild(), load->lastChild(), Limits::maxDepthOfAddressInUnrolledLoop) || earlier->offset() != load->offset() || earlier->range() != load->range())
                     continue;
                 bool comesFirst = earlier->owner == load->owner ? earlier->owner->values().find(earlier) < load->owner->values().find(load) : dominators.strictlyDominates(earlier->owner, load->owner);
-                if (!comesFirst || writesOnSidePathBetween(plan, earlier, load))
+                if (!comesFirst)
                     continue;
-                load->replaceWithIdentity(earlier);
-                ++numberOfMergedLoads;
+                load->lastChild() = earlier->lastChild();
+                numberOfRepeatedLoads += !hasFence && !likelyWritten.overlaps(load->range());
                 break;
             }
         }
-        return numberOfMergedLoads;
+        return numberOfRepeatedLoads;
     }
 
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
@@ -637,7 +602,7 @@ private:
         PhiChildren& phiChildren = prepareToReadCounters();
         if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
             return;
-        numberOfValues -= mergeRepeatedLoads(plan);
+        numberOfValues -= shareAddressesOfRepeatedLoads(plan);
         Dominators& dominators = m_proc.dominators();
         auto runsEveryTurn = [&](BasicBlock* block) {
             for (BasicBlock* predecessor : plan.header->predecessors()) {

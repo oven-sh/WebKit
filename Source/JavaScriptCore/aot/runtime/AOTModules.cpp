@@ -1252,8 +1252,10 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
     }
     if (!isEvaluatedNow && job == import.jobOfNextNativeModule) {
         Vector<ModuleID, 4> nativeModules;
-        for (const PlanOfLoad::Found& found : import.plan->level((job - jobsFromRequestToGenerator) / jobInWhichLoaderAsksRoot))
-            nativeModules.append(found.module);
+        for (const PlanOfLoad::Found& found : import.plan->level((job - jobsFromRequestToGenerator) / jobInWhichLoaderAsksRoot)) {
+            if (isNativeModule(found.module))
+                nativeModules.append(found.module);
+        }
         for (ModuleID nativeModule : nativeModules) {
             generateNativeModuleForLoader(nativeModule);
             Exception* exception = scope.exception();

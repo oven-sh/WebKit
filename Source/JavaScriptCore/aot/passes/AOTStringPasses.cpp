@@ -66,7 +66,6 @@ static constexpr uint32_t stateOperandIndex = 0;
 static_assert(OperandIndex::Add::left == stateOperandIndex);
 static_assert(OperandIndex::Strcat::parts == stateOperandIndex);
 
-static constexpr OpcodeSet keyedAccesses { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
 static constexpr OpcodeSet equalityComparisonsOfStrings { Opcode::StrictEq, Opcode::Eq };
 static constexpr OpcodeSet closingOperations { Opcode::StringBuilderFinish, Opcode::StringBuilderDiscard };
 static constexpr OpcodeSet redirectableOperations = closingOperations | OpcodeSet {
@@ -1626,8 +1625,8 @@ bool isKeyOperand(const Program& program, const Function& function, const Use& u
     if (use.kind != Use::Kind::Operand)
         return false;
     const Value& user = function.at(use.user);
-    if (keyedAccesses.contains(user.opcode))
-        return use.operandIndex == OperandPosition::property(user.opcode);
+    if (std::optional<unsigned> property = OperandPosition::property(user.opcode))
+        return use.operandIndex == *property;
     if (user.opcode != Opcode::CallBuiltin || builtinOperandAt(user, use.operandIndex) != BuiltinOperand::argument(0))
         return false;
     std::optional<InlineBuiltin> builtin = program.builtins().at(user.overload()).code.implementation.inlineBuiltin;

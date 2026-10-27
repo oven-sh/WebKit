@@ -28,6 +28,7 @@
 #include "config.h"
 #include "IntlDateTimeFormat.h"
 
+#include "AOTRemovableFeature.h"
 #include "ISO8601.h"
 #include "IntlCache.h"
 #include "IntlObjectInlines.h"
@@ -80,6 +81,12 @@ void UFormattedDateIntervalDeleter::operator()(UFormattedDateInterval* result)
 }
 
 const ClassInfo IntlDateTimeFormat::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlDateTimeFormat) };
+
+NEVER_INLINE void IntlDateTimeFormat::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlDateTimeFormat, &IntlDateTimeFormat::destroy);
+    static_cast<IntlDateTimeFormat*>(cell)->IntlDateTimeFormat::~IntlDateTimeFormat();
+}
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IntlDateTimeFormatImpl);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(IntlDateTimeFormatTemporalFormatterCache);

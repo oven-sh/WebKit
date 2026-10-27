@@ -1330,7 +1330,7 @@ static bool belongsToOneObject(Structure* structure)
     if (structure->isDictionary() || structure->typeInfo().type() == GlobalProxyType)
         return true;
     const CompiledStructure* compiled = compiledObjectStructureOrNull(structure);
-    return compiled && compiled->extraPropertiesStructure() && !compiled->listsEveryExtraProperty();
+    return compiled && ((compiled->extraPropertiesStructure() && !compiled->listsEveryExtraProperty()) || compiled->hasKeyOrderOfOneObject());
 }
 
 void PropertyCaches::cache(const CachedAccess& access, const PropertyAnswer& answer)

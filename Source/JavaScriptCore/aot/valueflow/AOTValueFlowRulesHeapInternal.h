@@ -385,13 +385,23 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
     }
 
     bool namesIndex = m_context.meet(keys, m_tables.numberKinds());
+    AOT_THRESHOLD(uint32_t, mostNamesOfOneKeyToldApart, 32);
+    bool countsNamesOfProgramTogether = m_context.holdsMoreMembersThan(m_context.restrict(keys, m_universe.keys()), mostNamesOfOneKeyToldApart);
+    bool hasNameOfProgram = false;
     m_context.forEachMember(m_context.restrict(keys, m_universe.keys()), [&](ValueFlowObjectID constant) {
         HeapKey key = keyNamed(m_universe.keyOf(constant));
-        if (key.keyClass == HeapKeyClass::Index)
+        if (key.keyClass == HeapKeyClass::Index) {
             namesIndex = true;
-        else
-            functor(key);
+            return;
+        }
+        if (countsNamesOfProgramTogether && m_tables.under(key.name).holders == ValueSets::nothing) {
+            hasNameOfProgram = true;
+            key.receivers = HeapKeyReceivers::BuiltinObjects;
+        }
+        functor(key);
     });
+    if (hasNameOfProgram)
+        functor(HeapKey { HeapKeyClass::Unknown, { }, false, HeapKeyReceivers::AllButBuiltinObjects });
     if (namesIndex)
         functor(indexHeapKey);
 }

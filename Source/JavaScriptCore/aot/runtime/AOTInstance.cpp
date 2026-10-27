@@ -533,7 +533,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     bmalloc::api::setAddressSpaceBallastHandler(didUseAddressSpaceBallastOnThisThread);
     bmalloc::api::setAddressSpaceBallastKeeper([] {
         keepAddressSpaceBallast();
-        return addressSpaceLeft();
+        return addressSpaceLeft(UncountedAddressSpace::IsTaken);
     });
 #endif
     return instance;

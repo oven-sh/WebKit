@@ -127,6 +127,7 @@ private:
     bool record(RecordedWrites&, RecordedWrite, Origin);
     bool hasRecordedOverlay(const RecordedWrite&);
     void recordLoopWrites();
+    void findBlocksOnLikelyPaths();
     bool inheritStateFromBeforeLoop(BasicBlock* header, MemoryState&);
     bool mergeSameEpochStates(BasicBlock*, MemoryState& merged);
     bool hasStateAtTail(BasicBlock* block) const { return block->index() < m_stateNumberAtTail.size(); }
@@ -152,6 +153,7 @@ private:
     Vector<unsigned> m_stateNumberAtTail;
     Vector<MemoryState> m_statesAtTails;
     Vector<LoopWrites> m_loopWrites;
+    IndexSet<BasicBlock*> m_blocksOnLikelyPaths;
     LayeredHashMap<ValueKey, Value*, MixingValueKeyHash> m_values;
     LayeredHashMap<PureCallKey, Value*, PureCallKeyHash> m_pureCalls;
     LayeredHashMap<unsigned, unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_heapEpochs;

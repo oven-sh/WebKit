@@ -165,6 +165,7 @@ void freeLargeVirtual(void* object, size_t size, HeapKind kind)
 static constexpr size_t sizeOfBallastPiece = 1024 * 1024;
 static constexpr size_t maxNumberOfBallastPieces = 64;
 static Mutex s_ballastLock;
+// Null: a piece of the allocator's arenas (mi_keep_piece_aside()), which gives them back last in, first out, as this list does.
 static void* s_ballastPieces[maxNumberOfBallastPieces];
 static std::atomic<size_t> s_numberOfBallastPieces { 0 };
 static std::atomic<size_t> s_numberOfBallastPiecesWanted { 0 };
@@ -172,10 +173,37 @@ static std::atomic<size_t> s_numberOfBallastPiecesWanted { 0 };
 static std::atomic<bool> s_lacksPiecesOfBallast { false };
 static std::atomic<AddressSpaceBallastHandler> s_ballastHandler { nullptr };
 static std::atomic<AddressSpaceBallastKeeper> s_ballastKeeper { nullptr };
-static thread_local unsigned t_numberOfRequestsWithBallast;
-static thread_local bool t_hasUsedBallast;
-static thread_local bool t_hasUsedWholeBallast;
-static thread_local bool t_isExemptFromBallast;
+static std::atomic<unsigned> s_numberOfThreadsWithRequestsWithBallast { 0 };
+
+struct BallastStateOfThread {
+    uint32_t numberOfRequests;
+    bool hasUsedBallast;
+    bool hasUsedWholeBallast;
+    bool isExempt;
+};
+
+#if BUSE(EXTERNAL_MIMALLOC)
+// patches/mimalloc/no-thread-locals-for-address-space-kept-aside.patch in oven-sh/bun.
+#if !defined(MI_HAS_THREAD_EMBEDDER_WORD)
+extern "C" size_t* mi_thread_embedder_word(void) noexcept;
+#endif
+static_assert(sizeof(BallastStateOfThread) <= sizeof(size_t) && alignof(BallastStateOfThread) <= alignof(size_t));
+#endif
+
+// In the allocator's own record of the thread: every thread of every process pays for a thread-local.
+static BallastStateOfThread& ballastStateOfThisThread()
+{
+#if BUSE(EXTERNAL_MIMALLOC)
+    if (size_t* word = mi_thread_embedder_word())
+        return *reinterpret_cast<BallastStateOfThread*>(word);
+    // A thread that has never allocated makes no request.
+    static BallastStateOfThread s_stateOfThreadsWithoutRecord;
+    return s_stateOfThreadsWithoutRecord;
+#else
+    static thread_local BallastStateOfThread t_state;
+    return t_state;
+#endif
+}
 
 void setAddressSpaceBallastHandler(AddressSpaceBallastHandler handler)
 {
@@ -189,7 +217,7 @@ void setAddressSpaceBallastKeeper(AddressSpaceBallastKeeper keeper)
 
 void exemptThisThreadFromAddressSpaceBallast()
 {
-    t_isExemptFromBallast = true;
+    ballastStateOfThisThread().isExempt = true;
 }
 
 bool hasWholeAddressSpaceBallast()
@@ -208,15 +236,19 @@ size_t sizeOfAddressSpaceBallastKept()
 
 static void beginRequestWithBallast()
 {
-    ++t_numberOfRequestsWithBallast;
+    if (!ballastStateOfThisThread().numberOfRequests++)
+        s_numberOfThreadsWithRequestsWithBallast.fetch_add(1, std::memory_order_relaxed);
 }
 
 static void endRequestWithBallast()
 {
-    if (--t_numberOfRequestsWithBallast || !t_hasUsedBallast)
+    if (--ballastStateOfThisThread().numberOfRequests)
         return;
-    t_hasUsedBallast = false;
-    bool wasWhole = std::exchange(t_hasUsedWholeBallast, false);
+    s_numberOfThreadsWithRequestsWithBallast.fetch_sub(1, std::memory_order_relaxed);
+    if (!ballastStateOfThisThread().hasUsedBallast)
+        return;
+    ballastStateOfThisThread().hasUsedBallast = false;
+    bool wasWhole = std::exchange(ballastStateOfThisThread().hasUsedWholeBallast, false);
     if (AddressSpaceBallastHandler handler = s_ballastHandler.load(std::memory_order_relaxed))
         handler(wasWhole);
 }
@@ -232,22 +264,41 @@ RequestWithBallast::~RequestWithBallast()
 }
 
 #if BUSE(EXTERNAL_MIMALLOC) && BOS(LINUX)
-static bool tryReleasePieceOfAddressSpaceBallast()
+// patches/mimalloc/keep-pieces-of-the-arenas-aside.patch in oven-sh/bun.
+#if !defined(MI_KEEPS_PIECES_ASIDE)
+extern "C" {
+bool mi_keep_piece_aside(size_t) noexcept;
+bool mi_release_piece_kept_aside(void) noexcept;
+}
+#endif
+
+enum class RoomFor : bool { Malloc, RequestToSystem };
+
+static bool tryReleasePieceOfAddressSpaceBallast(RoomFor roomFor)
 {
     LockHolder locker(s_ballastLock);
     size_t numberOfPieces = s_numberOfBallastPieces.load(std::memory_order_relaxed);
-    if (!numberOfPieces)
+    size_t index = numberOfPieces;
+    // A piece of the arenas is no address space for a request that goes to the system itself.
+    while (index && roomFor == RoomFor::RequestToSystem && !s_ballastPieces[index - 1])
+        --index;
+    if (!index)
         return false;
     if (!s_lacksPiecesOfBallast.exchange(true, std::memory_order_relaxed))
-        t_hasUsedWholeBallast = true;
-    s_numberOfBallastPieces.store(--numberOfPieces, std::memory_order_relaxed);
-    munmap(s_ballastPieces[numberOfPieces], sizeOfBallastPiece);
+        ballastStateOfThisThread().hasUsedWholeBallast = true;
+    if (void* piece = s_ballastPieces[--index])
+        munmap(piece, sizeOfBallastPiece);
+    else
+        mi_release_piece_kept_aside();
+    for (--numberOfPieces; index < numberOfPieces; ++index)
+        s_ballastPieces[index] = s_ballastPieces[index + 1];
+    s_numberOfBallastPieces.store(numberOfPieces, std::memory_order_relaxed);
     return true;
 }
 
 static bool makeRoomWithBallast(size_t size, size_t attempt)
 {
-    if (!t_numberOfRequestsWithBallast)
+    if (!ballastStateOfThisThread().numberOfRequests)
         return false;
     // Nothing is let go of for a request that all the pieces together could not hold.
     if (size > (attempt + s_numberOfBallastPieces.load(std::memory_order_relaxed)) * sizeOfBallastPiece)
@@ -255,21 +306,22 @@ static bool makeRoomWithBallast(size_t size, size_t attempt)
     // Some of what the last piece left may still be free, and was refused to a request that did not say that it may not fail.
     if (!attempt && s_lacksPiecesOfBallast.load(std::memory_order_relaxed))
         return true;
-    if (!tryReleasePieceOfAddressSpaceBallast())
+    if (!tryReleasePieceOfAddressSpaceBallast(RoomFor::Malloc))
         return false;
-    t_hasUsedBallast = true;
+    ballastStateOfThisThread().hasUsedBallast = true;
     return true;
 }
 
 static bool mayTakeAddressSpace(size_t size)
 {
-    if (!s_lacksPiecesOfBallast.load(std::memory_order_relaxed) || t_numberOfRequestsWithBallast || t_isExemptFromBallast)
+    if (!s_lacksPiecesOfBallast.load(std::memory_order_relaxed) || ballastStateOfThisThread().numberOfRequests)
         return true;
     AddressSpaceBallastKeeper keeper = s_ballastKeeper.load(std::memory_order_relaxed);
     if (!keeper)
-        return false;
+        return ballastStateOfThisThread().isExempt;
+    // The missing pieces come first, also ahead of a thread that is refused nothing.
     size_t addressSpaceLeft = keeper();
-    if (!s_lacksPiecesOfBallast.load(std::memory_order_relaxed))
+    if (!s_lacksPiecesOfBallast.load(std::memory_order_relaxed) || ballastStateOfThisThread().isExempt)
         return true;
     size_t wanted = s_numberOfBallastPiecesWanted.load(std::memory_order_relaxed);
     size_t kept = s_numberOfBallastPieces.load(std::memory_order_relaxed);
@@ -280,9 +332,9 @@ static bool mayTakeAddressSpace(size_t size)
 bool RequestWithBallast::tryMakeRoom()
 {
 #if BUSE(EXTERNAL_MIMALLOC) && BOS(LINUX)
-    if (!tryReleasePieceOfAddressSpaceBallast())
+    if (!tryReleasePieceOfAddressSpaceBallast(RoomFor::RequestToSystem))
         return false;
-    t_hasUsedBallast = true;
+    ballastStateOfThisThread().hasUsedBallast = true;
     return true;
 #else
     return false;
@@ -338,6 +390,20 @@ void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft, size_t addres
         addressSpaceLeft -= sizeOfBallastPiece;
         s_ballastPieces[numberOfPieces++] = piece;
     }
+#if BUSE(EXTERNAL_MIMALLOC)
+    // What threads have freed stays in the allocator's arenas and does not come back as address space. As much stays free there too.
+    // Not while a request looks in what a piece has just left there.
+    if (numberOfPieces < wanted && !s_numberOfThreadsWithRequestsWithBallast.load(std::memory_order_relaxed)) {
+        size_t numberToLeaveFree = addressSpaceToLeaveFree / sizeOfBallastPiece;
+        size_t numberTaken = 0;
+        while (numberTaken < wanted - numberOfPieces + numberToLeaveFree && mi_keep_piece_aside(sizeOfBallastPiece))
+            ++numberTaken;
+        for (size_t i = std::min(numberTaken, numberToLeaveFree); i--; --numberTaken)
+            mi_release_piece_kept_aside();
+        while (numberTaken--)
+            s_ballastPieces[numberOfPieces++] = nullptr;
+    }
+#endif
     s_numberOfBallastPieces.store(numberOfPieces, std::memory_order_relaxed);
     // A piece that could never be kept is not missing: nothing has used it.
     if (numberOfPieces >= wanted)

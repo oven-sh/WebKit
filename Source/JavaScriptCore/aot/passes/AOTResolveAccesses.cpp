@@ -1155,6 +1155,8 @@ static BuiltinID findFunctionOfReflectFor(Opcode access)
         return Builtins::ReflectHas;
     if (deletions.contains(access))
         return Builtins::ReflectDeleteProperty;
+    if (access == Opcode::PropHasOwn)
+        return Builtins::ReflectGetOwnPropertyDescriptor;
     return { };
 }
 
@@ -1237,7 +1239,7 @@ static std::optional<TestsOfAbsentTrap> createTestsOfAbsentTrap(FunctionPassCont
 
 enum class ReceiverOfAccess : bool { MayBeProxy, IsProxy };
 
-// As ProxyObject.cpp performProxyGet(), performHasProperty() and performPut(). The trap is read off the handler and called as the program would read and call it, so what is known of the handler and of the target is known here.
+// As ProxyObject.cpp performProxyGet(), performHasProperty(), performPut(), performDelete() and performInternalMethodGetOwnProperty(). The trap is read off the handler and called as the program would read and call it, so what is known of the handler and of the target is known here.
 static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& builder, ProgramPoint point, const std::optional<ProxyInSight>& proxyInSight, const FlowProxiesSeenAtSite* proxiesSeen, ReceiverOfAccess receiver)
 {
     const Program& program = context.program;
@@ -1247,6 +1249,7 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
     const bool reads = functionOfReflect == Builtins::ReflectGet;
     const bool stores = functionOfReflect == Builtins::ReflectSet;
     const bool deletes = functionOfReflect == Builtins::ReflectDeleteProperty;
+    const bool asksForOwnProperty = functionOfReflect == Builtins::ReflectGetOwnPropertyDescriptor;
     const bool isByName = PayloadWord::key(access.opcode).has_value();
     ValueID proxy = access.objectOperand();
     const Expected<BlockFrequency> frequency = function.at(point.block).frequency;
@@ -1373,6 +1376,20 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
             finishWith(builder.appendBoolean(true));
             builder.moveToEndOf(mayBind.notTaken);
             finishWith(builder.appendBoolean(true));
+        } else if (asksForOwnProperty) {
+            // A descriptor is always held against the target. That there is none is, where the target binds.
+            BlockID isHeldAgainstTarget = builder.addBlock(frequencyOfRead);
+            IRBuilder::BranchBlocks saysNone = builder.emitBranch(builder.appendTypeTest(answerOfTrap, TypeTable::undefined), frequencyOfRead, frequencyOfRead);
+            builder.moveToEndOf(saysNone.notTaken);
+            builder.emitJump(isHeldAgainstTarget);
+            builder.moveToEndOf(saysNone.taken);
+            IRBuilder::BranchBlocks mayBind = builder.emitBranch(builder.append(Opcode::MayBindAnswersOfHasTraps, { target }), rare, frequencyOfRead);
+            builder.moveToEndOf(mayBind.taken);
+            builder.emitJump(isHeldAgainstTarget);
+            builder.moveToEndOf(mayBind.notTaken);
+            finishWith(builder.appendBoolean(false));
+            builder.moveToEndOf(isHeldAgainstTarget);
+            finishWith(builder.append(Opcode::HasOwnByAnswerOfDescriptorTrap, { target, name, answerOfTrap }));
         } else {
             IRBuilder::BranchBlocks saysYes = builder.emitBranch(builder.append(Opcode::ToBoolean, { answerOfTrap }), frequencyOfRead, frequencyOfRead);
             builder.moveToEndOf(saysYes.taken);
@@ -1389,7 +1406,7 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
         builder.moveToEndOf(isFunction.notTaken);
         IRBuilder::BranchBlocks isAbsent = builder.emitBranch(builder.appendTypeTest(trap, TypeTable::nullish), frequencyOfRead, rare);
         builder.moveToEndOf(isAbsent.notTaken);
-        throwTypeError(reads ? "'get' property of a Proxy's handler should be callable"_s : stores ? "'set' property of a Proxy's handler should be callable"_s : deletes ? "'deleteProperty' property of a Proxy's handler should be callable"_s : "'has' property of a Proxy's handler should be callable"_s);
+        throwTypeError(reads ? "'get' property of a Proxy's handler should be callable"_s : stores ? "'set' property of a Proxy's handler should be callable"_s : deletes ? "'deleteProperty' property of a Proxy's handler should be callable"_s : asksForOwnProperty ? "'getOwnPropertyDescriptor' property of a Proxy's handler should be callable"_s : "'has' property of a Proxy's handler should be callable"_s);
         builder.moveToEndOf(isAbsent.taken);
         builder.emitJump(withoutTrap);
     };
@@ -1458,6 +1475,11 @@ static void expandAccessThroughProxy(FunctionPassContext& context, IRBuilder& bu
         else
             deletion.setPropertyOperand(name);
         finishWith(builder.append(WTF::move(deletion)));
+    } else if (asksForOwnProperty) {
+        Value test = IRBuilder::make(Opcode::PropHasOwn, { target });
+        test.setKey(access.key());
+        test.setCalledBuiltin(access.calledBuiltin());
+        finishWith(builder.append(WTF::move(test)));
     } else if (isByName) {
         Value test = IRBuilder::make(Opcode::PropHas, { target });
         test.setKey(access.key());

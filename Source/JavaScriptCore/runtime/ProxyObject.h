@@ -98,6 +98,8 @@ public:
     JS_EXPORT_PRIVATE static void finishSet(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key, JSValue putValue, bool shouldThrow);
     // The trap has said yes.
     JS_EXPORT_PRIVATE static void finishDelete(JSGlobalObject*, JSObject* target, JSValue key);
+    // What the getOwnPropertyDescriptor trap has answered is held against the target. Whether it describes a property.
+    JS_EXPORT_PRIVATE static bool hasOwnByAnswerOfTrap(JSGlobalObject*, JSObject* target, JSValue key, JSValue trapResult);
 #endif
 
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
@@ -143,6 +145,7 @@ private:
 
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
     bool performInternalMethodGetOwnProperty(JSGlobalObject*, PropertyName, PropertySlot&);
+    static bool finishGetOwnProperty(JSGlobalObject*, JSObject* slotBase, JSObject* target, PropertyName, JSValue trapResult, PropertySlot&);
     bool performGet(JSGlobalObject*, PropertyName, PropertySlot&);
     bool performHasProperty(JSGlobalObject*, PropertyName, PropertySlot&);
     template <typename DefaultDeleteFunction>

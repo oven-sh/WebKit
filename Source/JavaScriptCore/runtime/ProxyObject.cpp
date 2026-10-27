@@ -541,6 +541,14 @@ bool ProxyObject::performInternalMethodGetOwnProperty(JSGlobalObject* globalObje
     JSValue trapResult = call(globalObject, getOwnPropertyDescriptorMethod, callData, handler, ArgList { arguments.data(), arguments.size() });
     RETURN_IF_EXCEPTION(scope, false);
 
+    RELEASE_AND_RETURN(scope, finishGetOwnProperty(globalObject, this, target, propertyName, trapResult, slot));
+}
+
+bool ProxyObject::finishGetOwnProperty(JSGlobalObject* globalObject, JSObject* slotBase, JSObject* target, PropertyName propertyName, JSValue trapResult, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     if (trapResult.isUndefined() && !isClosedOrHasFixedProperties(target))
         return false;
 
@@ -599,14 +607,26 @@ bool ProxyObject::performInternalMethodGetOwnProperty(JSGlobalObject* globalObje
     if (trapResultAsDescriptor.isAccessorDescriptor()) {
         GetterSetter* getterSetter = trapResultAsDescriptor.slowGetterSetter(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
-        slot.setGetterSlot(this, trapResultAsDescriptor.attributes(), getterSetter);
+        slot.setGetterSlot(slotBase, trapResultAsDescriptor.attributes(), getterSetter);
     } else if (trapResultAsDescriptor.isDataDescriptor() && !trapResultAsDescriptor.value().isEmpty())
-        slot.setValue(this, trapResultAsDescriptor.attributes(), trapResultAsDescriptor.value());
+        slot.setValue(slotBase, trapResultAsDescriptor.attributes(), trapResultAsDescriptor.value());
     else
-        slot.setValue(this, trapResultAsDescriptor.attributes(), jsUndefined()); // We use undefined because it's the default value in object properties.
+        slot.setValue(slotBase, trapResultAsDescriptor.attributes(), jsUndefined()); // We use undefined because it's the default value in object properties.
 
     return true;
 }
+
+#if ENABLE(AOT)
+bool ProxyObject::hasOwnByAnswerOfTrap(JSGlobalObject* globalObject, JSObject* target, JSValue key, JSValue trapResult)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier name = key.toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    PropertySlot slot(target, PropertySlot::InternalMethodType::GetOwnProperty);
+    RELEASE_AND_RETURN(scope, finishGetOwnProperty(globalObject, target, target, name, trapResult, slot));
+}
+#endif
 
 bool ProxyObject::performHasProperty(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {

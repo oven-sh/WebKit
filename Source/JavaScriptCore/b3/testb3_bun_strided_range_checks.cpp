@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3AffineIndex.h"
+#include "B3EliminateDeadCode.h"
 #include "B3LoopRangeChecks.h"
 #include "B3LoopUtilities.h"
 #include "B3LoopVersionPlan.h"
@@ -47,6 +48,8 @@ struct StridedLoopShape {
     Vector<int32_t> addends { 0 };
     std::optional<int64_t> lengthStoredOnRarePath;
     std::optional<int64_t> lengthClobberedOnRarePath;
+    bool addsOnRarePath { false };
+    bool continuesEarly { false };
 };
 
 // for (int32_t i = start; i REL bound; i += step) sum += elements[scale * i + offset + addend], returning -1 at the first index that is out of bounds.
@@ -90,25 +93,46 @@ struct StridedLoop {
                 PatchpointValue* clobber = graph.callLikePatchpoint(rare);
                 clobber->effects.writes = firstHeap;
                 clobber->append(pointer, ValueRep::SomeRegister);
+                clobber->clobber(RegisterSet::macroClobberedGPRs());
                 clobber->setGenerator([length = *shape.lengthClobberedOnRarePath](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                    AllowMacroScratchRegisterUsage allowScratch(jit);
                     jit.store64(CCallHelpers::TrustedImm32(static_cast<int32_t>(length)), CCallHelpers::Address(params[0].gpr()));
                 });
             }
             graph.jump(rare, next);
             block = next;
         }
+        if (shape.addsOnRarePath) {
+            BasicBlock* rare = proc.addBlock();
+            BasicBlock* next = proc.addBlock();
+            graph.branch(block, graph.make(block, Equal, graph.get(block, counter), graph.int32(block, 3)), rarely(rare), FrequentedBlock(next));
+            graph.increase(rare, sum, 1000);
+            graph.jump(rare, next);
+            block = next;
+        }
+        Value* vector = nullptr;
         for (int32_t addend : shape.addends) {
             BasicBlock* inBounds = proc.addBlock();
             Value* index = appendIndex(block, graph.get(block, counter), scale, offset, addend);
             Value* length = graph.load(block, Int64, pointer, 0, firstHeap);
-            Value* vector = graph.load(block, Int64, pointer, OBJECT_OFFSETOF(StridedMemory, vector), thirdHeap);
+            vector = graph.load(block, Int64, pointer, OBJECT_OFFSETOF(StridedMemory, vector), thirdHeap);
             graph.branch(block, graph.make(block, Below, index, length), FrequentedBlock(inBounds), rarely(out));
             Value* address = graph.make(inBounds, Add, vector, graph.make(inBounds, Shl, index, graph.int32(inBounds, 3)));
             graph.increase(inBounds, sum, graph.load(inBounds, Int64, address, 0, secondHeap));
             block = inBounds;
         }
-        Value* next = graph.make(block, Add, graph.get(block, counter), graph.int32(block, shape.step));
+        Value* current = graph.get(block, counter);
+        Value* isOdd = graph.make(block, BitAnd, current, graph.int32(block, 1));
+        Value* next = graph.make(block, Add, current, graph.int32(block, shape.step));
         graph.set(block, counter, next);
+        if (shape.continuesEarly) {
+            BasicBlock* more = proc.addBlock();
+            graph.branch(block, isOdd, more, header);
+            Value* index = appendIndex(more, current, scale, offset, shape.addends.last());
+            Value* address = graph.make(more, Add, vector, graph.make(more, Shl, index, graph.int32(more, 3)));
+            graph.increase(more, sum, graph.load(more, Int64, address, 0, secondHeap));
+            block = more;
+        }
         if (shape.isBottomTested) {
             test = graph.make(block, shape.relation, next, bound);
             graph.branch(block, test, body, exit);
@@ -183,6 +207,8 @@ static ExpectedRun expectedRun(const StridedLoopShape& shape, StridedMemory memo
             if (shape.lengthClobberedOnRarePath)
                 memory.length = *shape.lengthClobberedOnRarePath;
         }
+        if (counter == 3 && shape.addsOnRarePath)
+            run.result += 1000;
         for (int32_t addend : shape.addends) {
             uint64_t index = indexFor(shape, counter, scale, memory.offset, addend);
             if (index >= static_cast<uint64_t>(memory.length)) {
@@ -194,6 +220,8 @@ static ExpectedRun expectedRun(const StridedLoopShape& shape, StridedMemory memo
                 return run;
             }
             run.result += memory.elements[index];
+            if (shape.continuesEarly && (counter & 1) && addend == shape.addends.last())
+                run.result += memory.elements[index];
         }
     }
     return run;
@@ -379,6 +407,39 @@ static void testVersionLoopsLeavesStridedFastLoopWhenLimitIsClobbered()
     }
 }
 
+static void testVersionLoopsStrengthReducesStridedIndices()
+{
+    for (IndexKind indexKind : { IndexKind::ZeroExtendedInt32, IndexKind::SignExtendedInt32, IndexKind::Int64 }) {
+        for (std::optional<int32_t> constantScale : { std::optional<int32_t> { }, std::optional<int32_t> { 3 }, std::optional<int32_t> { 16 }, std::optional<int32_t> { -1 } }) {
+            for (bool isRotated : { false, true }) {
+                for (bool isBottomTested : { false, true }) {
+                    for (bool addsOnRarePath : { false, true }) {
+                        for (bool continuesEarly : { false, true }) {
+                            if (continuesEarly && (isRotated || isBottomTested))
+                                continue;
+                            StridedLoopShape shape;
+                            shape.indexKind = indexKind;
+                            shape.constantScale = constantScale;
+                            shape.isRotated = isRotated;
+                            shape.isBottomTested = isBottomTested;
+                            shape.addsOnRarePath = addsOnRarePath;
+                            shape.continuesEarly = continuesEarly;
+                            shape.addends = { 0, 2 };
+                            StridedLoop loop(loopPolicy(), shape);
+                            CHECK(versionLoopsAndValidate(loop.proc));
+                            CHECK_EQ(loop.proc.report().countOf(Counter::RangeChecksRemoved), 2u);
+                            eliminateDeadCode(loop.proc);
+                            unsigned numberOfProducts = continuesEarly ? 3 : 2;
+                            checkValueCountInEachLoop(loop.proc, Mul, { addsOnRarePath ? numberOfProducts : 0u, numberOfProducts });
+                            checkRuns(loop);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 static void readLengthsFromViews(Procedure& proc)
 {
     AbstractHeapRepository& heaps = proc.heaps();
@@ -502,6 +563,7 @@ void addBunStridedRangeCheckTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsGuardsStridedRangeChecksAgainstCounterOverflow());
     RUN(testVersionLoopsRemovesStridedRangeChecksUnderUnsignedRelation());
     RUN(testVersionLoopsSharesGuardsOfStridedNeighbors());
+    RUN(testVersionLoopsStrengthReducesStridedIndices());
     RUN(testVersionLoopsKeepsStridedRangeCheckWhoseLimitIsStoredInLoop());
     RUN(testVersionLoopsLeavesStridedFastLoopWhenLimitIsClobbered());
     RUN(testVersionLoopsStridedFastLoopWithinViewDoesNotPoll());

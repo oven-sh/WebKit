@@ -120,7 +120,7 @@ static B3::UpstreamPolicy upstreamPolicy()
     upstream.hoistsLoopInvariantValues = true;
     upstream.eliminatesWasmGCAllocations = false;
     upstream.usesWasmFaultSignalHandler = false;
-    upstream.allowsSIMD = false;
+    upstream.allowsSIMD = true;
     upstream.forcesSIMD = false;
     return upstream;
 }
@@ -156,6 +156,7 @@ static B3::LoopPolicy loopPolicyFor(const FunctionBackEndTraits& traits)
     loops.versions = true;
     loops.clampsLoopBounds = true;
     loops.omitsPollsFromLoopsThatEndWithinData = true;
+    loops.vectorizes = true;
     loops.unrolls = std::isfinite(traits.leastFrequencyOfWarmCode);
     loops.minFrequencyOfUnrolledLoop = traits.leastFrequencyOfWarmCode;
     loops.hoistsOnlyFromLikelyPaths = true;
@@ -173,6 +174,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     else
         validation.level = lowestValidationLevel;
     validation.checksKnownPropertiesAtRunTime = build.validates();
+    validation.overlooksWritesOnUnlikelyPaths = build.isSabotaged(Sabotage::MergedLoadsOutlastWritesOnUnlikelyPaths);
     return validation;
 }
 

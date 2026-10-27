@@ -828,7 +828,7 @@ static PropertyAnswer classifyExtraPropertyAddition(const StoreQuery& query, Obj
         storageChange = OutOfLineStorageChange::Unsupported;
     else if (before->hasExtraProperties() && !isInlineOffset(lookup.offset))
         storageChange = outOfLineStorageChange(extraPropertiesBefore, extraPropertiesAfter, lookup.offset);
-    if (before->mayBePrototype() || storageChange == OutOfLineStorageChange::Unsupported)
+    if (before->mayBePrototype() || before->hasKeyOrderOfOneObject() || storageChange == OutOfLineStorageChange::Unsupported)
         return PropertyAnswer::uncacheable(access);
     PropertyAnswer answer = PropertyAnswer::own(PropertyAnswerKind::ExtraPropertyAddition, access, lookup.offset);
     answer.newStructure = object.structure();

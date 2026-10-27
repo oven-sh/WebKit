@@ -160,5 +160,5 @@ function f1 name="turn" module=m0 position=108 flags=[IsChecked, HasExplicitName
 # STORES-COUNT-4: = Store(b@{{*}}Writes:TypedArrayElements
 # STORES-NOT: = Store(b@{{*}}Writes:TypedArrayElements
 # STORES-LABEL: end of loop
-# X64: instructions: 26, patchpoints: 8, {{*}} steps by 4
-# ARM64: instructions: 18, patchpoints: 8, {{*}} steps by 4
+# X64: instructions: 12, patchpoints: 8, {{*}} steps by 4
+# ARM64: instructions: 14, patchpoints: 8, {{*}} steps by 4

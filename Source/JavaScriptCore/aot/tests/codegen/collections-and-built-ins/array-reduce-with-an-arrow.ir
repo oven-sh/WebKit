@@ -246,9 +246,8 @@ function f5 name="reduce" module=m1 position=1398 kind=Method role=Library flags
 # LOOP-COUNT-8: Double b@{{*}} = Load(b@{{*}}Reads:indexedDoubleProperties, {{*}}:GetArrayElement)
 # LOOP-NOT: Reads:indexedDoubleProperties
 # LOOP-LABEL: end of loop
-# In front of each element its index is compared with the length of the list, which stays in a register.
+# The loop ends at the length of the list, so no index is compared with it.
 # NONE-LABEL: steps by 8
-# NONE-COUNT-8: Branch(b@{{*}}, Terminal, {{*}}:HasArrayElement)
 # NONE-NOT: Branch(b@{{*}}, Terminal, {{*}}:HasArrayElement)
 # NONE-LABEL: end of loop
 # Nothing is called in that loop, no length and no storage is loaded again and the loop does not poll.
@@ -261,6 +260,5 @@ function f5 name="reduce" module=m1 position=1398 kind=Method role=Library flags
 # WHOLE-LABEL: name="total" role=Source
 # WHOLE-NOT: :NewClosure
 # WHOLE-LABEL: end of function
-# An index past the end skips its element and goes on with the next turn. Eight of the instructions are jumps to the block that follows, which are not emitted.
-# X64: instructions: 33, patchpoints: 0, {{*}} steps by 8
-# ARM64: instructions: 42, patchpoints: 0, {{*}} steps by 8
+# X64: instructions: 10, patchpoints: 0, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 0, {{*}} steps by 8

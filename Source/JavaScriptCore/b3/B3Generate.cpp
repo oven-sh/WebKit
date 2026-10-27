@@ -67,6 +67,7 @@
 #include "B3ThreadJumps.h"
 #include "B3UnrollLoops.h"
 #include "B3Validate.h"
+#include "B3VectorizeLoops.h"
 #include "B3VersionLoops.h"
 #include "CompilerTimingScope.h"
 #include <wtf/OptionSet.h>
@@ -245,7 +246,7 @@ static constexpr Step steps[] = {
     { "findLoops"_s,
         [](Procedure& procedure, const PipelineState&) {
             const LoopPolicy& loops = procedure.policy().loops;
-            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions || loops.unrolls);
+            return procedure.optLevel() >= 2 && (loops.rotates || loops.foldsComparisonsWithBounds || loops.versions || loops.vectorizes || loops.unrolls);
         },
         [](Procedure& procedure, PipelineState& state) -> Cleanups {
             state.hasLoops = procedure.hasCycle() && procedure.naturalLoops().numLoops();
@@ -287,6 +288,11 @@ static constexpr Step steps[] = {
         [](Procedure& procedure, PipelineState&) -> Cleanups {
             eliminateRedundantPhiCycles(procedure);
             return Cleanup::EliminateDeadCode;
+        } },
+    { "vectorizeLoops"_s,
+        [](Procedure& procedure, const PipelineState& state) { return state.hasLoops && procedure.policy().loops.vectorizes; },
+        [](Procedure& procedure, PipelineState&) {
+            return cleanupsIfChanged(vectorizeLoops(procedure), Cleanup::FixSSA);
         } },
     { "rotateLoops"_s,
         [](Procedure& procedure, const PipelineState& state) { return state.didVersionLoops && procedure.policy().loops.rotates && !state.topTestedVersionHeaders.isEmpty(); },

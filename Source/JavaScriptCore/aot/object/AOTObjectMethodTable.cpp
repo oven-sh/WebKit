@@ -672,77 +672,45 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
     const LayoutData& layout = object->layout();
     validateKeyListing(vm, *object);
     std::span<const FieldData> fields = layout.fields();
+    // No object has two keys of one name, so only a list that has the keys of another object is searched.
+    bool listsOnlyThisObject = names.canAddKnownUniqueForStructure();
+    auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
+        if (listsOnlyThisObject) [[likely]]
+            names.addUnchecked(name);
+        else
+            names.add(name);
+    };
     JSObject* extra = object->extraProperties();
+    ASSERT(!extra || extra->type() == FinalObjectType);
     if (extra)
         extra->getOwnIndexedPropertyNames(globalObject, names, mode);
-    auto extraKeyNames = object->extraKeyNames();
-    KeyOrderStorage storage;
-    std::span<const uint16_t> order = object->keyOrder(state, storage);
+    if (names.includeStringProperties() || names.includeSymbolProperties())
+        forEachOwnKey(vm, state, *object, static_cast<KeysListed>(names.includeStringProperties() | names.includeSymbolProperties() << 1), mode, add);
+    if (names.privateSymbolMode() != PrivateSymbolMode::Include) [[likely]]
+        return;
     auto isIncluded = [&](unsigned attributes) {
         return mode == DontEnumPropertiesMode::Include || !(attributes & PropertyAttribute::DontEnum);
     };
-    auto addKeysInOrder = [&](bool symbols) {
-        forEachPositionedKey(order, layout.numberOfFields, extraKeyNames.size(), [&](uint16_t index) {
-            const FieldData& field = fields[index];
-            if (field.isPrivate() || !(symbols ? layouts.hasSymbolKey(field) : layouts.hasStringKey(field)))
-                return;
-            unsigned attributes = field.attributes();
-            if (!object->isInSlot(field)) {
-                FieldProperty property = findFieldProperty(vm, *object, field);
-                if (!property)
-                    return;
-                attributes = property.attributes;
-            }
-            if (isIncluded(attributes))
-                names.add(Identifier::fromUid(vm, layouts.nameOf(vm, field)));
-        }, [&](size_t ordinal) {
-            UniquedStringImpl* name = extraKeyNames[ordinal];
-            unsigned attributes;
-            if (name->isSymbol() == symbols && extra->getDirect(vm, name, attributes) && isIncluded(attributes))
-                names.add(Identifier::fromUid(vm, name));
-        });
-    };
-    auto addFieldsUnderPrivateNames = [&] {
-        if (names.privateSymbolMode() != PrivateSymbolMode::Include) [[likely]]
-            return;
-        for (const FieldData& field : fields) {
-            if (field.isPrivate() || layouts.hasSymbolKey(field) || layouts.hasStringKey(field))
+    for (const FieldData& field : fields) {
+        if (field.isPrivate() || layouts.hasSymbolKey(field) || layouts.hasStringKey(field))
+            continue;
+        unsigned attributes = field.attributes();
+        if (!object->isInSlot(field)) {
+            FieldProperty property = findFieldProperty(vm, *object, field);
+            if (!property)
                 continue;
-            unsigned attributes = field.attributes();
-            if (!object->isInSlot(field)) {
-                FieldProperty property = findFieldProperty(vm, *object, field);
-                if (!property)
-                    continue;
-                attributes = property.attributes;
-            }
-            if (isIncluded(attributes))
-                names.add(Identifier::fromUid(vm, layouts.nameOf(vm, field)));
+            attributes = property.attributes;
         }
-    };
-    if (names.includeStringProperties())
-        addKeysInOrder(false);
-    if (!layout.hasFieldsWithSymbolKeys) {
-        addFieldsUnderPrivateNames();
-        if (extra)
-            extra->getOwnNonIndexPropertyNames(globalObject, names, mode);
+        if (isIncluded(attributes))
+            add(layouts.nameOf(vm, field));
+    }
+    if (!extra)
         return;
-    }
-    auto addExtraKeys = [&](bool symbols) {
-        if (!extra)
-            return;
-        extra->structure()->forEachProperty(vm, [&](const auto& entry) {
-            if (entry.key()->isSymbol() == symbols && isIncluded(entry.attributes()))
-                names.add(Identifier::fromUid(vm, entry.key()));
-            return true;
-        });
-    };
-    if (names.includeStringProperties())
-        addExtraKeys(false);
-    if (names.includeSymbolProperties()) {
-        addKeysInOrder(true);
-        addFieldsUnderPrivateNames();
-        addExtraKeys(true);
-    }
+    extra->structure()->forEachProperty(vm, [&](const auto& entry) {
+        if (PropertyName(entry.key()).isPrivateName() && isIncluded(entry.attributes()))
+            names.add(entry.key());
+        return true;
+    });
 }
 
 static bool getOwnPropertyDescriptorForStore(JSGlobalObject* globalObject, Object* object, PropertyName name, const PutPropertySlot& slot, PropertyDescriptor& descriptor)
@@ -992,7 +960,10 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
     JSObject* extra = object->extraProperties();
     if (!extra)
         return true;
-    std::optional<uint32_t> ordinal = field ? std::nullopt : object->extraKeyOrdinal(name);
+    PlaceOfExtraKey place;
+    if (!field)
+        place = object->placeOfExtraKey(name);
+    StructureID extraStructureBefore = extra->structureID();
     bool isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
     RETURN_IF_EXCEPTION(scope, false);
     slot.disableCaching();
@@ -1000,11 +971,10 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
         return false;
     if (field)
         removeFieldFromKeyOrder(vm, state, *object, *field);
-    else if (ordinal)
-        object->removeExtraKeyFromOrder(vm, state, *ordinal);
-    object->didChangeExtraProperties(vm);
+    if (extra->structureID() != extraStructureBefore)
+        object->didChangeExtraProperties(vm);
     if (!field)
-        object->didRemoveExtraKey(state);
+        object->didRemoveExtraKey(vm, state, place);
     didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, name.uid());
     return true;
 }

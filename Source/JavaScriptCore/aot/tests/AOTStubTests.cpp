@@ -352,7 +352,7 @@ static const StubDescriptor& checkedHandlerDescriptor(StubKey handler)
 {
     AOT_TEST_CHECK(exists(handler));
     const StubDescriptor& descriptor = descriptorOf(handler.family());
-    AOT_TEST_CHECK(descriptor.linkage == StubLinkage::Handler);
+    AOT_TEST_CHECK(descriptor.linkage == StubLinkage::SlotHandler);
     return descriptor;
 }
 

@@ -1241,6 +1241,11 @@ struct StoredNamesProblem {
         std::span<const ConstructionEvent> events = node.summary->eventsAt(point);
         if (events.empty())
             return;
+        // An event that enters no function asks what held in front of the operation before it notes anything, so a row of stores copies no state.
+        if (uint32_t position = static_cast<uint32_t>(events.data() - node.summary->events.span().data()); events.size() == 1 && node.resolvedEvents[position].callees.isEmpty()) {
+            applyEvent(state, state, position);
+            return;
+        }
         State stateBeforeOperation = state;
         for (const ConstructionEvent& event : events)
             applyEvent(state, stateBeforeOperation, static_cast<uint32_t>(&event - node.summary->events.span().data()));

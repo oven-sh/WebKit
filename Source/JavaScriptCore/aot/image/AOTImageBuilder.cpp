@@ -398,6 +398,7 @@ static bool hasAddressInImage(StubLinkage linkage)
     case StubLinkage::EnteredByRuntime:
     case StubLinkage::FrontEnd:
     case StubLinkage::Handler:
+    case StubLinkage::SlotHandler:
         return true;
     case StubLinkage::CalledByCode:
     case StubLinkage::InternalEntry:

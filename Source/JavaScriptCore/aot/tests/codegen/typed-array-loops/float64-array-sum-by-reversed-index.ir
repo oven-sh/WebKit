@@ -93,5 +93,6 @@ function f1 name="sumFromEnd" module=m0 flags=[IsChecked, HasExplicitName] lengt
 # UNCHECKED-NOT: Terminal, {{*}}:IsInsideView)
 # UNCHECKED-NOT: isLoopPoll
 # UNCHECKED-LABEL: end of loop
-# X64: instructions: 41, patchpoints: 8, {{*}} steps by 8
-# ARM64: instructions: 41, patchpoints: 8, {{*}} steps by 8
+# The index is a second induction variable that steps by -1, so each element is one load at a constant offset.
+# X64: instructions: 11, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 20, patchpoints: 8, {{*}} steps by 8

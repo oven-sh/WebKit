@@ -28,7 +28,7 @@ namespace JSC { namespace AOT {
 
 class StubAssembler;
 
-enum class StubLinkage : uint8_t { CalledByCode, EnteredByRuntime, FrontEnd, Handler, InternalEntry };
+enum class StubLinkage : uint8_t { CalledByCode, EnteredByRuntime, FrontEnd, Handler, SlotHandler, InternalEntry };
 
 enum class StubAxis : uint8_t {
     Form = 1,

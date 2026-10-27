@@ -205,7 +205,7 @@ static_assert(descriptorOf(StubFamily::ReadSlot).maxCount + 1 == numberOfSlotKin
 static_assert([] {
     for (SlotHandlerTable table : allSlotHandlerTables) {
         for (StubKey handler : slotHandlerKeys(table)) {
-            if (!exists(handler) || descriptorOf(handler.family()).linkage != StubLinkage::Handler || handlerTableOf(handler) != table)
+            if (!exists(handler) || descriptorOf(handler.family()).linkage != StubLinkage::SlotHandler || handlerTableOf(handler) != table)
                 return false;
         }
         if (!exists(slotExit(table, SlotExit::Miss)) || !exists(slotExit(table, SlotExit::Uncached)))

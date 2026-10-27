@@ -502,6 +502,17 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static void runGettersThatProgramLaidOn(ValueFlowRuleContext& context, ClimbingSet values)
+{
+    ClimbingSet receivers = context.restrict(values, context.universe().knownObjects());
+    ClimbingSet getters = context.valueOf(context.readWhatWasWritten(receivers, everyGetterName));
+    forEachPartOfCallees(context, context.restrict(getters, context.universe().callables()), [&](ClimbingSet callees) {
+        ValueFlowCallGroup group = context.group(callees, ValueFlowCallKind::Get);
+        context.add(group.thisValue, receivers);
+        context.connect(group.thrown, ValueFlowProgramNodes::escaped());
+    });
+}
+
 static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
 {
     const Program& program = context.program();
@@ -522,6 +533,8 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
     const BuiltinTable& builtins = program.builtins();
     ValueSetID filled = unknownValue(context, sourceOfWhatLoaderMakes(module));
     BuiltinID object = module.kind == ModuleKind::Runtime && module.runtimeModule ? builtins.namespaceOf(module.runtimeModule) : BuiltinID();
+    if (object)
+        runGettersThatProgramLaidOn(context, valueOf(context, runtimeNamespaceOf(context, module.runtimeModule)));
     for (const SyntheticExport& entry : module.syntheticExports) {
         if (!entry.variable)
             continue;
@@ -531,6 +544,8 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
         BuiltinID member = name ? builtins.findOwnMember(object, name) : BuiltinID();
         if (!member) {
             context.add(variable, filled);
+            if (key)
+                connect(context, ownPropertyOf(context, valueOf(context, runtimeNamespaceOf(context, module.runtimeModule)), key), variable);
             continue;
         }
         ClimbingSet objectOfModule = valueOf(context, runtimeNamespaceOf(context, module.runtimeModule));

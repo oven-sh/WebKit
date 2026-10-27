@@ -140,6 +140,7 @@ enum Sabotage {
     PartsOfViewsEndOneLater
     StoredValuesAreNeverRead
     WhatIsGivenTakesThePlaceOfWhatComes
+    MergedLoadsOutlastWritesOnUnlikelyPaths
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

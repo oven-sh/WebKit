@@ -579,7 +579,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallable, void, (Instance* insta
     DeferGCForAWhile deferGC(vm);
     JSValue value = calleeOfDecodedReference(instance, callee);
     if (!value.isCallable())
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfCalleeAtCallSite(vm)));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfForwardedCallee(vm)));
     OPERATION_RETURN(scope);
 }
 

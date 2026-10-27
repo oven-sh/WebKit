@@ -52,6 +52,7 @@ static void forEachStubEnteredByRuntime(const Functor& functor)
             return;
         case StubLinkage::CalledByCode:
         case StubLinkage::FrontEnd:
+        case StubLinkage::SlotHandler:
         case StubLinkage::InternalEntry:
             return;
         }

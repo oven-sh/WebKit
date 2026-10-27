@@ -33,6 +33,7 @@ public:
     void generateValidateAnswerOfGetTrap(const ValueContext&);
     void generateValidateDenialOfHasTrap(const ValueContext&);
     void generateValidateConsentOfDeleteTrap(const ValueContext&);
+    void generateHasOwnByAnswerOfDescriptorTrap(const ValueContext&);
     void generateFinishStoreByTrap(const ValueContext&);
     void generateElemGet(const ValueContext&);
     void generateElemSet(const ValueContext&);
