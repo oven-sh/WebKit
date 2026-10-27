@@ -5,8 +5,6 @@ aot/analysis/AOTBorrowedParameters.cpp
 aot/analysis/AOTCFG.cpp
 aot/analysis/AOTCallGraph.cpp
 aot/analysis/AOTCastsWithoutFacts.cpp
-aot/analysis/AOTDefinitions.cpp
-aot/analysis/AOTDescriptorLiteral.cpp
 aot/analysis/AOTDominators.cpp
 aot/analysis/AOTEscapeAnalysis.cpp
 aot/analysis/AOTFailedTests.cpp
@@ -24,7 +22,6 @@ aot/analysis/AOTIRBuilderExpansion.cpp
 aot/analysis/AOTInductionVariables.cpp
 aot/analysis/AOTIntegerRelations.cpp
 aot/analysis/AOTLiveness.cpp
-aot/analysis/AOTObservableOperations.cpp
 aot/analysis/AOTParameterUses.cpp
 aot/analysis/AOTPointsToSolver.cpp
 aot/analysis/AOTPredictedValues.cpp
@@ -76,6 +73,7 @@ aot/builtins/AOTMapSetBuiltinOperations.cpp
 aot/builtins/AOTMathBuiltinOperations.cpp
 aot/builtins/AOTObjectBuiltinOperations.cpp
 aot/builtins/AOTResolveBuiltins.cpp
+aot/builtins/AOTResolveBuiltinsCalleeSplits.cpp
 aot/builtins/AOTRuntimeIntrinsicOperations.cpp
 aot/builtins/AOTSimplifyBuiltinCalls.cpp
 aot/builtins/AOTSimplifyBuiltinCallsLiterals.cpp
@@ -106,7 +104,6 @@ aot/codegen/AOTConstantEmitterClosures.cpp
 aot/codegen/AOTControlEmitter.cpp
 aot/codegen/AOTEntryEmitter.cpp
 aot/codegen/AOTExceptionEmitter.cpp
-aot/codegen/AOTFrameMapEmitter.cpp
 aot/codegen/AOTFunctionCodeGenerator.cpp
 aot/codegen/AOTGuardEmitter.cpp
 aot/codegen/AOTHeaps.cpp
@@ -133,7 +130,6 @@ aot/codegen/AOTTypeTestPlan.cpp
 aot/image/AOTCallSiteTable.cpp
 aot/image/AOTCodeLayout.cpp
 aot/image/AOTCodeUnits.cpp
-aot/image/AOTFFIStubs.cpp
 aot/image/AOTFaultTable.cpp
 aot/image/AOTFunctionMerging.cpp
 aot/image/AOTFunctionTable.cpp
@@ -149,13 +145,11 @@ aot/image/AOTStringUses.cpp
 aot/image/AOTTextEncoder.cpp
 aot/image/AOTUnitPlacement.cpp
 aot/ir/AOTAbstractHeap.cpp
-aot/ir/AOTCheckRegExpLiterals.cpp
 aot/ir/AOTEdgeResults.cpp
 aot/ir/AOTEffectSummaries.cpp
 aot/ir/AOTEffectSummariesOfBodies.cpp
 aot/ir/AOTEffectSummariesSolver.cpp
 aot/ir/AOTEffects.cpp
-aot/ir/AOTEffectsCheck.cpp
 aot/ir/AOTEffectsDescription.cpp
 aot/ir/AOTEffectsOfAccesses.cpp
 aot/ir/AOTEffectsOfBuiltins.cpp
@@ -248,7 +242,6 @@ aot/passes/AOTSelectTypedResults.cpp
 aot/passes/AOTSimplifyCasts.cpp
 aot/passes/AOTSinkAllocations.cpp
 aot/passes/AOTSinkAllocationsCandidates.cpp
-aot/passes/AOTSinkAllocationsConstructors.cpp
 aot/passes/AOTSinkAllocationsDataflow.cpp
 aot/passes/AOTSinkAllocationsExecution.cpp
 aot/passes/AOTSinkAllocationsInlining.cpp
@@ -264,6 +257,7 @@ aot/passes/AOTVirtualObjectParameters.cpp
 aot/passes/AOTVirtualObjectShapes.cpp
 aot/pipeline/AOTDerivedFunctions.cpp
 aot/pipeline/AOTFunctionLoop.cpp
+aot/pipeline/AOTInterningPhases.cpp
 aot/pipeline/AOTOpenSites.cpp
 aot/pipeline/AOTPassRunner.cpp
 aot/pipeline/AOTProgramAnalyses.cpp
@@ -274,7 +268,6 @@ aot/place/AOTMethodTable.cpp
 aot/place/AOTObjectPacking.cpp
 aot/place/AOTPlacedSites.cpp
 aot/place/AOTPlacement.cpp
-aot/place/AOTPlacementCheck.cpp
 aot/place/AOTProgramTableEncoder.cpp
 aot/place/AOTShapeTests.cpp
 aot/place/AOTSiteResolution.cpp
@@ -353,6 +346,7 @@ aot/select/AOTGroupRewriterPaths.cpp
 aot/select/AOTInlineBuiltinRule.cpp
 aot/select/AOTKeyPartsRules.cpp
 aot/select/AOTLoopEntry.cpp
+aot/select/AOTNumberPathRules.cpp
 aot/select/AOTOperatorFormRule.cpp
 aot/select/AOTOperatorForms.cpp
 aot/select/AOTPlannedSlotRules.cpp
@@ -372,6 +366,9 @@ aot/select/AOTStringOrderRules.cpp
 aot/select/AOTStringRangeRules.cpp
 aot/select/AOTStringRuleSupport.cpp
 aot/select/AOTVariableRules.cpp
+aot/stubs/AOTStubAssembler.cpp
+aot/stubs/AOTStubCalls.cpp
+aot/stubs/AOTStubCatalog.cpp
 aot/stubs/AOTStubEntrypoints.cpp
 aot/support/AOTBuildContext.cpp
 aot/support/AOTCompileOptions.cpp
@@ -406,6 +403,7 @@ aot/valueflow/AOTValueFlowResultsBuiltins.cpp
 aot/valueflow/AOTValueFlowResultsCalls.cpp
 aot/valueflow/AOTValueFlowResultsClasses.cpp
 aot/valueflow/AOTValueFlowResultsContents.cpp
+aot/valueflow/AOTValueFlowResultsDictionaries.cpp
 aot/valueflow/AOTValueFlowResultsEscape.cpp
 aot/valueflow/AOTValueFlowResultsExecutions.cpp
 aot/valueflow/AOTValueFlowResultsFunctions.cpp

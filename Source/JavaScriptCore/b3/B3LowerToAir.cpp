@@ -796,6 +796,8 @@ private:
         // across. But, it's not clear how useful this would be.
         if (value->owner != m_value->owner)
             return true;
+        if (m_procedure.policy().validation.overlooksWritesBetweenLoadsAndTheirUsers) [[unlikely]]
+            return false;
 
         if (m_blockWithNextInterference == m_block) {
             bool result = m_nextInterference[value] < m_index;

@@ -17,12 +17,14 @@
 #include "AOTPropertyWalk.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "DeferGC.h"
 #include "GCMemoryOperations.h"
 #include "JSCInlines.h"
+#include "ObjectConstructorInlines.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 
@@ -69,12 +71,30 @@ static bool tryMakeClosuresForCopyOfWords(VM& vm, Object& source, CopyOfWords co
     return true;
 }
 
+static bool hasPrivateNames(VM& vm, Structure* structure)
+{
+    if (structure->isQuickPropertyAccessAllowedForEnumeration())
+        return false;
+    bool found = false;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        found = PropertyName(entry.key()).isPrivateName();
+        return !found;
+    });
+    return found;
+}
+
+static Structure* structureBeforeIntegrityLevel(Structure* structure)
+{
+    TransitionKind kind = structure->transitionKind();
+    if (kind == TransitionKind::PreventExtensions || kind == TransitionKind::Seal || kind == TransitionKind::Freeze)
+        return structure->previousID();
+    return structure;
+}
+
 static JSObject* tryCopyPlainExtraProperties(VM& vm, JSObject* extra)
 {
-    Structure* structure = extra->structure();
-    if (extra->type() != FinalObjectType || structure->isDictionary() || hasIndexedProperties(structure->indexingType()) || extra->hasNonReifiedStaticProperties())
-        return nullptr;
-    if (structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties() || structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || !structure->canPerformFastPropertyEnumeration())
+    Structure* structure = structureBeforeIntegrityLevel(extra->structure());
+    if (!structure || !checkStructureForClone(structure, false) || extra->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon() || hasPrivateNames(vm, structure))
         return nullptr;
     Butterfly* butterfly = structure->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
     JSFinalObject* copy = JSFinalObject::createWithButterfly(vm, structure, butterfly);
@@ -836,7 +856,7 @@ void describeMovesForStub(MappedCopy& copy)
         if (!tryDescribeForStub(move))
             return;
     }
-    std::ranges::stable_sort(copy.moves.mutableSpan(), { }, &MappedCopy::Move::runOfStub);
+    AOT::stableSort(copy.moves.mutableSpan(), { }, &MappedCopy::Move::runOfStub);
     for (const MappedCopy::Move& move : copy.moves) {
         MappedCopy::Run& run = copy.runsOfStub[static_cast<size_t>(move.runOfStub)];
         run.end = &move + 1;

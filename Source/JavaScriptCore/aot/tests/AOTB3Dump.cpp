@@ -380,9 +380,31 @@ static BitVector findBlocksReachedWithoutRareEdge(const B3::Air::Code& code, B3:
     return isReached;
 }
 
-static void dumpAirSize(PrintStream& out, const B3::Air::Code& code, B3::Air::BasicBlock* entry, std::span<B3::Air::BasicBlock* const> blocks)
+// Of a loop: the blocks of a turn that goes round without a rare edge. What only leads out of the loop, or back to its top by a rare edge, is no part of such a turn.
+static BitVector findBlocksOfLikelyTurns(const B3::Air::Code& code, B3::Air::BasicBlock* header, std::span<B3::Air::BasicBlock* const> region)
 {
-    BitVector isLikely = findBlocksReachedWithoutRareEdge(code, entry, blocks);
+    BitVector isReached = findBlocksReachedWithoutRareEdge(code, header, region);
+    BitVector leadsBack(code.size());
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (B3::Air::BasicBlock* block : region) {
+            if (!isReached.quickGet(block->index()) || leadsBack.quickGet(block->index()))
+                continue;
+            for (const B3::Air::FrequentedBlock& successor : block->successors()) {
+                if (!successor.isRare() && (successor.block() == header || leadsBack.quickGet(successor.block()->index()))) {
+                    leadsBack.quickSet(block->index());
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+    return leadsBack;
+}
+
+static void dumpAirSize(PrintStream& out, std::span<B3::Air::BasicBlock* const> blocks, const BitVector& isLikely)
+{
     unsigned numberOfInstructions = 0;
     unsigned numberOfPatchpoints = 0;
     unsigned numberOfRareInstructions = 0;
@@ -430,8 +452,14 @@ static void dumpAirLoops(PrintStream& out, B3::Air::Code& code, PrintedLoopParts
             continue;
 
         out.print("loop ", *header, ", ");
-        dumpAirSize(out, code, header, blocks.span());
-        for (const AirLoopCounter& counter : findAirCounters(blocks.span()))
+        BitVector isInLikelyTurn = findBlocksOfLikelyTurns(code, header, blocks.span());
+        dumpAirSize(out, blocks.span(), isInLikelyTurn);
+        Vector<BasicBlock*> blocksOfLikelyTurns;
+        for (BasicBlock* block : blocks) {
+            if (isInLikelyTurn.quickGet(block->index()))
+                blocksOfLikelyTurns.append(block);
+        }
+        for (const AirLoopCounter& counter : findAirCounters(blocksOfLikelyTurns.span()))
             out.print(", ", counter.tmp, " steps by ", counter.step);
         if (!isLikelyInFunction.quickGet(header->index()))
             out.print(", entered rarely");
@@ -456,7 +484,7 @@ void dumpAir(PrintStream& out, B3::Air::Code& code, B3DumpScope scope)
         return;
     case B3DumpScope::SizeOnly:
     case B3DumpScope::SizeOfFunctionAndLoops:
-        dumpAirSize(out, code, code[0], collectBlocks(code).span());
+        dumpAirSize(out, collectBlocks(code).span(), findBlocksReachedWithoutRareEdge(code, code[0], collectBlocks(code).span()));
         out.println();
         if (scope == B3DumpScope::SizeOfFunctionAndLoops)
             dumpAirLoops(out, code, PrintedLoopParts::HeadingOnly);

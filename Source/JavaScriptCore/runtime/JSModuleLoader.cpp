@@ -55,6 +55,7 @@
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -773,6 +774,13 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     ModuleMapKey moduleMapKey { specifier.impl(), type };
 
+#if ENABLE(AOT)
+    // See loadModuleSync().
+    bool takesOwnLoadSteps = m_rootThatTakesOwnLoadSteps && m_rootThatTakesOwnLoadSteps == specifier.impl() && referrer.isRealm() && payload->inherits<ModuleGraphLoadingState>();
+    if (takesOwnLoadSteps)
+        m_rootThatTakesOwnLoadSteps = nullptr;
+#endif
+
     // HostLoadImportedModule is required to be idempotent for the same
     // (referrer, moduleRequest) pair. referrer.[[LoadedModules]] is that cache;
     // FinishLoadingImportedModule populates it, and innerModuleLoading consults it,
@@ -780,7 +788,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     // Consult it now so we can skip the host resolve() hook for repeat imports.
     {
         auto& loadedModules = record ? record->loadedModules() : m_loadedModules;
+#if ENABLE(AOT)
+        if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end() && !takesOwnLoadSteps) {
+#else
         if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end()) {
+#endif
             AbstractModuleRecord* loaded = iter->value.m_module.get();
             ModuleRegistryEntry* loadedEntry = getRegisteredMayBeNull(loaded->moduleKey(), type);
             ASSERT(loadedEntry);
@@ -911,7 +923,9 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         }
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(AOT)
+        JSPromise* promise = takesOwnLoadSteps ? nullptr : mapEntry->loadedPromise(globalObject);
+#elif USE(BUN_JSC_ADDITIONS)
         JSPromise* promise = mapEntry->loadedPromise(globalObject);
 #else
         JSPromise* promise = mapEntry->loadPromise();
@@ -1594,7 +1608,25 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
 
     VM::SynchronousModuleQueueScope queue(vm);
 
+#if ENABLE(AOT)
+    // The root is linked once the load promise in its entry settles. Where an import() left that promise there and has made the
+    // record, the ModuleLoadStep that settles it is on the normal microtask queue, which this load never drains.
+    auto waitsForStepOfImport = [&, type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript] {
+        ModuleRegistryEntry* entry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, type) : nullptr;
+        return entry && entry->status() == ModuleRegistryEntry::Status::Fetched && entry->loadPromise() && entry->loadPromise()->status() == JSPromise::Status::Pending;
+    };
+    JSPromise* result = loadModule(globalObject, moduleName, parameters.copyRef(), scriptFetcher.copyRef(), { ModuleLoadFlag::Evaluate });
+    RETURN_IF_EXCEPTION(scope, result);
+    drainSynchronousModuleQueue(globalObject);
+    RETURN_IF_EXCEPTION(scope, result);
+    if (result->status() != JSPromise::Status::Pending || !waitsForStepOfImport())
+        return result;
+    // The root is loaded again, and takes its own steps from the module promise.
+    SetForScope rootThatTakesOwnLoadSteps(m_rootThatTakesOwnLoadSteps, moduleName.impl());
+    result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
+#else
     JSPromise* result = loadModule(globalObject, moduleName, WTF::move(parameters), WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
+#endif
     RETURN_IF_EXCEPTION(scope, result);
 
     scope.release();

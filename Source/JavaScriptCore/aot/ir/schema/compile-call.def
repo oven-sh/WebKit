@@ -124,7 +124,7 @@ enum ImageForm { Absolute PositionIndependent }
 enum MismatchPolicy { Silent Report }
 enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest Shuffled }
 enum FlowOverride { None Widened }
-flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads DecidedComparisons }
 flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals }
 flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes }
 enum Sabotage {
@@ -144,6 +144,13 @@ enum Sabotage {
     StridedIndexesStayInRange
     SlotsOfSitesStayAsTheyAre
     WordsReadAgainOutlastWrites
+    VectorTurnsMeetNoOtherAccess
+    LanesHoldWhateverIsComputed
+    FramesAlwaysFit
+    CallbacksOfOneChainShareNoMemory WalkedArraysStayAsTheyWereOpened HeadsThatAreCopiedLeaveNoTrace ConversionsOfStorageEndNoProofs WhatRunsAgainLeavesNoTrace GettersInSlotsHaveNoEffects ReadsOfCalleesSinkPastWrites RemovedTestsOutlastWrites
+    VariablesReadAgainInLoopsOutlastWrites
+    LoadsFoldedIntoTheirUsersOutlastWrites PairedLoadsOutlastWrites
+    WrittenOutTurnsAlwaysFit
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

@@ -1782,6 +1782,8 @@ static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration&
 // The reads stay where the steps stood, so what stands between them only has to leave alone what they rely on: the length, and what the open tested.
 static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, ValueID array)
 {
+    if (pass.build.isSabotaged(Sabotage::WalkedArraysStayAsTheyWereOpened))
+        return false;
     FunctionAnalyses& analyses = pass.analyses;
     Vector<GuardDependencies, 2> dependencies;
     auto relyOn = [&](const Value& test) {

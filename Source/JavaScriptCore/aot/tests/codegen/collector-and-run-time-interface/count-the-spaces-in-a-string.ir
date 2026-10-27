@@ -91,11 +91,7 @@ function f1 name="countSpaces" module=m0 flags=[IsChecked, HasExplicitName] leng
     Return v23
 }
 
-# The loop counts up to the length of the string, and a turn calls nothing: it ends within its data. No copy of the loop polls, and nothing in the function does.
-# CHECK-LABEL: name="countSpaces" role=Source
-# CHECK-NOT: isLoopPoll
-# CHECK-NOT: :LoopHint)
-# CHECK-LABEL: end of function
+# A turn calls nothing, and the turns are counted in front of the loop. No copy of the loop polls on a turn: the polls of the function stand between two stretches of many turns.
 # The loop is there: eight characters a turn, then one a turn for the rest, and the copy for strings of 16-bit characters.
 # LOOPS-LABEL: steps by 8
 # LOOPS-COUNT-8: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:characters8, {{*}}:GetStringCodeUnit)

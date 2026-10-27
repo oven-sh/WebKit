@@ -97,6 +97,8 @@ private:
         Value* testedCopyInExcursion { nullptr };
         StridedIndexVariables stridedIndexVariables { };
         unsigned numberOfReducedIndicesCopied { 0 };
+        // Only where decided comparisons are logged: what stands for a phi in the fast loop, by the variable that the phi has become.
+        UncheckedKeyHashMap<Variable*, Value*> valuesStandingForVariables;
     };
 
     void findSingleDefinitions()
@@ -246,11 +248,6 @@ private:
                 return hoistedValueOrSelf(version, value);
             }, version.stridedIndexVariables);
         }
-        if (omitsPollBehindGuard(plan)) {
-            appendGuardThatArrayHoldsLength(*version.front, plan.region.header->at(0)->origin(), plan.rangeChecks.lengthThatArrayMustHold, [&](Value* value) {
-                return hoistedValueOrSelf(version, value);
-            });
-        }
         if (!plan.rewritesLoopTest())
             return;
         version.bounds = appendEntryGuards(*version.front, plan.rangeChecks, *plan.countedLoop, [&](Value* value) {
@@ -299,41 +296,9 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    enum class OmitsPoll : uint8_t { No, BehindGuard, Yes };
-
-    OmitsPoll omitsPoll(const LoopVersionPlan& plan, Value* poll) const
-    {
-        auto* patchpoint = poll->as<PatchpointValue>();
-        if (!m_proc.policy().loops.omitsPollsFromLoopsThatEndWithinData || patchpoint->throwsWhatIsOwed)
-            return OmitsPoll::No;
-        if (patchpoint->likelyTurnsEndWithinData)
-            return OmitsPoll::Yes;
-        if (!plan.rangeChecks.endsWithinData)
-            return OmitsPoll::No;
-        return plan.rangeChecks.lengthThatArrayMustHold ? OmitsPoll::BehindGuard : OmitsPoll::Yes;
-    }
-
-    bool omitsPollBehindGuard(const LoopVersionPlan& plan) const
-    {
-        if (!plan.rangeChecks.lengthThatArrayMustHold)
-            return false;
-        for (BasicBlock* block : plan.region.blocks) {
-            for (Value* value : *block) {
-                if (isLoopPoll(value) && omitsPoll(plan, value) == OmitsPoll::BehindGuard)
-                    return true;
-            }
-        }
-        return false;
-    }
-
     void copyValue(Version& version, Value* value, BasicBlock* copy, RegionCloner::ValueMap& map, CopyKind kind)
     {
         const LoopVersionPlan& plan = version.plan;
-        // Every turn moves the counter, and the fast loop is left before the counter gets to its bound or to the limit of a range check.
-        if (kind == CopyKind::FastLoop && isLoopPoll(value) && omitsPoll(plan, value) != OmitsPoll::No) {
-            m_proc.count(Counter::LoopPollsRemoved);
-            return;
-        }
         if (isReplaced(version, value, kind)) {
             if (value->type() == Void)
                 return;
@@ -351,6 +316,14 @@ private:
         }
         if (kind == CopyKind::FastLoop) {
             if (auto outcome = plan.rangeChecks.decidedComparisons.find(value); outcome != plan.rangeChecks.decidedComparisons.end()) {
+                if (m_proc.policy().validation.logsDecidedComparisons && value->numChildren() == 2) {
+                    Value* clone = m_cloner.appendClone(value, copy, map);
+                    Value* left = clone->child(0);
+                    Value* right = clone->child(1);
+                    copy->values().removeLast();
+                    m_proc.deleteValue(clone);
+                    m_proc.movedLoadLog().addDecidedComparison(m_proc, value, copy, copy->size(), left, right, outcome->value);
+                }
                 m_cloner.substitute(map, value, copy->appendNew<Const32Value>(m_proc, value->origin(), outcome->value));
                 return;
             }
@@ -364,6 +337,10 @@ private:
             }
         }
         Value* clone = m_cloner.appendClone(value, copy, map);
+        if (kind == CopyKind::FastLoop && value->opcode() == Set) {
+            if (Value* standingForVariable = version.valuesStandingForVariables.get(value->as<VariableValue>()->variable()))
+                m_proc.movedLoadLog().addValuesTakenForEqual(m_proc, value->origin(), copy, copy->size(), clone->child(0), standingForVariable);
+        }
         if (!plan.rewritesLoopTest())
             return;
         if (value != plan.countedLoop->testedValue())
@@ -438,6 +415,13 @@ private:
             version.hotCopies.add(block, m_proc.addBlock());
         BasicBlock* fastHeader = version.hotCopies.get(header);
         BasicBlock* excursionEnd = nullptr;
+        if (m_proc.policy().validation.logsDecidedComparisons) {
+            for (Value* repeated : plan.hoisted.repeatedValues.keys()) {
+                Value* read = repeated->foldIdentity();
+                if (repeated != read && read->opcode() == Get && plan.hoisted.isHoisted(repeated))
+                    version.valuesStandingForVariables.add(read->as<VariableValue>()->variable(), version.hoistedMap.get(repeated));
+            }
+        }
         if (!plan.excursion.isEmpty()) {
             for (BasicBlock* block : plan.excursion.blocks)
                 version.excursionCopies.add(block, m_proc.addBlock());

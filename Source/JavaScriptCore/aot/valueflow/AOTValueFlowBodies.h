@@ -179,6 +179,7 @@ public:
     ValueSetID otherCallables() const { return m_otherCallables; }
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
+    ValueSetID records() const { return m_records; }
     ValueSetID keys() const { return m_keys; }
     // A set that holds every string still lists these keys, so that collectWorkerEntries() can see where they arrive.
     ValueSetID embeddedFilePaths() const { return m_embeddedFilePaths; }
@@ -187,6 +188,7 @@ public:
     ValueSetID instancesOf(BuiltinClassID builtinClass) const { return m_objectsOfClass[builtinClass.index()]; }
     ValueSetID objectsWith(LayoutID layout) const { return m_objectsOfLayout[layout.index()]; }
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
+    ValueSetID objectsAllocatedAsIterators() const { return m_objectsAllocatedAsIterators; }
     ValueSetID objectsThatMayBeAnything() const { return m_objectsThatMayBeAnything; }
     ValueSetID unknownObjectAlone() const { return m_unknownObjectAlone; }
     ValueSetID untrackedObjectAlone() const { return m_untrackedObjectAlone; }
@@ -249,6 +251,7 @@ private:
     Vector<ValueSetID> m_objectsOfLayout;
     Vector<ValueSetID> m_objectsOfClass;
     Vector<ValueSetID> m_sureInstancesOfClass;
+    ValueSetID m_objectsAllocatedAsIterators;
     ValueSetID m_objectsThatMayBeAnything;
     ValueSetID m_objectsWithAnyLayout;
     ValueSetID m_objectsWithLayoutOfProgram;
@@ -299,6 +302,7 @@ private:
     ValueSetID m_objects;
     ValueSetID m_callables;
     ValueSetID m_arrays;
+    ValueSetID m_records;
     ValueSetID m_keys;
     ValueSetID m_unknownObjectAlone;
     ValueSetID m_untrackedObjectAlone;

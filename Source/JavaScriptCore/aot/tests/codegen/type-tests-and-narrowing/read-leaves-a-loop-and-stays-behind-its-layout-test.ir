@@ -127,7 +127,6 @@ function f1 name="total" module=m0 flags=[HasExplicitName] length=2 thisType={ty
 # CHECK-NEXT: Successors: Then:#[[behind]], Else:#
 # CHECK-NEXT: BB#[[behind]]:
 # CHECK: Double b@{{*}} = Load(b@[[item]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK-NEXT: Jump(
 # CHECK-LABEL: end of function
 # A turn of the hot loop neither tests nor loads: it adds, counts and asks whether to go on.
 # HOT-LABEL: steps by 1

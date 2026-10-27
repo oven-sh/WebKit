@@ -791,6 +791,17 @@ Effects effectsOfCreatingPrototypeProperty(const Program& program, const Type& f
     return effects;
 }
 
+// The guards of a class speak of every instance, so the first instance with another prototype ends them.
+Effects effectsOfAllocatingWithPrototype(const Program& program, LayoutID allocated)
+{
+    Effects effects = declaredBoundOf(NamedEffectSet::Allocates);
+    if (program.prototypeMaySelectOtherClass(allocated))
+        effects.writes.add(AbstractHeap::MemberGuards);
+    else
+        effects.writes.add(program, MemoryLocation::memberGuards(declaredLayoutOf(program, allocated)));
+    return effects;
+}
+
 void describeOperandCode(const Program& program, const Type& operand, const OperandBehavior& behavior, EffectDescription& description)
 {
     MembersBeingDescribed membersBeingDescribed;
@@ -1441,8 +1452,10 @@ ResultFreshness freshnessOf(const EffectContext& context, const Function& functi
     if (value.opcode == Opcode::TypedArrayRange)
         return ResultFreshness::Fresh;
 
+    // A guard holds no value.
+    constexpr AbstractHeapSet heapsThatCannotHoldResult = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::MemberGuards };
     Effects effects = effectsOfValue().onAnyEdge();
-    if (!effects.writes.containsOnly(bookkeepingHeaps) || effects.mayCallUnknownCode)
+    if (!effects.writes.containsOnly(heapsThatCannotHoldResult) || effects.mayCallUnknownCode)
         return ResultFreshness::Unknown;
     return ResultFreshness::Fresh;
 }

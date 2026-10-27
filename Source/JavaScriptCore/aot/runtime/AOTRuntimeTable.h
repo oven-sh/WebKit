@@ -35,6 +35,7 @@ enum class BrokenClaim : uint32_t {
     WordNeverChanges,
     LoadMayMove,
     ValueIsInRange,
+    ComparisonIsDecided,
 };
 
 #if ASAN_ENABLED && CPU(X86_64) && OS(LINUX)

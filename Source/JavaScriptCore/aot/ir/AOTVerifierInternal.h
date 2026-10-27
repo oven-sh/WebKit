@@ -161,6 +161,7 @@ private:
     void verifyOperation(BlockID, uint32_t indexInBlock, ValueID, const Value&);
     void verifyTerminatorOperation(BlockID, const Terminator&);
     void verifyFormRules(BlockID, const Block&);
+    void verifyVariableRead(BlockID, ValueID, const Value&);
     void verifyCatch(BlockID, uint32_t indexInBlock, ValueID, const Value&);
     void verifyReturnCall(BlockID, const Terminator&);
     void verifyTestAndBranch(BlockID, const Terminator&);

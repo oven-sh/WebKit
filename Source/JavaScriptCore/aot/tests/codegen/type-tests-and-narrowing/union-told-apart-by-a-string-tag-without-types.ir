@@ -127,6 +127,6 @@ function f1 name="size" module=m0 flags=[HasExplicitName] length=1 thisType={typ
 # NONE-LABEL: end of function
 # Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
 # X64-LABEL: name="size" role=Source
-# X64-NEXT: instructions: 24, patchpoints: 1
+# X64-NEXT: instructions: 21, patchpoints: 1
 # ARM64-LABEL: name="size" role=Source
-# ARM64-NEXT: instructions: 26, patchpoints: 3
+# ARM64-NEXT: instructions: 21, patchpoints: 3

@@ -81,7 +81,7 @@ void Program::collectConstructionStarts()
         function.constructionStarts = { };
     }
     for (Vector<ConstructionStart>& starts : m_constructionStartsOfModules) {
-        std::ranges::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
+        AOT::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
         // A site is looked up by where it is reported. Of two starts with one such place the construction's stays.
         auto repeated = std::ranges::unique(starts, { }, &ConstructionStart::reported);
         starts.shrink(starts.size() - repeated.size());

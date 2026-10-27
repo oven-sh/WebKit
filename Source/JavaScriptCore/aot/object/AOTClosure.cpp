@@ -513,8 +513,13 @@ static void didChangePrototypeProperty(Closure* closure)
     if (FunctionRareData* rareData = closure->rareData())
         rareData->clear("Store to prototype property of a function");
     ClassTable& classes = closure->state().objects->classes;
-    if (const LayoutData* constructed = classes.classConstructedBy(closure->function()))
+    if (const LayoutData* constructed = classes.classConstructedBy(closure->function())) {
         classes.didChangeMember(*constructed, ClassSide::Static, vm.propertyNames->prototype.impl());
+        // The class of a constructor function is defined with the prototype object that the function has then, and its guards speak of that object.
+        JSObject* prototypeOfClass = ClassTable::isDefinedByClass(*constructed) ? nullptr : classes.classPrototypeIfExists(*constructed);
+        if (prototypeOfClass && closure->getDirect(vm, vm.propertyNames->prototype) != JSValue(prototypeOfClass))
+            classes.disarmMemberGuards(*constructed);
+    }
     // A construction whose result nobody uses is not compiled, so the object counts as a prototype from here on, as the one that the function is created with does.
     if (JSValue prototype = closure->getDirect(vm, vm.propertyNames->prototype); prototype && prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);

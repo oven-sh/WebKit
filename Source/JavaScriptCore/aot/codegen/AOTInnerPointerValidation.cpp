@@ -10,6 +10,7 @@
 
 #include "AOTHeaps.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStubRegisters.h"
 #include "AirCode.h"
 #include "AirCustom.h"
@@ -242,15 +243,34 @@ private:
         return effects.writes.overlaps(m_rules.collectorState) && effects.writes.overlaps(m_rules.weakTableStorage);
     }
 
-    static const B3::MemoryValue* findLoadFoldedInto(B3::Value* value, int64_t offset, unsigned depth)
+    static void forEachLoadAtDistance(B3::Value* value, unsigned distance, NOESCAPE const Invocable<void(const B3::MemoryValue*)> auto& functor)
     {
-        if (auto* memory = value->as<B3::MemoryValue>())
-            return memory->isLoad() && memory->offset() == offset ? memory : nullptr;
-        if (!depth)
-            return nullptr;
-        for (B3::Value* child : value->children()) {
-            if (const B3::MemoryValue* load = findLoadFoldedInto(child, offset, depth - 1))
-                return load;
+        if (auto* memory = value->as<B3::MemoryValue>()) {
+            if (!distance && memory->isLoad())
+                functor(memory);
+            return;
+        }
+        if (!distance)
+            return;
+        for (B3::Value* child : value->children())
+            forEachLoadAtDistance(child, distance - 1, functor);
+    }
+
+    // An instruction takes in a load that stands next to its own value. Further down stand loads that have instructions of their own, some with the same offset.
+    // Two at one distance that read different things cannot be told apart.
+    static const B3::MemoryValue* findLoadFoldedInto(B3::Value* value, int64_t offset, unsigned maxDistance)
+    {
+        for (unsigned distance = 0; distance <= maxDistance; ++distance) {
+            const B3::MemoryValue* found = nullptr;
+            bool isOnlyOne = true;
+            forEachLoadAtDistance(value, distance, [&](const B3::MemoryValue* load) {
+                if (load->offset() != offset)
+                    return;
+                isOnlyOne &= !found || found->range() == load->range();
+                found = load;
+            });
+            if (found)
+                return isOnlyOne ? found : nullptr;
         }
         return nullptr;
     }
@@ -870,7 +890,7 @@ private:
         m_choicesOfNotedBlock.shrink(0);
         for (unsigned choice = m_firstChoiceOfBlock[block]; choice != none; choice = m_facts[choice].nextHeadInBlock)
             m_choicesOfNotedBlock.append({ find(choice), choice });
-        std::ranges::sort(m_choicesOfNotedBlock);
+        AOT::sort(m_choicesOfNotedBlock);
     }
 
     // The load that made a pointer whose owner is last read in front of the position, if there is one.
@@ -976,7 +996,7 @@ private:
             if (m_unitOfOffset.contains(word >> 2) || m_unitOfOffset.contains((word + 4) >> 2))
                 spilledWords.append(word);
         }
-        std::ranges::sort(spilledWords);
+        AOT::sort(spilledWords);
         // A register that callees save may be written where this function has saved it, and any other everywhere.
         uint64_t savedRegisters = 0;
         for (const RegisterAtOffset& entry : m_code.calleeSaveRegisterAtOffsetList()) {
@@ -1029,7 +1049,7 @@ private:
 
     void report()
     {
-        std::ranges::sort(m_pointers, { }, [&](unsigned value) { return m_facts[value].block; });
+        AOT::sort(m_pointers, { }, [&](unsigned value) { return m_facts[value].block; });
         m_blockOfEnd.fill(none, m_facts.size());
         m_end.fill(0, m_facts.size());
         m_queryOfClass.fill(0, m_facts.size());

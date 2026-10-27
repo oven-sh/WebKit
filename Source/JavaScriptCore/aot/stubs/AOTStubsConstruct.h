@@ -9,10 +9,13 @@
 
 #include "AOTStubFrontEnds.h"
 #include "AOTStubKey.h"
+#include "AOTThreshold.h"
 
 namespace JSC { namespace AOT {
 
 enum class ConstructSyntax : uint8_t { NewExpression, SuperCall };
+
+AOT_THRESHOLD(unsigned, maxArgumentCountOfUntestedHostFrame, 16);
 
 PreludeExit emitCreatePromisePrelude(StubAssembler&);
 PreludeExit emitGetConstructPrototypePrelude(StubAssembler&);

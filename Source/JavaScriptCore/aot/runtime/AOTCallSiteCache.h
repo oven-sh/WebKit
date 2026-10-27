@@ -20,6 +20,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC::AOT {
 
+// The outermost function of a machine frame that stack traces list. A frame has none where it holds only parts of a function that are never listed by themselves.
+enum class OutermostVisibleFunction : uint8_t { None, Listed, HiddenBehindTailCall };
+
 class CallSiteCache {
     WTF_MAKE_TZONE_ALLOCATED(CallSiteCache);
     WTF_MAKE_NONCOPYABLE(CallSiteCache);
@@ -42,6 +45,10 @@ public:
         bool innermostIsAsync : 1 { false };
         // What the site calls is a function object that its own function made and handed to nobody.
         bool callsOwnFunctionObject : 1 { false };
+        // Image::constructedCalleeAt() has an answer.
+        bool namesConstructedCallee : 1 { false };
+        // Once the callee of the site has been entered.
+        OutermostVisibleFunction outermostVisibleFunction : 2 { OutermostVisibleFunction::Listed };
         TraceVisibility innermostVisibility { TraceVisibility::Visible };
         StubFrameKind stubFrameKind { StubFrameKind::Plain };
         FunctionID innermostFunction;

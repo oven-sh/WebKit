@@ -177,6 +177,7 @@ struct GraphPart {
     Vector<Node> numbersPassedOtherTypes;
     Vector<Node> fieldsStartedWithOtherTypes;
     Vector<Node> usedAsIntegers;
+    Vector<Node> usedAsBits;
     Vector<StoreSource> sourcesOfValues;
 };
 
@@ -252,6 +253,9 @@ public:
         UncheckedKeyHashMap<uint64_t, AccessedFields> fields WTF_GUARDED_BY_LOCK(lock);
         UncheckedKeyHashMap<uint64_t, StoreCallees> methods WTF_GUARDED_BY_LOCK(lock);
     };
+    static constexpr unsigned usesAsBitsShift = 2;
+    static constexpr uint8_t usesAsIntegers = (1 << usesAsBitsShift) - 1;
+    static constexpr uint8_t usesAsBits = usesAsIntegers << usesAsBitsShift;
     static constexpr unsigned numberOfAccessTables = 256;
     static constexpr Node nodesTakenAtOnce = 256;
     static constexpr Node nodesPerShare = 1 << 13;
@@ -653,12 +657,12 @@ public:
 
     void findUsesAsIntegers()
     {
-        constexpr uint8_t mayReachCallers = 1 << 0;
-        constexpr uint8_t cameThroughResult = 1 << 1;
+        constexpr uint8_t mayReachCallers = 1 << 0 | 1 << usesAsBitsShift;
+        constexpr uint8_t cameThroughResult = 1 << 1 | 1 << (usesAsBitsShift + 1);
 
         Node numberOfNodes = m_kinds.size();
         m_usesAsIntegers = FilledArray<std::atomic<uint8_t>>(m_loops, numberOfNodes);
-        if (m_usedAsIntegers.isEmpty())
+        if (m_usedAsIntegers.isEmpty() && m_usedAsBits.isEmpty())
             return;
 
         FilledArray<std::atomic<uint32_t>> next(m_loops, numberOfNodes);
@@ -673,36 +677,40 @@ public:
                 predecessors[next[successor].fetch_add(1, std::memory_order_relaxed)] = node;
         });
 
-        forEachShare(m_usedAsIntegers.size(), 1 << 10, [&](unsigned, Node first, Node end) {
-            Vector<Node> worklist;
-            auto mark = [&](Node node, uint8_t ways) {
-                if ((m_usesAsIntegers[node].load(std::memory_order_relaxed) & ways) == ways)
-                    return;
-                if ((m_usesAsIntegers[node].fetch_or(ways) & ways) != ways)
-                    worklist.append(node);
-            };
-            for (Node node : m_usedAsIntegers.subspan(first, end - first))
-                mark(node, mayReachCallers);
-            while (!worklist.isEmpty()) {
-                Node node = worklist.takeLast();
-                uint8_t ways = m_usesAsIntegers[node].load();
-                if (holdsStoresUnderKey(node))
-                    continue;
-                if (node >= m_numberOfPlaces) {
-                    uint32_t operationIndex = m_operationOfValue[node - m_numberOfPlaces];
-                    if (operationIndex != UINT32_MAX && m_operations[operationIndex].rule == StoredKindRule::BitOperation)
+        auto markFrom = [&](const Vector<Node>& used, uint8_t kindOfUse) {
+            forEachShare(used.size(), 1 << 10, [&](unsigned, Node first, Node end) {
+                Vector<Node> worklist;
+                auto mark = [&](Node node, uint8_t ways) {
+                    if ((m_usesAsIntegers[node].load(std::memory_order_relaxed) & ways) == ways)
+                        return;
+                    if ((m_usesAsIntegers[node].fetch_or(ways) & ways) != ways)
+                        worklist.append(node);
+                };
+                for (Node node : used.subspan(first, end - first))
+                    mark(node, mayReachCallers & kindOfUse);
+                while (!worklist.isEmpty()) {
+                    Node node = worklist.takeLast();
+                    uint8_t ways = m_usesAsIntegers[node].load() & kindOfUse;
+                    if (holdsStoresUnderKey(node))
                         continue;
+                    if (node >= m_numberOfPlaces) {
+                        uint32_t operationIndex = m_operationOfValue[node - m_numberOfPlaces];
+                        if (operationIndex != UINT32_MAX && m_operations[operationIndex].rule == StoredKindRule::BitOperation)
+                            continue;
+                    }
+                    if (isResult(node))
+                        ways = cameThroughResult & kindOfUse;
+                    else if (isParameter(node))
+                        ways &= mayReachCallers;
+                    if (!ways)
+                        continue;
+                    for (Node predecessor : predecessors.subspan(firstPredecessor[node], firstPredecessor[node + 1] - firstPredecessor[node]))
+                        mark(predecessor, ways);
                 }
-                if (isResult(node))
-                    ways = cameThroughResult;
-                else if (isParameter(node))
-                    ways &= mayReachCallers;
-                if (!ways)
-                    continue;
-                for (Node predecessor : predecessors.subspan(firstPredecessor[node], firstPredecessor[node + 1] - firstPredecessor[node]))
-                    mark(predecessor, ways);
-            }
-        });
+            });
+        };
+        markFrom(m_usedAsIntegers, usesAsIntegers);
+        markFrom(m_usedAsBits, usesAsBits);
     }
 
     // Hands over each place that is stored a sum or a difference which the contents of `from` go into, with no other place in between. False where that is too much to follow.
@@ -800,6 +808,7 @@ public:
     FilledArray<Operation> m_operations;
     FilledArray<std::atomic<uint8_t>> m_isEnqueued;
     Vector<Node> m_usedAsIntegers;
+    Vector<Node> m_usedAsBits;
     FilledArray<std::atomic<uint8_t>> m_usesAsIntegers;
     FilledArray<uint8_t> m_isAddedTo;
     bool m_unseenSourcesAreOther { false };
@@ -984,6 +993,21 @@ public:
             m_part.usedAsIntegers.append(source.node());
     }
 
+    void noteUsesAsBits(const Value& operation)
+    {
+        if (operation.numberOfOperands() != 2)
+            return;
+        auto isZero = [&](ValueID id) {
+            const Value& value = m_function.at(id);
+            return value.opcode == Opcode::Integer && !value.integer();
+        };
+        for (unsigned index : { 0u, 1u }) {
+            StoreSource source = sourceOf(operation.operand(index));
+            if (!source.isConstant() && !isZero(operation.operand(!index)))
+                m_part.usedAsBits.append(source.node());
+        }
+    }
+
     Expected<bool> hasCountedElements(ValueID object) const
     {
         if (!object)
@@ -1060,6 +1084,7 @@ public:
         case Opcode::RShift: {
             bool hasOperandThatIsNoBigInt = false;
             value.forEachOperand([&](ValueID operand, uint32_t) { hasOperandThatIsNoBigInt |= !typeFactsOf(operand).mayBeBigInt; });
+            noteUsesAsBits(value);
             return hasOperandThatIsNoBigInt ? StoreSource(StoredKind::Int32) : readOperation(StoredKindRule::BitOperation, value);
         }
         case Opcode::Add:
@@ -1276,6 +1301,8 @@ void StoreGraph::build(const VisibleStores::FunctionFilter& shouldRead)
 
     for (const GraphPart& part : m_parts)
         m_usedAsIntegers.appendVector(part.usedAsIntegers);
+    for (const GraphPart& part : m_parts)
+        m_usedAsBits.appendVector(part.usedAsBits);
 
     uint32_t numberOfOperations = 0;
     Vector<uint32_t> firstOperationOfPart = WTF::map(m_parts, [&](const GraphPart& part) {
@@ -1310,14 +1337,18 @@ VisibleStores::VisibleStores(const Program& program, const ParallelLoops& loops,
     graph.findUsesAsIntegers();
     graph.findFieldsAddedTo();
     m_fieldsUsedAsIntegers = Vector<BitVector>(program.layouts.size());
+    m_fieldsUsedAsBits = Vector<BitVector>(program.layouts.size());
     m_fieldsAddedTo = Vector<BitVector>(program.layouts.size());
     m_fieldsStartedWithOtherTypes = Vector<BitVector>(program.layouts.size());
     m_kinds = Vector<Vector<Kinds>>(program.layouts.size());
     graph.forEachInShares(program.layouts.size(), 512, [&](Node layout) {
         m_kinds[layout] = Vector<Kinds>(program.layouts[layout].fields.size(), [&](size_t field) {
             Node node = graph.nodeOf({ LayoutID(layout), static_cast<uint32_t>(field) });
-            if (graph.m_usesAsIntegers[node].load(std::memory_order_relaxed))
+            uint8_t uses = graph.m_usesAsIntegers[node].load(std::memory_order_relaxed);
+            if (uses & StoreGraph::usesAsIntegers)
                 m_fieldsUsedAsIntegers[layout].set(field);
+            if (uses & StoreGraph::usesAsBits)
+                m_fieldsUsedAsBits[layout].set(field);
             if (PropertyKeyID key = program.layouts[layout].fields[field].key; key && graph.isAddedTo(node, key))
                 m_fieldsAddedTo[layout].set(field);
             if (graph.m_fieldsStartedWithOtherTypes.quickGet(node))

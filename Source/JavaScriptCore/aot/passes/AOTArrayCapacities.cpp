@@ -1343,7 +1343,7 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
 // The code behind a failing edge is generic as a rule and relies on no proof about an array.
 static void findConversionsEndingProofs(FunctionPassContext& context, Vector<FailedStorageTest, 4>& failedTests)
 {
-    if (failedTests.isEmpty())
+    if (failedTests.isEmpty() || context.build.isSabotaged(Sabotage::ConversionsOfStorageEndNoProofs))
         return;
     const Function& function = context.function;
     const GuardAvailability& guards = context.analyses.guards();

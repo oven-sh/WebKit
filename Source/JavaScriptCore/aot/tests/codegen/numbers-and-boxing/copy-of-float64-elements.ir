@@ -83,17 +83,21 @@ function f1 name="copy" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
     Return v17
 }
 
-# to[k] = from[k] between two arrays of doubles: the eight bytes are loaded and stored as they are, whatever NaN they may spell.
-# HOT-LABEL: steps by 1
-# HOT: Store(b@{{*}}, b@{{*}}, ControlDependent|Writes:TypedArrayElements, {{*}}:PutTypedArrayElement)
-# HOT: Double b@{{*}} = Load(b@{{*}}, offset = 8, ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
+# to[k] = from[k] between two arrays of doubles: the bytes are loaded and stored as they are, two elements at a time, whatever NaN they may spell.
+# HOT-LABEL: steps by 16
+# HOT: V128 b@[[first]] = Load(b@{{*}}, ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
+# HOT: Store(b@[[first]], b@{{*}}, ControlDependent|Writes:TypedArrayElements, {{*}}:PutTypedArrayElement)
 # HOT-LABEL: end of loop
 # Nothing compares the element with itself, looks at its bits or chooses another NaN.
-# NONE-LABEL: steps by 1
+# NONE-LABEL: steps by 16
 # NONE-NOT: Equal(
 # NONE-NOT: BitwiseCast
 # NONE-NOT: Select(
 # NONE-NOT: isLoopPoll
 # NONE-LABEL: end of loop
 # X64: instructions: 9, patchpoints: 2
+# X64: instructions: 4, patchpoints: 2, {{*}} steps by 2
+# X64: instructions: 18, patchpoints: 16, {{*}} steps by 16
 # ARM64: instructions: 9, patchpoints: 2
+# ARM64: instructions: 5, patchpoints: 2, {{*}} steps by 2
+# ARM64: instructions: 21, patchpoints: 16, {{*}} steps by 16

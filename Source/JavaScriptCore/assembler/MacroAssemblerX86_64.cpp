@@ -571,6 +571,11 @@ CPUFeatureSet MacroAssemblerX86_64::collectCPUFeatures()
 
 void MacroAssemblerX86_64::emitVectorOperationWithoutAVX(VectorOperationWithoutAVX operation, SIMDLane lane, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
 {
+    // Of two numbers that are both NaN the left one comes out, so only operations on integers and on bits may change sides.
+    bool mayChangeSides = operation != VectorOperationWithoutAVX::Sub && operation != VectorOperationWithoutAVX::Div && operation != VectorOperationWithoutAVX::NarrowSigned
+        && operation != VectorOperationWithoutAVX::NarrowUnsigned && operation != VectorOperationWithoutAVX::Swizzle && !scalarTypeIsFloatingPoint(lane);
+    if (dest == right && mayChangeSides)
+        std::swap(left, right);
     if (dest == right && dest != left) {
         moveVector(right, fpTempRegister);
         right = fpTempRegister;
@@ -578,39 +583,34 @@ void MacroAssemblerX86_64::emitVectorOperationWithoutAVX(VectorOperationWithoutA
     if (dest != left)
         moveVector(left, dest);
 
-    using Emit = void (X86Assembler::*)(XMMRegisterID, XMMRegisterID);
+    // The last byte of the instruction, and above it: 1 = behind the prefix 66, 2 = behind the escape 38. Zero: there is no such instruction.
+    constexpr uint16_t with66 = 0x100;
+    constexpr uint16_t with6638 = 0x300;
     // In the order of SIMDLane: i8x16, i16x8, i32x4, i64x2, f32x4, f64x2.
-    static constexpr Emit arithmetic[4][6] = {
-        { &X86Assembler::paddb_rr, &X86Assembler::paddw_rr, &X86Assembler::paddd_rr, &X86Assembler::paddq_rr, &X86Assembler::addps_rr, &X86Assembler::addpd_rr },
-        { &X86Assembler::psubb_rr, &X86Assembler::psubw_rr, &X86Assembler::psubd_rr, &X86Assembler::psubq_rr, &X86Assembler::subps_rr, &X86Assembler::subpd_rr },
-        { nullptr, &X86Assembler::pmullw_rr, &X86Assembler::pmulld_rr, nullptr, &X86Assembler::mulps_rr, &X86Assembler::mulpd_rr },
-        { nullptr, nullptr, nullptr, nullptr, &X86Assembler::divps_rr, &X86Assembler::divpd_rr },
+    static constexpr uint16_t arithmetic[10][6] = {
+        { with66 | 0xfc, with66 | 0xfd, with66 | 0xfe, with66 | 0xd4, 0x58, with66 | 0x58 }, // paddb paddw paddd paddq addps addpd
+        { with66 | 0xf8, with66 | 0xf9, with66 | 0xfa, with66 | 0xfb, 0x5c, with66 | 0x5c }, // psubb psubw psubd psubq subps subpd
+        { 0, with66 | 0xd5, with6638 | 0x40, 0, 0x59, with66 | 0x59 }, // pmullw pmulld mulps mulpd
+        { 0, 0, 0, 0, 0x5e, with66 | 0x5e }, // divps divpd
+        { with6638 | 0x3c, with66 | 0xee, with6638 | 0x3d, 0, 0, 0 }, // pmaxsb pmaxsw pmaxsd
+        { with6638 | 0x38, with66 | 0xea, with6638 | 0x39, 0, 0, 0 }, // pminsb pminsw pminsd
+        { with66 | 0xde, with6638 | 0x3e, with6638 | 0x3f, 0, 0, 0 }, // pmaxub pmaxuw pmaxud
+        { with66 | 0xda, with6638 | 0x3a, with6638 | 0x3b, 0, 0, 0 }, // pminub pminuw pminud
+        { 0, with66 | 0x63, with66 | 0x6b, 0, 0, 0 }, // packsswb packssdw
+        { 0, with66 | 0x67, with6638 | 0x2b, 0, 0, 0 }, // packuswb packusdw
     };
+    static constexpr uint16_t onBits[4] = { 0x54, 0x56, 0x57, with6638 | 0x00 }; // andps orps xorps pshufb
     static_assert(static_cast<unsigned>(SIMDLane::i8x16) + 5 == static_cast<unsigned>(SIMDLane::f64x2));
-    Emit emit = nullptr;
-    switch (operation) {
-    case VectorOperationWithoutAVX::Add:
-    case VectorOperationWithoutAVX::Sub:
-    case VectorOperationWithoutAVX::Mul:
-    case VectorOperationWithoutAVX::Div:
+    static_assert(static_cast<unsigned>(VectorOperationWithoutAVX::And) == 10 && static_cast<unsigned>(VectorOperationWithoutAVX::Swizzle) == 13);
+    uint16_t instruction = 0;
+    if (operation >= VectorOperationWithoutAVX::And)
+        instruction = onBits[static_cast<unsigned>(operation) - 10];
+    else {
         RELEASE_ASSERT(lane >= SIMDLane::i8x16 && lane <= SIMDLane::f64x2);
-        emit = arithmetic[static_cast<unsigned>(operation)][static_cast<unsigned>(lane) - static_cast<unsigned>(SIMDLane::i8x16)];
-        break;
-    case VectorOperationWithoutAVX::And:
-        emit = &X86Assembler::andps_rr;
-        break;
-    case VectorOperationWithoutAVX::Or:
-        emit = &X86Assembler::orps_rr;
-        break;
-    case VectorOperationWithoutAVX::Xor:
-        emit = &X86Assembler::xorps_rr;
-        break;
-    case VectorOperationWithoutAVX::Swizzle:
-        emit = &X86Assembler::pshufb_rr;
-        break;
+        instruction = arithmetic[static_cast<unsigned>(operation)][static_cast<unsigned>(lane) - static_cast<unsigned>(SIMDLane::i8x16)];
     }
-    RELEASE_ASSERT(emit);
-    (m_assembler.*emit)(right, dest);
+    RELEASE_ASSERT(instruction);
+    m_assembler.vectorOp_rr(instruction & 0x100, instruction & 0x200, static_cast<uint8_t>(instruction), right, dest);
 }
 
 } // namespace JSC

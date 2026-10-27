@@ -420,35 +420,25 @@ struct FramesAboveRun {
     bool exist { false };
 };
 
+static ALWAYS_INLINE void countLogicalFrame(FunctionID function, TraceVisibility visibility, bool isTailDeleted, ShownFrameFilter& filter, CapturedRun& run, JSCell*& lastConstructorToSkip)
+{
+    if (!filter.shows(visibility, isTailDeleted))
+        return;
+    if (!lastConstructorToSkip) {
+        ++run.numberShown;
+        return;
+    }
+    ++run.numberOmitted;
+    if (isClosureOf(lastConstructorToSkip, function))
+        lastConstructorToSkip = nullptr;
+}
+
 static NEVER_INLINE void countLogicalFrames(const Image& image, InlineFrameReader& reader, const CallSiteCache::Entry& site, bool calleeWasEntered, ShownFrameFilter& filter, CapturedRun& run, JSCell*& lastConstructorToSkip)
 {
     for (LogicalFrame frame = innermostLogicalFrame(image, reader, { site.code, site.site.callSite, site.site.inlineFrame, site.site.isTailDeleted(calleeWasEntered), site.site.calledBuiltin });; frame = callerOfInlinedFrame(image, reader, site.code, frame)) {
-        if (filter.shows(FunctionDescription(frame.function).visibility(), frame.isTailDeleted)) {
-            if (!lastConstructorToSkip)
-                ++run.numberShown;
-            else {
-                ++run.numberOmitted;
-                if (isClosureOf(lastConstructorToSkip, frame.function))
-                    lastConstructorToSkip = nullptr;
-            }
-        }
+        countLogicalFrame(frame.function, FunctionDescription(frame.function).visibility(), frame.isTailDeleted, filter, run, lastConstructorToSkip);
         if (!frame.hasCallerInMachineFrame())
             break;
-    }
-}
-
-// Whether a tail call hides the outermost function that the machine frame shows. Nothing where it holds only parts of a function that no stack trace lists by themselves.
-static std::optional<bool> hidesOutermostFunctionBehindTailCall(const Image& image, InlineFrameReader& reader, const CallSiteCache::Entry& entry, bool calleeWasEntered)
-{
-    const CallSiteRecord& site = entry.site;
-    if (!site.isTailCall() && !site.inlineFrame && entry.innermostVisibility == TraceVisibility::Visible) [[likely]]
-        return false;
-    std::optional<bool> isHidden;
-    for (LogicalFrame frame = innermostLogicalFrame(image, reader, { entry.code, site.callSite, site.inlineFrame, site.isTailDeleted(calleeWasEntered), site.calledBuiltin });; frame = callerOfInlinedFrame(image, reader, entry.code, frame)) {
-        if (FunctionDescription(frame.function).visibility() == TraceVisibility::Visible)
-            isHidden = frame.isTailDeleted;
-        if (!frame.hasCallerInMachineFrame())
-            return isHidden;
     }
 }
 
@@ -462,32 +452,49 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
     run.numberShown = framesAbove.numberShown;
     CompiledFunctionID outermostCode;
     bool calleeOfFirstFrameWasEntered = calleeWasEntered;
-    // A function that is constructed waits for what its last call returns, so it is listed though a tail call of its own hides its frame or has taken it from the stack. Return addresses do not say that.
-    auto constructedFunctionIsListedBehindTailCall = [&](FunctionID constructed) {
-        if (constructed && (!outermostCode || !isCodeOf(walk.image(), outermostCode, constructed)))
-            return frameOfConstructedFunctionThatLeft(walk.image(), constructed, outermostCode).has_value();
+    auto functionAboveIsHiddenBehindTailCall = [&]() ALWAYS_INLINE_LAMBDA {
         CallSiteCache& cache = *vm.aotState().callSiteCache;
-        std::optional<bool> isHidden;
-        for (size_t index = run.returnAddresses.size(); index-- && !isHidden;)
-            isHidden = hidesOutermostFunctionBehindTailCall(walk.image(), cache.inlineFrames(), *cache.resolve(walk.image(), Trace::decode(run.returnAddresses[index], codeStart)), index || calleeOfFirstFrameWasEntered);
-        walk.findSiteAgain();
-        return isHidden.value_or(false);
+        auto outermost = OutermostVisibleFunction::None;
+        bool mayHaveMovedEntries = false;
+        for (size_t index = run.returnAddresses.size(); index-- && outermost == OutermostVisibleFunction::None;) {
+            const void* address = Trace::decode(run.returnAddresses[index], codeStart);
+            const CallSiteCache::Entry* above = cache.find(address);
+            if (!above) [[unlikely]] {
+                above = cache.resolve(walk.image(), address);
+                mayHaveMovedEntries = true;
+            }
+            outermost = index || calleeOfFirstFrameWasEntered || !above->site.isTailCall() ? above->outermostVisibleFunction : findOutermostVisibleFunction(walk.image(), cache.inlineFrames(), *above, false);
+        }
+        if (mayHaveMovedEntries) [[unlikely]]
+            walk.findSiteAgain();
+        return outermost == OutermostVisibleFunction::HiddenBehindTailCall;
     };
     // False: the run is not listed by return addresses.
-    auto didFindConstructionOf = [&](FunctionID constructed) {
-        if (constructedFunctionIsListedBehindTailCall(constructed)) [[unlikely]] {
+    auto didFindConstructionOf = [&](FunctionID constructed) ALWAYS_INLINE_LAMBDA {
+        // Where nothing on the stack says which function was constructed, it is the one that the frame above was entered for.
+        bool isFunctionAbove = outermostCode && (!constructed || isCodeOf(walk.image(), outermostCode, constructed));
+        // A function that is constructed waits for what its last call returns, so it is listed though a tail call of its own hides its frame or has taken it from the stack. Return addresses do not say that.
+        if (isFunctionAbove ? functionAboveIsHiddenBehindTailCall() : constructed && frameOfConstructedFunctionThatLeft(walk.image(), constructed, outermostCode)) [[unlikely]] {
             run.hasFrameListedBehindTailCall = true;
             return false;
         }
-        // Where nothing on the stack says which function was constructed, it is the one that the frame above was entered for.
-        if (outermostCode && (!constructed || isCodeOf(walk.image(), outermostCode, constructed)))
+        if (isFunctionAbove)
             run.addFlagToLast(Trace::Flag::IsConstructCall);
         return true;
     };
 
-    for (; !walk.isAtEnd(); walk.advance(), calleeWasEntered = true) {
-        if (walk.site().site.isConstruct() && !didFindConstructionOf(walk.constructedFunction())) [[unlikely]]
-            return;
+    for (;; walk.advance(), calleeWasEntered = true) {
+        bool isAtEnd = walk.isAtEnd();
+        if (isAtEnd ? walk.runEnd().isConstruct : walk.site().site.isConstruct()) {
+            FunctionID constructed = isAtEnd ? walk.runEnd().constructedFunction() : walk.constructedFunction();
+            if (isAtEnd && !constructed) {
+                if (walk.runEnd().constructs(walk.image().rootFunctionOf(outermostCode.index())))
+                    run.addFlagToLast(Trace::Flag::IsConstructCall);
+            } else if (!didFindConstructionOf(constructed)) [[unlikely]]
+                return;
+        }
+        if (isAtEnd)
+            break;
         const CallSiteCache::Entry& site = walk.site();
         outermostCode = site.code;
         if (hasRecordedCallees && FunctionTables::of(vm).framesAreNamedByCallee(walk.image().rootFunctionOf(site.code.index()))) [[unlikely]] {
@@ -512,16 +519,12 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
                 filter = ShownFrameFilter(true);
             continue;
         }
-        countLogicalFrames(walk.image(), vm.aotState().callSiteCache->inlineFrames(), site, calleeWasEntered, filter, run, lastConstructorToSkip);
+        if (!site.site.inlineFrame && !site.site.calledBuiltin)
+            countLogicalFrame(site.innermostFunction, site.innermostVisibility, site.site.isTailDeleted(calleeWasEntered), filter, run, lastConstructorToSkip);
+        else
+            countLogicalFrames(walk.image(), vm.aotState().callSiteCache->inlineFrames(), site, calleeWasEntered, filter, run, lastConstructorToSkip);
     }
 
-    if (walk.isAtEnd() && walk.runEnd().isConstruct) {
-        if (FunctionID constructed = walk.runEnd().constructedFunction()) {
-            if (!didFindConstructionOf(constructed))
-                return;
-        } else if (walk.runEnd().constructs(walk.image().rootFunctionOf(outermostCode.index())))
-            run.addFlagToLast(Trace::Flag::IsConstructCall);
-    }
     run.foundConstructorToSkip = !lastConstructorToSkip;
 }
 
@@ -694,7 +697,8 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
         framesAbove = { otherFrames.size(), true };
     }
     // A return address does not say which function object runs in the frame.
-    bool hasRecordedCallees = FunctionTables::of(vm).hasRecordedCallees() || FunctionTables::of(vm).recordsCalleesOfCallsByValue();
+    FunctionTables& tables = FunctionTables::of(vm);
+    bool hasRecordedCallees = tables.hasRecordedCallees() || tables.recordsCalleesOfCallsByValue();
     Instance* instance = findInstance(vm, *start);
     if (!instance)
         return nullptr;
@@ -984,8 +988,11 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
             frameIfGone = frameOfConstructedFunctionThatLeft(walk.image(), constructed, outermostCode);
         return lister.didFindCallerThatConstructed(constructed, frameIfGone);
     };
+    auto didFindConstructSite = [&]() NEVER_INLINE {
+        return didFindConstructionOf(walk.constructedFunction());
+    };
     // What was constructed has left by a tail call of something that is no compiled function.
-    if (walk.hasLeftPlainFunctionConstructFrame() && walk.site().site.isConstruct() && !didFindConstructionOf(walk.constructedFunction())) [[unlikely]]
+    if (walk.hasLeftPlainFunctionConstructFrame() && walk.site().site.isConstruct() && !didFindConstructSite()) [[unlikely]]
         return false;
     for (bool isCaller = calleeWasEntered;; isCaller = true) {
         outermostCode = walk.site().code;
@@ -1005,7 +1012,7 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
             else if (caller.innermostVisibility == TraceVisibility::Visible && !caller.site.isTailCall())
                 setCallee(frame, tables.recordedCalleeOfCallFrom(callerStackPointer, FunctionDescription(frame.function).sourceFunction()));
         }
-        if (caller.site.isConstruct() && !didFindConstructionOf(walk.constructedFunction()))
+        if (caller.site.isConstruct() && !didFindConstructSite())
             return false;
     }
     if (FunctionID constructed = walk.runEnd().constructedFunction()) {

@@ -21,6 +21,7 @@ struct EffectDescription;
 struct Type;
 
 Effects effectsOfCreatingPrototypeProperty(const Program&, const Type& functions);
+Effects effectsOfAllocatingWithPrototype(const Program&, LayoutID allocated);
 
 enum class OperandDeclarer : uint8_t { Operation, Builtin };
 

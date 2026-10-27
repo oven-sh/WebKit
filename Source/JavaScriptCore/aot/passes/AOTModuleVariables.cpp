@@ -582,6 +582,8 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
                 variable.initialization = VariableInitialization::Function;
                 variable.function = deferral.function;
                 variable.flow.stores = StoreCount::Never;
+                if (id == deferral.variableReadInBody)
+                    variable.flow.reads = ReadState::Unknown;
                 break;
             case Deferral::Kind::RegExp:
                 variable.declared.changeType(Proven::byPosition(editor.types().intern(program.at(variable.declared.written()).withPrimitives(Primitive::Absent))));

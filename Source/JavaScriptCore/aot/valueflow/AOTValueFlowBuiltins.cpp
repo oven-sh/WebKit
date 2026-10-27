@@ -595,7 +595,7 @@ private:
     }
 
     ClimbingSet objectsAt(BuiltinOperand position) { return m_context.restrict(valueAt(position), m_universe.objects()); }
-    ClimbingSet known(ClimbingSet objects) { return m_context.restrict(objects, m_universe.knownObjects()); }
+    ClimbingSet known(ClimbingSet objects) { return knownObjectsThatAreFollowed(m_context, objects); }
     ClimbingSet unknownObjectAlone() const { return ClimbingSet(m_universe.unknownObjectAlone()); }
     ClimbingSet untrackedObjectAlone() const { return ClimbingSet(m_universe.untrackedObjectAlone()); }
     bool mayBeUnknownObject(ClimbingSet objects) const { return m_context.contains(objects, ValueFlowUniverse::unknownObject()); }
@@ -1051,28 +1051,9 @@ private:
             appendHoldersOf(BuiltinClasses::Promise);
 
         m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins), m_context.maker().of(holdersOfRows.span()));
-        noteInstancesIn(overload.result.type);
+        noteInstancesIn(m_context, overload.result.type);
         if (overload.isUndeclared() && m_builtins.at(m_builtin).origin == BuiltinOrigin::Host)
             m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances), m_tables.heap().prototypeObjectsOfHost());
-    }
-
-    void noteInstancesIn(BuiltinTypeID type)
-    {
-        Vector<ValueFlowObjectID, 16> prototypes;
-        Vector<BuiltinTypeID, 8> types { type };
-        for (size_t index = 0; index < types.size(); ++index) {
-            if (!types[index])
-                continue;
-            for (const BuiltinTypePart& part : m_builtins.at(types[index]).parts) {
-                for (BuiltinClassID current = part.builtinClass; current; current = m_builtins.at(current).parent) {
-                    if (BuiltinID prototype = m_builtins.at(current).prototype)
-                        prototypes.append(m_universe.objectOf(prototype));
-                }
-                for (const BuiltinSlotContents& contents : part.contents)
-                    types.appendIfNotContains(contents.type);
-            }
-        }
-        m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances), m_context.maker().of(prototypes.span()));
     }
 
     bool mayHaveProperty(ClimbingSet holders, BuiltinName name)
@@ -1668,7 +1649,7 @@ private:
             return;
         case BuiltinPlaceKind::NewValue:
             constant = m_context.maker().unite(constant, valueOfType(place.newValueType, m_contentsObject));
-            noteInstancesIn(place.newValueType);
+            noteInstancesIn(m_context, place.newValueType);
             forEachCallbackResultIn(place.newValueType, functor);
             return;
         case BuiltinPlaceKind::NativeMemory:
@@ -3145,6 +3126,26 @@ void noteCallOfBuiltin(BuiltinID builtin, ValueFlowCallKind kind, ValueFlowRuleC
 {
     context.use(builtin, modeAndUseOf(kind).second);
     noteCallThatRunsOtherCode(builtin, context);
+}
+
+void noteInstancesIn(ValueFlowRuleContext& context, BuiltinTypeID type)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    Vector<ValueFlowObjectID, 16> prototypes;
+    Vector<BuiltinTypeID, 8> types { type };
+    for (size_t index = 0; index < types.size(); ++index) {
+        if (!types[index])
+            continue;
+        for (const BuiltinTypePart& part : builtins.at(types[index]).parts) {
+            for (BuiltinClassID current = part.builtinClass; current; current = builtins.at(current).parent) {
+                if (BuiltinID prototype = builtins.at(current).prototype)
+                    prototypes.append(context.universe().objectOf(prototype));
+            }
+            for (const BuiltinSlotContents& contents : part.contents)
+                types.appendIfNotContains(contents.type);
+        }
+    }
+    context.add(context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances), context.maker().of(prototypes.span()));
 }
 
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind kind, const ValueFlowStatement& call, ValueFlowRuleContext& context)

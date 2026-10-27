@@ -12,6 +12,7 @@
 #include "AOTClaimsOfFields.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreshold.h"
+#include "AOTValueFlowTypedResults.h"
 #include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -839,13 +840,24 @@ struct FieldResults {
             });
         }));
         BitVector layoutsOfOtherObjects(numberOfLayouts);
+        BitVector layoutsOfParsedObjects(numberOfLayouts);
         for (LayoutID layout : layoutsOfOtherSites([&](ValueFlowObjectID object, const ValueFlowSite& site) {
-            return !constructions.isFollowed(site.layout) && hasObjects(site.layout) && (site.origin == ValueFlowSiteOrigin::TypedResult || isCompiled(inputs.universe().functionOf(object)));
+            return !constructions.isFollowed(site.layout) && hasObjects(site.layout) && site.origin != ValueFlowSiteOrigin::TypedResult && isCompiled(inputs.universe().functionOf(object));
         }))
             layoutsOfOtherObjects.quickSet(layout.index());
+        for (LayoutID layout : layoutsOfOtherSites([&](ValueFlowObjectID, const ValueFlowSite& site) {
+            return !constructions.isFollowed(site.layout) && hasObjects(site.layout) && site.origin == ValueFlowSiteOrigin::TypedResult;
+        }))
+            layoutsOfParsedObjects.quickSet(layout.index());
         for (size_t layout : layoutsOfOtherObjects) {
             forEachFieldOfObjectsWith(program, application, LayoutID(layout), [&](FieldReference declaration, const Field&) {
                 missing.append(declaration);
+            });
+        }
+        for (size_t layout : layoutsOfParsedObjects) {
+            forEachFieldOfObjectsWith(program, application, LayoutID(layout), [&](FieldReference declaration, const Field& field) {
+                if (mayBeMissingInParsedText(program, field))
+                    missing.append(declaration);
             });
         }
         return missing;
@@ -1646,6 +1658,17 @@ struct FieldResults {
                 };
                 addedKeys = stores.keysStoredIntoKnownObjects(id);
                 addedKeys.removeAllMatching(isField);
+                // Each evaluation of a class makes its own private names, and a field holds the name of one evaluation. Only a class with a parent defines its names on an object that it did not make.
+                Vector<PropertyKeyID> privateNamesMadeAgain;
+                for (const Field& field : program.layouts[index].fields) {
+                    if (!field.key || program.at(field.key).kind != PropertyKeyKind::PrivateName)
+                        continue;
+                    LayoutID owner = program.at(field.key).owner;
+                    if (program.at(owner).has(LayoutFlags::HasHeritage) && application.layouts[owner.index()].classFlow.evaluations != ExecutionCount::AtMostOnce)
+                        privateNamesMadeAgain.append(field.key);
+                }
+                AOT::sort(privateNamesMadeAgain);
+                uniteSortedKeys(addedKeys, privateNamesMadeAgain);
                 mayGainSharedKey = stores.isReachedThroughPlaceholders(id) && !std::ranges::all_of(sharedKeys, isField);
             }
             bool mayAddProperty = !listsEveryName || !addedKeys.isEmpty() || mayGainSharedKey;

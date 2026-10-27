@@ -87,6 +87,8 @@ static void applyLayoutUpdate(Layout& layout, const FlowLayoutUpdate& update)
         if (!fieldUpdate.accessor.isAccessor())
             applyPosition(field.declared, fieldUpdate.position);
         field.flow = fieldUpdate.flow;
+        field.typeBeforeNarrowing = { };
+        field.flags.remove(FieldFlags::IsCountedWith);
 
         bool wasAnalyzed = field.flow.location.writers == WriterState::AllKnown;
         if (wasAnalyzed && !field.flow.stability.contains(FieldStability::IsNeverDeleted) && field.flags.contains(FieldFlags::IsRequired)) {
@@ -682,7 +684,7 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
     return constructed;
 }
 
-static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, const Vector<BitVector>& fieldsExpectedAsRead)
+static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, const Vector<BitVector>& fieldsExpectedAsRead, const BitVector& keysOfWidenedFields)
 {
     BitVector onlyConstructed = findFunctionsThatAreOnlyConstructed(context);
     FlowFirstTimeMarks firstTimeMarks = createFirstTimeMarks(context, editor);
@@ -694,6 +696,7 @@ static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& edi
         FlowBodyApplication body { context.program, context.results, context.application, id, function, arenas.types, context.build, fieldsExpectedAsRead, firstRunMarks[id.index()], &firstTimeMarks };
         body.provesEverything = provesEverything && !isOfRuntimeModule(context.program, function.module);
         body.isOnlyConstructed = onlyConstructed.quickGet(id.index());
+        body.keysOfWidenedFields = &keysOfWidenedFields;
         countsByTask[task] = applyBodyUpdate(body);
     });
 
@@ -773,6 +776,21 @@ static void takeBackFieldsThatListUntestedValues(Program& program, FlowResults& 
     results.setFieldsTakenBack(WTF::move(fields));
 }
 
+// A value of any type is still expected to be the integer that the program shows. A number is computed with as it is.
+static BitVector findKeysOfWidenedFields(const Program& program, const FlowApplication& application)
+{
+    BitVector keys;
+    for (uint32_t layout = 0; layout < application.layouts.size(); ++layout) {
+        const Vector<Field>& fields = program.layouts[layout].fields;
+        for (uint32_t index = 0; index < fields.size(); ++index) {
+            TypeID type = application.layouts[layout].fields[index].position.type;
+            if (fields[index].typeBeforeNarrowing && type && program.at(type).isNumberOrNullish() && !program.at(type).isSubsetOf(program.at(fields[index].declared.written()), program))
+                keys.set(fields[index].key.index());
+        }
+    }
+    return keys;
+}
+
 void applyFlowResults(Program& program, FlowResults& results, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -796,6 +814,7 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     PhaseTimes times(build, PassID::ApplyFlowResults);
     Vector<BitVector> fieldsExpectedAsRead = findExpectedFields(program, build.parallelLoops());
     nameObjectInPlaceOfDictionaryLayouts(program, *application, build.parallelLoops());
+    BitVector keysOfWidenedFields = findKeysOfWidenedFields(program, *application);
     applyLayoutUpdates(context);
     takeBackFieldsThatListUntestedValues(program, results, *application, build);
     times.didFinish("applyLayoutUpdates"_s);
@@ -808,7 +827,7 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     dropDataOfUnreachedCode(context);
     narrowContentsOfData(context);
     times.didFinish("removeUnreachedBodies"_s);
-    applyBodyUpdates(context, editor, fieldsExpectedAsRead);
+    applyBodyUpdates(context, editor, fieldsExpectedAsRead, keysOfWidenedFields);
     times.didFinish("applyBodyUpdates"_s);
     ProgramCaches caches(program, build);
     computeOperandSummaries(program, results, build);

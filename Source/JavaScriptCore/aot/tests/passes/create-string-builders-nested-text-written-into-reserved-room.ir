@@ -1,0 +1,104 @@
+# A nested builder whose text is written into reserved room is joined with a builder that stays open: the outer builder checks its length where the nested one was finished
+# FORM: Prepared
+# RUN: pass CreateStringBuilders
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="lengthIsReadBehindTheText" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    v11 = StringBuilderBegin
+    v12 = StringBuilderReserve v11 size=128
+    v13 = JSONAppendString v11, v12, v0
+    StringBuilderCommit v11, v13
+    v15 = StringBuilderFinish v11
+    v16 = Add v4, v15
+    v17 = GetStringLength v16
+    Return v17
+}
+# CHECK-LABEL: name="lengthIsReadBehindTheText"
+# CHECK: b1(v4: stringbuilder, v5: int|whole):
+# CHECK: v11: i32 = StringBuilderCheckpoint v4
+# CHECK-NEXT: v12: buildercursor = StringBuilderReserve v4 size=128
+# CHECK-NEXT: v13: buildercursor = JSONAppendString v4, v12, v0
+# CHECK-NEXT: StringBuilderCommit v4, v13
+# CHECK-NEXT: StringBuilderCheckLength v4
+# CHECK-NOT: StringBuilderFinish
+# CHECK: = StringBuilderLength v4
+
+function f1 name="textIsNeverRead" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    v11 = StringBuilderBegin
+    v12 = StringBuilderReserve v11 size=128
+    v13 = JSONAppendString v11, v12, v0
+    StringBuilderCommit v11, v13
+    v15 = StringBuilderFinish v11
+    v16 = Add v4, v15
+    Return v5
+}
+# CHECK-LABEL: name="textIsNeverRead"
+# CHECK: StringBuilderCommit v4, v13
+# CHECK-NEXT: StringBuilderCheckLength v4
+# CHECK: StringBuilderDiscard v4
+
+function f2 name="outerBuilderIsFinishedAtOnce" parameters=[{type=string}] results=[{type=string}] {
+    v1 = StringBuilderBegin
+    v2 = StringBuilderReserve v1 size=128
+    v3 = JSONAppendString v1, v2, v0
+    StringBuilderCommit v1, v3
+    v5 = StringBuilderFinish v1
+    v6 = String string="<"
+    v7 = Strcat v6, v0, v5
+    Return v7
+}
+# CHECK-LABEL: name="outerBuilderIsFinishedAtOnce"
+# CHECK-NOT: StringBuilderCheckLength
+# CHECK: = StringBuilderFinish
+
+function f3 name="nestedTextIsOnlyAppended" parameters=[{type=string}, {type=number}] results=[{type=number}] {
+    v2 = String string=""
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Less v5, v1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Add v4, v0
+    v9 = Integer integer=1
+    v10 = Add v5, v9
+    Jump -> next b1(v8, v10)
+  b3():
+    v11 = StringBuilderBegin
+    StringBuilderAppend v11, v0, v0
+    v13 = StringBuilderFinish v11
+    v14 = Add v4, v13
+    v15 = GetStringLength v14
+    Return v15
+}
+# CHECK-LABEL: name="nestedTextIsOnlyAppended"
+# CHECK-NOT: StringBuilderCheckLength
+# CHECK: = StringBuilderLength v4

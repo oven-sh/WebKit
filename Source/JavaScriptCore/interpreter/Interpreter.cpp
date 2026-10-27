@@ -845,6 +845,8 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) [[unlikely]] {
+        if (skippedFrames < framesToSkip && vm.aotState().frameOfImportThatAsksLoader == callFrame) [[unlikely]]
+            ++skippedFrames;
         bool validates = AOT::validatesRuntime(vm) && results.isEmpty() && framesToSkip == skippedFrames && !filter;
         if (caller || !AOT::tryGetStackTrace(vm, owner, results, framesToSkip - skippedFrames, maxStackSize, filter))
             appendStackTrace(owner, results, { .callFrame = callFrame, .framesToSkip = framesToSkip - skippedFrames, .caller = caller, .filter = filter }, maxStackSize);

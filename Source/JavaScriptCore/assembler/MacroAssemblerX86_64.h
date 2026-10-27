@@ -6712,7 +6712,7 @@ public:
     }
 
     // Without AVX an operation on vectors overwrites its left operand.
-    enum class VectorOperationWithoutAVX : uint8_t { Add, Sub, Mul, Div, And, Or, Xor, Swizzle };
+    enum class VectorOperationWithoutAVX : uint8_t { Add, Sub, Mul, Div, MaxSigned, MinSigned, MaxUnsigned, MinUnsigned, NarrowSigned, NarrowUnsigned, And, Or, Xor, Swizzle };
     JS_EXPORT_PRIVATE void emitVectorOperationWithoutAVX(VectorOperationWithoutAVX, SIMDLane, FPRegisterID left, FPRegisterID right, FPRegisterID dest);
 
     void compare64(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID dest)
@@ -8741,6 +8741,9 @@ public:
 
     void vectorMax(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
+        if (!supportsAVX() && scalarTypeIsIntegral(simdInfo.lane))
+            return emitVectorOperationWithoutAVX(simdInfo.signMode == SIMDSignMode::Signed ? VectorOperationWithoutAVX::MaxSigned : VectorOperationWithoutAVX::MaxUnsigned, simdInfo.lane, left, right, dest);
+
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
             if (supportsAVX()) {
@@ -8808,6 +8811,9 @@ public:
 
     void vectorMin(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)
     {
+        if (!supportsAVX() && scalarTypeIsIntegral(simdInfo.lane))
+            return emitVectorOperationWithoutAVX(simdInfo.signMode == SIMDSignMode::Signed ? VectorOperationWithoutAVX::MinSigned : VectorOperationWithoutAVX::MinUnsigned, simdInfo.lane, left, right, dest);
+
         switch (simdInfo.lane) {
         case SIMDLane::i8x16:
             if (supportsAVX()) {
@@ -9248,6 +9254,8 @@ public:
     {
         ASSERT(simdInfo.signMode != SIMDSignMode::None);
         ASSERT(scalarTypeIsIntegral(simdInfo.lane));
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(simdInfo.signMode == SIMDSignMode::Signed ? VectorOperationWithoutAVX::NarrowSigned : VectorOperationWithoutAVX::NarrowUnsigned, simdInfo.lane, lower, upper, dest);
 
         switch (simdInfo.lane) {
         case SIMDLane::i16x8:

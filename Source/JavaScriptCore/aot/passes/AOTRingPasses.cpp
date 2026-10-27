@@ -720,6 +720,7 @@ struct DeadCodeEliminator {
     Vector<ValueLocation> parameterLocations { };
     Vector<Vector<ValueID, 2>> storesInto { };
     BitVector isActive { };
+    ObservableOperations observable { analyses.effectContext(), function };
     bool tookProofsFromEdges { false };
     bool madeEdgesAlikeOrBlocksEmpty { false };
     bool tookArgumentsFromEmptyBlocks { false };
@@ -787,7 +788,8 @@ struct DeadCodeEliminator {
         case UnusedValueRule::IsRemoved:
             return false;
         case UnusedValueRule::Stays:
-            return true;
+            // All that the look at a heritage does is throw, or run a getter. The type of the heritage may rule out both.
+            return value.opcode != Opcode::ResolveHeritage || !observable.neitherThrowsNorRunsCode(id);
         case UnusedValueRule::StaysWithWrittenObject:
             return !waitsForWrittenObject(id, value, position);
         case UnusedValueRule::DependsOnEffects:

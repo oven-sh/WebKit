@@ -1290,9 +1290,26 @@ private:
         return true;
     }
 
+    uint8_t rankOf(uint32_t number) const { return at(number).rank == MadeNodes::partsAreBlocksOfFallingRank ? 0 : at(number).rank; }
+
+    void makeUnionOf(uint32_t number, std::span<const uint32_t> blocks, uint8_t rank)
+    {
+        ValueFlowMadeNodeKind kind = at(number).key.kind;
+        bool isRead = kind == ValueFlowMadeNodeKind::Read || kind == ValueFlowMadeNodeKind::ReadUnderKind;
+        ValueFlowNodeID first = at(number).first;
+        for (uint32_t block : blocks)
+            edges.append(isRead ? ValueFlowEdge { at(block).first, first } : ValueFlowEdge { first, at(block).first });
+        newAt(number).isUnionOfParts = true;
+        newAt(number).rank = rank;
+        setParts(number, blocks);
+    }
+
     bool makeUnionWithEarlierNode(uint32_t number)
     {
-        constexpr size_t mostLeaves = 64;
+        if (m_rankOfBlockBeingMade) {
+            makeUnionOf(number, m_blocksBeingJoined, m_rankOfBlockBeingMade);
+            return true;
+        }
         ValueFlowNodeKey key = at(number).key;
         if (m_isMakingLeaf || ValueSets::isComplement(key.set) || m_sets.size(key.set) <= mostObjectsLookedUpOneByOne)
             return false;
@@ -1342,30 +1359,36 @@ private:
             return false;
         ValueSetID earlierSet = at(earlier).key.set;
 
-        Vector<uint32_t, mostLeaves> leaves;
-        if (at(earlier).isUnionOfParts)
-            leaves.append(partsOf(at(earlier)));
+        // As a binary counter is counted up: a set that grows a member at a time lays a number of edges that grows with the logarithm of its versions.
+        Vector<uint32_t, 16> blocks;
+        if (at(earlier).rank == MadeNodes::partsAreBlocksOfFallingRank)
+            blocks.append(partsOf(at(earlier)));
         else
-            leaves.append(earlier);
-        if (leaves.size() >= mostLeaves)
-            return false;
+            blocks.append(earlier);
 
         ValueFlowNodeKey keyOfDifference = key;
         keyOfDifference.set = m_maker->intersect(key.set, ValueSets::complement(earlierSet));
         m_isMakingLeaf = true;
-        uint32_t difference = ensure(keyOfDifference);
+        blocks.append(ensure(keyOfDifference));
         m_isMakingLeaf = false;
-        if (at(difference).isUnionOfParts)
-            leaves.append(partsOf(at(difference)));
-        else
-            leaves.append(difference);
 
-        bool isRead = key.kind == ValueFlowMadeNodeKind::Read || key.kind == ValueFlowMadeNodeKind::ReadUnderKind;
-        ValueFlowNodeID first = at(number).first;
-        for (uint32_t leaf : leaves)
-            edges.append(isRead ? ValueFlowEdge { at(leaf).first, first } : ValueFlowEdge { first, at(leaf).first });
-        newAt(number).isUnionOfParts = true;
-        setParts(number, leaves.span());
+        uint8_t rank = MadeNodes::partsAreBlocksOfFallingRank;
+        while (rankOf(blocks[blocks.size() - 2]) <= rankOf(blocks.last())) {
+            uint8_t rankOfUnion = std::min<uint8_t>(rankOf(blocks.last()) + 1, MadeNodes::partsAreBlocksOfFallingRank - 1);
+            if (blocks.size() == 2) {
+                rank = rankOfUnion;
+                break;
+            }
+            m_blocksBeingJoined = { blocks[blocks.size() - 2], blocks.last() };
+            ValueFlowNodeKey keyOfUnion = key;
+            keyOfUnion.set = m_maker->unite(at(m_blocksBeingJoined[0]).key.set, at(m_blocksBeingJoined[1]).key.set);
+            m_rankOfBlockBeingMade = rankOfUnion;
+            uint32_t unionOfBlocks = ensure(keyOfUnion);
+            m_rankOfBlockBeingMade = 0;
+            blocks.shrink(blocks.size() - 2);
+            blocks.append(unionOfBlocks);
+        }
+        makeUnionOf(number, blocks.span(), rank);
         return true;
     }
 
@@ -1383,6 +1406,8 @@ private:
     bool m_hasMadeMoreOfName { false };
     Vector<ValueSetID> m_setsOfParts;
     bool m_isMakingLeaf { false };
+    uint8_t m_rankOfBlockBeingMade { 0 };
+    std::array<uint32_t, 2> m_blocksBeingJoined { };
 };
 
 void ValueFlowSolver::takeWhatWasMade(std::span<const std::unique_ptr<NodeMaker>> makers, std::span<KeyToMake> keys)
@@ -2433,7 +2458,7 @@ void ValueFlowSolver::insertNodesOfShards(const ListWithRoomToFill<NodeToLink>& 
     std::array<uint32_t, numberOfLinkShards> shardsInOrder;
     for (unsigned position = 0; position < numberOfLinkShards; ++position)
         shardsInOrder[position] = numberOfLinkShards - 1 - position;
-    std::ranges::stable_sort(std::span(shardsInOrder).subspan(numberOfLinkShardsOfKinds), std::ranges::greater(), [&](uint32_t shard) {
+    AOT::stableSort(std::span(shardsInOrder).subspan(numberOfLinkShardsOfKinds), std::ranges::greater(), [&](uint32_t shard) {
         return m_nodesToInsertOfShards[shard].size();
     });
     forEachIndexInParallel(m_loops, numberOfLinkShards, [&](unsigned task, unsigned worker) {
@@ -3317,7 +3342,7 @@ bool ValueFlowSolver::merge()
                 for (const std::unique_ptr<Thread>& thread : m_threads)
                     sizes[shard] += sizeIn(*thread, shard);
             }
-            std::ranges::stable_sort(shards, std::ranges::greater(), [&](uint32_t shard) {
+            AOT::stableSort(shards, std::ranges::greater(), [&](uint32_t shard) {
                 return sizes[shard];
             });
         };

@@ -54,16 +54,12 @@ function f1 name="tag" module=m0 flags=[HasExplicitName] length=2 thisType={type
 }
 
 # No type is written. The literal has no tag, and a store adds one later. The layout of the literal gets a slot for it, so the store is one store of the double:
-# the shape does not change, nothing grows, nothing is called. The test in front keeps the bit pattern of an empty slot out.
+# the shape does not change, nothing grows, nothing is called. An empty slot holds the bits of a NaN with a payload, which no double has.
 # CHECK-LABEL: name="tag" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Double b@[[value]] = ArgumentReg(
-# CHECK-NEXT: Int32 b@[[isNumber]] = Equal(b@[[value]], b@[[value]],
-# CHECK-NEXT: Branch(b@[[isNumber]], Terminal,
-# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# CHECK: Double b@[[stored]] = Phi(
 # CHECK-NEXT: Int64 b@[[item]] = ArgumentReg(
-# CHECK-NEXT: Store(b@[[stored]], b@[[item]], offset = [[slot]], ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK-NEXT: Store(b@[[value]], b@[[item]], offset = [[slot]], ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
 # CHECK-NEXT: Return(Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="tag" role=Source
@@ -73,6 +69,6 @@ function f1 name="tag" module=m0 flags=[HasExplicitName] length=2 thisType={type
 # NONE-NOT: Writes:OrderWords
 # NONE-LABEL: end of function
 # X64-LABEL: name="tag" role=Source
-# X64-NEXT: instructions: 3, patchpoints: 0
+# X64-NEXT: instructions: 2, patchpoints: 0
 # ARM64-LABEL: name="tag" role=Source
-# ARM64-NEXT: instructions: 3, patchpoints: 0
+# ARM64-NEXT: instructions: 2, patchpoints: 0

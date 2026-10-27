@@ -127,10 +127,6 @@ function f2 name="paint" module=m0 position=126 flags=[IsChecked, HasExplicitNam
 # A slot that is filled, the likely case, is stored into at once. Only the store that adds the field goes on to record the order, on an unlikely path.
 # CHECK-LABEL: name="widen" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK-NEXT: Double b@[[width]] = ArgumentReg(
-# CHECK-NEXT: Int32 b@[[isNumber]] = Equal(b@[[width]], b@[[width]],
-# CHECK-NEXT: Branch(b@[[isNumber]], Terminal,
-# CHECK: Double b@[[stored]] = Phi(
 # CHECK-NEXT: Int64 b@[[style]] = ArgumentReg(
 # CHECK-NEXT: Int64 b@[[old]] = Load(b@[[style]], offset = [[slot]], ControlDependent|Reads:ObjectFields{{*}}:PutSlotOrAdd)
 # CHECK: Int32 b@[[isEmpty]] = Equal(b@[[old]],
@@ -138,13 +134,14 @@ function f2 name="paint" module=m0 position=126 flags=[IsChecked, HasExplicitNam
 # CHECK-NEXT: Successors: Then:Unlikely:#[[add]], Else:#[[store]]
 # CHECK-NEXT: BB#[[store]]:
 # CHECK-NEXT: Predecessors:
-# CHECK-NEXT: Store(b@[[stored]], b@[[style]], offset = [[slot]], ControlDependent|Writes:ObjectFields{{*}}:PutSlotOrAdd)
+# CHECK-NEXT: Double b@[[width]] = ArgumentReg(
+# CHECK-NEXT: Store(b@[[width]], b@[[style]], offset = [[slot]], ControlDependent|Writes:ObjectFields{{*}}:PutSlotOrAdd)
 # CHECK-NEXT: Return(Terminal)
 # CHECK-NEXT: BB#[[add]]:
 # CHECK: Load(b@[[style]], offset = 8, ControlDependent|Reads:OrderWords
 # CHECK-LABEL: end of function
 # The count takes in the moves around the call on the unlikely path, which follow the calling convention.
 # X64-LABEL: name="widen" role=Source
-# X64-NEXT: instructions: 18, patchpoints: 1
+# X64-NEXT: instructions: 17, patchpoints: 1
 # ARM64-LABEL: name="widen" role=Source
-# ARM64-NEXT: instructions: 22, patchpoints: 1
+# ARM64-NEXT: instructions: 21, patchpoints: 1

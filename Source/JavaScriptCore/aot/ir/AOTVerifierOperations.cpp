@@ -11,6 +11,7 @@
 #include "AOTArrayStorageForms.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinPristine.h"
+#include "AOTFlowResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTInductionVariables.h"
 #include "AOTJSONVerification.h"
@@ -201,6 +202,12 @@ static bool asksForWhatNoCodeAnswers(const Value& value)
     return value.opcode == Opcode::RegExpMatchLiteral && !value.regExpOperand() && value.regExpFlags().containsAny(flagsOfMatchesUsingObject);
 }
 
+// Whoever adds a read or a store keeps the record of the place true: a later pass takes the stores of what nothing reads, and the room of what nothing stores to.
+static bool agreesWithRecord(const LocationFlow& flow, bool isRead)
+{
+    return isRead ? flow.reads != ReadState::NeverRead : flow.writers != WriterState::AllKnown || flow.stores != StoreCount::Never;
+}
+
 void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, ValueID id, const Value& value)
 {
     Opcode opcode = value.opcode;
@@ -222,8 +229,11 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
             verifyClassOperation(block, id, value);
         else if (opcode == Opcode::NewArray || Value::opcodesWithKeyIsIntegral.contains(opcode))
             verifyElementOperation(block, id, value);
-        else if (opcode == Opcode::NewObject)
+        else if (opcode == Opcode::NewObject) {
             verifyFormsOfListedFields(block, id, value);
+            if (m_program.at(value.layout()).flow.allocation == AllocationState::NeverAllocated)
+                fail(InternalErrorKind::InvalidLayout, block, id, value.layout().index());
+        }
         return;
     case OperationFamily::Constant:
         if (opcode == Opcode::NewClosure)
@@ -303,8 +313,20 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
     case OperationFamily::Module:
         if (opcode == Opcode::EvaluateModule || opcode == Opcode::RecordRequire)
             verifyModuleEvaluation(block, id, value);
+        // A module whose namespace object nothing makes has no word to keep it in.
+        else if ((opcode == Opcode::ModuleNamespace || opcode == Opcode::ImportModule) && m_inputs.flow && m_inputs.flow->hasResults() && m_inputs.flow->module(value.module()).namespaceUse == NamespaceUse::NeverCreated)
+            fail(InternalErrorKind::InvalidModule, block, id, value.module().index());
         return;
-    case OperationFamily::Binding: case OperationFamily::Operator: case OperationFamily::Hint: case OperationFamily::Control:
+    case OperationFamily::Binding:
+        if (Value::opcodesWithVariable.contains(opcode) && !agreesWithRecord(m_program.at(value.variable()).flow, opcode != Opcode::PutModuleVariable))
+            fail(InternalErrorKind::InvalidVariable, block, id, value.variable().index());
+        else if (opcode == Opcode::GetModuleVariable || opcode == Opcode::GetEncodedModuleVariable)
+            verifyVariableRead(block, id, value);
+        else if ((opcode == Opcode::GetEnvironmentField || opcode == Opcode::PutEnvironmentField) && value.field() < m_program.at(value.layout()).fields.size()
+            && !agreesWithRecord(flowOf(m_program, { value.layout(), value.field() }).location, opcode == Opcode::GetEnvironmentField))
+            fail(InternalErrorKind::InvalidEnvironmentUse, block, id);
+        return;
+    case OperationFamily::Operator: case OperationFamily::Hint: case OperationFamily::Control:
     case OperationFamily::Iteration: case OperationFamily::ForIn: case OperationFamily::EngineIntrinsic:
     case OperationFamily::PromiseIntrinsic: case OperationFamily::CollectionIntrinsic:
     case OperationFamily::GuardValue: case OperationFamily::OwnAccess: case OperationFamily::ExpandedIteration: case OperationFamily::JSONParse:
@@ -313,6 +335,22 @@ void FunctionVerifier::verifyOperation(BlockID block, uint32_t indexInBlock, Val
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// A variable that nothing fills stays as it began, and its type says so.
+void FunctionVerifier::verifyVariableRead(BlockID block, ValueID id, const Value& value)
+{
+    const Variable& variable = m_program.at(value.variable());
+    if (variable.flow.writers != WriterState::AllKnown || variable.flow.stores != StoreCount::Never || variable.flow.initialization == InitializationState::SetAtCreation)
+        return;
+    if (variable.initialization == VariableInitialization::Function || variable.declared.isExpected())
+        return;
+    // Every load of a module that cannot be linked throws, so no read of what the module would have filled is ever come to.
+    if (std::ranges::contains(m_program.moduleFailures, variable.module, &ModuleFailure::importer))
+        return;
+    uint16_t initialValue = variable.initialization == VariableInitialization::Undefined ? Primitive::Undefined : Primitive::Absent;
+    if (!(m_program.at(variable.declared.written()).primitives & initialValue))
+        fail(InternalErrorKind::InvalidVariable, block, id, value.variable().index());
 }
 
 void FunctionVerifier::verifyCatch(BlockID block, uint32_t indexInBlock, ValueID id, const Value& value)

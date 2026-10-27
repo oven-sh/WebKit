@@ -264,7 +264,7 @@ static std::optional<IntegerComparison> findIntegerComparison(FunctionAnalyses& 
 
 static unsigned estimateSwitchBytes(Vector<std::pair<int64_t, BlockID>, 8>& cases)
 {
-    std::ranges::sort(cases, { }, [](const auto& entry) { return entry.first; });
+    AOT::sort(cases, { }, [](const auto& entry) { return entry.first; });
     unsigned bytes = CodeSize::branch;
     for (size_t begin = 0; begin < cases.size();) {
         size_t end = begin;
@@ -551,7 +551,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                 return false;
             bool leavesNoTrace = std::ranges::all_of(block.values, [&](ValueID value) {
                 const Effects& effects = analyses.effectsOf(value).normal;
-                return !effects.mayRunOtherCode() && effects.writes.containsOnly(bookkeepingHeaps);
+                return (!effects.mayRunOtherCode() && effects.writes.containsOnly(bookkeepingHeaps)) || build.isSabotaged(Sabotage::HeadsThatAreCopiedLeaveNoTrace);
             });
             if (!leavesNoTrace || build.exceeds(LimitID::MaxInlineHeadBytes, uint64_t { admittedBytes } + blockBytes[id.index()], analyses.subject()))
                 return false;
@@ -595,7 +595,8 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                 continue;
             // Resolving a rope changes no result: `kind === "error"` is decided by the parameter as `kind === 1` is.
             const Effects& effects = analyses.effectsOf(id).normal;
-            bool isDecidedByOperands = effects.isRemovableWhenUnused() && effects.reads.containsOnly(heapsWhoseWritesNobodySees);
+            constexpr AbstractHeapSet heapsThatChangeNoResult = heapsWhoseWritesNobodySees - AbstractHeapSet { AbstractHeap::MemberGuards };
+            bool isDecidedByOperands = effects.isRemovableWhenUnused() && effects.reads.containsOnly(heapsThatChangeNoResult);
             if (!isDecidedByOperands || build.exceeds(LimitID::MaxConditionChainLength, ++chainLength, analyses.subject(condition)))
                 return std::nullopt;
             value.forEachOperand([&](ValueID operand, uint32_t) {
@@ -2697,9 +2698,9 @@ static std::optional<Head> findHead(const AnalysisContext& context)
     uint64_t numberOfBlocks = 0;
     uint64_t operations = 0;
     // What throws in the copy throws what the function would have thrown at that place.
-    auto onlyReads = [](const EffectsOnEdges& effects) {
+    auto onlyReads = [&](const EffectsOnEdges& effects) {
         const Effects& normal = effects.normal;
-        return !normal.mayCollect && !normal.mayRunOtherCode() && !normal.mayBeTerminated && normal.writes.containsOnly(bookkeepingHeaps);
+        return !normal.mayCollect && !normal.mayRunOtherCode() && !normal.mayBeTerminated && (normal.writes.containsOnly(bookkeepingHeaps) || context.build.isSabotaged(Sabotage::HeadsThatAreCopiedLeaveNoTrace));
     };
     BitVector blocks = findHeadBlocks(function, analyses, [&](BlockID id) {
         const Block& block = function.at(id);

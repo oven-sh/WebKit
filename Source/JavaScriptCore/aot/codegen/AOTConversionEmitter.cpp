@@ -149,7 +149,7 @@ Number ConversionEmitter::numberPartOf(Operand operand, const Type& type)
     case Representation::OptionalInt64:
         return toNumber(Integer(operand.value), type.integers);
     case Representation::Double:
-        return type.mayBeNaN() ? withoutPayload(operand.as<Number>()) : operand.as<Number>();
+        return operand.as<Number>();
     case Representation::DoubleWithPayload:
     case Representation::ImpureDouble:
         return withoutBitsOfAnyNaN(operand);

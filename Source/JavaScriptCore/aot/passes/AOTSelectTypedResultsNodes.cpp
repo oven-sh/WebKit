@@ -178,7 +178,7 @@ static ResultNode describeAlternative(const Program& program, TypeID type, const
             .key = field.key,
             .node = ResultNodeRef { expectation ? expectation : TypeTable::anything },
             .field = index,
-            .isOptional = !field.declared.written() || program.at(field.declared.expected().predicted()).primitives & Primitive::Undefined,
+            .isOptional = (!field.declared.written() || program.at(field.declared.expected().predicted()).primitives & Primitive::Undefined) && flowOf(program, { node.layout, index }).occupancy != Occupancy::AlwaysFilled,
         });
     }
     return node;

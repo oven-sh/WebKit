@@ -8,7 +8,7 @@
 # CHECK: f1: size=21 frame=none
 # CHECK: f2: size={{*}} frame=none
 # CHECK: f3: size=29 frame=none
-# CHECK: f4: size=55 frame=none
+# CHECK: f4: size=25 frame=none
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Numbers" fields=[{key="i" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired]}, {key="d" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=boolean} flags=[IsRequired]}]

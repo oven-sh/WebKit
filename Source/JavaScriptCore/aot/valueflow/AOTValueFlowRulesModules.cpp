@@ -179,6 +179,18 @@ struct OwnProperties {
     ValueFlowSources others;
 };
 
+ClimbingSet knownObjectsThatAreFollowed(ValueFlowRuleContext& context, ClimbingSet set)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet objects = context.restrict(set, universe.knownObjects());
+    if (!context.contains(set, ValueFlowUniverse::unknownObject()))
+        return objects;
+    ClimbingSet listedForTheirCalls = context.restrict(objects, universe.builtinTables().heap().objectsThatLetInUnseenCode());
+    if (!context.meet(listedForTheirCalls, ValueSets::anything))
+        return objects;
+    return context.restrict(objects, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.valueWithin(listedForTheirCalls, ValueFlowProgramNodes::escaped()))));
+}
+
 ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objects)
 {
     ClimbingSet all = objects;

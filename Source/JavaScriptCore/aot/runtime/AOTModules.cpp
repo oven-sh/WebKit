@@ -1070,6 +1070,8 @@ void Modules::handCountedImportsToLoader()
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Every counted import reaches the loader. A termination requested meanwhile is thrown at the caller's exception check.
     DeferTerminationForAWhile deferTermination(vm);
+    // The calls came ahead of any require() that is under way, so their steps are jobs, not steps of its load.
+    SetForScope noSynchronousLoad(vm.m_synchronousModuleQueue, nullptr);
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     size_t numberOfJobsOfOthers = queue.size();
     noteOrderAndModulesOfOnlyCountedImport();
@@ -1490,6 +1492,8 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     handCountedImportsToLoader();
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    VM& vm = *m_instance.vm;
+    SetForScope frameOfImportThatAsksLoader(vm.aotState().frameOfImportThatAsksLoader, vm.topCallFrame);
     JSPromise* loaded = loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     RELEASE_AND_RETURN(scope, createPromiseOfProgram(realm, loaded));

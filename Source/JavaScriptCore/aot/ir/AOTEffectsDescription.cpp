@@ -260,6 +260,8 @@ static Effects refinedEffectsOf(const Program& program, const Function& function
         return creationFromTables;
     if (std::optional<Effects> lookup = effectsOfLookupFromBase(program, function, value))
         return *lookup;
+    if (value.opcode == Opcode::NewObject)
+        return value.prototypeOperand() ? effectsOfAllocatingWithPrototype(program, value.layout()) : declaredBoundOf(NamedEffectSet::Allocates);
     Effects effects = declared;
     if (readsPrototypePropertyWithoutRunningCode(program, function, value) || joinsTextsThatFitInString(program, function, value))
         effects.mayThrow = ThrowEffect::onlyForLackOfMemory();
@@ -306,6 +308,7 @@ bool isRefinedByValue(Opcode opcode, const Effects& bound)
         || opcode == Opcode::ReportMismatch
         || opcode == Opcode::ModuleNamespace
         || opcode == Opcode::GetConstructPrototype
+        || !heapsWrittenForOptionalOperands(opcode).isEmpty()
         || opcode == Opcode::StringBuilderAppendJSON
         || opcode == Opcode::Strcat
         || opcode == Opcode::SuperGet

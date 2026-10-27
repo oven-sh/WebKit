@@ -370,6 +370,16 @@ bool guardsAreNeverSet(const Program& program, const Layout& layout)
     return layout.has(LayoutFlags::IsConstructorFunction) && !isEvaluatedOnce(program, layout);
 }
 
+// The run time reads the prototype property at the first allocation of a site.
+bool hasOnePrototypeObject(const Program& program, LayoutID allocatedClass)
+{
+    const Layout& constructed = program.at(declaredLayoutOf(program, allocatedClass));
+    if (!isEvaluatedOnce(program, constructed))
+        return false;
+    const ClassFlow& classFlow = constructed.classFlow;
+    return !constructed.has(LayoutFlags::IsConstructorFunction) || classFlow.prototypeProperty == MemberMutability::Fixed || classFlow.hasAssignedPrototype;
+}
+
 bool prototypePropertyMayEndGuards(const Program& program, FunctionID id)
 {
     LayoutID constructed = program.at(id).constructedClass;

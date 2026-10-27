@@ -27,6 +27,18 @@ struct ValueFlowTypedResult {
     uint32_t numberOfObjects() const { return ordinalOfPlainArray() + 1 - firstOrdinal; }
 };
 
+// The integers that the program shows say nothing of what a text holds. What it does with them does.
+inline TypeID typeOfParsedMember(const Field& field)
+{
+    return field.typeBeforeNarrowing && !field.flags.contains(FieldFlags::IsCountedWith) ? field.typeBeforeNarrowing : field.declared.expected().predicted();
+}
+// A parser turns away a text that lacks a member whose type has no undefined.
+inline bool mayBeMissingInParsedText(const Program& program, const Field& field)
+{
+    TypeID type = typeOfParsedMember(field);
+    return !type || program.at(type).primitives & Primitive::Undefined;
+}
+
 void appendSitesOfTypedResults(const Program&, const ValueFlowBuiltinTables&, const Function&, const CFG&, Vector<ValueFlowSite>&);
 void allocateTypedResult(const BuiltinOverload&, const ValueFlowStatement& call, const ValueFlowBuiltinCall&, ValueFlowObjectID promise, ValueSetID plainData, ValueFlowRuleContext&);
 

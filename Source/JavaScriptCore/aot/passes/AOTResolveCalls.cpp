@@ -58,7 +58,7 @@ static ValueID findStrongestLink(const Program& program, const Function& functio
     ValueID strongest;
     for (ValueID id : CastChain(function, callee)) {
         const Type& type = program.typeOf(function, id);
-        if (type.functions.isEmpty() || type.anyFunction || type.anyObject)
+        if (type.functions.isEmpty() || type.anyFunction || type.anyObject || type.mayBeUnspecified())
             continue;
         const Type* current = strongest ? &program.typeOf(function, strongest) : nullptr;
         if (!current || (type.functions.size() != current->functions.size() ? type.functions.size() < current->functions.size() : type != *current && type.isSubsetOf(*current, program)))
@@ -484,7 +484,7 @@ static bool canSinkToCall(FunctionPassContext& context, std::span<const ValueSit
         Effects effectsOfRead = context.analyses.effectsOf(read.value).normal;
         for (uint32_t index = read.index + 1; index < call.index; ++index) {
             ValueID id = values[index];
-            if (!std::ranges::contains(links, id, &ValueSite::value) && !validationsOfValues.contains(context.function.at(id).opcode) && context.analyses.effectsOf(id).normal.interferesWith(effectsOfRead))
+            if (!std::ranges::contains(links, id, &ValueSite::value) && !validationsOfValues.contains(context.function.at(id).opcode) && context.analyses.effectsOf(id).normal.interferesWith(effectsOfRead) && !context.build.isSabotaged(Sabotage::ReadsOfCalleesSinkPastWrites))
                 return false;
         }
     }
@@ -632,16 +632,6 @@ static bool allocatesOwnThis(const Function& constructor)
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-// The run time reads the prototype property at the first allocation of a site.
-static bool hasOnePrototypeObject(const Program& program, LayoutID allocatedClass)
-{
-    const Layout& constructed = program.at(declaredLayoutOf(program, allocatedClass));
-    if (!isEvaluatedOnce(program, constructed))
-        return false;
-    const ClassFlow& classFlow = constructed.classFlow;
-    return !constructed.has(LayoutFlags::IsConstructorFunction) || classFlow.prototypeProperty == MemberMutability::Fixed || classFlow.hasAssignedPrototype;
 }
 
 // Without a new.target to read the prototype from, the object has the prototype object of its class.
@@ -891,6 +881,15 @@ static MemberAnswer findBuiltinClassMember(const PropertyAccessContext& context,
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// The guards of a constructor function begin with the first object that it makes, and they speak of the prototype object that it has then.
+// While the guard of its prototype property holds, they have begun, and a class below the function inherits from that object.
+static bool startsAtPrototypeThatGuardsMayNotDescribe(const Layout& parent, const MemberAnswer& found)
+{
+    if (!parent.has(LayoutFlags::IsConstructorFunction))
+        return false;
+    return parent.classFlow.prototypeProperty != MemberMutability::Fixed || !found.conditions.isEmpty();
+}
+
 static std::optional<MemberAnswer> findSuperMember(const PropertyAccessContext& context, const Function& function, const Value& superAccess, Access access)
 {
     const Program& program = context.program;
@@ -925,6 +924,8 @@ static std::optional<MemberAnswer> findSuperMember(const PropertyAccessContext& 
         return MemberAnswer::unknown(UnprovenCause::UnknownBase);
     case ChainStep::CompiledClass:
         found = findMember(context, { start, next.layout, key, access });
+        if (side == ClassSide::Prototype && startsAtPrototypeThatGuardsMayNotDescribe(program.at(next.layout), found))
+            addCondition(walked.conditions, { MemberCondition::Kind::MemberUnchanged, next.layout, ClassSide::Static, program.keyOf(BuiltinNames::prototype) });
         break;
     case ChainStep::BuiltinClass:
         found = findBuiltinClassMember(context, next.builtinClass, side, key, access);
@@ -3547,7 +3548,7 @@ void reportCallTests(TestSiteReporter& reporter)
             break;
         case Opcode::NewObject:
             if (value.prototypeOperand())
-                reportTestOfOwnConstructPrototype(reporter, value.prototypeOperand(), [&] { return reporter.analyses().effectsOf(reporter.use()).normal; });
+                reportTestOfOwnConstructPrototype(reporter, value.prototypeOperand(), [] { return declaredBoundOf(NamedEffectSet::Allocates); });
             break;
         default:
             break;

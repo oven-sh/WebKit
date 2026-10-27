@@ -134,6 +134,8 @@ inline constexpr int64_t maxLoopBoundForRangeChecks = 1ll << 62;
 static_assert(maxLoopBoundForRangeChecks < std::numeric_limits<int64_t>::max() - maxRangeCheckOffset - maxCountedLoopStep);
 
 inline constexpr int64_t maxTurnsWithoutPoll = 1 << 20;
+inline constexpr unsigned maxValuesPerTurnCopiedWhereLoopRunsRarely = 12;
+inline constexpr double frequencyLostToBranchesInFrontOfLoop = 4;
 inline constexpr unsigned maxTermsPerInvariantSum = 4;
 inline constexpr unsigned maxStridedRangeChecksPerLoop = 4;
 inline constexpr unsigned maxReducedIndicesPerLoop = 16;
@@ -151,6 +153,7 @@ inline constexpr unsigned maxDistancesTestedInFrontOfVectorizedLoop = 3;
 inline constexpr unsigned maxDepthOfAddressInVectorizedLoop = 8;
 inline constexpr unsigned maxTermsOfAddressInVectorizedLoop = 3;
 inline constexpr unsigned maxCountersOfVectorizedLoop = 3;
+inline constexpr unsigned maxDistancesCheckedInFrontOfVectorizedLoop = 8;
 inline constexpr unsigned minCasesForBitTests = 4;
 inline constexpr unsigned maxCompareChainSize = 4;
 inline constexpr unsigned maxValuesBesideSecondTestOfInterval = 4;

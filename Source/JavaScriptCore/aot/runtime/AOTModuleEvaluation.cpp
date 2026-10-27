@@ -872,6 +872,22 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         }
     }
 
+    // No link has come to the files. Whoever evaluates a record takes the names behind the body.
+    for (const ModuleRequestData& request : m_table.requests(root)) {
+        if (request.isRequire)
+            continue;
+        ModuleID imported = request.targetModule();
+        if (request.isDeferred || !isCommonJSFileOrFace(imported)) {
+            if (request.isHoisted)
+                continue;
+            break;
+        }
+        if (data(imported).capturesExportsBehindEvaluation()) {
+            captureExportsBehindEvaluation(imported);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+    }
+
     bool didRunFile = false;
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader, load };
@@ -2018,8 +2034,16 @@ void Modules::evaluateWithOwnStack(ModuleID root)
     innerModuleEvaluation(root, context);
     Exception* exception = scope.exception();
     ASSERT(exception || stack.isEmpty());
-    if (!exception)
+    // An import() of the root that was called while the root ran has given it a capability, which CyclicModuleRecord::evaluate() would settle here.
+    ModuleRecord* record = recordIfExists(root);
+    JSPromise* capability = record ? record->topLevelCapability() : nullptr;
+    if (capability && capability->status() != JSPromise::Status::Pending)
+        capability = nullptr;
+    if (!exception) {
+        if (capability) [[unlikely]]
+            capability->fulfill(vm, jsUndefined());
         return;
+    }
     for (AbstractModuleRecord* member : stack) {
         auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(member);
         cyclic->setStatus(CyclicModuleRecord::Status::Evaluated);
@@ -2027,6 +2051,8 @@ void Modules::evaluateWithOwnStack(ModuleID root)
         if (auto* compiled = dynamicDowncast<ModuleRecord>(member))
             compiled->retain();
     }
+    if (capability && !vm.isTerminationException(exception)) [[unlikely]]
+        capability->reject(vm, exception->value());
 }
 
 JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* linkWalk, bool isLinked)

@@ -186,7 +186,7 @@ struct JSONTextWriter final : Emission {
         const Field& field = program().at(id).fields[fieldIndex];
         if (!isEnumerableStringField(program(), field))
             return MemberSupport::NotSerialized;
-        if (hasNoJSONText(program().at(slotTypeOf(program(), field))))
+        if (hasNoJSONText(slotContentsTypeOf(program(), { id, fieldIndex })))
             return MemberSupport::WithoutText;
 
         PropertyAccessQuery query { .key = field.key, .receivers = ReceiverCandidates::underGuard(singleElementSpan(id)) };
@@ -211,11 +211,11 @@ struct JSONTextWriter final : Emission {
         const Layout& layout = program().at(id);
         uint32_t members = 0;
         uint32_t membersWithoutText = 0;
-        for (const Field& field : layout.fields) {
-            if (!isEnumerableStringField(program(), field))
+        for (uint32_t field = 0; field < layout.fields.size(); ++field) {
+            if (!isEnumerableStringField(program(), layout.fields[field]))
                 continue;
             ++members;
-            if (hasNoJSONText(program().at(slotTypeOf(program(), field))))
+            if (hasNoJSONText(slotContentsTypeOf(program(), { id, field })))
                 ++membersWithoutText;
         }
         bool isOfLibrary = layout.module && program().at(layout.module).flags.contains(ModuleFlags::IsLibrary);

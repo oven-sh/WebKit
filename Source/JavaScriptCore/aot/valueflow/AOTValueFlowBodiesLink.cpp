@@ -1163,6 +1163,16 @@ private:
         }
         fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
         universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
+        for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
+            if (m_program.layouts[index].kind == LayoutKind::Record)
+                list.append(universe.instanceOf(LayoutID(index)));
+        }
+        for (uint32_t position = 0; position < universe.m_siteOfObject.size(); ++position) {
+            LayoutID layout = universe.m_sites[universe.m_siteOfObject[position]].layout;
+            if (layout && m_program.at(layout).kind == LayoutKind::Record)
+                list.append(ValueFlowObjectID(universe.m_firstSite + position));
+        }
+        universe.m_records = take();
         for (unsigned index = 0; index < m_numberOfFunctions; ++index) {
             if (m_bodies[index].answersOnlyWhatItConstructs)
                 list.append(universe.closureOf(FunctionID(index)));
@@ -1261,6 +1271,12 @@ private:
             }
             return maker.uniteAll(parts.span());
         });
+        parts.shrink(0);
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            if (builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::Iterator) || builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::AsyncIterator))
+                parts.append(allocatedAs[index]);
+        }
+        universe.m_objectsAllocatedAsIterators = maker.uniteAll(parts.span());
         universe.m_arrays = universe.m_objectsOfClass[BuiltinClasses::Array.index()];
 
         ValueSetID knownObjectsThatMayBeAnything = maker.intersect(universe.m_objectsThatMayBeAnything, universe.m_knownObjects);

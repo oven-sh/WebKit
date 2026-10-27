@@ -5501,6 +5501,7 @@ private:
             m_proc.deleteValue(value);
 
             // Append the full contents of the successor to the predecessor.
+            m_proc.movedLoadLog().willAppendValuesOf(successor, block);
             block->values().appendVector(successor->values());
             block->successors() = successor->successors();
 
@@ -5535,7 +5536,8 @@ private:
                     return candidate != block
                         && candidate->size() == 1
                         && candidate->last()->opcode() == Jump
-                        && candidate->successorBlock(0) != candidate;
+                        && candidate->successorBlock(0) != candidate
+                        && !m_proc.movedLoadLog().holdsDecidedComparisonAtHeadOf(candidate);
                 };
 
                 // Trace the chain of jump-only blocks with a Floyd tortoise/hare walk. The hare
@@ -5899,6 +5901,7 @@ private:
                 staying.frequency() = rarerOf(block->successor(1 - leavingIndex).frequency(), staying.frequency());
 
                 Value* nextBranch = next->values().takeLast();
+                m_proc.movedLoadLog().willAppendValuesOf(next, block);
                 block->values().appendVector(next->values());
                 next->values().clear();
                 next->values().append(nextBranch);

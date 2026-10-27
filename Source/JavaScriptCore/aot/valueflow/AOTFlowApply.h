@@ -50,6 +50,7 @@ struct FlowBodyApplication {
     bool provesEverything { false };
     // Every entry into the function is a construction.
     bool isOnlyConstructed { false };
+    const BitVector* keysOfWidenedFields { nullptr };
 };
 
 struct FlowBodyCounts {
