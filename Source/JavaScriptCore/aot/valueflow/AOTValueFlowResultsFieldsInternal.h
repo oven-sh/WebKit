@@ -864,7 +864,7 @@ void StoresByLayout::forEachWriteAmong(std::span<const uint32_t> writes, NOESCAP
             writer.isAllocation = resultRuleOf(statement.opcode) == ResultRule::Allocation || statement.opcode == Opcode::Data;
         if (family) {
             writer.familyOfReceiver = LayoutSetID(family - 1);
-            writer.layoutsOfReceiver = program.types.at(writer.familyOfReceiver).completeMembers();
+            writer.layoutsOfReceiver = program.types.at(writer.familyOfReceiver).completeMembers().value();
         }
         for (; first < writes.size() && !(writes[first] & isStatementInListOfWrites); ++first)
             functor(writer, solver.keyOfMadeNodesAt(writes[first]), solver.possibleValuesOf(solver.firstOfMadeNodesAt(writes[first])));

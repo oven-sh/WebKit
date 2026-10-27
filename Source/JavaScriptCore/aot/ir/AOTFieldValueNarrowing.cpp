@@ -25,7 +25,7 @@ static LayoutSetID allocatedMembersExcluding(const TypingContext& context, Layou
 
     std::span<const LayoutID> excludedMembers;
     if (excluded)
-        excludedMembers = context.types.at(excluded).completeMembers();
+        excludedMembers = context.types.at(excluded).completeMembers().value();
 
     Vector<LayoutID> remaining;
     remaining.grow(allocatedMembers.size());

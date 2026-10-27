@@ -725,7 +725,7 @@ struct DeferralAnalysis {
         }
         std::span<const LayoutID> members;
         if (Value::opcodesWithFieldAccess.contains(access.opcode) || access.opcode == Opcode::IsSlotFilled)
-            members = program.at(access.receivers()).completeMembers();
+            members = program.at(access.receivers()).completeMembers().value();
         else if (access.numberOfOperands() && access.operand(0))
             members = membersOf(program, program.typeOf(function, access.operand(0)));
         for (LayoutID member : members) {
