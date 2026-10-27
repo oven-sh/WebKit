@@ -1010,13 +1010,13 @@ private:
                 continue;
             // The positions ascend, and so do the ends of their blocks.
             unsigned end = endOf(branch.position);
-            auto near = std::ranges::lower_bound(jumps->value, (end > reach ? end - reach : 0) + sizeOfJump, { }, [&](unsigned position) {
+            auto inReach = std::ranges::lower_bound(jumps->value, (end > reach ? end - reach : 0) + sizeOfJump, { }, [&](unsigned position) {
                 return endOf(position);
             });
-            for (; near != jumps->value.end() && endOf(*near) <= end + reach + sizeOfJump; ++near) {
-                if (*near == branch.position)
+            for (; inReach != jumps->value.end() && endOf(*inReach) <= end + reach + sizeOfJump; ++inReach) {
+                if (*inReach == branch.position)
                     continue;
-                route(branch, splitOffFinalJump(*near));
+                route(branch, splitOffFinalJump(*inReach));
                 break;
             }
         }
