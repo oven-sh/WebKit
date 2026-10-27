@@ -58,6 +58,9 @@ test/built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-of
 test/built-ins/Uint8Array/prototype/setFromBase64/trailing-garbage.js:
   default: 3
   strict mode: 3
+test/intl402/DateTimeFormat/prototype/formatToParts/era.js:
+  default: 3
+  strict mode: 3
 test/intl402/Locale/prototype/getHourCycles/region-priority.js:
   default: 3
   strict mode: 3
