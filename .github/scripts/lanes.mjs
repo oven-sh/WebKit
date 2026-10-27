@@ -100,8 +100,8 @@ const variants = {
   "assertions-aot": { buildType: "Release", mimalloc: true, assertions: true },
   "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
-  // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed. Only what ships
-  // has a twin without the compiler.
+  // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed but for arm64's
+  // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
@@ -167,9 +167,13 @@ const platforms = [
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
+      //
+      // No -mtune with HARDENING: clang emits its copies of glibc's always-inline _FORTIFY_SOURCE wrappers (memcpy.inline,
+      // ...) without a tune CPU, and LLVM 23 for AArch64 inlines no such function into one that has one. Out of line, a
+      // wrapper cannot see the size of the destination and calls the plain function: nothing is checked.
       MARCH_FLAG:
         arch === "arm64"
-          ? `--target=aarch64-unknown-linux-gnu ${ARMV8} -mtune=ampere1`
+          ? `--target=aarch64-unknown-linux-gnu ${ARMV8}${v.hardened ? "" : " -mtune=ampere1"}`
           : `--target=x86_64-unknown-linux-gnu ${NEHALEM}`,
     }),
   },
