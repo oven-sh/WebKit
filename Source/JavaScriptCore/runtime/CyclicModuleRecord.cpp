@@ -726,6 +726,68 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, void());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// ECMA-262 has no job that runs while a module graph is evaluated. A host can run one from a module body (a
+// microtask checkpoint, a synchronous require() of an ES module). Such a job can finish a module with a top-level
+// await while the modules that wait for it are on the stack of InnerModuleEvaluation, or while
+// AsyncModuleExecutionFulfilled runs the body of another module that they wait for.
+//
+// GatherAvailableAncestors counts a module without a top-level await as done when it appends the module to
+// execList, before the body of that module runs. A job that the body runs could then finish the last other
+// dependency of an ancestor, and the ancestor would run before that body ended. So this gathers one level: the
+// modules for which `record`, which has finished, was the last pending dependency. asyncExecutionFulfilled() calls
+// it again for a module without a top-level await when the body of that module has run. A module gets its
+// [[AsyncEvaluationOrder]] after each module that it waits for, so the modules run in the order of the
+// specification's sorted execList.
+struct AvailableModule {
+    int64_t order;
+    CyclicModuleRecord* module;
+};
+
+static void gatherAvailableParents(CyclicModuleRecord* record, Vector<AvailableModule, 8>& available)
+{
+    auto append = [&](CyclicModuleRecord* m) {
+        available.append({ m->asyncEvaluationOrder().order(), m });
+        std::ranges::push_heap(available, std::ranges::greater(), &AvailableModule::order);
+    };
+
+    for (const WriteBarrier<AbstractModuleRecord>& barrier : record->asyncParentModules()) {
+        auto* m = uncheckedDowncast<CyclicModuleRecord>(barrier.get());
+        // m is on the stack of an InnerModuleEvaluation that the job runs inside, and has no cycle root yet.
+        if (m->status() == CyclicModuleRecord::Status::Evaluating) {
+            // The walk throws the error of m (asyncExecutionRejected). When a dependency of m failed, that dependency
+            // never gets here. An embedder can reject m itself and then finish the dependency: Bun's node:vm does,
+            // for a module that the timeout of a run stopped.
+            if (m->evaluationError())
+                continue;
+            int remaining = m->pendingAsyncDependencies().value() - 1;
+            m->setPendingAsyncDependencies(remaining);
+            // m has not reached step 12 of its InnerModuleEvaluation, which reads the count.
+            if (m->asyncEvaluationOrder().isUnset())
+                continue;
+            // m is past that step and waits on the stack for a cycle that is not closed. Nothing in the walk reads
+            // its count again, so it runs like any other module whose last dependency finished.
+            if (!remaining)
+                append(m);
+            continue;
+        }
+        // GatherAvailableAncestors 1.a: m.[[CycleRoot]].[[EvaluationError]] is empty.
+        // (Probable spec bug (https://github.com/tc39/ecma262/issues/3766). We need an additional check here that m.[[CycleRoot]] isn't empty.)
+        ASSERT_IMPLIES(!m->cycleRoot(), m->evaluationError());
+        CyclicModuleRecord* root = m->cycleRoot();
+        if (!root || root->evaluationError() != nullptr)
+            continue;
+        ASSERT(m->status() == CyclicModuleRecord::Status::EvaluatingAsync);
+        ASSERT(m->evaluationError() == nullptr);
+        ASSERT(m->asyncEvaluationOrder().hasOrder());
+        ASSERT(m->pendingAsyncDependencies().value() > 0);
+        int remaining = m->pendingAsyncDependencies().value() - 1;
+        m->setPendingAsyncDependencies(remaining);
+        if (!remaining)
+            append(m);
+    }
+}
+#else
 static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList)
 {
     // GatherAvailableAncestors(module, execList)
@@ -780,6 +842,7 @@ static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicMo
     }
     // 2. Return UNUSED.
 }
+#endif
 
 void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JSValue error)
 {
@@ -801,6 +864,19 @@ void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JS
             // 1.b. Return UNUSED.
             continue;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        // A job that ran inside a walk (see gatherAvailableParents) rejected a module that is on the stack of that
+        // walk, or one that such a module waits for. The module keeps its status and remembers the first error: the
+        // walk throws it where it next looks at the module, and Evaluate() then gives it to every module on the stack.
+        if (module->status() == CyclicModuleRecord::Status::Evaluating) {
+            if (module->evaluationError())
+                continue;
+            module->setEvaluationError(vm, error);
+            for (const WriteBarrier<AbstractModuleRecord>& m : module->asyncParentModules() | std::views::reverse)
+                stack.append(uncheckedDowncast<CyclicModuleRecord>(m.get()));
+            continue;
+        }
+#endif
         // 2. Assert: module.[[Status]] is EVALUATING-ASYNC.
         ASSERT(module->status() == CyclicModuleRecord::Status::EvaluatingAsync);
         // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
@@ -844,8 +920,15 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
         // 1.b. Return UNUSED.
         RELEASE_AND_RETURN(scope, void());
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // A member of a cycle that is not closed can finish its async body in a job that runs inside the walk (see
+    // gatherAvailableParents). It stays EVALUATING: the walk sets its status when it pops the cycle.
+    bool isOnStack = status() == CyclicModuleRecord::Status::Evaluating;
+#else
+    constexpr bool isOnStack = false;
+#endif
     // 2. Assert: module.[[Status]] is EVALUATING-ASYNC.
-    ASSERT(status() == CyclicModuleRecord::Status::EvaluatingAsync);
+    ASSERT(isOnStack || status() == CyclicModuleRecord::Status::EvaluatingAsync);
     // 3. Assert: module.[[AsyncEvaluationOrder]] is an integer.
     ASSERT(asyncEvaluationOrder().hasOrder());
     // 4. Assert: module.[[EvaluationError]] is EMPTY.
@@ -853,14 +936,70 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     // 5. Set module.[[AsyncEvaluationOrder]] to DONE.
     setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
     // 6. Set module.[[Status]] to EVALUATED.
-    setStatus(CyclicModuleRecord::Status::Evaluated);
+    if (!isOnStack)
+        setStatus(CyclicModuleRecord::Status::Evaluated);
     // 7. If module.[[TopLevelCapability]] is not EMPTY, then
-    if (auto* capability = topLevelCapability()) {
+    // A module on the stack has one only when a job called Evaluate() on it. Its cycle has not run, so this does not
+    // settle that promise.
+    if (auto* capability = isOnStack ? nullptr : topLevelCapability()) {
         // 7.a. Assert: module.[[CycleRoot]] and module are the same Module Record.
         ASSERT(cycleRoot() == this);
         // 7.b. Perform ! Call(module.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
         capability->fulfill(vm, jsUndefined());
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // Steps 8 to 12, with gatherAvailableParents() in the place of GatherAvailableAncestors: the modules that are
+    // available run in the order of their [[AsyncEvaluationOrder]], and a module without a top-level await makes
+    // the modules that wait for it available when its body has run.
+    // (Note: it's safe to use a Vector instead of a MarkedArgumentsBuffer here because all the contents are accessed through WriteBarriers starting at `this`.)
+    Vector<AvailableModule, 8> available;
+    gatherAvailableParents(this, available);
+    while (!available.isEmpty()) {
+        std::ranges::pop_heap(available, std::ranges::greater(), &AvailableModule::order);
+        CyclicModuleRecord* m = available.takeLast().module;
+        // Every module that m waited for has finished, so nothing has rejected m since it became available.
+        ASSERT(m->evaluationError() == nullptr);
+        ASSERT(m->pendingAsyncDependencies() && !*m->pendingAsyncDependencies());
+        // On the stack of the walk that this job runs inside (see gatherAvailableParents).
+        bool mIsOnStack = m->status() == CyclicModuleRecord::Status::Evaluating;
+        ASSERT(mIsOnStack || m->status() == CyclicModuleRecord::Status::EvaluatingAsync);
+        // 12.b. If m.[[HasTLA]] is true, then
+        if (m->hasTLA()) {
+            // 12.b.i. Perform ExecuteAsyncModule(m).
+            m->executeAsync(globalObject);
+            if (Exception* exception = scope.exception()) {
+                JSValue error = exception->value();
+                TRY_CLEAR_EXCEPTION(scope, void());
+                m->asyncExecutionRejected(globalObject, error);
+            }
+            continue;
+        }
+        // 12.c.i. Let result be m.ExecuteModule().
+        m->execute(globalObject);
+        // 12.c.ii. If result is an abrupt completion, then
+        if (Exception* exception = scope.exception()) {
+            JSValue error = exception->value();
+            TRY_CLEAR_EXCEPTION(scope, void());
+            // 12.c.ii.1. Perform AsyncModuleExecutionRejected(m, result.[[Value]]).
+            m->asyncExecutionRejected(globalObject, error);
+            continue;
+        }
+        // 12.c.iii.1. Set m.[[AsyncEvaluationOrder]] to DONE.
+        m->setAsyncEvaluationOrder(AbstractModuleRecord::AsyncEvaluationOrder::done());
+        // 12.c.iii.2. Set m.[[Status]] to EVALUATED.
+        if (!mIsOnStack)
+            m->setStatus(CyclicModuleRecord::Status::Evaluated);
+        // 12.c.iii.3. If m.[[TopLevelCapability]] is not EMPTY, then
+        // Not for a module on the stack, as in step 7.
+        if (auto* capability = mIsOnStack ? nullptr : m->topLevelCapability()) {
+            // 12.c.iii.3.a. Assert: m.[[CycleRoot]] and m are the same Module Record.
+            ASSERT(m->cycleRoot() == m);
+            // 12.c.iii.3.b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
+            capability->fulfill(vm, jsUndefined());
+        }
+        gatherAvailableParents(m, available);
+    }
+#else
     // 8. Let execList be a new empty List.
     // (Note: it's safe to use a Vector instead of a MarkedArgumentsBuffer here because all the contents are accessed through WriteBarriers starting at `this`.)
     Vector<CyclicModuleRecord*, 8> execList;
@@ -919,6 +1058,7 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
             }
         }
     }
+#endif
     // 13. Return UNUSED.
 }
 
