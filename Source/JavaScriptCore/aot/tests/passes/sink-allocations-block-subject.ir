@@ -1,0 +1,95 @@
+# The subject of a block is read at the head of the block, so an object it names is a cell there and the block names that cell
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 1
+# STATISTIC: AllocationsSunk = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Resource" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="subjectIsBuiltBeforeTheRegion" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    PropDefine v1, v0 key="x" receivers=[L0]
+    v3 = FinishObject v1
+    v4 = Call v0, -, v3
+    Jump -> next b1()
+  b1() handler=b2():
+    v5 = Call v0
+    Return v5
+  b2() role=DisposalCleanup subject=v3:
+    v6 = CatchValue
+    v7 = Call v4, v3
+    Throw v6
+# CHECK: [[cell0]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, [[cell0]]
+# CHECK: b1() handler=b2([[cell0]]):
+# CHECK: b2([[carried0]]: L0) role=DisposalCleanup subject=[[carried0]]:
+# CHECK-NEXT: = CatchValue
+# CHECK-NEXT: = Call v4, [[carried0]]
+}
+
+function f1 name="subjectIsOnlyNamed" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x" receivers=[L0]
+    v4 = FinishObject v2
+    Branch v1 -> taken b1(), notTaken b3()
+  b1() handler=b2():
+    v5 = Call v0
+    Return v5
+  b2() role=DisposalCleanup subject=v4:
+    v6 = CatchValue
+    Throw v6
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Branch v1 -> taken [[edge1]](), notTaken b3()
+# CHECK: b1() handler=b2([[cell1]]):
+# CHECK: b2([[carried1]]: L0) role=DisposalCleanup subject=[[carried1]]:
+# CHECK: b3():
+# CHECK-NEXT: Return v0
+# CHECK: [[edge1]]():
+# CHECK-NEXT: [[cell1]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: Jump -> next b1()
+}
+
+function f2 name="subjectIsParameter" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x" receivers=[L0]
+    v4 = FinishObject v2
+    Branch v1 -> taken b1(), notTaken b3()
+  b1() handler=b2(v4):
+    v5 = Call v0
+    Return v5
+  b2(v6) role=DisposalCleanup subject=v6:
+    v7 = CatchValue
+    Throw v7
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Branch v1 -> taken [[edge2]](), notTaken b3()
+# CHECK: b1() handler=b2([[cell2]]):
+# CHECK: b2(v6:{{*}}) role=DisposalCleanup subject=v6:
+# CHECK: [[edge2]]():
+# CHECK-NEXT: [[cell2]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+}
+
+function f3 name="noSubject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject layout=L0
+    PropDefine v2, v0 key="x" receivers=[L0]
+    v4 = FinishObject v2
+    Branch v1 -> taken b1(), notTaken b3()
+  b1() handler=b2():
+    v5 = Call v0
+    Return v5
+  b2() role=CleanupHandler:
+    v6 = CatchValue
+    v7 = PropGet v4 key="x" receivers=[L0]
+    v8 = Call v7
+    Throw v6
+  b3():
+    Return v0
+# CHECK-NOT: NewObject
+# CHECK: b1() handler=b2(v0):
+# CHECK: b2([[x3]]: anything) role=CleanupHandler:
+# CHECK: v7: anything = Upcast [[x3]] castType=anything
+}

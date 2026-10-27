@@ -34,6 +34,8 @@ open(IN, $file) or die "No such file $file";
 my @keys = ();
 my @attrs = ();
 my @values = ();
+my @conditions = ();
+my $condition = "";
 my @table = ();
 my @links = ();
 
@@ -57,6 +59,16 @@ sub hashValue($);
 while (<IN>) {
     chomp;
     s/^\s+//;
+    # The rows between "#if <condition>" and "#endif" are in the table only where the condition holds.
+    if ($inside && /^\#if\s+(\S.*?)\s*$/) {
+        die "nested #if" if length($condition);
+        $condition = $1;
+        next;
+    }
+    if ($inside && /^\#endif/) {
+        $condition = "";
+        next;
+    }
     next if /^\#|^$/; # Comment or blank line. Do nothing.
     if (!$inside && /^\@begin/) {
         if (/^\@begin\s*([:_\w]+)\s*\d*\s*$/) {
@@ -71,6 +83,8 @@ while (<IN>) {
         @keys = ();
         @attrs = ();
         @values = ();
+        @conditions = ();
+        $condition = "";
         $includeBuiltin = 0;
 
         $inside = 0;
@@ -83,6 +97,7 @@ while (<IN>) {
 
         push(@keys, $key);
         push(@attrs, length($att) > 0 ? $att : "None");
+        push(@conditions, $condition);
 
         if ($val eq "JSBuiltin") {
             $includeBuiltin = 1;
@@ -415,6 +430,7 @@ sub output() {
             my $attributes = "PropertyAttribute::" . $attrs[$i];
             $attributes =~ s/\|/\|PropertyAttribute::/g;
             $attributes = "static_cast<unsigned>(" . $attributes . ")";
+            $hashTableString .= "#if $conditions[$i]\n" if length($conditions[$i]);
             if ($values[$i]{"type"} eq "PropertyAttribute::Function" && $firstValue eq "JSBuiltin")  {
                 $typeTag = "BuiltinGenerator";
                 my $tableHead = $name;
@@ -424,6 +440,7 @@ sub output() {
             else {
                 $hashTableString .= "   { \"$key\"_s, $attributes, $intrinsic, { HashTableValue::" . $typeTag . "Type, $firstValue" . ($hasSecondValue ? ", " . $secondValue : "") . " } },\n";
             }
+            $hashTableString .= "#else\n   { { }, 0, NoIntrinsic, { HashTableValue::End } },\n#endif\n" if length($conditions[$i]);
             $i++;
         }
         $hashTableString .= "};\n";

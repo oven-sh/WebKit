@@ -1,0 +1,51 @@
+# The allocation of an object that JSONObjectFinish takes stays in the function that finishes the object, also where it is made on two ways and arrives as the parameter of the block where they meet
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# STATISTIC: OutlinedBodiesCreated = 1
+# STATISTIC: ColdSitesOutlined = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything}}]
+
+function f0 name="finishedWhereTwoWaysMeet" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b8()
+# REPEAT: i = 2..7
+  b%(i-1)() frequency=Rare:
+    v%(i) = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b7(v%(i))
+# END REPEAT
+  b7(v8: L0) frequency=Rare:
+    v9 = JSONObjectBegin layout=L0
+    v10 = Undefined
+    v11 = JSONObjectFinish v9, v8, v10 layout=L0
+    Return v8
+  b8():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-NOT: CallDirect
+# CHECK-COUNT-6: = NewObject -, v1 layout=L0
+# CHECK-NOT: CallDirect
+
+function f1 name="notFinished" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b8()
+# REPEAT: i = 2..7
+  b%(i-1)() frequency=Rare:
+    v%(i) = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b7(v%(i))
+# END REPEAT
+  b7(v8: L0) frequency=Rare:
+    Return v8
+  b8():
+    Return v1
+}
+# CHECK-LABEL: function f1
+# CHECK-NOT: NewObject
+# CHECK-COUNT-6: = CallDirect v1 function=f2
+# CHECK-NOT: NewObject
+
+# CHECK-LABEL: function f2 {{*}}role=OutlinedBody
+# CHECK: [[object]]:{{*}}= NewObject -, v0 layout=L0 fields=[0]
+# CHECK-NEXT: Return [[object]]

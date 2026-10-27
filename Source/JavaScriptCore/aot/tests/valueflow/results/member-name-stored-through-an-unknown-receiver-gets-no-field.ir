@@ -1,0 +1,84 @@
+# publish(new Point, new Heir, new Bound); input.norm = 1; input.size = 1; input.extra = 1   (expectations changed by ruling 74: no field for a name that is stored only through a receiver nobody knows)
+# A store through a receiver that nobody knows may reach every object that has escaped. The name gets no field in their layouts, whether a class of the chain declares a member under it or not:
+# it stays an extra property. Otherwise every such name is a field of every such layout, and its slot is empty in all objects but the odd one.
+# The objects have reached unknown JavaScript, so no list of the names that they may gain is complete, and none is published: nobody reads such a list. A call of norm tests the object.
+# A store into an object that is known to have the layout (this.run = ..) does make the field, also under the name of a method.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point"
+# CHECK-NOT: IsAddedLate
+# CHECK-NOT: addedKeys
+# CHECK: layout L1 kind=Instance name="Heir"
+# CHECK-NOT: IsAddedLate
+# CHECK-NOT: addedKeys
+# CHECK: layout L2 kind=Instance name="Bound"
+# CHECK: fields=[{key="run" {{*}} flags=[IsAddedLate
+# CHECK-NOT: IsAddedLate
+# CHECK-NOT: addedKeys
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="Heir" module=m0 base=L0 constructor=f4 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Instance name="Bound" module=m0 constructor=f5
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="norm"
+    v4 = NewClosure function=f3
+    DefineMethod v1, v4 layout=L0 methodKind=Getter index=1 key="size"
+    v6 = FinishClass v1 layout=L0
+    v7 = ResolveHeritage v6
+    v8 = NewClosure function=f4
+    v9 = NewClass v8, v6, v7 layout=L1
+    v10 = FinishClass v9 layout=L1
+    v11 = NewClosure function=f5
+    v12 = NewClass v11 layout=L2
+    v13 = NewClosure function=f6
+    DefineMethod v12, v13 layout=L2 key="run"
+    v15 = FinishClass v12 layout=L2
+    v16 = Construct v6
+    v17 = Construct v10
+    v18 = Construct v15
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="publish" [isFreeName]
+    v21 = Call v20, -, v16, v17, v18
+    v22 = PropGet v19 key="input" [isFreeName]
+    v23 = Integer integer=1
+    PropSet v22, v23 key="norm" mode=Strict
+    PropSet v22, v23 key="size" mode=Strict
+    PropSet v22, v23 key="extra" mode=Strict
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}
+function f2 name="norm" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="size" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="Heir" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f5 name="Bound" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    v3 = NewClosure function=f7
+    PropSet v2, v3 key="run" mode=Strict
+    Return v2
+}
+function f6 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f7 name="own" kind=Arrow results=[{type=anything}] {
+    Return
+}

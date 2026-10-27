@@ -1,0 +1,175 @@
+# A class over Map that a captured variable chooses at run time: flow allocates neither layout, the expected type names both, and the program builds
+# RUN: compile
+# OPTIONS: check=VerifyEachPass
+# CHECK: image not empty
+
+layout L0 kind=Instance name="Keyed" module=m0 position=6 constructor=f3 flags=[HasHeritage]
+layout L1 kind=Instance name="Deeper" module=m0 position=60 base=L0 constructor=f5 supertypes=[L0] flags=[HasHeritage]
+layout L2 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=function|absent flags=[IsExpected]} flags=[IsRequired]}]
+layout L3 module=m0 position=312 fields=[{key="v" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+variable g0 name="run" module=m0 declared={type=function} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Keyed" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g2 name="Deeper" module=m0 declared={type=function|absent} flags=[IsImmutable]
+variable g3 module=m0 declared={type=function} flags=[IsImmutable]
+variable g4 module=m0 declared={type=function} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=function flags=[IsExpected]} @0
+    v2 = Builtin builtin=GlobalThis @20
+    v3 = PropGet v2 key="Map" [isFreeName] @20
+    v4 = Convert v3 declared={type=builtin(Map) flags=[IsExpected]} @20
+    v5 = ResolveHeritage v4 @0
+    v6 = NewClosure function=f3 @0
+    v7 = NewClass v6, v4, v5 layout=L0 @0
+    PutModuleVariable v7 variable=g3 @0
+    v9 = NewClosure function=f4 @26
+    DefineMethod v7, v9 layout=L0 key="tag" @26
+    v11 = FinishClass v7 layout=L0 @0
+    v12 = Convert v11 declared={type=function flags=[IsExpected]} @0
+    v13 = Convert v11 declared={type=function flags=[IsExpected]} @0
+    PutModuleVariable v13 variable=g1 @0
+    v15 = ResolveHeritage v13 @54
+    v16 = NewClosure function=f5 @54
+    v17 = NewClass v16, v13, v15 layout=L1 @54
+    PutModuleVariable v17 variable=g4 @54
+    v19 = NewClosure function=f6 @83
+    DefineMethod v17, v19 layout=L1 key="tag" @83
+    v21 = FinishClass v17 layout=L1 @54
+    v22 = Convert v21 declared={type=function flags=[IsExpected]} @54
+    v23 = Convert v21 declared={type=function flags=[IsExpected]} @54
+    PutModuleVariable v23 variable=g2 @54
+    v25 = Convert v1 declared={type=function flags=[IsExpected]} @411
+    v26 = Call v25 calleeName="main" @411
+    v27 = Undefined @411
+    Return v27 @411
+}
+function f1 name="run" module=m0 position=105 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1() @105
+  b1():
+    v1 = String string="x" @123
+    v2 = PropGet v1 key="replace" @123
+    v3 = Convert v2 declared={type=function flags=[IsExpected]} @123
+    v4 = String string="x" @135
+    v5 = Call v3, v1, v4, v0 calleeKey="replace" calleeName="replace" @127
+    v6 = Undefined @123
+    Return v6 @123
+}
+function f2 name="main" module=m0 position=146 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+    Jump -> next b1() @146
+  b1():
+    v0 = Absent @146
+    v1 = NewObject -, v0 layout=L2 fields=[0] @146
+    v2 = NewClosure v1 function=f7 @146
+    v3 = Convert v2 declared={type=function flags=[IsExpected]} @146
+    v4 = GetModuleVariable variable=g1 @174
+    v5 = CheckInitialized v4 name="Keyed" @174
+    v6 = Convert v5 declared={type=function flags=[IsExpected]} @170
+    PutEnvironmentField v1, v6 layout=L2 @170
+    v8 = Data data=d0 @197
+    v9 = Convert v8 declared={type=Array<never> flags=[IsExpected]} @197
+    v10 = Convert v9 declared={type=Array flags=[IsExpected]} @189
+    v11 = Integer @261
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @257
+    Jump -> next b2(v12) @257
+  b2(v13):
+    LoopHint @257
+    v15 = Integer integer=2 @268
+    v16 = Less v13, v15 @264
+    Branch v16 -> taken b3(| 0), notTaken b6(| 0) @264
+  b3(v17):
+    Jump -> next b4() @264
+  b4():
+    v18 = GetEnvironmentField v1 layout=L2 @295
+    v19 = CheckInitialized v18 name="C" @295
+    v20 = Construct v19 calleeName="C" @295
+    v21 = Convert v20 declared={type=L0 flags=[IsExpected]} @291
+    v22 = PropGet v21 key="set" @300
+    v23 = Convert v22 declared={type=function flags=[IsExpected]} @300
+    v24 = Integer integer=1 @309
+    v25 = Convert v17 declared={type=number flags=[IsExpected]} @314
+    v26 = NewObject -, v25 layout=L3 fields=[0] @312
+    v27 = FinishObject v26 @312
+    v28 = Call v23, v21, v24, v27 calleeKey="set" calleeName="set" @305
+    v29 = PropGet v10 key="push" @323
+    v30 = Convert v29 declared={type=function flags=[IsExpected]} @323
+    v31 = PropGet v21 key="tag" @334
+    v32 = Convert v31 declared={type=function flags=[IsExpected]} @334
+    v33 = Call v32, v21 calleeKey="tag" calleeName="tag" @339
+    v34 = Convert v33 declared={type=string flags=[IsExpected]} @334
+    v35 = PropGet v21 key="get" @346
+    v36 = Convert v35 declared={type=function flags=[IsExpected]} @346
+    v37 = Integer integer=1 @355
+    v38 = Call v36, v21, v37 calleeKey="get" calleeName="get" @351
+    v39 = PropGet v38 key="v" @356
+    v40 = PropGet v21 key="size" @361
+    v41 = Convert v40 declared={type=number flags=[IsExpected]} @361
+    v42 = Call v30, v10, v34, v39, v41 calleeKey="push" calleeName="push" @329
+    v43 = GetModuleVariable variable=g0 @373
+    v44 = Convert v43 declared={type=function flags=[IsExpected]} @373
+    v45 = Convert v3 declared={type=function flags=[IsExpected]} @377
+    v46 = Call v44, -, v45 calleeName="run" @373
+    Jump -> next b5() @373
+  b5():
+    v47 = Increment v17 @271
+    v48 = Convert v47 declared={type=number flags=[IsExpected]} @271
+    Jump -> next b2(v48) @271
+  b6(v49):
+    Jump -> next b7() @264
+  b7():
+    v50 = Builtin builtin=GlobalThis @388
+    v51 = PropGet v50 key="print" [isFreeName] @388
+    v52 = PropGet v10 key="join" @394
+    v53 = Convert v52 declared={type=function flags=[IsExpected]} @394
+    v54 = Call v53, v10 calleeKey="join" calleeName="join" @400
+    v55 = Convert v54 declared={type=string flags=[IsExpected]} @394
+    v56 = Call v51, -, v55 calleeName="print" @388
+    v57 = Undefined @388
+    Return v57 @388
+}
+function f3 name="Keyed" module=m0 position=6 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+    Jump -> next b1() @6
+  b1():
+    v3 = GetSuperBase v0 @6
+    v4 = SuperConstructList v3, v1, v2 layout=L0 @6
+    Return v4 @6
+}
+function f4 name="tag" module=m0 position=26 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
+    Jump -> next b1() @26
+  b1():
+    v0 = String string="keyed" @41
+    v1 = Convert v0 declared={type=string flags=[IsExpected]} @41
+    Return v1 @41
+}
+function f5 name="Deeper" module=m0 position=60 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array}] results=[{type=object}] {
+    Jump -> next b1() @60
+  b1():
+    v3 = GetSuperBase v0 @60
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @60
+    Return v4 @60
+}
+function f6 name="tag" module=m0 position=83 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
+    Jump -> next b1() @83
+  b1():
+    v0 = Integer integer=2 @98
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @98
+    Return v1 @98
+}
+function f7 name="next" module=m0 position=203 flags=[HasExplicitName] captures=[{type=env L2}] thisType={type=anything} results=[{type=string flags=[IsExpected]}] {
+  b0(v0: env L2):
+    Jump -> next b1() @203
+  b1():
+    v1 = GetEnvironmentField v0 layout=L2 @221
+    v2 = CheckInitialized v1 name="C" @221
+    v3 = GetModuleVariable variable=g2 @225
+    v4 = CheckInitialized v3 name="Deeper" @225
+    v5 = Convert v4 declared={type=function flags=[IsExpected]} @221
+    PutEnvironmentField v0, v5 layout=L2 @221
+    v7 = String string="" @240
+    v8 = Convert v7 declared={type=string flags=[IsExpected]} @240
+    Return v8 @240
+}
+data d0 root=Array{contents=anything} module=m0
+entry module=m0

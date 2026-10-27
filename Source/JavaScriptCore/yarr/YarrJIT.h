@@ -35,8 +35,10 @@
 #include "VM.h"
 #include "Yarr.h"
 #include "YarrPattern.h"
+#include <expected>
 #include <wtf/Atomics.h>
 #include <wtf/BitSet.h>
+#include <wtf/Function.h>
 #include <wtf/StackCheck.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
@@ -52,8 +54,10 @@ class VM;
 
 namespace Yarr {
 
+class CodeAddressing;
 class MatchingContextHolder;
 class YarrCodeBlock;
+struct CodeGenerationPolicy;
 
 enum class JITFailureReason : uint8_t {
     DecodeSurrogatePair,
@@ -64,6 +68,11 @@ enum class JITFailureReason : uint8_t {
     OffsetTooLarge,
     GeneratedCodeSizeTooLarge,
     LookbehindLayoutMismatch,
+    LookbehindJITDisabled,
+    UnsupportedCPU,
+    ProcessAddressInCode,
+    OutOfPCRelativeReach,
+    UnlistedSharedTable,
 };
 
 class BoyerMooreFastCandidates {
@@ -296,8 +305,10 @@ public:
     std::optional<JITFailureReason> failureReason() { return m_failureReason; }
 
     size_t codeSize() const { return m_ref8.size() + m_ref16.size() + m_matchOnly8.size() + m_matchOnly16.size(); }
-    bool has8BitCode() { return m_ref8.size(); }
-    bool has16BitCode() { return m_ref16.size(); }
+    bool has8BitCode() { return !!m_ref8; }
+    static constexpr ptrdiff_t offsetOf8BitCode() { return OBJECT_OFFSETOF(YarrCodeBlock, m_ref8); }
+    static constexpr ptrdiff_t offsetOf16BitCode() { return OBJECT_OFFSETOF(YarrCodeBlock, m_ref16); }
+    bool has16BitCode() { return !!m_ref16; }
     void set8BitCode(MacroAssemblerCodeRef<Yarr8BitPtrTag> ref, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
         m_ref8 = ref;
@@ -309,8 +320,13 @@ public:
         saveMaps(WTF::move(maps));
     }
 
-    bool has8BitCodeMatchOnly() { return m_matchOnly8.size(); }
-    bool has16BitCodeMatchOnly() { return m_matchOnly16.size(); }
+    bool has8BitCodeMatchOnly() { return !!m_matchOnly8; }
+    bool has16BitCodeMatchOnly() { return !!m_matchOnly16; }
+    void setCodeFromImage(const void* for8Bit, const void* for16Bit)
+    {
+        m_ref8 = MacroAssemblerCodeRef<Yarr8BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr8BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for8Bit)));
+        m_ref16 = MacroAssemblerCodeRef<Yarr16BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr16BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for16Bit)));
+    }
     void set8BitCodeMatchOnly(MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag> matchOnly, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
         m_matchOnly8 = matchOnly;
@@ -452,6 +468,38 @@ private:
 };
 
 void jitCompile(YarrPattern&, StringView patternString, CharSize, std::optional<StringView> sampleString, VM*, YarrCodeBlock& jitObject, ExecutionMode);
+
+struct CodeGenerationRequest {
+    const YarrPattern& pattern;
+    StringView patternString;
+    CharSize charSize;
+    ExecutionMode executionMode;
+    std::optional<StringView> sampleString;
+    YarrCodeBlock* codeBlock;
+    const CodeGenerationPolicy& policy;
+    Function<std::unique_ptr<CodeAddressing>(CCallHelpers&)> createCodeAddressing;
+};
+
+struct CodeGenerationAttempt;
+
+class GeneratedCode {
+    WTF_MAKE_NONCOPYABLE(GeneratedCode);
+public:
+    JS_EXPORT_PRIVATE explicit GeneratedCode(std::unique_ptr<CodeGenerationAttempt>);
+    JS_EXPORT_PRIVATE GeneratedCode(GeneratedCode&&);
+    JS_EXPORT_PRIVATE ~GeneratedCode();
+
+    JS_EXPORT_PRIVATE CCallHelpers& jit();
+    JS_EXPORT_PRIVATE CodeAddressing& addressing();
+    JS_EXPORT_PRIVATE bool hasElidedFrame() const;
+    JS_EXPORT_PRIVATE unsigned classTableLimitHits() const;
+    CodeGenerationAttempt& attempt() { return *m_attempt; }
+
+private:
+    std::unique_ptr<CodeGenerationAttempt> m_attempt;
+};
+
+JS_EXPORT_PRIVATE std::expected<GeneratedCode, JITFailureReason> generateCode(const CodeGenerationRequest&);
 
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
 

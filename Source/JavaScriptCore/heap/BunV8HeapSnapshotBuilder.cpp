@@ -4,6 +4,10 @@
 
 #include "BunV8HeapSnapshotBuilder.h"
 
+#if ENABLE(AOT)
+#include "AOTHeapHooks.h"
+#endif
+
 #include "DeferGC.h"
 #include "DeferGCInlines.h"
 #include "Heap.h"
@@ -361,6 +365,7 @@ unsigned BunV8HeapSnapshotBuilder::getNodeTypeIndex(JSCell* cell)
     case JSType::GlobalLexicalEnvironmentType:
     case JSType::LexicalEnvironmentType:
     case JSType::ModuleEnvironmentType:
+    case JSType::CompiledEnvironmentType:
         return static_cast<unsigned>(V8NodeType::Object);
 
     default: {
@@ -442,7 +447,18 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
     case JSType::GlobalLexicalEnvironmentType:
     case JSType::LexicalEnvironmentType:
     case JSType::ModuleEnvironmentType:
+    case JSType::CompiledEnvironmentType:
         return makeString("system / "_s, cell->className());
+#if ENABLE(AOT)
+    case JSType::CompiledClosureType:
+    case JSType::SlimClosureType:
+    case JSType::SlimClosureWithPropertiesType: {
+        String displayName = AOT::HeapHooks::nameOfCompiledCallee(cell);
+        if (!displayName.isEmpty())
+            return displayName;
+        break;
+    }
+#endif
     default: {
         break;
     }

@@ -1,0 +1,43 @@
+# A field whose closure is made on demand, in a slot that may be empty. A read takes an empty slot for undefined wherever it does so for any other field, and makes the closure where the slot is filled.
+# A call tests the slot and goes to the function. Whoever proves what an access does can use no test: it is told of the read.
+# FORM: Prepared
+# RUN(PLAN): property-access
+# RUN(PROVEN): proven-access
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="saved" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Descriptor" fields=[{key="optional" declared={type=undefined|f0} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f0} prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="mayBeAbove" declared={type=undefined|f0} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f0}}}, {key="filled" declared={type=f0} flow={location={stores=AtMostOnce deferral=CapturesNothing deferredFunction=f0} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="plain" declared={type=undefined|f0} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="made" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f1 name="kept" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="optional"
+    PutModuleVariable v1 variable=g0
+    v3 = PropGet v0 key="mayBeAbove"
+    PutModuleVariable v3 variable=g0
+    v5 = PropGet v0 key="filled"
+    PutModuleVariable v5 variable=g0
+    v7 = PropGet v0 key="plain"
+    PutModuleVariable v7 variable=g0
+    Return
+}
+# PLAN: F1 v1 PropGet [[optional]]: form=Slot level=Proven operation=GetDeferredClosureSlotOrUndefined receivers=[L0]
+# PLAN: F1 v3 PropGet [[mayBeAbove]]: form=Slot {{*}}operation=GetDeferredClosureSlot receivers=[L0] {{*}}SlotFilled
+# PLAN: F1 v5 PropGet [[filled]]: form=Slot level=Proven operation=GetDeferredClosureSlot receivers=[L0]
+# PLAN: F1 v7 PropGet [[plain]]: form=Slot level=Proven operation=GetSlotOrUndefined receivers=[L0]
+# PROVEN: F1 v1 PropGet: complete operations=[GetDeferredClosureSlotOrUndefined] key=K{{*}} receivers=S
+# PROVEN-NEXT: F1 v3 PropGet: unknown
+# PROVEN-NEXT: F1 v5 PropGet: complete operations=[GetDeferredClosureSlot] key=K{{*}} receivers=S
+# PROVEN-NEXT: F1 v7 PropGet: complete operations=[GetSlotOrUndefined] key=K{{*}} receivers=S
+function f2 name="called" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="optional"
+    v2 = Call v1, v0
+    v3 = PropGet v0 key="filled"
+    v4 = Call v3, v0
+    Return v4
+}
+# PLAN: F2 v1 PropGet [[optional]]: form=Method {{*}}SlotFilled
+# PLAN: F2 v3 PropGet [[filled]]: form=Method level=Proven receivers=[L0]
+# PROVEN: F2 v1 PropGet: complete operations=[GetDeferredClosureSlotOrUndefined] key=K{{*}} receivers=S
+# PROVEN-NEXT: F2 v3 PropGet: complete operations=[GetDeferredClosureSlot] key=K{{*}} receivers=S

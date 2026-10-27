@@ -1,0 +1,115 @@
+# value instanceof C, with C the one object of a class that is out of the compiler's sight and the value expected to be an instance.
+# The answer is true under two tests. The value has the layout. One test of the bits of the classes says the rest: the objects of the layout have kept the prototype object of their class,
+# C finds the ordinary Symbol.hasInstance, and, for a constructor function, nobody has stored to its prototype property. Below another class the link between the prototype objects is among the bits.
+# The class of a constructor function is defined at the first construction that is carried out, and until then its bits speak of no object: what such a function makes is asked itself for its prototype object.
+# Under the same tests a value of an unrelated class gives false, and of a value that may be either its layout answers. Where nothing is expected of the value, or the chain above what is
+# expected is not known, the chain of the value is walked under the bits of C alone. For a constructor that is not known the operation stays as it is
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Class" constructor=f0 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L1 kind=Instance name="Below" base=L0 constructor=f1 flags=[HasHeritage] classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+layout L2 kind=Instance name="Function" constructor=f2 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L3 kind=Instance name="Assigned" constructor=f8 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce hasAssignedPrototype=true}
+layout L4 kind=Instance name="Other" constructor=f12 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed}
+function f0 name="Class" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="Below" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f2 name="Function" flags=[HasThis] thisType={type=L2 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L2):
+    Return
+}
+function f3 name="instance-of-a-class" parameters=[{type=L0 flags=[IsExpected]}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=L0
+# CHECK: true = Boolean boolean=true
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+# CHECK: = AreMembersUnchanged conditions=[{{*}}layout=L0 side=Static key=@@hasInstance}, {kind=PrototypeLinkUnchanged layout=L0 side=Static}, {kind=InstancePrototypeUnchanged layout=L0}]
+# CHECK-NOT: HasLayoutPrototype
+# CHECK-NOT: key="prototype"
+}
+function f4 name="instance-of-a-class-below" parameters=[{type=L1 flags=[IsExpected]}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything ~ L1, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=L1
+# CHECK: true = Boolean boolean=true
+# CHECK: = AreMembersUnchanged conditions=[{{*}}{kind=PrototypeLinkUnchanged layout=L1}, {kind=InstancePrototypeUnchanged layout=L1}]
+}
+function f5 name="instance-of-a-constructor-function" parameters=[{type=L2 flags=[IsExpected]}, {type=f2}] results=[{type=anything}] {
+  b0(v0: anything ~ L2, v1: f2):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=L2
+# CHECK: true = Boolean boolean=true
+# CHECK: ([[made5]]: L2):
+# CHECK: = HasLayoutPrototype [[made5]],
+# CHECK: = AreMembersUnchanged conditions=[{layout=L2 side=Static key="prototype"}, {layout=L2 side=Static key=@@hasInstance}, {kind=PrototypeLinkUnchanged layout=L2 side=Static}]
+}
+function f6 name="unrelated-class" parameters=[{type=L4 flags=[IsExpected]}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything ~ L4, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=L4
+# CHECK: false = Boolean
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+# CHECK: = AreMembersUnchanged conditions=[{{*}}{kind=PrototypeLinkUnchanged layout=L4}, {kind=InstancePrototypeUnchanged layout=L4}]
+# CHECK-NOT: HasLayoutPrototype
+}
+function f7 name="unknown-constructor" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: anything):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ L0, v1: anything):
+# CHECK-NEXT: = InstanceOf v0, v1
+}
+function f8 name="Assigned" flags=[HasThis] thisType={type=L3 flags=[IsExpected]} results=[{type=undefined}] {
+  b0(v0: anything ~ L3):
+    Return
+}
+function f9 name="either" parameters=[{type=L1|L4 flags=[IsExpected]}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything ~ L1|L4, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=L1|L4
+# CHECK: v2: boolean = TypeTest {{*}} testedType=L1
+# CHECK-NEXT: Return v2
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+}
+function f10 name="nothing-is-expected" parameters=[{type=anything}, {type=f0}] results=[{type=anything}] {
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK-NEXT: b0(v0: anything, v1: f0):
+# CHECK-NEXT: = AreMembersUnchanged conditions=[{{*}}layout=L0 side=Static key=@@hasInstance}, {kind=PrototypeLinkUnchanged layout=L0 side=Static}]
+# CHECK: [[prototype10]]:{{*}}= GetClassPrototype v1 layout=L0
+# CHECK-NEXT: v2: boolean = HasInPrototypeChain v0, [[prototype10]]
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+}
+function f11 name="prototype-object-may-be-shared" parameters=[{type=L3 flags=[IsExpected]}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything ~ L3, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK-NOT: = TypeTest
+# CHECK: = HasInPrototypeChain v0,
+# CHECK-NOT: = TypeTest
+}
+function f12 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f13 name="unrelated-constructor-function" parameters=[{type=L2 flags=[IsExpected]}, {type=f0}] results=[{type=anything}] {
+  b0(v0: anything ~ L2, v1: f0):
+    v2 = InstanceOf v0, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=L2
+# CHECK: false = Boolean
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = InstanceOf v0, v1
+# CHECK: ([[made13]]: L2):
+# CHECK: = HasLayoutPrototype [[made13]],
+# CHECK: = AreMembersUnchanged conditions=[{{*}}{kind=PrototypeLinkUnchanged layout=L2}]
+}

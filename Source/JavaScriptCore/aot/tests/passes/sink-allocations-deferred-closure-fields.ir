@@ -1,0 +1,50 @@
+# The read of a slot that defers its closure creates the closure, so it is no load: where a cell meets a virtual object, that field is not loaded out of the cell
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Handlers" fields=[{key="run" declared={type=f2} flags=[IsRequired] flow={location={stores=AtMostOnce initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f2} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}, {key="name" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={members=[L0]}
+
+function f0 name="otherFieldReadAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=f2}] results=[{type=anything}] {
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = PropGet v4 key="name" receivers=[L0]
+    Return v6
+# CHECK: b1() frequency=Rare:
+# CHECK: [[cell0]]:{{*}}= NewObject
+# CHECK: = Call v0, -, [[cell0]]
+# CHECK-NOT: key="run"
+# CHECK: [[name0]]:{{*}}= GetSlot [[cell0]]{{*}}key="name"
+# CHECK-NOT: key="run"
+# CHECK: Jump -> next b3({{*}}[[name0]])
+# CHECK: b2():
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b3({{*}}v1)
+}
+
+function f1 name="deferredFieldReadAfterRareUse" parameters=[{type=anything}, {type=anything}, {type=boolean}, {type=f2}] results=[{type=anything}] {
+    v4 = NewObject -, v3, v1 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v5 = Call v0, -, v4
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    v6 = GetDeferredClosureSlot v4 key="run" receivers=[L0] level=Proven
+    Return v6
+# CHECK-NOT: = GetSlot {{*}}key="run"
+# CHECK: = GetDeferredClosureSlot {{*}}key="run"
+# CHECK-NOT: = GetSlot {{*}}key="run"
+}
+
+function f2 name="run" results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}

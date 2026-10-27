@@ -1,0 +1,31 @@
+# function use(s: string | undefined) { return s ? links(s) : 0 }   use("s"); use(undefined)
+# RUN: valueflow-why values=f2:v1
+# CHECK: values=f2:v1
+# CHECK: operand 0 {{*}} 1 members: primitive7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = String string="s"
+    v2 = Call v0, -, v1
+    v3 = Undefined
+    v4 = Call v0, -, v3
+    Return
+}
+function f1 name="use" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|string
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = NewClosure function=f2
+    v5 = Call v4, -, v3
+    Return v5
+  b2(v6):
+    v7 = Integer integer=0
+    Return v7
+}
+function f2 name="links" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+}

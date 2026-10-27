@@ -1,0 +1,86 @@
+# A protocol that runs on everything reachable from an operand runs no code where every reachable type is proven and the lookups find built-in members alone: the call then reads the objects and writes none. Whatever is not proven on the way is unknown code, and a function of the program that is found is named beside it. JSON.stringify has errors of its own, for a BigInt, for an object that holds itself and for a text longer than a string may be: where the types reach none of them, through ordinary objects of the program, lack of memory is all that is left. The label of a Point is any string, a Node may be its own next, and what an array holds is not followed yet
+# FORM: Prepared
+# RUN: effects f0 f1 f2
+# RUN(USES): operands f0 f1
+# RUN(NAMED): effects summaries f1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="label" declared={type=string} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L1 name="Line" fields=[{key="from" declared={type=L0} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="to" declared={type=L0} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L2 name="Series" fields=[{key="values" declared={type=Array<number, proven, pristine[Storage, Names]>} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L3 name="Node" fields=[{key="value" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="next" declared={type=null|L3} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L4 name="Table" fields=[{key="rows" declared={type=Array<L0, proven, pristine[Storage, Names]>} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L5 kind=Instance name="Account" constructor=f3 fields=[{key="balance" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L6 kind=Instance name="Report" constructor=f4 flow={baseState=None impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="toJSON" function=f6 mutability=Fixed}]}
+layout L7 name="HoldsReport" fields=[{key="report" declared={type=L6} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L8 name="HasOwnGetter" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[ChangePrototype] addedKeys=["y"] addedKeysAreComplete=true ownAccessors=[{key="y" kind=Getter function=f5}] ownAccessorsAreComplete=true}
+layout L9 name="HoldsAnything" fields=[{key="x" declared={type=anything} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L10 name="MayGainProperty" fields=[{key="x" declared={type=number} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, ChangePrototype]}
+layout L11 name="ReachedUnknownCode" fields=[{key="x" declared={type=number}}]
+layout L12 name="HasUnknownWriters" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L13 name="HoldsArrayThatMayGainNames" fields=[{key="values" declared={type=Array<number, proven, pristine[Storage]>} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L14 name="HoldsArrayOfUnprovenContents" fields=[{key="values" declared={type=Array<number, pristine[Storage, Names]>} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L15 name="HoldsBigInt" fields=[{key="count" declared={type=bigint} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+layout L16 name="HoldsClosure" fields=[{key="run" declared={type=f7} flow={location={writers=AllKnown} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[RedefineProperty, AddProperty, ChangePrototype]}
+variable g0 name="serialized" declared={type=number} initialization=Undefined flow={writers=AllKnown}
+function f0 name="runsNoCode" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L4}, {type=L5}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v6 = Undefined
+    v7 = CallBuiltin -, v0, v6, v6 overload=JSONStringify/0
+    v8 = CallBuiltin -, v1, v6, v6 overload=JSONStringify/0
+    v9 = CallBuiltin -, v2, v6, v6 overload=JSONStringify/0
+    v10 = CallBuiltin -, v3, v6, v6 overload=JSONStringify/0
+    v11 = CallBuiltin -, v4, v6, v6 overload=JSONStringify/0
+    v12 = CallBuiltin -, v5, v6, v6 overload=JSONStringify/0
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: v7 CallBuiltin: reads(ObjectFields, ShapeWords, OrderWords, PrototypeLinks, NamedProperties, Elements, ArrayStorage, TypedArrayStorage, TypedArrayElements, CollectionStorage, CollectionEntries, InternalFields, PromiseState, StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v8 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v9 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v10 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v11 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v12 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throwsForLackOfMemory collects
+# USES-LABEL: function f0
+# USES: v7 CallBuiltin 1: [Inspects, AppliesTransitively] reads(ObjectFields,
+# USES-NOT: PassesToUserCode
+function f1 name="runsUnknownCode" parameters=[{type=L6}, {type=L7}, {type=L8}, {type=L9}, {type=L10}, {type=L11}, {type=L12}, {type=L13}, {type=L14}, {type=L15}, {type=L16}, {type=object}, {type=Proxy}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v13 = Undefined
+# REPEAT: i = 0..12
+    v%(i+14) = CallBuiltin -, v%(i), v13, v13 overload=JSONStringify/0
+# END REPEAT
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK: v14 CallBuiltin: unknownCode
+# REPEAT: i = 15..26
+# CHECK-NEXT: v%(i) CallBuiltin: unknownCode
+# END REPEAT
+# USES-LABEL: function f1
+# USES: v14 CallBuiltin 1: [Inspects, PassesToUserCode, AppliesTransitively]
+# USES: v20 CallBuiltin 1: [Inspects, PassesToUserCode, AppliesTransitively]
+# USES: v26 CallBuiltin 1: [Inspects, PassesToUserCode, AppliesTransitively]
+
+# Unknown code leaves out a function whose callers are all known, so the call names the method it finds
+# NAMED: unknown code: reads(all) writes(ObjectFields,
+# NAMED-LABEL: function f1
+# NAMED: v14 CallBuiltin: reads(all) writes(ModuleVariables/1, ObjectFields,{{*}}callsUnknownCode
+# NAMED-NEXT: v15 CallBuiltin: reads(all) writes(ModuleVariables/1, ObjectFields,{{*}}callsUnknownCode
+# NAMED: v25 CallBuiltin: reads(all) writes(ObjectFields,{{*}}callsUnknownCode
+function f2 name="convertsContents" parameters=[{type=Array<L0, proven, pristine[Storage, Names]>}, {type=Array<L6, proven, pristine[Storage, Names]>}, {type=string}] results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v3 = CallBuiltin v0, v2 overload=ArrayPrototypeJoin/0
+    v4 = CallBuiltin v1, v2 overload=ArrayPrototypeJoin/0
+    Return
+}
+# A method that the protocols of the entry do not look up is not run
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v3 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v4 CallBuiltin: reads(ObjectFields, {{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+function f3 name="Account" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
+function f4 name="Report" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f5 name="y" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f6 name="toJSON" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return v1
+}
+function f7 name="run" kind=Arrow results=[{type=undefined}]

@@ -1,0 +1,39 @@
+# An allocation of an instance of a class may list a value that only holds the place of a field until its store comes, so a listed value that may be undefined proves nothing about the fields of birth. An allocation that says it lists only stored values proves them filled: its guard meets the guard of a passed test at a join
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Fields" fields=[{key="a" declared={type=anything} flow={occupancy=FilledAtBirth}}]
+function f0 name="listsOnlyStoredValues" parameters=[{type=anything}, {type=boolean}, {type=L0}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0 layout=L0 fields=[0] [listsOnlyStoredValues]
+    v4 = AllGuards v3
+    Jump -> next b4(v3, v4)
+  b2():
+    v5 = HasBirthFieldsFilled v2
+    Branch v5 -> taken b4(v2 | 0), notTaken b3()
+  b3():
+    v6 = Undefined
+    Return v6
+  b4(v7, v8):
+    v9 = GetSlot v7, v8 key="a" receivers=[L0] level=Expected
+    Return v9
+}
+function f1 name="mayListAPlaceholder" parameters=[{type=anything}, {type=boolean}, {type=L0}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = AllGuards v3
+    Jump -> next b4(v3, v4)
+  b2():
+    v5 = HasBirthFieldsFilled v2
+    Branch v5 -> taken b4(v2 | 0), notTaken b3()
+  b3():
+    v6 = Undefined
+    Return v6
+  b4(v7, v8):
+    v9 = GetSlot v7, v8 key="a" receivers=[L0] level=Expected
+    Return v9
+}

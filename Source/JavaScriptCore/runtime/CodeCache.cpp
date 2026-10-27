@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CodeCache.h"
 
+#include "AOTRemovableFeature.h"
 #include "BytecodeGenerator.h"
 #include "DirectEvalExecutable.h"
 #include "IndirectEvalExecutable.h"
@@ -86,8 +87,9 @@ void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
     });
 }
 
-void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize, NOESCAPE const ScopedLambda<void(UnlinkedFunctionCodeBlock*, const SourceCode&)>& functor)
+NEVER_INLINE void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize, NOESCAPE const ScopedLambda<void(UnlinkedFunctionCodeBlock*, const SourceCode&)>& functor)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, generateUnlinkedCodeBlockForFunctions);
     if (!depth)
         return;
     auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable) {
@@ -109,8 +111,9 @@ void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCo
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType = ScriptExecutable>
-UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, DerivedContextType derivedContextType, bool isArrowFunctionContext, const TDZEnvironment* variablesUnderTDZ = nullptr, const PrivateNameEnvironment* privateNameEnvironment = nullptr, ExecutableType* executable = nullptr, OptimizeBytecode optimize = OptimizeBytecode::No)
+NEVER_INLINE UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, DerivedContextType derivedContextType, bool isArrowFunctionContext, const TDZEnvironment* variablesUnderTDZ = nullptr, const PrivateNameEnvironment* privateNameEnvironment = nullptr, ExecutableType* executable = nullptr, OptimizeBytecode optimize = OptimizeBytecode::No)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, generateUnlinkedCodeBlockImpl<UnlinkedCodeBlockType, ExecutableType>);
     typedef typename CacheTypes<UnlinkedCodeBlockType>::RootNode RootNode;
     bool isInsideOrdinaryFunction = executable && executable->isInsideOrdinaryFunction();
 

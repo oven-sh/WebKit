@@ -1,0 +1,62 @@
+# Where a layout has more expected key orders than a serializer has arms, an order that is a prefix of another one shares its arm: it costs one test, and the members it may lack are read as undefined
+# FORM: Prepared
+# RUN: derived-functions Serializer:L0 Serializer:L1 Serializer:L2 Serializer:L3
+# STATISTIC: SerializersCreated = 5
+# LOSS: MaxExpandedKeyOrders x1 L2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Sparse" fields=[{key="id" declared={type=number}}, {key="name" declared={type=string}}, {key="note" declared={type=undefined|string}}, {key="tag" declared={type=undefined|string}}, {key="more" declared={type=undefined|string}}, {key="last" declared={type=undefined|string}}] flow={constructorOrders=[{fields=[0, 1]}, {fields=[0, 1, 2]}, {fields=[0, 1, 2, 3]}, {fields=[0, 1, 2, 3, 4]}, {fields=[0, 1, 2, 3, 4, 5]}]}
+layout L1 name="AnArmForEachOrder" fields=[{key="a" declared={type=number}}, {key="b" declared={type=undefined|number}}] flow={constructorOrders=[{fields=[0]}, {fields=[0, 1]}]}
+layout L2 name="EndingsThatAreNeverUndefined" fields=[{key="a" declared={type=number}}, {key="b" declared={type=number}}, {key="c" declared={type=number}}, {key="d" declared={type=number}}, {key="e" declared={type=number}}] flow={constructorOrders=[{fields=[0]}, {fields=[0, 1]}, {fields=[0, 1, 2]}, {fields=[0, 1, 2, 3]}, {fields=[0, 1, 2, 3, 4]}]}
+layout L3 name="Outer" fields=[{key="inner" declared={type=L4}}, {key="b" declared={type=undefined|number}}, {key="c" declared={type=undefined|number}}, {key="d" declared={type=undefined|number}}, {key="e" declared={type=undefined|number}}] flow={constructorOrders=[{fields=[0]}, {fields=[0, 1]}, {fields=[0, 1, 2]}, {fields=[0, 1, 2, 3]}, {fields=[0, 1, 2, 3, 4]}]}
+layout L4 name="Inner" fields=[{key="x" declared={type=number}}] flow={constructorOrders=[{fields=[0]}]}
+
+# CHECK: function {{*}}creator=Serializer{layout=L0}
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2, 3]
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2, 3, 4, 5]
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK: ([[guard0]]: guard, {{*}}: i32):
+# CHECK-NEXT: = GetSlot v0, [[guard0]] key="id" receivers=[L0] level=Expected
+# CHECK: = HasKeyOrder v0, {{*}} layout=L0 fields=[0, 1, 2, 3, 4]
+# CHECK-NOT: HasKeyOrder
+# CHECK: = GetSlot v0, [[guard0]] key="more" receivers=[L0] level=Expected
+# CHECK: [[last0]]: undefined|string = GetSlotOrUndefined v0, [[guard0]] key="last" receivers=[L0] level=Expected
+# CHECK: = TypeTest [[last0]] testedType=undefined
+# CHECK-NOT: JSONAppendValue
+
+# CHECK: function {{*}}creator=Serializer{layout=L1}
+# CHECK-NOT: : guard, {{*}}: i32):
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L1 fields=[0, 1]
+# CHECK-NOT: : guard, {{*}}: i32):
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK: = GetSlot v0, {{*}} key="b" receivers=[L1] level=Expected
+# CHECK-NOT: GetSlotOrUndefined
+
+# CHECK: function {{*}}creator=Serializer{layout=L2}
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK: = HasKeyOrder v0, {{*}} layout=L2 fields=[0, 1, 2, 3]
+# CHECK-NOT: HasKeyOrder
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK-NOT: key="e"
+
+# CHECK: function {{*}}creator=Serializer{layout=L3}
+# CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 1, 2, 3, 4]
+# CHECK: ([[guard3]]: guard, [[members3]]: i32):
+# CHECK-NEXT: = JSONEnterHolder v1, v0
+# CHECK-NEXT: = GetSlot v0, [[guard3]] key="inner" receivers=[L3] level=Expected
+# CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 1, 2, 3]
+# CHECK: = ShapeTest v0 layouts=[L3]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 1, 2, 3, 4]
+# CHECK: ([[renewed3]]: guard, [[membersNow3]]: i32):
+# CHECK-NEXT: = StrictEq [[membersNow3]], [[members3]]
+# CHECK: = HasKeyOrder v0, {{*}} layout=L3 fields=[0, 1, 2, 3]
+# CHECK: Jump -> next [[memberB3]]({{*}}, [[renewed3]])
+# CHECK: PropSet {{*}}, [[members3]] key="length"
+# CHECK: [[memberB3]]({{*}}: buildercursor, [[guardAtB3]]: guard):
+# CHECK-NEXT: = GetSlot v0, [[guardAtB3]] key="b" receivers=[L3] level=Expected
+# CHECK: = GetSlotOrUndefined v0, [[guardAtB3]] key="e" receivers=[L3] level=Expected

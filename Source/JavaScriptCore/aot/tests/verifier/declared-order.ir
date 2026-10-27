@@ -1,0 +1,10 @@
+# the order in which a type declares its fields names a field at most once, and only fields that the layout has; it need not name them all
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidLayout 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="badFieldTwice" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}] declaredOrder=[1, 1]
+layout L1 name="badFieldPastFields" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}] declaredOrder=[1, 2]
+layout L2 name="goodWholeOrder" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}] declaredOrder=[1, 0]
+layout L3 name="goodPartOfTheFields" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}] declaredOrder=[1]

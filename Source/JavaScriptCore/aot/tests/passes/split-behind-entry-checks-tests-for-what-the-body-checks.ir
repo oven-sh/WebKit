@@ -1,0 +1,122 @@
+# The declared type of a parameter belongs to the variable, which the body may assign to: a source that reuses its variables declares `x: string | number | boolean` and passes `x as string` on.
+# The value at the entrance is what callers pass. Where all that the body does with it is to check it for one type, the tests at the entrance test for that type:
+# the typed body holds the value proven, hands it on proven, and its callee is entered behind its own tests.
+#   f1 handsOn: no check at the entrance, two checks in the body for one type: one test for string, no check left
+#   f2 narrows: a check at the entrance for string|number, the body checks the result for string, through a cast: one test, for string
+#   f3 alsoUses: the value is also an operand of an operation: as it was
+#   f4 twoTypes: the body checks for string on one path and for number on the other: as it was
+#   f5 otherMemberArrives: main passes a number: an ordinary value of the parameter, which no test at the entrance may turn away: as it was
+#   f6 reassigned: the check looks at the variable behind a join with another value, not at the value at the entrance: as it was
+# FORM: Prepared
+# RUN: pass SplitBehindEntryChecks VerifyProgram
+# STATISTIC: FunctionsSplitBehindEntryChecks = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Assertion
+typesite w2 module=m0 position=30 kind=Assertion
+typesite w3 module=m0 position=40 kind=Parameter
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = NewClosure function=f4
+    v4 = NewClosure function=f5
+    v5 = NewClosure function=f6
+    v6 = NewClosure function=f7
+    v7 = Integer integer=7
+    v8 = Call v4, -, v7 callees=[f5]
+    Return
+}
+function f1 name="handsOn" module=m0 position=100 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Check v0 expectedType=string site=w1
+    v4 = CallDirect v3 function=f7
+    Return v4
+  b2():
+    v5 = Check v0 expectedType=string site=w2
+    v6 = CallDirect v5 function=f7
+    Return v6
+}
+function f2 name="narrows" module=m0 position=200 flags=[IsChecked] length=1 parameters=[{type=number|string site=w0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ number|string):
+    v1 = Check v0 expectedType=number|string site=w0
+    Jump -> next b1()
+  b1():
+    v2 = Upcast v1 castType=anything
+    v3 = Check v2 expectedType=string site=w1
+    v4 = CallDirect v3 function=f7
+    Return v4
+}
+function f3 name="alsoUses" module=m0 position=300 flags=[IsChecked] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Check v0 expectedType=string site=w1
+    v3 = CallDirect v2 function=f7
+    Return v3
+  b2():
+    Return
+}
+function f4 name="twoTypes" module=m0 position=400 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Check v0 expectedType=string site=w1
+    v4 = CallDirect v3 function=f7
+    Return v4
+  b2():
+    v5 = Check v0 expectedType=number site=w2
+    Return v5
+}
+function f5 name="otherMemberArrives" module=m0 position=500 flags=[IsChecked] length=1 parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    v1 = Check v0 expectedType=string site=w1
+    v2 = CallDirect v1 function=f7
+    Return v2
+}
+function f6 name="reassigned" module=m0 position=600 flags=[IsChecked] length=2 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3: anything):
+    v4 = Check v3 expectedType=string site=w1
+    v5 = CallDirect v4 function=f7
+    Return v5
+}
+function f7 name="takesString" module=m0 position=700 flags=[IsChecked] length=1 parameters=[{type=string site=w3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ string):
+    v1 = Check v0 expectedType=string site=w3
+    v2 = PropGet v1 key="length"
+    Return v2
+}
+# CHECK-LABEL: function f1 name="handsOn" module=m0 position=100 role=EntryChecks
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest
+# CHECK-LABEL: function f2 name="narrows" module=m0 position=200 role=EntryChecks
+# CHECK: = TypeTest v0 testedType=string
+# CHECK-NOT: TypeTest
+# CHECK-LABEL: function f3 name="alsoUses" module=m0 position=300 flags=[IsChecked]
+# CHECK: = Check v0 expectedType=string
+# CHECK-LABEL: function f4 name="twoTypes" module=m0 position=400 flags=[IsChecked]
+# CHECK: = Check v0 expectedType=string
+# CHECK: = Check v0 expectedType=number
+# CHECK-LABEL: function f5 name="otherMemberArrives" module=m0 position=500 flags=[IsChecked]
+# CHECK: = Check v0 expectedType=string
+# CHECK-LABEL: function f6 name="reassigned" module=m0 position=600 flags=[IsChecked]
+# CHECK: = Check v3 expectedType=string
+# CHECK-LABEL: function f7 name="takesString" module=m0 position=700 role=EntryChecks
+# The typed bodies.
+# CHECK: name="handsOn" module=m0 position=100 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w1}, {type=anything}]
+# CHECK-NOT: = Check
+# CHECK: name="narrows" module=m0 position=200 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string site=w0}]
+# CHECK-NOT: = Check
+# CHECK: name="takesString" module=m0 position=700 flags=[IsChecked]

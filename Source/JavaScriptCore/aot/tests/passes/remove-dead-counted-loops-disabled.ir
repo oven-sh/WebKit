@@ -1,0 +1,36 @@
+# With the pass disabled an empty counted loop stays
+# FORM: Prepared
+# OPTIONS: disable=pass:RemoveDeadCountedLoops
+# RUN: pass RemoveDeadCountedLoops
+# STATISTIC: RemoveDeadCountedLoopsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="emptyLoop" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = Less v2, v0
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = Integer integer=1
+    v7 = Add v5, v6
+    Jump -> next b1(v7)
+  b3():
+    Return
+# CHECK-NEXT: b0(v0: int[0, 100]):
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v1)
+# CHECK-NEXT: b1(v2: {{*}}):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v4: boolean = Less v2, v0
+# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v5: {{*}}):
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: {{*}} = Add v5, v6
+# CHECK-NEXT: Jump -> next b1(v7)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}

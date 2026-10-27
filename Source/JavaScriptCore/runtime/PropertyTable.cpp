@@ -156,10 +156,16 @@ PropertyTable::~PropertyTable()
     destroyIndexVector(m_indexVector);
 }
 
+// A private name that passes through proxies stands for an ordinary property that is not listed: it is sealed and frozen with the listed ones.
+static bool keepsAttributesWhenSealedOrFrozen(PropertyName name)
+{
+    return name.isPrivateName() && !name.passesThroughProxies();
+}
+
 void PropertyTable::seal()
 {
     forEachPropertyMutable([&](auto& entry) {
-        if (!PropertyName(entry.key()).isPrivateName())
+        if (!keepsAttributesWhenSealedOrFrozen(entry.key()))
             entry.setAttributes(entry.attributes() | static_cast<unsigned>(PropertyAttribute::DontDelete));
         return IterationStatus::Continue;
     });
@@ -168,7 +174,7 @@ void PropertyTable::seal()
 void PropertyTable::freeze()
 {
     forEachPropertyMutable([&](auto& entry) {
-        if (!PropertyName(entry.key()).isPrivateName()) {
+        if (!keepsAttributesWhenSealedOrFrozen(entry.key())) {
             if (!(entry.attributes() & PropertyAttribute::Accessor))
                 entry.setAttributes(entry.attributes() | static_cast<unsigned>(PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly));
             else

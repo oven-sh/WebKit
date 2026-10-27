@@ -1,0 +1,33 @@
+# function hold(x: any) { const got: number = (x as number | undefined)!; return { held: got } }   hold(undefined); hold(false)   The field is declared undefined | number | string.
+# Of what arrives the first check lets undefined through. Flow writes that behind it, as a type that holds behind checks, and the second check tests the value that has this type.
+# What flow holds of the slot leaves out false, which the checks turn away. Where the checks are gone false is what is stored, so the type of the slot in front of the store holds behind checks too.
+# Whoever reads the field may get false.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 module=m0 fields=[{key="held" declared={type=undefined|number|string} flags=[IsRequired]}] ownFieldCount=1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    v1 = Boolean
+    v2 = CallDirect v0 function=f1
+    v3 = CallDirect v1 function=f1
+    v4 = PropGet v2 key="held"
+    Return v4
+# CHECK: [[read]]: anything ~ undefined = PropGet
+# CHECK-NEXT: = AssumeType [[read]] provenType=undefined|false
+}
+function f1 name="hold" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|number
+    v2 = Check v1 expectedType=number
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    Return v4
+# CHECK: [[first]]: undefined = Check v0 expectedType=undefined|number
+# CHECK-NEXT: [[passed]]: undefined = AssumeType [[first]] provenType=undefined [isBehindChecks]
+# CHECK-NEXT: [[second]]: number = Check [[passed]] expectedType=number
+# CHECK-NEXT: [[stored]]: never = AssumeType [[second]] provenType=undefined|null [isBehindChecks]
+# CHECK-NEXT: = NewObject -, [[stored]] layout=L0
+}

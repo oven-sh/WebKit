@@ -225,6 +225,7 @@ public:
 
 private:
     friend class AlignedMemoryAllocator;
+    friend class CompleteSubspace;
     friend class IsoCellSet;
     friend class LocalAllocator;
     friend class LocalSideAllocator;
@@ -277,6 +278,9 @@ private:
     BlockDirectory* m_nextDirectoryInSubspace { nullptr };
     BlockDirectory* m_nextDirectoryWithEmptyBlocks { nullptr };
     Atomic<bool> m_isOnEmptyBlocksList { false };
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned m_numberOfLargerCells { 0 };
+#endif
     
     SentinelLinkedList<LocalAllocator, BasicRawSentinelNode<LocalAllocator>> m_localAllocators;
 };

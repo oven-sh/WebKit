@@ -1,0 +1,39 @@
+# The miss path of a guarded slot read is stamped with the layout of the guard: it asks for no site cache and reads by name through the lookup tables, of which the table of fields comes first
+# RUN: compile
+# RUN(SITES): pipeline PlaceSiteCaches
+# OPTIONS: heat=everything-is-hot check=validate-back-end limit=MaxSiteCaches:2 disable=pass:InlineCalls
+# STATISTIC: TypeTestsPlaced = 16
+# STATISTIC: SiteCachesPlaced = 2
+# STATISTIC: SitesWithoutSiteCache = 1
+# CHECK: image not empty
+# SITES-LABEL: name="readsPointBetweenCalls"
+# SITES: PropGet {{*}} key="report" {{*}}siteCache=
+# SITES: PropGet {{*}} key="first" {{*}}siteCache=
+# SITES-NOT: key="x" {{*}}siteCache=
+# SITES-LABEL: name="library"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="register" [isFreeName]
+    v2 = Double number=1.5
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Call v1, -, v3
+    v5 = NewClosure function=f1
+    v6 = Call v1, -, v5
+    Return v6
+}
+function f1 name="readsPointBetweenCalls" parameters=[{type=anything}, {type=undefined|null|L0}] results=[{type=anything}] {
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="report" [isFreeName]
+    v4 = PropGet v0 key="first"
+# REPEAT: i = 0..15
+    v%(i*2+5) = Call v3, -, v%(i*2+4)
+    v%(i*2+6) = PropGet v1 key="x" receivers=[L0]
+# END REPEAT
+    v37 = Call v3, -, v36
+    Return v37
+}

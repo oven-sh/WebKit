@@ -1,0 +1,96 @@
+# What an edge passes is converted on the edge, by the code generator. Four edges that take the sum of a loop boxed do not outvote the addition and the back edge if they lead to a block that is seldom entered,
+# or out of the loop: the loop carries a double, and the sum is boxed on the four edges. Four edges to a block that runs as often as the rest of the loop do
+# FORM: Placed
+# RUN: pass ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="rareEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v5: number):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b6(v5)
+  b2():
+    Branch v2 -> taken b3(), notTaken b6(v5)
+  b3():
+    Branch v3 -> taken b4(), notTaken b6(v5)
+  b4():
+    Branch v4 -> taken b5(), notTaken b6(v5)
+  b5():
+    v7 = Add v5, v0 form=Numbers
+    Jump -> next b1(v7)
+  b6(v8: anything) frequency=Rare:
+    Branch v1 -> taken b1(v0), notTaken b7(v8)
+  b7(v9: anything):
+    Return v9
+# CHECK: b1(v5: number @Double):
+# CHECK: number @Double = Add v5, v0 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v7)
+# CHECK-NEXT: b6(v8: anything @JSValue) frequency=Rare:
+}
+
+function f1 name="unlikelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v5: number):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b6(v5)
+  b2():
+    Branch v2 -> taken b3(), notTaken b6(v5)
+  b3():
+    Branch v3 -> taken b4(), notTaken b6(v5)
+  b4():
+    Branch v4 -> taken b5(), notTaken b6(v5)
+  b5():
+    v7 = Add v5, v0 form=Numbers
+    Jump -> next b1(v7)
+  b6(v8: anything) frequency=Unlikely:
+    Branch v1 -> taken b1(v0), notTaken b7(v8)
+  b7(v9: anything):
+    Return v9
+# CHECK: b1(v5: number @Double):
+# CHECK: number @Double = Add v5, v0 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v7)
+# CHECK-NEXT: b6(v8: anything @JSValue) frequency=Unlikely:
+}
+
+function f2 name="likelyEdgesTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v5: number):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b6(v5)
+  b2():
+    Branch v2 -> taken b3(), notTaken b6(v5)
+  b3():
+    Branch v3 -> taken b4(), notTaken b6(v5)
+  b4():
+    Branch v4 -> taken b5(), notTaken b6(v5)
+  b5():
+    v7 = Add v5, v0 form=Numbers
+    Jump -> next b1(v7)
+  b6(v8: anything):
+    Branch v1 -> taken b1(v0), notTaken b7(v8)
+  b7(v9: anything):
+    Return v9
+# CHECK: b1(v5: number @JSValue):
+}
+
+function f3 name="edgesOutOfTheLoopTakeTheSumBoxed" parameters=[{type=number}, {type=boolean}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1(v0)
+  b1(v5: number):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b6(v5)
+  b2():
+    Branch v2 -> taken b3(), notTaken b6(v5)
+  b3():
+    Branch v3 -> taken b4(), notTaken b6(v5)
+  b4():
+    Branch v4 -> taken b5(), notTaken b6(v5)
+  b5():
+    v7 = Add v5, v0 form=Numbers
+    Jump -> next b1(v7)
+  b6(v8: anything):
+    Return v8
+# CHECK: b1(v5: number @Double):
+# CHECK: number @Double = Add v5, v0 form=Numbers
+# CHECK-NEXT: Jump -> next b1(v7)
+# CHECK-NEXT: b6(v8: anything @JSValue):
+}

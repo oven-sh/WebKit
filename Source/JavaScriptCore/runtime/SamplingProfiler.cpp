@@ -28,6 +28,7 @@
 
 #if ENABLE(SAMPLING_PROFILER)
 
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "CodeBlockSet.h"
 #include "HeapIterationScope.h"
@@ -53,6 +54,11 @@
 #include <wtf/StackTrace.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
+
+#include "AOTCompiledFrame.h"
+#include "AOTFunctionDescription.h"
+#include "AOTImage.h"
+#include "AOTStackTrace.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -314,6 +320,205 @@ private:
     void* m_machineFrame;
 };
 
+#if ENABLE(AOT)
+class FrameWalkerWithCompiledFrames : public FrameWalker {
+public:
+    typedef FrameWalker Base;
+
+    FrameWalkerWithCompiledFrames(VM& vm, const AOT::Image& image, const AOT::SampledTop& top, const StackBounds& stackBounds, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, top.callFrame, codeBlockSetLocker, machineThreadsLocker)
+        , m_image(image)
+        , m_stack { stackBounds }
+        , m_pc(top.pc)
+        , m_callerPCOfFramelessTop(top.callerPCOfFramelessTop)
+        , m_framePointerOfFrameWithoutRecord(top.framePointer)
+    {
+    }
+
+    SUPPRESS_ASAN
+    size_t walk(Vector<UnprocessedStackFrame>& stackTrace, bool& didRunOutOfSpace)
+    {
+        if (sReportStats)
+            sNumTotalWalks++;
+        resetAtMachineFrame();
+        size_t maxStackTraceSize = stackTrace.size();
+        while (!isAtTop() && !m_bailingOut && m_depth < maxStackTraceSize) {
+            recordJITFrame(stackTrace);
+            advanceToParentFrame();
+            resetAtMachineFrame();
+        }
+        didRunOutOfSpace = m_depth >= maxStackTraceSize && !isAtTop();
+        reportStats();
+        return m_depth;
+    }
+
+protected:
+
+    SUPPRESS_ASAN
+    void recordJITFrame(Vector<UnprocessedStackFrame>& stackTrace)
+    {
+        if (!m_compiledFrames) {
+            Base::recordJITFrame(stackTrace);
+            return;
+        }
+        const AOT::CodeLocation& code = (**m_compiledFrames).code;
+        if (code.kind != AOT::CodeKind::Function)
+            return;
+        stackTrace[m_depth] = UnprocessedStackFrame();
+        stackTrace[m_depth].compiledCode = AOT::CompiledFunctionID(code.function);
+        stackTrace[m_depth].compiledCodeOffset = code.offset;
+        m_depth++;
+    }
+
+    SUPPRESS_ASAN
+    void advanceToParentFrame()
+    {
+        if (const void* callerPC = std::exchange(m_callerPCOfFramelessTop, nullptr)) {
+            m_pc = callerPC;
+            m_compiledFrames.reset();
+            return;
+        }
+        if (m_compiledFrames) {
+            ++*m_compiledFrames;
+            if (*m_compiledFrames) {
+                m_callFrame = (**m_compiledFrames).callFrame;
+                m_pc = (**m_compiledFrames).pc;
+                return;
+            }
+            m_compiledFrames.reset();
+        }
+        m_framePointerOfFrameWithoutRecord = nullptr;
+        CallFrame* calleeFrame = m_callFrame;
+        EntryFrame* calleeEntryFrame = m_entryFrame;
+        m_pc = removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(calleeFrame)->returnPC);
+        Base::advanceToParentFrame();
+        if (isAtTop())
+            return;
+        if (m_entryFrame != calleeEntryFrame) {
+            if (auto resumedFrame = AOT::findSampledTop(m_image, { calleeEntryFrame, nullptr, nullptr, calleeEntryFrame }, m_callFrame, m_stack.bounds)) {
+                m_callFrame = resumedFrame->callFrame;
+                m_pc = resumedFrame->pc;
+                m_framePointerOfFrameWithoutRecord = resumedFrame->framePointer;
+            } else
+                m_pc = nullptr;
+        }
+        // A stub frame records nothing, so m_depth alone does not bound a walk over a cyclic chain of frames.
+        if (m_callFrame <= calleeFrame) {
+            m_bailingOut = true;
+            if (sReportStats)
+                sNumFailedWalks++;
+        }
+    }
+
+    SUPPRESS_ASAN
+    void resetAtMachineFrame()
+    {
+        if (!isAtTop() && isValidFramePointer(m_callFrame)) {
+            if (!m_compiledFrames)
+                m_compiledFrames.emplace(m_image, m_callFrame, m_pc, m_stack, m_framePointerOfFrameWithoutRecord);
+            if (*m_compiledFrames && (**m_compiledFrames).code.runsCompiledCode())
+                return;
+            m_compiledFrames.reset();
+        }
+        Base::resetAtMachineFrame();
+    }
+
+    const AOT::Image& m_image;
+    AOT::SuspendedThreadStack m_stack;
+    const void* m_pc;
+    const void* m_callerPCOfFramelessTop;
+    CallFrame* m_framePointerOfFrameWithoutRecord;
+    std::optional<AOT::MachineFrameIterator<AOT::SuspendedThreadStack>> m_compiledFrames;
+};
+
+class CFrameWalkerWithCompiledFrames : public FrameWalkerWithCompiledFrames {
+public:
+    typedef FrameWalkerWithCompiledFrames Base;
+
+    CFrameWalkerWithCompiledFrames(VM& vm, const AOT::Image& image, void* machineFrame, const AOT::SampledTop& top, const StackBounds& stackBounds, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, image, { top.callFrame, top.pc, nullptr, top.framePointer }, stackBounds, codeBlockSetLocker, machineThreadsLocker)
+        , m_machineFrame(machineFrame)
+    {
+    }
+
+    size_t walk(Vector<UnprocessedStackFrame>& stackTrace, bool& didRunOutOfSpace)
+    {
+        if (sReportStats)
+            sNumTotalWalks++;
+        resetAtMachineFrame();
+        size_t maxStackTraceSize = stackTrace.size();
+        if (!isAtTop() && !m_bailingOut && m_machineFrame == m_callFrame) {
+            recordJITFrame(stackTrace);
+            Base::advanceToParentFrame();
+            resetAtMachineFrame();
+        }
+
+        while (!isAtTop() && !m_bailingOut && m_depth < maxStackTraceSize) {
+            if (m_machineFrame >= m_callFrame) {
+                m_bailingOut = true;
+                break;
+            }
+
+            if (isCFrame()) {
+                RELEASE_ASSERT(!LLInt::isLLIntPC(frame()->callerFrame));
+                stackTrace[m_depth] = UnprocessedStackFrame(frame()->returnPC);
+                m_depth++;
+            } else
+                recordJITFrame(stackTrace);
+            advanceToParentFrame();
+            resetAtMachineFrame();
+        }
+        didRunOutOfSpace = m_depth >= maxStackTraceSize && !isAtTop();
+        reportStats();
+        return m_depth;
+    }
+
+private:
+
+    bool isCFrame()
+    {
+        return frame()->callerFrame != m_callFrame;
+    }
+
+    void advanceToParentFrame()
+    {
+        if (!isCFrame())
+            Base::advanceToParentFrame();
+        m_machineFrame = frame()->callerFrame;
+    }
+
+    void resetAtMachineFrame()
+    {
+        if (!isValidFramePointer(m_machineFrame)) {
+            m_bailingOut = true;
+            if (sReportStats)
+                sNumFailedWalks++;
+            return;
+        }
+        Base::resetAtMachineFrame();
+    }
+
+    CallerFrameAndPC* frame()
+    {
+        return reinterpret_cast<CallerFrameAndPC*>(m_machineFrame);
+    }
+
+    void* m_machineFrame;
+};
+
+static void* linkRegisterOf(const PlatformRegisters& registers)
+{
+#if OS(DARWIN) && CPU(ARM64)
+    return MachineContext::linkRegister(registers).untaggedPtr();
+#elif OS(LINUX) && CPU(ARM64)
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.machineContext.regs[30]));
+#else
+    UNUSED_PARAM(registers);
+    return nullptr;
+#endif
+}
+#endif // ENABLE(AOT)
+
 SamplingProfiler::SamplingProfiler(VM& vm, Ref<Stopwatch>&& stopwatch)
     : m_isPaused(false)
     , m_isShutDown(false)
@@ -398,6 +603,10 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             bool topFrameIsLLInt = false;
             RegExp* regExp = nullptr;
             void* llintPC;
+#if ENABLE(AOT)
+            const AOT::Image* image = m_vm.aotState().image;
+            AOT::SampledRegisters sampledRegisters;
+#endif
             {
                 PlatformRegisters registers;
                 m_jscExecutionThread->getRegisters(threadSuspendLocker, registers);
@@ -410,6 +619,10 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     machinePC = nullptr;
                 llintPC = removeCodePtrTag(MachineContext::llintInstructionPointer(registers));
                 assertIsNotTagged(machinePC);
+#if ENABLE(AOT)
+                if (image) [[unlikely]]
+                    sampledRegisters = { machineFrame, machinePC, linkRegisterOf(registers), MachineContext::stackPointer(registers) };
+#endif
             }
 
             bool shouldAppendTopFrameAsCCode = false;
@@ -423,6 +636,10 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 topFrameIsLLInt = true;
                 // We're okay to take a normal stack trace when the PC
                 // is in LLInt code.
+#if ENABLE(AOT)
+            } else if (image && image->locate(machinePC).runsCompiledCode()) {
+                // We're okay to take a normal stack trace here too.
+#endif
             } else {
                 // RegExp evaluation is leaf. So if RegExp evaluation exists, we can say it is RegExp evaluation is the top user-visible frame.
                 regExp = m_vm.m_executingRegExp;
@@ -436,6 +653,27 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             size_t walkSize;
             bool wasValidWalk;
             bool didRunOutOfVectorSpace;
+#if ENABLE(AOT)
+            if (image) [[unlikely]] {
+                const StackBounds& stackBounds = m_jscExecutionThread->stack();
+                AOT::SampledTop top { callFrame, machinePC, nullptr };
+                if (!topFrameIsLLInt) {
+                    if (auto sampledTop = AOT::findSampledTop(*image, sampledRegisters, callFrame, stackBounds))
+                        top = *sampledTop;
+                    else if (callFrame != machineFrame)
+                        top.pc = nullptr;
+                }
+                if (Options::sampleCCode()) {
+                    CFrameWalkerWithCompiledFrames walker(m_vm, *image, machineFrame, top, stackBounds, codeBlockSetLocker, machineThreadsLocker);
+                    walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
+                    wasValidWalk = walker.wasValidWalk();
+                } else {
+                    FrameWalkerWithCompiledFrames walker(m_vm, *image, top, stackBounds, codeBlockSetLocker, machineThreadsLocker);
+                    walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
+                    wasValidWalk = walker.wasValidWalk();
+                }
+            } else
+#endif
             if (Options::sampleCCode()) {
                 CFrameWalker walker(m_vm, machineFrame, callFrame, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
@@ -486,11 +724,53 @@ static ALWAYS_INLINE BytecodeIndex LEGACY_NODELETE tryGetBytecodeIndex(unsigned 
     return BytecodeIndex();
 }
 
+#if ENABLE(AOT)
+using CompiledSitePositions = UncheckedKeyHashMap<uint64_t, std::optional<AOT::SourcePosition>>;
+
+static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, std::optional<AOT::Typed::FunctionID> innerEntry, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
+{
+    AOT::CompiledFunctionID code = machineFrame.compiledCode;
+    auto append = [&](const AOT::TraceFrame& compiledFrame) -> SamplingProfiler::StackFrame& {
+        frames.append(SamplingProfiler::StackFrame());
+        frames.last().compiledFrame = compiledFrame;
+        return frames.last();
+    };
+
+    if (innerEntry) {
+        append({ code, *innerEntry, CallSiteIndex(), false, false });
+        shownFrames = AOT::ShownFrameFilter(true);
+        return;
+    }
+
+    if (auto site = image.callSiteAt(code.index(), machineFrame.compiledCodeOffset)) {
+        AOT::forEachShownFrame(code, *site, shownFrames, [&](const AOT::TraceFrame& compiledFrame) {
+            SamplingProfiler::StackFrame& frame = append(compiledFrame);
+            uint64_t key = (static_cast<uint64_t>(compiledFrame.code.index()) << 32 | compiledFrame.callSite.bits()) + 1;
+            auto& position = sitePositions.ensure(key, [&] {
+                return AOT::positionOf(compiledFrame);
+            }).iterator->value;
+            if (!position)
+                return;
+            frame.semanticLocation.lineColumn = position->lineColumn;
+            frame.compiledSiteModule = position->source;
+        });
+        return;
+    }
+
+    AOT::FunctionDescription root(image.rootFunctionOf(code.index()));
+    if (shownFrames.shows(root.visibility(), false))
+        append({ code, root.sourceFunction(), CallSiteIndex(), false, false });
+}
+#endif
+
 void SamplingProfiler::processUnverifiedStackTraces()
 {
     RELEASE_ASSERT(m_lock.isLocked());
 
     TinyBloomFilter<uintptr_t> filter = m_vm.heap.objectSpace().blocks().filter();
+#if ENABLE(AOT)
+    CompiledSitePositions compiledSitePositions;
+#endif
 
     for (UnprocessedStackTrace& unprocessedStackTrace : m_unprocessedStackTraces) {
         m_stackTraces.append(StackTrace());
@@ -583,7 +863,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 m_liveCellPointers.add(callee);
             };
 
-            if (calleeCell->type() != JSFunctionType) {
+            if (!isJSFunctionType(calleeCell->type())) {
                 if (JSObject* object = dynamicDowncast<JSObject>(calleeCell))
                     addCallee(object);
 
@@ -687,6 +967,9 @@ void SamplingProfiler::processUnverifiedStackTraces()
         }
 #endif
 
+#if ENABLE(AOT)
+        AOT::ShownFrameFilter shownFrames;
+#endif
         for (size_t i = startIndex; i < unprocessedStackTrace.frames.size(); i++) {
             UnprocessedStackFrame& unprocessedStackFrame = unprocessedStackTrace.frames[i];
             if (CodeBlock* codeBlock = unprocessedStackFrame.verifiedCodeBlock) {
@@ -706,6 +989,12 @@ void SamplingProfiler::processUnverifiedStackTraces()
                     appendCodeBlockNoInlining();
 #else
                 appendCodeBlockNoInlining();
+#endif
+#if ENABLE(AOT)
+            } else if (unprocessedStackFrame.compiledCode) {
+                const AOT::Image& image = *m_vm.aotState().image;
+                appendCompiledFrames(image, unprocessedStackFrame, i ? std::nullopt : image.innerEntryContaining(unprocessedStackTrace.topPC), shownFrames, compiledSitePositions, stackTrace.frames);
+                continue;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {
                 appendEmptyFrame();
@@ -743,8 +1032,10 @@ void SamplingProfiler::shutdown()
 
 void SamplingProfiler::start()
 {
+    JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, ReturnDefault, void)
     Locker locker { m_lock };
     startWithLock();
+    JSC_END_REMOVABLE_ENTRY_POINT
 }
 
 void SamplingProfiler::startWithLock()
@@ -833,6 +1124,14 @@ String SamplingProfiler::StackFrame::nameFromCallee(VM& vm)
 
 String SamplingProfiler::StackFrame::displayName(VM& vm)
 {
+#if ENABLE(AOT)
+    if (isCompiledFrame()) {
+        AOT::FunctionDescription description(compiledFrame.function);
+        if (description.codeType() == ModuleCode)
+            return "(module)"_s;
+        return description.nameInFrames(vm);
+    }
+#endif
     {
         String name = nameFromCallee(vm);
         if (!name.isEmpty())
@@ -886,6 +1185,12 @@ String SamplingProfiler::StackFrame::displayName(VM& vm)
 
 int SamplingProfiler::StackFrame::functionStartLine()
 {
+#if ENABLE(AOT)
+    if (isCompiledFrame()) {
+        auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+        return definition ? static_cast<int>(definition->lineColumn.line) : -1;
+    }
+#endif
     switch (frameType) {
     case FrameType::Unknown:
     case FrameType::Host:
@@ -905,6 +1210,12 @@ int SamplingProfiler::StackFrame::functionStartLine()
 
 unsigned SamplingProfiler::StackFrame::functionStartColumn()
 {
+#if ENABLE(AOT)
+    if (isCompiledFrame()) {
+        auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+        return definition ? definition->lineColumn.column : std::numeric_limits<unsigned>::max();
+    }
+#endif
     switch (frameType) {
     case FrameType::Unknown:
     case FrameType::Host:
@@ -923,8 +1234,22 @@ unsigned SamplingProfiler::StackFrame::functionStartColumn()
     return std::numeric_limits<unsigned>::max();
 }
 
+#if ENABLE(AOT)
+AOT::Typed::ModuleID SamplingProfiler::StackFrame::compiledModule() const
+{
+    auto definition = AOT::FunctionDescription(compiledFrame.function).definition();
+    return definition && definition->source ? definition->source : compiledSiteModule;
+}
+#endif
+
 std::tuple<SourceProvider*, SourceID> SamplingProfiler::StackFrame::sourceProviderAndID()
 {
+#if ENABLE(AOT)
+    if (isCompiledFrame()) {
+        AOT::Typed::ModuleID module = compiledModule();
+        return { nullptr, module ? firstCompiledCodeSourceID + module.index() : internalSourceID };
+    }
+#endif
     switch (frameType) {
     case FrameType::Unknown:
     case FrameType::Host:
@@ -947,6 +1272,12 @@ std::tuple<SourceProvider*, SourceID> SamplingProfiler::StackFrame::sourceProvid
 
 String SamplingProfiler::StackFrame::url()
 {
+#if ENABLE(AOT)
+    if (isCompiledFrame()) {
+        AOT::Typed::ModuleID module = compiledModule();
+        return module ? AOT::sourceURLOf(module) : emptyString();
+    }
+#endif
     switch (frameType) {
     case FrameType::Unknown:
     case FrameType::Host:
@@ -1023,6 +1354,7 @@ struct Tiers {
     static constexpr ASCIILiteral baseline { "Baseline"_s };
     static constexpr ASCIILiteral dfg { "DFG"_s };
     static constexpr ASCIILiteral ftl { "FTL"_s };
+    static constexpr ASCIILiteral compiled { "AOT"_s };
     static constexpr ASCIILiteral builtin { "js builtin"_s };
     static constexpr ASCIILiteral ipint { "IPInt"_s };
     static constexpr ASCIILiteral bbq { "BBQ"_s };
@@ -1037,6 +1369,8 @@ struct Tiers {
 
 static String tierName(SamplingProfiler::StackFrame& frame)
 {
+    if (frame.isCompiledFrame())
+        return Tiers::compiled;
     switch (frame.frameType) {
     case SamplingProfiler::FrameType::Executable:
         switch (frame.semanticLocation.jitType) {
@@ -1119,6 +1453,8 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
             }
 #endif
         }
+        if (stackFrame.isCompiledFrame())
+            result->setString("sourceURL"_s, stackFrame.url());
         result->setDouble("line"_s, sourceMappedLineColumn.line);
         result->setDouble("column"_s, sourceMappedLineColumn.column);
         result->setString("category"_s, tierName(stackFrame));
@@ -1316,6 +1652,8 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
         func(Tiers::baseline);
         func(Tiers::dfg);
         func(Tiers::ftl);
+        if (m_vm.hasCompiledCode())
+            func(Tiers::compiled);
         func(Tiers::builtin);
         func(Tiers::ipint);
         func(Tiers::bbq);

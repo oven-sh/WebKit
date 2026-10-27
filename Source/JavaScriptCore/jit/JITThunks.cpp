@@ -28,6 +28,7 @@
 
 #if ENABLE(JIT)
 
+#include "AOTRemovableFeature.h"
 #include "CommonSlowPaths.h"
 #include "JIT.h"
 #include "JITCode.h"
@@ -54,22 +55,29 @@ JITThunks::~JITThunks() = default;
 
 using SharedCommonThunks = std::array<MacroAssemblerCodeRef<JITThunkPtrTag>, numberOfVMIndependentCommonThunkIDs>;
 
+NEVER_INLINE static void generateSharedCommonThunks(SharedCommonThunks& thunks)
+{
+    JSC_REMOVABLE_DEFINITION(JIT, generateSharedCommonThunks);
+    unsigned index = 0;
+#define JSC_DEFINE_SHARED_JIT_THUNK(name, func) thunks[index++] = func();
+JSC_FOR_EACH_VM_INDEPENDENT_COMMON_THUNK(JSC_DEFINE_SHARED_JIT_THUNK)
+#undef JSC_DEFINE_SHARED_JIT_THUNK
+}
+
 static const SharedCommonThunks& sharedCommonThunks()
 {
     static LazyNeverDestroyed<SharedCommonThunks> thunks;
     static std::once_flag onceKey;
     std::call_once(onceKey, [] {
         thunks.construct();
-        unsigned index = 0;
-#define JSC_DEFINE_SHARED_JIT_THUNK(name, func) thunks.get()[index++] = func();
-JSC_FOR_EACH_VM_INDEPENDENT_COMMON_THUNK(JSC_DEFINE_SHARED_JIT_THUNK)
-#undef JSC_DEFINE_SHARED_JIT_THUNK
+        generateSharedCommonThunks(thunks.get());
     });
     return thunks.get();
 }
 
-static ThunkGenerator generatorForLazyCommonThunk(CommonJITThunkID thunkID)
+NEVER_INLINE static ThunkGenerator generatorForLazyCommonThunk(CommonJITThunkID thunkID)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, generatorForLazyCommonThunk);
     switch (thunkID) {
 #define JSC_CASE_COMMON_JIT_THUNK(name, func) \
     case CommonJITThunkID::name: return func;
@@ -81,8 +89,9 @@ JSC_FOR_EACH_VM_DEPENDENT_LAZY_COMMON_THUNK(JSC_CASE_COMMON_JIT_THUNK)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void JITThunks::initialize(VM& vm)
+NEVER_INLINE void JITThunks::initialize(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(JIT, &JITThunks::initialize);
     ASSERT(!isCompilationThread());
     sharedCommonThunks();
 #define JSC_DEFINE_COMMON_JIT_THUNK(name, func) \

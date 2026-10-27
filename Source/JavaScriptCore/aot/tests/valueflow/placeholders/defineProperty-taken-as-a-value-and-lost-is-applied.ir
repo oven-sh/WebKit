@@ -1,0 +1,65 @@
+# picked = first or second or third; tools = Object.defineProperty or first or second; holder = {}; picked(holder, "go", { value: one }); holder.go(); other = {}; other.go()
+# Each variable holds more than the analysis follows in one set, so the untracked object stands for what they held. A call of it may be a call of whatever can be called among all of that,
+# also of what never came to this call: the functions are entered and the built-in is applied, each with the operands of the call. So the object that is passed has the property, and no other object has it.
+# Nothing escapes by that, and a function that the analysis still follows is not entered.
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 2
+# RUN: valueflow-solve calls
+# CHECK: f0 v17 -> f1
+# CHECK-NOT: f0 v20 -> {{*}}
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+# UNREACHED: unreached f5
+# RUN(NUMBERS): valueflow-solve
+# NUMBERS: reached-functions-escaped 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder"
+layout L1 name="Descriptor" fields=[{key="value" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Other"
+variable g0 name="picked" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="tools" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    v2 = NewClosure function=f4
+    PutModuleVariable v0 variable=g0
+    PutModuleVariable v1 variable=g0
+    PutModuleVariable v2 variable=g0
+    v6 = Builtin builtin=ObjectDefineProperty
+    PutModuleVariable v6 variable=g1
+    PutModuleVariable v0 variable=g1
+    PutModuleVariable v1 variable=g1
+    v10 = NewObject layout=L0 fields=[]
+    v11 = NewClosure function=f1
+    v12 = NewObject -, v11 layout=L1 fields=[0]
+    v13 = String string="go"
+    v14 = GetModuleVariable variable=g0
+    v15 = Call v14, -, v10, v13, v12
+    v16 = PropGet v10 key="go"
+    v17 = Call v16, v10
+    v18 = NewObject layout=L2 fields=[]
+    v19 = PropGet v18 key="go"
+    v20 = Call v19, v18
+    v21 = NewClosure function=f5
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="first" results=[{type=anything}] {
+    Return
+}
+function f3 name="second" results=[{type=anything}] {
+    Return
+}
+function f4 name="third" results=[{type=anything}] {
+    Return
+}
+function f5 name="kept" results=[{type=anything}] {
+    Return
+}

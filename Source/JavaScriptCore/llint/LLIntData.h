@@ -60,6 +60,11 @@ struct OpcodeConfig {
     void* ipint_conversion_dispatch_base;
     void* ipint_simd_dispatch_base;
     void* ipint_atomic_dispatch_base;
+
+    uintptr_t bytecodePCRangeStart;
+    uintptr_t bytecodePCRangeEnd;
+    uintptr_t wasmIPIntPCRangeStart;
+    uintptr_t wasmIPIntPCRangeEnd;
 };
 
 constexpr size_t OpcodeConfigSizeToProtect = std::max(CeilingOnPageSize, 16 * KB);

@@ -33,6 +33,8 @@
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
+#include "AOTPropertyWalk.h"
+
 namespace JSC {
 
 static JSC_DECLARE_HOST_FUNCTION(objectProtoFuncValueOf);
@@ -105,6 +107,18 @@ bool objectPrototypeHasOwnProperty(JSGlobalObject* globalObject, JSObject* thisO
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (thisObject->structure()->isCompiledStructure()) {
+        switch (AOT::PropertyWalk::hasOwnProperty(thisObject, propertyName.uid())) {
+        case AOT::PropertyWalk::Presence::Present:
+            return true;
+        case AOT::PropertyWalk::Presence::Absent:
+            return false;
+        case AOT::PropertyWalk::Presence::Unknown:
+            break;
+        }
+    }
+#endif
     Structure* structure = thisObject->structure();
     HasOwnPropertyCache& hasOwnPropertyCache = vm.ensureHasOwnPropertyCache();
     if (std::optional<bool> result = hasOwnPropertyCache.get(structure, propertyName)) {

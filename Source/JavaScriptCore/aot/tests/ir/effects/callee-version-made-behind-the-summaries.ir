@@ -1,0 +1,50 @@
+# A copy of a function for the one function that it is handed, made behind the summaries, is the body of its source with the same parameters.
+# A call of it has the effects of a call of the source, on memory and on each operand, and so has a call of a copy of the copy
+# FORM: Prepared optimizing
+# RUN: effects summaries-before=f4 f0
+# RUN(OPERANDS): operands summaries-before=f4 f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="calls" parameters=[{type=Array<number>}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v1 = NewClosure function=f1
+    v2 = CallDirect v1, v0 function=f3
+    v3 = CallDirect v1, v0 function=f4
+    v4 = CallDirect v1, v0 function=f5
+    Return v4
+}
+function f1 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f2 name="negate" kind=Arrow parameters=[{type=number}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame] {
+    v1 = Negate v0
+    Return v1
+}
+function f3 name="apply" parameters=[{type=f1|f2}, {type=Array<number>}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] {
+    v2 = TypeOf v1
+    v3 = Integer integer=1
+    v4 = Call v0, -, v3 callees=[f1, f2]
+    Return v4
+}
+function f4 name="apply" role=CalleeVersion parameters=[{type=undefined|f1}, {type=Array<number>}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f3} {
+    v2 = TypeOf v1
+    v3 = Integer integer=1
+    v4 = Call v0, -, v3 callees=[f1]
+    Return v4
+}
+function f5 name="apply" role=CalleeVersion parameters=[{type=f1}, {type=Array<number>}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4 parameterMap=[{original=0}, {original=1}]} creator=Version{provenVersion=f4} {
+    v2 = TypeOf v1
+    v3 = Integer integer=1
+    v4 = Call v0, -, v3 callees=[f1]
+    Return v4
+}
+# CHECK: f3 return: none throw: none p0: [Calls] p1: [Inspects]
+# CHECK: v2 CallDirect: none
+# CHECK-NEXT: v3 CallDirect: none
+# CHECK-NEXT: v4 CallDirect: none
+# OPERANDS: v2 CallDirect 0: [Inspects, Calls]
+# OPERANDS-NEXT: v2 CallDirect 1: [Inspects]
+# OPERANDS-NEXT: v3 CallDirect 0: [Inspects, Calls]
+# OPERANDS-NEXT: v3 CallDirect 1: [Inspects]
+# OPERANDS-NEXT: v4 CallDirect 0: [Inspects, Calls]
+# OPERANDS-NEXT: v4 CallDirect 1: [Inspects]

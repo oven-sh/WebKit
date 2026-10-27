@@ -1,0 +1,79 @@
+# function f(): number { const list: string[] = []; const s = list[0]; list[0] = s + 0; let n = 1; (() => { n = 2; s })(); return n }  for (let i = 0; i < 1; i++) print(f())
+# The sum that goes back into the list is no string, so the rest of f runs in the copy without types. The arrow function holds s, which rests on a check: its call in the copy names
+# the function that flow has seen beside whatever else may come, so what that function stores is stored by the call, and n is read again behind it
+# FORM: AsRead
+# RUN(IR): pipeline CheckPlacement
+# RUN: run-in-shell
+# IR: = CallDirect {{*}}[isNeverInlined]
+# IR-NEXT: = GetEnvironmentField
+# CHECK: 2
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w3}}]
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+data d0 root=Array{contents=undefined|null|string} module=m0
+typesite w0 module=m0 kind=Result
+typesite w1 module=m0 position=165 kind=Variable
+typesite w2 module=m0 position=196 kind=CallResult
+typesite w3 module=m0 position=98 kind=Variable
+typesite w4 module=m0 position=31 kind=Variable
+typesite w5 module=m0 position=60 kind=Variable
+typesite w6 module=m0 position=64 kind=Element
+typesite w7 module=m0 position=75 kind=Element
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w1}
+    Jump -> next b1(v3)
+  b1(v4: number):
+    LoopHint
+    v6 = Integer integer=1
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v8):
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="print" [isFreeName]
+    v11 = Call v1 calleeName="f"
+    v12 = Convert v11 declared={type=number site=w2}
+    v13 = Call v10, -, v12
+    v14 = Increment v8
+    v15 = Convert v14 declared={type=number site=w1}
+    Jump -> next b1(v15)
+  b3(v16):
+    v17 = Undefined
+    Return v17
+}
+function f1 name="f" module=m0 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=w0}] {
+    v0 = NewObject layout=L0
+    v1 = Data data=d0
+    v2 = Convert v1 declared={type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined]}
+    v3 = Integer
+    v4 = ElemGet v2, v3
+    v5 = Convert v4 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v6 = Integer
+    v7 = Integer
+    v8 = Add v5, v7
+    v9 = Convert v8 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}
+    ElemSet v2, v6, v9
+    v11 = Integer integer=1
+    v12 = Convert v11 declared={type=number site=w3}
+    PutEnvironmentField v0, v12 layout=L0
+    v14 = NewClosure v0, v5 function=f2
+    v15 = Call v14
+    v16 = GetEnvironmentField v0 layout=L0
+    v17 = CheckInitialized v16 name="n"
+    v18 = Convert v17 declared={type=number site=w0}
+    Return v18
+}
+function f2 module=m0 kind=Arrow flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}, {type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: env L0, v1: undefined|null|string):
+    v2 = GetEnvironmentField v0 layout=L0
+    v3 = CheckInitialized v2 name="n"
+    v4 = Integer integer=2
+    v5 = Convert v4 declared={type=number site=w3}
+    PutEnvironmentField v0, v5 layout=L0
+    v7 = Undefined
+    Return v7
+}

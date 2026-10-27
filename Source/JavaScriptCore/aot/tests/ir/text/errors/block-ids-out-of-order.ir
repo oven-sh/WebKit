@@ -1,0 +1,11 @@
+# Block ids are dense and ascend
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="f" results=[{type=undefined}] {
+  b0():
+    Jump -> next b1()
+  b2():
+    Return
+}

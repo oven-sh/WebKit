@@ -1,0 +1,67 @@
+enum WriterState { | engine Unknown AllKnown }
+enum StoreCount { | engine Unknown Never AtMostOnce }
+enum InitializationState { | engine Unknown StoredBeforeEveryRead SetAtCreation }
+enum ReadState { | engine Unknown OnlyCalled OnlyAccessed NeverRead }
+enum ClosureDeferral { | engine Unknown CapturesNothing CapturesObject CapturesEnvironment }
+enum Occupancy { | engine Unknown FilledAtBirth FilledWithValueAtBirth AlwaysFilled }
+enum PrototypeNameState { | engine Unknown AbsentOnPrototypes }
+enum ExecutionCount { | engine Unknown AtMostOnce }
+enum AllocationState { | engine Unknown NeverAllocated }
+enum KeyEnumeration { | engine Unknown NeverEnumerated }
+enum FieldCreation { | engine Unknown OnlyAtConstruction }
+enum MemberMutability { | engine Unknown Fixed }
+enum BaseState { | engine Unknown None Layout BuiltinClass }
+enum FrameLocality { | engine Unknown FrameLocal }
+enum FunctionReachability { | engine Unknown Unreached }
+enum CallerState { | engine Unknown AllKnown }
+enum ClosureUse { | engine Unknown CalledOnly }
+enum NamespaceUse { | engine Unknown NamedReadsOnly NeverCreated }
+enum BuiltinLocationState { | engine Unknown Constant }
+enum StoreNaming { | engine Unknown EveryStoreNamesLocation }
+
+flags ObjectMutation {
+    | engine ReachNativeCode ReachUnknownJavaScript DeleteField RedefineProperty AddProperty ChangeIntegrity ChangePrototype BecomePrototype
+    StoreAfterCreation StoreOfOtherType
+}
+flags FieldStability { | engine IsNeverDeleted IsNeverRedefined IsNeverStoredWithOtherType }
+flags ObservedUse { | engine Serialized ReachesTypedParse IsParsedByType }
+
+record LocationFlow engine {
+    writers: WriterState stores: StoreCount storeNaming: StoreNaming initialization: InitializationState reads: ReadState deferral: ClosureDeferral
+    deferredFunction: Function(Closure)? isUnchangedDuringActivation: Bool cause: UnprovenCause witness: Witness
+}
+record FieldFlow engine { location: LocationFlow occupancy: Occupancy prototypeName: PrototypeNameState stability: FieldStability }
+record FieldOrder engine { fields: List<UInt32> }
+record LayoutFlow engine {
+    allocation: AllocationState baseState: BaseState base: Layout? baseClass: BuiltinClass? members: List<Layout> allocationClasses: List<AllocationClass>
+    constructorOrders: List<FieldOrder> fieldCreation: FieldCreation observedUses: ObservedUse cause: UnprovenCause witness: Witness
+    impossibleMutations: ObjectMutation keys: KeyEnumeration addedKeys: List<PropertyKey> addedKeysAreComplete: Bool
+    isReachedThroughUnknownReceivers: Bool ownAccessors: List<ClassMember> ownAccessorsAreComplete: Bool closureEnvironmentField: UInt32?
+}
+record ClassMember engine {
+    key: PropertyKey? side: ClassSide kind: MethodKind function: Function(Dispatch)? mutability: MemberMutability closureUse: ClosureUse
+    isWritableData: Bool
+}
+record ClassFlow engine {
+    evaluations: ExecutionCount prototypeLink: MemberMutability staticLink: MemberMutability constructorProperty: MemberMutability
+    prototypeProperty: MemberMutability prototypeNamesAreComplete: Bool staticNamesAreComplete: Bool members: List<ClassMember>
+    namedMembers: List<ClassMember> hasAssignedPrototype: Bool prototypeBase: Layout?
+}
+
+record FunctionFlow engine {
+    reachability: FunctionReachability callers: CallerState executions: ExecutionCount closureUse: ClosureUse
+    cause: UnprovenCause witness: Witness
+}
+record ModuleFlow engine { namespaceUse: NamespaceUse exportsReadByName: List<Variable> }
+record BuiltinLocationFlow engine { holder: Builtin key: PropertyKey state: BuiltinLocationState witness: Witness }
+
+record LayoutSet engine { members: List<Layout> isComplete: Bool hasMembersWithoutLayout: Bool }
+record CalleeSet engine { functions: List<Function(Call)> builtins: List<Builtin> isComplete: Bool }
+record AccessSite engine { function: Function(Dispatch) location: SourceLocation kind: AccessKind }
+record AllocationSite engine { function: Function(Dispatch) layout: Layout? builtinClass: BuiltinClass? allocationClass: AllocationClass? location: SourceLocation }
+record AllocationClass engine {
+    layout: Layout? builtinClass: BuiltinClass? closureFunction: Function(Closure)? impossibleMutations: ObjectMutation
+    keys: KeyEnumeration locality: FrameLocality addedKeys: List<PropertyKey> addedKeysAreComplete: Bool isReachedThroughUnknownReceivers: Bool
+    cause: UnprovenCause witness: Witness
+    isStoredUnderUnnamedKeys: Bool inheritsFromListedFunctions: Bool
+}

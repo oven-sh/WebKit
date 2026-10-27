@@ -101,7 +101,7 @@ ClonedArguments* ClonedArguments::createEmpty(VM& vm, JSGlobalObject* nullOrGlob
         ClonedArguments(vm, structure, butterfly);
     result->finishCreation(vm);
 
-    result->m_callee.set(vm, result, callee);
+    result->m_callee.setMayBeNull(vm, result, callee);
     result->putDirectOffset(vm, clonedArgumentsLengthPropertyOffset, jsNumber(length));
     return result;
 }
@@ -206,17 +206,21 @@ Structure* ClonedArguments::createSlowPutStructure(VM& vm, JSGlobalObject* globa
     return createStructure(vm, globalObject, prototype, NonArrayWithSlowPutArrayStorage);
 }
 
+// A native function stands for a callee in strict code.
+static bool hidesCallee(JSFunction* callee)
+{
+    auto* executable = dynamicDowncast<FunctionExecutable>(callee->executable());
+    return !executable || executable->isInStrictContext() || executable->usesNonSimpleParameterList();
+}
+
 bool ClonedArguments::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName ident, PropertySlot& slot)
 {
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(object);
     VM& vm = globalObject->vm();
 
     if (!thisObject->specialsMaterialized()) {
-        FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(thisObject->m_callee->executable());
-        bool isStrictMode = executable->isInStrictContext();
-
         if (ident == vm.propertyNames->callee) {
-            if (isStrictMode || executable->usesNonSimpleParameterList()) {
+            if (hidesCallee(thisObject->m_callee.get())) {
                 slot.setGetterSlot(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor, thisObject->realm()->throwTypeErrorArgumentsCalleeGetterSetter());
                 return true;
             }
@@ -285,13 +289,10 @@ void ClonedArguments::materializeSpecials(JSGlobalObject* globalObject)
     RELEASE_ASSERT(!specialsMaterialized());
     VM& vm = globalObject->vm();
     
-    FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(m_callee->executable());
-    bool isStrictMode = executable->isInStrictContext();
-    
     {
         // An arguments object has these from the start, so one with immutable properties still gets them. No JavaScript runs here.
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        if (isStrictMode || executable->usesNonSimpleParameterList())
+        if (hidesCallee(m_callee.get()))
             putDirectAccessor(globalObject, vm.propertyNames->callee, this->realm()->throwTypeErrorArgumentsCalleeGetterSetter(), PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
         else
             putDirect(vm, vm.propertyNames->callee, JSValue(m_callee.get()));

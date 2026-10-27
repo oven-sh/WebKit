@@ -225,7 +225,8 @@ static ALWAYS_INLINE void putDirectAccessorWithReify(VM& vm, JSGlobalObject* glo
         RETURN_IF_EXCEPTION(scope, void());
     }
 
-    ASSERT(canPutDirectFast(vm, originalStructureBeforePut(baseObject), propertyName, isJSFunction));
+    // llint_aot_op_new_object may have made a compiled object of the literal's first members. putDirectAccessor() adds to one as to any other object.
+    ASSERT(canPutDirectFast(vm, originalStructureBeforePut(baseObject), propertyName, isJSFunction) || originalStructureBeforePut(baseObject)->isCompiledStructure());
     scope.release();
     baseObject->putDirectAccessor(globalObject, propertyName, accessor, attribute);
 }

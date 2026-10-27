@@ -1,0 +1,32 @@
+# The limit is on the shapes of an object at a merge. Here it has two at each of two merges, and one between them
+# FORM: Prepared
+# OPTIONS: limit=MaxVirtualObjectVariants:4
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Options" fields=[{key="a" declared={type=anything}}, {key="b" declared={type=anything}}, {key="c" declared={type=anything}}]
+
+function f0 name="twoShapesAtEachOfTwoMerges" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PropDefine v3, v0 key="b" receivers=[L0]
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    PropDefine v3, v0 key="b" receivers=[L0]
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    PropDefine v3, v0 key="c" receivers=[L0]
+    Jump -> next b6()
+  b5():
+    Jump -> next b6()
+  b6():
+    PropDefine v3, v0 key="c" receivers=[L0]
+    v8 = PropGet v3 key="a" receivers=[L0]
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropDefine
+}

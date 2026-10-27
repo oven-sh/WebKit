@@ -1,0 +1,128 @@
+# A proof of the flow analysis at the head of a merge block moves to the edges whose values it narrows, and the parameter gets the proven type
+# FORM: Prepared
+# RUN: pass SimplifyCasts
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneEdgeIsInside" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3):
+    v4 = AssumeType v3 provenType=number
+    Return v4
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: [[onEdge]]: number = AssumeType v0 provenType=number
+# CHECK-NEXT: Jump -> next b3([[onEdge]])
+# CHECK-NEXT: b3(v3: number):
+# CHECK-NEXT: Return v3
+}
+
+function f1 name="twoOfThreeEdgesAreNarrowed" parameters=[{type=i32}, {type=anything}, {type=string|number}, {type=number}] results=[{type=number}] {
+    Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Jump -> next b4(v1)
+  b2():
+    Jump -> next b4(v2)
+  b3():
+    Jump -> next b4(v3)
+  b4(v4):
+    v5 = AssumeType v4 provenType=number
+    Return v5
+# CHECK: b1():
+# CHECK-NEXT: [[first]]: number = AssumeType v1 provenType=number
+# CHECK-NEXT: Jump -> next b4([[first]])
+# CHECK-NEXT: b2():
+# CHECK-NEXT: [[second]]: number = AssumeType v2 provenType=number
+# CHECK-NEXT: Jump -> next b4([[second]])
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Jump -> next b4(v3)
+# CHECK-NEXT: b4(v4: number):
+# CHECK-NEXT: Return v4
+}
+
+function f2 name="edgeUnderAnotherHandler" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2() handler=b4():
+    Jump -> next b3(v0)
+  b3(v3):
+    v4 = AssumeType v3 provenType=number
+    Return v4
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    v6 = Integer integer=0
+    Return v6
+# CHECK: b2() handler=b4():
+# CHECK-NEXT: [[covered]]: number = AssumeType v0 provenType=number
+# CHECK-NEXT: Jump -> next b3([[covered]])
+# CHECK-NEXT: b3(v3: number):
+# CHECK-NEXT: Return v3
+}
+
+function f3 name="everyEdgeIsNarrowed" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v3):
+    v4 = AssumeType v3 provenType=number
+    Return v4
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NEXT: b3(v3: anything):
+# CHECK-NEXT: v4: number = AssumeType v3 provenType=number
+}
+
+function f4 name="parameterHasSecondUse" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3):
+    v4 = AssumeType v3 provenType=number
+    v5 = Add v4, v3
+    Return v5
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK-NEXT: b3(v3: anything):
+# CHECK-NEXT: v4: number = AssumeType v3 provenType=number
+}
+
+function f5 name="predecessorBranches" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2(v0)
+  b1():
+    Jump -> next b2(v2)
+  b2(v3):
+    v4 = AssumeType v3 provenType=number
+    Return v4
+# CHECK: Branch v1 -> taken b1(), notTaken b2(v0)
+# CHECK: b2(v3: anything):
+# CHECK-NEXT: v4: number = AssumeType v3 provenType=number
+}
+
+function f6 name="proofIsNotFirstValue" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3):
+    v4 = Call v0
+    v5 = AssumeType v3 provenType=number
+    Return v5
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v0)
+# CHECK-NEXT: b3(v3: anything):
+# CHECK-NEXT: = Call v0
+# CHECK-NEXT: v5: number = AssumeType v3 provenType=number
+}

@@ -1,0 +1,72 @@
+# Each level of nesting multiplies by ten at every depth, and a block after the loops runs once
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="fourNestedLoops" parameters=[{type=boolean}] results=[{type=undefined}] {
+# REPEAT: i = 1..4
+    Jump -> next b%(i)()
+  b%(i)():
+    LoopHint
+# END REPEAT
+    Branch v0 -> taken b4(), notTaken b5()
+  b5():
+    Branch v0 -> taken b3(), notTaken b6()
+  b6():
+    Branch v0 -> taken b2(), notTaken b7()
+  b7():
+    Branch v0 -> taken b1(), notTaken b8()
+  b8():
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 10.000000
+# CHECK-NEXT: b2 frequency: Normal count: 100.000000
+# CHECK-NEXT: b3 frequency: Normal count: 1000.000000
+# CHECK-NEXT: b4 frequency: Normal count: 10000.000000
+# CHECK-NEXT: b5 frequency: Normal count: 1000.000000
+# CHECK-NEXT: b6 frequency: Normal count: 100.000000
+# CHECK-NEXT: b7 frequency: Normal count: 10.000000
+# CHECK-NEXT: b8 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f1 name="testsAtTheHeaders" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b5()
+  b2():
+    LoopHint
+    Branch v0 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b2()
+  b4():
+    Jump -> next b1()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 10.000000
+# CHECK-NEXT: b2 frequency: Normal count: 90.000000
+# CHECK-NEXT: b3 frequency: Normal count: 81.000000
+# CHECK-NEXT: b4 frequency: Normal count: 9.000000
+# CHECK-NEXT: b5 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f2 name="twoLoopsInSequence" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b1(), notTaken b2()
+  b2():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 10.000000
+# CHECK-NEXT: b2 frequency: Normal count: 10.000000
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency

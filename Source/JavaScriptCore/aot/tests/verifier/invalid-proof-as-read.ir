@@ -1,0 +1,57 @@
+# a body as read is typed before its edges are verified, and a proof its terminator does not give is reported all the same
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidProof 5
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="badEntryPastOperands" parameters=[{type=anything}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 1), notTaken b2()
+  b1(v2):
+    Return
+  b2():
+    Return
+}
+function f1 name="badConditionProvesNothing" parameters=[{type=boolean}] results=[{type=undefined}] {
+    v1 = LogicalNot v0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    Return
+  b2():
+    Return
+}
+function f2 name="badConditionIsParameter" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(| 0), notTaken b2()
+  b1(v1):
+    Return
+  b2():
+    Return
+}
+function f3 name="badProofOnOtherwise" parameters=[{type=anything}] results=[{type=undefined}] {
+    Switch v0 cases=[1] -> case b1(| 0), otherwise b2(| 0)
+  b1(v1):
+    Return
+  b2(v2):
+    Return
+}
+function f4 name="badProofOnHandlerEdge" parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: anything) handler=b1(| 0):
+    v1 = Call v0
+    Return
+  b1(v2) role=CatchHandler:
+    v3 = CatchValue
+    Return
+}
+function f5 name="good" parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(| 0, 1), notTaken b2(| 0)
+  b1(v3, v4):
+    SwitchString v0 strings=["a"] -> case b3(| 0), otherwise b4()
+  b2(v5):
+    Return
+  b3(v6):
+    Return
+  b4():
+    Return
+}

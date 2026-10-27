@@ -27,7 +27,7 @@
 
 #if ENABLE(B3_JIT)
 
-#include "B3HeapRange.h"
+#include "B3HeapSet.h"
 #include <wtf/PrintStream.h>
 
 namespace JSC { namespace B3 {
@@ -97,8 +97,8 @@ public:
     // WARNING: The B3::hoistLoopInvariantValues() phase thinks that it understands this exhaustively. If you
     // add any new kinds of things that can be read or written, you should check that phase.
 
-    HeapRange writes;
-    HeapRange reads;
+    HeapSet writes;
+    HeapSet reads;
 
     static constexpr Effects none()
     {
@@ -154,7 +154,7 @@ public:
 
     // Returns true if reordering instructions with these respective effects would change program
     // behavior in an observable way.
-    bool LEGACY_NODELETE interferes(const Effects&) const;
+    JS_EXPORT_PRIVATE bool LEGACY_NODELETE interferes(const Effects&) const;
     
     friend bool operator==(const Effects&, const Effects&) = default;
 

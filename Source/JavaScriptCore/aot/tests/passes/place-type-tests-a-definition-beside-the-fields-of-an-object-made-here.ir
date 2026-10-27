@@ -1,0 +1,64 @@
+# A definition under a name that is no field of the layout adds a property beside the fields of an object made here: it moves no field out of its slot and freezes nothing, so the stores behind it still go by what the allocation proves. A getter under the name of a field, and code that nobody knows, end that
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Definition" fields=[{key="type" declared={type=anything}}, {key="check" declared={type=anything}}, {key="abort" declared={type=anything}}]
+
+function f0 name="nameIsNoField" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v1, v0 key="format"
+    PropDefine v1, v0 key="check"
+    PropDefine v1, v0 key="abort"
+    Return v1
+# CHECK: b0(v0: anything):
+# CHECK-NOT: Branch
+# CHECK: PropDefine v1, v0 key="format"
+# CHECK-NOT: Branch
+# CHECK: PutSlotOrAdd v1, {{*}}, v0 key="check" receivers=[L0] level=Expected
+# CHECK-NOT: Branch
+# CHECK: PutSlotOrAdd v1, {{*}}, v0 key="abort" receivers=[L0] level=Expected
+# CHECK-NEXT: Return v1
+}
+
+function f1 name="getterUnderTheNameOfAField" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    DefineGetter v2, v1 key="check"
+    PropDefine v2, v0 key="abort"
+    Return v2
+# CHECK: DefineGetter v2, v1 key="check"
+# CHECK: = HasNoFieldOutsideSlot v2
+}
+
+function f2 name="getterUnderAnotherName" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    DefineGetter v2, v1 key="format"
+    PropDefine v2, v0 key="abort"
+    Return v2
+# CHECK: DefineGetter v2, v1 key="format"
+# CHECK: = HasNoFieldOutsideSlot v2
+}
+
+function f3 name="codeNobodyKnowsGetsTheObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    PropDefine v1, v0 key="format"
+    v3 = Call v0, -, v1
+    PropDefine v1, v0 key="abort"
+    Return v1
+# CHECK: = Call v0, -, v1
+# CHECK: = HasNoFieldOutsideSlot v1
+# CHECK: = IsNotFrozen v1
+}
+
+function f4 name="definitionOnAnObjectThatIsGiven" parameters=[{type=anything}, {type=L0}] results=[{type=anything}] {
+    v2 = HasNoFieldOutsideSlot v1
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3: guard):
+    PropDefine v1, v0 key="format"
+    PropDefine v1, v0 key="abort"
+    Return v1
+  b2():
+    Return v0
+# CHECK: PropDefine v1, v0 key="format"
+# CHECK: = HasNoFieldOutsideSlot v1
+}

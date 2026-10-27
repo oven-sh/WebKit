@@ -1,0 +1,39 @@
+# The bounds of a StringRange lie inside a string, and each read of a string range has its own type
+# FORM: Selected
+# RUN: result-types
+# CHECK: v3.0: int[0, 2147483647]
+# CHECK-NEXT: v3.1: int[0, 2147483647]
+# CHECK-NEXT: v4: int[0, 2147483647]
+# CHECK-NEXT: v5: int[0, 2147483647]
+# CHECK-NEXT: v6: int[-2147483647, 2147483647]
+# CHECK-NEXT: v7: int[0, 4294967294]
+# CHECK-NEXT: v8: number
+# CHECK-NEXT: v9: undefined|int[0, 1114111]
+# CHECK-NEXT: v10: string
+# CHECK-NEXT: v11: undefined|string
+# CHECK-NEXT: v12: boolean
+# CHECK-NEXT: v13: number
+# CHECK-NEXT: v14: number
+# CHECK-NEXT: v15: string
+# CHECK-NEXT: v16: undefined|string
+# CHECK-NEXT: v17: int[-1, 65535]
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="kinds" parameters=[{type=string}, {type=int}, {type=int[0, 2147483647]}] results=[{type=undefined}] {
+    v3 = StringRange v2, v1
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Sub v5, v4 form=Integers
+    v7 = Add v4, v5 form=Integers
+    v8 = StringRangeCodeUnitOrNaN v0, v4, v5, v1
+    v9 = StringRangeCodePointOrUndefined v0, v4, v5, v1
+    v10 = StringRangeCharacterOrEmpty v0, v4, v5, v1
+    v11 = StringRangeCharacterOrUndefined v0, v4, v5, v1
+    v12 = StringRangeEqualsLiteral v0, v4, v5 literal="a"
+    v13 = StringRangeToNumber v0, v4, v5
+    v14 = StringRangeParseInt v0, v4, v5
+    v15 = Substring v0, v4, v5
+    v16 = StringRangeSubstringOrUndefined v0, v4, v5
+    v17 = StringRangeCodeUnitOrMinusOne v0, v4, v5, v1
+    Return
+}

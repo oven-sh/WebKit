@@ -1,0 +1,37 @@
+# A callee that varies in a loop is not resolved in front of that loop
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: ResolvedCallTargetGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="varying-callee" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    v5 = Call v3, -, v2
+    Branch v1 -> taken b1(v5), notTaken b2()
+  b2():
+    Return
+# CHECK-NOT: ResolveCallTarget
+# CHECK: anything = Call v3, -, v2
+}
+
+function f1 name="varies-in-outer-loop" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Jump -> next b1(v0)
+  b1(v3):
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v6 = Call v3, -, v2
+    Branch v1 -> taken b2(), notTaken b3()
+  b3():
+    Branch v1 -> taken b1(v6), notTaken b4()
+  b4():
+    Return
+# CHECK: b1(v3: anything):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[target]]: codeaddress = ResolveCallTarget v3 argumentCount=1
+# CHECK-NEXT: Jump -> next b2()
+# CHECK: anything = CallResolved v3, [[target]], -, v2
+}

@@ -24,6 +24,7 @@
 
 #include "ConservativeRoots.h"
 #include "MachineContext.h"
+#include "Options.h"
 #include <wtf/BitVector.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
@@ -101,6 +102,16 @@ static void LEGACY_NODELETE copyMemory(void* dst, const void* src, size_t size)
     CPURegister* dstPtr = reinterpret_cast<CPURegister*>(dst);
     const CPURegister* srcPtr = reinterpret_cast<const CPURegister*>(src);
     size /= sizeof(CPURegister);
+#if JSC_CONSERVATIVE_SCAN_SKIPS_POISONED_WORDS
+    if (Options::runsCompiledImage()) {
+        // ConservativeRoots::genericAddSpanOfCompiledProcess scans the copy, and the addressable half of a poisoned word may hold a narrow reference.
+        while (size--) {
+            *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? addressableHalvesForConservativeScan(srcPtr) : *srcPtr;
+            ++srcPtr;
+        }
+        return;
+    }
+#endif
     // The copy is scanned in place of the stack, and only the stack knows which of its words are poisoned.
     while (size--) {
         *dstPtr++ = isPoisonedForConservativeScan(srcPtr) ? 0 : *srcPtr;

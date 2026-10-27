@@ -1,0 +1,6 @@
+# (1.5).toLocaleString("de")
+# Under a report the record of a feature has the place where the program names the built-in.
+# RUN: valueflow-results
+# OPTIONS: report=Flow
+# CHECK: feature 10 NumberPrototypeToLocaleString f0:v0
+# PROGRAM-OF: nobody-looks-for-places-without-a-report.ir

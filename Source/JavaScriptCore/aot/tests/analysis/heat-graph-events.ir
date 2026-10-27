@@ -1,0 +1,94 @@
+# The host enters a handler once per event, and a call of a known callee hands that on. Where the handler calls a name or a value, each function that may stand there is entered as often, and hands that on through calls of known callees alone.
+# A value that is called is one of the application's functions. What was entered by such a guess hands its entries on through calls of known callees alone.
+# An even branch counts as taken. The handler is listed though the object that holds it has escaped before it is registered
+# FORM: AsRead
+# RUN: heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Options" fields=[{key="fetch" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Methods" fields=[{key="calledByHandler" declared={type=anything} flags=[IsRequired]}, {key="calledBehindGuess" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f3
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f4
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f6
+    v7 = NewClosure function=f7
+    v8 = NewObject -, v6, v7 layout=L1 fields=[0, 1]
+    v9 = Call v1, -, v8
+    v10 = NewClosure function=f1
+    v11 = NewObject -, v10 layout=L0 fields=[0]
+    PropSet v0, v11 key="options" mode=Strict
+    v13 = Builtin builtin=BunServe
+    v14 = Builtin builtin=Bun
+    v15 = Call v13, v14, v11
+    Return
+}
+function f1 name="fetch" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect function=f2
+    v3 = Call v0
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="registry" [isFreeName]
+    v6 = PropGet v5 key="calledByHandler"
+    v7 = Call v6, v5 calleeKey="calledByHandler"
+    Return v7
+}
+function f2 name="calledByHandlerDirectly" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="flag" [isFreeName]
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = CallDirect function=f8
+    Return v3
+  b2():
+    Return
+}
+function f3 name="escapedFromApplication" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect function=f5
+    v2 = PropGet v0 key="calledBehindGuess"
+    v3 = Call v2, v0 calleeKey="calledBehindGuess"
+    Return v3
+}
+function f4 name="escapedFromLibrary" module=m1 results=[{type=anything}] {
+    Return
+}
+function f5 name="calledDirectlyBehindGuess" results=[{type=anything}] {
+    Return
+}
+function f6 name="calledByHandler" results=[{type=anything}] {
+    Return
+}
+function f7 name="calledBehindGuess" results=[{type=anything}] {
+    Return
+}
+function f8 name="calledBehindEvenBranch" results=[{type=anything}] {
+    Return
+}
+# CHECK: f1 size 7: f2*1.000000 unknown*1.000000 name0*1.000000
+# CHECK-NEXT: f2 size 7: f8*0.500000
+# CHECK-NEXT: f3 size 4: f5*1.000000 name1*1.000000
+# CHECK: host: f0*1.000000 f1*32768.000000 f3*32768.000000 f6*32768.000000 f7*10.000000
+# CHECK-NEXT: unknown:
+# CHECK-NEXT: activations:
+# CHECK-NEXT: f0 1.000000
+# CHECK-NEXT: f1 32768.000000
+# CHECK-NEXT: f2 32768.000000
+# CHECK-NEXT: f3 32769.000000
+# CHECK-NEXT: f4 1.000000
+# CHECK-NEXT: f5 32769.000000
+# CHECK-NEXT: f6 32768.000000
+# CHECK-NEXT: f7 10.000000
+# CHECK-NEXT: f8 16384.000000
+# CHECK-NEXT: entries per event:
+# CHECK-NEXT: f1 32768.000000
+# CHECK-NEXT: f2 32768.000000
+# CHECK-NEXT: f3 32768.000000
+# CHECK-NEXT: f5 32768.000000
+# CHECK-NEXT: f6 32768.000000
+# CHECK-NEXT: f8 32768.000000

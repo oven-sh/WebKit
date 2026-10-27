@@ -1,0 +1,114 @@
+# A narrow reference stays narrow as a block parameter and under a test of its truth: it is decoded once behind a join and not on every edge. It is decoded in front of whatever can run the collector
+# OPTIONS: references=narrow disable=pass:RemoveUnreadFields testing=NoLayoutIsMadeSeldom
+# RUN: pipeline ChooseRepresentations
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Filled" constructor=f1 fields=[{key="next" declared={type=undefined|null|L0} flags=[IsRequired]}, {key="previous" declared={type=undefined|null|L0} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}]
+layout L1 kind=Instance name="FilledOnOnePath" constructor=f3 fields=[{key="next" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="previous" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="filled" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="filledOnOnePath" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = Construct v4, -, v1
+    PutModuleVariable v5 variable=g0
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L1
+    v9 = FinishClass v8 layout=L1
+    v10 = Construct v9, -, v1
+    PutModuleVariable v10 variable=g1
+    v12 = PropGet v0 key="keep" [isFreeName]
+    v13 = NewClosure function=f5
+    v14 = CallDirect v1 function=f6 [isNeverInlined]
+    v15 = ToBoolean v14
+    v16 = CallDirect v1 function=f7 [isNeverInlined]
+    v17 = ToBoolean v16
+    v18 = Call v12, -, v13, v15, v17
+    Return
+}
+function f1 name="Filled" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f2
+    PropSet v3, v3 key="next" mode=Strict
+    PropSet v3, v3 key="previous" mode=Strict
+    PropSet v3, v1 key="a" mode=Strict
+    PropSet v3, v1 key="b" mode=Strict
+    PropSet v3, v1 key="c" mode=Strict
+    Return v3
+}
+function f2 name="initializeFilled" kind=Initializer flags=[HasThis] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="next"
+    PropDefine v0, v1 key="previous"
+    Return
+}
+function f3 name="FilledOnOnePath" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = Convert v3 declared={type=L1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = CallDirect v4 function=f4
+    PropSet v3, v1 key="a" mode=Strict
+    PropSet v3, v1 key="b" mode=Strict
+    PropSet v3, v1 key="c" mode=Strict
+    v9 = ToBoolean v1
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v3, v3 key="next" mode=Strict
+    PropSet v3, v3 key="previous" mode=Strict
+    Jump -> next b2()
+  b2():
+    Return v3
+}
+function f4 name="initializeFilledOnOnePath" kind=Initializer flags=[HasThis] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="next"
+    PropDefine v0, v1 key="previous"
+    Return
+}
+function f5 name="truthOfReference" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = PropGet v1 key="next"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer integer=1
+    Return v4
+  b2():
+    v5 = Integer integer=2
+    Return v5
+}
+function f6 name="returnedBehindJoin" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = PropGet v1 key="next"
+    v3 = PropGet v1 key="previous"
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(v2), notTaken b1(v3)
+  b1(v5: anything):
+    Return v5
+}
+function f7 name="collectorRunsBehindJoin" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = PropGet v1 key="next"
+    v3 = PropGet v1 key="previous"
+    v4 = ToBoolean v0
+    Branch v4 -> taken b1(v2), notTaken b1(v3)
+  b1(v5: anything):
+    v6 = Call v0, -
+    Return v5
+}
+# CHECK-LABEL: function f6 name="returnedBehindJoin"
+# CHECK: TestAndBranch {{*}} -> taken b1([[next]]), notTaken b1([[previous]])
+# CHECK-NEXT: b1([[joined]]: undefined|L1 @Cell32):
+# CHECK-NEXT: Return [[joined]]
+# CHECK-LABEL: function f7 name="collectorRunsBehindJoin"
+# CHECK: ({{*}}: undefined|L1 @JSValue):
+# CHECK-NEXT: = Call
+# CHECK-LABEL: name="truthOfReference" module=m0 role=GenericEntrypoint
+# CHECK: [[tested]]: undefined|L1 @Cell32 = GetSlot {{*}} key="next"
+# CHECK-NEXT: boolean @Boolean = ToBoolean [[tested]]

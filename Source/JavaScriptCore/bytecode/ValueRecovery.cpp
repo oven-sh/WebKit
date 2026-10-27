@@ -56,7 +56,7 @@ JSValue ValueRecovery::recover(CallFrame* callFrame) const
     }
 }
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 void ValueRecovery::dumpInContext(PrintStream& out, DumpContext* context) const
 {
@@ -123,7 +123,7 @@ void ValueRecovery::dump(PrintStream& out) const
 {
     dumpInContext(out, nullptr);
 }
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)
 
 } // namespace JSC
 

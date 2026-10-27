@@ -1,0 +1,73 @@
+# The closures of an async function inherit from %AsyncFunction%.prototype, which hands down what Function.prototype has. apply read from such a closure is a constant behind the test that the closure is as the closures of async functions are created.
+# A receiver that may be, or is expected to be, a closure of either kind takes the test that both kinds pass. `constructor` is another object for the two kinds: no test that an async closure passes answers for the one of Function.prototype
+# FORM: Prepared
+# RUN: pass ResolveBuiltins PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="applyOnAsyncClosure" parameters=[{type=anything}, {type=Array}] results=[{type=anything}] {
+    v2 = NewClosure function=f5
+    v3 = PropGet v2 key="apply"
+    v4 = Call v3, v2, v0, v1 calleeKey="apply"
+    Return v4
+# CHECK: [[isAsCreated0]]: boolean = IsPristine v2 builtinClass=AsyncFunction aspects=[Names]
+# CHECK-NEXT: Branch [[isAsCreated0]] -> taken
+# CHECK-NOT: PropGet
+# CHECK: anything = CallBuiltin v2, v0, v1 overload=FunctionPrototypeApply/0
+# CHECK: frequency=Unlikely
+# CHECK: anything = PropGet v2 key="apply"
+}
+
+function f1 name="applyOnClosureOfEitherKind" parameters=[{type=f5|f6}, {type=anything}, {type=Array}] results=[{type=anything}] {
+    v3 = PropGet v0 key="apply"
+    v4 = Call v3, v0, v1, v2 calleeKey="apply"
+    Return v4
+# CHECK: [[isAsCreated1]]: boolean = IsPristine v0 builtinClass=Function aspects=[NamesKeptBelow]
+# CHECK-NEXT: Branch [[isAsCreated1]] -> taken
+}
+
+function f2 name="applyOnWhatIsExpectedToBeAnAsyncClosure" parameters=[{type=function|f5 flags=[IsExpected]}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything ~ function|f5, v1: anything, v2: Array):
+    v3 = PropGet v0 key="apply"
+    v4 = Call v3, v0, v1, v2 calleeKey="apply"
+    Return v4
+# CHECK: = TypeTest v0 testedType=function
+# CHECK: [[isAsCreated2]]: boolean = IsPristine [[function2]] builtinClass=Function aspects=[NamesKeptBelow]
+# CHECK-NEXT: Branch [[isAsCreated2]] -> taken
+}
+
+function f3 name="applyOnWhatIsExpectedToBeAPlainClosure" parameters=[{type=function|f6 flags=[IsExpected]}, {type=anything}, {type=Array}] results=[{type=anything}] {
+  b0(v0: anything ~ function|f6, v1: anything, v2: Array):
+    v3 = PropGet v0 key="apply"
+    v4 = Call v3, v0, v1, v2 calleeKey="apply"
+    Return v4
+# CHECK: = TypeTest v0 testedType=function
+# CHECK: [[isAsCreated3]]: boolean = IsPristine [[function3]] builtinClass=Function aspects=[Names]
+# CHECK-NEXT: Branch [[isAsCreated3]] -> taken
+}
+
+function f4 name="constructorOfAsyncClosure" results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = PropGet v0 key="constructor"
+    Return v1
+# CHECK: = IsPristine v0 builtinClass=Function aspects=[Names]
+}
+
+function f5 name="later" kind=Arrow flags=[IsAsync] results=[{type=Promise}] {
+    Return
+}
+
+function f6 name="now" kind=Arrow results=[{type=anything}] {
+    Return
+}
+
+function f7 name="callOnAnyAsyncFunction" parameters=[{type=AsyncFunction}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="call"
+    v3 = Call v2, v0, v1 calleeKey="call"
+    Return v3
+# CHECK: [[isAsCreated7]]: boolean = IsPristine v0 builtinClass=AsyncFunction aspects=[Names]
+# CHECK-NEXT: Branch [[isAsCreated7]] -> taken
+# CHECK: anything = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0
+# CHECK: frequency=Unlikely
+# CHECK: anything = PropGet v0 key="call"
+}

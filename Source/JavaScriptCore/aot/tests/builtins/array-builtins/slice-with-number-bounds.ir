@@ -1,0 +1,35 @@
+# slice() with bounds of type number is expanded inline, as splice() and at() are: the inline code tests that a bound is a whole number
+# RUN: compile
+# RUN(SELECTED): pipeline Select
+# OPTIONS: heat=EverythingIsHot
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = Call v3, -, v0, v1
+    Return v4
+}
+function f1 name="sliceFrom" parameters=[{type=Array<number>}, {type=number}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number):
+    v2 = PropGet v0 key="slice"
+    v3 = Call v2, v0, v1 calleeKey="slice"
+    Return v3
+}
+# SELECTED-LABEL: name="sliceFrom" module=m0 role=GenericEntrypoint
+# SELECTED: [[from]]: number = AssumeType v3 provenType=number
+# SELECTED: TryCallInline {{*}}, [[from]] inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/
+function f2 name="sliceBetween" parameters=[{type=Array<number>}, {type=number}, {type=i32}] results=[{type=anything}] {
+  b0(v0: Array<number>, v1: number, v2: i32):
+    v3 = PropGet v0 key="slice"
+    v4 = Call v3, v0, v1, v2 calleeKey="slice"
+    Return v4
+}
+# SELECTED-LABEL: name="sliceBetween" module=m0 role=GenericEntrypoint
+# SELECTED: TryCallInline {{*}} inlineBuiltin=ArraySlice overload=ArrayPrototypeSlice/

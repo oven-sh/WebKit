@@ -165,7 +165,19 @@ public:
     template<typename Functor>
     void forEachProperty(NOESCAPE const Functor&) const;
 
+    // The entries stand in the order in which they were added, numbered from 1 as in FindResult::entryIndex. One that was removed keeps its number, without a key, until the table is rehashed.
+    unsigned numberOfEntriesWithRemovedOnes() const { return m_keyCount + m_deletedCount; }
+    unsigned numberOfRemovedEntries() const { return m_deletedCount; }
+    KeyType keyOfEntry(unsigned entryIndex) const;
+
     static constexpr unsigned EmptyEntryIndex = 0;
+
+    static constexpr ptrdiff_t offsetOfIndexSize() { return OBJECT_OFFSETOF(PropertyTable, m_indexSize); }
+    static constexpr ptrdiff_t offsetOfIndexVector() { return OBJECT_OFFSETOF(PropertyTable, m_indexVector); }
+    static constexpr ptrdiff_t offsetOfKeyCount() { return OBJECT_OFFSETOF(PropertyTable, m_keyCount); }
+    static constexpr ptrdiff_t offsetOfDeletedCount() { return OBJECT_OFFSETOF(PropertyTable, m_deletedCount); }
+    static constexpr ptrdiff_t offsetOfDeletedOffsets() { return OBJECT_OFFSETOF(PropertyTable, m_deletedOffsets); }
+    static constexpr uintptr_t flagOfCompactIndexVector = 0x1;
 
 private:
     PropertyTable(VM&, unsigned initialCapacity);
@@ -282,7 +294,7 @@ private:
         return withIndexVector(m_indexVector, function);
     }
 
-    static constexpr uintptr_t isCompactFlag = 0x1;
+    static constexpr uintptr_t isCompactFlag = flagOfCompactIndexVector;
     static constexpr uintptr_t indexVectorMask = ~isCompactFlag;
 
     unsigned m_indexSize;
@@ -643,6 +655,15 @@ inline bool PropertyTable::canInsert(const ValueType& entry)
     if (!isCompact())
         return true;
     return canFitInCompact(entry);
+}
+
+inline PropertyTable::KeyType PropertyTable::keyOfEntry(unsigned entryIndex) const
+{
+    ASSERT(entryIndex && entryIndex <= usedCount());
+    return withIndexVector([&](const auto* vector) -> KeyType {
+        KeyType key = tableFromIndexVector(vector)[entryIndex - 1].key();
+        return key == PROPERTY_MAP_DELETED_ENTRY_KEY ? nullptr : key;
+    });
 }
 
 template<typename Functor>

@@ -63,6 +63,7 @@ void JSONCache::NameTable<size>::insert(unsigned set, Structure* from, Structure
     entry.to.setWithoutWriteBarrier(to);
     entry.offset = offset;
     entry.textLength = textLength;
+    entry.textIsASCII = charactersAreAllASCII(std::span<const Latin1Character> { text }.first(textLength));
     entry.toNameIndex = nameIndex(StructureID::encode(to));
     m_texts[set] = text;
 }

@@ -40,6 +40,11 @@
 #include <wtf/text/AtomString.h>
 #include <wtf/threads/Signals.h>
 
+#if ENABLE(AOT)
+#include <wtf/MonotonicTime.h>
+#include <wtf/SafeStrerror.h>
+#endif
+
 #if PLATFORM(COCOA)
 #include <wtf/cocoa/Entitlements.h>
 #include <wtf/darwin/LibraryPathDiagnostics.h>
@@ -309,7 +314,34 @@ void Thread::entryPoint(NewThreadContext* newThreadContext)
     function();
 }
 
+#if ENABLE(AOT)
+bool Thread::s_survivesFailedCreation { false };
+
+void Thread::setSurvivesFailedCreation()
+{
+    s_survivesFailedCreation = true;
+}
+
 Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
+{
+    // Threads of other processes under the same limit come and go.
+    Seconds timeToWaitForRoom = survivesFailedCreation() ? 2_s : 0_s;
+    RefPtr thread = tryCreate(name, WTF::move(entryPoint), threadType, qos, schedulingPolicy, stackSpec, timeToWaitForRoom);
+    if (!thread && survivesFailedCreation()) [[unlikely]]
+        WTFLogAlways("FATAL: could not start the thread \"%s\": %s", name.characters(), safeStrerror(errno).data());
+    RELEASE_ASSERT(thread);
+    return thread.releaseNonNull();
+}
+
+RefPtr<Thread> Thread::tryCreate(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
+{
+    return tryCreate(name, WTF::move(entryPoint), threadType, qos, schedulingPolicy, stackSpec, 0_s);
+}
+
+RefPtr<Thread> Thread::tryCreate(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec, Seconds timeToWaitForRoom)
+#else
+Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, ThreadType threadType, QOS qos, SchedulingPolicy schedulingPolicy, StackAllocationSpecification stackSpec)
+#endif
 {
     WTF::initialize();
 
@@ -325,7 +357,18 @@ Ref<Thread> Thread::create(ASCIILiteral name, Function<void()>&& entryPoint, Thr
                 stackSpec = StackAllocationSpecification::RequestSize(maybeSize.value());
         }
         bool success = thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy);
+#if ENABLE(AOT)
+        for (MonotonicTime deadline = MonotonicTime::now() + timeToWaitForRoom; !success && errno == EAGAIN && MonotonicTime::now() < deadline;) [[unlikely]] {
+            sleep(10_ms);
+            success = thread->establishHandle(context.get(), stackSpec, qos, schedulingPolicy);
+        }
+        if (!success) [[unlikely]] {
+            context->deref(); // Thread::entryPoint, which would have adopted it, does not run.
+            return nullptr;
+        }
+#else
         RELEASE_ASSERT(success);
+#endif
 
 #if HAVE(STACK_BOUNDS_FOR_NEW_THREAD)
         thread->m_stack = StackBounds::newThreadStackBounds(thread->m_handle);

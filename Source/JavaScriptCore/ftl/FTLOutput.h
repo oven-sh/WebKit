@@ -27,7 +27,7 @@
 
 #include "DFGCommon.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "B3AbstractHeapRepository.h"
 #include "B3BasicBlockInlines.h"
@@ -61,7 +61,9 @@ struct Node;
 } // namespace DFG
 
 namespace B3 {
+class CheckValue;
 class FenceValue;
+class PatchpointValue;
 class SlotBaseValue;
 } // namespace B3
 
@@ -71,7 +73,10 @@ enum Scale { ScaleOne, ScaleTwo, ScaleFour, ScaleEight, ScalePtr };
 
 class Output : public CommonValues {
 public:
+#if ENABLE(FTL_JIT)
     Output(State&);
+#endif
+    explicit Output(B3::Procedure&);
     ~Output();
 
     void LEGACY_NODELETE initialize(AbstractHeapRepository&);
@@ -106,6 +111,7 @@ public:
     LValue LEGACY_NODELETE constBool(bool value);
     LValue constInt32(int32_t value);
 
+#if ENABLE(FTL_JIT)
     LValue alreadyRegisteredWeakPointer(DFG::Graph& graph, JSCell* cell)
     {
         ASSERT(graph.m_plan.weakReferences().contains(cell));
@@ -119,6 +125,7 @@ public:
 
         return constIntPtr(std::bit_cast<intptr_t>(value->cell()));
     }
+#endif
 
     template<typename T>
     LValue constIntPtr(T* value)
@@ -187,7 +194,9 @@ public:
     LValue doubleFloor(LValue);
     LValue doubleTrunc(LValue);
 
+#if ENABLE(FTL_JIT)
     LValue doubleUnary(DFG::Arith::UnaryType, LValue);
+#endif
 
     LValue doubleStdPow(LValue base, LValue exponent);
     LValue doublePowi(LValue base, LValue exponent);
@@ -492,7 +501,16 @@ public:
     double m_frequency { 1 };
 
 private:
+    struct BlockLink {
+        LBasicBlock block { nullptr };
+        unsigned previous { 0 };
+        unsigned next { 0 };
+    };
+
+    bool ordersBlocksByIndex() const { return !m_blockLinks.isEmpty(); }
+
     OrderMaker<LBasicBlock> m_blockOrder;
+    Vector<BlockLink, 32> m_blockLinks;
 };
 
 template<typename... Params>
@@ -524,4 +542,4 @@ IGNORE_WARNINGS_END
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)

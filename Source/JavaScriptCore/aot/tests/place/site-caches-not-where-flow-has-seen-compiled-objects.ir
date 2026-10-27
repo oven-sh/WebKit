@@ -1,0 +1,29 @@
+# function read(o) { return [o.x, o.length, o.other]; }  read({ x: input, length: input }); read(input)
+# Flow has seen a compiled object come to the reads of x and of length. The table of fields answers for every layout alike, so the read of x has no site cache, which would stay empty.
+# The read of length keeps its own: the stub at a site knows arrays and strings. No layout has `other`.
+# OPTIONS: only-passes=EstimateHeat
+# RUN: place site-caches
+# CHECK: site caches 2,
+# CHECK-NEXT: f1 v2 PropGet cache=
+# CHECK-NEXT: f1 v3 PropGet cache=
+# CHECK-NOT: cache=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="x" declared={type=anything}}, {key="length" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1, v1 layout=L0 fields=[0, 1]
+    v3 = CallDirect v2 function=f1
+    v4 = CallDirect v1 function=f1
+    Return
+}
+function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x" receivers=[L0, ..]
+    v2 = PropGet v0 key="length" receivers=[L0, ..]
+    v3 = PropGet v0 key="other"
+    v4 = StrictEq v1, v2
+    v5 = StrictEq v4, v3
+    Return v5
+}

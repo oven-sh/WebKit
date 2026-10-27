@@ -1,0 +1,58 @@
+# A constructed object escapes unless the flow results prove its constructor does not retain the this value
+# FORM: AsRead
+# RUN: analyses escape function=f0
+# RUN(FLOW): analyses escape flow function=f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point"
+layout L1 name="Leaky"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = CallDirect v0 function=f1
+    v2 = NewObject layout=L1 fields=[]
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="flag" [isFreeName]
+    v5 = CallDirect v2, v4 function=f2
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=object
+    Return
+}
+function f2 name="Leaky" flags=[HasThis] thisType={type=L1} parameters=[{type=anything}] results=[{type=undefined}] {
+    v2 = TypeTest v1 testedType=string
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Throw v0
+  b2():
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 2
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Escapes
+# CHECK-NEXT: o0 reasons: [StoredInUnknownMemory PassedToUnknownCode RetainedByCallee]
+# CHECK-NEXT: o0 first escape: v1(0)
+# CHECK: o1 definition: v2
+# CHECK-NEXT: o1 kind: Allocation
+# CHECK-NEXT: o1 state: Escapes
+# CHECK-NEXT: o1 reasons: [StoredInUnknownMemory PassedToUnknownCode RetainedByCallee]
+# CHECK-NEXT: o1 first escape: v5(0)
+# FLOW: function f0
+# FLOW-NEXT: escape:
+# FLOW-NEXT: objects: 2
+# FLOW-NEXT: o0 definition: v0
+# FLOW-NEXT: o0 kind: Allocation
+# FLOW-NEXT: o0 state: DoesNotEscape
+# FLOW-NEXT: o0 reasons: []
+# FLOW-NEXT: o0 first escape: none
+# FLOW-NEXT: o0 uses: [Inspects]
+# FLOW: o0 escaping uses: []
+# FLOW: o1 definition: v2
+# FLOW-NEXT: o1 kind: Allocation
+# FLOW-NEXT: o1 state: Escapes
+# FLOW-NEXT: o1 reasons: [RetainedByCallee]
+# FLOW-NEXT: o1 first escape: v5(0)

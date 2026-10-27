@@ -184,7 +184,7 @@ ALWAYS_INLINE std::pair<JSGlobalObject*, bool> MicrotaskQueue::drainImpl(JSGloba
     // Entries hold the callee's CodeBlock and entry point untraced, which is only sound on the stack:
     // conservative scanning keeps them alive, and code is detached only outside a VM entry scope. A cache
     // that outlives a drain needs clear() and reconcileWeakReferencesAtGCEnd, as VM's own cache does.
-    MicrotaskCallCache microtaskCallCache;
+    MicrotaskCallCache microtaskCallCache { MicrotaskCallCache::Owner::JobLoop };
 
     while (!m_queue.isEmpty()) {
         auto& front = m_queue.front();

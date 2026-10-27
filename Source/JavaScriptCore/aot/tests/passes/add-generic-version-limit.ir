@@ -1,0 +1,46 @@
+# A function whose generic version would have more blocks than the limit allows gets none, and its blocks stay as they were. Nothing throws: what a check says is expected of the value, and each use is guarded by itself
+# FORM: Prepared
+# OPTIONS: limit=MaxBlocksInGenericVersion:0 heat=NothingIsHottest
+# RUN: pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 0
+# STATISTIC: GenericVersionsNotCreated = 2
+# STATISTIC: ExitsToGenericVersion = 0
+# LOSS: MaxBlocksInGenericVersion x2 f0 v3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="overTheLimit" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0
+    v3 = Check v2 expectedType=number
+    v4 = Add v3, v1
+    Return v4
+# CHECK-NEXT: b0(v0: anything, v1: number):
+# CHECK-NOT: = Check
+# CHECK-NOT: = TypeTest
+# CHECK: : anything ~ number =
+# CHECK-NOT: = Check
+# CHECK-NOT: = TypeTest
+# CHECK: v4: number|string|bigint{{*}} = Add
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+}
+
+function f1 name="nothingIsChecked" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: number = Add v0, v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+
+# What flow has stamped on an operation was read off a run in which every check had passed. With a guard at each use the operation also runs with what the check would have turned away,
+# so the stamp of a call of what rests on the check no longer names every callee. It still names those that flow has seen: they are entered by this call, through their entrypoints. The other call keeps its stamp
+function f2 name="stampOnWhatRestsOnTheCheckIsOpen" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=function
+    v3 = Call v2 callees=[f1]
+    v4 = Call v1 callees=[f1]
+    v5 = Add v3, v4
+    Return v5
+# CHECK: v3: anything = Call v2 callees=[f1, ..]
+# CHECK-NEXT: v4: anything = Call v1 callees=[f1]
+}

@@ -27,6 +27,7 @@
 #include "config.h"
 #include "YarrInterpreter.h"
 
+#include "AOTRemovableFeature.h"
 #include "ConcurrentJSLock.h"
 #include "Options.h"
 #include "SuperSampler.h"
@@ -279,6 +280,8 @@ public:
             , decodeSurrogatePairs(decodeSurrogatePairs)
         {
         }
+
+        std::span<const CharType> span() const { return { input, length }; }
 
         void LEGACY_NODELETE next()
         {
@@ -1455,7 +1458,7 @@ public:
         // Handle fixed matches and the minimum part of a variable length match.
         if (minimumMatchCount) {
             // Match the mandatory iterations, backtracking earlier ones as needed.
-            JSRegExpResult result = refillParenthesesContextsToMinCount(term, backTrack, disjunctionBody);
+            JSRegExpResult result = keepsContextsOfFirstAndLastTurn(term) ? matchTurnsWithoutChoices(term, backTrack, disjunctionBody) : refillParenthesesContextsToMinCount(term, backTrack, disjunctionBody);
             if (result != JSRegExpResult::Match)
                 return result;
 
@@ -1510,6 +1513,11 @@ public:
         case QuantifierType::FixedCount: {
             ASSERT(backTrack->matchAmount == term.atom.quantityMaxCount);
             ASSERT(term.atom.quantityMinCount == term.atom.quantityMaxCount);
+
+            if (keepsContextsOfFirstAndLastTurn(term)) {
+                undoTurnsWithoutChoices(term, backTrack);
+                return JSRegExpResult::NoMatch;
+            }
 
             JSRegExpResult result = parenthesesDoBacktrack(term, backTrack);
             if (result != JSRegExpResult::Match)
@@ -1669,6 +1677,57 @@ public:
         return JSRegExpResult::Match;
     }
 
+    // The JIT keeps no context for a group that is repeated a fixed number of times and has nothing to go back into: see jitCountsTurnsOf().
+    bool keepsContextsOfFirstAndLastTurn(const ByteTerm& term) const
+    {
+        return pattern->m_countsWhatJITCounts && term.atom.quantityType == QuantifierType::FixedCount && term.atom.quantityMaxCount > 1 && !term.atom.parenthesesDisjunction->m_jitCountsTurns;
+    }
+
+    // The context of the first turn holds what the captures were in front of the group, that of the last turn where it matched. A group without captures keeps neither.
+    JSRegExpResult matchTurnsWithoutChoices(ByteTerm& term, BackTrackInfoParentheses* backTrack, ByteDisjunction* disjunctionBody)
+    {
+        bool hasCaptures = term.capture() || disjunctionBody->m_numSubpatterns;
+        while (backTrack->matchAmount < term.atom.quantityMaxCount) {
+            if (hasCaptures && backTrack->matchAmount > 1) {
+                ParenthesesDisjunctionContext* previous = backTrack->lastContext;
+                backTrack->lastContext = previous->next;
+                freeParenthesesDisjunctionContext(previous);
+            }
+            ParenthesesDisjunctionContext* context = allocParenthesesDisjunctionContext(disjunctionBody, output, term);
+            if (!context) [[unlikely]]
+                return JSRegExpResult::ErrorNoMemory;
+            unsigned turnBegin = input.getPos();
+            JSRegExpResult result = matchDisjunction(disjunctionBody, context->getDisjunctionContext(), /* btrack= */ false);
+            // The turn behind one that takes no input begins where that began, without captures as that did, and so ends as that ended: so does every turn that is left.
+            unsigned turnsMade = result == JSRegExpResult::Match && input.getPos() == turnBegin ? term.atom.quantityMaxCount - backTrack->matchAmount : 1;
+            if (result == JSRegExpResult::Match && hasCaptures) {
+                appendParenthesesDisjunctionContext(backTrack, context);
+                backTrack->matchAmount += turnsMade - 1;
+                continue;
+            }
+            resetMatches(term, context);
+            freeParenthesesDisjunctionContext(context);
+            if (result == JSRegExpResult::Match) {
+                backTrack->matchAmount += turnsMade;
+                continue;
+            }
+            undoTurnsWithoutChoices(term, backTrack);
+            return result;
+        }
+        return JSRegExpResult::Match;
+    }
+
+    void undoTurnsWithoutChoices(ByteTerm& term, BackTrackInfoParentheses* backTrack)
+    {
+        while (ParenthesesDisjunctionContext* context = backTrack->lastContext) {
+            resetMatches(term, context);
+            backTrack->lastContext = context->next;
+            freeParenthesesDisjunctionContext(context);
+        }
+        backTrack->matchAmount = 0;
+        input.setPos(backTrack->begin);
+    }
+
     // Greedy extension appends as many additional iterations as possible up
     // to quantityMaxCount, each required to match at least one character.
     JSRegExpResult extendParenthesesContextsToMaxCount(ByteTerm& term, BackTrackInfoParentheses* backTrack, ByteDisjunction* disjunctionBody)
@@ -1823,7 +1882,7 @@ public:
         if (!isSafeToRecurse()) [[unlikely]]
             return JSRegExpResult::ErrorNoMemory;
 
-        if (!--remainingMatchCount) {
+        if (countsTowardMatchLimit(disjunction, btrack) && !--remainingMatchCount) {
             dataLogLnIf(verbose, "      Reached match limit - Returning ErrorHitLimit");
             return JSRegExpResult::ErrorHitLimit;
         }
@@ -2159,6 +2218,10 @@ public:
             }
 
             input.next();
+            if (!moveToStartWithRequiredTexts()) {
+                DUMP_EXTRA("- Return NoMatch\n");
+                return JSRegExpResult::NoMatch;
+            }
 
             context->matchBegin = input.getPos();
 
@@ -2303,6 +2366,9 @@ public:
         if (pattern->hasEndAnchoredFixedSize() && input.end() >= pattern->m_endAnchoredFixedSize)
             input.setPos(std::max(input.getPos(), input.end() - pattern->m_endAnchoredFixedSize));
 
+        if (!moveToStartWithRequiredTexts())
+            return offsetNoMatch;
+
         ConcurrentJSLocker locker(pattern->m_lock);
 
         for (unsigned i = 0; i < pattern->m_body->m_numSubpatterns + 1; ++i)
@@ -2315,12 +2381,15 @@ public:
         RELEASE_ASSERT(allocatorPool);
 
         DisjunctionContext* context = allocDisjunctionContext(pattern->m_body.get());
-        if (!context) [[unlikely]]
+        if (!context) [[unlikely]] {
+            m_result = JSRegExpResult::ErrorNoMemory;
             return offsetNoMatch;
+        }
 
         dataLogLnIf(verbose, "  Interpret input: ", input, "\n  Matching");
 
         JSRegExpResult result = matchDisjunction(pattern->m_body.get(), context, /* btrack= */ false);
+        m_result = result;
         if (result == JSRegExpResult::Match) {
             output[0] = context->matchBegin;
             output[1] = context->matchEnd;
@@ -2338,7 +2407,10 @@ public:
         return output[0];
     }
 
-    Interpreter(BytecodePattern* pattern, unsigned* output, std::span<const CharType> input, unsigned start)
+    JSRegExpResult result() const { return m_result; }
+    unsigned remainingTurns() const { return remainingMatchCount; }
+
+    Interpreter(BytecodePattern* pattern, unsigned* output, std::span<const CharType> input, unsigned start, bool triesEveryPlace = false)
         : pattern(pattern)
         , compileMode(pattern->compileMode())
         , output(output)
@@ -2346,6 +2418,7 @@ public:
         , startOffset(start)
         , noNewlineBefore(start)
         , remainingMatchCount(matchLimit)
+        , m_usesRequiredTexts(!triesEveryPlace && !pattern->m_requiredTexts.isEmpty())
     {
     }
 
@@ -2357,6 +2430,26 @@ private:
 
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
 
+    // False: no match can begin here or farther on.
+    ALWAYS_INLINE bool moveToStartWithRequiredTexts()
+    {
+        if (!m_usesRequiredTexts) [[likely]]
+            return true;
+        unsigned start = nextStartWithRequiredTexts(pattern->m_requiredTexts, input.span(), input.getPos(), m_requiredTextPlaces);
+        if (start > input.end())
+            return false;
+        input.setPos(start);
+        return true;
+    }
+
+    // The JIT takes one off matchLimit for each turn that a repeated group begins (YarrGenerator::allocateParenContext()), and nothing for going back into a turn.
+    inline bool countsTowardMatchLimit(const ByteDisjunction* disjunction, bool btrack) const
+    {
+        if (!pattern->m_countsWhatJITCounts) [[likely]]
+            return true;
+        return !btrack && disjunction->m_jitCountsTurns;
+    }
+
     BytecodePattern* pattern;
     CompileMode compileMode;
     unsigned* output;
@@ -2367,6 +2460,9 @@ private:
     static constexpr unsigned bolUnsatisfiable = std::numeric_limits<unsigned>::max();
     unsigned noNewlineBefore; // see matchDotStarEnclosure
     unsigned remainingMatchCount;
+    JSRegExpResult m_result { JSRegExpResult::NoMatch };
+    RequiredTextPlaces m_requiredTextPlaces { };
+    bool m_usesRequiredTexts;
 };
 
 class ByteCompiler {
@@ -2922,6 +3018,7 @@ public:
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, inputOffset, matchDirection))
                             return error;
                         atomParenthesesSubpatternEnd(term.parentheses.lastSubpatternId, delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType, term.parentheses.disjunction->m_callFrameSize);
+                        m_allParenthesesInfo.last()->m_jitCountsTurns = jitCountsTurnsOf(term);
                     }
                     break;
                 }
@@ -3312,14 +3409,232 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
     m_lineIndent = savedLineIndent;
 }
 
-std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
+NEVER_INLINE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock, const String& source)
 {
-    return ByteCompiler(pattern).compile(allocator, lock, errorCode);
+    JSC_REMOVABLE_DEFINITION(RegExp, byteCompile);
+    if (pattern.m_analysis != PatternAnalysis::Performed)
+        return ByteCompiler(pattern).compile(allocator, lock, errorCode);
+
+    RequiredTexts requiredTexts = findRequiredTexts(pattern);
+    // This has to come first: the bytecode compiler takes m_userCharacterClasses out of the pattern.
+    auto flatProgram = compileFlatProgram(pattern);
+    if (!flatProgram) {
+        dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs in the bytecode interpreter: ", description(flatProgram.error()));
+        auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+        if (bytecode) {
+            bytecode->m_flatProgramDecline = flatProgram.error();
+            bytecode->m_countsWhatJITCounts = true;
+            bytecode->m_requiredTexts = WTF::move(requiredTexts);
+        }
+        return bytecode;
+    }
+    if (!requiredTexts.isEmpty()) {
+        bool hasSelectiveStartScan = (*flatProgram)->hasSelectiveStartScan();
+        requiredTexts.removeAllMatching([&](const RequiredText& required) {
+            return !required.isAllThatMatchesAtEndHold && (hasSelectiveStartScan || (*flatProgram)->startScanCovers(required));
+        });
+    }
+    if (!requiredTexts.isEmpty())
+        (*flatProgram)->setRequiredTexts(requiredTexts);
+
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Runs on a flat program");
+    if (Options::validateRegExpFlatProgram()) [[unlikely]] {
+        ErrorCode ignoredErrorCode { ErrorCode::NoError };
+        if (auto bytecode = ByteCompiler(pattern).compile(allocator, lock, ignoredErrorCode)) {
+            bytecode->m_flatProgram = WTF::move(*flatProgram);
+            bytecode->m_countsWhatJITCounts = true;
+            bytecode->m_source = source;
+            bytecode->m_requiredTexts = WTF::move(requiredTexts);
+            return bytecode;
+        }
+    }
+    auto bytecode = makeUnique<BytecodePattern>(WTF::move(*flatProgram), pattern, allocator, lock, source);
+    bytecode->m_requiredTexts = WTF::move(requiredTexts);
+    return bytecode;
 }
 
-unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+static unsigned interpretBytecode(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, JSRegExpResult& result, unsigned& remainingTurns, bool triesEveryPlace = false)
 {
+    if (input.is8Bit()) {
+        Interpreter<Latin1Character> interpreter(bytecode, output, input.span8(), start, triesEveryPlace);
+        unsigned matchStart = interpreter.interpret();
+        result = interpreter.result();
+        remainingTurns = interpreter.remainingTurns();
+        return matchStart;
+    }
+    Interpreter<char16_t> interpreter(bytecode, output, input.span16(), start, triesEveryPlace);
+    unsigned matchStart = interpreter.interpret();
+    result = interpreter.result();
+    remainingTurns = interpreter.remainingTurns();
+    return matchStart;
+}
+
+// Not for where time matters: there the second match is made in interpretBehindFlatProgram().
+static JSRegExpResult matchFlatProgramWithSurrogates(const FlatProgram& program, StringView input, unsigned start, unsigned* output, FlatMatchPolicy policy = FlatMatchPolicy::HandsOverEarly)
+{
+    unsigned remainingTurns = program.remainingTurns;
+    JSRegExpResult result = matchFlatProgram(program, input, start, output, policy);
+    if (result != JSRegExpResult::JITCodeFailure)
+        return result;
+    program.remainingTurns = remainingTurns;
+    return matchFlatProgramBehindSurrogate(program, input, start, output, policy);
+}
+
+// Answers nothing where the pattern has no such program, or the program has given up before the turns ran out.
+static std::optional<JSRegExpResult> matchCountingTurns(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, unsigned& remainingTurns)
+{
+    ConcurrentJSLocker locker(bytecode->m_lock);
+    if (!bytecode->m_hasAskedForFlatProgramThatCountsTurns) {
+        bytecode->m_hasAskedForFlatProgramThatCountsTurns = true;
+        if (bytecode->m_source.isNull())
+            return std::nullopt;
+        // The analysis puts alternatives in another order. This has to make the search of the bytecode that stands behind it: see interpretBehindFlatProgram().
+        auto analysis = bytecode->m_body ? PatternAnalysis::Performed : PatternAnalysis::Skipped;
+        ErrorCode errorCode { ErrorCode::NoError };
+        YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode, ExecutionMode::IncludeSubpatterns, analysis);
+        if (hasError(errorCode))
+            return std::nullopt;
+        if (auto program = compileFlatProgram(pattern, FlatProgramForm::CountsTurns)) {
+            (*program)->setRequiredTexts(bytecode->m_requiredTexts);
+            bytecode->m_flatProgramThatCountsTurns = WTF::move(*program);
+        }
+    }
+    FlatProgram* program = bytecode->m_flatProgramThatCountsTurns.get();
+    if (!program)
+        return std::nullopt;
+    program->remainingTurns = matchLimit;
+    JSRegExpResult result = matchFlatProgramWithSurrogates(*program, input, start, output);
+    remainingTurns = program->remainingTurns;
+    if (result == JSRegExpResult::ErrorNoMemory || result == JSRegExpResult::JITCodeFailure || (result == JSRegExpResult::ErrorHitLimit && remainingTurns))
+        return std::nullopt;
+    return result;
+}
+
+static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, JSRegExpResult flatResult, const unsigned* output)
+{
+    JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
+    unsigned bytecodeRemainingTurns { 0 };
+    Vector<unsigned, 32> bytecodeOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    interpretBytecode(bytecode, input, start, bytecodeOutput.mutableSpan().data(), bytecodeResult, bytecodeRemainingTurns);
+    validateFlatProgramResult(program, input, start, { flatResult, output }, { bytecodeResult, bytecodeOutput.span().data() });
+    if (flatResult == JSRegExpResult::JITCodeFailure) {
+        Vector<unsigned, 32> secondOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+        JSRegExpResult secondResult = matchFlatProgramBehindSurrogate(program, input, start, secondOutput.mutableSpan().data());
+        validateFlatProgramResult(program, input, start, { secondResult, secondOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+    }
+
+    Vector<unsigned, 32> memoOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    JSRegExpResult memoResult = matchFlatProgramWithSurrogates(program, input, start, memoOutput.mutableSpan().data(), FlatMatchPolicy::RemembersFromStart);
+    validateFlatProgramResult(program, input, start, { memoResult, memoOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+
+    unsigned remainingTurns { 0 };
+    Vector<unsigned, 32> countingOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    auto countingResult = matchCountingTurns(bytecode, input, start, countingOutput.mutableSpan().data(), remainingTurns);
+    if (!countingResult || bytecodeResult == JSRegExpResult::ErrorNoMemory)
+        return;
+    validateFlatProgramResult(program, input, start, { *countingResult, countingOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+    if (remainingTurns != bytecodeRemainingTurns) {
+        dataLogLn("validateRegExpFlatProgram: turns differ at start ", start, ": flat program ", matchLimit - remainingTurns, " interpreter ", matchLimit - bytecodeRemainingTurns);
+        dataLogLn("  pattern: ", bytecode->m_source);
+        dataLogLn("  subject: ", input);
+        CRASH();
+    }
+}
+
+// A flat program keeps a frame for each turn of a repeated group, and gives up where they pass Options::maxRegExpStackSize(). It counts every frame that it resumes, and gives up at
+// matchLimit, which the JIT reaches later or never. Neither is an answer: the match is made again in a form that gives it up only where the JIT does.
+static bool hasGivenUp(JSRegExpResult flatResult)
+{
+    return flatResult == JSRegExpResult::ErrorNoMemory || flatResult == JSRegExpResult::ErrorHitLimit || flatResult == JSRegExpResult::JITCodeFailure;
+}
+
+static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, unsigned* output, JSRegExpResult flatResult)
+{
+    if (flatResult == JSRegExpResult::JITCodeFailure) {
+        flatResult = matchFlatProgramBehindSurrogate(program, input, start, output);
+        if (!hasGivenUp(flatResult))
+            return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+    }
+    if (flatResult == JSRegExpResult::ErrorHitLimit) {
+        unsigned remainingTurns { 0 };
+        if (auto result = matchCountingTurns(bytecode, input, start, output, remainingTurns))
+            return *result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+        if (program.jitCountsTurns) {
+            // It has handed over early: see FlatMatchPolicy.
+            flatResult = matchFlatProgramWithSurrogates(program, input, start, output, FlatMatchPolicy::RunsToMatchLimit);
+            if (!hasGivenUp(flatResult))
+                return flatResult == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+        }
+    }
+    if (!bytecode->m_body) {
+        if (!bytecode->m_bytecodeBehindFlatProgram) {
+            if (bytecode->m_source.isNull())
+                return offsetNoMatch;
+            ErrorCode errorCode { ErrorCode::NoError };
+            YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode);
+            if (hasError(errorCode))
+                return offsetNoMatch;
+            bytecode->m_bytecodeBehindFlatProgram = ByteCompiler(pattern).compile(bytecode->m_allocator, bytecode->m_lock, errorCode);
+            if (!bytecode->m_bytecodeBehindFlatProgram)
+                return offsetNoMatch;
+            bytecode->m_bytecodeBehindFlatProgram->m_countsWhatJITCounts = true;
+            bytecode->m_bytecodeBehindFlatProgram->m_requiredTexts = bytecode->m_requiredTexts;
+        }
+        bytecode = bytecode->m_bytecodeBehindFlatProgram.get();
+    }
+    JSRegExpResult result { JSRegExpResult::NoMatch };
+    unsigned remainingTurns { 0 };
+    return interpretBytecode(bytecode, input, start, output, result, remainingTurns);
+}
+
+static NEVER_INLINE unsigned interpretFlatProgram(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    JSRegExpResult flatResult = matchFlatProgram(*bytecode->m_flatProgram, input, start, output);
+    if (bytecode->m_body) [[unlikely]]
+        validateFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, flatResult, output);
+    if (flatResult == JSRegExpResult::Match)
+        return output[0];
+    if (hasGivenUp(flatResult)) [[unlikely]]
+        return interpretBehindFlatProgram(bytecode, *bytecode->m_flatProgram, input, start, output, flatResult);
+    return offsetNoMatch;
+}
+
+// The bytecode's answer without the attempts that the texts rule out, and with them.
+static void validateRequiredTexts(BytecodePattern* bytecode, StringView input, unsigned start)
+{
+    if (!bytecode->m_body || bytecode->m_requiredTexts.isEmpty())
+        return;
+    auto answer = [&](Vector<unsigned, 32>& output, bool triesEveryPlace) {
+        JSRegExpResult result { JSRegExpResult::NoMatch };
+        unsigned remainingTurns { 0 };
+        interpretBytecode(bytecode, input, start, output.mutableSpan().data(), result, remainingTurns, triesEveryPlace);
+        return result;
+    };
+    Vector<unsigned, 32> output(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    JSRegExpResult result = answer(output, false);
+    Vector<unsigned, 32> outputOfEveryAttempt(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    JSRegExpResult resultOfEveryAttempt = answer(outputOfEveryAttempt, true);
+    if (resultOfEveryAttempt != JSRegExpResult::Match && resultOfEveryAttempt != JSRegExpResult::NoMatch)
+        return;
+    bool isSame = result == resultOfEveryAttempt;
+    for (unsigned i = 0; isSame && result == JSRegExpResult::Match && i <= bytecode->m_body->m_numSubpatterns; ++i)
+        isSame = output[i << 1] == outputOfEveryAttempt[i << 1] && (output[i << 1] == offsetNoMatch || output[(i << 1) + 1] == outputOfEveryAttempt[(i << 1) + 1]);
+    if (isSame)
+        return;
+    dataLogLn("validateRegExpFlatProgram: the text that every match holds changes the answer at start ", start, ": ", static_cast<int>(result), " at ", static_cast<int>(output[0]), ", without it ", static_cast<int>(resultOfEveryAttempt), " at ", static_cast<int>(outputOfEveryAttempt[0]));
+    dataLogLn("  pattern: ", bytecode->m_source);
+    dataLogLn("  subject: ", input);
+    CRASH();
+}
+
+NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    JSC_REMOVABLE_DEFINITION(RegExp, interpret);
     SuperSamplerScope superSamplerScope(false);
+    if (Options::validateRegExpFlatProgram()) [[unlikely]]
+        validateRequiredTexts(bytecode, input, start);
+    if (bytecode->m_flatProgram) [[unlikely]]
+        return interpretFlatProgram(bytecode, input, start, output);
     if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();

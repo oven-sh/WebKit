@@ -1,0 +1,122 @@
+# A callee is looked for on every value of its cast chain, and the value with the strongest type is the one tested and read
+# FORM: Prepared optimizing
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f3 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="run" function=f4 mutability=Fixed}]}
+function f0 name="plain" results=[{type=anything}] {
+    Return
+}
+function f1 name="other" results=[{type=anything}] {
+    Return
+}
+function f2 name="counter" captures=[{type=number}] results=[{type=anything}] {
+    Return
+}
+function f3 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f4 name="run" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    Return
+}
+
+function f5 name="proven-under-upcast" parameters=[{type=f1}] results=[{type=anything}] {
+    v1: anything = Upcast v0 castType=anything
+    v2 = Call v1
+    Return v2
+# CHECK: = CallDirect function=f1
+# CHECK-NOT: = Call v
+}
+function f6 name="captures-read-under-cast" parameters=[{type=f2}] results=[{type=anything}] {
+    v1: function = Upcast v0 castType=function
+    v2 = Call v1
+    Return v2
+# CHECK: [[capture]]: number = GetCapture v0 function=f2
+# CHECK-NEXT: = CallDirect [[capture]] function=f2
+# CHECK-NOT: = Call v
+}
+function f7 name="closure-creation-under-upcast" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f2
+    v2: anything = Upcast v1 castType=anything
+    v3 = Call v2
+    Return v3
+# CHECK-NOT: GetCapture
+# CHECK: = CallDirect v0 function=f2
+# CHECK-NOT: = Call v
+}
+function f8 name="check-in-the-middle" parameters=[{type=f0|f1}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=f1
+    v2: anything = Upcast v1 castType=anything
+    v3 = Call v2
+    Return v3
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect function=f1
+# CHECK-NOT: = Call v
+}
+function f9 name="expected-type-above-two-functions" parameters=[{type=f0|f1}] results=[{type=anything}] {
+    v1: anything ~ f1 = Upcast v0 castType=anything
+    v2 = Call v1
+    Return v2
+# CHECK: [[isPlain]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isPlain]] -> taken [[plainArm]](| 0), notTaken [[otherArm]](| 0)
+# CHECK: [[plainArm]]({{*}}: f0):
+# CHECK-NEXT: = CallDirect function=f0
+# CHECK: [[otherArm]]({{*}}: f1):
+# CHECK-NEXT: = CallDirect function=f1
+}
+function f10 name="cast-rejects-every-function" parameters=[{type=f0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f0):
+    v1 = Check v0 expectedType=number
+    v2 = Call v1
+    Unreachable
+# CHECK-NEXT: b0(v0: anything ~ f0):
+# CHECK-NEXT: v1: number = Check v0 expectedType=number
+# CHECK-NEXT: v2: never = Call v1
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+}
+function f11 name="expected-type-under-cast" parameters=[{type=f0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ f0):
+    v1 = Check v0 expectedType=function
+    v2 = Call v1
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ f0):
+# CHECK-NEXT: = Check v0 expectedType=function
+# CHECK-NEXT: v2: anything = Call v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f12 name="construct-under-upcast" parameters=[{type=f3}] results=[{type=anything}] {
+    v1: anything = Upcast v0 castType=anything
+    v2 = Construct v1
+    Return v2
+# CHECK: [[object]]: L0 = NewObject layout=L0
+# CHECK-NEXT: = CallDirect [[object]], v0 function={{*}} [isConstruction]
+# CHECK-NOT: = Construct
+}
+function f13 name="method-read-under-cast" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="run"
+    v2 = Check v1 expectedType=function
+    v3 = Call v2, v0 calleeKey="run"
+    Return v3
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: = CallDirect v0 function=f4
+}
+function f14 name="cast-rejects-the-method" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="run"
+    v2 = Check v1 expectedType=number
+    v3 = Call v2, v0 calleeKey="run"
+    Unreachable
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="run"
+# CHECK-NEXT: v2: number = Check v1 expectedType=number
+# CHECK-NEXT: v3: never = Call v2, v0 calleeKey="run"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+}

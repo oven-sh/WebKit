@@ -1,0 +1,41 @@
+# In a validating build the test of a proof at the head of a merge block moves to the edges with the cast, so the parameter gets the proven type as in a release build
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: pass SimplifyCasts EliminateDeadCode
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneEdgeIsInside" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3):
+    ValidateType v3 validatedType=number
+    v5 = AssumeType v3 provenType=number
+    Return v5
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v2)
+# CHECK-NEXT: b2():
+# CHECK-NEXT: ValidateType v0 validatedType=number
+# CHECK-NEXT: [[onEdge]]: number = AssumeType v0 provenType=number
+# CHECK-NEXT: Jump -> next b3([[onEdge]])
+# CHECK-NEXT: b3(v3: number):
+# CHECK-NEXT: Return v3
+}
+
+function f1 name="testOfAnotherType" parameters=[{type=anything}, {type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v0)
+  b3(v3):
+    ValidateType v3 validatedType=string|number
+    v5 = AssumeType v3 provenType=number
+    Return v5
+# CHECK: b3(v3: anything):
+# CHECK-NEXT: ValidateType v3 validatedType=number|string
+# CHECK-NEXT: = AssumeType v3 provenType=number
+}

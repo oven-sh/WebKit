@@ -1,0 +1,95 @@
+# A step that can run without the test having held is not bounded by the test, so the counter stays a number
+# FORM: Prepared
+# RUN: pass ConvertCountersToIntegers
+# STATISTIC: CountersConverted = 0
+# STATISTIC: ConvertCountersToIntegersChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="stepAboveTheTest" parameters=[{type=i32}] results=[{type=undefined}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=1
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Add v3, v2
+    v6 = Less v3, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v5)
+  b3():
+    Return
+# CHECK: b1(v3: int|whole):
+# CHECK: v5: int|whole = Add v3, v2
+# CHECK: Branch v6 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+}
+
+function f1 name="stepBelowTheJoinOfBothEdges" parameters=[{type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    v7 = Add v4, v3
+    Branch v1 -> taken b1(v7), notTaken b5()
+  b5():
+    Return
+# CHECK: b1(v4: int|whole):
+# CHECK: Branch v6 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK: v7: int|whole = Add v4, v3
+}
+
+function f2 name="oneOfTwoStepsSkipsTheTest" parameters=[{type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Add v4, v3
+    Jump -> next b1(v6)
+  b3():
+    v7 = Less v4, v0
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    v8 = Add v4, v3
+    Jump -> next b1(v8)
+  b5():
+    Return
+# CHECK: b1(v4: int|whole):
+# CHECK: v6: int|whole = Add v4, v3
+# CHECK: Branch v7 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v8: int|whole = Add v4, v3
+}
+
+function f3 name="pathAroundTheTestJoinsTheStayingTarget" parameters=[{type=i32}, {type=boolean}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    v3 = Integer integer=1
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Less v4, v0
+    Branch v6 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Add v4, v3
+    Jump -> next b1(v7)
+  b4():
+    Return
+# CHECK: b1(v4: int|whole):
+# CHECK: Branch v6 -> taken b3(), notTaken b4()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v7: int|whole = Add v4, v3
+}

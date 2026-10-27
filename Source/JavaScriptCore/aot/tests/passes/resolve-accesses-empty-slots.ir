@@ -1,0 +1,89 @@
+# A field that cannot move out of its slot is in the slot or the object has no such property. The prototype of these objects may change, so nobody knows what lies above them. A read that finds the slot empty looks the name up from the object on:
+# of that lookup the type of the object says what it may find, so it has no more effects than the read had, and a caller that relied on the summary of this function stays right.
+# The slot of a number is tested for a number. It fails that test when it is empty and when it holds undefined or null
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="stays" declared={type=string} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="other" declared={type=string} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="moves" declared={type=number} flow={stability=[IsNeverRedefined]}}, {key="redefined" declared={type=number} flow={stability=[IsNeverStoredWithOtherType]}}, {key="filled" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="alone" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="count" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity]}
+
+function f0 name="slotOrPrototype" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="stays"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: [[isFilled0]]: boolean = IsSlotFilled v0 key="stays" receivers=[L0]
+# CHECK-NEXT: Branch [[isFilled0]] -> taken [[filled0]](| 0), notTaken [[empty0]]()
+# CHECK-NOT: PropGet
+# CHECK: [[filled0]]([[guard0]]: guard):
+# CHECK-NEXT: [[own0]]: string = GetSlot v0, [[guard0]] key="stays" receivers=[L0]
+# CHECK-NEXT: Jump -> next [[join0]]([[own0]])
+# CHECK: [[empty0]]():
+# CHECK-NEXT: [[found0]]: anything = SuperGet v0, v0 key="stays"
+# CHECK-NEXT: Jump -> next [[join0]]([[found0]])
+# CHECK-NOT: GetSuperBase
+}
+
+function f1 name="twoReadsInOneBlock" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="stays"
+    v2 = PropGet v0 key="filled"
+    v3 = PropGet v0 key="other"
+    v4 = Add v1, v3
+    v5 = Add v4, v2
+    Return v5
+# CHECK-NOT: PropGet
+# CHECK: = IsSlotFilled v0 key="stays"
+# CHECK: = SuperGet {{*}}, v0 key="other"
+# CHECK: = GetSlot v0 key="filled"
+# CHECK-NEXT: = IsSlotFilled v0 key="other"
+# CHECK: = SuperGet {{*}}, v0 key="stays"
+}
+
+function f2 name="valueOfAnotherTypeMovesTheFieldOut" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="moves"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1:{{*}}= PropGet v0 key="moves"
+# CHECK-NEXT: Return v1
+}
+
+function f3 name="redefinitionMovesTheFieldOut" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="redefined"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1:{{*}}= PropGet v0 key="redefined"
+# CHECK-NEXT: Return v1
+}
+
+function f4 name="prototypesHaveNothingUnderTheName" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="alone"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1:{{*}}= GetSlotOrUndefined v0 key="alone"
+# CHECK-NEXT: Return v1
+}
+
+function f5 name="receiverIsExpected" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="stays"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: v1:{{*}}= PropGet v0 key="stays"
+# CHECK-NEXT: Return v1
+}
+
+function f6 name="slotOfNumberIsTestedForNumber" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: [[holdsNumber6]]: boolean = IsSlotFilled v0 key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch [[holdsNumber6]] -> taken [[number6]](| 0), notTaken [[other6]]()
+# CHECK-NOT: PropGet
+# CHECK-NOT: GetSuperBase
+# CHECK: [[number6]]([[guard6]]: guard):
+# CHECK-NEXT: [[own6]]: number = GetSlot v0, [[guard6]] key="count" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next [[join6]]([[own6]])
+# CHECK: [[other6]]() frequency=Unlikely:
+# CHECK-NEXT: [[found6]]: anything = SuperGet v0, v0 key="count"
+# CHECK-NEXT: Jump -> next [[join6]]([[found6]])
+# CHECK-NOT: GetSuperBase
+}

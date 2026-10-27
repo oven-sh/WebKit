@@ -1,0 +1,69 @@
+# known.x; helper(); input.x; input.x = 1; result = input(handed); result.x; new input(); many = first; many = second; many = third; many.x;  function handed(value) { value.x }
+# An access whose receivers are all listed and a call whose callees are all listed have a stamp and no loss. Every other site has a loss that says what took the proof away and where, and no stamp,
+# but for the read at which layouts with the field are seen to arrive beside what was given up: they are what it expects, in a set that is not complete.
+# A built-in object has no layout. Where the unknown object arrives, the cause is how that object came into being: a property of the global object that no table declares, the result of a callee
+# nobody knows, a parameter of a function that was handed to such a callee. Where a set was given up, the untracked object arrives, and a receiver that may be anything says nothing about it.
+# Nothing earlier explains any of these, so each site is its own witness
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 1
+# RUN: valueflow-results
+# CHECK: access S0 function=f0 kind=Read
+# CHECK-NOT: loss
+# CHECK: access S1 function=f0 kind=Call
+# CHECK-NOT: loss
+# CHECK: access S2 function=f0 kind=Read loss cause=NonLayoutObject witness=f0:v6
+# CHECK-NEXT: access S3 function=f0 kind=Read loss cause=UndescribedNativeResult witness=f0:v7
+# CHECK-NEXT: access S4 function=f0 kind=Store loss cause=UndescribedNativeResult witness=f0:v8
+# CHECK-NEXT: access S5 function=f0 kind=Call loss cause=UndescribedNativeResult witness=f0:v10
+# CHECK-NEXT: access S6 function=f0 kind=Read loss cause=ResultOfUnknownCallee witness=f0:v11
+# CHECK-NEXT: access S7 function=f0 kind=Construct loss cause=UndescribedNativeResult witness=f0:v12
+# CHECK-NEXT: access S8 function=f0 kind=Read loss cause=Untracked witness=f0:v20
+# CHECK-NEXT: access S9 function=f2 kind=Read loss cause=ParameterOfEscapedFunction witness=f2:v1
+# CHECK-NOT: access S
+# RUN(APPLY): valueflow-apply
+# APPLY: = PropGet v1 key="x" accessSite=0 receivers=[L0]
+# APPLY: = Call {{*}}accessSite=1 callees=[f1]
+# APPLY-NOT: receivers=
+# APPLY-NOT: callees=
+# APPLY: = PropGet v19 key="x" accessSite=8 receivers=[L1, L2, L3, ..]
+# APPLY-NOT: receivers=
+# APPLY-NOT: callees=
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Known" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="First" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Second" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Third" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="many" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="x"
+    v3 = NewClosure function=f1
+    v4 = Call v3
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = PropGet v6 key="x"
+    PropSet v6, v0 key="x"
+    v9 = NewClosure function=f2
+    v10 = Call v6, -, v9
+    v11 = PropGet v10 key="x"
+    v12 = Construct v6
+    v13 = NewObject -, v0 layout=L1 fields=[0]
+    PutModuleVariable v13 variable=g0
+    v15 = NewObject -, v0 layout=L2 fields=[0]
+    PutModuleVariable v15 variable=g0
+    v17 = NewObject -, v0 layout=L3 fields=[0]
+    PutModuleVariable v17 variable=g0
+    v19 = GetModuleVariable variable=g0
+    v20 = PropGet v19 key="x"
+    Return
+}
+function f1 name="helper" results=[{type=anything}] {
+    Return
+}
+function f2 name="handed" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return
+}

@@ -1,0 +1,175 @@
+# Edges, roots, caller sets, callee sets, entry sets, recursion and ranks of the call graph
+# FORM: Prepared
+# RUN: pass BuildCallGraph
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f8 flow={baseState=None members=[L0] impossibleMutations=[AddProperty, ChangePrototype]} classFlow={prototypeLink=Fixed prototypeNamesAreComplete=true namedMembers=[{key="y" kind=Getter function=f9 mutability=Fixed}, {key="z" function=f10 mutability=Fixed closureUse=CalledOnly}]}
+variable g0 name="hoisted" declared={type=anything} initialization=Function function=f3
+variable g1 name="stored" declared={type=anything}
+runtimefunction id=65 function=f17
+runtimefunction id=131089 function=f20
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = NewClosure function=f4
+    v2 = NewClosure function=f5
+    v3 = NewClosure function=f7
+    v4 = IsClosureOf v1 function=f6
+    v5 = NewClosure function=f19
+    PutModuleVariable v5 variable=g1
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="callback" [isFreeName]
+    v9 = Call v8, -, v1, v2, v3, v4 callees=[f7, ..]
+    Return v9
+}
+function f1 name="chainMiddle" results=[{type=undefined}] {
+    v0 = CallDirect function=f2
+    ReturnCall v0
+}
+function f2 name="chainBottom" results=[{type=undefined}] {
+    Return
+}
+function f3 name="hoisted" results=[{type=undefined}] {
+    Return
+}
+function f4 name="closureCalledDirectly" results=[{type=undefined}] {
+    Return
+}
+function f5 name="closure" results=[{type=undefined}] {
+    Return
+}
+function f6 name="comparedOnly" results=[{type=undefined}] {
+    Return
+}
+function f7 name="memberOfOpenSet" results=[{type=undefined}] {
+    Return
+}
+function f8 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f9 name="y" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
+    Return
+}
+function f10 name="z" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
+    Return
+}
+function f11 name="readsAccessor" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="y"
+    v2 = PropGet v0 key="z"
+    v3 = Call v2, v0 callees=[f10]
+    Return v1
+}
+function f12 name="readsUnknownReceiver" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="y"
+    Return v1
+}
+function f13 name="callsByValue" parameters=[{type=boolean}] results=[{type=anything}] {
+    v1 = NewClosure function=f14
+    v2 = NewClosure function=f15
+    Branch v0 -> taken b1(v1), notTaken b1(v2)
+  b1(v3):
+    v4 = Call v3 callees=[f14, f15]
+    Return v4
+}
+function f14 name="firstCandidate" results=[{type=undefined}] {
+    Return
+}
+function f15 name="secondCandidate" results=[{type=undefined}] {
+    Return
+}
+function f16 name="mapsArray" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = NewClosure function=f18
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeMap/0
+    Return v2
+}
+function f17 name="map" role=Library flags=[HasThis] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Call v1 callees=[f18]
+    Return v2
+}
+function f18 name="callback" results=[{type=undefined}] {
+    Return
+}
+function f19 name="storedAndCallsUnknownCode" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="other" [isFreeName]
+    v2 = Call v1
+    Return v2
+}
+function f20 name="sort" role=Library enclosingRuntimeFunction=131089 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f21 name="sortsArray" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f20
+    Return v1
+}
+function f22 name="callsTwice" results=[{type=undefined}] {
+    v0 = CallDirect function=f27
+    v1 = CallDirect function=f27
+    v2 = CallDirect function=f4
+    Return v2
+}
+function f23 name="" role=GenericEntrypoint captures=[{type=f4}] results=[{type=undefined}] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+    v1 = CallDirect function=f4
+    Return v1
+}
+function f24 name="selfRecursive" role=OutlinedBody results=[{type=undefined}] {
+    v0 = CallDirect function=f24
+    Return v0
+}
+function f25 name="cycleA" role=OutlinedBody results=[{type=undefined}] {
+    v0 = CallDirect function=f26
+    Return v0
+}
+function f26 name="cycleB" role=OutlinedBody results=[{type=undefined}] {
+    v0 = CallDirect function=f25
+    Return v0
+}
+function f27 name="calledTwice" role=OutlinedBody results=[{type=undefined}] {
+    Return
+}
+function f28 name="pair" role=ResultWrapper results=[{type=number}] creator=ResultWrapper{worker=f29} {
+    v0 = CallDirect function=f29
+    v1 = ResultAt v0 index=0
+    Return v1
+}
+function f29 name="pair" role=ResultWorker results=[{type=number}, {type=number}] creator=ResultWorker{origin=f28} {
+    v0 = Integer integer=1
+    v1 = Results v0, v0
+    Return v1
+}
+# CHECK: called by unknown code f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 f15 f16 f17 f18 f19 f20 f21 f22 f23 f28
+# CHECK-NEXT: roots f0 f3 f17
+# CHECK-NEXT: f0: callees f1 f7 | callers | sites 0 | callers Unknown | callees Unknown | entries Unknown | Unknown | rank [[unknownCode]]
+# CHECK-NEXT: f1: callees f2 | callers f0 | sites 1 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive | rank 1
+# CHECK-NEXT: f2: callees | callers f1 | sites 1 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive | rank 0
+# CHECK-NEXT: f3: callees | callers | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f4: callees | callers f22 f23 | sites 2 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f5: callees | callers | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f6: callees | callers | sites 0 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f7: callees | callers f0 | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f8: callees | callers | sites 0 | callers Unknown | {{*}} | entries Unknown |
+# CHECK-NEXT: f9: callees | callers f11 | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f10: callees | callers f11 | sites 0 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f11: callees f9 f10 | callers | sites 0 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f12: callees | callers | sites 0 | callers Unknown | callees Unknown | entries DirectCallers | Unknown | rank [[unknownCode]]
+# CHECK-NEXT: f13: callees f14 f15 | callers | sites 0 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f14: callees | callers f13 | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f15: callees | callers f13 | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f16: callees f17 | callers | sites 0 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f17: callees f18 | callers f16 | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f18: callees | callers f17 | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f19: callees | callers | sites 0 | callers Unknown | callees Unknown | entries Unknown | Unknown | rank [[unknownCode]]
+# CHECK-NEXT: f20: callees | callers f21 | sites 1 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f21: callees f20 | callers | sites 0 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f22: callees f4 f27 | callers | sites 0 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f23: callees f4 | callers | sites 0 | callers Unknown | callees Complete | entries Unknown | NotRecursive |
+# CHECK-NEXT: f24: callees f24 | callers f24 | sites 1 | callers Complete | callees Complete | entries DirectCallers | Unknown |
+# CHECK-NEXT: f25: callees f26 | callers f26 | sites 1 | callers Complete | callees Complete | entries DirectCallers | Unknown | rank [[cycle]]
+# CHECK-NEXT: f26: callees f25 | callers f25 | sites 1 | callers Complete | callees Complete | entries DirectCallers | Unknown | rank [[cycle]]
+# CHECK-NEXT: f27: callees | callers f22 | sites 2 | callers Complete | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f28: callees f29 | callers | sites 0 | callers Unknown | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: f29: callees | callers f28 | sites 1 | callers Complete | callees Complete | entries DirectCallers | NotRecursive |
+# CHECK-NEXT: outcome: Unchanged

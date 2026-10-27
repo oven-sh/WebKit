@@ -1,0 +1,16 @@
+# A call with a typed result has the effects that its overload declares, and those of opening and closing the source that the compiled parser reads
+# FORM: Prepared optimizing
+# RUN: effects summaries f0
+
+module m0 path="main.js" displayPath="main.js"
+expectedresult x0 type=L0 layouts=[L0]
+layout L0 name="User" fields=[{key="id" declared={type=number}}]
+function f0 name="parsedText" role=OutlinedBody parameters=[{type=string}] results=[{type=undefined}] {
+    v1 = Undefined
+    v2 = CallBuiltin -, v0, v1 overload=JSONParse/0
+    v3 = CallBuiltin -, v0, v1 overload=JSONParse/0 expectedResult=x0
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK: v2 CallBuiltin: reads(StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v3 CallBuiltin: {{*}}writes({{*}}ParserState{{*}}throws

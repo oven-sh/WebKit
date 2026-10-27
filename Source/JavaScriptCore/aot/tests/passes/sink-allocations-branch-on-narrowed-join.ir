@@ -1,0 +1,58 @@
+# A join of an object and booleans that a test has narrowed to its booleans is the condition of a branch: the branch gets the value
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneBoolean" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewArray v0 contents=anything
+    Jump -> next b3(v2)
+  b2():
+    v3 = Boolean boolean=true
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = TypeTest v4 testedType=boolean
+    Branch v5 -> taken b4(| 0), notTaken b6()
+  b4(v6):
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    v7 = Undefined
+    Return v7
+# CHECK: b4([[narrowed0]]: true):
+# CHECK-NEXT: Branch [[narrowed0]] -> taken b5(), notTaken b6()
+}
+
+function f1 name="bothBooleans" parameters=[{type=anything}, {type=int[0, 2]}] results=[{type=anything}] {
+    Switch v1 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    v2 = NewArray v0 contents=anything
+    Jump -> next b4(v2)
+  b2():
+    v3 = Boolean boolean=true
+    Jump -> next b4(v3)
+  b3():
+    v4 = Boolean
+    Jump -> next b4(v4)
+  b4(v5):
+    v6 = TypeTest v5 testedType=boolean
+    Branch v6 -> taken b5(| 0), notTaken b7()
+  b5(v7):
+    Branch v7 -> taken b6(), notTaken b7()
+  b6():
+    Return v0
+  b7():
+    v8 = Undefined
+    Return v8
+# CHECK-NOT: NewArray
+# CHECK: b4([[tag1]]: i32,
+# CHECK: b5():
+# CHECK-NEXT: Switch [[tag1]] cases=[2] -> case [[isTrue1]](), otherwise [[isFalse1]]()
+# CHECK: ([[condition1]]: boolean):
+# CHECK-NEXT: Branch [[condition1]] -> taken b6(), notTaken b7()
+# CHECK: [[isTrue1]]():
+# CHECK-NEXT: = Boolean boolean=true
+}

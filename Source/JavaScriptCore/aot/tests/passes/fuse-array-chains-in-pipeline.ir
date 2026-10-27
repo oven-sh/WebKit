@@ -1,0 +1,320 @@
+# A chain in a loop is fused in the form the earlier passes leave it in, and the traversal is specialized until one loop with the callbacks is left
+# TODO: nobody: `a.filter(f).map(g)` in a hot loop no longer ends as one loop: each call goes to a callee version of the library function
+# FORM: AsRead
+# RUN: pipeline EliminateGuards
+# RUN(ABSENT): pipeline EliminateGuards
+# RUN(FIRST): pipeline FuseArrayChains
+# STATISTIC: MaxOptimizationRoundsHits = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}] exports=[{name="across" variable=g1}, {name="count" variable=g2}, {name="hot" variable=g0}, {name="once" variable=g3}]
+module m1 path="once.js" displayPath="once.js" body=f6 exports=[{name="once" variable=g3}]
+entry module=m0 hostReads=[{exportName="across"}, {exportName="count"}, {exportName="hot"}, {exportName="once"}]
+variable g0 name="hot" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="across" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="count" module=m0 declared={type=anything} initialization=Undefined
+variable g3 name="once" module=m1 declared={type=anything} initialization=Undefined
+runtimefunction id=33 function=f7
+runtimefunction id=65 function=f8
+runtimefunction id=131091 function=f10
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=0
+    Jump -> next b1(v0)
+  b1(v1):
+    LoopHint
+    v3 = Integer integer=1000
+    v4 = Less v1, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = Integer integer=-1
+    v6 = Integer integer=2
+    v7 = Integer integer=3
+    v8 = NewArray v5, v6, v7 contents=number
+    v9 = CallDirect v8 function=f3
+    PutModuleVariable v9 variable=g0
+    v11 = CallDirect v8 function=f5
+    PutModuleVariable v11 variable=g1
+    v13 = NewClosure function=f1
+    v14 = PropGet v8 key="filter"
+    v15 = Call v14, v8, v13
+    v16 = PropGet v15 key="length"
+    PutModuleVariable v16 variable=g2
+    v18 = Integer integer=1
+    v19 = Add v1, v18
+    Jump -> next b1(v19)
+  b3():
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-COUNT-4: LoopHint
+# CHECK-NOT: LoopHint
+# CHECK-LABEL: function f1 name="isPositive"
+# ABSENT-LABEL: function f0 name="main"
+# ABSENT-NOT: AppendElement
+# ABSENT-NOT: function=f7
+# ABSENT-NOT: function=f8
+# ABSENT-NOT: = Call v
+# ABSENT-NOT: = BitAnd
+# ABSENT-NOT: = RShift
+# ABSENT-NOT: = StrictEq
+# ABSENT-NOT: = NewArray {{*}}, {{*}}, {{*}}, {{*}}, {{*}}, {{*}}, {{*}}, {{*}} contents=anything
+# FIRST-LABEL: function f0 name="main"
+# FIRST-NOT: function=f7
+# FIRST: [[callback]]: f1 = NewClosure function=f1
+# FIRST-NOT: function=f7
+# FIRST: = CallDirect {{*}}, [[callback]], {{*}} function=[[lengthStep]]
+# FIRST-NOT: function=f7
+# FIRST-LABEL: function f1 name="isPositive"
+function f1 name="isPositive" kind=Arrow parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = Integer integer=0
+    v2 = Less v1, v0
+    Return v2
+}
+function f2 name="double" kind=Arrow parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+function f3 name="hotChain" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="filter"
+    v3 = Call v2, v0, v1
+    v4 = NewClosure function=f2
+    v5 = PropGet v3 key="map"
+    v6 = Call v5, v3, v4
+    Return v6
+}
+function f4 name="evens" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = NewClosure function=f1
+    v2 = PropGet v0 key="filter"
+    v3 = Call v2, v0, v1
+    Return v3
+}
+function f5 name="chainAcrossHelper" parameters=[{type=Array<number>}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f4
+    v2 = NewClosure function=f2
+    v3 = PropGet v1 key="map"
+    v4 = Call v3, v1, v2
+    Return v4
+}
+function f6 name="runsOnce" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=5
+    v1 = NewArray v0 contents=number
+    v2 = NewClosure function=f1
+    v3 = PropGet v1 key="filter"
+    v4 = Call v3, v1, v2
+    v5 = PropGet v4 key="length"
+    PutModuleVariable v5 variable=g3
+    Return
+}
+# ABSENT-LABEL: function f6 name="runsOnce"
+# FIRST-LABEL: function f6 name="runsOnce"
+# FIRST: [[kept]]{{*}} = CallDirect {{*}} function=f7
+# FIRST: PutModuleVariable {{*}} variable=g3
+function f7 name="filter" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=33 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = PropGet v0 key="length"
+    v4 = Check v3 expectedType=int[0, 4294967295]
+    v5 = Integer integer=0
+    v6 = ElemGet v2, v5
+    v7 = NewArray contents=anything
+    Jump -> next b1(v5)
+  b1(v8):
+    LoopHint
+    v10 = Less v8, v4
+    Branch v10 -> taken b2(), notTaken b5()
+  b2():
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    v13 = Check v8 expectedType=int[0, 4294967294]
+    v14 = ElemHas v0, v13
+    Branch v14 -> taken b3(), notTaken b1(v12)
+  b3():
+    v15 = ElemGet v0, v13
+    v16 = Call v1, v6, v15, v8, v0
+    v17 = ToBoolean v16
+    Branch v17 -> taken b4(), notTaken b1(v12)
+  b4():
+    AppendElement v7, v15
+    Jump -> next b1(v12)
+  b5():
+    Return v7
+}
+function f8 name="map" role=Library flags=[HasThis, HasHiddenRest] enclosingRuntimeFunction=65 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: Array<anything>):
+    v3 = PropGet v0 key="length"
+    v4 = Check v3 expectedType=int[0, 4294967295]
+    v5 = Integer integer=0
+    v6 = ElemGet v2, v5
+    v7 = NewArray contents=anything
+    Jump -> next b1(v5)
+  b1(v8):
+    LoopHint
+    v10 = Less v8, v4
+    Branch v10 -> taken b2(), notTaken b4()
+  b2():
+    v11 = Integer integer=1
+    v12 = Add v8, v11
+    v13 = Check v8 expectedType=int[0, 4294967294]
+    v14 = ElemHas v0, v13
+    Branch v14 -> taken b3(), notTaken b1(v12)
+  b3():
+    v15 = ElemGet v0, v13
+    v16 = Call v1, v6, v15, v8, v0
+    AppendElement v7, v16
+    Jump -> next b1(v12)
+  b4():
+    Return v7
+}
+function f9 name="clampToLength" role=Library enclosingRuntimeFunction=131091 parameters=[{type=number}, {type=number}] results=[{type=int[0, 4294967295]}] {
+    v2 = Integer integer=0
+    v3 = Less v0, v2
+    Branch v3 -> taken b1(), notTaken b4()
+  b1():
+    v4 = Add v1, v0
+    v5 = Less v4, v2
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    Return v2
+  b3():
+    v6 = URShift v4, v2
+    Return v6
+  b4():
+    v7 = Less v0, v1
+    Branch v7 -> taken b5(v0), notTaken b5(v1)
+  b5(v8):
+    v9 = URShift v8, v2
+    Return v9
+}
+function f10 name="traverseArray" role=Library enclosingRuntimeFunction=131091 parameters=[{type=Array<anything>}, {type=number}, {type=undefined|number}, {type=number}, {type=Array<anything>}, {type=anything}] results=[{type=anything}] {
+    v6 = Integer integer=0
+    v7 = Integer integer=1
+    v8 = Integer integer=2
+    v9 = Integer integer=3
+    v10 = Integer integer=4
+    v11 = Integer integer=6
+    v12 = Integer integer=7
+    v13 = Integer integer=15
+    v14 = BitAnd v3, v13
+    v15 = RShift v3, v10
+    v16 = BitAnd v15, v9
+    v17 = RShift v3, v11
+    v18 = BitAnd v17, v9
+    v19 = StrictEq v16, v7
+    v20 = StrictEq v16, v8
+    v21 = StrictEq v18, v7
+    v22 = StrictEq v18, v8
+    v23 = StrictEq v14, v6
+    v24 = StrictEq v14, v7
+    Branch v20 -> taken b1(v20), notTaken b1(v22)
+  b1(v25):
+    v26 = ElemGet v4, v11
+    v27 = ElemGet v4, v12
+    v28 = PropGet v0 key="length"
+    v29 = Check v28 expectedType=int[0, 4294967295]
+    v30 = CallDirect v1, v29 function=f9
+    v31 = Undefined
+    v32 = StrictEq v2, v31
+    Branch v32 -> taken b3(v29), notTaken b2()
+  b2():
+    v33 = Check v2 expectedType=number
+    v34 = CallDirect v33, v29 function=f9
+    Jump -> next b3(v34)
+  b3(v35):
+    v36 = Less v30, v35
+    Branch v36 -> taken b4(), notTaken b5(v6)
+  b4():
+    v37 = Sub v35, v30
+    Jump -> next b5(v37)
+  b5(v38):
+    Branch v23 -> taken b6(), notTaken b9(v31)
+  b6():
+    Branch v25 -> taken b7(), notTaken b8()
+  b7():
+    v39 = NewArrayWithCapacity v38, v0
+    Jump -> next b9(v39)
+  b8():
+    v40 = NewArrayLike v38, v0
+    Jump -> next b9(v40)
+  b9(v41):
+    Jump -> next b10(v30, v6, v6, v6)
+  b10(v42, v43, v44, v45):
+    LoopHint
+    v47 = Less v42, v35
+    Branch v47 -> taken b11(), notTaken b27()
+  b11():
+    v48 = Sub v42, v30
+    v49 = Add v42, v7
+    v50 = ElemHas v0, v42
+    Branch v50 -> taken b12(), notTaken b10(v49, v43, v44, v45)
+  b12():
+    v51 = ElemGet v0, v42
+    Branch v19 -> taken b13(), notTaken b14()
+  b13():
+    v52 = ElemGet v4, v6
+    v53 = ElemGet v4, v7
+    v54 = Call v52, v53, v51, v48, v0
+    Jump -> next b17(v54, v48, v43)
+  b14():
+    Branch v20 -> taken b15(), notTaken b17(v51, v48, v43)
+  b15():
+    v55 = ElemGet v4, v6
+    v56 = ElemGet v4, v7
+    v57 = Call v55, v56, v51, v48, v0
+    v58 = ToBoolean v57
+    Branch v58 -> taken b16(), notTaken b10(v49, v43, v44, v45)
+  b16():
+    v59 = Add v43, v7
+    Jump -> next b17(v51, v43, v59)
+  b17(v60, v61, v62):
+    Branch v21 -> taken b18(), notTaken b19()
+  b18():
+    v63 = ElemGet v4, v8
+    v64 = ElemGet v4, v9
+    v65 = Call v63, v64, v60, v61
+    Jump -> next b22(v65, v61, v44)
+  b19():
+    Branch v22 -> taken b20(), notTaken b22(v60, v61, v44)
+  b20():
+    v66 = ElemGet v4, v8
+    v67 = ElemGet v4, v9
+    v68 = Call v66, v67, v60, v61
+    v69 = ToBoolean v68
+    Branch v69 -> taken b21(), notTaken b10(v49, v62, v44, v45)
+  b21():
+    v70 = Add v44, v7
+    Jump -> next b22(v60, v44, v70)
+  b22(v71, v72, v73):
+    v74 = Add v72, v7
+    Branch v23 -> taken b23(), notTaken b25()
+  b23():
+    v75 = Check v41 expectedType=Array<anything>
+    v76 = Check v72 expectedType=int[0, 4294967295]
+    v77 = TryPutByValDirect v75, v76, v71
+    Branch v77 -> taken b10(v49, v62, v73, v74), notTaken b24()
+  b24():
+    ElemSet v75, v72, v71 mode=Strict
+    Jump -> next b10(v49, v62, v73, v74)
+  b25():
+    Branch v24 -> taken b10(v49, v62, v73, v74), notTaken b26()
+  b26():
+    v79 = Call v26, v27, v71, v72
+    Jump -> next b10(v49, v62, v73, v45)
+  b27():
+    Branch v25 -> taken b28(v45), notTaken b28(v38)
+  b28(v80):
+    Branch v23 -> taken b29(), notTaken b30()
+  b29():
+    v81 = Check v41 expectedType=Array<anything>
+    v82 = Check v80 expectedType=int[0, 4294967295]
+    v83 = TruncateNewArray v81, v82
+    Return v83
+  b30():
+    Branch v24 -> taken b31(), notTaken b32()
+  b31():
+    Return v80
+  b32():
+    Return v31
+}
+# CHECK: function [[lengthStep]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f10 parameter=33}
+# CHECK: function [[arrayStep]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f10 parameter=96}
+# CHECK-NOT: role=ChainStep

@@ -1,0 +1,20 @@
+# Constants do not count toward the 32 computed elements of an array literal, also once each has a conversion to the representation the array stores
+# RUN: compile
+# LOSS: MaxArrayLiteralBatch x0
+# CHECK: image not empty
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="source" [isFreeName]
+# REPEAT: i = 0..39
+    v%(i+2) = String string="s%(i)"
+# END REPEAT
+    v42 = Call v1
+    v43 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42 contents=anything
+    v44 = PropGet v0 key="sink" [isFreeName]
+    v45 = Call v44, -, v43
+    v46 = Undefined
+    Return v46
+}

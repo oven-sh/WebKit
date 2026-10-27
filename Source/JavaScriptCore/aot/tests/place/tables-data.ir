@@ -1,0 +1,31 @@
+# Constant data is a tree of read-only nodes, children first, from word 1 on: an array is a header, the header of its storage and its elements, an object whose members all lie in its cell a header and the bytes of the cell
+# RUN: tables data requests constants
+# RUN(SIZES): tables
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Outer" fields=[{key="mixed" declared={type=anything} flags=[IsRequired]}, {key="doubles" declared={type=anything} flags=[IsRequired]}, {key="integers" declared={type=anything} flags=[IsRequired]}, {key="untyped" declared={type=anything} flags=[IsRequired]}, {key="inner" declared={type=anything} flags=[IsRequired]}, {key="big" declared={type=anything} flags=[IsRequired]}, {key="text" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Inner" fields=[{key="zero" declared={type=number} flags=[IsRequired]}, {key="nan" declared={type=number} flags=[IsRequired]}, {key="nothing" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Data data=d0
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="publish" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+data d0 root=Object{layout=L0 members=[{key="mixed" value=Array{contents=anything elements=[Number{value=1}, Hole, String{value="pear"}, Boolean{value=true}, Undefined]}}, {key="doubles" value=Array{contents=number elements=[Number{value=1.5}, Hole, Number{value=2}]}}, {key="integers" value=Array{contents=number elements=[Number{value=1}, Number{value=2}]}}, {key="untyped" value=Array{contents=anything elements=[Number{value=1}, Number{value=2}]}}, {key="inner" value=Object{layout=L1 members=[{key="zero" value=Number{value=-0}}, {key="nan" value=Number{value=NaN}}, {key="nothing" value=Null}]}}, {key="big" value=BigInt{digits="12345678901234567890"}}, {key="text" value=String{value="plum"}}]} module=m0
+
+# CHECK: array 1 ArrayWithContiguous elements=[1 hole "pear" true undefined]
+# CHECK-NEXT: array 8 ArrayWithDouble isStorage elements=[1.5 hole 2]
+# Whole numbers are stored as doubles in an array declared `number` and as int32s in an array of anything.
+# CHECK-NEXT: array 13 ArrayWithDouble isStorage elements=[1 2]
+# CHECK-NEXT: array 17 ArrayWithInt32 isStorage elements=[1 2]
+# -0, NaN and null as the slots hold them.
+# CHECK-NEXT: objectBody 21 allocation=[[inner]] words=[0x8000000000000000 0x7ff8000000000000 0x2 0x0]
+# The nodes 1, 8, 13, 17 and 21, a BigInt and a string, as words of the table.
+# CHECK-NEXT: objectBody 26 allocation=[[outer]] words=[0x14 0x4c 0x74 0x94 0xb4 0x9 0x10 0x0]
+# CHECK-NEXT: request 4 Data root=26 sharedStorage=-
+# CHECK: bigInt 0 digits="12345678901234567890"
+# SIZES: bigIntConstants 1 4
+# SIZES-NEXT: data 35 280
+# SIZES-NEXT: requests 3 12

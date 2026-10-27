@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "AOTRemovableFeature.h"
 #include "BytecodeGeneratorBase.h"
 #include "BytecodeStructs.h"
 #include "CodeBlock.h"
@@ -411,8 +412,9 @@ namespace JSC {
         NeedsClassFieldInitializer needsClassFieldInitializer() const { return m_codeBlock->needsClassFieldInitializer(); }
 
         template<typename Node, typename UnlinkedCodeBlock>
-        static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
+        NEVER_INLINE static ParserError generate(VM& vm, Node* node, const SourceCode& sourceCode, UnlinkedCodeBlock* unlinkedCodeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* privateNameEnvironment, OptimizeBytecode optimize = OptimizeBytecode::No, RefPtr<DeclaredNamesLink> parentDeclaredNames = nullptr)
         {
+            JSC_REMOVABLE_DEFINITION(Interpreter, &BytecodeGenerator::generate<Node, UnlinkedCodeBlock>);
             MonotonicTime before;
             if (Options::reportBytecodeCompileTimes()) [[unlikely]]
                 before = MonotonicTime::now();

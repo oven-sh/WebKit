@@ -1,0 +1,70 @@
+# A call of a method on a union is split as a whole: each arm reads the method from its own receiver and calls it there, so the method and the receiver stay together
+# FORM: Prepared
+# RUN: pass SplitUnions
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="methodOfTwoClasses" parameters=[{type=Map|Set}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="has"
+    v3 = Call v2, v0, v1 calleeKey="has"
+    Return v3
+# CHECK-NEXT: b0(v0: Map|Set, v1: anything):
+# CHECK-NOT: PropGet v0
+# CHECK: = TypeTest v0 testedType=Map
+# CHECK: ([[map]]: Map):
+# CHECK-NEXT: [[mapHas]]: anything = PropGet [[map]] key="has"
+# CHECK-NEXT: = Call [[mapHas]], [[map]], v1 calleeKey="has"
+# CHECK: ([[set]]: Set):
+# CHECK-NEXT: [[setHas]]: anything = PropGet [[set]] key="has"
+# CHECK-NEXT: = Call [[setHas]], [[set]], v1 calleeKey="has"
+}
+
+function f1 name="castOfTheMethod" parameters=[{type=string|Array<anything>}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="indexOf"
+    v3 = AssumeType v2 provenType=builtin(StringPrototypeIndexOf)|builtin(ArrayPrototypeIndexOf)
+    v4 = Call v3, v0, v1 calleeKey="indexOf"
+    Return v4
+# CHECK-NOT: PropGet v0
+# CHECK: = TypeTest v0 testedType=string
+# CHECK: ([[text]]: string):
+# CHECK-NEXT: [[read1]]: anything = PropGet [[text]] key="indexOf"
+# CHECK-NEXT: [[cast1]]: {{*}} = AssumeType [[read1]] provenType=
+# CHECK-NEXT: = Call [[cast1]], [[text]], v1 calleeKey="indexOf"
+# CHECK: ([[list]]: Array):
+# CHECK-NEXT: [[read2]]: anything = PropGet [[list]] key="indexOf"
+# CHECK-NEXT: [[cast2]]: {{*}} = AssumeType [[read2]] provenType=
+# CHECK-NEXT: = Call [[cast2]], [[list]], v1 calleeKey="indexOf"
+}
+
+function f2 name="unknownCodeBetweenReadAndCall" parameters=[{type=Map|Set}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="has"
+    v3 = Call v1
+    v4 = Call v2, v0, v3 calleeKey="has"
+    Return v4
+# CHECK: v3: anything = Call v1
+# CHECK-NEXT: v4: anything = Call v2, v0, v3 calleeKey="has"
+# CHECK: ([[map2]]: Map):
+# CHECK-NEXT: = PropGet [[map2]] key="has"
+# CHECK-NEXT: Jump
+}
+
+function f3 name="methodIsAlsoKept" parameters=[{type=Map|Set}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="has"
+    v3 = Call v2, v0, v1 calleeKey="has"
+    Return v2
+# CHECK: v3: anything = Call v2, v0, v1 calleeKey="has"
+# CHECK: ([[map3]]: Map):
+# CHECK-NEXT: = PropGet [[map3]] key="has"
+# CHECK-NEXT: Jump
+}
+
+function f4 name="calledOnAnotherReceiver" parameters=[{type=Map|Set}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="has"
+    v3 = Call v2, v1, v1 calleeKey="has"
+    Return v3
+# CHECK: v3: anything = Call v2, v1, v1 calleeKey="has"
+# CHECK: ([[map4]]: Map):
+# CHECK-NEXT: = PropGet [[map4]] key="has"
+# CHECK-NEXT: Jump
+}

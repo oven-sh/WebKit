@@ -70,6 +70,37 @@ std::optional<Opcode> invertedCompare(Opcode opcode, Type type)
     }
 }
 
+std::optional<Opcode> invertedRelation(Opcode relation)
+{
+    if (relation == Equal || relation == NotEqual)
+        return std::nullopt;
+    return invertedCompare(relation, Int64);
+}
+
+Opcode flippedRelation(Opcode relation)
+{
+    switch (relation) {
+    case LessThan:
+        return GreaterThan;
+    case LessEqual:
+        return GreaterEqual;
+    case GreaterThan:
+        return LessThan;
+    case GreaterEqual:
+        return LessEqual;
+    case Below:
+        return Above;
+    case BelowEqual:
+        return AboveEqual;
+    case Above:
+        return Below;
+    case AboveEqual:
+        return BelowEqual;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
 Opcode storeOpcode(Bank bank, Width width)
 {
     switch (bank) {

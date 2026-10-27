@@ -1,0 +1,25 @@
+# globalThis.make = stored        make()        given()
+# A bare name is a property of the global object. Under a name that no table lists and that an operation of the program stores under, it finds what statements have stored there and nothing else, as `globalThis.make` does.
+# A bare name that the program only reads is left to whoever defines it: nobody knows what it answers.
+# RUN: valueflow-solve calls
+# CHECK: f0 v4 -> f1
+# CHECK: f0 v6 -> unknown
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="make"
+    v3 = PropGet v0 key="make" [isFreeName]
+    v4 = Call v3, -
+    v5 = PropGet v0 key="given" [isFreeName]
+    v6 = Call v5, -
+    Return v6
+}
+function f1 name="stored" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

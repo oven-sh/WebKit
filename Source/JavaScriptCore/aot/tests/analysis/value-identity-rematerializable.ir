@@ -1,0 +1,44 @@
+# Constants are rematerializable and NewClosure is not
+# FORM: Prepared
+# RUN: analyses value-identity function=f0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="constants" parameters=[{type=number}] results=[{type=undefined}] {
+    v1 = Undefined
+    v2 = Null
+    v3 = Boolean boolean=true
+    v4 = Integer integer=7
+    v5 = Double number=1.5
+    v6 = String string="a"
+    v7 = BigInt digits="1"
+    v8 = Builtin builtin=Array
+    v9 = NewClosure function=f1
+    v10 = Add v0, v4
+    v11 = Upcast v4 castType=number
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    v12 = NewRuntimeError runtimeError=NotDestructurable
+    Throw v12
+}
+function f1 name="closure" results=[{type=undefined}] {
+    Return
+}
+# CHECK: function f0
+# CHECK-NEXT: value-identity:
+# CHECK: v0 rematerializable: no
+# CHECK: v1 rematerializable: yes
+# CHECK: v2 rematerializable: yes
+# CHECK: v3 rematerializable: yes
+# CHECK: v4 rematerializable: yes
+# CHECK: v5 rematerializable: yes
+# CHECK: v6 rematerializable: yes
+# CHECK: v7 rematerializable: yes
+# CHECK: v8 rematerializable: yes
+# CHECK: v9 constant: none
+# CHECK: v9 rematerializable: no
+# CHECK: v10 rematerializable: no
+# CHECK: v11 constant: v4
+# CHECK: v11 rematerializable: no
+# CHECK: v12 rematerializable: no

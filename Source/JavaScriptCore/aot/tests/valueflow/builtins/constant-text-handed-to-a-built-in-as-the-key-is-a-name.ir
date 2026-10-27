@@ -1,0 +1,22 @@
+# Object.defineProperty(globalThis, "someNameOfMine", { value: 1 }); Date.now()
+# No access of the program spells the name. The text is constant and stands where the table says the built-in takes the key of a property, so it is a name all the same:
+# the definition hits that name and no other member of the global object
+# RUN: valueflow-results
+# CHECK: builtin-location GlobalThis."Date" Constant
+
+layout L0 fields=[{key="value" declared={type=anything}}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Object
+    v1 = Builtin builtin=ObjectDefineProperty
+    v2 = Builtin builtin=GlobalThis
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = String string="someNameOfMine"
+    v6 = Call v1, v0, v2, v5, v4
+    v7 = PropGet v2 key="Date" [isFreeName]
+    v8 = PropGet v7 key="now"
+    v9 = Call v8, v7
+    Return
+}

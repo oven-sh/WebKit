@@ -1,0 +1,18 @@
+# Primitive kinds unite bit by bit, two ranges to the range that covers both
+# RUN: union
+# CHECK: t0 | t0 = undefined
+# CHECK: t0 | t1 = undefined|null
+# CHECK: t0 | t9 = undefined|absent
+# CHECK: t2 | t3 = boolean
+# CHECK: t4 | t5 = int[0, 29]
+# CHECK: t4 | t6 = int[0, 9]|double
+# CHECK: t4 | t8 = int[0, 9]
+# CHECK: t4 | t10 = int
+# CHECK: t4 | t11 = int[0, 9]|whole
+# CHECK: t6 | t10 = number
+# CHECK: t7 | t8 = string
+# CHECK: t11 | t12 = double
+# CHECK: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=undefined}, {type=null}, {type=true}, {type=false}, {type=int[0, 9]}, {type=int[20, 29]}, {type=double}, {type=string}, {type=never}, {type=absent}, {type=int}, {type=whole}, {type=fractional}] results=[{type=undefined}]

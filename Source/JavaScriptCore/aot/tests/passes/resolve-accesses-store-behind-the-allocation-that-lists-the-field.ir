@@ -1,0 +1,25 @@
+# The allocation has filled the slot of a field that it lists and has put the key among the keys, so a store behind it creates nothing: it is a plain store that the allocation guards
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Effect" fields=[{key="tag" declared={type=number}}, {key="inst" declared={type=undefined|string}}] flow={members=[L0]}
+
+function f0 name="listed" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
+    PropSet v3, v1 key="inst"
+    Return v3
+# CHECK: = NewObject
+# CHECK-NOT: Branch
+# CHECK: PutSlot v3, [[guard]], v1 key="inst" receivers=[L0] level=Expected
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+}
+function f1 name="left-out" parameters=[{type=number}, {type=string}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    PropSet v2, v1 key="inst"
+    Return v2
+# CHECK: PutSlotOrAdd v2, [[guards]], v1 key="inst"
+}

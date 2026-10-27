@@ -1,0 +1,86 @@
+# A parameter that an edge fills with a tested value of narrower type stays: no cast narrows without a test. One whose type has a single primitive value is that constant
+# FORM: Prepared
+# RUN: pass RemoveTrivialParameters
+# STATISTIC: RemoveTrivialParametersChanges = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="typeTest" parameters=[{type=undefined|number}] results=[{type=undefined|number}] {
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+# CHECK: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: number):
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v3: undefined = Undefined
+# CHECK-NEXT: Return v3
+}
+
+function f1 name="truthiness" parameters=[{type=boolean}] results=[{type=boolean}] {
+    v1 = ToBoolean v0
+    Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2):
+    Return v2
+  b2(v3):
+    Return v3
+# CHECK: Branch v1 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v2: true = Boolean boolean=true
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v3: false = Boolean
+# CHECK-NEXT: Return v3
+}
+
+function f2 name="nullishTest" parameters=[{type=null|string}] results=[{type=null|string}] {
+    v1 = Null
+    v2 = Eq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return v3
+  b2(v4):
+    Return v4
+# CHECK: Branch v2 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: null = Null
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2(v4: string):
+# CHECK-NEXT: Return v4
+}
+
+function f3 name="integerBound" parameters=[{type=int[0, 100]}] results=[{type=number}] {
+    v1 = Integer integer=10
+    v2 = Less v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return v3
+  b2(v4):
+    Return v4
+# CHECK: Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-NEXT: b1(v3: int[0, 9]):
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: b2(v4: int[10, 100]):
+# CHECK-NEXT: Return v4
+}
+
+function f4 name="sameProofFromTwoTests" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b3(| 0), notTaken b4()
+  b2():
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b3(| 0), notTaken b4()
+  b3(v4):
+    Return v4
+  b4():
+    Return v0
+# CHECK: Branch v2 -> taken b3(| 0), notTaken b4()
+# CHECK: Branch v3 -> taken b3(| 0), notTaken b4()
+# CHECK-NEXT: b3(v4: number):
+# CHECK-NEXT: Return v4
+}

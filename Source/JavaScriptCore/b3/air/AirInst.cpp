@@ -28,10 +28,93 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirCode.h"
+#include "AirFormTable.h"
 #include "AirInstInlines.h"
 #include <wtf/ListDump.h>
 
 namespace JSC { namespace B3 { namespace Air {
+
+void Inst::fillForms()
+{
+    ASSERT(kind.opcode == Patch && m_size);
+    if (m_size > maxNumberOfForms + 1)
+        return;
+    setFormsState(FormsState::NotFixed);
+    if (!args()[0].special()->hasFixedForms(*this))
+        return;
+    std::array<uint8_t, maxNumberOfForms + 1> forms;
+    unsigned next = 0;
+    bool isInOrder = true;
+    forEachArgCustom(
+        [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
+            if (next >= m_size || &arg != &args()[next]) {
+                isInOrder = false;
+                return;
+            }
+            forms[next++] = ENCODE_INST_FORM(role, bank, width);
+        });
+    if (!isInOrder || next != m_size)
+        return;
+    if (forms[0] != ENCODE_INST_FORM(Arg::Use, GP, pointerWidth()))
+        return;
+    if (m_size == 1) {
+        setFormsState(FormsState::NoArguments);
+        return;
+    }
+    memcpy(formsAfterSpecial(), forms.data() + 1, m_size - 1);
+}
+
+const uint8_t* Inst::formsKeptByCode()
+{
+    ASSERT(kind.opcode == Patch && m_size > maxNumberOfForms + 1);
+    Special* special = args()[0].special();
+    if (!origin)
+        return nullptr;
+    Code::FormsOfPatch& kept = special->code().formsOfPatches().add(origin, Code::FormsOfPatch()).iterator->value;
+    if (kept.special == special && kept.formsAfterSpecial.size() == m_size - 1)
+        return kept.areFixed ? kept.formsAfterSpecial.span().data() : nullptr;
+    kept.special = special;
+    kept.areFixed = false;
+    kept.formsAfterSpecial.resize(m_size - 1);
+    if (!special->hasFixedForms(*this))
+        return nullptr;
+    unsigned next = 0;
+    bool isInOrder = true;
+    forEachArgCustom(
+        [&] (Arg& arg, Arg::Role role, Bank bank, Width width) {
+            if (next >= m_size || &arg != &args()[next]) {
+                isInOrder = false;
+                return;
+            }
+            uint8_t form = ENCODE_INST_FORM(role, bank, width);
+            if (next)
+                kept.formsAfterSpecial[next - 1] = form;
+            else
+                isInOrder = form == ENCODE_INST_FORM(Arg::Use, GP, pointerWidth());
+            ++next;
+        });
+    kept.areFixed = isInOrder && next == m_size;
+    return kept.areFixed ? kept.formsAfterSpecial.span().data() : nullptr;
+}
+
+bool Inst::hasCurrentForms()
+{
+    ASSERT(kind.opcode == Patch && m_size);
+    const uint8_t* keptForms = m_size > maxNumberOfForms + 1 ? formsKeptByCode() : formsState() == FormsState::Fixed ? formsAfterSpecial() : nullptr;
+    if (!keptForms)
+        return true;
+    std::span<const uint8_t> forms = unsafeMakeSpan(keptForms, m_size - 1);
+    unsigned next = 0;
+    bool isCurrent = true;
+    forEachArgCustom(
+        [&] (Arg&, Arg::Role role, Bank bank, Width width) {
+            if (next && next < m_size)
+                isCurrent &= forms[next - 1] == ENCODE_INST_FORM(role, bank, width);
+            ++next;
+        });
+    return isCurrent && next == m_size;
+}
 
 bool Inst::hasEarlyDef()
 {

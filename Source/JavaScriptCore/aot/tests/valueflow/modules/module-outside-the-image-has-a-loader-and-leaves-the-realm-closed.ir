@@ -1,0 +1,18 @@
+# require("package") with --external package
+# The package is interpreted. It has `require`, `module` and the cache, so it comes to the module objects of the program. The realm it finds as evaluated text does:
+# the run time refuses an assignment to what compiled code relies on, whoever makes it. valueflow/host/plugin-changes-the-realm.ir has code that is handed the loader itself
+# RUN: valueflow-why flag=h5 flag=h29 flag=h19
+# CHECK: flag=h5
+# CHECK-NEXT: by RequireModule f0 v0
+# CHECK: flag=h29
+# CHECK-NEXT: by RequireModule f0 v0
+# CHECK: flag=h19
+# CHECK-NEXT: not held
+
+module m0 path="/app/main.js" displayPath="main.js" body=f0
+module m1 path="package" displayPath="package" kind=External referrer=m0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = RequireModule module=m1 referrer=m0 specifier="package"
+    Return
+}

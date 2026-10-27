@@ -1,0 +1,30 @@
+# somethingNoTableLists(handedOver); `${handedOver}`; `${onlyConverted}`
+# Code that nobody compiles holds one of the two closures and may have put a toString on it, so the conversion may find a function nobody knows there. It finds none on the other closure, which is not handed to one:
+# it does not escape, and nobody enters it.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+# RUN(ESCAPED): valueflow-why escaped=f1 escaped=f2
+# ESCAPED: escaped=f1
+# ESCAPED-NEXT: n0 escaped
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="somethingThatNoTableLists" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = NewClosure function=f2
+    v5 = ToString v4
+    v6 = ToString v0
+    Return
+}
+function f1 name="handedOver" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="onlyConverted" kind=Arrow results=[{type=anything}] {
+    Return
+}

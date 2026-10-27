@@ -1,0 +1,40 @@
+# class Cache extends Map { constructor() { super() } set(key, value) {} unused() {} }; new Cache()
+# Without entries the constructor of Map runs no JavaScript: it reads `prototype` from new.target and calls nothing that lies on the new object. Neither the class nor its methods are in unknown hands.
+# class-that-extends-map-is-handed-over-where-the-constructor-gets-entries.ir is the same class with entries
+# LIBRARY: own
+# RUN: valueflow-why escaped=f1 escaped=f2 escaped=f3 timeline
+# CHECK: escaped=f1
+# CHECK-NEXT: not held
+# CHECK: escaped=f2
+# CHECK-NEXT: not held
+# CHECK: escaped=f3
+# CHECK-NEXT: not held
+# CHECK-NOT: flag
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Cache" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Map
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 key="set"
+    v6 = NewClosure function=f3
+    DefineMethod v3, v6 layout=L0 index=1 key="unused"
+    v8 = FinishClass v3 layout=L0
+    v9 = Construct v8
+    Return v9
+}
+function f1 name="Cache" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    Return v3
+}
+function f2 name="set" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return
+}
+function f3 name="unused" results=[{type=anything}] {
+    Return
+}

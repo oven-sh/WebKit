@@ -187,6 +187,21 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
 
     // Figure out what our cases are.
     for (CallVariant variant : list) {
+#if ENABLE(AOT)
+        if (JSCell* callee = variant.rawCalleeCell(); vm.hasCompiledCode() && isCompiledCalleeType(callee->type())) [[unlikely]] {
+            CallData callData = JSC::getCallData(callee);
+            if (isClosureCall || callData.type != CallData::Type::Compiled) {
+                callLinkInfo.setVirtualCall(vm);
+                return;
+            }
+            CallSlot slot;
+            slot.m_index = callSlots.size();
+            slot.m_target = CodePtr<JSEntryPtrTag>::fromTaggedPtr(const_cast<void*>(callData.compiled.entrypoint));
+            slot.m_calleeOrExecutable = callee;
+            callSlots.append(WTF::move(slot));
+            continue;
+        }
+#endif
         CodeBlock* codeBlock = nullptr;
         if (variant.executable() && !variant.executable()->isHostFunction()) {
             ExecutableBase* executable = variant.executable();
@@ -844,7 +859,7 @@ static InlineCacheAction tryCacheArrayGetByVal(JSGlobalObject* globalObject, Cod
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayUint32Load : AccessCase::IndexedTypedArrayUint32Load;
                 break;
             case Float16ArrayType:
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return GiveUpOnCache;
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayFloat16Load : AccessCase::IndexedTypedArrayFloat16Load;
                 break;
@@ -1032,7 +1047,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
     VM& vm = globalObject->vm();
     AccessGenerationResult result;
     Identifier ident = Identifier::fromUid(vm, propertyName.uid());
-    if (oldStructure->hasImmutableProperties() || (baseValue.isCell() && baseValue.asCell()->structure()->hasImmutableProperties()))
+    if (oldStructure->mayHaveImmutableProperties() || (baseValue.isCell() && baseValue.asCell()->structure()->mayHaveImmutableProperties()))
         return GiveUpOnCache;
     {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
@@ -1374,7 +1389,7 @@ static InlineCacheAction tryCacheArrayPutByVal(JSGlobalObject* globalObject, Cod
     if (!baseValue.isCell() || forceICFailure(globalObject))
         return GiveUpOnCache;
 
-    if (baseValue.asCell()->structure()->hasImmutableProperties())
+    if (baseValue.asCell()->structure()->hasImmutableIndexedProperties())
         return GiveUpOnCache;
 
     if (!index.isInt32())
@@ -1424,7 +1439,7 @@ static InlineCacheAction tryCacheArrayPutByVal(JSGlobalObject* globalObject, Cod
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayUint32Store : AccessCase::IndexedTypedArrayUint32Store;
                 break;
             case Float16ArrayType:
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return GiveUpOnCache;
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayFloat16Store : AccessCase::IndexedTypedArrayFloat16Store;
                 break;
@@ -2025,7 +2040,7 @@ static InlineCacheAction tryCacheArrayInByVal(JSGlobalObject* globalObject, Code
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayUint32In : AccessCase::IndexedTypedArrayUint32In;
                 break;
             case Float16ArrayType:
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return GiveUpOnCache;
                 accessType = typedArray->isResizableOrGrowableShared() ? AccessCase::IndexedResizableTypedArrayFloat16In : AccessCase::IndexedTypedArrayFloat16In;
                 break;

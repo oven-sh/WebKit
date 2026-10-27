@@ -1,0 +1,36 @@
+# The test for spare capacity and the reservation have code as a value, as the condition of a branch and for both integer representations, in the three code shapes
+# FORM: Placed
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+# CHECK: f0: size=
+# CHECK: operation operationAOTReserveArrayCapacity x{{*}}
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="reserves" parameters=[{type=Array<anything>}, {type=i32}, {type=int}, {type=boolean}] results=[{type=anything}] {
+    v4 = HasSpareArrayCapacity v0
+    ReserveArrayCapacity v0, v1
+    ReserveArrayCapacity v0, v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    ReserveArrayCapacity v0, v1
+    ReserveArrayCapacity v0, v2
+    v10 = HasSpareArrayCapacity v0
+    TestAndBranch v10 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b5()
+  b3() frequency=Rare:
+    ReserveArrayCapacity v0, v1
+    ReserveArrayCapacity v0, v2
+    v13 = HasSpareArrayCapacity v0
+    TestAndBranch v13 -> taken b4(), notTaken b5()
+  b4() frequency=Rare:
+    Jump -> next b5()
+  b5():
+    Return v4
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact

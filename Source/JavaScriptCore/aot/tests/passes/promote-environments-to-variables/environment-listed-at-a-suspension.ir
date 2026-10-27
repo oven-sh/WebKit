@@ -1,0 +1,34 @@
+# An environment that a suspension lists among what the function holds becomes variables like any other, and leaves the list: the variables hold what it held.
+# FORM: AsRead
+# RUN: pipeline PromoteEnvironmentsToVariables
+# OPTIONS: only-passes=PromoteEnvironmentsToVariables check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 1
+# CHECK: variable g0 name="x.0"
+# CHECK-NOT: variable g1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="ofTheModule" fields=[{key=@"x.0" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewObject -, v1 layout=L0 fields=[0] @10
+    v3 = NewClosure v2 function=f1
+    v4 = PropGet v0 key="publish" [isFreeName]
+    v5 = Call v4, -, v3
+    Return
+# CHECK-NOT: NewObject
+# CHECK: PutModuleVariable v1 variable=g0
+# CHECK: = NewClosure function=f1
+}
+
+function f1 name="awaitsOnce" flags=[IsAsync] captures=[{type=env L0}] parameters=[{type=object}] results=[{type=Promise}] {
+  b0(v0: env L0, v1: object):
+    v2 = Await v1, v1, v0 @20
+    v3 = GetEnvironmentField v0 layout=L0 field=0
+    Return v3
+# CHECK-NOT: captures=
+# CHECK: = Await [[parameter]], [[parameter]] @20
+# CHECK-NEXT: = GetModuleVariable variable=g0
+}

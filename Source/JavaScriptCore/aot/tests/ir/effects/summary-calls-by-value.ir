@@ -1,0 +1,45 @@
+# A call by value whose callees are all named gives its function the union of their summaries; one callee nobody named makes it unknown code
+# FORM: Prepared
+# RUN: effects summaries
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="count" declared={type=number}}]
+layout L1 name="Point" fields=[{key="x" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+variable g0 name="total" declared={type=number} initialization=Undefined
+function f0 name="writesVariable" parameters=[{type=L1}] results=[{type=undefined}] {
+    v1 = Integer integer=1
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f1 name="writesCaptureAndArgument" captures=[{type=env L0}] parameters=[{type=L1}] results=[{type=undefined}] {
+  b0(v0: env L0, v1: L1):
+    v2 = Integer integer=1
+    PutEnvironmentField v0, v2 layout=L0 field=0
+    PutSlot v1, -, v2 key="x" receivers=[L1] level=Proven
+    Return
+}
+function f2 name="everyCalleeNamed" parameters=[{type=f0|f1}, {type=L1}] results=[{type=undefined}] {
+    v2 = Call v0, -, v1 callees=[f0, f1]
+    Return
+}
+function f3 name="someCalleeUnnamed" parameters=[{type=function}, {type=L1}] results=[{type=undefined}] {
+    v2 = Call v0, -, v1 callees=[f0, f1, ..]
+    Return
+}
+function f4 name="noCalleeNamed" parameters=[{type=function}, {type=L1}] results=[{type=undefined}] {
+    v2 = Call v0, -, v1
+    Return
+}
+# CHECK: f0 return: writes(ModuleVariables/1) throw: none
+# CHECK: f1 return: none throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/1)
+# CHECK: f2 return: writes(ModuleVariables/1, EnvironmentFields/1) throw: none p0: [Calls] p1: [{{*}}] writes(ObjectFields/1)
+# CHECK-NOT: nknown
+# CHECK: f3 return: reads(all) {{*}}callsUnknownCode{{*}} unknown code from f3 v2
+# CHECK: f4 return: reads(all) {{*}}callsUnknownCode{{*}} unknown code from f4 v2
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v2 Call: writes(ModuleVariables/1, EnvironmentFields/1, ObjectFields/1)
+# CHECK-NOT: callsUnknownCode
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v2 Call: reads(all) {{*}}callsUnknownCode
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v2 Call: reads(all) {{*}}callsUnknownCode

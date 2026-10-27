@@ -1,0 +1,29 @@
+# interface CallExpression extends Node { expression: Expression; questionDotToken?: Token }   function createCallExpression(e) { const node = createBaseNode(); node.expression = e; return node }
+# Every type that holds a reference lists undefined and null, so the type of a required field admits undefined as that of an optional one does. What the program wrote tells them apart:
+# a field that its type requires is expected to be filled though it is added late: one test of the slot, as for a field which the program declares. An empty slot is read by name, as behind any test that fails.
+# An optional field keeps the read that takes an empty slot for undefined. Among several receivers one in which the field is optional keeps that plan for all.
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Instance name="CallExpression" constructor=f0 fields=[{key="expression" declared={type=undefined|null|L0} flags=[IsRequired, IsAddedLate]}, {key="questionDotToken" declared={type=undefined|null|L0} flags=[IsAddedLate]}]
+layout L1 kind=Instance name="Other" constructor=f4 fields=[{key="expression" declared={type=undefined|null|L0} flags=[IsAddedLate]}]
+
+function f0 name="CallExpression" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+
+function f1 name="required" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="expression"
+    Return v1
+}
+# CHECK: F1 v1 PropGet [[expression]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] {{*}}
+function f2 name="optional" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="questionDotToken"
+    Return v1
+}
+# CHECK-NEXT: F2 v1 PropGet [[questionDotToken]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0] proofs=[NoFieldOutsideSlot, PrototypeLinkUnchanged] {{*}}
+function f3 name="optional-in-one-receiver" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="expression"
+    Return v1
+}
+# CHECK-NEXT: F3 v1 PropGet [[expression]]: form=Slot level=Expected operation=GetSlotOrUndefined receivers=[L0, L1] proofs=[NoFieldOutsideSlot, PrototypeLinkUnchanged] {{*}}
+function f4 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

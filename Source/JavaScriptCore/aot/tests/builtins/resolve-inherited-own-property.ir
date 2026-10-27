@@ -1,0 +1,51 @@
+# An own data property that every instance of a built-in class has is read and stored through its entry on an instance of a compiled class that extends the built-in class, whatever the compiled prototype holds under that name
+# FORM: Prepared
+# RUN: pass ResolveBuiltins
+# RUN(CALLS): pass ResolveBuiltins ResolveCalls
+# CHECK: outcome: Changed
+# STATISTIC: BuiltinReadsResolved = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Stack" constructor=f0 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Array impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L1 kind=Instance name="Padded" constructor=f1 flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Array impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="length" kind=Getter function=f2 mutability=Fixed}]}
+function f0 name="Stack" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L0
+function f1 name="Padded" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f2 name="length" kind=Getter flags=[HasThis] results=[{type=number}] {
+    v1 = Integer integer=42
+    Return v1
+}
+
+function f3 name="read" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+}
+
+function f4 name="strictStore" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    PropSet v0, v1 key="length" mode=Strict
+    Return
+# CHECK-NOT: PropSet
+# CHECK: CallBuiltin v0, v1 overload=ArrayPrototypeLength/1
+}
+
+function f5 name="sloppyStoreThatMayFail" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    PropSet v0, v1 key="length" mode=Sloppy
+    Return
+# CHECK-NOT: CallBuiltin
+# CHECK: PropSet v0, v1 key="length" mode=Sloppy
+}
+
+function f6 name="layoutIsOnlyExpected" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: = PropGet v0 key="length"
+}
+
+function f7 name="getterOfCompiledPrototypeIsShadowed" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0
+# CALLS-NOT: function=f2
+}

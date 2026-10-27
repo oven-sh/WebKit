@@ -1,0 +1,26 @@
+# Lists with the same members get one layout set, whatever the order and the repeats. The empty list is a set too.
+# FORM: Prepared
+# RUN: layout-set L1,L2 L2,L1 L1,L2,L1 L1 L2 - L1 -
+# RUN(MISSING): layout-set
+# RUN(RANGE): layout-set L1 L4
+# RUN(COMMA): layout-set L1,
+# RUN(WORD): layout-set L1,x
+# CHECK: L1,L2: set [[both]] [L1, L2]
+# CHECK-NEXT: L2,L1: set [[both]] [L1, L2]
+# CHECK-NEXT: L1,L2,L1: set [[both]] [L1, L2]
+# CHECK-NEXT: L1: set [[circle]] [L1]
+# CHECK-NEXT: L2: set [[square]] [L2]
+# CHECK-NEXT: -: set [[empty]] []
+# CHECK-NEXT: L1: set [[circle]] [L1]
+# CHECK-NEXT: -: set [[empty]] []
+# CHECK-NEXT: laws hold
+# MISSING: error: missing argument
+# RANGE: error: bad argument L4
+# RANGE-NOT: set
+# COMMA: error: bad argument L1,
+# WORD: error: bad argument L1,x
+
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Square" supertypes=[L0]
+layout L3 kind=Environment name="scope"

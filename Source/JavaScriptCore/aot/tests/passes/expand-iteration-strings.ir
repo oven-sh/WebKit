@@ -1,0 +1,145 @@
+# An iteration over a string steps by code points: a length read, codePointAt and a substring at each step
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(RESOLVED): pass ExpandIteration ResolveBuiltins
+# RUN(LEFT): pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 4
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="string" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# CHECK: b0(v0: string):
+# CHECK-NEXT: [[zero0]]: 0 = Integer
+# CHECK-NEXT: Jump -> next {{*}}([[zero0]])
+# CHECK-NEXT: b1([[index0]]: int[0, 2147483648]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[length0]]: int[0, 2147483647] = GetStringLength v0
+# CHECK-NEXT: [[inRange0]]: boolean = Less [[index0]], [[length0]]
+# CHECK-NEXT: Branch [[inRange0]] -> taken [[read0]](| 0), notTaken [[end0]](| 0)
+# CHECK: [[read0]]([[proven0]]: int[0, 2147483646]):
+# CHECK-NEXT: [[codePoint0]]: {{*}} = CallBuiltin v0, [[proven0]] overload=StringPrototypeCodePointAt/0
+# CHECK-NEXT: [[lastUnit0]]: 65535 = Integer integer=65535
+# CHECK-NEXT: [[isAstral0]]: boolean = Greater [[codePoint0]], [[lastUnit0]]
+# CHECK-NEXT: Branch [[isAstral0]] -> taken [[pair0]](), notTaken [[unit0]]()
+# CHECK: [[end0]]({{*}}):
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: [[nothing0]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next [[after0]]([[yes0]], [[nothing0]], [[index0]])
+# CHECK: [[merge0]]([[stop0]]: int[0, 2147483648]):
+# CHECK-NEXT: [[character0]]: string = Substring v0, [[proven0]], [[stop0]]
+# CHECK-NEXT: [[no0]]: false = Boolean
+# CHECK-NEXT: Jump -> next [[after0]]([[no0]], [[character0]], [[stop0]])
+# CHECK: [[pair0]]() frequency=Unlikely:
+# CHECK-NEXT: [[two0]]: 2 = Integer integer=2
+# CHECK-NEXT: [[afterPair0]]: {{*}} = Add [[proven0]], [[two0]]
+# CHECK-NEXT: Jump -> next [[merge0]]([[afterPair0]])
+# CHECK: [[unit0]]():
+# CHECK-NEXT: [[one0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[afterUnit0]]: {{*}} = Add [[proven0]], [[one0]]
+# CHECK-NEXT: Jump -> next [[merge0]]([[afterUnit0]])
+# ABSENT-NOT: TypeTest
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="codePointAt"
+# ABSENT-NOT: key="next"
+# RESOLVED-NOT: = Call v
+# RESOLVED: = CallBuiltin v0, {{*}} overload=StringPrototypeCodePointAt/0
+# RESOLVED-NOT: = Call v
+}
+
+function f1 name="stringOrNullish" parameters=[{type=undefined|null|string}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f1 name="stringOrNullish"
+# CHECK: b0(v0: undefined|null|string):
+# CHECK-NEXT: [[isString1]]: boolean = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[isString1]] -> taken [[string1]](| 0), notTaken [[nullish1]](| 0)
+# CHECK: = GetStringLength [[text1]]
+# CHECK: [[string1]]([[text1]]: string):
+# CHECK: [[nullish1]]([[rest1]]: undefined|null) frequency=Unlikely:
+# CHECK-NEXT: never = RequireObjectCoercible [[rest1]] nullishAccess=Iterate
+# CHECK-NEXT: Unreachable
+# ABSENT-LABEL: function f1 name="stringOrNullish"
+# ABSENT-NOT: @@iterator
+# ABSENT-NOT: [isNeverInlined]
+# ABSENT-NOT: key="next"
+# RESOLVED-LABEL: function f1 name="stringOrNullish"
+
+function f2 name="expectedString" parameters=[{type=string flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ string):
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# CHECK-LABEL: function f2 name="expectedString"
+# CHECK: b0(v0: anything ~ string):
+# CHECK-NEXT: [[isString2]]: {{*}} = TypeTest v0 testedType=string
+# CHECK-NEXT: Branch [[isString2]] -> taken [[string2]](| 0), notTaken [[other2]](| 0)
+# CHECK: = GetStringLength [[text2]]
+# CHECK: [[protocol2]]([[iterable2]]: anything ~ string) frequency=Unlikely:
+# CHECK: function=[[openIterator]] [isNeverInlined]
+# CHECK: [[string2]]([[text2]]: string):
+# CHECK: [[other2]]([[rest2]]: {{*}}) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[protocol2]]([[rest2]])
+# ABSENT-LABEL: function f2 name="expectedString"
+# ABSENT-NOT: testedType=Array
+# RESOLVED-LABEL: function f2 name="expectedString"
+
+function f3 name="unknownIsTestedForStringLast" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+}
+# Nobody expects a string, so no arm is made for one.
+# CHECK-LABEL: function f3 name="unknownIsTestedForStringLast"
+# CHECK: b0(v0: anything):
+# CHECK-NEXT: = TypeTest v0 testedType=Array
+# CHECK: = TypeTest {{*}} testedType=string
+# CHECK: ([[walked3]]: string) frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[walked3]], {{*}} function=[[stepString]] [isNeverInlined]
+# CHECK: function [[stepString]] name="stepString"
+# CHECK: = GetStringLength
+# CHECK: = Substring
+# ABSENT-LABEL: function f3 name="unknownIsTestedForStringLast"
+# ABSENT-NOT: TypeTest v0 testedType=string
+# ABSENT-LABEL: function f4
+# RESOLVED-LABEL: function f3 name="unknownIsTestedForStringLast"
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

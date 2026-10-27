@@ -1,0 +1,29 @@
+# The loose comparison of a value with a text takes a text that is no number: 1 == "1" holds, and its code never converts the text
+# FORM: Selected
+# RUN: verify
+# DIAGNOSTIC: PayloadOutOfRange 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="badDecimalText" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = ValueLooselyEqualsLiteral v0 literal="1"
+    Return v1
+}
+function f1 name="badEmptyText" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = ValueLooselyEqualsLiteral v0 literal=""
+    Return v1
+}
+function f2 name="badInfinity" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = ValueLooselyEqualsLiteral v0 literal=" -Infinity "
+    Return v1
+}
+function f3 name="goodTexts" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = ValueLooselyEqualsLiteral v0 literal="constructor"
+    v2 = ValueLooselyEqualsLiteral v0 literal="NaN"
+    v3 = ValueLooselyEqualsLiteral v0 literal="1n"
+    v4 = ValueLooselyEqualsLiteral v0 literal="true"
+    Return v1
+}
+function f4 name="goodNumericTextForString" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = StringEqualsLiteral v0 literal="1"
+    Return v1
+}

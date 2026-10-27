@@ -26,7 +26,7 @@
 #include "config.h"
 #include "JITCompilation.h"
 
-#if ENABLE(JIT)
+#if ENABLE(CODE_GENERATION)
 
 #include "JITOpaqueByproducts.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -51,5 +51,5 @@ Compilation::~Compilation() = default;
 
 } // namespace JSC
 
-#endif // ENABLE(JIT)
+#endif // ENABLE(CODE_GENERATION)
 

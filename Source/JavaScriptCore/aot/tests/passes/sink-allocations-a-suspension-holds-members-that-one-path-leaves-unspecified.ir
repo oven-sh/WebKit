@@ -1,0 +1,34 @@
+# Where an object that is never built meets a path without it, its members are unspecified on that path. A suspension behind the meeting lists them all the same: nothing reads what a suspension lists.
+# FORM: Prepared
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 fields=[{key="held" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}, {key="n" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation}}}]
+
+function f0 name="unspecifiedOnOnePath" role=CoroutineRamp flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=boolean}, {type=boolean}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=5} {
+    v5 = NewPromise
+    v6 = CallDirect v0, v1, v2, v3, v4, v5 function=f1
+    Return v5
+}
+
+function f1 name="unspecifiedOnOnePath" role=CoroutineBody flags=[IsAsync] parameters=[{type=object}, {type=number}, {type=anything}, {type=boolean}, {type=boolean}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=5} {
+    v6 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v7)
+  b2():
+    v8 = Undefined
+    Jump -> next b3(v8)
+  b3(v9: undefined|L0):
+    v10 = AwaitBySavingFrame v2, v5, v9
+    Branch v4 -> taken b4(), notTaken b5()
+  b4():
+    Return v9
+  b5():
+    Return v1
+# CHECK: Unspecified
+# CHECK-NOT: NewObject
+# CHECK: AwaitBySavingFrame
+# CHECK: NewObject
+}

@@ -1,0 +1,173 @@
+# A construction of a known class with the class as new.target allocates the object in the caller and calls a version of the constructor that takes it
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: ConstructsResolved = 10
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 flow={baseState=None allocationClasses=[5]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Shape" constructor=f1 flow={baseState=None members=[L1, L2, L3]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="Circle" base=L1 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L1 members=[L2]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L3 kind=Instance name="Unlinked" base=L1 constructor=f3 flags=[HasHeritage] flow={baseState=Layout base=L1 members=[L3]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L4 kind=Instance name="Scoped" constructor=f4 flow={baseState=None} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L5 kind=Instance name="Lazy" constructor=f5 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L6 kind=Instance name="Counted" constructor=f6 flow={baseState=None members=[L6, L7]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L7 kind=Instance name="BelowCounted" base=L6 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L6 members=[L7]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L8 kind=Instance name="Cached" constructor=f8 flow={baseState=None} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L0}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = AssumeType v3 provenType=L0
+    Return v4
+}
+function f1 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=L1|L2|L3}] {
+    v2 = GetConstructPrototype v0 layout=L1
+    v3 = NewObject v2 layout=L1
+    v4 = AssumeType v3 provenType=L1|L2|L3
+    Return v4
+}
+function f2 name="Circle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=L2}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L2 callees=[f1]
+    v5 = AssumeType v4 provenType=L2
+    Return v5
+}
+function f3 name="Unlinked" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=L3}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L3
+    v5 = AssumeType v4 provenType=L3
+    Return v5
+}
+function f4 name="Scoped" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L4}] {
+    v1 = GetConstructPrototype v0 layout=L4
+    v2 = NewObject v1 layout=L4
+    v3 = AssumeType v2 provenType=L4
+    Return v3
+}
+function f5 name="Lazy" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L5}] {
+    Jump -> next b1()
+  b1():
+    v1 = GetConstructPrototype v0 layout=L5
+    v2 = NewObject v1 layout=L5
+    v3 = AssumeType v2 provenType=L5
+    Return v3
+}
+function f6 name="Counted" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=number}] results=[{type=L6|L7}] {
+    v2 = GetConstructPrototype v1 layout=L6
+    v3 = NewObject v2 layout=L6
+    v4 = AssumeType v3 provenType=L6|L7
+    Return v4
+}
+function f7 name="BelowCounted" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=L7}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L7 callees=[f6]
+    v4 = AssumeType v3 provenType=L7
+    Return v4
+}
+function f8 name="Cached" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=object}, {type=boolean}] results=[{type=object}] {
+    v3 = GetConstructPrototype v0 layout=L8
+    v4 = NewObject v3 layout=L8
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return v4
+}
+
+function f9 name="class-is-new-target" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NEXT: [[point]]: L0 = NewObject layout=L0 allocationClass=5
+# CHECK-NEXT: = CallDirect [[point]], v0, v1 function=[[pointVersion]] [isConstruction]
+# CHECK-NOT: = Construct
+}
+function f10 name="class-named-as-new-target" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, v0, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f0, v1: anything):
+# CHECK-NEXT: [[samePoint]]: L0 = NewObject layout=L0 allocationClass=5
+# CHECK-NEXT: = CallDirect [[samePoint]], v0, v1 function=[[pointVersion]] [isConstruction]
+# CHECK-NOT: = Construct
+}
+function f11 name="other-new-target" parameters=[{type=f1}, {type=f2}, {type=anything}] results=[{type=anything}] {
+    v3 = Construct v0, v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: f1, v1: f2, v2: anything):
+# CHECK-NEXT: : L1|L2|L3 = CallDirect v1, v2 function=f1 [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: = Construct
+}
+function f12 name="constructor-may-return-another-object" parameters=[{type=f8}, {type=object}, {type=boolean}] results=[{type=anything}] {
+    v3 = Construct v0, -, v1, v2
+    Return v3
+# CHECK-NEXT: b0(v0: f8, v1: object, v2: boolean):
+# CHECK-NEXT: [[cached]]: L8 = NewObject layout=L8
+# CHECK-NEXT: [[returned]]: undefined|object = CallDirect [[cached]], v0, v1, v2 function=[[cachedVersion]] [isConstruction]
+# CHECK-NEXT: [[isObject]]: boolean = TypeTest [[returned]] testedType=object
+# CHECK-NEXT: Branch [[isObject]] -> taken [[replaced]](| 0), notTaken [[kept]](
+# CHECK: [[join]](v3: anything ~ object):
+# CHECK: [[replaced]]([[other]]: object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[join]]([[other]])
+# CHECK: [[kept]](
+# CHECK-NEXT: Jump -> next [[join]]([[cached]])
+# CHECK-NOT: = Construct
+}
+function f13 name="class-evaluated-more-than-once" parameters=[{type=f4}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+# CHECK-NEXT: b0(v0: f4):
+# CHECK-NEXT: [[prototype]]: object = GetConstructPrototype v0 layout=L4
+# CHECK-NEXT: [[scoped]]: object ~ L4 = NewObject [[prototype]] layout=L4
+# CHECK-NEXT: [[scopedThis]]: L4 = AssumeType [[scoped]] provenType=L4
+# CHECK-NEXT: = CallDirect [[scopedThis]], v0 function=[[scopedVersion]] [isConstruction]
+# CHECK-NOT: = Construct
+}
+function f14 name="derived-class" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f2, v1: anything):
+# CHECK-NEXT: [[circle]]: L2 = NewObject layout=L2
+# CHECK-NEXT: = CallDirect [[circle]], v0, v0, v1 function=[[circleVersion]] [isConstruction]
+# CHECK-NOT: = Construct
+}
+function f15 name="super-call-is-not-linked-to-the-parent" parameters=[{type=f3}, {type=anything}] results=[{type=anything}] {
+    v2 = Construct v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f3, v1: anything):
+# CHECK-NEXT: : L3 = CallDirect v0, v0, v1 function=f3 [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: = Construct
+}
+function f16 name="allocation-after-the-entry-block" parameters=[{type=f5}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+# CHECK-NEXT: b0(v0: f5):
+# CHECK-NEXT: : L5 = CallDirect v0 function=f5 [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: = Construct
+}
+function f17 name="base-class-with-capture" parameters=[{type=f6}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+# CHECK-NEXT: b0(v0: f6):
+# CHECK-NEXT: [[counted]]: L6 = NewObject layout=L6
+# CHECK-NEXT: [[count]]: number = GetCapture v0 function=f6
+# CHECK-NEXT: = CallDirect [[count]], [[counted]], v0 function=[[countedVersion]] [isConstruction]
+# CHECK-NOT: = Construct
+}
+function f18 name="parent-needs-its-closure" parameters=[{type=f7}] results=[{type=anything}] {
+    v1 = Construct v0
+    Return v1
+# CHECK-NEXT: b0(v0: f7):
+# CHECK-NEXT: : L7 = CallDirect v0, v0 function=f7 [isConstruction]
+# CHECK-NOT: NewObject
+# CHECK-NOT: = Construct
+# CHECK: function [[pointVersion]] name="Point"{{*}}role=AllocatedThisVersion flags=[HasThis, HasNewTarget]
+# CHECK-NOT: NewObject
+# CHECK: function [[circleVersion]] name="Circle"{{*}}role=AllocatedThisVersion
+# CHECK-NOT: SuperConstruct
+# CHECK: function [[scopedVersion]] name="Scoped"{{*}}role=AllocatedThisVersion
+# CHECK: function [[countedVersion]] name="Counted"{{*}}role=AllocatedThisVersion
+# CHECK: function [[cachedVersion]] name="Cached"{{*}}role=AllocatedThisVersion
+}

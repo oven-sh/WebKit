@@ -1,0 +1,151 @@
+# What is known about a value at build time: constants, operations on known operands, casts, types with one member, the case of a switch
+# FORM: Prepared
+# RUN: known-value function=f1 assume=v0:undefined
+# RUN(UNDEFINED): known-value function=f2 assume=v0:undefined
+# RUN(FIVE): known-value function=f2 assume=v0:5
+# RUN(OBJECT): known-value function=f2 assume=v0:object
+# RUN(NOTHING): known-value function=f2
+# RUN(TYPES): known-value function=f3
+# RUN(CASES): known-value function=f4
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Open" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Other" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="callee" results=[{type=undefined}] {
+    Return
+}
+
+function f1 name="knownValues" parameters=[{type=anything}, {type=L0}, {type=string}, {type=string}] results=[{type=anything}] {
+    v4 = Double number=5
+    v5 = Double number=-0
+    v6 = Double number=NaN
+    v7 = StrictEq v6, v6
+    v8 = Integer integer=0
+    v9 = StrictEq v8, v5
+    v10 = Null
+    v11 = Undefined
+    v12 = Eq v10, v11
+    v13 = StrictEq v10, v11
+    v14 = TypeTest v11 testedType=undefined|null
+    v15 = BitAnd v8, v0
+    v16 = Check v0 expectedType=number
+    v17 = NewObject -, v0 layout=L0 fields=[0]
+    v18 = Integer integer=1
+    v19 = Eq v17, v18
+    v20 = Less v2, v3
+    v21 = TypeTest v1 testedType=L0
+    v22 = Add v18, v18
+    v23 = Less v8, v18
+    v24 = ToBoolean v17
+    v25 = LogicalNot v24
+    v26 = StrictEq v17, v10
+    v27 = TypeTest v17 testedType=object
+    v28 = TypeTest v17 testedType=function
+    v29 = NewClosure function=f0
+    v30 = TypeTest v29 testedType=L1
+    v31 = TypeTest v17 testedType=L1
+    v32 = TypeTest v29 testedType=f0
+    Return v0
+}
+# CHECK-LABEL: function f1
+# CHECK: v4 known: Integer 5
+# CHECK: v5 known: Double 0x8000000000000000
+# CHECK: v5 truthy: False
+# CHECK: v6 truthy: False
+# CHECK: v7 evaluated: Boolean false
+# CHECK: v9 evaluated: Boolean true
+# CHECK: v12 evaluated: Boolean true
+# CHECK: v13 evaluated: Boolean false
+# CHECK: v14 evaluated: Boolean true
+# CHECK: v15 evaluated: Unknown
+# CHECK: v16 evaluated: Unknown
+# CHECK: v17 known: Object
+# CHECK: v17 truthy: True
+# CHECK: v19 evaluated: Unknown
+# CHECK: v20 evaluated: Unknown
+# CHECK: v21 evaluated: Unknown
+# CHECK: v22 evaluated: Integer 2
+# CHECK: v23 evaluated: Boolean true
+# CHECK: v24 evaluated: Boolean true
+# CHECK: v25 evaluated: Boolean false
+# CHECK: v26 evaluated: Boolean false
+# CHECK: v27 evaluated: Boolean true
+# CHECK: v28 evaluated: Boolean false
+# CHECK: v29 known: Function
+# CHECK: v30 evaluated: Boolean false
+# CHECK: v31 evaluated: Unknown
+# CHECK: v32 evaluated: Unknown
+
+function f2 name="casts" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Upcast v0 castType=anything
+    v2 = AssumeType v0 provenType=number
+    v3 = CheckInitialized v0 name="x"
+    v4 = Check v0 expectedType=number
+    v5 = RequireObjectCoercible v0 name="x"
+    v6 = RequireObject v0
+    Return v0
+}
+# UNDEFINED: v1 evaluated: Undefined
+# UNDEFINED: v2 evaluated: Undefined
+# UNDEFINED: v3 evaluated: Undefined
+# UNDEFINED: v4 evaluated: Unknown
+# UNDEFINED: v5 evaluated: Unknown
+# UNDEFINED: v6 evaluated: Unknown
+# FIVE: v1 evaluated: Integer 5
+# FIVE: v2 evaluated: Integer 5
+# FIVE: v3 evaluated: Integer 5
+# FIVE: v4 evaluated: Integer 5
+# FIVE: v5 evaluated: Integer 5
+# FIVE: v6 evaluated: Unknown
+# OBJECT: v1 evaluated: Object
+# OBJECT: v2 evaluated: Object
+# OBJECT: v3 evaluated: Object
+# OBJECT: v4 evaluated: Unknown
+# OBJECT: v5 evaluated: Object
+# OBJECT: v6 evaluated: Object
+# NOTHING: v1 evaluated: Unknown
+# NOTHING: v2 evaluated: Unknown
+# NOTHING: v3 evaluated: Unknown
+# NOTHING: v4 evaluated: Unknown
+# NOTHING: v5 evaluated: Unknown
+# NOTHING: v6 evaluated: Unknown
+
+function f3 name="types" parameters=[{type=L0}, {type=L0|L1}, {type=undefined|L0}, {type=object}, {type=L0|f0}, {type=f0}, {type=function}, {type=7}, {type=int[7, 8]}, {type="a"}, {type="a"|"b"}, {type=null}] results=[{type=undefined}] {
+# REPEAT: i = 0..11
+    v%(i+12) = Upcast v%(i) castType=anything
+# END REPEAT
+    Return
+}
+# TYPES: v12 known: Object
+# TYPES: v13 known: Object
+# TYPES: v14 known: Unknown
+# TYPES: v15 known: Unknown
+# TYPES: v16 known: Unknown
+# TYPES: v17 known: Function
+# TYPES: v18 known: Function
+# TYPES: v19 known: Integer 7
+# TYPES: v20 known: Unknown
+# TYPES: v21 known: String "a"
+# TYPES: v22 known: Unknown
+# TYPES: v23 known: Null
+
+function f4 name="switchCases" results=[{type=undefined}] {
+    v0 = Integer integer=-3
+    v1 = Double number=4
+    v2 = Double number=-0
+    v3 = Double number=1.5
+    v4 = Double number=NaN
+    v5 = Boolean boolean=false
+    v6 = String string="0"
+    v7 = Null
+    Return
+}
+# CASES: v0 switch case: -3
+# CASES: v1 switch case: 4
+# CASES: v2 switch case: 0
+# CASES: v3 switch case: none
+# CASES: v4 switch case: none
+# CASES: v5 switch case: none
+# CASES: v6 switch case: none
+# CASES: v7 switch case: none

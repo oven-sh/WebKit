@@ -1,0 +1,79 @@
+# class Router { constructor(o) { this.update = o => { this.options = o; this.reset(o) }; this.update(o); fill(this, o) }   reset(o) { this.origin = o } }   function fill(router, o) { router.filled = o }
+# What a constructor calls at every activation with the object goes on filling it: as receiver (`reset`), as argument (`fill`), or in a closure over the object that the constructor itself has made (`update`),
+# and what those call in turn. What they store at every activation counts as filled by the constructor.
+# A store in a branch of such a function (`inBranch`), a store by a function that the constructor calls in a branch (`rarely`), by a closure over the object that the constructor does not call (`later`)
+# and by a function that gets the finished object (`other`) do not. The call of a closure takes what the closure holds out of it (GetCapture, which no text of this form has: a variable stands in for it)
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses,EstimateHeat heat=EverythingIsHot
+# RUN: plan-slots fill
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Router" constructor=f1 fields=[{key="update" declared={type=anything}}, {key="listen" declared={type=anything}}, {key="options" declared={type=anything}}, {key="origin" declared={type=anything}}, {key="filled" declared={type=anything}}, {key="inBranch" declared={type=anything}}, {key="rarely" declared={type=anything}}, {key="later" declared={type=anything}}, {key="other" declared={type=anything}}]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="whatTheClosureHolds" module=m0 declared={type=L0} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Construct v2, -, v1
+    PutModuleVariable v3 variable=g0
+    v5 = CallDirect v3, v1 function=f7
+    Return
+}
+function f1 name="Router" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+    v2 = NewClosure v0 function=f2
+    PropSet v0, v2 key="update"
+    v4 = NewClosure v0 function=f6
+    PropSet v0, v4 key="listen"
+    v6 = GetModuleVariable variable=g1
+    v7 = CallDirect v6, v1 function=f2
+    v8 = CallDirect v0, v1 function=f4
+    v9 = ToBoolean v1
+    Branch v9 -> taken b1(), notTaken b2()
+  b1():
+    v10 = CallDirect v0, v1 function=f5
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f2 name="update" kind=Arrow captures=[{type=L0}] parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="options"
+    v3 = CallDirect v0, v1 function=f3
+    v4 = ToBoolean v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v0, v1 key="inBranch"
+    Jump -> next b2()
+  b2():
+    Return
+}
+function f3 name="reset" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="origin"
+    Return
+}
+function f4 name="fill" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="filled"
+    Return
+}
+function f5 name="calledInBranch" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="rarely"
+    Return
+}
+function f6 name="listen" kind=Arrow captures=[{type=L0}] parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="later"
+    Return
+}
+function f7 name="storesLater" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="other"
+    Return
+}
+
+# CHECK-LABEL: L0 allocated=
+# CHECK-NEXT: .0 "update" filled={{*}} byConstructor likely
+# CHECK-NEXT: .1 "listen" filled={{*}} byConstructor likely
+# CHECK-NEXT: .2 "options" filled={{*}} byConstructor likely
+# CHECK-NEXT: .3 "origin" filled={{*}} byConstructor likely
+# CHECK-NEXT: .4 "filled" filled={{*}} byConstructor likely
+# CHECK-NEXT: .5 "inBranch" filled=
+# CHECK-NOT: byConstructor

@@ -1,0 +1,56 @@
+# `includes` and `indexOf` with a value that is compared by identity compare the elements of a short vector of boxed values by a loop in the code, and hand a longer one to the operation that searches 64-bit words.
+# Compact code has no loop. A value of an open type is asked what it is first, so that code is longer
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# RUN(CALLS): generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="indexOfBoolean" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done b2(), miss b3()
+  b2(v3):
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK: f0: size=[[withLoop]] frame=
+# CALLS-LABEL: f0: size=
+# CALLS: operation operationAOTArrayIndexOfInt32 x1
+function f1 name="indexOfBooleanInCompactCode" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b4()
+  b1() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done b2(), miss b3()
+  b2(v3) frequency=Rare:
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NOT: f1: size=[[withLoop]] frame=
+# CALLS-LABEL: f1: size=
+# CALLS: operation operationAOTArrayIndexOfInt32 x1
+function f2 name="indexOfAnything" parameters=[{type=Array<anything, proven, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    TryCallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1 -> done b2(), miss b3()
+  b2(v3):
+    Return v3
+  b3() frequency=Rare:
+    v4 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Jump -> next b2(v4)
+  b4():
+    v5 = Undefined
+    Return v5
+}
+# CHECK-NOT: f2: size=[[withLoop]] frame=
+# CALLS-LABEL: f2: size=
+# CALLS: operation operationAOTArrayIndexOfInt32 x1

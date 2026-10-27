@@ -1,0 +1,6 @@
+# A prediction that stands behind no contents
+# RUN: print
+# DIAGNOSTIC: IRTextError
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="x" module=m0 declared={type=Array<number, ~ int>} initialization=Undefined

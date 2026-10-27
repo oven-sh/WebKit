@@ -1,0 +1,21 @@
+# Reading the own values of an object runs the getters that flow lists for its layout and nothing else, and unknown code (?) where the list is not complete
+# FORM: Prepared
+# RUN: members-run-by OwnValues f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="GainsDataProperties" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeys=["y"] addedKeysAreComplete=true ownAccessorsAreComplete=true}
+layout L1 name="HasAccessor" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeys=["y"] addedKeysAreComplete=true ownAccessors=[{key="y" kind=Getter function=f1}, {key="y" kind=Setter function=f2}] ownAccessorsAreComplete=true}
+layout L2 name="HasOnlySetter" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeys=["y"] addedKeysAreComplete=true ownAccessors=[{key="y" kind=Setter function=f2}] ownAccessorsAreComplete=true}
+layout L3 name="ListIsNotComplete" fields=[{key="x" declared={type=number}}] flow={impossibleMutations=[ChangePrototype] addedKeys=["y"] addedKeysAreComplete=true ownAccessors=[{key="y" kind=Getter function=f1}]}
+function f0 name="operands" parameters=[{type=L0}, {type=L1}, {type=L2}, {type=L3}, {type=L0|L1}, {type=L1|L3}] results=[{type=undefined}] {
+    Return
+}
+function f1 name="y" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}]
+function f2 name="y" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}]
+
+# CHECK: v0: none
+# CHECK-NEXT: v1: f1
+# CHECK-NEXT: v2: none
+# CHECK-NEXT: v3: ?
+# CHECK-NEXT: v4: f1
+# CHECK-NEXT: v5: ?

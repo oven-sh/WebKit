@@ -1,0 +1,92 @@
+# A receiver whose type is a family of layouts needs no test, whichever member it is: the access becomes a slot operation without a guard. Where the same family is only expected, one test of the receiver
+# stands in front of the slot operation, and the access by name stays in one rarer copy
+# FORM: Prepared
+# RUN: pass ResolveAccesses
+# RUN(TESTS): pass PlaceTypeTests
+# RUN(COPY): pass PlaceTypeTests
+# CHECK: outcome: Changed
+# TESTS: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Circle" fields=[{key="x" declared={type=number} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="radius" declared={type=number} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] supertypes=[L3] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 name="Square" fields=[{key="side" declared={type=number} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="x" declared={type=number} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] supertypes=[L3] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L2 name="Dot" fields=[{key="x" declared={type=number} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] supertypes=[L3] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+# The interface that the three are converted to. Nothing allocates it, and the family keeps it
+layout L3 name="Shape" fields=[{key="x" declared={type=number} flags=[IsRequired]}] flow={allocation=NeverAllocated}
+
+function f0 name="proven-family-read" parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+# CHECK-NEXT: b0(v0: L0|L1|L2|L3):
+# CHECK-NEXT: v1: number = GetSlot v0 key="x" receivers=[L0, L1, L2] level=Proven
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# TESTS-NEXT: b0(v0: L0|L1|L2|L3):
+# TESTS-NEXT: = PropGet v0 key="x"
+# TESTS-NEXT: Return v1
+# TESTS-NEXT: }
+}
+
+function f1 name="proven-family-store" parameters=[{type=L0|L1|L2|L3}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x"
+    Return
+# CHECK-NEXT: b0(v0: L0|L1|L2|L3, v1: number):
+# CHECK-NEXT: PutSlot v0, -, v1 key="x" receivers=[L0, L1, L2] level=Proven
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+# TESTS-NEXT: b0(v0: L0|L1|L2|L3, v1: number):
+# TESTS-NEXT: PropSet v0, v1 key="x"
+# TESTS-NEXT: Return
+# TESTS-NEXT: }
+}
+
+function f2 name="expected-family" parameters=[{type=L0|L1|L2|L3 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L1|L2|L3):
+    v1 = PropGet v0 key="x"
+    Return v1
+# CHECK-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# TESTS-NEXT: b0(v0: anything ~ L0|L1|L2|L3):
+# TESTS-NEXT: [[isMember]]: boolean{{*}}= TypeTest v0 testedType=L0|L1|L2
+# TESTS-NEXT: Branch [[isMember]] -> taken
+# TESTS-NOT: = TypeTest
+# TESTS-NOT: = ShapeTest
+# TESTS-NOT: = IsSlotFilled
+# TESTS: v1: number = GetSlot {{*}} key="x" receivers=[L0, L1, L2] level=Expected
+# TESTS-NOT: = TypeTest
+# TESTS-NOT: = ShapeTest
+# TESTS-NOT: = IsSlotFilled
+# COPY-NOT: = PropGet
+# COPY-NOT: frequency=Rare
+# COPY: [[byName]]:{{*}}= PropGet v0 key="x"
+# COPY-NEXT: Return [[byName]]
+# COPY-NOT: = PropGet
+# COPY-NOT: frequency=Rare
+}
+
+# A primitive, a host object or an ordinary object may be converted to the type as well, so that the type proves no layout
+function f3 name="family-with-members-without-a-layout" parameters=[{type=L0|L1|L2|nolayout}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-LABEL: function f3 name="family-with-members-without-a-layout"
+# CHECK-NEXT: b0(v0: L0|L1|L2|nolayout):
+# CHECK-NEXT: = PropGet v0 key="x"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# TESTS-LABEL: function f3 name="family-with-members-without-a-layout"
+# TESTS-NEXT: b0(v0: L0|L1|L2|nolayout):
+# TESTS-NEXT: = TypeTest v0 testedType=L0|L1|L2
+# TESTS: v1: number = GetSlot {{*}} key="x" receivers=[L0, L1, L2] level=Expected
+# COPY-LABEL: function f3 name="family-with-members-without-a-layout"
+
+function f4 name="field-of-one-member" parameters=[{type=L0|L1|L2|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="radius"
+    Return v1
+# CHECK-NEXT: b0(v0: L0|L1|L2|L3):
+# CHECK-NEXT: = PropGet v0 key="radius"
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}

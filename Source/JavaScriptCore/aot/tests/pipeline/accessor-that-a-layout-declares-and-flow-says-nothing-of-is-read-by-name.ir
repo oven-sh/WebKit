@@ -1,0 +1,51 @@
+# const above = { plain: 1, get lazy() { return 2 } }   const heir = { __proto__: above }   function read() { return above.lazy }   function hand() { return heir }
+# The layout of the literal declares the accessor. The flow analysis gives its slot no type, because the object lies above another. So nothing says that the pair in the slot has a getter, or which:
+# the read goes by name.
+# FORM: AsRead
+# RUN(IR): pipeline Select
+# RUN(CODE): compile
+# RUN: run-in-shell globalThis.register = (read, hand) => { print(read(), hand().lazy, Object.keys(Object.getPrototypeOf(hand())).join()); };
+# IR: layout L0 {{*}}key="lazy" {{*}}form=[IsAccessor]
+# IR-NOT: GetSlotGetter
+# CODE-NOT: diagnostic
+# CODE: image not empty
+# CHECK: 2 2 plain,lazy
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}, {key="lazy" declared={type=anything} flags=[IsRequired] form=[IsAccessor]}]
+layout L1
+variable g0 name="heir" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="above" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f3
+    DefineGetter v1, v2 key="lazy"
+    v4 = FinishObject v1
+    PutModuleVariable v4 variable=g1
+    v6 = NewObject layout=L1
+    SetLiteralPrototype v6, v4
+    v8 = FinishObject v6
+    PutModuleVariable v8 variable=g0
+    v10 = NewClosure function=f1
+    v11 = NewClosure function=f2
+    v12 = Builtin builtin=GlobalThis
+    v13 = PropGet v12 key="register" [isFreeName]
+    v14 = Call v13, -, v10, v11
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="lazy"
+    Return v1
+}
+function f2 name="hand" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f3 name="lazy" kind=Getter results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

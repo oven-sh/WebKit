@@ -1,0 +1,150 @@
+# An edge of a branch or a switch into a block that only jumps goes straight to the target of the jump, with the arguments of the jump
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 5
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="branchIntoEmptyBlock" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v3 = Negate v2
+    Jump -> next b3(v3)
+  b3(v4):
+    Return v4
+# CHECK: Branch v0 -> taken b3(v1), notTaken b2()
+# CHECK-NOT: Jump -> next b3(v1)
+# CHECK: = Negate v2
+# CHECK-NEXT: Jump -> next b3(v3)
+# CHECK: b3(v4: number):
+# CHECK-NEXT: Return v4
+}
+
+function f1 name="bothEdgesIntoEmptyBlocks" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v2)
+  b3(v3):
+    Return v3
+# CHECK: Branch v0 -> taken b3(v1), notTaken b3(v2)
+# CHECK-NOT: Jump
+}
+
+function f2 name="switchIntoEmptyBlocks" parameters=[{type=i32}, {type=number}, {type=number}] results=[{type=number}] {
+    Switch v0 cases=[0, 1] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Jump -> next b4(v1)
+  b2():
+    v3 = Negate v2
+    Jump -> next b4(v3)
+  b3():
+    Jump -> next b4(v2)
+  b4(v4):
+    Return v4
+# CHECK: Switch v0 cases=[0, 1] -> case b4(v1), case b2(), otherwise b4(v2)
+}
+
+function f3 name="rareBlockBeforeRareTarget" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    Jump -> next b3(v1)
+  b2() frequency=Rare:
+    v3 = Negate v2
+    Jump -> next b3(v3)
+  b3(v4) frequency=Rare:
+    Return v4
+# CHECK: Branch v0 -> taken b3(v1), notTaken b2()
+}
+
+function f4 name="ordinaryBlockBeforeRareTarget" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    v3 = Negate v2
+    Jump -> next b3(v3)
+  b3(v4) frequency=Rare:
+    Return v4
+# CHECK: Branch v0 -> taken b3(v1), notTaken b2()
+}
+
+function f5 name="rareBlockBeforeOrdinaryTarget" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    Jump -> next b3(v1)
+  b2():
+    v3 = Negate v2
+    Jump -> next b3(v3)
+  b3(v4):
+    Return v4
+# CHECK: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: Jump -> next b3(v1)
+}
+
+function f6 name="unlikelyBlockBeforeOrdinaryTarget" parameters=[{type=boolean}, {type=number}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    Jump -> next b3(v1)
+  b2():
+    v3 = Negate v2
+    Jump -> next b3(v3)
+  b3(v4):
+    Return v4
+# CHECK: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b3(v1)
+}
+
+function f7 name="emptyBlockInCycle" parameters=[{type=function}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = Call v0
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+# CHECK: Branch v3 -> taken b2(), notTaken b3()
+# CHECK-NEXT: b2():
+# CHECK-NEXT: Jump -> next b1()
+}
+
+function f8 name="parameterFilledByEdge" parameters=[{type=anything}, {type=number}] results=[{type=number}] {
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    Jump -> next b3(v3)
+  b2():
+    v4 = Negate v1
+    Jump -> next b3(v4)
+  b3(v5):
+    Return v5
+# CHECK: Branch v2 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v3: number):
+# CHECK-NEXT: Jump -> next b3(v3)
+}
+
+function f9 name="parameterFilledByArgument" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    Branch v0 -> taken b1(v1), notTaken b2()
+  b1(v2):
+    Jump -> next b3(v2)
+  b2():
+    v3 = Negate v1
+    Jump -> next b3(v3)
+  b3(v4):
+    Return v4
+# CHECK: Branch v0 -> taken b1(v1), notTaken b2()
+# CHECK-NEXT: b1(v2: number):
+# CHECK-NEXT: Jump -> next b3(v2)
+}

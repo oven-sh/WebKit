@@ -1,0 +1,12 @@
+# The generic version goes on with the value that a check has turned away and lists it in the allocation that lists the checked one. There it is stored behind the allocation, by a store that tests it.
+# Until then something that fits the slot stands in for it. Nothing stands in for a symbol: its field is defined behind the allocation, and so is every field listed behind it, for property order is observable.
+# A method cannot be defined there. So the symbol that is listed in front of a method cannot leave the allocation, and its field is only expected.
+# `false` stands in for a boolean, and behind the last symbol nothing is listed: both fields keep their types.
+# The empty string stands in for a string: add-generic-version-a-string-stands-in-for-a-string-field.ir
+# FORM: AsRead
+# RUN: pass TypeValues GuardTaintedPositions VerifyProgram
+# STATISTIC: TaintedPositions = 1
+# CHECK: layout L0 name="SymbolBeforeMethod" fields=[{key="tag" declared={type=symbol flags=[IsExpected]}
+# CHECK: layout L1 name="FlagBeforeMethod" fields=[{key="flag" declared={type=boolean}
+# CHECK: layout L2 name="SymbolBehindMethod" fields=[{key="tag" declared={type=symbol}
+# PROGRAM-OF: add-generic-version-initial-values-behind-the-allocation.ir

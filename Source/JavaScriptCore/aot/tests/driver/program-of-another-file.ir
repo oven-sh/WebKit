@@ -1,0 +1,7 @@
+# PROGRAM-OF stands for the program of the named file, without its directives: NEXT-lines of check-next.ir that would fail here do not come along
+# RUN: print
+# CHECK: Sub
+# CHECK-NOT: Add
+# CHECK: name="sum2"
+# PROGRAM-OF: check-next.ir
+# CHECK: Negate

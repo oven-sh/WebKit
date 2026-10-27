@@ -1,0 +1,14 @@
+# Flags that are not a constant leave the call
+# FORM: Prepared
+# RUN: pass FoldConstantRegExps
+# STATISTIC: FoldConstantRegExpsChanges = 0
+# CHECK: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="flagsAreParameter" parameters=[{type=string}] results=[{type=RegExp}] {
+    v1 = String string="a"
+    v2 = CallBuiltin -, v1, v0 overload=RegExp/4
+    Return v2
+# CHECK: CallBuiltin
+# CHECK-NOT: NewRegExp
+}

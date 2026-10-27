@@ -713,6 +713,13 @@ macro crash()
     end
 end
 
+# offlineasm puts the ARM64 veneers of a part of a section in front of the next section directive, so a part ends in a jump.
+macro endSectionPart()
+    if not C_LOOP
+        jmp _llint_crash
+    end
+end
+
 macro assert(assertion)
     if ASSERT_ENABLED
         assertion(.ok)
@@ -1467,7 +1474,7 @@ macro convertJSCalleeToVM(callee)
 end
 
 macro getVMFromCallFrame(vm, scratch)
-if WEBASSEMBLY
+if WEBASSEMBLY or AOT
         loadq Callee[cfr], vm
         move vm, scratch
         andq (constexpr JSValue::NativeCalleeMask), scratch
@@ -1476,7 +1483,11 @@ if WEBASSEMBLY
         jmp .loaded
     .isWasmCallee:
         loadp CodeBlock + LowWordOffset[cfr], vm
+    if WEBASSEMBLY
         loadp JSWebAssemblyInstance::m_vm[vm], vm
+    else
+        loadp (constexpr (AOT_INSTANCE_OFFSET(vm)))[vm], vm
+    end
     .loaded:
 else
     loadp Callee + LowWordOffset[cfr], vm
@@ -1591,10 +1602,16 @@ end
             bpa t2, t0, .zeroStackLoop
         else
             move 0, t3
-        .zeroStackLoop:
+            fq2d t3, ft0
+            subp t2, t0, t3
+            btpz t3, 2 * PtrSize, .zeroStackLoop
             subp 2 * PtrSize, t2
-            storeq t3, [t2]
-            storeq t3, PtrSize[t2]
+            storev v0, [t2]
+            bpeq t2, t0, .zeroStackDone
+        .zeroStackLoop:
+            subp 4 * PtrSize, t2
+            storev v0, [t2]
+            storev v0, 2 * PtrSize[t2]
             bpa t2, t0, .zeroStackLoop
         end
 .zeroStackDone:
@@ -2180,10 +2197,29 @@ end
 
 # Entry point for the llint to initialize.
 entry(llint, macro()
+    macro trampolineEntries(setEntries) setEntries() end
+    macro bytecodeEntries(setEntries) end
+    macro webAssemblyEntries(setEntries) end
     include InitBytecodes
 end)
 
 end // not C_LOOP
+
+endSectionPart()
+section "bytecode"
+
+global _llintBytecodePCRangeStart
+_llintBytecodePCRangeStart:
+    break
+
+if not C_LOOP
+entry(llint_bytecode, macro()
+    macro trampolineEntries(setEntries) end
+    macro bytecodeEntries(setEntries) setEntries() end
+    macro webAssemblyEntries(setEntries) end
+    include InitBytecodes
+end)
+end
 
 _llint_op_wide16:
     nextInstructionWide16()
@@ -2272,6 +2308,10 @@ macro getArgumentIncludingThisCountForAsyncIteratorNext(size, dst)
 end
 
 include LowLevelInterpreter64
+
+if AOT
+    include LowLevelInterpreterAOT
+end
 
 
 
@@ -2680,6 +2720,9 @@ llintOp(op_super_sampler_end, OpSuperSamplerEnd, macro (unused, unused, dispatch
     dispatch()
 end)
 
+endSectionPart()
+section "trampolines"
+
 op(llint_native_call_trampoline, macro ()
     nativeCallTrampoline(NativeExecutable::m_function)
 end)
@@ -2856,6 +2899,9 @@ op(llint_polymorphic_closure_call_trampoline, macro ()
     linkFor(_llint_polymorphic_call)
 end)
 
+endSectionPart()
+section "bytecode"
+
 if JIT
     macro loadBaselineJITConstantPool()
         # Baseline uses LLInt's PB register for its JIT constant pool.
@@ -2971,6 +3017,10 @@ op(array_sort_comparator_return_trampoline, macro ()
     end
 end)
 
+global _llintBytecodePCRangeEnd
+_llintBytecodePCRangeEnd:
+    break
+
 # Lastly, make sure that we can link even though we don't support all opcodes.
 # These opcodes should never arise when using LLInt or either JIT. We assert
 # as much.
@@ -3005,6 +3055,9 @@ macro updateBinaryArithProfile(size, opcodeStruct, type, scratch1, scratch2)
     loadp UnlinkedCodeBlock::m_binaryArithProfiles + BinaryArithProfileFixedVector::m_storage[scratch2], scratch2
     orh type, (constexpr (BinaryArithProfileFixedVector::Storage::offsetOfData())) + BinaryArithProfile::m_bits[scratch2, scratch1, 2]
 end
+
+endSectionPart()
+section "webassembly"
 
 if WEBASSEMBLY
 
@@ -3088,6 +3141,18 @@ _wasm_ipint_call_return_location_wide32:
     crash()
 
 end # WEBASSEMBLY
+
+if not C_LOOP
+entry(llint_webassembly, macro()
+    macro trampolineEntries(setEntries) end
+    macro bytecodeEntries(setEntries) end
+    macro webAssemblyEntries(setEntries) setEntries() end
+    include InitBytecodes
+end)
+end
+
+endSectionPart()
+section "trampolines"
 
 include? LowLevelInterpreterAdditions
 

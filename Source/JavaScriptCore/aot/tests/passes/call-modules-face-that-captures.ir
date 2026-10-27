@@ -1,0 +1,49 @@
+# ES modules import a CommonJS file through a module of its own, whose body evaluates the file. Where the names of the file are known only once it has run, the run time fills them in behind that body:
+# it finds the place by the state of the module, so the module has one, whoever imports it. The file behind it is a function that it calls.
+# FORM: Prepared
+# RUN: pass CallModules
+# STATISTIC: ModulesWithState = 2
+# STATISTIC: ModulesWithoutState = 1
+# CHECK: outcome: Changed
+
+variable g0 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m2 declared={type=anything}
+module m0 path="/main.mjs" displayPath="main.mjs" body=f0 requests=[{target=m2 completes=true}]
+module m1 path="/value.cjs" displayPath="value.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f1 exportsVariable=g0
+module m2 path="#2" displayPath="value.cjs" exportRule=CommonJs body=f2 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+entry module=m0
+# CHECK: module m0 {{*}}flags=[EvaluatesItself] body=f0
+# CHECK: module m1 path="/value.cjs" displayPath="value.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports exportsVariable=g0
+# CHECK: module m2 {{*}}flags=[EvaluatesItself] exportRule=CommonJs body=f2
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    PutModuleVariable v0 variable=g0
+    Return
+# CHECK: = CallDirect function=f2
+# CHECK-NEXT: = StopLoadingBehindFile module=m2
+# CHECK: = BeginModuleEvaluation module=m0
+# CHECK: = CallDirect function=f3
+# CHECK-NEXT: FinishModuleEvaluation module=m0
+}
+function f1 name="value" module=m1 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    Return
+}
+# CHECK-LABEL: function f1 name="value"{{*}}HasOnlyDirectCallers, IsNeverCalledByHost] {
+# CHECK-NOT: ModuleEvaluation
+function f2 name="face" module=m1 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m2 [isBare]
+    Return
+}
+# CHECK-LABEL: function f2 name="face"
+# CHECK: = BeginModuleEvaluation module=m2
+# CHECK-NOT: AbandonModuleEvaluation
+# CHECK: = CallDirect function=f4
+# CHECK-NEXT: FinishModuleEvaluation module=m2
+# CHECK-LABEL: function f3 name="main"{{*}}derivation={source=f0}
+# CHECK-LABEL: function f4 name="face"{{*}}derivation={source=f2} {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: = CallDirect function=f1
+# CHECK-NEXT: Return

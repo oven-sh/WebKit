@@ -1,0 +1,80 @@
+# below = Object.create({ ...{ ...process } }); hide(below); step0 = { next: () => below.getBuiltinModule(globalThis.name) }; step1 = { next: () => step0.next() }; and so on
+# The receiver inherits from a copy of a copy of process, and all of them are in unknown hands long before the function that reads the name is reached.
+# The read goes up to the copy and on to the sources of copies, to the end, and the call is a load of a module by name.
+# RUN: valueflow-solve unseen
+# CHECK: unseen LoadsModuleByName ProcessGetBuiltinModule f1:v4
+# CHECK: modules-by-name yes
+
+module m0 path="/app/main.js" displayPath="main.js" kind=SourceText body=f0
+entry module=m0
+layout L0 fields=[{key="next" declared={type=anything}}]
+layout L1
+variable g0 name="copy" module=m0 declared={type=anything}
+variable g1 name="step0" module=m0 declared={type=anything}
+variable g2 name="step1" module=m0 declared={type=anything}
+variable g3 name="step2" module=m0 declared={type=anything}
+variable g4 name="step3" module=m0 declared={type=anything}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hide" [isFreeName]
+    v2 = Builtin builtin=Process
+    v3 = NewObject layout=L1
+    CopyDataProperties v3, v2
+    v5 = FinishObject v3
+    v6 = NewObject layout=L1
+    CopyDataProperties v6, v5
+    v8 = FinishObject v6
+    v9 = Builtin builtin=ObjectCreate
+    v10 = Call v9, -, v8
+    PutModuleVariable v10 variable=g0
+    v12 = Call v1, -, v10
+    v13 = NewClosure function=f1
+    v14 = NewObject layout=L0
+    PropDefine v14, v13 key="next"
+    v16 = FinishObject v14
+    PutModuleVariable v16 variable=g1
+    v18 = NewClosure function=f2
+    v19 = NewObject layout=L0
+    PropDefine v19, v18 key="next"
+    v21 = FinishObject v19
+    PutModuleVariable v21 variable=g2
+    v23 = NewClosure function=f3
+    v24 = NewObject layout=L0
+    PropDefine v24, v23 key="next"
+    v26 = FinishObject v24
+    PutModuleVariable v26 variable=g3
+    v28 = NewClosure function=f4
+    v29 = NewObject layout=L0
+    PropDefine v29, v28 key="next"
+    v31 = FinishObject v29
+    PutModuleVariable v31 variable=g4
+    v33 = PropGet v31 key="next"
+    v34 = Call v33, v31
+    Return v34
+}
+function f1 name="next" module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="name" [isFreeName]
+    v2 = GetModuleVariable variable=g0
+    v3 = PropGet v2 key="getBuiltinModule"
+    v4 = Call v3, v2, v1
+    Return v4
+}
+function f2 name="next" module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f3 name="next" module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}
+function f4 name="next" module=m0 kind=Arrow results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g3
+    v1 = PropGet v0 key="next"
+    v2 = Call v1, v0
+    Return v2
+}

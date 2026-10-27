@@ -1,0 +1,56 @@
+# The search for a text from the end of a string: a text of one unit is looked for by the leaf that looks for a character, a longer one by the operation that gets the number of the text
+# FORM: Selected
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="oneUnit" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
+    v2 = FlattenString v0
+    v3 = StringLastIndexOfLiteral v2, v1 literal="/"
+    Return v3
+}
+# CHECK-LABEL: f0: size=
+# CHECK-NOT: Literal
+# CHECK: operationAOTStringReverseFindCharacter16 x1
+# CHECK-NEXT: operationAOTStringReverseFindCharacter8 x1
+# CHECK-NOT: Literal
+
+function f1 name="twoUnits" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
+    v2 = FlattenString v0
+    v3 = StringLastIndexOfLiteral v2, v1 literal="::"
+    Return v3
+}
+# CHECK-LABEL: f1: size=
+# CHECK-NOT: ReverseFindCharacter
+# CHECK: operationAOTStringReverseFindLiteral8 x1
+# CHECK-NOT: ReverseFindCharacter
+
+function f2 name="stringThatMayBeARope" parameters=[{type=string}, {type=i32}] results=[{type=i32}] {
+    v2 = StringLastIndexOfLiteral v0, v1 literal="/"
+    Return v2
+}
+# The characters of a part of another string are read where they lie: nothing is made flat for the search.
+# CHECK-LABEL: f2: size=
+# CHECK-NOT: Literal
+# CHECK: operationAOTStringReverseFindCharacter8 x1
+# CHECK-NEXT: stub RopeCharacters x1
+# CHECK-NOT: FlattenString
+
+# Backward from position 0 the text stands at the start or nowhere: the characters are compared in place and nothing is searched.
+function f3 name="fromPositionZero" parameters=[{type=string}] results=[{type=i32}] {
+    v1 = FlattenString v0
+    v2 = Integer integer=0
+    v3 = StringLastIndexOfLiteral v1, v2 literal="::"
+    Return v3
+}
+# CHECK-LABEL: f3: size=
+# CHECK-NOT: ReverseFind
+# CHECK-NOT: LastIndexOfLiteral
+
+function f4 name="fromPositionOne" parameters=[{type=string}] results=[{type=i32}] {
+    v1 = FlattenString v0
+    v2 = Integer integer=1
+    v3 = StringLastIndexOfLiteral v1, v2 literal="::"
+    Return v3
+}
+# CHECK-LABEL: f4: size=
+# CHECK: operationAOTStringReverseFindLiteral8 x1

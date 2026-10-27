@@ -1,0 +1,83 @@
+# The inline frames of a caller after a copy: callee, position, parent, tail call, construction
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 7
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="oneOperation" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0 @3
+    Return v1 @4
+}
+
+function f1 name="otherOperation" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+}
+
+function f2 name="hasInlineFrames" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f0 callPosition=5 module=m0}, {callee=f1 callPosition=6 parent=1 module=m0}] {
+    v1 = Mul v0, v0 @5:1
+    v2 = Mul v1, v0 @6:2
+    Return v2
+}
+
+function f3 name="ordinarySite" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 @9
+    Return v1
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 module=m0}] {
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v0, v0 @3:1
+}
+
+function f4 name="tailSite" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 @9
+    ReturnCall v1
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 isTailCall=true module=m0}] {
+# CHECK-NOT: CallDirect
+# CHECK-NOT: ReturnCall
+# CHECK: Return v1
+# CHECK: = Mul v0, v0 @3:1
+}
+
+function f5 name="constructionSite" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 [isConstruction] @9
+    Return v1
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=9 isConstruction=true module=m0}] {
+# CHECK-NOT: CallDirect
+}
+
+function f6 name="calleeWithFrames" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f2 @9
+    Return v1
+# CHECK: inlineFrames=[{}, {callee=f2 callPosition=9 module=m0}, {callee=f0 callPosition=5 parent=1 module=m0}, {callee=f1 callPosition=6 parent=2 module=m0}] {
+# CHECK-NOT: CallDirect
+# CHECK: [[square6]]: number = Mul v0, v0 @5:2
+# CHECK-NEXT: = Mul [[square6]], v0 @6:3
+}
+
+function f7 name="siteInsideFrame" parameters=[{type=number}] results=[{type=number}] inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}] {
+    v1 = CallDirect v0 function=f0 @7:1
+    Return v1
+# CHECK: inlineFrames=[{}, {callee=f1 callPosition=4 module=m0}, {callee=f0 callPosition=7 parent=1 module=m0}] {
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v0, v0 @3:2
+}
+
+function f8 name="twoSites" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 @11
+    v2 = CallDirect v1 function=f1 @12
+    Return v2
+# CHECK: inlineFrames=[{}, {callee=f1 callPosition=12 module=m0}, {callee=f0 callPosition=11 module=m0}] {
+# CHECK-NOT: CallDirect
+# CHECK: = Add v1, v1 @0:1
+# CHECK: = Mul v0, v0 @3:2
+}
+
+function f9 name="callMarkedNeverInlined" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f0 [isNeverInlined] @9
+    Return v1
+# CHECK-NOT: inlineFrames=
+# CHECK: = CallDirect v0 function=f0 [isNeverInlined] @9
+}

@@ -26,6 +26,8 @@
 #include "config.h"
 #include "RegExpGlobalData.h"
 
+#include "AOTRemovableFeature.h"
+#include "AOTRuntimeValidation.h"
 #include "JSCInlines.h"
 
 namespace JSC {
@@ -39,8 +41,19 @@ void RegExpGlobalData::visitAggregateImpl(Visitor& visitor)
 
 DEFINE_VISIT_AGGREGATE(RegExpGlobalData);
 
-JSValue RegExpGlobalData::getBackref(JSGlobalObject* globalObject, unsigned i)
+static void willReadLegacyStatics(JSGlobalObject* globalObject)
 {
+#if ENABLE(AOT)
+    AOT::willReadLegacyRegExpStatics(globalObject->vm());
+#else
+    UNUSED_PARAM(globalObject);
+#endif
+}
+
+NEVER_INLINE JSValue RegExpGlobalData::getBackref(JSGlobalObject* globalObject, unsigned i)
+{
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getBackref);
+    willReadLegacyStatics(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -57,8 +70,10 @@ JSValue RegExpGlobalData::getBackref(JSGlobalObject* globalObject, unsigned i)
     return jsEmptyString(vm);
 }
 
-JSValue RegExpGlobalData::getLastParen(JSGlobalObject* globalObject)
+NEVER_INLINE JSValue RegExpGlobalData::getLastParen(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getLastParen);
+    willReadLegacyStatics(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -76,13 +91,17 @@ JSValue RegExpGlobalData::getLastParen(JSGlobalObject* globalObject)
     return jsEmptyString(vm);
 }
 
-JSValue RegExpGlobalData::getLeftContext(JSGlobalObject* globalObject)
+NEVER_INLINE JSValue RegExpGlobalData::getLeftContext(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getLeftContext);
+    willReadLegacyStatics(globalObject);
     return m_cachedResult.leftContext(globalObject, globalObject);
 }
 
-JSValue RegExpGlobalData::getRightContext(JSGlobalObject* globalObject)
+NEVER_INLINE JSValue RegExpGlobalData::getRightContext(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, &RegExpGlobalData::getRightContext);
+    willReadLegacyStatics(globalObject);
     return m_cachedResult.rightContext(globalObject, globalObject);
 }
 

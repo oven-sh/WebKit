@@ -1,0 +1,63 @@
+# A field that is read only to be called stays while such a read is in the program, by slot or by name
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="ReadBySlot" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled} occupancy=AlwaysFilled}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="ReadByName" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="ReadInOtherFunction" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled} occupancy=AlwaysFilled}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="NoReadRemains" fields=[{key="run" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="ReadBySlot" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}
+# CHECK: layout L1 name="ReadByName" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}
+# CHECK: layout L2 name="ReadInOtherFunction" fields=[{key="run"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=OnlyCalled}
+# CHECK: layout L3 name="NoReadRemains" fields=[{key="run"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}
+
+function f0 name="readBySlot" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+    v3 = GetSlot v2, v2 key="run" receivers=[L0] level=Proven
+    v4 = Call v3, v2
+    Return v2
+# CHECK: = NewClosure function=f5
+# CHECK-NEXT: = NewObject -, v1, v0 layout=L0 fields=[0, 1]
+# CHECK-NEXT: = GetSlot
+}
+
+function f1 name="readByName" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v1, v0 layout=L1 fields=[0, 1]
+    v3 = PropGet v2 key="run" receivers=[L1]
+    v4 = Call v3, v2
+    Return v2
+# CHECK: = NewClosure function=f5
+# CHECK-NEXT: = NewObject -, v1, v0 layout=L1 fields=[0, 1]
+# CHECK-NEXT: = PropGet
+}
+
+function f2 name="builtHere" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v1, v0 layout=L2 fields=[0, 1]
+    Return v2
+# CHECK: = NewClosure function=f5
+# CHECK-NEXT: = NewObject -, v1, v0 layout=L2 fields=[0, 1]
+}
+
+function f3 name="readThere" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="run" receivers=[L2] level=Proven
+    v2 = Call v1, v0
+    Return v2
+}
+
+function f4 name="noReadRemains" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f5
+    v2 = NewObject -, v1, v0 layout=L3 fields=[0, 1]
+    v3 = CallDirect function=f5
+    Return v2
+# CHECK-NOT: NewClosure
+# CHECK: = NewObject -, v0 layout=L3 fields=[1]
+}
+
+function f5 name="callback" kind=Arrow results=[{type=anything}] {
+    Return
+}

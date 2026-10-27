@@ -1,0 +1,403 @@
+# A literal or a nullish constant that meet after an inlined result wrapper are one virtual object: a test of the value is a test of its tag
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 8
+# STATISTIC: AllocationsSunk = 3
+# STATISTIC: AllocationsMergedAtJoins >= 10
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Found" fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=number} flags=[IsRequired]}]
+variable g0 name="last" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="find" role=ResultWrapper parameters=[{type=number}] results=[{type=null|L0}] creator=ResultWrapper{worker=f13 nullish=Null layout=L0}
+
+function f1 name="truthinessTest" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(| 0), notTaken b5()
+  b4(v9):
+    v10 = PropGet v9 key="a" receivers=[L0]
+    Return v10
+  b5():
+    Return
+# CHECK-NOT: NewObject
+# CHECK: b1():
+# CHECK-NEXT: [[present1]]: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b3([[present1]], v3, v4)
+# CHECK: b2():
+# CHECK: [[absent1]]: 2 = Integer integer=2
+# CHECK: Jump -> next b3([[absent1]], 
+# CHECK: b3([[tag1]]: i32, [[a1]]: number, {{*}}: number):
+# CHECK-NEXT: [[mask1]]: 1 = Integer integer=1
+# CHECK-NEXT: [[masked1]]:{{*}}= BitAnd [[tag1]], [[mask1]]
+# CHECK-NEXT: [[isPresent1]]: boolean = ToBoolean [[masked1]]
+# CHECK-NEXT: v8: boolean = Upcast [[isPresent1]] castType=boolean
+# CHECK-NEXT: Branch v8 -> taken b4(), notTaken b5()
+# CHECK: b4():
+# CHECK-NEXT: v10:{{*}}= Upcast [[a1]] castType=
+}
+
+function f2 name="comparedWithNull" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Null
+    v9 = StrictEq v7, v8
+    Branch v9 -> taken b4(), notTaken b5()
+  b4():
+    Return
+  b5():
+    v10 = PropGet v7 key="b" receivers=[L0]
+    Return v10
+# CHECK-NOT: NewObject
+# CHECK: b3([[tag2]]: i32, {{*}}: number, [[b2]]: number):
+# CHECK-NOT: StrictEq
+# CHECK: [[mask2]]: 2 = Integer integer=2
+# CHECK-NEXT: [[masked2]]:{{*}}= BitAnd [[tag2]], [[mask2]]
+# CHECK-NEXT: [[isNull2]]: boolean = ToBoolean [[masked2]]
+# CHECK-NEXT: v9: boolean = Upcast [[isNull2]] castType=boolean
+# CHECK-NEXT: Branch v9 -> taken b4(), notTaken b5()
+# CHECK: b5():
+# CHECK-NEXT: v10:{{*}}= Upcast [[b2]] castType=
+}
+
+function f3 name="notUndefined" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Undefined
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Undefined
+    v9 = StrictEq v7, v8
+    Branch v9 -> taken b4(), notTaken b5()
+  b4():
+    Return
+  b5():
+    v10 = PropGet v7 key="a" receivers=[L0]
+    Return v10
+# CHECK-NOT: NewObject
+# CHECK: b3([[tag3]]: i32, [[a3]]: number, {{*}}: number):
+# CHECK-NOT: StrictEq
+# CHECK: [[mask3]]: 2 = Integer integer=2
+# CHECK-NEXT: [[masked3]]:{{*}}= BitAnd [[tag3]], [[mask3]]
+# CHECK-NEXT: = ToBoolean [[masked3]]
+# CHECK: b5():
+# CHECK-NEXT: v10:{{*}}= Upcast [[a3]] castType=
+}
+
+function f4 name="nullIsNeverUndefined" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = Undefined
+    v9 = StrictEq v7, v8
+    Return v9
+# CHECK-NOT: NewObject
+# CHECK: b3(
+# CHECK-NOT: StrictEq
+# CHECK-NOT: BitAnd
+# CHECK: [[never4]]: false = Boolean
+# CHECK-NEXT: v9:{{*}}= Upcast [[never4]] castType=
+}
+
+function f5 name="typeTests" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = TypeTest v7 testedType=null
+    v9 = TypeTest v7 testedType=object
+    v10 = StrictEq v8, v9
+    Return v10
+# CHECK-NOT: NewObject
+# CHECK: b3([[tag5]]: i32, 
+# CHECK-NOT: TypeTest
+# CHECK: [[nullMask5]]: 2 = Integer integer=2
+# CHECK-NEXT: [[nullBits5]]:{{*}}= BitAnd [[tag5]], [[nullMask5]]
+# CHECK-NEXT: [[isNull5]]: boolean = ToBoolean [[nullBits5]]
+# CHECK-NEXT: v8: boolean = Upcast [[isNull5]] castType=boolean
+# CHECK-NEXT: [[objectMask5]]: 1 = Integer integer=1
+# CHECK-NEXT: [[objectBits5]]:{{*}}= BitAnd [[tag5]], [[objectMask5]]
+# CHECK-NEXT: [[isObject5]]: boolean = ToBoolean [[objectBits5]]
+# CHECK-NEXT: v9: boolean = Upcast [[isObject5]] castType=boolean
+}
+
+function f6 name="requiredWithoutTest" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = RequireObjectCoercible v7 nullishAccess=Read name="r"
+    v9 = PropGet v8 key="a" receivers=[L0]
+    Return v9
+# CHECK-NOT: NewObject
+# CHECK: b3([[tag6]]: i32, [[a6]]: number, {{*}}: number):
+# CHECK-NEXT: [[mask6]]: 2 = Integer integer=2
+# CHECK-NEXT: [[masked6]]:{{*}}= BitAnd [[tag6]], [[mask6]]
+# CHECK-NEXT: [[isNull6]]: boolean = ToBoolean [[masked6]]
+# CHECK-NEXT: Branch [[isNull6]] -> taken [[failing6]](), notTaken [[passing6]]()
+# CHECK: [[failing6]]() frequency=Rare:
+# CHECK-NEXT: [[null6]]: null = Null
+# CHECK-NEXT: = RequireObjectCoercible [[null6]] name="r"
+# CHECK-NEXT: Unreachable
+# CHECK: [[passing6]]():
+# CHECK-NEXT: v9:{{*}}= Upcast [[a6]] castType=
+}
+
+function f7 name="readWithoutTest" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = PropGet v7 key="a"
+    Return v8
+# CHECK: b1():
+# CHECK-NEXT: v5:{{*}}= NewObject -, v3, v4 layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK: b3(v7: 
+# CHECK-NEXT: = PropGet v7 key="a"
+}
+
+function f8 name="returnedWhenPresent" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(| 0), notTaken b5()
+  b4(v9):
+    Return v9
+  b5():
+    Return
+# CHECK: b1():
+# CHECK-NOT: NewObject
+# CHECK: b3([[tag8]]: i32, [[a8]]: number, [[b8]]: number):
+# CHECK: b4():
+# CHECK-NEXT: [[cell8]]:{{*}}= NewObject -, [[a8]], [[b8]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: Return [[cell8]]
+# CHECK-NOT: NewObject
+}
+
+function f9 name="storedOnOnePath" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = ToBoolean v0
+    Branch v8 -> taken b4(), notTaken b5()
+  b4():
+    PutModuleVariable v7 variable=g0
+    Return
+  b5():
+    Return
+# CHECK: b1():
+# CHECK-NOT: NewObject
+# CHECK: b3([[tag9]]: i32, [[a9]]: number, [[b9]]: number):
+# CHECK: b4():
+# CHECK-NEXT: Switch [[tag9]] cases=[1] -> case [[present9]](), otherwise [[absent9]]()
+# CHECK: [[continuation9]]([[value9]]: null|L0):
+# CHECK-NEXT: PutModuleVariable [[value9]] variable=g0
+# CHECK: [[present9]]():
+# CHECK-NEXT: [[cell9]]:{{*}}= NewObject -, [[a9]], [[b9]] layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next [[continuation9]]([[cell9]])
+# CHECK: [[absent9]]():
+# CHECK-NEXT: [[null9]]: null = Null
+# CHECK-NEXT: Jump -> next [[continuation9]]([[null9]])
+}
+
+function f10 name="storedOnEveryPath" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    PutModuleVariable v7 variable=g0
+    Return
+# CHECK: b1():
+# CHECK-NEXT: v5:{{*}}= NewObject -, v3, v4 layout=L0 fields=[0, 1]
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK: b3(v7: 
+# CHECK-NEXT: PutModuleVariable v7 variable=g0
+}
+
+function f11 name="passedThroughAnotherParameter" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    Jump -> next b3(v5)
+  b2():
+    v6 = Null
+    Jump -> next b3(v6)
+  b3(v7):
+    Jump -> next b4(v7)
+  b4(v8):
+    v9 = ToBoolean v8
+    Branch v9 -> taken b5(), notTaken b6()
+  b5():
+    v10 = PropGet v8 key="a" receivers=[L0]
+    Return v10
+  b6():
+    Return
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropGet
+# CHECK: = BitAnd
+# CHECK-NOT: NewObject
+# CHECK-NOT: PropGet
+}
+
+function f12 name="pairOrUndefinedDestructured" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = CallDirect v0 function=f13
+    v2 = ResultAt v1 index=0
+    v3 = ResultAt v1 index=1
+    v4 = ResultAt v1 index=2
+    Switch v2 cases=[1] -> case b1(), otherwise b2()
+  b1():
+    v5 = NewArray v3, v4 contents=number
+    Jump -> next b3(v5)
+  b2():
+    v6 = Undefined
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(| 0), notTaken b5()
+  b4(v9):
+    v10 = DestructureIterable v9 count=2
+    v11 = ResultAt v10 index=0
+    v12 = ResultAt v10 index=1
+    v13 = Add v11, v12
+    Return v13
+  b5():
+    Return
+# CHECK-NOT: NewArray
+# CHECK-NOT: DestructureIterable
+# CHECK: b3([[tag12]]: i32, [[first12]]: number, [[second12]]: number, 
+# CHECK: = BitAnd [[tag12]], 
+# CHECK: b4():
+# CHECK-NEXT: v11:{{*}}= Upcast [[first12]] castType=
+# CHECK-NEXT: v12:{{*}}= Upcast [[second12]] castType=
+}
+
+function f13 name="find" role=ResultWorker parameters=[{type=number}] results=[{type=i32}, {type=number}, {type=number}] derivation={source=f0} creator=ResultWorker{origin=f0} {
+    v1 = Integer integer=1
+    v2 = Results v1, v0, v0
+    Return v2
+}
+
+function f14 name="narrowedValueUsedAfterOnePathBuiltIt" parameters=[{type=anything}, {type=boolean}, {type=boolean}, {type=number}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewObject -, v3, v3 layout=L0 fields=[0, 1]
+    Jump -> next b3(v4)
+  b2():
+    v5 = Null
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = ToBoolean v6
+    Branch v7 -> taken b4(| 0), notTaken b7()
+  b4(v8):
+    Branch v2 -> taken b6(), notTaken b5()
+  b5():
+    v9 = Call v0, -, v8
+    Jump -> next b6()
+  b6():
+    PutSlot v8, -, v3 key="b" receivers=[L0] level=Proven
+    v11 = Call v0, -, v8
+    Jump -> next b7()
+  b7():
+    Return
+# CHECK: b1():
+# CHECK-NOT: NewObject
+# CHECK: b5():
+# CHECK-NEXT: [[early14]]: L0 = NewObject -, {{*}} layout=L0 fields=[0, 1]
+# CHECK-NEXT: = Call v0, -, [[early14]]
+# CHECK: [[cell14]]: L0 = 
+# CHECK-NEXT: PutSlot [[cell14]], -, v3 key="b"
+# CHECK-NEXT: = Call v0, -, [[cell14]]
+}

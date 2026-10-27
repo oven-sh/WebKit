@@ -29,16 +29,60 @@
 #include "ProxyObject.h"
 #include "VMInlines.h"
 
+#include "AOTCompiledCallee.h"
+#include "AOTRuntimeHooks.h"
+
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(InternalFunction);
 
 const ClassInfo InternalFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalFunction) };
 
+#if ENABLE(AOT)
+// Function.prototype is such a function too, and has the names as members of its own: they stay what its own lock makes of them.
+static bool refusesAsNewProperty(VM& vm, InternalFunction* function, PropertyName propertyName)
+{
+    return AOT::RuntimeHooks::refusesNameOnNativeConstructor(function->globalObject(), propertyName) && !isValidOffset(function->structure()->get(vm, propertyName));
+}
+
+bool InternalFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    InternalFunction* function = uncheckedDowncast<InternalFunction>(cell);
+    if (slot.thisValue() == JSValue(function) && refusesAsNewProperty(vm, function, propertyName)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        // Function.prototype[Symbol.hasInstance] is read-only, so the language itself refuses that store, and says nothing of it in sloppy code.
+        bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
+        return typeError(globalObject, scope, isTold, AOT::RuntimeHooks::messageOfNameRefusedOnBuiltinFunction(propertyName));
+    }
+    return Base::put(cell, globalObject, propertyName, value, slot);
+}
+
+bool InternalFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    if (refusesAsNewProperty(vm, uncheckedDowncast<InternalFunction>(object), propertyName)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::messageOfNameRefusedOnBuiltinFunction(propertyName));
+    }
+    return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
+}
+
+bool InternalFunction::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
+{
+    if (object->getPrototypeDirect() != prototype && AOT::RuntimeHooks::keepsPrototypeOfNativeConstructors(uncheckedDowncast<InternalFunction>(object)->globalObject())) [[unlikely]] {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return typeError(globalObject, scope, shouldThrowIfCantSet, AOT::RuntimeHooks::messageOfPrototypeRefusedOnBuiltinFunction());
+    }
+    return Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
+}
+#endif
+
 InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction functionForCall, NativeFunction functionForConstruct)
     : Base(vm, structure)
-    , m_functionForCall(toTagged(functionForCall))
-    , m_functionForConstruct(functionForConstruct ? toTagged(functionForConstruct) : callHostFunctionAsConstructor)
+    , m_functionForCall(toTagged(functionUnlessRemoved(functionForCall)))
+    , m_functionForConstruct(functionForConstruct ? toTagged(functionUnlessRemoved(functionForConstruct)) : callHostFunctionAsConstructor)
     , m_globalObject(structure->realm(), WriteBarrierEarlyInit)
 {
     ASSERT_WITH_MESSAGE(m_functionForCall, "[[Call]] must be implemented");
@@ -49,6 +93,12 @@ InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction 
     ASSERT(methodTable()->getCallData == InternalFunction::info()->methodTable.getCallData);
     ASSERT(methodTable()->getConstructData == InternalFunction::info()->methodTable.getConstructData);
     ASSERT(type() == InternalFunctionType || type() == NullSetterFunctionType);
+
+#if ENABLE(AOT)
+    // Not Function.prototype, which has the put of an ordinary object.
+    if (structure->classInfoForCells()->methodTable.put == InternalFunction::put && AOT::RuntimeHooks::keepsPrototypeOfNativeConstructors(structure->realm())) [[unlikely]]
+        structure->setOverridesPut();
+#endif
 }
 
 void InternalFunction::finishCreation(VM& vm, unsigned length, const String& name, PropertyAdditionMode nameAdditionMode)
@@ -143,6 +193,31 @@ String InternalFunction::calculatedDisplayName(VM& vm)
     return name();
 }
 
+static ALWAYS_INLINE bool retainsInternalFunctionAllocationStructure(JSFunction* function)
+{
+    if (function->canUseAllocationProfiles())
+        return true;
+    if (!function->isCompiledClosure())
+        return false;
+#if ENABLE(AOT)
+    switch (AOT::CompiledCallee::kind(function)) {
+    case AOT::CompiledCallee::FunctionKind::Class:
+    case AOT::CompiledCallee::FunctionKind::Generator:
+    case AOT::CompiledCallee::FunctionKind::AsyncGenerator:
+        return true;
+    case AOT::CompiledCallee::FunctionKind::Builtin:
+        return AOT::isCompiledClassObject(function);
+    case AOT::CompiledCallee::FunctionKind::Sloppy:
+    case AOT::CompiledCallee::FunctionKind::Strict:
+    case AOT::CompiledCallee::FunctionKind::Arrow:
+    case AOT::CompiledCallee::FunctionKind::Method:
+    case AOT::CompiledCallee::FunctionKind::Async:
+        return false;
+    }
+#endif
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObject, JSObject* newTarget, Structure* baseClass)
 {
     VM& vm = globalObject->vm();
@@ -154,7 +229,7 @@ Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObjec
     // newTarget may be an InternalFunction if we were called from Reflect.construct.
     JSFunction* targetFunction = dynamicDowncast<JSFunction>(newTarget);
 
-    if (!targetFunction || !targetFunction->canUseAllocationProfiles()) [[unlikely]] {
+    if (!targetFunction || !retainsInternalFunctionAllocationStructure(targetFunction)) [[unlikely]] {
         JSValue prototypeValue = newTarget->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, nullptr);
         // .prototype getter could have triggered having a bad time so need to recheck array structures.

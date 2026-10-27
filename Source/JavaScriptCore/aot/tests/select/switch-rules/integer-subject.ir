@@ -1,0 +1,51 @@
+# Selection leaves a chain that compares an integer as it is
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SwitchNumberGroups = 1
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="three-integers"
+# CHECK-NOT: Switch
+function f0 name="three-integers" parameters=[{type=i32}] results=[{type=i32}] {
+# REPEAT: i = 1..3
+    v%(i*2-1) = Integer integer=%(i)
+    v%(i*2) = StrictEq v0, v%(i*2-1)
+    Branch v%(i*2) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
+    Return v0
+  b%(i*2)():
+# END REPEAT
+    Return v0
+}
+
+# CHECK-LABEL: function f1 name="number-cast-to-integer-after-chain"
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: [[integer]]: i32 = AssumeType v0 provenType=i32
+# CHECK: Switch v0 cases=[1, 2, 3] -> case b1(), case b2(), case b3(), otherwise b4()
+function f1 name="number-cast-to-integer-after-chain" parameters=[{type=number}] results=[{type=number}] {
+    v1 = AssumeType v0 provenType=i32
+# REPEAT: i = 1..3
+    v%(i*2) = Integer integer=%(i)
+    v%(i*2+1) = StrictEq v0, v%(i*2)
+    Branch v%(i*2+1) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
+    Return v0
+  b%(i*2)():
+# END REPEAT
+    Return v1
+}
+
+# CHECK-LABEL: function f2 name="integer-ends-chain"
+# CHECK-NOT: Switch
+function f2 name="integer-ends-chain" parameters=[{type=number}] results=[{type=number}] {
+    v1 = AssumeType v0 provenType=i32
+# REPEAT: i = 1..3; a = 0 0 1
+    v%(i*2) = Integer integer=%(i)
+    v%(i*2+1) = StrictEq v%(a), v%(i*2)
+    Branch v%(i*2+1) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
+    Return v0
+  b%(i*2)():
+# END REPEAT
+    Return v1
+}

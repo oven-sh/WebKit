@@ -128,12 +128,7 @@ static bool isSanitizerEnabled()
     }
     return false;
 #elif BOS(UNIX)
-    void* handle = dlopen(nullptr, RTLD_NOW);
-    if (!handle)
-        return false;
-    bool result = !!dlsym(handle, "__asan_init") || !!dlsym(handle, "__tsan_init");
-    dlclose(handle);
-    return result;
+    return !!dlsym(RTLD_DEFAULT, "__asan_init") || !!dlsym(RTLD_DEFAULT, "__tsan_init");
 #else
     return false;
 #endif

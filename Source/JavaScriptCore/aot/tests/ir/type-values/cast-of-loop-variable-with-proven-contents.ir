@@ -1,0 +1,73 @@
+# The types of a loop rise from never by unions. A rule that answers something else for a wider operand, not more, leaves its first answer in the union:
+# a cast takes the contents of an array from its operand while they are proven, and from its own type once they are not. What a value holds above its rule comes down again after the ascent
+# FORM: Prepared
+# RUN: pass RetypeValues
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="check" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Check v3 expectedType=Array<int>
+    v6 = Upcast v2 castType=Array
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v6)
+  b3():
+    Return v5
+# CHECK: v5: Array<int> = Check
+}
+function f1 name="assumed" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=object}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = AssumeType v3 provenType=Array<int>
+    v6 = Upcast v2 castType=object
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v6)
+  b3():
+    Return v5
+# CHECK: v5: Array<int> = AssumeType
+}
+function f2 name="upcast" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array<string>}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Upcast v3 castType=Array<int>
+    v6 = Upcast v2 castType=Array<string>
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v6)
+  b3():
+    Return v5
+# CHECK: v5: Array<int> = Upcast
+}
+function f3 name="contentsStayProven" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array<int, proven>}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Check v3 expectedType=Array<int>
+    v6 = Upcast v2 castType=Array<int, proven>
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v6)
+  b3():
+    Return v5
+# CHECK: v5: Array<int|string, proven> = Check
+}
+function f4 name="usedByAnotherValue" parameters=[{type=boolean}, {type=Array<string, proven>}, {type=Array}] results=[{type=anything}] {
+    Jump -> next b1(v1)
+  b1(v3):
+    LoopHint
+    v5 = Check v3 expectedType=Array<int>
+    v6 = Upcast v2 castType=Array
+    v7 = Integer
+    v8 = ElemGet v5, v7
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1(v6)
+  b3():
+    Return v8
+# CHECK: v5: Array<int> = Check
+}

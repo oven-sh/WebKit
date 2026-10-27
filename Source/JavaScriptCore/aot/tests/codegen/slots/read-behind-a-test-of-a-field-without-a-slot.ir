@@ -1,0 +1,57 @@
+# `c ? {} : { note }`, spread into a literal by its only caller: the allocation that lists the field is inlined and taken apart, nothing stores the field, so it gets no slot.
+# The read of the field is still there, behind the test of its slot. That test never passes: the read is code that no run reaches, and the build goes on.
+# f2: two tests hand their proofs to one block, which tells the layouts apart again: the read through the layout without the slot stands behind a test that can pass.
+# What is left of f1 answers undefined. A read that no test stands in front of stays an error: codegen/slots/read-of-a-field-without-a-slot-that-nothing-tests.ir
+# FORM: Selected
+# OPTIONS: references=narrow
+# RUN: generate-code calls
+# RUN(X64): generate-code calls
+# REQUIRES(X64): x86_64
+# X64: f1: size=7 frame=none
+# CHECK: f1: size={{*}} frame=none
+# CHECK: f2: size={{*}}
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="NeverFilled" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=undefined|string} flow={location={writers=AllKnown stores=Never}}}] flow={members=[L0]}
+layout L1 name="SometimesFilled" fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="note" declared={type=undefined|string}}] flow={members=[L1]}
+function f0 name="make" parameters=[{type=number}, {type=string}, {type=boolean}] results=[{type=L0|L1}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    Return v3
+  b2():
+    v4 = NewObject -, v0, v1 layout=L1 fields=[0, 1]
+    Return v4
+}
+function f1 name="noteOf" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = IsSlotFilled v0 key="note" receivers=[L0] level=Proven
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: guard):
+    v3 = GetSlot v0, v2 key="note" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    v4 = Undefined
+    Return v4
+}
+function f2 name="noteOfEither" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=L0
+    TestAndBranch v1 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v2: L0):
+    v3 = IsSlotFilled v2 key="note" receivers=[L0] level=Proven
+    TestAndBranch v3 -> taken b3(| 0), notTaken b6()
+  b2(v4: L1):
+    v5 = IsSlotFilled v4 key="note" receivers=[L1] level=Proven
+    TestAndBranch v5 -> taken b3(| 0), notTaken b6()
+  b3(v6: guard):
+    v7 = TypeTest v0 testedType=L0
+    TestAndBranch v7 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v8: L0):
+    v9 = GetSlot v8, v6 key="note" receivers=[L0] level=Proven
+    Return v9
+  b5(v10: L1):
+    v11 = GetSlot v10, v6 key="note" receivers=[L1] level=Proven
+    Return v11
+  b6():
+    v12 = Undefined
+    Return v12
+}

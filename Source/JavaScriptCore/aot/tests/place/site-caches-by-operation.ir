@@ -1,0 +1,72 @@
+# A site cache goes to a read, a store and a method call by name and to a run of stores by name. A keyed access, a test, a deletion, a fused read, an allocation and a slot access have none
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: place site-caches program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="late" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1 function=f1
+    v3 = CallDirect v1 function=f1
+    v4 = CallDirect v1 function=f2
+    v5 = ToNumber v1
+    v6 = CallDirect v5 function=f3
+    Return
+}
+function f1 name="usesCaches" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="a"
+    PropSet v0, v1 key="e"
+    v3 = PropGet v0 key="d"
+    v4 = Call v3, v0 calleeKey="d"
+    v5 = ToObject v4
+    PropSet v5, v1 key="p"
+    PropSet v5, v1 key="q"
+    PropSet v5, v1 key="r"
+    Return v4
+}
+function f2 name="usesNoCache" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ElemGet v0, v0
+    v2 = Integer integer=1
+    ElemSet v0, v0, v2
+    v4 = PropHas v0 key="a"
+    v5 = PropDelete v0 key="a"
+    v6 = PropGet v0 key="b"
+    v7 = PropGet v6 key="c"
+    v8 = PropGet v0 key="f"
+    v9 = PropGet v0 key="g"
+    v10 = StrictEq v8, v9
+    Return v7
+}
+function f3 name="accessesSlots" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    v3 = PropGet v2 key="x"
+    PropSet v2, v0 key="x"
+    PropSet v2, v0 key="late"
+    v6 = ForInOpen v2
+    Return v3
+}
+# The read in the body of the module runs at most once, so it asks for none (site-caches.ir).
+# CHECK: site caches 7, without 1
+# CHECK-NEXT: f1 v1 PropGet cache=
+# CHECK-NEXT: f1 v2 PropSet cache=
+# CHECK-NEXT: f1 {{*}} CallMethod cache=
+# CHECK-NEXT: f1 {{*}} TryPutByIds cache=
+# The three stores by name are the path that the run of stores leaves when it fails.
+# CHECK-COUNT-3: f1 {{*}} PropSet cache=
+# CHECK-NOT: cache=
+# CHECK-LABEL: function f2 name="usesNoCache"
+# CHECK: = ElemGet
+# CHECK: ElemSet
+# CHECK: = PropHas
+# CHECK: = PropDelete
+# CHECK: = PropGetChain
+# CHECK: = PropGetPair
+# CHECK-LABEL: function f3 name="accessesSlots"
+# CHECK: = NewObject
+# CHECK: = GetSlot
+# CHECK: PutSlot v2
+# CHECK: PutSlotOrAdd v2

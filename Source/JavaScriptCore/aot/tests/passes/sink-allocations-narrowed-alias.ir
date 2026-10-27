@@ -1,0 +1,261 @@
+# A parameter that an edge fills with the narrowed object is the object
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsRemoved = 4
+# STATISTIC: AllocationsSunk = 8
+
+module m0 path="main.js" displayPath="main.js"
+typesite w0 kind=Assertion
+layout L0 name="Holder" fields=[{key="list" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Other" fields=[{key="list" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="bothEdgesPassTheObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Jump -> next b3(v2)
+  b2():
+    v3 = Null
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = TypeTest v4 testedType=null
+    Branch v5 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v6):
+    Return v6
+  b5(v7):
+    v8 = PropGet v7 key="list" receivers=[L0]
+    Return v8
+# CHECK-NOT: NewObject
+# CHECK: b3([[tag0]]: i32, [[list0]]: anything):
+# CHECK-NOT: TypeTest
+# CHECK: = BitAnd [[tag0]], 
+# CHECK: Branch {{*}} -> taken b4(), notTaken b5()
+# CHECK: b4():
+# CHECK-NEXT: [[null0]]: null = Null
+# CHECK-NEXT: Return [[null0]]
+# CHECK: b5():
+# CHECK-NEXT: v8: anything = Upcast [[list0]] castType=anything
+}
+
+function f1 name="chainOfThree" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Upcast v1 castType=anything
+    v3 = TypeTest v2 testedType=object
+    Branch v3 -> taken b1(| 0), notTaken b4()
+  b1(v4):
+    v5 = ToBoolean v4
+    Branch v5 -> taken b2(| 0), notTaken b4()
+  b2(v6):
+    v7 = Null
+    v8 = StrictEq v6, v7
+    Branch v8 -> taken b4(), notTaken b3(| 0)
+  b3(v9):
+    v10 = PropGet v9 key="list" receivers=[L0]
+    Return v10
+  b4():
+    Return v0
+# CHECK-NOT: NewObject
+# CHECK-NOT: Branch
+# CHECK: Jump -> next b1()
+# CHECK: Jump -> next b2()
+# CHECK: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NEXT: v10: anything = Upcast v0 castType=anything
+}
+
+function f2 name="narrowedMergedWithOriginal" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Upcast v2 castType=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = TypeTest v3 testedType=object
+    Branch v4 -> taken b3(| 0), notTaken b5()
+  b2():
+    Jump -> next b4(v3)
+  b3(v5):
+    Jump -> next b4(v5)
+  b4(v6):
+    v7 = PropGet v6 key="list"
+    Return v7
+  b5():
+    Return v0
+# CHECK-NOT: NewObject
+# CHECK-NOT: TypeTest
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b4(v0)
+# CHECK: b3():
+# CHECK-NEXT: Jump -> next b4(v0)
+# CHECK: b4([[list2]]: anything):
+# CHECK-NEXT: v7: anything = Upcast [[list2]] castType=anything
+}
+
+function f3 name="keptTestKeepsItsProofs" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Upcast v2 castType=anything
+    Branch v1 -> taken b1(), notTaken b4()
+  b1():
+    v4 = Call v0, -, v3
+    v5 = StrictEq v3, v4
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v6):
+    v7 = PropGet v6 key="list"
+    Return v7
+  b3(v8):
+    Return v8
+  b4():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[cell3]]:{{*}}= NewObject -, v0
+# CHECK-NEXT: = Call v0, -, [[cell3]]
+# CHECK-NEXT: v5:{{*}}= StrictEq [[cell3]], v4
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+# CHECK: b2(v6: L0):
+# CHECK-NEXT: = PropGet v6 key="list"
+# CHECK: b3(v8: L0):
+# CHECK-NEXT: Return v8
+}
+
+function f4 name="narrowedOperandIsBuilt" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = Upcast v2 castType=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v4 = TypeTest v3 testedType=Array
+    Branch v4 -> taken b3(| 0), notTaken b4()
+  b3(v5):
+    v6 = Call v0, -, v5
+    Return v2
+  b4():
+    v7 = Call v0, -, v2
+    Return v2
+# CHECK-NOT: NewArray
+# CHECK: b2():
+# CHECK: Jump -> next b3()
+# CHECK: b3():
+# CHECK-NEXT: [[cell4]]: Array = NewArray
+# CHECK-NEXT: = Call v0, -, [[cell4]]
+# CHECK-NEXT: Return [[cell4]]
+# CHECK-NOT: NewArray
+}
+
+function f5 name="aliasThroughTwoEdges" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = Upcast v3 castType=anything
+    Branch v1 -> taken b1(), notTaken b6()
+  b1():
+    v5 = TypeTest v4 testedType=object
+    Branch v5 -> taken b2(| 0), notTaken b6()
+  b2(v6):
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b5(v6)
+  b4():
+    Jump -> next b5(v6)
+  b5(v7):
+    v8 = Call v0, -, v7
+    Return v8
+  b6():
+    Return v0
+# CHECK-NOT: NewObject
+# CHECK: Jump -> next b5(v0)
+# CHECK: Jump -> next b5(v0)
+# CHECK: b5([[list5]]: anything):
+# CHECK-NEXT: [[cell5]]:{{*}}= NewObject -, [[list5]] layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, [[cell5]]
+}
+
+function f6 name="assumedTypeRepeatsAtEachUse" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=anything
+    v3 = AssumeType v2 provenType=Array<anything, proven, pristine[Storage, Names]>
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v0, -, v3
+    Return v3
+  b2():
+    Return v0
+# CHECK-NOT: NewArray
+# CHECK: b1():
+# CHECK-NEXT: [[cell6]]: Array = NewArray v0
+# CHECK-NEXT: [[first6]]:{{*}}= AssumeType [[cell6]] provenType=Array<anything, proven, pristine[Storage, Names]>
+# CHECK-NEXT: = Call v0, -, [[first6]]
+# CHECK-NEXT: [[second6]]:{{*}}= AssumeType [[cell6]] provenType=Array<anything, proven, pristine[Storage, Names]>
+# CHECK-NEXT: Return [[second6]]
+}
+
+function f7 name="assumedTypeStoredInVirtualObject" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray v0 contents=anything
+    v3 = AssumeType v2 provenType=Array<anything, proven, pristine[Storage, Names]>
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v5 = Call v0, -, v4
+    Return v5
+  b2():
+    Return v0
+# CHECK-NOT: NewArray
+# CHECK-NOT: NewObject
+# CHECK: b1():
+# CHECK-NEXT: [[list7]]: Array = NewArray v0
+# CHECK: [[holder7]]:{{*}}= NewObject -, {{*}} layout=L0 fields=[0]
+# CHECK-NEXT: = Call v0, -, [[holder7]]
+}
+
+function f8 name="checkForItsOwnLayoutGoes" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Check v2 expectedType=L0 site=w0
+    v4 = GetSlotOrUndefined v3 key="list" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    Return v0
+# CHECK-NOT: NewObject
+# CHECK-NOT: Check
+# CHECK: b1():
+# CHECK-NEXT: v4: anything = Upcast v0 castType=anything
+# CHECK-NEXT: Return v4
+}
+
+function f9 name="assumedTypeUnderFoldedTest" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = AssumeType v2 provenType=Array<anything, proven>
+    v4 = Upcast v3 castType=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v5 = TypeTest v4 testedType=Array
+    Branch v5 -> taken b3(| 0), notTaken b4()
+  b3(v6):
+    v7 = Call v0, -, v6
+    Return v7
+  b4():
+    Return v0
+# CHECK-NOT: NewArray
+# CHECK-NOT: TypeTest
+# CHECK: b3():
+# CHECK-NEXT: [[cell9]]: Array = NewArray
+# CHECK: = Call v0, -, 
+}
+
+function f10 name="checkThatFailsStays" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Check v2 expectedType=L1 site=w0
+    v4 = GetSlotOrUndefined v3 key="list" receivers=[L1] level=Proven
+    Return v4
+  b2():
+    Return v0
+# Generic code goes on with the object, and there it needs its cell.
+# CHECK: b0(
+# CHECK-NEXT: Branch
+# CHECK: b1():
+# CHECK-NEXT: [[cell10]]:{{*}}= NewObject -, v0
+# CHECK-NEXT: v3: L1 = Check [[cell10]] expectedType=L1
+# CHECK-NEXT: = GetSlotOrUndefined v3 key="list"
+}

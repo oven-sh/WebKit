@@ -1,0 +1,28 @@
+# class Custom extends Error { name = "Custom" }        function copy(f: Failure) { return { ...f } }        copy(new Custom("c"));  copy({ name: "plain" })
+# The constructor of Error makes the instances of Custom: cells of that class, which have no slots and no word for the order of their keys.
+# So the spread gets an arm for the literal alone, and an instance of Custom goes to the operation that copies whatever it is given.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Empty"
+layout L1 kind=Instance name="Custom" constructor=f1 fields=[{key="name" declared={type=string} flow={occupancy=AlwaysFilled}}] flags=[HasHeritage] flow={baseState=BuiltinClass baseClass=Error constructorOrders=[{fields=[0]}]}
+layout L2 name="Failure" fields=[{key="name" declared={type=string}}] flow={constructorOrders=[{fields=[0]}]}
+
+function f0 name="copy" parameters=[{type=L1|L2}] results=[{type=anything}] {
+    v1 = NewObject layout=L0 fields=[]
+    CopyDataProperties v1, v0
+    v3 = FinishObject v1
+    Return v3
+}
+# CHECK-LABEL: function f0 name="copy"
+# CHECK-NOT: layouts=[L1]
+# CHECK-NOT: layout=L1
+# CHECK-NOT: receivers=[L1]
+# CHECK: CopyDataProperties v1, v0
+# CHECK-LABEL: function f1 name="Custom"
+# RUN(LITERAL): pass ExpandOwnKeys
+# LITERAL: = ShapeTest {{*}} layouts=[L2]
+function f1 name="Custom" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1

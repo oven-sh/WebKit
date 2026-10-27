@@ -277,6 +277,14 @@ public:
     static Ref<StringImpl> createWithoutCopying(std::span<const char16_t> characters) { return characters.empty() ?  Ref { *empty() } : createWithoutCopyingNonEmpty(characters); }
     static Ref<StringImpl> createWithoutCopying(std::span<const Latin1Character> characters) { return characters.empty() ? Ref { *empty() } : createWithoutCopyingNonEmpty(characters); }
     ALWAYS_INLINE static Ref<StringImpl> createWithoutCopying(std::span<const char> characters) { return createWithoutCopying(byteCast<Latin1Character>(characters)); }
+    static Ref<StringImpl> create(std::span<const Latin1Character> characters, unsigned hash)
+    {
+        ASSERT(hash == StringHasher::computeHashAndMaskTop8Bits(characters));
+        Ref string = create(characters);
+        if (!string->isStatic() && !string->hasHash())
+            string->setHash(hash);
+        return string;
+    }
 
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createUninitialized(size_t length, std::span<Latin1Character>&);
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createUninitialized(size_t length, std::span<char16_t>&);
@@ -361,6 +369,13 @@ public:
     // TODO: remove once atomic strings are process-wide.
     bool canBecomeAtom() const { return !(m_hashAndFlags & s_hashFlagNeverAtomize); }
     void setNeverAtomize() { ASSERT(!isAtom()); m_hashAndFlags |= s_hashFlagNeverAtomize; }
+
+    // What the constructors of StaticStringImpl put into m_refCount and m_hashAndFlags, for a compiler that writes static strings into a file.
+    static constexpr uint32_t refCountOfStaticString() { return s_refCountFlagIsStaticString; }
+    static constexpr unsigned hashAndFlagsOfStaticString(unsigned hash, bool is8Bit, StringKind stringKind)
+    {
+        return (is8Bit ? s_hashFlag8BitBuffer : s_hashZeroValue) | s_hashFlagDidReportCost | stringKind | BufferInternal | (hash << s_flagCount);
+    }
 #endif
 
 private:
@@ -1189,10 +1204,9 @@ inline void StringImpl::ref()
 {
     STRING_STATS_REF_STRING(*this);
 
-#if TSAN_ENABLED
+    // A static string may be in memory that nobody can write.
     if (isStatic())
         return;
-#endif
 
     m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed);
 }
@@ -1201,13 +1215,11 @@ inline void StringImpl::deref()
 {
     STRING_STATS_DEREF_STRING(*this);
 
-#if TSAN_ENABLED
-    if (isStatic())
+    auto refCount = m_refCount.load(std::memory_order_relaxed);
+    if (refCount & s_refCountFlagIsStaticString)
         return;
-#endif
 
     // When this is the only reference nobody else can be racing to add one, so skip the atomic read-modify-write.
-    auto refCount = m_refCount.load(std::memory_order_relaxed);
     if (refCount != s_refCountIncrement) {
         if (m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed) != s_refCountIncrement) [[likely]]
             return;

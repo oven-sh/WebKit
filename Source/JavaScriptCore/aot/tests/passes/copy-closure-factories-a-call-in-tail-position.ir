@@ -1,0 +1,50 @@
+# "use strict"; Helper.prototype.define = function (name) { this.target[name] = function () { return name; }; return this; };
+# Helper.prototype.alias = function (name) { return this.define(name); };   new Helper(object).alias("a");
+# A call in tail position ends its block, so no test of the callee is put in front of it: `alias` gets a copy, and the copy calls `define` as written.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: NewClosure v7 function=f5
+# CHECK-LABEL: function f5 name="alias"
+# CHECK-NOT: IsClosureOf
+# CHECK: [[call]]{{*}} = Call v2, v0, v1
+# CHECK-NEXT: ReturnCall [[call]]
+# CHECK-NOT: name="define"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="define" mode=Strict
+    v4 = NewClosure function=f4
+    PropSet v1, v4 key="alias" mode=Strict
+    v6 = NewObject layout=L0
+    v7 = FinishObject v6
+    v8 = Construct v0, -, v7
+    v9 = PropGet v8 key="alias"
+    v10 = String string="a"
+    v11 = Call v9, v8, v10
+    Return
+}
+function f1 name="Helper" module=m0 position=10 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="target" mode=Strict
+    Return
+}
+function f2 name="define" module=m0 position=20 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="target"
+    v3 = NewClosure v1 function=f3
+    ElemSet v2, v1, v3 mode=Strict
+    Return v0
+}
+function f3 name="member" module=m0 position=30 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="alias" module=m0 position=40 flags=[HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="define"
+    v3 = Call v2, v0, v1
+    ReturnCall v3
+}

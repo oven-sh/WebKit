@@ -28,8 +28,15 @@
 #if ENABLE(B3_JIT)
 
 #include "B3AbstractHeapRepository.h"
+#include "B3Arena.h"
+#include "B3CompilationReport.h"
+#include "B3HeapSet.h"
+#include "B3InductionRecords.h"
+#include "B3KnownProperties.h"
+#include "B3MovedLoadCheck.h"
 #include "B3Origin.h"
 #include "B3PCToOriginMap.h"
+#include "B3Policy.h"
 #include "B3SparseCollection.h"
 #include "B3Type.h"
 #include "B3ValueKey.h"
@@ -37,6 +44,7 @@
 #include "PureNaN.h"
 #include "RegisterAtOffsetList.h"
 #include <wtf/Bag.h>
+#include <wtf/BitSet.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashSet.h>
 #include <wtf/IndexedContainerIterator.h>
@@ -60,8 +68,13 @@ class BackwardsCFG;
 class BackwardsDominators;
 class BasicBlock;
 class BlockInsertionSet;
+class BlockRarity;
 class CFG;
+class CompilationScratch;
+class ConstPtrValue;
 class Dominators;
+class FrequencyEstimate;
+class MemoryValue;
 class NaturalLoops;
 class Value;
 class Variable;
@@ -88,6 +101,7 @@ class Procedure {
 public:
 
     JS_EXPORT_PRIVATE Procedure(bool usesSIMD = false);
+    JS_EXPORT_PRIVATE explicit Procedure(const Policy&, CompilationScratch* = nullptr, bool usesSIMD = false);
     JS_EXPORT_PRIVATE ~Procedure();
 
     template<typename Callback>
@@ -108,6 +122,10 @@ public:
     // program. The FTL passes the DFG Graph.
     void setFrontendData(const void* value) { m_frontendData = value; }
     const void* frontendData() const { return m_frontendData; }
+
+    // A number by which the client knows what it compiles here. Nothing in B3 depends on it.
+    void setSubjectOfClient(uint32_t subject) { m_subjectOfClient = subject; }
+    uint32_t subjectOfClient() const { return m_subjectOfClient; }
 
     JS_EXPORT_PRIVATE BasicBlock* addBlock(double frequency = 1);
 
@@ -138,7 +156,7 @@ public:
     template<typename ValueType, typename... Arguments>
     ValueType* add(Arguments...);
 
-    Value* clone(Value*);
+    JS_EXPORT_PRIVATE Value* clone(Value*);
 
     Value* addIntConstant(Origin, Type, int64_t value);
     Value* addIntConstant(Value*, int64_t value);
@@ -154,12 +172,12 @@ public:
     // Returns null for TriState::Indeterminate.
     Value* addBoolConstant(Origin, TriState);
 
-    void LEGACY_NODELETE resetValueOwners();
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE resetValueOwners();
     JS_EXPORT_PRIVATE void resetReachability();
 
     // This destroys CFG analyses. If we ask for them again, we will recompute them. Usually you
     // should call this anytime you call resetReachability().
-    void invalidateCFG();
+    JS_EXPORT_PRIVATE void invalidateCFG();
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
@@ -172,8 +190,16 @@ public:
     iterator begin() const { return iterator(*this, 0); }
     iterator end() const { return iterator(*this, size()); }
 
-    Vector<BasicBlock*> blocksInPreOrder();
-    Vector<BasicBlock*> blocksInPostOrder();
+    JS_EXPORT_PRIVATE Vector<BasicBlock*> blocksInPreOrder();
+    JS_EXPORT_PRIVATE Vector<BasicBlock*> blocksInPostOrder();
+    JS_EXPORT_PRIVATE const Vector<BasicBlock*>& cachedBlocksInPreOrder() LIFETIME_BOUND;
+    JS_EXPORT_PRIVATE const Vector<BasicBlock*>& cachedBlocksInPostOrder() LIFETIME_BOUND;
+    JS_EXPORT_PRIVATE bool hasCycle();
+
+    // The cached orders follow the order of a block's successors, which no other analysis of the CFG does.
+    JS_EXPORT_PRIVATE void didReorderSuccessors();
+    // The frequencies of blocks are sums that are added up in the order of the successors.
+    JS_EXPORT_PRIVATE void willReorderSuccessors();
 
     SparseCollection<Air::StackSlot>& stackSlots();
     const SparseCollection<Air::StackSlot>& stackSlots() const;
@@ -189,7 +215,25 @@ public:
     const SparseCollection<Value>& values() const LIFETIME_BOUND { return m_values; }
 
     // Short for values().remove(). It's better to call this method since it's out of line.
-    void deleteValue(Value*);
+    JS_EXPORT_PRIVATE void deleteValue(Value*);
+
+    JS_EXPORT_PRIVATE void setKnownRange(Value*, IntRange);
+    std::optional<IntRange> knownRange(const Value* value) const { return m_knownProperties.range(value); }
+
+    JS_EXPORT_PRIVATE void setKnownDereferenceableBytes(Value*, uint32_t);
+    uint32_t knownDereferenceableBytes(const Value* value) const { return m_knownProperties.dereferenceableBytes(value); }
+    JS_EXPORT_PRIVATE bool isKnownDereferenceable(const MemoryValue*) const;
+    JS_EXPORT_PRIVATE bool isKnownDereferenceable(const Value* address, int64_t offset, size_t byteSize) const;
+    JS_EXPORT_PRIVATE Effects effectsOf(const Value*) const;
+    KnownProperties& knownProperties() LIFETIME_BOUND { return m_knownProperties; }
+
+    JS_EXPORT_PRIVATE void setKnownInduction(const InductionRecord&);
+    JS_EXPORT_PRIVATE void setKnownInduction(const DemotedInduction&);
+    std::optional<InductionRecord> knownInduction(const Value* phi) const { return m_knownInductions.find(phi); }
+    const InductionRecords& knownInductions() const LIFETIME_BOUND { return m_knownInductions; }
+    InductionRecords& knownInductions() LIFETIME_BOUND { return m_knownInductions; }
+
+    MovedLoadLog& movedLoadLog() LIFETIME_BOUND { return m_movedLoadLog; }
 
     // A valid procedure cannot contain any orphan values. An orphan is a value that is not in
     // any basic block. It is possible to create an orphan value during code generation or during
@@ -199,10 +243,13 @@ public:
 
     CFG& cfg() const { return *m_cfg; }
 
-    Dominators& dominators();
+    JS_EXPORT_PRIVATE Dominators& dominators();
     JS_EXPORT_PRIVATE NaturalLoops& naturalLoops();
     BackwardsCFG& backwardsCFG();
     JS_EXPORT_PRIVATE BackwardsDominators& backwardsDominators();
+    JS_EXPORT_PRIVATE BlockRarity& blockRarity();
+    JS_EXPORT_PRIVATE void updateEdgeClasses();
+    JS_EXPORT_PRIVATE void updateFrequencies();
 
     void addFastConstant(const ValueKey&);
     bool LEGACY_NODELETE isFastConstant(const ValueKey&);
@@ -222,7 +269,25 @@ public:
     // alive. Great for compiler-generated data sections, like switch jump tables and constant pools.
     // This returns memory that has been zero-initialized.
     JS_EXPORT_PRIVATE void* addDataSection(size_t);
-    
+
+    struct DataSectionRecord {
+        void* data;
+        size_t size;
+    };
+
+    JS_EXPORT_PRIVATE Value* addDataSectionAddress(Origin, const void* dataSection);
+    std::span<const DataSectionRecord> dataSections() const LIFETIME_BOUND { return m_dataSections.span(); }
+
+    struct JumpTableRecord {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(JumpTableRecord);
+        Vector<uint32_t> targetOffsets;
+    };
+
+    JS_EXPORT_PRIVATE unsigned addJumpTable(unsigned numberOfEntries);
+    JS_EXPORT_PRIVATE Value* addJumpTableAddress(Origin, unsigned jumpTable);
+    JumpTableRecord& jumpTable(unsigned index) LIFETIME_BOUND { return *m_jumpTables[index]; }
+    unsigned numberOfJumpTables() const { return m_jumpTables.size(); }
+
     // Some operations are specified in B3 IR to behave one way but on this given CPU they behave a
     // different way. When true, those B3 IR ops switch to behaving the CPU way, and the optimizer may
     // start taking advantage of it.
@@ -258,6 +323,36 @@ public:
     
     JS_EXPORT_PRIVATE void LEGACY_NODELETE setOptLevel(unsigned value);
     unsigned optLevel() const { return m_optLevel; }
+
+    const Policy& policy() const { return m_policy; }
+    // A load is not folded into an instruction that comes after a write to this range.
+    const HeapRange& heapThatLoadsStayInFrontOf() const { return m_heapThatLoadsStayInFrontOf; }
+    void setHeapThatLoadsStayInFrontOf(const HeapRange& range) { m_heapThatLoadsStayInFrontOf = range; }
+    uint64_t limit(Limit limit) const { return m_policy.limits.get(limit); }
+    HeapSetTable& heapSets() LIFETIME_BOUND { return m_heapSets; }
+    Arena* arenaOrNull() LIFETIME_BOUND { return m_policy.allocation.usesArena ? &m_arena : nullptr; }
+    bool hasEverAdded(Opcode opcode) const { return m_opcodesEverAdded.get(opcode); }
+    template<typename Predicate>
+    bool hasEverAddedAny(const Predicate& predicate) const
+    {
+        for (size_t opcode : m_opcodesEverAdded) {
+            if (predicate(static_cast<Opcode>(opcode)))
+                return true;
+        }
+        return false;
+    }
+    void didAddOpcode(Opcode opcode) { m_opcodesEverAdded.set(opcode); }
+
+    JS_EXPORT_PRIVATE void fail(FailureKind, Origin = Origin());
+    const CompilationReport& report() const { return m_report; }
+    void didReachLimit(Limit limit, Origin origin = Origin()) const
+    {
+        LimitHit& hit = m_report.limitHits[static_cast<size_t>(limit)];
+        if (!hit.count++)
+            hit.firstOrigin = origin;
+    }
+    JS_EXPORT_PRIVATE void addRemark(const Remark&, uint32_t count = 1);
+    void count(Counter counter, uint32_t amount = 1) { m_report.counters[static_cast<size_t>(counter)] += amount; }
     
     // You can turn off used registers calculation. This may speed up compilation a bit. But if
     // you turn it off then you cannot use StackmapGenerationParams::usedRegisters() or
@@ -295,26 +390,29 @@ public:
 
     void setUsesSIMD()
     { 
-        RELEASE_ASSERT(Options::useWasmSIMD());
+        RELEASE_ASSERT(m_policy.upstream.allowsSIMD);
         m_usesSIMD = true;
     }
     bool usesSIMD() const
     {
         // See also: WasmModuleInformation::usesSIMD().
-        if (!Options::useWasmSIMD())
+        if (!m_policy.upstream.allowsSIMD)
             return false;
-        if (Options::forceAllFunctionsToUseSIMD())
+        if (m_policy.upstream.forcesSIMD)
             return true;
-        // The LLInt discovers this value.
-        ASSERT(Options::useWasmIPInt());
         return m_usesSIMD;
     }
 
     void setIonGraphPasses(Ref<JSON::Array>&&);
     void appendIonGraphPass(ASCIILiteral);
 
-    AbstractHeapRepository& heaps() { return m_heaps.get(); }
-    const AbstractHeapRepository& heaps() const { return m_heaps.get(); }
+    AbstractHeapRepository& heaps()
+    {
+        if (!m_heaps) [[unlikely]]
+            createHeaps();
+        return *m_heaps;
+    }
+    const AbstractHeapRepository& heaps() const { return const_cast<Procedure*>(this)->heaps(); }
 
     void setIsWasm(bool flag) { m_isWasm = flag; }
     bool isWasm() const { return m_isWasm; }
@@ -338,7 +436,18 @@ private:
 
     JS_EXPORT_PRIVATE Value* addValueImpl(Value*);
     void setBlockOrderImpl(Vector<BasicBlock*>&);
+    JS_EXPORT_PRIVATE void createHeaps();
 
+    template<typename T>
+    void didAddPointerConstant(Origin origin, T* pointer)
+    {
+        if (pointer && m_policy.addressing.isPositionIndependent)
+            fail(FailureKind::AbsoluteAddress, origin);
+    }
+    template<typename T>
+    void didAddPointerConstant(Origin, T) { }
+
+    Arena m_arena;
     SparseCollection<Variable> m_variables;
     Vector<Vector<Type>> m_tuples;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
@@ -348,18 +457,36 @@ private:
     std::unique_ptr<NaturalLoops> m_naturalLoops;
     std::unique_ptr<BackwardsCFG> m_backwardsCFG;
     std::unique_ptr<BackwardsDominators> m_backwardsDominators;
+    std::unique_ptr<BlockRarity> m_blockRarity;
+    std::unique_ptr<FrequencyEstimate> m_frequencyEstimate;
     UncheckedKeyHashSet<ValueKey> m_fastConstants;
     const char* m_lastPhaseName;
     std::unique_ptr<OpaqueByproducts> m_byproducts;
     std::unique_ptr<Air::Code> m_code;
-    UniqueRef<AbstractHeapRepository> m_heaps;
+    std::unique_ptr<AbstractHeapRepository> m_heaps;
     RefPtr<SharedTask<void(PrintStream&, Origin)>> m_originPrinter;
     const void* m_frontendData;
+    uint32_t m_subjectOfClient { 0 };
     String m_name;
     PCToOriginMap m_pcToOriginMap;
     RefPtr<JSON::Array> m_ionGraphPasses;
     unsigned m_numEntrypoints { 1 };
-    unsigned m_optLevel { defaultOptLevel() };
+    unsigned m_optLevel { 2 };
+    Policy m_policy;
+    HeapRange m_heapThatLoadsStayInFrontOf;
+    CompilationScratch* m_scratch { nullptr };
+    mutable CompilationReport m_report;
+    HeapSetTable m_heapSets;
+    KnownProperties m_knownProperties;
+    InductionRecords m_knownInductions;
+    MovedLoadLog m_movedLoadLog;
+    Vector<DataSectionRecord, 1> m_dataSections;
+    Vector<std::unique_ptr<JumpTableRecord>> m_jumpTables;
+    Vector<BasicBlock*> m_blocksInPreOrder;
+    Vector<BasicBlock*> m_blocksInPostOrder;
+    WTF::BitSet<256> m_opcodesEverAdded;
+    bool m_hasCycle { false };
+    bool m_areFrequenciesCurrent { false };
     bool m_needsUsedRegisters : 1 { true };
     bool m_hasQuirks : 1 { false };
     bool m_needsPCToOriginMap : 1 { false };

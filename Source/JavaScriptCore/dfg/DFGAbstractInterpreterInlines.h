@@ -5654,7 +5654,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
 
     case CallFFI: {
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
         clobberWorld();
         setTypeForNode(node, FFI::speculatedResultTypeForCallFFI(node));
 #else

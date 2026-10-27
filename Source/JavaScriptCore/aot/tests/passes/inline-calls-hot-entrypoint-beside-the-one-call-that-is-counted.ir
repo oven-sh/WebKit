@@ -1,0 +1,13 @@
+# A hot entrypoint that enters a body by a tail call holds no copy of it beside the one call that the call graph counts, though the body is within its budget
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass heat=EverythingIsHot only-passes=EstimateHeat,SummarizeForInlining,InlineCalls
+# RUN: pipeline InlineCalls
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = Call {{*}}callees=[f1]
+
+# CHECK-LABEL: name="calledAtOnePlace" module=m0 role=GenericEntrypoint
+# CHECK-NOT: = Mul
+# CHECK: = CallDirect {{*}}function=f1
+# CHECK-NOT: = Mul
+# PROGRAM-OF: inline-calls-entrypoint-beside-the-one-call-that-is-counted.ir

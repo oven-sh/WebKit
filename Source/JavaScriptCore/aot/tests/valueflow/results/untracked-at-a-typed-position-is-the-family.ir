@@ -1,0 +1,84 @@
+# function take(shape: Shape) { return shape.side }  take(circle); take(square); take(triangle)
+# The calls of one function share a node for each argument. Here the analysis follows two layouts in one set, so it gives up what the three calls pass, and the untracked object stands for it.
+# Every edge into a checked position is covered by the type of the position. So there the untracked object is whatever the type lists of what the analysis has given up: the parameter is proven,
+# and the read lists the three layouts that the calls pass as its receivers, not the layout of the family that no call passes, and names no loss.
+# Nothing checks what enters a position that admits anything, or one that is only expected to hold its type. There the untracked object may be any object that was given up,
+# here also one of a layout outside the family, which has no `side`: nothing is said of the position, an expected type stays expected, and the receivers of the read are what is seen to arrive, in a set that is not complete.
+# At the end: two layouts are followed, and the type loses the others
+# OPTIONS: limit=MaxValueFlowSetMembers:2
+# STATISTIC: MaxValueFlowSetMembersHits >= 2
+# STATISTIC: LayoutsOutsideFamily = 0
+# RUN: valueflow-apply
+# RUN(POSITIONS): flow
+# POSITIONS: function f1 parameter 0 type=L1|L2|L3 proven
+# POSITIONS-NOT: function f2 parameter 0 {{*}}proven
+# POSITIONS-NOT: function f3 parameter 0 {{*}}proven
+# POSITIONS: function f4 parameter 0 type=L1|L2 proven
+# RUN(RESULTS): valueflow-results
+# RESULTS: access [[checked]] function=f1 kind=Read
+# RESULTS-NOT: loss
+# RESULTS: access [[anything]] function=f2 kind=Read loss cause=Untracked witness=f2:v1
+# RESULTS-NEXT: access [[expected]] function=f3 kind=Read loss cause=Untracked witness=f3:v1
+# RESULTS-NEXT: access [[followed]] function=f4 kind=Read
+# RESULTS-NOT: loss
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Shape" fields=[{key="side" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Circle" fields=[{key="side" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L2 name="Square" fields=[{key="side" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L3 name="Triangle" fields=[{key="side" declared={type=anything} flags=[IsRequired]}] supertypes=[L0]
+layout L4 name="Other" fields=[{key="edge" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L1 fields=[0]
+    v3 = NewObject -, v0 layout=L2 fields=[0]
+    v4 = NewObject -, v0 layout=L3 fields=[0]
+    v5 = NewObject -, v0 layout=L4 fields=[0]
+    v6 = NewClosure function=f1
+    v7 = Call v6, -, v2
+    v8 = Call v6, -, v3
+    v9 = Call v6, -, v4
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v2
+    v12 = Call v10, -, v3
+    v13 = Call v10, -, v4
+    v14 = Call v10, -, v5
+    v15 = NewClosure function=f3
+    v16 = Call v15, -, v2
+    v17 = Call v15, -, v3
+    v18 = Call v15, -, v4
+    v19 = NewClosure function=f4
+    v20 = Call v19, -, v2
+    v21 = Call v19, -, v3
+    Return
+}
+function f1 name="take" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: parameters=[{type=L1|L2|L3}]
+# CHECK: b0(v0: L1|L2|L3):
+# CHECK: = PropGet v0 key="side" accessSite={{*}} receivers=[L1, L2, L3]
+}
+function f2 name="takeAnything" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: parameters=[{type=anything}]
+# CHECK: b0(v0: anything):
+# CHECK: = PropGet v0 key="side" accessSite={{*}} receivers=[L1, L2, L3, ..]
+}
+function f3 name="takeExpected" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: parameters=[{type=L0|L1|L2|L3 flags=[IsExpected]}]
+# CHECK: b0(v0: anything ~ L0|L1|L2|L3):
+# CHECK: = PropGet v0 key="side" accessSite={{*}} receivers=[L1, L2, L3, ..]
+}
+function f4 name="takeTwo" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="side"
+    Return v1
+# CHECK: parameters=[{type=L1|L2}]
+# CHECK: b0(v0: L1|L2):
+# CHECK: key="side" accessSite={{*}} receivers=[L1, L2]
+}

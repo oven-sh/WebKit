@@ -1,0 +1,23 @@
+# An unlikely arm with a call comes back in front of a branch, one side of which calls and the other returns. The arm has a frame of its own and so has the side that calls: the path that takes neither sets up none, though it lies between two places that need a frame
+# FORM: Selected
+# OPTIONS: heat=everything-is-hot
+# RUN: generate-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unlikelyArmThenLikelyCall" parameters=[{type=boolean}, {type=boolean}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v3 = Call v2
+    Jump -> next b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Call v2
+    Return v4
+  b4():
+    Return v2
+}
+# CHECK: f0: size={{*}}
+# X64: f0: size=56 frame=16@15-31,42-50

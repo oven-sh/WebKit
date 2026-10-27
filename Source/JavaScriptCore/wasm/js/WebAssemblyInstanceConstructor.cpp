@@ -104,7 +104,7 @@ void WebAssemblyInstanceConstructor::finishCreation(VM& vm, WebAssemblyInstanceP
 }
 
 WebAssemblyInstanceConstructor::WebAssemblyInstanceConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyInstance, constructJSWebAssemblyInstance)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyInstance), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyInstance))
 {
 }
 

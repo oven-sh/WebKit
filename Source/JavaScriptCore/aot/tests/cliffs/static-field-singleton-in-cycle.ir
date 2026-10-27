@@ -1,0 +1,105 @@
+# In a cycle of modules nobody knows when the partner runs, and the static initializer has entered the constructor before the field is defined. A read, and a call of a method, whose receiver comes from the class's binding still run after the store to that binding, which follows the definitions. A method that the constructor calls has no such bound
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses
+# RUN: pipeline ResolveAccesses
+# RUN(ORDER): valueflow-apply
+# ORDER: variable g4 {{*}}stores=AtMostOnce {{*}}initialization=StoredBeforeEveryRead
+# ORDER-NEXT: variable g5 {{*}}stores=AtMostOnce
+# ORDER-NOT: initialization=StoredBeforeEveryRead
+# ORDER: variable g6 name=
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="registry.js" displayPath="registry.js" body=f1 requests=[{target=m2 completes=true}] exports=[{name="Eager" variable=g2}, {name="Registry" variable=g0}]
+module m2 path="partner.js" displayPath="partner.js" body=f2 requests=[{target=m1 completes=true}] exports=[{name="use" variable=g6}]
+entry module=m0
+layout L0 kind=Instance name="Registry" constructor=f3 staticFields=[{key="instance" variable=g4}]
+layout L1 kind=Instance name="Eager" constructor=f6 staticFields=[{key="instance" variable=g5}]
+variable g0 name="Registry" module=m1 declared={type=function|absent} flags=[IsImmutable]
+variable g1 name="Registry" module=m1 declared={type=function|absent} flags=[IsImmutable]
+variable g2 name="Eager" module=m1 declared={type=function|absent} flags=[IsImmutable]
+variable g3 name="Eager" module=m1 declared={type=function|absent} flags=[IsImmutable]
+variable g4 module=m1 declared={type=anything} owner=L0
+variable g5 module=m1 declared={type=anything} owner=L1
+variable g6 name="use" module=m2 declared={type=function} initialization=Function function=f9 flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="registry" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f3
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f4
+    DefineMethod v1, v2 layout=L0 side=Static key="get"
+    v4 = FinishClass v1 layout=L0
+    PutModuleVariable v4 variable=g1
+    v6 = CallDirect v4 function=f5
+    PutModuleVariable v4 variable=g0
+    v8 = NewClosure function=f6
+    v9 = NewClass v8 layout=L1
+    v10 = NewClosure function=f7
+    DefineMethod v9, v10 layout=L1 side=Static key="get"
+    v12 = FinishClass v9 layout=L1
+    PutModuleVariable v12 variable=g3
+    v14 = CallDirect v12 function=f8
+    PutModuleVariable v12 variable=g2
+    Return
+}
+function f2 name="partner" module=m2 kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g6
+    v1 = Call v0
+    Return
+}
+function f3 name="Registry" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f4 name="get" module=m1 kind=Method results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="Registry"
+    v2 = PropGet v1 key="instance"
+    Return v2
+# CHECK: = GetModuleVariable variable=g4
+}
+function f5 name="initializeRegistry" module=m1 kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="Registry"
+    v3 = Construct v2
+    PropDefine v0, v3 key="instance"
+    Return
+}
+function f6 name="Eager" module=m1 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    v3 = GetModuleVariable variable=g3
+    v4 = CheckInitialized v3 name="Eager"
+    v5 = PropGet v4 key="get"
+    v6 = Call v5, v4 calleeKey="get"
+    Return v2
+}
+function f7 name="get" module=m1 kind=Method results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g3
+    v1 = CheckInitialized v0 name="Eager"
+    v2 = PropGet v1 key="instance"
+    Return v2
+# CHECK: = PropGet [[eager]] key="instance"
+}
+function f8 name="initializeEager" module=m1 kind=Initializer flags=[HasThis] thisType={type=function} results=[{type=anything}] {
+    v1 = GetModuleVariable variable=g3
+    v2 = CheckInitialized v1 name="Eager"
+    v3 = Construct v2
+    PropDefine v0, v3 key="instance"
+    Return
+}
+function f9 name="use" module=m2 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="Registry"
+    v2 = PropGet v1 key="instance"
+    v3 = PropGet v1 key="get"
+    v4 = Call v3, v1 calleeKey="get"
+    v5 = GetModuleVariable variable=g2
+    v6 = CheckInitialized v5 name="Eager"
+    v7 = PropGet v6 key="get"
+    v8 = Call v7, v6 calleeKey="get"
+    Return v4
+# CHECK: = GetModuleVariable variable=g4
+}

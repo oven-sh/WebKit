@@ -1,0 +1,67 @@
+# A template object of which only the strings at positions and the length are read is an array literal of its cooked strings
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readByPosition" parameters=[{type=int}] results=[{type=anything}] {
+    v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="\n" raw="\\n"}]
+    v2 = ElemGet v1, v0
+    Return v2
+# CHECK-NOT: NewTemplateObject
+# CHECK: [[first0]]: "a" = String string="a"
+# CHECK-NEXT: [[second0]]: "\n" = String string="\n"
+# CHECK-NEXT: v1: Array<string> = NewArray [[first0]], [[second0]] contents=string
+}
+
+function f1 name="lengthIsRead" results=[{type=anything}] {
+    v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK-NOT: NewTemplateObject
+# CHECK: v0: Array<string> = NewArray
+}
+
+function f2 name="stringWithoutCookedText" parameters=[{type=int}] results=[{type=anything}] {
+    v1 = NewTemplateObject templateStrings=[{raw="\\u"}, {cooked="b" raw="b"}]
+    v2 = ElemGet v1, v0
+    Return v2
+# CHECK: [[first2]]: undefined = Undefined
+# CHECK-NEXT: [[second2]]: "b" = String string="b"
+# CHECK-NEXT: v1: Array<undefined|string> = NewArray [[first2]], [[second2]] contents=undefined|string
+}
+
+function f3 name="rawStringsAreRead" results=[{type=anything}] {
+    v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    v1 = PropGet v0 key="raw"
+    Return v1
+# CHECK: v0: Array = NewTemplateObject
+}
+
+function f4 name="keyMayBeAName" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    v2 = ElemGet v1, v0
+    Return v2
+# CHECK: v1: Array = NewTemplateObject
+}
+
+function f5 name="objectIsHandedOn" parameters=[{type=int}] results=[{type=anything}] {
+    v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    v2 = ElemGet v1, v0
+    Return v1
+# CHECK: v1: Array = NewTemplateObject
+}
+
+function f6 name="objectIsStoredTo" parameters=[{type=int}, {type=string}] results=[{type=anything}] {
+    v2 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    ElemSet v2, v0, v1 mode=Strict
+    v4 = ElemGet v2, v0
+    Return v4
+# CHECK: v2: Array = NewTemplateObject
+}
+
+function f7 name="objectIsTheKey" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    v2 = ElemGet v0, v1
+    Return v2
+# CHECK: v1: Array = NewTemplateObject
+}

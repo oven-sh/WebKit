@@ -1586,10 +1586,10 @@ private:
             compileCallWasm();
             break;
         case CallFFI:
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
             compileCallFFI();
 #else
-            DFG_CRASH(m_graph, m_node, "CallFFI is unreachable without USE(BUN_JSC_ADDITIONS)"_s);
+            DFG_CRASH(m_graph, m_node, "CallFFI is unreachable without ENABLE(FFI)"_s);
 #endif
             break;
         case CallCustomAccessorGetter:
@@ -2406,7 +2406,7 @@ private:
     LValue tryDoubleToInt32AsDouble(LValue value)
     {
 #if CPU(ARM64)
-        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat()) {
+        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat(CPUFeatureSet::host())) {
             PatchpointValue* converted = m_out.patchpoint(Double);
             converted->append(value, ValueRep::SomeRegister);
             converted->setGenerator(
@@ -2425,7 +2425,7 @@ private:
     LValue tryDoubleToInt64AsDouble(LValue value)
     {
 #if CPU(ARM64)
-        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat()) {
+        if (MacroAssemblerARM64::supportsRoundFloatToIntegerFloat(CPUFeatureSet::host())) {
             PatchpointValue* converted = m_out.patchpoint(Double);
             converted->append(value, ValueRep::SomeRegister);
             converted->setGenerator(
@@ -6081,9 +6081,11 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileGetWebAssemblyInstanceExports()
     {
+#if ENABLE(WEBASSEMBLY)
         LValue base = lowCell(m_node->child1());
         LValue moduleRecord = m_out.loadPtr(base, m_heaps.JSWebAssemblyInstance_moduleRecord);
         setJSValue(m_out.loadPtr(moduleRecord, m_heaps.WebAssemblyModuleRecord_exportsObject));
+#endif
     }
 
     LValue typedArrayLength(LValue base, bool acceptResizable, std::optional<TypedArrayType> typedArrayType, Edge edge = Edge())
@@ -15045,6 +15047,7 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileCallWasm()
     {
+#if ENABLE(WEBASSEMBLY)
         Node* node = m_node;
         WebAssemblyFunction* wasmFunction = node->castOperand<WebAssemblyFunction*>();
 
@@ -15268,9 +15271,10 @@ IGNORE_CLANG_WARNINGS_END
                 break;
             }
         }
+#endif // ENABLE(WEBASSEMBLY)
     }
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
 
     template<bool DirectCall>
     void compileCallFFIImpl()
@@ -15691,7 +15695,7 @@ IGNORE_CLANG_WARNINGS_END
         else
             compileCallFFIImpl<false>();
     }
-#endif // USE(BUN_JSC_ADDITIONS)
+#endif // ENABLE(FFI)
 
     void compileCallCustomAccessorGetter()
     {
@@ -19169,7 +19173,7 @@ IGNORE_CLANG_WARNINGS_END
 
         m_out.appendTo(checkReplacementSensitiveStructure);
         LValue structureValue = decodeNonNullStructure(structureID);
-        LValue hasReplacementSensitiveStructure = m_out.testNonZero32(m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | Structure::s_isWatchingReplacementBits | Structure::s_hasImmutablePropertiesBits), m_out.load32(structureValue, m_heaps.Structure_bitField));
+        LValue hasReplacementSensitiveStructure = m_out.testNonZero32(m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | Structure::s_isWatchingReplacementBits | Structure::s_anyImmutablePropertiesBits), m_out.load32(structureValue, m_heaps.Structure_bitField));
         m_out.branch(hasReplacementSensitiveStructure, rarely(genericOrRecover), usually(checkInlineOrOutOfLineBlock));
 
         m_out.appendTo(checkInlineOrOutOfLineBlock);
@@ -25695,7 +25699,7 @@ IGNORE_CLANG_WARNINGS_END
     LValue doubleToInt32(LValue doubleValue)
     {
 #if CPU(ARM64)
-        if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+        if (MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(CPUFeatureSet::host())) {
             PatchpointValue* patchpoint = m_out.patchpoint(Int32);
             patchpoint->append(ConstrainedValue(doubleValue, B3::ValueRep::SomeRegister));
             patchpoint->setGenerator([=] (CCallHelpers& jit, const StackmapGenerationParams& params) {

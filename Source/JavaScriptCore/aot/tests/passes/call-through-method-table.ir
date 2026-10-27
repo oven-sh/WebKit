@@ -1,0 +1,81 @@
+# The receiver is proven to be of a family whose layouts find different methods under one name, and nothing proves that nobody replaces them: the call goes through the method table.
+# It tests nothing and has nothing to fall back to. The entry of a layout enters the method that the class definitions give it, and the lookup of the selector calls what the receiver has under the name.
+# A selector is a name, a number of arguments and how they are passed: typed where each argument is of the type that the methods of the name declare for it, any value otherwise.
+# A layout of the family that has the member as a field is told from the others by one test of the receiver, and the read and the call stay as they are for it.
+# One method for the whole family stays a test of one bit and a direct call, which ResolveCalls makes. So does a tail call
+# FORM: Prepared
+# RUN: pass CallThroughMethodTable
+# STATISTIC: TableCalls = 4
+# STATISTIC: TableLookups = 3
+# STATISTIC: TableEntrypoints = 6
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 kind=Instance name="Square" constructor=f0 flow={baseState=None allocationClasses=[0]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed members=[{key="scaled" function=f1}, {key="name" function=f2}] namedMembers=[{key="scaled" function=f1}, {key="name" function=f2}]}
+layout L1 kind=Instance name="Circle" constructor=f3 flow={baseState=None allocationClasses=[1]} classFlow={evaluations=AtMostOnce prototypeProperty=Fixed members=[{key="scaled" function=f4}] namedMembers=[{key="scaled" function=f4}]}
+layout L2 name="Scalable" fields=[{key="scaled" declared={type=function}}] flow={allocationClasses=[2]}
+function f0 name="Square" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="scaled" kind=Method flags=[HasThis] thisType={type=L0} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything ~ number):
+    Return v1
+}
+function f2 name="name" kind=Method flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+    Return
+}
+function f3 name="Circle" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f4 name="scaled" kind=Method flags=[HasThis] thisType={type=L1} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: L1, v1: anything ~ number):
+    v2 = Add v1, v1
+    Return v2
+}
+function f5 name="passesNumber" parameters=[{type=undefined|null|L0|L1}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="scaled"
+    v3 = Call v2, v0, v1 calleeKey="scaled"
+    Return v3
+# CHECK: [[receiver]]: L0|L1 = RequireObjectCoercible v0
+# CHECK: = CallTable [[receiver]], v1 function=[[typedLookup]] key="scaled" receivers=[L0, L1] entrypoints=[f
+# CHECK-NOT: AreMembersUnchanged
+}
+function f6 name="passesAnything" parameters=[{type=L0|L1}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="scaled"
+    v3 = Call v2, v0, v1 calleeKey="scaled"
+    v4 = PropGet v0 key="scaled"
+    v5 = Call v4, v0 calleeKey="scaled"
+    Return v5
+# CHECK: = CallTable v0, v1 function=[[boxedLookup]] key="scaled" receivers=[L0, L1]
+# CHECK: = CallTable v0 function=[[lookupWithoutArguments]] key="scaled" receivers=[L0, L1]
+}
+function f7 name="oneMethod" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="name"
+    v2 = Call v1, v0 calleeKey="name"
+    Return v2
+# CHECK: = PropGet v0 key="name"
+# CHECK-NEXT: = Call
+}
+function f8 name="tailCall" parameters=[{type=L0|L1}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="scaled"
+    v3 = Call v2, v0, v1 calleeKey="scaled"
+    ReturnCall v3 requirement=Required
+# CHECK: = PropGet v0 key="scaled"
+# CHECK-NEXT: = Call
+}
+function f9 name="oneLayoutHasAField" parameters=[{type=L0|L1|L2}, {type=number}] results=[{type=anything}] {
+    v2 = PropGet v0 key="scaled"
+    v3 = Call v2, v0, v1 calleeKey="scaled"
+    Return v3
+# CHECK: [[isInstance]]: boolean = TypeTest v0 testedType=L0|L1
+# CHECK-NEXT: Branch [[isInstance]]
+# CHECK: ([[instance]]: L0|L1):
+# CHECK-NEXT: = CallTable [[instance]], v1 function=[[typedLookup]] key="scaled" receivers=[L0, L1]
+# CHECK: ([[record]]: L2):
+# CHECK-NEXT: [[read]]: {{*}} = PropGet [[record]] key="scaled"
+# CHECK-NEXT: = Call [[read]], [[record]], v1 calleeKey="scaled"
+# CHECK: function [[typedLookup]] {{*}}role=TableLookup {{*}}thisType={type=object} parameters=[{type=number}] results=[{type=anything}]
+# CHECK: = PropGet v0 key="scaled"
+# CHECK-NEXT: = Call {{*}}, v0, v1 calleeKey="scaled"
+# CHECK: role=TableEntrypoint {{*}}thisType={type=object} parameters=[{type=number}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: object, v1: number):
+# CHECK-NEXT: [[this]]: L0 = AssumeType v0 provenType=L0
+# CHECK: [[result]]: anything = CallDirect [[this]], {{*}} function=f1
+# CHECK-NEXT: ReturnCall [[result]] requirement=Allowed
+}

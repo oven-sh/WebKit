@@ -1,0 +1,43 @@
+# The tests that were split off the head of a function are entered by compiled code too, so they stay, and what the generic entrypoint took in would be a second copy of them and of the typed body behind them.
+# Where the tests return what the entrypoint returns, in the same form, a hot entrypoint takes no copy either: it jumps to them. The copies would lie between the bodies that run,
+# and a call by value would run code that no call by name has fetched
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineCalls VerifyProgram
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="callsByName" module=m0 parameters=[{type=anything}] results=[{type=string}] {
+    v1 = CallDirect v0 function=f2 [isNeverInlined]
+    Return v1
+# CHECK: = CallDirect v0 function=f2
+}
+function f2 name="shared" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}] results=[{type=string}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f3 fallback=f4} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: string):
+    v3 = CallDirect v2 function=f3 [isNeverInlined]
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f4 [isNeverInlined]
+    ReturnCall v4 requirement=Allowed
+}
+function f3 name="shared" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2} {
+    Return v0
+}
+function f4 name="shared" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=string flags=[IsExpected]}] results=[{type=string}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f2} creator=Version{provenVersion=f3} {
+  b0(v0: anything):
+    v1 = ToString v0
+    Return v1
+}
+function f5 name="shared" module=m0 role=GenericEntrypoint flags=[HasThis, IsChecked] length=1 captures=[{type=f2}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f2} creator=Entrypoint{target=f2 arguments=Registers} {
+    v3 = CallDirect v2 function=f2
+    ReturnCall v3 requirement=Allowed
+# CHECK-NOT: = TypeTest
+# CHECK: = CallDirect {{*}} function=f2
+}

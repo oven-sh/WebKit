@@ -1,0 +1,23 @@
+# A cast has its operand's type met with its target: a wider target keeps the operand's type, declared contents come from the target
+# FORM: Prepared
+# RUN: result-types
+# CHECK: v3: i32
+# CHECK-NEXT: v4: string
+# CHECK-NEXT: v5: Array<number>
+# CHECK-NEXT: v6: undefined|number|absent
+# CHECK-NEXT: v7: undefined|number
+# CHECK-NEXT: v8: number
+# CHECK-NEXT: v9: object
+
+module m0 path="main.js" displayPath="main.js"
+typesite w0 kind=Assertion
+function f0 name="c" parameters=[{type=i32}, {type=anything}, {type=Array<i32>}] results=[{type=undefined}] {
+    v3 = Upcast v0 castType=number
+    v4 = Check v1 expectedType=string site=w0
+    v5 = Upcast v2 castType=Array<number>
+    v6 = Unspecified valueType=undefined|number|absent
+    v7 = CheckInitialized v6 name="x"
+    v8 = RequireObjectCoercible v7 nullishAccess=Iterate
+    v9 = RequireObject v1 runtimeError=IteratorResultNotObject
+    Return
+}

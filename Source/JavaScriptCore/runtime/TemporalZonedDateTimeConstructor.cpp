@@ -73,7 +73,7 @@ static JSC_DECLARE_HOST_FUNCTION(callTemporalZonedDateTime);
 static JSC_DECLARE_HOST_FUNCTION(constructTemporalZonedDateTime);
 
 TemporalZonedDateTimeConstructor::TemporalZonedDateTimeConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callTemporalZonedDateTime, constructTemporalZonedDateTime)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callTemporalZonedDateTime), JSC_REGISTERED_HOST_FUNCTION(constructTemporalZonedDateTime))
 {
 }
 

@@ -1,0 +1,48 @@
+# With 1024 unchecked bytes at most two functions in a row are entered without a stack check. Where the third from below is an entrance, the typed body behind it checks in its place:
+# the body has a frame anyway, the entrance would need one for the check alone. The entrance still counts as a function for whoever calls it: with the generic version below it that makes two.
+# FORM: Selected
+# OPTIONS: limit=UncheckedStackBytes:1024
+# RUN: pass ElideStackChecks
+# STATISTIC: StackChecksDeferredToCallee = 0
+# LOSS: UncheckedStackBytes x1 f0
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = CallDirect v0 function=f1
+    Return v1
+}
+
+function f1 name="outer" role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f2 fallback=f3} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f2
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f3
+    ReturnCall v4 requirement=Allowed
+}
+
+function f2 name="outer" flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} {
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+
+function f3 name="outer" role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f1} creator=Version{provenVersion=f2} {
+  b0(v0: anything):
+    Return v0
+}
+
+function f4 name="inner" parameters=[{type=number}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK: f0 stack check: Required
+# CHECK-NEXT: f1 stack check: CoveredByCallers
+# CHECK-NEXT: f2 stack check: Required
+# CHECK-NEXT: f3 stack check: CoveredByCallers
+# CHECK-NEXT: f4 stack check: CoveredByCallers
+# CHECK-NEXT: outcome: Unchanged

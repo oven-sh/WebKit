@@ -1,0 +1,43 @@
+# function mod8(i: number) { return i % 8 }   function mod10(i: number) { return i % 10 }   function isEven(i: number) { return i % 2 === 0 }
+# A remainder works on integers where the dividend, made an int64 and a number again, is itself. Beyond int64 x86-64 answers that conversion with the least int64.
+# ARM64 answers with the nearest one: from 2^63 on 2^63 - 1, which made a number again rounds to 2^63
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (mod8, mod10, isEven) => { for (const i of [2 ** 63, -(2 ** 63), 2 ** 63 + 2048, 2 ** 64, 2 ** 62, 2 ** 53 + 2, 1e300, 13]) print(mod8(i), mod10(i), isEven(i)); };
+# CHECK: 0 8 true
+# CHECK-NEXT: 0 -8 true
+# CHECK-NEXT: 0 6 true
+# CHECK-NEXT: 0 6 true
+# CHECK-NEXT: 0 4 true
+# CHECK-NEXT: 2 4 true
+# CHECK-NEXT: 0 0 true
+# CHECK-NEXT: 5 3 false
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="register" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return
+}
+function f1 name="mod8" flags=[IsChecked] parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Integer integer=8
+    v2 = Mod v0, v1
+    Return v2
+}
+function f2 name="mod10" flags=[IsChecked] parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Integer integer=10
+    v2 = Mod v0, v1
+    Return v2
+}
+function f3 name="isEven" flags=[IsChecked] parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Integer integer=2
+    v2 = Mod v0, v1
+    v3 = Integer integer=0
+    v4 = StrictEq v2, v3
+    Return v4
+}

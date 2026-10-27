@@ -1,0 +1,35 @@
+# An if chain that compares the code unit of a character, an integer, with constants becomes a jump table in B3. A chain that compares a number does not
+# FORM: Selected
+# RUN: generate-code
+# CHECK: f0: size={{*}} jumpTables=1
+# CHECK: f1: size={{*}} jumpTables=0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="integers" parameters=[{type=string}, {type=i32}] results=[{type=int}] {
+    v2 = StringRangeCodeUnitOrMinusOne v0, -, -, v1
+# REPEAT: i = 1..8
+    v%(i*3) = Integer integer=%(i+96)
+    v%(i*3+1) = StrictEq v2, v%(i*3) form=Integers
+    TestAndBranch v%(i*3+1) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
+    v%(i*3+2) = Integer integer=%(i)
+    Return v%(i*3+2)
+  b%(i*2)():
+# END REPEAT
+    v27 = Integer integer=0
+    Return v27
+}
+function f1 name="numbers" parameters=[{type=string}, {type=i32}] results=[{type=int}] {
+    v2 = StringRangeCodeUnitOrNaN v0, -, -, v1
+# REPEAT: i = 1..8
+    v%(i*3) = Integer integer=%(i+96)
+    v%(i*3+1) = StrictEq v2, v%(i*3) form=Numbers
+    TestAndBranch v%(i*3+1) -> taken b%(i*2-1)(), notTaken b%(i*2)()
+  b%(i*2-1)():
+    v%(i*3+2) = Integer integer=%(i)
+    Return v%(i*3+2)
+  b%(i*2)():
+# END REPEAT
+    v27 = Integer integer=0
+    Return v27
+}

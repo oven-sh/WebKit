@@ -26,6 +26,7 @@
 #include "config.h"
 #include "HeapSnapshotBuilder.h"
 
+#include "AOTRemovableFeature.h"
 #include "DeferGCInlines.h"
 #include "Heap.h"
 #include "HeapProfiler.h"
@@ -59,8 +60,9 @@ HeapSnapshotBuilder::~HeapSnapshotBuilder()
         m_profiler.clearSnapshots();
 }
 
-void HeapSnapshotBuilder::buildSnapshot()
+NEVER_INLINE void HeapSnapshotBuilder::buildSnapshot()
 {
+    JSC_REMOVABLE_DEFINITION(Profilers, &HeapSnapshotBuilder::buildSnapshot);
     // GCDebuggingSnapshot are always full snapshots, so clear any existing snapshots.
     if (m_snapshotType == SnapshotType::GCDebuggingSnapshot)
         m_profiler.clearSnapshots();
@@ -339,8 +341,9 @@ String HeapSnapshotBuilder::json()
     return string.tryToString().value_or(String());
 }
 
-void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
+NEVER_INLINE void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
 {
+    JSC_REMOVABLE_DEFINITION(Profilers, &HeapSnapshotBuilder::dumpToStream);
     VM& vm = m_profiler.vm();
     DeferGCForAWhile deferGC(vm);
 

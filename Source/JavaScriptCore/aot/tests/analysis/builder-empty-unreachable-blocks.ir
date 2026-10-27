@@ -1,0 +1,54 @@
+# Emptying the unreachable blocks removes their values, edges, handlers and roles, and counts only the blocks that had any
+# FORM: Prepared
+# RUN: empty-unreachable-blocks function=f0
+# RUN(NONE): empty-unreachable-blocks function=f1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unreachableBlocks" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b2(v0)
+  b1():
+    v1 = Add v0, v0
+    Jump -> next b2(v1)
+  b2(v2):
+    Return v2
+  b3():
+    Unreachable
+  b4() handler=b5():
+    Unreachable
+  b5() role=CatchHandler:
+    v3 = CatchValue
+    Unreachable
+}
+function f1 name="allReachable" parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number) handler=b2():
+    Jump -> next b1()
+  b1():
+    Return v0
+  b2() role=CatchHandler:
+    v1 = CatchValue
+    Return v0
+}
+# CHECK: emptied: 3
+# CHECK-NEXT: function f0
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: Jump -> next b2(v0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b2(v2: number):
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b4():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+# NONE: emptied: 0
+# NONE-NEXT: function f1
+# NONE-NEXT: b0(v0: number) handler=b2():
+# NONE-NEXT: Jump -> next b1()
+# NONE-NEXT: b1():
+# NONE-NEXT: Return v0
+# NONE-NEXT: b2() role=CatchHandler:
+# NONE-NEXT: = CatchValue
+# NONE-NEXT: Return v0

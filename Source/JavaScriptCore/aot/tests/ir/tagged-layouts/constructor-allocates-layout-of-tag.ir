@@ -1,0 +1,86 @@
+# interface Node { kind: number; pos: number }  interface Num extends Node { kind: 1; value: number }  interface Add extends Node { kind: 2; left: Node; right: Node }
+# function NodeObject(this: Node, kind: number, pos: number) { this.kind = kind; this.pos = pos }
+# The types below the declared `this` declare one literal each for `kind`, and the function stores a parameter there: an object is made with the layout of its literal.
+# The reader derives the layouts and leaves the function as it was sent. The pass gives the function a copy of its body that allocates `this` itself, behind a switch on the parameter,
+# and the function enters the copy where new.target is one of its own closures. Its own body stays for a `this` that somebody hands in
+# FORM: AsRead
+# RUN(READ): print
+# RUN: pass AllocateTaggedLayouts
+# RUN(ENTERS): pass AllocateTaggedLayouts
+# RUN(TYPED): pass AllocateTaggedLayouts TypeValues VerifyProgram
+# TYPED-COUNT-3: outcome:
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="NodeObject" constructor=f1 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L1] flags=[IsConstructorFunction]
+layout L1 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Num" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] supertypes=[L1]
+layout L3 name="Add" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="left" declared={type=undefined|null|L1} flags=[IsRequired]}, {key="right" declared={type=undefined|null|L1} flags=[IsRequired]}] supertypes=[L1]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="NodeObject" flags=[HasThis] thisType={type=undefined|null|L1} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="kind" mode=Strict
+    PropSet v0, v2 key="pos" mode=Strict
+    Return
+}
+function f2 name="valueOf" parameters=[{type=undefined|null|L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="value"
+    Return v1
+}
+
+# READ: layout L3 name="Add"
+# READ-NEXT: layout L4 kind=Instance name="NodeObject" fields=[{key="kind" declared={type=number} flags=[IsInherited] originLayout=L0 originField=0}, {key="pos" {{*}}, {key="value" declared={type=number}
+# READ-NEXT: layout L5 kind=Instance name="NodeObject" fields=[{key="kind" {{*}}, {key="pos" {{*}}, {key="left" {{*}}, {key="right"
+# READ-NEXT: module m0
+# READ-LABEL: function f1 name="NodeObject"
+# READ: flags=[HasThis] thisType={type=undefined|null|L0|L1|L2|L3|L4|L5}
+# READ-NOT: Switch
+# READ-LABEL: function f2 name="valueOf"
+# READ: parameters=[{type=undefined|null|L2|L4}]
+# READ-NOT: function f3
+
+# CHECK-LABEL: function f1 name="NodeObject"
+# CHECK: flags=[HasThis, HasNewTarget] thisType={type=undefined|null|L0|L1|L2|L3|L4|L5} parameters=[{type=number}, {type=number}] results=[{type=anything}]
+# CHECK-NEXT: b0([[this]]: undefined|null|L0|L1|L2|L3|L4|L5, [[newTarget]]: anything, [[kind]]: number, [[pos]]: number):
+# CHECK-NEXT: [[own]] = TypeTest [[newTarget]] testedType=f1
+# CHECK-NEXT: Branch [[own]] -> taken [[construction]](), notTaken [[body]]()
+# CHECK: [[body]]():
+# CHECK-NEXT: PropSet [[this]], [[kind]] key="kind"
+# CHECK-NEXT: PropSet [[this]], [[pos]] key="pos"
+# CHECK-NEXT: Return
+# CHECK-LABEL: function f2 name="valueOf"
+# CHECK-LABEL: function f3 name="NodeObject"
+# CHECK: flags=[HasNewTarget, AllocatesOwnThis] thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=L0|L4|L5 flags=[IsFromCompiler]}]
+# CHECK: derivation={source=f1
+# CHECK-NEXT: b0([[copiedNewTarget]]: anything, [[tag]]: number, [[position]]: number):
+# CHECK-NEXT: [[prototype]] = GetConstructPrototype [[copiedNewTarget]] layout=L0
+# CHECK-NEXT: Switch [[tag]] cases=[1, 2] -> case [[num]](), case [[add]](), otherwise [[other]]()
+# CHECK: [[num]]():
+# CHECK-NEXT: [[numObject]] = NewObject [[prototype]] layout=L4
+# CHECK-NEXT: Jump -> next [[rest]]([[numObject]])
+# CHECK: [[add]]():
+# CHECK-NEXT: [[addObject]] = NewObject [[prototype]] layout=L5
+# CHECK-NEXT: Jump -> next [[rest]]([[addObject]])
+# CHECK: [[other]]():
+# CHECK-NEXT: [[otherObject]] = NewObject [[prototype]] layout=L0
+# CHECK-NEXT: Jump -> next [[rest]]([[otherObject]])
+# CHECK: [[rest]]([[object]]):
+# CHECK-NEXT: PropSet [[object]], [[tag]] key="kind"
+# CHECK-NEXT: PropSet [[object]], [[position]] key="pos"
+# CHECK-NEXT: Return [[object]]
+
+# ENTERS-LABEL: function f1 name="NodeObject"
+# ENTERS: b0([[this]]: {{*}}, [[newTarget]]: anything, [[kind]]: number, [[pos]]: number):
+# ENTERS: -> taken [[construction]](), notTaken
+# ENTERS: [[construction]]():
+# ENTERS-NEXT: [[made]] = CallDirect [[newTarget]], [[kind]], [[pos]] function=f3 [isConstruction]
+# ENTERS-NEXT: ReturnCall [[made]] requirement=Allowed
+# ENTERS-LABEL: function f2 name="valueOf"
+
+# TYPED-LABEL: function f3 name="NodeObject"
+# TYPED: : L4 = NewObject
+# TYPED: : L5 = NewObject
+# TYPED: : L0 = NewObject
+# TYPED: ([[object]]: L0|L4|L5):
+# TYPED: Return [[object]]

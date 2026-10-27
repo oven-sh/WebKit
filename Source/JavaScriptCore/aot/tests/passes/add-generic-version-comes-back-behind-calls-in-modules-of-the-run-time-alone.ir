@@ -1,0 +1,54 @@
+# In a function of the program the copy behind a failed check runs on over a call to the end of the function, and comes back at the head of a loop. In a module of the run time, whose checks meet whatever the program hands in, it comes back behind the call
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 3
+# STATISTIC: WaysBackFromGenericVersion = 2
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library" displayPath="library" flags=[IsLibrary]
+
+function f0 name="ofTheProgram" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=object
+    v3: anything ~ number = PropGet v2 key="size"
+    v4 = Call v1
+    v5 = Add v3, v3
+    Return v5
+# CHECK: ) frequency=Unlikely:
+# CHECK-NEXT: [[size0]]: anything ~ number = PropGet {{*}} key="size"
+# CHECK: = Call v1 [isNeverInlined]
+# CHECK-NEXT: [[sum0]]:{{*}}= Add [[size0]], [[size0]]
+# CHECK-NEXT: Return [[sum0]]
+}
+
+function f1 name="ofTheProgramWithLoop" module=m0 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=number
+    v3 = Mul v2, v2
+    v4 = Call v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = Call v1
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+# CHECK: ) frequency=Unlikely:
+# CHECK-NEXT: [[product1]]: number|bigint = Mul
+# CHECK-NEXT: = Call v1 [isNeverInlined]
+# CHECK-NEXT: Jump -> next [[inFrontOfLoop1]]()
+# CHECK: [[inFrontOfLoop1]]() frequency=Unlikely:
+# CHECK-NEXT: = TypeTest [[product1]] testedType=number
+}
+
+function f2 name="ofTheRunTime" module=m1 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=object
+    v3: anything ~ number = PropGet v2 key="size"
+    v4 = Call v1
+    v5 = Add v3, v3
+    Return v5
+# CHECK: ) frequency=Unlikely:
+# CHECK-NEXT: [[size2]]: anything ~ number = PropGet {{*}} key="size"
+# CHECK: = Call v1 [isNeverInlined]
+# CHECK: = TypeTest [[size2]] testedType=number
+}
