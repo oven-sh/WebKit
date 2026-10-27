@@ -1175,7 +1175,7 @@ static void moduleGraphLoadingError(JSGlobalObject* globalObject, VM& vm, ThrowS
 #if ENABLE(AOT)
         if (vm.hasCompiledCode()) {
             AOT::ModuleRecord::didFailToLoad(globalObject, *state);
-            RETURN_IF_EXCEPTION(scope, void());
+            scope.assertNoExceptionExceptTermination();
         }
 #endif
         state->promise()->reject(vm, errorValue);

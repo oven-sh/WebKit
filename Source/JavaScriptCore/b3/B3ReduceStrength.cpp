@@ -32,6 +32,7 @@
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3BasicBlockUtils.h"
+#include "B3BlockWorklist.h"
 #include "B3BulkMemoryValue.h"
 #include "B3ComputeDivisionMagic.h"
 #include "B3ConstantReplacements.h"
@@ -4828,7 +4829,8 @@ private:
     // and every turn would make the sum again. It moves up to where all of them come from.
     void shareNewPartsOfAddresses()
     {
-        if (m_newPartsOfAddresses.size() < 2)
+        Vector<Value*, 8> newParts = std::exchange(m_newPartsOfAddresses, { });
+        if (newParts.size() < 2)
             return;
         m_proc.resetValueOwners();
         Dominators& dominators = m_proc.dominators();
@@ -4836,7 +4838,7 @@ private:
         // A shift comes before the sums that it is part of.
         for (Opcode opcode : { Shl, Add }) {
             UncheckedKeyHashMap<ValueKey, Vector<Value*, 8>> valuesByKey;
-            for (Value* value : m_newPartsOfAddresses) {
+            for (Value* value : newParts) {
                 if (value->opcode() != opcode || !value->owner)
                     continue;
                 value->performSubstitution();
@@ -4867,7 +4869,23 @@ private:
                 m_changed = true;
             }
         }
-        m_newPartsOfAddresses.shrink(0);
+    }
+
+    // The blocks that nothing leads to any more leave the procedure with all that stands in them. The walk reduces a block of a cycle with two entries before it has seen all that leads there.
+    void forgetNewPartsOfAddressesInBlocksThatLeave()
+    {
+        if (m_newPartsOfAddresses.isEmpty())
+            return;
+        m_proc.resetValueOwners();
+        BlockWorklist staying;
+        staying.push(m_proc.at(0));
+        while (BasicBlock* block = staying.pop()) {
+            for (BasicBlock* successor : block->successorBlocks())
+                staying.push(successor);
+        }
+        m_newPartsOfAddresses.removeAllMatching([&](Value* value) {
+            return !staying.saw(value->owner);
+        });
     }
 
     Value* insertOrReuse(Opcode opcode, Value* child)
@@ -5602,6 +5620,7 @@ private:
     {
         if (m_changedCFG) {
             m_changedCFG = false;
+            forgetNewPartsOfAddressesInBlocksThatLeave();
             m_proc.resetReachability();
             m_proc.invalidateCFG();
             // Dominators and natural loops are not valid anymore, and we don't need them yet.

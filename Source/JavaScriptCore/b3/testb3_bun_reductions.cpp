@@ -1303,6 +1303,51 @@ static void testPartOfAddressIsSharedByAccessesThatDoNotFollowEachOther()
     CHECK_EQ(invoke<int64_t>(*code, memory, 1, 0), 13);
 }
 
+// A cycle with two entries, each behind a test that folds. The walk reduces the blocks of the cycle before it has seen that nothing leads to them, and they leave the procedure behind it.
+// What is left shares its part as if the cycle had never been there.
+static void testPartOfAddressIsSharedBesideCycleThatLeavesProcedure()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.redundancyElimination = RedundancyElimination::MemoryNumbering;
+        policy.optimization.reducesWithRanges = true;
+        policy.loops.unrolls = true;
+    }));
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* testInFrontOfFirst = proc.addBlock();
+    BasicBlock* testInFrontOfSecond = proc.addBlock();
+    BasicBlock* storing = proc.addBlock();
+    BasicBlock* loading = proc.addBlock();
+    BasicBlock* first = proc.addBlock();
+    BasicBlock* second = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t, int64_t>(proc, root);
+    Value* pointer = arguments[0];
+    Value* index = arguments[1];
+    Value* isFirst = arguments[2];
+    auto address = [&](BasicBlock* block, int64_t distance) {
+        Value* offset = graph.make(block, Shl, graph.make(block, Add, index, graph.int64(block, distance)), graph.int32(block, 3));
+        return graph.make(block, Add, pointer, offset);
+    };
+    graph.branch(root, isFirst, testInFrontOfFirst, testInFrontOfSecond);
+    graph.branch(testInFrontOfFirst, graph.int32(testInFrontOfFirst, 0), storing, first);
+    graph.branch(testInFrontOfSecond, graph.int32(testInFrontOfSecond, 0), loading, second);
+    graph.store(storing, index, address(storing, 3), 0, firstHeap);
+    graph.jump(storing, loading);
+    graph.branch(loading, graph.load(loading, Int64, address(loading, 4), 0, firstHeap), storing, first);
+    graph.ret(first, graph.load(first, Int64, address(first, 1), 0, firstHeap));
+    graph.ret(second, graph.load(second, Int64, address(second, 2), 0, firstHeap));
+    proc.resetReachability();
+
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    validate(proc);
+    CHECK_EQ(numberOfValues(proc, Store), 0u);
+    CHECK_EQ(numberOfValues(proc, Shl), isX86() ? 2u : 1u);
+    auto code = compileProc(proc);
+    int64_t memory[4] = { 10, 11, 12, 13 };
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 1), 12);
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1, 0), 13);
+}
+
 static void testDifferencePlusSubtrahend()
 {
     for (bool usesPolicy : { true, false }) {
@@ -1353,6 +1398,7 @@ void addBunReductionTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testConstantLeavesZeroExtendedSumInAddress());
     RUN(testZeroExtendedSumWithAnotherUserStaysOutsideX86());
     RUN(testPartOfAddressIsSharedByAccessesThatDoNotFollowEachOther());
+    RUN(testPartOfAddressIsSharedBesideCycleThatLeavesProcedure());
     RUN(testDifferencePlusSubtrahend());
 }
 

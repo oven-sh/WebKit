@@ -1258,7 +1258,7 @@ void JSModuleLoader::continueModuleLoading(JSGlobalObject* globalObject, ModuleG
 #if ENABLE(AOT)
         if (vm.hasCompiledCode()) {
             AOT::ModuleRecord::didFailToLoad(globalObject, *state);
-            RETURN_IF_EXCEPTION(scope, void());
+            scope.assertNoExceptionExceptTermination();
         }
 #endif
         // 3.b. Perform ! Call(state.[[PromiseCapability]].[[Reject]], undefined, « moduleCompletion.[[Value]] »).
