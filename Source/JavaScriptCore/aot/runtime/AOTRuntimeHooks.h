@@ -54,6 +54,9 @@ void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);
 void didChangeGlobalLexicalBindings(JSGlobalObject*);
 void setLoopPollsEnabled(VM&, bool);
+// A store for another receiver ends in a question to the receiver and a definition on it. A proxy asks its handler for two traps and, where it has neither, hands both on to its target: that target.
+// Null for every other value, and where finding out would run code of the program.
+JSObject* targetThatProxyDefinesOn(VM&, JSValue receiver);
 
 } } // namespace JSC::AOT::RuntimeHooks
 

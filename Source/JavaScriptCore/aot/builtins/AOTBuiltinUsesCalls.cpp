@@ -279,6 +279,9 @@ BuiltinUsePlan planCallOfBuiltin(const BuiltinUseInputs& inputs, ValueID use, Pr
     } else {
         known.operands.receiver = call.thisValueOperand();
         known.stamps.expectedResult = call.expectedResult();
+        // `f.call(..)` names `f.call` where `f` refuses. What such a call has become names nothing more.
+        if (call.calleeKey() && (answer.callee == Builtins::FunctionPrototypeCall || answer.callee == Builtins::FunctionPrototypeApply))
+            known.stamps.calleeName = call.calleeName();
         thisValueHandling = thisValueHandlingOf(inputs, answer.callee, known.operands.receiver);
     }
     if (thisValueHandling == ThisValueHandling::KeepsGenericCall)
@@ -411,7 +414,7 @@ BuiltinUsePlan planRematch(const BuiltinUseInputs& inputs, ValueID use, ProgramP
     known.mode = overload.mode;
     known.operands.receiver = receiver;
     known.operands.arguments.append(call.argumentsOperands());
-    known.stamps = { call.expectedResult(), call.accessSite(), call.allocationSite() };
+    known.stamps = { call.expectedResult(), call.accessSite(), call.allocationSite(), call.calleeName() };
 
     auto withoutSameCall = [&](BuiltinUsePlan&& plan) -> BuiltinUsePlan {
         if (plan.kind == BuiltinUseKind::UnmatchedCall)

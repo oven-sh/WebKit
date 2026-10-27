@@ -501,7 +501,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
         throwUninitializedBinding(globalObject, scope, decoded.a);
         break;
     case ThrowKind::NotAFunction:
-        throwException(globalObject, scope, createNotAFunctionError(globalObject, value(), decoded.a == ThrowSiteWord::none ? StringView() : Image::current()->text().view(StringID(decoded.a))));
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, value(), decoded.a == ThrowSiteWord::none ? nameOfCalleeForwardedOnTop(vm) : Image::current()->text().view(StringID(decoded.a))));
         break;
     case ThrowKind::ErrorWithMessage:
         throwErrorWithMessage(instance, globalObject, scope, decoded);

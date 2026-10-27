@@ -45,6 +45,7 @@ JS_EXPORT_PRIVATE String quotedSourceOfFailedExpression(VM&);
 StringView nameOfConstructorThatRunsOnTop(VM&);
 // An operation runs in the top frame, for an `instanceof` of compiled code: the expression as it is written. Null for any other frame and where the site holds no text.
 StringView instanceofExpressionOnTop(VM&);
+StringView nameOfCalleeForwardedOnTop(VM&);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, StringView member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, const Identifier& member);
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue base, JSValue key);

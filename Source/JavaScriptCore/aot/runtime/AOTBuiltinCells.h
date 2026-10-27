@@ -64,6 +64,7 @@ public:
     // The exports of a built-in module tell of nothing.
     void fillCellsUnderModules();
     void didLoadModule(RuntimeModuleID, JSObject* exports);
+    void didLoadNativeModule(RuntimeModuleID, JSObject* exports);
     void didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* member);
     void fillCellsOfEngine();
 

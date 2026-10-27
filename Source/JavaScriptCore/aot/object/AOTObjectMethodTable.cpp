@@ -18,6 +18,7 @@
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
@@ -808,17 +809,9 @@ static bool putOutsideDataSlot(JSGlobalObject* globalObject, Object* object, Pro
     return true;
 }
 
-// A store for another receiver ends in a definition on the receiver. A proxy asks its handler for two traps and, where it has neither, hands the question and the definition on to its target.
-static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
+static bool hasNeitherTrapOfDefinitions(VM& vm, State& state, JSObject* handler)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!receiver.isCell() || receiver.asCell()->type() != ProxyObjectType)
-        return false;
-    ProxyObject* proxy = uncheckedDowncast<ProxyObject>(receiver.asCell());
-    if (!proxy->handler().isObject() || proxy->target() != target)
-        return false;
-    JSObject* handler = asObject(proxy->handler());
-    State& state = target->state();
     for (const Identifier* trap : { &vm.propertyNames->defineProperty, &vm.propertyNames->getOwnPropertyDescriptor }) {
         UniquedStringImpl* uid = trap->impl();
         if (const Slot* filed = state.propertyCaches->findByKey(handler->structure(), uid, SlotAccess::Read)) {
@@ -844,6 +837,42 @@ static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
             return false;
     }
     return true;
+}
+
+JSObject* RuntimeHooks::targetThatProxyDefinesOn(VM& vm, JSValue receiver)
+{
+    if (!receiver.isCell() || receiver.asCell()->type() != ProxyObjectType)
+        return nullptr;
+    ProxyObject* proxy = uncheckedDowncast<ProxyObject>(receiver.asCell());
+    // A proxy that has been revoked holds null for both.
+    if (!proxy->handler().isObject())
+        return nullptr;
+    JSObject* handler = asObject(proxy->handler());
+    Object* compiledHandler = compiledObjectOrNull(handler);
+    Object* compiled = compiledHandler ? compiledHandler : compiledObjectOrNull(proxy->target());
+    if (!compiled)
+        return nullptr;
+    State& state = compiled->state();
+    if (!compiledHandler || compiledHandler->hasFlagsInOrderWord())
+        return hasNeitherTrapOfDefinitions(vm, state, handler) ? proxy->target() : nullptr;
+
+    StructureID structure = handler->structureID();
+    HandlerKnownByItsSlots& known = state.handlersKnownByTheirSlots[(structure.bits() >> 4) % State::numberOfHandlersKnownByTheirSlots];
+    auto isEmpty = [&](const FieldData* field) {
+        return !field || !compiledHandler->isInSlot(*field);
+    };
+    if (known.structure != structure || known.prototype != handler->getPrototypeDirect().getObject()) {
+        JSGlobalObject* realm = handler->realm();
+        if (handler->getPrototypeDirect() != JSValue(realm->objectPrototype()) || !locksBuiltins(realm))
+            return hasNeitherTrapOfDefinitions(vm, state, handler) ? proxy->target() : nullptr;
+        known = { structure, realm->objectPrototype(), compiledHandler->fieldNamed(state, vm.propertyNames->defineProperty.impl()), compiledHandler->fieldNamed(state, vm.propertyNames->getOwnPropertyDescriptor.impl()) };
+    }
+    return isEmpty(known.fieldOfDefineProperty) && isEmpty(known.fieldOfGetOwnPropertyDescriptor) ? proxy->target() : nullptr;
+}
+
+static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
+{
+    return RuntimeHooks::targetThatProxyDefinesOn(vm, receiver) == target;
 }
 
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)

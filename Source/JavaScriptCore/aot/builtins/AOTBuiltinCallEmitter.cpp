@@ -761,7 +761,11 @@ void BuiltinCallEmitter::generateGetBuiltinValue(const ValueContext& value)
 
 void BuiltinCallEmitter::generateInitializeBuiltin(const ValueContext& value)
 {
-    emitter<ConstantEmitter>().builtinCell(value, m_builtins.canonicalID(value->builtin()));
+    BuiltinID member = m_builtins.canonicalID(value->builtin());
+    if (BuiltinCellKey::object(member).hasCell(m_builtins))
+        emitter<ConstantEmitter>().builtinCell(value, member);
+    else
+        builtinValue(value, BuiltinCellKey::value(member));
 }
 
 } } } // namespace JSC::AOT::Typed

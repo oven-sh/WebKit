@@ -149,9 +149,9 @@ void letAnythingHappenTo(ValueFlowRuleContext& context, ClimbingSet escaped)
     ValueSetID unknown = unknownValue(context, ValueFlowUnknownSource::ContentsOfEscapedObject);
     ValueSetID unknownObject = context.maker().intersect(unknown, universe.objects());
     context.mark(objects, OptionSet<ObjectMutation>::all());
-    // No statement of the program writes through a set that holds the unknown object beside known ones: what the program lays on an object and what nobody knows never share a node, whichever objects escape together.
+    // No statement of the program writes through a set that holds a mark, and no read asks for one: what the program lays on an object and what nobody knows never share a node, whichever objects escape together.
     auto throughReceiversNobodyKnows = [&](ClimbingSet receivers) {
-        return context.unite(receivers, ClimbingSet(universe.unknownObjectAlone()));
+        return context.unite(receivers, ClimbingSet(only(context, ValueFlowUniverse::markOfMemberLeftOut())));
     };
     ClimbingSet receivers = throughReceiversNobodyKnows(objects);
     context.add(context.written(receivers, { ValueFlowNameKind::UnknownKey, 0 }), unknown);

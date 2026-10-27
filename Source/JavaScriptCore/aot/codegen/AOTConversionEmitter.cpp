@@ -614,7 +614,7 @@ Integer ConversionEmitter::widen(Word32 value, Range range)
     return isNonNegative(range) ? zeroExtended(value) : signExtended(value);
 }
 
-Word32 ConversionEmitter::toInt32(Number value)
+Word32 ConversionEmitter::toInt32(Number value, BitsOfInt32 bits)
 {
     if (std::optional<Word32> converted = convertedInt32Of(value))
         return *converted;
@@ -638,13 +638,13 @@ Word32 ConversionEmitter::toInt32(Number value)
         return either<Word32>(isExact, [&] {
             return low32(exact->value);
         }, [&] {
-            return toInt32OfAnyNumber(value);
+            return toInt32OfAnyNumber(value, bits);
         });
     }
-    return toInt32OfAnyNumber(value);
+    return toInt32OfAnyNumber(value, bits);
 }
 
-Word32 ConversionEmitter::toInt32OfAnyNumber(Number value)
+Word32 ConversionEmitter::toInt32OfAnyNumber(Number value, BitsOfInt32 bits)
 {
 #if CPU(ARM64)
     if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics(build().targetFeatures())) {
@@ -656,6 +656,8 @@ Word32 ConversionEmitter::toInt32OfAnyNumber(Number value)
     }
 #endif
     Integer truncated = toInteger(value);
+    if (bits == BitsOfInt32::Lowest)
+        return low32(truncated);
     // x86-64 truncates whatever is outside int64 to the least of them. ARM64 stops at either end.
     Condition fits = isX86_64() ? notEqual(truncated, integer(std::numeric_limits<int64_t>::min())) : below(integer(1), add(truncated, integer(std::numeric_limits<int64_t>::min() + 1)));
     return either<Word32>(fits, [&] {

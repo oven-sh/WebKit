@@ -57,9 +57,8 @@ function f1 name="letter" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # CHECK: Int64 b@[[text]] = Load(b@[[address]], ControlDependent|ReadsImmutable|Reads:singleCharacterStrings, {{*}}:CallInline)
 # CHECK: Return(b@[[text]], Terminal)
 # CHECK-LABEL: end of function
-# The only branch is the one of `code & 127`, which asks whether the number fits into an integer.
+# There is no branch: `code & 127` looks at the lowest bits of the number alone, which are right however large the number is.
 # NONE-LABEL: name="letter" role=Source
-# NONE: Branch(b@{{*}}:BitAnd)
 # NONE-NOT: Branch(
 # NONE-NOT: ExitsSideways
 # NONE-LABEL: end of function

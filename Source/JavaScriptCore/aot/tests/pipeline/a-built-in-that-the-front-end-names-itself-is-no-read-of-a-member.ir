@@ -1,0 +1,29 @@
+# A front end writes the read of a locked member as a constant, and the first read of a member may add it to its holder. `{ __proto__: null }` is sent as a call of Object.create, which the
+# program does not read: the constant says so, and Object stays as it is. Behind the pass that looks at it, the constant is like any other.
+# FORM: AsRead
+# RUN: pipeline ResolveAccesses
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Null
+    v1 = Builtin builtin=ObjectCreate [isNotReadFromHolder]
+    v2 = Call v1, -, v0
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectEntries
+    v5 = Call v4, v3, v3
+    v6 = Builtin builtin=ObjectFreeze [isNotReadFromHolder]
+    v7 = Builtin builtin=Reflect
+    v8 = Builtin builtin=ReflectOwnKeys
+    v9 = Call v8, v7, v3
+    v10 = NewArray v2, v6, v9 contents=anything
+    Return v10
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: InitializeBuiltin builtin=ObjectCreate
+# CHECK: InitializeBuiltin builtin=ObjectEntries
+# CHECK-NOT: InitializeBuiltin builtin=ObjectFreeze
+# CHECK: Builtin builtin=ObjectFreeze
+# CHECK-NOT: isNotReadFromHolder

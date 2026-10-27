@@ -9,7 +9,9 @@
 
 #include "AOTInstance.h"
 #include "AOTVector.h"
+#include "StructureID.h"
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <span>
 #include <type_traits>
@@ -105,6 +107,14 @@ private:
 extern template class CreatedAtFirstUse<PropertyCaches>;
 extern template class CreatedAtFirstUse<StringKeyCache>;
 
+// A compiled object right below a locked Object.prototype, as it was born, has one of the two traps only in the slot of its field. A field is null where the layout has none of the name.
+struct HandlerKnownByItsSlots {
+    StructureID structure;
+    const JSObject* prototype { nullptr };
+    const FieldData* fieldOfDefineProperty { nullptr };
+    const FieldData* fieldOfGetOwnPropertyDescriptor { nullptr };
+};
+
 struct State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
     WTF_MAKE_NONCOPYABLE(State);
@@ -143,6 +153,8 @@ struct State {
     const void* returnAddressOfThrowAfterCleanup { nullptr };
     // What that cleanup has kept of the throw that entered it: the Exception, or where a `throw` of the same function returns to, or zero. It is read only between that Throw and the search for its handler.
     uint64_t keptByCleanup { 0 };
+    static constexpr unsigned numberOfHandlersKnownByTheirSlots = 8;
+    std::array<HandlerKnownByItsSlots, numberOfHandlersKnownByTheirSlots> handlersKnownByTheirSlots { };
 
 private:
     explicit State(Instance&);

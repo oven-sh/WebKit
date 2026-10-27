@@ -884,18 +884,24 @@ static uint64_t countChecks(const Function& function)
     return numberOfChecks;
 }
 
-// The front end writes the read of a locked member as a constant.
-static void initializeMembersOfListedHolders(const BuiltinTable& builtins, const FlowResults& results, const Function& function, FunctionAnalyses& analyses, IRBuilder& builder)
+// The front end writes the read of a locked member as a constant. Where it names the object itself, the program reads nothing. From here on one constant is like the other.
+static void initializeMembersOfListedHolders(const BuiltinTable& builtins, const FlowResults& results, Function& function, FunctionAnalyses& analyses, IRBuilder& builder)
 {
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& constant = function.values[index];
-        if (constant.opcode != Opcode::Builtin || !firstReadChangesListedKeys(builtins, results, constant.builtin()))
+        if (constant.opcode != Opcode::Builtin)
+            continue;
+        if (constant.isNotReadFromHolder()) {
+            function.edit(ValueID(index), ValueEdit::Definition).setIsNotReadFromHolder(false);
+            continue;
+        }
+        if (!firstReadChangesListedKeys(builtins, results, constant.builtin()))
             continue;
         const UseLists& useLists = analyses.useLists();
         if (useLists.locationOf(ValueID(index)).placement != ValuePlacement::InBlock)
             continue;
         builder.setOrigin(constant.origin());
-        builder.insertBefore(useLists.pointAfter(ValueID(index)), *tryMakeInitializeBuiltin(builtins, results, constant));
+        builder.insertBefore(useLists.pointAfter(ValueID(index)), *tryMakeInitializeBuiltin(builtins, results, constant.builtin()));
     }
 }
 

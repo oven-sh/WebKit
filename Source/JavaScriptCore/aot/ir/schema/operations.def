@@ -26,7 +26,7 @@ operation Integer (integer: Int64) -> constant ; none ; flow = TableProves ; has
 operation Double (number: Double) -> constant ; none ; flow = TableProves ; hasKnownValueRule = true ; flowsWithoutRule = true
 operation String (string: String) -> constant ; CreatesConstant ; runtime = StringConstant ; flow = TableProves ; hasKnownValueRule = true ; flowsWithoutRule = true
 operation BigInt (digits: String) -> constant ; CreatesConstant ; runtime = BigIntConstant ; flow = TableProves ; flowsWithoutRule = true
-operation Builtin (builtin: Builtin) -> constant ; CreatesConstant ; runtime = BuiltinCell ; flow = TableProves ; flowRule = Module
+operation Builtin (builtin: Builtin) [isNotReadFromHolder] -> constant ; CreatesConstant ; runtime = BuiltinCell ; flow = TableProves ; flowRule = Module
 operation ModuleBuiltin (builtin: Builtin, module: Module(Referrer)) -> constant ; Allocates UsesRuntime throws ; runtime = ModuleBuiltinCell ; flow = TableProves
 operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
 operation NewClosure (function: Function(Closure), captures...: Declared/retains(result), with CellStamp, engine from Selected closureForm: ClosureForm) [| engine isMadeOnDemand isHeldByClosureTable isLent] -> constant ; Allocates ; runtime = NewClosureSlow ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowsWithoutRule = true

@@ -1739,6 +1739,8 @@ void Modules::evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (runsWhenLoaded)
         evaluateLoadedCommonJSFile(moduleOnWay);
+    else if (isNativeModule(moduleOnWay))
+        captureExports(moduleOnWay);
     auto found = m_levelsOfLoads.find(moduleOnWay);
     if (found == m_levelsOfLoads.end()) [[likely]] {
         scope.release();
@@ -2182,6 +2184,30 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         throwAsyncModuleError();
 }
 
+JSValue Modules::requireNativeModule(ModuleID module)
+{
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (JSValue cached = value(module))
+        return cached;
+    JSValue exports;
+    if (host().requireNativeModule) {
+        RequestToHostScope requestToHost(*this);
+        exports = host().requireNativeModule(realm, pathString(module));
+    } else if (auto* requireBuiltinModule = realm->globalObjectMethodTable()->requireBuiltinModule)
+        exports = requireBuiltinModule(realm, *data(module).registryID());
+    else
+        throwException(realm, scope, createBuiltinModulesUnavailableError(realm));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_ASSERT(exports);
+    setValue(module, exports);
+    if (exports.isObject())
+        m_state.builtinCells->didLoadNativeModule(RuntimeModuleID(*data(module).registryID()), asObject(exports));
+    if (status(module) == ModuleStatus::Unlinked || status(module) == ModuleStatus::Linked)
+        setStatus(module, ModuleStatus::Evaluated);
+    return exports;
+}
+
 JSValue Modules::execute(ModuleID module)
 {
     VM& vm = *m_instance.vm;
@@ -2194,6 +2220,8 @@ JSValue Modules::execute(ModuleID module)
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, exportsSeenByLoader(module));
     }
+    if (isNativeModule(module))
+        RELEASE_AND_RETURN(scope, requireNativeModule(module));
 
     switch (status(module)) {
     case ModuleStatus::Unlinked:

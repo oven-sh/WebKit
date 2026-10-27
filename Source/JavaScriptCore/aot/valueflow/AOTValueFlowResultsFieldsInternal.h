@@ -683,7 +683,6 @@ public:
     ValueSetID objectsThatMayBeEnumerated() const { return m_enumerated; }
     ValueSetID objectsWithAllKeysShown() const { return m_withAllKeysShown; }
     ValueSetID objectsWithEnumerableKeysShown() const { return m_withEnumerableKeysShown; }
-    ValueSetID objectsSeenWithKeysShown() const { return m_seenWithKeysShown; }
     bool mayBeExportedByCommonJSModule(ValueSetID objects) const { return m_inputs.sets().meet(objects, m_exportedByCommonJSModules); }
     bool mayBeObservedUnder(ValueSetID objects, PropertyKeyID) const;
     bool mayBeCalledUnder(ValueSetID objects, PropertyKeyID key) const { return m_inputs.sets().meet(objects, setAt(m_calledUnderKey, key.index())); }
@@ -702,7 +701,6 @@ private:
         UnionOfSets withAllKeysShown;
         UnionOfSets withEnumerableKeysShown;
         UnionOfSets walkedForEnumerableKeys;
-        UnionOfSets seenWithKeysShown;
         UnionOfSets observedUnderAnyKey;
         PartsByNumber observedUnderKey;
         PartsByNumber startsOfTestsUnderKey;
@@ -795,7 +793,6 @@ private:
     ValueSetID m_enumerated { ValueSets::nothing };
     ValueSetID m_withAllKeysShown { ValueSets::nothing };
     ValueSetID m_withEnumerableKeysShown { ValueSets::nothing };
-    ValueSetID m_seenWithKeysShown { ValueSets::nothing };
     ValueSetID m_exportedByCommonJSModules { ValueSets::nothing };
     ValueSetID m_observedUnderAnyKey { ValueSets::nothing };
     SetsByNumber m_observedUnderKey;

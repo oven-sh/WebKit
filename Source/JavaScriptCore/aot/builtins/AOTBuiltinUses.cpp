@@ -444,6 +444,14 @@ static Value makeConstant(const Program& program, const BuiltinUsePlan& plan)
     return WTF::move(*constant);
 }
 
+// The value of a read may be known at build time. What the read does to the holder is not undone by that.
+static std::optional<Value> tryMakeInitializationOfReadMember(const BuiltinTable& table, const FlowResults& flow, const BuiltinUsePlan& plan)
+{
+    if (plan.constant || (plan.readsPrivateAlias && onlyAddsMemberToHolder(table, plan.member)))
+        return std::nullopt;
+    return tryMakeInitializeBuiltin(table, flow, plan.member);
+}
+
 static Value makeHostValueRead(const BuiltinUsePlan& plan)
 {
     Value read = IRBuilder::make(Opcode::GetBuiltinValue);
@@ -469,10 +477,8 @@ Effects effectsWhenApplied(const BuiltinUseInputs& inputs, const BuiltinUsePlan&
     case BuiltinUseKind::Constant: {
         Value constant = makeConstant(inputs.program, plan);
         Effects effects = declaredBoundOf(constant.opcode);
-        if (tryMakeInitializeBuiltin(inputs.program.builtins(), inputs.flow, constant))
+        if (tryMakeInitializationOfReadMember(inputs.program.builtins(), inputs.flow, plan))
             effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
-        if (plan.leavesReadBehind)
-            effects.merge(declaredBoundOf(Opcode::PropGet));
         effects.merge(nullishCheckEffects);
         return effects;
     }
@@ -648,10 +654,8 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
     case BuiltinUseKind::Constant: {
         insertReceiverCheck(context, function.at(rewrite.use).objectOperand(), plan.nullishCheck, insert);
         Value constant = makeConstant(context.program, plan);
-        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(context.program.builtins(), context.inputs.flow, constant))
+        if (std::optional<Value> initialization = tryMakeInitializationOfReadMember(context.program.builtins(), context.inputs.flow, plan))
             insert(WTF::move(*initialization));
-        if (plan.leavesReadBehind)
-            insert(Value(function.at(rewrite.use)));
         replaceKeepingOrigin(function.edit(rewrite.use), WTF::move(constant));
         break;
     }

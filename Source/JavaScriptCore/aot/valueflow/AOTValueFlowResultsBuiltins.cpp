@@ -808,9 +808,6 @@ void findHoldersWithListedKeys(const ValueFlowResultInputs& inputs, const ValueF
     auto noteHolder = [&](BuiltinID holder) {
         tables.holdersWithListedKeys.set(holder.index());
     };
-    forEachHolderIn(objectsSeenWithKeysShown(usesOfHeap), [&](BuiltinID holder) {
-        tables.holdersSeenListed.set(holder.index());
-    });
     forEachHolderIn(objectsWithAllKeysShown(usesOfHeap), noteHolder);
     forEachHolderIn(objectsWithEnumerableKeysShown(usesOfHeap), [&](BuiltinID holder) {
         bool showsOrder = std::ranges::any_of(builtins.membersOf(holder), [&](BuiltinID member) {

@@ -124,22 +124,22 @@ function f1 name="turn" module=m0 position=43 flags=[IsChecked, HasExplicitName]
 # LOWERED-NEXT: Int32 b@[[element]] = Load8Z(b@[[address]], ControlDependent|Reads:TypedArrayElements, [[read]]:GetTypedArrayElement)
 
 # Clamping to 0..255 is two Selects per element, not branches.
-# BODY-LABEL: steps by 4
-# BODY-COUNT-4: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
+# BODY-LABEL: steps by 8
+# BODY-COUNT-8: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
 # BODY-NOT: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
 # BODY-LABEL: end of loop
-# STORES-LABEL: steps by 4
-# STORES-COUNT-4: = Store8(b@{{*}}Writes:TypedArrayElements
+# STORES-LABEL: steps by 8
+# STORES-COUNT-8: = Store8(b@{{*}}Writes:TypedArrayElements
 # STORES-NOT: = Store8(b@{{*}}Writes:TypedArrayElements
 # STORES-LABEL: end of loop
-# BRANCHES-LABEL: steps by 4
+# BRANCHES-LABEL: steps by 8
 # BRANCHES-NOT: Branch(
 # BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of loop
-# HOT-LABEL: steps by 4
+# HOT-LABEL: steps by 8
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
-# X64: instructions: 26, patchpoints: 8, {{*}} steps by 4
-# ARM64: instructions: 27, patchpoints: 8, {{*}} steps by 4
+# X64: instructions: 42, patchpoints: 16, {{*}} steps by 8
+# ARM64: instructions: 43, patchpoints: 16, {{*}} steps by 8

@@ -472,8 +472,11 @@ private:
             sites.keyOrderTests.append(KeyOrderTestUse { value.layout(), Vector<FieldIndex>(value.fields()) });
             break;
         case Opcode::Builtin:
+            appendCell(BuiltinCellKey::object(builtins.canonicalID(value.builtin())));
+            break;
         case Opcode::InitializeBuiltin:
             appendCell(BuiltinCellKey::object(builtins.canonicalID(value.builtin())));
+            appendCell(BuiltinCellKey::value(builtins.canonicalID(value.builtin())));
             break;
         case Opcode::IsBuiltinLocationUnchanged:
             appendCellsOfMember(value.member());

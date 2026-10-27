@@ -525,6 +525,12 @@ void BuiltinCells::didLoadModule(RuntimeModuleID module, JSObject* exports)
     }
 }
 
+void BuiltinCells::didLoadNativeModule(RuntimeModuleID module, JSObject* exports)
+{
+    if (BuiltinID root = BuiltinTable::singleton().namespaceOf(module))
+        didLock(root, exports);
+}
+
 void BuiltinCells::didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* created)
 {
     size_t awaited = m_awaitedMembers.findIf([&](const AwaitedMember& member) {

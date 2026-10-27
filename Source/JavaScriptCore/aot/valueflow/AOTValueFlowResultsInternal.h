@@ -814,7 +814,6 @@ ValueFlowHeapView& heapViewOf(ValueFlowUsesOfHeap&);
 ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap&);
 ValueSetID objectsWithAllKeysShown(const ValueFlowUsesOfHeap&);
 ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap&);
-ValueSetID objectsSeenWithKeysShown(const ValueFlowUsesOfHeap&);
 
 struct ValueFlowConstructions {
     struct OfLayout {

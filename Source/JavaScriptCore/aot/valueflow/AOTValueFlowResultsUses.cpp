@@ -262,7 +262,6 @@ void UsesOfObjects::goOnToPrototypes(ValueSetMakers& makers)
             BorrowedValueSetMaker maker(m_inputs.makerPool());
             m_enumerated = m_heap.chainOf(maker.get(), takeUnion(&Notes::enumerated).takeExpanded(m_heap, maker.get()));
             m_withAllKeysShown = takeUnion(&Notes::withAllKeysShown).take(maker.get());
-            m_seenWithKeysShown = takeUnion(&Notes::seenWithKeysShown).take(maker.get());
             m_withEnumerableKeysShown = maker.get().unite(takeUnion(&Notes::withEnumerableKeysShown).take(maker.get()), followPrototypeLinks(maker.get(), takeUnion(&Notes::walkedForEnumerableKeys).take(maker.get())));
         },
         [&] {
@@ -519,9 +518,7 @@ void UsesOfObjects::noteShownKeys(Noter noter, ValueSetID objects, ShownKeys sho
 {
     if (shown == ShownKeys::None)
         return;
-    if (isFullyKnown(objects))
-        noter.notes.seenWithKeysShown.add(noter.maker.intersect(objects, m_inputs.universe().builtinObjects()));
-    else
+    if (!isFullyKnown(objects))
         objects = m_inputs.universe().builtinObjects();
     if (goesOnToPrototypes)
         noter.notes.walkedForEnumerableKeys.add(objects);

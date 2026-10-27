@@ -396,14 +396,12 @@ bool onlyAddsMemberToHolder(const BuiltinTable& table, BuiltinID member)
     return !isMadeWithCodeOfLibrary(table, member);
 }
 
-std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const FlowResults& flow, const Value& constant)
+std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable& table, const FlowResults& flow, BuiltinID member)
 {
-    if (constant.opcode != Opcode::Builtin)
-        return std::nullopt;
-    if (!isMadeWithCodeOfLibrary(table, constant.builtin()) && !firstReadChangesListedKeys(table, flow, constant.builtin()))
+    if (!isMadeWithCodeOfLibrary(table, member) && !firstReadChangesListedKeys(table, flow, member))
         return std::nullopt;
     Value initialization = IRBuilder::make(Opcode::InitializeBuiltin);
-    initialization.setBuiltin(constant.builtin());
+    initialization.setBuiltin(member);
     return initialization;
 }
 

@@ -328,13 +328,17 @@ private:
     JSObject* createTableOfExports();
     JSModuleLoader* loader() const;
 
-    bool loadRuntimeModules(const ModuleLinkWalk&);
+    enum class NativeModuleLoading : bool { Eager, Deferred };
+    bool loadRuntimeModules(const ModuleLinkWalk&, NativeModuleLoading = NativeModuleLoading::Eager);
     void link(const ModuleLinkWalk&);
     void captureSyntheticExports(const ModuleLinkWalk&, VisitedModuleRecords&);
     void finishLink(const ModuleLinkWalk&, LinkContext&);
     void didLinkEntryPoint();
     bool didCaptureExports(ModuleID) const;
     void captureExports(ModuleID);
+    bool isNativeModule(ModuleID) const;
+    JSObject* generateNativeModuleExports(ModuleID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
+    JSValue requireNativeModule(ModuleID);
     void bindLatestCapture(ModuleID);
     void captureExportsBehindEvaluation(ModuleID);
     void captureExportsOfFilesBeingEvaluated(ModuleID root);

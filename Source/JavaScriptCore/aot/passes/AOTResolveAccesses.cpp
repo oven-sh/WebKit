@@ -253,13 +253,6 @@ static CalleeSetID calleesOfGetterInSlot(FunctionPassContext& context, const Pro
     return context.types.intern(CalleeSet::complete(Vector<FunctionID>(getters->span()), { }));
 }
 
-static Value makeBuiltinConstant(BuiltinID builtin)
-{
-    Value constant = IRBuilder::make(Opcode::Builtin);
-    constant.setBuiltin(builtin);
-    return constant;
-}
-
 Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPlan& plan, const SlotStamp& stamp)
 {
     const Program& program = context.program;
@@ -270,7 +263,7 @@ Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPl
         return Effects::none();
     case AccessForm::Builtin: {
         Effects effects = declaredBoundOf(Opcode::Builtin);
-        if (tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, makeBuiltinConstant(plan.member.builtin)))
+        if (tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, plan.member.builtin))
             effects.merge(declaredBoundOf(Opcode::InitializeBuiltin));
         return effects;
     }
@@ -423,7 +416,7 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
             value->setBoolean(plan.booleanConstant);
         break;
     case AccessForm::Builtin:
-        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, makeBuiltinConstant(plan.member.builtin)))
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, plan.member.builtin))
             insertBeforeAccess(WTF::move(*initialization));
         value->become(Opcode::Builtin);
         value->setBuiltin(plan.member.builtin);

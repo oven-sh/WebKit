@@ -51,11 +51,6 @@ ValueSetID objectsWithEnumerableKeysShown(const ValueFlowUsesOfHeap& usesOfHeap)
     return usesOfHeap.uses.objectsWithEnumerableKeysShown();
 }
 
-ValueSetID objectsSeenWithKeysShown(const ValueFlowUsesOfHeap& usesOfHeap)
-{
-    return usesOfHeap.uses.objectsSeenWithKeysShown();
-}
-
 void listStoresByLayout(const ValueFlowResultInputs& inputs, ValueFlowUsesOfHeap& usesOfHeap, const FlowResultTables& tables)
 {
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);

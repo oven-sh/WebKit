@@ -112,7 +112,7 @@ std::optional<Value> tryMakeBuiltinConstant(const Program&, BuiltinID member);
 bool firstReadChangesListedKeys(const BuiltinTable&, const FlowResults&, BuiltinID member);
 // Of a member that InitializeBuiltin names: no code of the library runs to make it.
 bool onlyAddsMemberToHolder(const BuiltinTable&, BuiltinID member);
-std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable&, const FlowResults&, const Value& constant);
+std::optional<Value> tryMakeInitializeBuiltin(const BuiltinTable&, const FlowResults&, BuiltinID member);
 
 } } } // namespace JSC::AOT::Typed
 

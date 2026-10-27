@@ -253,6 +253,7 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
 }
 
 static StringView nameOfCalleeAtCallSite(VM&);
+static StringView nameOfForwardedCallee(VM&);
 
 template<bool isParent>
 static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue callee, JSValue newTarget, const ArgList& arguments)
@@ -291,7 +292,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTApply, EncodedJSValue, (Instance* instance,
     JSValue function = JSValue::decode(callee);
     auto callData = JSC::getCallData(function);
     if (callData.type == CallData::Type::None) {
-        throwNotAFunctionError(globalObject, scope, function);
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, function, nameOfForwardedCallee(vm)));
         OPERATION_RETURN(scope, encodedJSValue());
     }
     MarkedArgumentBuffer arguments;
@@ -430,7 +431,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArgumentList, JSCell*, (Instance* instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArgumentList);
     JSValue function = JSValue::decode(callee);
     if (!function.isCallable()) {
-        throwNotAFunctionError(globalObject, scope, function);
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, function, nameOfForwardedCallee(vm)));
         OPERATION_RETURN(scope, nullptr);
     }
     if (JSArray* list = tryCopyUnmappedArguments(instance, JSValue::decode(arrayLike)))
@@ -495,6 +496,37 @@ static StringView nameOfCalleeAtCallSite(VM& vm)
     if (!frames || frames->isAtEnd())
         return { };
     return nameOfCalleeAt(frames->callSite());
+}
+
+// `f.apply(receiver, list)` and `f.call(receiver)` name `f.apply` and `f.call` where `f` refuses the call, as bytecode does, which calls `f` at that place.
+// The built-in function is a function of the library. Its frame stands above the place unless it has left by its tail call, and entered in any other way it names nothing.
+static StringView nameOfCalleeForwardedBy(auto& frames)
+{
+    FunctionID function = frames->frame().function;
+    std::optional<uint32_t> builtin = builtinOfFunctionInFrames(function) ? std::nullopt : Image::current()->programTables().builtinImplementedBy(function.index());
+    if (!builtin)
+        return { };
+    ASCIILiteral member = BuiltinID(*builtin) == Builtins::FunctionPrototypeApply ? ".apply"_s : BuiltinID(*builtin) == Builtins::FunctionPrototypeCall ? ".call"_s : ""_s;
+    frames->advanceToCallerMachineFrame();
+    StringView name = frames->isAtEnd() ? StringView() : nameOfCalleeAt(frames->callSite());
+    return !member.isEmpty() && name.endsWith(member) ? name : StringView();
+}
+
+static StringView nameOfForwardedCallee(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, vm.topCallFrame, vm.topEntryFrame);
+    if (!frames || frames->isAtEnd())
+        return { };
+    StringView name = nameOfCalleeAt(frames->callSite());
+    return name.isEmpty() ? nameOfCalleeForwardedBy(frames) : name;
+}
+
+StringView nameOfCalleeForwardedOnTop(VM& vm)
+{
+    auto frames = CompiledFrameIterator::tryCreateAtTop(vm);
+    if (!frames || frames->isAtEnd())
+        return { };
+    return nameOfCalleeForwardedBy(frames);
 }
 
 StringView instanceofExpressionOnTop(VM& vm)

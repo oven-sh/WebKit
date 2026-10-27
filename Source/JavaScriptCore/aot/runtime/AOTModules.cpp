@@ -852,7 +852,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
             std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
             {
                 SetForScope stackPointerOfImport(vm.aotState().stackPointerOfImport, currentStackPointer());
-                loadRuntimeModules(*linkWalk);
+                loadRuntimeModules(*linkWalk, NativeModuleLoading::Deferred);
             }
             RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
             keepLinkWalk(WTF::move(linkWalk));
@@ -1488,7 +1488,7 @@ ModuleRecord* Modules::exposeRecord(ModuleID module, RecordHolder holder)
     // The walk of the root has loaded what a module below it needs, and is kept for the link.
     if ((status(module) == ModuleStatus::Unlinked || data(module).capturesExports()) && !m_isWalkingRequests && !m_levelsOfLoads.contains(module)) {
         std::unique_ptr<ModuleLinkWalk> linkWalk = takeLinkWalk(module);
-        loadRuntimeModules(*linkWalk);
+        loadRuntimeModules(*linkWalk, NativeModuleLoading::Deferred);
         RETURN_IF_EXCEPTION(scope, nullptr);
         keepLinkWalk(WTF::move(linkWalk));
     }

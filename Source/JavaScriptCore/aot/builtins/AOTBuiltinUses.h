@@ -62,8 +62,8 @@ struct BuiltinUsePlan {
     ValueID newTarget;
     TypeID assumedResult;
     bool isNeverInlined { false };
-    // The value of the read is known, and the read stays for what it does to the holder. Nobody takes its result.
-    bool leavesReadBehind { false };
+    // A private name of the engine finds the member, and the property that the program sees stays as it is.
+    bool readsPrivateAlias { false };
     Vector<UseRequirement, 2> requirements;
 
     explicit operator bool() const { return kind != BuiltinUseKind::None; }
