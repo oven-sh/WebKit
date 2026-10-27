@@ -43,6 +43,7 @@ struct FlowOrderInputs {
     BitVector evaluatedModules;
     BitVector modulesLoadedByName;
     BitVector modulesLoadedByHost;
+    bool hostRunsWaitingJobs { false };
     Vector<FlowModuleLoad> moduleLoads;
     Vector<FlowCall> calls;
     Vector<FlowStaticFieldAccess> staticFieldAccesses;

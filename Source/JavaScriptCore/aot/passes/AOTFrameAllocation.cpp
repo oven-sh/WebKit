@@ -352,7 +352,8 @@ static bool mayGainFrom(const Program& program, const FramePlan& plan, const Bit
     auto handsToSuchFunction = [&](const Use& use) {
         if (use.kind != Use::Kind::Operand || effectRuleOf(function.at(use.user).opcode) != EffectRule::Call)
             return false;
-        return std::ranges::any_of(calleesOfCall(program, function.at(use.user)).functions, [&](FunctionID callee) {
+        CalleeList callees = calleesOfCall(program, function.at(use.user));
+        return std::ranges::any_of(callees.seen().predicted().functions, [&](FunctionID callee) {
             return functionsThatBorrowMore.get(callee.index());
         });
     };

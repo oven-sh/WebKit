@@ -539,7 +539,7 @@ NEVER_INLINE ClimbingSet ValueFlowRuleContext::objectsThatMayHoldSomethingUnder(
     return m_solver.mayBeComputedKey(name) ? unite(*holders, valueWithin(objects, writtenUnderUnknownKey())) : *holders;
 }
 
-ValueFlowNodeID ValueFlowRuleContext::read(ClimbingSet objects, ValueFlowName name)
+ValueFlowNodeID ValueFlowRuleContext::readWhatWasWritten(ClimbingSet objects, ValueFlowName name)
 {
     AOT_THRESHOLD(uint32_t, mostObjectsReadWhole, 8);
     ASSERT(!m_solver.m_input.program || !namesElementByText(*m_solver.m_input.program, name));

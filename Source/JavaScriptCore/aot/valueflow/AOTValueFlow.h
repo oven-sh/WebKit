@@ -207,6 +207,14 @@ struct ValueFlowName {
     friend constexpr auto operator<=>(const ValueFlowName&, const ValueFlowName&) = default;
 };
 
+struct ValueFlowCellName : ValueFlowName {
+    constexpr explicit ValueFlowCellName(ValueFlowNameKind kind, uint32_t payload = 0)
+        : ValueFlowName { kind, payload }
+    {
+        ASSERT_UNDER_CONSTEXPR_CONTEXT(shapeOf(kind).sort == ValueFlowNameSort::Other);
+    }
+};
+
 inline bool namesElementByText(const Program& program, ValueFlowName name)
 {
     ValueFlowNameShape shape = shapeOf(name.kind);
@@ -214,11 +222,11 @@ inline bool namesElementByText(const Program& program, ValueFlowName name)
     return shape.reach == ValueFlowNameReach::OneKey && shape.isValueOrAccessor() && key && program.isIndexLike(key);
 }
 
-inline constexpr ValueFlowName keyOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xffffffff };
-inline constexpr ValueFlowName valueOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffe };
-inline constexpr ValueFlowName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
-inline constexpr ValueFlowName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
-inline constexpr ValueFlowName describedObjectName { ValueFlowNameKind::HiddenSlot, 0xfffffffb };
+inline constexpr ValueFlowCellName keyOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xffffffff };
+inline constexpr ValueFlowCellName valueOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffe };
+inline constexpr ValueFlowCellName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
+inline constexpr ValueFlowCellName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
+inline constexpr ValueFlowCellName describedObjectName { ValueFlowNameKind::HiddenSlot, 0xfffffffb };
 
 inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
 inline constexpr ValueFlowName unknownKeyName = ValueFlowName::of(ValueFlowNameKind::UnknownKey);
@@ -228,8 +236,8 @@ inline constexpr ValueFlowName everyGetterName = ValueFlowName::of(ValueFlowName
 inline constexpr ValueFlowName copiedFromName = ValueFlowName::of(ValueFlowNameKind::CopiedFrom);
 inline constexpr ValueFlowName prototypeLinkName = ValueFlowName::of(ValueFlowNameKind::PrototypeLink);
 inline constexpr ValueFlowName chainWithoutCopiesOntoRealmName { ValueFlowNameKind::PrototypeLink, 1 };
-inline constexpr ValueFlowName allocatedAsName = ValueFlowName::of(ValueFlowNameKind::AllocatedAs);
-inline constexpr ValueFlowName awaitedValueName = ValueFlowName::of(ValueFlowNameKind::AwaitedValue);
+inline constexpr ValueFlowCellName allocatedAsName { ValueFlowNameKind::AllocatedAs };
+inline constexpr ValueFlowCellName awaitedValueName { ValueFlowNameKind::AwaitedValue };
 
 enum class ValueFlowMaskKind : uint8_t {
     Plain,

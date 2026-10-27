@@ -194,17 +194,17 @@ static Type narrowByTruthiness(const TypingContext& context, const Type& source,
 
 static bool mayBeMemberWithoutLayout(const TypingContext& context, const Type& type)
 {
-    return type.layouts && context.types.at(type.layouts).hasMembersWithoutLayout;
+    return type.layouts && context.types.at(type.layouts).mayHoldObjectsWithoutLayout();
 }
 
 static Type withMembersWithoutLayout(const TypingContext& context, Type&& type)
 {
     if (mayBeMemberWithoutLayout(context, type))
         return WTF::move(type);
-    LayoutSet layouts { .isComplete = true, .hasMembersWithoutLayout = true };
+    Vector<LayoutID> members;
     if (type.layouts)
-        layouts.members = context.types.at(type.layouts).members;
-    type.layouts = context.types.intern(WTF::move(layouts));
+        members = context.types.at(type.layouts).written();
+    type.layouts = context.types.intern(LayoutSet::complete(WTF::move(members), true));
     return WTF::move(type);
 }
 
@@ -233,8 +233,8 @@ static Type withoutMembersWithoutLayout(const TypingContext& context, const Type
     if (!mayBeMemberWithoutLayout(context, type))
         return type;
     Type listed = type;
-    const Vector<LayoutID>& members = context.types.at(type.layouts).members;
-    listed.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet { Vector<LayoutID>(members), true });
+    const Vector<LayoutID>& members = context.types.at(type.layouts).written();
+    listed.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet::complete(Vector<LayoutID>(members)));
     return listed;
 }
 

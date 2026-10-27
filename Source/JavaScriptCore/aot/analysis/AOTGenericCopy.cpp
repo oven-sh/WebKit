@@ -192,7 +192,7 @@ void GenericCopy::computeBlocksReachingNonRareCode()
             if (m_reachesNonRareCode.get(block.index()))
                 continue;
             m_function.at(block).forEachTarget([&](const Target& target) {
-                if (!isRare(target.block) || m_reachesNonRareCode.get(target.block.index()))
+                if (!isRare(target.block).predicted() || m_reachesNonRareCode.get(target.block.index()))
                     changed |= m_reachesNonRareCode.add(block.index());
             });
         }
@@ -309,9 +309,9 @@ void GenericCopy::computeRegion(Extent extent)
 
     bool comesBack = extent == Extent::ToWaysBack;
     bool comesBackWithoutTests = comesBack && !m_isRejoinBlockWithoutTests.isEmpty();
-    BlockFrequency frequencyOfStarts = BlockFrequency::Rare;
+    Expected<BlockFrequency> frequencyOfStarts = BlockFrequency::Rare;
     for (BlockID block : m_starts)
-        frequencyOfStarts = std::min(frequencyOfStarts, m_function.at(block).frequency);
+        frequencyOfStarts = moreFrequentOf(frequencyOfStarts, m_function.at(block).frequency);
     BitVector isExit(numberOfBlocks);
     while (!worklist.isEmpty()) {
         m_function.at(worklist.takeLast()).forEachTarget([&](const Target& target) {
@@ -324,9 +324,9 @@ void GenericCopy::computeRegion(Extent extent)
                 m_untestedRejoins.append(block);
                 return;
             }
-            bool isRarerRejoinBlock = m_leavesAtRarerRejoinBlocks && m_isRejoinBlock.get(block.index()) && m_function.at(block).frequency > frequencyOfStarts;
+            bool isRarerRejoinBlock = m_leavesAtRarerRejoinBlocks && m_isRejoinBlock.get(block.index()) && (m_function.at(block).frequency > frequencyOfStarts).predicted();
             bool isRejoinBlock = isRarerRejoinBlock || (comesBack && m_isRejoinBlock.get(block.index()));
-            bool endsInRareCode = isRare(block) && !m_reachesNonRareCode.get(block.index());
+            bool endsInRareCode = isRare(block).predicted() && !m_reachesNonRareCode.get(block.index());
             if ((isRejoinBlock || endsInRareCode) && !m_mustBeCopied.get(block.index()) && (isRarerRejoinBlock || !hasValueAtHead(block, m_mayBeNarrowed, m_hasNarrowedValueAtHead))) {
                 isExit.set(block.index());
                 m_exits.append(block);
@@ -543,7 +543,7 @@ auto GenericCopy::plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::Liveness
     return Extent::NotCopied;
 }
 
-void GenericCopy::clone(BlockFrequency (*frequencyOfCopy)(BlockFrequency))
+void GenericCopy::clone(Expected<BlockFrequency> (*frequencyOfCopy)(Expected<BlockFrequency>))
 {
     RELEASE_ASSERT(!m_cloner && !m_region.isEmpty());
     Origin savedOrigin = m_builder.origin();
@@ -850,7 +850,7 @@ void GenericCopy::addWaysBack(std::span<const ValueID> changedValues, TypesTeste
 
     for (const RejoinPlan& plan : rejoins) {
         BlockID copy = copyOf(plan.block);
-        BlockFrequency frequency = m_function.at(copy).frequency;
+        Expected<BlockFrequency> frequency = m_function.at(copy).frequency;
         m_builder.setOrigin(m_function.at(plan.block).terminator.origin());
         for (Edge edge : plan.edges)
             m_builder.redirectEdge(edge, plan.testBlock, Arguments(targetOf(m_function, edge).arguments));
@@ -951,13 +951,13 @@ Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses& analyses, TypeArena
     return tested;
 }
 
-bool isClosedOnlyByWaysBack(FunctionAnalyses& analyses, const NaturalLoop& loop)
+Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses& analyses, const NaturalLoop& loop)
 {
     const NaturalLoops& loops = analyses.naturalLoops();
     const Function& function = analyses.function();
-    BlockFrequency frequencyOfHeader = function.at(loop.header()).frequency;
+    Expected<BlockFrequency> frequencyOfHeader = function.at(loop.header()).frequency;
     return std::ranges::all_of(analyses.cfg().incomingEdges(loop.header()), [&](Edge edge) {
-        return !loops.belongsTo(edge.from, loop) || isRarerThan(function.at(edge.from).frequency, frequencyOfHeader);
+        return !loops.belongsTo(edge.from, loop) || isRarerThan(function.at(edge.from).frequency, frequencyOfHeader).predicted();
     });
 }
 

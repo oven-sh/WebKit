@@ -702,6 +702,7 @@ bool ClassDefinition::hasMemberEnvironment() const
 void ClassDefinition::run(JSValue heritage, JSValue prototypeParent)
 {
     auto scope = DECLARE_THROW_SCOPE(m_vm);
+    ClassTable::InternalPutScope internalPut(m_classes);
     if (!m_classObject->kind().isInRuntimeModule)
         m_state.statics->ensureProgramStaticsInitialized();
     ASSERT(m_requestedPart == ClassPart::Everything || m_classLayout.createsMembersLazily);
@@ -1403,8 +1404,9 @@ void ensureProperties(VM& vm, Closure& classObject)
         return;
     if (hasEveryProperty(vm, classObject, layout->staticFields()))
         return;
-    classObject.ensureClassObject(vm);
     State& state = classObject.state();
+    ClassTable::InternalPutScope internalPut(state.objects->classes);
+    classObject.ensureClassObject(vm);
     for (const FieldData& field : layout->staticFields()) {
         UniquedStringImpl* uid = state.objects->layouts.nameOf(vm, field);
         if (PropertyName(uid).isPrivateName() || !isInVariable(classObject, field) || isValidOffset(classObject.structure()->get(vm, uid)))
@@ -1422,10 +1424,23 @@ void moveToProperty(VM& vm, Closure& classObject, const FieldData& field)
     UniquedStringImpl* uid = state.objects->layouts.nameOf(vm, field);
     JSValue value = classes.readStaticField(field);
     ASSERT(value);
+    ClassTable::InternalPutScope internalPut(classes);
     ensureProperties(vm, classObject);
     classObject.putDirect(vm, uid, value, 0);
     ProgramStatics::writeVariable(state.instance, field.slot, JSValue());
     classes.didChangeMember(*classObject.classData(), ClassSide::Static, uid);
+}
+
+void willPutDirect(VM& vm, Closure& classObject, UniquedStringImpl* uid)
+{
+    const LayoutData* layout = classObject.classData();
+    if (!layout || layout->staticFields().empty() || !ownsVariables(classObject) || classObject.state().objects->classes.isInInternalPut())
+        return;
+    const FieldData* field = findOwnField(classObject, uid);
+    if (field && isInVariable(classObject, *field))
+        moveToProperty(vm, classObject, *field);
+    else
+        ensureProperties(vm, classObject);
 }
 
 void didDeleteProperty(VM& vm, Closure& classObject, const FieldData& field)

@@ -227,7 +227,7 @@ struct BlocksReachedFrom {
                 return false;
             isPending.quickClear(position);
             for (BlockID successor : cfg.successors(order[position])) {
-                if ((!frequencies || !(frequencies->classOf(start) < frequencies->classOf(successor))) && !isReached.quickSet(successor.index()))
+                if ((!frequencies || !(frequencies->classOf(start) < frequencies->classOf(successor)).predicted()) && !isReached.quickSet(successor.index()))
                     isPending.quickSet(cfg.reversePostOrderIndex(successor));
             }
         }
@@ -280,7 +280,7 @@ struct CapacityPlanner {
         const NaturalLoop* loopOfLiteral = loops.innerMostLoopOf(point.block);
         BitVector chain;
         for (BlockID block = point.block; block && loops.innerMostLoopOf(block) == loopOfLiteral && chain.add(block.index());)
-            block = chainSuccessorOf(block);
+            block = chainSuccessorOf(block).predicted();
         int64_t numberOfElements = function.at(id).elementsOperands().size();
         CapacityPlan result { id, point, numberOfElements };
 
@@ -302,7 +302,7 @@ struct CapacityPlanner {
         const BlockFrequencies& frequencies = analyses.blockFrequencies();
         BlocksReachedFrom blocksBehindLiteralByLikelyPaths { analyses.cfg(), point.block, &frequencies };
         for (const AppendSite& site : sites) {
-            if (frequencies.classOf(point.block) < frequencies.classOf(site.block) || !mayFollowLiteral(site))
+            if ((frequencies.classOf(point.block) < frequencies.classOf(site.block)).predicted() || !mayFollowLiteral(site))
                 continue;
             const NaturalLoop* loop = loops.innerMostLoopOf(site.block);
             bool isInOtherCycle = !loop && analyses.isInCycle(site.block);
@@ -317,7 +317,7 @@ struct CapacityPlanner {
                         return std::nullopt;
                 }
                 (alwaysRuns ? result.constant : numberOfConditionalElements) += site.count;
-            } else if (!isInOtherCycle && loop && likelyOuterLoopOf(*loop) == loopOfLiteral) {
+            } else if (!isInOtherCycle && loop && likelyOuterLoopOf(*loop).predicted() == loopOfLiteral) {
                 if (site.kind == AppendKind::List)
                     return std::nullopt;
                 loopSites.append(site);
@@ -380,14 +380,14 @@ struct CapacityPlanner {
     }
 
     // SeparateUnlikelyLoopPaths leaves a loop around the loop, which only the unlikely paths close. A capacity is a prediction, and that loop is predicted not to go round.
-    const NaturalLoop* likelyOuterLoopOf(const NaturalLoop& loop)
+    Expected<const NaturalLoop*> likelyOuterLoopOf(const NaturalLoop& loop)
     {
         const NaturalLoops& loops = analyses.naturalLoops();
         const BlockFrequencies& frequencies = analyses.blockFrequencies();
-        BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
+        Expected<BlockFrequency> frequencyOfLoop = frequencies.classOf(loop.header());
         auto isClosedByLikelyPath = [&](const NaturalLoop& outer) {
             return std::ranges::any_of(analyses.cfg().incomingEdges(outer.header()), [&](Edge edge) {
-                return loops.belongsTo(edge.from, outer) && !(frequencyOfLoop < frequencies.classOf(edge.from));
+                return loops.belongsTo(edge.from, outer) && !(frequencyOfLoop < frequencies.classOf(edge.from)).predicted();
             });
         };
         const NaturalLoop* outer = loops.innerMostOuterLoop(loop);
@@ -396,15 +396,15 @@ struct CapacityPlanner {
         return outer;
     }
 
-    BlockID chainSuccessorOf(BlockID block, unsigned numberOfBranchesAround = 0)
+    Expected<BlockID> chainSuccessorOf(BlockID block, unsigned numberOfBranchesAround = 0)
     {
         const Terminator& terminator = function.at(block).terminator;
         if (terminator.kind == TerminatorKind::Jump)
             return terminator.next().block;
-        return terminator.kind == TerminatorKind::Branch ? blockWhereLikelyArmsMeet(block, numberOfBranchesAround) : BlockID();
+        return terminator.kind == TerminatorKind::Branch ? blockWhereLikelyArmsMeet(block, numberOfBranchesAround) : Expected(BlockID());
     }
 
-    BlockID blockWhereLikelyArmsMeet(BlockID block, unsigned numberOfBranchesAround)
+    Expected<BlockID> blockWhereLikelyArmsMeet(BlockID block, unsigned numberOfBranchesAround)
     {
         AOT_THRESHOLD(unsigned, maxBlocksOfArm, 16);
         AOT_THRESHOLD(unsigned, maxBranchesAround, 8);
@@ -419,7 +419,7 @@ struct CapacityPlanner {
         const BlockFrequencies& frequencies = analyses.blockFrequencies();
         Vector<BlockID, 2> likely;
         for (BlockID successor : analyses.cfg().successors(block)) {
-            if (!(frequencies.classOf(successor) < frequencies.classOf(block)) && !likely.contains(successor))
+            if (!(frequencies.classOf(successor) < frequencies.classOf(block)).predicted() && !likely.contains(successor))
                 likely.append(successor);
         }
         BlockID result;
@@ -427,10 +427,10 @@ struct CapacityPlanner {
             result = likely[0];
         else if (likely.size() == 2) {
             Vector<BlockID, maxBlocksOfArm> firstArm;
-            for (BlockID next = likely[0]; next && firstArm.size() < maxBlocksOfArm && !firstArm.contains(next); next = chainSuccessorOf(next, numberOfBranchesAround + 1))
+            for (BlockID next = likely[0]; next && firstArm.size() < maxBlocksOfArm && !firstArm.contains(next); next = chainSuccessorOf(next, numberOfBranchesAround + 1).predicted())
                 firstArm.append(next);
             unsigned numberOfBlocks = 0;
-            for (BlockID next = likely[1]; next && numberOfBlocks++ < maxBlocksOfArm; next = chainSuccessorOf(next, numberOfBranchesAround + 1)) {
+            for (BlockID next = likely[1]; next && numberOfBlocks++ < maxBlocksOfArm; next = chainSuccessorOf(next, numberOfBranchesAround + 1).predicted()) {
                 if (firstArm.contains(next)) {
                     result = next;
                     break;
@@ -451,7 +451,7 @@ struct CapacityPlanner {
             const NaturalLoop& loop = loopOf(sites[i]);
             if ((i && &loop == &loopOf(sites[i - 1])) || (sites[i].kind == AppendKind::Elements && sites[i].count != 1))
                 return false;
-            if (!isEnteredOnLikelyPathsFrom(literal.point.block, loop) || !runsOncePerIteration(loop, sites[i].block))
+            if (!isEnteredOnLikelyPathsFrom(literal.point.block, loop).predicted() || !runsOncePerIteration(loop, sites[i].block).predicted())
                 return false;
         }
         const NaturalLoop& firstLoop = loopOf(sites[0]);
@@ -462,7 +462,7 @@ struct CapacityPlanner {
         return plan.tryAdd(count.added) && plan.tryAdd(count.subtracted, true);
     }
 
-    bool isEnteredOnLikelyPathsFrom(BlockID block, const NaturalLoop& loop)
+    Expected<bool> isEnteredOnLikelyPathsFrom(BlockID block, const NaturalLoop& loop)
     {
         if (analyses.dominators().dominates(block, loop.header()))
             return true;
@@ -473,7 +473,7 @@ struct CapacityPlanner {
         for (size_t i = 0; i < between.size(); ++i) {
             bool hasLikelyEdge = false;
             for (Edge edge : analyses.cfg().incomingEdges(between[i])) {
-                if (frequencies.classOf(block) < frequencies.classOf(edge.from) || loops.belongsTo(edge.from, loop))
+                if ((frequencies.classOf(block) < frequencies.classOf(edge.from)).predicted() || loops.belongsTo(edge.from, loop))
                     continue;
                 hasLikelyEdge = true;
                 if (edge.from == block || between.contains(edge.from))
@@ -489,30 +489,30 @@ struct CapacityPlanner {
     }
 
     // A capacity is a prediction: a path through a loop counts when it is as likely as the loop.
-    bool anyLikelyBlockOf(const NaturalLoop& loop, NOESCAPE const Invocable<bool(BlockID)> auto& predicate)
+    Expected<bool> anyLikelyBlockOf(const NaturalLoop& loop, NOESCAPE const Invocable<bool(BlockID)> auto& predicate)
     {
         const BlockFrequencies& frequencies = analyses.blockFrequencies();
-        BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
+        Expected<BlockFrequency> frequencyOfLoop = frequencies.classOf(loop.header());
         for (unsigned i = 0; i < loop.size(); ++i) {
-            if (!(frequencyOfLoop < frequencies.classOf(loop.at(i))) && predicate(loop.at(i)))
+            if (!(frequencyOfLoop < frequencies.classOf(loop.at(i))).predicted() && predicate(loop.at(i)))
                 return true;
         }
         return false;
     }
 
-    bool runsOncePerIteration(const NaturalLoop& loop, BlockID block)
+    Expected<bool> runsOncePerIteration(const NaturalLoop& loop, BlockID block)
     {
         if (block == loop.header())
             return true;
         const NaturalLoops& loops = analyses.naturalLoops();
         const BlockFrequencies& frequencies = analyses.blockFrequencies();
-        BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
-        if (frequencyOfLoop < frequencies.classOf(block))
+        Expected<BlockFrequency> frequencyOfLoop = frequencies.classOf(loop.header());
+        if ((frequencyOfLoop < frequencies.classOf(block)).predicted())
             return false;
         BitVector barrier;
         barrier.set(block.index());
         for (unsigned i = 0; i < loop.size(); ++i) {
-            if (frequencyOfLoop < frequencies.classOf(loop.at(i)))
+            if ((frequencyOfLoop < frequencies.classOf(loop.at(i))).predicted())
                 barrier.set(loop.at(i).index());
         }
         BitVector reachedWithoutBlock = analyses.cfg().blocksReachableFrom(loop.header(), barrier);
@@ -569,7 +569,7 @@ struct CapacityPlanner {
             && analyses.dominates(function.at(check).valueOperand(), point) && followsWithoutVisibleEffect(point, check);
     }
 
-    bool mayChangeLengthIn(const NaturalLoop& loop, const MeasuredStorage& measured, ValueID literal)
+    Expected<bool> mayChangeLengthIn(const NaturalLoop& loop, const MeasuredStorage& measured, ValueID literal)
     {
         auto mayWrite = [&](const EffectsOnEdges& effects) {
             return effects.normal.writes.contains(measured.heap) || effects.handler.writes.contains(measured.heap);
@@ -592,7 +592,7 @@ struct CapacityPlanner {
     }
 
     // `list.length = 0`, list.pop(), list.splice(..): the array does not hold what all the turns have appended.
-    bool mayTakeElementsAwayIn(const NaturalLoop& loop, ValueID array)
+    Expected<bool> mayTakeElementsAwayIn(const NaturalLoop& loop, ValueID array)
     {
         auto mayTakeAway = [&](ValueID id) {
             const Value& writer = function.at(id);
@@ -612,15 +612,15 @@ struct CapacityPlanner {
     }
 
     // An exit outside the header that is rarer than the loop does not count: where a type test fails, the loop continues in its generic copy.
-    bool hasOnlyRareSideExits(const NaturalLoop& loop)
+    Expected<bool> hasOnlyRareSideExits(const NaturalLoop& loop)
     {
         const NaturalLoops& loops = analyses.naturalLoops();
         const BlockFrequencies& frequencies = analyses.blockFrequencies();
-        BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
+        Expected<BlockFrequency> frequencyOfLoop = frequencies.classOf(loop.header());
         return !anyLikelyBlockOf(loop, [&](BlockID block) {
             const Terminator& terminator = function.at(block).terminator;
             return block != loop.header() && (returnsToCaller(terminator.kind) || std::ranges::any_of(terminator.targets, [&](const Target& target) {
-                return !loops.belongsTo(target.block, loop) && !(frequencyOfLoop < frequencies.classOf(target.block));
+                return !loops.belongsTo(target.block, loop) && !(frequencyOfLoop < frequencies.classOf(target.block)).predicted();
             }));
         });
     }
@@ -630,7 +630,7 @@ struct CapacityPlanner {
     {
         const NaturalLoops& loops = analyses.naturalLoops();
         const Terminator& terminator = function.at(loop.header()).terminator;
-        if (terminator.kind != TerminatorKind::Branch || !hasOnlyRareSideExits(loop) || !loops.belongsTo(terminator.taken().block, loop) || loops.belongsTo(terminator.notTaken().block, loop))
+        if (terminator.kind != TerminatorKind::Branch || !hasOnlyRareSideExits(loop).predicted() || !loops.belongsTo(terminator.taken().block, loop) || loops.belongsTo(terminator.notTaken().block, loop))
             return { };
         const Value& hasEntry = function.at(terminator.conditionOperand());
         if (hasEntry.opcode != Opcode::ResultAt || hasEntry.index() != static_cast<uint32_t>(MapNextResult::HasEntry))
@@ -645,7 +645,7 @@ struct CapacityPlanner {
         if (!step || !makeSizeReadOfWalkedCollection(context, function.at(step)))
             return { };
         MeasuredStorage measured { walkedCollectionOf(function.at(step)), { }, AbstractHeap::CollectionStorage };
-        if (!canMeasureAt(measured, literal.point) || mayChangeLengthIn(loop, measured, literal.value))
+        if (!canMeasureAt(measured, literal.point) || mayChangeLengthIn(loop, measured, literal.value).predicted())
             return { };
         return { .added = { CapacityTermKind::Integer, step } };
     }
@@ -658,7 +658,7 @@ struct CapacityPlanner {
             for (const InductionTest& test : variable.tests) {
                 if (test.tested != TestedValue::BeforeStep || !isBoundingRelation(test.relation, variable.direction))
                     continue;
-                if (test.exits == LoopExits::OnlyAtTest || (test.block == loop.header() && hasOnlyRareSideExits(loop)))
+                if (test.exits == LoopExits::OnlyAtTest || (test.block == loop.header() && hasOnlyRareSideExits(loop).predicted()))
                     return { &variable, &test };
             }
         }
@@ -699,7 +699,7 @@ struct CapacityPlanner {
         uint32_t parameterIndex = static_cast<uint32_t>(function.at(block).parameters.find(id));
         ValueID given;
         for (Edge edge : analyses.cfg().incomingEdges(block)) {
-            if (frequencies.classOf(block) < frequencies.classOf(edge.from))
+            if ((frequencies.classOf(block) < frequencies.classOf(edge.from)).predicted())
                 continue;
             ValueID passed = valuePassedOn(function, edge, parameterIndex);
             if (!passed || (given && given != passed))
@@ -730,7 +730,7 @@ struct CapacityPlanner {
             const NaturalLoop* outermost = nullptr;
             for (const NaturalLoop* loop = loops.innerMostLoopOf(analyses.useLists().blockOf(definition)); loop && !loops.belongsTo(literal.point.block, *loop); loop = loops.innerMostOuterLoop(*loop))
                 outermost = loop;
-            if (!outermost || !mayChangeLengthIn(*outermost, *measured, literal.value))
+            if (!outermost || !mayChangeLengthIn(*outermost, *measured, literal.value).predicted())
                 return { CapacityTermKind::Integer, definition };
         }
         return isAvailable && type.isNumber() ? CapacityTerm { CapacityTermKind::Number, definition } : CapacityTerm { };
@@ -760,7 +760,7 @@ struct CapacityPlanner {
         if (appendKindOf(append) != AppendKind::Elements || (append.opcode == Opcode::CallBuiltin ? builtinCallOf(program, append).arguments.size() != 1 : append.opcode != Opcode::AppendElement))
             return std::nullopt;
         ValueID array = appendedArrayOf(append);
-        if (analyses.blockFrequencies().classOf(point.block) == BlockFrequency::Rare || !program.typeOf(function, array).isSubsetOf(Type::builtinClass(BuiltinClasses::Array), program))
+        if (analyses.blockFrequencies().classOf(point.block).predicted() == BlockFrequency::Rare || !program.typeOf(function, array).isSubsetOf(Type::builtinClass(BuiltinClasses::Array), program))
             return std::nullopt;
         // The capacity test makes the append's load of the indexing mode control dependent, and B3 hoists such a load out of the loop only from a pointer that code generation publishes as dereferenceable.
         const Value& origin = function.at(analyses.sameObjectThroughCasts(array));
@@ -772,12 +772,12 @@ struct CapacityPlanner {
             if (capacity.isInteger() && capacity.integers.maximum <= static_cast<int64_t>(context.limit(LimitID::MaxPlannedArrayCapacity)))
                 return std::nullopt;
         }
-        if (!runsOncePerIteration(loop, point.block))
+        if (!runsOncePerIteration(loop, point.block).predicted())
             return std::nullopt;
         TripCount count = iterationsAt(point, loop, array, CountedIterations::Remaining);
         if (count.added.kind == CapacityTermKind::Unknown || count.subtracted.kind == CapacityTermKind::Unknown)
             return std::nullopt;
-        if (mayTakeElementsAwayIn(loop, array))
+        if (mayTakeElementsAwayIn(loop, array).predicted())
             return std::nullopt;
         return GrowthPlan { id, point, array, loop.header(), count };
     }
@@ -803,7 +803,7 @@ struct CapacityPlanner {
         ValueID id = function.at(point.block).values[point.index];
         const Value& addition = function.at(id);
         std::optional<InlineBuiltin> implementation = addition.opcode == Opcode::CallBuiltin ? inlineImplementationOf(program, addition) : std::nullopt;
-        if ((implementation != InlineBuiltin::MapSet && implementation != InlineBuiltin::SetAdd) || analyses.blockFrequencies().classOf(point.block) == BlockFrequency::Rare)
+        if ((implementation != InlineBuiltin::MapSet && implementation != InlineBuiltin::SetAdd) || analyses.blockFrequencies().classOf(point.block).predicted() == BlockFrequency::Rare)
             return std::nullopt;
         ValueID collection = addition.receiverOperand();
         BlockID preheader = findPreheader(loop);
@@ -991,7 +991,7 @@ static unsigned applyGrowthPlans(FunctionPassContext& context, Vector<GrowthPlan
 
     for (const GrowthPlan& plan : plans) {
         Value append = function.at(plan.append);
-        BlockFrequency frequency = function.at(plan.point.block).frequency;
+        Expected<BlockFrequency> frequency = function.at(plan.point.block).frequency;
         builder.setOrigin(append.origin());
         IRBuilder::Expansion expansion = builder.beginExpansion(plan.point);
         auto appendAndRejoin = [&] {
@@ -1031,7 +1031,7 @@ static ArrayStorage storageHolding(FunctionPassContext& context, const Value& al
         stored = context.types.unionOf(stored, function.at(function.at(store).valueOperand()).type);
     ArrayStorage kind = arrayStorageAtAllocation(context.types.at(stored));
     // The readers test for the kind that the declared elements give the array.
-    if (kind == ArrayStorage::Int32 && allocation.expected().predicted() && arrayStorageDeclaredBy(context.program, context.types.at(allocation.expected().predicted())) == ArrayStorage::Double)
+    if (kind == ArrayStorage::Int32 && allocation.expected().predicted() && arrayStorageDeclaredBy(context.program, context.types.at(allocation.expected().predicted())).predicted() == ArrayStorage::Double)
         return ArrayStorage::Double;
     return kind;
 }
@@ -1096,7 +1096,7 @@ static unsigned chooseStorageOfConstructedArrays(FunctionPassContext& context)
 
     Vector<std::tuple<ValueID, unsigned, bool>, 8> usesOfArrays;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        bool isInRareCode = function.at(block).frequency == BlockFrequency::Rare;
+        bool isInRareCode = function.at(block).frequency.predicted() == BlockFrequency::Rare;
         for (ValueID id : function.at(block).values) {
             if (!usesOfConstructedStorage.contains(function.at(id).opcode))
                 continue;
@@ -1307,7 +1307,7 @@ static ValueID findCopiedArrayToConvert(FunctionPassContext& context, ValueID ar
     });
     // A reader of that array would test for the same kind and convert it.
     const ClassPart* copied = copies ? program.typeOf(context.function, call.receiver).singleBuiltinClass() : nullptr;
-    return copied && copied->arrayStorage == ArrayStorage::Other && arrayStorageDeclaredBy(program, *copied) == ArrayStorage::Double ? call.receiver : ValueID();
+    return copied && copied->arrayStorage == ArrayStorage::Other && arrayStorageDeclaredBy(program, *copied).predicted() == ArrayStorage::Double ? call.receiver : ValueID();
 }
 
 static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionPassContext& context)
@@ -1503,7 +1503,8 @@ static bool holdsNumbersInAnyStorage(FunctionPassContext& context, ValueID array
 {
     const Program& program = context.program;
     const ClassPart* part = program.typeOf(context.function, array).singleBuiltinClass();
-    return part && part->contentsAreProven && program.at(part->contentsAt(program.builtins(), ContentsSlot::Element)).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
+    std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
+    return elements && program.at(*elements).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
 }
 
 // Behind the test of its position an element of Double storage is no undefined either: `list[0] === undefined` is false, and the test is all that is left of the read.
@@ -1575,7 +1576,7 @@ static bool cutOutRegionOfReads(FunctionPassContext& context, IRBuilder& builder
         if (location.placement == ValuePlacement::InBlock)
             endOfUses[location.block.index()] = std::max(endOfUses[location.block.index()], location.index + 1);
         const NaturalLoop* loop = isRepeated ? nullptr : context.analyses.naturalLoops().innerMostLoopOf(location.block);
-        isRepeated = isRepeated || (loop && isHotLoop(context, *loop));
+        isRepeated = isRepeated || (loop && isHotLoop(context, *loop).predicted());
     };
     std::ranges::for_each(found.proofs, addUse);
     std::ranges::for_each(found.reads, addUse);
@@ -1807,7 +1808,7 @@ static PassOutcome readListsOfNumbersInEitherStorage(FunctionPassContext& contex
         const Value* test = findStorageTestBranchedOnBy(function, block);
         if (!test || (test->arrayStorage() != ArrayStorage::Double && test->arrayStorage() != ArrayStorage::Contiguous))
             continue;
-        if (context.analyses.blockFrequencies().classOf(block) != BlockFrequency::Normal || isCold(heatClassOf(context, block)))
+        if (context.analyses.blockFrequencies().classOf(block).predicted() != BlockFrequency::Normal || isCold(heatClassOf(context, block)).predicted())
             continue;
         const Value* nextTest = findStorageTestBranchedOnBy(function, function.at(block).terminator.notTaken().block);
         if (!nextTest || nextTest->arrayOperand() != test->arrayOperand())

@@ -73,7 +73,7 @@ struct JSONTextWriter final : Emission {
     };
 
     struct MergePoint {
-        BlockFrequency frequency { BlockFrequency::Normal };
+        Expected<BlockFrequency> frequency { BlockFrequency::Normal };
         BlockID block;
         Cursor cursor { { }, UINT_MAX };
         // Set where each arm brings the guard that the code behind the merge relies on.
@@ -324,7 +324,7 @@ struct JSONTextWriter final : Emission {
         if (part->builtinClass == BuiltinClasses::Date && findGetTimeOfDate())
             return { .kind = ValueKind::Scalar, .row = Opcode::JSONAppendDate, .tested = types.intern(instances.withoutClassProofs()) };
         if (part->builtinClass == BuiltinClasses::Array)
-            return { .kind = ValueKind::Array, .tested = types.intern(instances.withoutClassProofs()), .element = part->contentsAt(builtins, ContentsSlot::Element) };
+            return { .kind = ValueKind::Array, .tested = types.intern(instances.withoutClassProofs()), .element = part->expectedContentsAt(builtins, ContentsSlot::Element).predicted() };
         return { };
     }
 
@@ -352,7 +352,7 @@ struct JSONTextWriter final : Emission {
         return plan.layouts.isEmpty() ? ValuePlan { } : WTF::move(plan);
     }
 
-    BlockFrequency currentFrequency() { return function().at(builder().currentBlock()).frequency; }
+    Expected<BlockFrequency> currentFrequency() { return function().at(builder().currentBlock()).frequency; }
     TypeID cursorType() { return inputs().opaqueType(OpaqueKind::BuilderCursor); }
 
     void ensureCursor(uint32_t bytes)
@@ -445,7 +445,7 @@ struct JSONTextWriter final : Emission {
     {
         if (!m_afterUnknownCode || !isInBlock())
             return;
-        BlockFrequency frequency = currentFrequency();
+        Expected<BlockFrequency> frequency = currentFrequency();
         jumpTo(*m_afterUnknownCode);
         Block& block = builder().function().edit(m_afterUnknownCode->block);
         block.frequency = moreFrequentOf(block.frequency, frequency);
@@ -624,7 +624,7 @@ struct JSONTextWriter final : Emission {
         return builder().append(Opcode::JSONListedHolders, { m_stringBuilder });
     }
 
-    TypeArm beginTypeArm(ValueID value, TypeID tested, BlockFrequency otherwise)
+    TypeArm beginTypeArm(ValueID value, TypeID tested, Expected<BlockFrequency> otherwise)
     {
         TypeArm arm { evaluateTypeTest(program(), typeOf(value), program().at(tested)), value, value, { } };
         if (arm.matches != KnownBoolean::Unknown)
@@ -885,7 +885,7 @@ struct JSONTextWriter final : Emission {
         commit();
 
         bool isProperty = position.kind == JSONPosition::Property;
-        BlockFrequency frequency = currentFrequency();
+        Expected<BlockFrequency> frequency = currentFrequency();
         MergePoint done = createMergePoint();
         BlockID generic = builder().addBlock(BlockFrequency::Rare);
         // A serializer that gives up has been called all the same, so what comes behind it has run unknown code.
@@ -1079,7 +1079,7 @@ struct JSONTextWriter final : Emission {
         if (counts.size() == 1)
             return { emitKeyOrderTest(tested, arm.layout, longestOrder, notTaken), { } };
 
-        BlockFrequency frequency = currentFrequency();
+        Expected<BlockFrequency> frequency = currentFrequency();
         BlockID matched = builder().addBlock(frequency);
         ValueID guard = builder().addParameter(matched, TypeTable::guard);
         ValueID numberOfOwnMembers = builder().addParameter(matched, TypeTable::int32);
@@ -1100,7 +1100,7 @@ struct JSONTextWriter final : Emission {
     {
         const Member& member = arm.members[index];
         const ValuePlan& plan = member.plan;
-        BlockFrequency frequency = currentFrequency();
+        Expected<BlockFrequency> frequency = currentFrequency();
 
         ValueID value;
         bool isReadByName = false;

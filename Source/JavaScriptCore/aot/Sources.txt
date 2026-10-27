@@ -5,6 +5,7 @@ aot/analysis/AOTBorrowedParameters.cpp
 aot/analysis/AOTCFG.cpp
 aot/analysis/AOTCallGraph.cpp
 aot/analysis/AOTDefinitions.cpp
+aot/analysis/AOTDescriptorLiteral.cpp
 aot/analysis/AOTDominators.cpp
 aot/analysis/AOTEscapeAnalysis.cpp
 aot/analysis/AOTFailedTests.cpp
@@ -451,6 +452,7 @@ aot/valueflow/AOTFlowParts.cpp
 aot/valueflow/AOTFlowReport.cpp
 aot/valueflow/AOTFlowReportAccesses.cpp
 aot/valueflow/AOTFlowResults.cpp
+aot/valueflow/AOTLedgerFields.cpp
 aot/valueflow/AOTValueFlowAnalysis.cpp
 aot/valueflow/AOTValueFlowBodies.cpp
 aot/valueflow/AOTValueFlowBodiesLink.cpp

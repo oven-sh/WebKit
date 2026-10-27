@@ -176,18 +176,18 @@ static LocationStability stabilityOfObjectField(const Program& program, const Va
     if (!Value::opcodesWithReceivers.contains(access.opcode) || !access.receivers())
         return LocationStability::Unknown;
 
-    const LayoutSet& receivers = program.at(access.receivers());
-    if (!receivers.isComplete || receivers.members.isEmpty())
+    auto receivers = program.at(access.receivers()).all();
+    if (!receivers || receivers->value().empty())
         return LocationStability::Unknown;
 
     const FamilyMember& member = program.familyTables().memberOf(access.receivers(), key);
-    if (member.withoutField && !program.at(member.withoutField).members.isEmpty())
+    if (member.withoutField && !program.at(member.withoutField).completeMembers().value().empty())
         return LocationStability::Unknown;
     if (member.hasOneDeclaration)
         return stabilityOfField(program, member.declaration);
 
     LocationStability stability = LocationStability::UnchangedDuringActivation;
-    for (LayoutID receiver : receivers.members) {
+    for (LayoutID receiver : *receivers) {
         std::optional<uint32_t> field = program.at(receiver).findField(key);
         stability = weakerOf(stability, field ? stabilityOfField(program, { receiver, *field }) : LocationStability::Unknown);
         if (stability == LocationStability::Unknown)

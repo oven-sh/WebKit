@@ -397,9 +397,7 @@ StubSignature signatureOfThroughProxy(StubKey key)
 {
     if (static_cast<TrapOfProxy>(key.form()) == TrapOfProxy::Set)
         return StubSignature::withoutResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister), gprOf(valueStoredThroughProxyRegister), gprOf(StubRegister::T14) });
-    if (static_cast<TrapOfProxy>(key.form()) == TrapOfProxy::Get)
-        return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister), gprOf(slotHeaderRegister) });
-    return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister) });
+    return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister), gprOf(slotHeaderRegister) });
 }
 
 // As ProxyObject.cpp performProxyGet(), performHasProperty() and performPut(). The trap is read off the handler and called as compiled code reads and calls.
@@ -440,8 +438,19 @@ void generateThroughProxy(StubAssembler& jit)
         return Address(sp, static_cast<int32_t>(offset));
     };
 
+    // Without a trap the question is the same question about the target: it has no receiver. The answers are zero and one, and a target is neither.
+    auto emitQuestionAboutTarget = [&] {
+        RELEASE_ASSERT(signatureOf(inById(PresenceQuestion::In)).operands[0] == Reg(R0) && signatureOf(inById(PresenceQuestion::In)).immediate == name);
+        Jump isAnswered = jit.branch64(CCallHelpers::BelowOrEqual, R0, TrustedImm32(1));
+        jit.jumpToStub(inById(PresenceQuestion::In));
+        isAnswered.link(&jit);
+    };
+    const ScopedLambda<void()> askTarget = emitQuestionAboutTarget;
+
+    // Whoever comes here has probed a table, which leaves the slot in these two. So no caller of theirs has anything in them.
+    jit.recordClobbers(RegisterSet(gprOf(slotHeaderRegister), gprOf(slotPayloadRegister)));
     jit.checkStackBeforeEntering();
-    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = !isStore, .checksException = true }, [&] {
+    jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = !isStore, .checksException = true, .emitBeforeReturn = trap == TrapOfProxy::Has ? &askTarget : nullptr }, [&] {
         JumpList isDone;
         JumpList isNoFunction;
         JumpList runTimeDoesAll;
@@ -462,7 +471,7 @@ void generateThroughProxy(StubAssembler& jit)
         if (isStore) {
             jit.store64(handler, kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)));
             jit.store64(scratch, kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot)));
-        } else if (trap == TrapOfProxy::Get)
+        } else
             jit.store64(jit.operand(2), kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot)));
         jit.load64(inProxy(ProxyObject::Field::Handler), handler);
         jit.load64(inProxy(ProxyObject::Field::Target), target);
@@ -486,8 +495,6 @@ void generateThroughProxy(StubAssembler& jit)
         if (trap != TrapOfProxy::Has)
             jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)), argumentGPR(operations.numberOfArguments - 1));
         jit.callStub(callValueCell(operations.numberOfArguments));
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
-        isDone.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(scratch, VM::exceptionOffset())));
         Jump saysYes;
         if (trap == TrapOfProxy::Has) {
             saysYes = jit.branch64(CCallHelpers::Equal, R0, TrustedImm64(JSValue::ValueTrue));
@@ -503,7 +510,10 @@ void generateThroughProxy(StubAssembler& jit)
         runTimeFinishes.append(jit.branchIfNotType(target, CompiledObjectType));
         runTimeFinishes.append(jit.branchTest8(CCallHelpers::Zero, Address(scratch, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::EveryFieldIsBornConfigurable))));
         bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(target, offsetOfOrderWord), TrustedImm32(~orderAndCountMask)));
+        // What the trap has thrown is seen in front of the return. Until then nothing looks at the answer but the tests above, and only the operation must not run.
         runTimeFinishes.link(&jit);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
+        isDone.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(scratch, VM::exceptionOffset())));
         callWithWords(operations.afterCall);
         isDone.append(jit.jump());
 
@@ -532,6 +542,15 @@ void generateThroughProxy(StubAssembler& jit)
             isDone.append(jit.branchTest64(CCallHelpers::NonZero, R0));
             jit.move(TrustedImm64(JSValue::ValueUndefined), R0);
             tablesDoNotSay.link(&jit);
+        }
+        if (trap == TrapOfProxy::Has) {
+            JumpList operationAsks;
+            operationAsks.append(jit.branchIfNotUndefined(R0));
+            jit.load16(kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot) + Slot::offsetOfLocation()), name);
+            operationAsks.append(jit.branchTest32(CCallHelpers::Zero, name));
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), R0);
+            isDone.append(jit.jump());
+            operationAsks.link(&jit);
         }
         callWithWords(operations.withoutFunction);
         isDone.append(jit.jump());

@@ -149,7 +149,7 @@ static bool definesPropertyOfOrdinaryObject(const Program& program, const Functi
     if (function.at(sameObjectThroughCasts(function, access.objectOperand())).opcode == Opcode::NewObject)
         return true;
     const Type& type = program.typeOf(function, access.objectOperand());
-    return type.hasOnlyLayouts(program) && std::ranges::all_of(program.at(type.layouts).members, [&](LayoutID layout) {
+    return type.hasOnlyLayouts(program) && std::ranges::all_of(program.at(type.layouts).completeMembers(), [&](LayoutID layout) {
         return program.at(layout).kind == LayoutKind::Record;
     });
 }

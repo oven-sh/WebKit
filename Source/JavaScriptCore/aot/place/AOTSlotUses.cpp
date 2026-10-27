@@ -267,9 +267,9 @@ static void forEachObjectHandedOver(const SlotPlanContext& context, FunctionID i
 
     Vector<std::pair<FunctionID, ObjectUnderConstruction>, 8> closures;
     const BlockFrequencies& frequencies = analyses.blockFrequencies();
-    double frequencyOfEntry = frequencies.frequencyOf(entryBlock);
+    double frequencyOfEntry = frequencies.frequencyOf(entryBlock).predicted();
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        bool runsNearlyAlways = frequencies.frequencyOf(block) * 2 > frequencyOfEntry;
+        bool runsNearlyAlways = frequencies.frequencyOf(block).predicted() * 2 > frequencyOfEntry;
         for (ValueID valueID : function.at(block).values) {
             const Value& value = function.at(valueID);
             if (value.opcode == Opcode::NewClosure) {
@@ -414,7 +414,7 @@ private:
         CalleeSetID callees = construct.callees();
         if (!callees)
             return;
-        for (FunctionID callee : m_program.at(callees).functions) {
+        for (FunctionID callee : m_program.at(callees).seen().predicted().functions) {
             if (LayoutID constructed = m_program.at(callee).constructedClass)
                 functor(constructed);
         }
@@ -543,7 +543,7 @@ private:
             use.storesWithoutAllocation = cannotAllocate && !use.storesIntoFilledSlots;
             ValueID objectID = rootOf(value.objectOperand());
             const Value& object = m_function.at(objectID);
-            std::span<const LayoutID> receivers = m_program.at(value.receivers()).members.span();
+            std::span<const LayoutID> receivers = m_program.at(value.receivers()).completeMembers();
             use.storesIntoNewObjects = object.opcode == Opcode::NewObject && receivers.size() == 1 && receivers[0] == object.layout();
             noteStoreBehindStore(objectID, value, use.weight);
         }
@@ -595,7 +595,7 @@ private:
 
         bool storesUndefined = isUndefinedConstant(store.operand(*stored));
         const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
-        double frequencyOfStore = frequencies.frequencyOf(block);
+        double frequencyOfStore = frequencies.frequencyOf(block).predicted();
         auto countStoreInto = [&](LayoutID layout) {
             std::optional<uint32_t> field = m_program.at(layout).findField(store.key());
             if (!field)
@@ -604,7 +604,7 @@ private:
             add(storesUndefined ? use.storesOfUndefined : use.storesOfConstructorWithValue, 1);
         };
         for (SlotUseFreshObject object : objects) {
-            if (!storesUndefined && frequencyOfStore * 2 <= frequencies.frequencyOf(object.block))
+            if (!storesUndefined && frequencyOfStore * 2 <= frequencies.frequencyOf(object.block).predicted())
                 continue;
             if (object.allocation) {
                 if (storesUndefined || m_fieldsFilledBesideAllocation.add(static_cast<uint64_t>(object.allocation.index()) << 32 | store.key().index()).isNewEntry)
@@ -892,7 +892,7 @@ static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std
             add(callee);
     }
     for (const FlowIndirectCall& call : context.inputs.flow.indirectCalls()) {
-        if (call.times == BuiltinCallbackTimes::PerElement && call.callee.index() < numberOfFunctions)
+        if (call.times.predicted() == BuiltinCallbackTimes::PerElement && call.callee.index() < numberOfFunctions)
             add(call.callee);
     }
     while (!worklist.isEmpty()) {
@@ -1001,9 +1001,10 @@ static void distributeCopies(const SlotPlanContext& context, SlotUses& uses, std
         heatOfCopies.fill(0.0);
         for (const FunctionUses& function : functions) {
             for (const CopyIntoNewObject& copy : function.copiesIntoNewObjects) {
-                if (!copy.sources || !program.at(copy.sources).isComplete || program.at(copy.sources).hasMembersWithoutLayout)
+                auto allSources = copy.sources ? program.at(copy.sources).all() : std::nullopt;
+                if (!allSources)
                     continue;
-                std::span<const LayoutID> sources = program.at(copy.sources).members.span();
+                std::span<const LayoutID> sources = *allSources;
                 double made = 0;
                 for (LayoutID source : sources)
                     made += uses.layouts[source.index()].creationHeat;

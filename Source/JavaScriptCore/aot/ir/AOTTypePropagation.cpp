@@ -45,7 +45,7 @@ static void forEachListedValue(const Function& function, const CFG& cfg, NOESCAP
 
 static bool isSeldomTaken(const Function& function, Edge edge)
 {
-    return function.at(edge.from).frequency != BlockFrequency::Normal;
+    return function.at(edge.from).frequency.predicted() != BlockFrequency::Normal;
 }
 
 static bool isEveryEdgeSeldomTaken(const Function& function, std::span<const Edge> edges)

@@ -139,9 +139,9 @@ static FunctionID bodyBehind(const Typed::Program& program, FunctionID id)
     return { };
 }
 
-static CodeBand bandOf(HeatClass heatClass)
+static CodeBand bandOf(Typed::Expected<HeatClass> heatClass)
 {
-    switch (heatClass) {
+    switch (heatClass.predicted()) {
     case HeatClass::Hot:
         return CodeBand::Hot;
     case HeatClass::Warm:

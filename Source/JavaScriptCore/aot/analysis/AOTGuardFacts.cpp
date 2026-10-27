@@ -379,7 +379,7 @@ bool allocationProves(const Program& program, const Function& function, const Va
     const ClassPart* allocatedClass = allocation.type ? program.at(allocation.type).singleBuiltinClass() : nullptr;
     switch (proof) {
     case Proof::Shape:
-        return std::ranges::binary_search(program.at(test.layouts()).members, allocation.layout());
+        return std::ranges::binary_search(program.at(test.layouts()).completeMembers(), allocation.layout());
     case Proof::SlotFilled:
         return !holdsDeclaredType(test) && listsFieldWithKey(program, allocation, test.key());
     case Proof::NoExtraProperties:
@@ -465,16 +465,14 @@ static bool isInsideLength(const Value& user)
     return Value::opcodesWithIsInsideView.contains(user.opcode) && user.isInsideView();
 }
 
-static bool admitsLayouts(const Program& program, const Value& user, std::span<const LayoutID> sortedLayouts, bool isComplete)
+static bool admitsLayouts(const Program& program, const Value& user, std::span<const LayoutID> sortedLayouts)
 {
     if (!Value::opcodesWithReceivers.contains(user.opcode))
         return true;
     LayoutSetID receivers = user.receivers();
-    if (!receivers || !program.at(receivers).isComplete)
+    if (!receivers || !program.at(receivers).listsEveryLayout())
         return true;
-    if (!isComplete)
-        return false;
-    const Vector<LayoutID>& admitted = program.at(receivers).members;
+    std::span<const LayoutID> admitted = program.at(receivers).completeMembers();
     if (sortedLayouts.size() <= admitted.size() && std::ranges::includes(admitted, sortedLayouts))
         return true;
     return std::ranges::all_of(sortedLayouts, [&](LayoutID member) {
@@ -482,11 +480,11 @@ static bool admitsLayouts(const Program& program, const Value& user, std::span<c
     });
 }
 
-static bool admitsLayoutSet(const Program& program, const Value& user, LayoutSetID layouts, bool isComplete)
+static bool admitsLayoutSet(const Program& program, const Value& user, LayoutSetID layouts)
 {
     if (Value::opcodesWithReceivers.contains(user.opcode) && user.receivers() == layouts)
         return true;
-    return admitsLayouts(program, user, program.at(layouts).members.span(), isComplete);
+    return admitsLayouts(program, user, program.at(layouts).completeMembers());
 }
 
 static LayoutSetID layoutSetTestedBy(const Function& function, const GuardOrigin& origin)
@@ -512,7 +510,7 @@ static bool isProvenByType(const Program& program, const Value& user, Proof proo
     if (type.isNever())
         return true;
     if (proof == Proof::Shape)
-        return type.hasOnlyLayouts(program) && !type.mayBeUndefinedOrNull() && admitsLayoutSet(program, user, type.layouts, program.at(type.layouts).isComplete);
+        return type.hasOnlyLayouts(program) && !type.mayBeUndefinedOrNull() && admitsLayoutSet(program, user, type.layouts);
     if (proof == Proof::NotThenable)
         return !protocolMayFindMember(program, type, Protocol::Thenable);
     if (proof != Proof::Pristine && proof != Proof::ArrayStorage)
@@ -621,7 +619,7 @@ static bool provesInBoundsForUser(FunctionAnalyses& analyses, const GuardOrigin&
 static bool isAnsweredByTestOfCell(const Program& program, const Value& slotOperation)
 {
     bool needsRawValue = holdsDeclaredType(slotOperation);
-    return std::ranges::all_of(program.at(slotOperation.receivers()).members, [&](LayoutID layout) {
+    return std::ranges::all_of(program.at(slotOperation.receivers()).completeMembers(), [&](LayoutID layout) {
         std::optional<FieldReference> field = findField(program, layout, slotOperation.key(), BaseChain::Proven);
         if (!field)
             return false;
@@ -722,8 +720,8 @@ bool provesForUser(FunctionAnalyses& analyses, const GuardFact& fact, Proof proo
         return false;
     if (proof == Proof::Shape) {
         if (hasOneTestedLayoutSet(fact))
-            return admitsLayoutSet(program, user, layoutSetTestedBy(function, fact.origins[0]), true);
-        return admitsLayouts(program, user, layoutsProvenBy(program, function, fact).span(), true);
+            return admitsLayoutSet(program, user, layoutSetTestedBy(function, fact.origins[0]));
+        return admitsLayouts(program, user, layoutsProvenBy(program, function, fact).span());
     }
 
     return std::ranges::all_of(fact.origins, [&](const GuardOrigin& origin) {
@@ -789,8 +787,8 @@ static std::optional<MemoryLocation> findShapeWordsOf(const Program& program, co
         LayoutSetID layouts = type ? program.at(type).layouts : LayoutSetID();
         if (!layouts)
             continue;
-        const LayoutSet& set = program.at(layouts);
-        if (set.isComplete && set.members.size() == 1 && set.members.first() == allocation.layout())
+        auto all = program.at(layouts).all();
+        if (all && all->value().size() == 1 && all->value().front() == allocation.layout())
             return MemoryLocation::shapeWords(layouts);
     }
     return std::nullopt;
@@ -960,7 +958,7 @@ const GuardFacts& GuardAvailability::factsOf(ValueID guard) const
 
 static std::span<const LayoutID> layoutsTestedBy(const Program& program, const Function& function, const GuardOrigin& origin)
 {
-    return program.at(layoutSetTestedBy(function, origin)).members.span();
+    return program.at(layoutSetTestedBy(function, origin)).completeMembers();
 }
 
 Vector<LayoutID, 4> layoutsProvenBy(const Program& program, const Function& function, const GuardFact& fact)

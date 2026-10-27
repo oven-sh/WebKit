@@ -95,8 +95,8 @@ static bool entersOnlyBuiltins(const Program& program, const Value& call)
 {
     if (effectRuleOf(call.opcode) == EffectRule::Builtin)
         return true;
-    CalleeList callees = calleesOfCall(program, call);
-    return callees.isComplete && callees.functions.isEmpty() && !callees.builtins.isEmpty();
+    std::optional<ProvenValue<Callees>> callees = calleesOfCall(program, call).all();
+    return callees && callees->value().functions.empty() && !callees->value().builtins.empty();
 }
 
 static double estimateCallbackCalls(OperandUses uses)
@@ -119,11 +119,11 @@ static bool isHandedToCodeThatRuns(const Value& user, uint32_t operandIndex)
 
 static bool isHandedToCodeThatRuns(const Terminator&, uint32_t) { return true; }
 
-static double shareOfClass(BlockFrequency frequency)
+static double shareOfClass(Expected<BlockFrequency> frequency)
 {
-    if (frequency == BlockFrequency::Normal)
+    if (frequency.predicted() == BlockFrequency::Normal)
         return 1;
-    return frequency == BlockFrequency::Unlikely ? frequencyConstants.unlikelyEdgeShare : frequencyConstants.rareEdgeShare;
+    return frequency.predicted() == BlockFrequency::Unlikely ? frequencyConstants.unlikelyEdgeShare : frequencyConstants.rareEdgeShare;
 }
 
 static Vector<WeightOfBlock> computeWeightsOfBlocks(FunctionAnalyses& analyses)
@@ -132,15 +132,15 @@ static Vector<WeightOfBlock> computeWeightsOfBlocks(FunctionAnalyses& analyses)
     Vector<WeightOfBlock> weights;
     weights.reserveInitialCapacity(analyses.cfg().reversePostOrder().size());
     for (BlockID id : analyses.cfg().reversePostOrder())
-        weights.append(WeightOfBlock { id, frequencies.frequencyOf(id), shareOfClass(frequencies.classOf(id)) });
+        weights.append(WeightOfBlock { id, frequencies.frequencyOf(id).predicted(), shareOfClass(frequencies.classOf(id)) });
     return weights;
 }
 
 static double estimateIndirectCalls(const FlowIndirectCall& call)
 {
-    bool describesSite = call.kind == FlowIndirectCallKind::BuiltinCallback || call.times == BuiltinCallbackTimes::Once;
+    bool describesSite = call.kind == FlowIndirectCallKind::BuiltinCallback || call.times.predicted() == BuiltinCallbackTimes::Once;
     double runsOfSite = call.isInCycle && describesSite ? frequencyConstants.iterationsPerLoop : 1;
-    switch (call.times) {
+    switch (call.times.predicted()) {
     case BuiltinCallbackTimes::PerEvent:
         return 0;
     case BuiltinCallbackTimes::Repeatedly:
@@ -346,7 +346,7 @@ static PropertyKeyID nameOfAccessorInDescriptor(const Program&, const Terminator
 static bool constructsUnknownCallee(const Program& program, const Function& function, const Value& value)
 {
     std::optional<unsigned> callee = OperandPosition::callee(value.opcode);
-    return callee && OperandPosition::newTarget(value.opcode) && !calleesOf(program, program.typeOf(function, value.operand(*callee))).isComplete;
+    return callee && OperandPosition::newTarget(value.opcode) && !calleesOf(program, program.typeOf(function, value.operand(*callee))).listsEveryCallee();
 }
 
 static bool constructsUnknownCallee(const Program&, const Function&, const Terminator&) { return false; }
@@ -834,9 +834,9 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
     BitVector isCalledOnceAfterReturn;
     BitVector isCalledPerEvent;
     for (const FlowIndirectCall& call : flow.indirectCalls()) {
-        if (call.times == BuiltinCallbackTimes::Later)
+        if (call.times.predicted() == BuiltinCallbackTimes::Later)
             isCalledOnceAfterReturn.set(call.callee.index());
-        if (call.times == BuiltinCallbackTimes::PerEvent)
+        if (call.times.predicted() == BuiltinCallbackTimes::PerEvent)
             isCalledPerEvent.set(call.callee.index());
     }
     const bool verifies = build.options().verifiesAfterEveryPass;
@@ -892,9 +892,10 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         };
         auto addHandOver = [&](ValueID operand, double weight) {
             CalleeList callees = calleesOf(program, program.typeOf(function, operand));
-            for (FunctionID callee : callees.functions) {
+            std::span<const FunctionID> seen = callees.seen().predicted().functions;
+            for (FunctionID callee : seen) {
                 if (callGraph.callerSet(callee) != CallerSet::Complete && !isCalledOnceAfterReturn.get(callee.index()))
-                    add(callee, weight / callees.functions.size(), CallOfHost::IsReplaced);
+                    add(callee, weight / seen.size(), CallOfHost::IsReplaced);
             }
         };
         auto addCallsOfSite = [&](const auto& instruction, double weight, std::span<const FunctionID> candidates, bool callsUnknownCode) {
@@ -915,11 +916,12 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 if (!additionalCalls || isCountedByCallers(operand))
                     return;
                 CalleeList callees = calleesOf(program, program.typeOf(function, operand));
-                for (FunctionID callee : callees.functions) {
+                std::span<const FunctionID> seen = callees.seen().predicted().functions;
+                for (FunctionID callee : seen) {
                     if (!isCalledOnceAfterReturn.get(callee.index()))
-                        add(callee, weight * additionalCalls / callees.functions.size());
+                        add(callee, weight * additionalCalls / seen.size());
                 }
-                if (!callees.isComplete)
+                if (!callees.listsEveryCallee())
                     addUnknownCode(weight * additionalCalls);
             });
         };
@@ -1004,7 +1006,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
         } else {
             const BlockFrequencies& frequencies = analyses.blockFrequencies();
             for (BlockID blockID : analyses.cfg().reversePostOrder())
-                visit(blockID, frequencies.frequencyOf(blockID), shareOfClass(frequencies.classOf(blockID)));
+                visit(blockID, frequencies.frequencyOf(blockID).predicted(), shareOfClass(frequencies.classOf(blockID)));
         }
         sharePerWeight = 1;
         if (!followsNames)
@@ -1051,7 +1053,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 if (!position || std::ranges::binary_search(readsOfCallees, read.index()))
                     return;
                 CalleeList callees = calleesOf(program, program.typeOf(function, read));
-                if (callees.isComplete && callees.functions.isEmpty())
+                if (!callees.mayRunUserCode())
                     return;
                 namesReadBy[index].append(static_cast<uint32_t>(*position));
             });
@@ -1072,7 +1074,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 if (!(key.primitives & (Primitive::AnyString | Primitive::AnySymbol)) || (key.primitives & Primitive::Number) || constantKeyOf(program, key))
                     return;
                 CalleeList callees = calleesOf(program, program.typeOf(function, read));
-                if (callees.isComplete && callees.functions.isEmpty())
+                if (!callees.mayRunUserCode())
                     return;
                 readHoldersOf(program.typeOf(function, value.operand(OperandIndex::ElemGet::object)));
             });
@@ -1175,7 +1177,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
             // A handler gets events only as surely as whoever registers it is reached. What is reached as surely as a rare edge is taken counts as reached.
             Vector<double> sureness = estimateHowSurelyNodesAreReached(program, flow, graph, calls, names, seen, hasOnlySeenCallers, modulesLoadedBy);
             for (const FlowIndirectCall& call : flow.indirectCalls()) {
-                if (call.times != BuiltinCallbackTimes::PerEvent)
+                if (call.times.predicted() != BuiltinCallbackTimes::PerEvent)
                     continue;
                 double howSurely = call.caller && !program.entries.isEmpty() ? sureness[call.caller.index()] : 1.0;
                 if (howSurely >= frequencyConstants.rareEdgeShare)

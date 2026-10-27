@@ -103,9 +103,9 @@ inline ValueID valueOfOrigin(B3::Origin origin)
     return bits ? ValueID(static_cast<uint32_t>(bits - 1)) : ValueID();
 }
 
-constexpr B3::FrequencyClass b3FrequencyClassOf(BlockFrequency frequency)
+constexpr B3::FrequencyClass b3FrequencyClassOf(Expected<BlockFrequency> frequency)
 {
-    switch (frequency) {
+    switch (frequency.predicted()) {
     case BlockFrequency::Normal:
         return B3::FrequencyClass::Normal;
     case BlockFrequency::Unlikely:

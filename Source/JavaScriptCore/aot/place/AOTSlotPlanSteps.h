@@ -92,7 +92,7 @@ struct SlotPlanContext {
 
     void forEachHolder(PropertyKeyID key, LayoutSetID receivers, NOESCAPE const Invocable<void(LayoutID, SlotRow)> auto& functor) const
     {
-        for (LayoutID member : program.at(receivers).members) {
+        for (LayoutID member : program.at(receivers).seen().predicted()) {
             if (!isCompiledObject(member))
                 continue;
             if (std::optional<uint32_t> field = program.at(member).findField(key))

@@ -102,8 +102,8 @@ static bool isStoredIntoDeferringFields(const TypingContext& context, const Valu
     if ((store.opcode != Opcode::PutSlot && store.opcode != Opcode::PutSlotOrAdd) || operandIndex != OperandIndex::PutSlot::value)
         return false;
     const Function& callee = program.at(closureFunction);
-    auto& members = program.at(store.receivers()).members;
-    return !members.isEmpty() && std::ranges::all_of(members, [&](LayoutID member) {
+    std::span<const LayoutID> members = program.at(store.receivers()).completeMembers();
+    return !members.empty() && std::ranges::all_of(members, [&](LayoutID member) {
         std::optional<uint32_t> field = program.at(member).findField(store.key());
         if (!field)
             return false;
@@ -181,7 +181,7 @@ static bool asksOnlyForRowsOf(const Program& program, const Type& receiver, Layo
     ReceiverCandidates candidates = candidatesOf(program, receiver, nullptr, { });
     if (candidates.proof != ReceiverProof::Type || candidates.hasOtherParts || candidates.mayBeNullish)
         return false;
-    const auto& members = program.at(rows).members;
+    std::span<const LayoutID> members = program.at(rows).completeMembers();
     return std::ranges::all_of(candidates.proven, [&](LayoutID layout) {
         return std::ranges::binary_search(members, layout);
     });
@@ -319,6 +319,8 @@ void FunctionVerifier::verifySuspension(BlockID block, uint32_t, ValueID id, con
     }
     if (!isValid)
         fail(InternalErrorKind::InvalidSuspension, block, id);
+    else if (value.opcode == Opcode::AsyncGeneratorYield || value.opcode == Opcode::StepAsyncGenerator)
+        verifyProofsOfValueBesideMode(block, id);
 }
 
 void FunctionVerifier::verifyGeneratorStart()

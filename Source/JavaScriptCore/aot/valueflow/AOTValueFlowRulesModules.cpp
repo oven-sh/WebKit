@@ -184,7 +184,7 @@ ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objec
     ClimbingSet all = objects;
     ClimbingSet last = objects;
     for (;;) {
-        last = context.restrict(context.valueOf(context.read(last, copiedFromName)), context.universe().knownObjects());
+        last = context.restrict(context.valueOf(context.readWhatWasWritten(last, copiedFromName)), context.universe().knownObjects());
         bool findsNewSource = false;
         context.forEachMember(last, [&](ValueFlowObjectID source) {
             findsNewSource |= !context.contains(all, source);
@@ -204,13 +204,13 @@ static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSe
     ClimbingSet holders = withSourcesOfCopies(context, receivers);
 
     OwnProperties properties;
-    properties.held = sourcesOf(context.read(holders, valueName));
-    ClimbingSet getters = context.valueOf(context.read(holders, getterName));
+    properties.held = sourcesOf(context.readWhatWasWritten(holders, valueName));
+    ClimbingSet getters = context.valueOf(context.readWhatWasWritten(holders, getterName));
     auto readWhatIsStoredThrough = [&](ValueSetID placeholder, ValueFlowNodeID covered) {
         if (!context.holdsAnyOf(holders, covered))
             return;
-        properties.held.nodes.append(context.read(ClimbingSet(placeholder), valueName));
-        getters = context.unite(getters, context.valueOf(context.read(ClimbingSet(placeholder), getterName)));
+        properties.held.nodes.append(context.readWhatWasWritten(ClimbingSet(placeholder), valueName));
+        getters = context.unite(getters, context.valueOf(context.readWhatWasWritten(ClimbingSet(placeholder), getterName)));
     };
     readWhatIsStoredThrough(universe.unknownObjectAlone(), ValueFlowProgramNodes::escaped());
     readWhatIsStoredThrough(universe.untrackedObjectAlone(), ValueFlowProgramNodes::lost());
@@ -295,6 +295,18 @@ static ValueFlowSources runtimeNamespaceOf(ValueFlowRuleContext& context, Runtim
     return sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
 }
 
+// The run time has one namespace object for a file: that of the module that stands for the file where ES modules name what they import from it, or the file's own.
+static ValueFlowSources namespaceOfFile(ValueFlowRuleContext& context, ModuleID file)
+{
+    const Program& program = context.program();
+    ValueFlowSources sources = namespaceOf(context, file);
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (commonJsModuleCapturedBy(program, program.modules[index]) == file)
+            append(context, sources, namespaceOf(context, ModuleID(index)));
+    }
+    return sources;
+}
+
 ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
 {
     const Program& program = context.program();
@@ -312,8 +324,13 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
     }
 
     switch (module.requireResult) {
-    case RequireResult::ModuleExports:
-        return moduleExportsValueOf(context, id);
+    case RequireResult::ModuleExports: {
+        ValueFlowSources sources = moduleExportsValueOf(context, id);
+        // Where the file threw and nobody got the error, the loader answers with what it has of the file.
+        if (module.flags.contains(ModuleFlags::MayBeImportedWhileItRuns))
+            append(context, sources, namespaceOfFile(context, id));
+        return sources;
+    }
     case RequireResult::DefaultExport:
         return defaultExportOf(context, id);
     case RequireResult::Namespace: {

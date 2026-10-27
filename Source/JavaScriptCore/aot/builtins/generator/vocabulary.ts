@@ -579,6 +579,8 @@ export const builtinMarks = [
   "IsNotEnumerable",
   // An accessor of the host stands under its name. The getter answers what the entry says. The setter puts the value that it is given in the accessor's place, on the holder, whatever its receiver is.
   "IsReplacedBySetter",
+  // It, or what it makes, runs the jobs that wait before a call returns: the reactions of promises, and the modules that an import() loads.
+  "RunsWaitingJobs",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

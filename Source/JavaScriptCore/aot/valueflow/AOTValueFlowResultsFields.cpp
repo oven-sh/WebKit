@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinMembers.h"
+#include "AOTClaimsOfFields.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreshold.h"
 #include <wtf/HashSet.h>
@@ -28,6 +29,11 @@ std::unique_ptr<ValueFlowUsesOfHeap, ValueFlowUsesOfHeapDeleter> computeUsesOfHe
 ValueFlowHeapView& heapViewOf(ValueFlowUsesOfHeap& usesOfHeap)
 {
     return usesOfHeap.heap;
+}
+
+const LedgerPart& ledgerOfFieldsIn(const ValueFlowUsesOfHeap& usesOfHeap)
+{
+    return *usesOfHeap.ledgerOfFields;
 }
 
 ValueSetID objectsThatMayBeEnumerated(const ValueFlowUsesOfHeap& usesOfHeap)
@@ -51,6 +57,7 @@ void listStoresByLayout(const ValueFlowResultInputs& inputs, ValueFlowUsesOfHeap
     usesOfHeap.layoutsOfObjects.emplace(inputs, usesOfHeap.heap);
     times.didFinish("fields: layouts of objects"_s);
     usesOfHeap.stores.emplace(inputs, tables, usesOfHeap.heap, *usesOfHeap.layoutsOfObjects);
+    usesOfHeap.ledgerOfFields.emplace(inputs.program);
 }
 
 static FieldFlow& flowOf(FlowApplication& application, FieldReference declaration)
@@ -255,6 +262,7 @@ struct FieldResults {
     const UsesOfObjects& uses;
     const LayoutsOfObjects& layoutsOfObjects;
     StoresByLayout& stores;
+    LedgerOfFields& ledger;
     const Program& program { inputs.program };
     const ParallelLoops& loops { inputs.loops() };
     BuildContext& build { inputs.build };
@@ -883,27 +891,81 @@ struct FieldResults {
         return !mayGainName;
     }
 
-    void noteWhatNeverHappens(FieldFlow& flow, uint32_t layout, OptionSet<ObjectMutation> possible, bool hasListedStores, bool isFilledAtCreation) const
+    // Who has not accounted for the objects of a layout.
+    OptionSet<Actor> actorsOpenOnObjectsWith(LayoutID id) const
     {
-        if (!possible.contains(ObjectMutation::ReachUnknownJavaScript) && hasListedStores && build.isEnabled(FlowResultKind::StoreCounts, layout))
-            flow.location.writers = WriterState::AllKnown;
-        if (build.isEnabled(FlowResultKind::HolderMutations, layout)) {
-            if (!possible.contains(ObjectMutation::DeleteField))
-                flow.stability.add(FieldStability::IsNeverDeleted);
-            if (!possible.contains(ObjectMutation::RedefineProperty))
-                flow.stability.add(FieldStability::IsNeverRedefined);
-        }
-        if (isFilledAtCreation && flow.location.writers == WriterState::AllKnown && build.isEnabled(FlowResultKind::Initialization, layout))
-            flow.location.initialization = InitializationState::SetAtCreation;
+        OptionSet<Actor> open;
+        // Nobody lists where the objects are made.
+        if (application.layouts[id.index()].flow.allocationClasses.isEmpty())
+            open.add(Actor::Creation);
+        if (possibleMutationsOf(id).contains(ObjectMutation::ReachUnknownJavaScript))
+            open.add(Actor::UnseenCode);
+        // A copy brings names that nobody lists, and what it brings under them is not followed.
+        if (stores.getsCopiedProperties(id))
+            open.add(Actor::KeysNobodyKnows);
+        return open;
+    }
+
+    using WritesSeen = Vector<Write, 3>;
+    static WritesSeen writesSeen(ValueSetID stored, bool isStoredAfterCreation, OptionSet<ObjectMutation> possible)
+    {
+        WritesSeen writes;
+        writes.append(Write { isStoredAfterCreation ? Actor::Statements : Actor::Creation, isStoredAfterCreation ? WriteForm::Store : WriteForm::AtCreation, { }, stored });
+        if (possible.contains(ObjectMutation::DeleteField))
+            writes.append(Write { Actor::Statements, WriteForm::Delete, { }, ValueSets::nothing });
+        if (possible.contains(ObjectMutation::RedefineProperty))
+            writes.append(Write { Actor::Statements, WriteForm::Define, { }, ValueSets::nothing });
+        return writes;
+    }
+
+    ClaimsOfFieldsEnabled claimsEnabledFor(uint32_t layout) const
+    {
+        return { build.isEnabled(FlowResultKind::StoreCounts, layout), build.isEnabled(FlowResultKind::HolderMutations, layout), build.isEnabled(FlowResultKind::Initialization, layout) };
+    }
+
+    // Nothing tests a value that an allocation lists, so each has a write of its own.
+    Vector<LedgerOfFields::WriteToField> collectValuesListedByAllocations() const
+    {
+        return collectInParallel<LedgerOfFields::WriteToField>(loops, program.functions.size(), [&](unsigned index, Vector<LedgerOfFields::WriteToField>& found) {
+            FunctionID id(index);
+            if (!inputs.bodies().holdsAnyOf(id, notedOperations({ ValueFlowNotedOperation::NewObject })) || !isCompiled(id))
+                return;
+            const Function& function = program.functions[index];
+            auto note = [&](ValueID site, NOESCAPE const Invocable<ValueSetID(uint32_t position)> auto& arrivesAt) {
+                const Value& allocation = function.at(site);
+                if (!hasObjectsThatCodeAlters(program.at(allocation.layout()).kind))
+                    return;
+                std::span<const uint32_t> fields = allocation.fields();
+                for (uint32_t position = 0; position < fields.size(); ++position)
+                    found.append({ declarationOf(program, { allocation.layout(), fields[position] }), Write { Actor::Creation, WriteForm::AtCreation, { }, arrivesAt(position), id, site } });
+            };
+            if (!inputs.isReached(id)) {
+                for (uint32_t value = 0; value < function.values.size(); ++value) {
+                    if (function.values[value].opcode == Opcode::NewObject)
+                        note(ValueID(value), [](uint32_t) { return ValueSets::anything; });
+                }
+                return;
+            }
+            BorrowedValueSetMaker maker(inputs.makerPool());
+            for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::NewObject)
+                    continue;
+                std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+                note(statement.site, [&](uint32_t position) {
+                    return inputs.possibleValuesOf(maker.get(), operands[OperandIndex::NewObject::values + position]);
+                });
+            }
+        });
     }
 
     ValueFlowFieldContents computeDeclaredFields(std::span<const AllocatingOperation> allocatingOperations) const
     {
         struct FactsOfField {
             OptionSet<FieldFact> facts;
-            OptionSet<ObjectMutation> possibleMutations;
         };
         struct HeldField : FactsOfField {
+            OptionSet<ObjectMutation> possibleMutations;
+            OptionSet<Actor> open;
             FieldReference declaration;
             FlowAccessorField accessor;
             ValueSetID stored { ValueSets::nothing };
@@ -936,6 +998,7 @@ struct FieldResults {
             bool getsCopiedProperties = stores.getsCopiedProperties(id);
             OptionSet<ObjectMutation> marked = possibleMutationsOf(id);
             OptionSet<ObjectMutation> possible = getsCopiedProperties ? allObjectMutations : marked;
+            OptionSet<Actor> open = actorsOpenOnObjectsWith(id);
             bool isSeenByOthers = !isSeenByFollowedCodeAlone(id);
             bool isDeletedByStatementsAlone = !isSeenByOthers || (heap.reaches(inputs.universe().unknownObjectAlone(), objects) && !stores.hasObjectOfCodeWithoutSolve(id) && !possible.contains(ObjectMutation::ReachUnknownJavaScript));
             auto isPutDown = [&](ValueFlowNameKind underKey, ValueFlowNameKind underUnknownKey, PropertyKeyID key) {
@@ -953,6 +1016,8 @@ struct FieldResults {
                 held.declaration = declaration;
                 held.facts = { FieldFact::HasObjects, FieldFact::MayBeObserved, FieldFact::MayInheritName };
                 held.possibleMutations = field.key ? possible : allObjectMutations;
+                // Nobody lists what is written to a field without a name.
+                held.open = field.key ? open : actorsThatCanWrite(PlaceKind::Field);
                 if (field.key) {
                     if (isDeletedByStatementsAlone && !getsCopiedProperties && !isPutDown(ValueFlowNameKind::DeletedMember, ValueFlowNameKind::DeletedMemberUnderUnknownKey, field.key))
                         held.possibleMutations.remove(ObjectMutation::DeleteField);
@@ -985,23 +1050,26 @@ struct FieldResults {
                 if (held.facts.contains(FieldFact::IsAskedForAccessor))
                     uniteAccessors(application.layouts[layout].fields[field].accessor, WTF::move(held.accessor), !all.facts.contains(FieldFact::IsAskedForAccessor));
                 all.facts.add(held.facts);
-                all.possibleMutations.add(held.possibleMutations);
+                ledger.sign(held.declaration, held.open, writesSeen(held.stored, held.facts.contains(FieldFact::IsStoredAfterCreation), held.possibleMutations).span());
                 contents.stored[layout][field] = makers.of(0).unite(contents.stored[layout][field], held.stored);
                 contents.storedNumbers[layout][field].unite(held.storedNumbers);
             }
             heldFields.clear();
         }
+        ledger.note(collectValuesListedByAllocations());
+        ledger.close(loops);
 
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
             const Layout& layout = program.layouts[index];
             if (!hasObjectsThatCodeAlters(layout.kind))
                 return;
             for (uint32_t field = 0; field < layout.fields.size(); ++field) {
-                auto [facts, possible] = known[index][field];
+                OptionSet<FieldFact> facts = known[index][field].facts;
                 if (!facts.contains(FieldFact::HasObjects) || layout.fields[field].flags.contains(FieldFlags::IsInherited))
                     continue;
                 FieldFlow& flow = application.layouts[index].fields[field].flow;
-                noteWhatNeverHappens(flow, index, possible, true, !facts.contains(FieldFact::IsMissingAtCreation));
+                Writers writers = ledger.writersOf(FieldReference { LayoutID(index), field });
+                claimWhatNeverHappens(flow, writers, !facts.contains(FieldFact::IsMissingAtCreation), claimsEnabledFor(index));
                 if (!facts.contains(FieldFact::MayInheritName))
                     flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
                 if (hasNodeOfItsOwn(layout.fields[field])) {
@@ -1011,10 +1079,7 @@ struct FieldResults {
                 }
                 if (flow.location.writers != WriterState::AllKnown)
                     continue;
-                if (!facts.contains(FieldFact::IsStoredAfterCreation) && !possible.containsAny({ ObjectMutation::DeleteField, ObjectMutation::RedefineProperty })) {
-                    flow.location.stores = StoreCount::AtMostOnce;
-                    flow.location.isUnchangedDuringActivation = true;
-                }
+                claimStoreCount(flow, writers);
                 if (!facts.contains(FieldFact::MayBeObserved) && build.isEnabled(FlowResultKind::ObjectUses, index) && build.isEnabledEverywhere(FlowResultKind::ReceiverSets)) {
                     bool isCalled = facts.contains(FieldFact::MayBeCalled);
                     bool isAccessed = facts.contains(FieldFact::MayBeAccessed);
@@ -1290,7 +1355,7 @@ struct FieldResults {
                 PropertyKeyKind kind = program.at(key).kind;
                 bool canBeDeclared = kind != PropertyKeyKind::CreatedSymbol && kind != PropertyKeyKind::RegisteredSymbol && kind != PropertyKeyKind::ModulePrivateName;
                 bool isOutsideFamilies = canBeDeclared && !families.isEmpty() && (declarers == layoutsWithField.end() || (!haveCommonMember(views, declarers->value.span()) && std::ranges::none_of(families, [&](LayoutSetID family) {
-                    return haveCommonMember(program.at(family).members.span(), declarers->value.span());
+                    return haveCommonMember(program.at(family).completeMembers(), declarers->value.span());
                 })));
                 if (isOutsideFamilies || std::ranges::binary_search(keysDeclaredBelow[id.index()], key) || !canNameField(key) || keysOfFields.contains(key))
                     return true;
@@ -1350,6 +1415,7 @@ struct FieldResults {
                 FlowAppendedField field;
                 field.key = key;
                 OptionSet<ObjectMutation> possible;
+                OptionSet<Actor> open;
                 ValueSetID stored = ValueSets::nothing;
                 ValueFlowNumbers storedNumbers;
                 bool isStoredBeforeObjectsLeak = true;
@@ -1361,12 +1427,16 @@ struct FieldResults {
                     ValueSetID above;
                     inheritsNothing = inheritsNothing && inheritsNothingUnder(maker, below, above, key);
                     possible.add(stores.getsCopiedProperties(below) ? allObjectMutations : possibleMutationsOf(below));
+                    open.add(actorsOpenOnObjectsWith(below));
                     stored = maker.unite(stored, stores.storedUnder(maker, below, key));
                     storedNumbers.unite(stores.numbersStoredUnder(below, key));
                     isStoredBeforeObjectsLeak &= holdsSinceBirth(below, key) || (constructions.isFollowed(below) && constructions.isStoredBeforeObjectLeaks(below, key, { }));
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
                 });
-                noteWhatNeverHappens(field.flow, index, possible, !sets.isEmpty(stored), isStoredBeforeObjectsLeak);
+                WritesSeen writes = writesSeen(stored, true, possible);
+                ClaimsOfFieldsEnabled enabled = claimsEnabledFor(index);
+                enabled.storeCounts &= !sets.isEmpty(stored);
+                claimWhatNeverHappens(field.flow, Writers(writes.span(), open), isStoredBeforeObjectsLeak, enabled);
                 if (inheritsNothing)
                     field.flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
                 application.layouts[index].appendedFields.append(WTF::move(field));
@@ -1738,7 +1808,7 @@ struct FieldResults {
 ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, ValueFlowUsesOfHeap& usesOfHeap, const ValueFlowConstructions& constructions, FlowResultTables& tables)
 {
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
-    FieldResults results { inputs, tables, constructions, usesOfHeap.heap, usesOfHeap.uses, *usesOfHeap.layoutsOfObjects, *usesOfHeap.stores };
+    FieldResults results { inputs, tables, constructions, usesOfHeap.heap, usesOfHeap.uses, *usesOfHeap.layoutsOfObjects, *usesOfHeap.stores, *usesOfHeap.ledgerOfFields };
     Vector<AllocatingOperation> allocatingOperations;
     runTasksInParallel(inputs.loops(), {
         [&] {

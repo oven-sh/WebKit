@@ -17,6 +17,7 @@
 #include "AOTFlowRecords.h"
 #include "AOTFlowSiteData.h"
 #include "AOTLayout.h"
+#include "AOTLedgerFields.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTSort.h"
@@ -806,6 +807,7 @@ struct ValueFlowUsesOfHeap {
     UsesOfObjects uses;
     std::optional<LayoutsOfObjects> layoutsOfObjects;
     std::optional<StoresByLayout> stores;
+    std::optional<LedgerOfFields> ledgerOfFields;
 };
 
 using ValueFlowBuiltinApplicationOnWorkerFunctor = ScopedLambda<void(unsigned worker, const ValueFlowBuiltinApplication&)>;
@@ -862,7 +864,7 @@ void StoresByLayout::forEachWriteAmong(std::span<const uint32_t> writes, NOESCAP
             writer.isAllocation = resultRuleOf(statement.opcode) == ResultRule::Allocation || statement.opcode == Opcode::Data;
         if (family) {
             writer.familyOfReceiver = LayoutSetID(family - 1);
-            writer.layoutsOfReceiver = program.types.at(writer.familyOfReceiver).members.span();
+            writer.layoutsOfReceiver = program.types.at(writer.familyOfReceiver).completeMembers();
         }
         for (; first < writes.size() && !(writes[first] & isStatementInListOfWrites); ++first)
             functor(writer, solver.keyOfMadeNodesAt(writes[first]), solver.possibleValuesOf(solver.firstOfMadeNodesAt(writes[first])));

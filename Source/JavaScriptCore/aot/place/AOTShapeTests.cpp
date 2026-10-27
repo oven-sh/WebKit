@@ -245,7 +245,7 @@ ShapeTestCandidates collectShapeTestCandidates(const PlacementContext& context, 
             list.weight = saturatedSum(list.weight, testedSets[next].weight);
             list.sites = clampTo<uint32_t>(static_cast<uint64_t>(list.sites) + testedSets[next].sites);
         }
-        for (LayoutID member : context.program.at(list.set).members) {
+        for (LayoutID member : context.program.at(list.set).completeMembers()) {
             uint32_t numberOfShapes = variants.numberOfShapesOf(member);
             if (!context.isCompiledObject(member) || !numberOfShapes)
                 continue;
@@ -1147,7 +1147,7 @@ static void deriveSetTests(const PlacementContext& context, const ShapeNumbering
     parts.firstMemberShape.fill(0, numberOfSets + 1);
     forEachIndexInParallel(loops, numberOfSets, [&](unsigned index) {
         CheckedUint32 numberOfShapes = 0;
-        for (LayoutID member : context.program.at(LayoutSetID(index)).members)
+        for (LayoutID member : context.program.at(LayoutSetID(index)).written())
             numberOfShapes += objectShapesOf(member).count;
         parts.firstMemberShape[index + 1] = numberOfShapes.value();
     });
@@ -1164,7 +1164,7 @@ static void deriveSetTests(const PlacementContext& context, const ShapeNumbering
         uint32_t first = parts.firstMemberShape[index];
         auto shapes = parts.memberShapes.mutableSubspan(first, parts.firstMemberShape[index + 1] - first);
         size_t next = 0;
-        for (LayoutID member : context.program.at(LayoutSetID(index)).members) {
+        for (LayoutID member : context.program.at(LayoutSetID(index)).written()) {
             ShapeRange range = objectShapesOf(member);
             for (uint32_t shape = range.first; shape < range.end(); ++shape)
                 shapes[next++] = shape;
@@ -1247,8 +1247,8 @@ static void deriveKnownSetTests(const PlacementContext& context, const PlacedSit
     });
     forEachIndexInParallel(loops, tests.size(), [&](unsigned index) {
         ShapeTestWithinKnownSet& entry = tests[index];
-        const LayoutSet& known = context.program.at(entry.known);
-        bool areMemberShapesComplete = known.isComplete && std::ranges::all_of(known.members, [&](LayoutID member) {
+        auto known = context.program.at(entry.known).all();
+        bool areMemberShapesComplete = known && std::ranges::all_of(*known, [&](LayoutID member) {
             return context.isCompiledObject(member) || context.program.at(member).flow.allocation == AllocationState::NeverAllocated;
         });
         const ShapeTest& general = parts.testOfSet[entry.tested.index()];

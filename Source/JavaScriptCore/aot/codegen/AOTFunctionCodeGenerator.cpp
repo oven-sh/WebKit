@@ -67,9 +67,9 @@ FunctionBackEndTraits computeBackEndTraits(const CodeGenerationInputs& inputs, F
         .isAsync = function.has(FunctionFlags::IsAsync),
         .rejectsOnThrow = rejectsOnThrow(inputs.program, function),
         .hasHandlers = std::ranges::any_of(function.blocks, [](const Block& block) { return !!block.handler; }),
-        .isCold = isCold(inputs.heat.of(inputs.program, id)),
-        .runsOnce = inputs.heat.of(inputs.program, id) == HeatClass::RunsOnce,
-        .isHot = isHot(inputs.heat.of(inputs.program, id)),
+        .isCold = isCold(inputs.heat.of(inputs.program, id)).predicted(),
+        .runsOnce = inputs.heat.of(inputs.program, id).predicted() == HeatClass::RunsOnce,
+        .isHot = isHot(inputs.heat.of(inputs.program, id)).predicted(),
         .returnsAreUnlikely = !savesFrameOnSuspend && !function.hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }),
     };
 }
@@ -132,22 +132,22 @@ static BitVector findRareAirBlocks(const B3::Air::Code& code)
 BlockColdnessRule::BlockColdnessRule(const CodeGenerationInputs& inputs, FunctionID id)
     : m_inputs(inputs)
     , m_id(id)
-    , m_activations(inputs.heat.activationsOf(inputs.program, id))
+    , m_activations(inputs.heat.activationsOf(inputs.program, id).predicted())
     // Nothing says that a compact function runs, and a failed test at an entrance is expected of no call.
-    , m_isExpectedNotToBeEntered(inputs.heat.isCompact(inputs.program, id) || inputs.program.at(id).runsOnlyBehindFailedTest())
+    , m_isExpectedNotToBeEntered(inputs.heat.isCompact(inputs.program, id).predicted() || inputs.program.at(id).runsOnlyBehindFailedTest())
 {
 }
 
 BlockColdness BlockColdnessRule::of(double frequency, bool isRare) const
 {
     double heat = m_activations * frequency;
-    HeatClass heatClass = m_inputs.heat.classOf(m_inputs.program, m_id, frequency);
+    Expected<HeatClass> heatClass = m_inputs.heat.classOf(m_inputs.program, m_id, frequency);
     // A shared sequence costs a call and a return each time it runs.
-    bool isExpectedNotToRun = isCold(heatClass) && !m_inputs.heat.isColdByLimitAlone(heat);
+    bool isExpectedNotToRun = isCold(heatClass).predicted() && !m_inputs.heat.isColdByLimitAlone(heat).predicted();
     return {
-        .isCold = isExpectedNotToRun || (isRare && !isHot(heatClass)),
+        .isCold = isExpectedNotToRun || (isRare && !isHot(heatClass).predicted()),
         // In a function that is expected to run, what lies behind a rare edge is rare by an estimate only: a test that rests on a guess fails at every call or at none.
-        .isRarelyRun = (isRare && isExpectedNotToRun) || heatClass == HeatClass::RunsOnce || m_isExpectedNotToBeEntered,
+        .isRarelyRun = (isRare && isExpectedNotToRun) || heatClass.predicted() == HeatClass::RunsOnce || m_isExpectedNotToBeEntered,
     };
 }
 

@@ -19,6 +19,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static_assert(!std::is_convertible_v<ValueFlowName, ValueFlowCellName>);
+static_assert(!std::is_invocable_v<decltype(&ValueFlowRuleContext::read), ValueFlowRuleContext&, ClimbingSet, ValueFlowName>);
+static_assert(std::is_invocable_v<decltype(&ValueFlowRuleContext::read), ValueFlowRuleContext&, ClimbingSet, ValueFlowCellName>);
+
 std::span<const NativeTest> valueFlowCoreTests();
 
 namespace {
@@ -1105,10 +1109,10 @@ static void runToyRule(const ValueFlowStatement& statement, ValueFlowRuleContext
         context.add(statement.result, context.maker().of(ValueFlowObjectID(payload)));
         return;
     case ToyOperation::Load:
-        context.connect(context.read(context.valueOf(operands[0]), ValueFlowName::property(PropertyKeyID(payload))), statement.result);
+        context.connect(context.readWhatWasWritten(context.valueOf(operands[0]), ValueFlowName::property(PropertyKeyID(payload))), statement.result);
         return;
     case ToyOperation::LoadEveryProperty:
-        context.connect(context.read(context.valueOf(operands[0]), ValueFlowName { ValueFlowNameKind::EveryProperty, 0 }), statement.result);
+        context.connect(context.readWhatWasWritten(context.valueOf(operands[0]), ValueFlowName { ValueFlowNameKind::EveryProperty, 0 }), statement.result);
         return;
     case ToyOperation::StoreUnderUnknownKey:
         context.connect(operands[1], context.written(context.valueOf(operands[0]), ValueFlowName { ValueFlowNameKind::UnknownKey, 0 }));

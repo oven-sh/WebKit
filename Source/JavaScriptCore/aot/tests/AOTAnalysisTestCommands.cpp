@@ -246,6 +246,8 @@ static void duplicateRegion(TestCommandContext& context, CommandWords& words, Se
     Vector<BlockID> region = words.parseRequired("region"_s, listParser(blockParser(function)));
     auto entersRegion = [&](Edge edge) { return region.contains(targetOf(function, edge).block); };
     Vector<Edge> redirectedEdges = words.parseAll("redirect"_s, filterParser(edgeParser(function), entersRegion));
+    Vector<Edge> edgesIntoCopy = words.parseAll("enter"_s, edgeParser(function));
+    auto standIns = words.parseAll("standIn"_s, pairParser(':', valueParser(function), valueParser(function)));
     Vector<Vector<ValueID>> variables = parseVariables(words, function);
 
     rewriteAndPrint(context, words, session, [&] {
@@ -259,11 +261,15 @@ static void duplicateRegion(TestCommandContext& context, CommandWords& words, Se
             return false;
 
         RegionCloner cloner(session.builder, function);
+        for (auto [value, standIn] : standIns)
+            cloner.mapValue(value, standIn);
         cloner.cloneBlocks(region.span(), [](ValueID, Value&) { });
         for (Edge edge : redirectedEdges) {
             if (entersRegion(edge))
                 session.builder.redirectEdge(edge, cloner.cloneOf(targetOf(function, edge).block), Arguments(targetOf(function, edge).arguments));
         }
+        for (Edge edge : edgesIntoCopy)
+            session.builder.redirectEdge(edge, cloner.cloneOf(region.first()), { });
         if (variables.isEmpty())
             cloner.repairSSA(session.analyses);
         else

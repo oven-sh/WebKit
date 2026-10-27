@@ -1,0 +1,27 @@
+# A family may have members that no layout stands for: an error, a view of a buffer. Error.isError and ArrayBuffer.isView ask such an object itself
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="HasMessage" fields=[{key="message" declared={type=string} flags=[IsRequired]}]
+function f0 name="everyObjectHasTheLayout" parameters=[{type=L0}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ErrorIsError/0
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: v1: false = Boolean
+}
+
+function f1 name="errorWithoutLayout" parameters=[{type=L0|nolayout}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ErrorIsError/0
+    Return v1
+# CHECK-NOT: Boolean
+# CHECK: = CallBuiltin -, v0 overload=ErrorIsError/0
+}
+
+function f2 name="viewWithoutLayout" parameters=[{type=L0|nolayout}] results=[{type=boolean}] {
+    v1 = CallBuiltin -, v0 overload=ArrayBufferIsView/0
+    Return v1
+# CHECK-NOT: Boolean
+# CHECK: = CallBuiltin -, v0 overload=ArrayBufferIsView/0
+}

@@ -135,11 +135,14 @@ static bool holdsEnvironmentOfDeferredClosures(const FieldInputs& field)
     return isObjectLayout(field.layout.kind) && field.declaration.flags.contains(FieldFlags::IsHidden) && field.type.environment;
 }
 
-static bool needsAbsentState(const FieldInputs& field)
+static bool needsAbsentState(const SlotPlanContext& context, const FieldInputs& field)
 {
     constexpr OptionSet<FieldStability> everyStability { FieldStability::IsNeverDeleted, FieldStability::IsNeverRedefined, FieldStability::IsNeverStoredWithOtherType };
     if (holdsEnvironmentOfDeferredClosures(field))
         return false;
+    // The markers for undefined and null come with the one for a slot that is empty.
+    if (slotHoldsUndefinedAndNull(context.program, field.reference))
+        return true;
     bool isAlwaysFilled = field.flow.occupancy == Occupancy::AlwaysFilled;
     switch (field.layout.kind) {
     case LayoutKind::CoroutineFrame:
@@ -234,7 +237,7 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
 
     const LocationFlow& location = field.flow.location;
     bool isAlwaysFilledByNativeCode = field.members.isFilledByNativeCode && field.declaration.flags.contains(FieldFlags::IsRequired);
-    claim.needsAbsentState = needsAbsentState(field) || (context.build.validates() && field.layout.kind == LayoutKind::Environment);
+    claim.needsAbsentState = needsAbsentState(context, field) || (context.build.validates() && field.layout.kind == LayoutKind::Environment);
     claim.isSetAtCreation = location.initialization == InitializationState::SetAtCreation;
     claim.existsAtCreation = field.use.initializingSites || claim.isSetAtCreation || isAlwaysFilledByNativeCode;
     claim.isInitializedWithValue = field.use.sitesInitializingWithValue || (claim.isSetAtCreation && !field.use.initializingSites) || isAlwaysFilledByNativeCode;

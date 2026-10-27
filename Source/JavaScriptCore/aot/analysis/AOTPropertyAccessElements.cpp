@@ -296,9 +296,9 @@ static ArrayStorage expectedArrayStorageOf(const Program& program, const Element
     const ClassPart* expected = query.receiverExpected ? query.receiverExpected->findClassPart(part.builtinClass) : nullptr;
     if (expected && expected->arrayStorage != ArrayStorage::Other)
         return expected->arrayStorage;
-    ArrayStorage storage = arrayStorageDeclaredBy(program, part);
+    ArrayStorage storage = arrayStorageDeclaredBy(program, part).predicted();
     if (storage == ArrayStorage::Other && expected)
-        storage = arrayStorageDeclaredBy(program, *expected);
+        storage = arrayStorageDeclaredBy(program, *expected).predicted();
     return storage;
 }
 

@@ -386,8 +386,8 @@ void IRPrinter::printBlockHead(const Function& function, BlockID id, const Block
         field("role"_s, block.role);
     if (block.subject)
         field("subject"_s, block.subject);
-    if (block.frequency != BlockFrequency::Normal)
-        field("frequency"_s, block.frequency);
+    if (block.frequency.predicted() != BlockFrequency::Normal)
+        field("frequency"_s, block.frequency.predicted());
     if (block.handler) {
         beginField("handler"_s);
         printTarget({ }, *block.handler);
@@ -668,13 +668,13 @@ void IRPrinter::print(RuntimeFunctionID id)
 static void dumpLayouts(IRPrinter& printer, const LayoutSet& layouts)
 {
     CommaPrinter bar("|"_s);
-    for (LayoutID member : layouts.members) {
+    for (LayoutID member : layouts.written()) {
         printer.out().print(bar);
         printer.print(member);
     }
-    if (layouts.hasMembersWithoutLayout)
+    if (layouts.isWrittenWithMembersWithoutLayout())
         printer.out().print(bar, "nolayout"_s);
-    if (!layouts.isComplete)
+    if (!layouts.listsEveryLayout())
         printer.out().print(bar, "?"_s);
 }
 

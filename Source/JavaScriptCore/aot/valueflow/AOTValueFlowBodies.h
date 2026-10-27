@@ -233,6 +233,7 @@ private:
     ValueSetID m_objectsThatPickTheirLayout;
     ValueSetID m_constructedObjects;
     ValueSetID m_instancesOfClasses;
+    BitVector m_classesNamedAboveSeveralClasses;
     ValueSetID m_constructorsWithLayouts;
     ValueSetID m_constructorsAnsweringOnlyWhatTheyConstruct;
     BitVector m_isLayoutOfTable;

@@ -286,19 +286,19 @@ void becomeExpect(Value& value, ValueID operand, ExpectedType expected)
 static LayoutSetID withReceiversNobodyHasSeen(TypeArena& types, LayoutSetID stamp)
 {
     const LayoutSet& receivers = types.at(stamp);
-    if (!receivers.isComplete)
+    if (!receivers.listsEveryLayout())
         return stamp;
-    if (receivers.members.isEmpty() || receivers.hasMembersWithoutLayout)
+    if (receivers.written().isEmpty() || receivers.mayHoldObjectsWithoutLayout())
         return { };
-    return types.intern(LayoutSet { .members = receivers.members, .isComplete = false });
+    return types.intern(LayoutSet::open(Vector<LayoutID>(receivers.written())));
 }
 
 static CalleeSetID withCalleesNobodyHasSeen(TypeArena& types, CalleeSetID stamp)
 {
-    const CalleeSet& callees = types.at(stamp);
-    if (!callees.isComplete)
+    std::optional<ProvenValue<Callees>> callees = types.at(stamp).all();
+    if (!callees)
         return stamp;
-    return types.intern(CalleeSet { .functions = callees.functions, .builtins = callees.builtins, .isComplete = false });
+    return types.intern(CalleeSet::open(Vector<FunctionID>(callees->value().functions), Vector<BuiltinID>(callees->value().builtins)));
 }
 
 ForgottenProofs forgetProofsBehind(Function& function, const CFG& cfg, TypeArena& types, std::span<const ValueID> values, const BitVector& checksThatGo, ExpectedTypes expectedTypes)

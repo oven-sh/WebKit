@@ -524,8 +524,8 @@ public:
             didEnterCompiledCode = instance->scratch.didEnterCompiledCode;
             instance->scratch.didEnterCompiledCode |= m_didEnterCompiledCodeBefore;
         }
-        // A step of an async generator and a job go into the compiled body without an entry scope of the engine.
-        bool didRunCode = m_vm.didEnterVM || didEnterCompiledCode;
+        // The stub through which native code enters compiled code sets it as an entry scope of the engine does.
+        bool didRunCode = m_vm.didEnterVM;
         m_vm.didEnterVM |= m_didEnterVMBefore;
 
         DeferGCForAWhile deferGC(m_vm);

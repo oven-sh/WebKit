@@ -8,7 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSort.h"
 #include "AOTThreshold.h"
+#include <algorithm>
+#include <optional>
+#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -406,6 +410,27 @@ ValueSetID ValueFlowHeapView::prototypesOfHeirs(ValueSetMaker& maker, ValueSetID
     return expand(maker, maker.unite(maker.of(atCreation.span()), maker.intersect(writtenUnder(maker, heirs, prototypeLinkName), m_inputs.universe().objects())));
 }
 
+// What lies above a set is what lies above its members. Large sets share most of their members, so each member is asked once for all of them.
+ValueSetID ValueFlowHeapView::prototypesOfEachHeir(ValueSetMaker& maker, ValueSetID heirs) const
+{
+    AOT_THRESHOLD(uint32_t, fewestHeirsAskedOneByOne, 8);
+    const ValueSets& sets = m_inputs.sets();
+    if (sets.size(heirs) < fewestHeirsAskedOneByOne)
+        return prototypesOfHeirs(maker, heirs);
+    Vector<ValueFlowObjectID, 64> onlyPrototypes;
+    Vector<ValueSetID, 8> severalPrototypes;
+    sets.forEachMember(heirs, [&](ValueFlowObjectID heir) {
+        ValueSetID above = prototypesOf(maker, maker.of(heir));
+        if (ValueFlowObjectID prototype = sets.onlyMember(above))
+            onlyPrototypes.append(prototype);
+        else if (above != ValueSets::nothing && (severalPrototypes.isEmpty() || severalPrototypes.last() != above))
+            severalPrototypes.append(above);
+    });
+    AOT::sort(severalPrototypes);
+    removeRepeatedElements(severalPrototypes);
+    return maker.unite(maker.of(onlyPrototypes.span()), maker.uniteAll(severalPrototypes.span()));
+}
+
 ValueSetID ValueFlowHeapView::prototypesOf(ValueSetMaker& maker, ValueSetID objects) const
 {
     return m_index.prototypesOfSets().ensure(objects.index(), [&] {
@@ -437,7 +462,7 @@ ValueSetID ValueFlowHeapView::prototypesOf(ValueSetMaker& maker, ValueSetID obje
             otherHeirs = maker.intersect(otherHeirs, ValueSets::complement(placeholder.prototypes.heirs));
             prototypes = maker.unite(prototypes, placeholder.prototypes.prototypes);
         }
-        prototypes = maker.unite(prototypes, prototypesOfHeirs(maker, otherHeirs));
+        prototypes = maker.unite(prototypes, prototypesOfEachHeir(maker, otherHeirs));
         if (m_inputs.build.options().verifiesAfterEveryPass)
             RELEASE_ASSERT(prototypes == prototypesOfHeirs(maker, heirs));
         return prototypes;
@@ -542,6 +567,15 @@ ValueSetID ValueFlowHeapView::chainOf(ValueSetMaker& maker, ValueSetID objects) 
             }
         };
 
+        // All that a step has added, and whether what lies above it was new as a whole: then the chain of the step is the step and the chain of the next one.
+        struct Step {
+            ValueSetID added;
+            bool meetsNothingWalked;
+        };
+        AOT_THRESHOLD(size_t, fewestStepsToKeep, 8);
+        Vector<Step, 16> steps;
+        ValueSetID chainOfLastStep = ValueSets::nothing;
+
         takeInChainsOfPlaceholdersIn(objects);
         while (true) {
             takeInChainsOfPlaceholdersIn(chain);
@@ -550,11 +584,31 @@ ValueSetID ValueFlowHeapView::chainOf(ValueSetMaker& maker, ValueSetID objects) 
             ValueSetID frontier = maker.intersect(chain, ValueSets::complement(walked));
             if (frontier == ValueSets::nothing)
                 break;
+            if (std::optional<ValueSetID> known = frontier != objects ? m_index.chainsOfSets().find(frontier.index()) : std::nullopt) {
+                chain = maker.unite(chain, *known);
+                if (ValueSets::isComplement(chain))
+                    return chainWalkedInFull(maker, objects);
+                chainOfLastStep = *known;
+                break;
+            }
             walked = maker.unite(walked, chain);
-            chain = maker.unite(chain, prototypesOf(maker, frontier));
+            ValueSetID above = prototypesOf(maker, frontier);
+            steps.append({ frontier, !sets.meet(above, chain) });
+            chain = maker.unite(chain, above);
         }
         if (m_inputs.build.options().verifiesAfterEveryPass)
             RELEASE_ASSERT(chain == chainWalkedInFull(maker, objects));
+        bool hasTakenInPlaceholder = std::ranges::any_of(placeholders, &Placeholder::isTakenIn);
+        if (steps.size() < fewestStepsToKeep || hasTakenInPlaceholder)
+            return chain;
+        for (size_t index = steps.size(); index-- > 1 && steps[index].meetsNothingWalked;) {
+            chainOfLastStep = maker.unite(chainOfLastStep, steps[index].added);
+            m_index.chainsOfSets().ensure(steps[index].added.index(), [&] {
+                return chainOfLastStep;
+            });
+            if (m_inputs.build.options().verifiesAfterEveryPass && index == steps.size() / 2)
+                RELEASE_ASSERT(chainOfLastStep == chainWalkedInFull(maker, steps[index].added));
+        }
         return chain;
     });
 }

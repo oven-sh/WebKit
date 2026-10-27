@@ -146,7 +146,7 @@ void FreshArgumentCollector::visitCall(const Value& call)
 
     const Program& program = m_context.program;
     CalleeList callees = calleesOfCall(program, call);
-    for (FunctionID id : callees.functions) {
+    for (FunctionID id : callees.seen().predicted().functions) {
         const Function& callee = program.at(id);
         for (uint32_t operandIndex : freshOperands) {
             std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, operandIndex);
@@ -716,7 +716,7 @@ std::optional<Promotion> ParameterPromoter::trySplitBehindEarlyReturn(uint32_t p
             size += block.values.size() + 1;
             isTooLarge = size > limit;
             canBeStart = !isTooLarge && !cycles.isInCycle(reached[next]) && !block.handler;
-            earlyReturns += returnsToCaller(block.terminator.kind) && block.frequency == BlockFrequency::Normal;
+            earlyReturns += returnsToCaller(block.terminator.kind) && block.frequency.predicted() == BlockFrequency::Normal;
             for (BlockID successor : cfg.successors(reached[next])) {
                 if (successor != cut && !reached.contains(successor))
                     reached.append(successor);

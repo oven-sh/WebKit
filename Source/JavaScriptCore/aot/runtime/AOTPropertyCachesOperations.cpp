@@ -516,6 +516,9 @@ static void putByVal(JSGlobalObject* globalObject, JSValue base, JSValue propert
         return;
     }
     if (std::optional<uint32_t> index = indexOfKey(property)) {
+        // The stub finds the text of the index there the next time.
+        if (base.isCell() && base.asCell()->type() == ProxyObjectType && *index < NumericStrings::cacheSize)
+            vm.numericStrings.addJSString(vm, static_cast<int>(*index));
         scope.release();
         if (!base.isObject() || !asObject(base)->trySetIndexQuickly(vm, *index, value))
             base.putByIndex(globalObject, *index, value, isStrict);

@@ -67,6 +67,8 @@ TypeID slotTypeOf(const Program& program, const Field& field)
 
 bool slotHoldsUndefinedAndNull(const Program& program, FieldReference reference)
 {
+    if (!isObjectLayout(program.at(reference.layout).kind))
+        return false;
     const Type& type = program.at(slotTypeOf(program, fieldAt(program, reference)));
     bool hasMarkers = !type.isNever() && type.hasOnlyPrimitives(Primitive::Number | Primitive::Boolean | Primitive::UndefinedOrNull);
     return hasMarkers && !flowOf(program, reference).stability.contains(FieldStability::IsNeverStoredWithOtherType);
@@ -281,7 +283,7 @@ static std::optional<FieldEvidence> collectFieldEvidence(const Program& program,
         }
     });
     evidence.layoutsKept = uniteMembers(&Scan::layoutSetsKept, program.layouts.size(), [&](LayoutSetID set) -> const auto& {
-        return program.at(set).members;
+        return program.at(set).written();
     });
     // A field is narrowed where it is declared.
     for (size_t index : BitVector(evidence.layoutsKept)) {

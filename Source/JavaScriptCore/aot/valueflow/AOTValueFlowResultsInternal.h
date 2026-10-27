@@ -22,6 +22,7 @@
 #include <array>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
@@ -38,7 +39,6 @@ struct ValueFlowContainerFacts {
     Vector<TypeID, 2> contents;
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
-    ArrayStorage arrayStorageToldToCreator { ArrayStorage::Other };
     OptionSet<PristineAspects> pristine;
 };
 
@@ -191,6 +191,12 @@ constexpr ValueFlowKindsOfMadeNodes kindsOfMadeNodes(std::initializer_list<Value
     return bits;
 }
 
+// What a function holds under `prototype` is the prototype of what it constructs, and counts as one from the store on.
+struct ValueFlowPrototypes {
+    ValueSetID objects { ValueSets::nothing };
+    ValueSetID functionsWithNonObjectPrototype { ValueSets::nothing };
+};
+
 struct ValueFlowResultInputs {
     const Program& program;
     ValueFlowSolution& solution;
@@ -206,6 +212,7 @@ struct ValueFlowResultInputs {
     const ValueFlowLayoutsOfSites* layoutsOfSites { nullptr };
     const ValueFlowHeapIndex* heapIndex { nullptr };
     const ValueFlowNodesAskedFor* nodesAskedFor { nullptr };
+    const ValueFlowPrototypes* prototypes { nullptr };
 
     const ValueFlowBodies& bodies() const { return solution.bodies(); }
     const ValueFlowUniverse& universe() const { return solution.bodies().universe(); }
@@ -220,6 +227,8 @@ struct ValueFlowResultInputs {
     bool hasEscaped(ValueFlowObjectID object) const { return sets().contains(solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), object); }
     bool isLost(ValueFlowObjectID object) const { return sets().contains(solver().possibleValuesOf(ValueFlowProgramNodes::lost()), object); }
     bool isHeldByNativeCode(ValueFlowObjectID object) const { return sets().contains(solver().possibleValuesOf(bodies().nodes().ofHost(ValueFlowHostNode::HeldByNativeCode)), object); }
+    // Of an object that has neither escaped nor is lost.
+    bool mayBecomePrototype(ValueFlowObjectID object) const { return sets().contains(prototypes->objects, object); }
 
     bool isLayoutOfDictionaries(LayoutID layout) const { return layoutsOfDictionaries && layout && layoutsOfDictionaries->get(layout.index()); }
     bool isDictionary(ValueFlowObjectID object) const { return layoutsOfDictionaries && isLayoutOfDictionaries(universe().layoutOf(object)); }
@@ -562,6 +571,14 @@ public:
         return m_answers.add(hash, Answer { question, answer() }, isWanted).answer;
     }
 
+    std::optional<ValueSetID> find(uint64_t question) const
+    {
+        const Answer* known = m_answers.find(static_cast<uint32_t>((question * 0x9e3779b97f4a7c15ull) >> 32), [&](const Answer& known) {
+            return known.question == question;
+        });
+        return known ? std::optional(known->answer) : std::nullopt;
+    }
+
 private:
     struct Answer {
         uint64_t question;
@@ -735,6 +752,7 @@ private:
 
     void appendPrototypesAtCreation(ValueFlowObjectID, Vector<ValueFlowObjectID, 8>&) const;
     ValueSetID prototypesOfHeirs(ValueSetMaker&, ValueSetID heirs) const;
+    ValueSetID prototypesOfEachHeir(ValueSetMaker&, ValueSetID heirs) const;
     ValueSetID findWrittenUnder(ValueSetMaker&, ValueSetID objects, const NodesWrittenUnderName&) const;
     ValueSetID chainWalkedInFull(ValueSetMaker&, ValueSetID objects) const;
 
@@ -885,6 +903,7 @@ void findHoldersWithListedKeys(const ValueFlowResultInputs&, const ValueFlowUses
 void recordLockedWritesUnderNewNames(const Program&, TypeTable&, std::span<const ValueFlowWriteUnderNewName>, FlowResultTables&);
 ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs&);
 ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
+ValueFlowPrototypes findPrototypes(const ValueFlowResultInputs&);
 void computeFunctionResults(const ValueFlowResultInputs&, ValueFlowStampedCalls&, FlowResultTables&);
 void computeExecutionResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 BitVector computeCreatedSymbolResults(const ValueFlowResultInputs&, const FlowResultTables&);
@@ -906,6 +925,8 @@ void computeOrderResults(const ValueFlowResultInputs&, const ValueFlowStampedCal
 void computeObjectResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 void computeClassResults(const ValueFlowResultInputs&, FlowResultTables&);
 ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, const ValueFlowConstructions&, FlowResultTables&);
+class LedgerPart;
+const LedgerPart& ledgerOfFieldsIn(const ValueFlowUsesOfHeap&);
 struct ValueFlowWritesToContainers;
 struct ValueFlowWritesToContainersDeleter {
     void operator()(ValueFlowWritesToContainers*) const;
@@ -915,7 +936,7 @@ ValueFlowContainerResults computeContainerResults(ValueFlowWritesToContainers&);
 std::unique_ptr<ValueFlowNumbersOfValues> prepareNumbersOfPositions(const ValueFlowResultInputs&, ValueFlowHeapView&, const FlowResultTables&);
 void computeNumbersOfPositions(ValueFlowNumbersOfValues&, const FlowResultTables&);
 BuiltinClassID classOfFollowedContainer(const ValueFlowResultInputs&, ValueFlowObjectID);
-void computeTypeResults(const ValueFlowResultInputs&, const ValueFlowFieldContents&, TypeTable&, FlowResultTables&, const ListenerForSetsOutsideTypes*);
+void computeTypeResults(const ValueFlowResultInputs&, const ValueFlowFieldContents&, const LedgerPart& ledgerOfFields, TypeTable&, FlowResultTables&, const ListenerForSetsOutsideTypes*);
 void computeLayoutsNeverStoredOtherTypes(const ValueFlowResultInputs&, const ValueFlowFieldContents&, TypeTable&, FlowResultTables&);
 void computeAccessResults(const ValueFlowResultInputs&, TypeTable&, FlowResultTables&);
 void computeStoreNamingResults(const ValueFlowResultInputs&, ValueFlowUsesOfHeap&, FlowResultTables&);

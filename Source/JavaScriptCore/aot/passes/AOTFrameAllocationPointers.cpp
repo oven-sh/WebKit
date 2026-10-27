@@ -142,9 +142,10 @@ static bool mayHandFrameArrayTo(const Program& program, const FlowResults* flow,
     if (!flow || effectRuleOf(call.opcode) != EffectRule::Call || maySuspend(call.opcode) || call.operandUses(operandIndex).containsAny(callingUses))
         return false;
     CalleeList callees = calleesOfCall(program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return false;
-    return std::ranges::all_of(callees.functions, [&](FunctionID callee) {
+    return std::ranges::all_of(functions->value(), [&](FunctionID callee) {
         std::optional<uint32_t> entryParameter = entryParameterOf(program.at(callee), call, operandIndex);
         return entryParameter && flow->mayTakeFrameArray(callee, *entryParameter);
     });
@@ -494,13 +495,14 @@ static OperandSummary summarizePublishedParameter(const Program& program, const 
 static OperandSummary summarizeCallOperand(const Program& program, const FlowResults& flow, const Value& call, uint32_t operandIndex)
 {
     CalleeList callees = calleesOfCall(program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode))
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions || maySuspend(call.opcode))
         return { };
 
     OperandUses declaredUses = operandUsesOf(call.opcode, operandIndex);
     bool isCalledValue = declaredUses.containsAny(callingUses);
     OperandSummary summary { isCalledValue ? declaredUses : OperandUses { OperandUse::Inspects }, RetainedIn::UnknownMemory, 0 };
-    for (FunctionID id : callees.functions) {
+    for (FunctionID id : functions->value()) {
         const Function& callee = program.at(id);
         if (!isCalledValue) {
             summary = joinOf(summary, summarizePublishedParameter(program, flow, call, id, entryParameterOf(callee, call, operandIndex)));

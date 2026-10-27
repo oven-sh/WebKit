@@ -336,11 +336,11 @@ void IRPrinter::printObjectParts(const Type& type, CommaPrinter& bar)
         printInvalid("layoutset"_s, type.layouts.index());
     } else if (type.layouts) {
         const LayoutSet& set = types.at(type.layouts);
-        visitInPrintedOrder(m_program, set.members.span(), [&](LayoutID layout) {
+        visitInPrintedOrder(m_program, set.written().span(), [&](LayoutID layout) {
             m_out.print(bar);
             print(layout);
         });
-        if (set.hasMembersWithoutLayout)
+        if (set.isWrittenWithMembersWithoutLayout())
             m_out.print(bar, "nolayout"_s);
     }
     if (type.environment) {
@@ -366,7 +366,7 @@ void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
     unsigned numberOfContents = builtins.contains(part.builtinClass) ? builtins.numberOfSlotsInType(part.builtinClass) : 0;
     bool hasKnownContents = false;
     for (unsigned index = 0; index < numberOfContents; ++index)
-        hasKnownContents |= part.contentsAt(index) != TypeTable::anything;
+        hasKnownContents |= part.writtenContentsAt(index) != TypeTable::anything;
 
     Vector<RegExpLiteralInType, 4> literals;
     if (part.builtinClass == BuiltinClasses::RegExp)
@@ -380,7 +380,7 @@ void IRPrinter::printClassPart(const Type& type, const ClassPart& part)
     CommaPrinter comma;
     for (unsigned index = 0; index < numberOfContents; ++index) {
         m_out.print(comma);
-        print(part.contentsAt(index));
+        print(part.writtenContentsAt(index));
     }
     if (printsEngineParts) {
         AOT::sort(literals, [&](RegExpLiteralInType a, RegExpLiteralInType b) {
@@ -419,13 +419,13 @@ void IRPrinter::print(LayoutSetID id)
     const LayoutSet& set = m_program.at(id);
     m_out.print("["_s);
     CommaPrinter comma;
-    visitInPrintedOrder(m_program, set.members.span(), [&](LayoutID member) {
+    visitInPrintedOrder(m_program, set.written().span(), [&](LayoutID member) {
         m_out.print(comma);
         print(member);
     });
-    if (set.hasMembersWithoutLayout)
+    if (set.isWrittenWithMembersWithoutLayout())
         m_out.print(comma, "nolayout"_s);
-    if (!set.isComplete)
+    if (!set.listsEveryLayout())
         m_out.print(comma, ".."_s);
     m_out.print("]"_s);
 }
@@ -444,16 +444,16 @@ void IRPrinter::print(CalleeSetID id)
     const CalleeSet& set = m_program.at(id);
     m_out.print("["_s);
     CommaPrinter comma;
-    for (FunctionID function : set.functions) {
+    for (FunctionID function : set.written().functions) {
         m_out.print(comma);
         print(function);
     }
-    for (BuiltinID builtin : set.builtins) {
+    for (BuiltinID builtin : set.written().builtins) {
         m_out.print(comma, "builtin("_s);
         print(builtin);
         m_out.print(")"_s);
     }
-    if (!set.isComplete)
+    if (!set.listsEveryCallee())
         m_out.print(comma, ".."_s);
     m_out.print("]"_s);
 }

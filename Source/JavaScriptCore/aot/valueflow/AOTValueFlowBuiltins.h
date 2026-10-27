@@ -30,19 +30,19 @@ struct ValueFlowBuiltinCall {
     bool readsOnlySpecies { false };
 };
 
-inline ValueFlowName cellOfCallsThatRunOtherCode(const BuiltinTable& builtins)
+inline ValueFlowCellName cellOfCallsThatRunOtherCode(const BuiltinTable& builtins)
 {
-    return { ValueFlowNameKind::Slot, builtins.slotCount() + builtins.nameCount() };
+    return ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + builtins.nameCount() };
 }
 
-inline ValueFlowName cellOfValueFromLibrary(const BuiltinTable& builtins)
+inline ValueFlowCellName cellOfValueFromLibrary(const BuiltinTable& builtins)
 {
-    return { ValueFlowNameKind::Slot, builtins.slotCount() + builtins.nameCount() + 1 };
+    return ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + builtins.nameCount() + 1 };
 }
 
-inline ValueFlowName cellOfDroppedResults(const BuiltinTable& builtins)
+inline ValueFlowCellName cellOfDroppedResults(const BuiltinTable& builtins)
 {
-    return { ValueFlowNameKind::Slot, builtins.slotCount() + builtins.nameCount() + 2 };
+    return ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + builtins.nameCount() + 2 };
 }
 
 ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext&, BuiltinName cell);
@@ -70,6 +70,8 @@ ValueSetID promisesAllocatedByBuiltins(ValueFlowRuleContext&, ClimbingSet values
 void connectAwaitedValue(ValueFlowRuleContext&, const ValueFlowOperand&, ValueFlowNodeID target);
 void applyBuiltin(BuiltinID, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&, ValueSetID receivers = ValueSets::anything);
 void applyBuiltinFoundThroughUnknownObject(BuiltinID, const ValueFlowStatement& call, ValueFlowRuleContext&);
+bool listsObjectThatLetsInUnseenCode(ValueFlowRuleContext&, const ValueFlowOperand&);
+ClimbingSet builtinFunctionsListedBesideUnknownObject(ValueFlowRuleContext&, ValueFlowNodeID callee);
 void readSpeciesOfUnknownObject(BuiltinID, ValueFlowRuleContext&);
 void applyBuiltin(BuiltinID, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
 void applyEntryDescribing(ValueFlowObjectID closure, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&);

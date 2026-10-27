@@ -362,8 +362,8 @@ static void testClassOfCompactFunction()
 {
     for (bool isVeryLarge : { false, true }) {
         TestBuild build(makeString(namedProgramWithLargeFunctionText(), runtimeFunctionsText(4)), isVeryLarge ? TestOptions { .loweredLimit = LimitID::MaxWarmCodeValues, .loweredLimitValue = 1 } : TestOptions { });
-        AOT_TEST_CHECK(build.pipeline().heat->isCompact(build.program(), FunctionID(1u)) == isVeryLarge);
-        AOT_TEST_CHECK(!build.pipeline().heat->isCompact(build.program(), FunctionID(0u)));
+        AOT_TEST_CHECK(build.pipeline().heat->isCompact(build.program(), FunctionID(1u)).predicted() == isVeryLarge);
+        AOT_TEST_CHECK(!build.pipeline().heat->isCompact(build.program(), FunctionID(0u)).predicted());
         TestImage image = builtImage(build, bodies(plainBody(0), plainBody(1)));
         Vector<ImageSymbol> symbols = symbolsOf(build, image);
         AOT_TEST_CHECK(classLetterOf(symbols.span(), FunctionID(0u)) == "o"_s);

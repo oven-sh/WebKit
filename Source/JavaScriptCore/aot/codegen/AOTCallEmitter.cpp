@@ -363,7 +363,8 @@ NativeCallExpectation CallEmitter::expectationOf(const OperationContext& context
         if (context.valueID()) {
             const Value& call = m_function.at(context.valueID());
             const BuiltinTable& table = m_program.builtins();
-            for (BuiltinID callee : calleesOfCall(m_program, call).builtins)
+            CalleeList callees = calleesOfCall(m_program, call);
+            for (BuiltinID callee : callees.listed().builtins)
                 expectation.name(table.canonicalID(callee));
             call.forEachOperand([&](ValueID operand, uint32_t) {
                 for (BuiltinID handed : typeOf(operand).builtins) {

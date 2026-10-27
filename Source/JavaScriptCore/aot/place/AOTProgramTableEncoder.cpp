@@ -317,7 +317,7 @@ static LayoutSetRecords encodeLayoutSets(TableEncoder& encoder)
         if (!isObjectLayout(program.at(id).kind))
             continue;
         LayoutSetID set = program.declaredMembersOf(id);
-        if (set && !program.at(set).members.isEmpty() && !namingLayouts[set.index()])
+        if (set && !program.at(set).written().isEmpty() && !namingLayouts[set.index()])
             namingLayouts[set.index()] = id;
     }
 
@@ -379,7 +379,7 @@ static TypeID describedContentsOf(const Program& program, TypeID id)
     const Type& type = program.at(id);
     if (type.classes.size() != 1)
         return { };
-    TypeID contents = type.classes[0].contentsAt(program.builtins(), ContentsSlot::Element);
+    TypeID contents = type.classes[0].writtenContentsAt(program.builtins(), ContentsSlot::Element);
     return contents == TypeTable::anything ? TypeID() : contents;
 }
 
@@ -2329,6 +2329,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
+    entry.importedWhileItRuns = module.flags.contains(ModuleFlags::MayBeImportedWhileItRuns);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;
     entry.exportRule = module.exportRule;

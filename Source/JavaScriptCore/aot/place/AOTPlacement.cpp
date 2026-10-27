@@ -216,7 +216,7 @@ static String describeDisagreement(const Program& program, const SlotAccessKey& 
 {
     StringPrintStream out;
     out.print(access.isStore ? "a store"_s : "a read"_s);
-    out.print(" through "_s, program.types.at(access.receivers).members.size(), " layouts, which keep it in "_s, agreement.groups.size(), " places; "_s);
+    out.print(" through "_s, program.types.at(access.receivers).written().size(), " layouts, which keep it in "_s, agreement.groups.size(), " places; "_s);
     out.print(agreement.membersWithoutSlot.size(), " of them have no slot for it"_s);
     return out.toString();
 }
@@ -289,7 +289,7 @@ static FieldAccess createFieldAccess(const PlacementContext& context, TypeArena&
         row.slot.indexInLayoutRecord = std::nullopt;
     }
     row.extensionWord = group.extensionWord;
-    bool everyReceiverIsMember = group.members.size() == program.types.at(access.receivers).members.size();
+    bool everyReceiverIsMember = group.members.size() == program.types.at(access.receivers).written().size();
     row.membersWithField = everyReceiverIsMember ? access.receivers : arena.completeLayoutSet(group.members.span());
 
     TypeID contents;
@@ -429,7 +429,7 @@ static BitVector computeTypesNeededAtRunTime(const PlacementContext& context, co
     while (!worklist.isEmpty()) {
         const Type& type = program.at(worklist.takeLast());
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents)
+            for (TypeID contents : part.writtenContents)
                 addType(contents);
         }
         for (LayoutID layout : membersOf(program, type))

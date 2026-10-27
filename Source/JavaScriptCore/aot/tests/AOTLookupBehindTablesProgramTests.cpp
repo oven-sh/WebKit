@@ -227,7 +227,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
 #define LINE_OF_ANSWERS(kind, answer) \
     kind ": read " answer " | in " answer " | hasOwn " answer " | read by key " answer " | in by key " answer " | hasOwn by key " answer " | read by key, twice " answer "\n"
 
-#define OUTPUT_OF_ORDINARY_OBJECTS(objects, operations) \
+#define OUTPUT_OF_ORDINARY_OBJECTS(objects, operations, fewOperations) \
     LINE_OF_ANSWERS("own value in the cell", objects) \
     LINE_OF_ANSWERS("own value outside the cell", objects) \
     LINE_OF_ANSWERS("own value among 300 names", objects) \
@@ -247,7 +247,7 @@ globalThis.publish = (read, has, hasOwn, readByKey, hasByKey, hasOwnByKey) => {
     LINE_OF_ANSWERS("setter alone", objects) \
     LINE_OF_ANSWERS("own value that is undefined", objects) \
     LINE_OF_ANSWERS("own value beside an element", operations) \
-    LINE_OF_ANSWERS("value behind a proxy", operations)
+    "value behind a proxy: read " operations " | in " objects " | hasOwn " operations " | read by key " operations " | in by key " fewOperations " | hasOwn by key " operations " | read by key, twice " operations "\n"
 
 static constexpr OptionWords shellOptions = { "--aotCountsPath=/dev/null"_s, "--useDollarVM=1"_s };
 
@@ -258,7 +258,7 @@ static constexpr OptionWords shellOptions = { "--aotCountsPath=/dev/null"_s, "--
             checkOutputOfProgramInShell(programText, output("right", "right", "right") ""_s, { word }, ASK_QUESTIONS statements ""_s, shellOptions); \
     } while (false)
 
-#define OUTPUT_OF_ORDINARY_OBJECTS_BY(objects, operations, fewOperations) OUTPUT_OF_ORDINARY_OBJECTS(objects, operations)
+#define OUTPUT_OF_ORDINARY_OBJECTS_BY(objects, operations, fewOperations) OUTPUT_OF_ORDINARY_OBJECTS(objects, operations, fewOperations)
 
 static void testOrdinaryObjectsAnswer()
 {

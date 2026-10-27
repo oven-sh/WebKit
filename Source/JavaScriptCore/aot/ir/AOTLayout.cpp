@@ -389,7 +389,7 @@ Vector<Vector<LayoutID>> declaredViewsOf(const Program& program, const BitVector
         LayoutID view(index);
         if (program.at(view).kind != LayoutKind::Record)
             continue;
-        for (LayoutID member : program.at(program.declaredMembersOf(view)).members) {
+        for (LayoutID member : program.at(program.declaredMembersOf(view)).completeMembers()) {
             if (member != view && declaredLayouts.get(member.index()))
                 views[member.index()].append(view);
         }
@@ -412,7 +412,7 @@ void initializeAddedLayout(Program& program, LayoutID id)
     Layout& layout = program.at(id);
     layout.ownFieldCount = static_cast<uint32_t>(layout.fields.size());
     layout.indexFields();
-    program.setDeclaredMembers(id, program.types.intern(LayoutSet { { id }, true }));
+    program.setDeclaredMembers(id, program.types.intern(LayoutSet::complete({ id })));
 }
 
 static bool shouldAppendInheritedFields(const Layout& layout)
@@ -550,7 +550,7 @@ static unsigned findTypesWithLayouts(const Program& program, BitVector& result, 
     for (unsigned index = firstType; index < numberOfTypes; ++index) {
         const Type& type = program.at(TypeID(index));
         bool hasLayouts = type.layouts || std::ranges::any_of(type.classes, [&](const ClassPart& part) {
-            return std::ranges::any_of(part.contents, [&](TypeID contents) {
+            return std::ranges::any_of(part.writtenContents, [&](TypeID contents) {
                 return contents && result.quickGet(contents.index());
             });
         });
@@ -618,7 +618,7 @@ static void nameLayoutsOfConvertedResults(const Program& program, const BitVecto
     while (!worklist.isEmpty()) {
         const Type& type = program.at(worklist.takeLast());
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents)
+            for (TypeID contents : part.writtenContents)
                 visit(contents);
         }
         for (LayoutID member : membersOf(program, type)) {

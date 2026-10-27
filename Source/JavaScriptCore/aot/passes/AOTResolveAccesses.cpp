@@ -243,10 +243,7 @@ static CalleeSetID calleesOfGetterInSlot(FunctionPassContext& context, const Pro
     std::optional<Vector<FunctionID, 2>> getters = gettersInSlots(context.program, plan.receivers.span(), key);
     if (!getters)
         return { };
-    CalleeSet callees;
-    callees.functions.append(getters->span());
-    callees.isComplete = true;
-    return context.types.intern(WTF::move(callees));
+    return context.types.intern(CalleeSet::complete(Vector<FunctionID>(getters->span()), { }));
 }
 
 static Value makeBuiltinConstant(BuiltinID builtin)
@@ -765,7 +762,7 @@ static bool testsSlotOfGetterWhereItStands(FunctionAnalyses& analyses, const Val
     if (!mayTestSlotOfGetterWhereItStands(plan) || standsBehindFailedTestOfItsSlot(analyses, site))
         return false;
     const Function& function = analyses.function();
-    switch (function.at(site.block).frequency) {
+    switch (function.at(site.block).frequency.predicted()) {
     case BlockFrequency::Normal:
         return function.runsOnlyBehindFailedTest();
     case BlockFrequency::Unlikely:
@@ -792,7 +789,7 @@ static bool hasFailedTestOfPrototype(FunctionAnalyses& analyses, ValueID object,
 // The arms cost bytes at every access. Code that seldom runs keeps one test for all the accesses of a stretch.
 static bool isWorthArms(FunctionPassContext& context, BlockID block)
 {
-    return context.function.at(block).frequency == BlockFrequency::Normal && !context.function.runsOnlyBehindFailedTest() && !isCold(heatClassOf(context, block));
+    return context.function.at(block).frequency.predicted() == BlockFrequency::Normal && !context.function.runsOnlyBehindFailedTest() && !isCold(heatClassOf(context, block)).predicted();
 }
 
 // Nobody has seen an object that its constructor is still filling, and a store by name would have to finish it first.
@@ -900,7 +897,7 @@ static void expandStoresUnderPrototypesThatMayBeReplaced(FunctionPassContext& co
         expansion.begin(store.site);
         ValueID object = expansion.original().objectOperand();
         ValueID stored = expansion.original().valueOperand();
-        BlockFrequency frequency = expansion.frequency();
+        Expected<BlockFrequency> frequency = expansion.frequency();
         // Which prototype an object has is no guess of the compiler's: both arms are laid out alike. The other tests seldom fail.
         BlockID underAnotherPrototype = builder.addBlock(frequency);
         BlockID otherwise;
@@ -959,8 +956,8 @@ static void expandReadsUnderPrototypesThatMayBeReplaced(FunctionPassContext& con
         SlotStamp stamp = createSlotStamp(context, context.function.at(read.site.value), read.plan);
         expansion.begin(read.site);
         ValueID object = expansion.original().objectOperand();
-        BlockFrequency frequency = expansion.frequency();
-        BlockFrequency unlikelyFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
+        Expected<BlockFrequency> frequency = expansion.frequency();
+        Expected<BlockFrequency> unlikelyFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
         // Whoever reads the name expects to find it, and only an object that was handed another prototype does.
         BlockID underAnotherPrototype = builder.addBlock(frequency);
         BlockID otherwise;
@@ -1005,7 +1002,7 @@ static void expandReadsUnderPrototypesThatMayBeReplaced(FunctionPassContext& con
 // Every receiver finds one and the same method of its class where it has no property of its own under the name.
 static std::optional<PropertyAccessPlan> planMethodAboveEmptySlot(FunctionPassContext& context, const SlotStamp& stamp, const Type& typeOfRead)
 {
-    std::span<const LayoutID> receivers = context.program.at(stamp.receivers).members;
+    std::span<const LayoutID> receivers = context.program.at(stamp.receivers).completeMembers();
     // Whoever makes such an object fills the field: only the code in front of that store finds the slot empty.
     bool isFilledByCreator = std::ranges::any_of(receivers, [&](LayoutID receiver) {
         std::optional<FieldReference> field = findField(context.program, receiver, stamp.key, BaseChain::Proven);
@@ -1044,7 +1041,7 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         test.setCountsFieldsWithoutStorage(!!methodAbove);
         BlockID failedUnasked = builder.beginPrediction();
         ValueID isFilled = builder.append(WTF::move(test));
-        BlockFrequency frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
+        Expected<BlockFrequency> frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isFilled, OperandIndex::IsSlotFilled::object, expansion.frequency(), frequencyOfFailure);
         // Only an empty slot answers with the method. Where no test was asked, the name is looked up.
         BlockID byName = methodAbove ? failedUnasked : BlockID();
@@ -1328,7 +1325,7 @@ static LayoutSetID layoutsOfReceiver(TestSiteReporter& reporter, const Value& ac
 // `node.kind`, asked in every function of a program and in every round, of a family of some hundred layouts that all require it. The answer hangs on the set and the name alone.
 static PropertyAccessCache::Optionality optionalityOf(const Program& program, LayoutSetID set, PropertyKeyID name)
 {
-    std::span<const LayoutID> layouts = program.at(set).members.span();
+    std::span<const LayoutID> layouts = program.at(set).completeMembers();
     auto compute = [&](PropertyAccessCache::DeclaredTypesKey key) {
         PropertyAccessCache::Optionality result { key, false, true };
         for (LayoutID layout : layouts) {
@@ -1362,7 +1359,7 @@ static bool claimsAbsenceOfNameOnInstalledPrototype(TestSiteReporter& reporter, 
     const Heat& heat = reporter.context().inputs.heat;
     PropertyKeyID prototypeKey = program.keyOf(BuiltinNames::prototype);
     return std::ranges::any_of(program.layoutsWithName(key), [&](LayoutID layout) {
-        return heat.isStoredUnder(layout, prototypeKey);
+        return heat.isStoredUnder(layout, prototypeKey).predicted();
     });
 }
 
@@ -1382,7 +1379,7 @@ static bool isReadOfUntypedFieldInColdCode(TestSiteReporter& reporter, const Val
     FunctionPassContext& context = reporter.context();
     const Function& function = reporter.function();
     BlockID block = reporter.point().block;
-    if (!context.isBehindRounds || access.opcode != Opcode::PropGet || tested.plan.operation != Opcode::GetSlot || function.at(block).handler || heatClassOf(context, block) > HeatClass::Cold)
+    if (!context.isBehindRounds || access.opcode != Opcode::PropGet || tested.plan.operation != Opcode::GetSlot || function.at(block).handler || heatClassOf(context, block).predicted() > HeatClass::Cold)
         return false;
     // What is entered most is small: accessors, selectors, callbacks. Their tests are few bytes. A body that was pasted in is as small as it was where it was written.
     if (std::min(function.values.size(), context.program.sourceFunctionOf(function, access.origin()).values.size()) <= HeatModel::maxSizeOfSmallFunction)
@@ -1424,7 +1421,7 @@ static std::optional<PlannedAccess> planForLargestGroupOfProvenReceivers(TestSit
     const ReceiverCandidates& receivers = query.receivers;
     if (query.start != MemberStart::Instance || !receivers.isProven() || receivers.hasOtherParts || receivers.proven.size() < 2)
         return std::nullopt;
-    if (!isCold(heatClassOf(reporter.context(), reporter.point().block)))
+    if (!isCold(heatClassOf(reporter.context(), reporter.point().block)).predicted())
         return std::nullopt;
     if (planWithoutCalls(reporter.context(), query).form != AccessForm::Split)
         return std::nullopt;
@@ -1471,7 +1468,7 @@ static UncheckedKeyHashMap<uint32_t, unsigned> countOptionalFieldsRead(TestSiteR
     UncheckedKeyHashSet<uint64_t> seen;
     UncheckedKeyHashMap<uint32_t, unsigned> counts;
     for (BlockID block : reporter.analyses().cfg().reversePostOrder()) {
-        if (function.at(block).frequency != BlockFrequency::Normal)
+        if (function.at(block).frequency.predicted() != BlockFrequency::Normal)
             continue;
         for (ValueID id : function.at(block).values) {
             const Value& value = function.at(id);
@@ -1508,7 +1505,7 @@ static bool readsOptionsLeftOutAsUndefined(const FunctionPassContext& context)
 // Whoever reports the tests of a read and whoever rewrites the read behind them ask the same.
 static bool mayTestSlotFirst(const FunctionPassContext& context, const PropertyAccessQuery& query)
 {
-    return query.access == Access::Read && readsOptionsLeftOutAsUndefined(context) && !isCold(context.inputs.heat.of(context.program, context.id));
+    return query.access == Access::Read && readsOptionsLeftOutAsUndefined(context) && !isCold(context.inputs.heat.of(context.program, context.id)).predicted();
 }
 
 void reportPropertyAccessTests(TestSiteReporter& reporter)
@@ -1612,13 +1609,13 @@ static Vector<AccessBehindSlotTest> findAccessesBehindSlotTests(FunctionPassCont
     Vector<AccessBehindSlotTest> sites;
     for (BlockID id : cfg.reversePostOrder()) {
         const Block& block = function.at(id);
-        if (block.frequency != BlockFrequency::Normal || block.values.isEmpty() || !block.terminator.isConditionalBranch())
+        if (block.frequency.predicted() != BlockFrequency::Normal || block.values.isEmpty() || !block.terminator.isConditionalBranch())
             continue;
         const Value& test = function.at(block.values.last());
         if (test.opcode != Opcode::IsSlotFilled || test.holdsDeclaredType() || block.terminator.conditionOperand() != block.values.last())
             continue;
         const Target& filled = block.terminator.taken();
-        bool leavesWhereEmpty = isRarerThan(function.at(block.terminator.notTaken().block).frequency, block.frequency);
+        bool leavesWhereEmpty = isRarerThan(function.at(block.terminator.notTaken().block).frequency, block.frequency).predicted();
         if (!leavesWhereEmpty || !filled.arguments.isEmpty() || !cfg.singleIncomingEdge(filled.block))
             continue;
         if (std::optional<ValueSite> access = findAccessBehindSlotTest(context, test, filled.block))
@@ -1641,7 +1638,7 @@ struct EmptySlotCases {
 // Outside the cell a field takes no room while it holds undefined, so the test of its slot finds nothing.
 static bool mayHoldUndefinedWithoutStorage(const Program& program, const SlotPlan& slots, const Value& slotTest)
 {
-    return std::ranges::any_of(program.at(slotTest.receivers()).members, [&](LayoutID member) {
+    return std::ranges::any_of(program.at(slotTest.receivers()).completeMembers(), [&](LayoutID member) {
         std::optional<uint32_t> field = program.at(member).findField(slotTest.key());
         return field && slots.slot(member, *field).isOutOfLine() && slots.slot(member, *field).mayExistWithoutStorage;
     });
@@ -1651,7 +1648,7 @@ static EmptySlotCases planCaseOfFieldWithoutStorage(FunctionPassContext& context
 {
     if (!(typeOfRead.primitives & Primitive::Undefined) || !mayHoldUndefinedWithoutStorage(context.program, *context.inputs.slots, slotTest))
         return { };
-    std::optional<TestsOfEmptySlot> needed = testsThatOptionLeftOutReadsAsUndefined({ context.program, &context.inputs.flow }, context.program.at(slotTest.receivers()).members, slotTest.key(), OptionKind::FieldWithoutStorage);
+    std::optional<TestsOfEmptySlot> needed = testsThatOptionLeftOutReadsAsUndefined({ context.program, &context.inputs.flow }, context.program.at(slotTest.receivers()).completeMembers(), slotTest.key(), OptionKind::FieldWithoutStorage);
     if (!needed)
         return { };
     PropertyAccessPlan plan;
@@ -1663,7 +1660,7 @@ static EmptySlotCases planCaseOfFieldWithoutStorage(FunctionPassContext& context
 static EmptySlotCases planEmptySlotCases(FunctionPassContext& context, const Value& slotTest, const Type& typeOfRead, bool isStore, bool functionStoresField)
 {
     PropertyAccessContext accessContext { context.program, &context.inputs.flow };
-    std::span<const LayoutID> receivers = context.program.at(slotTest.receivers()).members;
+    std::span<const LayoutID> receivers = context.program.at(slotTest.receivers()).completeMembers();
     bool handlesLazyFields = !isLibraryCode(context.program, context.function);
     PropertyAccessPlan plan;
     if (isStore) {
@@ -1717,7 +1714,7 @@ static void addEmptySlotCase(FunctionPassContext& context, IRBuilder& builder, S
 {
     std::span<const PropertyAccessPlan> plans = cases.plans.span();
     Function& function = context.function;
-    BlockFrequency frequency = function.at(site.test).frequency;
+    Expected<BlockFrequency> frequency = function.at(site.test).frequency;
     Target leaves = function.at(site.test).terminator.notTaken();
     expansion.begin(site.access);
     Value original = expansion.original();
@@ -2228,12 +2225,15 @@ void emitSplit(SiteExpansion& expansion, const ValueSplit& split, NOESCAPE const
         bool entersWithoutTest = !split.hasRest && index + 1 == split.arms.size();
         if (entersWithoutTest) {
             RELEASE_ASSERT(program.typeOf(expansion.function(), current).isSubsetOf(program.at(arm.testedType), program));
+            // The arm is entered because every test in front of it has failed.
+            if (index && expansion.context().build.validates())
+                builder.append(makeValidateType(current, arm.testedType));
             emitArm(index, current);
             RELEASE_ASSERT(!builder.currentBlock());
             return;
         }
 
-        BlockFrequency frequencyOfRemainingPaths = split.hasRest ? split.restFrequency : BlockFrequency::Rare;
+        Expected<BlockFrequency> frequencyOfRemainingPaths = split.hasRest ? split.restFrequency : BlockFrequency::Rare;
         for (const SplitArm& remaining : split.arms.subspan(index + 1))
             frequencyOfRemainingPaths = moreFrequentOf(frequencyOfRemainingPaths, remaining.frequency);
         ValueID test = builder.appendTypeTest(current, arm.testedType);
@@ -2378,7 +2378,7 @@ static bool resolvesOnPart(const FunctionPassContext& context, const Value& acce
 // The getter or the setter in a slot is called behind a test of the slot, and nobody places a test in code that runs once: there the arm would read by name as the rest does.
 static bool waitsForTestThatNobodyPlaces(FunctionPassContext& context, BlockID block, const Value& access, const UnionPart& part)
 {
-    if (part.kind != UnionPartKind::Layouts || !isNamedAccess(access.opcode) || heatClassOf(context, block) != HeatClass::RunsOnce)
+    if (part.kind != UnionPartKind::Layouts || !isNamedAccess(access.opcode) || heatClassOf(context, block).predicted() != HeatClass::RunsOnce)
         return false;
     AccessForm form = planOnLayouts(context, access, part).form;
     return form == AccessForm::GetterInSlot || form == AccessForm::SetterInSlot;
@@ -2402,7 +2402,7 @@ AccessesResolvedOnParts countAccessesResolvedOnParts(FunctionPassContext& contex
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
     for (ValueID receiver : receivers) {
         for (const Use& use : context.analyses.useLists().usesOf(receiver)) {
-            if (use.kind != Use::Kind::Operand || frequencies.classOf(use.block) == BlockFrequency::Rare)
+            if (use.kind != Use::Kind::Operand || frequencies.classOf(use.block).predicted() == BlockFrequency::Rare)
                 continue;
             const Value& access = context.function.at(use.user);
             if (splitOperandOf(access) != use.operandIndex)
@@ -2461,11 +2461,11 @@ struct PlannedSplit {
 
 } // anonymous namespace
 
-static bool resolvesEveryAccess(FunctionPassContext& context, ValueID receiver, const BitVector* isInLoop, const UnionPart& part)
+static Expected<bool> resolvesEveryAccess(FunctionPassContext& context, ValueID receiver, const BitVector* isInLoop, const UnionPart& part)
 {
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
-        if ((isInLoop && !isInLoop->get(block.index())) || frequencies.classOf(block) == BlockFrequency::Rare)
+        if ((isInLoop && !isInLoop->get(block.index())) || frequencies.classOf(block).predicted() == BlockFrequency::Rare)
             continue;
         for (ValueID id : context.function.at(block).values) {
             const Value& access = context.function.at(id);
@@ -2522,7 +2522,7 @@ static bool isExpectedToHoldNumbers(FunctionPassContext& context, ValueID receiv
         return false;
     if (type.classes.size() != 1 || type.classes[0].builtinClass != BuiltinClasses::Array)
         return false;
-    const Type& contents = context.types.at(type.classes[0].contentsAt(0));
+    const Type& contents = context.types.at(type.classes[0].expectedContentsAt(0).predicted());
     if (contents.isNumberOrNullish())
         return true;
     return contents.primitives & Primitive::Number && holdsNumbersByUse(context, receiver, isInLoop);
@@ -2552,7 +2552,7 @@ static TypeID chooseTestedType(FunctionPassContext& context, ValueID receiver, V
         const UnionPart* last = nullptr;
         unsigned numberOfServingParts = 0;
         for (const UnionPart& part : parts) {
-            if (!canSeparateByTest(program, context.types, whole, parts, part) || !resolvesEveryAccess(context, receiver, &isInLoop, part))
+            if (!canSeparateByTest(program, context.types, whole, parts, part) || !resolvesEveryAccess(context, receiver, &isInLoop, part).predicted())
                 continue;
             ++numberOfServingParts;
             last = &part;
@@ -2580,7 +2580,7 @@ static TypeID chooseTestedType(FunctionPassContext& context, ValueID receiver, V
         TypeID testedType = context.types.intern(parts[0].type);
         Value test = IRBuilder::make(Opcode::TypeTest, { narrowestName });
         test.setTestedType(testedType);
-        if (context.analyses.findEarlierTest(test, front) == EarlierTest::Failed || !resolvesEveryAccess(context, receiver, nullptr, parts[0]))
+        if (context.analyses.findEarlierTest(test, front) == EarlierTest::Failed || !resolvesEveryAccess(context, receiver, nullptr, parts[0]).predicted())
             continue;
         restTakesEveryValue = true;
         return testedType;
@@ -2594,7 +2594,7 @@ static LoopSplit splitLoop(FunctionPassContext& context, const NaturalLoop& loop
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     BlockID header = loop.header();
-    if (analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || heatClassOf(context, header) != HeatClass::Hot)
+    if (analyses.blockFrequencies().classOf(header).predicted() != BlockFrequency::Normal || heatClassOf(context, header).predicted() != HeatClass::Hot)
         return LoopSplit::NotSplit;
     bool isLoopOfProgram = std::ranges::any_of(function.at(header).values, [&](ValueID value) {
         return function.at(value).opcode == Opcode::LoopHint;
@@ -2621,7 +2621,7 @@ static LoopSplit splitLoop(FunctionPassContext& context, const NaturalLoop& loop
     const BlockFrequencies& frequencies = analyses.blockFrequencies();
     Vector<ValueID, 4> receivers;
     for (BlockID block : region) {
-        if (frequencies.classOf(block) == BlockFrequency::Rare)
+        if (frequencies.classOf(block).predicted() == BlockFrequency::Rare)
             continue;
         for (ValueID id : function.at(block).values) {
             const Value& access = function.at(id);
@@ -2671,7 +2671,7 @@ static LoopSplit splitLoop(FunctionPassContext& context, const NaturalLoop& loop
     IRBuilder builder(analyses.context(), function, context.types, &analyses);
     builder.setOrigin(function.at(entry->from).terminator.origin());
     BlockID front = builder.splitEdge(*entry);
-    BlockFrequency frequency = function.at(front).frequency;
+    Expected<BlockFrequency> frequency = function.at(front).frequency;
     Arguments arguments(function.at(front).terminator.next().arguments);
     function.edit(front, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
     builder.moveToEndOf(front);
@@ -2807,9 +2807,9 @@ static std::optional<PlannedSplit> planSplitByParts(FunctionPassContext& context
     if (chosen.isEmpty())
         return std::nullopt;
 
-    BlockFrequency frequency = function.at(site.block).frequency;
-    BlockFrequency unlikelyFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
-    bool hasCompleteStamp = PayloadWord::receivers(value.opcode) && value.receivers() && program.at(value.receivers()).isComplete;
+    Expected<BlockFrequency> frequency = function.at(site.block).frequency;
+    Expected<BlockFrequency> unlikelyFrequency = rarerOf(frequency, BlockFrequency::Unlikely);
+    bool hasCompleteStamp = PayloadWord::receivers(value.opcode) && value.receivers() && program.at(value.receivers()).listsEveryLayout();
 
     // What is expected goes somewhere: where no arm takes it, the rest does.
     PlannedSplit plan { site, operandIndex, { receiver, { }, chosen.size() < parts.size(), chosen.first().isLikely ? unlikelyFrequency : frequency }, { }, { }, { } };
@@ -2833,7 +2833,7 @@ static bool isOnlyComparedByIdentity(FunctionPassContext& context, ValueID read)
 
 static std::optional<PlannedSplit> planSplitByArms(FunctionPassContext& context, const ValueSite& site, const PropertyAccessQuery& query, const PropertyAccessPlan& access)
 {
-    if (isCold(heatClassOf(context, site.block)))
+    if (isCold(heatClassOf(context, site.block)).predicted())
         return std::nullopt;
 
     const Value& value = context.function.at(site.value);
@@ -2866,7 +2866,7 @@ static std::optional<PlannedSplit> planSplitByArms(FunctionPassContext& context,
 static PlannedSplit planSplitOfKey(FunctionPassContext& context, const ValueSite& site, std::span<const Type> keys, bool hasRest)
 {
     const Value& value = context.function.at(site.value);
-    BlockFrequency frequency = context.function.at(site.block).frequency;
+    Expected<BlockFrequency> frequency = context.function.at(site.block).frequency;
     PlannedSplit plan { site, *OperandPosition::property(value.opcode), { value.propertyOperand(), { }, hasRest, rarerOf(frequency, BlockFrequency::Unlikely) }, { }, { }, { } };
     for (const Type& key : keys)
         plan.split.arms.append(SplitArm { context.types.intern(key), frequency });
@@ -2970,17 +2970,17 @@ static std::optional<PlannedSplit> planSplit(FunctionPassContext& context, const
     std::optional<uint32_t> operandIndex = splitOperandOf(value);
     if (!operandIndex)
         return std::nullopt;
-    if (!isNamedAccess(value.opcode) && !isRecordedAsRare(function, site.block)) {
+    if (!isNamedAccess(value.opcode) && !isRecordedAsRare(function, site.block).predicted()) {
         if (std::optional<PlannedSplit> plan = planSplitOfSymbolKey(context, site))
             return plan;
     }
     // Nothing is proven about the objects of such a type, and testing every unknown value for its primitive parts would only grow the code.
     if (context.program.typeOf(function, value.operand(*operandIndex)).anyObject)
         return std::nullopt;
-    if (isRecordedAsRare(function, site.block))
+    if (isRecordedAsRare(function, site.block).predicted())
         return std::nullopt;
     auto isInRareBlock = [&] {
-        return context.analyses.blockFrequencies().classOf(site.block) == BlockFrequency::Rare;
+        return context.analyses.blockFrequencies().classOf(site.block).predicted() == BlockFrequency::Rare;
     };
 
     if (!isNamedAccess(value.opcode)) {
@@ -3342,11 +3342,11 @@ DispatchPlan planDispatch(FunctionPassContext& context, const MemberPartition& p
     return plan;
 }
 
-ValueSplit createSplit(FunctionPassContext& context, const DispatchPlan& dispatch, const MemberPartition& partition, ValueID receiver, BlockFrequency siteFrequency)
+ValueSplit createSplit(FunctionPassContext& context, const DispatchPlan& dispatch, const MemberPartition& partition, ValueID receiver, Expected<BlockFrequency> siteFrequency)
 {
     const Program& program = context.program;
     TypeArena& types = context.types;
-    BlockFrequency unlikelyFrequency = rarerOf(siteFrequency, BlockFrequency::Unlikely);
+    Expected<BlockFrequency> unlikelyFrequency = rarerOf(siteFrequency, BlockFrequency::Unlikely);
 
     LayoutList expected(membersOf(program, program.expectedOrTypeOf(context.function, receiver)));
     auto hasExpectedMember = [&](uint32_t armIndex) {

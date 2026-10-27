@@ -786,8 +786,9 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                 bool reachesOnlyCandidates = false;
                 bool mayReachAnyLayout = false;
                 if (LayoutSetID stamp = value.receivers()) {
-                    members = program.at(stamp).members.span();
-                    reachesOnlyCandidates = program.at(stamp).isComplete;
+                    auto all = program.at(stamp).all();
+                    members = all ? all->value() : program.at(stamp).seen().predicted();
+                    reachesOnlyCandidates = !!all;
                 } else if (std::optional<uint8_t> receiver = receiverOf(opcode)) {
                     const Type& type = program.typeOf(function, value.operand(*receiver));
                     members = membersOf(program, type);

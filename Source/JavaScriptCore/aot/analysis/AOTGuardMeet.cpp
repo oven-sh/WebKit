@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTSchemaOperationColumns.h"
@@ -123,6 +124,77 @@ static bool testImplies(const Value& test, const Value& impliedTest)
     if (proof == Proof::ArrayStorage)
         return test.arrayStorage() == impliedTest.arrayStorage() && test.isWritable();
     return false;
+}
+
+static std::optional<EdgeResult> findOnlyProofBehind(const Function& function, ValueID guard)
+{
+    std::optional<Edge> onlyEdge;
+    uint32_t parameterIndex = 0;
+    for (uint32_t from = 0; from < function.blocks.size(); ++from) {
+        bool entersTwice = false;
+        forEachOutgoingEdge(function, BlockID(from), [&](Edge edge, const Target& target) {
+            size_t index = function.at(target.block).parameters.find(guard);
+            if (index == notFound)
+                return;
+            entersTwice |= !!onlyEdge;
+            onlyEdge = edge;
+            parameterIndex = static_cast<uint32_t>(index);
+        });
+        if (entersTwice)
+            return std::nullopt;
+    }
+    if (!onlyEdge)
+        return std::nullopt;
+    IncomingValue incoming = incomingValueOf(function, *onlyEdge, parameterIndex);
+    if (incoming.kind != IncomingValue::Kind::EdgeResult)
+        return std::nullopt;
+    std::optional<EdgeResult> result = tryGetEdgeResult(function, incoming.result);
+    return result && result->kind == EdgeResultKind::Guard && result->test ? result : std::nullopt;
+}
+
+static bool asksSameOfSubject(const Function& function, const Value& test, const Value& other)
+{
+    if (!test.hasSamePayloadAs(other) || test.numberOfOperands() != other.numberOfOperands())
+        return false;
+    for (uint32_t operandIndex = subjectOperandIndex + 1; operandIndex < test.numberOfOperands(); ++operandIndex) {
+        if (test.operandKind(operandIndex) == OperandKind::Guard)
+            continue;
+        ValueID operand = test.operand(operandIndex);
+        ValueID operandOfOther = other.operand(operandIndex);
+        if (!operand != !operandOfOther || (operand && definitionThroughUpcasts(function, operand) != definitionThroughUpcasts(function, operandOfOther)))
+            return false;
+    }
+    return true;
+}
+
+// Each access names the kind of storage that it relies on, and is held to its guard. What the kind says of the elements answers questions about them, and of an answered question nothing is left.
+static bool saysAsMuchOfElements(const Program& program, const Type& array, ArrayStorage storage, ArrayStorage other)
+{
+    Type heldInOther = typeOfElementRead(other);
+    if (typeOfElementRead(storage).isSubsetOf(heldInOther, program))
+        return true;
+    const ClassPart* part = array.singleBuiltinClass();
+    std::optional<ProvenValue<TypeID>> elements = part ? part->provenContentsAt(program.builtins(), ContentsSlot::Element) : std::nullopt;
+    return elements && program.at(*elements).isSubsetOf(heldInOther, program);
+}
+
+bool provesAsMuchAs(const Program& program, const Function& function, ValueID guard, ValueID other)
+{
+    if (guard == other)
+        return true;
+    std::optional<EdgeResult> proof = findOnlyProofBehind(function, guard);
+    std::optional<EdgeResult> proofOfOther = findOnlyProofBehind(function, other);
+    if (!proof || !proofOfOther || proof->proof != proofOfOther->proof || proof->side != proofOfOther->side || !proof->subject || !proofOfOther->subject)
+        return false;
+    if (definitionThroughUpcasts(function, proof->subject) != definitionThroughUpcasts(function, proofOfOther->subject) || !function.at(proof->subject).type)
+        return false;
+    const Value& test = function.at(proof->test);
+    const Value& testOfOther = function.at(proofOfOther->test);
+    if (test.opcode != testOfOther.opcode)
+        return false;
+    if (asksSameOfSubject(function, test, testOfOther) || testImplies(test, testOfOther))
+        return true;
+    return proof->proof == Proof::ArrayStorage && proof->side == EdgeSide::Taken && saysAsMuchOfElements(program, program.typeOf(function, proof->subject), test.arrayStorage(), testOfOther.arrayStorage());
 }
 
 static std::span<const uint32_t> fieldsListedBy(const Value& allocation)

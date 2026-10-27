@@ -279,7 +279,7 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
     if (!condition->calledOn && (isRun || mayCallWhateverHasEscaped(context)) && context.holdsAnyOf(object, ValueFlowProgramNodes::escaped()))
         return true;
 
-    auto holdsSomething = [&](ValueFlowName cell) {
+    auto holdsSomething = [&](ValueFlowCellName cell) {
         return context.meet(context.valueOf(context.read(object, cell)), ValueSets::anything);
     };
     if (isObjectKind(builtins.at(builtin).kind)) {
@@ -287,10 +287,10 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
             return false;
         if (condition->callRunsOtherCode && !holdsSomething(cellOfCallsThatRunOtherCode(builtins)))
             return false;
-        if (condition->firstText() && !holdsSomething({ ValueFlowNameKind::Slot, builtins.slotCount() + condition->firstText().index() }))
+        if (condition->firstText() && !holdsSomething(ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + condition->firstText().index() }))
             return false;
     }
-    return !condition->hasProperty || holdsSomething({ ValueFlowNameKind::Slot, builtins.slotCount() + condition->hasProperty.index() });
+    return !condition->hasProperty || holdsSomething(ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + condition->hasProperty.index() });
 }
 
 static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModuleLoad& load)
@@ -323,7 +323,7 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
     if (load.readsEveryExport) {
         ValueFlowSources answer = requiredValueOf(context, id);
         connect(context, answer, escaped);
-        context.connect(context.read(withSourcesOfCopies(context, context.restrict(valueOf(context, answer), context.universe().knownObjects())), everyPropertyName), escaped);
+        context.connect(context.readWhatWasWritten(withSourcesOfCopies(context, context.restrict(valueOf(context, answer), context.universe().knownObjects())), everyPropertyName), escaped);
         return;
     }
     for (size_t index = 0; index < load.exports.size(); ++index) {
@@ -501,7 +501,7 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
         return;
 
     for (ValueFlowNameKind kind : { ValueFlowNameKind::EveryProperty, ValueFlowNameKind::EveryGetter, ValueFlowNameKind::EverySetter, ValueFlowNameKind::PrototypeLink, ValueFlowNameKind::CopiedFrom })
-        context.connect(context.read(held, { kind, 0 }), heldNode);
+        context.connect(context.readWhatWasWritten(held, { kind, 0 }), heldNode);
     context.add(heldNode, objectsHeldFromCreation(context, held));
     context.mark(held, ObjectMutation::ReachNativeCode);
 
@@ -513,7 +513,7 @@ static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
         { ValueFlowNameKind::PrototypeLink, ValueFlowNameKind::PrototypeLink },
     };
     for (auto [found, written] : foundAndWrittenNames)
-        context.connect(context.read(unknownObject, { found, 0 }), context.written(held, { written, 0 }));
+        context.connect(context.readWhatWasWritten(unknownObject, { found, 0 }), context.written(held, { written, 0 }));
     for (ObjectMutation mutation : OptionSet<ObjectMutation>::all()) {
         if (context.meet(context.markedAmong(unknownObject, mutation), ValueSets::anything))
             context.mark(held, mutation);
@@ -608,7 +608,7 @@ static bool someCallPassesPropertyThatRunsUnseenCode(ValueFlowRuleContext& conte
     const BuiltinUnseenCode* row = builtins.unseenCodeOf(builtin);
     if (!row || !row->condition || !row->condition->hasProperty)
         return false;
-    ValueFlowName cell { ValueFlowNameKind::Slot, builtins.slotCount() + row->condition->hasProperty.index() };
+    ValueFlowCellName cell { ValueFlowNameKind::Slot, builtins.slotCount() + row->condition->hasProperty.index() };
     return context.meet(context.valueOf(context.read(only(context, context.universe().objectOf(builtin)), cell)), ValueSets::anything);
 }
 

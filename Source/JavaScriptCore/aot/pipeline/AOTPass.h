@@ -147,7 +147,7 @@ struct FunctionPassContext {
     bool hasRequiredTailCall() { return openSites.hasRequiredTailCall(changes, analyses, function); }
     bool hasConstantListSource() { return openSites.hasConstantListSource(changes, analyses, function); }
 
-    double heatOf(BlockID);
+    Expected<double> heatOf(BlockID);
     bool runsAtMostOnce(BlockID);
 
     Subject subject() const;

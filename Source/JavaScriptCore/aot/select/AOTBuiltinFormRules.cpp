@@ -52,7 +52,7 @@ static bool hasObjectPart(const Type* type)
 static bool isInRareBlock(const InlineBuiltinSite& site)
 {
     BlockID block = site.context.analyses().useLists().blockOf(site.call);
-    return site.context.function().at(block).frequency == BlockFrequency::Rare;
+    return site.context.function().at(block).frequency.predicted() == BlockFrequency::Rare;
 }
 
 InlineForm chooseFormOfOwnPropertyBuiltin(const InlineBuiltinSite& site)

@@ -593,7 +593,7 @@ static ValueID appendRebuiltResult(IRBuilder& builder, const FreshResultShape& s
         return appendRebuiltVariant(builder, shape, shape.variants[0], results.span());
 
     Function& function = builder.function();
-    BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+    Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
     Vector<BlockID, 4> arms;
     for (const FreshResultVariant& variant : shape.variants)
         arms.append(builder.addBlock(rarerOf(frequency, variant.frequency)));
@@ -868,7 +868,7 @@ struct FreshResultSplitter {
             && (id.index() >= callGraph.numberOfFunctions() || callGraph.numberOfCallSitesInCode(id) || callGraph.isExpectedByCode(id))
             && canReturnParts(program.at(id))
             && build.isEnabled(PassID::SplitFreshResults, id)
-            && !isCold(inputs.heat.of(program, id));
+            && !isCold(inputs.heat.of(program, id)).predicted();
     }
 
     static TailCalls classifyTailCalls(const Function& function)
@@ -1149,7 +1149,7 @@ struct FreshResultSplitter {
         Vector<WrapperCallSite, 4> sites;
         forEachDirectCall(program, id, [&](BlockID block, ValueID call, FunctionID callee) {
             // In frequent code a call is marked because it would have closed a cycle when its callee was the whole function. The wrapper only calls the worker.
-            if (isWrapper(callee) && (!caller.at(call).isNeverInlined() || caller.at(block).frequency == BlockFrequency::Normal))
+            if (isWrapper(callee) && (!caller.at(call).isNeverInlined() || caller.at(block).frequency.predicted() == BlockFrequency::Normal))
                 sites.append(WrapperCallSite { call, callee });
         });
         if (sites.isEmpty())
@@ -1160,7 +1160,7 @@ struct FreshResultSplitter {
             ValueLocation location = analyses.useLists().locationOf(site.call);
             if (location.placement != ValuePlacement::InBlock)
                 return true;
-            return isCold(heatClassOf(inputs.heat, analyses, location.block)) && !meetsOtherValues(analyses, site.call);
+            return isCold(heatClassOf(inputs.heat, analyses, location.block)).predicted() && !meetsOtherValues(analyses, site.call);
         });
         return sites;
     }

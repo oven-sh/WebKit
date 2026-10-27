@@ -292,7 +292,7 @@ HeapChain HeapRule::chainFrom(ClimbingSet receivers, const HeapKey& key)
 
 ValueFlowNodeID HeapRule::storedThroughUnknownObjectInto(ClimbingSet objects, ValueFlowName name)
 {
-    ValueFlowNodeID stored = m_context.read(unknownObjectAlone(), name);
+    ValueFlowNodeID stored = m_context.readWhatWasWritten(unknownObjectAlone(), name);
     if (!m_context.meet(objects, m_universe.builtinObjects()) && !hasEscaped(objects))
         return { };
     if (!holdsAnything(stored))
@@ -326,7 +326,7 @@ ValueFlowNodeID HeapRule::storedThroughUntrackedObjectInto(ClimbingSet objects, 
 {
     if (!hasBeenLost(objects))
         return { };
-    ValueFlowNodeID stored = m_context.read(untrackedObjectAlone(), name);
+    ValueFlowNodeID stored = m_context.readWhatWasWritten(untrackedObjectAlone(), name);
     return holdsAnything(stored) ? stored : ValueFlowNodeID();
 }
 
@@ -1274,7 +1274,7 @@ ClimbingSet HeapRule::letMembersOfHeldPrototypeObjectsEscape(PropertyKeyID key, 
     ClimbingSet holders = m_context.valueWithin(m_context.holdersOfLibraryExportsWrittenUnder(key), m_context.nodes().ofHost(ValueFlowHostNode::HoldersOfExportsInEscapedObjects));
     ClimbingSet prototypeObjects = m_context.restrict(holders, m_universe.prototypeObjectsOfLibraryClasses());
     for (ValueFlowName name : names) {
-        connect(m_context.read(prototypeObjects, name), ValueFlowProgramNodes::escaped());
+        connect(m_context.readWhatWasWritten(prototypeObjects, name), ValueFlowProgramNodes::escaped());
         if (m_context.mayFindWhatIsWrittenUnderUnknownKey(name))
             connect(m_context.nodes().ofHost(ValueFlowHostNode::MembersUnderUnknownKeyInHeldPrototypeObjectsOfLibraryClasses), ValueFlowProgramNodes::escaped());
     }
@@ -1327,9 +1327,9 @@ std::optional<ClimbingSet> HeapRule::startsThatMayFindSomething(ClimbingSet star
         takeHoldersUnder(name);
         if (m_context.mayFindWhatIsWrittenUnderUnknownKey(name))
             takeHoldersUnder(writtenName(unknownHeapKey, part));
-        if (holdsAnything(m_context.read(unknownObjectAlone(), name)))
+        if (holdsAnything(m_context.readWhatWasWritten(unknownObjectAlone(), name)))
             answering = m_context.unite(answering, m_context.unite(m_context.restrict(chain, m_universe.builtinObjects()), escapedAmong(chain)));
-        if (holdsAnything(ValueFlowProgramNodes::lost()) && holdsAnything(m_context.read(untrackedObjectAlone(), name)))
+        if (holdsAnything(ValueFlowProgramNodes::lost()) && holdsAnything(m_context.readWhatWasWritten(untrackedObjectAlone(), name)))
             answering = m_context.unite(answering, lostAmong(chain));
     }
     if (!areHoldersKept)
@@ -1476,8 +1476,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         if (key.keyClass == HeapKeyClass::Name) {
             ClimbingSet holdersOfExports = letMembersOfHeldPrototypeObjectsEscape(key.name, { value, getter });
             if (holdsAnything(holdersOfExports)) {
-                answer(m_context.read(holdersOfExports, value));
-                takeGetters(m_context.read(holdersOfExports, getter));
+                answer(m_context.readWhatWasWritten(holdersOfExports, value));
+                takeGetters(m_context.readWhatWasWritten(holdersOfExports, getter));
             }
             if (m_context.mayFindWhatIsWrittenUnderUnknownKey(value)) {
                 answer(m_context.nodes().ofHost(ValueFlowHostNode::ValuesUnderUnknownKeyInHeldHoldersOfExports));
@@ -1521,8 +1521,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     if (chain.holdsUnknownObject) {
         builtinGetters.append(ValueFlowUniverse::unknownObject());
         if (ClimbingSet holders = escapedHoldersOfWhatStaysBehindUnder(value); holdsAnything(holders)) {
-            answer(m_context.read(holders, value));
-            takeGetters(m_context.read(holders, getter));
+            answer(m_context.readWhatWasWritten(holders, value));
+            takeGetters(m_context.readWhatWasWritten(holders, getter));
         }
     }
     if (key.keyClass != HeapKeyClass::Name && m_context.meet(chain.objects, m_tables.prototypesAboveNativeElements()))
@@ -1587,7 +1587,7 @@ bool HeapRule::endsAtMemberOfTable(ClimbingSet entries, BuiltinName name)
         }
         holders.append(m_universe.objectOf(above));
         ClimbingSet alone(only(object));
-        everyEntryComesToMember &= !holdsAnything(m_context.read(alone, prototypeLinkName));
+        everyEntryComesToMember &= !holdsAnything(m_context.readWhatWasWritten(alone, prototypeLinkName));
         everyEntryComesToMember &= !isStoredThroughPlaceholdersInto(alone, prototypeLinkName);
     });
     if (!everyEntryComesToMember)
@@ -1595,7 +1595,7 @@ bool HeapRule::endsAtMemberOfTable(ClimbingSet entries, BuiltinName name)
 
     ClimbingSet objects(m_context.maker().of(holders.span()));
     ValueFlowName deleted = ValueFlowName::of(ValueFlowNameKind::DeletedMemberUnderUnknownKey);
-    bool mayBeDeleted = holdsAnything(m_context.read(objects, deleted));
+    bool mayBeDeleted = holdsAnything(m_context.readWhatWasWritten(objects, deleted));
     return !isStoredThroughPlaceholdersInto(objects, deleted) && !mayBeDeleted;
 }
 
@@ -1694,9 +1694,9 @@ void HeapRule::collectAccessors(BuiltinCallMode mode)
         accessors.append(ValueFlowUniverse::unknownObject());
         appendAccessorsOf(holdersOfAccessorsThatRunOnUnknownObject(key));
         if (ClimbingSet holders = escapedHoldersOfWhatStaysBehindUnder(name); holdsAnything(holders))
-            answer(m_context.read(holders, name));
+            answer(m_context.readWhatWasWritten(holders, name));
         if (key.keyClass == HeapKeyClass::Name) {
-            answer(m_context.read(letMembersOfHeldPrototypeObjectsEscape(key.name, { name }), name));
+            answer(m_context.readWhatWasWritten(letMembersOfHeldPrototypeObjectsEscape(key.name, { name }), name));
             if (m_context.mayFindWhatIsWrittenUnderUnknownKey(name))
                 answer(m_context.nodes().ofHost(mode == BuiltinCallMode::Get ? ValueFlowHostNode::GettersUnderUnknownKeyInHeldHoldersOfExports : ValueFlowHostNode::SettersUnderUnknownKeyInHeldHoldersOfExports));
         }

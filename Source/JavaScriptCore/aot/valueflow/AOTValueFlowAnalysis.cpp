@@ -353,7 +353,7 @@ static void internKeysOfDeclaredStringLiterals(Program& program, const ParallelL
         for (StringID literal : type.stringLiterals)
             program.types.intern(PropertyKey { .kind = PropertyKeyKind::Text, .text = literal });
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents)
+            for (TypeID contents : part.writtenContents)
                 visit(contents);
         }
     }

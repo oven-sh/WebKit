@@ -1,0 +1,77 @@
+# A variable that goes around a loop is read ahead of the loop. Where a test stands in front of its read in the first turn, the variable may still be empty there: it is looked at no earlier than the program
+# looks at it
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass SeparateUnlikelyLoopPaths
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="First" fields=[{key="x" declared={type=number}}]
+layout L1 name="Second" fields=[{key="y" declared={type=number}}]
+variable g0 name="current" declared={type=L0|L1} flow={writers=AllKnown storeNaming=EveryStoreNamesLocation initialization=StoredBeforeEveryRead}
+
+# The tests that a turn begins with stand ahead of the loop in the order in which the turn has them: the test of the variable comes behind the test that its read stood behind
+function f0 name="aTurnBeginsWithTwoTests" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = TypeTest v0 testedType=f1
+    Branch v3 -> taken b2(| 0), notTaken b6()
+  b2(v4):
+    v5 = GetModuleVariable variable=g0
+    v6 = TypeTest v5 testedType=L0
+    Branch v6 -> taken b3(| 0), notTaken b6()
+  b3(v7):
+    Branch v1 -> taken b4(), notTaken b5()
+  b4():
+    Jump -> next b1()
+  b5():
+    Return v7
+  b6() frequency=Unlikely:
+    v8 = Undefined
+    Return v8
+}
+# CHECK-LABEL: name="aTurnBeginsWithTwoTests"
+# CHECK: b0(
+# CHECK-NEXT: [[first0]]: L0|L1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK-NEXT: Jump -> next [[tests0]]([[first0]])
+# CHECK: [[tests0]]([[entering0]]: L0|L1):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: [[isCallee0]]: boolean = TypeTest v0 testedType=f1
+# CHECK-NEXT: Branch [[isCallee0]] -> taken [[behind0]](| 0), notTaken b6()
+# CHECK-NEXT: [[behind0]]({{*}}: f1):
+# CHECK-NEXT: = TypeTest [[entering0]] testedType=L0
+
+function f1 name="callee" results=[{type=undefined}] {
+    v0 = Undefined
+    Return v0
+}
+
+# A loop that is entered through its copy: a turn of the copy may have passed the read by, so one of two layouts is told from the other where the program does it, inside the loop
+function f2 name="aTurnOfTheCopyMayPassTheReadBy" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: boolean):
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IsClosureOf v0 function=f1
+    Branch v4 -> taken b2(), notTaken b5()
+  b2():
+    v5 = GetModuleVariable variable=g0
+    Branch v2 -> taken b3(), notTaken b6()
+  b3():
+    v6 = TypeTest v5 testedType=L0
+    Branch v6 -> taken b4(| 0), notTaken b5()
+  b4(v7):
+    Jump -> next b1()
+  b5() frequency=Unlikely:
+    v8 = Call v1, -
+    Jump -> next b1()
+  b6():
+    Return v5
+}
+# CHECK-LABEL: name="aTurnOfTheCopyMayPassTheReadBy"
+# CHECK: b1([[carried2]]: L0|L1):
+# CHECK: = IsClosureOf v0 function=f1
+# CHECK: = TypeTest {{*}} testedType=L0
+# CHECK: [[entering2]]: L0|L1 = GetModuleVariable variable=g0 [mayPrecedeItsStore]
+# CHECK-NEXT: Jump -> next b1([[entering2]])

@@ -16,8 +16,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-inline constexpr ValueFlowName addedNamesName = ValueFlowName::of(ValueFlowNameKind::AddedNames);
-inline constexpr ValueFlowName internalFieldsName = ValueFlowName::of(ValueFlowNameKind::InternalFields);
+inline constexpr ValueFlowCellName addedNamesName { ValueFlowNameKind::AddedNames };
+inline constexpr ValueFlowCellName internalFieldsName { ValueFlowNameKind::InternalFields };
 inline constexpr ValueFlowName everyPropertyOfListedHoldersOfExports { ValueFlowNameKind::EveryProperty, 2 };
 
 enum class HeapKeyClass : uint8_t {
@@ -156,7 +156,7 @@ private:
     {
         if (m_asksWithoutNodes && !m_context.mayFindSomethingWritten(objects, name.kind))
             return { };
-        return m_context.read(objects, name);
+        return m_context.readWhatWasWritten(objects, name);
     }
     ClimbingSet valueOfNodeIfAny(ValueFlowNodeID node) { return node ? m_context.valueOf(node) : ClimbingSet(); }
 
@@ -412,7 +412,7 @@ void HeapRule::forEachKeyOfAction(const BuiltinKey& key, const ValueFlowOperand&
         if (m_context.meet(lists, m_universe.placeholdersAlone()) || hasEscaped(known(lists)) || hasBeenLost(known(lists)))
             functor(unknownHeapKey);
         else
-            forEachKey(operandOf(m_context.read(known(lists), elementsName)), functor);
+            forEachKey(operandOf(m_context.readWhatWasWritten(known(lists), elementsName)), functor);
         return;
     }
     }
@@ -438,15 +438,15 @@ void HeapRule::forEachNodeStoredThroughPlaceholdersInto(ClimbingSet objects, Val
 
 void HeapRule::forEachNodeHolding(ClimbingSet objects, ValueFlowName name, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
 {
-    functor(m_context.read(objects, name));
+    functor(m_context.readWhatWasWritten(objects, name));
     forEachNodeStoredThroughPlaceholdersInto(objects, name, functor);
 }
 
 void HeapRule::forEachNodeReadByName(ValueFlowName name, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
 {
-    functor(m_context.read(foundThroughUntrackedObject(m_universe.knownObjects()), name));
-    functor(m_context.read(untrackedObjectAlone(), name));
-    functor(m_context.read(unknownObjectAlone(), name));
+    functor(m_context.readWhatWasWritten(foundThroughUntrackedObject(m_universe.knownObjects()), name));
+    functor(m_context.readWhatWasWritten(untrackedObjectAlone(), name));
+    functor(m_context.readWhatWasWritten(unknownObjectAlone(), name));
 }
 
 void HeapRule::forEachMemberUnder(ClimbingSet objects, const HeapKey& key, NOESCAPE const Invocable<void(BuiltinID member, ModuleID)> auto& functor)

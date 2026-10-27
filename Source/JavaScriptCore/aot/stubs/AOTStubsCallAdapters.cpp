@@ -155,8 +155,12 @@ void emitEnterAdapter(StubAssembler& jit, AdapterCaller caller, unsigned extraBy
     if constexpr (-AdapterFrame::offsetOfNewTarget < static_cast<ptrdiff_t>(AdapterFrame::saveAreaSize))
         jit.store64(TrustedImm32(0), Address(fp, AdapterFrame::offsetOfNewTarget - static_cast<ptrdiff_t>(sizeof(CPURegister))));
     jit.move(instance, instanceGPR);
-    if (jit.options().validates)
+    if (jit.options().validates) {
         jit.store64(TrustedImm32(1), Address(instanceGPR, AOT_INSTANCE_OFFSET(scratch.didEnterCompiledCode)));
+        // A job and a step of an async generator come here without an entry scope of the engine, and the checks of operations ask the VM whether code ran.
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), cellCageBaseGPR);
+        jit.store8(TrustedImm32(1), Address(cellCageBaseGPR, OBJECT_OFFSETOF(VM, didEnterVM)));
+    }
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(cellCageBase)), cellCageBaseGPR);
 #if !CPU(X86_64)
     jit.emitMaterializeTagCheckRegisters();

@@ -673,8 +673,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                     m_rootWhoseFilesRanAhead = root;
                     return true;
                 }
-                recordIfExists(*failedFile)->setEvaluationError(vm, JSValue());
-                setStatus(*failedFile, ModuleStatus::Evaluated);
+                dropErrorOfFile(*failedFile);
             }
         }
     }
@@ -727,10 +726,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
             return didRunFile;
         }
         TRY_CLEAR_EXCEPTION(scope, didRunFile);
-        if (status(imported) != ModuleStatus::Failed)
-            continue;
-        recordIfExists(imported)->setEvaluationError(vm, JSValue());
-        setStatus(imported, ModuleStatus::Evaluated);
+        dropErrorOfFile(imported);
     }
     if (didRunFile)
         m_rootsLoadedWithoutLoader.append(root);
@@ -1278,28 +1274,37 @@ void Modules::layWayOfLoad(PlanOfLoad& plan, LevelOfLoad* above)
     }
 
     std::optional<ModuleID> below;
+    std::optional<ModuleID> firstFileInFront;
     std::optional<ModuleID> firstFileBehind;
     for (size_t depth = levels.size(); depth-- > highestLevel; onWay = &found[onWay->importer]) {
         auto planned = makeUnique<LevelOfLoad>();
         planned->next = below;
+        planned->firstFileInFrontOfNext = std::exchange(firstFileInFront, std::nullopt);
         planned->firstFileBehindNext = std::exchange(firstFileBehind, std::nullopt);
         planned->plan = &plan;
         planned->depth = depth;
+        // While a file runs the loader waits for it, so whatever the file requires, the module that imports it is not loaded before the file has ended.
+        std::unique_ptr<LevelOfLoad> inFront;
         std::unique_ptr<LevelOfLoad> behind;
         if (levels[depth].hasFiles) {
             for (Found& file : plan.level(depth)) {
                 if (!file.isFile || &file == onWay || !isLeftToLoad(plan, file))
                     continue;
-                if (onWay->isFile || &file < onWay)
+                if (onWay->isFile) {
                     planned->files.append(file.module);
-                else if (behind)
-                    behind->files.append(file.module);
+                    continue;
+                }
+                auto& filesOnThatSide = &file < onWay ? inFront : behind;
+                if (filesOnThatSide)
+                    filesOnThatSide->files.append(file.module);
                 else {
-                    behind = makeUnique<LevelOfLoad>();
-                    firstFileBehind = file.module;
+                    filesOnThatSide = makeUnique<LevelOfLoad>();
+                    (&file < onWay ? firstFileInFront : firstFileBehind) = file.module;
                 }
             }
         }
+        if (inFront)
+            m_levelsOfLoads.set(*firstFileInFront, WTF::move(inFront));
         if (behind)
             m_levelsOfLoads.set(*firstFileBehind, WTF::move(behind));
         m_levelsOfLoads.set(onWay->module, WTF::move(planned));
@@ -1308,6 +1313,7 @@ void Modules::layWayOfLoad(PlanOfLoad& plan, LevelOfLoad* above)
     if (!above)
         return;
     above->next = below;
+    above->firstFileInFrontOfNext = firstFileInFront;
     above->firstFileBehindNext = firstFileBehind;
 }
 
@@ -1376,10 +1382,12 @@ void Modules::layWayOfLoadAgain(LevelOfLoad& level)
     level.plan->isWhole = false;
     for (uint32_t place : std::exchange(level.plan->knownToBeLeft, { }))
         level.plan->found[place].isKnownToBeLeft = false;
+    take(level.firstFileInFrontOfNext);
     take(level.firstFileBehindNext);
     for (std::unique_ptr<LevelOfLoad> below = take(level.next); below; below = take(below->next)) {
         if (!firstError)
             firstError = below->firstError.get();
+        take(below->firstFileInFrontOfNext);
         take(below->firstFileBehindNext);
     }
     layWayOfLoad(*level.plan, &level);
@@ -1460,15 +1468,22 @@ bool Modules::wasLoadedWithEarlierGraph(ModuleID module)
 // A graph that the file requires comes to the file.
 void Modules::noteLoadOfFile(ModuleID module)
 {
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ModuleID file = m_table.fileBehindFace(module).value_or(module);
     // Where nothing but its face runs a file, the face alone has the status.
-    if (status(file) == ModuleStatus::Evaluating || status(module) == ModuleStatus::Evaluating)
-        ensureLoaded(file).wasLoadedWhileItRan = true;
+    if (status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating)
+        return;
+    ensureLoaded(file).wasLoadedWhileItRan = true;
+    // The loader takes the names of the file as they are now. Where no importer asks for one of them, only a later require() can show them.
+    if (data(file).mayBeImportedWhileItRuns() && !didCaptureExports(file) && !m_table.faceOfFile(file))
+        RELEASE_AND_RETURN(scope, captureExports(file));
 }
 
 ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module)
 {
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     noteLoadOfFile(module);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     ModuleRecord* record = ensureRecord(module);
     record->retain();
     record->setRunsWhenLoaded();
@@ -1487,7 +1502,7 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     ModuleStatus statusAtStart = status(module);
     // A graph that the file requires comes to the file: the loader makes its record a second time.
     if (statusAtStart == ModuleStatus::Evaluating)
-        ensureLoaded(m_table.fileBehindFace(module).value_or(module)).wasLoadedWhileItRan = true;
+        RELEASE_AND_RETURN(scope, noteLoadOfFile(module));
     if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
         return;
     // As the start of an importer would call it.
@@ -1501,10 +1516,19 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(module).value_or(module)))
         return;
     TRY_CLEAR_EXCEPTION(scope, void());
-    if (status(module) != ModuleStatus::Failed)
+    dropErrorOfFile(module);
+}
+
+// The loader has the file, and nobody waits for its end. `bun run` forgets that the file was required and keeps what the loader has: every later require() of the file answers with the namespace object of that import.
+void Modules::dropErrorOfFile(ModuleID fileOrFace)
+{
+    ModuleID file = m_table.fileBehindFace(fileOrFace).value_or(fileOrFace);
+    if (data(file).mayBeImportedWhileItRuns())
+        ensureLoaded(file).isAnsweredWithNamespace = true;
+    if (status(fileOrFace) != ModuleStatus::Failed)
         return;
-    recordIfExists(module)->setEvaluationError(vm, JSValue());
-    setStatus(module, ModuleStatus::Evaluated);
+    recordIfExists(fileOrFace)->setEvaluationError(*m_instance.vm, JSValue());
+    setStatus(fileOrFace, ModuleStatus::Evaluated);
 }
 
 // Of a file whose body has just thrown. The file ran in front of every ES module that imports it, so one that has begun was loaded by the file itself.
@@ -1543,10 +1567,7 @@ void Modules::evaluateCommonJSForLoader(ModuleID file)
     if (vm.isTerminationException(exception) || !wasImportedWhileItRan(file))
         return;
     TRY_CLEAR_EXCEPTION(scope, void());
-    if (status(file) != ModuleStatus::Failed)
-        return;
-    recordIfExists(file)->setEvaluationError(vm, JSValue());
-    setStatus(file, ModuleStatus::Evaluated);
+    dropErrorOfFile(file);
 }
 
 void Modules::evaluateWithOwnStack(ModuleID root)
@@ -1888,6 +1909,14 @@ JSValue Modules::require(ModuleID target)
     if (targetData.isUncompiledCode())
         RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), *targetData.referrerModule(), true));
     if (!targetData.hasExportTable()) {
+        if (LoadedModule* loaded = targetData.mayBeImportedWhileItRuns() ? loadedIfExists(target) : nullptr; loaded && loaded->isAnsweredWithNamespace) [[unlikely]] {
+            JSObject* namespaceObject = moduleNamespace(target, ModulePhase::Evaluation);
+            RETURN_IF_EXCEPTION(scope, { });
+            // As for an ES module below.
+            if (auto* names = uncheckedDowncast<ModuleNamespace>(namespaceObject); !names->hasExport(vm.propertyNames->__esModule.impl()))
+                names->setESModuleMarker(true);
+            return namespaceObject;
+        }
         JSValue executed = execute(target);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_ASSERT(executed);

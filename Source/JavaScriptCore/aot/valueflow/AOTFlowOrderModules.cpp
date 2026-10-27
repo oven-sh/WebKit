@@ -40,6 +40,12 @@ static bool completesBeforeRequester(const Module& requester, const ModuleReques
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+// A require() of an ES module runs the jobs of the loader before it returns, and with them the modules that an import() loads.
+static bool runsJobsOfLoader(const Module& required)
+{
+    return required.kind == ModuleKind::SourceText;
+}
+
 bool FlowModuleOrder::completesBefore(ModuleID first, ModuleID second) const
 {
     if (first == second || first.index() >= componentOf.size() || second.index() >= componentOf.size() || modulesInCycles.get(second.index()))
@@ -54,9 +60,11 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
     const Program& program = inputs.program;
     uint32_t numberOfModules = program.modules.size();
     uint32_t anyModule = numberOfModules;
-    unsigned numberOfNodes = anyModule + 2 + program.functions.size();
+    uint32_t anyImportedModule = anyModule + 1;
+    uint32_t firstFunction = anyImportedModule + 1;
+    unsigned numberOfNodes = firstFunction + program.functions.size();
     auto nodeOf = [&](FunctionID function) {
-        return function == inputs.host() ? anyModule : anyModule + 1 + function.index();
+        return function == inputs.host() ? anyModule : firstFunction + function.index();
     };
 
     Vector<ModuleID> moduleWithBody(program.functions.size());
@@ -91,14 +99,19 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
                 addEdge(evaluatedModule.index(), nodeOf(FunctionID(index)));
             bool canSuspendEvaluation = file && program.at(file).flags.contains(ModuleFlags::HasTopLevelAwait);
             for (; load != inputs.moduleLoads.end() && load->function.index() == index; ++load) {
+                if (!load->isSynchronous)
+                    addEdge(anyImportedModule, load->target.index());
                 if (!load->isSynchronous && !canSuspendEvaluation)
                     continue;
                 if (file)
                     addEdge(file.index(), load->target.index());
                 if (evaluatedModule && evaluatedModule != file)
                     addEdge(evaluatedModule.index(), load->target.index());
-                if (load->isSynchronous)
-                    addEdge(nodeOf(FunctionID(index)), load->target.index());
+                if (!load->isSynchronous)
+                    continue;
+                addEdge(nodeOf(FunctionID(index)), load->target.index());
+                if (runsJobsOfLoader(program.at(load->target)))
+                    addEdge(nodeOf(FunctionID(index)), anyImportedModule);
             }
         }
         for (size_t module : inputs.modulesLoadedByHost)
@@ -110,6 +123,8 @@ FlowModuleOrder computeModuleOrder(const FlowOrderInputs& inputs)
         }
         for (size_t module : inputs.modulesLoadedByName)
             addEdge(anyModule, static_cast<uint32_t>(module));
+        if (inputs.hostRunsWaitingJobs || !inputs.modulesLoadedByName.isEmpty())
+            addEdge(anyModule, anyImportedModule);
         for (size_t module : inputs.evaluatedModules)
             addEdge(static_cast<uint32_t>(module), anyModule);
     });

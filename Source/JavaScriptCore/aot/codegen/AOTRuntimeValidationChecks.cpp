@@ -192,7 +192,7 @@ void RuntimeValidationEmitter::checkReceiverOfSlotAccess(const OperationContext&
     if (!hasTestableBits(object) || !get(object).is<CellPointer>())
         return;
     const SlotPlan& slots = m_placement.slots();
-    bool hasOnlyCompiledObjects = std::ranges::all_of(m_program.at(access.receivers()).members, [&](LayoutID member) {
+    bool hasOnlyCompiledObjects = std::ranges::all_of(m_program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
         return slots.storageOf(member) == LayoutStorage::CompiledObject || m_program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
     std::span<const uint32_t> shapes = m_placement.shapes().memberShapes(access.receivers());
@@ -297,7 +297,7 @@ void RuntimeValidationEmitter::checkClassProofs(ValueID id, CellPointer cell, co
     if (hasArrayStorageForm(part.arrayStorage))
         failUnless(emitter<ElementAccessEmitter>().hasArrayStorage(cell, part.arrayStorage), ValidationFailureKind::ArrayStorageKind, cell, id);
     for (ContentsSlot slot : allMembersOf<ContentsSlot>) {
-        TypeID contents = part.contentsAt(m_builtins, slot);
+        TypeID contents = part.provenContentsAt(m_builtins, slot).value_or(Proven::byFlowOfContents(TypeTable::anything));
         if (contents == TypeTable::anything || !m_builtins.findSlot(part.builtinClass, slot))
             continue;
         if (!m_placement.typesNeededAtRunTime().get(contents.index()))

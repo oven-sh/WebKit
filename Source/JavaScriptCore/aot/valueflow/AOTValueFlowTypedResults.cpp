@@ -37,7 +37,7 @@ namespace {
 
 TypeID typedElementTypeOf(const Program& program, const ClassPart& array)
 {
-    return array.contentsAt(program.builtins(), ContentsSlot::Element);
+    return array.writtenContentsAt(program.builtins(), ContentsSlot::Element);
 }
 
 void followTypes(const Program& program, ValueFlowTypedResult& result)
@@ -207,7 +207,7 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
         if (type.primitives & Primitive::AnySymbol)
             members.append(ValueFlowUniverse::primitive(PrimitiveSet::Symbol));
 
-        bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || (type.layouts && program.at(type.layouts).hasMembersWithoutLayout);
+        bool admitsPlainObjects = type.anyObject || type.anyFunction || !type.functions.isEmpty() || !type.builtins.isEmpty() || (type.layouts && program.at(type.layouts).mayHoldObjectsWithoutLayout());
         std::span<const LayoutID> layoutsOfType = membersOf(program, type);
         for (size_t index = 0; index < result.layouts.size() && !layoutsOfType.empty(); ++index) {
             if (std::ranges::binary_search(layoutsOfType, result.layouts[index]))
@@ -419,7 +419,7 @@ void computeDataNodeResults(const ValueFlowResultInputs& inputs, const ValueFlow
                     if (facts && indexOfElements < facts->contents.size() && facts->contents[indexOfElements] != TypeTable::never)
                         node.elements = facts->contents[indexOfElements];
                     if (facts)
-                        node.arrayStorage = facts->arrayStorageToldToCreator;
+                        node.arrayStorage = facts->arrayStorage;
                     if (facts && ordinal && (facts->contentsAreProven || !facts->pristine.isEmpty())) {
                         if (!positions)
                             positions.emplace(inputs, arena, counts, index);

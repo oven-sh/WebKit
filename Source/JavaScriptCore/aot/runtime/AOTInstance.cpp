@@ -20,6 +20,7 @@
 #include "AOTCompactTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTFunctionTables.h"
 #include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
@@ -708,11 +709,29 @@ struct CountedCall<entry, operation, Result(First, Rest...) noexcept(isNoexcept)
 };
 #endif
 
+// A leaf that preserves most registers is handed characters and numbers and no instance.
+// What takes the pending exception runs the collection that throwing put off: the places that call it say so, its row does not.
+static constexpr bool isCalledWithoutCollection(Entry entry)
+{
+    std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
+    if (!operation || Typed::declaredBoundOf(*operation).mayCollect || preservesMostRegisters(*operation) || featureOf(entry))
+        return false;
+    return *operation != RuntimeOperation::Catch && *operation != RuntimeOperation::CatchException && *operation != RuntimeOperation::CatchValueAndException;
+}
+
+template<Entry entry, auto operation>
+static constexpr auto functionInTable = [] {
+    if constexpr (isCalledWithoutCollection(entry))
+        return CallWithoutCollection<operation>::call;
+    else
+        return operation;
+}();
+
 template<bool countsCalls>
 static void fillOperations(void** entries)
 {
 #define AOT_FILL_OPERATION(name) \
-    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, countsCalls ? CountedCall<Entry::name, &name, std::remove_pointer_t<decltype(&name)>>::call : &name>();
+    entries[static_cast<unsigned>(Entry::name)] = operationAddress<Entry::name, countsCalls ? CountedCall<Entry::name, functionInTable<Entry::name, &name>, std::remove_pointer_t<decltype(&name)>>::call : functionInTable<Entry::name, &name>>();
 #define AOT_FILL_SCHEMA_OPERATION(name) AOT_FILL_OPERATION(operationAOT##name)
 #define AOT_TRAP_ENTRY(name) \
     entries[static_cast<unsigned>(Entry::name)] = tagCFunctionPtr<void*, OperationPtrTag>(operationNotUsedByImage);

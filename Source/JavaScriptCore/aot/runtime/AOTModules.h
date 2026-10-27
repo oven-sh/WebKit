@@ -199,6 +199,7 @@ public:
     bool wasLoadedWithGraph(ModuleID);
     bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
     bool wasImportedWhileItRan(ModuleID file) const;
+    void dropErrorOfFile(ModuleID fileOrFace);
     void evaluateCommonJSForLoader(ModuleID file);
     JSValue execute(ModuleID);
 
@@ -272,6 +273,7 @@ private:
         bool capturedFieldsAreOfRuntimeModule { false };
         Identifier resolvedKey;
         bool wasLoadedWhileItRan { false };
+        bool isAnsweredWithNamespace { false };
         bool bindsEarlierCapture { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
@@ -497,6 +499,7 @@ private:
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LevelOfLoad);
 
         std::optional<ModuleID> next;
+        std::optional<ModuleID> firstFileInFrontOfNext;
         std::optional<ModuleID> firstFileBehindNext;
         Vector<ModuleID, 4> files;
         Strong<Unknown> firstError;

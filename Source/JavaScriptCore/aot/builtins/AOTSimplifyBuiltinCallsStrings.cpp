@@ -66,8 +66,8 @@ static void expandIntoTwoPaths(SiteExpansion& expansion, const CodeUnitRead& rea
 {
     IRBuilder& builder = expansion.builder();
     expansion.begin(read.site);
-    BlockFrequency frequency = expansion.frequency();
-    BlockFrequency frequencyOutside = rarerOf(frequency, BlockFrequency::Unlikely);
+    Expected<BlockFrequency> frequency = expansion.frequency();
+    Expected<BlockFrequency> frequencyOutside = rarerOf(frequency, BlockFrequency::Unlikely);
 
     auto typeOf = [&](ValueID id) -> const Type& {
         return expansion.context().program.typeOf(expansion.function(), id);
@@ -153,7 +153,7 @@ unsigned simplifyStringReads(FunctionPassContext& context, const BuiltinCallSite
         read->isInside = context.program.typeOf(context.function, read->position).isInteger() && positions.isInside(read->string, read->position, site.block);
         if (read->isInside && !read->readsCodePoint)
             rewrite(site.value, IRBuilder::make(Opcode::GetStringCodeUnit, { read->string, read->position }));
-        else if (context.function.at(site.block).frequency == BlockFrequency::Normal)
+        else if (context.function.at(site.block).frequency.predicted() == BlockFrequency::Normal)
             readsWithTwoPaths.append(*read);
     }
 

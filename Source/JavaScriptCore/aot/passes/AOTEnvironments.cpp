@@ -3126,6 +3126,8 @@ static void findReleasePoints(const AnalysisContext& context, const EnvironmentT
                 // Nothing stands between a tail call and the end of the block, and the callee still has the environment.
                 if (wasLive || !isLive || (block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == block.values[index]))
                     continue;
+                if (hasNeverResult(function.at(block.values[index])))
+                    continue;
                 if (ValueID environment = findReleasableEnvironment(calc))
                     plan.releases.append({ std::nullopt, { blockID, index + 1 }, environment, layout });
             }

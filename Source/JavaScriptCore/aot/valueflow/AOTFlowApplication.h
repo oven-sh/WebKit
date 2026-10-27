@@ -39,6 +39,13 @@ struct FlowFieldUpdate {
     bool undefinedAtStartIsNeverRead { false };
 };
 
+// An allocation lists, for a field, a value that may lie outside the type of the field. Nothing tests it there.
+struct FlowListedValue {
+    uint32_t field { 0 };
+    FunctionID function;
+    ValueID allocation;
+};
+
 struct FlowAppendedField {
     PropertyKeyID key;
     FlowPositionUpdate position;
@@ -51,6 +58,7 @@ struct FlowLayoutUpdate {
     ClassFlow classFlow;
     Vector<FlowFieldUpdate> fields;
     Vector<FlowAppendedField> appendedFields;
+    Vector<FlowListedValue> valuesListedWithOtherTypes;
     Vector<Vector<PropertyKeyID>> literalKeyOrders;
     bool objectsAreDictionaries { false };
     bool objectsArePrototypesOfCreatedObjects { false };
@@ -105,6 +113,7 @@ struct FlowAllocationStamp {
     AllocationSiteID site;
     AllocationClassID allocationClass;
     TypeID elements;
+    bool elementsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
 };
 

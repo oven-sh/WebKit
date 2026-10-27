@@ -213,7 +213,7 @@ static void describeCalledValue(const Program& program, const Type& callee, Effe
 {
     CalleeList callees = calleesOf(program, callee);
     describeCallees(program, callees, BuiltinCallMode::Call, description);
-    if (callees.builtins.isEmpty())
+    if (callees.listed().builtins.empty())
         return;
     EnteringOperands operands;
     operands.newTarget = TypeID();
@@ -223,9 +223,10 @@ static void describeCalledValue(const Program& program, const Type& callee, Effe
 static bool mayReturnObject(const Program& program, const Type& calledValue)
 {
     CalleeList callees = calleesOf(program, calledValue);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return true;
-    return std::ranges::any_of(callees.functions, [&](FunctionID callee) {
+    return std::ranges::any_of(functions->value(), [&](FunctionID callee) {
         const Function& function = program.at(callee);
         if (function.results.size() != 1 || function.isUnsplitCoroutine() || function.result().isExpected())
             return true;
@@ -450,7 +451,7 @@ static bool forEachProvenContents(const Program& program, const Type& operand, N
         return part.contentsAreProven && std::ranges::all_of(table.at(part.builtinClass).slots, [&](BuiltinSlotID slot) {
             std::optional<uint8_t> indexInType = table.at(slot).indexInType;
             if (indexInType)
-                functor(program.at(part.contentsAt(*indexInType)));
+                functor(program.at(*part.provenContentsAt(*indexInType)));
             return indexInType.has_value();
         });
     });
@@ -674,12 +675,12 @@ void ReachableValueWalk::runProtocolsOn(const Type& receivers, Protocols protoco
     describeCallees(m_program, membersWithKeptResults, BuiltinCallMode::Call, m_description);
 
     CalleeList members = membersRunBy(m_program, receivers, protocols - protocolsKeepingResults, m_behavior.namedMembers, { }, NamedMembers::AreOnlyInspected);
-    for (BuiltinID member : members.builtins)
+    for (BuiltinID member : members.listed().builtins)
         describeCallOn(receivers, member);
-    members.builtins.clear();
+    members.removeBuiltins();
     describeCallees(m_program, members, BuiltinCallMode::Call, m_description);
 
-    bool returnsNothingReachable = membersWithKeptResults.runsNothing() && members.functions.isEmpty();
+    bool returnsNothingReachable = membersWithKeptResults.runsNothing() && members.listed().functions.empty();
     if (!returnsNothingReachable || (protocols.contains(Protocol::Named) && !findsNamedMembersInFields(receivers)))
         m_description.addUnknownCode();
 }
@@ -897,7 +898,8 @@ static void describeOperandCode(const Program& program, const Type& operand, con
 static bool mayTakeCallee(const Program& program, const Type& calledValue)
 {
     CalleeList callees = calleesOf(program, calledValue);
-    return !callees.isComplete || std::ranges::any_of(callees.functions, [&](FunctionID callee) {
+    std::optional<ProvenValue<Callees>> all = callees.all();
+    return !all || std::ranges::any_of(all->value().functions, [&](FunctionID callee) {
         return program.at(callee).calleeParameterIndex().has_value();
     });
 }
@@ -1053,14 +1055,19 @@ static OperandSummary summarizeCallOperand(const EffectContext& context, const T
 
     CalleeList callees = calleesOfCall(context.program, call);
     bool isCalledValue = behavior.uses.containsAny(callingUses);
-    if (isCalledValue && call.opcode == Opcode::Call && !callees.isComplete)
+    if (isCalledValue && call.opcode == Opcode::Call && !callees.listsEveryCallee())
         return summarizeDeclaredUses(behavior);
-    if (!callees.isComplete || !callees.builtins.isEmpty() || maySuspend(call.opcode))
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions || maySuspend(call.opcode))
         return { };
 
+    // Nothing that is joined to a summary that allows everything changes it.
+    constexpr OperandSummary allowsEverything;
     if (isCalledValue) {
         OperandSummary summary = summarizeDeclaredUses(behavior);
-        for (FunctionID callee : callees.functions) {
+        for (FunctionID callee : functions->value()) {
+            if (summary == allowsEverything)
+                break;
             for (uint32_t parameter : entryParametersOfCalledValue(context.program.at(callee), call))
                 summary = joinOf(summary, summarizeArgumentOf(context, call, callee, parameter));
         }
@@ -1068,8 +1075,11 @@ static OperandSummary summarizeCallOperand(const EffectContext& context, const T
     }
 
     OperandSummary summary { OperandUse::Inspects, RetainedIn::UnknownMemory, 0 };
-    for (FunctionID callee : callees.functions)
+    for (FunctionID callee : functions->value()) {
+        if (summary == allowsEverything)
+            break;
         summary = joinOf(summary, summarizeArgumentOf(context, call, callee, entryParameterOf(context.program.at(callee), call, operandIndex)));
+    }
     return summary;
 }
 
@@ -1270,11 +1280,11 @@ OperandConfinement confinementOf(Opcode opcode)
     return answers[static_cast<unsigned>(opcode)];
 }
 
-static OperandMemory memoryAccessedByCallees(const EffectContext& context, const Value& call, uint32_t operandIndex, const CalleeList& callees)
+static OperandMemory memoryAccessedByCallees(const EffectContext& context, const Value& call, uint32_t operandIndex, ProvenValue<std::span<const FunctionID>> callees)
 {
     bool isCalledValue = operandUsesOf(call.opcode, operandIndex).containsAny(callingUses);
     OperandMemory memory = OperandMemory::none();
-    for (FunctionID id : callees.functions) {
+    for (FunctionID id : callees.value()) {
         const Function& callee = context.program.at(id);
         CalleeSummary summary(context, id);
         if (isCalledValue) {
@@ -1295,8 +1305,8 @@ OperandMemory memoryAccessedThrough(const EffectContext& context, const Function
 
     if (effectRuleOf(user.opcode) == EffectRule::Call && !maySuspend(user.opcode)) {
         CalleeList callees = calleesOfCall(context.program, user);
-        if (callees.isComplete && callees.builtins.isEmpty())
-            return memoryAccessedByCallees(context, user, operandIndex, callees);
+        if (std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone())
+            return memoryAccessedByCallees(context, user, operandIndex, *functions);
     }
 
     Effects effects = effectsOfUser.onAnyEdge();

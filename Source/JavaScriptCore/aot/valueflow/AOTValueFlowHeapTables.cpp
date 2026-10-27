@@ -11,6 +11,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinMembers.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTFlowBuiltinLocations.h"
 #include "AOTFlowObjectOperations.h"
 #include "AOTFlowSiteData.h"
@@ -501,6 +502,20 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 return overload.mode == BuiltinCallMode::Get && overload.receiver && (!overload.receiver->uses.containsOnly(usesThatLookAtObject) || !overload.receiver->protocols.isEmpty());
             });
         };
+        // f.call(..), f.bind(..), Reflect.apply(f, ..), list.map(f): the row says that the function calls its receiver or an argument, or answers a bound function.
+        auto callsOrBindsOperand = [&](BuiltinID function) {
+            auto isCalled = [](const BuiltinParameter& parameter) {
+                return parameter.uses != OperandUses::all() && parameter.uses.containsAny(callingUses);
+            };
+            return std::ranges::any_of(builtins.overloadsOf(function), [&](const BuiltinOverload& overload) {
+                if ((overload.receiver && isCalled(*overload.receiver)) || std::ranges::any_of(overload.parameters, isCalled))
+                    return true;
+                return overload.result.type && std::ranges::any_of(builtins.at(overload.result.type).parts, [](const BuiltinTypePart& part) {
+                    return part.kind == BuiltinTypePartKind::Instance && part.builtinClass == BuiltinClasses::BoundFunction;
+                });
+            });
+        };
+        Vector<ValueFlowObjectID, 32> functionsThatCallOrBindOperand;
         Vector<ValueFlowObjectID, 32> gettersThatActOnReceiver;
         Vector<ValueFlowObjectID, 32> holdersOfGettersThatActOnReceiver;
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
@@ -519,7 +534,10 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCode);
             if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && builtins.letsInUnseenCodeWhenCalled(BuiltinID(index)))
                 universe.appendObjectsOf(BuiltinID(index), objectsThatLetInUnseenCodeWhenCalled);
+            if (builtins.canonicalID(BuiltinID(index)) == BuiltinID(index) && callsOrBindsOperand(BuiltinID(index)))
+                universe.appendObjectsOf(BuiltinID(index), functionsThatCallOrBindOperand);
         }
+        m_functionsThatCallOrBindOperand = maker.intersect(maker.of(functionsThatCallOrBindOperand.span()), universe.builtinFunctions());
         m_objectsThatLetInUnseenCode = maker.of(objectsThatLetInUnseenCode.span());
         m_objectsThatLetInUnseenCodeWhenCalled = maker.of(objectsThatLetInUnseenCodeWhenCalled.span());
         m_gettersThatActOnReceiver = maker.of(gettersThatActOnReceiver.span());

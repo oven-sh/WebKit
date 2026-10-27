@@ -143,7 +143,7 @@ private:
 
 InliningSummaries summarizeForInlining(const Program&, const CallGraph&, const Heat&, const FlowResults&, BuildContext&);
 
-InliningSummary summarizeFunctionForInlining(const AnalysisContext&, const Function&, HeatClass);
+InliningSummary summarizeFunctionForInlining(const AnalysisContext&, const Function&, Expected<HeatClass>);
 
 bool isBoundToFrame(const Function&, const Block&, uint32_t indexInBlock);
 bool isWrapperCreatedByEngine(const Function&);

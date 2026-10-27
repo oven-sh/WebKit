@@ -242,7 +242,7 @@ static bool addLayoutsOfFastArms(const Program& program, std::span<const FastArm
     for (const FastArm& arm : arms) {
         if (!arm.receivers)
             continue;
-        for (LayoutID layout : program.at(arm.receivers).members)
+        for (LayoutID layout : program.at(arm.receivers).completeMembers())
             layouts.add(layout);
     }
     return !arms.empty();
@@ -262,7 +262,7 @@ static ArrivalSiteDescription describe(const Program& program, const Function& f
     // The stamp of a pair is that of its first read.
     LayoutSetID stamp = site.part || opcodeCallsByValue(value.opcode) ? LayoutSetID() : value.receivers();
     if (stamp)
-        description.stamp = program.at(stamp).isComplete ? ArrivalStamp::Complete : ArrivalStamp::Open;
+        description.stamp = program.at(stamp).listsEveryLayout() ? ArrivalStamp::Complete : ArrivalStamp::Open;
 
     bool hasFastArm = addLayoutsOfFastArms(program, sortedArms, description.accessSite, description.origin.inlineFrame, description.expected);
     // Where the callee is known the read of the method is gone from the fast arm, and the call is what is left of the two.

@@ -69,7 +69,7 @@ private:
     bool keepClosureUntilItLeaves(ObjectID closure);
     bool isPassedOnByBranch(const Use&) const;
     bool willHaveLongFormsInLine(BlockID);
-    bool mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const;
+    Expected<bool> mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const;
     bool isOnlyCalled(ObjectID closure) const;
     void checkCellForms();
     void checkUses();
@@ -184,7 +184,7 @@ static bool isValueOfDeferringField(const Program& program, const Value& user, u
     }
     if ((user.opcode != Opcode::PutSlot && user.opcode != Opcode::PutSlotOrAdd) || operandIndex != OperandIndex::PutSlot::value)
         return false;
-    return std::ranges::any_of(program.at(user.receivers()).members, [&](LayoutID member) {
+    return std::ranges::any_of(program.at(user.receivers()).completeMembers(), [&](LayoutID member) {
         std::optional<uint32_t> field = program.at(member).findField(user.key());
         return field && defersClosure(member, *field);
     });
@@ -345,9 +345,10 @@ bool FramePlanner::isHiddenRestOfEveryCallee(const Use& use) const
     if (effectRuleOf(call.opcode) != EffectRule::Call)
         return false;
     CalleeList callees = calleesOfCall(m_program, call);
-    if (!callees.isComplete || !callees.builtins.isEmpty())
+    std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+    if (!functions)
         return false;
-    return std::ranges::all_of(callees.functions, [&](FunctionID id) {
+    return std::ranges::all_of(functions->value(), [&](FunctionID id) {
         const Function& callee = m_program.at(id);
         std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, use.operandIndex);
         return entryParameter && *entryParameter == callee.hiddenRestParameterIndex();
@@ -481,17 +482,17 @@ AOT_THRESHOLD(unsigned, maxUsesOfClosureKeptUntilItLeaves, 8);
 
 bool FramePlanner::willHaveLongFormsInLine(BlockID block)
 {
-    BlockFrequency frequency = m_function.at(block).frequency;
-    if (frequency != BlockFrequency::Normal)
+    Expected<BlockFrequency> frequency = m_function.at(block).frequency;
+    if (frequency.predicted() != BlockFrequency::Normal)
         return false;
-    double activations = m_heat.activationsOf(m_program, m_plan.function);
+    Expected<double> activations = m_heat.activationsOf(m_program, m_plan.function);
     if (codeShapeFor(activations * roundingOfFrequencySums, false, frequency) != CodeShape::Fast && runsNoBlockMoreOftenThanEntry(m_analyses.cfg()))
         return false;
     if (m_analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
         return false;
-    double frequencyInFunction = m_analyses.blockFrequencies().frequencyOf(block);
-    double heat = activations * frequencyInFunction;
-    return codeShapeFor(heat, false, frequency, m_heat.leastHeatOfFastCode(m_program, m_plan.function, frequencyInFunction)) == CodeShape::Fast && m_heat.isAmongHottestCode(heat);
+    Expected<double> frequencyInFunction = m_analyses.blockFrequencies().frequencyOf(block);
+    Expected<double> heat = activations * frequencyInFunction;
+    return codeShapeFor(heat, false, frequency, m_heat.leastHeatOfFastCode(m_program, m_plan.function, frequencyInFunction)) == CodeShape::Fast && m_heat.isAmongHottestCode(heat).predicted();
 }
 
 bool FramePlanner::isPassedOnByBranch(const Use& use) const
@@ -529,8 +530,8 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
             continue;
         }
         lastUses.append(use);
-        bool runsOften = m_function.at(use.block).frequency == BlockFrequency::Normal;
-        if (runsOften && use.kind == Use::Kind::Operand && mayLendArgument(m_function.at(use.user), use.operandIndex) && mayFindBorrowingCallee(m_function.at(use.user), use.operandIndex)) {
+        bool runsOften = m_function.at(use.block).frequency.predicted() == BlockFrequency::Normal;
+        if (runsOften && use.kind == Use::Kind::Operand && mayLendArgument(m_function.at(use.user), use.operandIndex) && mayFindBorrowingCallee(m_function.at(use.user), use.operandIndex).predicted()) {
             isLent = true;
             continue;
         }
@@ -555,20 +556,22 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     return true;
 }
 
-bool FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
+// Whoever is lent a closure and does not borrow it moves it to the heap.
+Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
 {
     auto borrows = [&](FunctionID id) {
         std::optional<uint32_t> entryParameter = entryParameterOf(m_program.at(id), call, operandIndex);
         return entryParameter && m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
     };
     CalleeList callees = calleesOfCall(m_program, call);
-    if (std::ranges::any_of(callees.functions, borrows))
+    Callees seen = callees.seen().predicted();
+    if (std::ranges::any_of(seen.functions, borrows))
         return true;
-    if (!callees.isComplete)
-        return callees.functions.isEmpty();
+    if (!callees.listsEveryCallee())
+        return seen.functions.empty();
 
     const BuiltinTable& table = m_program.builtins();
-    return std::ranges::any_of(callees.builtins, [&](BuiltinID builtin) {
+    return std::ranges::any_of(seen.builtins, [&](BuiltinID builtin) {
         return std::ranges::any_of(table.overloadsOf(builtin), [&](const BuiltinOverload& overload) {
             const RuntimeFunctionEntry* entry = overload.code.implementation.function ? findRuntimeFunction(m_program, overload.code.implementation.function) : nullptr;
             return entry && borrows(entry->function);
@@ -893,7 +896,8 @@ void FramePlanner::checkReturnCalls()
         auto calleesEndTheirTailCalls = [&] {
             if (!answer) {
                 CalleeList callees = calleesOfCall(m_program, call);
-                answer = m_flow && callees.isComplete && callees.builtins.isEmpty() && std::ranges::all_of(callees.functions, [&](FunctionID callee) {
+                std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+                answer = m_flow && functions && std::ranges::all_of(functions->value(), [&](FunctionID callee) {
                     const FrameArrayParameters& table = m_flow->frameArrayParameters();
                     return call.opcode == Opcode::CallDirect ? table.endsItsTailCalls(callee) : table.endsItsTailCallsWhenCalledByValue(callee);
                 });

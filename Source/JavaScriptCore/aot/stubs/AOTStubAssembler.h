@@ -71,6 +71,8 @@ struct PreservingCall {
     bool checksException { true };
     // The stub has not written it, so it is saved with the registers of the caller or by the callee.
     std::optional<GPRReg> cellToKeep { };
+    // Emits what stands in front of the return, where the frame is gone, the registers of the caller are back and nothing was thrown.
+    const ScopedLambda<void()>* emitBeforeReturn { nullptr };
 };
 
 void readTagsFromInstance(CCallHelpers&);

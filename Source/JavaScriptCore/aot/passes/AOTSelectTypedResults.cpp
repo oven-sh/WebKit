@@ -282,7 +282,7 @@ static TypedResultChoice chooseResult(FunctionPassContext& context, TypedResultS
     };
 
     // The generic side of an expansion is a rare block, which ends the rounds. How often the call runs says nothing about how often its result is read.
-    if (context.function.at(site.block).frequency == BlockFrequency::Rare)
+    if (context.function.at(site.block).frequency.predicted() == BlockFrequency::Rare)
         return { };
     if (site.form == TypedResultForm::Rows && hasExpectedRows())
         return { };

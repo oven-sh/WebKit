@@ -27,7 +27,7 @@ static_assert((Value::opcodesWithIsPresent | Value::opcodesWithReadsHoleAsNaN | 
 static SlotInReceivers findSlotInReceivers(const Program& program, const LayoutSet& receivers, PropertyKeyID key)
 {
     SlotInReceivers slot;
-    for (LayoutID member : receivers.members) {
+    for (LayoutID member : receivers.written()) {
         std::optional<FieldReference> field = findField(program, member, key, BaseChain::Proven);
         if (!field) {
             if (!slot.memberWithoutField)
@@ -36,6 +36,9 @@ static SlotInReceivers findSlotInReceivers(const Program& program, const LayoutS
         }
         if (isRemovedField(program, *field) && !slot.memberWithRemovedField)
             slot.memberWithRemovedField = member;
+        LayoutID& firstOfForm = fieldAt(program, *field).form.contains(FieldForm::IsAccessor) ? slot.memberWithAccessor : slot.memberWithValue;
+        if (!firstOfForm)
+            firstOfForm = member;
 
         const FieldFlow& flow = flowOf(program, *field);
         slot.isAlwaysFilled &= flow.occupancy == Occupancy::AlwaysFilled;
@@ -73,16 +76,23 @@ static bool hasValidHoles(const Value& array)
 void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Value& value)
 {
     const LayoutSet& receivers = m_program.at(value.receivers());
-    if (!receivers.isComplete || receivers.members.isEmpty()) {
+    if (!receivers.all() || receivers.written().isEmpty()) {
         fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
     }
 
+    bool readsHalfOfPair = value.opcode == Opcode::GetSlotGetter || value.opcode == Opcode::GetSlotSetter;
     auto verifySlot = [&](PropertyKeyID key) {
         SlotInReceivers slot = slotInReceivers(value.receivers(), key);
         if (slot.memberWithoutField) {
             fail(InternalErrorKind::InvalidGuard, block, id);
             m_errors.last().layout = slot.memberWithoutField;
+            return slot;
+        }
+        LayoutID memberOfOtherForm = readsHalfOfPair ? slot.memberWithValue : slot.memberWithAccessor;
+        if (memberOfOtherForm && value.opcode != Opcode::IsSlotFilled) {
+            fail(InternalErrorKind::SlotOfOtherForm, block, id);
+            m_errors.last().layout = memberOfOtherForm;
             return slot;
         }
         if (slot.memberWithRemovedField && !isOptimizing()) {
@@ -121,6 +131,21 @@ void FunctionVerifier::verifySlotOperation(BlockID block, ValueID id, const Valu
         fail(InternalErrorKind::InvalidGuard, block, id);
 }
 
+// The slot of an accessor holds the pair of its functions, which the definition of the accessor makes.
+void FunctionVerifier::verifyFormsOfListedFields(BlockID block, ValueID id, const Value& allocation)
+{
+    const Vector<Field>& fields = m_program.at(allocation.layout()).fields;
+    std::span<const uint32_t> listed = allocation.fields();
+    std::span<const ValueID> values = allocation.valuesOperands();
+    for (size_t index = 0; index < std::min(listed.size(), values.size()); ++index) {
+        if (!values[index] || listed[index] >= fields.size() || !fields[listed[index]].form.contains(FieldForm::IsAccessor))
+            continue;
+        fail(InternalErrorKind::SlotOfOtherForm, block, id);
+        m_errors.last().layout = allocation.layout();
+        return;
+    }
+}
+
 void FunctionVerifier::verifyKeyedTail(BlockID block, ValueID id, const Value& value, size_t numberOfKeys)
 {
     if (Value::opcodesWithGetterMask.contains(value.opcode) && numberOfKeys > maxVerifiedKeysInAccessorMasks)
@@ -144,6 +169,19 @@ void FunctionVerifier::verifyElementOperation(BlockID block, ValueID id, const V
     if (Value::opcodesWithHoles.contains(value.opcode) && !hasValidHoles(value)) {
         fail(InternalErrorKind::PayloadOutOfRange, block, id);
         return;
+    }
+    if (value.opcode == Opcode::NewArray) {
+        // Its elements are held to its contents, so they are stored without a test in the storage that it names.
+        if (holdsOnlyNumbers(value.arrayStorage()) && (!value.contentsAreProven() || !canStoreWithoutConversion(value.arrayStorage(), m_program.at(value.contents())))) {
+            fail(InternalErrorKind::PayloadOutOfRange, block, id);
+            return;
+        }
+        for (ValueID element : value.elementsOperands()) {
+            if (!typeOf(element).isJavaScriptValue()) {
+                fail(InternalErrorKind::OperandTypeMismatch, block, id, element.index());
+                return;
+            }
+        }
     }
     if (Value::opcodesWithIsInBounds.contains(value.opcode) && value.isInBounds()) {
         if (!hasArrayStorageForm(value.arrayStorage())) {

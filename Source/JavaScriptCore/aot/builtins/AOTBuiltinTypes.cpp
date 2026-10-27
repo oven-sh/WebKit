@@ -95,7 +95,7 @@ static ClassPart closedInstancePartOf(const Program& program, const BuiltinTypeP
     if (!contentsArena || part.contents.empty())
         return result;
 
-    result.contents = contentsOfInstancePart(program.builtins(), part, [&](const BuiltinSlotContents& declared) {
+    result.writtenContents = contentsOfInstancePart(program.builtins(), part, [&](const BuiltinSlotContents& declared) {
         return contentsArena->intern(closedTypeOf(program, declared.type, contentsArena));
     });
     return result;
@@ -111,7 +111,7 @@ static ClassPart closedTuplePartOf(const Program& program, const BuiltinLayout& 
     Type element = Type::never();
     for (const BuiltinLayoutField& field : tuple.fields)
         element = element.unionWith(closedTypeOf(program, field.type, contentsArena), *contentsArena);
-    result.contents.append(contentsArena->intern(element));
+    result.writtenContents.append(contentsArena->intern(element));
     return result;
 }
 
@@ -581,7 +581,7 @@ TypeFit FitWalk::fitOfContents(const ClassPart& part, const BuiltinTypePart& adm
         std::optional<uint8_t> index = m_table.at(tested.slot).indexInType;
         if (!index || !part.contentsAreProven)
             return false;
-        OperandFit fit = fitOf(m_context, part.contentsAt(*index), tested.type);
+        OperandFit fit = fitOf(m_context, *part.provenContentsAt(*index), tested.type);
         return fit.fit == TypeFit::Inside && !fit.unprovenPristine;
     });
     return areInside ? TypeFit::Inside : TypeFit::Unknown;

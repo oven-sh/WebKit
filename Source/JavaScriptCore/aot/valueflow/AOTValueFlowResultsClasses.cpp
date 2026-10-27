@@ -555,7 +555,7 @@ static ClassFlow computeClassFlow(const ValueFlowResultInputs& inputs, LayoutID 
     auto isOnlyCalled = [&](FunctionID function) {
         ValueFlowObjectID closure = universe.closureOf(function);
         return !program.at(function).has(FunctionFlags::TakesCallee) && !std::ranges::binary_search(definition.functionsHandedOnAtDefinition, function) && !inputs.hasEscaped(closure) && !inputs.isLost(closure)
-            && !inputs.isHeldByNativeCode(closure) && markedMutationsOf(inputs, closure).isEmpty() && !sets.contains(closuresTakenOutOfMembers, closure);
+            && !inputs.isHeldByNativeCode(closure) && markedMutationsOf(inputs, closure).isEmpty() && !inputs.mayBecomePrototype(closure) && !sets.contains(closuresTakenOutOfMembers, closure);
     };
 
     Vector<ClassMember> namedMembers;

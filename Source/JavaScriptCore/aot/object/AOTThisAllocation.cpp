@@ -287,6 +287,24 @@ Object* ClassTable::createInstanceOfClassBelow(VM& vm, size_t indexOfRecord)
     return createWithoutFields(vm, m_state.objects->layouts, structure, structure->layout());
 }
 
+// Each evaluation of a class has a prototype object of its own, and the record of the allocation names one of them.
+void ClassTable::rememberInstanceOfOtherEvaluation(VM& vm, const Object& instance, JSObject* prototype, uint32_t allocation)
+{
+    const LayoutData& layout = instance.layout();
+    const AllocationData& site = m_tables.allocations()[allocation];
+    if (layout.size > MarkedSpace::largeCutoff || site.size() != layout.size || site.orderWord() != orderWordOf(0, 0))
+        return;
+    RuntimeLayoutTable& layouts = m_state.objects->layouts;
+    if (!layouts.bodyAtBirthIfKnown(layout))
+        createWithoutFields(vm, layouts, instance.structure(), layout);
+    const RuntimeLayoutTable::BodyAtBirth& body = *layouts.bodyAtBirthIfKnown(layout);
+    if (body.isBornUnfinished != site.isBornUnfinished)
+        return;
+    static_assert(JSCell::typeInfoFlagsOffset() == 6);
+    uint64_t header = cellHeaderFor(instance.structure()) | (body.isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
+    m_instancesOfClassesBelow[indexOfInstanceOfClassBelow(prototype)] = { prototype, header, body.cell.span().data(), allocation, static_cast<uint32_t>(body.cell.size() / 2) };
+}
+
 // The prototype object of another class never leaves the object with the allocated shape: what the program does to that object is recorded for the other class.
 JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype, bool holdsNoField, std::optional<uint32_t> allocation)
 {
@@ -300,6 +318,8 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {
         allocated->setPrototypeAtCreation(vm, prototype);
+        if (requested && listsNoField && allocation)
+            rememberInstanceOfOtherEvaluation(vm, *allocated, prototype, *allocation);
         return allocated;
     }
 
@@ -311,7 +331,7 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
             const RuntimeLayoutTable::BodyAtBirth& body = *m_state.objects->layouts.bodyAtBirthIfKnown(*requested);
             static_assert(JSCell::typeInfoFlagsOffset() == 6);
             uint64_t header = cellHeaderFor(instance->structure()) | (body.isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
-            recent = { prototype, header, body.cell.span().data(), *allocation, static_cast<uint32_t>(body.cell.size()) };
+            recent = { prototype, header, body.cell.span().data(), *allocation, static_cast<uint32_t>(body.cell.size() / 2) };
         }
         return instance;
     }

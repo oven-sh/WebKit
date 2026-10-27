@@ -206,17 +206,19 @@ struct PrototypeOfClassObject {
 constexpr unsigned numberOfPrototypesOfClassObjects = 32;
 constexpr unsigned shiftOfClassObjectForPrototype = 4;
 
-// What the constructor of a base class makes where new.target is a class below it: an object of the layout of that class in which nothing is stored yet.
+// What the constructor of a class makes where new.target has another prototype object than the record of the allocation names: that of a class below, or that of another evaluation of the class. It is an object in which nothing is stored yet.
 struct InstanceOfClassBelow {
     JSCell* prototype;
     uint64_t header;
     // The cell without its header, in whole chunks of sixteen bytes. The subspace of objects has an allocator for so many bytes.
     const uint8_t* cellAtBirth;
     uint32_t allocation;
-    uint32_t bytesInChunks;
+    // Half the bytes: how far the allocator for the cell lies behind the first one of the subspace.
+    uint32_t offsetOfAllocator;
 };
-constexpr unsigned numberOfInstancesOfClassesBelow = 16;
-constexpr unsigned shiftOfPrototypeForInstanceOfClassBelow = 4;
+constexpr unsigned numberOfInstancesOfClassesBelow = 64;
+// No two prototype objects begin closer to each other.
+constexpr unsigned shiftOfPrototypeForInstanceOfClassBelow = 5;
 // With this bit the number that operationAOTAllocateSlow() takes is the index of such a record, and the operation makes the whole object.
 constexpr uint32_t allocatesInstanceOfClassBelow = 1u << 31;
 

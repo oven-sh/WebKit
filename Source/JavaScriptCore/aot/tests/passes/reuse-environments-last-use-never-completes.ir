@@ -1,0 +1,56 @@
+# No release stands behind a last use that never completes, and such a use alone does not make a layout worth reusing
+# FORM: Prepared
+# RUN: pass ReuseEnvironments
+# OPTIONS: disable=pass:AllocateInFrames
+# STATISTIC: EnvironmentsReused = 1
+# CHECK: reused environments: [L0]
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment name="oneWayCompletes" fields=[{key="x" declared={type=anything}}]
+layout L1 kind=Environment name="noWayCompletes" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="oneWayCompletes" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = NewObject -, v0 layout=L0 fields=[0]
+    v4 = CallDirect v3, v0 function=f2
+    Jump -> next b1()
+  b3():
+    v5 = NewObject -, v0 layout=L0 fields=[0]
+    v6 = CallDirect v5, v0 function=f3
+    Unreachable
+# CHECK: = CallDirect v3, v0 function=f2
+# CHECK-NEXT: ReleaseEnvironment v3
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: = CallDirect v5, v0 function=f3
+# CHECK-NEXT: Unreachable
+}
+
+function f1 name="noWayCompletes" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = CallDirect v1, v0 function=f4
+    Unreachable
+# CHECK: = CallDirect v1, v0 function=f4
+# CHECK-NEXT: Unreachable
+}
+
+function f2 name="completes" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    Return v2
+}
+
+function f3 name="neverCompletes" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=never}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    Throw v2
+}
+
+function f4 name="neverCompletes" kind=Arrow captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=never}] {
+  b0(v0: env L1, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    Throw v2
+}

@@ -21,6 +21,8 @@
 #include "TopExceptionScope.h"
 #include <bit>
 #include <optional>
+#include <type_traits>
+#include <utility>
 
 namespace JSC { namespace AOT {
 
@@ -63,13 +65,61 @@ private:
 
 #if OS(WINDOWS) && CPU(X86_64)
 // There __builtin_frame_address(0) is the low end of the frame. DECLARE_CALL_FRAME says why rbp is named.
-#define AOT_OPERATION_FRAME_RECORD() \
+#define AOT_FRAME_RECORD_OF_THIS_FUNCTION() \
     ({ \
         asm volatile("" : : : "rbp"); \
         std::bit_cast<JSC::CallerFrameAndPC*>(static_cast<void**>(_AddressOfReturnAddress()) - 1); \
     })
 #else
-#define AOT_OPERATION_FRAME_RECORD() std::bit_cast<JSC::CallerFrameAndPC*>(__builtin_frame_address(0))
+#define AOT_FRAME_RECORD_OF_THIS_FUNCTION() std::bit_cast<JSC::CallerFrameAndPC*>(__builtin_frame_address(0))
+#endif
+
+#if ASSERT_ENABLED
+// Where assertions are on, the run-time table calls an operation that is declared not to collect through a function that holds one of these.
+// The frame of that function lies between the frame of the operation and the frame of the caller.
+class NoCollectionGuard {
+    WTF_FORBID_HEAP_ALLOCATION;
+    WTF_MAKE_NONCOPYABLE(NoCollectionGuard);
+public:
+    explicit NoCollectionGuard(CallerFrameAndPC* frameRecord)
+        : m_outerFrameRecord(std::exchange(s_frameRecord, frameRecord))
+    {
+    }
+
+    ~NoCollectionGuard() { s_frameRecord = m_outerFrameRecord; }
+
+    static ALWAYS_INLINE CallerFrameAndPC* frameRecordThatNamesCaller(CallerFrameAndPC* frameRecordOfOperation)
+    {
+        CallerFrameAndPC* guard = s_frameRecord;
+        return guard && std::bit_cast<CallerFrameAndPC*>(frameRecordOfOperation->callerFrame) == guard ? guard : frameRecordOfOperation;
+    }
+
+private:
+    static thread_local CallerFrameAndPC* s_frameRecord;
+
+    CallerFrameAndPC* m_outerFrameRecord;
+    AssertNoGC m_assertNoGC;
+};
+
+#define AOT_OPERATION_FRAME_RECORD() JSC::AOT::NoCollectionGuard::frameRecordThatNamesCaller(AOT_FRAME_RECORD_OF_THIS_FUNCTION())
+#else
+#define AOT_OPERATION_FRAME_RECORD() AOT_FRAME_RECORD_OF_THIS_FUNCTION()
+#endif
+
+template<auto operation, typename Function = std::remove_pointer_t<decltype(operation)>>
+struct CallWithoutCollection {
+    static constexpr auto call = operation;
+};
+
+#if ASSERT_ENABLED
+template<auto operation, typename Result, typename... Arguments, bool isNoexcept>
+struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept)> {
+    static NEVER_INLINE Result JIT_OPERATION_ATTRIBUTES call(Arguments... arguments) noexcept(isNoexcept)
+    {
+        NoCollectionGuard guard(AOT_FRAME_RECORD_OF_THIS_FUNCTION());
+        return operation(arguments...);
+    }
+};
 #endif
 
 #define AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecordOfOperation, entry) \

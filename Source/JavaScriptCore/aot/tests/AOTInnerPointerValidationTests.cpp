@@ -351,6 +351,29 @@ static void testPointerHandedToSafepoint()
     }
 }
 
+// The safepoint is handed the pointer and its owner, and what names no cell is read through the pointer behind it.
+static void testPointerHandedToSafepointAndReadBehindIt()
+{
+    for (unsigned numberOfPreservedRegisters : numbersOfPreservedRegisters) {
+        for (B3::HeapRange field : { fieldOfPointer, fieldOfPointerTheScanKnows }) {
+            for (bool handsOwner : { false, true }) {
+                InnerPointerFindings findings = check(numberOfPreservedRegisters, [&](Graph& graph) {
+                    B3::BasicBlock* root = graph.proc.addBlock();
+                    B3::Value* owner = graph.argument(root, 0);
+                    B3::Value* pointer = graph.loadPointer(root, owner, field);
+                    B3::PatchpointValue* safepoint = graph.safepoint(root);
+                    safepoint->append(pointer, B3::ValueRep::SomeRegister);
+                    if (handsOwner)
+                        safepoint->append(owner, B3::ValueRep::SomeRegister);
+                    root->appendNew<B3::Value>(graph.proc, B3::Return, Graph::originOf(otherOrigin), graph.load(root, B3::Load, B3::Int64, pointer, 0, contentsWithoutCells));
+                });
+                AOT_TEST_CHECK(findings.numberOfPointersAcrossSafepoints);
+                AOT_TEST_CHECK(findings.violations.isEmpty() == (handsOwner && field == fieldOfPointerTheScanKnows));
+            }
+        }
+    }
+}
+
 static void testSafepointInOtherBlock()
 {
     checkEveryForm([](Graph& graph, Keeps keeps) {
@@ -477,6 +500,107 @@ static void testPointerTheScanKnows()
     }
 }
 
+// One load of the pointer serves two ways. What is read on one of them may name cells, what is read on the other names none.
+static void testPointerThatGivesCellsOnOneWay()
+{
+    for (unsigned numberOfPreservedRegisters : numbersOfPreservedRegisters) {
+        for (B3::HeapRange field : { fieldOfPointer, fieldOfPointerTheScanKnows }) {
+            for (bool keepsOwnerWhereCellsAreRead : { false, true }) {
+                InnerPointerFindings findings = check(numberOfPreservedRegisters, [&](Graph& graph) {
+                    B3::Origin origin = Graph::originOf(otherOrigin);
+                    B3::BasicBlock* root = graph.proc.addBlock();
+                    B3::BasicBlock* readsCells = graph.proc.addBlock();
+                    B3::BasicBlock* readsNumbers = graph.proc.addBlock();
+                    B3::Value* owner = graph.argument(root, 0);
+                    B3::Value* pointer = graph.loadPointer(root, owner, field);
+                    root->appendNew<B3::Value>(graph.proc, B3::Branch, origin, graph.argument(root, 1));
+                    root->setSuccessors(B3::FrequentedBlock(readsCells), B3::FrequentedBlock(readsNumbers));
+                    graph.safepoint(readsCells);
+                    graph.finish(readsCells, keepsOwnerWhereCellsAreRead ? Keeps::OwnerBehindRead : Keeps::Nothing, owner, owner, graph.load(readsCells, B3::Load, B3::Int64, pointer, 0, contents));
+                    graph.safepoint(readsNumbers);
+                    graph.finish(readsNumbers, Keeps::Nothing, owner, owner, graph.load(readsNumbers, B3::Load, B3::Int64, pointer, 0, contentsWithoutCells));
+                });
+                AOT_TEST_CHECK(findings.numberOfPointersAcrossSafepoints);
+                AOT_TEST_CHECK(findings.violations.size() == static_cast<size_t>(!keepsOwnerWhereCellsAreRead) + (field == fieldOfPointer));
+            }
+        }
+    }
+}
+
+static void testPointerThatGivesCellsInOneLoop()
+{
+    for (unsigned numberOfPreservedRegisters : numbersOfPreservedRegisters) {
+        for (bool keepsOwnerWhereCellsAreRead : { false, true }) {
+            InnerPointerFindings findings = check(numberOfPreservedRegisters, [&](Graph& graph) {
+                B3::Origin origin = Graph::originOf(otherOrigin);
+                B3::BasicBlock* root = graph.proc.addBlock();
+                B3::Value* owner = graph.argument(root, 0);
+                B3::Value* limit = graph.argument(root, 2);
+                B3::Value* pointer = graph.loadPointer(root, owner, fieldOfPointerTheScanKnows);
+                auto addLoop = [&](B3::HeapRange range, bool keepsOwner) {
+                    B3::BasicBlock* entry = graph.proc.addBlock();
+                    B3::BasicBlock* loop = graph.proc.addBlock();
+                    B3::BasicBlock* done = graph.proc.addBlock();
+                    auto* first = entry->appendNew<B3::UpsilonValue>(graph.proc, origin, entry->appendNew<B3::Const64Value>(graph.proc, origin, 0));
+                    entry->appendNew<B3::Value>(graph.proc, B3::Jump, origin);
+                    entry->setSuccessors(B3::FrequentedBlock(loop));
+                    B3::Value* index = loop->appendNew<B3::Value>(graph.proc, B3::Phi, B3::Int64, origin);
+                    first->setPhi(index);
+                    graph.safepoint(loop);
+                    B3::Value* word = graph.load(loop, B3::Load, B3::Int64, loop->appendNew<B3::Value>(graph.proc, B3::Add, origin, pointer, index), 0, range);
+                    if (keepsOwner)
+                        graph.keepAlive(loop, owner);
+                    B3::Value* next = loop->appendNew<B3::Value>(graph.proc, B3::Add, origin, index, word);
+                    loop->appendNew<B3::UpsilonValue>(graph.proc, origin, next, index);
+                    loop->appendNew<B3::Value>(graph.proc, B3::Branch, origin, loop->appendNew<B3::Value>(graph.proc, B3::Below, origin, next, limit));
+                    loop->setSuccessors(B3::FrequentedBlock(loop), B3::FrequentedBlock(done));
+                    done->appendNew<B3::Value>(graph.proc, B3::Return, origin, next);
+                    return entry;
+                };
+                B3::BasicBlock* loopOverCells = addLoop(contents, keepsOwnerWhereCellsAreRead);
+                B3::BasicBlock* loopOverNumbers = addLoop(contentsWithoutCells, false);
+                root->appendNew<B3::Value>(graph.proc, B3::Branch, origin, graph.argument(root, 1));
+                root->setSuccessors(B3::FrequentedBlock(loopOverCells), B3::FrequentedBlock(loopOverNumbers));
+            });
+            AOT_TEST_CHECK(findings.numberOfPointersAcrossSafepoints);
+            AOT_TEST_CHECK(findings.violations.size() == static_cast<size_t>(!keepsOwnerWhereCellsAreRead));
+        }
+    }
+}
+
+// The owner is needed up to the last read that may give a cell, and no further.
+static void testCellsReadBetweenSafepoints()
+{
+    for (unsigned numberOfPreservedRegisters : numbersOfPreservedRegisters) {
+        for (bool computesAddressFirst : { false, true }) {
+            for (bool keepsOwnerWhereCellsAreRead : { false, true }) {
+                InnerPointerFindings findings = check(numberOfPreservedRegisters, [&](Graph& graph) {
+                    B3::Origin origin = Graph::originOf(otherOrigin);
+                    B3::BasicBlock* root = graph.proc.addBlock();
+                    B3::Value* owner = graph.argument(root, 0);
+                    B3::Value* pointer = graph.loadPointer(root, owner, fieldOfPointerTheScanKnows);
+                    B3::Value* address = pointer;
+                    if (computesAddressFirst) {
+                        address = root->appendNew<B3::Value>(graph.proc, B3::Add, origin, pointer, graph.argument(root, 1));
+                        B3::PatchpointValue* opaque = graph.emptyPatchpoint(root, otherOrigin);
+                        opaque->effects.writesLocalState = true;
+                        opaque->append(address, B3::ValueRep::SomeRegister);
+                    }
+                    graph.safepoint(root);
+                    B3::Value* cell = graph.load(root, B3::Load, B3::Int64, address, 0, contents);
+                    if (keepsOwnerWhereCellsAreRead)
+                        graph.keepAlive(root, owner);
+                    graph.safepoint(root);
+                    B3::Value* number = graph.load(root, B3::Load, B3::Int64, pointer, 8, contentsWithoutCells);
+                    root->appendNew<B3::Value>(graph.proc, B3::Return, origin, root->appendNew<B3::Value>(graph.proc, B3::Add, origin, cell, number));
+                });
+                AOT_TEST_CHECK(findings.numberOfPointersAcrossSafepoints);
+                AOT_TEST_CHECK(findings.violations.isEmpty() == keepsOwnerWhereCellsAreRead);
+            }
+        }
+    }
+}
+
 static void testLoadFoldedIntoUserBehindSafepoint()
 {
     for (bool loadsStayInFront : { true, false }) {
@@ -551,12 +675,16 @@ std::span<const NativeTest> innerPointerValidationTests()
         { "inner-pointer-owner-whose-load-took-trap"_s, testOwnerWhoseLoadTookTrap },
         { "inner-pointer-only-compared"_s, testPointerOnlyCompared },
         { "inner-pointer-handed-to-safepoint"_s, testPointerHandedToSafepoint },
+        { "inner-pointer-handed-to-safepoint-and-read-behind-it"_s, testPointerHandedToSafepointAndReadBehindIt },
         { "inner-pointer-safepoint-in-other-block"_s, testSafepointInOtherBlock },
         { "inner-pointer-safepoint-in-loop"_s, testSafepointInLoop },
         { "inner-pointer-joined"_s, testJoinedPointers },
         { "inner-pointer-chosen-owner"_s, testChosenOwner },
         { "inner-pointer-owner-that-stays"_s, testOwnerThatStays },
         { "inner-pointer-the-scan-knows"_s, testPointerTheScanKnows },
+        { "inner-pointer-gives-cells-on-one-way"_s, testPointerThatGivesCellsOnOneWay },
+        { "inner-pointer-gives-cells-in-one-loop"_s, testPointerThatGivesCellsInOneLoop },
+        { "inner-pointer-cells-read-between-safepoints"_s, testCellsReadBetweenSafepoints },
         { "inner-pointer-load-folded-into-user-behind-safepoint"_s, testLoadFoldedIntoUserBehindSafepoint },
         { "inner-pointer-dead-values-are-overwritten"_s, testDeadValuesAreOverwritten },
     };

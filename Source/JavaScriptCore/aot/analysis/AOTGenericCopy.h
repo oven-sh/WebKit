@@ -24,7 +24,7 @@ struct FunctionPassContext;
 
 Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses&, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt);
 
-bool isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
+Expected<bool> isClosedOnlyByWaysBack(FunctionAnalyses&, const NaturalLoop&);
 
 Vector<TypeID, 4> typesOfCountersOnWayBack(FunctionAnalyses&, TypeArena&, BlockID head);
 
@@ -59,7 +59,7 @@ public:
     Extent plan(uint64_t maxBlocks, NOESCAPE const RegionCloner::LivenessSource& livenessInsideCopiedBlocks);
     std::span<const BlockID> plannedBlocks() const LIFETIME_BOUND { return m_region.span(); }
 
-    void clone(BlockFrequency (*frequencyOfCopy)(BlockFrequency));
+    void clone(Expected<BlockFrequency> (*frequencyOfCopy)(Expected<BlockFrequency>));
     BlockID copyOf(BlockID block) const { return m_cloner ? m_cloner->cloneOf(block) : BlockID(); }
     ValueID copyOf(ValueID value) const { return m_hasPlaceholder.get(value.index()) ? ValueID() : nameInCopy(value); }
     std::span<const BlockID> copiedBlocks() const { return m_cloner ? m_cloner->clonedBlocks() : std::span<const BlockID> { }; }
@@ -120,7 +120,7 @@ private:
     };
 
     bool isInRegion(BlockID block) const { return m_isInRegion.get(block.index()); }
-    bool isRare(BlockID block) const { return m_function.at(block).frequency == BlockFrequency::Rare; }
+    Expected<bool> isRare(BlockID block) const { return m_function.at(block).frequency == BlockFrequency::Rare; }
 
     void computeBlocksReachingNonRareCode();
     void computeNarrowedValues();

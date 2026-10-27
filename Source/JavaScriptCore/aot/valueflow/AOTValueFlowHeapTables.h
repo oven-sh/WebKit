@@ -104,6 +104,7 @@ private:
     macro(ValueSetID, holdersThatAnswerUnderSomeKey) \
     macro(ValueSetID, objectsThatLetInUnseenCode) \
     macro(ValueSetID, objectsThatLetInUnseenCodeWhenCalled) \
+    macro(ValueSetID, functionsThatCallOrBindOperand) \
     macro(ValueSetID, objectsOfNativeModules) \
     macro(ValueSetID, objectsOfPublicModules) \
     macro(ValueSetID, holdersWithMembers) \

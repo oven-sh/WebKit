@@ -823,7 +823,7 @@ FunctionID FunctionPassContext::derivedFunction(const DerivedFunctionKey& key)
     return inputs.derivedFunctions->ensure(key);
 }
 
-double FunctionPassContext::heatOf(BlockID block)
+Expected<double> FunctionPassContext::heatOf(BlockID block)
 {
     return inputs.heat.activationsOf(program, id) * analyses.blockFrequencies().frequencyOf(block);
 }
@@ -1476,6 +1476,7 @@ void Pipeline::runReadStage()
 {
     TimedStage stage(*this, Stage::ReadAndVerify);
     stage.verifyRecordsAtBoundary(IRForm::AsRead);
+    shuffleRecordedFrequencies(m_program, m_build);
     forgetLongExpectations(m_program, m_build);
     stage.run(PassID::CopyClosureFactories);
     stage.run(PassID::AllocateTaggedLayouts);

@@ -32,10 +32,12 @@
 
 #include "AOTAsyncResumption.h"
 #include "AOTCompiledCall.h"
+#include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTNativeCallValidation.h"
 #include "AOTRemovableFeature.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTStackTrace.h"
 #include "AOTUnwinding.h"
 #include "AOTVMState.h"
@@ -843,7 +845,11 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 
 #if ENABLE(AOT)
     if (vm.hasCompiledCode()) [[unlikely]] {
-        appendStackTrace(owner, results, { .callFrame = callFrame, .framesToSkip = framesToSkip - skippedFrames, .caller = caller, .filter = filter }, maxStackSize);
+        bool validates = AOT::validatesRuntime(vm) && results.isEmpty() && framesToSkip == skippedFrames && !filter;
+        if (caller || !AOT::tryGetStackTrace(vm, owner, results, framesToSkip - skippedFrames, maxStackSize, filter))
+            appendStackTrace(owner, results, { .callFrame = callFrame, .framesToSkip = framesToSkip - skippedFrames, .caller = caller, .filter = filter }, maxStackSize);
+        if (validates) [[unlikely]]
+            AOT::validateFrames(vm, owner, results, maxStackSize, caller);
         return;
     }
 #endif
@@ -972,7 +978,35 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
             results.append(WTF::move(frame));
     };
 
+#if ENABLE(AOT)
+    bool listsEachRunAtOnce = !start.compiledFramesBelow && !start.visitsEachCompiledFrame;
+    AOT::ShownFrameFilter shownFrameFilter(!!start.compiledFrameExit);
+    auto appendCompiledFrames = [&] (StackVisitor& visitor) {
+        EntryFrame* currentEntryFrame = visitor->entryFrame();
+        AOT::RunListing listing { owner, maxResultsSize, framesToSkip - std::min(skippedFrames, framesToSkip), foundCaller ? nullptr : caller, start.filter };
+        IterationStatus status = AOT::appendShownFramesOfRun(vm, visitor.compiledFrames(), shownFrameFilter, results, listing);
+        skippedFrames = framesToSkip - listing.framesToSkip;
+        foundCaller = !listing.caller;
+        if (listing.hasReachedFrame && Options::useAsyncStackTrace() && currentEntryFrame != previousEntryFrame && previousEntryFrame)
+            updateAsyncStackTraceOriginGenerator();
+        if (listing.hasListedFrame) {
+            if (listing.isAboveFramesThatWait && Options::useAsyncStackTrace())
+                entryFrameWhoseContextWaits = currentEntryFrame;
+            previousEntryFrame = currentEntryFrame;
+            previousEntryFrameStackTraceInsertPos = results.size();
+        }
+        return status;
+    };
+#endif
+
     auto appendFrame = [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
+#if ENABLE(AOT)
+        if (listsEachRunAtOnce) {
+            if (visitor->isCompiledFrame())
+                return appendCompiledFrames(visitor);
+            shownFrameFilter = AOT::ShownFrameFilter(true);
+        }
+#endif
         if (results.size() >= maxResultsSize)
             return IterationStatus::Done;
 
@@ -1049,10 +1083,12 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
         return IterationStatus::Continue;
     };
 #if ENABLE(AOT)
-    if (start.compiledFrameExit)
-        StackVisitor::visitFrom(vm, *start.compiledFrameExit, appendFrame, StackVisitor::CompiledFrameVisit::ShownFramesAndCalledBuiltins);
-    else
-        StackVisitor::visitWithCompiledFrames(start.callFrame, vm, appendFrame, false, StackVisitor::CompiledFrameVisit::ShownFramesAndCalledBuiltins);
+    auto compiledFrameVisit = listsEachRunAtOnce ? StackVisitor::CompiledFrameVisit::EachRunOnce : StackVisitor::CompiledFrameVisit::ShownFramesAndCalledBuiltins;
+    if (start.compiledFrameExit) {
+        if (start.compiledFrameExit->callFrame)
+            StackVisitor::visitFrom(vm, *start.compiledFrameExit, appendFrame, compiledFrameVisit);
+    } else if (start.callFrame)
+        StackVisitor::visitWithCompiledFrames(start.callFrame, vm, appendFrame, false, compiledFrameVisit);
 #else
     StackVisitor::visit(start.callFrame, vm, appendFrame);
 #endif
@@ -1076,7 +1112,9 @@ void Interpreter::appendStackTrace(JSCell* owner, Vector<StackFrame>& results, c
         // that wasn't captured during stack traversal (e.g. TLA)
         if (!asyncStackTraceOriginGenerator && previousEntryFrame)
             updateAsyncStackTraceOriginGenerator();
-        if (asyncStackTraceOriginGenerator) {
+        if (asyncStackTraceOriginGenerator && asyncStackTraceInsertPos == results.size())
+            getAsyncStackTrace(owner, results, asyncStackTraceOriginGenerator, maxStackSize < std::numeric_limits<size_t>::max() - results.size() ? results.size() + maxStackSize : std::numeric_limits<size_t>::max());
+        else if (asyncStackTraceOriginGenerator) {
             Vector<StackFrame> asyncFrames;
             getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxStackSize);
             if (!asyncFrames.isEmpty())

@@ -23,6 +23,8 @@ class FlowResults;
 enum class TaintedPositionsRun : uint8_t { BeforeFlow, AfterFlow };
 void guardTaintedPositions(Program&, BuildContext&, TaintedPositionsRun);
 void guardTaintedPositionsAfterFlow(Program&, const FlowResults&, BuildContext&);
+// The types of the fields are only expected from here on. guardTaintedPositionsAfterFlow() puts the checks at their reads.
+void expectFields(Program&, std::span<const FieldReference>, BuildContext&);
 // The body is typed without its checks where it stands, and is left as it was.
 bool mayReturnTaintedValue(const Program&, FunctionID, Function& body, BuildContext&);
 bool mayTurnValueAway(const Program&, const Function&, const Value& check);

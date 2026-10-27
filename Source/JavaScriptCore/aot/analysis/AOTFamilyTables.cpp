@@ -136,7 +136,7 @@ static std::span<const LayoutID> membersListedIn(const Program& program, LayoutS
 {
     if (!set)
         return { };
-    return program.at(set).members.span();
+    return program.at(set).written().span();
 }
 
 static LayoutList computeAllocatedMembers(const Program& program, std::span<const LayoutID> members)
@@ -245,7 +245,7 @@ std::span<const LayoutID> FamilyTables::allocatedMembersOf(LayoutSetID set) cons
 
 ReceiverState FamilyTables::stateOf(LayoutSetID set) const
 {
-    if (set && m_program.at(set).hasMembersWithoutLayout)
+    if (set && m_program.at(set).mayHoldObjectsWithoutLayout())
         return { };
     std::span<const LayoutID> members = membersListedIn(m_program, set);
     if (members.size() < minCachedSetSize)
@@ -276,9 +276,9 @@ static FamilyMember computeMember(const Program& program, const LayoutList& allo
     ScratchTypeArena scratch(program.types);
     TypeArena& types = scratch;
     if (!holders.isEmpty())
-        member.holders = types.intern(LayoutSet { WTF::move(holders), true });
+        member.holders = types.intern(LayoutSet::complete(WTF::move(holders)));
     if (!withoutField.isEmpty())
-        member.withoutField = types.intern(LayoutSet { WTF::move(withoutField), true });
+        member.withoutField = types.intern(LayoutSet::complete(WTF::move(withoutField)));
     return member;
 }
 
@@ -302,15 +302,15 @@ auto FamilyTables::candidatesOf(LayoutSetID receiver, LayoutSetID expected, Layo
             if (expected)
                 predicted = expectedMembers;
             if (stamped)
-                predicted.unite(listFromSorted(stamped->members.span()));
+                predicted.unite(listFromSorted(stamped->seen().predicted()));
             return predicted;
         }
 
         predicted = proven;
         if (expected)
             predicted.intersect(expectedMembers);
-        if (stamped && stamped->isComplete)
-            predicted.intersect(listFromSorted(stamped->members.span()));
+        if (stamped && stamped->listsEveryLayout())
+            predicted.intersect(listFromSorted(stamped->completeMembers()));
         if (predicted.size() == proven.size())
             predicted.clear();
         return predicted;
@@ -345,9 +345,9 @@ bool FamilyTables::isSubsetOf(LayoutSetID subset, LayoutSetID superset) const
     const LayoutSet& first = m_program.at(subset);
     const LayoutSet& second = m_program.at(superset);
     auto compute = [&] {
-        return (!first.hasMembersWithoutLayout || second.hasMembersWithoutLayout) && Typed::isSubsetOf(first, second);
+        return Typed::isSubsetOf(first, second);
     };
-    if (first.members.size() + second.members.size() < minCachedSetSize)
+    if (first.written().size() + second.written().size() < minCachedSetSize)
         return compute();
     return cache().subsets.ensure(computeHash(subset, superset), { subset, superset }, compute);
 }
@@ -374,7 +374,7 @@ static LayoutSetID computeMembersWhoseFieldCannotHold(const Program& program, co
     }
     if (excluded.isEmpty())
         return { };
-    return types.intern(LayoutSet { WTF::move(excluded), true });
+    return types.intern(LayoutSet::complete(WTF::move(excluded)));
 }
 
 LayoutSetID FamilyTables::membersWhoseFieldCannotHold(LayoutSetID set, PropertyKeyID key, TypeID read, TypeLevel level) const

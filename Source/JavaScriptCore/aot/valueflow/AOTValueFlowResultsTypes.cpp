@@ -18,6 +18,7 @@
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTKnownClosures.h"
+#include "AOTLedger.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPhaseTimes.h"
 #include "AOTResultRules.h"
@@ -1358,19 +1359,48 @@ static void replaceUnobservedDefinitions(const ValueFlowResultInputs& inputs, co
     }
 }
 
-static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID id, const ValueFlowFieldContents& contents, const BitVector& fieldsWithUnobservedDefinition, ValueFlowPositions& positions, TypeArena& types, FlowLayoutUpdate& update)
+static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID id, const ValueFlowFieldContents& contents, const LedgerPart& ledger, const BitVector& fieldsWithUnobservedDefinition, ValueFlowPositions& positions, TypeArena& types, FlowLayoutUpdate& update)
 {
     const Program& program = inputs.program;
     const Layout& layout = program.at(id);
     if (!hasObjectsThatCodeAlters(layout.kind))
         return;
     ValueSetMaker& maker = positions.maker();
+    ValueSetID numbersThatAreNoIntegers = maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) });
+    // A store tests what it is handed, in every version of its function, and turns away what does not fit the slot: of what arrives there only what passes counts.
+    // An allocation tests nothing, so what it lists counts as it arrives. Whoever applies this stores such a value behind the allocation, or takes the type of the field back.
+    auto noteValuesListedWithOtherTypes = [&](uint32_t index, const Type& asRead, ValueSetID primitivesInside, bool everyObjectLiesInside) {
+        if (layout.fields[index].flags.contains(FieldFlags::IsInherited) || !asRead.isJavaScriptValue() || asRead.isAnything())
+            return;
+        const ValueFlowNumbers& storedNumbers = contents.storedNumbers[id.index()][index];
+        for (const Write& write : ledger.writersOf(Place::field(program, id, index))->seen().predicted()) {
+            if (write.form != WriteForm::AtCreation || !write.site)
+                continue;
+            auto liesInside = [&] {
+                if (ValueSets::isComplement(write.arrives))
+                    return false;
+                ValueSetID primitives = maker.intersect(write.arrives, inputs.universe().primitives());
+                if (!storedNumbers.mayBeOtherThanIntegers)
+                    primitives = maker.intersect(primitives, ValueSets::complement(numbersThatAreNoIntegers));
+                if (!inputs.sets().isSubset(primitives, primitivesInside))
+                    return false;
+                return everyObjectLiesInside || positions.isSurelyInside(maker.intersect(write.arrives, inputs.universe().objects()), asRead);
+            };
+            if (!liesInside())
+                update.valuesListedWithOtherTypes.append({ index, write.function, write.site });
+        }
+    };
     for (uint32_t index = 0; index < layout.fields.size(); ++index) {
         FieldFlow& flow = update.fields[index].flow;
-        if (flow.location.writers != WriterState::AllKnown)
-            continue;
-        ValueSetID stored = contents.stored[id.index()][index];
         const Type& asRead = program.at(layout.fields[index].declared.written());
+        if (flow.location.writers != WriterState::AllKnown) {
+            ValueSetID primitivesInside = inputs.universe().membersSurelyInside(maker, program, layout.fields[index].declared.written());
+            if (asRead.primitives & Primitive::Integer && contents.storedNumbers[id.index()][index].integers.isSubsetOf(asRead.integers))
+                primitivesInside = maker.unite(primitivesInside, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Integer)));
+            noteValuesListedWithOtherTypes(index, asRead, primitivesInside, false);
+            continue;
+        }
+        ValueSetID stored = contents.stored[id.index()][index];
         bool startsAbsent = asRead.primitives & Primitive::Absent && !inputs.sets().isEmpty(stored);
         auto resultWith = [&](ValueSetID held) {
             return positions.resultAt(layout.fields[index].declared, startsAbsent ? maker.unite(held, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))) : held);
@@ -1396,10 +1426,12 @@ static void narrowFieldsOfObjects(const ValueFlowResultInputs& inputs, LayoutID 
             surelyInside = maker.unite(surelyInside, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Integer)));
         ValueSetID storedPrimitives = maker.intersect(stored, inputs.universe().primitives());
         if (!storedNumbers.mayBeOtherThanIntegers)
-            storedPrimitives = maker.intersect(storedPrimitives, ValueSets::complement(maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::WholeNumber), ValueFlowUniverse::primitive(PrimitiveSet::FractionalNumber) })));
+            storedPrimitives = maker.intersect(storedPrimitives, ValueSets::complement(numbersThatAreNoIntegers));
         bool storesOnlyPrimitivesOfType = inputs.sets().isSubset(storedPrimitives, surelyInside);
         if (inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) && !update.fields[index].accessor.isAccessor() && (asRead.isAnything() || (storesOnlyObjectsOfType && storesOnlyPrimitivesOfType)))
             flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
+        else
+            noteValuesListedWithOtherTypes(index, asRead, surelyInside, storesOnlyObjectsOfType);
         if (!flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) && flow.location.stores == StoreCount::AtMostOnce) {
             flow.location.stores = StoreCount::Unknown;
             flow.location.isUnchangedDuringActivation = false;
@@ -1518,7 +1550,7 @@ static void expectThisToBeCreatedBelow(const Program& program, const FlowApplica
         return;
     Vector<LayoutID, 4> expected(createdBelow);
     if (LayoutSetID layouts = program.at(declared.expected().predicted()).layouts) {
-        for (LayoutID layout : program.at(layouts).members) {
+        for (LayoutID layout : program.at(layouts).completeMembers()) {
             if (!application.layouts[layout.index()].objectsAreDictionaries && !expected.contains(layout))
                 expected.append(layout);
         }
@@ -1790,7 +1822,7 @@ static void proveReadsAfterInitialization(const Program& program, const Parallel
     }
 }
 
-void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFieldContents& fieldContents, TypeTable& types, FlowResultTables& tables, const ListenerForSetsOutsideTypes* listenerForSetsOutsideTypes)
+void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFieldContents& fieldContents, const LedgerPart& ledgerOfFields, TypeTable& types, FlowResultTables& tables, const ListenerForSetsOutsideTypes* listenerForSetsOutsideTypes)
 {
     const Program& program = inputs.program;
     FlowApplication& application = *tables.application;
@@ -1837,7 +1869,7 @@ void computeTypeResults(const ValueFlowResultInputs& inputs, const ValueFlowFiel
         if (task < numberOfLayouts) {
             ValueFlowPositions positions(inputs, arena, counts, task, maker);
             narrowEnvironmentFields(inputs, LayoutID(task), storedUndefined.environmentFields, numbers, positions, application.layouts[task]);
-            narrowFieldsOfObjects(inputs, LayoutID(task), fieldContents, fieldsWithUnobservedDefinition[task], positions, arena, application.layouts[task]);
+            narrowFieldsOfObjects(inputs, LayoutID(task), fieldContents, ledgerOfFields, fieldsWithUnobservedDefinition[task], positions, arena, application.layouts[task]);
             return;
         }
         if (task < firstFunctionTask) {

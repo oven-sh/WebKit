@@ -145,13 +145,12 @@ static void appendObjectTests(TypeTestPlan& plan, const Program& program, const 
     if (!to.layouts || !occurs(Type::forLayoutSet(to.layouts)))
         return;
     const LayoutSet* known = fromObjects.layouts ? &program.at(fromObjects.layouts) : nullptr;
-    const LayoutSet& layouts = program.at(to.layouts);
-    bool mayHaveShapes = !layouts.isComplete;
-    for (LayoutID member : layouts.members) {
+    bool mayHaveShapes = false;
+    for (LayoutID member : program.at(to.layouts).completeMembers()) {
         const Layout& layout = program.at(member);
         if (layout.kind != LayoutKind::ModuleNamespace)
             mayHaveShapes = true;
-        else if (fromObjects.anyObject || (known && (!known->isComplete || std::ranges::binary_search(known->members, member))))
+        else if (fromObjects.anyObject || (known && std::ranges::binary_search(known->completeMembers(), member)))
             append({ .kind = CellTestKind::IsNamespaceOf, .module = layout.namespaceOf });
     }
     if (mayHaveShapes)

@@ -35,7 +35,7 @@ void testAcceptsFixture()
     AOT_TEST_CHECK(parsedText.toString() == readText.toString());
 
     AOT_TEST_CHECK(program->form() == IRForm::AsRead);
-    AOT_TEST_CHECK(program->at(f7).blocks[2].frequency == BlockFrequency::Unlikely);
+    AOT_TEST_CHECK(program->at(f7).blocks[2].frequency.predicted() == BlockFrequency::Unlikely);
     AOT_TEST_CHECK(program->at(f8).blocks[1].handler && program->at(f8).blocks[1].handler->block == BlockID(3u));
     AOT_TEST_CHECK(program->at(f8).blocks[3].role == BlockRole::CatchHandler);
     AOT_TEST_CHECK(hasElements(program->at(f8).blocks[0].terminator.taken().proofs, { 0u }));

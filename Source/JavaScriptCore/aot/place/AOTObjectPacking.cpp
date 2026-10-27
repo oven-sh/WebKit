@@ -1112,7 +1112,7 @@ Vector<LocationRequest> ObjectPacker::collectRequests()
             requests.last().weight = saturatedSum(requests.last().weight, use.weight);
             continue;
         }
-        size_t numberOfReceivers = m_context.program.at(access.receivers).members.size();
+        size_t numberOfReceivers = m_context.program.at(access.receivers).written().size();
         if (numberOfReceivers < 2)
             continue;
         requests.append(LocationRequest { access.key, access.receivers, use.weight, numberOfMembers, 0 });
@@ -1137,7 +1137,7 @@ void ObjectPacker::findMemberRows(LocationRequest& request)
 {
     const Program& program = m_context.program;
     std::span<MemberRow> rows = m_memberRows.mutableSpan().subspan(request.firstMemberRow);
-    for (LayoutID member : program.at(request.receivers).members) {
+    for (LayoutID member : program.at(request.receivers).completeMembers()) {
         if (!m_context.isCompiledObject(member))
             continue;
         auto field = program.at(member).findField(request.key);

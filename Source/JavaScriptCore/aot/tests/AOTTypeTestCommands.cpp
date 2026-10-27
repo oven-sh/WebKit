@@ -259,7 +259,7 @@ static Type withoutExpectedContents(const Type& type)
     for (ClassPart& part : result.classes) {
         if (part.contentsAreProven)
             continue;
-        part.contents.clear();
+        part.writtenContents.clear();
         part.arrayStorage = ArrayStorage::Other;
     }
     return result;
@@ -278,7 +278,7 @@ static Type topLevelPartsOf(const Type& type, const BuiltinTable& builtins)
 {
     Type result = withoutExpectedContents(type);
     for (ClassPart& part : result.classes)
-        part.contents.clear();
+        part.writtenContents.clear();
     if (result.anyFunction) {
         removeAllMatching(result.builtins, [&](BuiltinID builtin) {
             return isCallableBuiltin(builtins, builtin);
@@ -318,8 +318,8 @@ static bool hasIncomparableContents(const ClassPart& a, const ClassPart& b, cons
         return false;
     if (a.arrayStorage != b.arrayStorage && a.arrayStorage != ArrayStorage::Other && b.arrayStorage != ArrayStorage::Other)
         return true;
-    for (unsigned index = 0; index < std::max(a.contents.size(), b.contents.size()); ++index) {
-        if (hasIncomparableParts(types.at(a.contentsAt(index)), types.at(b.contentsAt(index)), types))
+    for (unsigned index = 0; index < std::max(a.writtenContents.size(), b.writtenContents.size()); ++index) {
+        if (hasIncomparableParts(types.at(a.writtenContentsAt(index)), types.at(b.writtenContentsAt(index)), types))
             return true;
     }
     return false;
@@ -555,9 +555,9 @@ static bool hasExpectedDeclaredParts(const Type& cast, const Type& source, const
         const ClassPart* castPart = castType.findClassPart(part.builtinClass);
         if (!sourcePart || !castPart || (sourcePart->contentsAreProven && castPart->contentsAreProven))
             return true;
-        bool usesSource = sourcePart->contentsAreProven || (!castPart->contentsAreProven && castPart->contents.isEmpty());
+        bool usesSource = sourcePart->contentsAreProven || (!castPart->contentsAreProven && castPart->writtenContents.isEmpty());
         const ClassPart& expected = usesSource ? *sourcePart : *castPart;
-        return part.contentsAreProven == expected.contentsAreProven && part.arrayStorage == expected.arrayStorage && part.contents == expected.contents;
+        return part.contentsAreProven == expected.contentsAreProven && part.arrayStorage == expected.arrayStorage && part.writtenContents == expected.writtenContents;
     });
 }
 
@@ -645,7 +645,8 @@ static void runCast(TestCommandContext& context)
 static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& arena)
 {
     Type raw;
-    LayoutSet layouts { .isComplete = true };
+    Vector<LayoutID> layouts;
+    bool namesObjectsWithoutLayout = false;
     bool hasUnrestrictedRegExp = false;
     for (const Type& type : types | std::views::reverse) {
         raw.primitives |= type.primitives;
@@ -658,8 +659,8 @@ static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& a
         raw.builtins.unite(type.builtins);
         raw.regExpLiteralSet.unite(type.regExpLiteralSet);
         raw.classes.appendVector(type.classes);
-        layouts.members.append(membersOf(arena.table(), type));
-        layouts.hasMembersWithoutLayout |= hasMembersWithoutLayout(arena.table(), type);
+        layouts.append(membersOf(arena.table(), type));
+        namesObjectsWithoutLayout |= hasMembersWithoutLayout(arena.table(), type);
         hasUnrestrictedRegExp |= type.regExpLiteralSet.isEmpty() && type.findClassPart(BuiltinClasses::RegExp);
         if (type.environment)
             raw.environment = type.environment;
@@ -668,8 +669,8 @@ static Type uniteWithoutCanonicalizing(std::span<const Type> types, TypeArena& a
     }
     if (hasUnrestrictedRegExp)
         raw.regExpLiteralSet.clear();
-    if (!layouts.members.isEmpty() || layouts.hasMembersWithoutLayout)
-        raw.layouts = arena.intern(WTF::move(layouts));
+    if (!layouts.isEmpty() || namesObjectsWithoutLayout)
+        raw.layouts = arena.intern(LayoutSet::complete(WTF::move(layouts), namesObjectsWithoutLayout));
     return raw;
 }
 

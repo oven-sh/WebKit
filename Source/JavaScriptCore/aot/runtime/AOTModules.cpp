@@ -30,6 +30,7 @@
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "DeferGCInlines.h"
+#include "DeferTermination.h"
 #include "DisallowVMEntry.h"
 #include "ExceptionHelpers.h"
 #include "GlobalObjectMethodTable.h"
@@ -920,11 +921,11 @@ void Modules::noteOrderAndModulesOfOnlyCountedImport()
 static void runJobsThatAreDue(VM& vm, MicrotaskQueue& jobs)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // What they queue goes to the queue of the realm.
+    // What they queue goes to the queue of the realm. As in MicrotaskQueue::drain(), only a termination stops the remaining jobs.
     jobs.allOf([&](const QueuedTask& job) {
         auto arguments = job.arguments();
         runInternalMicrotask(job.globalObject(), vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
-        return !scope.exception();
+        return !scope.exception() || scope.tryClearException();
     });
     jobs.clear();
 }
@@ -972,6 +973,8 @@ void Modules::handCountedImportsToLoader()
         return;
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // Every counted import reaches the loader. A termination requested meanwhile is thrown at the caller's exception check.
+    DeferTerminationForAWhile deferTermination(vm);
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     size_t numberOfJobsOfOthers = queue.size();
     noteOrderAndModulesOfOnlyCountedImport();
@@ -994,6 +997,8 @@ void Modules::handCountedImportsToLoader()
             JSPromise* loaded = askLoaderForImport(import.module, import.referrerAsyncOrder);
             if (scope.exception()) [[unlikely]] {
                 import.promise->rejectWithCaughtException(vm, scope);
+                // The reactions of the rejected promise are jobs of the program, not steps of the loader.
+                numberOfJobsOfOthers = queue.size();
                 continue;
             }
             import.promise->resolve(m_instance.globalObject, vm, loaded);
@@ -1004,7 +1009,7 @@ void Modules::handCountedImportsToLoader()
             SetForScope rootWhoseGraphIsLoaded(m_rootWhoseGraphIsLoaded, import.isLoaded ? std::optional(import.module) : std::nullopt);
             runJobsThatAreDue(vm, *import.jobsOfLoader);
         }
-        RETURN_IF_EXCEPTION(scope, void());
+        scope.assertNoException();
         queue.moveTasksBehind(numberOfJobsOfOthers, *import.jobsOfLoader);
     }
 }
@@ -1082,6 +1087,9 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
     import.outerInOwnJob = std::exchange(m_innermostCountedImportInOwnJob, &import);
     auto didLeaveJob = makeScopeExit([&] {
         m_innermostCountedImportInOwnJob = import.outerInOwnJob;
+        // Only a termination leaves the job with the import still counted.
+        if (!import.jobsOfLoader)
+            forgetCountedImport(import);
     });
     auto goOnWithLoader = [&] {
         handCountedImportsToLoader();
@@ -1486,7 +1494,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         // Nobody sees how many steps are taken before require() returns.
         if (level->next && level->plan && !m_instance.vm->m_synchronousModuleQueue)
             countStepsOfLevel(*level->plan, level->depth + 1);
-        for (std::optional<ModuleID> target : { level->next, level->firstFileBehindNext }) {
+        for (std::optional<ModuleID> target : { level->firstFileInFrontOfNext, level->next, level->firstFileBehindNext }) {
             if (!target)
                 continue;
             if (auto asked = m_levelsOfLoads.find(*target); asked != m_levelsOfLoads.end())
@@ -1545,6 +1553,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record)
         } else if (isCommonJSFileOrFace(target)) {
             // The loader may have the file, and then asks nobody for its record.
             noteLoadOfFile(target);
+            RETURN_IF_EXCEPTION(scope, void());
             keptAlive.append(keyOfRequest(target));
         } else if (targetData.kind == ModuleKind::Data || isFileOfProgram(target) || isBuiltinModuleNewToLoader(target))
             keptAlive.append(keyOfRequest(target));

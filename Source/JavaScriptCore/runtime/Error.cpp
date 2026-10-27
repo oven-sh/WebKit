@@ -265,7 +265,7 @@ void addErrorInfo(JSGlobalObject* globalObject, JSObject* obj, bool useCurrentFr
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && useCurrentFrame) [[unlikely]] {
         Vector<StackFrame> stackTrace;
-        if (auto stackTraceLimit = obj->realm()->stackTraceLimit(); stackTraceLimit && AOT::tryGetStackTrace(vm, obj, *stackTraceLimit, stackTrace)) {
+        if (auto stackTraceLimit = obj->realm()->stackTraceLimit(); stackTraceLimit && AOT::tryGetStackTrace(vm, obj, stackTrace, 0, *stackTraceLimit)) {
             addErrorInfo(vm, &stackTrace, obj);
             return;
         }

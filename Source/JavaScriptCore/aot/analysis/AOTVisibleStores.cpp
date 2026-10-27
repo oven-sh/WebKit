@@ -424,7 +424,7 @@ public:
         Locker locker { table.lock };
         return table.fields.ensure(tableKey, [&]() -> AccessedFields {
             std::span<const FieldWithKey> fields = fieldsWithKey(key);
-            std::span<const LayoutID> members = m_program.at(receivers).members.span();
+            std::span<const LayoutID> members = m_program.at(receivers).completeMembers();
             Vector<Node, 8> declarations;
             bool areRequired = true;
             auto add = [&](const FieldWithKey& field) {
@@ -506,8 +506,8 @@ public:
         Locker locker { table.lock };
         return table.methods.ensure(tableKey, [&]() -> StoreCallees {
             const LayoutSet& family = m_program.at(receivers);
-            StoreCallees callees { .areAllSeen = !family.hasMembersWithoutLayout };
-            for (LayoutID member : family.members) {
+            StoreCallees callees { .areAllSeen = !family.mayHoldObjectsWithoutLayout() };
+            for (LayoutID member : family.completeMembers()) {
                 const Layout& layout = m_program.at(member);
                 if (layout.flow.allocation == AllocationState::NeverAllocated)
                     continue;

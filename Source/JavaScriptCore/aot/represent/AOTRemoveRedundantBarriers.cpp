@@ -491,7 +491,7 @@ private:
                 again.filter(inOneArm);
                 inTwoArms.merge(again);
                 inOneArm.merge(waiting);
-                if (m_function.at(predecessor).frequency != BlockFrequency::Normal)
+                if (m_function.at(predecessor).frequency.predicted() != BlockFrequency::Normal)
                     continue;
                 if (inEveryOrdinaryArm)
                     inEveryOrdinaryArm->filter(waiting);

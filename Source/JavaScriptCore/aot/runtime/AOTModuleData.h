@@ -89,7 +89,8 @@ struct ModuleData {
     uint8_t importedByModule : 1;
     uint8_t firstEntryPoint : 1;
     uint8_t loadedWithFirstEntryPoint : 1;
-    uint8_t unusedBits : 2;
+    uint8_t importedWhileItRuns : 1;
+    uint8_t unusedBits : 1;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }
@@ -117,6 +118,8 @@ struct ModuleData {
     bool isFirstEntryPoint() const { return firstEntryPoint; }
     // A graph of imports leads to it from that entry point: whoever loads the one loads the other.
     bool isLoadedWithFirstEntryPoint() const { return loadedWithFirstEntryPoint; }
+    // A CommonJS file that leads by a require() to an ES module that imports it. No code of the image takes what a require() of it answers for what the file exports.
+    bool mayBeImportedWhileItRuns() const { return importedWhileItRuns; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
     // Code of the host, whatever its form.

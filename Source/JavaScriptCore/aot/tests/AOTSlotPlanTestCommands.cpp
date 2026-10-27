@@ -241,7 +241,7 @@ static void printAccesses(const SlotPlanViewContext& view)
     for (const AccessRequest& request : requests) {
         std::span<const LayoutID> members;
         if (request.receivers)
-            members = program.at(request.receivers).members.span();
+            members = program.at(request.receivers).written().span();
         printer.print(request.key);
         out.print(" "_s);
         printLayoutIDs(printer, members);

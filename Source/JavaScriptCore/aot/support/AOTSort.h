@@ -7,9 +7,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTThreshold.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstring>
 #include <functional>
 #include <ranges>
@@ -258,7 +260,20 @@ private:
 template<typename Integer>
 NEVER_INLINE void sortIntegers(Integer* begin, Integer* end)
 {
-    std::sort(begin, end);
+    // Lists that were in order, one behind the other, are merged.
+    AOT_THRESHOLD(ptrdiff_t, fewestIntegersToMerge, 64);
+    AOT_THRESHOLD(unsigned, mostListsMerged, 8);
+    Integer* endOfOrdered = std::is_sorted_until(begin, end);
+    for (unsigned lists = 1; endOfOrdered != end && end - begin >= fewestIntegersToMerge && lists < mostListsMerged; ++lists) {
+        Integer* endOfNext = std::is_sorted_until(endOfOrdered, end);
+        bool areTooShort = (endOfNext - begin) * static_cast<ptrdiff_t>(mostListsMerged) < (end - begin) * static_cast<ptrdiff_t>(lists + 1);
+        if (areTooShort)
+            break;
+        std::inplace_merge(begin, endOfOrdered, endOfNext);
+        endOfOrdered = endOfNext;
+    }
+    if (endOfOrdered != end)
+        std::sort(begin, end);
 }
 
 template<typename T> struct IntegerOrderedLike { using Type = std::conditional_t<std::is_integral_v<T>, T, void>; };

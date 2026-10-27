@@ -58,7 +58,7 @@ static bool canMoveToCall(FunctionAnalyses& analyses, const Function& function, 
 static bool canPlaceTests(FunctionPassContext& context, std::span<const UseRequirement> requirements, BlockID block)
 {
     FunctionAnalyses& analyses = context.analyses;
-    if (analyses.blockFrequencies().classOf(block) == BlockFrequency::Rare)
+    if (analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Rare)
         return false;
 
     const BuiltinTable& table = context.program.builtins();

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAllocationCounts.h"
 #include "AOTBuiltinCells.h"
 #include "AOTCellFormat.h"
 #include "AOTClassTable.h"
@@ -334,6 +335,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountStopsForCollector, uint64_t, 
 #endif
 }
 
+#if ASSERT_ENABLED
+thread_local CallerFrameAndPC* NoCollectionGuard::s_frameRecord;
+#endif
+
 OperationPermissions permissionsOf(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
@@ -575,6 +580,7 @@ void CollectionValidator::didFinishCollection(VM& vm, CollectionScope scope)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateLookup, size_t, (Instance* instance, JSCell* receiver, uint32_t key, JSCell* expected))
 {
     VM& vm = *instance->vm;
+    LeafOperationScope leaf(vm);
     DeferGCForAWhile deferGC(vm);
     DeferTerminationForAWhile deferTermination(vm);
     JSGlobalObject* globalObject = instance->globalObject;

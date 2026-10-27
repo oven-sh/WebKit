@@ -404,6 +404,8 @@ static bool fillsFieldsInsideTheirTypes(const Program& program, const DataNode::
         if (!field)
             return true;
         const Field& filled = layout.fields[*field];
+        if (filled.form.contains(FieldForm::IsAccessor))
+            return false;
         return filled.declared.isExpected() || includesData(program, program.at(slotTypeOf(program, filled)), member.value);
     });
 }

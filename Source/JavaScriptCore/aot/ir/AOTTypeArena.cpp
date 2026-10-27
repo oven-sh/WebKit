@@ -194,7 +194,7 @@ struct TypeInterningPhase::Merge {
         };
         commitInPlace(type.layouts);
         for (ClassPart& part : type.classes) {
-            for (TypeID& contents : part.contents)
+            for (TypeID& contents : part.writtenContents)
                 commitInPlace(contents);
         }
         if (hasChanged)
@@ -278,7 +278,7 @@ struct TypeInterningPhase::ParallelMerge {
                 return true;
         }
         for (const ClassPart& part : type.classes) {
-            for (TypeID contents : part.contents) {
+            for (TypeID contents : part.writtenContents) {
                 if (TypeTable::isProvisional(contents))
                     return true;
             }
@@ -328,7 +328,7 @@ struct TypeInterningPhase::ParallelMerge {
                 visit(propertyKeys, key);
             visit(layoutSets, type.layouts);
             for (const ClassPart& part : type.classes) {
-                for (TypeID contents : part.contents)
+                for (TypeID contents : part.writtenContents)
                     depth = std::max<unsigned>(depth, visitType(contents));
             }
         }
@@ -508,7 +508,7 @@ struct TypeInterningPhase::ParallelMerge {
                 bool hasChanged = rewriteAllButContents(type);
                 if (nestingDepths[position]) {
                     for (ClassPart& part : type.classes) {
-                        for (TypeID& contents : part.contents) {
+                        for (TypeID& contents : part.writtenContents) {
                             if (!TypeTable::isProvisional(contents))
                                 continue;
                             uint32_t earlier = types.positionOf(contents);
@@ -530,7 +530,7 @@ struct TypeInterningPhase::ParallelMerge {
                 return;
             bool hasChanged = false;
             for (ClassPart& part : records[position].classes) {
-                for (TypeID& contents : part.contents) {
+                for (TypeID& contents : part.writtenContents) {
                     if (!TypeTable::isProvisional(contents))
                         continue;
                     contents = interning.idAt(contents.index() & ~TypeTable::provisionalBit);
@@ -887,7 +887,7 @@ TypeID TypeArena::intern(Type&& type)
     }
 
     type.canonicalize();
-    ASSERT(!type.layouts || at(type.layouts).isComplete);
+    ASSERT(!type.layouts || at(type.layouts).listsEveryLayout());
     return internCanonical<Type, TypeID>(WTF::move(type));
 }
 
@@ -931,7 +931,7 @@ Type TypeArena::adopt(const Type& fromOtherArena)
         return adopt(key);
     });
     for (ClassPart& part : adopted.classes) {
-        for (TypeID& contents : part.contents)
+        for (TypeID& contents : part.writtenContents)
             contents = adopt(contents);
     }
     return adopted;
@@ -948,7 +948,7 @@ LayoutSetID TypeArena::adopt(LayoutSetID fromOtherArena)
 {
     if (!TypeTable::isProvisional(fromOtherArena))
         return fromOtherArena;
-    if (at(fromOtherArena).members.size() < minCachedSetSize)
+    if (at(fromOtherArena).written().size() < minCachedSetSize)
         return intern(LayoutSet(at(fromOtherArena)));
     auto known = m_adoptedLayoutSets.find(fromOtherArena);
     if (known != m_adoptedLayoutSets.end()) {
@@ -983,7 +983,7 @@ PropertyKeyID TypeArena::adopt(PropertyKeyID fromOtherArena)
 
 LayoutSetID TypeArena::completeLayoutSet(std::span<const LayoutID> unsortedMembers)
 {
-    return intern(LayoutSet { Vector<LayoutID>(unsortedMembers), true });
+    return intern(LayoutSet::complete(Vector<LayoutID>(unsortedMembers)));
 }
 
 PropertyKeyID TypeArena::textKey(StringID text)
@@ -1059,46 +1059,45 @@ static uint64_t pairKey(LayoutSetID a, LayoutSetID b)
 
 bool TypeArena::shouldCacheResult(LayoutSetID a, LayoutSetID b) const
 {
-    return at(a).members.size() + at(b).members.size() >= minCachedSetSize;
+    return at(a).written().size() + at(b).written().size() >= minCachedSetSize;
 }
 
 LayoutSetID TypeArena::internCompleteSet(Vector<LayoutID>&& sortedMembers, bool hasMembersWithoutLayout)
 {
     if (sortedMembers.isEmpty() && !hasMembersWithoutLayout)
         return { };
-    LayoutSet set { WTF::move(sortedMembers), true };
-    set.hasMembersWithoutLayout = hasMembersWithoutLayout;
-    return intern(WTF::move(set));
+    return intern(LayoutSet::complete(WTF::move(sortedMembers), hasMembersWithoutLayout));
 }
 
 LayoutSetID TypeArena::computeResult(LayoutSetOperation operation, LayoutSetID a, LayoutSetID b)
 {
     const LayoutSet& first = at(a);
     const LayoutSet& second = at(b);
-    ASSERT(first.isComplete && second.isComplete);
+    std::span<const LayoutID> inFirst = first.completeMembers();
+    std::span<const LayoutID> inSecond = second.completeMembers();
 
     Vector<LayoutID> members;
     bool hasMembersWithoutLayout = false;
     switch (operation) {
     case LayoutSetOperation::Union:
-        members.grow(first.members.size() + second.members.size());
-        members.shrink(std::ranges::set_union(first.members, second.members, members.begin()).out - members.begin());
-        hasMembersWithoutLayout = first.hasMembersWithoutLayout || second.hasMembersWithoutLayout;
+        members.grow(inFirst.size() + inSecond.size());
+        members.shrink(std::ranges::set_union(inFirst, inSecond, members.begin()).out - members.begin());
+        hasMembersWithoutLayout = first.mayHoldObjectsWithoutLayout() || second.mayHoldObjectsWithoutLayout();
         break;
     case LayoutSetOperation::Intersection:
-        members.grow(std::min(first.members.size(), second.members.size()));
-        members.shrink(std::ranges::set_intersection(first.members, second.members, members.begin()).out - members.begin());
-        hasMembersWithoutLayout = first.hasMembersWithoutLayout && second.hasMembersWithoutLayout;
+        members.grow(std::min(inFirst.size(), inSecond.size()));
+        members.shrink(std::ranges::set_intersection(inFirst, inSecond, members.begin()).out - members.begin());
+        hasMembersWithoutLayout = first.mayHoldObjectsWithoutLayout() && second.mayHoldObjectsWithoutLayout();
         break;
     case LayoutSetOperation::Difference:
-        members.grow(first.members.size());
-        members.shrink(std::ranges::set_difference(first.members, second.members, members.begin()).out - members.begin());
-        hasMembersWithoutLayout = first.hasMembersWithoutLayout;
+        members.grow(inFirst.size());
+        members.shrink(std::ranges::set_difference(inFirst, inSecond, members.begin()).out - members.begin());
+        hasMembersWithoutLayout = first.mayHoldObjectsWithoutLayout();
         break;
     }
 
     auto isResult = [&](const LayoutSet& set) {
-        return members.size() == set.members.size() && hasMembersWithoutLayout == set.hasMembersWithoutLayout;
+        return members.size() == set.written().size() && hasMembersWithoutLayout == set.mayHoldObjectsWithoutLayout();
     };
     if (isResult(first))
         return a;

@@ -382,7 +382,7 @@ const SlotAgreement& SlotPlan::agreementOf(const Program& program, PropertyKeyID
 {
     if (!receivers)
         return m_agreementOfNoReceivers;
-    std::span<const LayoutID> members = program.at(receivers).members.span();
+    std::span<const LayoutID> members = program.at(receivers).completeMembers();
     // An id that a thread made for itself names another set in the next phase, so such a set is found by its members.
     bool isFoundByMembers = TypeTable::isProvisional(receivers);
     uint32_t hash = pairIntHash(key.index(), isFoundByMembers ? hashOfLayouts(members) : receivers.index());
@@ -553,7 +553,7 @@ void JoinedRows::collectAccesses(const SlotPlanContext& context, const SlotUses&
         }
         keys.append(&access);
         m_accesses.append(Access { numberOfReceivers, 0, use.weight });
-        numberOfReceivers += program.at(access.receivers).members.size();
+        numberOfReceivers += program.at(access.receivers).written().size();
     }
 
     m_rowsOfAccesses.grow(numberOfReceivers);
@@ -723,7 +723,7 @@ BitVector findZeroEncodingCandidates(const SlotPlanContext& context)
 static bool isColdBlock(const Block& block)
 {
     TerminatorKind kind = block.terminator.kind;
-    return block.frequency != BlockFrequency::Normal
+    return block.frequency.predicted() != BlockFrequency::Normal
         || kind == TerminatorKind::Throw
         || kind == TerminatorKind::Rethrow
         || kind == TerminatorKind::Unreachable;

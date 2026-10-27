@@ -151,14 +151,14 @@ static bool runsAtMostOneCall(const Function& function, std::span<const ValueSit
     return true;
 }
 
-static FunctionID findEnteredVersion(const Program& program, const CalleeSet& callees, FunctionID function)
+static FunctionID findEnteredVersion(const Program& program, std::span<const FunctionID> followed, FunctionID function)
 {
-    for (FunctionID callee : callees.functions) {
+    for (FunctionID callee : followed) {
         const Function& version = program.at(callee);
         if (version.role == FunctionRole::GenericVersion && version.derivation.source == function)
             return callee;
     }
-    return std::ranges::binary_search(callees.functions, function) ? function : FunctionID();
+    return std::ranges::binary_search(followed, function) ? function : FunctionID();
 }
 
 static bool isBaseProven(const Layout& holder)
@@ -220,7 +220,7 @@ static FunctionID findParentTakingThis(const Program& program, const Function& f
     CalleeSetID callees = superCall.callees();
     if (!callees && isBaseProven(holder))
         return { };
-    FunctionID entered = callees ? findEnteredVersion(program, program.at(callees), parent) : parent;
+    FunctionID entered = callees ? findEnteredVersion(program, program.at(callees).followed(), parent) : parent;
     if (!entered)
         return { };
     if (!program.at(parent).captures.isEmpty() || !canConstructDirectly(program, parent) || !canTakeAllocatedThis(program, entered))

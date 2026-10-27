@@ -449,7 +449,7 @@ static unsigned numberOfSiteCachesUsedByOperationWithRequest(const Program& prog
     // Flow has seen compiled objects come to this read. The table of fields answers for all their layouts alike, and the stub without a site asks it first: a site in front of it would stay empty.
     // A name that none of the layouts has is found above the object, and the table has nothing to say.
     if (value.opcode == Opcode::PropGet && !value.isFreeName() && value.receivers() && program.nameClassOf(value.key()) != NameClass::Length) {
-        bool isFieldOfReceiver = std::ranges::any_of(program.at(value.receivers()).members, [&](LayoutID member) {
+        bool isFieldOfReceiver = std::ranges::any_of(program.at(value.receivers()).seen().predicted(), [&](LayoutID member) {
             return !!findField(program, member, value.key(), BaseChain::Proven);
         });
         if (isFieldOfReceiver)

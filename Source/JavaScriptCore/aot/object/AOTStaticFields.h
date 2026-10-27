@@ -27,6 +27,7 @@ bool isInVariable(const Closure& classObject, const FieldData&);
 bool canEnterVariable(VM&, const Closure& classObject, const FieldData&);
 void ensureProperties(VM&, Closure& classObject);
 void moveToProperty(VM&, Closure& classObject, const FieldData&);
+void willPutDirect(VM&, Closure& classObject, UniquedStringImpl*);
 void didDeleteProperty(VM&, Closure& classObject, const FieldData&);
 const FieldData* findFieldForCache(VM&, JSCell* classObject, UniquedStringImpl*);
 

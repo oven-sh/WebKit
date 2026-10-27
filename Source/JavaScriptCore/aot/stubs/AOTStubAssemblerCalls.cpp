@@ -87,11 +87,14 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
     // The epilogue takes the stack pointer from the frame pointer, so the padding is not taken off first.
     emitFunctionEpilogue();
     if (!preservingCall.checksException) {
+        RELEASE_ASSERT(!preservingCall.emitBeforeReturn);
         ret();
         return;
     }
     loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
     Jump threw = branchTestPtr(NonZero, Address(scratch, VM::exceptionOffset()));
+    if (preservingCall.emitBeforeReturn)
+        (*preservingCall.emitBeforeReturn)();
     ret();
     threw.link(this);
     if (key().callerFrame() == CallerFrame::StubFrame)

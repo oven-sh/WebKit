@@ -2,7 +2,7 @@
 # function make(given: Given): Made { return { list: given.list, ratio: 0.125 }; }   make({ name: "s", list: [1, 2] });   make(((value: any): Given => value)({ list: -1.5 }));
 # The check of the parameter turns the second object away, and the generic version reads a number out of it and lists it where the typed code lists an array.
 # Flow sees the number arrive. Of the slot of an object it leaves out the primitives of another type, which a store turns away: the value is stored behind the allocation, by a store that tests it.
-# Nothing stands in for an array, so `ratio` would have to be defined behind the allocation too, and flow says that it is stored once. So the number stays listed, and `list` of Made is only expected.
+# Nothing stands in for an array, so `ratio` would have to be defined behind the allocation too, and flow says that it is stored once. So the number stays listed, and `list` of Made is only expected: nothing but the checks of `make` says what is listed there.
 # In `makeLast` nothing is listed behind the array: the field keeps its type.
 # FORM: AsRead
 # RUN: pipeline ApplyFlowResults
@@ -10,8 +10,13 @@
 # CHECK: layout L3 name="MadeLast" {{*}}{key="list" declared={type=Array<int[1, 2], proven, pristine[Storage, Names, Dense]>} flags=[IsRequired, IsEnforced]
 # CHECK-LABEL: function f1 name="make"
 # CHECK: [[read]]: {{*}} = PropGet {{*}} key="list"
-# CHECK: [[listed]]: {{*}} = AssumeType {{*}} provenType=undefined|null|boolean|number|string|symbol|bigint|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: = NewObject -, [[listed]], {{*}} layout=L1
+# CHECK-NEXT: = AssumeType [[read]] provenType=fractional|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK: [[listed]]: {{*}} = AssumeType {{*}} provenType=Array<int[1, 2], proven, pristine[Storage, Names, Dense]> [isBehindChecks]
+# CHECK-NOT: = AssumeType
+# CHECK: = NewObject -, [[listed]], {{*}} layout=L1
+# CHECK-LABEL: function f3 name="makeLast"
+# CHECK: [[listedLast]]: {{*}} = AssumeType {{*}} provenType=undefined|null|boolean|number|string|symbol|bigint|Array<int[1, 2], proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: = NewObject -, {{*}}, [[listedLast]] layout=L3
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

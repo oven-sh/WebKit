@@ -173,7 +173,7 @@ private:
 
     bool isFilled(const Value& storeBySlot, const BitVector& stored) const
     {
-        return std::ranges::all_of(m_program.at(storeBySlot.receivers()).members, [&](LayoutID layout) {
+        return std::ranges::all_of(m_program.at(storeBySlot.receivers()).completeMembers(), [&](LayoutID layout) {
             return isFilled(layout, stored);
         });
     }
@@ -204,7 +204,7 @@ private:
     {
         if (!mayBeMarker(storeBySlot.operand(OperandIndex::PutSlot::value)))
             return false;
-        return std::ranges::any_of(m_program.at(storeBySlot.receivers()).members, [&](LayoutID layout) {
+        return std::ranges::any_of(m_program.at(storeBySlot.receivers()).completeMembers(), [&](LayoutID layout) {
             std::optional<FieldReference> field = findField(m_program, layout, storeBySlot.key(), BaseChain::Proven);
             return field && holdsRawValueFromBirth(m_program, *field);
         });
@@ -262,7 +262,7 @@ private:
                 const Value& value = m_function.at(id);
                 if (!birthStoresBySlot.contains(value.opcode) || m_context.analyses.identityOf(value.operand(OperandIndex::PutSlot::object)) != thisValue)
                     continue;
-                for (LayoutID layout : m_program.at(value.receivers()).members) {
+                for (LayoutID layout : m_program.at(value.receivers()).completeMembers()) {
                     if (hasFieldsFilledAtBirth(m_program, layout) && !result.contains(layout))
                         result.append(layout);
                 }
@@ -289,7 +289,7 @@ private:
         if (!layouts)
             return { };
         Layouts result;
-        for (LayoutID layout : m_program.at(layouts).members) {
+        for (LayoutID layout : m_program.at(layouts).completeMembers()) {
             if (hasFieldsFilledAtBirth(m_program, layout))
                 result.append(layout);
         }
@@ -300,7 +300,7 @@ private:
     bool initializerMayMeetObjectSeenByOthers() const
     {
         LayoutSetID layouts = m_function.thisType.written() ? m_context.types.at(m_function.thisType.expected().predicted()).layouts : LayoutSetID();
-        return !layouts || std::ranges::none_of(m_program.at(layouts).members, [&](LayoutID layout) {
+        return !layouts || std::ranges::none_of(m_program.at(layouts).completeMembers(), [&](LayoutID layout) {
             return !m_program.at(declaredLayoutOf(m_program, layout)).has(LayoutFlags::HasHeritage);
         });
     }
@@ -322,7 +322,7 @@ private:
             for (ValueID id : m_function.at(block).values) {
                 if (!birthStoresBySlot.contains(m_function.at(id).opcode))
                     continue;
-                for (LayoutID layout : m_program.at(m_function.at(id).receivers()).members)
+                for (LayoutID layout : m_program.at(m_function.at(id).receivers()).completeMembers())
                     numberKeysOf(layout);
             }
         }
@@ -475,7 +475,7 @@ private:
     bool provesNoFieldOutsideSlot(const Value& storeBySlot) const
     {
         ValueID guard = storeBySlot.guardOperand();
-        bool hasParent = std::ranges::any_of(m_program.at(storeBySlot.receivers()).members, [&](LayoutID layout) {
+        bool hasParent = std::ranges::any_of(m_program.at(storeBySlot.receivers()).completeMembers(), [&](LayoutID layout) {
             return m_program.at(declaredLayoutOf(m_program, layout)).has(LayoutFlags::HasHeritage);
         });
         if (!guard || hasParent)

@@ -134,7 +134,7 @@ static bool canCallResolvedTarget(SelectionContext& context, ValueID id)
     BlockID block = context.analyses().useLists().blockOf(id);
     if (!block || isOwnedByReturnCall(context, id))
         return false;
-    return function.at(block).frequency != BlockFrequency::Rare && context.shapeOf(block) == CodeShape::Fast;
+    return function.at(block).frequency.predicted() != BlockFrequency::Rare && context.shapeOf(block) == CodeShape::Fast;
 }
 
 static Vector<ResolvedCalls> findCallsOfInvariantCallees(SelectionContext& context)

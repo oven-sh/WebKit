@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAddGenericVersion.h"
 #include "AOTArrayStorageForms.h"
 #include "AOTFlowSiteData.h"
 #include "AOTFunctionEditing.h"
@@ -148,7 +149,7 @@ static std::optional<Type> typeDeclaredInFamilies(const Program& program, Family
     for (LayoutSetID family : families) {
         uint64_t cacheKey = static_cast<uint64_t>(family.index()) << 32 | key.index();
         const std::optional<Type>& declaredInFamily = cache.ensure(cacheKey, [&] {
-            return uniteTypesDeclaredIn(program, program.at(family).members.span(), key, arena);
+            return uniteTypesDeclaredIn(program, program.at(family).completeMembers(), key, arena);
         }).iterator->value;
         if (declaredInFamily)
             declared = declared ? declared->unionWith(*declaredInFamily, arena) : *declaredInFamily;
@@ -640,7 +641,7 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
             for (const FlowCallStamp& stamp : bodies[index].calls) {
                 if (!!OperandPosition::newTarget(program.functions[index].at(stamp.value).opcode) != ofConstructions)
                     continue;
-                for (FunctionID callee : program.at(stamp.callees).functions)
+                for (FunctionID callee : program.at(stamp.callees).followed().value())
                     functor(callee);
             }
         }
@@ -738,6 +739,32 @@ static void nameObjectInPlaceOfDictionaryLayouts(Program& program, const FlowApp
     rewriteList(program.webAssemblyModules);
 }
 
+// What an allocation lists is tested by nobody. Where it may lie outside the type of its field it is stored behind the allocation, by a store that tests it.
+// Where that cannot be done the type of the field is only expected, and this is settled before a body is told what its stores take.
+static void takeBackFieldsThatListUntestedValues(Program& program, FlowResults& results, const FlowApplication& application, BuildContext& build)
+{
+    Vector<FieldReference> fields;
+    for (uint32_t layout = 0; layout < application.layouts.size(); ++layout) {
+        for (const FlowListedValue& listed : application.layouts[layout].valuesListedWithOtherTypes) {
+            FieldReference declaration { LayoutID(layout), listed.field };
+            if ((!fields.isEmpty() && fields.last() == declaration) || fieldAt(program, declaration).declared.isExpected())
+                continue;
+            const Value& allocation = program.at(listed.function).at(listed.allocation);
+            std::span<const uint32_t> listedFields = allocation.fields();
+            for (uint32_t valueIndex = 0; valueIndex < listedFields.size(); ++valueIndex) {
+                if (declarationOf(program, { allocation.layout(), listedFields[valueIndex] }) != declaration || canStoreInitialValueBehindAllocation(program, allocation, valueIndex))
+                    continue;
+                fields.append(declaration);
+                break;
+            }
+        }
+    }
+    if (fields.isEmpty())
+        return;
+    expectFields(program, fields.span(), build);
+    results.setFieldsTakenBack(WTF::move(fields));
+}
+
 void applyFlowResults(Program& program, FlowResults& results, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -762,6 +789,7 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     Vector<BitVector> fieldsExpectedAsRead = findExpectedFields(program, build.parallelLoops());
     nameObjectInPlaceOfDictionaryLayouts(program, *application, build.parallelLoops());
     applyLayoutUpdates(context);
+    takeBackFieldsThatListUntestedValues(program, results, *application, build);
     times.didFinish("applyLayoutUpdates"_s);
     applyVariableUpdates(context);
     applySignatureUpdates(context);

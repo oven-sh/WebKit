@@ -807,7 +807,7 @@ static bool fieldValueFits(const AllocationSinking& sinking, VirtualObjectID obj
 {
     const VirtualFamily& family = sinking.familyOf(object);
     auto fitsIn = [&](const VirtualObjectDescription& description) {
-        return isWithin(sinking.program(), typeOfField(sinking.objectContext(), description, family.fieldAt(field)), type);
+        return isWithin(sinking.program(), contentsOf(sinking.shapeContext(object), description, field), type);
     };
     return std::ranges::all_of(state.variants, [&](const ObjectVariant& variant) {
         const VirtualShape& shape = family.at(variant.shape);
@@ -821,6 +821,29 @@ static bool fieldValueFits(const AllocationSinking& sinking, VirtualObjectID obj
         }
         RELEASE_ASSERT_NOT_REACHED();
     });
+}
+
+Admission admissionOf(const AllocationSinking& sinking, const VirtualObjectDescription& description, const VirtualField& field, FieldContents stored)
+{
+    const Program& program = sinking.program();
+    TypeID fieldType = typeOfField(sinking.objectContext(), description, field);
+    if (isWithin(program, stored, fieldType))
+        return Admission::IsOfFieldType;
+    if (!sinking.policy().followsUndefinedAndNullInFields || !holdsUndefinedAndNullToo(sinking.objectContext(), description, field))
+        return Admission::Refused;
+    return program.at(stored.type).withoutNullish().isSubsetOf(program.at(fieldType), program) ? Admission::TakesRoomBesideFieldType : Admission::Refused;
+}
+
+static void willStore(AllocationSinking& sinking, VirtualObjectID object, const ObjectState& state, uint32_t field, FieldContents stored)
+{
+    const VirtualFamily& family = sinking.familyOf(object);
+    if (family.mayHoldUndefinedOrNull(field) || !mayBeUndefinedOrNull(sinking.program(), stored))
+        return;
+    bool takesRoom = std::ranges::any_of(state.variants, [&](const ObjectVariant& variant) {
+        return admissionOf(sinking, family.descriptionOf(family.at(variant.shape)), family.fieldAt(field), stored) == Admission::TakesRoomBesideFieldType;
+    });
+    if (takesRoom)
+        sinking.didStoreUndefinedOrNull(object, field);
 }
 
 static bool isAssumedWithin(const Program& program, const ObjectState& state, TypeID type)
@@ -1238,6 +1261,7 @@ void ObjectInterpreter::executeStore(ValueID id)
         if (!stateOf(object)->isVirtual())
             return executeAccessOnCell(id, object);
     }
+    willStore(m_sinking, object, *stateOf(object), *field, { function().at(stored).type });
     storeField(object, *field, stored);
     return didFoldStores(object, 1);
 }
@@ -1276,7 +1300,7 @@ bool ObjectInterpreter::canStore(VirtualObjectID object, const VirtualFieldAcces
             return false;
         bool isPresent = hasStored(shape, field) || hasStoredCounterpart(family, shape, field);
         bool runsNoCode = isPresent ? access.whenPresent == PresentField::IsOwnData : access.whenAbsent == AbsentField::FindsNothing;
-        return runsNoCode && isWithin(program(), storedType, typeOfField(m_sinking.objectContext(), description, virtualField));
+        return runsNoCode && admissionOf(m_sinking, description, virtualField, { storedType }) != Admission::Refused;
     });
 }
 
@@ -2130,7 +2154,7 @@ std::optional<Vector<CopiedField, 8>> ObjectInterpreter::collectCopiedFields(Val
     return fields;
 }
 
-bool ObjectInterpreter::tryResolveTargetFields(VirtualObjectID target, const VirtualObjectDescription& source, std::span<CopiedField> fields)
+bool ObjectInterpreter::tryResolveTargetFields(VirtualObjectID target, VirtualObjectID source, std::span<CopiedField> fields)
 {
     const ObjectState* state = stateOf(target);
     if (!state)
@@ -2147,14 +2171,13 @@ bool ObjectInterpreter::tryResolveTargetFields(VirtualObjectID target, const Vir
         descriptions.append(&description);
     }
 
-    const VirtualObjectContext& context = m_sinking.objectContext();
     for (CopiedField& field : fields) {
         VirtualField property = VirtualField::named(field.key);
-        const Type& copiedType = program().at(typeOfField(context, source, property));
+        FieldContents copied = contentsOf(m_sinking.shapeContext(source), *singleDescriptionOf(source), field.sourceField);
         bool isAdmitted = std::ranges::all_of(descriptions, [&](const VirtualObjectDescription* description) {
             return layoutFieldOf(program(), *description, property)
                 && isEnumerable(program(), *description, property)
-                && copiedType.isSubsetOf(program().at(typeOfField(context, *description, property)), program());
+                && admissionOf(m_sinking, *description, property, copied) != Admission::Refused;
         });
         if (!isAdmitted)
             return false;
@@ -2177,7 +2200,7 @@ void ObjectInterpreter::executeCopyDataProperties(ValueID id)
     if (!fields)
         return executeOther(id);
 
-    bool targetIsVirtual = tryResolveTargetFields(target, *singleDescriptionOf(source), fields->mutableSpan());
+    bool targetIsVirtual = tryResolveTargetFields(target, source, fields->mutableSpan());
     BuildCause cause = causeOf(id, OperandIndex::CopyDataProperties::source);
     for (const CopiedField& field : *fields)
         requireCellOfHeldObject(source, field.sourceField, cause);
@@ -2188,8 +2211,10 @@ void ObjectInterpreter::executeCopyDataProperties(ValueID id)
         return executeOther(id);
 
     if (targetIsVirtual) {
-        for (const CopiedField& field : *fields)
+        for (const CopiedField& field : *fields) {
+            willStore(m_sinking, target, *stateOf(target), field.targetField, contentsOf(m_sinking.shapeContext(source), *singleDescriptionOf(source), field.sourceField));
             storeField(target, field.targetField, isRewriting() ? valueOfField(source, field.sourceField) : id);
+        }
         return didFoldStores(target, static_cast<unsigned>(fields->size()));
     }
 
@@ -2623,7 +2648,7 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     for (const PlannedProperty& property : planProperties(m_sinking, m_state, object, variant)) {
         const VirtualField& field = family.fieldAt(property.field);
         if (property.initialization == PropertyInitialization::Listed) {
-            properties.append(FieldValue { field, valueOfField(object, property.field, typeOfField(m_sinking.objectContext(), variant.description, field)) });
+            properties.append(FieldValue { field, valueOfField(object, property.field, typeOf(contentsOf(m_sinking.shapeContext(object), variant.description, property.field), cursor().builder().types())) });
             continue;
         }
         if (property.initialization == PropertyInitialization::ListedWithFiller) {
@@ -2786,14 +2811,14 @@ void ObjectInterpreter::didBuild(VirtualObjectID object, const BuildCause& cause
     ObjectState& state = *stateOf(object);
     if (m_mode == SinkingMode::Count) {
         const BlockFrequencies& frequencies = m_sinking.analyses().blockFrequencies();
-        BlockFrequency frequency = frequencies.classOf(m_state.block);
+        Expected<BlockFrequency> frequency = frequencies.classOf(m_state.block);
         if (m_enteredEdge.edge)
             frequency = rarerOf(frequencies.classOf(m_enteredEdge.edge->edge.from), frequencies.classOf(m_enteredEdge.edge->edge));
         bool isBorrowed = isBorrowingCall(cause);
         auto countBuilds = [&](VirtualObjectID built, unsigned numberOfBuilds) {
             Candidate& candidate = m_sinking.at(built);
             candidate.numberOfBuilds += numberOfBuilds;
-            if (isRarerThan(frequency, frequencies.classOf(candidate.block)))
+            if (isRarerThan(frequency, frequencies.classOf(candidate.block)).predicted())
                 candidate.numberOfRarerBuilds += numberOfBuilds;
             else if (isBorrowed)
                 candidate.numberOfBorrowingBuilds += numberOfBuilds;

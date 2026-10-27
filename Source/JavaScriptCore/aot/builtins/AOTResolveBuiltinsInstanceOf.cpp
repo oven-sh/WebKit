@@ -99,7 +99,8 @@ static InstanceOfAnswer answerForClassPart(const BuiltinLookupContext& context, 
 static InstanceOfAnswer answerForLayouts(const BuiltinLookupContext& context, LayoutSetID layouts, BuiltinID soughtPrototype)
 {
     const Program& program = context.program;
-    bool areRecordsAsMade = std::ranges::all_of(program.at(layouts).members, [&](LayoutID layout) {
+    auto all = program.at(layouts).all();
+    bool areRecordsAsMade = all && std::ranges::all_of(*all, [&](LayoutID layout) {
         return program.at(layout).kind == LayoutKind::Record && receiverStateOf(program, layout).cannot(ObjectMutation::ChangePrototype);
     });
     if (!areRecordsAsMade)
@@ -143,7 +144,7 @@ static bool isWorthTesting(FunctionPassContext& context, const ValueSite& site, 
     FunctionAnalyses& analyses = context.analyses;
     if (pristineTestOf(table, builtinClass) != PristineTest::MayPass)
         return false;
-    if (analyses.blockFrequencies().classOf(site.block) == BlockFrequency::Rare)
+    if (analyses.blockFrequencies().classOf(site.block).predicted() == BlockFrequency::Rare)
         return false;
 
     ValueID subject = context.function.at(site.value).valueOperand();
@@ -163,7 +164,7 @@ static bool isWorthTesting(FunctionPassContext& context, const ValueSite& site, 
 static bool isWorthTestingConstructor(FunctionPassContext& context, const ValueSite& site, BuiltinID constructor)
 {
     FunctionAnalyses& analyses = context.analyses;
-    if (analyses.blockFrequencies().classOf(site.block) == BlockFrequency::Rare)
+    if (analyses.blockFrequencies().classOf(site.block).predicted() == BlockFrequency::Rare)
         return false;
     ValueID operand = context.function.at(site.value).constructorOperand();
     return analyses.findEarlierTest(makeTypeTest(operand, context.types.intern(Type::forBuiltin(constructor))), site.block) != EarlierTest::Failed;
@@ -193,7 +194,7 @@ Vector<BuiltinInstanceOfSite> planBuiltinInstanceOfSites(FunctionPassContext& co
         if (!isProvenConstructor && !isWorthTestingConstructor(context, site, constructor))
             return;
         if (readsPrototype) {
-            if (context.analyses.blockFrequencies().classOf(site.block) == BlockFrequency::Rare)
+            if (context.analyses.blockFrequencies().classOf(site.block).predicted() == BlockFrequency::Rare)
                 return;
             sites.append(BuiltinInstanceOfSite { site, { }, InstanceOfAnswer::Unknown, isProvenConstructor ? BuiltinID() : constructor, false, true });
             return;
@@ -235,7 +236,7 @@ static void finishArmsWithClassTests(SiteExpansion& expansion, const BuiltinInst
     FunctionPassContext& context = expansion.context();
     IRBuilder& builder = expansion.builder();
     Type instances = Type::builtinClass(site.builtinClass);
-    BlockFrequency frequency = expansion.frequency();
+    Expected<BlockFrequency> frequency = expansion.frequency();
     ValueID subject = expansion.original().valueOperand();
 
     if (!context.program.typeOf(context.function, subject).isSubsetOf(instances, context.program)) {

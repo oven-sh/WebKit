@@ -363,7 +363,7 @@ std::optional<SlotRow> EmptySlotReserver::findRowWithSlot(LayoutID member, Prope
 SlotCoverage EmptySlotReserver::coverageOf(const SlotAccessKey& access) const
 {
     SlotCoverage coverage;
-    for (LayoutID member : m_context.program.at(access.receivers).members) {
+    for (LayoutID member : m_context.program.at(access.receivers).completeMembers()) {
         auto row = findRowWithSlot(member, access.key);
         if (!row) {
             coverage.membersWithoutSlot.append(member);

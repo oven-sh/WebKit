@@ -484,7 +484,7 @@ static void keepWhereEveryKnownArrivalFits(const Program& program, const Paralle
             if (!call.callees())
                 return;
             uint32_t numberOfArguments = call.numberOfOperands() - OperandIndex::Call::arguments;
-            for (FunctionID callee : program.at(call.callees()).functions) {
+            for (FunctionID callee : program.at(call.callees()).seen().predicted().functions) {
                 if (!hasCheckedEntryValue.get(callee.index()))
                     continue;
                 unsigned first = program.at(callee).firstParameterIndex();
@@ -562,7 +562,7 @@ static Function createFallback(const Function& original, FunctionID typedBody)
     fallback.creator = CreatorRecord::Version { .provenVersion = typedBody };
     fallback.capabilities = initialCapabilitiesOf(fallback) | capabilitiesBehindEntrance;
     for (Block& block : fallback.editAllBlocks())
-        block.frequency = block.frequency == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
+        block.frequency = block.frequency.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
     return fallback;
 }
 
@@ -638,7 +638,7 @@ void splitBehindEntryChecks(ProgramEditor& editor, const Heat* heat, BuildContex
     Vector<Split> splits = collectInParallel<Split>(loops, program.functions.size(), [&](unsigned index, Vector<Split>& found) {
         FunctionID id(index);
         // Tests, a typed body and a fallback are three functions for one. They pay where callers that have proven their arguments enter the typed body often.
-        if (!mayListValueWith(program, id, { Opcode::Check }) || !canBeSplit(program, build, id) || (heat && isCold(heat->of(program, id))))
+        if (!mayListValueWith(program, id, { Opcode::Check }) || !canBeSplit(program, build, id) || (heat && isCold(heat->of(program, id)).predicted()))
             return;
         Vector<EntryCheck, 4> checks = findEntryChecksThatMayFail(program, program.at(id));
         Vector<CheckedEntryValue, 2> checkedEntryValues;
@@ -854,13 +854,13 @@ void skipAnsweredEntryChecks(ProgramEditor& editor, const Heat& heat, BuildConte
     Vector<AnsweredCall> calls = collectInParallel<AnsweredCall>(loops, program.functions.size(), [&](unsigned index, Vector<AnsweredCall>& found) {
         FunctionID id(index);
         const Function& caller = program.functions[index];
-        if (!mayListValueWith(program, id, { Opcode::CallDirect }) || isCold(heat.of(program, id)))
+        if (!mayListValueWith(program, id, { Opcode::CallDirect }) || isCold(heat.of(program, id)).predicted())
             return;
         auto isEntrance = [&](NameKind kind, uint32_t callee) {
             return kind == NameKind::Function && entranceOf(FunctionID(callee));
         };
         forEachListedValueNaming(program, id, { Opcode::CallDirect }, isEntrance, [&](BlockID block, ValueID value, const Value& call) {
-            if (caller.at(block).frequency != BlockFrequency::Normal || isCold(heat.of(program, call.function())))
+            if (caller.at(block).frequency.predicted() != BlockFrequency::Normal || isCold(heat.of(program, call.function())).predicted())
                 return;
             // The typed body promises another result than its entrance, so a call that named it would have another type, and so would all that is computed from it.
             if (uint32_t answered = testsAnsweredBy(program, caller, call, *entranceOf(call.function())))

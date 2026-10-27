@@ -71,6 +71,7 @@ public:
                 add(definition.owner, IsPointer);
         }
         solve();
+        findWhatGivesCellsLater();
         report();
     }
 
@@ -101,8 +102,6 @@ private:
         // One of its values is read behind a safepoint that it was made in front of.
         HasSuspect = 1 << 2,
         HasOrdinaryDefinition = 1 << 3,
-        // Something is loaded through it that may name a cell, or it is handed on.
-        MayGiveCells = 1 << 4,
     };
 
     enum MemberFlag : uint8_t {
@@ -110,6 +109,7 @@ private:
         IsLiveOut = 1 << 1,
         HasFollowedCopies = 1 << 2,
         HasFollowedSums = 1 << 3,
+        GivesCellsBehindBlock = 1 << 4,
     };
 
     struct Facts {
@@ -119,8 +119,12 @@ private:
         unsigned location { none };
         unsigned created { 0 };
         unsigned lastRead { 0 };
+        // The last place in its block where something is loaded through it that may name a cell, or where it is handed on.
+        unsigned lastReadThatMayGiveCells { 0 };
         unsigned firstCopy { none };
         unsigned firstSum { none };
+        // What a sum is computed from, and what a choice is made from.
+        unsigned firstSource { none };
         unsigned nextHeadInBlock { none };
         unsigned nextHeadOfUnit { none };
         unsigned firstOwner { none };
@@ -162,6 +166,7 @@ private:
 
     using KeyTraits = WTF::UnsignedWithZeroKeyHashTraits<uint64_t>;
     using ValueByBlockAndUnit = UncheckedKeyHashMap<uint64_t, unsigned, DefaultHash<uint64_t>, KeyTraits>;
+    using ReportedPlaces = UncheckedKeyHashSet<std::pair<const B3::MemoryValue*, Inst*>>;
 
     static uint64_t keyOf(unsigned block, unsigned unit) { return static_cast<uint64_t>(block) << 32 | unit; }
     static bool isRegister(unsigned location) { return location < numberOfRegisters; }
@@ -364,6 +369,16 @@ private:
         return value;
     }
 
+    void noteReadThatMayGiveCells(unsigned value, unsigned position)
+    {
+        if (value == clobbered)
+            return;
+        Facts& facts = m_facts[value];
+        if (!facts.lastReadThatMayGiveCells && !(facts.memberFlags & GivesCellsBehindBlock))
+            m_valuesThatGiveCells.append(value);
+        facts.lastReadThatMayGiveCells = std::max(facts.lastReadThatMayGiveCells, position);
+    }
+
     void set(unsigned location, unsigned value)
     {
         if (!isRegister(location)) {
@@ -543,9 +558,10 @@ private:
         inst.forEachArg([&](Arg& arg, Arg::Role role, B3::Bank bank, Width width) {
             if (std::optional<unsigned> location = locationOf(arg)) {
                 if (Arg::isAnyUse(role) && role != Arg::Scratch) {
-                    m_operands.append(read(*location, Arg::isLateUse(role) ? m_late : m_early));
+                    unsigned position = Arg::isLateUse(role) ? m_late : m_early;
+                    m_operands.append(read(*location, position));
                     if (handsOperandsOn)
-                        m_facts[m_operands.last()].classFlags |= MayGiveCells;
+                        noteReadThatMayGiveCells(m_operands.last(), position);
                 }
                 return;
             }
@@ -558,7 +574,7 @@ private:
                 if (std::optional<unsigned> location = locationOfRegister(tmp)) {
                     m_operands.append(read(*location, m_early));
                     if (mayGiveCells)
-                        m_facts[m_operands.last()].classFlags |= MayGiveCells;
+                        noteReadThatMayGiveCells(m_operands.last(), m_early);
                 }
             });
             if (!Arg::isAnyUse(role) || !(arg.isAddr() || arg.isIndex() || arg.isSimpleAddr()))
@@ -613,16 +629,20 @@ private:
         if (choosesBetweenLastOperands(inst.kind.opcode)) {
             m_facts[result].nextHeadInBlock = std::exchange(m_firstChoiceOfBlock[m_block], result);
             for (unsigned source : m_operands.span().last(std::min<size_t>(m_operands.size(), 2))) {
-                if (source != clobbered)
-                    m_choices.append({ result, source });
+                if (source == clobbered)
+                    continue;
+                m_choices.append({ result, source });
+                link(m_facts[result].firstSource, source);
             }
             return;
         }
         if (!computesAddress(inst.kind.opcode))
             return;
         for (unsigned operand : m_operands) {
-            if (operand != clobbered)
-                link(m_facts[operand].firstSum, result);
+            if (operand == clobbered)
+                continue;
+            link(m_facts[operand].firstSum, result);
+            link(m_facts[result].firstSource, operand);
         }
     }
 
@@ -726,17 +746,22 @@ private:
             m_headsToResolve.append(head);
     }
 
-    // The last safepoint that the value is an operand of, or is read behind.
-    const Safepoint* lastSafepointReachedBy(unsigned value) const
+    // The last safepoint behind the making of the value and not behind the end.
+    const Safepoint* lastSafepointUpTo(unsigned value, unsigned end) const
     {
         const Facts& facts = m_facts[value];
         std::span<const Safepoint> safepoints = m_safepoints.span().subspan(m_firstSafepointOfBlock[facts.block], m_firstSafepointOfBlock[facts.block + 1] - m_firstSafepointOfBlock[facts.block]);
-        unsigned end = facts.memberFlags & IsLiveOut ? none : facts.lastRead;
         auto firstBehind = std::ranges::upper_bound(safepoints, end, { }, &Safepoint::position);
         if (firstBehind == safepoints.begin())
             return nullptr;
         const Safepoint& last = *std::prev(firstBehind);
         return last.position > facts.created ? &last : nullptr;
+    }
+
+    // The last safepoint that the value is an operand of, or is read behind.
+    const Safepoint* lastSafepointReachedBy(unsigned value) const
+    {
+        return lastSafepointUpTo(value, endOf(m_facts[value]));
     }
 
     void judge(unsigned value)
@@ -802,6 +827,33 @@ private:
         return facts.memberFlags & IsLiveOut ? none : facts.lastRead;
     }
 
+    static unsigned endOfReadsThatMayGiveCells(const Facts& facts)
+    {
+        return facts.memberFlags & GivesCellsBehindBlock ? none : facts.lastReadThatMayGiveCells;
+    }
+
+    // A pointer gives cells where a sum or a choice made from it does, and at the end of each block in front of one that finds it in a location and gives cells through it.
+    void findWhatGivesCellsLater()
+    {
+        while (!m_valuesThatGiveCells.isEmpty()) {
+            unsigned value = m_valuesThatGiveCells.takeLast();
+            if (!(m_facts[find(value)].classFlags & IsPointer))
+                continue;
+            for (unsigned source = m_facts[value].firstSource; source != none; source = m_links[source].next)
+                noteReadThatMayGiveCells(m_links[source].target, m_facts[value].created);
+            if (!(m_facts[value].memberFlags & IsHead))
+                continue;
+            for (unsigned predecessor : predecessorsOf(m_facts[value].block)) {
+                unsigned incoming = tailOf(predecessor, m_facts[value].location);
+                if (incoming == clobbered || (m_facts[incoming].memberFlags & GivesCellsBehindBlock))
+                    continue;
+                if (!m_facts[incoming].lastReadThatMayGiveCells)
+                    m_valuesThatGiveCells.append(incoming);
+                m_facts[incoming].memberFlags |= GivesCellsBehindBlock;
+            }
+        }
+    }
+
     void noteWhatBlockHolds(unsigned block)
     {
         for (unsigned head = m_firstHeadOfBlock[block]; head != none; head = m_facts[head].nextHeadInBlock) {
@@ -817,9 +869,8 @@ private:
     }
 
     // The load that made a pointer whose owner is last read in front of the position, if there is one.
-    const B3::MemoryValue* findLoadWithoutOwner(unsigned pointer, unsigned block, unsigned position)
+    const B3::MemoryValue* findLoadWithoutOwner(unsigned pointer, unsigned block, unsigned position, bool givesCells)
     {
-        bool givesCells = m_facts[find(pointer)].classFlags & MayGiveCells;
         ++m_query;
         m_classesToAsk.shrink(0);
         m_classesToAsk.append(find(pointer));
@@ -978,7 +1029,7 @@ private:
         m_end.fill(0, m_facts.size());
         m_queryOfClass.fill(0, m_facts.size());
         unsigned notedBlock = none;
-        UncheckedKeyHashSet<std::pair<const B3::MemoryValue*, Inst*>> reported;
+        ReportedPlaces reported;
         for (unsigned pointer : m_pointers) {
             const Safepoint* safepoint = lastSafepointReachedBy(pointer);
             if (!safepoint)
@@ -987,19 +1038,30 @@ private:
             const Facts& facts = m_facts[pointer];
             if (std::exchange(notedBlock, facts.block) != facts.block)
                 noteWhatBlockHolds(facts.block);
-            // Whoever is handed a pointer and its owner holds the owner for as long as it needs the pointer.
-            bool isOnlyOperand = endOf(facts) == safepoint->position;
-            const B3::MemoryValue* load = findLoadWithoutOwner(pointer, facts.block, safepoint->position + !isOnlyOperand);
-            if (!load || !reported.add({ load, safepoint->inst }).isNewEntry)
-                continue;
-            StringPrintStream detail;
-            detail.print(": ", deepDump(m_code.proc(), load), isOnlyOperand ? " is an operand of " : " is read behind ", *safepoint->inst, " in block #", facts.block);
-            if (facts.lastRead > safepoint->position)
-                detail.print(" by ", m_code[facts.block]->at((facts.lastRead - 1) / 2));
-            else if (!isOnlyOperand)
-                detail.print(" by a later block");
-            m_findings.violations.append(InnerPointerViolation { load->origin(), safepoint->inst->origin->origin(), detail.toString() });
+            // What the scan keeps by the pointer alone needs its owner only up to the last read that may give a cell.
+            unsigned endOfCells = endOfReadsThatMayGiveCells(facts);
+            if (const Safepoint* safepointOfCells = lastSafepointUpTo(pointer, endOfCells))
+                reportUnlessOwnerIsHeld(reported, pointer, *safepointOfCells, endOfCells, facts.lastReadThatMayGiveCells, true);
+            if (endOfCells != endOf(facts))
+                reportUnlessOwnerIsHeld(reported, pointer, *safepoint, endOf(facts), facts.lastRead, false);
         }
+    }
+
+    void reportUnlessOwnerIsHeld(ReportedPlaces& reported, unsigned pointer, const Safepoint& safepoint, unsigned end, unsigned lastReadInBlock, bool givesCells)
+    {
+        const Facts& facts = m_facts[pointer];
+        // Whoever is handed a pointer and its owner holds the owner for as long as it needs the pointer.
+        bool isOnlyOperand = end == safepoint.position;
+        const B3::MemoryValue* load = findLoadWithoutOwner(pointer, facts.block, safepoint.position + !isOnlyOperand, givesCells);
+        if (!load || !reported.add({ load, safepoint.inst }).isNewEntry)
+            return;
+        StringPrintStream detail;
+        detail.print(": ", deepDump(m_code.proc(), load), isOnlyOperand ? " is an operand of " : " is read behind ", *safepoint.inst, " in block #", facts.block);
+        if (lastReadInBlock > safepoint.position)
+            detail.print(" by ", m_code[facts.block]->at((lastReadInBlock - 1) / 2));
+        else if (!isOnlyOperand)
+            detail.print(" by a later block");
+        m_findings.violations.append(InnerPointerViolation { load->origin(), safepoint.inst->origin->origin(), detail.toString() });
     }
 
     Code& m_code;
@@ -1048,6 +1110,7 @@ private:
     Vector<unsigned> m_headsToResolve;
     Vector<unsigned> m_valuesToVisit;
     Vector<unsigned> m_ownersOfSuspects;
+    Vector<unsigned> m_valuesThatGiveCells;
     Vector<unsigned> m_pointers;
 
     Vector<unsigned> m_blockOfEnd;

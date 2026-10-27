@@ -393,7 +393,7 @@ struct JSONParserBuilder final : Emission {
     }
 
     TypeID testedFieldTypeOf(const MemberParse& member) { return fieldTypeToTest(typeStoredInSlotOf(*member.field)); }
-    bool canFillField(const MemberParse& member) { return !passesOnlyUndefinedIntoStoredType(program().at(member.valueType), testedFieldTypeOf(member)); }
+    bool canFillField(const MemberParse& member) { return !member.field->form.contains(FieldForm::IsAccessor) && !passesOnlyUndefinedIntoStoredType(program().at(member.valueType), testedFieldTypeOf(member)); }
     ValueID emitRequireTypeOfMember(ValueID value, const MemberParse& member, BlockID otherwise) { return emitRequireFieldType(value, typeStoredInSlotOf(*member.field), otherwise); }
     ValueID appendObjectKey(ValueID order, LayoutID layout, const MemberParse& member) { return builder().append(make<&Value::setLayout, &Value::setField>(Opcode::JSONObjectKey, { order }, layout, member.member->field)); }
 

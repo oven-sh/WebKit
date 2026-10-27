@@ -10,7 +10,6 @@
 
 #include "AOTAddGenericVersion.h"
 #include "AOTAnalysisContext.h"
-#include "AOTArrayStorageForms.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
@@ -241,6 +240,7 @@ static bool mayAssumeRequiredType(const FlowBodyApplication& body, const Value& 
     case RequiredTypeHolder::InitializedSlot:
         return hasProvenInitialValues(body, { user.layout(), user.fields()[*user.variadicOperandIndex(operandIndex)] });
     case RequiredTypeHolder::PositionThatFlowFollows:
+    case RequiredTypeHolder::ContentsOfLiteral:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -412,14 +412,14 @@ static std::optional<Type> typeOfListedCallees(const FlowBodyApplication& body, 
 {
     if (!PayloadWord::callees(call.opcode) || !call.callees())
         return std::nullopt;
-    const CalleeSet& callees = body.types.at(call.callees());
-    if (!callees.isComplete || body.results.mayCallBoundFunction(call.accessSite()))
+    std::optional<ProvenValue<Callees>> callees = body.types.at(call.callees()).all();
+    if (!callees || body.results.mayCallBoundFunction(call.accessSite()))
         return std::nullopt;
 
     Type listed;
-    for (FunctionID function : callees.functions)
+    for (FunctionID function : callees->value().functions)
         listed = listed.unionWith(Type::forFunction(function), body.types);
-    for (BuiltinID builtin : callees.builtins)
+    for (BuiltinID builtin : callees->value().builtins)
         listed = listed.unionWith(Type::forBuiltin(builtin), body.types);
 
     bool isConstruction = !!OperandPosition::newTarget(call.opcode);
@@ -436,10 +436,10 @@ static std::optional<Type> typeOfListedReceivers(const FlowBodyApplication& body
 {
     if (!Value::opcodesWithReceivers.contains(access.opcode) || !receiverOf(access.opcode) || !access.receivers())
         return std::nullopt;
-    const LayoutSet& receivers = body.types.at(access.receivers());
-    if (!receivers.isComplete || receivers.hasMembersWithoutLayout)
+    auto receivers = body.types.at(access.receivers()).all();
+    if (!receivers)
         return std::nullopt;
-    Type listed = receivers.members.isEmpty() ? Type() : Type::forLayoutSet(access.receivers());
+    Type listed = receivers->value().empty() ? Type() : Type::forLayoutSet(access.receivers());
     return listed.withPrimitives(Primitive::All);
 }
 
@@ -621,8 +621,10 @@ static void applyStamps(const FlowBodyApplication& body, const FlowBodyUpdate& u
             allocation.setAllocationClass(stamp.allocationClass);
         if (stamp.elements)
             allocation.setContents(stamp.elements);
-        if (allocation.opcode == Opcode::NewArray)
+        if (allocation.opcode == Opcode::NewArray) {
+            allocation.setContentsAreProven(stamp.elementsAreProven);
             allocation.setArrayStorage(stamp.arrayStorage);
+        }
         if (allocation.opcode == Opcode::NewObject && body.program.at(allocation.layout()).isEnvironment())
             stopListingStartsThatNobodyReads(body, allocation);
     }
@@ -888,15 +890,6 @@ static void eraseNamesTakenFromOneKey(const FlowCastInsertion& insertion, std::s
     }
 }
 
-static bool mayBeStoredWithOtherType(const Program& program, const Value& allocation, uint32_t operandIndex)
-{
-    std::optional<uint32_t> valueIndex = allocation.variadicOperandIndex(operandIndex);
-    if (!valueIndex)
-        return false;
-    FieldReference field = declarationOf(program, { allocation.layout(), allocation.fields()[*valueIndex] });
-    return !fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType);
-}
-
 bool takesOnlyWhatFlowHolds(const Program& program, const Value& store, uint32_t operandIndex)
 {
     switch (holderOfRequiredTypes(program, store)) {
@@ -906,10 +899,11 @@ bool takesOnlyWhatFlowHolds(const Program& program, const Value& store, uint32_t
         std::optional<uint32_t> valueIndex = store.variadicOperandIndex(operandIndex);
         if (!valueIndex)
             return false;
-        // The run behind flow takes back the field whose listed value no store can test.
-        return !mayBeStoredWithOtherType(program, store, operandIndex) || !canStoreInitialValueBehindAllocation(program, store, *valueIndex);
+        FieldReference field = declarationOf(program, { store.layout(), store.fields()[*valueIndex] });
+        return fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || !canStoreInitialValueBehindAllocation(program, store, *valueIndex);
     }
     case RequiredTypeHolder::PositionThatFlowFollows:
+    case RequiredTypeHolder::ContentsOfLiteral:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -950,6 +944,8 @@ static void assumeClaimedTypes(Function& function, IRBuilder& builder, std::span
 static void assumeTypesOfPositionsAtStores(const Program& program, Function& function, TypeArena& types, FunctionAnalyses& analyses, IRBuilder& builder, ValidatesClaims validatesClaims)
 {
     PredictedValues predicted(function, analyses.cfg());
+    if (!predicted.hasChecks())
+        return;
     // What is proven of a position that takes the very value that a check tests may rest on that check.
     std::optional<BitVector> checkedValuesThemselves;
     auto isCheckedValueItself = [&](ValueID value) {
@@ -980,34 +976,13 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
             return false;
         return definition.opcode != Opcode::AssumeType || definition.isBehindChecks() || !types.at(definition.provenType()).isSubsetOf(types.at(claimed), program);
     };
-    // A literal is born with the storage that fits the types of its elements: one whose element is not known to be a number gets the storage that holds everything.
-    // Its contents are what flow holds, cut by no type, so they hold of the very value that a check tests too.
-    BitVector literalsSeen;
-    auto visitElementsOfLiteral = [&](ValueID array, TypeID claimed) {
-        const ClassPart* part = types.at(claimed).singleBuiltinClass();
-        if (!part || !part->contentsAreProven)
-            return;
-        // A claim that names no storage leaves its readers to expect the storage that holds its contents.
-        ArrayStorage storage = arrayStorageDeclaredBy(program, *part);
-        if (storage != ArrayStorage::Int32 && storage != ArrayStorage::Double)
-            return;
-        ValueID literal = sameObjectThroughCasts(function, array);
-        if (function.at(literal).opcode != Opcode::NewArray || literalsSeen.set(literal.index()))
-            return;
-        TypeID elements = part->contentsAt(program.builtins(), ContentsSlot::Element);
-        for (uint32_t index = OperandIndex::NewArray::elements; index < function.at(literal).numberOfOperands(); ++index) {
-            ValueID element = function.at(literal).operand(index);
-            // What is read from a position that holds something else than was predicted for it is typed as anything.
-            bool fitsByItsType = types.at(function.at(element).type).isNever() || fitsStorageOfLiteral(storage, types.at(function.at(element).type));
-            if (!fitsByItsType || isTypedOnCredit(element, elements))
-                found.append({ analyses.useLists().pointOf(literal), literal, index, elements });
-        }
-    };
     auto visit = [&](ProgramPoint point, ValueID user, ValueID stored, uint32_t operandIndex, TypeID required) {
-        if (!required || required == TypeTable::anything || !isTypedOnCredit(stored, required) || isCheckedValueItself(stored))
+        if (!required || required == TypeTable::anything || !isTypedOnCredit(stored, required))
+            return;
+        bool mayRestOnCheckOfStoredValue = !user || holderOfRequiredTypes(program, function.at(user)) != RequiredTypeHolder::ContentsOfLiteral;
+        if (mayRestOnCheckOfStoredValue && isCheckedValueItself(stored))
             return;
         found.append({ point, user, operandIndex, required });
-        visitElementsOfLiteral(stored, required);
     };
 
     const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
@@ -1019,25 +994,19 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
         for (uint32_t index = 0; index < numberOfValues; ++index) {
             ValueID user = contents.values[index];
             const Value& value = function.at(user);
-            // It need not come by a position of this function: it may be stored by name.
-            if (value.opcode == Opcode::AssumeType)
-                visitElementsOfLiteral(value.valueOperand(), value.provenType());
-            if (!predicted.hasChecks() || !opcodesWithRequiredTypes.contains(value.opcode))
+            if (!opcodesWithRequiredTypes.contains(value.opcode))
                 continue;
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 if (value.operandKind(operandIndex) != OperandKind::Declared)
                     return;
                 TypeID required = requiredTypeOfOperand(typing, value, operandIndex);
-                bool isSlotOfObject = holderOfRequiredTypes(program, value) == RequiredTypeHolder::InitializedSlot;
-                if (takesOnlyWhatFlowHolds(program, value, operandIndex) && !(isSlotOfObject && mayBeStoredWithOtherType(program, value, operandIndex)))
+                if (takesOnlyWhatFlowHolds(program, value, operandIndex))
                     return visit({ block, index }, user, operand, operandIndex, required);
-                // Of the slot of an object at which a value of another type arrives flow leaves out primitives, and no object. No test of a store tells what is proven of the instances of a class: that is flow's word.
-                if (required && isSlotOfObject && types.at(required) != types.at(required).withoutClassProofs())
+                // Of the slot of an object that a store tests flow leaves out primitives, and no object. No test of a store tells what is proven of the instances of a class: that is flow's word.
+                if (required && holderOfRequiredTypes(program, value) == RequiredTypeHolder::InitializedSlot && types.at(required) != types.at(required).withoutClassProofs())
                     visit({ block, index }, user, operand, operandIndex, types.withPrimitives(required, Primitive::All));
             });
         }
-        if (!predicted.hasChecks())
-            continue;
         const Terminator& terminator = contents.terminator;
         if (terminator.kind == TerminatorKind::Return)
             visit({ block, numberOfValues }, { }, terminator.valueOperand(), OperandIndex::Return::value, requiredResult);

@@ -15,6 +15,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTDeferDefinitions.h"
 #include "AOTDefinitions.h"
+#include "AOTDescriptorLiteral.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectSummaries.h"
 #include "AOTEffectsDescription.h"
@@ -1048,15 +1049,16 @@ struct MovableCode {
             return { };
         CalleeList callees = calleesOfCall(program, call);
         // What the call of this run hands on says more than what all calls hand on.
-        if (!callees.isComplete && call.opcode != Opcode::CallDirect && hasOnlyFunctions(typeOf(caller, call.calleeOperand()))) {
+        if (!callees.listsEveryCallee() && call.opcode != Opcode::CallDirect && hasOnlyFunctions(typeOf(caller, call.calleeOperand()))) {
             callees = CalleeList::none();
             for (FunctionID function : typeOf(caller, call.calleeOperand()).functions)
                 callees.add(function);
         }
-        if (!callees.isComplete || !callees.builtins.isEmpty() || callees.functions.isEmpty())
+        std::optional<ProvenValue<std::span<const FunctionID>>> functions = callees.functionsAlone();
+        if (!functions || functions->value().empty())
             return { };
         InitializerCalleeAnswer result { true, true };
-        for (FunctionID id : callees.functions) {
+        for (FunctionID id : functions->value()) {
             const Function& callee = program.at(id);
             unsigned numberOfParameters = callee.numberOfEntryParameters();
             // A rest parameter and `arguments` are made at the entrance, which this does not follow.
@@ -1194,7 +1196,7 @@ struct MovableCode {
             const Type& arrayType = typeOf(function, test.objectOperand());
             const ClassPart* part = hasOnlyPristineArrays(arrayType) ? arrayType.singleBuiltinClass() : nullptr;
             BlockID taken = block.terminator.targets[0].block;
-            if (!part || !part->contentsAreProven || part->contents.isEmpty() || numberOfPredecessors[taken.index()] != 1)
+            if (!part || !part->contentsAreProven || part->writtenContents.isEmpty() || numberOfPredecessors[taken.index()] != 1)
                 continue;
             // Nothing in front of the read has run that could take the element away.
             const BlockValues& values = function.at(taken).values;
@@ -1204,7 +1206,7 @@ struct MovableCode {
             const Value& read = function.at(*found);
             if (sameObjectThroughCasts(function, read.objectOperand()) == sameObjectThroughCasts(function, test.objectOperand())
                 && definitionThroughUpcasts(function, read.propertyOperand()) == definitionThroughUpcasts(function, test.propertyOperand()))
-                narrowings.append({ taken, static_cast<uint32_t>(found - values.begin()), part->contents[0] });
+                narrowings.append({ taken, static_cast<uint32_t>(found - values.begin()), *part->provenContentsAt(0) });
         }
         if (narrowings.isEmpty())
             return;
@@ -1460,14 +1462,8 @@ struct MovableCode {
             if (!isCast(function.at(descriptor).opcode))
                 break;
         }
-        const Value& literal = function.at(descriptor);
-        if (literal.opcode != Opcode::NewObject || literal.prototypeOperand() || program.at(literal.layout()).kind != LayoutKind::Record)
-            return false;
-        return std::ranges::all_of(literal.fields(), [&](uint32_t index) {
-            const Field& field = program.at(literal.layout()).fields[index];
-            bool isKnown = field.key && (isText(field.key, "value"_s) || isText(field.key, "writable"_s) || isText(field.key, "enumerable"_s) || isText(field.key, "configurable"_s));
-            return isKnown && !field.form.contains(FieldForm::IsAccessor);
-        });
+        std::optional<DescriptorLiteral> described = readDescriptorLiteral(program, function, function.at(descriptor));
+        return described && !described->isAccessor() && !described->closureEnvironment;
     }
 
     bool mayMoveByEffects(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)

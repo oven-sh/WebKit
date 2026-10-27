@@ -150,7 +150,7 @@ struct GenericVersionBuilder {
         bool isUnsplitGenerator = function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator);
         for (CheckSite& site : sites)
             site.isWorthExit = !standsBetweenMethodReadAndCall(site);
-        bool runsSeldom = isInColderPartOfProgram(context.inputs.heat, program, context.id);
+        bool runsSeldom = isInColderPartOfProgram(context.inputs.heat, program, context.id).predicted();
         if (runsSeldom || isUnsplitGenerator || function.role == FunctionRole::GenericVersion || keepsMoreAliveOverAwaitThanFrameMapHolds() || !tryCreateGenericVersion()) {
             if (function.role != FunctionRole::GenericVersion) {
                 context.build.statistics().count(StatisticID::GenericVersionsNotCreated);
@@ -261,9 +261,12 @@ struct GenericVersionBuilder {
             const Value& user = function.at(use.user);
             if (user.operandUses(use.operandIndex) != OperandUses { OperandUse::Retains })
                 return false;
-            // The type of an array literal follows its elements. So only calls and that store count among the operations that take any value.
+            // Only calls and that store count among the operations that take any value.
             if (user.operandKind(use.operandIndex) == OperandKind::Any)
                 return effectRuleOf(user.opcode) == EffectRule::Call || isOnlyStore(use.user);
+            // The storage of an array literal that names none follows the types of its elements.
+            if (holderOfRequiredTypes(program, user) == RequiredTypeHolder::ContentsOfLiteral)
+                return false;
             return user.operandKind(use.operandIndex) == OperandKind::Declared && takesAnything(requiredTypeOfOperand(typing, user, use.operandIndex));
         });
     }
@@ -520,7 +523,7 @@ struct GenericVersionBuilder {
             const Block& after = function.at(cut.blockAfter);
             if (blockBefore.terminator.kind != TerminatorKind::Jump || blockBefore.terminator.next().block != cut.blockAfter)
                 continue;
-            if (!after.parameters.isEmpty() || blockBefore.handler != after.handler || blockBefore.frequency != after.frequency || !cfg.singleIncomingEdge(cut.blockAfter))
+            if (!after.parameters.isEmpty() || blockBefore.handler != after.handler || !blockBefore.frequency.isSamePredictionAs(after.frequency) || !cfg.singleIncomingEdge(cut.blockAfter))
                 continue;
             Block& before = function.edit(cut.blockBefore, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
             Block merged = std::exchange(function.edit(cut.blockAfter), Block { });
@@ -771,7 +774,7 @@ struct GenericVersionBuilder {
 
         replaceChecksWithGuards(checksWithoutExit.span());
         BitVector isMadeFromCheckedValue = valuesBehind(function, analyses.cfg(), checksWithExit.span());
-        copy.clone([](BlockFrequency frequency) { return frequency == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare; });
+        copy.clone([](Expected<BlockFrequency> frequency) -> Expected<BlockFrequency> { return frequency.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare; });
         forgetProofsInCopy(copy, isMadeFromCheckedValue);
         for (const CheckSite& site : sites) {
             if (site.hasExit)
@@ -952,18 +955,6 @@ static std::optional<Position> storedPosition(const Program& program, FunctionID
     }
 }
 
-// Of the slot of an object flow leaves out the primitives of another type that arrive there: the stores turn them away. Nothing tests a value that has to stay listed in its allocation.
-static bool staysListedUntested(const Program& program, const TypedStore& store)
-{
-    if (!store.operation || holderOfRequiredTypes(program, *store.operation) != RequiredTypeHolder::InitializedSlot)
-        return false;
-    std::optional<uint32_t> valueIndex = store.operation->variadicOperandIndex(store.operandIndex);
-    if (!valueIndex)
-        return false;
-    FieldReference field = declarationOf(program, { store.operation->layout(), store.operation->fields()[*valueIndex] });
-    return !fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) && !canStoreInitialValueBehindAllocation(program, *store.operation, *valueIndex);
-}
-
 static ALWAYS_INLINE std::optional<Position> variableReadBy(const Value& read)
 {
     if (read.opcode == Opcode::GetModuleVariable)
@@ -1039,6 +1030,9 @@ static Vector<TypedStore, 16> findTypedStores(const TypingContext& typing, const
         for (ValueID id : function.at(block).values) {
             const Value& value = function.at(id);
             if (!opcodesWithRequiredTypes.contains(value.opcode))
+                continue;
+            // The contents of a literal are cut by no check, so they take nothing that a check turns away.
+            if (holderOfRequiredTypes(typing.program, value) == RequiredTypeHolder::ContentsOfLiteral)
                 continue;
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 if (value.operandKind(operandIndex) == OperandKind::Declared)
@@ -1341,7 +1335,7 @@ struct PositionsProvenByTypes {
         bool passesList = call.opcode != Opcode::Call && call.opcode != Opcode::Construct && call.opcode != Opcode::SuperConstruct;
         // The bound arguments come first, and the bound `this` takes the place of the operand.
         bool mayCallBoundFunction = call.accessSite() && flow.mayCallBoundFunction(call.accessSite());
-        for (FunctionID callee : program.at(stamp).functions) {
+        for (FunctionID callee : program.at(stamp).followed().value()) {
             if (mayCallBoundFunction) {
                 forEachParameterOf(callee, true, giveUpParameter);
                 continue;
@@ -1385,8 +1379,8 @@ struct PositionsProvenByTypes {
             return append(call.function());
         if ((call.opcode != Opcode::Call && call.opcode != Opcode::CallList) || !call.callees())
             return false;
-        const CalleeSet& callees = program.at(call.callees());
-        return callees.isComplete && callees.builtins.isEmpty() && !callees.functions.isEmpty() && std::ranges::all_of(callees.functions, append);
+        std::optional<ProvenValue<Callees>> callees = program.at(call.callees()).all();
+        return callees && callees->value().builtins.empty() && !callees->value().functions.empty() && std::ranges::all_of(callees->value().functions, append);
     }
 
     // False unless the check passes as long as the positions that are appended hold.
@@ -1792,7 +1786,7 @@ static void appendFieldsGivenObjectsThatChecksTurnAway(const Program& program, c
     }
 }
 
-// After flow only the very value that a check has turned away counts, and what is made from one where it stays listed untested. The body is left as it was.
+// After flow only the very value that a check has turned away counts. The body is left as it was.
 static void collectTaintedStores(const Program& program, FunctionID id, Function& body, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, Vector<Position>& positions)
 {
     const Function& function = body;
@@ -1826,17 +1820,8 @@ static void collectTaintedStores(const Program& program, FunctionID id, Function
             valuesThatMayHaveOtherTypeWithoutChecks.append(store.stored);
     }
     BitVector storedValuesThatCount;
-    std::optional<BitVector> valuesBehindChecksAfterFlow;
     if (!valuesThatMayHaveOtherTypeWithoutChecks.isEmpty()) {
         storedValuesThatCount = isAfterFlow ? valuesThatAre(function, analyses.cfg(), checks.span()) : valuesBehind(function, analyses.cfg(), checks.span());
-        for (const TypedStore& store : stores) {
-            if (!isAfterFlow || !staysListedUntested(program, store))
-                continue;
-            if (!valuesBehindChecksAfterFlow)
-                valuesBehindChecksAfterFlow = valuesBehind(function, analyses.cfg(), checks.span());
-            if (valuesBehindChecksAfterFlow->get(store.stored.index()))
-                storedValuesThatCount.set(store.stored.index());
-        }
         valuesThatMayHaveOtherTypeWithoutChecks.removeAllMatching([&](ValueID stored) { return !storedValuesThatCount.get(stored.index()); });
     }
     if (valuesThatMayHaveOtherTypeWithoutChecks.isEmpty()) {
@@ -1845,9 +1830,10 @@ static void collectTaintedStores(const Program& program, FunctionID id, Function
         return;
     }
 
-    if (isAfterFlow && !valuesBehindChecksAfterFlow)
+    BitVector valuesBehindChecksAfterFlow;
+    if (isAfterFlow)
         valuesBehindChecksAfterFlow = valuesBehind(function, analyses.cfg(), checks.span());
-    const BitVector& isBehindCheck = isAfterFlow ? *valuesBehindChecksAfterFlow : storedValuesThatCount;
+    const BitVector& isBehindCheck = isAfterFlow ? valuesBehindChecksAfterFlow : storedValuesThatCount;
     bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
     UndoLog undoLog;
     {
@@ -2124,7 +2110,14 @@ static uint32_t insertReadChecks(const Program& program, FunctionID id, Function
     return numberOfChecks;
 }
 
-static uint64_t guardTaintedPositions(Program& program, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs)
+void expectFields(Program& program, std::span<const FieldReference> fields, BuildContext& build)
+{
+    for (FieldReference field : fields)
+        markExpected(program, positionOfField(field));
+    markEnforcedFields(program, build);
+}
+
+static uint64_t guardTaintedPositions(Program& program, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, std::span<const FieldReference> fieldsTakenBack = { })
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
     const ParallelLoops& loops = build.parallelLoops();
@@ -2178,6 +2171,9 @@ static uint64_t guardTaintedPositions(Program& program, BuildContext& build, Tai
         AOT::sort(marked);
         removeRepeatedElements(marked);
         marked.removeAllMatching([&](Position position) { return !markExpected(program, position); });
+        for (FieldReference field : std::exchange(fieldsTakenBack, { }))
+            marked.append(positionOfField(field));
+        AOT::sort(marked);
         if (marked.isEmpty())
             break;
         numberOfPositions += marked.size();
@@ -2257,12 +2253,13 @@ void guardTaintedPositionsAfterFlow(Program& program, const FlowResults& flow, B
 {
     PositionsProvenByTypes proofs { program, flow, build };
     proofs.findCandidates();
+    std::span<const FieldReference> fieldsTakenBack = flow.fieldsTakenBack();
     if (!proofs.hasCandidates()) {
-        guardTaintedPositions(program, build, TaintedPositionsRun::AfterFlow, nullptr);
+        guardTaintedPositions(program, build, TaintedPositionsRun::AfterFlow, nullptr, fieldsTakenBack);
         return;
     }
     proofs.solve();
-    while (guardTaintedPositions(program, build, TaintedPositionsRun::AfterFlow, &proofs) && proofs.solve()) { }
+    while (guardTaintedPositions(program, build, TaintedPositionsRun::AfterFlow, &proofs, std::exchange(fieldsTakenBack, { })) && proofs.solve()) { }
     if (proofs.hasCandidates())
         proofs.apply();
 }
@@ -2326,7 +2323,7 @@ static BlockID findCallOfGenericVersion(FunctionPassContext& pass, FunctionID ge
     const Function& function = pass.function;
     for (BlockID id : pass.analyses.cfg().reversePostOrder()) {
         const Block& block = function.at(id);
-        if (block.frequency != BlockFrequency::Rare || block.values.size() != 1 || !block.parameters.isEmpty() || block.terminator.kind != TerminatorKind::ReturnCall)
+        if (block.frequency.predicted() != BlockFrequency::Rare || block.values.size() != 1 || !block.parameters.isEmpty() || block.terminator.kind != TerminatorKind::ReturnCall)
             continue;
         const Value& call = function.at(block.values[0]);
         if (call.opcode == Opcode::CallDirect && call.function() == genericVersion && call.isNeverInlined() && std::ranges::equal(call.variadicOperands(), function.at(entryBlock).parameters.span()))
@@ -2342,7 +2339,7 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
     Vector<Edge, 16> failingEdges;
     for (BlockID id : pass.analyses.cfg().reversePostOrder()) {
         const Block& block = function.at(id);
-        if (!endsBeforeAnyEffect.quickGet(id.index()) || block.frequency != BlockFrequency::Normal || block.handler || !block.terminator.isConditionalBranch())
+        if (!endsBeforeAnyEffect.quickGet(id.index()) || block.frequency.predicted() != BlockFrequency::Normal || block.handler || !block.terminator.isConditionalBranch())
             continue;
         // What fails without being asked goes where the test behind it would send it.
         const Terminator& branch = function.at(block.terminator.conditionOperand()).opcode == Opcode::ShouldFailPrediction ? function.at(block.terminator.notTaken().block).terminator : block.terminator;
@@ -2356,8 +2353,8 @@ static Vector<Edge, 16> findFailingEdgesBeforeAnyEffect(FunctionPassContext& pas
             continue;
         for (uint32_t index = 0; index < block.terminator.targets.size(); ++index) {
             BlockID target = block.terminator.targets[index].block;
-            BlockFrequency frequency = function.at(target).frequency;
-            if (target != restart && (testsState ? frequency != BlockFrequency::Normal : frequency == BlockFrequency::Rare))
+            Expected<BlockFrequency> frequency = function.at(target).frequency;
+            if (target != restart && (testsState ? frequency.predicted() != BlockFrequency::Normal : frequency.predicted() == BlockFrequency::Rare))
                 failingEdges.append(Edge { id, index });
         }
     }

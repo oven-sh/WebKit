@@ -1646,7 +1646,7 @@ static bool markLikelyKeys(FunctionPassContext& context)
                     continue;
                 }
                 // As the call by name that stands in where a Map is not what its type says.
-                if (function.at(use.block).frequency != BlockFrequency::Normal)
+                if (function.at(use.block).frequency.predicted() != BlockFrequency::Normal)
                     continue;
 
                 ValueID sameString;

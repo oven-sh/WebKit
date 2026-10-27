@@ -1,14 +1,14 @@
 # const f = (n) => [n, (() => n |= 0)(), n]; f(1.5)
 # The variable is predicted to hold an int32, a fraction arrives, and no check stands in the function: what is read from the variable is typed as anything.
-# Flow has seen nothing but numbers stored in the literal and has proven storage for doubles. A literal is born with the storage that fits the types of its elements,
-# so flow gives each element that is not typed as a number the proven contents as its type.
+# Flow has seen nothing but numbers stored in the literal and has proven storage for doubles. The literal names that storage and is born with it: its elements are held to its contents,
+# so flow gives each element that is not typed as one of them the proven contents as its type.
 # RUN: valueflow-apply
 # CHECK-LABEL: function f1 name="f"
 # CHECK: [[before]]: anything ~ i32 = GetEnvironmentField
 # CHECK: [[after]]: anything ~ i32 = GetEnvironmentField
 # CHECK: [[first]]: int|fractional ~ i32 = AssumeType [[before]] provenType=int|fractional
 # CHECK: [[last]]: int|fractional ~ i32 = AssumeType [[after]] provenType=int|fractional
-# CHECK: [[literal]]: {{*}} = NewArray [[first]], {{*}}, [[last]] contents=int|fractional
+# CHECK: [[literal]]: {{*}} = NewArray [[first]], {{*}}, [[last]] contents=int|fractional{{*}}arrayStorage=Double
 # CHECK: = AssumeType [[literal]] provenType=Array<int|fractional, proven, Double
 
 module m0 path="main.js" displayPath="main.js" body=f0

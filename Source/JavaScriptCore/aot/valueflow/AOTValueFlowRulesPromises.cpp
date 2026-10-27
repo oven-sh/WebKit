@@ -12,10 +12,10 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static constexpr ValueFlowName promiseValue = nameOf(BuiltinSlots::PromiseValue);
-static constexpr ValueFlowName promiseReason = nameOf(BuiltinSlots::PromiseReason);
-static constexpr ValueFlowName resolvedPromises = ValueFlowName::of(ValueFlowNameKind::ResolvedPromises);
-static constexpr ValueFlowName rejectedPromises = ValueFlowName::of(ValueFlowNameKind::RejectedPromises);
+static constexpr ValueFlowCellName promiseValue = nameOf(BuiltinSlots::PromiseValue);
+static constexpr ValueFlowCellName promiseReason = nameOf(BuiltinSlots::PromiseReason);
+static constexpr ValueFlowCellName resolvedPromises { ValueFlowNameKind::ResolvedPromises };
+static constexpr ValueFlowCellName rejectedPromises { ValueFlowNameKind::RejectedPromises };
 
 void adoptRejectionOf(ValueFlowRuleContext& context, ClimbingSet values, ValueFlowNodeID reason)
 {
@@ -87,15 +87,15 @@ static bool mayLackBuiltinThen(ValueFlowRuleContext& context, ClimbingSet promis
     ClimbingSet untrackedObject(context.universe().untrackedObjectAlone());
     PropertyKeyID then = context.program().keyOf(BuiltinNames::then);
     for (ValueFlowName name : { ValueFlowName::property(then), ValueFlowName::getter(then), ValueFlowName::of(ValueFlowNameKind::CopiedFrom) }) {
-        if (holdsSomething(context, context.valueOf(context.read(promises, name))))
+        if (holdsSomething(context, context.valueOf(context.readWhatWasWritten(promises, name))))
             return true;
-        if (mayBeUntracked && holdsSomething(context, context.valueOf(context.read(untrackedObject, name))))
+        if (mayBeUntracked && holdsSomething(context, context.valueOf(context.readWhatWasWritten(untrackedObject, name))))
             return true;
     }
     ValueSetID otherPrototypes = ValueSets::complement(context.maker().of(context.universe().objectOf(Builtins::PromisePrototype)));
-    if (context.meet(context.valueOf(context.read(promises, prototypeLinkName)), otherPrototypes))
+    if (context.meet(context.valueOf(context.readWhatWasWritten(promises, prototypeLinkName)), otherPrototypes))
         return true;
-    return mayBeUntracked && context.meet(context.valueOf(context.read(untrackedObject, prototypeLinkName)), otherPrototypes);
+    return mayBeUntracked && context.meet(context.valueOf(context.readWhatWasWritten(untrackedObject, prototypeLinkName)), otherPrototypes);
 }
 
 static ClimbingSet instancesFindingBuiltinThen(ValueFlowRuleContext& context, ClimbingSet instances)
@@ -228,7 +228,7 @@ void settlePromisesThrough(ClimbingSet functions, const ValueFlowBuiltinCall& ca
 void letNativeCodeSettlePromises(ValueFlowRuleContext& context, ClimbingSet escaped)
 {
     ValueSetID passedByNativeCode = unknownValue(context, ValueFlowUnknownSource::ParameterOfEscapedFunction);
-    auto settle = [&](ValueFlowName settledPromises, ValueFlowName slot) {
+    auto settle = [&](ValueFlowCellName settledPromises, ValueFlowCellName slot) {
         forEachNodeOfSlotWrittenThrough(context, context.valueOf(context.read(escaped, settledPromises)), slot, [&](ValueFlowNodeID held) {
             context.add(held, passedByNativeCode);
         });

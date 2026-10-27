@@ -102,7 +102,7 @@ static void stampAllocationsOfBuiltinInstances(const ValueFlowResultInputs& inpu
             AllocationSiteID site(nextSite++);
             tables.sites.allocationSites[site.index()] = AllocationSite { FunctionID(index), { }, instance.builtinClass, allocationClass, function.locationOf(operation) };
             bool hasElements = facts && function.at(operation).opcode == Opcode::NewArray && indexOfElements < facts->contents.size();
-            stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID(), .arrayStorage = hasElements ? facts->arrayStorageToldToCreator : ArrayStorage::Other });
+            stamps.append(FlowAllocationStamp { .value = operation, .site = site, .allocationClass = allocationClass, .elements = hasElements ? facts->contents[indexOfElements] : TypeID(), .elementsAreProven = hasElements && facts->contentsAreProven, .arrayStorage = hasElements ? facts->arrayStorage : ArrayStorage::Other });
         }
         AOT::sort(stamps, { }, &FlowAllocationStamp::value);
     });
@@ -352,6 +352,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     ValueFlowClassesOfBuiltinResults classesOfBuiltinResults;
     std::unique_ptr<ValueFlowHeapIndex> heapIndex;
     std::unique_ptr<ValueFlowNodesAskedFor> nodesAskedFor;
+    ValueFlowPrototypes prototypes;
 
     Vector<ValueFlowWriteUnderNewName> writesUnderNewNames;
     ValueFlowStampedCalls calls;
@@ -402,6 +403,10 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         inputs.nodesAskedFor = nodesAskedFor.get();
         inputs.classesOfBuiltinResults = &classesOfBuiltinResults;
         inputs.layoutsOfSites = &layoutsOfSites;
+        inputs.prototypes = &prototypes;
+    });
+    auto prototypesFound = add("prototypes"_s, { firstResults }, [&](PhaseTimes&) {
+        prototypes = findPrototypes(inputs);
     });
     if (build.options().verifiesProgram) {
         add("operations without a value"_s, { firstResults }, [&](PhaseTimes&) {
@@ -414,7 +419,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
     auto usesOfTheHeap = add("uses of the heap"_s, { stampedCalls }, [&](PhaseTimes&) {
         usesOfHeap = computeUsesOfHeap(inputs);
     });
-    auto executions = add("executions"_s, { stampedCalls }, [&](PhaseTimes& timesOfStep) {
+    auto executions = add("executions"_s, { stampedCalls, prototypesFound }, [&](PhaseTimes& timesOfStep) {
         computeFunctionResults(inputs, calls, tables);
         computeSinkOperandResults(inputs, calls, tables);
         timesOfStep.didFinish("functions"_s);
@@ -503,7 +508,7 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         orderAllocationSites(inputs.loops(), tables);
     });
     auto stampsOfAccesses = add("accesses: stamps"_s, { contents }, [&](PhaseTimes& timesOfStep) {
-        computeTypeResults(inputs, fieldContents, types, tables, setsOutsideTypes);
+        computeTypeResults(inputs, fieldContents, ledgerOfFieldsIn(*usesOfHeap), types, tables, setsOutsideTypes);
         timesOfStep.didFinish("types: positions"_s);
         computeLayoutsNeverStoredOtherTypes(inputs, fieldContents, types, tables);
         computeSymbolConstantResults(inputs, tables);

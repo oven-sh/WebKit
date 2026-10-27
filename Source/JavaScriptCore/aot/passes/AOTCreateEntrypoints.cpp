@@ -649,7 +649,7 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
             CalleeCandidates candidates = calleeCandidates(program, function, callee);
             for (FunctionID listed : program.typeOf(function, candidates.value).functions)
                 found[0].typedCallees.append({ site, listed });
-            for (FunctionID listed : candidates.expected)
+            for (FunctionID listed : candidates.expected().predicted())
                 found[0].typedCallees.append({ site, listed });
         });
     });
@@ -724,7 +724,7 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
                     foundHere.append({ FoundKind::Function, listed.index() });
                 if (!admitsUnlistedFunctions(program, type) && type.classes.isEmpty())
                     return;
-                for (FunctionID listed : candidates.expected)
+                for (FunctionID listed : candidates.expected().predicted())
                     foundHere.append({ FoundKind::Function, listed.index() });
             }
             if (CalleeSetID stamp = call.callees())
@@ -772,7 +772,7 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
         case FoundKind::Set:
             if (isVisitedSet.quickSet(entry.index))
                 break;
-            for (FunctionID function : program.at(CalleeSetID(entry.index)).functions)
+            for (FunctionID function : program.at(CalleeSetID(entry.index)).followed().value())
                 mayBeEntered.set(function.index());
             break;
         }

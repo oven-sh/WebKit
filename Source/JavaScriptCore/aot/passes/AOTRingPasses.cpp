@@ -349,7 +349,7 @@ static bool mayContainNumbers(const Program& program, const Type& array)
     const ClassPart* part = array.singleBuiltinClass();
     if (!part || part->builtinClass != BuiltinClasses::Array || !part->contentsAreProven)
         return true;
-    return program.at(part->contentsAt(program.builtins(), ContentsSlot::Element)).primitives & Primitive::Number;
+    return program.at(*part->provenContentsAt(program.builtins(), ContentsSlot::Element)).primitives & Primitive::Number;
 }
 
 // The storage kinds that are left for an array are no range of integers, so the type of an ArrayStorageKind cannot say them.
@@ -2212,8 +2212,8 @@ struct ControlFlowSimplifier {
         if (numberOfIncomingEdges * numberOfArguments > numberOfIncomingEdges + numberOfArguments)
             return false;
         BlockID target = block.terminator.next().block;
-        BlockFrequency targetFrequency = function.at(target).frequency;
-        return target != id && rarerOf(block.frequency, targetFrequency) == targetFrequency;
+        Expected<BlockFrequency> targetFrequency = function.at(target).frequency;
+        return target != id && rarerOf(block.frequency, targetFrequency).isSamePredictionAs(targetFrequency);
     }
 
     static ValueID testedValueOf(const Terminator& terminator)
@@ -2452,7 +2452,7 @@ struct ControlFlowSimplifier {
         block.terminator = WTF::move(successor.terminator);
         if (choice == HandlerChoice::TakeSuccessorHandler)
             block.handler = WTF::move(successor.handler);
-        mayFindMoreAtOnce |= rarerOf(block.frequency, successor.frequency) != block.frequency || (block.values.isEmpty() && block.parameters.isEmpty());
+        mayFindMoreAtOnce |= !rarerOf(block.frequency, successor.frequency).isSamePredictionAs(block.frequency) || (block.values.isEmpty() && block.parameters.isEmpty());
         block.frequency = rarerOf(block.frequency, successor.frequency);
         if (throwingUncoveredBlocks.get(next->index()))
             throwingUncoveredBlocks.set(id.index());
@@ -3099,7 +3099,7 @@ static const Value* findTypeTestThatEnds(Rewrite& rewrite, const Block& block)
 
 static void testNarrowerTypeFirst(Rewrite& rewrite, BlockID id, const Block& block)
 {
-    if (block.frequency == BlockFrequency::Rare || block.handler)
+    if (block.frequency.predicted() == BlockFrequency::Rare || block.handler)
         return;
     const Value* wider = findTypeTestThatEnds(rewrite, block);
     const Target& proven = block.terminator.targets[0];
@@ -3121,13 +3121,13 @@ static void testNarrowerTypeFirst(Rewrite& rewrite, BlockID id, const Block& blo
     if (wider->testedType() == narrower->testedType() || !narrowerType.isSubsetOf(widerType, rewrite.program))
         return;
     // `links[id] ??= ..`, `session().project`: the second test asks whether there is nothing. Mostly there is something, which would fail it, then pass the first test on the failing side and be asked again.
-    if (narrowerType.isUndefinedOrNull() || rewrite.at(provenNarrower.block).frequency > rewrite.at(nextBlock.terminator.targets[1].block).frequency)
+    if (narrowerType.isUndefinedOrNull() || (rewrite.at(provenNarrower.block).frequency > rewrite.at(nextBlock.terminator.targets[1].block).frequency).predicted())
         return;
 
     rewrite.claim(id);
     rewrite.claim(next);
     // Where the first test admits nothing beside the second but undefined and null, flow expects `undefined|number` and the use needs a number: the rest is unlikely.
-    BlockFrequency frequencyOfRest = widerType.withoutNullish().isSubsetOf(narrowerType, rewrite.program) ? BlockFrequency::Unlikely : block.frequency;
+    Expected<BlockFrequency> frequencyOfRest = widerType.withoutNullish().isSubsetOf(narrowerType, rewrite.program) ? BlockFrequency::Unlikely : block.frequency;
     rewrite.later([&rewrite, id, test = block.values.last(), narrowerType = narrower->testedType(), provenNarrower = Target(provenNarrower), frequencyOfRest]() mutable {
         IRBuilder& builder = rewrite.builder();
         Target taken = rewrite.at(id).terminator.targets[0];

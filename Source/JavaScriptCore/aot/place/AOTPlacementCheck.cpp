@@ -359,7 +359,7 @@ struct PlannedLayoutCheck : PlacementCheckContext {
         const Field& declaration = fieldAt(program, declarationOf(program, { id, index }));
         const Type& type = program.at(slotTypeOf(program, declaration));
 
-        expect(canHoldType(slot.representation, type), PlacementRule::RepresentationCannotHoldType);
+        expect(canHoldType(slot.representation, slotHoldsUndefinedAndNull(program, { id, index }) ? type.withPrimitives(Primitive::UndefinedOrNull) : type), PlacementRule::RepresentationCannotHoldType);
         expect(canLeaveSlot(slot.representation) || canOmitAbsentState(declaration.flow), PlacementRule::AbsentStateMissing);
         expect(isStorageAllowed(slot, type), PlacementRule::OutOfLineNotAllowed);
         expect(hasRequiredWidth(index, slot), PlacementRule::WideReferenceMissing);
@@ -541,7 +541,7 @@ static bool isInterned(const Program& program, LayoutSetID set)
 
 static LayoutID firstMemberOf(const Program& program, LayoutSetID set)
 {
-    auto& members = program.at(set).members;
+    auto& members = program.at(set).written();
     return members.isEmpty() ? LayoutID() : members.first();
 }
 
@@ -737,8 +737,8 @@ static PlacementRule findKnownShapeFailure(const ShapeTable& shapes, const Shape
 static PlacementRule findKnownSetFailure(const PlacementCheckContext& context, const ShapeTest& test, LayoutSetID tested, LayoutSetID known)
 {
     // An object of a member that exists without a shape, such as a module namespace object, is none of the set's member shapes.
-    const LayoutSet& set = context.program.at(known);
-    bool listsEveryObjectByShape = set.isComplete && std::ranges::all_of(set.members, [&](LayoutID member) {
+    auto all = context.program.at(known).all();
+    bool listsEveryObjectByShape = all && std::ranges::all_of(*all, [&](LayoutID member) {
         return context.slots.storageOf(member) == LayoutStorage::CompiledObject || context.program.at(member).flow.allocation == AllocationState::NeverAllocated;
     });
     if (!listsEveryObjectByShape)
@@ -752,7 +752,7 @@ static void checkSetTest(const PlacementCheckContext& context, LayoutSetID set, 
     if (!context.expect(context.shapes.hasTestOf(set), PlacementRule::MemberShapesWrong, subject))
         return;
     Vector<uint32_t, 16> expectedShapes;
-    for (LayoutID member : context.program.at(set).members) {
+    for (LayoutID member : context.program.at(set).written()) {
         if (context.slots.storageOf(member) != LayoutStorage::CompiledObject)
             continue;
         ShapeRange range = context.shapes.shapesOf(member);
@@ -813,7 +813,7 @@ static bool isCoverageValid(const Program& program, const FieldAccess& access, c
 {
     if (agreement.groups.isEmpty())
         return access.coverage == FieldAccess::Coverage::NoMember && !access.slot.hasStorage();
-    if (!isInterned(program, access.membersWithField) || !std::ranges::equal(program.at(access.membersWithField).members, membersWithSlot))
+    if (!isInterned(program, access.membersWithField) || !std::ranges::equal(program.at(access.membersWithField).written(), membersWithSlot))
         return false;
     switch (access.coverage) {
     case FieldAccess::Coverage::NoMember:
@@ -1237,13 +1237,11 @@ static SiteCellKind siteCellKindOf(Opcode opcode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// A slot keeps its markers whatever the type of its field says, so undefined and null stay in it and are no values of another type.
-static bool slotAdmits(const Program& program, SlotRepresentation representation, const Type& contents, const Type& stored)
+static bool slotAdmits(const Program& program, bool holdsUndefinedAndNull, const Type& contents, const Type& stored)
 {
-    uint16_t markers = markerPrimitivesOf(traitsOf(representation)) & Primitive::UndefinedOrNull;
-    if (!(stored.primitives & markers & ~contents.primitives))
+    if (!holdsUndefinedAndNull || !(stored.primitives & Primitive::UndefinedOrNull & ~contents.primitives))
         return stored.isSubsetOf(contents, program);
-    return stored.isSubsetOf(contents.withPrimitives(markers), program);
+    return stored.isSubsetOf(contents.withPrimitives(Primitive::UndefinedOrNull), program);
 }
 
 namespace {
@@ -1299,6 +1297,8 @@ struct SiteCheck : PlacementCheckContext {
             checkAccessStore(id, value.fieldAccess(), value.operand(*storedOf(value.opcode)));
         if (value.opcode == Opcode::NewObject)
             checkInitialValues(id, value);
+        if (value.opcode == Opcode::NewArray)
+            checkElements(id, value);
         if (value.opcode == Opcode::GetSlot)
             checkReadOfFilledSlot(id, value);
         if (value.opcode == Opcode::PutSlot)
@@ -1504,9 +1504,9 @@ struct SiteCheck : PlacementCheckContext {
         return uses.useCount(closure) == 1;
     }
 
-    void checkStoredValue(ValueID site, ValueID stored, SlotRepresentation representation, const Type& contents, const Invocable<bool(FunctionID)> auto& isDeferredFunction)
+    void checkStoredValue(ValueID site, ValueID stored, SlotRepresentation representation, bool holdsUndefinedAndNull, const Type& contents, const Invocable<bool(FunctionID)> auto& isDeferredFunction)
     {
-        expect(slotAdmits(program, representation, contents, program.typeOf(function, stored)), PlacementRule::StoredTypeTooWide, site);
+        expect(slotAdmits(program, holdsUndefinedAndNull, contents, program.typeOf(function, stored)), PlacementRule::StoredTypeTooWide, site);
         if (representation != SlotRepresentation::DeferredClosure)
             return;
 
@@ -1523,8 +1523,12 @@ struct SiteCheck : PlacementCheckContext {
         const FieldAccess* access = accessAt(accessID);
         if (!access || !access->slot.hasStorage())
             return;
-        checkStoredValue(id, stored, access->slot.representation, program.at(access->contents), [&](FunctionID deferred) {
-            return std::ranges::all_of(program.at(access->membersWithField).members, [&](LayoutID member) {
+        bool holdUndefinedAndNull = std::ranges::all_of(program.at(access->membersWithField).completeMembers(), [&](LayoutID member) {
+            std::optional<uint32_t> field = program.at(member).findField(access->key);
+            return field && slotHoldsUndefinedAndNull(program, { member, *field });
+        });
+        checkStoredValue(id, stored, access->slot.representation, holdUndefinedAndNull, program.at(access->contents), [&](FunctionID deferred) {
+            return std::ranges::all_of(program.at(access->membersWithField).completeMembers(), [&](LayoutID member) {
                 const PlacedSlot* slot = slotOf(member, access->key);
                 return slot && slot->deferredFunction == deferred;
             });
@@ -1545,13 +1549,23 @@ struct SiteCheck : PlacementCheckContext {
             if (fields[index] >= numberOfFields || !slot.hasStorage())
                 continue;
             const Field& declaration = fieldAt(program, declarationOf(program, { layout, fields[index] }));
-            checkStoredValue(id, values[index], slot.representation, program.at(slotTypeOf(program, declaration)), [&](FunctionID deferred) {
+            checkStoredValue(id, values[index], slot.representation, slotHoldsUndefinedAndNull(program, { layout, fields[index] }), program.at(slotTypeOf(program, declaration)), [&](FunctionID deferred) {
                 return slot.deferredFunction == deferred;
             });
             listsClosureOverEnvironment |= slot.deferredClosureCapturesEnvironment;
         }
         std::optional<uint32_t> environmentField = program.at(layout).flow.closureEnvironmentField;
         expect(!listsClosureOverEnvironment || (environmentField && std::ranges::find(fields, *environmentField) != fields.end()), PlacementRule::DeferredClosureStore, id);
+    }
+
+    void checkElements(ValueID id, const Value& literal)
+    {
+        if (!holdsOnlyNumbers(literal.arrayStorage()))
+            return;
+        const Type& contents = program.at(literal.contents());
+        expect(literal.contentsAreProven() && canStoreWithoutConversion(literal.arrayStorage(), contents), PlacementRule::StoredTypeTooWide, id);
+        for (ValueID element : literal.elementsOperands())
+            expect(program.typeOf(function, element).isSubsetOf(contents, program), PlacementRule::StoredTypeTooWide, id);
     }
 
     void checkReadOfFilledSlot(ValueID id, const Value& value)
@@ -1563,7 +1577,7 @@ struct SiteCheck : PlacementCheckContext {
         bool mayReadAbsent = !access->slot.isOutOfLine() && (program.at(access->contents).primitives & Primitive::Absent);
         if (access->coverage == FieldAccess::Coverage::EveryMember && !mayReadAbsent)
             return;
-        bool isAlwaysFilled = std::ranges::all_of(program.at(access->receivers).members, [&](LayoutID member) {
+        bool isAlwaysFilled = std::ranges::all_of(program.at(access->receivers).completeMembers(), [&](LayoutID member) {
             std::optional<uint32_t> field = program.at(member).findField(access->key);
             return field && flowOf(program, { member, *field }).occupancy == Occupancy::AlwaysFilled;
         });
@@ -1576,7 +1590,7 @@ struct SiteCheck : PlacementCheckContext {
         const FieldAccess* access = accessAt(value.fieldAccess());
         if (!access || !access->slot.hasStorage())
             return;
-        bool mayLackStorage = std::ranges::any_of(program.at(access->membersWithField).members, [&](LayoutID member) {
+        bool mayLackStorage = std::ranges::any_of(program.at(access->membersWithField).completeMembers(), [&](LayoutID member) {
             const PlacedSlot* slot = slotOf(member, access->key);
             return slot && slot->mayExistWithoutStorage;
         });

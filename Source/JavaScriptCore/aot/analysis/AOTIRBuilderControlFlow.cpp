@@ -21,7 +21,7 @@ static bool hasContents(const Block& block)
 {
     const Terminator& terminator = block.terminator;
     return terminator.kind != TerminatorKind::Unreachable || !terminator.targets.isEmpty() || !block.values.isEmpty() || !block.parameters.isEmpty()
-        || block.handler || block.role != BlockRole::Ordinary || block.subject || block.frequency != BlockFrequency::Normal;
+        || block.handler || block.role != BlockRole::Ordinary || block.subject || block.frequency.predicted() != BlockFrequency::Normal;
 }
 
 static TypeID partInside(const Program& program, TypeArena& types, TypeID narrower, TypeID type)
@@ -146,7 +146,7 @@ Vector<BlockID> IRBuilder::splitBlock(BlockID block, std::span<const uint32_t> a
         RELEASE_ASSERT(ascendingIndexes[i - 1] < ascendingIndexes[i]);
     RELEASE_ASSERT(ascendingIndexes.back() <= numberOfValues);
 
-    BlockFrequency frequency = m_function.at(block).frequency;
+    Expected<BlockFrequency> frequency = m_function.at(block).frequency;
     CodeShape shape = m_function.at(block).shape;
     std::optional<Target> handler = std::exchange(m_handler, m_function.at(block).handler);
     parts.reserveInitialCapacity(ascendingIndexes.size());

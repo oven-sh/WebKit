@@ -42,6 +42,17 @@ struct ScratchRegisterConflict {
 // A test of a register against itself is no conflict. A pair loaded off the stack pointer restores what a call would have lost, and need not be read.
 Vector<ScratchRegisterConflict> findScratchRegisterConflicts(std::span<const uint8_t> code, std::span<const uint32_t> entryOffsets);
 
+struct UnreadValue {
+    friend bool operator==(const UnreadValue&, const UnreadValue&) = default;
+
+    GPRReg reg;
+    uint32_t offset;
+};
+
+// Follows x0 to x30 through all of the code, over its branches. A call, a return, an indirect jump, a trap and a jump out of the code read every register.
+// Finds each instruction that gives a register a constant or the value of another register where every path writes the register again before it reads it.
+Vector<UnreadValue> findUnreadConstantsAndCopies(std::span<const uint8_t> code);
+
 void printInstructions(PrintStream&, std::span<const uint8_t> code, uint32_t firstOffset, uint32_t lastOffset);
 
 } } // namespace JSC::AOT

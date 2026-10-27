@@ -16,7 +16,7 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static bool hasNeverResult(const Value& value)
+bool hasNeverResult(const Value& value)
 {
     return value.type == TypeTable::never && resultRuleOf(value.opcode) != ResultRule::None;
 }

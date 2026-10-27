@@ -82,8 +82,8 @@ struct PrototypeLinks {
     ValueSetID classPrototypes;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> linksByObject;
     ValueSetID linksOfAllObjects { ValueSets::nothing };
-    ValueSetID prototypes { ValueSets::nothing };
-    ValueSetID functionsWithNonObjectPrototype { ValueSets::nothing };
+    ValueSetID prototypes;
+    ValueSetID functionsWithNonObjectPrototype;
     HashMap<uint32_t, ValueFlowNodeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> markNodes;
 };
 
@@ -102,6 +102,8 @@ PrototypeLinks::PrototypeLinks(const ValueFlowResultInputs& inputs, const ValueF
     : inputs(inputs)
     , borrowedMaker(inputs.makerPool())
     , maker(borrowedMaker.get())
+    , prototypes(inputs.prototypes->objects)
+    , functionsWithNonObjectPrototype(inputs.prototypes->functionsWithNonObjectPrototype)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -121,22 +123,41 @@ PrototypeLinks::PrototypeLinks(const ValueFlowResultInputs& inputs, const ValueF
             markNodes.add(inputs.solver().keyOfMadeNode(node)->payload, node);
     }
 
+    for (const ValueFlowHeapIndex::Stretch& stretch : heapIndex.stretchesOfNodesWrittenUnder([&](ValueFlowName name) { return name.kind == ValueFlowNameKind::PrototypeLink; })) {
+        for (const WrittenNode& node : stretch.nodes) {
+            if (ValueSets::isComplement(node.objects)) {
+                unite(linksOfAllObjects, node.value);
+                continue;
+            }
+            sets.forEachMember(node.objects, [&](ValueFlowObjectID object) {
+                unite(linksByObject.add(object.index(), ValueSets::nothing).iterator->value, node.value);
+            });
+        }
+    }
+}
+
+ValueFlowPrototypes findPrototypes(const ValueFlowResultInputs& inputs)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    const ValueSets& sets = inputs.sets();
+    BorrowedValueSetMaker borrowedMaker(inputs.makerPool());
+    ValueSetMaker& maker = borrowedMaker.get();
+    auto unite = [&](ValueSetID& into, ValueSetID value) {
+        into = maker.unite(into, value);
+    };
+    ValueSetID prototypes = ValueSets::nothing;
+    ValueSetID functionsWithNonObjectPrototype = ValueSets::nothing;
+
     Vector<WrittenNode> storesToPrototypePropertyOfOtherObjects;
     Vector<WrittenNode> copies;
     ValueFlowName prototypeProperty = ValueFlowName::property(program.keyOf(BuiltinNames::prototype));
-    for (const ValueFlowHeapIndex::Stretch& stretch : heapIndex.stretchesOfNodesWrittenUnder([&](ValueFlowName name) {
+    for (const ValueFlowHeapIndex::Stretch& stretch : inputs.heapIndex->stretchesOfNodesWrittenUnder([&](ValueFlowName name) {
         return name.kind == ValueFlowNameKind::PrototypeLink || name.kind == ValueFlowNameKind::UnknownKey || name.kind == ValueFlowNameKind::CopiedFrom || name == prototypeProperty;
     })) {
         for (const WrittenNode& node : stretch.nodes) {
             if (stretch.name.kind == ValueFlowNameKind::PrototypeLink) {
                 unite(prototypes, node.value);
-                if (ValueSets::isComplement(node.objects)) {
-                    unite(linksOfAllObjects, node.value);
-                    continue;
-                }
-                sets.forEachMember(node.objects, [&](ValueFlowObjectID object) {
-                    unite(linksByObject.add(object.index(), ValueSets::nothing).iterator->value, node.value);
-                });
                 continue;
             }
             bool mayWriteIntoFunction = sets.meet(node.objects, universe.callables());
@@ -174,6 +195,7 @@ PrototypeLinks::PrototypeLinks(const ValueFlowResultInputs& inputs, const ValueF
         if (mayShareObject(store.objects, sources))
             unite(prototypes, store.value);
     }
+    return { prototypes, functionsWithNonObjectPrototype };
 }
 
 static BitVector findLayoutsWithInstances(const ValueFlowResultInputs& inputs)

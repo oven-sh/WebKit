@@ -241,7 +241,7 @@ static const Type& provenElementTypeOf(const Program& program, const Type& list)
     const ClassPart* part = list.singleBuiltinClass();
     if (!part || !part->contentsAreProven)
         return program.at(TypeTable::anything);
-    return program.at(part->contentsAt(program.builtins(), ContentsSlot::Element));
+    return program.at(*part->provenContentsAt(program.builtins(), ContentsSlot::Element));
 }
 
 static void describeListElements(const Program& program, const BuiltinOverload& overload, std::span<const TypeID> arguments, EffectDescription& description)

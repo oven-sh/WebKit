@@ -213,7 +213,7 @@ Boxed ConversionEmitter::box(const OperationContext& context, Operand operand, c
 
 bool ConversionEmitter::isSeldomEntered(const OperationContext& context) const
 {
-    if ((m_placeOnEdge ? m_placeOnEdge->frequency : m_function.at(context.block()).frequency) != BlockFrequency::Normal)
+    if ((m_placeOnEdge ? m_placeOnEdge->frequency : m_function.at(context.block()).frequency).predicted() != BlockFrequency::Normal)
         return true;
     // The forms for such code call a leaf stub. Where that gives a function that calls nothing a frame, a stack check and a poll, only a coroutine body, which has them anyway, takes these forms in all but fast code.
     return (leavesCallerWithoutFrame(AOT::boxNumber(BoxedNumberForm::Double)) || m_function.role == FunctionRole::CoroutineBody) && shapeAt(context) != CodeShape::Fast;

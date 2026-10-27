@@ -63,6 +63,12 @@ constexpr ArrayStorage arrayStorageOf(IndexingType indexingType)
 
 constexpr bool hasArrayStorageForm(ArrayStorage kind) { return findArrayStorageForm(kind); }
 
+constexpr bool holdsOnlyNumbers(ArrayStorage kind)
+{
+    const ArrayStorageForm* form = findArrayStorageForm(kind);
+    return form && !form->holdsCells;
+}
+
 constexpr Representation elementRepresentationOf(ArrayStorage kind)
 {
     const ArrayStorageForm* form = findArrayStorageForm(kind);
@@ -73,8 +79,8 @@ inline constexpr IndexingType arrayStorageTestMask = IndexingShapeMask;
 
 ArrayStorage arrayStorageHolding(const Type& elements);
 // The kind that the declared element type gives an array, for its creators and its readers alike. Other: nothing is declared.
-ArrayStorage arrayStorageDeclaredBy(const Program&, const ClassPart& array);
-ArrayStorage arrayStorageDeclaredBy(const Program&, const Type& array);
+Expected<ArrayStorage> arrayStorageDeclaredBy(const Program&, const ClassPart& array);
+Expected<ArrayStorage> arrayStorageDeclaredBy(const Program&, const Type& array);
 ArrayStorage arrayStorageAtAllocation(const Type& elements);
 ArrayStorage arrayStorageAtAllocation(const Program&, const Type& array);
 
@@ -93,8 +99,11 @@ JS_EXPORT_PRIVATE ArrayStorage arrayStorageOfData(const Program&, const DataNode
 JS_EXPORT_PRIVATE bool isStorageOfArray(const DataNode::Array&);
 // The kind of an array that is created with a length and nothing in it.
 std::optional<ArrayStorage> arrayStorageOfNewHoles(const Value& allocation);
+// NaN marks a hole in Double storage, so an array that is given one gets the storage that holds everything.
 bool canStoreWithoutConversion(ArrayStorage, const Type& stored);
-// A literal whose elements all fit the kind that is declared for it is born with that kind, and with Contiguous otherwise.
+bool canStoreWithoutConversion(ArrayStorage, double stored);
+// A literal that names no storage is born with the kind that is declared for it where all its elements fit that kind, and with Contiguous otherwise.
+// One that names storage for numbers alone is born with it: requiredTypeOfOperand() holds its elements to its proven contents, which are stored there without conversion.
 bool fitsStorageOfLiteral(ArrayStorage, const Type& element);
 
 Type typeOfElementRead(ArrayStorage);

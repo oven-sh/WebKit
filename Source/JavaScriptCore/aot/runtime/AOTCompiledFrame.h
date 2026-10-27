@@ -182,6 +182,8 @@ LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunc
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction);
 // The frame, or a hidden one of the same function below it, stands in the code of a caller that made the function object itself and handed it to nobody.
 bool isCopiedForOwnFunctionObject(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame);
+// All frames below it in its machine frame are hidden ones of the function.
+bool hasOnlyEntrypointsBelow(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame, FunctionID sourceFunction);
 // The frame is that of the stub that stepped the body of an async generator. Behind an await of the body its callers wait for the step, though they are still on the stack.
 bool callersWaitForStep(CallFrame* frameOfStepStub);
 
@@ -261,6 +263,13 @@ public:
 
     JS_EXPORT_PRIVATE void advance();
     JS_EXPORT_PRIVATE void advanceToCallerMachineFrame();
+    // For a walk that has gone over the rest of the run by itself.
+    void leaveRunAt(const Exit& exit, const RunEnd& runEnd)
+    {
+        m_isAtEnd = true;
+        m_exit = exit;
+        m_runEnd = runEnd;
+    }
     // The frame is the last one shown of its run: the functions below wait for the step of an async generator that it belongs to.
     JS_EXPORT_PRIVATE bool isAboveFramesThatWait() const;
     JS_EXPORT_PRIVATE bool isConstructCall();
@@ -269,6 +278,7 @@ public:
     void* callerStackPointer() const { return AOT::stackPointerOfCaller(m_cursor.callFrame, m_cursor.bytesAboveReturnAddress); }
     bool isAtFirstReadSite() const { return m_cursor.isAtFirstReadSite && m_callSite.site.firstReadSite; }
     bool calleeWasEntered() const { return m_calleeWasEntered; }
+    bool isAmongFramesThatWait() const { return m_cursor.isAmongFramesThatWait; }
     EntryFrame* entryFrame() const { return m_cursor.entryFrame; }
     CallFrame* framePointer() const { return m_cursor.framePointer; }
     void* stackPointer() const { return m_cursor.stackPointer; }

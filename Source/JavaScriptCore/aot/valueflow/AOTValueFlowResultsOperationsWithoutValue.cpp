@@ -55,11 +55,12 @@ public:
 private:
     std::span<const ValueFlowStatement> statements() const { return m_inputs.bodies().statementsOf(m_id.index()); }
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const { return m_inputs.bodies().operandsOf(statement); }
+    // What the rule of the operation was shown. Behind a test, that is less than the results say: they let a value that nobody knows through every test.
     ValueSetID valueOf(const ValueFlowOperand& operand)
     {
         if (!m_maker)
             m_maker.emplace(m_inputs.makerPool());
-        return m_inputs.possibleValuesOf(m_maker->get(), operand);
+        return ValueFlowRuleContext::valueShownToRules(operand, m_inputs.solver(), m_maker->get());
     }
     bool holdsNothing(ValueFlowNodeID node) const { return m_inputs.solver().possibleValuesOf(node) == ValueSets::nothing; }
     static bool isGiven(const ValueFlowOperand& operand) { return operand.node || (operand.constant && operand.constant != ValueSets::nothing); }
@@ -69,30 +70,9 @@ private:
         return statement.kind == ValueFlowStatementKind::Operation && statement.result && holdsNothing(statement.result);
     }
 
-    // As ValueFlowResultInputs::throughMaskOf() has it, without making the set.
-    bool holdsNothing(const ValueFlowOperand& operand) const
-    {
-        const ValueSets& sets = m_inputs.sets();
-        auto passes = [&](ValueSetID held) {
-            if (!held || held == ValueSets::nothing)
-                return false;
-            if (!operand.mask)
-                return true;
-            switch (operand.maskKind) {
-            case ValueFlowMaskKind::Plain:
-                return sets.meet(held, operand.mask);
-            case ValueFlowMaskKind::Checked:
-                return sets.meet(held, operand.mask) || sets.meet(held, m_inputs.universe().placeholdersAlone());
-            case ValueFlowMaskKind::Declared:
-            case ValueFlowMaskKind::Expected:
-                return true;
-            }
-            RELEASE_ASSERT_NOT_REACHED();
-        };
-        return !passes(operand.constant) && !(operand.node && passes(m_inputs.solver().possibleValuesOf(operand.node)));
-    }
+    bool holdsNothing(const ValueFlowOperand& operand) { return valueOf(operand) == ValueSets::nothing; }
 
-    bool hasOperandWithoutValue(const ValueFlowStatement& statement) const
+    bool hasOperandWithoutValue(const ValueFlowStatement& statement)
     {
         return std::ranges::any_of(operandsOf(statement), [&](const ValueFlowOperand& operand) {
             return isGiven(operand) && holdsNothing(operand);

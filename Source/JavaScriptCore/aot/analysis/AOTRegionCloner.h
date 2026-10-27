@@ -58,6 +58,7 @@ private:
     static void addVariables(SSARepair&, FunctionAnalyses&, std::span<const RegionCloner* const> clonersOfOneRegion);
 
     void cloneBlocksImpl(std::span<const BlockID> region, NOESCAPE const ScopedLambda<void(ValueID, Value&)>& didCloneValue);
+    bool saysAsMuchAs(ValueID inDestination, ValueID inSource) const;
 
     bool isSameFunction() const { return &m_source == &m_destination.function(); }
 

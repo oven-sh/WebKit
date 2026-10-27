@@ -322,7 +322,7 @@ static bool declareSameType(const Program& program, std::span<const LayoutID> la
 // No value of such a slot tells the layouts apart.
 static bool hasSameTypeInEveryLayout(const Program& program, const Value& read)
 {
-    std::span<const LayoutID> layouts = program.at(read.receivers()).members.span();
+    std::span<const LayoutID> layouts = program.at(read.receivers()).completeMembers();
     PropertyAccessCache* cache = program.propertyAccessCache();
     if (!cache || layouts.size() < PropertyAccessCache::fewestLayouts || TypeTable::isProvisional(read.key()))
         return declareSameType(program, layouts, read.key());
@@ -402,7 +402,7 @@ const Vector<Type>& SlotValueTests::slotTypesByReceiverOf(ValueID read)
     }
     const Function& function = m_analyses.function();
     TypingContext context { m_analyses.program(), function, m_types };
-    const Vector<LayoutID>& receivers = m_types.at(function.at(read).receivers()).members;
+    std::span<const LayoutID> receivers = m_types.at(function.at(read).receivers()).completeMembers();
     auto slotTypes = makeUniqueWithoutFastMallocCheck<Vector<Type>>(receivers.size(), [&](size_t index) {
         return typeOfSlotRead(context, function.at(read), singleElementSpan(receivers[index]));
     });
@@ -433,7 +433,7 @@ const Vector<LayoutID>& SlotValueTests::layoutsRuledOutBy(TestedRead& tested)
 
     std::span<const Edge> incomingEdges = m_analyses.cfg().incomingEdges(tested.target);
     Vector<LayoutID> layouts;
-    const Vector<LayoutID>& receivers = m_types.at(function.at(tested.read).receivers()).members;
+    std::span<const LayoutID> receivers = m_types.at(function.at(tested.read).receivers()).completeMembers();
     const Vector<Type>& slotTypes = slotTypesByReceiverOf(tested.read);
     for (size_t index = 0; index < receivers.size(); ++index) {
         bool isRuledOutOnEveryEdge = std::ranges::all_of(incomingEdges, [&](Edge edge) {
@@ -669,12 +669,12 @@ KnownBoolean evaluateCondition(FunctionAnalyses& analyses, const TypeTestBranche
 
 void raiseFrequenciesBehind(FunctionAnalyses& analyses, Function& function, Edge decided)
 {
-    BlockFrequency expected = function.at(targetOf(function, decided).block).frequency;
-    BlockFrequency actual = function.at(decided.from).frequency;
-    if (!isRarerThan(expected, actual))
+    Expected<BlockFrequency> expected = function.at(targetOf(function, decided).block).frequency;
+    Expected<BlockFrequency> actual = function.at(decided.from).frequency;
+    if (!isRarerThan(expected, actual).predicted())
         return;
     for (BlockID block : analyses.cfg().reversePostOrder()) {
-        if (function.at(block).frequency == expected && analyses.dominates(decided, block))
+        if (function.at(block).frequency.isSamePredictionAs(expected) && analyses.dominates(decided, block))
             function.edit(block, BlockEdit::Rest).frequency = actual;
     }
 }

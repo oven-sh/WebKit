@@ -30,9 +30,9 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr uint64_t iterationsPerLoop = static_cast<uint64_t>(frequencyConstants.iterationsPerLoop);
 static constexpr unsigned maxCountedLoopDepth = 6;
 
-static constexpr uint64_t votesOutsideLoops(BlockFrequency frequency)
+static constexpr uint64_t votesOutsideLoops(Expected<BlockFrequency> frequency)
 {
-    switch (frequency) {
+    switch (frequency.predicted()) {
     case BlockFrequency::Normal:
         return 64;
     case BlockFrequency::Unlikely:
@@ -42,7 +42,7 @@ static constexpr uint64_t votesOutsideLoops(BlockFrequency frequency)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-static constexpr uint64_t votesAt(BlockFrequency frequency, unsigned loopDepth)
+static constexpr uint64_t votesAt(Expected<BlockFrequency> frequency, unsigned loopDepth)
 {
     uint64_t votes = votesOutsideLoops(frequency);
     for (unsigned level = std::min(loopDepth, maxCountedLoopDepth); level--;)
@@ -427,7 +427,7 @@ private:
         BlockID to = targetOf(m_function, edge).block;
         const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
         const BlockCycles::Forest& cycles = m_analyses.blockCycles().forest();
-        BlockFrequency frequency = rarerOf(frequencies.classOf(edge), rarerOf(frequencies.classOf(edge.from), frequencies.classOf(to)));
+        Expected<BlockFrequency> frequency = rarerOf(frequencies.classOf(edge), rarerOf(frequencies.classOf(edge.from), frequencies.classOf(to)));
         return votesAt(frequency, cycles.depth(cycles.nearestCommon(cycles.innermost(edge.from), cycles.innermost(to))));
     }
 

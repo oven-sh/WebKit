@@ -40,6 +40,7 @@
 #include <span>
 #include <utility>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -349,124 +350,185 @@ static void markRareModeArms(BodyRewrite& body)
     body.analyses.invalidate(FunctionAnalysis::Frequencies);
 }
 
-// What the merged await rejects with arrives at the yield as a value that is sent in to be thrown.
-static void moveProofsOfSentValueBehindMode(BodyRewrite& body, BlockID block, ValueID yield)
-{
-    Function& function = body.function;
-    IRBuilder& builder = body.builder;
-    const Terminator& terminator = function.at(block).terminator;
-    if (terminator.kind != TerminatorKind::Switch)
-        return;
+namespace {
 
-    const BlockValues& values = function.at(block).values;
-    ValueID sent;
-    Vector<ValueID, 4> proofs;
-    BitVector proofIndexes(values.size());
-    for (uint32_t index = 0; index < values.size(); ++index) {
-        const Value& value = function.at(values[index]);
-        if (value.opcode == Opcode::ResultAt && value.operand(0) == yield && value.index() == static_cast<uint32_t>(YieldResult::Sent)) {
-            if (sent)
-                return;
-            sent = values[index];
-            continue;
-        }
-        if (!sent || (!isCastWithoutTest(value.opcode) && value.opcode != Opcode::ValidateType))
-            continue;
-        if (value.valueOperand() != sent && !proofs.contains(value.valueOperand()))
-            continue;
-        proofs.append(values[index]);
-        proofIndexes.quickSet(index);
-    }
-    if (proofs.isEmpty())
-        return;
-
-    BlockID throwingArm;
-    Vector<BlockID, 2> otherArms;
-    auto addArm = [&](BlockID arm) {
-        if (!otherArms.contains(arm))
-            otherArms.append(arm);
-    };
-    std::span<const Target> caseTargets = terminator.caseTargets();
-    for (size_t index = 0; index < caseTargets.size(); ++index) {
-        if (terminator.cases()[index] == static_cast<int64_t>(ResumeMode::Throw))
-            throwingArm = caseTargets[index].block;
-        else
-            addArm(caseTargets[index].block);
-    }
-    addArm(terminator.otherwise().block);
-    if (!throwingArm || otherArms.contains(throwingArm))
-        return;
-    const CFG& cfg = body.analyses.cfg();
-    if (!cfg.singleIncomingEdge(throwingArm))
-        return;
-    Vector<Edge, 2> edgesIntoOtherArms;
-    for (BlockID arm : otherArms) {
-        std::optional<Edge> edge = cfg.singleIncomingEdge(arm);
-        if (!edge)
-            return;
-        edgesIntoOtherArms.append(*edge);
-    }
-
+// What the merged await rejects with arrives at the yield as a value that is sent in to be thrown. What is proven of the values that are sent in holds in the arms that do not throw.
+struct ProofsOfSentValue {
     struct UseInArm {
         Use use;
         uint32_t proof;
         // None for the arm that throws.
         std::optional<uint32_t> arm;
     };
+    struct Arm {
+        Edge edge;
+        bool needsOwnBlock;
+    };
+
+    BlockID block;
+    ValueID sent;
+    Vector<ValueID, 4> proofs;
+    Vector<Arm, 2> otherArms;
     Vector<UseInArm, 8> uses;
-    Dominators& dominators = body.analyses.dominators();
+};
+
+} // anonymous namespace
+
+static bool provesWithoutTest(const Value& value)
+{
+    return isCastWithoutTest(value.opcode) || value.opcode == Opcode::ValidateType;
+}
+
+// Nothing where a proof cannot leave its place in front of the switch on the mode.
+static std::optional<ProofsOfSentValue> findProofsOfSentValue(BodyRewrite& body, BlockID block, ValueID yield)
+{
+    const Function& function = body.function;
     const UseLists& useLists = body.analyses.useLists();
-    for (uint32_t proof = 0; proof < proofs.size(); ++proof) {
-        for (const Use& use : useLists.usesOf(proofs[proof])) {
-            if (use.kind == Use::Kind::Operand && proofs.contains(use.user))
+    ProofsOfSentValue found { .block = block };
+    for (const Use& use : useLists.usesOf(yield)) {
+        if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::ResultAt || function.at(use.user).index() != static_cast<uint32_t>(YieldResult::Sent))
+            continue;
+        if (found.sent || use.block != block)
+            return std::nullopt;
+        found.sent = use.user;
+    }
+    if (!found.sent)
+        return found;
+    for (ValueID id : function.at(block).values) {
+        const Value& value = function.at(id);
+        if (provesWithoutTest(value) && (value.operand(0) == found.sent || found.proofs.contains(value.operand(0))))
+            found.proofs.append(id);
+    }
+
+    const Terminator& terminator = function.at(block).terminator;
+    std::optional<Edge> throwingEdge;
+    if (terminator.kind == TerminatorKind::Switch) {
+        const CFG& cfg = body.analyses.cfg();
+        for (uint32_t index = 0; index < terminator.targets.size(); ++index) {
+            Edge edge { block, index };
+            BlockID target = terminator.targets[index].block;
+            if (index < terminator.cases().size() && terminator.cases()[index] == static_cast<int64_t>(ResumeMode::Throw))
+                throwingEdge = edge;
+            else
+                found.otherArms.append({ edge, cfg.singleIncomingEdge(target) != edge || !!function.at(target).handler });
+        }
+    }
+    if (!throwingEdge) {
+        if (!found.proofs.isEmpty())
+            return std::nullopt;
+        found.otherArms.clear();
+    }
+    auto armOf = [&](const Use& use) -> std::optional<uint32_t> {
+        size_t arm = found.otherArms.findIf([&](const ProofsOfSentValue::Arm& candidate) {
+            if (use.kind == Use::Kind::EdgeArgument && use.block == block)
+                return use.edge() == candidate.edge;
+            return body.analyses.dominates(candidate.edge, use.block);
+        });
+        return arm == notFound ? std::nullopt : std::optional<uint32_t>(static_cast<uint32_t>(arm));
+    };
+
+    // Whoever proves something of the value farther on does so in an arm that does not throw.
+    for (const Use& use : useLists.usesOf(found.sent)) {
+        if (use.kind == Use::Kind::Operand && provesWithoutTest(function.at(use.user)) && !found.proofs.contains(use.user) && !armOf(use))
+            return std::nullopt;
+    }
+    for (uint32_t proof = 0; proof < found.proofs.size(); ++proof) {
+        for (const Use& use : useLists.usesOf(found.proofs[proof])) {
+            if (use.kind == Use::Kind::Operand && found.proofs.contains(use.user))
                 continue;
             if (use.kind == Use::Kind::BlockSubject)
-                return;
-            if (dominators.dominates(throwingArm, use.block)) {
-                uses.append({ use, proof, std::nullopt });
+                return std::nullopt;
+            if (std::optional<uint32_t> arm = armOf(use)) {
+                if (use.block == block)
+                    found.otherArms[*arm].needsOwnBlock = true;
+                found.uses.append({ use, proof, arm });
                 continue;
             }
-            size_t arm = otherArms.findIf([&](BlockID candidate) { return dominators.dominates(candidate, use.block); });
-            // Somebody reads it where several arms meet, or in front of the switch.
-            if (arm == notFound)
-                return;
-            uses.append({ use, proof, static_cast<uint32_t>(arm) });
+            // The arm that throws has the value as it came, and nothing there may hang on its type. Somebody else reads it where several arms meet, or in front of the switch.
+            bool isThrown = use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.kind == TerminatorKind::Throw;
+            if (!isThrown || !body.analyses.dominates(*throwingEdge, use.block))
+                return std::nullopt;
+            found.uses.append({ use, proof, std::nullopt });
         }
     }
+    return found;
+}
 
-    for (size_t index = 0; index < otherArms.size(); ++index) {
-        if (function.at(otherArms[index]).handler)
-            otherArms[index] = builder.splitEdge(edgesIntoOtherArms[index]);
-    }
+static void moveProofsOfSentValuesBehindModes(BodyRewrite& body, std::span<const ProofsOfSentValue> all)
+{
+    Function& function = body.function;
+    IRBuilder& builder = body.builder;
 
-    Vector<ValueID, 8> copies;
-    for (size_t arm = 0; arm < otherArms.size(); ++arm) {
-        for (ValueID proof : proofs) {
-            Value copy = function.at(proof);
-            size_t operand = proofs.find(copy.valueOperand());
-            if (operand != notFound)
-                copy.setValueOperand(copies[arm * proofs.size() + operand]);
-            builder.setOrigin(copy.origin());
-            copies.append(builder.insertBefore(ProgramPoint::atHeadOf(otherArms[arm]), WTF::move(copy)));
+    auto keyOf = [](Edge edge) {
+        return static_cast<uint64_t>(edge.from.index()) << 32 | edge.targetIndex;
+    };
+    UncheckedKeyHashMap<uint64_t, BlockID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> blocksOnEdges;
+    for (const ProofsOfSentValue& found : all) {
+        for (const ProofsOfSentValue::Arm& arm : found.otherArms) {
+            if (arm.needsOwnBlock)
+                blocksOnEdges.add(keyOf(arm.edge), builder.splitEdge(arm.edge));
         }
     }
-    for (const UseInArm& use : uses)
-        replaceUse(function, use.use, use.arm ? copies[*use.arm * proofs.size() + use.proof] : sent);
+    // The arguments of an edge have gone to the block on it.
+    auto whereItIsNow = [&](Use use) {
+        if (use.kind != Use::Kind::EdgeArgument)
+            return use;
+        if (BlockID added = blocksOnEdges.get(keyOf(use.edge()))) {
+            use.block = added;
+            use.targetIndex = 0;
+        }
+        return use;
+    };
+
+    for (const ProofsOfSentValue& found : all) {
+        Vector<ValueID, 8> copies;
+        for (size_t arm = 0; arm < found.otherArms.size(); ++arm) {
+            BlockID head = targetOf(function, found.otherArms[arm].edge).block;
+            for (ValueID proof : found.proofs) {
+                Value copy = function.at(proof);
+                size_t operand = found.proofs.find(copy.operand(0));
+                if (operand != notFound)
+                    copy.setOperand(0, copies[arm * found.proofs.size() + operand]);
+                builder.setOrigin(copy.origin());
+                copies.append(builder.insertBefore(ProgramPoint::atHeadOf(head), WTF::move(copy)));
+            }
+        }
+        for (const ProofsOfSentValue::UseInArm& use : found.uses)
+            replaceUse(function, whereItIsNow(use.use), use.arm ? copies[*use.arm * found.proofs.size() + use.proof] : found.sent);
+    }
     builder.applyInsertions();
-    builder.eraseValues(block, proofIndexes);
+
+    for (const ProofsOfSentValue& found : all) {
+        const BlockValues& values = function.at(found.block).values;
+        BitVector proofIndexes(values.size());
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (found.proofs.contains(values[index]))
+                proofIndexes.quickSet(index);
+        }
+        builder.eraseValues(found.block, proofIndexes);
+    }
     body.analyses.didChangeValues();
 }
 
 static void mergeAwaitsIntoYields(BodyRewrite& body)
 {
     struct AwaitedYield {
-        ProgramPoint await;
-        uint32_t yieldIndex;
+        BlockID block;
+        ValueID await;
         ValueID yield;
     };
     const Function& function = body.function;
     const UseLists& useLists = body.analyses.useLists();
     Vector<AwaitedYield> merges;
+    Vector<ProofsOfSentValue> proofsToMove;
+    auto mergeWhereProofsCanMove = [&](AwaitedYield awaitedYield) {
+        std::optional<ProofsOfSentValue> found = findProofsOfSentValue(body, awaitedYield.block, awaitedYield.yield);
+        if (!found)
+            return;
+        merges.append(awaitedYield);
+        if (!found->proofs.isEmpty())
+            proofsToMove.append(WTF::move(*found));
+    };
     forEachListed(function, Opcode::Await, [&](ProgramPoint point, ValueID await) {
         if (function.at(await).takesExtraTurn())
             return;
@@ -477,7 +539,7 @@ static void mergeAwaitsIntoYields(BodyRewrite& body)
                 return;
             Opcode user = function.at(use->user).opcode;
             if (user == Opcode::Yield && use->operandIndex == OperandIndex::Yield::value) {
-                merges.append({ point, index + 1, use->user });
+                mergeWhereProofsCanMove({ point.block, await, use->user });
                 return;
             }
             if (!isCastWithoutTest(user))
@@ -485,17 +547,18 @@ static void mergeAwaitsIntoYields(BodyRewrite& body)
         }
     });
 
-    // The last one of a block first, so the positions of the others still hold.
-    for (const AwaitedYield& merge : merges | std::views::reverse) {
-        ValueID await = function.at(merge.await.block).values[merge.await.index];
-        rewriteInPlace(body, merge.await.block, merge.yield, Opcode::AsyncGeneratorYield, { body.driver, function.at(await).valueOperand() }, { await, merge.yield });
+    // An await that goes may be what reads a proof, so the proofs move while every use is where it was found.
+    if (!proofsToMove.isEmpty())
+        moveProofsOfSentValuesBehindModes(body, proofsToMove.span());
+
+    for (const AwaitedYield& merge : merges) {
+        rewriteInPlace(body, merge.block, merge.yield, Opcode::AsyncGeneratorYield, { body.driver, function.at(merge.await).valueOperand() }, { merge.await, merge.yield });
+        const BlockValues& values = function.at(merge.block).values;
         BitVector mergedIndexes;
-        for (uint32_t index = merge.await.index; index < merge.yieldIndex; ++index)
+        for (size_t index = values.find(merge.await); values[index] != merge.yield; ++index)
             mergedIndexes.set(index);
-        body.builder.eraseValues(merge.await.block, mergedIndexes);
+        body.builder.eraseValues(merge.block, mergedIndexes);
     }
-    for (const AwaitedYield& merge : merges)
-        moveProofsOfSentValueBehindMode(body, merge.await.block, merge.yield);
 }
 
 static void replaceYields(BodyRewrite& body)
@@ -1468,7 +1531,7 @@ static void expandAwaitOfWorker(FunctionPassContext& context, IRBuilder& builder
 
     IRBuilder::Expansion expansion = builder.beginExpansion(site.point);
     Origin awaitOrigin = builder.origin();
-    BlockFrequency frequency = function.at(site.point.block).frequency;
+    Expected<BlockFrequency> frequency = function.at(site.point.block).frequency;
 
     BlockID rejection = builder.addHandlerBlock(BlockRole::CatchHandler, ValueID());
     BlockID awaiting = builder.addBlock(frequency);
@@ -1515,7 +1578,7 @@ static void expandAwaitOfGeneratorStep(FunctionPassContext& context, IRBuilder& 
     Origin callOrigin = function.at(site.call).origin();
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinID calledBuiltin = builtins.canonicalID(builtins.at(function.at(site.call).overload()).builtin);
-    BlockFrequency frequency = function.at(site.point.block).frequency;
+    Expected<BlockFrequency> frequency = function.at(site.point.block).frequency;
     TypeID type = function.at(site.await).type;
     Vector<ValueID, 8> held(heldOperandsOf(function.at(site.await)));
 

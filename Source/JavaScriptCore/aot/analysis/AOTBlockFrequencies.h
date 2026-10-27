@@ -21,9 +21,9 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static_assert(BlockFrequency::Normal < BlockFrequency::Unlikely && BlockFrequency::Unlikely < BlockFrequency::Rare);
 
-constexpr BlockFrequency rarerOf(BlockFrequency a, BlockFrequency b) { return a < b ? b : a; }
-constexpr BlockFrequency moreFrequentOf(BlockFrequency a, BlockFrequency b) { return a < b ? a : b; }
-constexpr bool isRarerThan(BlockFrequency a, BlockFrequency b) { return b < a; }
+constexpr Expected<BlockFrequency> rarerOf(Expected<BlockFrequency> a, Expected<BlockFrequency> b) { return a.predicted() < b.predicted() ? b : a; }
+constexpr Expected<BlockFrequency> moreFrequentOf(Expected<BlockFrequency> a, Expected<BlockFrequency> b) { return a.predicted() < b.predicted() ? a : b; }
+constexpr Expected<bool> isRarerThan(Expected<BlockFrequency> a, Expected<BlockFrequency> b) { return b < a; }
 
 inline constexpr WTF::FrequencyEstimatorConstants frequencyConstants { };
 
@@ -63,10 +63,10 @@ public:
 
     bool describes(const AnalysisContext&, const Function&) const;
 
-    double frequencyOf(BlockID) const;
-    BlockFrequency classOf(BlockID) const;
-    BlockFrequency classOf(Edge) const;
-    BlockFrequency classForBlockOrder(Edge) const;
+    Expected<double> frequencyOf(BlockID) const;
+    Expected<BlockFrequency> classOf(BlockID) const;
+    Expected<BlockFrequency> classOf(Edge) const;
+    Expected<BlockFrequency> classForBlockOrder(Edge) const;
     // Whichever way it goes on from the block, it ends in a throw, and the function has another way. A handler of the function that catches it makes the way no likelier.
     bool alwaysEndsInThrow(BlockID block) const { return m_blocksEndingInThrow.get(block.index()); }
     void dump(PrintStream&, const Function&) const;
@@ -89,13 +89,19 @@ private:
     mutable Vector<double> m_frequencies;
 };
 
+// Heat decides what is worth doing and never what is right, so a program means the same under any heat. HeatOverride::Shuffled draws every class from the numbers of what it is asked about and the layout seed.
+std::optional<uint32_t> seedOfShuffledHeat(const BuildContext&);
+uint32_t drawForShuffledHeat(uint32_t seed, uint32_t first, uint32_t second, uint32_t numberOfChoices);
+inline BlockFrequency drawFrequency(uint32_t seed, uint32_t first, uint32_t second) { return static_cast<BlockFrequency>(drawForShuffledHeat(seed, first, second, 3)); }
+void shuffleRecordedFrequencies(Program&, const BuildContext&);
+
 enum class RecordedFrequencyUse : uint8_t { NotRecorded, Ignored, Applied };
 
 RecordedFrequencyUse recordedFrequencyUseOf(const Function&, const CFG&, BlockID, bool ignoresBranchHints);
 
-inline bool isRecordedAsRare(const Function& function, BlockID block)
+inline Expected<bool> isRecordedAsRare(const Function& function, BlockID block)
 {
-    return block != entryBlock && function.at(block).frequency == BlockFrequency::Rare;
+    return block != entryBlock && function.at(block).frequency.predicted() == BlockFrequency::Rare;
 }
 
 } } } // namespace JSC::AOT::Typed

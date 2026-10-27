@@ -30,6 +30,7 @@
 #include "FreeListInlines.h"
 #include "JSCJSValueInlines.h"
 #include "MarkedBlockInlines.h"
+#include "StructureAlignedMemoryAllocator.h"
 #include "SweepingScope.h"
 #include "VMManager.h"
 #include "WeakSetInlines.h"
@@ -800,6 +801,22 @@ void MarkedBlock::Handle::poisonRedZoneCells()
 }
 #endif
 
+// Under useZombieMode a sweep overwrites dead cells.
+static void scribbleDeadCells(MarkedBlock::Handle& handle)
+{
+    JSC::Heap& heap = *handle.heap();
+    if (heap.isShuttingDown() || handle.alignedMemoryAllocator() == heap.structureAllocator.get())
+        return;
+    size_t size = handle.cellSize();
+    bool hasDestructors = handle.attributes().destruction != DoesNotNeedDestruction;
+    handle.forEachDeadCell([&](HeapCell* cell, HeapCell::Kind) {
+        scribble(cell, size);
+        if (hasDestructors)
+            cell->zap(HeapCell::Destruction);
+        return IterationStatus::Continue;
+    });
+}
+
 void MarkedBlock::Handle::validateFreeIntervals(const WTF::BitSet<atomsPerBlock>& live, std::span<const std::pair<unsigned, unsigned>> intervals)
 {
     size_t intervalIndex = 0;
@@ -863,6 +880,8 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     if (sweepMode == SweepOnly && !needsDestruction) {
         if (!isEmpty())
             decommitUnusedPages(isFirstSweepSinceFullCollection);
+        if (Options::useZombieMode()) [[unlikely]]
+            scribbleDeadCells(*this);
         Locker locker { m_directory->bitvectorLock().mutate() };
         m_directory->assertInUse(index());
         m_directory->setIsUnswept(index(), false);
@@ -893,8 +912,12 @@ void MarkedBlock::Handle::sweep(FreeList* freeList)
     
     if (needsDestruction) {
         subspace()->finishSweep(*this, freeList);
-        if (sweepMode == SweepOnly && !isEmpty())
-            decommitUnusedPages(isFirstSweepSinceFullCollection);
+        if (sweepMode == SweepOnly) {
+            if (!isEmpty())
+                decommitUnusedPages(isFirstSweepSinceFullCollection);
+            if (Options::useZombieMode()) [[unlikely]]
+                scribbleDeadCells(*this);
+        }
         return;
     }
     

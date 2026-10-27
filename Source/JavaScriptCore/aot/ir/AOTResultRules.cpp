@@ -341,7 +341,7 @@ static bool hasProofs(const ClassPart& part)
 static TypeID testablePartOf(const TypingContext& context, TypeID target)
 {
     const Type& type = context.types.at(target);
-    bool hasMembersWithoutLayout = type.layouts && context.types.at(type.layouts).hasMembersWithoutLayout;
+    bool hasMembersWithoutLayout = type.layouts && context.types.at(type.layouts).mayHoldObjectsWithoutLayout();
     if (type.classes.isEmpty() && type.builtins.isEmpty() && !hasMembersWithoutLayout)
         return target;
 
@@ -357,8 +357,8 @@ static TypeID testablePartOf(const TypingContext& context, TypeID target)
 
     Type testable = type;
     if (hasMembersWithoutLayout) {
-        const Vector<LayoutID>& members = context.types.at(type.layouts).members;
-        testable.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet { Vector<LayoutID>(members), true });
+        const Vector<LayoutID>& members = context.types.at(type.layouts).written();
+        testable.layouts = members.isEmpty() ? LayoutSetID() : context.types.intern(LayoutSet::complete(Vector<LayoutID>(members)));
     }
     testable.classes.removeAllMatching([&](const ClassPart& part) {
         return !hasInstanceTest(builtins, part);

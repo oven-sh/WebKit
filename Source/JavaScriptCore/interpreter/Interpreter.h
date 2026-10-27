@@ -206,6 +206,8 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
             const StackFrameFilter* filter { nullptr };
             // If set, the walk ends at the first compiled frame that is shown and hands it over, unless frames of suspended async functions belong above it.
             std::optional<AOT::CompiledFrameIterator>* compiledFramesBelow { nullptr };
+            // The slow way, which the quick one is checked against.
+            bool visitsEachCompiledFrame { false };
         };
         JS_EXPORT_PRIVATE void appendStackTrace(JSCell* owner, Vector<StackFrame>& results, const StackTraceStart&, size_t maxStackSize);
         void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter, size_t maxStackSize);

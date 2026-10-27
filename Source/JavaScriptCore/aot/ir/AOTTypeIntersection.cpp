@@ -128,7 +128,7 @@ static ClassPart withoutProofs(ClassPart part)
 
 static void copyContents(ClassPart& target, const ClassPart& source)
 {
-    target.contents = source.contents;
+    target.writtenContents = source.writtenContents;
     target.arrayStorage = source.arrayStorage;
 }
 
@@ -144,10 +144,10 @@ static TypeID intersectKnownContents(TypeID first, TypeID second, TypeArena& are
 static void intersectContents(ClassPart& result, const ClassPart& a, const ClassPart& b, TypeArena& arena)
 {
     result.arrayStorage = a.arrayStorage != ArrayStorage::Other ? a.arrayStorage : b.arrayStorage;
-    size_t size = std::max(a.contents.size(), b.contents.size());
-    result.contents.resize(size);
+    size_t size = std::max(a.writtenContents.size(), b.writtenContents.size());
+    result.writtenContents.resize(size);
     for (unsigned index = 0; index < size; ++index)
-        result.contents[index] = intersectKnownContents(a.contentsAt(index), b.contentsAt(index), arena);
+        result.writtenContents[index] = intersectKnownContents(a.writtenContentsAt(index), b.writtenContentsAt(index), arena);
 }
 
 static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeArena& arena, DeclaredParts declared)
@@ -160,7 +160,7 @@ static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeAren
     else if (a.contentsAreProven || declared == DeclaredParts::FromEither)
         intersectContents(result, a, b, arena);
     else
-        copyContents(result, b.contents.isEmpty() ? a : b);
+        copyContents(result, b.writtenContents.isEmpty() ? a : b);
     return result;
 }
 
@@ -268,11 +268,10 @@ static void castToFamilyWithUnlistedMembers(Type& result, const Type& source, co
     intersectListedObjects(result, source, family, arena, DeclaredParts::FromSecond);
     if (isSubset(objectsWithoutLayoutOf(source), objectsWithoutLayoutOf(result), arena.table()))
         return;
-    LayoutSet layouts { .isComplete = true };
+    Vector<LayoutID> members;
     if (result.layouts)
-        layouts = arena.at(result.layouts);
-    layouts.hasMembersWithoutLayout = true;
-    result.layouts = arena.intern(WTF::move(layouts));
+        members = arena.at(result.layouts).written();
+    result.layouts = arena.intern(LayoutSet::complete(WTF::move(members), true));
 }
 
 static void intersectKnownObjects(Type& result, const Type& a, const Type& b, TypeArena& arena, DeclaredParts declared)

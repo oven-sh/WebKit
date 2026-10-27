@@ -321,8 +321,8 @@ struct RedundantReadElimination {
         const Value& store = m_function.at(access.id);
         if (!Value::opcodesWithReceivers.contains(store.opcode) || !store.receivers())
             return true;
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        return !receivers.isComplete || std::ranges::any_of(receivers.members, [&](LayoutID member) {
+        auto receivers = m_program.at(store.receivers()).all();
+        return !receivers || std::ranges::any_of(*receivers, [&](LayoutID member) {
             std::optional<FieldReference> field = findField(m_program, member, access.location.key(), BaseChain::Proven);
             return !field || flowOf(m_program, *field).location.deferral != ClosureDeferral::Unknown;
         });
@@ -1483,7 +1483,7 @@ struct VariableCarrier : LoopEditor {
         Vector<ValueID, 4> reads { };
         Vector<VariableAccess, 2> stores { };
         Vector<BlockID, 2> blocksOfOtherWrites { };
-        bool isReadInEveryTurn { false };
+        Expected<bool> isReadInEveryTurn { false };
         bool isWrittenOnLeavingPath { false };
         // Whoever gets to the end of the block ahead of the loop has read the variable or is about to, whichever way the tests turn out.
         bool isReadWheneverLoopIsEntered { false };
@@ -1622,7 +1622,7 @@ struct VariableCarrier : LoopEditor {
                 if (!firstWayOut)
                     firstWayOut = pointBeforeTerminatorOf(m_function, block);
                 if (!loops.belongsTo(target.block, loop))
-                    mayEndHere |= m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency;
+                    mayEndHere |= (m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency).predicted();
             }
             if (mayEndHere || !next)
                 break;
@@ -1653,7 +1653,7 @@ struct VariableCarrier : LoopEditor {
                 variable = &m_variables.last();
             }
             variable->reads.append(access.id);
-            variable->isReadInEveryTurn |= (!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span());
+            variable->isReadInEveryTurn = variable->isReadInEveryTurn.predicted() || ((!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span()));
             variable->isReadWheneverLoopIsEntered |= isReachedWheneverLoopIsEntered(access);
         }
 
@@ -1710,7 +1710,7 @@ struct VariableCarrier : LoopEditor {
         };
         // HoistLoopInvariantReads moves a read that is all there is to a variable.
         m_variables.removeAllMatching([&](const CarriedVariable& variable) {
-            if (!variable.isReadInEveryTurn || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
+            if (!variable.isReadInEveryTurn.predicted() || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
                 return true;
             return variable.stores.isEmpty() && !variable.isWrittenOnLeavingPath && !isReadBy(variable, Opcode::TypeTest) && !isReadBy(variable, Opcode::GetCapture);
         });
@@ -1765,7 +1765,7 @@ struct VariableCarrier : LoopEditor {
     bool carryOnce(const NaturalLoop& loop, BitVector& leaves)
     {
         BlockID header = loop.header();
-        if (m_function.at(header).isHandlerBlock() || m_function.at(header).frequency != BlockFrequency::Normal || m_analyses.isEnteredFromUnreachableBlock(header))
+        if (m_function.at(header).isHandlerBlock() || m_function.at(header).frequency.predicted() != BlockFrequency::Normal || m_analyses.isEnteredFromUnreachableBlock(header))
             return false;
         bool isLoopOfProgram = isHeaderOfLoopOfProgram(header);
         std::optional<Edge> singleEntry = m_analyses.naturalLoops().findSingleEntry(loop);
@@ -2234,13 +2234,13 @@ struct LoopPathSeparator : LoopEditor {
         m_analyses.didChangeValues();
     }
 
-    BitVector findUnlikelyBlocks(const NaturalLoop& loop)
+    Expected<BitVector> findUnlikelyBlocks(const NaturalLoop& loop)
     {
         const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
-        BlockFrequency frequencyOfLoop = frequencies.classOf(loop.header());
+        Expected<BlockFrequency> frequencyOfLoop = frequencies.classOf(loop.header());
         BitVector isUnlikely(m_function.blocks.size());
         for (unsigned index = 0; index < loop.size(); ++index) {
-            if (frequencies.classOf(loop.at(index)) > frequencyOfLoop)
+            if ((frequencies.classOf(loop.at(index)) > frequencyOfLoop).predicted())
                 isUnlikely.set(loop.at(index).index());
         }
         return isUnlikely;
@@ -2510,7 +2510,7 @@ struct LoopPathSeparator : LoopEditor {
     // A path that only computes leaves too where a parameter of the likely paths is wider for what it passes, or is an object of theirs but for that.
     BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
-        BitVector isUnlikely = findUnlikelyBlocks(loop);
+        BitVector isUnlikely = findUnlikelyBlocks(loop).predicted();
         BitVector leaves = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
             return !onlyComputes(m_function.at(block));
         });
@@ -2544,8 +2544,8 @@ struct LoopPathSeparator : LoopEditor {
     {
         BlockID header = loop.header();
         // What is hot is a share of the program, so other code decides it. A loop that is expected to run is copied too when it is small and the copy shortens its loop-carried arithmetic.
-        bool isHot = isHotLoop(m_context, loop);
-        if (!isHot && (m_analyses.blockFrequencies().classOf(header) != BlockFrequency::Normal || isCold(heatClassOf(m_context, header))))
+        bool isHot = isHotLoop(m_context, loop).predicted();
+        if (!isHot && (m_analyses.blockFrequencies().classOf(header).predicted() != BlockFrequency::Normal || isCold(heatClassOf(m_context, header)).predicted()))
             return std::nullopt;
         if (!isHeaderOfLoopOfProgram(header))
             return std::nullopt;
@@ -2565,7 +2565,7 @@ struct LoopPathSeparator : LoopEditor {
             plan.region.append(block);
             uint64_t bytesOfBlock = estimatedCodeBytes(m_program, m_function, m_function.at(block));
             bytes += bytesOfBlock;
-            if (m_analyses.blockFrequencies().classOf(block) == BlockFrequency::Normal)
+            if (m_analyses.blockFrequencies().classOf(block).predicted() == BlockFrequency::Normal)
                 bytesOfLikelyPaths += bytesOfBlock;
         }
         // The likely paths end up in the program twice, and the longer an iteration is, the less of it waits for one number.
@@ -2633,7 +2633,7 @@ struct LoopPathSeparator : LoopEditor {
         // A copy that the loop is entered through runs as often as the loop did.
         for (BlockID block : plan.region) {
             if (!plan.letsVariablesBeCarried)
-                m_function.edit(cloner.cloneOf(block), BlockEdit::Rest).frequency = m_function.at(block).frequency == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
+                m_function.edit(cloner.cloneOf(block), BlockEdit::Rest).frequency = m_function.at(block).frequency.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
         }
         for (Edge edge : plan.leavingEdges) {
             const Target& target = targetOf(m_function, edge);
@@ -2772,7 +2772,7 @@ struct LoopPathSeparator : LoopEditor {
     }
 
     // Emits at the end of the builder's block.
-    void emitTests(IRBuilder& builder, const Arguments& carried, std::span<const TypeID> tested, BlockID whenPassed, BlockID whenFailed, BlockFrequency whenPassedFrequency)
+    void emitTests(IRBuilder& builder, const Arguments& carried, std::span<const TypeID> tested, BlockID whenPassed, BlockID whenFailed, Expected<BlockFrequency> whenPassedFrequency)
     {
         auto argumentsWhenFailed = [&] {
             Arguments arguments;
@@ -2857,7 +2857,7 @@ struct LoopPathSeparator : LoopEditor {
         }
 
         builder.setOrigin(m_function.at(header).terminator.origin());
-        BlockFrequency frequencyOfLoop = m_function.at(header).frequency;
+        Expected<BlockFrequency> frequencyOfLoop = m_function.at(header).frequency;
 
         // Everything that enters the loop comes through one block, which is the header of the cycle through the copy. So the loop stays a loop of its own, with one entering edge.
         BlockID entry = builder.addBlock(frequencyOfLoop);

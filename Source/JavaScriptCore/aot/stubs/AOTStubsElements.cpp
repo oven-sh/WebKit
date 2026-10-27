@@ -319,6 +319,21 @@ static void loadCompiledObjectElementAndReturn(StubAssembler& jit, const Element
     jit.returnToCaller();
 }
 
+// A trap is handed an index as its text. The texts of the small ones are kept once they have been asked for. Goes on where the base is a proxy and the text of the key is there. Writes the registers of the storage and the index.
+static void loadTextOfIndexForTrap(StubAssembler& jit, const ElementRegisters& registers, GPRReg text, JumpList& hasNoText)
+{
+    static_assert(sizeof(NumericStrings::StringWithJSString) == 2 * sizeof(void*));
+    hasNoText.append(jit.branchIfNotCell(registers.base));
+    hasNoText.append(jit.branchIfNotType(registers.base, ProxyObjectType));
+    hasNoText.append(jit.branch64(CCallHelpers::Below, registers.key, numberTag));
+    jit.zeroExtend32ToWord(registers.key, registers.index);
+    hasNoText.append(jit.branch32(CCallHelpers::AboveOrEqual, registers.index, TrustedImm32(NumericStrings::cacheSize)));
+    jit.lshift64(TrustedImm32(1), registers.index);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.smallIntStrings)), registers.storage);
+    jit.loadPtr(BaseIndex(registers.storage, registers.index, CCallHelpers::TimesEight, NumericStrings::StringWithJSString::offsetOfJSString()), text);
+    hasNoText.append(jit.branchTestPtr(CCallHelpers::Zero, text));
+}
+
 void generateGetByVal(StubAssembler& jit)
 {
     const ElementRegisters registers = allocateElementRegisters(jit);
@@ -385,22 +400,12 @@ void generateGetByVal(StubAssembler& jit)
 
     slow.link(&jit);
     if (jit.options().callsTrapsOfProxies) {
-        // A trap is handed an index as its text. The texts of the small ones are kept once they have been asked for.
-        static_assert(sizeof(NumericStrings::StringWithJSString) == 2 * sizeof(void*));
         const StubSignature throughProxySignature = signatureOf(throughProxy(TrapOfProxy::Get));
         const GPRReg text = registers.type;
         const GPRReg noHeader = index;
         RELEASE_ASSERT(throughProxySignature.operands[0] == Reg(base) && throughProxySignature.operands[1] == Reg(text) && throughProxySignature.operands[2] == Reg(noHeader));
         JumpList operationReads;
-        operationReads.append(jit.branchIfNotCell(base));
-        operationReads.append(jit.branchIfNotType(base, ProxyObjectType));
-        operationReads.append(jit.branch64(CCallHelpers::Below, key, numberTag));
-        jit.zeroExtend32ToWord(key, index);
-        operationReads.append(jit.branch32(CCallHelpers::AboveOrEqual, index, TrustedImm32(NumericStrings::cacheSize)));
-        jit.lshift64(TrustedImm32(1), index);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.smallIntStrings)), storage);
-        jit.loadPtr(BaseIndex(storage, index, CCallHelpers::TimesEight, NumericStrings::StringWithJSString::offsetOfJSString()), text);
-        operationReads.append(jit.branchTestPtr(CCallHelpers::Zero, text));
+        loadTextOfIndexForTrap(jit, registers, text, operationReads);
         jit.move(TrustedImm32(0), noHeader);
         jit.jumpToStub(throughProxy(TrapOfProxy::Get));
         operationReads.link(&jit);
@@ -582,6 +587,20 @@ void generatePutByVal(StubAssembler& jit)
     });
 
     slow.link(&jit);
+    if (jit.options().callsTrapsOfProxies) {
+        const StubSignature throughProxySignature = signatureOf(throughProxy(TrapOfProxy::Set));
+        const GPRReg text = registers.type;
+        const GPRReg storedValue = jit.reuseScratch(valueStoredThroughProxyRegister);
+        const GPRReg isStrict = jit.reuseScratch(StubRegister::T14);
+        RELEASE_ASSERT(throughProxySignature.operands[0] == Reg(base) && throughProxySignature.operands[1] == Reg(text) && throughProxySignature.operands[2] == Reg(storedValue) && throughProxySignature.operands[3] == Reg(isStrict));
+        RELEASE_ASSERT(noOverlap(base, key, value, text, storedValue, isStrict, registers.storage, registers.index));
+        JumpList operationStores;
+        loadTextOfIndexForTrap(jit, registers, text, operationStores);
+        jit.move(value, storedValue);
+        jit.move(TrustedImm32(mode.isStrict() ? 1 : 0), isStrict);
+        jit.jumpToStub(throughProxy(TrapOfProxy::Set));
+        operationStores.link(&jit);
+    }
     jit.move(value, valueArgument);
     jit.move(TrustedImm32(mode.isStrict() ? 1 : 0), isStrictArgument);
     jit.callOperationAndReturn(Entry::operationAOTPutByVal, {

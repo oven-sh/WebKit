@@ -185,7 +185,7 @@ static LayoutSetID compiledReceiversOf(const Program& program, const Type& recei
     if (receiver.hasOnlyLayouts(program))
         return receiver.layouts;
     LayoutSetID arriving = store.receivers();
-    if (!arriving || !program.at(arriving).isComplete)
+    if (!arriving || !program.at(arriving).all())
         return { };
     return arriving;
 }

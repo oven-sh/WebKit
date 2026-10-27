@@ -184,7 +184,7 @@ static bool isOptionalFieldOfBuiltinLayout(const Program& program, LayoutID layo
 
 static TypeID prefixElementTypeOf(const Program& program, const ClassPart& array)
 {
-    TypeID contents = array.contentsAt(program.builtins(), ContentsSlot::Element);
+    TypeID contents = array.writtenContentsAt(program.builtins(), ContentsSlot::Element);
     const Type& element = program.at(contents);
     if (element.primitives & Primitive::Undefined)
         return contents;
@@ -513,6 +513,14 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
         return typeOfInitialValue(context, description, field);
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool holdsUndefinedAndNullToo(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
+{
+    if (description.kind != VirtualObjectKind::Object || field.kind != VirtualFieldKind::Named)
+        return false;
+    std::optional<uint32_t> layoutField = layoutFieldOf(context.program, description, field);
+    return layoutField && slotHoldsUndefinedAndNull(context.program, { description.layout, *layoutField });
 }
 
 static bool namesPrivateMember(const Program& program, PropertyKeyID key)

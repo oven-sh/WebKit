@@ -390,7 +390,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     const Program& program = context.program;
     Function& function = context.function;
     BlockID header = loop.header();
-    if (isClosedOnlyByWaysBack(context.analyses, loop))
+    if (isClosedOnlyByWaysBack(context.analyses, loop).predicted())
         return 0;
     bool hasRead = false;
     BitVector body(function.blocks.size());
@@ -474,14 +474,14 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     unsigned numberOfHoistedReads = 0;
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
-    BlockFrequency frequencyOfPreheader = frequencies.classOf(preheader);
+    Expected<BlockFrequency> frequencyOfPreheader = frequencies.classOf(preheader);
     LoopClobbers clobbersSinceEntry;
     for (BlockID blockID : context.analyses.cfg().reversePostOrder()) {
         if (!body.get(blockID.index()))
             continue;
         // In front of the loop a read runs each time the loop is entered, and what it read is kept all the way round. A block that seldom runs pays for its own reads.
-        BlockFrequency frequency = frequencies.classOf(blockID);
-        if (frequency == BlockFrequency::Rare || frequency > frequencyOfPreheader) {
+        Expected<BlockFrequency> frequency = frequencies.classOf(blockID);
+        if (frequency.predicted() == BlockFrequency::Rare || (frequency > frequencyOfPreheader).predicted()) {
             if (blockID == header)
                 behindHeader = { };
             continue;
@@ -812,7 +812,7 @@ static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, cons
 {
     const Function& function = context.function;
     NaturalLoops& loops = context.analyses.naturalLoops();
-    if (!mayBeHeaderOfShortLoop(context.program, function, function.at(loop.header())) || !isHotLoop(context, loop))
+    if (!mayBeHeaderOfShortLoop(context.program, function, function.at(loop.header())) || !isHotLoop(context, loop).predicted())
         return std::nullopt;
     std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
     if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))

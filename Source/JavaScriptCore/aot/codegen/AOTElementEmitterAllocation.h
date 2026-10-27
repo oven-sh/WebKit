@@ -20,7 +20,7 @@ public:
     explicit ArrayAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     const ArrayStorageForm& formAtAllocation(const Type& array) const;
-    const ArrayStorageForm& formOfLiteral(std::span<const ValueID> elements, const Type& array) const;
+    const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array);
 
     CellPointer newLiteral(const ValueContext&);
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);

@@ -393,8 +393,8 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     run.functionAsRead = context.subject().function;
     CurrentWorkScope workScope(program, run.functionAsRead);
     const bool readsHeat = schedule == FunctionSchedule::Prepare || schedule == FunctionSchedule::Optimize;
-    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id);
-    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id));
+    const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id).predicted();
+    run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id).predicted());
     if (run.optionalPassesOfShortSchedule)
         run.maxRounds = maxRoundsOfShortSchedule;
     if (contents) {
@@ -716,7 +716,7 @@ static OptionSet<BlockEdit> editsBetween(const Block& before, const Block& after
         if (before.handler)
             compareTargets(*before.handler, *after.handler);
     }
-    if (before.subject != after.subject || before.role != after.role || before.frequency != after.frequency || before.shape != after.shape)
+    if (before.subject != after.subject || before.role != after.role || !before.frequency.isSamePredictionAs(after.frequency) || before.shape != after.shape)
         edits.add(BlockEdit::Rest);
     return edits;
 }

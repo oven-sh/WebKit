@@ -120,18 +120,20 @@ void IRBuilder::moveToEndOf(BlockID block)
     m_block = block;
 }
 
-BlockID IRBuilder::addBlock(BlockFrequency frequency)
+BlockID IRBuilder::addBlock(Expected<BlockFrequency> frequency)
 {
     RELEASE_ASSERT(!m_handler || m_handler->block.index() < m_function.blocks.size());
     Block block;
     block.frequency = frequency;
+    if (m_context.build.recordedOptions().heat() == HeatOverride::Shuffled) [[unlikely]]
+        block.frequency = drawFrequency(*seedOfShuffledHeat(m_context.build), m_function.values.size(), m_function.blocks.size());
     block.handler = m_handler;
     BlockID id = m_function.addBlock(WTF::move(block));
     didChangeControlFlow(std::span<const BlockID> { });
     return id;
 }
 
-BlockID IRBuilder::addHandlerBlock(BlockRole role, ValueID subject, BlockFrequency frequency)
+BlockID IRBuilder::addHandlerBlock(BlockRole role, ValueID subject, Expected<BlockFrequency> frequency)
 {
     RELEASE_ASSERT(role != BlockRole::Ordinary);
     BlockID id = addBlock(frequency);
@@ -459,10 +461,10 @@ void IRBuilder::emitBranch(ValueID condition, Target&& taken, Target&& notTaken)
     closeBlock();
 }
 
-IRBuilder::BranchBlocks IRBuilder::emitBranch(ValueID condition, BlockFrequency taken, BlockFrequency notTaken)
+IRBuilder::BranchBlocks IRBuilder::emitBranch(ValueID condition, Expected<BlockFrequency> taken, Expected<BlockFrequency> notTaken)
 {
     RELEASE_ASSERT(m_block);
-    BlockFrequency frequency = m_function.at(m_block).frequency;
+    Expected<BlockFrequency> frequency = m_function.at(m_block).frequency;
     BranchBlocks blocks;
     blocks.taken = addBlock(rarerOf(taken, frequency));
     blocks.notTaken = addBlock(rarerOf(notTaken, frequency));
@@ -539,7 +541,7 @@ void IRBuilder::endPrediction(BlockID failedUnasked, ProvenBranch& branch, Value
     m_block = current;
 }
 
-IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken)
+IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t provenOperand, Expected<BlockFrequency> taken, Expected<BlockFrequency> notTaken)
 {
     Proof proof = provesOf(m_function.at(test).opcode);
     RELEASE_ASSERT(proof != Proof::None);
@@ -560,7 +562,7 @@ IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t pr
     return branch;
 }
 
-IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t provenOperand, BlockFrequency taken, BlockFrequency notTaken, ProvenBranchTargets&& targets)
+IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t provenOperand, Expected<BlockFrequency> taken, Expected<BlockFrequency> notTaken, ProvenBranchTargets&& targets)
 {
     Proof proof = provesOf(m_function.at(test).opcode);
     RELEASE_ASSERT(proof != Proof::None);
@@ -568,7 +570,7 @@ IRBuilder::ProvenBranch IRBuilder::emitBranchWithProof(ValueID test, uint32_t pr
     RELEASE_ASSERT(!targets.whenNotTaken || provesForStretch(proof));
 
     BlockID from = m_block;
-    BlockFrequency frequency = m_function.at(from).frequency;
+    Expected<BlockFrequency> frequency = m_function.at(from).frequency;
     BlockID takenBlock = targets.enteredOnlyWhenTaken ? targets.enteredOnlyWhenTaken : addBlock(rarerOf(taken, frequency));
     Target whenNotTaken = targets.whenNotTaken ? WTF::move(*targets.whenNotTaken) : Target { addBlock(rarerOf(notTaken, frequency)), { }, { } };
     BlockID notTakenBlock = whenNotTaken.block;

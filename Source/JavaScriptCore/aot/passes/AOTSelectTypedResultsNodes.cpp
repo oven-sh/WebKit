@@ -55,7 +55,7 @@ static Vector<FamilyOfMembers> familiesOf(const Program& program, std::span<cons
     }
     families.shrink(numberOfFamilies);
     AOT::sort(families, std::ranges::greater { }, [&](const FamilyOfMembers& family) {
-        return std::pair { program.at(family.family).members.size(), family.family };
+        return std::pair { program.at(family.family).written().size(), family.family };
     });
     return families;
 }
@@ -87,7 +87,7 @@ static Vector<LayoutID, 4> headLayoutsOf(const Program& program, const Type& typ
     for (const FamilyOfMembers& family : familiesOf(program, members)) {
         if (!numberLeft)
             break;
-        std::span<const LayoutID> subtypes = program.at(family.family).members.span();
+        std::span<const LayoutID> subtypes = program.at(family.family).completeMembers();
         auto isOwnerAlone = [&](LayoutID layout) {
             return !family.hasSeveralOwners && layout == family.owner;
         };
@@ -130,7 +130,7 @@ Vector<TypeAlternative, 4> alternativesOf(const Program& program, TypeID id)
             alternatives.append(TypeAlternative { .shape = ResultShape::StringLiteral, .literal = { .kind = ResultLiteral::Kind::String, .string = string } });
     }
     if (const ClassPart* array = type.findClassPart(BuiltinClasses::Array))
-        alternatives.append(TypeAlternative { .shape = ResultShape::Array, .contents = array->contentsAt(program.builtins(), ContentsSlot::Element) });
+        alternatives.append(TypeAlternative { .shape = ResultShape::Array, .contents = array->writtenContentsAt(program.builtins(), ContentsSlot::Element) });
     for (LayoutID layout : headLayoutsOf(program, type))
         alternatives.append(TypeAlternative { .shape = ResultShape::Object, .layout = layout });
     return alternatives;
@@ -209,7 +209,7 @@ Value makeArrayOf(const Program& program, const ResultNode& node)
 {
     const ClassPart* part = program.at(node.type).findClassPart(BuiltinClasses::Array);
     Value array = IRBuilder::make(Opcode::NewArray);
-    array.setContents(part ? part->contentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything);
+    array.setContents(part ? part->writtenContentsAt(program.builtins(), ContentsSlot::Element) : TypeTable::anything);
     array.setElementsOperands(std::span<const ValueID> { });
     return array;
 }
@@ -574,8 +574,8 @@ static bool isDeepSubset(const Program& program, TypeID narrow, TypeID wide)
             const ClassPart* partner = wideType.findClassPart(part.builtinClass);
             if (!partner)
                 continue;
-            for (unsigned index = 0; index < partner->contents.size(); ++index)
-                worklist.append(TypePair { part.contentsAt(index), partner->contentsAt(index) });
+            for (unsigned index = 0; index < partner->writtenContents.size(); ++index)
+                worklist.append(TypePair { part.writtenContentsAt(index), partner->writtenContentsAt(index) });
         }
     }
     return true;
@@ -639,7 +639,7 @@ void forEachLayoutReachedBy(const Program& program, TypeID root, const HeadLayou
     while (!worklist.isEmpty()) {
         const Type& type = program.at(worklist.takeLast());
         if (const ClassPart* array = type.findClassPart(BuiltinClasses::Array))
-            visit(array->contentsAt(program.builtins(), ContentsSlot::Element));
+            visit(array->writtenContentsAt(program.builtins(), ContentsSlot::Element));
         if (!type.layouts || !visitedFamilies.add(type.layouts).isNewEntry)
             continue;
         Vector<LayoutID, 4> headsOfThisWalk;

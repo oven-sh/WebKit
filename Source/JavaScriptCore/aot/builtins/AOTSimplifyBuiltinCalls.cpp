@@ -244,7 +244,7 @@ static bool mayBeMadeByBuiltinConstructor(const Program& program, const Type& ty
 {
     if (!type.layouts)
         return false;
-    return std::ranges::any_of(program.at(type.layouts).members, [&](LayoutID layout) {
+    return std::ranges::any_of(program.at(type.layouts).completeMembers(), [&](LayoutID layout) {
         return mayBeMadeByBuiltinConstructor(program, layout);
     });
 }
@@ -458,7 +458,8 @@ static KnownBoolean evaluateQuestionAboutClass(const Program& program, BuiltinID
     if (operand.anyObject)
         return KnownBoolean::Unknown;
     if (operand.layouts) {
-        bool areRecords = std::ranges::all_of(program.at(operand.layouts).members, [&](LayoutID layout) {
+        auto all = program.at(operand.layouts).all();
+        bool areRecords = all && std::ranges::all_of(*all, [&](LayoutID layout) {
             return program.at(layout).kind == LayoutKind::Record;
         });
         if (!areRecords)
@@ -484,7 +485,8 @@ static bool isOfNoClassOfHost(const Program& program, const Type& operand)
     if (operand.anyObject || operand.anyFunction || !operand.builtins.isEmpty())
         return false;
     if (operand.layouts) {
-        bool areMadeByProgram = std::ranges::all_of(program.at(operand.layouts).members, [&](LayoutID layout) {
+        auto all = program.at(operand.layouts).all();
+        bool areMadeByProgram = all && std::ranges::all_of(*all, [&](LayoutID layout) {
             return program.at(layout).kind == LayoutKind::Record || !mayBeMadeByBuiltinConstructor(program, layout);
         });
         if (!areMadeByProgram)

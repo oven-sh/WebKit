@@ -15,6 +15,7 @@
 #include "AOTPrimitives.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSortedSet.h"
+#include "AOTTypeKinds.h"
 #include "AOTWire.h"
 #include <compare>
 #include <optional>
@@ -39,10 +40,16 @@ struct ClassPart {
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
     OptionSet<PristineAspects> provenPristine;
-    InlineList<TypeID, 3> contents;
+    // As they stand in the type: for the algebra of types, walkers, printers and tables. Whoever wants to know what a collection holds asks one of the two questions below.
+    InlineList<TypeID, 3> writtenContents;
 
-    TypeID contentsAt(unsigned indexInType) const;
-    TypeID contentsAt(const BuiltinTable&, ContentsSlot) const;
+    TypeID writtenContentsAt(unsigned indexInType) const;
+    TypeID writtenContentsAt(const BuiltinTable&, ContentsSlot) const;
+    // All that is ever stored, where flow has followed it. Nothing where the contents are declared or guessed.
+    std::optional<ProvenValue<TypeID>> provenContentsAt(unsigned indexInType) const;
+    std::optional<ProvenValue<TypeID>> provenContentsAt(const BuiltinTable&, ContentsSlot) const;
+    ExpectedType expectedContentsAt(unsigned indexInType) const { return ExpectedType(writtenContentsAt(indexInType)); }
+    ExpectedType expectedContentsAt(const BuiltinTable&, ContentsSlot) const;
 
     friend bool operator==(const ClassPart&, const ClassPart&) = default;
 };

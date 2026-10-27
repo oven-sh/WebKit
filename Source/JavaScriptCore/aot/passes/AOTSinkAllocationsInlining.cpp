@@ -85,7 +85,7 @@ static bool isOnlyInterpreted(FunctionAnalyses& analyses, ValueID value, UsesLoo
     worklist.append(value);
     while (!worklist.isEmpty()) {
         for (const Use& use : useLists.usesOf(worklist.takeLast())) {
-            if (usesLookedAt == UsesLookedAt::InLikelyCode && function.at(use.block).frequency != BlockFrequency::Normal)
+            if (usesLookedAt == UsesLookedAt::InLikelyCode && function.at(use.block).frequency.predicted() != BlockFrequency::Normal)
                 continue;
             CallResultUse classified = classifyCallResultUse(analyses.program(), function, use);
             switch (classified.kind) {
@@ -143,7 +143,7 @@ public:
         : m_context(context)
         , m_id(context.function.at(call).function())
     {
-        m_isRepeated = isHot(heatClassOf(context, block)) || context.analyses.blockFrequencies().frequencyOf(block) >= HeatModel::minWeightOfCallInLoop;
+        m_isRepeated = isHot(heatClassOf(context, block)).predicted() || context.analyses.blockFrequencies().frequencyOf(block).predicted() >= HeatModel::minWeightOfCallInLoop;
     }
 
     bool onlyInterpretsRestArgumentsInLikelyCode(uint32_t entryParameter)

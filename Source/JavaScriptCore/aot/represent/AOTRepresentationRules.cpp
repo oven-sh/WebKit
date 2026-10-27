@@ -415,7 +415,7 @@ static Representation wantedByBuiltinCall(const RepresentationInputs& inputs, co
     std::optional<uint32_t> argumentIndex = call.variadicOperandIndex(operandIndex);
     if (argumentIndex && builtin == InlineBuiltin::ArrayPush) {
         Representation wanted = wantedByNewArrayElement(inputs, call.operand(operandIndex));
-        bool isPushedToDoubles = arrayStorageDeclaredBy(program, inputs.typeOf(call.operand(0))) == ArrayStorage::Double;
+        bool isPushedToDoubles = arrayStorageDeclaredBy(program, inputs.typeOf(call.operand(0))).predicted() == ArrayStorage::Double;
         return wanted == Representation::JSValue && isPushedToDoubles && type.isNumber() ? Representation::Double : wanted;
     }
 
@@ -499,6 +499,8 @@ static Representation wantedByDeclaredPosition(const RepresentationInputs& input
         return storeRepresentationOf(inputs, placement.slot(user.layout(), user.fields()[variadicIndex()]), operand);
     case Opcode::PrivateDefine:
         return Representation::JSValue;
+    case Opcode::NewArray:
+        return Representation::Unchosen;
     case Opcode::PutEnvironmentField:
         return storeRepresentationOf(inputs, placement.slot(user.layout(), user.field()), operand);
     case Opcode::PutModuleVariable: {

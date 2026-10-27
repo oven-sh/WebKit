@@ -391,6 +391,11 @@ void RuntimeValidationEmitter::checkBindingIsStored(const ValueContext& value, C
     failUnless(isStored, ValidationFailureKind::BindingReadBeforeStore, { }, value.id());
 }
 
+void RuntimeValidationEmitter::checkTypeTestsAgree(Condition agree, CellPointer tested)
+{
+    failUnless(agree, ValidationFailureKind::TypeTestsDiffer, tested, { });
+}
+
 void RuntimeValidationEmitter::reportFailure(ValidationFailureKind kind, Operand found, ValueID id)
 {
     callReport(kind, found, id);

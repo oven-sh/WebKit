@@ -548,7 +548,7 @@ const Vector<LayoutID>& StoresByLayout::layoutsAdmittedBy(LayoutSetID familyOfRe
         }
         Vector<LayoutID> admitted;
         BitVector isAdmitted(program.layouts.size());
-        Vector<LayoutID, 16> worklist(program.at(familyOfReceiver).members.span());
+        Vector<LayoutID, 16> worklist(program.at(familyOfReceiver).completeMembers().value());
         while (!worklist.isEmpty()) {
             LayoutID layout = worklist.takeLast();
             if (isAdmitted.quickSet(layout.index()))
@@ -997,7 +997,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
         }
         return;
     }
-    if (writes.familyOfReceiver != UINT32_MAX && !admits(m_inputs.program.at(LayoutSetID(writes.familyOfReceiver)).members.span(), layout))
+    if (writes.familyOfReceiver != UINT32_MAX && !admits(m_inputs.program.at(LayoutSetID(writes.familyOfReceiver)).completeMembers(), layout))
         return;
     note(maker, stores, name, writes.value, !writes.isStoredAfterCreation, writes.isNamedByOperation);
     stores.getsCopyWithoutComputedKey |= writes.leavesOutComputedKey;

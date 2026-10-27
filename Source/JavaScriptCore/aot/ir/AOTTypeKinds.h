@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTExpected.h"
 #include "AOTID.h"
 #include <optional>
 
@@ -96,8 +97,14 @@ struct Proven {
     static ProvenInEveryVersion byFlowOfPosition(TypeID type) { return ProvenInEveryVersion(type); }
     // The claim is moved or copied as it stands.
     static ProvenType asClaimedBy(const Value& assumeType);
+    // Flow has followed all that is stored into the collections of a type. It holds of a value as far as the type does.
+    static ProvenValue<TypeID> byFlowOfContents(TypeID type) { return ProvenValue<TypeID>(type); }
     // The type that the rules give a value, for whoever has not looked at what stands in front of the value.
     static ProvenType byRulesBehindChecks(TypeID type) { return { type, ProofScope::BehindChecks }; }
+    // Every member has been listed: the layouts that a type names or a test asks for, the receivers that flow has followed to an access. It holds of a value as far as the type, the test or the stamp does.
+    template<typename T> static ProvenValue<T> byClosedSet(T members) { return ProvenValue<T>(std::move(members)); }
+    // Flow lists at an operation every function that it has followed there. A function that arrives unlisted has callers that nobody claims to know.
+    template<typename T> static ProvenValue<T> byFlowOfCallees(T followed) { return ProvenValue<T>(std::move(followed)); }
 };
 
 } } } // namespace JSC::AOT::Typed

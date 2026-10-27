@@ -129,14 +129,14 @@ static BuiltinCallbackTimes mergeTimes(BuiltinCallbackTimes first, BuiltinCallba
     return isCalledPerEvent ? BuiltinCallbackTimes::PerEvent : BuiltinCallbackTimes::Repeatedly;
 }
 
-static BuiltinCallbackTimes timesOfCallbacks(const BuiltinTable& builtins, const CalleeSet* stamp)
+static Expected<BuiltinCallbackTimes> timesOfCallbacks(const BuiltinTable& builtins, const CalleeSet* stamp)
 {
     std::optional<BuiltinCallbackTimes> times;
     auto add = [&](BuiltinCallbackTimes other) {
         times = times ? mergeTimes(*times, other) : other;
     };
     if (stamp) {
-        for (BuiltinID builtin : stamp->builtins) {
+        for (BuiltinID builtin : stamp->seen().predicted().builtins) {
             for (const BuiltinOverload& overload : builtins.overloadsOf(builtin)) {
                 for (const BuiltinCallback& callback : overload.flow.callbacks)
                     add(callback.times);
@@ -233,7 +233,7 @@ static CallbacksOfCall findCallbacksOfCall(const ValueFlowResultInputs& inputs, 
         if (ValueSetID closures = maker.intersect(*seen, inputs.universe().closures()); closures != ValueSets::nothing)
             callbacks.rows.append({ closures, times, kind });
     };
-    for (BuiltinID builtin : stamp.builtins) {
+    for (BuiltinID builtin : stamp.seen().predicted().builtins) {
         for (const BuiltinOverload& overload : inputs.program.builtins().overloadsOf(builtin)) {
             for (const BuiltinCallback& callback : overload.flow.callbacks)
                 add(seenValuesAt(inputs, maker, call, callback.callee), callback.times, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode);
@@ -267,7 +267,7 @@ static void mergeIndirectCalls(Vector<FlowIndirectCall>& calls, size_t first)
         FlowIndirectCall& merged = calls[count - 1];
         merged.isInCycle |= call.isInCycle;
         merged.isAlwaysConstruction &= call.isAlwaysConstruction;
-        merged.times = mergeTimes(merged.times, call.times);
+        merged.times = mergeTimes(merged.times.predicted(), call.times.predicted());
     }
     calls.shrink(count);
 }
@@ -534,7 +534,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                         return;
                     if (namesNoEscapedClosure && sets.contains(escaped, callee))
                         return;
-                    if (stampThatListsCallees && std::ranges::binary_search(stampThatListsCallees->functions, entered))
+                    if (stampThatListsCallees && std::ranges::binary_search(stampThatListsCallees->followed().value(), entered))
                         return;
 
                     if (!std::exchange(hasPreparedSites, true)) {
@@ -565,7 +565,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                         }
                         if (!timesOfRows && (!callbacksOfStatement || !callbacksOfStatement->everyRowIsListed)) {
                             if (!timesOfCallbacksOfStatement)
-                                timesOfCallbacksOfStatement = timesOfCallbacks(program.builtins(), stamp);
+                                timesOfCallbacksOfStatement = timesOfCallbacks(program.builtins(), stamp).predicted();
                             timesOfRows = *timesOfCallbacksOfStatement;
                         }
                         call.times = timesOfRows.value_or(BuiltinCallbackTimes::Once);
@@ -574,7 +574,7 @@ static EntriesWithoutStamp findEntriesWithoutStamp(const ValueFlowResultInputs& 
                 });
             };
 
-            if (listsWhatWasSeen && stamp && !stamp->builtins.isEmpty()) {
+            if (listsWhatWasSeen && stamp && !stamp->seen().predicted().builtins.empty()) {
                 BorrowedValueSetMaker maker(inputs.makerPool());
                 callbacksOfStatement = findCallbacksOfCall(inputs, maker.get(), statement, *stamp);
                 for (const CallbacksOfCall::Row& row : callbacksOfStatement->rows)
@@ -853,7 +853,7 @@ static bool isOnlyCalled(const ValueFlowResultInputs& inputs, ValueSetID callabl
 {
     if (inputs.hasEscaped(object) || inputs.isLost(object) || inputs.isHeldByNativeCode(object))
         return false;
-    return !inputs.sets().contains(callablesLookedInto, object) && markedMutationsOf(inputs, object).isEmpty();
+    return !inputs.sets().contains(callablesLookedInto, object) && markedMutationsOf(inputs, object).isEmpty() && !inputs.mayBecomePrototype(object);
 }
 
 static bool mayHold(const ValueFlowResultInputs& inputs, const ValueFlowOperand& operand, ValueFlowObjectID object)

@@ -214,7 +214,7 @@ EarlierTest TestSiteReporter::findEarlierTest(const Value& test) const
     }
 
     // Every failing edge of a chain of tests enters one generic copy, so no single failed edge dominates the copy.
-    if (function().at(m_point.block).frequency == BlockFrequency::Normal || !failedConditions().mayHaveFailed(test, m_point.block))
+    if (function().at(m_point.block).frequency.predicted() == BlockFrequency::Normal || !failedConditions().mayHaveFailed(test, m_point.block))
         return EarlierTest::Unknown;
     m_hasFailedEarlierTest = true;
     return EarlierTest::Failed;
@@ -222,14 +222,14 @@ EarlierTest TestSiteReporter::findEarlierTest(const Value& test) const
 
 bool TestSiteReporter::mayHaveFailedTestOf(ValueID value) const
 {
-    return function().at(m_point.block).frequency != BlockFrequency::Normal || analyses().hasFailedTestOf(value);
+    return function().at(m_point.block).frequency.predicted() != BlockFrequency::Normal || analyses().hasFailedTestOf(value);
 }
 
 bool TestSiteReporter::takesAwaySitesInColdCode()
 {
     if (m_blockOfHeatClass != m_point.block) {
         m_blockOfHeatClass = m_point.block;
-        m_blockIsCold = heatClassOf(m_context, m_point.block) == HeatClass::Cold;
+        m_blockIsCold = heatClassOf(m_context, m_point.block).predicted() == HeatClass::Cold;
     }
     return m_blockIsCold;
 }
@@ -283,7 +283,7 @@ static bool asksForMoreThanLayoutsTell(const TestSiteReporter& reporter, const V
     if (tested.classes.isEmpty() && !program.expectedOrTypeOf(reporter.function(), test.operand(testedOperandIndex)).classes.isEmpty())
         return true;
     // `compilerOptions.strict`: a record type of dozens of fields, every one of them optional, describes a bag of options.
-    return std::ranges::all_of(program.at(tested.layouts).members, [&](LayoutID id) {
+    return std::ranges::all_of(program.at(tested.layouts).completeMembers(), [&](LayoutID id) {
         const Layout& layout = program.at(id);
         return layout.kind == LayoutKind::Record && layout.fields.size() >= minFieldsOfBagOfOptions && std::ranges::none_of(layout.fields, [](const Field& field) {
             return field.flags.containsAny({ FieldFlags::IsRequired, FieldFlags::IsRequiredUntilDeleted });
@@ -332,7 +332,7 @@ void TestSiteReporter::report(std::span<const Value> tests, const Effects& effec
         return;
 
     // A block that is marked is a slow path: a generic copy, the arm behind a failed test. A block that only the estimate of a branch calls unlikely is typed code like the rest, and the estimate may be wrong.
-    bool isInTypedCode = function().at(m_point.block).frequency == BlockFrequency::Normal;
+    bool isInTypedCode = function().at(m_point.block).frequency.predicted() == BlockFrequency::Normal;
     if (!isInTypedCode && !m_hasFailedEarlierTest) {
         const FailedConditions& failed = failedConditions();
         bool isAboutSubjectOfFailedTest = std::ranges::any_of(tests, [&](const Value& test) {
@@ -405,7 +405,7 @@ static const NaturalLoop* findLoopAround(TestSiteReporter& reporter, BlockID blo
         return nullptr;
     const NaturalLoops& loops = reporter.analyses().naturalLoops();
     const NaturalLoop* loop = loops.innerMostLoopOf(block);
-    while (loop && isClosedOnlyByWaysBack(reporter.analyses(), *loop))
+    while (loop && isClosedOnlyByWaysBack(reporter.analyses(), *loop).predicted())
         loop = loops.innerMostOuterLoop(*loop);
     return loop;
 }
@@ -447,11 +447,11 @@ static RarerSide rarerSideOf(TestSiteReporter& reporter)
     const Terminator& terminator = reporter.function().at(reporter.point().block).terminator;
     if (!terminator.isConditionalBranch() || terminator.conditionOperand() != reporter.use())
         return RarerSide::Neither;
-    BlockFrequency whenPassed = reporter.function().at(terminator.taken().block).frequency;
-    BlockFrequency whenFailed = reporter.function().at(terminator.notTaken().block).frequency;
-    if (isRarerThan(whenPassed, whenFailed))
+    Expected<BlockFrequency> whenPassed = reporter.function().at(terminator.taken().block).frequency;
+    Expected<BlockFrequency> whenFailed = reporter.function().at(terminator.notTaken().block).frequency;
+    if (isRarerThan(whenPassed, whenFailed).predicted())
         return RarerSide::WherePassed;
-    return isRarerThan(whenFailed, whenPassed) ? RarerSide::WhereFailed : RarerSide::Neither;
+    return isRarerThan(whenFailed, whenPassed).predicted() ? RarerSide::WhereFailed : RarerSide::Neither;
 }
 
 static std::optional<Value> testInFrontOf(TestSiteReporter& reporter, const Value& test, RarerSide rarerSide)

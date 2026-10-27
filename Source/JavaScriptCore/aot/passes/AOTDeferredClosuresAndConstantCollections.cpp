@@ -471,8 +471,8 @@ struct WindowScanner {
     {
         if (store.level() != KnowledgeLevel::Proven || (store.guardOperand() && !isObject(store.guardOperand())))
             return { };
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        return receivers.isComplete && receivers.members.size() == 1 ? receivers.members[0] : LayoutID();
+        auto receivers = m_program.at(store.receivers()).all();
+        return receivers && receivers->value().size() == 1 ? receivers->value().front() : LayoutID();
     }
 
     bool passesObjectOnlyAsReceiver(const Value& call) const
@@ -528,11 +528,11 @@ struct WindowScanner {
     {
         if (!isClosure(store.valueOperand()))
             return;
-        const LayoutSet& receivers = m_program.at(store.receivers());
-        if (!receivers.isComplete || receivers.members.isEmpty())
+        auto receivers = m_program.at(store.receivers()).all();
+        if (!receivers || receivers->value().empty())
             return;
         std::optional<FieldReference> declaration;
-        for (LayoutID member : receivers.members) {
+        for (LayoutID member : *receivers) {
             std::optional<uint32_t> field = m_program.at(member).findField(store.key());
             if (!field || !m_layouts.all.quickGet(member.index()))
                 return;
@@ -725,7 +725,7 @@ struct DeferralAnalysis {
         }
         std::span<const LayoutID> members;
         if (Value::opcodesWithFieldAccess.contains(access.opcode) || access.opcode == Opcode::IsSlotFilled)
-            members = program.at(access.receivers()).members.span();
+            members = program.at(access.receivers()).completeMembers();
         else if (access.numberOfOperands() && access.operand(0))
             members = membersOf(program, program.typeOf(function, access.operand(0)));
         for (LayoutID member : members) {
@@ -752,7 +752,7 @@ struct DeferralAnalysis {
     // `ifAbsent` is the answer for a receiver without the field.
     bool holdsForFieldInEveryReceiver(const Value& access, bool ifAbsent, const Invocable<bool(FieldReference)> auto& predicate) const
     {
-        return std::ranges::all_of(program.at(access.receivers()).members, [&](LayoutID member) {
+        return std::ranges::all_of(program.at(access.receivers()).completeMembers(), [&](LayoutID member) {
             std::optional<uint32_t> field = program.at(member).findField(access.key());
             return field ? predicate(FieldReference { member, *field }) : ifAbsent;
         });
@@ -1128,7 +1128,7 @@ struct DeferralAnalysis {
 
     bool findsClosureOverReceiver(const Value& read) const
     {
-        return !program.at(read.receivers()).members.isEmpty() && holdsForFieldInEveryReceiver(read, false, [&](FieldReference field) {
+        return !program.at(read.receivers()).completeMembers().value().empty() && holdsForFieldInEveryReceiver(read, false, [&](FieldReference field) {
             const FieldState& state = stateOf(field);
             const LocationFlow& location = flowOf(program, field).location;
             return state.canDefer()
@@ -1239,7 +1239,7 @@ struct DeferralAnalysis {
     {
         for (AccessKind kind : { SlotRead, NamedAccess }) {
             for (ValueReference reference : accesses[kind]) {
-                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)))
+                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)).predicted())
                     continue;
                 forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
                     if (states[row].isGivenWhereLayoutIsExpected)

@@ -258,7 +258,7 @@ static bool isFormThatLeftByTailCall(FunctionID candidate, FunctionID sourceFunc
 
 bool isCopiedForOwnFunctionObject(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame)
 {
-    if (frame.isOfCalledBuiltin)
+    if (frame.isOfCalledBuiltin || !frame.inlineFrame)
         return false;
     FunctionID source = FunctionDescription(frame.function).sourceFunction();
     while (frame.inlineFrame) {
@@ -270,6 +270,17 @@ bool isCopiedForOwnFunctionObject(const Image& image, InlineFrameReader& reader,
             return false;
     }
     return false;
+}
+
+bool hasOnlyEntrypointsBelow(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame, FunctionID source)
+{
+    while (frame.inlineFrame) {
+        bool leftByTailCall = reader.at(image, code.index(), frame.inlineFrame).isTailCall;
+        frame = callerOfInlinedFrame(image, reader, code, frame);
+        if (!isEntrypointOf(frame.function, source) && !isFormThatLeftByTailCall(frame.function, source, leftByTailCall))
+            return false;
+    }
+    return true;
 }
 
 static std::optional<SourcePosition> findPosition(const CompiledFrame& frame)
@@ -559,19 +570,10 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
 
     // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.
     FunctionID source = FunctionDescription(frame().function).sourceFunction();
-    auto hasOnlyEntrypoints = [&](CompiledFunctionID code, LogicalFrame logical) {
-        while (logical.inlineFrame) {
-            bool leftByTailCall = m_inlineFrames.at(*m_image, code.index(), logical.inlineFrame).isTailCall;
-            logical = callerOfInlinedFrame(*m_image, m_inlineFrames, code, logical);
-            if (!isEntrypointOf(logical.function, source) && !isFormThatLeftByTailCall(logical.function, source, leftByTailCall))
-                return false;
-        }
-        return true;
-    };
     LogicalFrame logical { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted };
     if (isCopiedForOwnFunctionObject(*m_image, m_inlineFrames, m_frame.code, logical))
         return nullptr;
-    if (!hasOnlyEntrypoints(m_frame.code, logical))
+    if (!hasOnlyEntrypointsBelow(*m_image, m_inlineFrames, m_frame.code, logical, source))
         return std::nullopt;
 
     Cursor cursor = m_cursor;
@@ -579,7 +581,7 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     RunEnd runEnd;
     const void* stackPointer = callerStackPointer();
     while (const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd)) {
-        if (m_image->callsOwnFunctionObjectAt(entry->code.index(), entry->site.callSite))
+        if (entry->callsOwnFunctionObject)
             return nullptr;
         // A function object of the same function that is called by value in tail position has a record of its own.
         if (!isEntrypointOf(entry->innermostFunction, source) && (!isFormThatLeftByTailCall(entry->innermostFunction, source, entry->site.isTailCall()) || tables.recordedCalleeOfCallFrom(stackPointer, source)))
@@ -587,7 +589,7 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
         LogicalFrame caller { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false };
         if (isCopiedForOwnFunctionObject(*m_image, m_inlineFrames, entry->code, caller))
             return nullptr;
-        if (!hasOnlyEntrypoints(entry->code, caller))
+        if (!hasOnlyEntrypointsBelow(*m_image, m_inlineFrames, entry->code, caller, source))
             break;
         stackPointer = AOT::stackPointerOfCaller(cursor.callFrame, cursor.bytesAboveReturnAddress);
     }
@@ -745,7 +747,10 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     LogicalFrame innermost = innermostLogicalFrame(image, reader, { entry.code, entry.site.callSite, entry.site.inlineFrame, false });
     entry.innermostFunction = innermost.function;
     entry.innermostIsInlinedConstructCall = innermost.isInlinedConstructCall;
-    entry.innermostVisibility = FunctionDescription(innermost.function).visibility();
+    FunctionDescription innermostDescription(innermost.function);
+    entry.innermostVisibility = innermostDescription.visibility();
+    entry.innermostIsAsync = innermostDescription.isAsync();
+    entry.callsOwnFunctionObject = image.callsOwnFunctionObjectAt(location.function, entry.site.callSite);
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());
     entry.shownFrameCountOnTop = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), false), CallSiteCache::Entry::tooManyFramesToCount);
     if (entry.site.isTailCall())

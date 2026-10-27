@@ -11,6 +11,7 @@
 #include "AOTFlowOrder.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRulesModules.h"
+#include <algorithm>
 #include <atomic>
 #include <wtf/Atomics.h>
 
@@ -159,6 +160,9 @@ static void collectModules(const ValueFlowResultInputs& inputs, FlowOrderInputs&
                 order.modulesLoadedByHost.quickSet(module.index());
         }
     }
+    order.hostRunsWaitingJobs = std::ranges::any_of(builtins.marked(BuiltinMark::RunsWaitingJobs), [&](const BuiltinMarkedEntry& entry) {
+        return inputs.solver().usesOf(entry.builtin).containsAny({ BuiltinUse::Read, BuiltinUse::Called, BuiltinUse::Constructed, BuiltinUse::Escaped });
+    });
 }
 
 static void collectStaticFields(const ValueFlowResultInputs& inputs, FlowOrderInputs& order)

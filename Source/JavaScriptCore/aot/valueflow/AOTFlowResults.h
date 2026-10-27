@@ -40,11 +40,15 @@ struct FlowIndirectCall {
     AccessSiteID site;
     FunctionID callee;
     FlowIndirectCallKind kind { FlowIndirectCallKind::Host };
-    BuiltinCallbackTimes times { BuiltinCallbackTimes::Later };
+    // Read off the built-ins that were seen at the site.
+    Expected<BuiltinCallbackTimes> times { BuiltinCallbackTimes::Later };
     bool isInCycle { false };
     bool isAlwaysConstruction { false };
 
-    friend bool operator==(const FlowIndirectCall&, const FlowIndirectCall&) = default;
+    friend bool operator==(const FlowIndirectCall& a, const FlowIndirectCall& b)
+    {
+        return a.caller == b.caller && a.site == b.site && a.callee == b.callee && a.kind == b.kind && a.times.isSamePredictionAs(b.times) && a.isInCycle == b.isInCycle && a.isAlwaysConstruction == b.isAlwaysConstruction;
+    }
 };
 
 struct FlowBoundFunctionUse {
@@ -302,6 +306,9 @@ public:
     BuiltinHolderState builtinHolder(BuiltinID holder) const { return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown; }
     bool listsKeysOf(BuiltinID canonicalHolder) const { return m_mayListKeysOfEveryHolder || m_tables.builtins.holdersWithListedKeys.get(canonicalHolder.index()); }
     void setMayListKeysOfEveryHolder() { m_mayListKeysOfEveryHolder = true; }
+    // The fields whose types were taken back as the results were applied. Their reads have no checks yet.
+    std::span<const FieldReference> fieldsTakenBack() const LIFETIME_BOUND { return m_fieldsTakenBack.span(); }
+    void setFieldsTakenBack(Vector<FieldReference>&& fields) { m_fieldsTakenBack = WTF::move(fields); }
     const BuiltinLocationFlow* findBuiltinLocation(BuiltinID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool builtinHolderNeverGains(BuiltinID holder, PropertyKeyID key) const { return hasResults() && Typed::builtinHolderNeverGains(m_tables.builtins, holder, key); }
     std::span<const BuiltinLocationFlow> builtinLocations() const LIFETIME_BOUND { return m_tables.builtins.locations.span(); }
@@ -341,8 +348,7 @@ public:
     // Flow decides the kind of storage of some arrays for the whole program, and whoever reads one of them by that decision reads it without a test.
     // So nothing that the compiler adds may change the kind of an array that may be one of them. Whoever adds such an operation asks here for each access that the array is the receiver of; no site stands for an access that flow has not seen.
     bool mayChangeStorageOfReceiver(AccessSiteID) const;
-    // A prediction: the caller must test the value at run time.
-    std::span<const FlowBoundFunctionAtSite> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
+    Expected<std::span<const FlowBoundFunctionAtSite>> boundFunctionsSeenAt(AccessSiteID, FlowBoundFunctionUseAtSite) const LIFETIME_BOUND;
     const SinkCandidates& sinkCandidates(AccessSiteID call, uint32_t operandIndex) const LIFETIME_BOUND;
     TypeID typedResultType(AccessSiteID call) const;
     std::span<const LayoutID> typedResultLayouts(AccessSiteID call) const LIFETIME_BOUND;
@@ -392,6 +398,7 @@ private:
     FrameArrayParameters m_frameArrayParameters;
     ConstantLists m_constantLists;
     BitVector m_sitesOfWholeLiterals;
+    Vector<FieldReference> m_fieldsTakenBack;
     bool m_mayListKeysOfEveryHolder { false };
     bool m_unseenCodeCanRun { true };
     bool m_unseenScriptsCanRun { true };

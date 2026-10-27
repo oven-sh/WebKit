@@ -13,12 +13,12 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-inline constexpr ValueFlowName steppedValuesName = ValueFlowName::of(ValueFlowNameKind::SteppedValues);
-inline constexpr ValueFlowName returnedValueName = ValueFlowName::of(ValueFlowNameKind::ReturnedValue);
-inline constexpr ValueFlowName sentValuesName = ValueFlowName::of(ValueFlowNameKind::SentValues);
+inline constexpr ValueFlowCellName steppedValuesName { ValueFlowNameKind::SteppedValues };
+inline constexpr ValueFlowCellName returnedValueName { ValueFlowNameKind::ReturnedValue };
+inline constexpr ValueFlowCellName sentValuesName { ValueFlowNameKind::SentValues };
 
 inline ValueFlowName nameOf(ValueFlowRuleContext& context, BuiltinName name) { return ValueFlowName::property(context.program(), context.program().keyOf(name)); }
-inline constexpr ValueFlowName nameOf(BuiltinSlotID slot) { return { ValueFlowNameKind::Slot, slot.index() }; }
+inline constexpr ValueFlowCellName nameOf(BuiltinSlotID slot) { return ValueFlowCellName { ValueFlowNameKind::Slot, slot.index() }; }
 
 inline ClimbingSet known(ValueFlowRuleContext& context, ClimbingSet set) { return context.restrict(set, context.universe().knownObjects()); }
 

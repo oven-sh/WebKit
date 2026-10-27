@@ -19,6 +19,7 @@
 #include "AOTSortedSet.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowResultsUnseenCode.h"
@@ -755,6 +756,25 @@ struct ConstructionGraphBuilder {
         return arePlain;
     }
 
+    bool holdsObjectOfProgramThatStopsStores(ValueSetID holders)
+    {
+        AOT_THRESHOLD(uint32_t, fewestHoldersAskedTogether, 8);
+        auto stopsStores = [&](ValueFlowObjectID holder) {
+            return !universe.builtinOf(holder) && markedMutationsOf(inputs, holder).containsAny(mutationsStoppingStores);
+        };
+        if (ValueSets::isComplement(holders) || sets.size(holders) < fewestHoldersAskedTogether)
+            return sets.anyMember(holders, stopsStores);
+        if (!objectsOfProgramThatStopStores) {
+            Vector<ValueFlowObjectID> stopping;
+            for (uint32_t index = 0; index < universe.numberOfObjects(); ++index) {
+                if (stopsStores(ValueFlowObjectID(index)))
+                    stopping.append(ValueFlowObjectID(index));
+            }
+            objectsOfProgramThatStopStores = maker.of(stopping.span());
+        }
+        return sets.meet(holders, *objectsOfProgramThatStopStores);
+    }
+
     bool mayBeStoppedAbove(const ChainOfReceivers& chain, PropertyKeyID key)
     {
         ValueSetID above = chain.above;
@@ -762,14 +782,12 @@ struct ConstructionGraphBuilder {
         const ValueFlowMembersUnderKey& members = universe.builtinTables().heap().under(key);
         if (accessorsUnder(above, key, true) != ValueSets::nothing || accessorsUnder(above, key, false) != ValueSets::nothing || sets.meet(above, members.holdersOfUndeclaredProperties))
             return true;
+        if (holdsObjectOfProgramThatStopsStores(above))
+            return true;
         bool mayBeStopped = false;
-        sets.forEachMember(above, [&](ValueFlowObjectID holder) {
+        sets.forEachMember(maker.intersect(above, members.holders), [&](ValueFlowObjectID holder) {
             BuiltinID builtin = universe.builtinOf(holder);
-            if (!builtin) {
-                mayBeStopped |= markedMutationsOf(inputs, holder).containsAny(mutationsStoppingStores);
-                return;
-            }
-            if (!sets.contains(members.holders, holder))
+            if (!builtin)
                 return;
             mayBeStopped |= sets.contains(members.holdersWithLockedLocation, holder);
             for (BuiltinID member : builtins.membersOf(builtin))
@@ -1046,6 +1064,7 @@ struct ConstructionGraphBuilder {
     const ValueSets& sets { inputs.sets() };
     ValueSetMaker& maker { heap.maker() };
     MapByNumber<uint32_t, ChainOfReceivers> chains { };
+    std::optional<ValueSetID> objectsOfProgramThatStopStores { };
     MapByNumber<uint32_t, std::optional<ChainOfReceivers>> chainsBeforeLeak { };
     ConstructionGraph graph { };
 };

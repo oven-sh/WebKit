@@ -538,58 +538,58 @@ void TextParser::completeType(uint32_t wireIndex, Type& type) const
     type.regExpLiteralSet = SortedSet<RegExpLiteralInType>(parts.regExpLiterals.span());
 
     if (parts.layoutsAreExact) {
-        LayoutSet exactLayouts { parts.layouts.map([](uint32_t word) { return LayoutID(word); }), true };
-        exactLayouts.hasMembersWithoutLayout = parts.hasMembersWithoutLayout;
-        type.layouts = m_program->types.intern(WTF::move(exactLayouts));
+        type.layouts = m_program->types.intern(LayoutSet::complete(parts.layouts.map([](uint32_t word) { return LayoutID(word); }), parts.hasMembersWithoutLayout));
     }
 }
 
 LayoutSetID TextParser::parseLayoutSet()
 {
-    LayoutSet set;
-    set.isComplete = true;
+    Vector<LayoutID> members;
+    bool isComplete = true;
+    bool hasMembersWithoutLayout = false;
     parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
-        if (!set.isComplete) {
+        if (!isComplete) {
             fail();
             return;
         }
         if (accept(TokenKind::DotDot)) {
-            set.isComplete = false;
+            isComplete = false;
             return;
         }
-        if (!set.hasMembersWithoutLayout && acceptWord("nolayout"_s)) {
-            set.hasMembersWithoutLayout = true;
+        if (!hasMembersWithoutLayout && acceptWord("nolayout"_s)) {
+            hasMembersWithoutLayout = true;
             return;
         }
-        set.members.append(LayoutID(parseIDWordUnderLimit(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));
+        members.append(LayoutID(parseIDWordUnderLimit(*this, IDPrefix::Layout, countOf(ProgramList::Layouts))));
     });
     if (hasFailed())
         return { };
-    return m_program->types.intern(WTF::move(set));
+    return m_program->types.intern(isComplete ? LayoutSet::complete(WTF::move(members), hasMembersWithoutLayout) : LayoutSet::open(WTF::move(members), hasMembersWithoutLayout));
 }
 
 CalleeSetID TextParser::parseCalleeSet()
 {
-    CalleeSet set;
-    set.isComplete = true;
+    Vector<FunctionID> functions;
+    Vector<BuiltinID> builtins;
+    bool isComplete = true;
     parseList(TokenKind::LeftBracket, TokenKind::RightBracket, [&] {
-        if (!set.isComplete) {
+        if (!isComplete) {
             fail();
             return;
         }
         if (accept(TokenKind::DotDot)) {
-            set.isComplete = false;
+            isComplete = false;
             return;
         }
         if (atWord("builtin"_s)) {
-            set.builtins.append(parseBuiltinPart(*this));
+            builtins.append(parseBuiltinPart(*this));
             return;
         }
-        set.functions.append(FunctionID(parseIDWordUnderLimit(*this, IDPrefix::Function, countOf(ProgramList::Functions))));
+        functions.append(FunctionID(parseIDWordUnderLimit(*this, IDPrefix::Function, countOf(ProgramList::Functions))));
     });
     if (hasFailed())
         return { };
-    return m_program->types.intern(WTF::move(set));
+    return m_program->types.intern(isComplete ? CalleeSet::complete(WTF::move(functions), WTF::move(builtins)) : CalleeSet::open(WTF::move(functions), WTF::move(builtins)));
 }
 
 template<typename IDType>

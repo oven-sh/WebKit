@@ -62,7 +62,8 @@ bool tryAssign(VM&, JSObject* compiledTarget, JSObject* source);
 // What canPerformFastPutInlineExcludingProto() and isStructureExtensible() would answer for the target if an ordinary object stood in the place of each compiled one, of the target and of those above it.
 bool wouldPerformFastPut(VM&, JSObject* target);
 JS_EXPORT_PRIVATE void didBecomePrototype(VM&, JSObject*);
-JS_EXPORT_PRIVATE void didAddPropertyToClosure(VM&, JSObject* closure, UniquedStringImpl*);
+JS_EXPORT_PRIVATE void willPutDirectOnClosure(VM&, JSObject* closure, UniquedStringImpl*);
+JS_EXPORT_PRIVATE void didPutDirectOnClosure(VM&, JSObject* closure, UniquedStringImpl*);
 bool hasIndexedProperties(JSObject*);
 JSObject* objectHoldingIndexedProperties(const JSObject*);
 

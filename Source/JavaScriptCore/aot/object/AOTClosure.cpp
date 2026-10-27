@@ -768,8 +768,13 @@ bool Closure::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSVal
     return Base::setPrototype(object, globalObject, prototype, shouldThrow);
 }
 
+void PropertyWalk::willPutDirectOnClosure(VM& vm, JSObject* object, UniquedStringImpl* uid)
+{
+    StaticFields::willPutDirect(vm, *uncheckedDowncast<Closure>(object), uid);
+}
+
 // JSObject::putDirect() asks no method table: Error.captureStackTrace(SomeClass) puts `stack` on the class object so. A holder is entered once its class is defined.
-void PropertyWalk::didAddPropertyToClosure(VM&, JSObject* object, UniquedStringImpl* uid)
+void PropertyWalk::didPutDirectOnClosure(VM&, JSObject* object, UniquedStringImpl* uid)
 {
     Closure* closure = uncheckedDowncast<Closure>(object);
     const LayoutData* classLayout = closure->classData();

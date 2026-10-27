@@ -141,7 +141,7 @@ bool hasValidReferences(const Program& program, const Type& type, ReferenceCheck
         checker(literal.pattern);
     for (const ClassPart& part : type.classes) {
         checker(part.builtinClass);
-        for (TypeID contents : part.contents)
+        for (TypeID contents : part.writtenContents)
             checker.checkIfSet(contents);
     }
     checker.checkIfSet(type.layouts);
@@ -161,9 +161,9 @@ std::optional<InternalError> findTypeError(const Program& program, TypeID id, Re
 
     if (type.layouts) {
         const LayoutSet& set = program.at(type.layouts);
-        if (!set.isComplete || (set.members.isEmpty() && !set.hasMembersWithoutLayout))
+        if (!set.listsEveryLayout() || (set.written().isEmpty() && !set.isWrittenWithMembersWithoutLayout()))
             return InternalError { .kind = InternalErrorKind::InvalidLayout, .count = id.index() };
-        for (LayoutID member : set.members) {
+        for (LayoutID member : set.written()) {
             if (!member || program.at(member).isEnvironment())
                 return InternalError { .kind = InternalErrorKind::InvalidLayout, .layout = member, .count = id.index() };
         }

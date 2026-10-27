@@ -59,7 +59,7 @@ FailedConditions::FailedConditions(FunctionAnalyses& analyses)
         if (failedAtHeadOf(failing.block).add(m_conditions.add(test).index()))
             isPending.quickSet(cfg.reversePostOrderIndex(failing.block));
     };
-    auto leavesNormalCode = [&](const Target& failing) { return function.at(failing.block).frequency != BlockFrequency::Normal; };
+    auto leavesNormalCode = [&](const Target& failing) { return function.at(failing.block).frequency.predicted() != BlockFrequency::Normal; };
     for (BlockID block : order) {
         const Terminator& terminator = function.at(block).terminator;
         if (terminator.isConditionalBranch() && leavesNormalCode(terminator.notTaken())) {
@@ -79,7 +79,7 @@ FailedConditions::FailedConditions(FunctionAnalyses& analyses)
             isPending.quickClear(position);
             BlockID block = order[position];
             function.at(block).forEachTarget([&](const Target& target) {
-                if (target.block == block || function.at(target.block).frequency == BlockFrequency::Normal)
+                if (target.block == block || function.at(target.block).frequency.predicted() == BlockFrequency::Normal)
                     return;
                 BitVector& failed = failedAtHeadOf(target.block);
                 size_t numberOfConditions = failed.bitCount();
@@ -219,7 +219,7 @@ static void shareConditionsTestsIn(FunctionPassContext& context, TestSites& site
 static void shareConditionsTests(FunctionPassContext& context, TestSites& sites)
 {
     for (std::span<const TestSite> sitesOfBlock : sites.sites.span() | std::views::chunk_by([](const TestSite& a, const TestSite& b) { return a.point.block == b.point.block; })) {
-        if (context.function.at(sitesOfBlock[0].point.block).frequency == BlockFrequency::Normal)
+        if (context.function.at(sitesOfBlock[0].point.block).frequency.predicted() == BlockFrequency::Normal)
             shareConditionsTestsIn(context, sites, sitesOfBlock);
     }
 }
@@ -257,7 +257,7 @@ static void askForConditionsTestsInFront(FunctionPassContext& context, TestSites
         std::optional<uint32_t> test = findConditionsTest(sites, site);
         if (!test)
             continue;
-        if (function.at(site.point.block).frequency == BlockFrequency::Normal && objectAskedAbout(context, site)) {
+        if (function.at(site.point.block).frequency.predicted() == BlockFrequency::Normal && objectAskedAbout(context, site)) {
             for (const auto& [passedAt, candidate] : testsInFront | std::views::reverse) {
                 if (candidate.conditions().size() <= sites.tests[*test].conditions().size() || !listsConditionsOf(candidate, sites.tests[*test]) || !isInFrontOf(passedAt, site.point))
                     continue;
@@ -333,8 +333,8 @@ static BitVector findReceiversAskedOnlyForNamesDefinedWithoutLayout(FunctionPass
 
 bool paysToTestMembersUnderSymbolsOfProgram(FunctionPassContext& context, BlockID block)
 {
-    HeatClass heatClass = heatClassOf(context, block);
-    return isHot(heatClass) || heatClass == HeatClass::Unknown || context.analyses.blockFrequencies().frequencyOf(block) >= HeatModel::minWeightOfCallInLoop;
+    Expected<HeatClass> heatClass = heatClassOf(context, block);
+    return isHot(heatClass).predicted() || heatClass.predicted() == HeatClass::Unknown || context.analyses.blockFrequencies().frequencyOf(block).predicted() >= HeatModel::minWeightOfCallInLoop;
 }
 
 static bool holdsMemberUnderSymbolOfProgram(const Program& program, std::span<const Value> tests)
@@ -366,9 +366,9 @@ static TestSites collectTestSites(FunctionPassContext& context)
         return { };
     // Most compact functions have no loop at all, and they are nearly half of a very large program: no rule looks at them.
     const Heat& heat = context.inputs.heat;
-    bool isCompactFunction = heat.isCompact(context.program, context.id);
+    bool isCompactFunction = heat.isCompact(context.program, context.id).predicted();
     // Without looking at the blocks: none of them runs more often than the function is entered.
-    if (isCompactFunction && isCold(heat.classOf(heat.activationsOf(context.program, context.id) * roundingOfFrequencySums)) && runsNoBlockMoreOftenThanEntry(context.analyses.cfg()))
+    if (isCompactFunction && isCold(heat.classOf(heat.activationsOf(context.program, context.id) * roundingOfFrequencySums)).predicted() && runsNoBlockMoreOftenThanEntry(context.analyses.cfg()))
         return { };
 
     TestSiteReporter reporter(context);
@@ -392,10 +392,10 @@ static TestSites collectTestSites(FunctionPassContext& context)
         // Tests that say nothing of the member pass for the objects that lack it alone, and whoever reads a name expects an object that has it.
         if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use))
             return true;
-        HeatClass heatClass = heatClassOf(context, site.point.block);
+        Expected<HeatClass> heatClass = heatClassOf(context, site.point.block);
         // What a test buys in cold code, against the copy that it costs. The general form of these is one call.
         bool paysInColdCode = site.rule != TestSiteRuleID::ElementAccess && site.rule != TestSiteRuleID::Operator;
-        return heatClass == HeatClass::RunsOnce || (heatClass == HeatClass::Cold && (isCompactFunction || !paysInColdCode));
+        return heatClass.predicted() == HeatClass::RunsOnce || (heatClass.predicted() == HeatClass::Cold && (isCompactFunction || !paysInColdCode));
     });
     const CFG& cfg = context.analyses.cfg();
     AOT::sort(sites.sites, { }, [&](const TestSite& site) { return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index }; });
@@ -420,7 +420,7 @@ static void dropSitesBeyondConditionLimit(FunctionPassContext& context, TestSite
 
     Vector<std::pair<double, uint32_t>> heaviestFirst(conditions.size(), [](size_t index) { return std::pair { 0.0, static_cast<uint32_t>(index) }; });
     for (const TestSite& site : sites.sites) {
-        double heat = context.heatOf(site.point.block);
+        double heat = context.heatOf(site.point.block).predicted();
         for (TestConditionID condition : conditionOfTest.subspan(site.firstTest, site.numberOfTests))
             heaviestFirst[condition.index()].first += heat;
     }
@@ -597,7 +597,7 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
             if (edge.isHandlerEdge() || loops.belongsTo(edge.from, loop))
                 continue;
             entry->edges.append(edge);
-            entry->highestSourceFrequency = std::max(entry->highestSourceFrequency, frequencies.frequencyOf(edge.from));
+            entry->highestSourceFrequency = std::max(entry->highestSourceFrequency, frequencies.frequencyOf(edge.from).predicted());
         }
         numberOfEnteringEdges += entry->edges.size();
         return *entry;
@@ -644,7 +644,7 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
         std::span<const TestRequirement> site = requirements.subspan(first, end - first);
         BlockID useBlock = site.front().point.block;
         for (const NaturalLoop* loop = loops.innerMostLoopOf(useBlock); loop; loop = loops.innerMostOuterLoop(*loop)) {
-            if (isClosedOnlyByWaysBack(analyses, *loop))
+            if (isClosedOnlyByWaysBack(analyses, *loop).predicted())
                 continue;
             SiteOperands operands;
             bool canLeaveLoop = false;
@@ -655,7 +655,7 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
             if (!canLeaveLoop)
                 break;
             const LoopEntry& entry = entryOf(*loop);
-            if (entry.highestSourceFrequency > frequencies.frequencyOf(useBlock))
+            if (entry.highestSourceFrequency > frequencies.frequencyOf(useBlock).predicted())
                 continue;
             for (uint32_t edgeIndex = 0; edgeIndex < entry.edges.size(); ++edgeIndex) {
                 size_t firstBit = static_cast<size_t>(entry.firstEdgeNumber + edgeIndex) * conditions.size();
@@ -1046,10 +1046,10 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     for (BlockID block : cfg.reversePostOrder()) {
         if (function.at(block).isHandlerBlock())
             continue;
-        BlockFrequency frequency = function.at(block).frequency;
-        bool isRarerThanPredecessor = std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) { return function.at(edge.from).frequency < frequency; });
+        Expected<BlockFrequency> frequency = function.at(block).frequency;
+        bool isRarerThanPredecessor = std::ranges::any_of(cfg.incomingEdges(block), [&](Edge edge) { return (function.at(edge.from).frequency < frequency).predicted(); });
         // An arm that goes straight back is part of the code it left: what the copy brought in there would meet the tested values at the next join.
-        bool goesStraightBack = std::ranges::any_of(function.at(block).terminator.targets, [&](const Target& target) { return function.at(target.block).frequency < frequency; });
+        bool goesStraightBack = std::ranges::any_of(function.at(block).terminator.targets, [&](const Target& target) { return (function.at(target.block).frequency < frequency).predicted(); });
         if (isRarerThanPredecessor && !goesStraightBack && mayRejoinAt(ProgramPoint::atHeadOf(block)))
             plan.rejoinPoints.append(ProgramPoint::atHeadOf(block));
     }
@@ -1449,22 +1449,22 @@ static BuiltinClassList builtinClassesWithMethod(const Program& program, Propert
     return classes;
 }
 
-static bool hasCalleesListedByFlow(const Program& program, const Value& call)
+static Expected<bool> hasCalleesListedByFlow(const Program& program, const Value& call)
 {
     if (!Value::opcodesWithCallees.contains(call.opcode) || !call.callees())
         return false;
     const CalleeSet& callees = program.at(call.callees());
-    return callees.isComplete || !callees.functions.isEmpty();
+    return callees.listsEveryCallee() || !callees.seen().predicted().functions.empty();
 }
 
-static bool isCalledByNameAlone(FunctionAnalyses& analyses, const Program& program, ValueID read)
+static Expected<bool> isCalledByNameAlone(FunctionAnalyses& analyses, const Program& program, ValueID read)
 {
-    return isOnlyCalled(analyses, read) && !anyUserBehindCasts(analyses, read, [&](const Value& user, uint32_t) { return hasCalleesListedByFlow(program, user); });
+    return isOnlyCalled(analyses, read) && !anyUserBehindCasts(analyses, read, [&](const Value& user, uint32_t) { return hasCalleesListedByFlow(program, user).predicted(); });
 }
 
 static bool callsBuiltinMethod(FunctionPassContext& context, ValueID read, PropertyKeyID key)
 {
-    return context.function.at(read).opcode == Opcode::PropGet && isCalledByNameAlone(context.analyses, context.program, read) && !builtinClassesWithMethod(context.program, key).isEmpty();
+    return context.function.at(read).opcode == Opcode::PropGet && isCalledByNameAlone(context.analyses, context.program, read).predicted() && !builtinClassesWithMethod(context.program, key).isEmpty();
 }
 
 // What is called only behind a join counts as not called: this feeds a guess.
@@ -1496,7 +1496,7 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
     Vector<NamedUse> uses;
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         // Where a test has failed, the copy that takes over is seldom entered, and the object there is none of those that were expected.
-        if (function.at(block).frequency != BlockFrequency::Normal)
+        if (function.at(block).frequency.predicted() != BlockFrequency::Normal)
             continue;
         std::optional<bool> isColdBlock;
         for (ValueID id : function.at(block).values) {
@@ -1515,7 +1515,7 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
                 continue;
             // A read by name is a short call, which cold code keeps. Under a private name it is an operation of the run time.
             if (!isColdBlock)
-                isColdBlock = isCold(heatClassOf(context, block));
+                isColdBlock = isCold(heatClassOf(context, block)).predicted();
             if (*isColdBlock && program.at(key).kind != PropertyKeyKind::PrivateName && (tellsLayoutsApart(program, key) || !callsBuiltinMethod(context, id, key)))
                 continue;
             // `Promise.resolve` through a variable that is expected to hold the constructor: flow has followed the one object, and it answers.
@@ -1586,7 +1586,7 @@ static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse
     for (bool didChange = true; std::exchange(didChange, false);) {
         for (BlockID id : context.analyses.cfg().reversePostOrder() | std::views::reverse) {
             const Block& block = context.function.at(id);
-            AskedNames asked = block.frequency == BlockFrequency::Normal ? namesAskedBehind(block.terminator, askedFrom) : std::nullopt;
+            AskedNames asked = block.frequency.predicted() == BlockFrequency::Normal ? namesAskedBehind(block.terminator, askedFrom) : std::nullopt;
             if (!asked)
                 continue;
             asked->merge(askedIn[id.index()]);
@@ -1613,7 +1613,7 @@ static void findUsesOnEveryPath(FunctionPassContext& context, std::span<NamedUse
 // A stamp that is not complete lists what flow saw arrive beside what it did not see. It joins what the names say and does not stand for it.
 static bool isExpectedToFindMember(const Program& program, const Function& function, const NamedUse& use)
 {
-    LayoutSetID stamp = use.stamp && program.at(use.stamp).isComplete ? use.stamp : LayoutSetID();
+    LayoutSetID stamp = use.stamp && program.at(use.stamp).listsEveryLayout() ? use.stamp : LayoutSetID();
     if (!function.at(use.receiver).expected().predicted() && !stamp)
         return false;
     std::span<const LayoutID> holders = program.layoutsWithName(use.key);
@@ -1649,13 +1649,13 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     LayoutList layoutsSeenToArrive;
     for (const NamedUse& use : uses) {
         if (use.stamp)
-            layoutsSeenToArrive.unite(LayoutList(program.at(use.stamp).members.span()));
+            layoutsSeenToArrive.unite(LayoutList(program.at(use.stamp).seen().predicted()));
     }
     using Likelihood = std::tuple<bool, bool, bool, bool, double>;
     using RankedLayout = std::pair<Likelihood, LayoutID>;
     Vector<RankedLayout, 16> likeliestFirst(layouts.size(), [&](size_t index) {
         LayoutID layout = layouts.span()[index];
-        return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject), layoutsSeenToArrive.contains(layout), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module)), heat.allocationsOf(layout) }, layout };
+        return RankedLayout { Likelihood { nameOfSubject && heat.isStoredUnder(layout, nameOfSubject).predicted(), layoutsSeenToArrive.contains(layout), layoutsMetElsewhere.contains(layout), module && (program.at(layout).module == module || heat.isAllocatedIn(layout, module).predicted()), heat.allocationsOf(layout).predicted() }, layout };
     });
     AOT::stableSort(likeliestFirst, std::ranges::greater { }, &RankedLayout::first);
 
@@ -1883,7 +1883,7 @@ static LayoutList findLayoutsStoredUnderNameOfSubject(FunctionPassContext& conte
         return { };
     LayoutList layouts;
     for (LayoutID layout : program.layoutsWithName(uses[0].key)) {
-        if (!context.inputs.heat.isStoredUnder(layout, read->second))
+        if (!context.inputs.heat.isStoredUnder(layout, read->second).predicted())
             continue;
         if (!std::ranges::all_of(uses, [&](const NamedUse& use) { return hasMemberToFindUnder(program, layout, use.key); }))
             continue;
@@ -2024,8 +2024,8 @@ static bool expectValues(FunctionPassContext& context, const ExpectedValues& exp
 static ValueID receiverOfMethodCall(TestSiteReporter& reporter, const Value& use)
 {
     if (use.opcode == Opcode::PropGet)
-        return isCalledByNameAlone(reporter.analyses(), reporter.program(), reporter.use()) ? use.objectOperand() : ValueID();
-    if (use.opcode == Opcode::Call && use.calleeKey() && !hasCalleesListedByFlow(reporter.program(), use))
+        return isCalledByNameAlone(reporter.analyses(), reporter.program(), reporter.use()).predicted() ? use.objectOperand() : ValueID();
+    if (use.opcode == Opcode::Call && use.calleeKey() && !hasCalleesListedByFlow(reporter.program(), use).predicted())
         return use.thisValueOperand();
     return { };
 }
@@ -2113,15 +2113,15 @@ void reportUnionReceiverTests(TestSiteReporter& reporter)
         auto reportTestFor = [&](ValueID receiver, const Type& tested) {
             reporter.report({ makeTypeTest(receiver, reporter.types().intern(tested)) }, reporter.analyses().effectsOf(reporter.use()).normal);
         };
-        BlockFrequency frequency = reporter.function().at(reporter.point().block).frequency;
-        if (frequency == BlockFrequency::Rare)
+        Expected<BlockFrequency> frequency = reporter.function().at(reporter.point().block).frequency;
+        if (frequency.predicted() == BlockFrequency::Rare)
             return;
-        if (std::optional<Type> receivers = frequency == BlockFrequency::Normal ? receiversThatAnswerWithFieldOrGetter(reporter, use) : std::nullopt) {
+        if (std::optional<Type> receivers = frequency.predicted() == BlockFrequency::Normal ? receiversThatAnswerWithFieldOrGetter(reporter, use) : std::nullopt) {
             reportTestFor(use.objectOperand(), *receivers);
             return;
         }
         ValueID receiver = receiverOfLockedMethodCall(reporter, use);
-        if (!receiver && frequency != BlockFrequency::Normal)
+        if (!receiver && frequency.predicted() != BlockFrequency::Normal)
             return;
         if (!receiver)
             receiver = receiverOfMethodCall(reporter, use);
@@ -2147,7 +2147,7 @@ void rewriteTestedUnionReceiver(TestSiteRewriter&)
 bool expectsReceiverOfCalledMethod(FunctionPassContext& context, BlockID block, const Value& call)
 {
     const Function& function = context.function;
-    if (!context.build.recordedOptions().usesExpectedTypes() || function.at(block).frequency != BlockFrequency::Normal)
+    if (!context.build.recordedOptions().usesExpectedTypes() || function.at(block).frequency.predicted() != BlockFrequency::Normal)
         return false;
 
     ValueID read = context.analyses.identityOf(call.calleeOperand());
@@ -2189,9 +2189,9 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     return expectValues(context, expectedValues, expectations);
 }
 
-static BlockFrequency frequencyOfGenericCopy(BlockFrequency original)
+static Expected<BlockFrequency> frequencyOfGenericCopy(Expected<BlockFrequency> original)
 {
-    return original == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
+    return original.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare;
 }
 
 static bool acceptsNarrowedValue(const Function& function, const Use& use)
@@ -2287,7 +2287,7 @@ struct TestPlacer {
     {
         // In a very large program the copies of the loops of cold functions are megabytes, and no run shows the time that they save. In any other program a kernel that is taken for cold would lose half its speed.
         const Heat& heat = context.inputs.heat;
-        if (isCold(heat.of(context.program, context.id)))
+        if (isCold(heat.of(context.program, context.id)).predicted())
             stretchesInFrontOfLoops = heat.isOfVeryLargeProgram() ? BitVector(plan.stretches.size()) : findStretchesInFrontOfLoops();
         collectSubjectOperands();
         findStretchesThatGuessLayouts();
@@ -2790,9 +2790,9 @@ struct TestPlacer {
             return !isPlaced(use.stretch) || plan.sites.sites[use.site].outcome == TestOutcome::IsUnpredictable;
         });
         if (everyTestIsUnpredictable)
-            copy->clone(+[](BlockFrequency original) { return original; });
+            copy->clone(+[](Expected<BlockFrequency> original) { return original; });
         else
-            copy->clone(expectsWhatCheckerSays ? +[](BlockFrequency) { return BlockFrequency::Rare; } : frequencyOfGenericCopy);
+            copy->clone(expectsWhatCheckerSays ? +[](Expected<BlockFrequency>) -> Expected<BlockFrequency> { return BlockFrequency::Rare; } : frequencyOfGenericCopy);
 
         RELEASE_ASSERT(extentOfCopy != GenericCopy::Extent::NotCopied);
         if (extentOfCopy == GenericCopy::Extent::ToWaysBack)
@@ -2840,7 +2840,7 @@ struct TestPlacer {
                 continue;
             }
             auto goOnWherePassed = [&](ValueID test) {
-                BlockFrequency frequency = function.at(builder.currentBlock()).frequency;
+                Expected<BlockFrequency> frequency = function.at(builder.currentBlock()).frequency;
                 IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, frequency, frequency);
                 builder.moveToEndOf(branch.notTaken);
                 builder.emitJump(nextInCopy.block, Arguments(nextInCopy.arguments));
@@ -2954,7 +2954,7 @@ struct TestPlacer {
             passedTarget = function.at(block).terminator.next();
         }
         Target failedTarget { copy->copyOf(passedTarget.block), passedTarget.arguments, { } };
-        BlockFrequency frequency = function.at(passedTarget.block).frequency;
+        Expected<BlockFrequency> frequency = function.at(passedTarget.block).frequency;
         RELEASE_ASSERT(failedTarget.block);
 
         Terminator& jump = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
@@ -3712,13 +3712,13 @@ static PassOutcome markArmsThatAreSeldomTaken(FunctionPassContext& context)
             continue;
         const Value& test = context.function.at(block.terminator.conditionOperand());
         const Block& arm = context.function.at(block.terminator.notTaken().block);
-        BlockFrequency frequency = arm.frequency;
+        Expected<BlockFrequency> frequency = arm.frequency;
         if (test.opcode == Opcode::TryPutByValDirect)
             frequency = BlockFrequency::Rare;
         // An arm with code of its own is code of the program, which gets its tests as any other.
-        else if (block.frequency == BlockFrequency::Normal && arm.frequency == BlockFrequency::Normal && arm.values.isEmpty() && arm.terminator.kind == TerminatorKind::Jump && asksForElementOfArray(context, test))
+        else if (block.frequency.predicted() == BlockFrequency::Normal && arm.frequency.predicted() == BlockFrequency::Normal && arm.values.isEmpty() && arm.terminator.kind == TerminatorKind::Jump && asksForElementOfArray(context, test))
             frequency = BlockFrequency::Unlikely;
-        if (frequency == arm.frequency)
+        if (frequency.isSamePredictionAs(arm.frequency))
             continue;
         context.function.edit(block.terminator.notTaken().block, BlockEdit::Rest).frequency = frequency;
         outcome = PassOutcome::Changed;
@@ -3735,11 +3735,11 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
     // An operator whose one operand has become an integer is worth a test of the other.
     hasUsesLeftByLastRound |= std::exchange(context.hasCountersConvertedSinceTestsWerePlaced, false);
     // What a test in a cold function buys, it buys at run time: the passes of the rounds gain little from it, and they would carry its arm and its join: a twentieth of the build of a very large program.
-    auto placesTestsBehindRounds = [&] { return heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)); };
+    auto placesTestsBehindRounds = [&] { return heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted(); };
     if (context.isBehindRounds ? !hasUsesLeftByLastRound && !placesTestsBehindRounds() : context.isInRounds && placesTestsBehindRounds())
         return PassOutcome::Unchanged;
     // No block runs more often than the function is entered unless it is in a cycle.
-    if (heat.of(context.program, context.id) == HeatClass::RunsOnce && !context.analyses.cfg().hasCycle())
+    if (heat.of(context.program, context.id).predicted() == HeatClass::RunsOnce && !context.analyses.cfg().hasCycle())
         return PassOutcome::Unchanged;
     // Where a test at the entrance has failed. A test in here would guess again what has just proved wrong, and cost a copy.
     if (context.function.runsOnlyBehindFailedTest())
