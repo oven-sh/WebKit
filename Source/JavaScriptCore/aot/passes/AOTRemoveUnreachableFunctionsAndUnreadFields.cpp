@@ -21,6 +21,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
+#include "AOTProgramCaches.h"
 #include "AOTRemoveUnreadExports.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTSchemaWalkers.h"
@@ -753,6 +754,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
     using FunctionAccesses = std::pair<FunctionID, Vector<RemovableAccess>>;
     FreshDataFunctions freshDataFunctions(program.functions.size());
     UnnoticedObjects unnoticedObjects(program, inputs.flow);
+    std::optional<ProgramCaches> caches(std::in_place, program, build);
     Vector<FunctionAccesses> functions = collectInParallel<FunctionAccesses>(loops, program.functions.size(), [&](unsigned index, Vector<FunctionAccesses>& collected) {
         FunctionID id(index);
         const Function& function = program.at(id);
@@ -863,6 +865,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (!accesses.isEmpty())
             collected.append({ id, WTF::move(accesses) });
     });
+    caches.reset();
 
     // An access goes only if each candidate that it may reach goes.
     struct CandidateSet : WTF::UnionFind<CandidateSet> { };

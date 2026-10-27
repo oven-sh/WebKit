@@ -367,6 +367,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSubstring, JSCell*, (Instance* instance, JS
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSubstring);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
+    leaveCellsForRopes(instance);
     OPERATION_RETURN(scope, jsSubstring(globalObject, cellArgument<JSString>(string, Entry::operationAOTSubstring), from, to - from));
 }
 

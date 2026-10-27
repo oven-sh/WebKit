@@ -1881,6 +1881,7 @@ struct VariableCarrier : LoopEditor {
             return false;
         const UseLists& useLists = m_analyses.useLists();
         const NaturalLoops& loops = m_analyses.naturalLoops();
+        UnspecifiedValues unspecifiedValues(m_analyses);
 
         Vector<ValueID, 4> hoisted;
         for (unsigned position = 0; position < loop.size(); ++position) {
@@ -1890,7 +1891,7 @@ struct VariableCarrier : LoopEditor {
                 if (value.opcode != Opcode::GetCapture)
                     return false;
                 ValueID closure = m_analyses.definitionThroughUpcasts(value.operand(0));
-                if (loops.belongsTo(useLists.locationOf(closure).block, loop) || m_function.at(closure).type != m_function.at(value.operand(0)).type)
+                if (loops.belongsTo(useLists.locationOf(closure).block, loop) || m_function.at(closure).type != m_function.at(value.operand(0)).type || unspecifiedValues.mayContain(closure))
                     return false;
                 value.setOperand(0, closure);
                 hoisted.append(id);
@@ -2708,8 +2709,11 @@ struct LoopPathSeparator : LoopEditor {
         // What a test has proven, or a cast has passed on, is the same value: the narrowest of the types it is tested for in every turn is what the loop needs.
         const Block& header = m_function.at(loop.header());
         PropertyAccessContext accessContext { m_program, &m_context.inputs.flow };
+        UnspecifiedValues variablesReadEarly(m_analyses, UnspecifiedValues::Sources::VariablesReadEarly);
         Vector<TypeID> tested(header.parameters.size());
         for (size_t index = firstVariable; index < header.parameters.size(); ++index) {
+            if (variablesReadEarly.mayContain(header.parameters[index]))
+                continue;
             Vector<ValueID, 8> sameValues { header.parameters[index] };
             for (size_t position = 0; position < sameValues.size() && sameValues.size() < 16; ++position) {
                 for (const Use& use : uses.usesOf(sameValues[position])) {

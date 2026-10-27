@@ -985,6 +985,16 @@ public:
             verify(form);
     }
 
+    void verifyRecordsAtBoundary(IRForm form)
+    {
+        PassRunner& runner = m_pipeline.m_runner;
+        if (!verifiesProgram() || runner.isStopped())
+            return;
+        verifyRecords(m_pipeline.m_program, form, m_pipeline.m_build, runner.verifierInputs());
+        runner.stopAfterErrors();
+        didFinish(nameOf(PassID::VerifyProgram));
+    }
+
 private:
     Pipeline& m_pipeline;
 };
@@ -1465,6 +1475,7 @@ static void forgetLongExpectations(Program& program, BuildContext& build)
 void Pipeline::runReadStage()
 {
     TimedStage stage(*this, Stage::ReadAndVerify);
+    stage.verifyRecordsAtBoundary(IRForm::AsRead);
     forgetLongExpectations(m_program, m_build);
     stage.run(PassID::CopyClosureFactories);
     stage.run(PassID::AllocateTaggedLayouts);

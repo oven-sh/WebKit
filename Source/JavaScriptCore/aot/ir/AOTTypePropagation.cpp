@@ -1350,9 +1350,17 @@ void TypePropagation::tellWhatIsTyped()
     pending->m_values.removeAllMatching([&](const ValueChange& change) {
         return index++ < firstOwnValueEntry ? isTyped(change.value) : !change.edits.containsAny({ ValueEdit::Added, ValueEdit::Definition });
     });
+    enum class Answer : uint8_t { NotAsked, No, Yes };
+    Vector<Answer, 128> answers;
+    answers.fill(Answer::NotAsked, function.blocks.size());
     index = 0;
     pending->m_blocks.removeAllMatching([&](const BlockChange& change) {
-        return index++ < firstOwnBlockEntry && isTypedWithItsTargets(change.block);
+        if (index++ >= firstOwnBlockEntry)
+            return false;
+        Answer& answer = answers[change.block.index()];
+        if (answer == Answer::NotAsked)
+            answer = isTypedWithItsTargets(change.block) ? Answer::Yes : Answer::No;
+        return answer == Answer::Yes;
     });
 }
 

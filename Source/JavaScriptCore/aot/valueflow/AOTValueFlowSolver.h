@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBackgroundTask.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowGraph.h"
 #include "AOTValueFlowLog.h"
 #include "AOTValueFlowRuleContext.h"
@@ -871,6 +872,11 @@ private:
         WatchesNode = 1 << 2,
         WaitsForFirstOperand = 1 << 3,
     };
+    // The upper half of the byte counts how often a chain of prototypes has woken its readers.
+    static constexpr unsigned shiftOfWakeUpsByChain = 4;
+    AOT_CLASS_THRESHOLD(uint8_t, mostWakeUpsByGrowingChain, 15);
+    bool isChainOfPrototypes(ValueFlowNodeID) const;
+    void listAsDueLast(ValueFlowStatementID) const;
     void noteListener(ValueFlowNodeID node, ListenerOfNode listener) { WTF::atomicExchangeOr(&m_listenersOfNode[node.index()], static_cast<uint8_t>(listener), std::memory_order_relaxed); }
     ListWithRoomToFill<uint8_t> m_listenersOfNode;
     bool m_isFullRound { false };

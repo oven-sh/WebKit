@@ -132,6 +132,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     ClosureOnDemandWithoutField(Optimize, "a closure that is made on demand is not the initial value of a field that defers it")
 
     FlowMembersInvalid(AnalyzeFlow, "members of {layout} do not ascend or are not allocated")
+    OperationWithoutValue(AnalyzeFlow, "every operand of an operation that is reached has a value, its result has none, and nothing says why it should never complete")
     MaskCutKnownValue(AnalyzeFlow, "{function}: the type of {value} removed a value flow knows arrives")
     FlowEndedTooEarly(AnalyzeFlow, "the flow analysis was at rest, and {count} of its rules still add something when they run once more over the solved sets")
     FlowRuleWasNotDue(AnalyzeFlow, "{value} in {function}: the rule was not due, and run once more over the solved sets it adds something")

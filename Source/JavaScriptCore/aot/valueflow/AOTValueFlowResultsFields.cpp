@@ -9,6 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinMembers.h"
+#include "AOTSharedMemo.h"
+#include "AOTThreshold.h"
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -70,26 +73,56 @@ static void forEachOnProvenChain(const FlowApplication& application, LayoutID id
         functor(id);
 }
 
+AOT_THRESHOLD(size_t, maxLayoutsBelowAskedOneByOne, 8);
+
 static void forEachFieldOfObjectsWith(const Program& program, const FlowApplication& application, LayoutID id, NOESCAPE const Invocable<void(FieldReference declaration, const Field&)> auto& functor)
 {
-    Vector<LayoutID, 4> layoutsBelow;
+    Vector<LayoutID, maxLayoutsBelowAskedOneByOne + 1> layoutsBelow;
     Vector<FieldReference, 16> visited;
+    bool isLongRow = false;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keysBelow;
+    HashSet<uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> visitedInLongRow;
+    auto numberOf = [](FieldReference declaration) {
+        return static_cast<uint64_t>(declaration.layout.index()) << 32 | declaration.field;
+    };
+    auto addKeysOf = [&](const Layout& layout) {
+        for (const Field& field : layout.fields) {
+            if (field.key)
+                keysBelow.add(field.key.index());
+        }
+    };
     forEachOnProvenChain(application, id, [&](LayoutID current) {
         const Layout& layout = program.at(current);
         for (uint32_t index = 0; index < layout.fields.size(); ++index) {
             const Field& field = layout.fields[index];
-            bool isHidden = field.key && std::ranges::any_of(layoutsBelow, [&](LayoutID below) {
+            bool isHidden = field.key && (isLongRow ? keysBelow.contains(field.key.index()) : std::ranges::any_of(layoutsBelow, [&](LayoutID below) {
                 return program.at(below).findField(field.key).has_value();
-            });
+            }));
             if (isHidden)
                 continue;
             FieldReference declaration = declarationOf(program, { current, index });
-            if (!layoutsBelow.isEmpty() && visited.contains(declaration))
-                continue;
-            visited.append(declaration);
+            if (isLongRow) {
+                if (!visitedInLongRow.add(numberOf(declaration)).isNewEntry)
+                    continue;
+            } else {
+                if (!layoutsBelow.isEmpty() && visited.contains(declaration))
+                    continue;
+                visited.append(declaration);
+            }
             functor(declaration, field);
         }
+        if (isLongRow) {
+            addKeysOf(layout);
+            return;
+        }
         layoutsBelow.append(current);
+        if (layoutsBelow.size() <= maxLayoutsBelowAskedOneByOne)
+            return;
+        isLongRow = true;
+        for (LayoutID below : layoutsBelow)
+            addKeysOf(program.at(below));
+        for (FieldReference declaration : visited)
+            visitedInLongRow.add(numberOf(declaration));
     });
 }
 
@@ -233,6 +266,13 @@ struct FieldResults {
     // For the layouts of literals that are born with copies: the keys that every object holds once its birth is over, sorted.
     KeysByLayout keysHeldSinceBirth { };
     BitVector isBornWithCopies { };
+    // What the last step of mayFindNameIn() asks of the members of a set: the same for every name but one.
+    struct KindsOfMembers {
+        ValueSetID objects;
+        bool mayHoldMoreUnderEveryKey { false };
+        bool holdsPrototypeObject { false };
+    };
+    mutable SharedMemo<KindsOfMembers> kindsOfMembers { };
 
     ValueSetID chainBuiltByProgram(ValueSetID objects) const
     {
@@ -255,6 +295,51 @@ struct FieldResults {
             return program.at(current).findField(key) || (appendedKeys && std::ranges::binary_search((*appendedKeys)[current.index()], key));
         });
     }
+
+    // holdsField() for many keys of one layout.
+    class KeysOfFieldsHeld {
+    public:
+        KeysOfFieldsHeld(const FieldResults& results, LayoutID id, const KeysByLayout* appendedKeys = nullptr)
+            : m_results(results)
+            , m_id(id)
+            , m_appendedKeys(appendedKeys)
+        {
+        }
+
+        bool contains(PropertyKeyID key)
+        {
+            if (!m_isLongRow) {
+                size_t length = 0;
+                m_isLongRow = !!findOnProvenChain(m_results.application, m_id, [&](LayoutID) {
+                    return ++length > maxLayoutsBelowAskedOneByOne;
+                });
+                if (*m_isLongRow)
+                    fill();
+            }
+            return *m_isLongRow ? m_keys.contains(key.index()) : m_results.holdsField(m_id, key, m_appendedKeys);
+        }
+
+    private:
+        void fill()
+        {
+            forEachOnProvenChain(m_results.application, m_id, [&](LayoutID current) {
+                for (const Field& field : m_results.program.at(current).fields) {
+                    if (field.key)
+                        m_keys.add(field.key.index());
+                }
+                if (!m_appendedKeys)
+                    return;
+                for (PropertyKeyID key : (*m_appendedKeys)[current.index()])
+                    m_keys.add(key.index());
+            });
+        }
+
+        const FieldResults& m_results;
+        LayoutID m_id;
+        const KeysByLayout* m_appendedKeys;
+        std::optional<bool> m_isLongRow;
+        HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_keys;
+    };
 
     void forEachLayoutBelow(LayoutID layout, NOESCAPE const Invocable<void(LayoutID)> auto& functor) const
     {
@@ -736,22 +821,43 @@ struct FieldResults {
         const ValueFlowMembersUnderKey& members = universe.builtinTables().heap().under(key);
         if (sets.meet(objects, members.holders) || sets.meet(objects, members.holdersOfUndeclaredProperties))
             return true;
-        for (ValueFlowName name : { ValueFlowName::property(key), ValueFlowName::getter(key), ValueFlowName::setter(key), unknownKeyName, ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey), ValueFlowName::of(ValueFlowNameKind::SetterUnderUnknownKey), copiedFromName }) {
+        for (ValueFlowName name : { ValueFlowName::property(program, key), ValueFlowName::getter(program, key), ValueFlowName::setter(program, key), unknownKeyName, ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey), ValueFlowName::of(ValueFlowNameKind::SetterUnderUnknownKey), copiedFromName }) {
             if (heap.writtenUnder(maker, objects, name) != ValueSets::nothing)
                 return true;
         }
-        bool mayHoldMore = false;
+        KindsOfMembers kinds = kindsOfMembersOf(objects);
+        return kinds.mayHoldMoreUnderEveryKey || (kinds.holdsPrototypeObject && key == universe.builtinTables().heap().constructorKey());
+    }
+
+    KindsOfMembers findKindsOfMembersOf(ValueSetID objects) const
+    {
+        const ValueFlowUniverse& universe = inputs.universe();
+        KindsOfMembers kinds { objects };
         sets.forEachMember(objects, [&](ValueFlowObjectID object) {
             ValueFlowObjectKind kind = universe.kindOf(object);
             if (kind == ValueFlowObjectKind::Site || kind == ValueFlowObjectKind::Instance) {
                 LayoutID layout = universe.layoutOf(object);
-                mayHoldMore |= !layout || !hasObjectsThatCodeAlters(program.at(layout).kind) || inputs.classOf(object);
+                kinds.mayHoldMoreUnderEveryKey |= !layout || !hasObjectsThatCodeAlters(program.at(layout).kind) || inputs.classOf(object);
             } else if (kind == ValueFlowObjectKind::Prototype)
-                mayHoldMore |= key == universe.builtinTables().heap().constructorKey();
+                kinds.holdsPrototypeObject = true;
             else
-                mayHoldMore |= kind != ValueFlowObjectKind::Builtin && kind != ValueFlowObjectKind::ModuleBuiltin;
+                kinds.mayHoldMoreUnderEveryKey |= kind != ValueFlowObjectKind::Builtin && kind != ValueFlowObjectKind::ModuleBuiltin;
         });
-        return mayHoldMore;
+        return kinds;
+    }
+
+    KindsOfMembers kindsOfMembersOf(ValueSetID objects) const
+    {
+        AOT_THRESHOLD(size_t, fewestMembersToRemember, 8);
+        if (sets.size(objects) < fewestMembersToRemember)
+            return findKindsOfMembersOf(objects);
+        uint32_t hash = IntHash<uint32_t>::hash(objects.index());
+        auto isWanted = [&](const KindsOfMembers& known) {
+            return known.objects == objects;
+        };
+        if (const KindsOfMembers* known = kindsOfMembers.find(hash, isWanted))
+            return *known;
+        return kindsOfMembers.add(hash, findKindsOfMembersOf(objects), isWanted);
     }
 
     ValueSetID objectsAbove(ValueSetMaker& maker, LayoutID id, ValueSetID& above) const
@@ -1024,7 +1130,7 @@ struct FieldResults {
     bool findsAccessorAbove(ValueSetMaker& maker, LayoutID id, PropertyKeyID key) const
     {
         Vector<ValueSetID, 4> receiversOfDefinitions;
-        for (ValueFlowName name : { ValueFlowName::getter(key), ValueFlowName::setter(key) }) {
+        for (ValueFlowName name : { ValueFlowName::getter(program, key), ValueFlowName::setter(program, key) }) {
             heap.forEachNodeWrittenUnder(name, [&](ValueSetID writtenThrough, ValueSetID value) {
                 if (!sets.isEmpty(value))
                     receiversOfDefinitions.append(writtenThrough);
@@ -1064,7 +1170,7 @@ struct FieldResults {
         removeRepeatedElements(keys);
         keys.removeAllMatching([&](PropertyKeyID key) {
             bool isNameOfAccessor = false;
-            for (ValueFlowName name : { ValueFlowName::getter(key), ValueFlowName::setter(key) }) {
+            for (ValueFlowName name : { ValueFlowName::getter(program, key), ValueFlowName::setter(program, key) }) {
                 heap.forEachNodeWrittenUnder(name, [&](ValueSetID, ValueSetID value) {
                     isNameOfAccessor |= !sets.isEmpty(value);
                 });
@@ -1107,7 +1213,7 @@ struct FieldResults {
             return isStored;
         };
         auto liesAbove = [&](PropertyKeyID key) {
-            if (isStoredAbove(ValueFlowName::property(key)) || isStoredAbove(ValueFlowName::getter(key)))
+            if (isStoredAbove(ValueFlowName::property(program, key)) || isStoredAbove(ValueFlowName::getter(program, key)))
                 return true;
             bool isMemberOfBuiltin = false;
             if (BuiltinName name = program.builtinNameOf(key)) {
@@ -1178,6 +1284,7 @@ struct FieldResults {
             ValueSetMaker& maker = makers.of(worker);
             Vector<LayoutSetID, 2> families = declaredFamiliesOf(program, id);
             std::span<const LayoutID> views = declaredViews[declaredLayoutOf(program, id).index()].span();
+            KeysOfFieldsHeld keysOfFields(*this, id);
             keysByLayout[id.index()].removeAllMatching([&](PropertyKeyID key) {
                 auto declarers = layoutsWithField.find(key.index());
                 PropertyKeyKind kind = program.at(key).kind;
@@ -1185,7 +1292,7 @@ struct FieldResults {
                 bool isOutsideFamilies = canBeDeclared && !families.isEmpty() && (declarers == layoutsWithField.end() || (!haveCommonMember(views, declarers->value.span()) && std::ranges::none_of(families, [&](LayoutSetID family) {
                     return haveCommonMember(program.at(family).members.span(), declarers->value.span());
                 })));
-                if (isOutsideFamilies || std::ranges::binary_search(keysDeclaredBelow[id.index()], key) || !canNameField(key) || holdsField(id, key))
+                if (isOutsideFamilies || std::ranges::binary_search(keysDeclaredBelow[id.index()], key) || !canNameField(key) || keysOfFields.contains(key))
                     return true;
                 if (stores.accessorDefinedUnder(maker, id, key).isAccessor())
                     return false;
@@ -1312,8 +1419,9 @@ struct FieldResults {
             Vector<PropertyKeyID> addedKeys;
             bool mayGainSharedKey = false;
             if (listsEveryName) {
+                KeysOfFieldsHeld keysOfFields(*this, id, &appendedKeys);
                 auto isField = [&](PropertyKeyID key) {
-                    return !std::ranges::binary_search(tables.wholeProgram.keysOfSeveralSymbols, key) && holdsField(id, key, &appendedKeys);
+                    return !std::ranges::binary_search(tables.wholeProgram.keysOfSeveralSymbols, key) && keysOfFields.contains(key);
                 };
                 addedKeys = stores.keysStoredIntoKnownObjects(id);
                 addedKeys.removeAllMatching(isField);

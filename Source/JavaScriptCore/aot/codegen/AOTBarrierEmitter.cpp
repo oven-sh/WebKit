@@ -63,7 +63,11 @@ ValueID BarrierEmitter::ownerOperandOf(const Value& store) const
 
 bool BarrierEmitter::ownerIsOnlyInFrames(const Value& store) const
 {
-    ValueID owner = ownerOperandOf(store);
+    return isOnlyInFrames(ownerOperandOf(store));
+}
+
+bool BarrierEmitter::isOnlyInFrames(ValueID owner) const
+{
     if (isFrameCell(m_function, owner))
         return true;
 
@@ -165,6 +169,15 @@ void BarrierEmitter::barrier(const OperationContext& context, CellPointer owner)
         m_out.appendTo(continuation);
     }
     didEmitBarrier(owner);
+}
+
+// The stores in front of it are marked as covered by a later barrier: this one.
+void BarrierEmitter::barrierBehindStores(const ValueContext& value, ValueID owner)
+{
+    if (m_options.recorded.isSabotaged(Sabotage::StoresNeedNoBarrier) || isOnlyInFrames(owner))
+        return;
+    build().statistics().count(StatisticID::BarriersEmitted);
+    barrier(value, in<CellPointer>(owner));
 }
 
 // The owner names its new Extension, which is a store like the one that needs the room.

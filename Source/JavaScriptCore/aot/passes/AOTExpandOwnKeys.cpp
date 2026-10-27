@@ -464,6 +464,13 @@ static std::pair<bool, std::span<const LayoutID>> walkedLayoutsOf(FunctionPassCo
     return { areProven, membersOf(program, areProven ? type : program.expectedOrTypeOf(context.function, site.source)) };
 }
 
+static bool expectsOneLayout(FunctionPassContext& context, const OwnKeyWalkSite& site)
+{
+    return std::ranges::count_if(walkedLayoutsOf(context, site).second, [&](LayoutID layout) {
+        return context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
+    }) == 1;
+}
+
 // Once its fields are stored one by one, such an object need not be made.
 static bool isKeptByNobody(FunctionPassContext& context, ValueID object)
 {
@@ -758,8 +765,11 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
             if (!plan)
                 continue;
             // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
-            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target))
-                continue;
+            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target)) {
+                // The copy of all slots at once is a few words of code in front of the call, which is then laid out as the rare way: for a source that is expected to have the layout of the literal and no other.
+                if (!expectsOneLayout(context, walk.site) || !plan->arms[0].copiesFieldsAtOnce)
+                    continue;
+            }
             walk.walkedSources.append(WalkedSource { walk.site.source, WTF::move(*plan), function.at(walk.site.value) });
         }
         walks.append(WTF::move(walk));

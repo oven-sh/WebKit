@@ -25,6 +25,7 @@
 #include "AOTStaticFields.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
+#include "NumericStrings.h"
 #include "ProxyObject.h"
 
 namespace JSC { namespace AOT {
@@ -130,6 +131,15 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
     RETURN_IF_EXCEPTION(scope, { });
     fileRead(access.instance, base, structureBefore, access.name(), slot, access.site);
     return result;
+}
+
+JSValue getUnderKeyForReceiver(Instance* instance, JSObject* base, const Identifier& name, JSValue receiver)
+{
+    NamedAccess access { instance, name, std::nullopt, nullptr };
+    if (!access.caches().tables().find(base->structureID(), access.name(), SlotAccess::Read))
+        return getAndCache(access, base, receiver);
+    PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
+    return JSValue(base).get(instance->globalObject, name, slot);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, SiteCache cache))
@@ -430,6 +440,9 @@ static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue prop
             Structure* structure = object->structure();
             if (structure->realm() == globalObject && globalObject->isOriginalArrayStructure(structure) && !hasAnyArrayStorage(structure->indexingType()) && globalObject->arrayPrototypeChainIsSane())
                 return jsUndefined();
+            // The stub finds the text of the index there the next time.
+            if (object->type() == ProxyObjectType && *index < NumericStrings::cacheSize)
+                vm.numericStrings.addJSString(vm, static_cast<int>(*index));
         }
         RELEASE_AND_RETURN(scope, base.get(globalObject, *index));
     }
@@ -450,6 +463,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetWithProxyTrap, EncodedJSValue, (Instance
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetWithProxyTrap);
     const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
+    // The answer is filed for the target, where the stub looks the next time.
+    if (uint32_t number = static_cast<uint32_t>(words.storeIsStrictOrHeaderOfSlot >> Slot::locationShiftInHeader); number && JSValue::decode(trap).isUndefinedOrNull())
+        OPERATION_RETURN(scope, JSValue::encode(getAndCache({ instance, identifierAt(instance, number), number, nullptr }, words.target, words.proxy)));
     OPERATION_RETURN(scope, JSValue::encode(ProxyObject::getWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, words.proxy)));
 }
 
@@ -479,7 +495,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetWithProxyTrap, void, (Instance* instance
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetWithProxyTrap);
     const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
-    ProxyObject::setWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, JSValue::decode(words.storedValue), words.proxy, words.storeIsStrict);
+    ProxyObject::setWithTrap(globalObject, words.target, words.handler, JSValue::decode(trap), words.key, JSValue::decode(words.storedValue), words.proxy, words.storeIsStrictOrHeaderOfSlot);
     OPERATION_RETURN(scope);
 }
 
@@ -487,7 +503,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTFinishSetThroughProxy, void, (Instance* ins
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFinishSetThroughProxy);
     const ProxyAccessWords& words = proxyAccessWords(wordsOfAccess);
-    ProxyObject::finishSet(globalObject, JSValue::decode(answer), words.target, words.key, JSValue::decode(words.storedValue), words.storeIsStrict);
+    ProxyObject::finishSet(globalObject, JSValue::decode(answer), words.target, words.key, JSValue::decode(words.storedValue), words.storeIsStrictOrHeaderOfSlot);
     OPERATION_RETURN(scope);
 }
 
@@ -515,6 +531,12 @@ static void putByVal(JSGlobalObject* globalObject, JSValue base, JSValue propert
 JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty, EncodedJSValue encodedValue, uint32_t isStrict))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPutByVal);
+    // Where nothing above the object intercepts indexes, a store of an element is a definition of it.
+    if (Object* object = compiledObjectOrNull(JSValue::decode(encodedBase))) {
+        std::optional<uint32_t> index = JSValue::decode(encodedProperty).tryGetAsUint32Index();
+        if (index && !globalObject->isHavingABadTime() && !object->anyObjectInChainMayInterceptIndexedAccesses() && tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(encodedValue)))
+            OPERATION_RETURN(scope);
+    }
     putByVal(globalObject, JSValue::decode(encodedBase), JSValue::decode(encodedProperty), JSValue::decode(encodedValue), isStrict);
     OPERATION_RETURN(scope);
 }

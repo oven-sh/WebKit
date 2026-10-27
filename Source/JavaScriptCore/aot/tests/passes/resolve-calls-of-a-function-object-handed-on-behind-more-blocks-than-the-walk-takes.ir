@@ -1,0 +1,210 @@
+# Whether a use of the caller's own function object and a call of it lie on one way is told by a walk against the edges, from one of them as far as the blocks that stand in front of the other. The walk takes a fixed number of blocks. Past that the two count as lying on one way, and the call stays by value.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="renamed" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee] {
+    Return v0
+}
+function f1 name="fewTestsFailIntoOneAnother" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b6()
+  b1():
+    Branch v0 -> taken b2(), notTaken b7()
+  b2():
+    Branch v0 -> taken b3(), notTaken b8()
+  b3():
+    Branch v0 -> taken b4(), notTaken b9()
+  b4():
+    Branch v0 -> taken b5(), notTaken b10()
+  b5():
+    v4 = Call v3, -, v1
+    Return v4
+  b6() frequency=Rare:
+    Jump -> next b7()
+  b7() frequency=Rare:
+    Jump -> next b8()
+  b8() frequency=Rare:
+    Jump -> next b9()
+  b9() frequency=Rare:
+    Jump -> next b10()
+  b10() frequency=Rare:
+    v5 = Call v2, -, v3
+    Return v5
+# CHECK: = CallDirect v1 function=f0 [callsOwnFunctionObject]
+# CHECK: = Call v2, -, v3
+}
+
+function f2 name="manyTestsFailIntoOneAnother" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b42()
+  b1():
+    Branch v0 -> taken b2(), notTaken b43()
+  b2():
+    Branch v0 -> taken b3(), notTaken b44()
+  b3():
+    Branch v0 -> taken b4(), notTaken b45()
+  b4():
+    Branch v0 -> taken b5(), notTaken b46()
+  b5():
+    Branch v0 -> taken b6(), notTaken b47()
+  b6():
+    Branch v0 -> taken b7(), notTaken b48()
+  b7():
+    Branch v0 -> taken b8(), notTaken b49()
+  b8():
+    Branch v0 -> taken b9(), notTaken b50()
+  b9():
+    Branch v0 -> taken b10(), notTaken b51()
+  b10():
+    Branch v0 -> taken b11(), notTaken b52()
+  b11():
+    Branch v0 -> taken b12(), notTaken b53()
+  b12():
+    Branch v0 -> taken b13(), notTaken b54()
+  b13():
+    Branch v0 -> taken b14(), notTaken b55()
+  b14():
+    Branch v0 -> taken b15(), notTaken b56()
+  b15():
+    Branch v0 -> taken b16(), notTaken b57()
+  b16():
+    Branch v0 -> taken b17(), notTaken b58()
+  b17():
+    Branch v0 -> taken b18(), notTaken b59()
+  b18():
+    Branch v0 -> taken b19(), notTaken b60()
+  b19():
+    Branch v0 -> taken b20(), notTaken b61()
+  b20():
+    Branch v0 -> taken b21(), notTaken b62()
+  b21():
+    Branch v0 -> taken b22(), notTaken b63()
+  b22():
+    Branch v0 -> taken b23(), notTaken b64()
+  b23():
+    Branch v0 -> taken b24(), notTaken b65()
+  b24():
+    Branch v0 -> taken b25(), notTaken b66()
+  b25():
+    Branch v0 -> taken b26(), notTaken b67()
+  b26():
+    Branch v0 -> taken b27(), notTaken b68()
+  b27():
+    Branch v0 -> taken b28(), notTaken b69()
+  b28():
+    Branch v0 -> taken b29(), notTaken b70()
+  b29():
+    Branch v0 -> taken b30(), notTaken b71()
+  b30():
+    Branch v0 -> taken b31(), notTaken b72()
+  b31():
+    Branch v0 -> taken b32(), notTaken b73()
+  b32():
+    Branch v0 -> taken b33(), notTaken b74()
+  b33():
+    Branch v0 -> taken b34(), notTaken b75()
+  b34():
+    Branch v0 -> taken b35(), notTaken b76()
+  b35():
+    Branch v0 -> taken b36(), notTaken b77()
+  b36():
+    Branch v0 -> taken b37(), notTaken b78()
+  b37():
+    Branch v0 -> taken b38(), notTaken b79()
+  b38():
+    Branch v0 -> taken b39(), notTaken b80()
+  b39():
+    Branch v0 -> taken b40(), notTaken b81()
+  b40():
+    Branch v0 -> taken b41(), notTaken b82()
+  b41():
+    v4 = Call v3, -, v1
+    Return v4
+  b42() frequency=Rare:
+    Jump -> next b43()
+  b43() frequency=Rare:
+    Jump -> next b44()
+  b44() frequency=Rare:
+    Jump -> next b45()
+  b45() frequency=Rare:
+    Jump -> next b46()
+  b46() frequency=Rare:
+    Jump -> next b47()
+  b47() frequency=Rare:
+    Jump -> next b48()
+  b48() frequency=Rare:
+    Jump -> next b49()
+  b49() frequency=Rare:
+    Jump -> next b50()
+  b50() frequency=Rare:
+    Jump -> next b51()
+  b51() frequency=Rare:
+    Jump -> next b52()
+  b52() frequency=Rare:
+    Jump -> next b53()
+  b53() frequency=Rare:
+    Jump -> next b54()
+  b54() frequency=Rare:
+    Jump -> next b55()
+  b55() frequency=Rare:
+    Jump -> next b56()
+  b56() frequency=Rare:
+    Jump -> next b57()
+  b57() frequency=Rare:
+    Jump -> next b58()
+  b58() frequency=Rare:
+    Jump -> next b59()
+  b59() frequency=Rare:
+    Jump -> next b60()
+  b60() frequency=Rare:
+    Jump -> next b61()
+  b61() frequency=Rare:
+    Jump -> next b62()
+  b62() frequency=Rare:
+    Jump -> next b63()
+  b63() frequency=Rare:
+    Jump -> next b64()
+  b64() frequency=Rare:
+    Jump -> next b65()
+  b65() frequency=Rare:
+    Jump -> next b66()
+  b66() frequency=Rare:
+    Jump -> next b67()
+  b67() frequency=Rare:
+    Jump -> next b68()
+  b68() frequency=Rare:
+    Jump -> next b69()
+  b69() frequency=Rare:
+    Jump -> next b70()
+  b70() frequency=Rare:
+    Jump -> next b71()
+  b71() frequency=Rare:
+    Jump -> next b72()
+  b72() frequency=Rare:
+    Jump -> next b73()
+  b73() frequency=Rare:
+    Jump -> next b74()
+  b74() frequency=Rare:
+    Jump -> next b75()
+  b75() frequency=Rare:
+    Jump -> next b76()
+  b76() frequency=Rare:
+    Jump -> next b77()
+  b77() frequency=Rare:
+    Jump -> next b78()
+  b78() frequency=Rare:
+    Jump -> next b79()
+  b79() frequency=Rare:
+    Jump -> next b80()
+  b80() frequency=Rare:
+    Jump -> next b81()
+  b81() frequency=Rare:
+    Jump -> next b82()
+  b82() frequency=Rare:
+    v5 = Call v2, -, v3
+    Return v5
+# CHECK: [[closureOf2]]: f0 = NewClosure function=f0
+# CHECK: = Call [[closureOf2]], -, v1
+}

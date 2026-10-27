@@ -575,6 +575,8 @@ struct FunctionsWhoseClosuresMayBeRenamed {
     BitVector all;
     // Of those: no statement is seen to rename a closure of the function. A displayName that is written through an object nobody follows may.
     BitVector onlyWhereNobodySees;
+    // In neither: no statement is seen to name a closure of the function, and its closures go where nobody follows them.
+    BitVector outOfSight;
 };
 
 static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInputs& inputs, const KeysAddedToClosures& added, std::span<const AllocationClass> classesOfClosures)
@@ -602,6 +604,7 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
 
     BitVector functions(program.functions.size());
     BitVector onlyWhereNobodySees(program.functions.size());
+    BitVector outOfSight(program.functions.size());
     inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename)), [&](ValueFlowObjectID object) {
         if (FunctionID function = inputs.universe().closureFunction(object); function && function.index() < program.functions.size())
             functions.quickSet(function.index());
@@ -621,17 +624,21 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
         auto mayNameFramesOfThisFunction = [&](PropertyKeyID key) {
             return key == keys[0] ? namedWithSeveralTexts.quickGet(writtenFunctionOf(program, closures.closureFunction).index()) : mayNameFrames(key);
         };
-        if (std::ranges::any_of(std::ranges::equal_range(added, index, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFramesOfThisFunction, &std::pair<uint32_t, PropertyKeyID>::second)
+        auto addedToThisFunction = std::ranges::equal_range(added, index, { }, &std::pair<uint32_t, PropertyKeyID>::first);
+        ValueFlowObjectID closure = inputs.universe().closureOf(closures.closureFunction);
+        if (std::ranges::any_of(addedToThisFunction, mayNameFramesOfThisFunction, &std::pair<uint32_t, PropertyKeyID>::second)
             || std::ranges::any_of(std::ranges::equal_range(added, UINT32_MAX, { }, &std::pair<uint32_t, PropertyKeyID>::first), mayNameFrames, &std::pair<uint32_t, PropertyKeyID>::second)
             || (constructedClass && std::ranges::any_of(program.at(constructedClass).staticFields, mayNameFrames, &StaticField::key)))
             functions.quickSet(index);
-        else if ((escapedClosuresMayBeRenamed && inputs.hasEscaped(inputs.universe().closureOf(closures.closureFunction)))
-            || (lostClosuresMayBeRenamed && inputs.isLost(inputs.universe().closureOf(closures.closureFunction))))
+        else if ((escapedClosuresMayBeRenamed && inputs.hasEscaped(closure)) || (lostClosuresMayBeRenamed && inputs.isLost(closure)))
             onlyWhereNobodySees.quickSet(index);
+        else if ((inputs.hasEscaped(closure) || inputs.isLost(closure)) && std::ranges::none_of(addedToThisFunction, [&](PropertyKeyID key) { return keys.contains(key); }, &std::pair<uint32_t, PropertyKeyID>::second))
+            outOfSight.quickSet(index);
     }
     onlyWhereNobodySees.exclude(functions);
     functions.merge(onlyWhereNobodySees);
-    return { WTF::move(functions), WTF::move(onlyWhereNobodySees) };
+    outOfSight.exclude(functions);
+    return { WTF::move(functions), WTF::move(onlyWhereNobodySees), WTF::move(outOfSight) };
 }
 
 static BitVector findFunctionsWhoseClosuresAreGivenDisplayName(const ValueFlowResultInputs& inputs)
@@ -738,6 +745,7 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
     FunctionsWhoseClosuresMayBeRenamed renamed = findFunctionsWhoseClosuresMayBeRenamed(inputs, added, classesOfClosures.span());
     tables.functions.functionsWhoseClosuresMayBeRenamed = WTF::move(renamed.all);
     tables.functions.functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees = WTF::move(renamed.onlyWhereNobodySees);
+    tables.functions.functionsWhoseClosuresGoOutOfSightUnnamed = WTF::move(renamed.outOfSight);
     tables.functions.functionsWhoseClosuresAreGivenDisplayName = findFunctionsWhoseClosuresAreGivenDisplayName(inputs);
     tables.sites.allocationClasses.appendVector(WTF::move(classesOfClosures));
 }

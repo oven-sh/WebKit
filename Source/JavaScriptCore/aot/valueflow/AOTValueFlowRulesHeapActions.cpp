@@ -111,13 +111,24 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
             }
         }
     }
+    // A getter nobody knows is entered with the source that holds it, whichever others are copied beside it.
+    HeapReceiver readSources { nullptr, sources, { } };
+    if (!keepsAccessors && mayBeAccessorNobodyKnows(getters)) {
+        ValueFlowObjectsToldApart toldApart = tellObjectsApart(m_context, m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), known(sources)));
+        ClimbingSet holdingSuchGetter(toldApart.rest);
+        for (ValueSetID group : toldApart.groups) {
+            if (mayBeAccessorNobodyKnows(m_context.valueOf(m_context.read(withSourcesOfCopies(m_context, ClimbingSet(group)), everyGetter))))
+                holdingSuchGetter = m_context.unite(holdingSuchGetter, ClimbingSet(group));
+        }
+        readSources.belowAccessorNobodyKnows = holdingSuchGetter;
+    }
     for (ValueFlowNodeID node : nodesTakingCopies) {
         if (mayBeUnknownObject(sources))
             add(node, Typed::unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));
         if (m_context.meet(sources, m_universe.strings()))
             add(node, m_universe.anyPrimitive());
         if (!keepsAccessors)
-            callAccessors(getters, ValueFlowCallKind::Get, { &source, { } }, nullptr, node);
+            callAccessors(getters, ValueFlowCallKind::Get, readSources, nullptr, node);
     }
     if (keepsAccessors && (mayBeUnknownObject(sources) || holdsAnything(hostObjects) || m_context.meet(sources, m_universe.builtinObjects())))
         connect(target, ValueFlowProgramNodes::escaped());
@@ -153,7 +164,7 @@ void HeapRule::compareWithPropertyThatIsThere(const ValueFlowOperand& defined)
 void HeapRule::defineAsDescribed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet descriptors, DefinedObject definedObject)
 {
     auto define = [&](HeapPropertyPart part, BuiltinName member) {
-        ValueFlowNodeID described = m_context.lookup(descriptors, ValueFlowName::property(m_program.keyOf(member)));
+        ValueFlowNodeID described = m_context.lookup(descriptors, ValueFlowName::property(m_program, m_program.keyOf(member)));
         if (part != HeapPropertyPart::Value && !m_context.meet(m_context.valueOf(described), ValueSets::complement(m_universe.undefinedValue())))
             return;
         this->define(object, key, part, operandOf(described));
@@ -224,12 +235,7 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
                 return;
             }
             readOwn(holders, foundName(key, HeapPropertyPart::Value), m_statement.result);
-            readPropertiesAtCreation(holders, key, m_statement.result);
-            handOutPrototypeObjectsAtCreation(holders, key);
-            if (key.mayNameNonEnumerable(m_tables.lengthKey()) && m_context.meet(holders, m_context.maker().unite(m_tables.arraysThatOperationsAllocate(), m_universe.closures())))
-                add(m_statement.result, m_tables.numberKinds());
-            if (key.mayNameNonEnumerable(m_tables.nameKey()) && m_context.meet(holders, m_universe.closures()))
-                add(m_statement.result, m_universe.strings());
+            readOwnPropertiesNobodyWrote(holders, key, m_statement.result);
             if (m_context.meet(m_context.valueOf(object), m_universe.strings())) {
                 if (key.keyClass != HeapKeyClass::Name)
                     add(m_statement.result, m_universe.strings());

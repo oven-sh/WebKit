@@ -227,6 +227,7 @@ public:
     JSObject* extraProperties() const { return hasExtraProperties() ? extraPropertiesSlow() : nullptr; }
     JSObject* extraPropertiesSlow() const;
     JSObject* ensureExtraProperties(VM&);
+    void adoptExtraProperties(VM&, JSObject* filled);
     void setExtraProperties(VM&, JSObject*, CompiledStructure* withExtraProperties);
     struct ExtraProperty {
         UniquedStringImpl* name;

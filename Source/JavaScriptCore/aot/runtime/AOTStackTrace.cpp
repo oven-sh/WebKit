@@ -59,21 +59,34 @@ BuiltinID builtinOfFunctionInFrames(FunctionID function)
     return function.index() < numberOfFunctions ? BuiltinID() : BuiltinID(static_cast<uint32_t>(function.index() - numberOfFunctions));
 }
 
-static constexpr FunctionTraceData traceOfCalledBuiltin {
-    .visibilityBits = static_cast<uint16_t>(TraceVisibility::Visible),
-    .builtinKindBits = static_cast<uint16_t>(StackTraceBuiltinKind::HostFunction),
-    .codeTypeBits = static_cast<uint16_t>(FunctionCode),
-    .rejectsOnThrow = false,
-    .isStrict = true,
-    .isConstructor = false,
-    .isAsync = false,
-    .isNamedByOwner = false,
-    .isNakedConstructor = false,
-    .implementsBuiltin = false,
-    .isNamedByComputedKey = false,
-    .recordsCallee = false,
-    .recordsCalleeOnceRenamed = false,
-};
+static constexpr FunctionTraceData traceOfCalledBuiltin(StackTraceBuiltinKind kind)
+{
+    return {
+        .visibilityBits = static_cast<uint16_t>(TraceVisibility::Visible),
+        .builtinKindBits = static_cast<uint16_t>(kind),
+        .codeTypeBits = static_cast<uint16_t>(FunctionCode),
+        .rejectsOnThrow = false,
+        .isStrict = true,
+        .isConstructor = false,
+        .isAsync = false,
+        .isNamedByOwner = false,
+        .isNakedConstructor = false,
+        .implementsBuiltin = false,
+        .isNamedByComputedKey = false,
+        .recordsCallee = false,
+        .recordsCalleeOnceRenamed = false,
+    };
+}
+static constexpr FunctionTraceData traceOfCalledHostFunction = traceOfCalledBuiltin(StackTraceBuiltinKind::HostFunction);
+static constexpr FunctionTraceData traceOfCalledJSBuiltin = traceOfCalledBuiltin(StackTraceBuiltinKind::JSBuiltin);
+
+static bool isWrittenInJavaScript(BuiltinID builtin)
+{
+    std::span<const BuiltinOverloadSummary> overloads = BuiltinTable::singleton().overloadSummariesOf(builtin);
+    return !overloads.empty() && std::ranges::all_of(overloads, [](const BuiltinOverloadSummary& overload) {
+        return overload.callee == BuiltinCallee::Function;
+    });
+}
 
 static String nameOfBuiltin(VM& vm, BuiltinID builtin)
 {
@@ -95,30 +108,35 @@ FunctionDescription::FunctionDescription(FunctionID function)
 {
     const Image* image = Image::current();
     RELEASE_ASSERT(image && function);
-    if (builtinOfFunctionInFrames(function)) [[unlikely]] {
-        m_record = &traceOfCalledBuiltin;
+    if (BuiltinID builtin = builtinOfFunctionInFrames(function)) [[unlikely]] {
+        m_record = isWrittenInJavaScript(builtin) ? &traceOfCalledJSBuiltin : &traceOfCalledHostFunction;
         return;
     }
     m_record = &image->programTables().traceOfFunction(function.index());
 }
 
+bool FunctionDescription::isOfCalledBuiltin() const
+{
+    return m_record == &traceOfCalledHostFunction || m_record == &traceOfCalledJSBuiltin;
+}
+
 String FunctionDescription::name(VM& vm) const
 {
-    if (m_record == &traceOfCalledBuiltin)
+    if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
     return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::AsWritten);
 }
 
 String FunctionDescription::nameInFrames(VM& vm, JSCell* callee, bool calleeLiesInFrame) const
 {
-    if (m_record == &traceOfCalledBuiltin)
+    if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
     return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::InFrames, callee ? asObject(callee) : nullptr, calleeLiesInFrame);
 }
 
 String FunctionDescription::calculatedDisplayName(VM& vm, JSCell* callee, bool calleeLiesInFrame) const
 {
-    if (m_record == &traceOfCalledBuiltin)
+    if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
     return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::CalculatedDisplayName, callee ? asObject(callee) : nullptr, calleeLiesInFrame);
 }
@@ -143,7 +161,7 @@ CodeType FunctionDescription::codeType() const
 
 bool FunctionDescription::isInRuntimeModule() const
 {
-    return m_record != &traceOfCalledBuiltin && functionKindData(m_function).isInRuntimeModule;
+    return !isOfCalledBuiltin() && functionKindData(m_function).isInRuntimeModule;
 }
 
 TraceVisibility FunctionDescription::visibility() const
@@ -153,7 +171,7 @@ TraceVisibility FunctionDescription::visibility() const
 
 FunctionID FunctionDescription::sourceFunction() const
 {
-    return m_record == &traceOfCalledBuiltin ? m_function : sourceFunctionOf(m_function);
+    return isOfCalledBuiltin() ? m_function : sourceFunctionOf(m_function);
 }
 
 StackTraceBuiltinKind FunctionDescription::builtinKind() const
@@ -163,7 +181,7 @@ StackTraceBuiltinKind FunctionDescription::builtinKind() const
 
 std::optional<SourcePosition> FunctionDescription::definition() const
 {
-    if (m_record == &traceOfCalledBuiltin)
+    if (isOfCalledBuiltin())
         return std::nullopt;
     const Image* image = Image::current();
     for (FunctionID candidate : { m_function, sourceFunction() }) {
@@ -763,6 +781,8 @@ std::optional<SourcePosition> positionOf(const TraceFrame& frame)
     const Image& image = *Image::current();
     if (image.isObfuscated())
         return SourcePosition { obfuscatedPositionOf(frame), ModuleID() };
+    if (builtinOfFunctionInFrames(frame.function) && FunctionDescription(frame.function).builtinKind() == StackTraceBuiltinKind::JSBuiltin) [[unlikely]]
+        return SourcePosition { startOfBuiltinFunction, ModuleID() };
     std::optional<SourcePosition> position = image.positionOf(frame.code.index(), frame.callSite);
     if (position && position->startIsForCallers) {
         if (frame.isCaller)

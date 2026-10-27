@@ -325,6 +325,7 @@ namespace {
 struct BuiltinOwnPropertyTest {
     ValueID object;
     PropertyKeyID key;
+    BuiltinID builtin;
 };
 
 } // anonymous namespace
@@ -352,13 +353,14 @@ static std::optional<BuiltinOwnPropertyTest> findOwnPropertyTest(FunctionPassCon
     PropertyKeyID key = internKey(context.types, constantKeyOf(program, program.typeOf(context.function, keyOperand)));
     if (!key)
         return std::nullopt;
-    return BuiltinOwnPropertyTest { object, key };
+    return BuiltinOwnPropertyTest { object, key, program.builtins().canonicalID(overload->builtin) };
 }
 
-static Value makeOwnPropertyTest(const Value& call, ValueID object, PropertyKeyID key)
+static Value makeOwnPropertyTest(const Value& call, ValueID object, const BuiltinOwnPropertyTest& found)
 {
     Value test = IRBuilder::make(Opcode::PropHasOwn, { object });
-    test.setKey(key);
+    test.setKey(found.key);
+    test.setCalledBuiltin(found.builtin);
     test.setAccessSite(call.accessSite());
     return test;
 }
@@ -368,7 +370,7 @@ static std::optional<Value> simplifyOwnPropertyTest(FunctionPassContext& context
     std::optional<BuiltinOwnPropertyTest> found = findOwnPropertyTest(context, value);
     if (!found || !context.program.typeOf(context.function, found->object).isObject())
         return std::nullopt;
-    Value test = makeOwnPropertyTest(value, found->object, found->key);
+    Value test = makeOwnPropertyTest(value, found->object, *found);
     if (!keepsEffectsOf(context, value, test))
         return std::nullopt;
     return test;
@@ -393,8 +395,10 @@ static unsigned simplifyOwnPropertyTestsOfWhatMayBeMissing(FunctionPassContext& 
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
     for (auto& [site, test] : tests) {
         builder.setOrigin(function.at(site.value).origin());
-        ValueID object = builder.insertBefore(site.point(), IRBuilder::make(Opcode::ToObject, { test.object }));
-        replaceKeepingType(context, site.value, makeOwnPropertyTest(function.at(site.value), object, test.key));
+        Value conversion = IRBuilder::make(Opcode::ToObject, { test.object });
+        conversion.setCalledBuiltin(test.builtin);
+        ValueID object = builder.insertBefore(site.point(), WTF::move(conversion));
+        replaceKeepingType(context, site.value, makeOwnPropertyTest(function.at(site.value), object, test));
     }
     builder.applyInsertions();
     context.analyses.didChangeValues();

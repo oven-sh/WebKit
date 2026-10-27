@@ -494,7 +494,21 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_letsInUnseenCode.ensureSize(builtins.builtinCount());
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCode;
         Vector<ValueFlowObjectID, 32> objectsThatLetInUnseenCodeWhenCalled;
+        // What the row of a getter says of its receiver beyond looking at it: members that it reads or calls, what it hands on, keeps or changes.
+        constexpr OperandUses usesThatLookAtObject { OperandUse::Inspects, OperandUse::ReadsContents };
+        auto actsOnReceiver = [&](BuiltinID getter) {
+            return std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(getter)), [&](const BuiltinOverload& overload) {
+                return overload.mode == BuiltinCallMode::Get && overload.receiver && (!overload.receiver->uses.containsOnly(usesThatLookAtObject) || !overload.receiver->protocols.isEmpty());
+            });
+        };
+        Vector<ValueFlowObjectID, 32> gettersThatActOnReceiver;
+        Vector<ValueFlowObjectID, 32> holdersOfGettersThatActOnReceiver;
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+            if (builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Get) && actsOnReceiver(BuiltinID(index))) {
+                universe.appendObjectsOf(BuiltinID(index), gettersThatActOnReceiver);
+                if (BuiltinID holder = builtins.at(BuiltinID(index)).holder)
+                    universe.appendObjectsOf(builtins.canonicalID(holder), holdersOfGettersThatActOnReceiver);
+            }
             if (builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Get))
                 m_hasGetEntry.quickSet(index);
             if (builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Set))
@@ -508,6 +522,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         }
         m_objectsThatLetInUnseenCode = maker.of(objectsThatLetInUnseenCode.span());
         m_objectsThatLetInUnseenCodeWhenCalled = maker.of(objectsThatLetInUnseenCodeWhenCalled.span());
+        m_gettersThatActOnReceiver = maker.of(gettersThatActOnReceiver.span());
+        m_holdersOfGettersThatActOnReceiver = maker.of(holdersOfGettersThatActOnReceiver.span());
         Vector<ValueFlowObjectID, 32> objectsOfNativeModules;
         Vector<ValueFlowObjectID, 32> objectsOfPublicModules;
         for (uint32_t index = 0; index < builtins.moduleCount(); ++index) {
@@ -698,8 +714,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 if (isNamespaceOrFunction && holder != Builtins::GlobalThis && holder != Builtins::Bun)
                     namespacesWhoseHoldersListThem.appendVector(objects);
             }
-            // A prototype object is found above every instance: HeapRule::notePrototypeObjectsThatWriteMayReach() says which of them a write reaches.
-            if (hasReplaceableMember && entry.kind != BuiltinKind::Prototype)
+            if (hasReplaceableMember)
                 holdersOfReplaceableMembers.appendVector(objects);
             if (hasMemberUnderNumericName)
                 holdersWithMembersUnderNumericNames.appendVector(objects);
@@ -724,7 +739,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         m_holdersWithMembers = maker.of(holdersWithMembers.span());
         m_holdersWithMembersUnderNumericNames = maker.of(holdersWithMembersUnderNumericNames.span());
         m_holdersOfMembersThatHostMakes = maker.of(holdersOfMembersThatHostMakes.span());
-        m_holdersOfReplaceableMembers = maker.of(holdersOfReplaceableMembers.span());
+        // HeapRule::notePrototypeObjectsThatWriteMayReach() says which of the prototype objects that no listing names a write reaches.
+        m_holdersOfReplaceableMembers = without(maker.of(holdersOfReplaceableMembers.span()), m_prototypeObjectsThatListingDoesNotName);
         m_namespacesWhoseHoldersListThem = maker.of(namespacesWhoseHoldersListThem.span());
         m_namespacesNotedWhenCarriedOut = maker.unite(m_namespacesWhoseHoldersListThem, universe.holdersOfLibraryExports());
         m_holdersThatListNotAllMembers = maker.unite(without(builtinObjects, maker.of(holdersThatListAllMembers.span())), maker.of(m_undescribedNativeCode));

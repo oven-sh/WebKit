@@ -1,0 +1,29 @@
+# function plain() {}  plain.member = 1;  sink({});  Function.prototype.demethodize = helper;  sink(Function.prototype);
+# What a read of a name finds on the function itself does not hang on Function.prototype and Object.prototype. What it finds there is asked of the table, name by name
+# RUN: valueflow-apply
+# CHECK: function f1 name="plain" {{*}}ClosuresAreReadWithoutCode]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Literal"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Integer integer=1
+    PropSet v0, v1 key="member" mode=Strict
+    v3 = PropGet v0 key="member"
+    v4 = NewObject layout=L0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v4, v3
+    v8 = Builtin builtin=FunctionPrototype
+    v9 = NewClosure function=f2
+    PropSet v8, v9 key="demethodize" mode=Strict
+    v11 = Call v6, -, v8
+    Return
+}
+function f1 name="plain" results=[{type=anything}] {
+    Return
+}
+function f2 name="helper" results=[{type=anything}] {
+    Return
+}

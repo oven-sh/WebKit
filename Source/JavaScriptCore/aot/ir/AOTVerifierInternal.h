@@ -212,6 +212,7 @@ public:
     ProgramVerifier(const Program&, IRForm, BuildContext&, const VerifierInputs&);
 
     bool run();
+    bool runRecords();
     bool runIDs();
 
 private:

@@ -135,6 +135,8 @@ private:
     macro(ValueSetID, builtinObjectsAndPlaceholders) \
     macro(ValueSetID, accessors) \
     macro(ValueSetID, knownAccessors) \
+    macro(ValueSetID, gettersThatActOnReceiver) \
+    macro(ValueSetID, holdersOfGettersThatActOnReceiver) \
     macro(ValueSetID, whatIsNewToNativeCode) \
     macro(ValueSetID, closuresWithPrototypeProperty) \
     macro(ValueSetID, templateObjects) \

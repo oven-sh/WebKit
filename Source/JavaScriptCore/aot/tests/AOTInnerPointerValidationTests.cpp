@@ -173,12 +173,15 @@ unsigned numberOfAccessesThatTookTraps(B3::Air::Code& code)
     return result;
 }
 
+enum class OriginsOfAccessesThatTakeTraps : uint8_t { Lost, Kept };
+
 template<typename Functor>
-InnerPointerFindings check(unsigned numberOfPreservedRegisters, const Functor& build, bool loadsStayInFront = true, unsigned numberOfChecksOfCells = 0)
+InnerPointerFindings check(unsigned numberOfPreservedRegisters, const Functor& build, bool loadsStayInFront = true, unsigned numberOfChecksOfCells = 0, OriginsOfAccessesThatTakeTraps origins = OriginsOfAccessesThatTakeTraps::Kept)
 {
     B3::Policy policy;
     policy.allocation.keepsValuesAfterLowering = true;
     policy.air.peepholes.trapReach = 4096;
+    policy.validation.keepsOriginsOfAccessesThatTakeTraps = origins == OriginsOfAccessesThatTakeTraps::Kept;
     B3::Procedure proc(policy);
     if (loadsStayInFront)
         proc.setHeapThatLoadsStayInFrontOf(weakTableStorage);
@@ -204,11 +207,11 @@ bool holdsOwner(Keeps keeps)
 constexpr Keeps allKeeps[] = { Keeps::Nothing, Keeps::OwnerBehindRead, Keeps::OwnerInFrontOfSafepoint, Keeps::OwnerAsLateUseOfSafepoint, Keeps::OtherCellBehindRead };
 
 template<typename Functor>
-void checkEveryForm(const Functor& build, Keeps alsoHoldsOwner = Keeps::OwnerBehindRead, unsigned numberOfChecksOfCells = 0)
+void checkEveryForm(const Functor& build, Keeps alsoHoldsOwner = Keeps::OwnerBehindRead, unsigned numberOfChecksOfCells = 0, OriginsOfAccessesThatTakeTraps origins = OriginsOfAccessesThatTakeTraps::Kept)
 {
     for (unsigned numberOfPreservedRegisters : numbersOfPreservedRegisters) {
         for (Keeps keeps : allKeeps) {
-            InnerPointerFindings findings = check(numberOfPreservedRegisters, [&](Graph& graph) { build(graph, keeps); }, true, numberOfChecksOfCells);
+            InnerPointerFindings findings = check(numberOfPreservedRegisters, [&](Graph& graph) { build(graph, keeps); }, true, numberOfChecksOfCells, origins);
             AOT_TEST_CHECK(findings.numberOfPointersAcrossSafepoints);
             AOT_TEST_CHECK(findings.violations.isEmpty() == (holdsOwner(keeps) || keeps == alsoHoldsOwner));
         }
@@ -271,31 +274,48 @@ static void testPointerLoadedThroughPointer()
     });
 }
 
-static void testPointerLoadedThroughPointerWhoseLoadTookTrap()
+static void testPointerWhoseLoadTookTrap()
 {
     checkEveryForm([](Graph& graph, Keeps keeps) {
         B3::BasicBlock* root = graph.proc.addBlock();
         B3::Value* owner = graph.argument(root, 0);
         B3::Value* other = graph.argument(root, 1);
         graph.checkCell(root, owner);
-        B3::Value* pointer = graph.loadPointer(root, graph.loadPointer(root, owner), fieldOutsideCells);
+        B3::Value* pointer = graph.loadPointer(root, owner);
         graph.safepoint(root, keeps, owner);
         graph.finish(root, keeps, owner, other, graph.readThrough(root, pointer));
     }, Keeps::OwnerBehindRead, 1);
 }
 
+static void testPointerLoadedThroughPointerWhoseLoadTookTrap()
+{
+    for (OriginsOfAccessesThatTakeTraps origins : { OriginsOfAccessesThatTakeTraps::Lost, OriginsOfAccessesThatTakeTraps::Kept }) {
+        checkEveryForm([](Graph& graph, Keeps keeps) {
+            B3::BasicBlock* root = graph.proc.addBlock();
+            B3::Value* owner = graph.argument(root, 0);
+            B3::Value* other = graph.argument(root, 1);
+            graph.checkCell(root, owner);
+            B3::Value* pointer = graph.loadPointer(root, graph.loadPointer(root, owner), fieldOutsideCells);
+            graph.safepoint(root, keeps, owner);
+            graph.finish(root, keeps, owner, other, graph.readThrough(root, pointer));
+        }, Keeps::OwnerBehindRead, 1, origins);
+    }
+}
+
 // The cell that an owner was loaded from is no owner.
 static void testOwnerWhoseLoadTookTrap()
 {
-    checkEveryForm([](Graph& graph, Keeps keeps) {
-        B3::BasicBlock* root = graph.proc.addBlock();
-        B3::Value* holder = graph.argument(root, 0);
-        graph.checkCell(root, holder);
-        B3::Value* owner = graph.load(root, B3::Load, B3::Int64, holder, 8, fieldOfCell);
-        B3::Value* pointer = graph.loadPointer(root, owner);
-        graph.safepoint(root, keeps, owner);
-        graph.finish(root, keeps, owner, holder, graph.readThrough(root, pointer));
-    }, Keeps::OwnerBehindRead, 1);
+    for (OriginsOfAccessesThatTakeTraps origins : { OriginsOfAccessesThatTakeTraps::Lost, OriginsOfAccessesThatTakeTraps::Kept }) {
+        checkEveryForm([](Graph& graph, Keeps keeps) {
+            B3::BasicBlock* root = graph.proc.addBlock();
+            B3::Value* holder = graph.argument(root, 0);
+            graph.checkCell(root, holder);
+            B3::Value* owner = graph.load(root, B3::Load, B3::Int64, holder, 8, fieldOfCell);
+            B3::Value* pointer = graph.loadPointer(root, owner);
+            graph.safepoint(root, keeps, owner);
+            graph.finish(root, keeps, owner, holder, graph.readThrough(root, pointer));
+        }, Keeps::OwnerBehindRead, 1, origins);
+    }
 }
 
 static void testPointerOnlyCompared()
@@ -526,6 +546,7 @@ std::span<const NativeTest> innerPointerValidationTests()
         { "inner-pointer-not-read-behind-safepoint"_s, testPointerNotReadBehindSafepoint },
         { "inner-pointer-address-computed-in-front-of-safepoint"_s, testAddressComputedInFrontOfSafepoint },
         { "inner-pointer-loaded-through-pointer"_s, testPointerLoadedThroughPointer },
+        { "inner-pointer-whose-load-took-trap"_s, testPointerWhoseLoadTookTrap },
         { "inner-pointer-loaded-through-pointer-whose-load-took-trap"_s, testPointerLoadedThroughPointerWhoseLoadTookTrap },
         { "inner-pointer-owner-whose-load-took-trap"_s, testOwnerWhoseLoadTookTrap },
         { "inner-pointer-only-compared"_s, testPointerOnlyCompared },

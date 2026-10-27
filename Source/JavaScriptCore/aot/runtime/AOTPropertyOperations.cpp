@@ -320,6 +320,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperGet, EncodedJSValue, (Instance* instan
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     auto property = JSValue::decode(key).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    // The answer is filed for the object above, where the stub looks the next time.
+    if (!parseIndex(property))
+        OPERATION_RETURN(scope, JSValue::encode(getUnderKeyForReceiver(instance, parent, property, JSValue::decode(receiver))));
     PropertySlot slot(JSValue::decode(receiver), PropertySlot::InternalMethodType::Get);
     OPERATION_RETURN(scope, JSValue::encode(JSValue(parent).get(globalObject, property, slot)));
 }

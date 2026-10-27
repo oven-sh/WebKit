@@ -645,19 +645,26 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
             }
         }
     };
-    forEachStampedCallee(true, [&](FunctionID callee) {
+    auto noteConstruction = [&](FunctionID callee) {
         const Function& function = program.at(callee);
         if (function.kind == FunctionKind::Plain && context.results.function(callee).callers == CallerState::AllKnown && makesTailCall(function))
             constructed.quickSet(callee.index());
-    });
+    };
+    forEachStampedCallee(true, noteConstruction);
+    for (const FlowIndirectCall& call : context.results.indirectCalls()) {
+        if (call.isAlwaysConstruction)
+            noteConstruction(call.callee);
+    }
     if (constructed.isEmpty())
         return constructed;
 
     forEachStampedCallee(false, [&](FunctionID callee) {
         constructed.quickClear(callee.index());
     });
-    for (const FlowIndirectCall& call : context.results.indirectCalls())
-        constructed.quickClear(call.callee.index());
+    for (const FlowIndirectCall& call : context.results.indirectCalls()) {
+        if (!call.isAlwaysConstruction)
+            constructed.quickClear(call.callee.index());
+    }
     for (const Function& function : program.functions) {
         for (const Block& block : function.blocks) {
             for (ValueID id : block.values) {

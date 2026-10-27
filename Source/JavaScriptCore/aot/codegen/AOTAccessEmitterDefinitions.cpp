@@ -389,7 +389,7 @@ void AccessEmitter::generateSuperGet(const ValueContext& value)
     Boxed receiver = in<Boxed>(value->receiverOperand());
     PropertyKeyID key = value->key();
     if (!key) {
-        define(value, callOperation<Boxed>(value, RuntimeOperation::SuperGet, { base, in<Boxed>(value->computedKeyOperand()), receiver }));
+        define(value, Boxed(callStub(value, getSuperByVal(), { base.value(), in<Boxed>(value->computedKeyOperand()).value(), receiver.value() }).first));
         return;
     }
 

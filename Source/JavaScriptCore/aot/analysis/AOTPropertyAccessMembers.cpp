@@ -408,7 +408,7 @@ MemberAnswer finishAtChainEnd(MemberAnswer&& walked, MemberAnswer&& chainEnd)
 }
 
 // A walk that has noted nothing when it comes to a class goes on as the walk that begins there, step for step. The two name their first class in what they note, and nowhere else.
-// So an answer without conditions is the answer of both, and a row of classes is walked once for a name, not once from each of its classes.
+// So an answer without conditions is the answer of both, and a long row of classes is walked once for a name, not once from each of its classes.
 struct ClassesPassed {
     PropertyAccessCache* cache { nullptr };
     Vector<LayoutID, 8> classes;
@@ -500,6 +500,8 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
         case ChainStep::Unknown:
             return MemberAnswer::unknown(UnprovenCause::UnknownBase);
         case ChainStep::CompiledClass:
+            if (context.usesOnlyAnswersWithoutTests && !walked.conditions.isEmpty())
+                return MemberAnswer::unknown(walked.cause);
             current = next.layout;
             continue;
         case ChainStep::BuiltinClass:
@@ -523,7 +525,7 @@ MemberAnswer findPrototypeMember(const PropertyAccessContext& context, const Mem
         ClassesPassed none;
         RELEASE_ASSERT(answer == walkPrototypes(context, query, none));
     }
-    if (!answer.conditions.isEmpty())
+    if (!answer.conditions.isEmpty() || passed.classes.size() < PropertyAccessCache::fewestClassesAbove)
         return answer;
     for (LayoutID passedClass : passed.classes) {
         PropertyAccessCache::InheritedMemberKey key { passedClass, { }, false, query.key, query.access, context.flow };

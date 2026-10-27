@@ -73,6 +73,7 @@ static bool checkKnownRanges(B3::Procedure& proc, Typed::FunctionID function)
             B3::Value* distance = insertionSet.insert<B3::Value>(index + 1, B3::Sub, origin, value, least);
             B3::Value* isOutside = insertionSet.insert<B3::Value>(index + 1, B3::Above, origin, distance, width);
             auto* check = insertionSet.insert<B3::CheckValue>(index + 1, B3::Check, origin, isOutside);
+            check->setRunsWithoutFrame(true);
             check->setGenerator([function, origin](CCallHelpers& jit, const B3::StackmapGenerationParams&) {
                 emitReportOfBrokenClaim(jit, BrokenClaim::ValueIsInRange, function, Typed::valueOfOrigin(origin));
             });

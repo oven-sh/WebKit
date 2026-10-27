@@ -15,11 +15,15 @@ struct BuiltinPropertyAction;
 
 namespace Typed {
 
+// A lookup under this name answers what readOwnPropertiesNobodyWrote() answers under any key.
+inline constexpr ValueFlowName everyOwnPropertyNobodyWroteName { ValueFlowNameKind::EveryProperty, 4 };
+
 void runHeapOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 void runLookup(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 ClimbingSet objectsHeldFromCreation(ValueFlowRuleContext&, ClimbingSet objects);
+void readOwnPropertiesNobodyWrote(ValueFlowRuleContext&, ClimbingSet holders, std::optional<PropertyKeyID>, ValueFlowNodeID result);
 ClimbingSet objectsRightAbove(ValueFlowRuleContext&, ClimbingSet knownObjects);
 ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(ValueFlowRuleContext&, const ValueFlowOperand&);
 ValueFlowNodeID exportsOfHoldersIn(ValueFlowRuleContext&, const ValueFlowOperand&);

@@ -13,6 +13,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStubsElements.h"
 #include "AOTStubsField.h"
+#include "AOTStubsPropertyAccessors.h"
 #include "AOTStubsPropertyExtraProperties.h"
 #include "AOTStubsStrings.h"
 #include "JSCJSValue.h"
@@ -56,6 +57,7 @@ static StubSignature signatureOfKeyedOperands(unsigned numberOfOperands, StubRes
 
 StubSignature signatureOfGetByValCached(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfGetByValCachedCells(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
+StubSignature signatureOfGetSuperByVal(StubKey) { return signatureOfKeyedOperands(3, StubResult::GPR); }
 StubSignature signatureOfInByValCached(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfDeleteByIdCached(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
 StubSignature signatureOfDeleteByValCached(StubKey) { return signatureOfKeyedOperands(2, StubResult::GPR); }
@@ -457,20 +459,17 @@ static Jump branchIfKeyedSlotKindDiffers(StubAssembler& jit, const KeyedProbeReg
     return jit.branch32(CCallHelpers::NotEqual, registers.uid, TrustedImm32(static_cast<int32_t>(kind)));
 }
 
-void generateGetByValCached(StubAssembler& jit)
+struct KeyedValueRead {
+    ProbedSlot slot;
+    Label readFieldByPlace;
+};
+
+// The base and the key are cells. Returns the own value or the field that a place names, undefined where the place says so, and the value that a slot of the hashed table names. Goes on with a slot of another kind.
+// A field whose slot does not say its value is asked of the hashed table, or left to emptyFieldSlot.
+static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& hasNoName, JumpList& isInNoTable, JumpList* emptyFieldSlot)
 {
-    const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
     const GPRReg base = registers.base;
-    const GPRReg key = registers.key;
     const GPRReg header = registers.header;
-    RELEASE_ASSERT(signatureOf(getByVal(false)).operands == jit.signature().operands);
-
-    jit.linkToStub(jit.branchIfNotCell(key), getByVal(false));
-    jit.linkToStub(jit.branchIfNotCell(base), getByVal(false));
-    jit.bindEntry(getByValCachedCells());
-
-    JumpList miss;
-    JumpList isInNoTable;
     JumpList hasNoPlace;
     JumpList placeIsOfNoField;
     Jump placeIsOfNoValue = findKeyedValuePlace(jit, SlotAccess::Read, registers, header, hasNoPlace);
@@ -478,6 +477,7 @@ void generateGetByValCached(StubAssembler& jit)
     returnOwnValueAt(jit, base, header);
 
     placeIsOfNoValue.link(&jit);
+    Label readFieldByPlace = jit.label();
     FieldReadExits fieldIsNotRead;
     readFieldAndReturn(jit, {
         .field = findFieldByPlace(jit, registers, placeIsOfNoField),
@@ -493,9 +493,14 @@ void generateGetByValCached(StubAssembler& jit)
     jit.returnToCaller();
 
     hasNoPlace.link(&jit);
-    fieldIsNotRead.isAbsent.link(&jit);
-    fieldIsNotRead.cannot.link(&jit);
-    const ProbedSlot slot = findKeyedSlot(jit, SlotAccess::Read, registers, StructureIDOfBase::IsLoaded, miss, isInNoTable);
+    if (emptyFieldSlot) {
+        emptyFieldSlot->append(fieldIsNotRead.isAbsent);
+        emptyFieldSlot->append(fieldIsNotRead.cannot);
+    } else {
+        fieldIsNotRead.isAbsent.link(&jit);
+        fieldIsNotRead.cannot.link(&jit);
+    }
+    const ProbedSlot slot = findKeyedSlot(jit, SlotAccess::Read, registers, StructureIDOfBase::IsLoaded, hasNoName, isInNoTable);
     Jump isNotValue = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Value);
     // An own property has no holder: Slot::createInStorage().
     Jump isInherited = jit.branchTest64(CCallHelpers::NonZero, slot.payload);
@@ -508,6 +513,24 @@ void generateGetByValCached(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotValue.link(&jit);
+    return { slot, readFieldByPlace };
+}
+
+void generateGetByValCached(StubAssembler& jit)
+{
+    const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
+    const GPRReg base = registers.base;
+    const GPRReg key = registers.key;
+    const GPRReg header = registers.header;
+    RELEASE_ASSERT(signatureOf(getByVal(false)).operands == jit.signature().operands);
+
+    jit.linkToStub(jit.branchIfNotCell(key), getByVal(false));
+    jit.linkToStub(jit.branchIfNotCell(base), getByVal(false));
+    jit.bindEntry(getByValCachedCells());
+
+    JumpList miss;
+    JumpList isInNoTable;
+    const ProbedSlot slot = returnValueOfKey(jit, registers, miss, isInNoTable, nullptr).slot;
     Jump isNotField = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Field);
     rememberFieldOfKey(jit, registers, slot);
     isNotField.link(&jit);
@@ -523,6 +546,86 @@ void generateGetByValCached(StubAssembler& jit)
     hasNoAnswer.link(&jit);
     jit.move(header, base);
     jit.exitOnMiss(Entry::operationAOTGetByValAndCache, { .secondArgumentIn = base, .thirdArgumentIn = key });
+}
+
+// Looks a key up in one object for another receiver, as super[key] and Reflect.get() do. A data property is the same for every receiver, so whatever is filed for the object that the search starts at says it. A getter gets the receiver.
+void generateGetSuperByVal(StubAssembler& jit)
+{
+    const KeyedProbeRegisters registers = allocateKeyedProbeRegisters(jit);
+    const GPRReg base = registers.base;
+    const GPRReg key = registers.key;
+    const GPRReg receiver = jit.operand(2);
+    const GPRReg start = jit.allocateScratch(StubRegister::T9);
+    const GPRReg getterSetter = registers.uid;
+    RELEASE_ASSERT(noOverlap(base, key, receiver, start, registers.uid, registers.structureID, registers.entry, registers.header, registers.payload));
+    JumpList nothingIsFiled;
+    JumpList whatIsFiledDoesNotAnswer;
+
+    jit.move(base, start);
+    Jump startsAtNoCell = jit.branchIfNotCell(base);
+    whatIsFiledDoesNotAnswer.append(jit.branchIfNotCell(key));
+    Label hasHolder = jit.label();
+    const KeyedValueRead read = returnValueOfKey(jit, registers, nothingIsFiled, nothingIsFiled, &whatIsFiledDoesNotAnswer);
+    auto slotOf = [&](Slot::Kind kind) {
+        return CachedSlot(read.slot.form, kind, read.slot.header, read.slot.payload);
+    };
+    Jump isNotField = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Field);
+    whatIsFiledDoesNotAnswer.append(slotOf(Slot::Kind::Field).branchIfFlag(jit, Slot::isOutOfLine));
+    rememberFieldOfKey(jit, registers, read.slot);
+    jit.jump().linkTo(read.readFieldByPlace, &jit);
+
+    isNotField.link(&jit);
+    Jump isNotAbsent = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Absent);
+    rememberAbsenceOfKey(jit, key, read.slot.header, registers.entry, registers.structureID);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), base);
+    jit.returnToCaller();
+
+    isNotAbsent.link(&jit);
+    Jump isNotInheritedField = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::InheritedField);
+    slotOf(Slot::Kind::InheritedField).loadHolder(jit, base);
+    jit.jump().linkTo(hasHolder, &jit);
+
+    isNotInheritedField.link(&jit);
+    Jump isNotGetter = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Getter);
+    loadValueBySlot(jit, slotOf(Slot::Kind::Getter), base, registers.uid, registers.structureID, getterSetter);
+    Label callGetter = jit.label();
+    callGetterAndReturn(jit, receiver, getterSetter, whatIsFiledDoesNotAnswer);
+
+    isNotGetter.link(&jit);
+    Jump isNotFieldGetter = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::FieldGetter);
+    {
+        const FieldAddressRegisters field { .object = base, .slotData = registers.uid, .extensionWordOffset = InvalidGPRReg, .address = registers.structureID, .representation = registers.entry };
+        whatIsFiledDoesNotAnswer.append(slotOf(Slot::Kind::FieldGetter).branchIfFlag(jit, Slot::isOutOfLine));
+        slotOf(Slot::Kind::FieldGetter).loadFirstPayloadWord(jit, field.slotData);
+        computeFieldAddress(jit, field, false, whatIsFiledDoesNotAnswer);
+        loadGetterSetterInField(jit, field.address, field.representation, getterSetter, whatIsFiledDoesNotAnswer);
+        jit.jump().linkTo(callGetter, &jit);
+    }
+
+    // Own data properties, which the handlers of reads by key read without a look at anything else.
+    isNotFieldGetter.link(&jit);
+    JumpList handlerAnswers;
+    for (Slot::Kind kind : { Slot::Kind::ArrayLength, Slot::Kind::FarValue, Slot::Kind::Constant })
+        handlerAnswers.append(jit.branch32(CCallHelpers::Equal, registers.uid, TrustedImm32(static_cast<int32_t>(kind))));
+    whatIsFiledDoesNotAnswer.append(jit.jump());
+    handlerAnswers.link(&jit);
+    jumpToSlotHandlerOfKind(jit, SlotHandlerTable::ReadByVal, read.slot.header, registers.uid);
+
+    // It calls nothing, so what it answers hangs on no receiver: an element under a text that reads as an index, and a data property, which it files. The receiver is kept across the call as the value of a store is.
+    nothingIsFiled.link(&jit);
+    jit.move(start, base);
+    callLeafLookup(jit, Entry::operationAOTGetByValGeneric, key, receiver, registers.header);
+    Jump hasNoAnswer = jit.branchTest64(CCallHelpers::Zero, base);
+    jit.returnToCaller();
+
+    hasNoAnswer.link(&jit);
+    jit.move(registers.header, base);
+    startsAtNoCell.link(&jit);
+    jit.exitOnMiss(Entry::operationAOTSuperGet, { .secondArgumentIn = base, .thirdArgumentIn = key, .fourthArgumentIn = receiver });
+
+    whatIsFiledDoesNotAnswer.link(&jit);
+    jit.move(start, base);
+    jit.callOperationAndReturn(Entry::operationAOTGetByValWithThis, { .secondArgumentIn = base, .thirdArgumentIn = receiver, .fourthArgumentIn = key });
 }
 
 // An element in the object's own storage answers both questions. A hole or an index past the end may be found in another way.
@@ -618,6 +721,11 @@ void generateInByValCached(StubAssembler& jit)
     kindDoesNotSay.link(&jit);
     loadSlotKind(jit, slot, registers.uid);
     jit.branch32(CCallHelpers::Equal, registers.uid, TrustedImm32(static_cast<int32_t>(Slot::Kind::FieldGetter))).linkTo(readsSlot, &jit);
+    if (asksIn && jit.options().callsTrapsOfProxies) {
+        RELEASE_ASSERT(base == gprOf(firstStubOperandRegister) && registers.payload == gprOf(slotPayloadRegister));
+        miss.append(jit.branch32(CCallHelpers::NotEqual, registers.uid, TrustedImm32(static_cast<int32_t>(Slot::Kind::Uncacheable))));
+        jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, registers.payload), throughProxy(TrapOfProxy::Has));
+    }
     miss.append(jit.jump());
 
     answerFromObjectsAndReturn(jit, asksIn ? ObjectLookupQuestion::In : ObjectLookupQuestion::HasOwn, registers, isInNoTable, miss);

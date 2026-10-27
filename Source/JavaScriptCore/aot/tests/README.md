@@ -253,7 +253,8 @@ schema is the reference for every keyword, field, operand, payload name and flag
 - An id is a letter and a number: `v` value, `b` block, `f` function, `L` layout, `g` variable, `m` module, `q` module failure,
   `w` type site, `e` eval scope, `x` expected result, `d` data.
 - A flag word is `[A, B]`, a nested record `{field=value ..}`, a variant `Case` or `Case{field=value ..}`, a list `[a, b]`.
-- A property key is `"x"`, `@"x"` (engine private name), `#"x"@L2` (private name of layout 2), `@@iterator`, `symbol@m0:120`.
+- A property key is `"x"`, `@"x"` (engine private name), `#"x"@L2` (private name of layout 2), `@@iterator`, `symbol@m0:120`
+  (the symbols that the call with `callNumber=120` in module 0 makes; with a description, `symbol("x")@m0:120`).
 - A type is parts joined by `|`: `undefined|number`, `i32`, `int[0, 9]`, `"a"|"b"`, `L3|L4`, `Array<number>`, `function`, `f3`, `env L1`,
   `builtin(MathMax)`, `anything`, `never`, `object`, `absent`, an opaque kind in lower case (`guard`, `iteratorstate`). `L3` reads as its
   family: the layouts below it. `nolayout` beside layouts says that the family also has members without a layout (`L3|nolayout`, in a layout

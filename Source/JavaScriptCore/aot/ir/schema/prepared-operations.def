@@ -45,7 +45,7 @@ operation FinishBirth (object: Object/inspects) -> none ; reads(ObjectFields) wr
 operation TryFinishBirth (object: Object/inspects) -> none ; reads(ObjectFields, OrderWords) writes(RuntimeState) ; runtime = TryFinishBirth
 
 family OwnAccess Prepared..Placed
-operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache
+operation PropHasOwn (object: Any/inspects+runs(OwnKeys), key: PropertyKey, calledBuiltin?: Builtin, with AccessStamp) -> natural(boolean) ; Allocates UsesRuntime reads(ObjectFields, NamedProperties, Elements, ArrayStorage, ShapeWords, OrderWords) throws by Access ; access = Has ; receiver = object ; interpreted = Test ; accessClass = ByName ; branches = May ; replaces = CallBuiltin ; runtime = HasOwnByIdAndCache
 
 family Access Prepared..Placed
 operation TryCopyFields (object: Object/inspects, source: Object/inspects+retainsContents, layout: Layout) -> natural(boolean) ; reads(ShapeWords, ObjectFields, OrderWords, NamedProperties) writes(ObjectFields, OrderWords) ; branches = May ; replaces = CopyDataProperties

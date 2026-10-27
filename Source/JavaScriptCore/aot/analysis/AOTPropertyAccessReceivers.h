@@ -25,6 +25,8 @@ class FlowResults;
 struct PropertyAccessContext {
     const Program& program;
     const FlowResults* flow { nullptr };
+    // Whoever asks uses an answer only if it holds without a test. A lookup may then end, as unknown, where it notes its first condition. No such answer is kept for others.
+    bool usesOnlyAnswersWithoutTests { false };
 };
 
 ReceiverState receiverStateOf(const Program&, LayoutID);

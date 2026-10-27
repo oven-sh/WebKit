@@ -753,7 +753,7 @@ struct WayBackPlanner {
                     break;
                 }
             }
-            if (!inFront || !canReplaceOperand(context, test, operandIndex, inFront, isNarrowedByEarlierTest.get(operandIndex)))
+            if (!inFront || mayBeVariableReadEarly(context.analyses, inFront) || !canReplaceOperand(context, test, operandIndex, inFront, isNarrowedByEarlierTest.get(operandIndex)))
                 return std::nullopt;
             operands.append(inFront);
         }

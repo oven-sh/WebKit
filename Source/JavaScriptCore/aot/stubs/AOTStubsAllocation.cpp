@@ -275,7 +275,10 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
     jit.returnToCaller();
 
     // What is saved around the operation comes back, the second result with it.
-    const GPRReg setsPrototype = cell;
+    // On ARM64 the first result and the first argument are one register: what is read while the arguments are laid out is in neither.
+    const GPRReg setsPrototype = scratch;
+    static_assert(noOverlap(gprOf(StubRegister::T9), gprOf(StubRegister::T13), operationArgumentGPR(0), operationArgumentGPR(1), operationArgumentGPR(3), operationArgumentGPR(4)));
+    RELEASE_ASSERT(allocation == gprOf(StubRegister::T9) && setsPrototype == gprOf(StubRegister::T13));
     emitLateRefill(jit, refill, hasNoRoom);
     hasNoRoom.link(&jit);
     jit.move(prototype, allocation);

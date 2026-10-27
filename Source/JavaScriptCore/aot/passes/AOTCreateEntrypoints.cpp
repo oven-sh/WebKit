@@ -155,6 +155,7 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
     BitVector hasSeveralForms(program.functions.size());
     BitVector recordsFromTheStart(program.functions.size());
     Vector<FunctionID> marked;
+    Vector<FunctionID> writtenWithClosuresOutOfSight;
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         if (!program.functions[index].hasBody())
             continue;
@@ -178,8 +179,11 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
         if (!hasClosures(function) || mayWait || function.hasAny({ FunctionFlags::IsGenerator, FunctionFlags::IsHiddenInStackTraces }))
             continue;
         FunctionID written = writtenFunctionOf(id);
-        if (!flow.closuresMayBeRenamed(id) && !namedBySeveralKeys.quickGet(written.index()))
+        if (!flow.closuresMayBeRenamed(id) && !namedBySeveralKeys.quickGet(written.index())) {
+            if (flow.closuresGoOutOfSightUnnamed(id) && (!flow.closureIsMadeOnce(id) || hasSeveralForms.quickGet(written.index())))
+                writtenWithClosuresOutOfSight.append(written);
             continue;
+        }
         // A static field is stored without a word to the run time.
         bool isNamedByStaticField = function.constructedClass && std::ranges::any_of(program.at(function.constructedClass).staticFields, [&](PropertyKeyID key) { return keysOfNames.contains(key); }, &StaticField::key);
         if (flow.closureIsMadeOnce(id) && !hasSeveralForms.quickGet(written.index()) && !isNamedByStaticField)
@@ -197,6 +201,11 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
             continue;
         editor.at(id).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
         editor.at(written).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
+    }
+    // Without RecordsCallee: the calls by value do the same, and nothing in compiled code asks.
+    for (FunctionID written : writtenWithClosuresOutOfSight) {
+        if (!program.at(written).has(FunctionCapabilities::RecordsCallee))
+            editor.at(written).capabilities.add(FunctionCapabilities::RecordsCalleeOnceRenamed);
     }
 }
 

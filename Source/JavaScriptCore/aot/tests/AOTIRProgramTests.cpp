@@ -216,9 +216,9 @@ static void propertyKeysAreUnique()
     created.kind = PropertyKeyKind::CreatedSymbol;
     created.text = description;
     created.module = ModuleID(0u);
-    created.position = 120;
+    created.callNumber = 120;
     PropertyKey createdElsewhere = created;
-    createdElsewhere.position = 130;
+    createdElsewhere.callNumber = 130;
     AOT_TEST_CHECK(!types.find(created));
     PropertyKeyID createdKey = arena.intern(created);
     AOT_TEST_CHECK(arena.intern(created) == createdKey && types.find(created) == createdKey && arena.intern(createdElsewhere) != createdKey);

@@ -40,6 +40,7 @@
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/Platform.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
 
 
@@ -192,7 +193,9 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         JS_EXPORT_PRIVATE static JSPromise* asyncFunctionPromise(JSCell* awaiter);
         JS_EXPORT_PRIVATE static JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* awaiter, size_t maxStackSize);
 
-        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+        // Says of each frame on the stack whether it goes into the results. A frame that it refuses does not count against maxStackSize.
+        using StackFrameFilter = ScopedLambda<bool(const StackFrame&)>;
+        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, const StackFrameFilter* = nullptr);
         struct StackTraceStart {
             CallFrame* callFrame { nullptr };
             const AOT::CompiledFrameExit* compiledFrameExit { nullptr };
@@ -200,6 +203,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
             size_t numberOfFramesAbove { 0 };
             size_t framesToSkip { 0 };
             JSCell* caller { nullptr };
+            const StackFrameFilter* filter { nullptr };
             // If set, the walk ends at the first compiled frame that is shown and hands it over, unless frames of suspended async functions belong above it.
             std::optional<AOT::CompiledFrameIterator>* compiledFramesBelow { nullptr };
         };

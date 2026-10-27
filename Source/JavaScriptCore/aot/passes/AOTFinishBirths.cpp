@@ -57,7 +57,7 @@ public:
             finishOnWaysThatLagBehind(block, atEnd);
             States states = statesAtHeadOf(block, atEnd);
             if (block == entryBlock && m_allocatedThis)
-                states[*objectDefinedBy(m_allocatedThis)] = State { BitVector(m_keys.size()), BitVector(m_keys.size()), true, false, m_thisMayHaveBeenSeen, m_thisMayHaveBeenSeen };
+                states[*objectDefinedBy(m_allocatedThis)] = State { BitVector(m_keys.size()), BitVector(m_keys.size()), BitVector(m_keys.size()), true, true, false, m_thisMayHaveBeenSeen, m_thisMayHaveBeenSeen };
             walk(block, states);
             atEnd[block.index()] = WTF::move(states);
         }
@@ -96,6 +96,9 @@ private:
         BitVector stored;
         // Of those, what has been stored since other code could last change the object.
         BitVector storedSinceOtherCodeRan;
+        // What some path from the birth has stored, while nobody else has seen the object.
+        BitVector storedOnSomePath;
+        bool mayHoldMoreThanIsListed { true };
         bool isAlive { false };
         bool isFinished { false };
         bool isReachableByOthers { true };
@@ -105,6 +108,8 @@ private:
         {
             stored.filter(other.stored);
             storedSinceOtherCodeRan.filter(other.storedSinceOtherCodeRan);
+            storedOnSomePath.merge(other.storedOnSomePath);
+            mayHoldMoreThanIsListed |= other.mayHoldMoreThanIsListed;
             isAlive &= other.isAlive;
             isFinished &= other.isFinished;
             isReachableByOthers |= other.isReachableByOthers;
@@ -114,6 +119,7 @@ private:
         void forgetWhatLoopMayUndo()
         {
             storedSinceOtherCodeRan.clearAll();
+            mayHoldMoreThanIsListed = true;
             isFinished = false;
             isReachableByOthers = true;
             wasSeenByOthers = true;
@@ -149,6 +155,22 @@ private:
         });
     }
 
+    // Without a field of birth that no path has stored yet, the run time need not look: it would find the object unfinished.
+    bool mayBeFilled(const Layouts& layouts, const State& state) const
+    {
+        if (state.mayHoldMoreThanIsListed || layouts.isEmpty())
+            return true;
+        return std::ranges::any_of(layouts, [&](LayoutID layout) {
+            const Layout& fields = m_program.at(layout);
+            for (uint32_t field = 0; field < fields.fields.size(); ++field) {
+                std::optional<uint32_t> number = isFilledAtBirth(m_program, { layout, field }) ? numberOf(fields.fields[field].key) : std::nullopt;
+                if (number && !state.storedOnSomePath.quickGet(*number))
+                    return false;
+            }
+            return true;
+        });
+    }
+
     bool isFilled(const Value& storeBySlot, const BitVector& stored) const
     {
         return std::ranges::all_of(m_program.at(storeBySlot.receivers()).members, [&](LayoutID layout) {
@@ -163,10 +185,12 @@ private:
 
     State stateAtBirth(const Value& allocation) const
     {
-        State state { BitVector(m_keys.size()), BitVector(m_keys.size()), true, false, false, false };
+        State state { BitVector(m_keys.size()), BitVector(m_keys.size()), BitVector(m_keys.size()), false, true, false, false, false };
         std::span<const uint32_t> fields = allocation.fields();
         std::span<const ValueID> values = allocation.variadicOperands();
         for (size_t index = 0; index < fields.size(); ++index) {
+            if (std::optional<uint32_t> number = numberOf(m_program.at(allocation.layout()).fields[fields[index]].key))
+                state.storedOnSomePath.quickSet(*number);
             if (holdsRawValueFromBirth(m_program, { allocation.layout(), fields[index] }) && (index >= values.size() || mayBeMarker(values[index])))
                 continue;
             if (std::optional<uint32_t> number = numberOf(m_program.at(allocation.layout()).fields[fields[index]].key))
@@ -188,7 +212,7 @@ private:
 
     State nothingKnown() const
     {
-        return { BitVector(m_keys.size()), BitVector(m_keys.size()), false, false, true, true };
+        return { BitVector(m_keys.size()), BitVector(m_keys.size()), BitVector(m_keys.size()), true, false, false, true, true };
     }
 
     std::optional<uint32_t> objectDefinedBy(ValueID value) const
@@ -503,9 +527,15 @@ private:
                     if (!state.isReachableByOthers || state.wasSeenByOthers)
                         continue;
                     state.wasSeenByOthers = true;
-                    if (state.isAlive && !state.isFinished && !callsInitializer && isKnownToBeObject(m_objects[object]))
+                    if (state.isAlive && !state.isFinished && !callsInitializer && isKnownToBeObject(m_objects[object]) && mayBeFilled(m_layouts[object], state))
                         m_insertions.append({ Opcode::TryFinishBirth, m_objects[object], { id, index } });
                 }
+            }
+            if (!birthStoresBySlot.contains(value.opcode) && effects.writes.contains(AbstractHeap::ObjectFields)) {
+                value.forEachOperand([&](ValueID operand, uint32_t) {
+                    if (std::optional<uint32_t> object = objectNamedBy(operand))
+                        states[*object].mayHoldMoreThanIsListed = true;
+                });
             }
             // Code that runs seldom stores by name. Whether that has filled the slot the run time sees, behind the store that may have filled the last one.
             if (birthStoresByName.contains(value.opcode)) {
@@ -531,6 +561,7 @@ private:
             if (!object || !number)
                 continue;
             State& state = states[*object];
+            state.storedOnSomePath.quickSet(*number);
             if (mayStoreMarkerInPlaceOfRawValue(value)) {
                 state.stored.quickClear(*number);
                 state.storedSinceOtherCodeRan.quickClear(*number);

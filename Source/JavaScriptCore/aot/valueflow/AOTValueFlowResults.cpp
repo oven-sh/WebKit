@@ -403,6 +403,11 @@ FlowResults analyzeValueFlow(Program& program, TypeTable& types, BuildContext& b
         inputs.classesOfBuiltinResults = &classesOfBuiltinResults;
         inputs.layoutsOfSites = &layoutsOfSites;
     });
+    if (build.options().verifiesProgram) {
+        add("operations without a value"_s, { firstResults }, [&](PhaseTimes&) {
+            reportOperationsWithoutValue(inputs);
+        });
+    }
     auto stampedCalls = add("calls"_s, { firstResults }, [&](PhaseTimes&) {
         calls = computeCallResults(inputs, types, tables);
     });

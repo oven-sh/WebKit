@@ -888,6 +888,15 @@ static void eraseNamesTakenFromOneKey(const FlowCastInsertion& insertion, std::s
     }
 }
 
+static bool mayBeStoredWithOtherType(const Program& program, const Value& allocation, uint32_t operandIndex)
+{
+    std::optional<uint32_t> valueIndex = allocation.variadicOperandIndex(operandIndex);
+    if (!valueIndex)
+        return false;
+    FieldReference field = declarationOf(program, { allocation.layout(), allocation.fields()[*valueIndex] });
+    return !fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType);
+}
+
 bool takesOnlyWhatFlowHolds(const Program& program, const Value& store, uint32_t operandIndex)
 {
     switch (holderOfRequiredTypes(program, store)) {
@@ -897,8 +906,8 @@ bool takesOnlyWhatFlowHolds(const Program& program, const Value& store, uint32_t
         std::optional<uint32_t> valueIndex = store.variadicOperandIndex(operandIndex);
         if (!valueIndex)
             return false;
-        FieldReference field = declarationOf(program, { store.layout(), store.fields()[*valueIndex] });
-        return fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) || !canStoreInitialValueBehindAllocation(program, store, *valueIndex);
+        // The run behind flow takes back the field whose listed value no store can test.
+        return !mayBeStoredWithOtherType(program, store, operandIndex) || !canStoreInitialValueBehindAllocation(program, store, *valueIndex);
     }
     case RequiredTypeHolder::PositionThatFlowFollows:
         return true;
@@ -941,8 +950,6 @@ static void assumeClaimedTypes(Function& function, IRBuilder& builder, std::span
 static void assumeTypesOfPositionsAtStores(const Program& program, Function& function, TypeArena& types, FunctionAnalyses& analyses, IRBuilder& builder, ValidatesClaims validatesClaims)
 {
     PredictedValues predicted(function, analyses.cfg());
-    if (!predicted.hasChecks())
-        return;
     // What is proven of a position that takes the very value that a check tests may rest on that check.
     std::optional<BitVector> checkedValuesThemselves;
     auto isCheckedValueItself = [&](ValueID value) {
@@ -989,7 +996,10 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
             return;
         TypeID elements = part->contentsAt(program.builtins(), ContentsSlot::Element);
         for (uint32_t index = OperandIndex::NewArray::elements; index < function.at(literal).numberOfOperands(); ++index) {
-            if (isTypedOnCredit(function.at(literal).operand(index), elements))
+            ValueID element = function.at(literal).operand(index);
+            // What is read from a position that holds something else than was predicted for it is typed as anything.
+            bool fitsByItsType = types.at(function.at(element).type).isNever() || fitsStorageOfLiteral(storage, types.at(function.at(element).type));
+            if (!fitsByItsType || isTypedOnCredit(element, elements))
                 found.append({ analyses.useLists().pointOf(literal), literal, index, elements });
         }
     };
@@ -1012,19 +1022,22 @@ static void assumeTypesOfPositionsAtStores(const Program& program, Function& fun
             // It need not come by a position of this function: it may be stored by name.
             if (value.opcode == Opcode::AssumeType)
                 visitElementsOfLiteral(value.valueOperand(), value.provenType());
-            if (!opcodesWithRequiredTypes.contains(value.opcode))
+            if (!predicted.hasChecks() || !opcodesWithRequiredTypes.contains(value.opcode))
                 continue;
             value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 if (value.operandKind(operandIndex) != OperandKind::Declared)
                     return;
                 TypeID required = requiredTypeOfOperand(typing, value, operandIndex);
-                if (takesOnlyWhatFlowHolds(program, value, operandIndex))
+                bool isSlotOfObject = holderOfRequiredTypes(program, value) == RequiredTypeHolder::InitializedSlot;
+                if (takesOnlyWhatFlowHolds(program, value, operandIndex) && !(isSlotOfObject && mayBeStoredWithOtherType(program, value, operandIndex)))
                     return visit({ block, index }, user, operand, operandIndex, required);
-                // Of the slot of an object that a store tests flow leaves out primitives, and no object. No test of a store tells what is proven of the instances of a class: that is flow's word.
-                if (required && holderOfRequiredTypes(program, value) == RequiredTypeHolder::InitializedSlot && types.at(required) != types.at(required).withoutClassProofs())
+                // Of the slot of an object at which a value of another type arrives flow leaves out primitives, and no object. No test of a store tells what is proven of the instances of a class: that is flow's word.
+                if (required && isSlotOfObject && types.at(required) != types.at(required).withoutClassProofs())
                     visit({ block, index }, user, operand, operandIndex, types.withPrimitives(required, Primitive::All));
             });
         }
+        if (!predicted.hasChecks())
+            continue;
         const Terminator& terminator = contents.terminator;
         if (terminator.kind == TerminatorKind::Return)
             visit({ block, numberOfValues }, { }, terminator.valueOperand(), OperandIndex::Return::value, requiredResult);

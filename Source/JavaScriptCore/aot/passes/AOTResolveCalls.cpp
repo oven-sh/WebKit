@@ -16,6 +16,7 @@
 #include "AOTCreateBoundFunctions.h"
 #include "AOTDominators.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsOfOperands.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowPrototypes.h"
@@ -2075,44 +2076,82 @@ struct CallResolver {
         };
     }
 
-    // Whether a way leads from the use to the call on which the function object is not made anew.
-    bool leadsToCall(const Use& use, const CallSite& site, BlockID made)
+    // The one entry of a cycle stands in front of all of it. So a way round that leaves the creation out lies in a cycle that leaves it out.
+    bool liesOnWayRoundWithoutCreation(BlockID block, BlockID made)
     {
-        // What an edge carries is handed on where the edge leads.
-        BlockID from = use.isEdgeUse() ? targetOf(function, use.edge()).block : use.block;
-        BlockID to = site.position.block;
-        if (from == to && (use.isEdgeUse() || (use.kind == Use::Kind::Operand && context.analyses.useLists().locationOf(use.user).index <= site.position.index)))
-            return true;
+        if (block == made)
+            return false;
+        const BlockCycles& cycles = context.analyses.blockCycles();
+        std::optional<unsigned> innermost = cycles.innermostCycleOf(block);
+        return innermost && (!cycles.forest()[*innermost].isReducible() || !cycles.forest().contains(*innermost, made));
+    }
+
+    // Whether a way leads from the end of one block to the start of the other on which the function object is not made anew. The creation stands in front of the second block on every way to it.
+    bool leadsOnward(BlockID from, BlockID to, BlockID made)
+    {
         CFG& cfg = context.analyses.cfg();
         if (!cfg.isReachable(from) || !cfg.isReachable(to))
             return cfg.isReachable(from);
         Dominators& dominators = context.analyses.dominators();
-        // The creation stands in front of the call on every way to it.
         if (!dominators.dominates(made, from))
             return false;
-        BlockID fork = dominators.nearestCommonDominator(from, to);
-        if (fork == from && from != to)
-            return true;
-        // Where the side of the call is entered from the fork alone, the way comes by the fork once more.
-        if (fork != to) {
-            bool isEnteredFromForkAlone = std::ranges::any_of(cfg.successors(fork), [&](BlockID side) {
-                return side != fork && dominators.dominates(side, to) && std::ranges::all_of(cfg.predecessors(side), [&](BlockID predecessor) {
-                    return predecessor == fork || dominators.dominates(side, predecessor);
-                });
-            });
-            if (!isEnteredFromForkAlone)
+
+        // Against the edges, as far as the blocks that stand in front of the first block: a way from it to one of those is a way round.
+        AOT_THRESHOLD(unsigned, maxEntrances, 32);
+        Vector<BlockID, 8> entrances;
+        Vector<BlockID, 8> worklist { to };
+        while (!worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            if (dominators.dominates(block, from)) {
+                if (liesOnWayRoundWithoutCreation(block, made))
+                    return true;
+                continue;
+            }
+            if (dominators.dominates(from, block))
                 return true;
+            // Every way from the first block to this one comes by the highest block in front of this one that does not stand in front of the first as well.
+            BlockID entrance = *std::ranges::find_if(dominators.children(dominators.nearestCommonDominator(block, from)), [&](BlockID child) { return dominators.dominates(child, block); });
+            if (entrances.contains(entrance))
+                continue;
+            entrances.append(entrance);
+            if (entrances.size() > maxEntrances)
+                return true;
+            for (BlockID predecessor : cfg.predecessors(entrance)) {
+                if (predecessor == from)
+                    return true;
+                if (cfg.isReachable(predecessor) && !dominators.dominates(entrance, predecessor))
+                    worklist.append(predecessor);
+            }
         }
-        if (fork == made)
-            return false;
-        // The one entry of a cycle stands in front of all of it. So a way round that leaves the creation out lies in a cycle that leaves it out.
-        const BlockCycles& cycles = context.analyses.blockCycles();
-        std::optional<unsigned> innermost = cycles.innermostCycleOf(fork);
-        return innermost && (!cycles.forest()[*innermost].isReducible() || !cycles.forest().contains(*innermost, made));
+        return false;
     }
 
-    // A function object that the function makes itself, and that has only been called on every way to the call, has the names it was made with.
-    bool isHandedToNobodyBefore(const CallSite& site, ValueID closureCreation)
+    bool leadsToCall(const Use& use, const CallSite& site, BlockID made)
+    {
+        // What an edge carries is handed on where the edge leads.
+        BlockID from = use.isEdgeUse() ? targetOf(function, use.edge()).block : use.block;
+        if (from == site.position.block && (use.isEdgeUse() || (use.kind == Use::Kind::Operand && context.analyses.useLists().locationOf(use.user).index <= site.position.index)))
+            return true;
+        return leadsOnward(from, site.position.block, made);
+    }
+
+    bool isReachedFromCall(const Use& use, const CallSite& site, BlockID made)
+    {
+        if (use.block == site.position.block && (use.kind != Use::Kind::Operand || context.analyses.useLists().locationOf(use.user).index >= site.position.index))
+            return true;
+        return leadsOnward(site.position.block, use.block, made);
+    }
+
+    // A look stores nothing in the object and runs no code that gets it: no accessor, no trap, no conversion.
+    bool onlyLooksAt(const Value& user, uint32_t operandIndex)
+    {
+        if (!user.operandUses(operandIndex).containsOnly(OperandUse::Inspects) || isWrittenOperand(user.opcode, std::min(operandIndex, numberOfNamedOperandsOf(user.opcode))))
+            return false;
+        return summarizeOperand(context.analyses.effectContext(), function, user, operandIndex).uses.containsOnly(OperandUse::Inspects);
+    }
+
+    // A stack names its frames when it is read, which may be long behind the call. A function object that the function makes itself, and that is only called on every way through the call, has the names it was made with for as long as there is such a stack.
+    bool isHandedToNobodyAround(const CallSite& site, ValueID closureCreation)
     {
         if (!closureCreation)
             return false;
@@ -2134,10 +2173,10 @@ struct CallResolver {
                     }
                     // A construction hands the function object to its body as new.target.
                     bool isCalled = (user.opcode == Opcode::Call && use.operandIndex == OperandIndex::Call::callee) || (user.opcode == Opcode::CallList && use.operandIndex == OperandIndex::CallList::callee);
-                    if (isCalled || user.operandUses(use.operandIndex).containsOnly(OperandUse::Inspects))
+                    if (isCalled || onlyLooksAt(user, use.operandIndex))
                         continue;
                 }
-                if (leadsToCall(use, site, made))
+                if (leadsToCall(use, site, made) || isReachedFromCall(use, site, made))
                     return false;
             }
         }
@@ -2157,7 +2196,7 @@ struct CallResolver {
         if (!only || typeOf(closure).mayBeUndefinedOrNull() || !mayBeCalledDirectlyOrThroughEntrypoint(program, only) || context.limit(LimitID::MaxDispatchCases) < 1 || isTailCall(function, site.position))
             return nullptr;
         bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only);
-        if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyBefore(site, findClosureCreation(function, closure, only))))
+        if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only))))
             return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))

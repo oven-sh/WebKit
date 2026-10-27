@@ -130,6 +130,7 @@ struct CastSimplification : Rewrite {
             if (!canMoveCast(cfg, candidate))
                 continue;
             const Value cast = at(candidate.cast);
+            bool joinSaysLessThanCast = false;
             builder().setOrigin(cast.origin());
             for (Edge edge : cfg.incomingEdges(candidate.block)) {
                 ValueID& argument = editTarget(function, edge).arguments[candidate.parameterIndex];
@@ -140,11 +141,15 @@ struct CastSimplification : Rewrite {
                     Value castOnEdge = cast;
                     castOnEdge.setOperand(0, argument);
                     castOnEdge.setExpected({ });
+                    // A check that nothing on its edge passes has the whole type that it asks for.
+                    joinSaysLessThanCast |= !context.types.at(resultTypeOf(program, function, castOnEdge, context.types, &context.typingMemo)).isSubsetOf(context.types.at(cast.type), program);
                     passed = builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(castOnEdge));
                 }
                 didChangeEdge |= passed != argument;
                 argument = passed;
             }
+            if (joinSaysLessThanCast)
+                edit(candidate.cast, ValueEdit::Definition).becomeAssumeType(cast.operand(0), Proven::byRulesBehindChecks(cast.type));
             movedParameters.append(cast.operand(0));
         }
         if (movedParameters.isEmpty())

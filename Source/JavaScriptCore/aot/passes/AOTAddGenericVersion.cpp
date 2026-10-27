@@ -336,10 +336,12 @@ struct GenericVersionBuilder {
         Vector<ValueID, 8> dropped;
         const CompactList<ValueID>& entryParameters = function.at(entryBlock).parameters;
         for (const CheckSite& site : sites) {
+            const Value& check = function.at(site.check);
             auto isHandedOnParameter = [&] {
-                return entryParameters.contains(sameObjectThroughCasts(function, function.at(site.check).valueOperand())) && !isReliedOn(site.check);
+                return entryParameters.contains(sameObjectThroughCasts(function, check.valueOperand())) && !isReliedOn(site.check);
             };
-            if (isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isHandedOnParameter())
+            bool leavesCodeAsItIs = check.cause() != CheckCause::MayFail && !changesCodeWhereProven(types.at(check.expectedType().predicted()));
+            if (leavesCodeAsItIs || isComparedByBitsAtEachUse(site.check) || isListedTextThatIsOnlyCompared(site.check) || isHandedOnParameter())
                 dropped.append(site.check);
         }
         if (dropped.isEmpty())
@@ -950,6 +952,18 @@ static std::optional<Position> storedPosition(const Program& program, FunctionID
     }
 }
 
+// Of the slot of an object flow leaves out the primitives of another type that arrive there: the stores turn them away. Nothing tests a value that has to stay listed in its allocation.
+static bool staysListedUntested(const Program& program, const TypedStore& store)
+{
+    if (!store.operation || holderOfRequiredTypes(program, *store.operation) != RequiredTypeHolder::InitializedSlot)
+        return false;
+    std::optional<uint32_t> valueIndex = store.operation->variadicOperandIndex(store.operandIndex);
+    if (!valueIndex)
+        return false;
+    FieldReference field = declarationOf(program, { store.operation->layout(), store.operation->fields()[*valueIndex] });
+    return !fieldAt(program, field).flow.stability.contains(FieldStability::IsNeverStoredWithOtherType) && !canStoreInitialValueBehindAllocation(program, *store.operation, *valueIndex);
+}
+
 static ALWAYS_INLINE std::optional<Position> variableReadBy(const Value& read)
 {
     if (read.opcode == Opcode::GetModuleVariable)
@@ -1070,6 +1084,11 @@ static std::optional<Position> variableReadThroughCastsAndChecks(const Function&
 bool mayTurnValueAway(const Program& program, const Function& function, const Value& check)
 {
     return !program.typeOf(function, check.valueOperand()).isSubsetOf(program.at(check.expectedType().predicted()), program);
+}
+
+bool changesCodeWhereProven(const Type& checked)
+{
+    return !checked.anyObject;
 }
 
 namespace {
@@ -1773,7 +1792,7 @@ static void appendFieldsGivenObjectsThatChecksTurnAway(const Program& program, c
     }
 }
 
-// After flow only the very value that a check has turned away counts. The body is left as it was.
+// After flow only the very value that a check has turned away counts, and what is made from one where it stays listed untested. The body is left as it was.
 static void collectTaintedStores(const Program& program, FunctionID id, Function& body, BuildContext& build, TaintedPositionsRun run, const PositionsProvenByTypes* proofs, Vector<Position>& positions)
 {
     const Function& function = body;
@@ -1807,8 +1826,17 @@ static void collectTaintedStores(const Program& program, FunctionID id, Function
             valuesThatMayHaveOtherTypeWithoutChecks.append(store.stored);
     }
     BitVector storedValuesThatCount;
+    std::optional<BitVector> valuesBehindChecksAfterFlow;
     if (!valuesThatMayHaveOtherTypeWithoutChecks.isEmpty()) {
         storedValuesThatCount = isAfterFlow ? valuesThatAre(function, analyses.cfg(), checks.span()) : valuesBehind(function, analyses.cfg(), checks.span());
+        for (const TypedStore& store : stores) {
+            if (!isAfterFlow || !staysListedUntested(program, store))
+                continue;
+            if (!valuesBehindChecksAfterFlow)
+                valuesBehindChecksAfterFlow = valuesBehind(function, analyses.cfg(), checks.span());
+            if (valuesBehindChecksAfterFlow->get(store.stored.index()))
+                storedValuesThatCount.set(store.stored.index());
+        }
         valuesThatMayHaveOtherTypeWithoutChecks.removeAllMatching([&](ValueID stored) { return !storedValuesThatCount.get(stored.index()); });
     }
     if (valuesThatMayHaveOtherTypeWithoutChecks.isEmpty()) {
@@ -1817,10 +1845,9 @@ static void collectTaintedStores(const Program& program, FunctionID id, Function
         return;
     }
 
-    BitVector valuesBehindChecksAfterFlow;
-    if (isAfterFlow)
+    if (isAfterFlow && !valuesBehindChecksAfterFlow)
         valuesBehindChecksAfterFlow = valuesBehind(function, analyses.cfg(), checks.span());
-    const BitVector& isBehindCheck = isAfterFlow ? valuesBehindChecksAfterFlow : storedValuesThatCount;
+    const BitVector& isBehindCheck = isAfterFlow ? *valuesBehindChecksAfterFlow : storedValuesThatCount;
     bool valuesAreTypedAsDefined = function.valuesAreTypedAsDefined();
     UndoLog undoLog;
     {

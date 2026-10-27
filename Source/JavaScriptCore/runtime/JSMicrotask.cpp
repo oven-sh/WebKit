@@ -1217,15 +1217,18 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
                 return;
             }
             if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && context->referrer().isRealm() && compiled->takeStepOfMainModule()) {
-                // The entry point is loaded from here on, for whoever asks the loader for it. Who asked for the program hears of it in the next step.
+                // The entry point is loaded from here on, for whoever asks the loader for it or has asked. Who asked for the program hears of it in the next step.
                 JSPromise* loadedBelowMainModule = JSPromise::create(vm, globalObject->promiseStructure());
                 loadedBelowMainModule->markAsHandled();
                 loadedBelowMainModule->fulfill(vm, module);
                 auto* entry = context->entry();
                 entry->setRecord(vm, module);
                 entry->setStatus(ModuleRegistryEntry::Status::Fetched);
-                entry->setLoadPromise(vm, loadedBelowMainModule);
                 loadedBelowMainModule->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
+                if (entry->loadPromise() == loadPromise)
+                    entry->setLoadPromise(vm, loadedBelowMainModule);
+                else
+                    entry->loadPromise()->fulfill(vm, module);
                 return;
             }
 #endif
@@ -1251,6 +1254,10 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             JSValue errorValue = arguments[1];
             entry->setEvaluationError(globalObject, errorValue);
             loadPromise->reject(vm, errorValue);
+#if ENABLE(AOT)
+            if (entry->loadPromise() != loadPromise && entry->loadPromise()->status() == JSPromise::Status::Pending)
+                entry->loadPromise()->reject(vm, errorValue);
+#endif
         }
         return;
     }
@@ -2432,7 +2439,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, argument2, static_cast<JSPromise::Status>(payload)));
 
     case InternalMicrotask::CompiledModuleImportStep:
-        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportStep(argument0, argument1, payload));
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportStep(argument0, argument1, argument2, payload));
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionResume: {

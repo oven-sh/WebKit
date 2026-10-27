@@ -98,7 +98,7 @@ void add(Hasher& hasher, const PropertyKey& key)
     add(hasher, key.kind, key.text, key.owner);
     add(hasher, key.symbol ? static_cast<uint32_t>(*key.symbol) + 1 : 0u);
     add(hasher, key.module);
-    add(hasher, key.position ? static_cast<uint64_t>(*key.position) + 1 : uint64_t { 0 });
+    add(hasher, key.callNumber ? static_cast<uint64_t>(*key.callNumber) + 1 : uint64_t { 0 });
     add(hasher, key.site);
 }
 

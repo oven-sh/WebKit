@@ -83,6 +83,7 @@ struct PropertyAnswer {
     JSValue constant { };
     // Of an access that is not cacheable because the receiver is a proxy: what the trap is handed as the key.
     JSCell* keyForTrap { nullptr };
+    uint16_t columnOfNameForTrap { 0 };
     ChainObjects changeableObjects { };
 };
 

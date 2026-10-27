@@ -385,7 +385,7 @@ static bool readsWhatMayChangeBehindHeader(FunctionPassContext& context, const N
 
 // In the header what stands in front of a read is known, and so it is in the block behind a test of the header that holds when the loop is entered. Anything in the loop may have run in front of a read in another block.
 // A loop that is entered from a branch has no block in front of it for what leaves it: such an entry is listed where something would leave.
-static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& testsThatStay, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
+static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& looksAtWhatMayBeUnspecified, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
 {
     const Program& program = context.program;
     Function& function = context.function;
@@ -433,8 +433,10 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
+        if (looksAtWhatMayBeUnspecified.get(id.index()))
+            return false;
         if (value.opcode == Opcode::ToBoolean)
-            return !keptReads.get(id.index()) && !testsThatStay.get(id.index()) && hasInvariantOperands(value);
+            return !keptReads.get(id.index()) && hasInvariantOperands(value);
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
         if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode)) {
             if (keptReads.get(id.index()) || !hasInvariantOperands(value))
@@ -540,15 +542,17 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
             definingBlock[id.index()] = blockID;
     }
 
-    // A value that may be unspecified is tested only where the program tests it. This and whether a loop turns once are asked before anything moves: the answers follow the uses of values.
-    BitVector testsThatStay;
-    if (context.analyses.opcodesOfValues().contains(Opcode::ToBoolean)) {
-        UnspecifiedValues unspecified(context.analyses);
-        for (BlockID block : cfg.reversePostOrder()) {
-            for (ValueID id : function.at(block).values) {
-                if (function.at(id).opcode == Opcode::ToBoolean && unspecified.mayContain(function.at(id).operand(0)))
-                    testsThatStay.set(id.index());
-            }
+    // A value that may be unspecified is looked at only where the program looks at it. This and whether a loop turns once are asked before anything moves: the answers follow the uses of values.
+    BitVector looksAtWhatMayBeUnspecified;
+    UnspecifiedValues unspecified(context.analyses);
+    for (BlockID block : cfg.reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            if (!hoistableOpcodes.contains(function.at(id).opcode))
+                continue;
+            function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                if (unspecified.mayContain(operand))
+                    looksAtWhatMayBeUnspecified.set(id.index());
+            });
         }
     }
 
@@ -560,7 +564,7 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
 
     unsigned numberOfHoistedReads = 0;
     for (const NaturalLoop* loop : loopsInnermostFirst)
-        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, testsThatStay, headersWhoseTestHoldsOnEntry, entriesFromBranches);
+        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, looksAtWhatMayBeUnspecified, headersWhoseTestHoldsOnEntry, entriesFromBranches);
     if (numberOfHoistedReads)
         context.analyses.didChangeValues();
     return numberOfHoistedReads;

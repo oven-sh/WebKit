@@ -26,6 +26,8 @@ void guardTaintedPositionsAfterFlow(Program&, const FlowResults&, BuildContext&)
 // The body is typed without its checks where it stands, and is left as it was.
 bool mayReturnTaintedValue(const Program&, FunctionID, Function& body, BuildContext&);
 bool mayTurnValueAway(const Program&, const Function&, const Value& check);
+// A type that holds any object names no layout: code that has it proven reads the object by name, as code that knows nothing does. A second version for the values that it turns away stands beside the same code.
+bool changesCodeWhereProven(const Type& checked);
 
 } } } // namespace JSC::AOT::Typed
 

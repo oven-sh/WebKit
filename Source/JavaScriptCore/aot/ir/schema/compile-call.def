@@ -137,6 +137,7 @@ enum Sabotage {
     FunctionPassFailsAssertion FunctionPassReadsBadAddress FunctionPassRunsOutOfStack FunctionPassNeverEnds ProgramPassFailsAssertion FlowAnalysisFailsAssertion CodeGenerationFailsAssertion ImageBuildingFailsAssertion LoweringPanics
     HoistedReadsAreStoredInTheirLoops CarriedVariablesAreWrittenByOthers DelayedStoresAreLeftOut TailCallsSwapTheirLastArguments RememberedReadsOutlastStoresThroughOtherNames RememberedReadsOutlastWrites FusedGeneratorsAreSeenByOthers DelayedStoresPassWhatMayThrow ParsedMembersComeOnce GrowingTextsAreHeldInOneState
     PartsOfViewsEndOneLater
+    StoredValuesAreNeverRead
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

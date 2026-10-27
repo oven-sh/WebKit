@@ -158,6 +158,7 @@ static JSValue createMatchValue(Instance* instance, RegExpMatchForm form, RegExp
     if (globalObject->isHavingABadTime()) [[unlikely]]
         return createRegExpMatchesArrayForPlainRegExpHavingABadTime(vm, globalObject, subject, result, offsets, numSubpatterns);
     prepareInlineAllocation<JSArray>(instance, InlineAllocation::RegExpMatchesArray, globalObject->regExpMatchesArrayStructure());
+    leaveCellsForRopes(instance);
     return createRegExpMatchesArrayForPlainRegExp(vm, globalObject, subject, result, offsets, numSubpatterns);
 }
 

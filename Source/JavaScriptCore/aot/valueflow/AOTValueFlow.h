@@ -199,10 +199,20 @@ struct ValueFlowName {
     static constexpr ValueFlowName property(PropertyKeyID key) { return { ValueFlowNameKind::Property, key.index() }; }
     static constexpr ValueFlowName getter(PropertyKeyID key) { return { ValueFlowNameKind::Getter, key.index() }; }
     static constexpr ValueFlowName setter(PropertyKeyID key) { return { ValueFlowNameKind::Setter, key.index() }; }
+    static ValueFlowName property(const Program& program, PropertyKeyID key) { return key && program.isIndexLike(key) ? of(ValueFlowNameKind::Elements) : property(key); }
+    static ValueFlowName getter(const Program& program, PropertyKeyID key) { return key && program.isIndexLike(key) ? of(ValueFlowNameKind::GetterUnderUnknownKey) : getter(key); }
+    static ValueFlowName setter(const Program& program, PropertyKeyID key) { return key && program.isIndexLike(key) ? of(ValueFlowNameKind::SetterUnderUnknownKey) : setter(key); }
 
     friend constexpr bool operator==(const ValueFlowName&, const ValueFlowName&) = default;
     friend constexpr auto operator<=>(const ValueFlowName&, const ValueFlowName&) = default;
 };
+
+inline bool namesElementByText(const Program& program, ValueFlowName name)
+{
+    ValueFlowNameShape shape = shapeOf(name.kind);
+    PropertyKeyID key(name.payload);
+    return shape.reach == ValueFlowNameReach::OneKey && shape.isValueOrAccessor() && key && program.isIndexLike(key);
+}
 
 inline constexpr ValueFlowName keyOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xffffffff };
 inline constexpr ValueFlowName valueOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffe };

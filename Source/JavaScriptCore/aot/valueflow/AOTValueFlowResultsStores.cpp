@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTSlotRepresentation.h"
 #include "AOTThreshold.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -293,7 +294,7 @@ auto StoresByLayout::objectsCopiedOnto(LayoutID target) -> std::optional<CopiedO
         return std::nullopt;
     for (LayoutID layout : layouts) {
         for (PropertyKeyID key : keysStoredInto(layout, ObjectsOfLayout::Followed)) {
-            if (isStoredUnder(ValueFlowName::getter(key)) || isStoredUnder(ValueFlowName::setter(key)))
+            if (isStoredUnder(ValueFlowName::getter(m_inputs.program, key)) || isStoredUnder(ValueFlowName::setter(m_inputs.program, key)))
                 return std::nullopt;
         }
     }
@@ -320,7 +321,7 @@ void StoresByLayout::followCopiedProperties()
             for (PropertyKeyID key : keysStoredInto(source, ObjectsOfLayout::Followed)) {
                 if (stores.keysLeftOutOfEveryCopy && stores.keysLeftOutOfEveryCopy->contains(key))
                     continue;
-                ValueSetID value = m_heap.writtenUnder(sources.objects, ValueFlowName::property(key));
+                ValueSetID value = m_heap.writtenUnder(sources.objects, ValueFlowName::property(m_inputs.program, key));
                 if (value == ValueSets::nothing)
                     continue;
                 ValueFlowNumbers numbers = numbersStoredUnder(source, key, ObjectsOfLayout::Followed);
@@ -826,7 +827,7 @@ uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Wri
         return AccessorForms::unknown;
     const ValueSets& sets = m_inputs.sets();
     auto attribute = [&](BuiltinName member) -> std::optional<bool> {
-        ValueSetID written = std::as_const(m_heap).writtenUnder(maker, *descriptors, ValueFlowName::property(m_inputs.program.keyOf(member)));
+        ValueSetID written = std::as_const(m_heap).writtenUnder(maker, *descriptors, ValueFlowName::property(m_inputs.program, m_inputs.program.keyOf(member)));
         if (sets.isEmpty(written))
             return false;
         ValueFlowObjectID only = sets.onlyMember(written);
@@ -1541,8 +1542,8 @@ void StoresByLayout::noteCodeWithoutSolve(const Function& function)
             m_hasObjectOfCodeWithoutSolve.quickSet(value.layout().index());
             for (uint32_t field : value.fields()) {
                 PropertyKeyID key = layout.fields[field].key;
-                note(m_heap.maker(), m_storesOfLayout[value.layout().index()], key ? ValueFlowName::property(key) : ValueFlowName::of(ValueFlowNameKind::UnknownKey), m_unknownValue, true, false);
-                noteNumbers(m_storesOfLayout[value.layout().index()], key ? ValueFlowName::property(key) : ValueFlowName::of(ValueFlowNameKind::UnknownKey), ValueFlowNumbers::any());
+                note(m_heap.maker(), m_storesOfLayout[value.layout().index()], key ? ValueFlowName::property(program, key) : ValueFlowName::of(ValueFlowNameKind::UnknownKey), m_unknownValue, true, false);
+                noteNumbers(m_storesOfLayout[value.layout().index()], key ? ValueFlowName::property(program, key) : ValueFlowName::of(ValueFlowNameKind::UnknownKey), ValueFlowNumbers::any());
             }
             continue;
         }
@@ -1551,8 +1552,8 @@ void StoresByLayout::noteCodeWithoutSolve(const Function& function)
         for (uint32_t index = 0; index < value.numberOfOperands() && !storesByName; ++index)
             storesInOtherWays |= operandUsesOf(value.opcode, index).containsAny({ OperandUse::StoresByKey, OperandUse::AssignsFrom, OperandUse::DefinesName, OperandUse::TakesDescriptor });
         if (storesByName && Value::opcodesWithKey.contains(value.opcode) && value.key()) {
-            note(m_heap.maker(), m_storesThroughUnknownObject, ValueFlowName::property(value.key()), m_unknownValue, false, true);
-            noteNumbers(m_storesThroughUnknownObject, ValueFlowName::property(value.key()), ValueFlowNumbers::any());
+            note(m_heap.maker(), m_storesThroughUnknownObject, ValueFlowName::property(program, value.key()), m_unknownValue, false, true);
+            noteNumbers(m_storesThroughUnknownObject, ValueFlowName::property(program, value.key()), ValueFlowNumbers::any());
         } else if (storesInOtherWays) {
             note(m_heap.maker(), m_storesThroughUnknownObject, ValueFlowName::of(ValueFlowNameKind::UnknownKey), m_unknownValue, false, false);
             noteNumbers(m_storesThroughUnknownObject, ValueFlowName::of(ValueFlowNameKind::UnknownKey), ValueFlowNumbers::any());

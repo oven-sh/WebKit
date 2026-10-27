@@ -40,6 +40,8 @@ inline constexpr unsigned maxConsecutiveClobberMisses = 64;
 inline constexpr unsigned minInsertionsPerBlockToSort = 16;
 
 inline constexpr unsigned maxSlotsForDenseInterference = 8192;
+// As many as the slots at that limit can have.
+inline constexpr size_t maxInterferenceEdgesAboveDenseLimit = static_cast<size_t>(maxSlotsForDenseInterference) * maxSlotsForDenseInterference / 2;
 inline constexpr size_t bytesPerNeighborInSparseInterference = 6;
 inline constexpr size_t minSlotsToOrderByUse = 13;
 inline constexpr size_t minAssignedSlotsToWalkComplement = 256;

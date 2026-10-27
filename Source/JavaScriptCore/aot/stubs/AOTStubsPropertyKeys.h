@@ -73,6 +73,7 @@ constexpr StubKey rememberKeyOrderStep() { return StubKey(StubFamily::RememberKe
 
 constexpr StubKey getByValCached() { return StubKey(StubFamily::GetByValCached); }
 constexpr StubKey getByValCachedCells() { return StubKey(StubFamily::GetByValCachedCells); }
+constexpr StubKey getSuperByVal() { return StubKey(StubFamily::GetSuperByVal); }
 constexpr StubKey inByValCached(PresenceQuestion question) { return StubKey(StubFamily::InByValCached).withForm(static_cast<uint8_t>(question)); }
 constexpr StubKey deleteByIdCached(PutMode mode) { return StubKey(StubFamily::DeleteByIdCached).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey deleteByValCached(PutMode mode) { return StubKey(StubFamily::DeleteByValCached).withForm(static_cast<uint8_t>(mode)); }
@@ -191,7 +192,7 @@ static_assert([] {
         getFreeName(FreeNameRead::TypeOf), setFreeName(PutMode::Sloppy), instanceOf(InstanceOfOperand::Prototype),
         putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putByIdAtSite(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define),
         didCreateField(CreatedFields::Run), didCreateFieldAtPlace(CreatedFieldsAtPlace::Run),
-        getByValCached(), getByValCachedCells(), inByValCached(PresenceQuestion::HasOwn), deleteByIdCached(PutMode::Sloppy), deleteByValCached(PutMode::Sloppy), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
+        getByValCached(), getByValCachedCells(), getSuperByVal(), inByValCached(PresenceQuestion::HasOwn), deleteByIdCached(PutMode::Sloppy), deleteByValCached(PutMode::Sloppy), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
     }) {
         if (!exists(lastFormKey) || lastFormKey.form() + 1u != descriptorOf(lastFormKey.family()).numberOfForms)
             return false;

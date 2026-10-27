@@ -89,6 +89,8 @@ public:
     void runLookup();
     void runPropertyAction(const BuiltinPropertyAction&, const ValueFlowPropertyActionOperands&);
     ClimbingSet objectsHeldFromCreation(ClimbingSet objects);
+    void readOwnPropertiesNobodyWrote(ClimbingSet holders, const HeapKey&, ValueFlowNodeID result);
+    void readOwnPropertiesNobodyWrote(ClimbingSet holders, std::optional<PropertyKeyID> key, ValueFlowNodeID result) { readOwnPropertiesNobodyWrote(holders, key ? keyNamed(*key) : unknownHeapKey, result); }
     ClimbingSet prototypesOf(ClimbingSet start, ValueSetID atCreation = { });
     ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object);
     ValueFlowNodeID exportsOfHoldersIn(const ValueFlowOperand& object);
@@ -202,6 +204,7 @@ private:
     ClimbingSet prototypeObjectsAboveEscapedEntries(std::span<const ValueFlowClassOfEntries>, ClimbingSet holders);
     ClimbingSet holdersOfAccessorsThatRunOnUnknownObject(const HeapKey&);
     ClimbingSet foundThroughUntrackedObject(ValueSetID objects);
+    ClimbingSet escapedHoldersOfWhatStaysBehindUnder(ValueFlowName);
     bool isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey&);
     bool mayHoldUndeclaredProperty(ClimbingSet objects, const HeapKey&);
     bool m_undescribedNativeCodeIsOfEngine { false };
@@ -231,9 +234,10 @@ private:
     bool isMemberOfBun(BuiltinID member) const { return m_builtins.at(member).holder && m_builtins.canonicalID(m_builtins.at(member).holder) == Builtins::Bun; }
     bool isMemberOfBunUsedByNameAlone(BuiltinID member) const;
     void readPropertiesAtCreation(ClimbingSet objects, const HeapKey&, ValueFlowNodeID result);
-    void handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey&);
+    void handOutPrototypeObjectsAtCreation(ClimbingSet receivers, const HeapKey&, ValueFlowNodeID result);
     bool splitLookupThroughPlaceholders();
     void callAccessors(ClimbingSet functions, ValueFlowCallKind, const HeapReceiver&, const ValueFlowOperand* value, ValueFlowNodeID result);
+    void enterGettersOfTableThatReceiversFindByThemselves(ClimbingSet receivers, const HeapKey&, ValueFlowNodeID result);
     bool mayBeAccessorNobodyKnows(ClimbingSet functions) const { return mayBeUnknownObject(functions) || m_context.contains(functions, m_tables.undescribedNativeCode()); }
     bool mayHoldAccessorNobodyKnows(ClimbingSet chain, const HeapKey&, HeapPropertyPart);
     bool endsAtPropertyOfCreation(ValueFlowObjectID receiver, const HeapKey&);

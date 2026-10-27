@@ -21,6 +21,7 @@
 #include "AOTEscapeAnalysis.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
+#include "AOTFrameAllocationPointers.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTKnownClosures.h"
@@ -2637,7 +2638,8 @@ static LoopSplit splitLoop(FunctionPassContext& context, const NaturalLoop& loop
     bool restTakesEveryValue = false;
     for (ValueID candidate : receivers) {
         narrowestName = findNarrowestName(context, candidate, pointBeforeTerminatorOf(function, entry->from));
-        if (!narrowestName)
+        // The test in front of the loop also runs where no turn gets to an access.
+        if (!narrowestName || mayBeVariableReadEarly(analyses, narrowestName))
             continue;
         testedType = chooseTestedType(context, candidate, narrowestName, isInLoop, entry->from, restTakesEveryValue);
         if (!testedType)

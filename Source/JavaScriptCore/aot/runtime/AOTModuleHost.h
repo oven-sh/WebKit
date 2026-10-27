@@ -83,6 +83,8 @@ JS_EXPORT_PRIVATE String modulePath(ModuleID);
 String sourceProviderURL(ModuleID);
 JS_EXPORT_PRIVATE bool entryPointIsCommonJS(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool isESModule(ModuleID);
+// A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
+JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);

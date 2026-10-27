@@ -1225,9 +1225,26 @@ void PropertyCaches::didAddProperty(Structure* before, Structure* after)
     m_additionsSinceCollection.append({ before->id(), after->id() });
 }
 
+JSCell* PropertyCaches::keyForTraps(UniquedStringImpl* uid)
+{
+    bool isKept = !uid->isSymbol() && m_vm.aotState().identifiers->numberOf(uid);
+    if (isKept) {
+        if (JSCell* key = m_keysForTraps.get(uid))
+            return key;
+    }
+    JSCell* key = identifierToSafePublicJSValue(m_vm, Identifier::fromUid(m_vm, uid)).asCell();
+    if (isKept) {
+        Locker locker { m_state.caches->lock() };
+        m_keysForTraps.add(uid, key);
+    }
+    return key;
+}
+
 template<typename Visitor>
 void PropertyCaches::visitRoots(Visitor& visitor)
 {
+    for (JSCell* key : m_keysForTraps.values())
+        visitor.appendUnbarriered(key);
     if (visitor.collectionScope() != CollectionScope::Eden)
         return;
     auto keepsStructure = [&](const Addition& addition) {

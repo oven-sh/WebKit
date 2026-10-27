@@ -574,10 +574,12 @@ static void testNextLargeTextGrowsOnce(LoadedProgram& program)
     AOT_TEST_CHECK(shorter.limit() == retained * 2);
     buffer = shorter.characters();
     AOT_TEST_CHECK(charactersOf(shorter.finish()) != buffer);
-    AOT_TEST_CHECK(shorter.limit() == retained / 2 && !shorter->length());
+    AOT_TEST_CHECK(!shorter.limit() && !shorter->length());
 
     Builder kept(program);
     AOT_TEST_CHECK(kept.storage() == shorter.storage());
+    kept.append("a"_s);
+    AOT_TEST_CHECK(kept.limit() == retained / 2);
     buffer = kept.characters();
     write(kept, retained / 4 + 1000);
     AOT_TEST_CHECK(kept.characters() == buffer);
@@ -593,6 +595,56 @@ static void testNextLargeTextGrowsOnce(LoadedProgram& program)
     write(afterWide, least + 1000);
     AOT_TEST_CHECK(afterWide.limit() == large);
     afterWide->release(program.instance());
+}
+
+// A collection that has been asked for runs at the next place where the collector may run.
+static void testDiscardLeavesNextBufferToNextWrite(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    uint32_t retained = limitValue(program, LimitID::MaxRetainedStringBuilderCapacity);
+    uint32_t large = retained * 4;
+    auto write = [&](Builder& builder, uint32_t length) {
+        for (uint32_t written = 0; written < length; written += 1000)
+            builder.appendRepeated('a', 1000);
+    };
+    auto discardWhileCollectionIsAskedFor = [&](auto operation, auto* builder) {
+        AOT_TEST_CHECK(!vm.heap.isDeferred());
+        vm.heap.collectAsync(CollectionScope::Full);
+        HeapVersion version = vm.heap.objectSpace().markingVersion();
+        {
+            AssertNoGC assertNoGC;
+            operation(&program.instance(), builder);
+        }
+        AOT_TEST_CHECK(vm.heap.objectSpace().markingVersion() == version);
+        vm.heap.collectSync(CollectionScope::Full);
+        AOT_TEST_CHECK(vm.heap.objectSpace().markingVersion() != version);
+    };
+    auto rememberLargeBuffer = [&] {
+        Builder builder(program);
+        write(builder, large - retained);
+        AOT_TEST_CHECK(builder.limit() == large);
+        builder.finish();
+    };
+
+    rememberLargeBuffer();
+    Builder discarded(program);
+    write(discarded, retained / 4 + 1000);
+    AOT_TEST_CHECK(discarded.limit() == large);
+    discardWhileCollectionIsAskedFor(operationAOTStringBuilderDiscard, static_cast<JSCell*>(discarded.storage()));
+    AOT_TEST_CHECK(!discarded.limit() && !discarded.characters() && !discarded->length());
+    discarded.append("a"_s);
+    AOT_TEST_CHECK(discarded.limit() == retained / 2);
+    discarded->release(program.instance());
+
+    rememberLargeBuffer();
+    Builder moved(program);
+    write(moved, retained / 4 + 1000);
+    AOT_TEST_CHECK(moved.limit() == large);
+    StackStringBuilder onStack;
+    onStack.limit = nullptr;
+    onStack.storage = moved.storage();
+    discardWhileCollectionIsAskedFor(operationAOTStackStringBuilderDiscard, reinterpret_cast<uint8_t*>(&onStack));
+    AOT_TEST_CHECK(!moved.limit() && !moved.characters() && !moved->length());
 }
 
 // Pieces of one width that follow each other become one flat part. Where the width changes a new part begins.
@@ -1463,6 +1515,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/pool-depth"_s, withInstance<testPoolDepth> },
         { "string-builder-storage/pool-depth-above-a-builder-laid-into-the-empty-pool"_s, withInstance<testPoolDepthAboveBuilderLaidIntoEmptyPool> },
         { "string-builder-storage/pool-cleared-by-collection"_s, withInstance<testPoolClearedByCollection> },
+        { "string-builder-storage/discard-leaves-next-buffer-to-next-write"_s, withInstance<testDiscardLeavesNextBufferToNextWrite> },
         { "string-builder-storage/keys-that-are-integers"_s, withInstance<testKeysThatAreIntegers> },
         { "string-builder-storage/parse-index"_s, testParseIndex },
         { "string-builder-storage/stack-builder"_s, withInstance<testStackBuilder> },

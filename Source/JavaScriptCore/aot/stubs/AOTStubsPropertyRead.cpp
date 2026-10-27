@@ -992,7 +992,7 @@ void generateInById(StubAssembler& jit)
     JumpList slotDoesNotSay;
     emitPresenceBySlot({ SlotForm::Slot, T12, T13 }, slotDoesNotSay);
     slotDoesNotSay.link(&jit);
-    if (question == PresenceQuestion::In) {
+    if (question == PresenceQuestion::In && jit.options().callsTrapsOfProxies) {
         miss.append(branchIfSlotKindDiffers(jit, { SlotForm::Slot, T12, T13 }, Slot::Kind::Uncacheable, T10));
         jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, T13), throughProxy(TrapOfProxy::Has));
     }

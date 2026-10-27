@@ -169,7 +169,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         }
     }
     readEvaluators(object, key);
-    handOutPrototypeObjectsAtCreation(receivers, key);
+    handOutPrototypeObjectsAtCreation(receivers, key, m_statement.result);
     mayThrow();
 }
 
@@ -693,7 +693,7 @@ void HeapRule::runCreateArguments(const ValueFlowOperand& count, const ValueFlow
         connect(parameter, contents);
 
     auto propertyNamed = [&](BuiltinName name) {
-        return m_context.written(arguments, ValueFlowName::property(m_program.keyOf(name)));
+        return m_context.written(arguments, ValueFlowName::property(m_program, m_program.keyOf(name)));
     };
     connect(count, propertyNamed(BuiltinNames::length));
     if (callee)

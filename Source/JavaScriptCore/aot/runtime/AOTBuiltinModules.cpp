@@ -150,15 +150,20 @@ bool refusesLibraryText()
     return image && !image->admitsLibraryText();
 }
 
+bool refusesLibraryText(JSGlobalObject* realm)
+{
+    return Instance::of(realm) && refusesLibraryText();
+}
+
 static std::optional<uint32_t> builtinFunctionHolding(const FunctionExecutable& executable)
 {
     return executable.source().provider()->builtinFunctionAt(executable.source().startOffset());
 }
 
-bool refusesToInterpret(ScriptExecutable& executable)
+bool refusesToInterpret(JSGlobalObject* realm, ScriptExecutable& executable)
 {
     auto* function = dynamicDowncast<FunctionExecutable>(&executable);
-    if (!refusesLibraryText() || !function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
+    if (!refusesLibraryText(realm) || !function || !function->isBuiltinFunction() || function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
         return false;
     std::optional<uint32_t> id = builtinFunctionHolding(*function);
     return !id || *id >= numberOfBuiltinCodes;
@@ -167,7 +172,7 @@ bool refusesToInterpret(ScriptExecutable& executable)
 bool refusesToRun(JSFunction* function)
 {
     auto* executable = dynamicDowncast<FunctionExecutable>(function->executable());
-    return executable && refusesToInterpret(*executable);
+    return executable && refusesToInterpret(function->realm(), *executable);
 }
 
 static Vector<String, 4> globalBuiltinsThatRun(RuntimeFunctionID function)

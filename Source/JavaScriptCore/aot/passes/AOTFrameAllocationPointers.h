@@ -167,17 +167,21 @@ bool isUnspecifiedAtDefinition(const Function&, const Value&);
 // What was found to be specified is not walked again, so the function has to stay as it is between the questions.
 class UnspecifiedValues {
 public:
-    explicit UnspecifiedValues(FunctionAnalyses&);
+    // VariablesReadEarly: only the variables that were read in front of the test which says that they have been stored.
+    enum class Sources : uint8_t { All, VariablesReadEarly };
+    explicit UnspecifiedValues(FunctionAnalyses&, Sources = Sources::All);
 
     bool mayContain(ValueID);
 
 private:
     FunctionAnalyses& m_analyses;
+    Sources m_sources;
     bool m_hasSource;
     BitVector m_isSpecified;
     Vector<ValueID, 16> m_visited;
 };
 inline bool mayBeUnspecified(FunctionAnalyses& analyses, ValueID id) { return UnspecifiedValues(analyses).mayContain(id); }
+inline bool mayBeVariableReadEarly(FunctionAnalyses& analyses, ValueID id) { return UnspecifiedValues(analyses, UnspecifiedValues::Sources::VariablesReadEarly).mayContain(id); }
 
 OperandSummary summarizeFramePointerUse(const Program&, const FlowResults*, const Function&, const Value& user, uint32_t operandIndex);
 bool mayLeakFramePointer(const Program&, const FlowResults*, const Function&, const Value& user, uint32_t operandIndex);

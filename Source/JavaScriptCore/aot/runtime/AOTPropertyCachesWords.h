@@ -190,7 +190,8 @@ struct ProxyAccessWords {
     JSObject* target;
     JSObject* handler;
     EncodedJSValue storedValue;
-    uint64_t storeIsStrict;
+    // Of a store: whether the code is strict. Of a read: Slot::headerBits() of the slot that led here.
+    uint64_t storeIsStrictOrHeaderOfSlot;
 };
 
 struct MissesOfPairs {

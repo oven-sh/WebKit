@@ -84,6 +84,8 @@ private:
     Vector<Field> m_fields;
     Vector<uint32_t> m_firstField;
     Vector<uint32_t> m_bases;
+    // From each layout up, itself included: the first that has such a field.
+    Vector<uint32_t> m_nearestWithFields;
 };
 
 class Reader {

@@ -69,6 +69,7 @@ public:
     static void didFailToLoad(const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
     bool takeStepOfMainModule();
+    bool takeLoadPromiseBelowMainModule();
     // The loader reports the module as loaded so many steps later.
     void setStepsBehindLoad(uint32_t steps) { m_stepsBehindLoad = steps; }
     bool takeStepBehindLoad() { return m_stepsBehindLoad && m_stepsBehindLoad--; }

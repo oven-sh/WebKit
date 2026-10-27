@@ -46,6 +46,9 @@ ValueFlowNodesAskedFor::ValueFlowNodesAskedFor(const ValueFlowResultInputs& inpu
 }
 
 ValueFlowHeapIndex::ValueFlowHeapIndex(const ValueFlowResultInputs& inputs)
+#if ASSERT_ENABLED
+    : m_program(inputs.program)
+#endif
 {
     collectNodesWritten(inputs);
     collectCalls(inputs);
@@ -830,7 +833,7 @@ static void forEachBuiltinAppliedByProtocol(const ValueFlowResultInputs& inputs,
     ValueSetID everyObject = inputs.universe().objects();
     ValueSetID stored = heap.writtenUnder(maker, everyObject, unknownKeyName);
     for (BuiltinName name : { BuiltinNames::iteratorSymbol, BuiltinNames::asyncIteratorSymbol, BuiltinNames::next, BuiltinNames::returnKeyword, BuiltinNames::throwKeyword, BuiltinNames::then })
-        stored = maker.unite(stored, heap.writtenUnder(maker, everyObject, ValueFlowName::property(inputs.program.keyOf(name))));
+        stored = maker.unite(stored, heap.writtenUnder(maker, everyObject, ValueFlowName::property(inputs.program, inputs.program.keyOf(name))));
     inputs.sets().forEachMember(maker.intersect(maker.intersect(stored, inputs.universe().builtinFunctionsOfProtocols()), amongFunctions), [&](ValueFlowObjectID callee) {
         byProtocol.builtin = inputs.universe().builtinOf(callee);
         functor(byProtocol);

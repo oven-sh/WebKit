@@ -155,6 +155,12 @@ bool canStoreWithoutConversion(ArrayStorage kind, const Type& stored)
     return kind == ArrayStorage::Contiguous || (kind == ArrayStorage::Int32 && stored.isInt32());
 }
 
+bool fitsStorageOfLiteral(ArrayStorage kind, const Type& element)
+{
+    // A NaN among the numbers is found when the literal runs and takes the slow path.
+    return kind == ArrayStorage::Double ? element.isNumber() : canStoreWithoutConversion(kind, element);
+}
+
 Type typeOfElementRead(ArrayStorage kind)
 {
     if (kind == ArrayStorage::Int32)

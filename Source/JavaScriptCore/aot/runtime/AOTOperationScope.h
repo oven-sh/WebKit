@@ -15,7 +15,10 @@
 #include "AOTRuntimeValidation.h"
 #include "DeferGC.h"
 #include "FrameTracers.h"
+#include "FreeList.h"
 #include "JSCInlines.h"
+#include "LocalAllocator.h"
+#include "TopExceptionScope.h"
 #include <bit>
 #include <optional>
 
@@ -94,6 +97,19 @@ ALWAYS_INLINE void prepareInlineAllocation(Instance* instance, InlineAllocation 
         return;
     data.header = cellHeaderFor(structure);
     data.allocator = subspaceFor<CellType>(*instance->vm)->allocatorFor(sizeof(CellType), AllocatorForMode::EnsureAllocator).localAllocator();
+}
+
+// A stub that finds no cell for a rope leaves its work to an operation. An operation that can answer without making a rope calls this, so that the stub finds cells the next time.
+ALWAYS_INLINE void leaveCellsForRopes(Instance* instance)
+{
+    void* allocator = instance->prefix().ropeStringAllocator;
+    if (!allocator || !std::bit_cast<FreeList*>(static_cast<char*>(allocator) + LocalAllocator::offsetOfFreeList())->allocationWillFail()) [[likely]]
+        return;
+    VM& vm = *instance->vm;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSString* character = vm.smallStrings.singleCharacterString('a');
+    jsString(instance->globalObject, character, character);
+    scope.assertNoException();
 }
 
 } } // namespace JSC::AOT

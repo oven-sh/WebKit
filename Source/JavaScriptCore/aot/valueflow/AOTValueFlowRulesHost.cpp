@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTKnownClosures.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
@@ -185,7 +186,7 @@ static void enterRuntimeFunction(ValueFlowRuleContext& context, RuntimeFunctionI
 static ValueFlowSources memberOfRequiredValue(ValueFlowRuleContext& context, ModuleID module, StringID name)
 {
     std::optional<PropertyKeyID> key = context.program().types.find({ .kind = PropertyKeyKind::Text, .text = name });
-    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(*key) : everyPropertyName) }, { } };
+    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(context.program(), *key) : everyPropertyName) }, { } };
 }
 
 static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& context, ModuleID id, StringID name)
@@ -196,7 +197,7 @@ static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& conte
 
     auto found = std::ranges::find(module.exports, name, &ModuleExport::name);
     if (found != module.exports.end())
-        return found->kind == ModuleExportKind::Indirect ? unknown : exportedValueOf(context, *found);
+        return found->kind == ModuleExportKind::Indirect && program.at(found->module).kind == ModuleKind::External ? unknown : exportedValueOf(context, *found);
 
     if (module.exportRule != SyntheticExportRule::None || module.exportsVariable) {
         bool isDefault = name == program.stringOf(BuiltinNames::defaultKeyword);
@@ -236,7 +237,7 @@ static bool mayBeServerConfiguration(ValueFlowRuleContext& context, const ValueF
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet configuration = valueOf(context, value);
     auto found = [&](BuiltinName name) {
-        return context.valueOf(context.lookup(configuration, ValueFlowName::property(program.keyOf(name))));
+        return context.valueOf(context.lookup(configuration, ValueFlowName::property(program, program.keyOf(name))));
     };
     auto hasHandler = [&] {
         if (context.meet(configuration, universe.placeholdersAlone()))
@@ -342,6 +343,8 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
             use(namespaceOf(context, found->module), index);
             break;
         case ModuleExportKind::Indirect:
+            if (program.at(found->module).kind != ModuleKind::External)
+                use(exportedValueOf(context, *found), index);
             break;
         }
     }

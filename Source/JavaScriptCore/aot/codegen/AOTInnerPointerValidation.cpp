@@ -250,7 +250,7 @@ private:
         return nullptr;
     }
 
-    // An access that has taken over the trap of a check of its cell has the origin of the check too (foldTrapsIntoAccesses), and nothing says which field it reads.
+    // An access that has taken over the trap of a check of its cell has the origin of the check too (foldTrapsIntoAccesses).
     static const B3::MemoryValue* trapFoldedInto(const Inst& inst, const Arg& address)
     {
         if (!inst.kind.effects || !inst.origin || !inst.origin->traps())
@@ -259,13 +259,14 @@ private:
         return memory && memory->offset() != address.offset() ? memory : nullptr;
     }
 
-    static const B3::MemoryValue* loadOf(const Inst& inst, const Arg& address)
+    const B3::MemoryValue* loadOf(const Inst& inst, const Arg& address) const
     {
-        if (!inst.origin || trapFoldedInto(inst, address))
+        B3::Value* origin = trapFoldedInto(inst, address) ? m_code.originOfAccessThatTookTrap(inst.origin) : inst.origin;
+        if (!origin)
             return nullptr;
-        if (auto* memory = inst.origin->as<B3::MemoryValue>())
+        if (auto* memory = origin->as<B3::MemoryValue>())
             return memory->isLoad() ? memory : nullptr;
-        return findLoadFoldedInto(inst.origin, address.offset(), 3);
+        return findLoadFoldedInto(origin, address.offset(), 3);
     }
 
     static bool computesAddress(B3::Air::Opcode opcode)
@@ -607,7 +608,7 @@ private:
 
         if (load && baseOfLoad != clobbered && contains(m_rules.fieldsThatHoldPointers.span(), load->range()))
             m_definitions.append(Definition { result, baseOfLoad, load });
-        if (const B3::MemoryValue* trap = addressOfLoad && baseOfLoad != clobbered ? trapFoldedInto(inst, *addressOfLoad) : nullptr)
+        if (const B3::MemoryValue* trap = !load && addressOfLoad && baseOfLoad != clobbered ? trapFoldedInto(inst, *addressOfLoad) : nullptr)
             m_loadsOfUnknownFields.append(Definition { result, baseOfLoad, trap });
         if (choosesBetweenLastOperands(inst.kind.opcode)) {
             m_facts[result].nextHeadInBlock = std::exchange(m_firstChoiceOfBlock[m_block], result);

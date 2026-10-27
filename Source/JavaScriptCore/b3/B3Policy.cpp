@@ -264,6 +264,7 @@ static void dumpValidation(PrintStream& out, CommaPrinter& comma, const Validati
         out.print(comma, "validation = "_s, validation.level);
     PRINT_IF_SET(validation, checksKnownPropertiesAtRunTime);
     PRINT_IF_SET(validation, logsMovedLoads);
+    PRINT_IF_SET(validation, keepsOriginsOfAccessesThatTakeTraps);
 }
 
 #undef PRINT_IF_DIFFERENT

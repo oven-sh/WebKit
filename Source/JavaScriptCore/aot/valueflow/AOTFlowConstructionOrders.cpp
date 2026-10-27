@@ -735,7 +735,7 @@ struct ConstructionGraphBuilder {
     ValueSetID accessorsUnder(ValueSetID holders, PropertyKeyID key, bool getters)
     {
         holders = maker.intersect(holders, ValueSets::complement(universe.builtinTables().heap().under(key).holdersWithLockedLocation));
-        ValueSetID underKey = heap.writtenUnder(holders, getters ? ValueFlowName::getter(key) : ValueFlowName::setter(key));
+        ValueSetID underKey = heap.writtenUnder(holders, getters ? ValueFlowName::getter(program, key) : ValueFlowName::setter(program, key));
         return maker.unite(underKey, heap.writtenUnder(holders, ValueFlowName::of(getters ? ValueFlowNameKind::GetterUnderUnknownKey : ValueFlowNameKind::SetterUnderUnknownKey)));
     }
 

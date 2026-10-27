@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTFlowObjectOperations.h"
@@ -162,6 +163,8 @@ static bool readsNameOfClosuresWithoutCode(const Program& program, const Type& r
         BuiltinID member = findOwnMember(program, above, key);
         if (!listsEveryMemberUnder(program, above, key) || (member && program.builtins().at(member).kind != BuiltinKind::Method))
             return false;
+        if (!isLockedLocation(program, above, key) || !program.builtins().hasLockedPrototypeLink(above))
+            return false;
     }
     Type closures = receiver.withoutPrimitives(Primitive::UndefinedOrNull);
     if (closures.functions.isEmpty() || closures != closures.withOnlyObjects() || closures.anyObject || closures.anyFunction || closures.layouts || !closures.classes.isEmpty() || !closures.builtins.isEmpty())
@@ -190,7 +193,7 @@ static ProvenAccess computeProvenNamedAccessOf(const Program& program, const Fun
     query->usesOnlyPlansWithoutTests = true;
 
     ProvenAccess result;
-    if (!addProvenArms({ program, nullptr }, *query, result)) {
+    if (!addProvenArms({ program, nullptr, !program.propertyAccessCache() }, *query, result)) {
         if (definesPropertyOfOrdinaryObject(program, function, access))
             return { .isComplete = true, .definesOwnProperty = true, .key = query->key };
         if (query->access == Access::Read && !query->isPrivate && readsNameOfClosuresWithoutCode(program, program.typeOf(function, access.operand(*receiverOf(access.opcode))), query->key))

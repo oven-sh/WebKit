@@ -771,6 +771,9 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     BuiltinID calledBuiltin = options.calledBuiltin;
     if (!calledBuiltin && value && Value::opcodesWithCalledBuiltin.contains(value->opcode))
         calledBuiltin = value->calledBuiltin();
+    // No stack trace lists a function that only built-in code can name.
+    if (calledBuiltin && BuiltinBindings::linkTimeConstantOf(calledBuiltin))
+        calledBuiltin = { };
     bool standsForCallee = origin.isTailCall && !options.isTailCall && !options.constructs;
     // A call, and the read of the method that it calls, can throw before the callee begins.
     bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));

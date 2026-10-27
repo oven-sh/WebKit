@@ -326,12 +326,19 @@ static bool applies(const AccessorDefinitionPlan& plan, const Object& object, st
 {
     if (plan.layout != &object.layout() || plan.structureBits != object.structureID().bits() || plan.orderWordBefore != object.orderWord() || plan.getters != getters || plan.enumerable != enumerable || plan.definitions.size() * 2 != keysAndFunctions.size())
         return false;
-    for (size_t index = 0; index < plan.definitions.size(); ++index) {
-        const AccessorDefinitionPlan::Definition& definition = plan.definitions[index];
+    std::span definitions = plan.definitions.span();
+    std::span slots = plan.slots.span();
+    bool definesGettersOfEmptySlots = plan.definesGettersOfEmptySlots;
+    for (size_t index = 0; index < definitions.size(); ++index) {
+        const AccessorDefinitionPlan::Definition& definition = definitions[index];
         if (atomOf(JSValue::decode(keysAndFunctions[index * 2])) != definition.name || functionOf(JSValue::decode(keysAndFunctions[index * 2 + 1]).asCell()) != definition.function)
             return false;
+        if (definesGettersOfEmptySlots && !slotHoldsAbsent(slots[index].field->slot.representation(), object.slotOf(*slots[index].field)))
+            return false;
     }
-    for (const AccessorDefinitionPlan::FilledSlot& slot : plan.slots) {
+    if (definesGettersOfEmptySlots)
+        return true;
+    for (const AccessorDefinitionPlan::FilledSlot& slot : slots) {
         if (slotHoldsAbsent(slot.field->slot.representation(), object.slotOf(*slot.field)) == slot.isFilledBefore)
             return false;
     }
@@ -344,67 +351,80 @@ bool Object::tryDefineAccessorsOfLiteral(VM& vm, JSGlobalObject* globalObject, s
     size_t count = keysAndFunctions.size() / 2;
     if (!count || count >= AccessorDefinitionPlan::noDefinition || !JSValue::decode(keysAndFunctions[0]).isCell())
         return false;
-    auto fill = [&](const AccessorDefinitionPlan::FilledSlot& slot) {
-        GetterSetter* held = slot.isFilledBefore ? uncheckedDowncast<GetterSetter>(read(*slot.field).asCell()) : nullptr;
-        JSObject* getter = held && !held->isGetterNull() ? held->getter() : nullptr;
-        JSObject* setter = held && !held->isSetterNull() ? held->setter() : nullptr;
-        if (slot.getter != AccessorDefinitionPlan::noDefinition)
-            getter = asObject(JSValue::decode(keysAndFunctions[slot.getter * 2 + 1]));
-        if (slot.setter != AccessorDefinitionPlan::noDefinition)
-            setter = asObject(JSValue::decode(keysAndFunctions[slot.setter * 2 + 1]));
+    AccessorDefinitionPlan& plan = accessorDefinitionPlanFor(state, *this, JSValue::decode(keysAndFunctions[0]), JSValue::decode(keysAndFunctions[1]), count);
+    bool isPlanned = applies(plan, *this, keysAndFunctions, getters, enumerable);
+    if (!isPlanned) {
+        // Nothing is written before every function is known to find its slot, so a literal that the plan does not serve is left to the general way whole.
+        if (hasFlagsInOrderWord() || hasOutOfLineKeyOrder() || structure()->mayBePrototype())
+            return false;
+        RuntimeLayoutTable& layouts = state.objects->layouts;
+        AccessorDefinitionPlan made { &layout(), structureID().bits(), orderWord(), 0, getters, enumerable, { }, { } };
+        for (size_t index = 0; index < count; ++index) {
+            UniquedStringImpl* name = atomOf(JSValue::decode(keysAndFunctions[index * 2]));
+            JSCell* function = JSValue::decode(keysAndFunctions[index * 2 + 1]).asCell();
+            const FieldData* field = name ? layouts.field(vm, layout(), name) : nullptr;
+            unsigned attributes = PropertyAttribute::Accessor | (enumerable >> index & 1 ? PropertyAttribute::None : PropertyAttribute::DontEnum);
+            if (!field || !field->isAccessor() || field->isOutOfLine() || field->isFilledAtBirth || attributes != attributesOf(*field))
+                return false;
+            bool isGetter = getters >> index & 1;
+            std::optional<FunctionID> id = functionOf(function);
+            if (!id || (isGetter && !layouts.objectHasType(layouts.typeOf(*field), function)))
+                return false;
+            made.definitions.append({ name, *id });
+            size_t place = made.slots.findIf([&](const AccessorDefinitionPlan::FilledSlot& slot) {
+                return slot.field == field;
+            });
+            if (place == notFound) {
+                place = made.slots.size();
+                made.slots.append({ field, AccessorDefinitionPlan::noDefinition, AccessorDefinitionPlan::noDefinition, isInSlot(*field) });
+            }
+            (isGetter ? made.slots[place].getter : made.slots[place].setter) = static_cast<uint8_t>(index);
+        }
+        // Compiled code calls the getter that it finds in a filled slot as one of those that the type of the field lists.
+        for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots) {
+            if (!slot.isFilledBefore && slot.getter == AccessorDefinitionPlan::noDefinition && !layouts.objectHasType(layouts.typeOf(*slot.field), globalObject->nullGetterFunction()))
+                return false;
+        }
+        made.definesGettersOfEmptySlots = made.slots.size() == count && std::ranges::all_of(made.slots, [](const AccessorDefinitionPlan::FilledSlot& slot) {
+            return !slot.isFilledBefore && slot.setter == AccessorDefinitionPlan::noDefinition;
+        });
+        plan = WTF::move(made);
+    }
+    ProgramStrings& strings = *state.strings;
+    bool definesGettersOfEmptySlots = plan.definesGettersOfEmptySlots;
+    const EncodedJSValue* nextGetter = keysAndFunctions.data() + 1;
+    for (const AccessorDefinitionPlan::FilledSlot& slot : plan.slots.span()) {
+        JSObject* getter = nullptr;
+        JSObject* setter = nullptr;
+        if (definesGettersOfEmptySlots) [[likely]] {
+            getter = asObject(JSValue::decode(*nextGetter));
+            nextGetter += 2;
+        } else {
+            if (slot.isFilledBefore) {
+                auto* held = uncheckedDowncast<GetterSetter>(read(*slot.field).asCell());
+                getter = held->isGetterNull() ? nullptr : held->getter();
+                setter = held->isSetterNull() ? nullptr : held->setter();
+            }
+            if (slot.getter != AccessorDefinitionPlan::noDefinition)
+                getter = asObject(JSValue::decode(keysAndFunctions[slot.getter * 2 + 1]));
+            if (slot.setter != AccessorDefinitionPlan::noDefinition)
+                setter = asObject(JSValue::decode(keysAndFunctions[slot.setter * 2 + 1]));
+        }
         auto* accessor = GetterSetter::create(vm, globalObject, getter, setter);
-        bool isWritten = tryWriteSlot(*state.strings, slot.field->slot.representation(), slotOf(*slot.field), accessor);
+        bool isWritten = tryWriteSlot(strings, slot.field->slot.representation(), slotOf(*slot.field), accessor);
         RELEASE_ASSERT(isWritten);
         vm.writeBarrier(this, accessor);
-    };
-    AccessorDefinitionPlan& plan = accessorDefinitionPlanFor(state, *this, JSValue::decode(keysAndFunctions[0]), JSValue::decode(keysAndFunctions[1]), count);
-    if (applies(plan, *this, keysAndFunctions, getters, enumerable)) {
-        for (const AccessorDefinitionPlan::FilledSlot& slot : plan.slots)
-            fill(slot);
+        if (!isPlanned && !slot.isFilledBefore)
+            didCreateField(state, *slot.field, true);
+    }
+    if (isPlanned) {
         at<uint32_t>(offsetOfOrderWord) = plan.orderWordAfter;
         return true;
     }
-
-    // Nothing is written before every function is known to find its slot, so a literal that the plan does not serve is left to the general way whole.
-    if (hasFlagsInOrderWord() || hasOutOfLineKeyOrder() || structure()->mayBePrototype())
-        return false;
-    RuntimeLayoutTable& layouts = state.objects->layouts;
-    AccessorDefinitionPlan made { &layout(), structureID().bits(), orderWord(), 0, getters, enumerable, { }, { } };
-    for (size_t index = 0; index < count; ++index) {
-        UniquedStringImpl* name = atomOf(JSValue::decode(keysAndFunctions[index * 2]));
-        JSCell* function = JSValue::decode(keysAndFunctions[index * 2 + 1]).asCell();
-        const FieldData* field = name ? layouts.field(vm, layout(), name) : nullptr;
-        unsigned attributes = PropertyAttribute::Accessor | (enumerable >> index & 1 ? PropertyAttribute::None : PropertyAttribute::DontEnum);
-        if (!field || !field->isAccessor() || field->isOutOfLine() || field->isFilledAtBirth || attributes != attributesOf(*field))
-            return false;
-        bool isGetter = getters >> index & 1;
-        std::optional<FunctionID> id = functionOf(function);
-        if (!id || (isGetter && !layouts.objectHasType(layouts.typeOf(*field), function)))
-            return false;
-        made.definitions.append({ name, *id });
-        size_t place = made.slots.findIf([&](const AccessorDefinitionPlan::FilledSlot& slot) {
-            return slot.field == field;
-        });
-        if (place == notFound) {
-            place = made.slots.size();
-            made.slots.append({ field, AccessorDefinitionPlan::noDefinition, AccessorDefinitionPlan::noDefinition, isInSlot(*field) });
-        }
-        (isGetter ? made.slots[place].getter : made.slots[place].setter) = static_cast<uint8_t>(index);
-    }
-    // Compiled code calls the getter that it finds in a filled slot as one of those that the type of the field lists.
-    for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots) {
-        if (!slot.isFilledBefore && slot.getter == AccessorDefinitionPlan::noDefinition && !layouts.objectHasType(layouts.typeOf(*slot.field), globalObject->nullGetterFunction()))
-            return false;
-    }
-    for (const AccessorDefinitionPlan::FilledSlot& slot : made.slots) {
-        fill(slot);
-        if (!slot.isFilledBefore)
-            didCreateField(state, *slot.field, true);
-    }
-    if (!hasFlagsInOrderWord() && !hasOutOfLineKeyOrder() && structureID().bits() == made.structureBits) {
-        made.orderWordAfter = orderWord();
-        plan = WTF::move(made);
-    }
+    if (!hasFlagsInOrderWord() && !hasOutOfLineKeyOrder() && structureID().bits() == plan.structureBits)
+        plan.orderWordAfter = orderWord();
+    else
+        plan = { };
     return true;
 }
 

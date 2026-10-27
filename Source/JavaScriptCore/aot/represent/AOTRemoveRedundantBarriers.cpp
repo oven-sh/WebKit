@@ -12,6 +12,7 @@
 #include "AOTEscapeAnalysis.h"
 #include "AOTForwardDataflow.h"
 #include "AOTFrameAllocationPointers.h"
+#include "AOTIRBuilder.h"
 #include "AOTPlacement.h"
 #include "AOTRepresentationRules.h"
 #include "AOTSlotEmitter.h"
@@ -36,7 +37,14 @@ struct BarrierStore {
     uint32_t ownerNumber { 0 };
     bool alwaysRunsBarrier { false };
     bool canBeCovered { false };
+    // RememberOwner stores nothing: it only runs the barrier.
+    bool isStore { true };
     BarrierDecision decision { BarrierDecision::Emit };
+};
+
+struct BarrierBehindArms {
+    BlockID join;
+    ValueID owner;
 };
 
 struct BarrierOwner {
@@ -138,12 +146,13 @@ public:
 
     PassOutcome run()
     {
-        if (collectStores()) {
-            findUnmarkableOwners();
-            findCoveredStores();
+        decide();
+        if (placeBarriersBehindArms())
+            decide();
+        for (const BarrierStore& store : m_stores) {
+            if (store.isStore)
+                setFlags(store.value, store.decision);
         }
-        for (const BarrierStore& store : m_stores)
-            setFlags(store.value, store.decision);
 
         auto count = [&](StatisticID statistic, BarrierDecision decision) {
             m_pass.build.statistics().count(statistic, static_cast<uint64_t>(std::ranges::count(m_stores, decision, &BarrierStore::decision)));
@@ -154,6 +163,17 @@ public:
     }
 
 private:
+    void decide()
+    {
+        m_stores.clear();
+        m_owners.clear();
+        m_retentionHistory.reset();
+        if (collectStores()) {
+            findUnmarkableOwners();
+            findCoveredStores();
+        }
+    }
+
     bool collectStores()
     {
         for (BlockID block : m_order) {
@@ -195,6 +215,10 @@ private:
     void collectStore(BlockID block, uint32_t index, ValueID id)
     {
         const Value& value = m_function.at(id);
+        if (value.opcode == Opcode::RememberOwner) {
+            m_stores.append(BarrierStore { .block = block, .index = index, .value = id, .owner = m_analyses.identityOf(value.objectOperand()), .alwaysRunsBarrier = true, .canBeCovered = true, .isStore = false });
+            return;
+        }
         if (!runsOwnerBarrierOf(value.opcode))
             return;
 
@@ -222,7 +246,7 @@ private:
         bool alwaysRunsBarrier = storesCells && !storesLiteralStringWord && !storesInSomeSlotThat(value, [](const PlacedSlot& slot) {
             return slot.representation == SlotRepresentation::DeferredClosure;
         });
-        m_stores.append(BarrierStore { .block = block, .index = index, .value = id, .owner = m_analyses.sameObjectThroughCasts(owner), .alwaysRunsBarrier = alwaysRunsBarrier });
+        m_stores.append(BarrierStore { .block = block, .index = index, .value = id, .owner = m_analyses.identityOf(owner), .alwaysRunsBarrier = alwaysRunsBarrier });
     }
 
     bool storesInSomeSlotThat(const Value& store, const auto& holds) const
@@ -271,7 +295,7 @@ private:
             hasHeapAllocation |= owner.kind == OwnerKind::HeapAllocation;
         }
         for (BarrierStore& store : m_stores) {
-            if (m_owners[store.ownerNumber].kind == OwnerKind::FrameCell)
+            if (store.isStore && m_owners[store.ownerNumber].kind == OwnerKind::FrameCell)
                 store.decision = BarrierDecision::OwnerCannotBeMarked;
         }
         if (!hasHeapAllocation)
@@ -290,7 +314,7 @@ private:
                     ValueID id = values[index];
                     problem.execute(*young, DataflowStep { block, index, id, m_function.at(id), problem.ignoresEffects(*young) ? noEffectsOnEdges : m_analyses.effectsOf(id) });
                 }
-                if (isStoreToYoungOwner(store, *young))
+                if (store.isStore && isStoreToYoungOwner(store, *young))
                     store.decision = BarrierDecision::OwnerCannotBeMarked;
             }
         }
@@ -317,7 +341,7 @@ private:
         BitVector owners(m_owners.size());
         bool hasRepeatedOwner = false;
         for (BarrierStore& store : m_stores) {
-            if (store.decision == BarrierDecision::Emit && remembersOwnerOf(m_function.at(store.value).opcode) && admits(store))
+            if (store.isStore && store.decision == BarrierDecision::Emit && remembersOwnerOf(m_function.at(store.value).opcode) && admits(store))
                 hasRepeatedOwner |= owners.quickSet(store.ownerNumber);
         }
         return hasRepeatedOwner;
@@ -372,7 +396,7 @@ private:
             ValueID value = block.values[index];
             if (!stores.empty() && stores.back().index == index) {
                 BarrierStore& store = stores.back();
-                if (decides && store.canBeCovered && covered.get(store.ownerNumber))
+                if (decides && store.isStore && store.canBeCovered && covered.get(store.ownerNumber))
                     store.decision = BarrierDecision::LaterBarrierCovers;
                 if (store.canBeCovered && store.alwaysRunsBarrier)
                     covered.set(store.ownerNumber);
@@ -391,6 +415,112 @@ private:
         return covered;
     }
 
+    // The owners whose barrier runs in the block and may as well run behind its end: nothing behind the store ends the coverage, and the block goes on to one block.
+    BitVector ownersWaitingAtEndOf(BlockID id)
+    {
+        BitVector waiting(m_owners.size());
+        const Block& block = m_function.at(id);
+        if (block.terminator.kind != TerminatorKind::Jump || endsCoverage(m_analyses.effectsOfTerminator(id)))
+            return waiting;
+        std::span<BarrierStore> stores = storesIn(id);
+        for (size_t index = block.values.size(); index-- && !stores.empty();) {
+            if (stores.back().index == index) {
+                const BarrierStore& store = stores.back();
+                if (store.isStore && store.canBeCovered && store.decision == BarrierDecision::Emit)
+                    waiting.set(store.ownerNumber);
+                stores = stores.first(stores.size() - 1);
+            }
+            if (endsCoverage(m_analyses.effectsOf(block.values[index])))
+                break;
+        }
+        return waiting;
+    }
+
+    // A name of the owner that holds a pointer to an object wherever the block begins.
+    ValueID nameOfOwnerAtHeadOf(BlockID join, uint32_t ownerNumber)
+    {
+        if (m_namesOfOwners.isEmpty()) {
+            m_namesOfOwners.grow(m_owners.size());
+            auto note = [&](ValueID id, BlockID block, bool isParameter) {
+                if (m_function.at(id).representation != Representation::Cell || !m_pass.program.typeOf(m_function, id).isObject())
+                    return;
+                if (std::optional<uint32_t> number = m_ownerNumbers[m_analyses.identityOf(id)])
+                    m_namesOfOwners[*number].append({ id, block, isParameter });
+            };
+            for (BlockID block : m_order) {
+                for (ValueID parameter : m_function.at(block).parameters)
+                    note(parameter, block, true);
+                for (ValueID value : m_function.at(block).values)
+                    note(value, block, false);
+            }
+        }
+        for (const NameOfOwner& name : m_namesOfOwners[ownerNumber]) {
+            if (name.block == join ? name.isParameter : m_analyses.dominators().dominates(name.block, join))
+                return name.value;
+        }
+        return { };
+    }
+
+    // One store is often made in several arms, one for each place that the slot has in the layouts of the object, and the arms meet again behind it.
+    // One barrier where they meet does for all of them. A block that is seldom run may come in beside them: there the barrier runs for nothing.
+    bool placeBarriersBehindArms()
+    {
+        bool hasStoreThatCanWait = std::ranges::any_of(m_stores, [](const BarrierStore& store) {
+            return store.isStore && store.canBeCovered && store.decision == BarrierDecision::Emit;
+        });
+        if (!hasStoreThatCanWait)
+            return false;
+
+        Vector<BarrierBehindArms> barriers;
+        const CFG& cfg = m_analyses.cfg();
+        for (BlockID join : m_order) {
+            std::span<const BlockID> predecessors = cfg.predecessors(join);
+            if (predecessors.size() < 2 || m_function.at(join).isHandlerBlock())
+                continue;
+            bool someArmStores = std::ranges::any_of(predecessors, [&](BlockID predecessor) {
+                return !storesIn(predecessor).empty();
+            });
+            if (!someArmStores)
+                continue;
+            BitVector inOneArm(m_owners.size());
+            BitVector inTwoArms(m_owners.size());
+            std::optional<BitVector> inEveryOrdinaryArm;
+            for (BlockID predecessor : predecessors) {
+                BitVector waiting = ownersWaitingAtEndOf(predecessor);
+                BitVector again = waiting;
+                again.filter(inOneArm);
+                inTwoArms.merge(again);
+                inOneArm.merge(waiting);
+                if (m_function.at(predecessor).frequency != BlockFrequency::Normal)
+                    continue;
+                if (inEveryOrdinaryArm)
+                    inEveryOrdinaryArm->filter(waiting);
+                else
+                    inEveryOrdinaryArm = WTF::move(waiting);
+            }
+            if (inEveryOrdinaryArm)
+                inTwoArms.filter(*inEveryOrdinaryArm);
+            for (size_t number : inTwoArms) {
+                if (ValueID owner = nameOfOwnerAtHeadOf(join, static_cast<uint32_t>(number)))
+                    barriers.append({ join, owner });
+            }
+        }
+        if (barriers.isEmpty())
+            return false;
+
+        IRBuilder builder(m_analyses.context(), m_function, m_pass.types);
+        for (const BarrierBehindArms& barrier : barriers) {
+            ValueID made = builder.insertBefore(ProgramPoint::atHeadOf(barrier.join), IRBuilder::make(Opcode::RememberOwner, { barrier.owner }));
+            m_function.edit(made, ValueEdit::Type).representation = Representation::Void;
+        }
+        builder.applyInsertions();
+        m_analyses.didChangeValues();
+        m_order = m_analyses.cfg().reversePostOrder();
+        m_namesOfOwners.clear();
+        m_outcome = PassOutcome::Changed;
+        return true;
+    }
+
     std::span<BarrierStore> storesIn(BlockID block)
     {
         StoreRange range = m_storeRanges[block];
@@ -406,6 +536,12 @@ private:
     Vector<BarrierOwner> m_owners;
     IndexMap<BlockID, StoreRange> m_storeRanges;
     OwnerNumbers m_ownerNumbers;
+    struct NameOfOwner {
+        ValueID value;
+        BlockID block;
+        bool isParameter { false };
+    };
+    Vector<Vector<NameOfOwner, 2>> m_namesOfOwners;
     std::optional<UseEffectHistory> m_retentionHistory;
     PassOutcome m_outcome { PassOutcome::Unchanged };
 };

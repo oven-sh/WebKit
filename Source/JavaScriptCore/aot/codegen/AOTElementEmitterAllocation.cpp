@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBarrierEmitter.h"
+#include "AOTCellAllocationEmitter.h"
 #include "AOTConvention.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
@@ -112,13 +114,7 @@ const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(std::span<const Va
 {
     const ArrayStorageForm& form = formAtAllocation(array);
     bool canHoldElements = std::ranges::all_of(elements, [&](ValueID element) {
-        Representation representation = representationOf(element);
-        if (isOptionalNumberInDoubleForm(form, representation))
-            return true;
-        // A NaN among the numbers is found when the literal runs and takes the slow path.
-        if (form.element == Representation::Double)
-            return typeOf(element).isNumber();
-        return canStoreWithoutConversion(form.kind, typeOf(element));
+        return isOptionalNumberInDoubleForm(form, representationOf(element)) || fitsStorageOfLiteral(form.kind, typeOf(element));
     });
     return canHoldElements ? form : arrayStorageFormOf(ArrayStorage::Contiguous);
 }

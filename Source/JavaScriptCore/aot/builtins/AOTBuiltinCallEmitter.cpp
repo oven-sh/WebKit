@@ -178,7 +178,7 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return index < boxedArguments.size() ? boxedArguments[index] : undefined();
         };
         auto answerOrCallFunction = [&](RuntimeOperation operation, std::initializer_list<Operand> operands) {
-            Boxed answer = callOperation<Boxed>(value, operation, operands);
+            Boxed answer = callOperation<Boxed>(value, operation, operands, { .calledBuiltin = builtin });
             defineResult(either<Boxed>(isNotEmpty(answer), [&] {
                 return answer;
             }, [&] {

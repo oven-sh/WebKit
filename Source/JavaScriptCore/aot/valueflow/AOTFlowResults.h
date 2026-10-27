@@ -42,6 +42,7 @@ struct FlowIndirectCall {
     FlowIndirectCallKind kind { FlowIndirectCallKind::Host };
     BuiltinCallbackTimes times { BuiltinCallbackTimes::Later };
     bool isInCycle { false };
+    bool isAlwaysConstruction { false };
 
     friend bool operator==(const FlowIndirectCall&, const FlowIndirectCall&) = default;
 };
@@ -161,6 +162,7 @@ struct FlowFunctionTables {
     BitVector functionsWithOneClosure;
     BitVector functionsWhoseClosuresMayBeRenamed;
     BitVector functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees;
+    BitVector functionsWhoseClosuresGoOutOfSightUnnamed;
     BitVector functionsWhoseClosuresAreGivenDisplayName;
     BitVector functionsWhoseClosuresAreMadeOnce;
 };
@@ -322,6 +324,8 @@ public:
     bool closuresMayBeRenamed(FunctionID closureFunction) const;
     // They may be, and no statement is seen to do it: what renames one goes through the run time, which knows the function object.
     bool closuresMayBeRenamedOnlyWhereNobodySees(FunctionID closureFunction) const;
+    // No statement is seen to name one, and they go where nobody follows them.
+    bool closuresGoOutOfSightUnnamed(FunctionID closureFunction) const;
     // By a statement that is seen to reach the closure and writes that key or a key nobody knows.
     bool closuresAreGivenDisplayName(FunctionID closureFunction) const;
     // By one operation that runs once, or by the first read of the variable that starts with the function.

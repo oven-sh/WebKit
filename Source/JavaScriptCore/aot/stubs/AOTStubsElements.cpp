@@ -27,6 +27,7 @@
 #include "JSObject.h"
 #include "JSString.h"
 #include "MarkedBlock.h"
+#include "NumericStrings.h"
 #include "SmallStrings.h"
 #include "SparseArrayValueMap.h"
 #include "Structure.h"
@@ -383,6 +384,27 @@ void generateGetByVal(StubAssembler& jit)
     jit.jumpToStub(getByValCachedCells());
 
     slow.link(&jit);
+    if (jit.options().callsTrapsOfProxies) {
+        // A trap is handed an index as its text. The texts of the small ones are kept once they have been asked for.
+        static_assert(sizeof(NumericStrings::StringWithJSString) == 2 * sizeof(void*));
+        const StubSignature throughProxySignature = signatureOf(throughProxy(TrapOfProxy::Get));
+        const GPRReg text = registers.type;
+        const GPRReg noHeader = index;
+        RELEASE_ASSERT(throughProxySignature.operands[0] == Reg(base) && throughProxySignature.operands[1] == Reg(text) && throughProxySignature.operands[2] == Reg(noHeader));
+        JumpList operationReads;
+        operationReads.append(jit.branchIfNotCell(base));
+        operationReads.append(jit.branchIfNotType(base, ProxyObjectType));
+        operationReads.append(jit.branch64(CCallHelpers::Below, key, numberTag));
+        jit.zeroExtend32ToWord(key, index);
+        operationReads.append(jit.branch32(CCallHelpers::AboveOrEqual, index, TrustedImm32(NumericStrings::cacheSize)));
+        jit.lshift64(TrustedImm32(1), index);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.smallIntStrings)), storage);
+        jit.loadPtr(BaseIndex(storage, index, CCallHelpers::TimesEight, NumericStrings::StringWithJSString::offsetOfJSString()), text);
+        operationReads.append(jit.branchTestPtr(CCallHelpers::Zero, text));
+        jit.move(TrustedImm32(0), noHeader);
+        jit.jumpToStub(throughProxy(TrapOfProxy::Get));
+        operationReads.link(&jit);
+    }
     callBinaryOperation(jit, Entry::operationAOTGetByVal);
 }
 

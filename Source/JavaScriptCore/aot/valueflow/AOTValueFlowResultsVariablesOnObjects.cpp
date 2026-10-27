@@ -65,7 +65,7 @@ struct ValueFlowAccessesThroughObjects {
     static void setFlag(Vector<uint8_t>& flags, uint32_t index) { AtomicRef(flags[index]).store(1, std::memory_order_relaxed); }
     bool isNamespace(ValueFlowObjectID object) const { return inputs.universe().kindOf(object) == ValueFlowObjectKind::Namespace; }
     std::span<const VariableOnObject> variablesOn(ValueFlowObjectID object) const LIFETIME_BOUND { return std::span(std::ranges::equal_range(variables, object, { }, &VariableOnObject::object)); }
-    ValueFlowName nameOf(PropertyKeyID key) const { return inputs.program.isIndexLike(key) ? elementsName : ValueFlowName::property(key); }
+    ValueFlowName nameOf(PropertyKeyID key) const { return ValueFlowName::property(inputs.program, key); }
     bool reachesFollowedObject(ValueFlowStatementID sharedLookup) const { return lookupReachesFollowedObject[sharedLookup.index() - solver.input().statements.size()]; }
 
     bool hasObjectIn(ValueSetID set)

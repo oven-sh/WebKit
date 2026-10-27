@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCFG.h"
+#include "AOTIRProgram.h"
 #include "AOTPhaseTimes.h"
 #include "AOTSort.h"
 #include "AOTSystemResources.h"
@@ -2533,13 +2534,22 @@ void ValueFlowSolver::listReadersOfWatch(const WatchShard& shard, uint32_t watch
 {
     for (uint32_t reader = shard.watches[watch].firstReader; reader != noSolverIndex; reader = shard.readers[reader].next)
         listIfItMayBecomeDue(shard.readers[reader].statement, readers);
-    for (uint32_t reader = shard.watches[watch].firstReaderAskingLast; reader != noSolverIndex; reader = shard.readers[reader].next) {
-        ValueFlowStatementID statement = shard.readers[reader].statement;
-        if (isAtRest(statement) || m_isDue.get(statement.index()) || m_isDueLast.set(statement.index()))
-            continue;
-        Locker locker { m_lockOfDueLast };
-        m_dueLast.append(statement);
-    }
+    for (uint32_t reader = shard.watches[watch].firstReaderAskingLast; reader != noSolverIndex; reader = shard.readers[reader].next)
+        listAsDueLast(shard.readers[reader].statement);
+}
+
+void ValueFlowSolver::listAsDueLast(ValueFlowStatementID statement) const
+{
+    if (isAtRest(statement) || m_isDue.get(statement.index()) || m_isDueLast.set(statement.index()))
+        return;
+    Locker locker { m_lockOfDueLast };
+    m_dueLast.append(statement);
+}
+
+bool ValueFlowSolver::isChainOfPrototypes(ValueFlowNodeID node) const
+{
+    const ValueFlowNodeKey* key = keyOfMadeNode(node);
+    return key && key->kind == ValueFlowMadeNodeKind::Lookup && shapeOf(key->name().kind).sort == ValueFlowNameSort::PrototypeLink;
 }
 
 void ValueFlowSolver::listWatchersOf(ValueFlowNodeID node, ValueSetMaker& maker, Vector<ValueFlowStatementID>& readers, Vector<NewMemberOfWatchedNode>& newMembers, Vector<WatchesToTest>& watchesToTest)
@@ -3300,6 +3310,61 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
     constexpr uint32_t nodesPerShare = nodesPerShareOfListed;
     uint32_t numberOfNodes = m_graph.numberOfNodes();
     m_listedWithCoveredMembers.grow((numberOfNodes + nodesPerShare - 1) / nodesPerShare);
+
+    // A retired node has handed on what came before it retired, and when that was hangs on the order of the rules. In the code of the program an object that the library constructs counts as seen where it comes past no node that has retired in the end.
+    ValueSetID constructedByLibrary = ValueSets::nothing;
+    Vector<ValueSetID> constructedByLibraryThatCome;
+    if (m_input.program && m_input.escaped) {
+        ValueSetMaker& maker = *m_makers[0];
+        Vector<ValueFlowObjectID> constructed;
+        m_sets.forEachMember(maker.intersect(m_graph.valueOf(m_input.escaped), m_input.universe->constructedObjects()), [&](ValueFlowObjectID object) {
+            if (isLibraryCode(*m_input.program, m_input.program->at(m_input.universe->functionOf(object))))
+                constructed.append(object);
+        });
+        constructedByLibrary = maker.of(constructed.span());
+    }
+    if (constructedByLibrary != ValueSets::nothing) {
+        ValueSetMaker& maker = *m_makers[0];
+        constructedByLibraryThatCome.fill(ValueSets::nothing, numberOfNodes);
+        Vector<uint32_t> toVisit;
+        for (uint32_t index = 0; index < numberOfNodes; ++index) {
+            ValueFlowNodeID node(index);
+            if (m_graph.isConstant(node) || !m_sets.meet(m_graph.valueOf(node), constructedByLibrary))
+                continue;
+            ValueSetID come = ValueSets::nothing;
+            m_graph.forEachPredecessor(node, [&](ValueFlowNodeID from) {
+                if (m_graph.isConstant(from) && m_sets.meet(m_graph.valueOf(from), constructedByLibrary))
+                    come = maker.unite(come, maker.intersect(maker.intersect(m_graph.valueOf(from), constructedByLibrary), m_graph.valueOf(node)));
+            });
+            if (come == ValueSets::nothing)
+                continue;
+            constructedByLibraryThatCome[index] = come;
+            toVisit.append(index);
+        }
+        while (!toVisit.isEmpty()) {
+            uint32_t index = toVisit.takeLast();
+            if (m_graph.isRetired(ValueFlowNodeID(index)))
+                continue;
+            ValueSetID come = constructedByLibraryThatCome[index];
+            m_graph.forEachSuccessor(ValueFlowNodeID(index), [&](ValueFlowNodeID to) {
+                ValueSetID before = constructedByLibraryThatCome[to.index()];
+                ValueSetID after = maker.unite(before, maker.intersect(come, m_graph.valueOf(to)));
+                if (after == before)
+                    return;
+                constructedByLibraryThatCome[to.index()] = after;
+                toVisit.append(to.index());
+            });
+        }
+    }
+    auto withoutWhatRetiredNodesHandedOn = [&](ValueFlowNodeID node, ValueSetID listed, ValueSetID left, ValueSetMaker& maker) {
+        if (node.index() >= firstNodeOfHost || constructedByLibrary == ValueSets::nothing || !m_sets.meet(listed, constructedByLibrary))
+            return listed;
+        FunctionID function = m_input.nodes->functionOf(node);
+        if (!function || isLibraryCode(*m_input.program, m_input.program->at(function)))
+            return listed;
+        ValueSetID handedOn = maker.intersect(maker.intersect(listed, constructedByLibrary), ValueSets::complement(maker.unite(constructedByLibraryThatCome[node.index()], left)));
+        return handedOn == ValueSets::nothing ? listed : maker.intersect(listed, ValueSets::complement(handedOn));
+    };
     forEachIndexInParallel(m_loops, m_listedWithCoveredMembers.size(), [&](unsigned share, unsigned worker) {
         ValueSetMaker& maker = *m_makers[worker];
         for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
@@ -3312,7 +3377,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 continue;
             m_graph.replaceValueAfterSolving(node, left);
             if ((index < firstNodeOfHost || keyOfMadeNode(node)->kind == ValueFlowMadeNodeKind::Written))
-                m_listedWithCoveredMembers[share].append(ValueFlowNodeSet { node, value });
+                m_listedWithCoveredMembers[share].append(ValueFlowNodeSet { node, withoutWhatRetiredNodesHandedOn(node, value, left, maker) });
         }
         m_listedWithCoveredMembers[share].shrinkToFit();
     });
@@ -3411,9 +3476,21 @@ void ValueFlowSolver::makeReadersDue(std::span<const ValueFlowNodeID> moved)
             if (m_sets.isSubset(value, m_seenByReadersOfNode[node.index()]))
                 continue;
             m_seenByReadersOfNode[node.index()] = value;
+            // A long chain is found one link a round. Whoever reads it runs again when nothing else is left to run: by then the chain is whole.
+            bool readersRunLast = false;
+            if (isChainOfPrototypes(node)) {
+                static_assert(mostWakeUpsByGrowingChain << shiftOfWakeUpsByChain <= UINT8_MAX);
+                readersRunLast = listeners >> shiftOfWakeUpsByChain == mostWakeUpsByGrowingChain;
+                if (!readersRunLast)
+                    WTF::atomicExchangeAdd(&m_listenersOfNode[node.index()], static_cast<uint8_t>(1 << shiftOfWakeUpsByChain));
+            }
             const Vector<Reader>& readers = m_readerShards[readerShardOf(node)].readers;
-            for (uint32_t reader = m_firstReaderOfNode[node.index()]; reader != noSolverIndex; reader = readers[reader].next)
-                listIfItMayBecomeDue(readers[reader].statement, found);
+            for (uint32_t reader = m_firstReaderOfNode[node.index()]; reader != noSolverIndex; reader = readers[reader].next) {
+                if (readersRunLast)
+                    listAsDueLast(readers[reader].statement);
+                else
+                    listIfItMayBecomeDue(readers[reader].statement, found);
+            }
         }
     });
 

@@ -19,6 +19,7 @@ operation DefineAccessors (object: Object/inspects+definesName, keys: List<Prope
 
 family SelectedOperator Selected..Placed
 operation IntegerBound (number: Number/inspects, comparison: Opcode) [numberIsOnLeft] -> natural(integer) ; none
+operation RememberOwner (object: Object/inspects) -> none ; writes(RuntimeState)
 operation FulfillFreshPromise (promise: Object/inspects+writesContents, value: Any/retains(promise), guard?: Guard/inspects) -> none ; writes(PromiseState) ; relies = NotThenable ; guarded = value ; replaces = ReturnAsyncResult, ResolvePromise ; runsOwnerBarrier = true ; remembersOwner = true
 
 family String Selected..Placed

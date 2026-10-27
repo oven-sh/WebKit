@@ -777,6 +777,12 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
             return std::nullopt;
         if (nested.web->reads.first().use != nested.readOfLastState || !nested.web->reads.first().endsWeb)
             return std::nullopt;
+        // The front is joined to each first state where the web is entered: a read in front of whatever says whether that state is there.
+        bool wouldReadEmptyFirstState = std::ranges::any_of(nested.web->entries, [&](const StringWebEntry& entry) {
+            return mayBeVariableReadEarly(context.analyses, entry.value);
+        });
+        if (wouldReadEmptyFirstState)
+            return std::nullopt;
         return nested;
     };
     // A concatenation converts its operands before it joins them. The code that the conversion of an object runs would come after the front is written.

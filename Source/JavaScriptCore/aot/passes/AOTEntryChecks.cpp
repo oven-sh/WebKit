@@ -317,6 +317,8 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
             continue;
         if (!given.overlaps(checked, program))
             return { };
+        if (!changesCodeWhereProven(checked))
+            continue;
         checks.append(EntryCheck { id, static_cast<unsigned>(entryParameter), value.expectedType().predicted(), value.site() });
     }
     if (checks.isEmpty())
@@ -415,7 +417,7 @@ static Vector<CheckedEntryValue, 2> findCheckedEntryValues(const Program& progra
             continue;
         const Type& given = program.typeOf(function, entry.parameters[entryValue.entryParameter]);
         const Type& checked = program.at(entryValue.type);
-        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program))
+        if (given.isSubsetOf(checked, program) || !given.overlaps(checked, program) || !changesCodeWhereProven(checked))
             continue;
         if (entryValue.entryCheck && !checked.isSubsetOf(program.at(entryChecks[*entryValue.entryCheck].type), program))
             continue;

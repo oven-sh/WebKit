@@ -369,7 +369,7 @@ void generateReadSlot(StubAssembler& jit)
             jit.returnToCaller();
             return;
         case Slot::Kind::Uncacheable:
-            if (slot.form() == SlotForm::Slot && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal))
+            if (jit.options().callsTrapsOfProxies && slot.form() == SlotForm::Slot && (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal))
                 jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, operands.payload), throughProxy(TrapOfProxy::Get));
             uncached.append(jit.jump());
             return;
@@ -397,6 +397,8 @@ StubSignature signatureOfThroughProxy(StubKey key)
 {
     if (static_cast<TrapOfProxy>(key.form()) == TrapOfProxy::Set)
         return StubSignature::withoutResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister), gprOf(valueStoredThroughProxyRegister), gprOf(StubRegister::T14) });
+    if (static_cast<TrapOfProxy>(key.form()) == TrapOfProxy::Get)
+        return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister), gprOf(slotHeaderRegister) });
     return StubSignature::withGPRResult({ gprOf(firstStubOperandRegister), gprOf(slotPayloadRegister) });
 }
 
@@ -459,8 +461,9 @@ void generateThroughProxy(StubAssembler& jit)
         jit.storePtr(key, kept(OBJECT_OFFSETOF(ProxyAccessWords, key)));
         if (isStore) {
             jit.store64(handler, kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)));
-            jit.store64(scratch, kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrict)));
-        }
+            jit.store64(scratch, kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot)));
+        } else if (trap == TrapOfProxy::Get)
+            jit.store64(jit.operand(2), kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot)));
         jit.load64(inProxy(ProxyObject::Field::Handler), handler);
         jit.load64(inProxy(ProxyObject::Field::Target), target);
         jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.numbersOfNamesOfTraps) + static_cast<int32_t>(static_cast<unsigned>(trap) * sizeof(uint32_t))), name);
@@ -515,6 +518,21 @@ void generateThroughProxy(StubAssembler& jit)
             isDone.append(bindsNothing);
 
         isNoFunction.link(&jit);
+        if (trap == TrapOfProxy::Get) {
+            // Without a trap the target answers. A data property is the same for every receiver, so what is filed for the target says it.
+            const StubSignature probe = signatureOfTryGetSuperById(tryGetSuperById());
+            RELEASE_ASSERT(probe.immediate && probe.operands[0] == Reg(R0) && *probe.immediate != R0);
+            const GPRReg column = *probe.immediate;
+            JumpList tablesDoNotSay;
+            tablesDoNotSay.append(jit.branchIfNotUndefined(R0));
+            jit.load16(kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot) + Slot::offsetOfLocation()), column);
+            tablesDoNotSay.append(jit.branchTest32(CCallHelpers::Zero, column));
+            jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, target)), R0);
+            jit.callStub(tryGetSuperById());
+            isDone.append(jit.branchTest64(CCallHelpers::NonZero, R0));
+            jit.move(TrustedImm64(JSValue::ValueUndefined), R0);
+            tablesDoNotSay.link(&jit);
+        }
         callWithWords(operations.withoutFunction);
         isDone.append(jit.jump());
 
@@ -523,7 +541,7 @@ void generateThroughProxy(StubAssembler& jit)
         jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, key)), operationArgumentGPR(2));
         if (isStore) {
             jit.load64(kept(OBJECT_OFFSETOF(ProxyAccessWords, storedValue)), operationArgumentGPR(3));
-            jit.load32(kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrict)), operationArgumentGPR(4));
+            jit.load32(kept(OBJECT_OFFSETOF(ProxyAccessWords, storeIsStrictOrHeaderOfSlot)), operationArgumentGPR(4));
         }
         callOperation(operations.whole);
 

@@ -345,7 +345,7 @@ inline bool isLookupOfCalleeByCall(const ValueFlowResultInputs& inputs, const Va
     if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::Call && statement.opcode != Opcode::CallList) || key.kind != ValueFlowMadeNodeKind::Lookup)
         return false;
     PropertyKeyID calleeKey = inputs.program.at(statement.function).at(statement.site).calleeKey();
-    return calleeKey && key.name() == ValueFlowName::property(calleeKey) && inputs.sets().onlyMember(key.set);
+    return calleeKey && key.name() == ValueFlowName::property(inputs.program, calleeKey) && inputs.sets().onlyMember(key.set);
 }
 
 inline bool hasObjectsThatCodeAlters(LayoutKind kind) { return hasObjectsThatCodeAltersOf(kind); }
@@ -616,6 +616,7 @@ public:
 
     const NodesWrittenUnderName* findNodesWrittenUnder(ValueFlowName name) const LIFETIME_BOUND
     {
+        ASSERT(!namesElementByText(m_program, name));
         uint64_t number = static_cast<uint64_t>(name.kind) << 32 | name.payload;
         std::optional<uint32_t> position = m_positionOfNameWritten.find(IntHash<uint64_t>::hash(number), [&](uint32_t candidate) {
             return m_namesWritten[candidate] == number;
@@ -656,6 +657,9 @@ private:
     static void indexNodesWrittenUnder(const ValueFlowResultInputs&, NodesWrittenUnderName&);
     void collectCalls(const ValueFlowResultInputs&);
 
+#if ASSERT_ENABLED
+    const Program& m_program;
+#endif
     Vector<uint64_t> m_namesWritten;
     ParallelArray<NodesWrittenUnderName> m_nodesOfNamesWritten;
     HashedIndex m_positionOfNameWritten;
@@ -884,6 +888,7 @@ ValueFlowStampedCalls computeCallResults(const ValueFlowResultInputs&, TypeTable
 void computeFunctionResults(const ValueFlowResultInputs&, ValueFlowStampedCalls&, FlowResultTables&);
 void computeExecutionResults(const ValueFlowResultInputs&, const ValueFlowStampedCalls&, FlowResultTables&);
 BitVector computeCreatedSymbolResults(const ValueFlowResultInputs&, const FlowResultTables&);
+void reportOperationsWithoutValue(const ValueFlowResultInputs&);
 void computeClosuresMadeOnce(const ValueFlowResultInputs&, FlowResultTables&);
 struct ValueFlowAccessesThroughObjects;
 struct ValueFlowAccessesThroughObjectsDeleter {

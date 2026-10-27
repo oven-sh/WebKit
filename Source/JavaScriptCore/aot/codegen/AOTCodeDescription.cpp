@@ -101,8 +101,6 @@ using ShownFunctions = Vector<ShownFunction, 4>;
 } // anonymous namespace
 
 static constexpr LineColumn hostFunctionPosition { 0, 0 };
-static constexpr LineColumn startOfBuiltinFunction { 1, 11 };
-static_assert(sizeof("function (") == startOfBuiltinFunction.column, "JSC reports every frame of a built-in written in JavaScript at the start of its parameters");
 static constexpr LineColumn superCallOfDefaultConstructor { 1, 28 };
 static_assert(sizeof("(function (...args) { super") == superCallOfDefaultConstructor.column, "JSC makes a default constructor from a text of its own");
 static constexpr LineColumn startOfSuperCallOfDefaultConstructor { 1, 23 };

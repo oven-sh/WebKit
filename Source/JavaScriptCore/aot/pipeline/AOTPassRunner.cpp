@@ -506,7 +506,8 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::SimplifyBuiltinCalls, InPlaceOfOperation::NothingByProofOfThePass, false, TakesHandlersAway::No, { Opcode::CallBuiltin, Opcode::AwaitBySavingFrame } },
 };
 
-static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations)
+// A pass that runs inside another one, on a function that the other has edited, answers for the other one too.
+static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationThatWent>& operations, ReasonsForOperationsThatWent* listenerOutside = nullptr)
 {
     const OperationsThatPassAnswersFor* entry = nullptr;
     for (const OperationsThatPassAnswersFor& candidate : operationsThatPassesAnswerFor) {
@@ -517,6 +518,8 @@ static String findOperationNobodyAnswersFor(PassID id, const Vector<OperationTha
         bool isAnswered = entry && (operation.how == OperationThatWent::How::LostItsHandler ? entry->takesHandlersAway == TakesHandlersAway::Yes : entry->isEveryOperation || entry->opcodes.contains(operation.opcode));
         if (!isAnswered)
             return describe(operation);
+        if (listenerOutside)
+            listenerOutside->addForOperationThatWent(operation.value, entry->reason);
     }
     return { };
 }
@@ -878,7 +881,7 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     if (functionBeforeRun) [[unlikely]] {
         stopWhereThereIsOne(findEditWithoutEntry(*functionBeforeRun, context.function, context.changes, logBeforeRun));
         if (outcome == PassOutcome::Changed)
-            stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons)));
+            stopWhereThereIsOne(findOperationNobodyAnswersFor(id, findOperationsThatWentWithoutReason({ context.program, context.inputs.effects }, *functionBeforeRun, context.function, *reasons), &*reasons));
     }
     if (isTimed) {
         if (outcome == PassOutcome::Unchanged && !context.analyses.computed().containsAll(analysesBefore))

@@ -19,6 +19,7 @@
 #include "AOTModules.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeCounters.h"
@@ -141,16 +142,17 @@ static PropertyAnswer classifyCustomGetter(const ReadQuery& query)
 {
     VM& vm = query.globalObject->vm();
     const PropertySlot& slot = query.slot;
-    if (!query.base.isObject() || !query.structureBefore->propertyAccessesAreCacheable() || query.structureBefore->isDictionary())
+    if (!query.structureBefore->propertyAccessesAreCacheable() || query.structureBefore->isDictionary())
         return PropertyAnswer::uncacheable(SlotAccess::Read);
-    JSObject* base = asObject(query.base);
+    // Null for a primitive. classifyRead() has answered for what a primitive has of its own.
+    JSObject* base = query.base.getObject();
     JSObject* holder = slot.slotBase();
-    if (base->structure() != query.structureBefore)
+    if (base && base->structure() != query.structureBefore)
         return uncacheableOnce(SlotAccess::Read);
     ChainWalk walk;
     if (holder != base) {
-        auto* closure = dynamicDowncast<Closure>(base);
-        if ((closure && closure->isLazyClassObject()) || !structureProvesOwnAbsence(vm, base, query.structureBefore, query.uid, query.mode))
+        auto* closure = base ? dynamicDowncast<Closure>(base) : nullptr;
+        if ((closure && closure->isLazyClassObject()) || (base && !structureProvesOwnAbsence(vm, base, query.structureBefore, query.uid, query.mode)))
             return PropertyAnswer::uncacheable(SlotAccess::Read);
         walk = walkChain({ query.globalObject, query.structureBefore, base, query.mode }, query.uid);
         if (walk.result != ChainWalkResult::Found || walk.holder != holder || !(walk.attributes & PropertyAttribute::CustomAccessorOrValue))
@@ -158,7 +160,8 @@ static PropertyAnswer classifyCustomGetter(const ReadQuery& query)
     }
     bool passesHolder = !(slot.attributes() & PropertyAttribute::CustomAccessor);
     auto domAttribute = slot.domAttribute();
-    if (domAttribute && !(passesHolder ? holder : base)->inherits(domAttribute->classInfo))
+    JSObject* passed = passesHolder ? holder : base;
+    if (domAttribute && (!passed || !passed->inherits(domAttribute->classInfo)))
         return PropertyAnswer::uncacheableAfter(SlotAccess::Read, WTF::move(walk));
     uint32_t offsetOfCachedValue = !passesHolder && domAttribute ? BuiltinBindings::cachedValueOffsetOf(domAttribute->classInfo, query.uid).value_or(0) : 0;
     JSObject* slotBase = passesHolder && holder != base ? holder : nullptr;
@@ -385,8 +388,13 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     if (type == GlobalProxyType && structure->classInfoForCells() == JSGlobalProxy::info() && mayAllocate && receiver->structure() == structure
         && structure->realm() == query.globalObject && uncheckedDowncast<JSGlobalProxy>(receiver)->target() == query.globalObject)
         return classifyGlobalProxyRead(query);
-    if (type == ProxyObjectType && mayAllocate && !PropertyName(uid).isPrivateName())
-        return PropertyAnswer::handlerOfProxyAnswers(access, identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, uid)).asCell());
+    if (type == ProxyObjectType && mayAllocate && !PropertyName(uid).isPrivateName()) {
+        PropertyAnswer answer = PropertyAnswer::handlerOfProxyAnswers(access, State::of(query.globalObject).propertyCaches->keyForTraps(uid));
+        std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(uid);
+        if (number && RowDisplacementTable::hasColumn(*number) && *number <= UINT16_MAX)
+            answer.columnOfNameForTrap = static_cast<uint16_t>(*number);
+        return answer;
+    }
     if ((structure->typeInfo().prohibitsPropertyCaching() && !structure->isCompiledStructure()) || isProxyType(type) || structure->needImpurePropertyWatchpoint())
         return PropertyAnswer::uncacheable(access);
     if (structure->isDictionary()) {
@@ -869,7 +877,7 @@ PropertyAnswer classifyStore(const StoreQuery& query)
         return PropertyAnswer::uncacheable(access, flattenOnce(vm, query.base));
     }
     if (access == SlotAccess::Store && structureBefore->typeInfo().type() == ProxyObjectType && !isNeverCachedName(vm, query.uid) && !PropertyName(query.uid).isPrivateName())
-        return PropertyAnswer::handlerOfProxyAnswers(access, identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, query.uid)).asCell());
+        return PropertyAnswer::handlerOfProxyAnswers(access, State::of(query.globalObject).propertyCaches->keyForTraps(query.uid));
     if (isNeverCached)
         return PropertyAnswer::uncacheable(access);
     if (access == SlotAccess::Store && isCompiledClosure(query.base)) {
@@ -997,7 +1005,7 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
     uint8_t flags = (answer.isOwn ? Slot::isOwn : 0) | (answer.dependsOnChain() ? Slot::dependsOnChain : 0);
     switch (answer.kind) {
     case PropertyAnswerKind::Uncacheable:
-        return answer.keyForTrap ? Slot::createForProxies(id, answer.keyForTrap) : uncacheableSlot(id, flags);
+        return answer.keyForTrap ? Slot::createForProxies(id, answer.keyForTrap, answer.columnOfNameForTrap) : uncacheableSlot(id, flags);
     case PropertyAnswerKind::Value:
         return Slot::createInStorage(id, Kind::Value, flags, answer.holder, answer.offset);
     case PropertyAnswerKind::Accessor:

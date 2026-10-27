@@ -1923,7 +1923,7 @@ static FunctionID functionAsWritten(const Program& program, FunctionID id)
 // The caller's own function object is called without the test.
 static bool standsBesideCallByValue(const FunctionPassContext& context, const Value& call)
 {
-    return !call.callsOwnFunctionObject() && context.program.at(call.function()).capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
+    return !call.callsOwnFunctionObject() && context.program.at(call.function()).capabilities.containsAll({ FunctionCapabilities::RecordsCallee, FunctionCapabilities::RecordsCalleeOnceRenamed }) && functionAsWritten(context.program, context.id) != functionAsWritten(context.program, call.function());
 }
 
 InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningSummary& summary, BlockID block, ValueID call)

@@ -47,7 +47,7 @@ constexpr ValueFlowOperand operandOfBuiltinAt(ValueFlowNodeID node, ValueSetID m
 
 ValueFlowName property(ValueFlowRuleContext& context, BuiltinName name)
 {
-    return ValueFlowName::property(context.program().keyOf(name));
+    return ValueFlowName::property(context.program(), context.program().keyOf(name));
 }
 
 static ClimbingSet withHostObjectsAmongMembers(ValueFlowRuleContext& context, ClimbingSet hostObjects)
@@ -390,7 +390,7 @@ public:
             ValueFlowOperand used = value;
             for (BuiltinName name : use.memberPath) {
                 PropertyKeyID key = m_program.keyOf(name);
-                used = operandOfBuiltinAt(m_context.lookup(m_context.valueOf(used), m_program.isIndexLike(key) ? elementsName : ValueFlowName::property(key)));
+                used = operandOfBuiltinAt(m_context.lookup(m_context.valueOf(used), ValueFlowName::property(m_program, key)));
             }
             switch (use.use) {
             case BuiltinHostReadUse::Inspected:
@@ -1047,12 +1047,12 @@ private:
         if (mayBeUnknownObject(chain) || mayBeUntrackedObject(chain))
             return true;
         bool isWritten = false;
-        for (ValueFlowName written : { ValueFlowName::property(key), ValueFlowName::getter(key), ValueFlowName::setter(key) }) {
+        for (ValueFlowName written : { ValueFlowName::property(m_program, key), ValueFlowName::getter(m_program, key), ValueFlowName::setter(m_program, key) }) {
             forEachNodeReadThrough(chain, written, [&](ValueFlowNodeID node) {
                 isWritten |= holdsAnything(m_context.valueOf(node));
             });
         }
-        return isWritten || m_context.meet(m_context.valueOf(m_context.lookup(holders, ValueFlowName::property(key))), ValueSets::complement(m_universe.undefinedValue()));
+        return isWritten || m_context.meet(m_context.valueOf(m_context.lookup(holders, ValueFlowName::property(m_program, key))), ValueSets::complement(m_universe.undefinedValue()));
     }
 
     bool hasFieldUnderName(ClimbingSet holders, BuiltinName name)
@@ -1470,6 +1470,9 @@ private:
 
         ClimbingSet objects = m_context.restrict(holders, m_context.maker().intersect(m_universe.objects(), ValueSets::complement(m_universe.builtinObjects())));
         forEachNodeReadThrough(objects, everyPropertyName, functor);
+        // A definition makes enumerable what an object holds since it was made.
+        if (ClimbingSet redefined = m_context.markedAmong(known(withSourcesOfCopies(objects)), ObjectMutation::RedefineProperty); holdsAnything(redefined))
+            functor(m_context.lookup(redefined, everyOwnPropertyNobodyWroteName));
         if (mayBeUnknownObject(objects))
             constant = m_context.maker().unite(constant, unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));
         forEachNodeReadThrough(objects, everySetter, [&](ValueFlowNodeID node) {
@@ -2262,7 +2265,7 @@ private:
                 m_context.mark(object, { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty });
             for (const BuiltinResultProperty& own : entry.typesOfNamesDefinedOnNewInstances) {
                 if (PropertyKeyID key = m_program.keyOf(own.name))
-                    m_context.add(m_context.written(object, ValueFlowName::property(key)), m_tables.primitivesOf(own.type));
+                    m_context.add(m_context.written(object, ValueFlowName::property(m_program, key)), m_tables.primitivesOf(own.type));
             }
             for (const BuiltinPropertyMaker& maker : entry.makersOfNamesDefinedOnNewInstances) {
                 PropertyKeyID made = m_program.keyOf(maker.name);
@@ -2270,7 +2273,7 @@ private:
                     continue;
                 m_context.add(escaped(), object);
                 if (made)
-                    m_context.add(m_context.written(object, ValueFlowName::property(made)), unknownValue(m_context, ValueFlowUnknownSource::ResultOfUnknownCallee));
+                    m_context.add(m_context.written(object, ValueFlowName::property(m_program, made)), unknownValue(m_context, ValueFlowUnknownSource::ResultOfUnknownCallee));
             }
         }
     }
@@ -2281,7 +2284,7 @@ private:
         if (m_context.meet(chain, m_universe.placeholdersAlone()))
             return true;
         PropertyKeyID key = m_program.keyOf(maker.member);
-        return m_context.meet(m_context.valueOf(m_context.read(m_context.restrict(chain, m_universe.knownObjects()), key ? ValueFlowName::property(key) : unknownKeyName)), m_universe.callables());
+        return m_context.meet(m_context.valueOf(m_context.read(m_context.restrict(chain, m_universe.knownObjects()), key ? ValueFlowName::property(m_program, key) : unknownKeyName)), m_universe.callables());
     }
 
     void passArguments(const ValueFlowCallGroup& group, std::span<const BuiltinPlace> arguments)

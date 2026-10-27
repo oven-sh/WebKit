@@ -280,10 +280,10 @@ struct alignas(16) Slot {
         slot.customAccessor = { index, 0 };
         return slot;
     }
-    // The receivers are proxies, whose handlers answer. The key is what a read hands to the trap.
-    static Slot createForProxies(StructureID structureID, JSCell* key)
+    // The receivers are proxies, whose handlers answer. The key is what an access hands to the trap. The location is the number of the name where the front tables have a column for it, or zero.
+    static Slot createForProxies(StructureID structureID, JSCell* key, uint16_t columnOfName)
     {
-        Slot slot = create(structureID, Kind::Uncacheable, 0, 0);
+        Slot slot = create(structureID, Kind::Uncacheable, 0, columnOfName);
         slot.holder = key;
         return slot;
     }

@@ -198,7 +198,7 @@ Wire::PropertyKey TextParser::parsePropertyKeyValue()
         expect(TokenKind::At);
         key.module = parseIDWordOrMinus(*this, IDPrefix::Module);
         expect(TokenKind::Colon);
-        key.position = accept(TokenKind::Minus) ? Wire::none : parseUInt32(Wire::none - 1);
+        key.callNumber = accept(TokenKind::Minus) ? Wire::none : parseUInt32(Wire::none - 1);
         return key;
     }
     if (acceptWord("Symbol"_s)) {

@@ -12,6 +12,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRules.h"
+#include "AOTValueFlowRulesHeap.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/StdLibExtras.h>
@@ -27,7 +28,7 @@ ClimbingSet unknownObject(ValueFlowRuleContext& context, ValueFlowUnknownSource 
 static ValueFlowName writtenNameOf(const Program& program, StringID text)
 {
     std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = text });
-    return key ? ValueFlowName::property(*key) : unknownKeyName;
+    return key ? ValueFlowName::property(program, *key) : unknownKeyName;
 }
 
 void connect(ValueFlowRuleContext& context, const ValueFlowSources& sources, ValueFlowNodeID target)
@@ -165,6 +166,9 @@ ValueFlowSources exportedValueOf(ValueFlowRuleContext& context, const ModuleExpo
         return namespaceOf(context, entry.module, entry.phase);
     case ModuleExportKind::Indirect:
         useModule(context, entry.module);
+        // The run time reads the name on the namespace object of a module of the program.
+        if (context.program().at(entry.module).kind != ModuleKind::External)
+            connect(context, namespaceOf(context, entry.module), ValueFlowProgramNodes::escaped());
         return unknownSources(context, sourceOfWhatLoaderMakes(context.program().at(entry.module)));
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -194,8 +198,8 @@ ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objec
 static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key)
 {
     const ValueFlowUniverse& universe = context.universe();
-    ValueFlowName valueName = key ? ValueFlowName::property(*key) : everyPropertyName;
-    ValueFlowName getterName = key ? ValueFlowName::getter(*key) : everyGetterName;
+    ValueFlowName valueName = key ? ValueFlowName::property(context.program(), *key) : everyPropertyName;
+    ValueFlowName getterName = key ? ValueFlowName::getter(context.program(), *key) : everyGetterName;
     ClimbingSet receivers = context.restrict(values, universe.knownObjects());
     ClimbingSet holders = withSourcesOfCopies(context, receivers);
 
@@ -237,6 +241,12 @@ static ValueFlowSources ownPropertyOf(ValueFlowRuleContext& context, ClimbingSet
     OwnProperties properties = readOwnProperties(context, values, key);
     append(context, properties.held, properties.others);
     return properties.held;
+}
+
+// The loader lists every own name of what a file exports, enumerable or not.
+static void listOwnPropertiesNobodyWrote(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key, ValueFlowNodeID target)
+{
+    readOwnPropertiesNobodyWrote(context, withSourcesOfCopies(context, context.restrict(values, context.universe().knownObjects())), key, target);
 }
 
 static ValueFlowSources moduleExportsValueOf(ValueFlowRuleContext& context, ModuleID id)
@@ -351,11 +361,20 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
     for (uint32_t index = 0; index < module.exports.size(); ++index) {
         const ModuleExport& entry = module.exports[index];
         PropertyKeyID key = module.namespaceLayout ? program.at(module.namespaceLayout).fields[index].key : PropertyKeyID();
-        ValueFlowNodeID location = context.written(namespaceObject, key ? ValueFlowName::property(key) : writtenNameOf(program, entry.name));
+        ValueFlowNodeID location = context.written(namespaceObject, key ? ValueFlowName::property(program, key) : writtenNameOf(program, entry.name));
         switch (entry.kind) {
         case ModuleExportKind::Variable:
-        case ModuleExportKind::Indirect:
             connect(context, exportedValueOf(context, entry), location);
+            break;
+        case ModuleExportKind::Indirect:
+            if (program.at(entry.module).kind == ModuleKind::External) {
+                connect(context, exportedValueOf(context, entry), location);
+                break;
+            }
+            useModule(context, entry.module);
+            context.add(ValueFlowProgramNodes::escaped(), only(context, universe.namespaceOf(entry.module)));
+            namespacesInside.append(entry.module);
+            context.add(location, unknownValue(context, sourceOfWhatLoaderMakes(program.at(entry.module))));
             break;
         case ModuleExportKind::Namespace: {
             if (program.at(entry.module).kind == ModuleKind::External) {
@@ -401,6 +420,7 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
         ClimbingSet values = valueOf(context, value);
         context.add(holdersOfNames, context.restrict(values, universe.knownObjects()));
         connect(context, readOwnProperties(context, values, std::nullopt).others, underAnyName);
+        listOwnPropertiesNobodyWrote(context, values, std::nullopt, underAnyName);
     } else if (module.kind != ModuleKind::SourceText)
         context.add(underAnyName, unknownValue(context, sourceOfWhatLoaderMakes(module)));
     if (module.kind == ModuleKind::Runtime) {
@@ -660,7 +680,9 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         if (isDefaultExport && !mayCaptureDefaultMember(module.exportRule))
             continue;
         context.add(variable, context.universe().undefinedValue());
-        connect(context, ownPropertyOf(context, values, program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name })), variable);
+        std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name });
+        connect(context, ownPropertyOf(context, values, key), variable);
+        listOwnPropertiesNobodyWrote(context, values, key, variable);
     }
 }
 

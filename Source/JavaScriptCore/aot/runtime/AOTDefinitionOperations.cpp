@@ -69,25 +69,13 @@ void defineDataProperty(Instance* instance, JSObject* object, PropertyName name,
         object->createDataProperty(instance->globalObject, name, value, true);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, EncodedJSValue encodedObject, uint32_t name, EncodedJSValue value))
-{
-    constexpr Entry entry = Entry::operationAOTDefineById;
-    AOT_OPERATION_BEGIN(instance, entry);
-    JSObject* object = objectArgument(encodedObject, entry);
-    if (Options::aotCountsPath()) [[unlikely]]
-        instance->state->propertyCaches->countMiss("definition without caches"_s, false, object, identifierAt(instance, name).impl());
-    PutPropertySlot slot(object, true);
-    defineDataProperty(instance, object, identifierAt(instance, name), JSValue::decode(value), slot);
-    OPERATION_RETURN(scope);
-}
-
 // These are the arrays for which JSArray::defineOwnProperty() comes down to putDirectIndex(): a length that is read-only puts the array into sparse mode. The text of the index is never made.
 static bool canDefineElementsDirectly(JSObject* object)
 {
     return isJSArray(object) && !object->structure()->hasImmutableIndexedProperties() && !object->inSparseIndexingMode() && !isCopyOnWrite(object->indexingMode());
 }
 
-static bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint32_t index, JSValue value)
 {
     Object* compiled = compiledObjectOrNull(object);
     if (!compiled || compiled->isNotExtensible() || compiled->structure()->mayBePrototype() || compiled->layout().isClass())
@@ -101,11 +89,30 @@ static bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* objec
         return false;
     if (vm.aotState().validatesRuntime && !(extra && extra->hasOwnProperty(instance->globalObject, index)))
         validateMutation(vm, *compiled, ObjectMutation::AddProperty);
-    if (!extra)
-        extra = compiled->ensureExtraProperties(vm);
+    if (!extra) {
+        extra = constructEmptyObject(vm, instance->realm.emptyExtraPropertiesStructure);
+        extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
+        compiled->adoptExtraProperties(vm, extra);
+        return true;
+    }
     extra->putDirectIndex(instance->globalObject, index, value, 0, PutDirectIndexShouldThrow);
     compiled->didChangeExtraProperties(vm);
     return true;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDefineById, void, (Instance* instance, EncodedJSValue encodedObject, uint32_t name, EncodedJSValue value))
+{
+    constexpr Entry entry = Entry::operationAOTDefineById;
+    AOT_OPERATION_BEGIN(instance, entry);
+    JSObject* object = objectArgument(encodedObject, entry);
+    if (Options::aotCountsPath()) [[unlikely]]
+        instance->state->propertyCaches->countMiss("definition without caches"_s, false, object, identifierAt(instance, name).impl());
+    const Identifier& identifier = identifierAt(instance, name);
+    if (std::optional<uint32_t> index = parseIndex(identifier); index && tryDefineElementOfCompiledObject(instance, object, *index, JSValue::decode(value)))
+        OPERATION_RETURN(scope);
+    PutPropertySlot slot(object, true);
+    defineDataProperty(instance, object, identifier, JSValue::decode(value), slot);
+    OPERATION_RETURN(scope);
 }
 
 // `{ id, [key]: value }`. As for a store by key: the second object that gets the same name behind the same names has the Structure of its extra properties named, and the stub adds the property to the third.

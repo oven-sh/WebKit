@@ -70,9 +70,9 @@ PropertyKey createKey(PropertyKeyKind kind, StringID text = { }, LayoutID owner 
     return { kind, text, owner, symbol, { }, { }, { } };
 }
 
-PropertyKey createSymbolKey(StringID description, ModuleID module, std::optional<uint32_t> position, AllocationSiteID site = { })
+PropertyKey createSymbolKey(StringID description, ModuleID module, std::optional<uint32_t> callNumber, AllocationSiteID site = { })
 {
-    return { PropertyKeyKind::CreatedSymbol, description, { }, { }, module, position, site };
+    return { PropertyKeyKind::CreatedSymbol, description, { }, { }, module, callNumber, site };
 }
 
 struct PrinterTest {

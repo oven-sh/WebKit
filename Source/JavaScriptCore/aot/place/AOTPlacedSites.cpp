@@ -283,10 +283,10 @@ private:
             m_sites->guardSets.append(GuardSetUse { WTF::move(guards), weight });
     }
 
-    // A private name is no value, so it has no cell.
+    // A private name of a class is no value, so it has no cell. That of the library has one, which only the run time is handed.
     void appendKeyCell(PropertyKeyID key)
     {
-        if (!key || (m_program.at(key).kind != PropertyKeyKind::Text && !isSymbolKind(m_program.at(key).kind)))
+        if (!key || m_program.at(key).kind == PropertyKeyKind::PrivateName)
             return;
         ModuleID module = m_program.at(m_source).module;
         m_sites->keyCellUses.append(KeyCellUse { key, module ? module.index() : UINT32_MAX, m_source.index() });

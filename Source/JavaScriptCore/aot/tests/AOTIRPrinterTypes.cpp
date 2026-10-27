@@ -73,7 +73,7 @@ static bool isPrintedBefore(const StringTable& strings, const PropertyKey& a, co
         return a.kind < b.kind;
     if (auto order = compareSpans(bytesOf(strings, a.text), bytesOf(strings, b.text)); order != 0)
         return order < 0;
-    return std::tie(a.symbol, a.module, a.position) < std::tie(b.symbol, b.module, b.position);
+    return std::tie(a.symbol, a.module, a.callNumber) < std::tie(b.symbol, b.module, b.callNumber);
 }
 
 static bool isPrintedBefore(const StringTable& strings, RegExpLiteralInType a, RegExpLiteralInType b)
@@ -187,8 +187,8 @@ void IRPrinter::print(PropertyKeyID id)
         m_out.print("@"_s);
         print(key.module);
         m_out.print(":"_s);
-        if (key.position)
-            print(*key.position);
+        if (key.callNumber)
+            print(*key.callNumber);
         else
             m_out.print("-"_s);
         return;

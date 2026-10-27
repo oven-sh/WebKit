@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAsyncAwaitConditions.h"
+#include "AOTBuiltinTable.h"
 #include "AOTCellAllocationEmitter.h"
 #include "AOTGuardEmitter.h"
 #include "AOTStubsCoroutines.h"

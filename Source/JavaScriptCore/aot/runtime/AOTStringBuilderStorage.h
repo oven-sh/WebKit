@@ -222,6 +222,7 @@ private:
     WatchedJSONLevels m_watchedLevels;
     uint32_t m_lengthWhenWatchBegan { 0 };
     uint32_t m_positionWhenSegmentsWereJoined { 0 };
+    uint32_t m_capacityOfNextBuffer { 0 };
     StackManager::Mirror& m_levelLimit;
     StringBuilderWords& m_words;
     WriteBarrier<StringBuilderStorage> m_nextFree;

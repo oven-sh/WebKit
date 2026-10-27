@@ -473,6 +473,7 @@ aot/valueflow/AOTValueFlowResultsFunctions.cpp
 aot/valueflow/AOTValueFlowResultsHeap.cpp
 aot/valueflow/AOTValueFlowResultsLocations.cpp
 aot/valueflow/AOTValueFlowResultsObjects.cpp
+aot/valueflow/AOTValueFlowResultsOperationsWithoutValue.cpp
 aot/valueflow/AOTValueFlowResultsOrder.cpp
 aot/valueflow/AOTValueFlowResultsPlaces.cpp
 aot/valueflow/AOTValueFlowResultsSinks.cpp

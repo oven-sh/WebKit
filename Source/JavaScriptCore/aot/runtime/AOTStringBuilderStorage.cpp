@@ -320,11 +320,11 @@ bool StringBuilderStorage::tryEnsureRoom(size_t length, size_t bytesWritten)
         return false;
     size_t grownCapacity = needed > currentCapacity ? currentCapacity * 2 : currentCapacity;
     size_t newCapacity = std::max(needed, std::min<size_t>(std::max<size_t>(grownCapacity, m_limits.minCapacity), String::MaxLength));
-    if (needed > m_limits.minCapacity) {
-        size_t expectedCapacity = std::exchange(m_words.capacityOfLastLargeBuffer, 0);
-        if (expectedCapacity > newCapacity && tryReplaceBuffer(expectedCapacity))
-            return true;
-    }
+    size_t expectedCapacity = std::exchange(m_capacityOfNextBuffer, 0);
+    if (needed > m_limits.minCapacity)
+        expectedCapacity = std::max<size_t>(expectedCapacity, std::exchange(m_words.capacityOfLastLargeBuffer, 0));
+    if (expectedCapacity > newCapacity && tryReplaceBuffer(expectedCapacity))
+        return true;
     return tryReplaceBuffer(newCapacity);
 }
 
@@ -361,6 +361,7 @@ void StringBuilderStorage::dropBuffer()
     updateLimit();
 }
 
+// A builder is emptied where compiled code counts on no collection, so the buffer that fits is made by the next write.
 void StringBuilderStorage::dropLargeBuffer(size_t longestTextInBuffer)
 {
     size_t fittingCapacity = longestTextInBuffer > capacity() / 2 ? capacity() : std::max<size_t>(roundUpToPowerOfTwo(longestTextInBuffer), m_limits.minCapacity);
@@ -368,7 +369,7 @@ void StringBuilderStorage::dropLargeBuffer(size_t longestTextInBuffer)
     if (fittingCapacity > m_limits.maxRetainedCapacity)
         m_words.capacityOfLastLargeBuffer = static_cast<uint32_t>(fittingCapacity);
     else
-        tryReplaceBuffer(fittingCapacity);
+        m_capacityOfNextBuffer = static_cast<uint32_t>(fittingCapacity);
 }
 
 bool StringBuilderStorage::ensureRoom(JSGlobalObject* globalObject, size_t size)

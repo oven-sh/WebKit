@@ -41,6 +41,7 @@ struct ValidationPolicy {
     ValidationLevel level { ValidationLevel::FromOptions };
     bool checksKnownPropertiesAtRunTime { false };
     bool logsMovedLoads { false };
+    bool keepsOriginsOfAccessesThatTakeTraps { false };
 };
 
 enum class RedundancyElimination : uint8_t {

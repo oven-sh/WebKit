@@ -373,7 +373,7 @@ bool hoistsFunctionsIntoVariables(ModuleKind kind) { return hoistsFunctionsIntoV
 
 bool isValidPropertyKey(const PropertyKey& key)
 {
-    bool hasCreationSite = key.module || key.position || key.site;
+    bool hasCreationSite = key.module || key.callNumber || key.site;
     switch (key.kind) {
     case PropertyKeyKind::Text:
     case PropertyKeyKind::EnginePrivateName:
@@ -385,7 +385,7 @@ bool isValidPropertyKey(const PropertyKey& key)
     case PropertyKeyKind::WellKnownSymbol:
         return key.symbol && !key.text && !key.owner && !hasCreationSite;
     case PropertyKeyKind::CreatedSymbol:
-        return key.module && key.position && !key.owner && !key.symbol;
+        return key.module && key.callNumber && !key.owner && !key.symbol;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -399,6 +399,14 @@ ProgramVerifier::ProgramVerifier(const Program& program, IRForm form, BuildConte
 }
 
 bool ProgramVerifier::run()
+{
+    if (!runRecords())
+        return false;
+    verifyFunctionBodies();
+    return !hasFailed();
+}
+
+bool ProgramVerifier::runRecords()
 {
     using Group = void (ProgramVerifier::*)();
     static constexpr Group groups[] = {
@@ -417,7 +425,6 @@ bool ProgramVerifier::run()
         &ProgramVerifier::verifySmallRecords,
         &ProgramVerifier::verifyFunctionHeaders,
         &ProgramVerifier::verifyDerivationChains,
-        &ProgramVerifier::verifyFunctionBodies,
     };
     for (Group verifyGroup : groups) {
         (this->*verifyGroup)();
@@ -625,6 +632,11 @@ bool verifyProgram(const Program& program, IRForm form, BuildContext& build, con
 {
     RELEASE_ASSERT(form != IRForm::Placed || inputs.placed);
     return ProgramVerifier(program, form, build, inputs).run();
+}
+
+bool verifyRecords(const Program& program, IRForm form, BuildContext& build, const VerifierInputs& inputs)
+{
+    return ProgramVerifier(program, form, build, inputs).runRecords();
 }
 
 } } } // namespace JSC::AOT::Typed

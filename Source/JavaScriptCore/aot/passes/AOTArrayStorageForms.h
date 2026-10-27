@@ -94,6 +94,8 @@ JS_EXPORT_PRIVATE bool isStorageOfArray(const DataNode::Array&);
 // The kind of an array that is created with a length and nothing in it.
 std::optional<ArrayStorage> arrayStorageOfNewHoles(const Value& allocation);
 bool canStoreWithoutConversion(ArrayStorage, const Type& stored);
+// A literal whose elements all fit the kind that is declared for it is born with that kind, and with Contiguous otherwise.
+bool fitsStorageOfLiteral(ArrayStorage, const Type& element);
 
 Type typeOfElementRead(ArrayStorage);
 

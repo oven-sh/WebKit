@@ -17,7 +17,7 @@ inline constexpr ValueFlowName steppedValuesName = ValueFlowName::of(ValueFlowNa
 inline constexpr ValueFlowName returnedValueName = ValueFlowName::of(ValueFlowNameKind::ReturnedValue);
 inline constexpr ValueFlowName sentValuesName = ValueFlowName::of(ValueFlowNameKind::SentValues);
 
-inline ValueFlowName nameOf(ValueFlowRuleContext& context, BuiltinName name) { return ValueFlowName::property(context.program().keyOf(name)); }
+inline ValueFlowName nameOf(ValueFlowRuleContext& context, BuiltinName name) { return ValueFlowName::property(context.program(), context.program().keyOf(name)); }
 inline constexpr ValueFlowName nameOf(BuiltinSlotID slot) { return { ValueFlowNameKind::Slot, slot.index() }; }
 
 inline ClimbingSet known(ValueFlowRuleContext& context, ClimbingSet set) { return context.restrict(set, context.universe().knownObjects()); }

@@ -323,6 +323,8 @@ public:
     // The getter that a read of the name calls on every object with the Structure of this one. Runs no code of the program and allocates no cell.
     JSValue findGetterAndFillSiteCache(SiteCache, JSCell* base, uint32_t identifierNumber);
     void cacheFreeName(SiteCache, UniquedStringImpl*, SlotAccess, const PropertyAnswer&);
+    // The cell that a trap of a proxy is handed for the name. A slot names it and does not hold it. For a name of the program there is one, which is kept, so such a slot lasts as long as its Structure.
+    JSCell* keyForTraps(UniquedStringImpl*);
 
     template<typename Visitor> void visitRoots(Visitor&);
     void didFinishCollection(VM&, CollectionScope);
@@ -352,6 +354,8 @@ private:
     WatchedValues m_watchedValues;
     StringKeyCache m_stringKeys;
     Vector<Addition> m_additionsSinceCollection;
+    // Written under the lock of the caches.
+    UncheckedKeyHashMap<UniquedStringImpl*, JSCell*> m_keysForTraps;
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     std::array<uint32_t, numberOfFirstAdditionsByKey> m_firstAdditionsByKey { };
     uint32_t m_evictionSeed { 0 };

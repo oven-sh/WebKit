@@ -627,9 +627,15 @@ void applyBuiltinUse(const BuiltinUseRewrite& rewrite, const BuiltinUsePlan& pla
 
     Origin origin = function.at(rewrite.use).origin();
     bool isPropertyAccess = accessOf(function.at(rewrite.use).opcode) != Access::None;
+    // A step of a function that is called in tail position runs inside the function, when the frame of the caller is gone.
+    const Terminator& terminator = function.at(rewrite.block).terminator;
+    bool isCalledInTailPosition = terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == rewrite.use;
     auto insertWithOrigin = [&](auto&& inserted) {
         ValueID id = rewrite.insert(WTF::move(inserted));
-        function.edit(id, ValueEdit::Definition).setOrigin(origin);
+        Value& value = function.edit(id, ValueEdit::Definition);
+        value.setOrigin(origin);
+        if (isCalledInTailPosition && Value::opcodesWithCalledBuiltin.contains(value.opcode) && value.calledBuiltin())
+            value.isTailCall = true;
         return id;
     };
     InsertBeforeCall insert = insertWithOrigin;

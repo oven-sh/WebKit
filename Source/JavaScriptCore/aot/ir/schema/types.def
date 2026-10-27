@@ -14,7 +14,7 @@ enum WellKnownSymbol {
     Unscopables
 }
 record PropertyKey wire customText {
-    kind: PropertyKeyKind text: String? owner: Layout? symbol: WellKnownSymbol? module: Module(Referrer)? position: UInt32?
+    kind: PropertyKeyKind text: String? owner: Layout? symbol: WellKnownSymbol? module: Module(Referrer)? callNumber: UInt32?
     | engine site: AllocationSite?
 }
 

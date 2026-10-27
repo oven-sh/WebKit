@@ -1,0 +1,40 @@
+# const f = (n) => [n, (() => n |= 0)(), n]; f(1.5)
+# The variable is predicted to hold an int32, a fraction arrives, and no check stands in the function: what is read from the variable is typed as anything.
+# Flow has seen nothing but numbers stored in the literal and has proven storage for doubles. A literal is born with the storage that fits the types of its elements,
+# so flow gives each element that is not typed as a number the proven contents as its type.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="f"
+# CHECK: [[before]]: anything ~ i32 = GetEnvironmentField
+# CHECK: [[after]]: anything ~ i32 = GetEnvironmentField
+# CHECK: [[first]]: int|fractional ~ i32 = AssumeType [[before]] provenType=int|fractional
+# CHECK: [[last]]: int|fractional ~ i32 = AssumeType [[after]] provenType=int|fractional
+# CHECK: [[literal]]: {{*}} = NewArray [[first]], {{*}}, [[last]] contents=int|fractional
+# CHECK: = AssumeType [[literal]] provenType=Array<int|fractional, proven, Double
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=i32 flags=[IsExpected]} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Double number=1.5
+    v2 = Call v0, -, v1
+    v3 = Integer
+    v4 = ElemGet v2, v3
+    Return v4
+}
+function f1 name="f" module=m0 kind=Arrow length=1 parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetEnvironmentField v1 layout=L0
+    v3 = NewClosure v1 function=f2
+    v4 = Call v3
+    v5 = GetEnvironmentField v1 layout=L0
+    v6 = NewArray v2, v4, v5 contents=anything
+    Return v6
+}
+function f2 name="store" module=m0 kind=Arrow captures=[{type=env L0 flags=[IsFromCompiler]}] results=[{type=anything}] {
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = Integer
+    v3 = BitOr v1, v2
+    PutEnvironmentField v0, v3 layout=L0
+    Return v3
+}
