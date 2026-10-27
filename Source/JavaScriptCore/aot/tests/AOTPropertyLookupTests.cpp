@@ -1435,8 +1435,14 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
     }
 
     // What the lowest object has itself is nothing to a store that has found that the object lacks the name.
-    JSObject* owner = constructEmptyObject(realm);
-    owner->putDirect(vm, label, jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    // The number of a Structure leads to the place of its filter, and two Structures may have one place. This one has another place than the Structure of the object below, whose filter is asked for again.
+    JSObject* owner = nullptr;
+    unsigned numberOfOwners = 0;
+    do {
+        owner = constructEmptyObject(realm);
+        owner->putDirect(vm, Identifier::fromString(vm, makeString("other"_s, numberOfOwners++)), jsNumber(0));
+        owner->putDirect(vm, label, jsNumber(1), static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    } while (AbsenceFilter::indexFor(owner->structureID().bits()) == AbsenceFilter::indexFor(below->structureID().bits()));
     const AbsenceFilter* ofOwner = filterOf(owner);
     AOT_TEST_CHECK(ofOwner && ofOwner->letsStoresPass(*number));
 
@@ -1458,6 +1464,17 @@ static void testAbsenceFilterNamesWhatStopsStores(LoadedProgram& program)
 
     // No list of names speaks for an object that has a say of its own in a store that comes past it.
     AOT_TEST_CHECK(!filterOf(makeBelow(ProxyObject::create(realm, constructEmptyObject(realm), constructEmptyObject(realm)))));
+
+    // Of two Structures that have one place the one whose filter is filed later takes it, and the other has no filter until it is filed anew.
+    JSObject* earlier = makeBelow(constructEmptyObject(realm));
+    const AbsenceFilter* place = filterOf(earlier);
+    JSObject* later = nullptr;
+    do {
+        later = makeBelow(constructEmptyObject(realm));
+    } while (AbsenceFilter::indexFor(later->structureID().bits()) != AbsenceFilter::indexFor(earlier->structureID().bits()));
+    AOT_TEST_CHECK(place && validFilterOf(earlier) == place && !validFilterOf(later));
+    AOT_TEST_CHECK(filterOf(later) == place && !validFilterOf(earlier));
+    AOT_TEST_CHECK(filterOf(earlier) == place && !validFilterOf(later));
 }
 
 template<LoadedProgramTest body>

@@ -286,10 +286,7 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
 {
     constexpr unsigned headerSize = sizeof(JSCell);
 
-    bool hasOnlyCells = !(type.primitives & ~cellPrimitives);
-    ASSERT(hasOnlyCells);
-    if (!hasOnlyCells)
-        return 0;
+    ASSERT(!(type.primitives & ~cellPrimitives));
     if (type.environment)
         return placement.layout(type.environment).size;
     if (type.isAnyString() || type.isOpaque(OpaqueKind::FlatString))
@@ -319,10 +316,10 @@ void CodeGenerator::publishKnownPropertiesOfConvertedValue(ValueID id, Operand c
 void CodeGenerator::publishKnownProperties(ValueID id, Operand operand, bool isConverted)
 {
     LValue lowered = operand.value;
-    if (lowered->isConstant())
+    const Type& type = typeOf(id);
+    if (lowered->isConstant() || type.mayBeUnspecified())
         return;
 
-    const Type& type = typeOf(id);
     Representation representation = operand.representation;
     std::optional<B3::IntRange> range = B3::mayHaveKnownRange(lowered->opcode()) ? knownRangeOf(type, representation) : std::nullopt;
     unsigned bytes = representation == Representation::Cell ? leastCellSizeOf(program(), m_inputs.program.placement, type) : 0;
