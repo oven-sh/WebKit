@@ -678,12 +678,12 @@ static void checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail()
     for (void*& memory : more)
         memory = fastMalloc(16 * KB);
     AOT_TEST_CHECK(!largeRequestFindsMemory());
-    std::array<void*, 512> small;
-    for (void*& memory : small)
+    std::array<void*, 512> smallRequests;
+    for (void*& memory : smallRequests)
         AOT_TEST_CHECK(tryFastMalloc(48).getValue(memory));
     AOT_TEST_CHECK(!bmalloc::api::hasWholeAddressSpaceBallast() && !largeRequestFindsMemory());
 
-    for (void* memory : small)
+    for (void* memory : smallRequests)
         fastFree(memory);
     for (void* memory : more)
         fastFree(memory);
