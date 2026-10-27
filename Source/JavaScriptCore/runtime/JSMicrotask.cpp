@@ -1371,19 +1371,18 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         intermediatePromise->pipeFrom(vm, combinedPromise);
     } else {
         // onFetchRejected logic
+        JSValue errorValue = arguments[1];
+        // Bun: nothing was fetched, so no module of the key ran. The key is not registered with the error, whatever
+        // module the error is of: the next load of the key fetches again. An entry made here has no record and no
+        // promises, and a static import of its key would wait for a fetch promise that nothing settles.
+#if !USE(BUN_JSC_ADDITIONS)
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
-        JSValue errorValue = arguments[1];
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
             auto failure = JSModuleLoader::getErrorInfo(globalObject, error);
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
             // Don't register the module unless it's an evaluation error.
-#if USE(BUN_JSC_ADDITIONS)
-            // This load has no entry. One that holds its key is another load's, and is not where this error goes.
-            if (failure.isEvaluationError(specifier, type) && !context->loader()->getRegisteredMayBeNull(specifier, type)) {
-#else
             if (failure.isEvaluationError(specifier, type)) {
-#endif
                 ModuleRegistryEntry* entry = context->loader()->ensureRegistered(globalObject, specifier, type);
                 if (scope.exception()) {
                     intermediatePromise->rejectWithCaughtException(vm, scope);
@@ -1392,6 +1391,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
                 entry->setEvaluationError(globalObject, error);
             }
         }
+#endif
         intermediatePromise->reject(vm, errorValue);
     }
 }
