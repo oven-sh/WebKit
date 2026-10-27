@@ -519,10 +519,10 @@ static uint32_t nonPlainFunctionKindMask()
 
 void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& isNotPlainFunction)
 {
-    constexpr ptrdiff_t offsetOfThis = -8;
-    constexpr ptrdiff_t offsetOfCallee = -16;
-    constexpr ptrdiff_t offsetOfWord = -24;
-    constexpr ptrdiff_t offsetOfCount = -32;
+    constexpr ptrdiff_t offsetOfThis = PlainFunctionConstructFrame::offsetOfThis;
+    constexpr ptrdiff_t offsetOfCallee = PlainFunctionConstructFrame::offsetOfCallee;
+    constexpr ptrdiff_t offsetOfWord = PlainFunctionConstructFrame::offsetOfWord;
+    constexpr ptrdiff_t offsetOfCount = PlainFunctionConstructFrame::offsetOfCount;
     static_assert(!(-offsetOfCount % stackAlignmentBytes()));
     const GPRReg function = jit.reuseScratch(StubRegister::A0);
     const GPRReg kind = jit.reuseScratch(StubRegister::A2);
@@ -566,7 +566,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
     jit.sub32(TrustedImm32(1), countGPR);
     takesNewTarget.link(&jit);
 
-    EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::BelowSpilledArguments);
+    EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::PlainFunctionConstruct);
     emitSelectConstructResult(jit, offsetOfThis);
     jit.emitFunctionEpilogue();
     emitDropSpilledArgumentRegisters(jit);

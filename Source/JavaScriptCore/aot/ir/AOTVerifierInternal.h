@@ -153,6 +153,8 @@ private:
     void verifyGuardOperand(BlockID, ValueID user, const Value&, ProofSet neededFromGuard, ValueID guard);
 
     void verifyUnspecifiedValues();
+    bool verifyNoOperandIsUnspecified(BlockID, ValueID, const Value&);
+    bool verifyNoOperandIsUnspecified(BlockID, const Terminator&);
 
     void verifyOperations();
     void verifyOperation(BlockID, uint32_t indexInBlock, ValueID, const Value&);

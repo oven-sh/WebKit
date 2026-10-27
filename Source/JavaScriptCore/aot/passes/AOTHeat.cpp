@@ -1869,7 +1869,7 @@ struct OutliningScan {
             result = function.at(site.exitBlock).parameters[*site.exitArgument];
         if (result)
             site.resultType = function.at(result).type;
-        if (!program.at(site.resultType).isJavaScriptValue() || (result && unspecifiedValues.mayContain(result)))
+        if (!program.at(site.resultType).isJavaScriptValue() || program.at(site.resultType).mayBeUnspecified())
             return false;
         NamedGuards namedGuards = findNamedGuards(site);
         if (namedGuards == NamedGuards::SomeDefinedOutside)
@@ -1888,7 +1888,7 @@ struct OutliningScan {
         // No use of an Unspecified value is reached, and an operand or the result of the call of the shared function would be one.
         for (ValueID liveIn : form.liveIns) {
             const Value& value = function.at(liveIn);
-            if (!program.at(value.type).isJavaScriptValue() || isFramePointer(liveIn) || branchesOf(value.opcode) == Branches::Only || isDeferredClosure(function, liveIn) || unspecifiedValues.mayContain(liveIn) || program.at(value.type).mayBeUnspecified())
+            if (!program.at(value.type).isJavaScriptValue() || isFramePointer(liveIn) || branchesOf(value.opcode) == Branches::Only || isDeferredClosure(function, liveIn) || program.at(value.type).mayBeUnspecified())
                 return false;
         }
         if (mayEndGuardInUse(site, form.liveIns.span(), namedGuards))
@@ -2077,7 +2077,6 @@ struct OutliningScan {
     const CFG& cfg { analyses.cfg() };
     const UseLists& useLists { analyses.useLists() };
     Subject subject = analyses.subject();
-    UnspecifiedValues unspecifiedValues { analyses };
     // Found when somebody asks.
     std::optional<FramePointers> framePointers { };
     std::optional<BitVector> guards { };

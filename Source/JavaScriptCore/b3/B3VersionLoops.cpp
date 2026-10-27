@@ -260,8 +260,10 @@ private:
     {
         const LoopVersionPlan& plan = version.plan;
         // Every turn moves the counter, and the fast loop is left before the counter gets to the limit of a range check: it ends within the data it walks.
-        if (kind == CopyKind::FastLoop && isLoopPoll(value) && plan.rangeChecks.endsWithinLimit() && m_proc.policy().loops.limitsOfRangeChecksAreLengthsOfData)
+        if (kind == CopyKind::FastLoop && isLoopPoll(value) && plan.rangeChecks.endsWithinLimit() && m_proc.policy().loops.limitsOfRangeChecksAreLengthsOfData) {
+            m_proc.count(Counter::LoopPollsRemoved);
             return;
+        }
         if (isReplaced(version, value, kind)) {
             if (value->type() == Void)
                 return;

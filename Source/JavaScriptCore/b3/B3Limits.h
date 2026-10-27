@@ -139,6 +139,7 @@ inline constexpr unsigned minHoistedValuesPerLoopVersion = 2;
 inline constexpr unsigned minTurnsPerUnrolledLoop = 4;
 inline constexpr unsigned maxTurnsPerUnrolledLoop = 8;
 inline constexpr unsigned maxBlocksBesideTestOfUnrolledLoop = 4;
+inline constexpr unsigned maxDepthOfAddressInUnrolledLoop = 6;
 inline constexpr unsigned minCasesForBitTests = 4;
 inline constexpr unsigned maxCompareChainSize = 4;
 inline constexpr unsigned blocksPerConstantStretch = 1024;

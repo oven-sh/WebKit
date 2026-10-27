@@ -276,6 +276,15 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
     RELEASE_AND_RETURN(scope, constructAllowingPrimitiveResult(globalObject, callee, constructData, arguments, newTarget));
 }
 
+static JSValue constructParent(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue parent, JSValue newTarget, const ArgList& arguments)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue made = constructValue<true>(globalObject, vm, parent, newTarget, arguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    instance->state->objects->classes.didConstructParent(newTarget, made);
+    return made;
+}
+
 // The argument values lie in the stack of the caller for as long as the call lasts.
 JSC_DEFINE_JIT_OPERATION(operationAOTConstruct, EncodedJSValue, (Instance* instance, EncodedJSValue callee, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* argumentValues))
 {
@@ -462,7 +471,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstruct, EncodedJSValue, (Instance* 
         throwOutOfMemoryError(globalObject, scope);
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
+    OPERATION_RETURN(scope, JSValue::encode(constructParent(instance, globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instance* instance, EncodedJSValue parent, EncodedJSValue newTarget, JSCell* list))
@@ -474,7 +483,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instan
     EXCEPTION_ASSERT(didAppend == !scope.exception());
     if (!didAppend) [[unlikely]]
         OPERATION_RETURN(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
+    OPERATION_RETURN(scope, JSValue::encode(constructParent(instance, globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
 static StringView nameOfCalleeAt(const CallSiteCache::Entry& callSite)

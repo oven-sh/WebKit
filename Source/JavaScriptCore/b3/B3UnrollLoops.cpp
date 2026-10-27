@@ -286,10 +286,10 @@ private:
         plan.farthestBoundWithRoom = static_cast<int64_t>(farthest);
         if (room > 0 ? bound.max < farthest : bound.min > farthest)
             return false;
-        IntegerInterval far { std::max(bound.min - room, full.min), std::min(bound.max - room, full.max) };
+        IntegerInterval farBound { std::max(bound.min - room, full.min), std::min(bound.max - room, full.max) };
         IntegerInterval start = intervalFor(m_proc, plan.start, signedness);
         plan.startHasRoom = start.min + room >= full.min && start.max + room <= full.max;
-        return evaluateComparison(plan.relation, start, far) != TriState::False;
+        return evaluateComparison(plan.relation, start, farBound) != TriState::False;
     }
 
     // A loop that looks for something is expected to find it.
@@ -375,6 +375,33 @@ private:
         }
     }
 
+    static bool changesFromTurnToTurn(const Plan& plan, Value* value, unsigned timeToLive)
+    {
+        if (!plan.blocks.contains(value->owner))
+            return false;
+        if (value->opcode() == Phi)
+            return value->owner == plan.header;
+        if (!timeToLive || value->as<MemoryValue>())
+            return false;
+        for (Value* child : value->children()) {
+            if (changesFromTurnToTurn(plan, child, timeToLive - 1))
+                return true;
+        }
+        return false;
+    }
+
+    // The turns that are written out share one counter: each reads or writes at its own distance from it. A loop that walks nothing would only test less often.
+    static bool walksData(const Plan& plan)
+    {
+        for (BasicBlock* block : plan.blocks) {
+            for (Value* value : *block) {
+                if (value->as<MemoryValue>() && changesFromTurnToTurn(plan, value->lastChild(), Limits::maxDepthOfAddressInUnrolledLoop))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
     {
         if (!isInnermostLoop(loops, loop))
@@ -397,7 +424,7 @@ private:
             if (block->last()->type() != Void)
                 return;
             for (Value* value : *block) {
-                if (!canCloneForLoop(value) || isCall(value) || accessesWord(value))
+                if (!canCloneForLoop(value) || (isCall(value) && !isLoopPoll(value)) || accessesWord(value))
                     return;
                 numberOfValues += countsTowardsSize(value);
             }
@@ -408,7 +435,7 @@ private:
             return;
         }
         PhiChildren& phiChildren = prepareToReadCounters();
-        if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
+        if (plan.header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop || !walksData(plan))
             return;
         Dominators& dominators = m_proc.dominators();
         auto runsEveryTurn = [&](BasicBlock* block) {
@@ -434,8 +461,62 @@ private:
 
     struct Bounds {
         Value* bound { nullptr };
-        Value* far { nullptr };
+        Value* farBound { nullptr };
     };
+
+    // The block in front of the pre-header that lets the loop be entered exactly where the first turn's test would hold, for a counter that starts at a constant and rises to a bound that is not negative.
+    struct TestOfFirstTurn {
+        BasicBlock* block { nullptr };
+        // From the block behind the test to the pre-header: they only jump, and hold nothing but constants and what the loop starts with.
+        Vector<BasicBlock*, 4> blocksBehind;
+    };
+
+    std::optional<TestOfFirstTurn> findTestOfFirstTurn(const Plan& plan, Int128 start)
+    {
+        if (plan.testsCounterBeforeStep || plan.step < 0 || start < 0)
+            return std::nullopt;
+        TestOfFirstTurn result;
+        BasicBlock* block = plan.preHeader;
+        do {
+            if (block->numPredecessors() != 1 || result.blocksBehind.size() == Limits::maxBlocksBesideTestOfUnrolledLoop)
+                return std::nullopt;
+            for (Value* value : *block) {
+                if (value != block->last() && !value->as<VariableValue>() && value->opcode() != Upsilon && value->opcode() != Nop && !value->isConstant())
+                    return std::nullopt;
+            }
+            result.blocksBehind.insert(0, block);
+            block = block->predecessor(0);
+        } while (block->last()->opcode() == Jump);
+        BasicBlock* preHeader = result.blocksBehind[0];
+        if (block->last()->opcode() != Branch || block->successorBlock(0) == block->successorBlock(1))
+            return std::nullopt;
+        result.block = block;
+        IntegerInterval known = intervalFor(m_proc, plan.bound, Signedness::Signed);
+        if (known.min < 0)
+            return std::nullopt;
+
+        DominatingCondition condition = stripNegations(block->last()->child(0)->foldIdentity());
+        Value* tested = condition.value->foldIdentity();
+        bool entersWhereTrue = condition.isNonZero == (block->successorBlock(0) == preHeader);
+        auto holdsFor = [&](IntegerInterval bounds, bool expected) {
+            if (bounds.min > bounds.max)
+                return true;
+            TriState result = TriState::Indeterminate;
+            if (tested == plan.bound)
+                result = evaluateComparison(NotEqual, bounds, IntegerInterval { 0, 0 });
+            else if (isIntegerComparison(tested->opcode()) && tested->child(0)->foldIdentity() == plan.bound && tested->child(1)->hasInt() && tested->child(1)->asInt() >= 0)
+                result = evaluateComparison(tested->opcode(), bounds, IntegerInterval { tested->child(1)->asInt(), tested->child(1)->asInt() });
+            else if (isIntegerComparison(tested->opcode()) && tested->child(1)->foldIdentity() == plan.bound && tested->child(0)->hasInt() && tested->child(0)->asInt() >= 0)
+                result = evaluateComparison(tested->opcode(), IntegerInterval { tested->child(0)->asInt(), tested->child(0)->asInt() }, bounds);
+            return result == triState(expected == entersWhereTrue);
+        };
+        Int128 leastBoundOfOneTurn = start + (includesEqual(plan.relation) ? 0 : 1);
+        if (!holdsFor({ std::max(known.min, leastBoundOfOneTurn), known.max }, true) || !holdsFor({ known.min, std::min(known.max, leastBoundOfOneTurn - 1) }, false))
+            return std::nullopt;
+        return result;
+    }
+
+    static bool includesEqual(Opcode relation) { return relation == LessEqual || relation == GreaterEqual || relation == BelowEqual || relation == AboveEqual; }
 
     Bounds appendBoundsAndEnter(const Plan& plan, BasicBlock* unrolledHeader)
     {
@@ -453,32 +534,65 @@ private:
         int64_t room = plan.step * static_cast<int64_t>(plan.factor - 1);
         // A loop of a few turns pays one comparison. Where the counter can take all the steps and still meets the bound, the bound has room for them as well.
         if (plan.startHasRoom) {
-            Value* enters = append(m_proc.add<Value>(plan.relation, origin, append(m_proc.add<Value>(Add, origin, plan.start, constant(room))), bound));
             BasicBlock* entered = m_proc.addBlock();
-            Value* far = entered->appendNew<Value>(m_proc, Sub, origin, bound, entered->appendIntConstant(m_proc, origin, type, room));
+            Value* farBound = entered->appendNew<Value>(m_proc, Sub, origin, bound, entered->appendIntConstant(m_proc, origin, type, room));
             entered->appendNew<Value>(m_proc, Jump, origin);
             entered->setSuccessors(FrequentedBlock(unrolledHeader));
+
+            IntegerInterval start = intervalFor(m_proc, plan.start, isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed);
+            bool startIsKnown = start.min == start.max;
+            // One test says that there is a first turn and that there are too few for the turns that are written out: a loop of a few turns pays a subtraction.
+            if (auto found = startIsKnown ? findTestOfFirstTurn(plan, start.min) : std::nullopt) {
+                BasicBlock* testOfFirstTurn = found->block;
+                BasicBlock* other = m_proc.addBlock();
+                other->appendNew<Value>(m_proc, Branch, origin, testOfFirstTurn->last()->child(0));
+                other->setSuccessors(testOfFirstTurn->successor(0), testOfFirstTurn->successor(1));
+                other->replaceSuccessor(found->blocksBehind[0], entered);
+                for (BasicBlock* block : found->blocksBehind) {
+                    Value* jump = block->last();
+                    for (Value* value : *block) {
+                        if (value == jump)
+                            continue;
+                        value->owner = testOfFirstTurn;
+                        testOfFirstTurn->appendNonTerminal(value);
+                    }
+                    block->values().shrink(0);
+                    block->values().append(jump);
+                }
+                auto appendInFront = [&](Value* value) {
+                    testOfFirstTurn->appendNonTerminal(value);
+                    return value;
+                };
+                int64_t leastBoundOfOneTurn = static_cast<int64_t>(start.min) + (includesEqual(plan.relation) ? 0 : 1);
+                Value* turnsBehindFirst = appendInFront(m_proc.add<Value>(Sub, origin, bound, appendInFront(m_proc.addIntConstant(origin, type, leastBoundOfOneTurn))));
+                Value* isNotShort = appendInFront(m_proc.add<Value>(AboveEqual, origin, turnsBehindFirst, appendInFront(m_proc.addIntConstant(origin, type, room))));
+                testOfFirstTurn->last()->child(0) = isNotShort;
+                testOfFirstTurn->setSuccessors(FrequentedBlock(other), FrequentedBlock(found->blocksBehind[0]));
+                return { bound, farBound };
+            }
+            Value* reached = startIsKnown ? constant(static_cast<int64_t>(start.min) + room) : append(m_proc.add<Value>(Add, origin, plan.start, constant(room)));
+            Value* enters = append(m_proc.add<Value>(plan.relation, origin, reached, bound));
             preHeader->replaceLastWithNew<Value>(m_proc, Branch, origin, enters);
             preHeader->setSuccessors(FrequentedBlock(entered), FrequentedBlock(plan.header));
-            return { bound, far };
+            return { bound, farBound };
         }
-        Value* far = append(m_proc.add<Value>(Sub, origin, bound, constant(room)));
+        Value* farBound = append(m_proc.add<Value>(Sub, origin, bound, constant(room)));
         Value* enters = nullptr;
         if (plan.needsGuardOfFarBound) {
             Opcode hasRoom = plan.step > 0 ? (isUnsignedRelation(plan.relation) ? AboveEqual : GreaterEqual) : (isUnsignedRelation(plan.relation) ? BelowEqual : LessEqual);
             enters = append(m_proc.add<Value>(hasRoom, origin, bound, constant(plan.farthestBoundWithRoom)));
         }
         if (!plan.testsCounterBeforeStep) {
-            Value* reaches = append(m_proc.add<Value>(plan.relation, origin, plan.start, far));
+            Value* reaches = append(m_proc.add<Value>(plan.relation, origin, plan.start, farBound));
             enters = enters ? append(m_proc.add<Value>(BitAnd, origin, enters, reaches)) : reaches;
         }
         if (!enters) {
             preHeader->setSuccessors(FrequentedBlock(unrolledHeader));
-            return { bound, far };
+            return { bound, farBound };
         }
         preHeader->replaceLastWithNew<Value>(m_proc, Branch, origin, enters);
         preHeader->setSuccessors(FrequentedBlock(unrolledHeader), FrequentedBlock(plan.header));
-        return { bound, far };
+        return { bound, farBound };
     }
 
     static constexpr int64_t greatestSumOfIntegers = 1ll << 52;
@@ -562,6 +676,7 @@ private:
         Vector<Variable*, 1> integers;
         Vector<Vector<Value*, 8>, 1> summandsOfTurns;
         for (const SumOfIntegers& sum : plan.sums) {
+            m_proc.count(B3::Counter::SumsKeptAsIntegers);
             integers.append(m_proc.addVariable(Int64));
             size_t index = sum.summand->owner->values().find(sum.summand);
             RELEASE_ASSERT(index != notFound);
@@ -616,7 +731,7 @@ private:
             BasicBlock* rest = plan.testsCounterBeforeStep ? plan.header : m_proc.addBlock();
             Value* tested = m_proc.add<VariableValue>(Get, origin, testedVariable);
             test->appendNonTerminal(tested);
-            Value* hasRoom = m_proc.add<Value>(plan.relation, origin, tested, bounds.far);
+            Value* hasRoom = m_proc.add<Value>(plan.relation, origin, tested, bounds.farBound);
             test->appendNonTerminal(hasRoom);
             test->last()->child(0) = hasRoom;
             BasicBlock* nextTurn = stayingCopy.block();

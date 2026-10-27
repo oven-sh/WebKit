@@ -329,7 +329,10 @@ void FunctionVerifier::verifyCast(BlockID block, ValueID id, const Value& value)
 {
     switch (value.opcode) {
     case Opcode::Upcast:
-        need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
+        if (typeOf(value.valueOperand()).mayBeUnspecified())
+            need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()).withPrimitives(Primitive::Unspecified));
+        else
+            need(InternalErrorKind::UpcastNotSubset, block, id, value.valueOperand(), m_program.at(value.castType()));
         return;
     case Opcode::Expect:
         if (hasClassProofs(m_program.at(value.expectedType().predicted())))

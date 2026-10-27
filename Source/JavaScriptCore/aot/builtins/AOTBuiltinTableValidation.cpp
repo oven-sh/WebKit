@@ -538,6 +538,18 @@ static void checkNewInstance(RealmComparison& comparison, BuiltinClassID classID
     }
 }
 
+static void checkInstanceTestsOfEntries(RealmComparison& comparison)
+{
+    auto& table = comparison.table;
+    forEachFoundObject(comparison, [&](BuiltinID id, JSObject* object) {
+        for (unsigned index = 0; index < table.classCount(); ++index) {
+            BuiltinClassID classID(index);
+            if (passesInstanceTest(table, classID, object).value_or(false) && !Typed::mayBeInstanceOf(table, id, classID))
+                comparison.report(id, "passes the instance test of "_s, table.tokenOf(classID), ", and the table says it is no instance"_s);
+        }
+    });
+}
+
 static void checkClasses(RealmComparison& comparison)
 {
     for (unsigned index = 0; index < comparison.table.classCount(); ++index) {
@@ -558,6 +570,7 @@ Vector<String> BuiltinTable::mismatches(JSGlobalObject* realm) const
     checkClosedHolders(comparison);
     checkThatNothingSettlesLater(comparison);
     checkClasses(comparison);
+    checkInstanceTestsOfEntries(comparison);
     return WTF::move(comparison.mismatches);
 }
 

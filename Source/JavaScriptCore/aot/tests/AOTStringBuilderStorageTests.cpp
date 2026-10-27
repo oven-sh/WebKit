@@ -1131,6 +1131,13 @@ public:
         return result;
     }
 
+    JSString* finishAsCompiledCodeDoes()
+    {
+        auto* result = uncheckedDowncast<JSString>(callOperationFromTest(m_program.vm(), operationAOTStackStringBuilderFinish, &m_program.instance(), reinterpret_cast<uint8_t*>(&m_builder), byteCast<uint8_t>(m_cursor), 0u).value);
+        AOT_TEST_CHECK(result && textOf(m_program, result) == m_expected.toString());
+        return result;
+    }
+
 private:
     void didChangeStorage()
     {
@@ -1184,6 +1191,24 @@ static void testStackBuilder(LoadedProgram& program)
             mixed.appendToStorage(jsString(vm, repeated('y', 200)));
     }
     mixed.finish(StringUse::Unknown);
+}
+
+static void testShortTextBuiltOnStackIsFoundAgain(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    State& state = program.state();
+    auto build = [&](ASCIILiteral text) {
+        StackBuilderForTest builder(program);
+        builder.appendInline(text);
+        return builder.finishAsCompiledCodeDoes();
+    };
+    AOT_TEST_CHECK(!state.propertyCaches.getIfCreated() && !state.stringKeys.getIfCreated());
+    AOT_TEST_CHECK(build(""_s) == vm.smallStrings.emptyString() && build("/"_s) == vm.smallStrings.singleCharacterString('/'));
+    AOT_TEST_CHECK(!state.stringKeys.getIfCreated());
+
+    JSString* first = build("/orders/17"_s);
+    AOT_TEST_CHECK(build("/orders/17"_s) == first && build("/orders/18"_s) != first);
+    AOT_TEST_CHECK(state.stringKeys.getIfCreated() && !state.propertyCaches.getIfCreated());
 }
 
 static void testParseIndex()
@@ -1425,14 +1450,14 @@ static NEVER_INLINE void convertAStringThatDies(LoadedProgram& program, uintptr_
     JSString* source = jsNontrivialString(program.vm(), "X-Dies-With-The-Request"_s);
     addressOfSource = std::bit_cast<uintptr_t>(source);
     AOT_TEST_CHECK(textOf(program, toLowerCase(program, source)) == "x-dies-with-the-request"_s);
-    AOT_TEST_CHECK(program.state().propertyCaches->stringKeys().tryFindCaseConversion(source, StringKeyCache::LetterCase::Lower));
+    AOT_TEST_CHECK(program.state().stringKeys->tryFindCaseConversion(source, StringKeyCache::LetterCase::Lower));
 }
 
 // The conversion of one and the same string is remembered for each case. Nothing is remembered of a string that died: another string may get its cell.
 static void testCaseConversionOfTheSameStringIsRemembered(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    StringKeyCache& keys = program.state().propertyCaches->stringKeys();
+    StringKeyCache& keys = *program.state().stringKeys;
     using LetterCase = StringKeyCache::LetterCase;
     Strong<JSString> source(vm, jsNontrivialString(vm, "Content-Type"_s));
     Strong<JSString> twin(vm, jsNontrivialString(vm, "Content-Type"_s));
@@ -1461,7 +1486,7 @@ static void testCaseConversionOfTheSameStringIsRemembered(LoadedProgram& program
 static void testCaseConversionsOfStringsWithOneHashAreRemembered(LoadedProgram& program)
 {
     VM& vm = program.vm();
-    StringKeyCache& keys = program.state().propertyCaches->stringKeys();
+    StringKeyCache& keys = *program.state().stringKeys;
     using LetterCase = StringKeyCache::LetterCase;
     auto hashOf = [&](JSString* string) { return StringKeyCache::indexOfCaseConversion(MarkedBlockCage::encode(keys.cageBase(), string), LetterCase::Lower); };
     Vector<Strong<JSString>> sources;
@@ -1519,6 +1544,7 @@ std::span<const NativeTest> stringBuilderStorageTests()
         { "string-builder-storage/keys-that-are-integers"_s, withInstance<testKeysThatAreIntegers> },
         { "string-builder-storage/parse-index"_s, testParseIndex },
         { "string-builder-storage/stack-builder"_s, withInstance<testStackBuilder> },
+        { "string-builder-storage/short-text-built-on-stack-is-found-again"_s, withInstance<testShortTextBuiltOnStackIsFoundAgain> },
         { "string-builder-storage/keys-up-to-the-cached-length"_s, withInstance<testKeysUpToTheCachedLength> },
         { "string-builder-storage/concatenated-keys"_s, withInstance<testConcatenatedKeys> },
         { "string-builder-storage/keys-found-by-their-parts"_s, withInstance<testKeysFoundByTheirParts> },

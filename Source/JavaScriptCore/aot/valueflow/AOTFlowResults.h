@@ -229,6 +229,7 @@ struct FlowProgramTables {
     Vector<ModuleFlow> modules;
     Vector<UnseenCodeRecord> unseenCode;
     Vector<UnseenCodeRecord> loadsOfMachineCode;
+    bool findsFilesOfProgramByName { true };
     ProgramInstances instances { ProgramInstances::Unknown };
     Vector<PropertyKeyID> keysStoredThroughUnknownReceivers;
     Vector<PropertyKeyID> keysDefinedOnObjectsWithoutKnownLayout;
@@ -364,6 +365,7 @@ public:
     bool unseenScriptsCanRun() const { return m_unseenScriptsCanRun; }
     std::span<const UnseenCodeRecord> unseenCode() const LIFETIME_BOUND { return m_tables.wholeProgram.unseenCode.span(); }
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.wholeProgram.loadsOfMachineCode.span(); }
+    bool findsFilesOfProgramByName() const { return !hasResults() || m_tables.wholeProgram.findsFilesOfProgramByName; }
     std::span<const BuiltinUseRecord> builtinUses() const LIFETIME_BOUND { return m_tables.builtins.uses.span(); }
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.builtins.featureUses.span(); }
     std::span<const FlowLocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.builtins.localeUses.span(); }

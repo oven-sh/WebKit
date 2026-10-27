@@ -10,6 +10,7 @@
 
 #include "AOTDecidedBranches.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -242,6 +243,7 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
     for (auto [read, replacement] : tables.replacedReads)
         replaceReadWithValue(m_program, builder.function(), substitution, read, replacement);
     substitution.apply(builder.function(), &m_analyses);
+    nameFactsWhereUnspecifiedValuesAreUsed(builder, m_analyses);
 }
 
 ValueID AllocationSinking::sameValueThroughTests(ValueID id)

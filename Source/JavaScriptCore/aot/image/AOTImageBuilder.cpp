@@ -428,9 +428,11 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline)
 {
     const Typed::FlowResults& flow = *pipeline.flow;
     if (!flow.hasResults())
-        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
+        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
 
     OptionSet<ImageFlag> flags;
+    if (flow.findsFilesOfProgramByName())
+        flags.add(ImageFlag::FindsDataFilesByName);
     for (const auto& record : flow.unseenCode()) {
         if (Typed::admitsUnknownJavaScript(record.cause))
             flags.add(ImageFlag::AdmitsUnknownJavaScript);

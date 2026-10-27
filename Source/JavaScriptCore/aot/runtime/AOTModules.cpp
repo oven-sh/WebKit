@@ -118,6 +118,7 @@ Modules::Modules(State& state)
     , m_admitsCodeOutsideImage(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector) || state.instance.vm->aotState().image->loadsCodeOutsideImage())
     , m_admitsInspector(hasFlag(state.instance.options().admitted(), AdmittedCode::Inspector))
     , m_loadsModulesByName(state.instance.vm->aotState().image->loadsModulesByName())
+    , m_findsDataFilesByName(state.instance.vm->aotState().image->findsDataFilesByName())
     , m_buildHasSeenWhoNamesModules(!m_admitsInspector)
 {
     m_instance.modules.status = state.tableArena.allocate<uint8_t>(m_table.size());

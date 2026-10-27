@@ -16,6 +16,7 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTRepresentation.h"
 #include "AOTRepresentationRules.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTThreads.h"
 #include "AOTTypeClosure.h"
 #include "AOTTypePropagation.h"
@@ -231,48 +232,59 @@ void FunctionVerifier::verifyOperands(BlockID block, ValueID id, const Value& va
         fail(InternalErrorKind::InvalidGuard, block, id);
         return;
     }
-    if (value.opcode == Opcode::AssumeType && typeOf(value.valueOperand()).mayBeUnspecified() && !typeOf(id).mayBeUnspecified() && !value.factOperand()) {
-        fail(InternalErrorKind::InvalidGuard, block, id);
-        return;
-    }
 
+    if (!verifyNoOperandIsUnspecified(block, id, value))
+        return;
     LayoutID layout = Value::opcodesWithLayout.contains(value.opcode) ? value.layout() : LayoutID();
     value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (hasFailed())
-            return;
-        // A cast hands the word on. Everything else would look at it, or put it where somebody may. The variable that it came from may get it back, and a validating build compares words.
-        bool goesBackIntoVariable = (value.opcode == Opcode::PutModuleVariable && holdsDeclaredTypeOnlyBehindEntry(m_program.at(value.variable()).flow))
-            || (value.opcode == Opcode::PutEnvironmentField && operandIndex == OperandIndex::PutEnvironmentField::value && holdsDeclaredTypeOnlyBehindEntry(flowOf(m_program, { value.layout(), value.field() }).location));
-        bool handsWordOn = value.operandUses(operandIndex) == OperandUses { OperandUse::Returns } || goesBackIntoVariable || value.opcode == Opcode::ValidateSameValue;
-        if (typeOf(operand).mayBeUnspecified() && !handsWordOn) {
-            fail(InternalErrorKind::UnspecifiedValueInspected, block, id, operand.index());
-            return;
-        }
-        verifyOperandKind(block, id, operandIndex, operand, value.operandKind(operandIndex), layout);
+        if (!hasFailed())
+            verifyOperandKind(block, id, operandIndex, operand, value.operandKind(operandIndex), layout);
     });
 }
 
 void FunctionVerifier::verifyOperands(BlockID block, const Terminator& terminator)
 {
+    if (!verifyNoOperandIsUnspecified(block, terminator))
+        return;
     terminator.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-        if (hasFailed())
-            return;
-        if (typeOf(operand).mayBeUnspecified()) {
-            fail(InternalErrorKind::UnspecifiedValueInspected, block, { }, operand.index());
-            return;
-        }
-        verifyOperandKind(block, { }, operandIndex, operand, terminator.operandKind(operandIndex), { });
+        if (!hasFailed())
+            verifyOperandKind(block, { }, operandIndex, operand, terminator.operandKind(operandIndex), { });
     });
+}
+
+// Everything that does not hand the word on would look at it, or put it where somebody may.
+bool FunctionVerifier::verifyNoOperandIsUnspecified(BlockID block, ValueID id, const Value& value)
+{
+    value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        if (!hasFailed() && typeOf(operand).mayBeUnspecified() && !handsOperandOn(m_program, value, operandIndex))
+            fail(InternalErrorKind::UnspecifiedValueInspected, block, id, operand.index());
+    });
+    return !hasFailed();
+}
+
+// A function hands on what its result is declared to hold.
+bool FunctionVerifier::verifyNoOperandIsUnspecified(BlockID block, const Terminator& terminator)
+{
+    bool handsWordOn = terminator.kind == TerminatorKind::Return && m_function.results.size() == 1 && typing().typeOf(m_function.result()).mayBeUnspecified();
+    terminator.forEachOperand([&](ValueID operand, uint32_t) {
+        if (!hasFailed() && typeOf(operand).mayBeUnspecified() && !handsWordOn)
+            fail(InternalErrorKind::UnspecifiedValueInspected, block, { }, operand.index());
+    });
+    return !hasFailed();
 }
 
 void FunctionVerifier::verifyOperandKind(BlockID block, ValueID user, uint32_t, ValueID operand, OperandKind kind, LayoutID layoutPayload)
 {
-    const Type& type = typeOf(operand);
+    // A word that may be anything gets here only where it is handed on. It is of the kind that it has when it has been filled.
+    Type type = typeOf(operand).withoutPrimitives(Primitive::Unspecified);
     auto hasKind = [&] {
         switch (kind) {
         case OperandKind::Any:
             // A pass may ask an environment that may be absent whether it is there.
-            return type.isJavaScriptValue() || (type.environment && user && m_function.at(user).opcode == Opcode::TypeTest && (m_form != IRForm::AsRead || isOptimizing()));
+            // A cast that names a fact says of any word that it has been filled. A parameter that such a word could get to and that is left with one source becomes an Upcast to its type.
+            return type.isJavaScriptValue() || (type.environment && user && m_function.at(user).opcode == Opcode::TypeTest && (m_form != IRForm::AsRead || isOptimizing()))
+                || (user && m_function.at(user).opcode == Opcode::AssumeType && m_function.at(user).factOperand())
+                || (user && m_function.at(user).opcode == Opcode::Upcast && m_program.at(m_function.at(user).castType()).mayBeUnspecified());
         case OperandKind::Boolean:
             return type.hasOnlyPrimitives(Primitive::Boolean);
         case OperandKind::Integer:

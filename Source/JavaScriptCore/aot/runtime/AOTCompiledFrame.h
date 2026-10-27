@@ -177,6 +177,9 @@ struct LogicalFrameSite {
     BuiltinID calledBuiltin { };
 };
 
+// After a tail call the frame above a construct belongs to another function than the one that was constructed.
+bool isFrameOfConstructedCallee(CallFrame* plainFunctionConstructFrame, FunctionID);
+
 LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const LogicalFrameSite&);
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction);
@@ -211,7 +214,6 @@ public:
     using Exit = CompiledFrameExit;
 
     struct RunEnd {
-        // After a tail call the outermost frame of the run belongs to another function than the one that was constructed.
         JS_EXPORT_PRIVATE bool constructs(FunctionID outermost) const;
 
         CallFrame* adapterFrame { nullptr };
@@ -307,6 +309,7 @@ private:
         CallFrame* asyncGeneratorStubFrame { nullptr };
         CallFrame* asyncGeneratorBodyFrame { nullptr };
         CallFrame* engineCalleeStubFrame { nullptr };
+        CallFrame* plainFunctionConstructFrame { nullptr };
         bool isAmongFramesThatWait { false };
     };
 

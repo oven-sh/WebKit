@@ -83,7 +83,6 @@ bool FunctionVerifier::run()
         &FunctionVerifier::verifyDominance,
         &FunctionVerifier::verifyGuards,
         &FunctionVerifier::verifyProofs,
-        &FunctionVerifier::verifyUnspecifiedValues,
         &FunctionVerifier::verifyOperations,
     };
     for (Stage stage : stages) {

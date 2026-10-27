@@ -13,7 +13,7 @@
 #include "AOTJSONHooks.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
-#include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeCounters.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
@@ -618,7 +618,7 @@ static JSString* stringOfIndex(VM& vm, Instance& instance, uint32_t index)
         string->tryGetValueImpl()->hash();
         return string;
     }
-    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance.state->stringKeys;
     if (JSString* string = keys.tryFindIntegerKey(index))
         return string;
     std::array<char, 10> digits;
@@ -653,7 +653,7 @@ ALWAYS_INLINE JSString* StringBuilderStorage::copyBufferToString(JSGlobalObject*
 
 static JSString* tryCreateKey(VM& vm, Instance& instance, std::span<const Latin1Character> characters)
 {
-    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance.state->stringKeys;
     if (JSString* key = tryCreateIndexKey(vm, instance, characters))
         return key;
     if (characters.size() <= keys.maxCachedKeyLength())
@@ -837,7 +837,7 @@ ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFin
 {
     if (!holdsOnlyShortTextInOwnBuffer() || m_limit < StringKeyCache::minReadableBytes) [[unlikely]]
         return std::nullopt;
-    const StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    const StringKeyCache& keys = *instance.state->stringKeys;
     if (m_position > keys.maxCachedKeyLength()) [[unlikely]]
         return std::nullopt;
     StringKeyCache::Lookup lookup = keys.findKeyForText(std::span<const Latin1Character> { m_characters, m_position }, key, hash);
@@ -850,7 +850,7 @@ ALWAYS_INLINE std::optional<StringKeyCache::Lookup> StringBuilderStorage::tryFin
 
 ALWAYS_INLINE JSString* StringBuilderStorage::finishWithNewKey(Instance& instance, unsigned hash)
 {
-    JSString* key = instance.state->propertyCaches->stringKeys().makeKey(*instance.vm, std::span<const Latin1Character> { m_characters, m_position }, hash);
+    JSString* key = instance.state->stringKeys->makeKey(*instance.vm, std::span<const Latin1Character> { m_characters, m_position }, hash);
     m_position = 0;
     returnToPool(instance);
     return key;
@@ -962,7 +962,7 @@ static ALWAYS_INLINE bool isIndexOfIntegerKey(JSValue primitive)
 
 JSString* StringBuilderStorage::tryFindKeyByParts(Instance& instance, std::span<const EncodedJSValue> primitives)
 {
-    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance.state->stringKeys;
     if (JSValue only = onlyPartWithCharacters(*instance.vm, primitives)) {
         if (isIndexOfIntegerKey(only))
             return keys.tryFindIntegerKey(only.asInt32());
@@ -975,7 +975,7 @@ JSString* StringBuilderStorage::tryFindKeyByParts(Instance& instance, std::span<
 
 static JSString* tryConcatenateShortKey(VM& vm, Instance& instance, std::span<const EncodedJSValue> primitives)
 {
-    StringKeyCache& keys = instance.state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance.state->stringKeys;
     if (JSValue only = onlyPartWithCharacters(vm, primitives)) {
         if (isIndexOfIntegerKey(only))
             return stringOfIndex(vm, instance, only.asInt32());
@@ -1074,17 +1074,18 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finish
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStackStringBuilderFinish);
     std::span<const Latin1Character> characters = reinterpret_cast<StackStringBuilder*>(builder)->charactersOnStack(byteCast<Latin1Character>(cursor));
-    OPERATION_RETURN(scope, instance->state->propertyCaches->stringKeys().makeKey(vm, characters, hash, { }));
+    OPERATION_RETURN(scope, instance->state->stringKeys->makeKey(vm, characters, hash, { }));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStackStringBuilderFinish, JSCell*, (Instance* instance, uint8_t* builder, uint8_t* cursor, uint32_t isLikelyKey))
 {
     auto& stackBuilder = *reinterpret_cast<StackStringBuilder*>(builder);
-    PropertyCaches* caches = instance->state->propertyCaches.getIfCreated();
-    if (stackBuilder.isOnStack() && caches) [[likely]] {
-        const StringKeyCache& keys = caches->stringKeys();
+    if (stackBuilder.isOnStack()) [[likely]] {
         std::span<const Latin1Character> characters = stackBuilder.charactersOnStack(byteCast<Latin1Character>(cursor));
-        if (characters.size() - 2 <= keys.maxCachedKeyLength() - 2) [[likely]] {
+        if (characters.size() < 2)
+            return { characters.empty() ? jsEmptyString(*instance->vm) : jsSingleCharacterString(*instance->vm, characters[0]), nullptr };
+        const StringKeyCache& keys = *instance->state->stringKeys;
+        if (characters.size() <= keys.maxCachedKeyLength()) [[likely]] {
             JSString* key;
             unsigned hash;
             switch (keys.findKeyForText(characters, key, hash)) {
@@ -1121,7 +1122,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
 static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateShortKey(Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey)
 {
     ShortKeyCharacters characters;
-    StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance->state->stringKeys;
     if (tryWriteShortKeyInline(unsafeMakeSpan(parts, count), characters) && characters.length - 2 <= keys.maxCachedKeyLength() - 2) [[likely]] {
         // A rope is made anew each time, so nobody asks for these parts again.
         if (characters.hasRopePart)
@@ -1151,7 +1152,7 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
             return { key, nullptr };
         [[clang::musttail]] return concatenateByContents(instance, count, parts, isLikelyKey);
     }
-    StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+    StringKeyCache& keys = *instance->state->stringKeys;
     StringKeyCache::KeyByParts taken;
     if (!taken.tryTake(keys.cageBase(), unsafeMakeSpan(parts, count)))
         taken.countAndKinds = 0;
@@ -1163,10 +1164,9 @@ static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concat
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatenate, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey))
 {
-    PropertyCaches* caches = instance->state->propertyCaches.getIfCreated();
-    if (!isLikelyKey || !caches) [[unlikely]]
+    if (!isLikelyKey) [[unlikely]]
         [[clang::musttail]] return concatenateByContents(instance, count, parts, isLikelyKey);
-    StringKeyCache& keys = caches->stringKeys();
+    StringKeyCache& keys = *instance->state->stringKeys;
     JSString* key;
     switch (count) {
     case 2: {

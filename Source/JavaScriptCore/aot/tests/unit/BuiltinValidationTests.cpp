@@ -180,6 +180,13 @@ static void testAdditionsToObjectPrototypeAreReported()
     checkChange("Object.prototype.extra = 1"_s, { "Object.prototype.extra: is not in the table"_s });
 }
 
+static void testEntryThatIsAnInstanceOfAnotherClassIsReported()
+{
+    checkChange("const replaced = new Map; Object.setPrototypeOf(replaced, Object.prototype); for (const key of Reflect.ownKeys(Reflect)) Object.defineProperty(replaced, key, Object.getOwnPropertyDescriptor(Reflect, key)); Object.defineProperty(globalThis, 'Reflect', { value: replaced })"_s, {
+        mismatchOf(Builtins::Reflect, "passes the instance test of Map, and the table says it is no instance"_s),
+    });
+}
+
 static void runWithOptionalGlobals(ASCIILiteral testName, void (*body)())
 {
     if (Options::useSharedArrayBuffer() && Options::useShadowRealm()) {
@@ -221,6 +228,7 @@ std::span<const NativeTest> builtinValidationTests()
         { "builtin-validation/hidden-roots-are-found"_s, withOptionalGlobals<testHiddenRootsAreFound> },
         { "builtin-validation/unlisted-members-are-reported"_s, withOptionalGlobals<testUnlistedMembersAreReported> },
         { "builtin-validation/additions-to-object-prototype-are-reported"_s, withOptionalGlobals<testAdditionsToObjectPrototypeAreReported> },
+        { "builtin-validation/entry-that-is-an-instance-of-another-class-is-reported"_s, withOptionalGlobals<testEntryThatIsAnInstanceOfAnotherClassIsReported> },
     };
     return tests;
 }

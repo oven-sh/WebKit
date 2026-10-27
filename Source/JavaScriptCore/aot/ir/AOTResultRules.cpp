@@ -554,8 +554,10 @@ Type ResultRules::declared(const Value& value, ModuleID module)
     return Type::forLayout(layout, context.types);
 }
 
-Type ResultRules::declared(const Value&, TypeID type)
+Type ResultRules::declared(const Value& value, TypeID type)
 {
+    if (value.opcode == Opcode::Unspecified)
+        return context.types.at(type).withPrimitives(Primitive::Unspecified);
     return context.types.at(type);
 }
 
@@ -638,7 +640,12 @@ Type ResultRules::unknown(const Value& value)
 
 Type ResultRules::cast(const Value& value, uint32_t operandIndex, TypeID castType)
 {
-    return context.typeOf(value.operand(operandIndex)).castTo(context.types.at(castType), context.types);
+    const Type& source = context.typeOf(value.operand(operandIndex));
+    Type result = source.castTo(context.types.at(castType), context.types);
+    // Only a cast that names a fact takes away that the word may be anything.
+    if (source.mayBeUnspecified() && !(value.opcode == Opcode::AssumeType && value.factOperand()))
+        return result.withPrimitives(Primitive::Unspecified);
+    return result;
 }
 
 // The one place where what is expected of a value becomes what is proven of it: a check tests. An expectation that nothing tests proves nothing.
@@ -824,7 +831,7 @@ struct ResultRulesWithoutType {
         return idInArena(context.typeIDOf(value.operand(operandIndex)));
     }
 
-    TypeID declared(const Value&, TypeID type) { return idInArena(type); }
+    TypeID declared(const Value& value, TypeID type) { return value.opcode == Opcode::Unspecified ? TypeID() : idInArena(type); }
 
     TypeID declared(const Value& value, VariableID variable)
     {
@@ -904,8 +911,11 @@ struct ResultRulesWithoutType {
 
     TypeID cast(const Value& value, uint32_t operandIndex, TypeID castType)
     {
+        TypeID source = context.typeIDOf(value.operand(operandIndex));
+        if (context.types.at(source).mayBeUnspecified()) [[unlikely]]
+            return { };
         return rememberedResult(Key::CastToType, SharedAnswers::AboutTypes, value, [&](auto& hasher) {
-            hasher.add(context.typeIDOf(value.operand(operandIndex)).index(), castType.index());
+            hasher.add(source.index(), castType.index());
         });
     }
 

@@ -24,7 +24,7 @@ static std::optional<ValueID> findValueOutsideLoop(SelectionContext& context, co
     ProgramPoint loopHead = ProgramPoint::atHeadOf(loop.header());
     for (ValueID id : CastChain(context.function(), operand)) {
         // Code on the loop entry also runs on the paths that never reach the use inside the loop.
-        if (!loops.belongsTo(uses.blockOf(id), loop) && analyses.dominates(id, loopHead) && isUsable(id) && !mayBeUnspecified(analyses, id))
+        if (!loops.belongsTo(uses.blockOf(id), loop) && analyses.dominates(id, loopHead) && isUsable(id) && !context.typeOf(id).mayBeUnspecified())
             return id;
     }
     return std::nullopt;

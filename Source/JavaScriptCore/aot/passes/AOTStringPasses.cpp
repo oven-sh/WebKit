@@ -42,12 +42,14 @@
 #include "AOTSlotPlan.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTStringArena.h"
 #include "AOTStringRanges.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTValueIdentity.h"
+#include "AOTValueSubstitution.h"
 #include "YarrFlags.h"
 #include <algorithm>
 #include <array>
@@ -164,7 +166,8 @@ struct StringBuilderStep {
     PassOutcome joinNestedBuilders();
 
     const Type& typeOf(ValueID id) const { return program.typeOf(function, id); }
-    bool isPart(ValueID id) const { return isStringBuilderPart(typeOf(id)); }
+    // Nobody reads what is Unspecified, so nothing is appended for it. It is asked what it stands in for.
+    bool isPart(ValueID id) const { return isStringBuilderPart(function.at(id).opcode == Opcode::Unspecified ? typeOf(id).withoutPrimitives(Primitive::Unspecified) : typeOf(id)); }
     bool isEmptyString(ValueID id) const { return stringConstantOf(program, function, id) == program.strings.emptyString(); }
 
     void retype(Value& value)
@@ -713,7 +716,7 @@ StringBuilderPlan StringBuilderStep::findWebs()
         });
         // The builder is begun on the edge with an append of the first state: a read in front of whatever says whether that state is there.
         bool wouldReadUnspecifiedFirstState = std::ranges::any_of(web.entries, [&](const StringWebEntry& entry) {
-            return entry.edge && function.at(entry.value).opcode != Opcode::Unspecified && mayBeUnspecified(context.analyses, entry.value);
+            return entry.edge && function.at(entry.value).opcode != Opcode::Unspecified && context.program.typeOf(function, entry.value).mayBeUnspecified();
         });
         if (!wouldReadUnspecifiedFirstState)
             web.decision = web.hasTooFewAppends ? StringBuilderDeclineReason::TooFewAppends : StringBuilderDeclineReason::Created;
@@ -779,7 +782,7 @@ PassOutcome StringBuilderStep::mergeNestedWebs(const StringBuilderPlan& plan)
             return std::nullopt;
         // The front is joined to each first state where the web is entered: a read in front of whatever says whether that state is there.
         bool wouldReadEmptyFirstState = std::ranges::any_of(nested.web->entries, [&](const StringWebEntry& entry) {
-            return context.program.typeOf(context.function, entry.value).mayBeUnspecified();
+            return function.at(entry.value).opcode != Opcode::Unspecified && context.program.typeOf(context.function, entry.value).mayBeUnspecified();
         });
         if (wouldReadEmptyFirstState)
             return std::nullopt;
@@ -1792,9 +1795,116 @@ static PassOutcome createAndJoinBuilders(FunctionPassContext& context)
     return outcome | rollBackAppendsUnderHandlers(context);
 }
 
+// A text that grows may begin as Unspecified on a way that never reads it: a builder begins empty there, and then nothing is left unfilled.
+// While the pass looks for such texts their states are plain strings. What stays a string gets its facts again behind the pass, where its uses stand. Where the pass makes nothing, all is put back as it was.
+struct StatesReadAsStrings {
+    struct State {
+        ValueID parameter;
+        TypeID type;
+    };
+    struct ReplacedUse {
+        Use use;
+        ValueID cast;
+    };
+    Vector<State, 8> states;
+    Vector<std::pair<ValueID, Value>, 8> casts;
+    Vector<ReplacedUse, 8> uses;
+
+    bool isEmpty() const { return states.isEmpty(); }
+};
+
+static StatesReadAsStrings readStatesThatBeginUnspecifiedAsStrings(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::Unspecified))
+        return { };
+    const CFG& cfg = context.analyses.cfg();
+    const UseLists& useLists = context.analyses.useLists();
+    auto typeOf = [&](ValueID id) -> const Type& { return context.types.at(function.at(id).type); };
+
+    BitVector isState(function.values.size());
+    Vector<std::pair<BlockID, uint32_t>, 8> states;
+    for (BlockID block : cfg.reversePostOrder()) {
+        const CompactList<ValueID>& parameters = function.at(block).parameters;
+        for (uint32_t index = 0; block != cfg.root() && index < parameters.size(); ++index) {
+            const Type& type = typeOf(parameters[index]);
+            if (!type.mayBeUnspecified() || !type.withoutPrimitives(Primitive::Unspecified).isString())
+                continue;
+            states.append({ block, index });
+            isState.quickSet(parameters[index].index());
+        }
+    }
+    auto isCastBehindFact = [&](const Use& use) {
+        return use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::AssumeType && use.operandIndex == OperandIndex::AssumeType::value && function.at(use.user).factOperand();
+    };
+    for (bool didRemove = true; didRemove;) {
+        didRemove = states.removeAllMatching([&](auto state) {
+            ValueID parameter = function.at(state.first).parameters[state.second];
+            bool beginsUnspecified = std::ranges::all_of(cfg.incomingEdges(state.first), [&](Edge edge) {
+                ValueID passed = valuePassedOn(function, edge, state.second);
+                return passed && (!typeOf(passed).mayBeUnspecified() || function.at(passed).opcode == Opcode::Unspecified || isState.quickGet(passed.index()));
+            });
+            bool isOnlyCastOrPassedOn = std::ranges::all_of(useLists.usesOf(parameter), [&](const Use& use) {
+                if (use.isEdgeUse())
+                    return isState.quickGet(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex].index());
+                return isCastBehindFact(use);
+            });
+            if (beginsUnspecified && isOnlyCastOrPassedOn)
+                return false;
+            isState.quickClear(parameter.index());
+            return true;
+        });
+    }
+    if (states.isEmpty())
+        return { };
+
+    StatesReadAsStrings result;
+    for (auto [block, index] : states) {
+        ValueID parameter = function.at(block).parameters[index];
+        result.states.append({ parameter, function.at(parameter).type });
+        for (const Use& use : useLists.usesOf(parameter)) {
+            if (!isCastBehindFact(use))
+                continue;
+            result.casts.append({ use.user, function.at(use.user) });
+            for (const Use& useOfCast : useLists.usesOf(use.user))
+                result.uses.append({ useOfCast, use.user });
+        }
+    }
+    for (const auto& replaced : result.uses)
+        replaceUse(function, replaced.use, function.at(replaced.cast).valueOperand());
+    // A cast that nobody names any more would count as a read of the state.
+    for (const auto& [cast, value] : result.casts)
+        becomeUndefined(function, cast);
+    for (const auto& state : result.states)
+        function.edit(state.parameter, ValueEdit::Type).type = context.types.intern(typeOf(state.parameter).withoutPrimitives(Primitive::Unspecified));
+    context.analyses.didChangeValues();
+    return result;
+}
+
+static void putBack(FunctionPassContext& context, const StatesReadAsStrings& read)
+{
+    Function& function = context.function;
+    for (const auto& state : read.states)
+        function.edit(state.parameter, ValueEdit::Type).type = state.type;
+    for (const auto& [cast, value] : read.casts)
+        function.edit(cast) = value;
+    for (const auto& replaced : read.uses)
+        replaceUse(function, replaced.use, replaced.cast);
+    context.analyses.didChangeValues();
+}
+
 PassOutcome createStringBuilders(FunctionPassContext& context)
 {
+    StatesReadAsStrings statesReadAsStrings = readStatesThatBeginUnspecifiedAsStrings(context);
     PassOutcome outcome = createAndJoinBuilders(context);
+    if (!statesReadAsStrings.isEmpty()) {
+        if (outcome == PassOutcome::Unchanged)
+            putBack(context, statesReadAsStrings);
+        else {
+            IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+            nameFactsWhereUnspecifiedValuesAreUsed(builder, context.analyses);
+        }
+    }
     // Each step that edits tells the analyses when it is done, for the step behind it asks them. So whatever they hold was made behind the last edit.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses;

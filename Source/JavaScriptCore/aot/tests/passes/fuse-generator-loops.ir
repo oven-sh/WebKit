@@ -328,7 +328,7 @@ function f11 name="valueLiveAcrossYield" parameters=[{type=anything}, {type=anyt
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # CHECK: = NewGenerator
-# CHECK-NEXT: [[seed11]]: anything = Unspecified valueType=anything @43
+# CHECK-NEXT: [[seed11]]: anything|unspecified = Unspecified valueType=anything @43
 # CHECK-NOT: StepGenerator
 # CHECK-NOT: YieldBySavingFrame
 # CHECK: Jump -> next {{*}}({{*}}, [[seed11]])

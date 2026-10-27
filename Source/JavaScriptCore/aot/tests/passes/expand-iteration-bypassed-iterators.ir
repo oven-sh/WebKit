@@ -184,9 +184,10 @@ function f6 name="joinsAnotherValue" parameters=[{type=Map<string, number>}, {ty
     Return v9
 # The cases of a join: expand-iteration-iterators-made-before-merges.ir.
 # CHECK: [[receiver6]]: Map<string, number> = Upcast v0 castType=Map<string, number>
-# CHECK: b3(v4: anything, [[arm6]]: int[0, 1], [[map6]]: Map<string, number>):
+# CHECK: b3(v4: anything|unspecified, [[arm6]]: int[0, 1], [[map6]]: unspecified|Map<string, number>):
 # CHECK-NEXT: Switch [[arm6]] cases=[0]
-# CHECK: = MapNext [[map6]],
+# CHECK: = MapNext [[mapInArm6]],
+# CHECK: [[mapInArm6]]: Map<string, number> = AssumeType [[map6]], [[isMap6]] provenType=Map<string, number>
 # CHECK: [[open6]]: undefined = CallDirect {{*}} function=f9 [isNeverInlined]
 # CHECK: = ResultAt [[open6]] index=1
 # ABSENT-NOT: b3(v3

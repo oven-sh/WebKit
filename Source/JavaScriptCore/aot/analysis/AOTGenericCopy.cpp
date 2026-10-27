@@ -480,7 +480,6 @@ void GenericCopy::recordTestedRejoins()
     if (m_testedRejoinBlocks.isEmpty())
         return;
     const Liveness& liveness = m_analyses.liveness();
-    UnspecifiedValues unspecifiedValues(m_analyses);
     for (BlockID block : m_testedRejoinBlocks) {
         if (!canLeaveCopyAt(block) || mergesAllocationThatSinksWithItsCopyAt(block))
             continue;
@@ -498,11 +497,11 @@ void GenericCopy::recordTestedRejoins()
                 rejoin.narrowedLiveValues.append(value);
         }
         for (ValueID parameter : m_function.at(block).parameters) {
-            if (unspecifiedValues.mayContain(parameter))
+            if (m_analyses.program().typeOf(m_function, parameter).mayBeUnspecified())
                 rejoin.valuesThatMayBeUnspecified.append(parameter);
         }
         for (ValueID value : rejoin.narrowedLiveValues) {
-            if (unspecifiedValues.mayContain(value))
+            if (m_analyses.program().typeOf(m_function, value).mayBeUnspecified())
                 rejoin.valuesThatMayBeUnspecified.append(value);
         }
         m_testedRejoins.append(WTF::move(rejoin));

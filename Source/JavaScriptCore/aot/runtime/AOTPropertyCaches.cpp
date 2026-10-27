@@ -66,6 +66,7 @@ namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(VMPropertyCaches);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PropertyCaches);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(StringKeyCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(HashedSlotTable);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RowDisplacementTable);
 
@@ -1198,18 +1199,24 @@ void initializePropertyCacheWords(Instance& instance)
         handlers[index] = offsets[index] == offsetOfAbsentStub ? nullptr : sharedCode + offsets[index];
 }
 
-LazyPropertyCaches::LazyPropertyCaches(State& state)
+template<typename T>
+CreatedAtFirstUse<T>::CreatedAtFirstUse(State& state)
     : m_state(state)
 {
 }
 
-LazyPropertyCaches::~LazyPropertyCaches() = default;
+template<typename T>
+CreatedAtFirstUse<T>::~CreatedAtFirstUse() = default;
 
-NEVER_INLINE PropertyCaches& LazyPropertyCaches::create()
+template<typename T>
+NEVER_INLINE T& CreatedAtFirstUse<T>::create()
 {
-    m_caches = makeUnique<PropertyCaches>(m_state);
-    return *m_caches;
+    m_value = makeUnique<T>(m_state);
+    return *m_value;
 }
+
+template class CreatedAtFirstUse<PropertyCaches>;
+template class CreatedAtFirstUse<StringKeyCache>;
 
 PropertyCaches::PropertyCaches(State& state)
     : m_state(state)
@@ -1218,7 +1225,6 @@ PropertyCaches::PropertyCaches(State& state)
     , m_tablesOwnerID(state.chainDependents->addOwner(m_tables))
     , m_siteCaches(*state.siteCaches)
     , m_watchedValues(state)
-    , m_stringKeys(state)
 {
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);

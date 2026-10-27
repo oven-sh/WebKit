@@ -48,11 +48,13 @@ enum class Counter : uint8_t {
     LoopsUnrolled,
     RangeChecksRemoved,
     LoopBoundsClamped,
+    LoopPollsRemoved,
+    SumsKeptAsIntegers,
     KnownInductionsUsed,
     TrapsFoldedIntoAccesses,
 };
 
-static constexpr unsigned numberOfCounters = 7;
+static constexpr unsigned numberOfCounters = 9;
 static_assert(static_cast<unsigned>(Counter::TrapsFoldedIntoAccesses) + 1 == numberOfCounters);
 
 struct LimitHit {

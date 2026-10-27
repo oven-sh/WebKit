@@ -31,9 +31,11 @@ function f0 name="string-is-loop-parameter" parameters=[{type=string}, {type=num
 # CHECK: = TypeTest v0 testedType=string
 # CHECK: LoopHint
 # CHECK: v9: string = AssumeType v0 provenType=string
-# CHECK-NEXT: v10: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v5
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[flatThere1]]: flatstring = AssumeType [[flat1]], [[filled1]] provenType=flatstring
+# CHECK-NEXT: v10: number = StringRangeCodeUnitOrNaN [[flatThere1]], -, -, v5
 # CHECK-COUNT-1: : flatstring = FlattenString
-# CHECK: ([[flat1]]: flatstring):
+# CHECK: ([[flat1]]: unspecified|flatstring):
 function f1 name="cast-in-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
     v2 = Undefined
     v3 = Integer integer=0

@@ -37,6 +37,8 @@ function f0 name="merge" parameters=[{type=boolean}] results=[{type=anything}] {
     v12 = NewArray contents=anything
     Jump -> next b9(v12)
   b9(v13):
-    v14 = CallBuiltin v13 overload=ArrayPrototypeLength/0
-    Return v14
+    v14 = Specified
+    v15 = AssumeType v13, v14 provenType=Array
+    v16 = CallBuiltin v15 overload=ArrayPrototypeLength/0
+    Return v16
 }

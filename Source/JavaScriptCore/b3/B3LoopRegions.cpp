@@ -31,9 +31,6 @@ static bool loopsBackThroughInvariantTests(NaturalLoops& loops, const NaturalLoo
 
 std::expected<HotRegion, GaveUp> findHotRegion(NaturalLoops& loops, const NaturalLoop& loop, std::optional<UnswitchedEdge> unswitched)
 {
-    if (!isInnermostLoop(loops, loop))
-        return std::unexpected(GaveUp(GaveUpReason::NotInnermost));
-
     HotRegion region;
     region.loop = &loop;
     region.header = loop.header();
@@ -53,6 +50,9 @@ std::expected<HotRegion, GaveUp> findHotRegion(NaturalLoops& loops, const Natura
             if (unswitched && block == unswitched->block && successor.block() != unswitched->successor)
                 continue;
             hasBackEdge |= successor.block() == loop.header();
+            // A loop inside that only rare edges lead into is one more slow path.
+            if (loops.innerMostLoopOf(successor.block()) != &loop)
+                return std::unexpected(GaveUp(GaveUpReason::NotInnermost));
             if (region.blockSet.add(successor.block()))
                 region.blocks.append(successor.block());
         }
@@ -104,7 +104,7 @@ IndexSet<BasicBlock*> findRejoiningBlocks(NaturalLoops& loops, const HotRegion& 
         for (BasicBlock* predecessor : worklist.takeLast()->predecessors()) {
             if (predecessor == region.header || !loops.belongsTo(predecessor, *region.loop) || !visited.add(predecessor))
                 continue;
-            if (!region.contains(predecessor) && !canCloneRareBlock(predecessor, invalidation))
+            if (!region.contains(predecessor) && (loops.innerMostLoopOf(predecessor) != region.loop || !canCloneRareBlock(predecessor, invalidation)))
                 continue;
             rejoiningBlocks.add(predecessor);
             worklist.append(predecessor);

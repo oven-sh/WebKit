@@ -226,6 +226,7 @@ public:
         return *m_site;
     }
     bool isAtFirstReadSite() const { return m_isAtFirstReadSite && site().site.firstReadSite; }
+    bool constructs(CompiledFunctionID callee) const { return site().site.isConstruct() && (!m_plainFunctionConstructFrame || isFrameOfConstructedCallee(m_plainFunctionConstructFrame, m_image.rootFunctionOf(callee.index()))); }
     void* callerStackPointer() const { return stackPointerOfCaller(m_callFrame, bytesAboveReturnAddressOf(site())); }
     CallFrame* machineFrame() const { return m_callFrame; }
     RunStart position() const { return { m_stackPointer, m_framePointer, m_rawPC, m_entryFrame, m_isAtFirstReadSite, true }; }
@@ -252,6 +253,7 @@ public:
     {
         ASSERT(!isAtEnd());
         m_isAtFirstReadSite = false;
+        m_plainFunctionConstructFrame = nullptr;
         if (passOverFrame())
             findFunctionFrame();
     }
@@ -302,6 +304,9 @@ private:
         case StubFrameKind::ArgumentList:
         case StubFrameKind::BelowSpilledArguments:
         case StubFrameKind::AtStubEntry:
+            break;
+        case StubFrameKind::PlainFunctionConstruct:
+            m_plainFunctionConstructFrame = m_callFrame;
             break;
         case StubFrameKind::MethodRead:
             return passOverMethodReadFrame();
@@ -369,6 +374,7 @@ private:
     void* m_stackPointer;
     CallFrame* m_framePointer;
     CallFrame* m_callFrame { nullptr };
+    CallFrame* m_plainFunctionConstructFrame { nullptr };
     void* m_rawPC;
     EntryFrame* m_entryFrame;
     bool m_isAtFirstReadSite;
@@ -437,7 +443,7 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
 
     for (; !walk.isAtEnd(); walk.advance(), calleeWasEntered = true) {
         const CallSiteCache::Entry& site = walk.site();
-        if (site.site.isConstruct() && !run.returnAddresses.isEmpty())
+        if (!run.returnAddresses.isEmpty() && walk.constructs(outermostCode))
             run.addFlagToLast(Trace::Flag::IsConstructCall);
         outermostCode = site.code;
         if (hasRecordedCallees && FunctionTables::of(vm).framesAreNamedByCallee(walk.image().rootFunctionOf(site.code.index()))) [[unlikely]] {
@@ -914,7 +920,7 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
             else if (caller.innermostVisibility == TraceVisibility::Visible && !caller.site.isTailCall())
                 setCallee(frame, tables.recordedCalleeOfCallFrom(callerStackPointer, FunctionDescription(frame.function).sourceFunction()));
         }
-        if (!lister.didFindCallerOfMachineFrame(caller.site.isConstruct()))
+        if (!lister.didFindCallerOfMachineFrame(walk.constructs(outermostCode)))
             return false;
     }
     if (!lister.didFindCallerOfMachineFrame(walk.runEnd().constructs(walk.image().rootFunctionOf(outermostCode.index()))) || !lister.handOn())

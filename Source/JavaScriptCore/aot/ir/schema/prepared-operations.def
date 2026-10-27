@@ -30,6 +30,7 @@ operation IsEnumeratorCurrent (enumerator: Enumerator/inspects, object: Any/insp
 family GuardValue Prepared..Placed
 operation AllGuards (guards...: Guard/inspects) -> natural(Guard) ; none ; relies = none ; interpreted = Guards
 operation Entered (function: Function(Dispatch)) -> natural(Fact) ; none
+operation Specified () -> natural(Fact) ; none
 
 family SlotAccess Prepared..Placed ; receiver = object ; accessClass = Slot
 operation GetSlot (object: Object/inspects, guard?: Guard/inspects, with SlotStamp) [holdsDeclaredType] -> declared(key) ; reads(ObjectFields[key]) ; access = Read ; relies = Shape, SlotFilled ; guarded = object ; interpreted = Read ; replaces = PropGet, PrivateGet

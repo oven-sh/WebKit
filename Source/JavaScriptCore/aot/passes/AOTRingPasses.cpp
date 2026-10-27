@@ -1805,8 +1805,8 @@ struct TrivialParameterRemover {
                 continue;
             }
             bool canReplace = canReplaceParameter(function, argument, parameter);
-            // A parameter dominates the handler of its block. An Upcast among the values of the block does not.
-            if (!canReplace && block.handler)
+            // A parameter dominates the handler of its block. An Upcast among the values of the block does not. And only a value of the program has an Upcast.
+            if (!canReplace && (block.handler || !context.types.at(function.at(parameter).type).isJavaScriptValue()))
                 continue;
             removedIndexes.set(index);
             if (canReplace)

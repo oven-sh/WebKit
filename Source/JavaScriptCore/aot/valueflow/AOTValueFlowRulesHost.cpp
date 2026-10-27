@@ -691,6 +691,19 @@ static void handLoadedModulesToNativeCode(ValueFlowRuleContext& context)
     });
 }
 
+// Text has import() and process.getBuiltinModule() and no require of a file. The loader answers it with an entry point under any name,
+// and with a data file of the image only where the program itself loads files by name.
+static void handLoadableModulesToText(ValueFlowRuleContext& context, bool filesOfProgramAreLoadedByName)
+{
+    handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
+    forEachModuleLoadableByName(context, [&](ModuleID module, bool isOfProgram) {
+        if (!isOfProgram || (context.program().at(module).kind == ModuleKind::Data && !filesOfProgramAreLoadedByName))
+            return;
+        connect(context, requiredValueOf(context, module), ValueFlowProgramNodes::escaped());
+        connect(context, namespaceOf(context, module), ValueFlowProgramNodes::escaped());
+    });
+}
+
 static void raiseEvent(ValueFlowRuleContext& context, BuiltinID builtin, UnseenCodeCause cause, ValueFlowNodeID result)
 {
     if (!loadsModulesByName(cause)) {
@@ -1088,10 +1101,11 @@ void runUnseenCode(const ValueFlowStatement&, ValueFlowRuleContext& context)
     }
     if (isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeChangesRealm))
         letAnythingHappenTo(context, ClimbingSet(context.maker().of(objectsOfHost.span())));
-    if (isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName))
+    bool filesOfProgramAreLoadedByName = isHostFlagRaised(context, ValueFlowHostNode::ModulesAreRequiredByName) || isHostFlagRaised(context, ValueFlowHostNode::ModulesAreImportedByName);
+    if (filesOfProgramAreLoadedByName && isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeHasLoader))
         handLoadedModulesToNativeCode(context);
     else
-        handLibraryModulesTo(context, context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode));
+        handLoadableModulesToText(context, filesOfProgramAreLoadedByName);
 
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         if (builtins.at(BuiltinID(index)).flags.contains(BuiltinFlag::EvaluatesText))

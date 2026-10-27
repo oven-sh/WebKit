@@ -21,6 +21,7 @@
 #include <utility>
 #include <wtf/BitSet.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/RapidHash.h>
 
@@ -31,6 +32,7 @@ struct State;
 
 class StringKeyCache {
     WTF_MAKE_NONCOPYABLE(StringKeyCache);
+    WTF_MAKE_TZONE_ALLOCATED(StringKeyCache);
 public:
     static constexpr size_t maxCaseConvertedStringLength = 64;
 

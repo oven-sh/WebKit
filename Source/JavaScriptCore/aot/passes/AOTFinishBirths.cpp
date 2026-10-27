@@ -420,7 +420,8 @@ private:
             State& state = (*atEnd[predecessor.index()])[arriving];
             if (state.isFinished || !state.isAlive || !isKnownToBeObject(m_objects[arriving]))
                 return;
-            m_insertions.append({ Opcode::TryFinishBirth, m_objects[arriving], pointBeforeTerminatorOf(m_function, predecessor) });
+            if (state.wasSeenByOthers || mayBeFilled(m_layouts[arriving], state))
+                m_insertions.append({ Opcode::TryFinishBirth, m_objects[arriving], pointBeforeTerminatorOf(m_function, predecessor) });
             state.isFinished = true;
         });
     }
@@ -582,7 +583,8 @@ private:
             std::optional<uint32_t> object = objectNamedBy(leaving);
             if (!object || states[*object].isFinished || !isKnownToBeObject(leaving))
                 return;
-            m_insertions.append({ Opcode::TryFinishBirth, leaving, pointBeforeTerminatorOf(m_function, id) });
+            if (states[*object].wasSeenByOthers || mayBeFilled(m_layouts[*object], states[*object]))
+                m_insertions.append({ Opcode::TryFinishBirth, leaving, pointBeforeTerminatorOf(m_function, id) });
             states[*object].isFinished = true;
         };
         block.terminator.forEachOperand([&](ValueID operand, uint32_t) {

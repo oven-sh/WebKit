@@ -977,6 +977,7 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     times.didFinish("built-ins: locations"_s);
     BitVector builtinsWhoseCodeRuns = findBuiltinsWhoseCodeRuns(inputs);
     tables.wholeProgram.unseenCode = collectUnseenCode(inputs, tables.wholeProgram.loadsOfMachineCode);
+    tables.wholeProgram.findsFilesOfProgramByName = filesOfProgramAreLoadedByName(inputs.solution);
     warnAboutLoadsUnderComputedNames(inputs.program, inputs.build, tables.wholeProgram.unseenCode.span());
     tables.wholeProgram.instances = countProgramInstances(inputs);
     times.didFinish("built-ins: code that runs, unseen code, instances"_s);

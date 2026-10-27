@@ -161,6 +161,10 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
 
 void GuardEmitter::generateHasNoExtraProperties(const ValueContext& value)
 {
+    if (const Type& type = typeOf(value->objectOperand()); emitter<ShapeTestEmitter>().isToldByStructuresOfBuiltins(type)) {
+        defineTest(value, emitter<ShapeTestEmitter>().isAsBuiltinMadeIt(in<CellPointer>(value->objectOperand()), type));
+        return;
+    }
     defineTest(value, emitter<ShapeTestEmitter>().hasNoExtraProperties(in<CellPointer>(value->objectOperand())));
 }
 
@@ -209,7 +213,10 @@ void GuardEmitter::planTestsOfFlags()
             const Value& test = m_function.at(id);
             const Terminator& terminator = m_function.at(block).terminator;
             bool decidesBranch = terminator.isConditionalBranch() && terminator.conditionOperand() == id;
-            if (uint8_t flags = decidesBranch ? flagsTestedBy(test) : 0)
+            uint8_t flags = decidesBranch ? flagsTestedBy(test) : 0;
+            if (flags && emitter<ShapeTestEmitter>().isToldByStructuresOfBuiltins(typeOf(test.objectOperand())))
+                continue;
+            if (flags)
                 tests.append(Test { id, analyses().identityOf(test.objectOperand()), block, &destinationOf(m_function, terminator.notTaken()), flags });
             else if (test.opcode == Opcode::HasNoFieldOutsideSlot)
                 mayBeUnfinished.add(analyses().identityOf(test.objectOperand()));
@@ -279,6 +286,10 @@ void GuardEmitter::generateIsNotFrozen(const ValueContext& value)
 
 void GuardEmitter::generateHasLayoutPrototype(const ValueContext& value)
 {
+    if (const Type& type = typeOf(value->objectOperand()); emitter<ShapeTestEmitter>().isToldByStructuresOfBuiltins(type)) {
+        defineTest(value, emitter<ShapeTestEmitter>().isAsBuiltinMadeIt(in<CellPointer>(value->objectOperand()), type));
+        return;
+    }
     // The state of an object that was handed a prototype is known only behind a test that has passed.
     if (emitter<SlotAccessEmitter>().stateOfNewObjectBefore(value, value->objectOperand()))
         defineTest(value, boolean(true));

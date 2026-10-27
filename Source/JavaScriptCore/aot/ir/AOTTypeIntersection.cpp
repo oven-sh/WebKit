@@ -81,13 +81,6 @@ static SortedSet<T> intersectLists(const SortedSet<T>& a, bool includesAllOfA, c
     return result;
 }
 
-static bool mayBeInstanceOf(const BuiltinTable& builtins, BuiltinID builtin, BuiltinClassID builtinClass)
-{
-    if (!isCallableBuiltin(builtins, builtin) || isFunctionClass(builtins, builtinClass))
-        return true;
-    return relate(builtins, BuiltinClasses::Function, builtinClass) == ClassRelation::Unknown;
-}
-
 static bool holdsBuiltinListedUnder(const BuiltinTable& builtins, const Type& a, const Type& b, BuiltinClassID builtinClass)
 {
     return std::ranges::any_of(a.builtins, [&](BuiltinID builtin) {

@@ -631,6 +631,7 @@ State::State(Instance& instance)
     , tables(instance.tables())
     , tableArena(pages, tables)
     , propertyCaches(*this)
+    , stringKeys(*this)
 {
     instance.state = this;
     caches = makeUnique<CacheRegistry>();

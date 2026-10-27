@@ -26,12 +26,12 @@ namespace JSC { namespace AOT { namespace Typed {
 
 using DecorationMark = B3::AbstractHeapRepository::DecorationMark;
 
-static bool receivesUnspecifiedValue(const Function& function, const BitVector& unspecifiedValues, Edge edge, uint32_t parameterIndex)
+static bool receivesMarkedValue(const Function& function, const BitVector& markedValues, Edge edge, uint32_t parameterIndex)
 {
     IncomingValue incoming = incomingValueOf(function, edge, parameterIndex);
     switch (incoming.kind) {
     case IncomingValue::Kind::Argument:
-        return unspecifiedValues.get(incoming.argument.index());
+        return markedValues.get(incoming.argument.index());
     case IncomingValue::Kind::EdgeResult:
         break;
     }
@@ -39,7 +39,7 @@ static bool receivesUnspecifiedValue(const Function& function, const BitVector& 
     EdgeResult result = edgeResultAt(function, incoming.result);
     switch (result.kind) {
     case EdgeResultKind::NarrowedOperand:
-        return unspecifiedValues.get(result.subject.index());
+        return markedValues.get(result.subject.index());
     case EdgeResultKind::Guard:
     case EdgeResultKind::DeclaredResult:
         return false;
@@ -47,28 +47,29 @@ static bool receivesUnspecifiedValue(const Function& function, const BitVector& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool returnsUnspecifiedOperand(const Function& function, const Value& value, const BitVector& unspecifiedValues)
+static bool returnsMarkedOperand(const Function& function, const Value& value, const BitVector& markedValues)
 {
     if (!hasRegister(value.representation))
         return false;
-    bool returnsUnspecified = false;
+    bool returnsMarked = false;
     forEachReturnedOperand(function, value, [&](ValueID operand) {
-        returnsUnspecified |= unspecifiedValues.get(operand.index());
+        returnsMarked |= markedValues.get(operand.index());
     });
-    return returnsUnspecified;
+    return returnsMarked;
 }
 
-static BitVector collectUnspecifiedValues(const Function& function, const CFG& cfg, bool (*isSource)(const Function&, const Value&))
+// A validating build marks a read that it moved to where the program does not read. The type does not say so: a pass that saw the mark would decide otherwise than in any other build.
+static BitVector collectValuesValidatedWhereLookedAt(const Function& function, const CFG& cfg)
 {
-    BitVector unspecifiedValues;
+    BitVector markedValues;
     for (BlockID block : cfg.reversePostOrder()) {
         for (ValueID id : function.at(block).values) {
-            if (isSource(function, function.at(id)))
-                unspecifiedValues.set(id.index());
+            if (function.at(id).opcode == Opcode::GetModuleVariable && function.at(id).isValidatedWhereLookedAt())
+                markedValues.set(id.index());
         }
     }
-    if (unspecifiedValues.isEmpty())
-        return unspecifiedValues;
+    if (markedValues.isEmpty())
+        return markedValues;
 
     bool changed = true;
     while (changed) {
@@ -77,27 +78,18 @@ static BitVector collectUnspecifiedValues(const Function& function, const CFG& c
             const Block& block = function.at(id);
             for (uint32_t parameterIndex = 0; parameterIndex < block.parameters.size(); ++parameterIndex) {
                 for (Edge edge : cfg.incomingEdges(id)) {
-                    if (receivesUnspecifiedValue(function, unspecifiedValues, edge, parameterIndex))
-                        changed |= unspecifiedValues.add(block.parameters[parameterIndex].index());
+                    if (receivesMarkedValue(function, markedValues, edge, parameterIndex))
+                        changed |= markedValues.add(block.parameters[parameterIndex].index());
                 }
             }
             for (ValueID value : block.values) {
-                if (returnsUnspecifiedOperand(function, function.at(value), unspecifiedValues))
-                    changed |= unspecifiedValues.add(value.index());
+                if (returnsMarkedOperand(function, function.at(value), markedValues))
+                    changed |= markedValues.add(value.index());
             }
         }
         changed &= cfg.hasCycle();
     }
-    return unspecifiedValues;
-}
-
-bool CodeGenerator::mayBeUnspecified(ValueID id)
-{
-    if (typeOf(id).mayBeUnspecified())
-        return true;
-    if (!m_unspecifiedValues)
-        m_unspecifiedValues = collectUnspecifiedValues(function(), analyses().cfg(), isUnspecifiedAtDefinition);
-    return m_unspecifiedValues->get(id.index());
+    return markedValues;
 }
 
 bool CodeGenerator::isValidatedWhereLookedAt(ValueID id)
@@ -105,7 +97,7 @@ bool CodeGenerator::isValidatedWhereLookedAt(ValueID id)
     if (typeOf(id).mayBeUnspecified())
         return true;
     if (!m_valuesValidatedWhereLookedAt)
-        m_valuesValidatedWhereLookedAt = collectUnspecifiedValues(function(), analyses().cfg(), Typed::isValidatedWhereLookedAt);
+        m_valuesValidatedWhereLookedAt = collectValuesValidatedWhereLookedAt(function(), analyses().cfg());
     return m_valuesValidatedWhereLookedAt->get(id.index());
 }
 
@@ -215,9 +207,9 @@ static bool hasUnconditionalType(CodeGenerator& generator, std::span<const LValu
 {
     const Value& value = generator.function().at(id);
     if (value.opcode == Opcode::Parameter)
-        return !generator.mayBeUnspecified(id) && (published == PublishedValue::Itself || !generator.hasTypeOnlyBehindTest(id));
+        return !generator.typeOf(id).mayBeUnspecified() && (published == PublishedValue::Itself || !generator.hasTypeOnlyBehindTest(id));
     if (value.opcode == Opcode::ResultAt)
-        return !generator.mayBeUnspecified(id) && isPinnedWithOperation(generator, loweredValues[id.index()], value.resultsOperand());
+        return !generator.typeOf(id).mayBeUnspecified() && isPinnedWithOperation(generator, loweredValues[id.index()], value.resultsOperand());
 
     switch (resultRuleOf(value.opcode)) {
     case ResultRule::Constant:

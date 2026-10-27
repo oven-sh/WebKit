@@ -536,7 +536,7 @@ struct CapacityPlanner {
 
     bool canMeasureAt(const MeasuredStorage& measured, ProgramPoint point)
     {
-        return analyses.dominates(measured.owner, point) && !mayBeUnspecified(analyses, measured.owner) && holdsAt(measured.guard, point);
+        return analyses.dominates(measured.owner, point) && !context.program.typeOf(function, measured.owner).mayBeUnspecified() && holdsAt(measured.guard, point);
     }
 
     // Nothing that anybody could tell lies between the point and the value, and no other way leads on from the point. So what the value does, a throw too, may as well be done at the point.
@@ -566,7 +566,7 @@ struct CapacityPlanner {
     bool canMeasureBehindCheck(const MeasuredStorage& measured, ProgramPoint point)
     {
         ValueID check = checkInFrontOf(function, measured);
-        return check && !function.at(point.block).handler && !mayBeUnspecified(analyses, measured.owner)
+        return check && !function.at(point.block).handler && !context.program.typeOf(function, measured.owner).mayBeUnspecified()
             && analyses.dominates(function.at(check).valueOperand(), point) && followsWithoutVisibleEffect(point, check);
     }
 
@@ -808,7 +808,7 @@ struct CapacityPlanner {
             return std::nullopt;
         ValueID collection = addition.receiverOperand();
         BlockID preheader = findPreheader(loop);
-        if (!preheader || !isInvariantIn(analyses, loop, collection) || mayBeUnspecified(analyses, collection))
+        if (!preheader || !isInvariantIn(analyses, loop, collection) || program.typeOf(function, collection).mayBeUnspecified())
             return std::nullopt;
         // A value that is invariant may still be computed in the loop.
         if (!analyses.dominates(collection, pointBeforeTerminatorOf(function, preheader)) || !makeSizeRead(context, collection, implementation == InlineBuiltin::MapSet))

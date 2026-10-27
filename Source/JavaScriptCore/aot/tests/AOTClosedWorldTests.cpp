@@ -25,10 +25,10 @@ static constexpr Flags closed { };
 static constexpr Flags runsText { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName };
 // A module that stays outside the image has require and every module of the library. It sees no module object of the program and replaces no answer of the loader.
 static constexpr Flags runsModuleFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
-static constexpr Flags findsModulesByName { ImageFlag::LoadsModulesByName };
-static constexpr Flags loadsCodeFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsCodeOutsideImage };
+static constexpr Flags findsModulesByName { ImageFlag::LoadsModulesByName, ImageFlag::FindsDataFilesByName };
+static constexpr Flags loadsCodeFromOutside { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::LoadsCodeOutsideImage, ImageFlag::FindsDataFilesByName };
 static constexpr Flags showsWaysBetweenModuleObjects { ImageFlag::ShowsWaysBetweenModuleObjects };
-static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
+static constexpr Flags open { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
 
 #define AOT_APPLY_EVALUATOR_TEXT R"IR(function f1 name="apply" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

@@ -219,6 +219,6 @@ function f10 name="data" parameters=[{type=boolean site=w22}] results=[{type=any
 # MODULE: = ModuleBuiltin builtin=ImportMeta module=m0
 # ARRAY: = Data data=d0 {{*}}encoding=CopyOnWriteArray
 # TREE: = Data data=d1 {{*}}encoding=ReadOnlyTree
-# DOUBLE: : number = Unspecified
-# CELL: : string = Unspecified
-# VALUE: : anything = Unspecified
+# DOUBLE: : number|unspecified = Unspecified
+# CELL: : string|unspecified = Unspecified
+# VALUE: : anything|unspecified = Unspecified

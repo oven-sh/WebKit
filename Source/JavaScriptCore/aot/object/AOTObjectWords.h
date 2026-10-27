@@ -232,6 +232,8 @@ struct ClassWords {
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
     const InstanceOfClassBelow* instancesOfClassesBelow;
+    // By class, as classPrototypes: the number of the Structure that a built-in constructor gives what it makes for the class. Zero until it has made the first. The run time keeps the Structure alive.
+    uint32_t* structuresOfInstancesMadeByBuiltins;
 };
 
 static_assert(sizeof(KeyOrderTransition) == 16);

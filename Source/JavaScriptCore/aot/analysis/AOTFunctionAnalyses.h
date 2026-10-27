@@ -190,7 +190,7 @@ public:
     {
         m_runningPass = pass;
         if (m_values.identities && !m_values.identities->isComplete())
-            completeIdentitiesBeforePass();
+            dropIncompleteIdentitiesBeforePass();
     }
     void didRunPass()
     {
@@ -265,7 +265,7 @@ private:
     void didBuild(FunctionAnalysis);
     void didBringUseListsUpToDate(const UseLists::Update&);
     void verifyUseLists() const;
-    void completeIdentitiesBeforePass();
+    void dropIncompleteIdentitiesBeforePass();
     void verifyIdentities(const CFG&) const;
     void verifyLiveness() const;
     void verifyFrequencies();

@@ -123,6 +123,7 @@ struct ImageCodeRanges {
 
 // Without AdmitsUnknownJavaScript the proofs in the code hold only while nothing but the code of the image runs, and without LoadsModulesByName only while no module is found by a name.
 // Without LoadsCodeOutsideImage they hold only while no file with code is loaded but those that the build lists as staying outside.
+// Without FindsDataFilesByName they hold only while no data file of the image is found by a name.
 enum class ImageFlag : uint32_t {
     IsObfuscated = 1 << 0,
     AdmitsUnknownJavaScript = 1 << 1,
@@ -130,6 +131,7 @@ enum class ImageFlag : uint32_t {
     AdmitsLibraryText = 1 << 3,
     ShowsWaysBetweenModuleObjects = 1 << 4,
     LoadsCodeOutsideImage = 1 << 5,
+    FindsDataFilesByName = 1 << 6,
 };
 
 // codeOffset and sections[].offset count from the header.

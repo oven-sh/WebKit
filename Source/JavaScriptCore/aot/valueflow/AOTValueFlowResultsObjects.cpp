@@ -428,7 +428,7 @@ static BitVector findWrittenFunctionsNamedWithSeveralTexts(const ValueFlowResult
 // A stack frame shows the own property `name` or `displayName` of the function object. What code that nobody has seen may do to a closure is written down as stores under unknown keys.
 struct FunctionsWhoseClosuresMayBeRenamed {
     BitVector all;
-    // Of those: no statement is seen to rename a closure of the function. A displayName that is written through an object nobody follows may.
+    // Of those: no statement is seen to rename a closure of the function. A displayName that is written, or a name that is defined, through an object nobody follows may.
     BitVector onlyWhereNobodySees;
     // In neither: no statement is seen to name a closure of the function, and its closures go where nobody follows them.
     BitVector outOfSight;
@@ -462,8 +462,9 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
             });
         });
     };
-    bool escapedClosuresMayBeRenamed = isDisplayNameWrittenThrough(ValueFlowUniverse::unknownObject(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject);
-    bool lostClosuresMayBeRenamed = isDisplayNameWrittenThrough(ValueFlowUniverse::untrackedObject(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
+    ValueSetID namedByDefinitions = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatDefinitionsName));
+    bool escapedClosuresMayBeRenamed = inputs.sets().contains(namedByDefinitions, ValueFlowUniverse::unknownObject()) || isDisplayNameWrittenThrough(ValueFlowUniverse::unknownObject(), ValueFlowHostNode::SourcesOfCopiesIntoUnknownObject);
+    bool lostClosuresMayBeRenamed = inputs.sets().contains(namedByDefinitions, ValueFlowUniverse::untrackedObject()) || isDisplayNameWrittenThrough(ValueFlowUniverse::untrackedObject(), ValueFlowHostNode::SourcesOfCopiesIntoUntrackedObject);
 
     BitVector functions(program.functions.size());
     BitVector onlyWhereNobodySees(program.functions.size());

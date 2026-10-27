@@ -45,13 +45,15 @@ function f0 name="cellBesideTag" parameters=[{type=anything}, {type=number}, {ty
   b10():
     Switch v10 cases=[2] -> case b11(), otherwise b12()
   b11():
-    Return v11
+    v27 = Specified
+    v28 = AssumeType v11, v27 provenType=null|string|L0
+    Return v28
   b12():
     Return v8
-# CHECK: b1(v8: number, v9: int|whole, v10: {{*}}, v11: null|string|L0{{*}}):
-# CHECK: [[entry0]]({{*}}: number ~ 0, {{*}}: null|string|L0{{*}}):
+# CHECK: b1(v8: number, v9: int|whole, v10: {{*}}, v11: null|string|unspecified|L0{{*}}):
+# CHECK: [[entry0]]({{*}}: number ~ 0, {{*}}: null|string|unspecified|L0{{*}}):
 # CHECK-NEXT: Jump -> next b1(
-# CHECK-NEXT: [[tests0]]([[sum0]]: number|string|bigint, [[counter0]]: int|whole, [[tag0]]: {{*}}, [[cell0]]: null|string|L0{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[tests0]]([[sum0]]: number|string|bigint, [[counter0]]: int|whole, [[tag0]]: {{*}}, [[cell0]]: null|string|unspecified|L0{{*}}) frequency=Unlikely:
 # CHECK-NEXT: [[test0]]: boolean = TypeTest [[sum0]] testedType=number
 # CHECK-NEXT: Branch [[test0]] -> taken [[passed0]](| 0), notTaken
 # CHECK-NEXT: [[passed0]]([[narrowed0]]: number) frequency=Unlikely:
@@ -119,19 +121,23 @@ function f2 name="testOfEveryTurnStaysBehindTheTag" parameters=[{type=anything},
     LoopHint
     Switch v7 cases=[2] -> case b4(), otherwise b8()
   b4():
-    v10 = TypeTest v8 testedType=L0
-    Branch v10 -> taken b5(| 0), notTaken b6()
-  b5(v11):
-    Jump -> next b7(v11)
-  b6() frequency=Unlikely:
-    v12 = Call v0, -
-    v13 = AssumeType v12 provenType=null|string|L0
+    v10 = Specified
+    v11 = AssumeType v8, v10 provenType=null|string|L0
+    v12 = TypeTest v11 testedType=L0
+    Branch v12 -> taken b5(| 0), notTaken b6()
+  b5(v13):
     Jump -> next b7(v13)
-  b7(v14):
-    Branch v1 -> taken b3(v7, v14), notTaken b8()
+  b6() frequency=Unlikely:
+    v14 = Call v0, -
+    v15 = AssumeType v14 provenType=null|string|L0
+    Jump -> next b7(v15)
+  b7(v16):
+    Branch v1 -> taken b3(v7, v16), notTaken b8()
   b8():
     Return
 # CHECK: b4():
-# CHECK-NEXT: v10: boolean = TypeTest v8 testedType=L0
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[v8There]]: null|string|L0 = AssumeType v8, [[filled1]] provenType=null|string|L0
+# CHECK-NEXT: v12: boolean = TypeTest [[v8There]] testedType=L0
 # CHECK-NOT: = TypeTest
 }

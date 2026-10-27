@@ -16,7 +16,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
-#include "AOTPropertyCaches.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTState.h"
 #include "AOTStringEmitter.h"
@@ -649,7 +649,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* i
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     int64_t value = static_cast<int64_t>(bits);
     if (value >= static_cast<int64_t>(NumericStrings::cacheSize) && value <= INT32_MAX) {
-        StringKeyCache& keys = instance->state->propertyCaches->stringKeys();
+        StringKeyCache& keys = *instance->state->stringKeys;
         JSString* string = keys.tryFindIntegerKey(static_cast<uint32_t>(value));
         if (!string) {
             std::array<Latin1Character, 10> digits;
@@ -679,7 +679,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance
     // Most numbers that become text are ids and counts. Their text is asked for by the integer, as the stub IntegerToString asks, so that every road gives the same string.
     int32_t integer = truncateDoubleToInt32(value);
     if (integer == value && integer >= static_cast<int32_t>(NumericStrings::cacheSize)) {
-        if (JSString* key = instance->state->propertyCaches->stringKeys().tryFindIntegerKey(static_cast<uint32_t>(integer)))
+        if (JSString* key = instance->state->stringKeys->tryFindIntegerKey(static_cast<uint32_t>(integer)))
             return key;
         return operationAOTIntToString(instance, static_cast<uint64_t>(integer));
     }
@@ -840,13 +840,13 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
 JSC_DEFINE_JIT_OPERATION(operationAOTStringToLowerCase, JSCell*, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringToLowerCase);
-    OPERATION_RETURN(scope, convertCase<LetterCase::Lower>(globalObject, vm, instance->state->propertyCaches->stringKeys(), cellArgument<JSString>(cell, Entry::operationAOTStringToLowerCase)));
+    OPERATION_RETURN(scope, convertCase<LetterCase::Lower>(globalObject, vm, *instance->state->stringKeys, cellArgument<JSString>(cell, Entry::operationAOTStringToLowerCase)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringToUpperCase, JSCell*, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringToUpperCase);
-    OPERATION_RETURN(scope, convertCase<LetterCase::Upper>(globalObject, vm, instance->state->propertyCaches->stringKeys(), cellArgument<JSString>(cell, Entry::operationAOTStringToUpperCase)));
+    OPERATION_RETURN(scope, convertCase<LetterCase::Upper>(globalObject, vm, *instance->state->stringKeys, cellArgument<JSString>(cell, Entry::operationAOTStringToUpperCase)));
 }
 
 template<typename CharacterType>

@@ -993,37 +993,57 @@ static void removeBySlotAndReturn(StubAssembler& jit, const KeyedProbeRegisters&
     isNotAmongExtraProperties.link(&jit);
     Jump isNoField = jit.branch32(CCallHelpers::NotEqual, kind, TrustedImm32(static_cast<int32_t>(Slot::Kind::FieldRemoval)));
     const CachedSlot fieldRemoval(probed.form, Slot::Kind::FieldRemoval, probed.header, probed.payload);
-    needsOperation.append(jit.branch32(CCallHelpers::NotEqual, Address(base, offsetOfOrderWord), fieldRemoval.registerOfFirstPayloadWord()));
-    fieldRemoval.loadSecondPayloadWord(jit, scratch);
-    jit.store32(scratch, Address(base, offsetOfOrderWord));
     const GPRReg pattern = registers.key;
+    const GPRReg held = registers.key;
     const GPRReg offset = registers.entry;
     const BaseIndex slotOfField(base, offset, CCallHelpers::TimesOne);
     fieldRemoval.loadHiddenWordOffset(jit, offset);
     jit.urshift64(probed.header, TrustedImm32(Slot::flagsShiftInHeader + Slot::absentPatternShift), pattern);
     jit.and32(TrustedImm32(Slot::absentPatternMask), pattern);
+    JumpList hasEightBytes;
+    JumpList hasFourBytes;
+    JumpList isAbsent;
     JumpList isCleared;
-    auto writeIfPatternIs = [&](AbsentPattern candidate, unsigned width, uint64_t bits) {
-        Jump isOther = jit.branch32(CCallHelpers::NotEqual, pattern, TrustedImm32(static_cast<int32_t>(candidate)));
-        jit.move(TrustedImm64(static_cast<int64_t>(bits)), scratch);
-        if (width == sizeof(uint64_t))
-            jit.store64(scratch, slotOfField);
-        else if (width == sizeof(uint32_t))
-            jit.store32(scratch, slotOfField);
-        else
-            jit.store8(scratch, slotOfField);
-        isCleared.append(jit.jump());
-        isOther.link(&jit);
+    auto branchIfPatternIs = [&](AbsentPattern candidate) {
+        return jit.branch32(CCallHelpers::Equal, pattern, TrustedImm32(static_cast<int32_t>(candidate)));
     };
-    writeIfPatternIs(AbsentPattern::ZeroInEightBytes, sizeof(uint64_t), 0);
-    writeIfPatternIs(AbsentPattern::ZeroInFourBytes, sizeof(uint32_t), 0);
-    writeIfPatternIs(AbsentPattern::Int32, sizeof(uint32_t), static_cast<uint32_t>(absentInt32));
-    writeIfPatternIs(AbsentPattern::Double, sizeof(uint64_t), absentDouble);
-    writeIfPatternIs(AbsentPattern::Integer, sizeof(uint64_t), static_cast<uint64_t>(absentInteger));
+    auto branchUnlessOrderIsFiled = [&] {
+        needsOperation.append(jit.branch32(CCallHelpers::NotEqual, Address(base, offsetOfOrderWord), fieldRemoval.registerOfFirstPayloadWord()));
+    };
     static_assert(absentPatternOf(SlotRepresentation::OptionalBoolean) == AbsentPattern::ZeroInOneByte);
     jit.move(TrustedImm32(0), scratch);
+    hasEightBytes.append(branchIfPatternIs(AbsentPattern::ZeroInEightBytes));
+    hasFourBytes.append(branchIfPatternIs(AbsentPattern::ZeroInFourBytes));
+    Jump hasOneByte = branchIfPatternIs(AbsentPattern::ZeroInOneByte);
+    jit.move(TrustedImm32(absentInt32), scratch);
+    hasFourBytes.append(branchIfPatternIs(AbsentPattern::Int32));
+    jit.move(TrustedImm64(static_cast<int64_t>(absentDouble)), scratch);
+    hasEightBytes.append(branchIfPatternIs(AbsentPattern::Double));
+    jit.move(TrustedImm64(static_cast<int64_t>(absentInteger)), scratch);
+
+    hasEightBytes.link(&jit);
+    jit.load64(slotOfField, held);
+    isAbsent.append(jit.branch64(CCallHelpers::Equal, held, scratch));
+    branchUnlessOrderIsFiled();
+    jit.store64(scratch, slotOfField);
+    isCleared.append(jit.jump());
+
+    hasOneByte.link(&jit);
+    jit.load8(slotOfField, held);
+    isAbsent.append(jit.branchTest32(CCallHelpers::Zero, held));
+    branchUnlessOrderIsFiled();
     jit.store8(scratch, slotOfField);
+    isCleared.append(jit.jump());
+
+    hasFourBytes.link(&jit);
+    jit.load32(slotOfField, held);
+    isAbsent.append(jit.branch32(CCallHelpers::Equal, held, scratch));
+    branchUnlessOrderIsFiled();
+    jit.store32(scratch, slotOfField);
+
     isCleared.link(&jit);
+    fieldRemoval.loadSecondPayloadWord(jit, scratch);
+    jit.store32(scratch, Address(base, offsetOfOrderWord));
     Jump staysAsBorn = fieldRemoval.branchUnlessFlag(jit, Slot::leavesStateOfBirth);
     jit.load8(Address(base, JSCell::typeInfoFlagsOffset()), scratch);
     jit.or32(TrustedImm32(TypeInfoPerCellBit), scratch);
@@ -1031,6 +1051,8 @@ static void removeBySlotAndReturn(StubAssembler& jit, const KeyedProbeRegisters&
     staysAsBorn.link(&jit);
     returnTrue(jit);
 
+    isAbsent.link(&jit);
+    needsOperation.append(jit.branchTest32(CCallHelpers::NonZero, Address(base, offsetOfOrderWord), TrustedImm32(orderWordHasFieldOutsideSlot)));
     isNoField.link(&jit);
     returnTrue(jit);
 }

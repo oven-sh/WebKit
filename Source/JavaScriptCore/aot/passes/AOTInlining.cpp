@@ -100,6 +100,7 @@ static constexpr OpcodeSet opcodesWithoutCode = castsThatProveNothing | OpcodeSe
     Opcode::FinishObject,
     Opcode::AllGuards,
     Opcode::Entered,
+    Opcode::Specified,
     Opcode::LogicalNot,
     Opcode::ValidateType,
     Opcode::ValidateCallee,

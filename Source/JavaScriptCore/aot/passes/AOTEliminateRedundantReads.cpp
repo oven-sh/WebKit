@@ -1321,6 +1321,18 @@ static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
     };
     const Program& program = context.program;
     Function& function = context.function;
+    auto isBrandOperation = [&](const Value& value) {
+        return (value.opcode == Opcode::PrivateGet || value.opcode == Opcode::PrivateDefine) && program.at(value.layout()).fields[value.field()].flags.contains(FieldFlags::IsBrand);
+    };
+    size_t numberOfBrandOperations = 0;
+    for (const Block& block : function.blocks) {
+        numberOfBrandOperations += std::ranges::count_if(block.values, [&](ValueID id) {
+            return isBrandOperation(function.at(id));
+        });
+    }
+    if (numberOfBrandOperations < 2)
+        return PassOutcome::Unchanged;
+
     const Dominators& dominators = context.analyses.dominators();
     Vector<Brand, 8> taken;
     Vector<size_t, 16> numberTakenAtEntry;
@@ -1332,9 +1344,7 @@ static PassOutcome dropRepeatedBrandTests(FunctionPassContext& context)
         BitVector erasedIndexes;
         for (size_t index = 0; index < values.size(); ++index) {
             const Value& value = function.at(values[index]);
-            if (value.opcode != Opcode::PrivateGet && value.opcode != Opcode::PrivateDefine)
-                continue;
-            if (!program.at(value.layout()).fields[value.field()].flags.contains(FieldFlags::IsBrand))
+            if (!isBrandOperation(value))
                 continue;
             Brand brand { sameObjectThroughCasts(function, value.objectOperand()), sameObjectThroughCasts(function, value.tokenOperand()), value.layout(), value.field(), block };
             // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
@@ -1378,6 +1388,21 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
     };
     const BuiltinTable& builtins = context.program.builtins();
     Function& function = context.function;
+    Vector<BuiltinID, 8> initializedBuiltins;
+    bool hasRepeatedBuiltin = false;
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::InitializeBuiltin)
+                continue;
+            BuiltinID builtin = builtins.canonicalID(value.builtin());
+            hasRepeatedBuiltin |= initializedBuiltins.contains(builtin);
+            initializedBuiltins.append(builtin);
+        }
+    }
+    if (!hasRepeatedBuiltin)
+        return PassOutcome::Unchanged;
+
     const Dominators& dominators = context.analyses.dominators();
     Vector<Initialization, 8> done;
     Vector<size_t, 16> numberDoneAtEntry;
@@ -2691,10 +2716,9 @@ struct LoopPathSeparator : LoopEditor {
         plan.letsVariablesBeCarried = isHot && mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
-        UnspecifiedValues unspecifiedValues(m_analyses);
         plan.carriedValuesThatMayBeUnspecified = BitVector(parameters.size());
         for (size_t index = 0; index < parameters.size(); ++index) {
-            if (unspecifiedValues.mayContain(parameters[index]))
+            if (typeOf(parameters[index]).mayBeUnspecified())
                 plan.carriedValuesThatMayBeUnspecified.set(index);
         }
         bool movesTest = isHot && std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {

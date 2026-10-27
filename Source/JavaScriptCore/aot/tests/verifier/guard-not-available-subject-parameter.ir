@@ -112,8 +112,10 @@ function f6 name="badCallBeforeTheOnlyEdgeThatPassesAnObject" parameters=[{type=
     v6 = AllGuards
     Jump -> next b3(v5, v6)
   b3(v7, v8):
-    v9 = GetArrayLength v7, v8
-    Return v9
+    v9 = Specified
+    v10 = AssumeType v7, v9 provenType=Array
+    v11 = GetArrayLength v10, v8
+    Return v11
 }
 function f7 name="goodShapeOutlastsTheCalls" parameters=[{type=object}, {type=object}, {type=boolean}, {type=anything}] results=[{type=anything}] {
     Branch v2 -> taken b1(), notTaken b2()

@@ -719,6 +719,8 @@ static void testBackEndReportStatistics()
     raw.counters[static_cast<size_t>(B3::Counter::LoopBoundsClamped)] = 8;
     raw.counters[static_cast<size_t>(B3::Counter::KnownInductionsUsed)] = 9;
     raw.counters[static_cast<size_t>(B3::Counter::TrapsFoldedIntoAccesses)] = 10;
+    raw.counters[static_cast<size_t>(B3::Counter::LoopPollsRemoved)] = 11;
+    raw.counters[static_cast<size_t>(B3::Counter::SumsKeptAsIntegers)] = 12;
     AOT_TEST_CHECK(!program.report(build, program.functionAsRead(), raw));
 
     expected.count(StatisticID::LoopsVersioned, 4);
@@ -728,6 +730,8 @@ static void testBackEndReportStatistics()
     expected.count(StatisticID::LoopBoundsClamped, 8);
     expected.count(StatisticID::KnownInductionsUsed, 9);
     expected.count(StatisticID::NullChecksFoldedIntoAccesses, 10);
+    expected.count(StatisticID::LoopPollsRemoved, 11);
+    expected.count(StatisticID::SumsKeptAsIntegers, 12);
     AOT_TEST_CHECK(build.statistics().values() == expected.values());
     AOT_TEST_CHECK(build.takeLosses(&program.program()).isEmpty());
 }

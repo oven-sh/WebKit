@@ -804,19 +804,23 @@ UseLists* FunctionAnalyses::updatingUseLists()
     return &*m_values.useLists;
 }
 
-static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass) { return pass == PassID::SimplifyControlFlow || pass == PassID::RemoveTrivialParameters; }
+static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatAskForIdentitiesOnlyBeforeEditing {
+    PassID::SimplifyControlFlow, PassID::RemoveTrivialParameters, PassID::PropagateBranchConditions, PassID::RemoveRedundantBarriers,
+};
+
+static constexpr bool asksForIdentitiesOnlyBeforeEditing(PassID pass) { return passesThatAskForIdentitiesOnlyBeforeEditing.contains(pass); }
 
 static constexpr EnumeratorBitSet<PassID, numberOfPasses> passesThatMayCompleteIdentitiesLate {
     PassID::FoldConstants, PassID::PropagateBranchConditions, PassID::HoistTestsIntoPredecessors, PassID::ThreadJumps, PassID::EliminateDeadCode,
     PassID::EliminateRedundantReads, PassID::RetypeValues, PassID::CompactBlocks,
 };
 
-void FunctionAnalyses::completeIdentitiesBeforePass()
+void FunctionAnalyses::dropIncompleteIdentitiesBeforePass()
 {
     if (asksForIdentitiesOnlyBeforeEditing(m_runningPass) || passesThatMayCompleteIdentitiesLate.contains(m_runningPass))
         return;
-    m_values.identities->setGraph(&cfg());
-    m_values.identities->complete();
+    willDrop(FunctionAnalysis::Identities);
+    m_values.identities.reset();
 }
 
 const ValueIdentities& FunctionAnalyses::identities()

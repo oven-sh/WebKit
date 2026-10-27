@@ -402,23 +402,36 @@ static ValueID readAheadAndAssumeInPlace(FunctionPassContext& context, IRBuilder
 
 // In the header what stands in front of a read is known, and so it is in the block behind a test of the header that holds when the loop is entered. Anything in the loop may have run in front of a read in another block.
 // A loop that is entered from a branch has no block in front of it for what leaves it: such an entry is listed where something would leave.
-static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& looksAtWhatMayBeUnspecified, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
+static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop& loop, Vector<BlockID>& definingBlock, const BitVector& headersWhoseTestHoldsOnEntry, Vector<Edge, 2>& entriesFromBranches)
 {
     const Program& program = context.program;
     Function& function = context.function;
     BlockID header = loop.header();
     if (isClosedOnlyByWaysBack(context.analyses, loop).predicted())
         return 0;
-    bool hasRead = false;
+    if (function.at(header).isHandlerBlock())
+        return 0;
     BitVector body(function.blocks.size());
-    for (unsigned i = 0; i < loop.size(); ++i) {
+    for (unsigned i = 0; i < loop.size(); ++i)
         body.quickSet(loop.at(i).index());
-        hasRead |= std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
+    auto hasInvariantOperands = [&](const Value& value) {
+        bool result = true;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            BlockID block = definingBlock[operand.index()];
+            result &= block && !body.get(block.index());
+        });
+        return result;
+    };
+    bool hasCandidate = false;
+    for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
+        hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            return lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean || (hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read);
+            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || value.opcode == Opcode::ToBoolean)
+                return hasInvariantOperands(value);
+            return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
         });
     }
-    if (!hasRead || function.at(header).isHandlerBlock())
+    if (!hasCandidate)
         return 0;
     std::optional<Edge> entry = context.analyses.naturalLoops().findSingleEntry(loop);
     if (!entry || entry->isHandlerEdge())
@@ -439,14 +452,6 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         return 0;
 
     BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
-    auto hasInvariantOperands = [&](const Value& value) {
-        bool result = true;
-        value.forEachOperand([&](ValueID operand, uint32_t) {
-            BlockID block = definingBlock[operand.index()];
-            result &= block && !body.get(block.index());
-        });
-        return result;
-    };
     auto canGoAheadOfItsFact = [&](const Value& value) {
         return value.opcode == Opcode::GetModuleVariable && program.at(value.type).isJavaScriptValue() && !program.at(value.type).mayBeUnspecified();
     };
@@ -459,8 +464,6 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
-        if (looksAtWhatMayBeUnspecified.get(id.index()))
-            return false;
         if (value.opcode == Opcode::ToBoolean)
             return !keptReads.get(id.index()) && hasInvariantOperands(value);
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
@@ -587,20 +590,7 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
             definingBlock[id.index()] = blockID;
     }
 
-    // A value that may be unspecified is looked at only where the program looks at it. This and whether a loop turns once are asked before anything moves: the answers follow the uses of values.
-    BitVector looksAtWhatMayBeUnspecified;
-    UnspecifiedValues unspecified(context.analyses);
-    for (BlockID block : cfg.reversePostOrder()) {
-        for (ValueID id : function.at(block).values) {
-            if (!hoistableOpcodes.contains(function.at(id).opcode))
-                continue;
-            function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
-                if (unspecified.mayContain(operand))
-                    looksAtWhatMayBeUnspecified.set(id.index());
-            });
-        }
-    }
-
+    // Whether a loop turns once is asked before anything moves: the answer follows the uses of values.
     BitVector headersWhoseTestHoldsOnEntry;
     for (const NaturalLoop* loop : loopsInnermostFirst) {
         if (readsWhatMayChangeBehindHeader(context, *loop) && staysBehindFirstTest(context, *loop))
@@ -609,7 +599,7 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
 
     unsigned numberOfHoistedReads = 0;
     for (const NaturalLoop* loop : loopsInnermostFirst)
-        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, looksAtWhatMayBeUnspecified, headersWhoseTestHoldsOnEntry, entriesFromBranches);
+        numberOfHoistedReads += hoistReadsOutOf(context, *loop, definingBlock, headersWhoseTestHoldsOnEntry, entriesFromBranches);
     if (numberOfHoistedReads)
         context.analyses.didChangeValues();
     return numberOfHoistedReads;

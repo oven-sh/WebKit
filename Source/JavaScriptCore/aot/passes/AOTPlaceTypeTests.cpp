@@ -630,7 +630,7 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
             }
             // Inside the loop the test stands behind whatever decides that the value is there, the switch on the kind of an iteration for one. In front of the loop it would read through whatever the register holds.
             ValueID outside = findDefinitionOutside(test.operand(operandIndex), loop);
-            if (!outside || mayBeUnspecified(analyses, outside) || !canReplaceOperand(context, test, operandIndex, outside, isNarrowedByEarlierTest))
+            if (!outside || context.program.typeOf(context.function, outside).mayBeUnspecified() || !canReplaceOperand(context, test, operandIndex, outside, isNarrowedByEarlierTest))
                 return std::nullopt;
             operands.append(outside);
         }

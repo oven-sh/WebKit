@@ -117,6 +117,10 @@ static StatisticID statisticOf(B3::Counter counter)
         return StatisticID::RangeChecksRemoved;
     case B3::Counter::LoopBoundsClamped:
         return StatisticID::LoopBoundsClamped;
+    case B3::Counter::LoopPollsRemoved:
+        return StatisticID::LoopPollsRemoved;
+    case B3::Counter::SumsKeptAsIntegers:
+        return StatisticID::SumsKeptAsIntegers;
     case B3::Counter::KnownInductionsUsed:
         return StatisticID::KnownInductionsUsed;
     case B3::Counter::TrapsFoldedIntoAccesses:

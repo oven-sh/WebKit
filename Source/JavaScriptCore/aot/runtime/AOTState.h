@@ -39,6 +39,7 @@ class ProgramStrings;
 class PropertyCaches;
 class FirstAdditions;
 class SiteCaches;
+class StringKeyCache;
 struct BuiltinFamilyState;
 struct ObjectModel;
 
@@ -77,28 +78,32 @@ private:
     size_t m_used { 0 };
 };
 
-// Created at their first use, which in most programs is the first access that neither inline code nor a stub answers. A program without one never pays for them.
-class LazyPropertyCaches {
-    WTF_MAKE_NONCOPYABLE(LazyPropertyCaches);
+// Created at its first use. A program without one never pays for it.
+template<typename T>
+class CreatedAtFirstUse {
+    WTF_MAKE_NONCOPYABLE(CreatedAtFirstUse);
 public:
-    explicit LazyPropertyCaches(State&);
-    ~LazyPropertyCaches();
+    explicit CreatedAtFirstUse(State&);
+    ~CreatedAtFirstUse();
 
-    PropertyCaches& operator*()
+    T& operator*()
     {
-        if (m_caches) [[likely]]
-            return *m_caches;
+        if (m_value) [[likely]]
+            return *m_value;
         return create();
     }
-    PropertyCaches* operator->() { return &**this; }
-    PropertyCaches* getIfCreated() const { return m_caches.get(); }
+    T* operator->() { return &**this; }
+    T* getIfCreated() const { return m_value.get(); }
 
 private:
-    PropertyCaches& create();
+    T& create();
 
     State& m_state;
-    std::unique_ptr<PropertyCaches> m_caches;
+    std::unique_ptr<T> m_value;
 };
+
+extern template class CreatedAtFirstUse<PropertyCaches>;
+extern template class CreatedAtFirstUse<StringKeyCache>;
 
 struct State {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(State);
@@ -120,7 +125,8 @@ struct State {
     std::unique_ptr<BuiltinCells> builtinCells;
     std::unique_ptr<ChainDependents> chainDependents;
     std::unique_ptr<SiteCaches> siteCaches;
-    LazyPropertyCaches propertyCaches;
+    CreatedAtFirstUse<PropertyCaches> propertyCaches;
+    CreatedAtFirstUse<StringKeyCache> stringKeys;
     // Created when an object is first given a name that is new to its Structure.
     std::unique_ptr<FirstAdditions> firstAdditions;
     std::unique_ptr<Modules> modules;

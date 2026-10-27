@@ -16,14 +16,28 @@ namespace {
 
 enum class TestPlace : uint8_t { Top, Bottom };
 
+enum class Walks : bool { Nothing, Data };
+
 struct CountedSum {
-    CountedSum(B3::Opcode relation, int64_t step, int64_t firstIndex, const Policy& policy = loopPolicy())
+    CountedSum(B3::Opcode relation, int64_t step, int64_t firstIndex, const Policy& policy = loopPolicy(), Walks walks = Walks::Data)
         : proc(policy)
         , loop(graph, relation, step, firstIndex)
         , relation(relation)
         , step(step)
         , firstIndex(firstIndex)
     {
+        if (walks == Walks::Nothing)
+            return;
+        graph.increase(loop.body, loop.sum, zeroReadAt(graph, loop.body, loop.index));
+    }
+
+    // Whatever the counter is, the turn reads one of two words, which hold zero.
+    static Value* zeroReadAt(Graph& graph, BasicBlock* block, Variable* counter)
+    {
+        static const int32_t zeros[2] = { 0, 0 };
+        Value* distance = graph.make(block, BitAnd, graph.get(block, counter), graph.int64(block, 4));
+        Value* word = graph.load(block, Int32, graph.make(block, Add, graph.int64(block, reinterpret_cast<intptr_t>(zeros)), distance), 0, firstHeap);
+        return graph.make(block, ZExt32, word);
     }
 
     void finish(BasicBlock* bodyLastBlock, TestPlace place)
@@ -192,6 +206,17 @@ static void testUnrollLoopsSkipsLoopWithCall()
     checkSumsIntegersBelowBound(sum.proc);
 }
 
+static void testUnrollLoopsSkipsLoopThatWalksNothing()
+{
+    CountedSum sum(LessThan, 1, 0, loopPolicy(), Walks::Nothing);
+    sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.get(sum.loop.body, sum.loop.index));
+    sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.make(sum.loop.body, ZExt32, sum.graph.load(sum.loop.body, Int32, sum.loop.pointer, 0, firstHeap)));
+    sum.finish(sum.loop.body, TestPlace::Bottom);
+
+    CHECK(!unrollLoopsAndValidate(sum.proc));
+    CHECK_EQ(sum.proc.naturalLoops().numLoops(), 1u);
+}
+
 static void testUnrollLoopsSkipsLoopWithLikelySecondWayOut()
 {
     CountedSum sum(LessThan, 1, 0);
@@ -277,7 +302,7 @@ static void testUnrollLoopsWritesFewerTurnsOfLargerLoop()
         unsigned numberOfAdditions;
         unsigned expectedTurns;
     };
-    for (Case testCase : { Case { 2, 8 }, Case { 4, 8 }, Case { 5, 4 }, Case { 10, 4 }, Case { 11, 0 }, Case { 30, 0 } }) {
+    for (Case testCase : { Case { 0, 8 }, Case { 1, 8 }, Case { 2, 4 }, Case { 7, 4 }, Case { 8, 0 }, Case { 30, 0 } }) {
         CountedSum sum(LessThan, 1, 0);
         auto& [proc, graph, loop, relation, step, firstIndex] = sum;
         Value* summand = graph.get(loop.body, loop.index);
@@ -357,6 +382,7 @@ static void testUnrollLoopsOnlyInnermostLoop()
     graph.set(outer, column, graph.int64(outer, 0));
     graph.jump(outer, inner);
     graph.increase(inner, sum, graph.make(inner, Mul, graph.get(inner, row), graph.get(inner, column)));
+    graph.increase(inner, sum, CountedSum::zeroReadAt(graph, inner, column));
     graph.increase(inner, column, 1);
     graph.branch(inner, graph.make(inner, LessThan, graph.get(inner, column), bound), inner, outerLatch);
     graph.increase(outerLatch, row, 1);
@@ -541,6 +567,7 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUnrollLoopsKeepsOtherWaysOut());
     RUN(testUnrollLoopsLeavesRareBlocksToLoopItself());
     RUN(testUnrollLoopsSkipsLoopWithCall());
+    RUN(testUnrollLoopsSkipsLoopThatWalksNothing());
     RUN(testUnrollLoopsSkipsLoopWithLikelySecondWayOut());
     RUN(testUnrollLoopsStoresInOrder());
     RUN(testUnrollLoopsSkipsLoopOverWords());

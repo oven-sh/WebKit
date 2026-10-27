@@ -22,6 +22,7 @@
 #include "AOTSavedFrame.h"
 #include "AOTShownFrameFilter.h"
 #include "AOTStackTrace.h"
+#include "AOTStubFrames.h"
 #include "CallFrameInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSCellInlines.h"
@@ -333,6 +334,11 @@ CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool 
     enterMachineFrame(findFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
 
+bool isFrameOfConstructedCallee(CallFrame* plainFunctionConstructFrame, FunctionID function)
+{
+    return isClosureOf(*std::bit_cast<JSCell**>(std::bit_cast<uintptr_t>(plainFunctionConstructFrame) + PlainFunctionConstructFrame::offsetOfCallee), function);
+}
+
 bool CompiledFrameIterator::RunEnd::constructs(FunctionID outermost) const
 {
     if (!isConstruct)
@@ -456,6 +462,9 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         case StubFrameKind::EngineCallee:
             cursor.engineCalleeStubFrame = cursor.callFrame;
             break;
+        case StubFrameKind::PlainFunctionConstruct:
+            cursor.plainFunctionConstructFrame = cursor.callFrame;
+            break;
         case StubFrameKind::Adapter:
         case StubFrameKind::HandlerOfJob:
         case StubFrameKind::ConstructAdapter:
@@ -539,6 +548,7 @@ void CompiledFrameIterator::advanceToCallerMachineFrame()
     m_cursor.asyncGeneratorStubFrame = nullptr;
     m_cursor.asyncGeneratorBodyFrame = nullptr;
     m_cursor.engineCalleeStubFrame = nullptr;
+    m_cursor.plainFunctionConstructFrame = nullptr;
     m_calleeWasEntered = true;
     enterMachineFrame(findCallerFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
@@ -559,11 +569,12 @@ bool CompiledFrameIterator::isConstructCall()
     Exit exit;
     RunEnd runEnd;
     for (;;) {
+        cursor.plainFunctionConstructFrame = nullptr;
         const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd);
         if (!entry)
             return runEnd.constructs(source);
         if (entry->site.isConstruct())
-            return true;
+            return !cursor.plainFunctionConstructFrame || isFrameOfConstructedCallee(cursor.plainFunctionConstructFrame, source);
         if (entry->innermostVisibility == TraceVisibility::Visible)
             return false;
         LogicalFrame caller { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false };

@@ -10,6 +10,7 @@
 
 #include "AOTResultRules.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTTypeArena.h"
 #include "AOTValueSubstitution.h"
 #include <algorithm>
@@ -228,6 +229,13 @@ void SSARepair::run()
         m_builder.applyInsertions();
     m_analyses.didChangeValuesButNotUses();
     m_builder.setOrigin(savedOrigin);
+
+    // A definition that stands for "no use is reached from here" gives the parameters it gets to its type, and a use is legal where it stood.
+    bool hasUnspecifiedDefinition = std::ranges::any_of(m_variables, [&](const VariableData& data) {
+        return data.type && m_builder.m_types.at(data.type).mayBeUnspecified();
+    });
+    if (hasUnspecifiedDefinition)
+        nameFactsWhereUnspecifiedValuesAreUsed(m_builder, m_analyses);
 }
 
 void SSARepair::separateUsesAsGuards()

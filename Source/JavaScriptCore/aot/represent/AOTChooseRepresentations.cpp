@@ -188,12 +188,12 @@ private:
         bool hasChoice() const { return fitsNarrowReference || legal != RepresentationSet { chosen }; }
         uint64_t votesFor(Representation representation) const { return produced[std::to_underlying(representation)] + wanted[std::to_underlying(representation)]; }
 
-        uint64_t conversionsNeededBy(Representation representation) const
+        uint64_t totalVotes() const
         {
-            uint64_t allVotes = 0;
-            for (Representation other : allMembersOf<Representation>)
-                allVotes += votesFor(other);
-            return allVotes - votesFor(representation);
+            uint64_t total = 0;
+            for (Representation representation : allMembersOf<Representation>)
+                total += votesFor(representation);
+            return total;
         }
 
         void addProducer(Representation representation, uint64_t votes)
@@ -702,21 +702,31 @@ private:
         auto moveTogether = [&](uint32_t source, uint32_t destination) {
             Web& from = m_webs[source];
             Web& to = m_webs[destination];
+            RepresentationSet candidates = from.legal;
+            candidates &= to.legal;
+            candidates &= representationsWithRegister;
+            bool hasCandidate = false;
+            candidates.forEach([&](Representation candidate) {
+                hasCandidate |= candidate != from.chosen && candidate != to.chosen;
+            });
+            if (!hasCandidate)
+                return false;
             uint64_t votesAsProducer = votesBetween(source, destination, true);
             uint64_t votesAsUse = votesBetween(destination, source, false);
-            uint64_t fewest = from.conversionsNeededBy(from.chosen) + to.conversionsNeededBy(to.chosen);
+            uint64_t totalVotes = from.totalVotes() + to.totalVotes();
+            uint64_t fewest = totalVotes - from.votesFor(from.chosen) - to.votesFor(to.chosen);
             if (from.chosen != to.chosen && hasRegister(to.chosen))
                 fewest -= votesAsUse;
             std::optional<Representation> best;
-            for (Representation candidate : allMembersOf<Representation>) {
-                if (!hasRegister(candidate) || !from.legal.contains(candidate) || !to.legal.contains(candidate) || candidate == from.chosen || candidate == to.chosen)
-                    continue;
-                uint64_t needed = from.conversionsNeededBy(candidate) + to.conversionsNeededBy(candidate) - votesAsProducer - (hasRegister(to.chosen) ? votesAsUse : 0);
+            candidates.forEach([&](Representation candidate) {
+                if (candidate == from.chosen || candidate == to.chosen)
+                    return;
+                uint64_t needed = totalVotes - from.votesFor(candidate) - to.votesFor(candidate) - votesAsProducer - (hasRegister(to.chosen) ? votesAsUse : 0);
                 if (needed < fewest) {
                     best = candidate;
                     fewest = needed;
                 }
-            }
+            });
             if (!best)
                 return false;
             move(source, *best);
@@ -734,10 +744,10 @@ private:
             bool changed = false;
             for (uint32_t index : websWithChoice) {
                 const Web& web = m_webs[index];
-                Representation chosen = formWithMostVotes(web.chosen, [&](Representation candidate) {
-                    return web.votesFor(candidate);
-                }, [&](Representation candidate) {
-                    return web.legal.contains(candidate);
+                Representation chosen = web.chosen;
+                web.legal.forEach([&](Representation candidate) {
+                    if (web.votesFor(candidate) > web.votesFor(chosen))
+                        chosen = candidate;
                 });
                 if (chosen == web.chosen)
                     continue;

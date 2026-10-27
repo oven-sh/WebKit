@@ -118,6 +118,7 @@ public:
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
+    bool findsDataFilesByName() const { return header().has(ImageFlag::FindsDataFilesByName); }
     bool admitsLibraryText() const { return header().has(ImageFlag::AdmitsLibraryText); }
     bool loadsCodeOutsideImage() const { return !runsOnlyCodeOfImage && header().has(ImageFlag::LoadsCodeOutsideImage); }
     bool showsWaysBetweenModuleObjects() const { return header().has(ImageFlag::ShowsWaysBetweenModuleObjects); }

@@ -38,6 +38,7 @@ aot/analysis/AOTPropertyAccessStaticMembers.cpp
 aot/analysis/AOTRecordUsers.cpp
 aot/analysis/AOTRegionCloner.cpp
 aot/analysis/AOTSSARepair.cpp
+aot/analysis/AOTSpecifiedValues.cpp
 aot/analysis/AOTStringPositions.cpp
 aot/analysis/AOTUseEffectHistory.cpp
 aot/analysis/AOTUseLists.cpp

@@ -1,6 +1,5 @@
 aot/analysis/AOTAnalysisVerification.cpp
 aot/analysis/AOTCheckCause.cpp
-aot/analysis/AOTUnspecifiedValuePaths.cpp
 aot/analysis/AOTWholeLiterals.cpp
 aot/builtins/AOTArrayBufferViewBuiltinEmitter.cpp
 aot/builtins/AOTBufferBuiltinEmitter.cpp

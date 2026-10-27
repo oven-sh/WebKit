@@ -137,8 +137,8 @@ public:
     bool isTextNamedByProgram(StringView url) const;
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost && !m_runsUncompiledCode; }
     bool isAskingHost() const { return m_isAskingHost; }
-    // A name that the build did not follow finds an entry point and no other file of the image.
-    bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && data(module).kind != ModuleKind::Data && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath(); }
+    // A name that the build did not follow finds an entry point and no other file of the image with code.
+    bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && (data(module).kind != ModuleKind::Data || !m_findsDataFilesByName) && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath(); }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);
     template<typename Visitor> void visitRoots(Visitor&);
@@ -413,6 +413,7 @@ private:
     bool m_runsUncompiledCode { false };
     const bool m_admitsInspector;
     bool m_loadsModulesByName;
+    const bool m_findsDataFilesByName;
     bool m_isAskingHost { false };
     bool m_isWalkingRequests { false };
     struct LoadInFlight {

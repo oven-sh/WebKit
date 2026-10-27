@@ -36,6 +36,7 @@
 #include "AOTResultRulesInternal.h"
 #include "AOTRuleSupport.h"
 #include "AOTSSARepair.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTSort.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTSplitUnions.h"
@@ -2704,6 +2705,7 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
     builder.setHandler(std::nullopt);
     repair.run();
     builder.emptyUnreachableBlocks();
+    nameFactsWhereUnspecifiedValuesAreUsed(builder, pass.analyses);
     return true;
 }
 

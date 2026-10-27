@@ -307,7 +307,6 @@ public:
 
     SiteCaches& siteCaches() { return m_siteCaches; }
     WatchedValues& watchedValues() { return m_watchedValues; }
-    StringKeyCache& stringKeys() { return m_stringKeys; }
     VMPropertyCaches& tables() { return m_tables; }
 
     CachedName nameOf(uint32_t identifierNumber) const;
@@ -364,7 +363,6 @@ private:
     ChainDependentOwnerID m_tablesOwnerID;
     SiteCaches& m_siteCaches;
     WatchedValues m_watchedValues;
-    StringKeyCache m_stringKeys;
     Vector<Addition> m_additionsSinceCollection;
     // Written under the lock of the caches.
     UncheckedKeyHashMap<UniquedStringImpl*, JSCell*> m_keysForTraps;

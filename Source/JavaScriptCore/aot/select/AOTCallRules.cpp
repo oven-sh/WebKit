@@ -150,7 +150,8 @@ static Vector<ResolvedCalls> findCallsOfInvariantCallees(SelectionContext& conte
         const Value& call = function.at(id);
         ValueID callee = call.calleeOperand();
         std::optional<InvariantOperand> invariant = findOutermostInvariantLoop(context, analyses.useLists().blockOf(id), callee);
-        if (!invariant)
+        // The code in front of the loop pays for itself in the turns, and a loop that is not expected to be entered has none.
+        if (!invariant || function.at(invariant->header).frequency.predicted() != BlockFrequency::Normal)
             continue;
 
         ValueID object = analyses.sameObjectThroughCasts(callee);

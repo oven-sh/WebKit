@@ -94,6 +94,8 @@ public:
     JSObject* classPrototypeIfExists(const LayoutData&) const;
     JSObject* createClassPrototype(VM&, const LayoutData&, JSObject* parent);
     void registerClassPrototype(const LayoutData&, JSObject*);
+    // `super(..)` has come back by way of the run time.
+    void didConstructParent(JSValue newTarget, JSValue made);
     Structure* lazyClassObjectStructureInheritingFrom(VM&, JSObject* parent);
     Structure* classObjectStructureInheritingFrom(VM&, JSObject* parent);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -223,6 +225,7 @@ private:
     static size_t indexOfInstanceOfClassBelow(const JSObject* prototype) { return std::bit_cast<uintptr_t>(prototype) >> shiftOfPrototypeForInstanceOfClassBelow & (numberOfInstancesOfClassesBelow - 1); }
     void rememberInstanceOfOtherEvaluation(VM&, const Object& instance, JSObject* prototype, uint32_t allocation);
     std::array<InstanceOfClassBelow, numberOfInstancesOfClassesBelow> m_instancesOfClassesBelow { };
+    const Structure* m_structureLookedAtLast { nullptr };
     State& m_state;
     const ProgramTables& m_tables;
     mutable std::array<std::atomic<uint64_t>, 64> m_recentClassLookups { };

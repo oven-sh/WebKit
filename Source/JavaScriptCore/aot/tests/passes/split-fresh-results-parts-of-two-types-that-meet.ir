@@ -163,10 +163,14 @@ function f10 name="listOfWholeNumbersOrOfAnything" parameters=[{type=boolean}, {
     Return v5
 }
 # CHECK-LABEL: function f10 name="listOfWholeNumbersOrOfAnything" module=m0 role=ResultWrapper
-# CHECK: [[element]]: i32 = ResultAt [[callOfLists]] index=1
-# CHECK-NEXT: [[otherElement]]: anything = ResultAt [[callOfLists]] index=2
-# CHECK: = NewArray [[element]] contents=i32
-# CHECK: = NewArray [[otherElement]] contents=anything
+# CHECK: [[element]]: i32|unspecified = ResultAt [[callOfLists]] index=1
+# CHECK-NEXT: [[otherElement]]: anything|unspecified = ResultAt [[callOfLists]] index=2
+# CHECK: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[elementThere]]: i32 = AssumeType [[element]], [[filled1]] provenType=i32
+# CHECK-NEXT: = NewArray [[elementThere]] contents=i32
+# CHECK: [[filled2]]: fact = Specified
+# CHECK-NEXT: [[otherElementThere]]: anything = AssumeType [[otherElement]], [[filled2]] provenType=anything
+# CHECK-NEXT: = NewArray [[otherElementThere]] contents=anything
 
 function f11 name="callsThemAll" parameters=[{type=boolean}, {type=i32}, {type=anything}, {type=fractional}, {type=string}, {type=int}, {type=int}, {type=L4}, {type=L5}] results=[{type=undefined}] {
     v9 = CallDirect v0, v1, v2 function=f0
