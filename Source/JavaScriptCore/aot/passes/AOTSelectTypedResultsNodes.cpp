@@ -149,7 +149,7 @@ static TypeID withoutProofsAboutClasses(const Program& program, TypeID id)
 
     Type type = program.at(id);
     for (ClassPart& part : type.classes) {
-        part.contentsAreProven = false;
+        part.forgetProofOfContents();
         part.provenPristine = { };
         part.arrayStorage = ArrayStorage::Other;
     }

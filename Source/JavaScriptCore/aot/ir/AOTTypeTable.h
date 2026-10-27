@@ -133,6 +133,7 @@ public:
     static constexpr TypeID guard { 13u };
     static constexpr TypeID length { 14u };
     static constexpr TypeID anythingOrAbsent { 15u };
+    static constexpr TypeID fact { 16u };
     static constexpr TypeID valuesOf(TypeID held) { return held == anythingOrAbsent ? anything : held; }
 
     static constexpr uint32_t provisionalBit = 1u << 31;

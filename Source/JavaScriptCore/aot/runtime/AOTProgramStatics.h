@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTID.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
 #include "AOTProgramTables.h"
@@ -38,17 +37,15 @@ public:
             initializeProgramStatics();
     }
     void initializeStatics(uint32_t firstWord, uint32_t endWord);
-    // By its number in ProgramTables::staticsOfFiles(): the file and all that it imports.
-    void fillVariablesOfFile(uint32_t file);
-    void fillVariablesOfModule(ModuleID module)
-    {
-        if (m_filledFiles) [[unlikely]]
-            fillVariablesOfListedModule(module);
-    }
+    // By its number in ProgramTables::staticsOfFiles(): the group and all that its files import.
+    void fillVariablesOfFiles(uint32_t group);
+    bool fillsVariablesWithFiles() const { return m_filledFiles; }
+    // For whoever hands out the names of a file that is being evaluated and may not have been entered.
+    void fillVariablesOfAllFiles();
     void ensureVariableIsFilled(uint32_t offset)
     {
         if (offset / sizeof(uint64_t) - m_firstWordFilledWithFiles < m_numberOfWordsFilledWithFiles) [[unlikely]]
-            fillVariablesOfFile(fileWithWord(offset / sizeof(uint64_t)));
+            fillVariablesOfFiles(groupWithWord(offset / sizeof(uint64_t)));
     }
     bool isFilled(uint32_t offset) const;
     void didStoreRootInStatics(uint32_t offset) { m_slots.record(m_instance.statics() + offset); }
@@ -69,8 +66,7 @@ public:
 private:
     template<typename Appender> void visitRegion(Appender&, size_t begin, size_t end);
     void initializeProgramStatics();
-    uint32_t fileWithWord(uint32_t word) const;
-    void fillVariablesOfListedModule(ModuleID);
+    uint32_t groupWithWord(uint32_t word) const;
 
     Instance& m_instance;
     const ProgramTables& m_tables;

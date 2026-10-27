@@ -528,10 +528,10 @@ static void printStatics(const TablesContext& context)
         RecordLine(context, "layout"_s).field("filledAtProgramEntry"_s, layout.sizeFilledAtProgramEntry).field("fromArrayProfileToLastArray"_s, layout.distanceFromArrayProfileToLastArray);
     for (const StaticsRun& run : tables.staticsRuns())
         RecordLine(context, "run"_s).field("firstWord"_s, run.firstWord).field("words"_s, run.numberOfWords).hex("bits"_s, run.bits());
-    for (const StaticsOfFile& file : tables.staticsOfFiles())
-        RecordLine(context, "file"_s).field("module"_s, file.module).field("firstWord"_s, file.firstWord).field("words"_s, file.numberOfWords).field("firstImportedFile"_s, file.firstImportedFile);
-    for (uint32_t file : tables.staticsOfImportedFiles())
-        RecordLine(context, "importedFile"_s).field("file"_s, file);
+    for (const StaticsOfFiles& group : tables.staticsOfFiles())
+        RecordLine(context, "files"_s).field("firstWord"_s, group.firstWord).field("words"_s, group.numberOfWords).field("firstImportedGroup"_s, group.firstImportedGroup);
+    for (uint32_t group : tables.staticsOfImportedFiles())
+        RecordLine(context, "importedFiles"_s).field("group"_s, group);
     for (const StaticsRange& range : tables.staticsRoots())
         RecordLine(context, "roots"_s).field("offset"_s, range.offset).field("size"_s, range.size);
     for (const StaticsRange& range : tables.staticsNarrowRoots())

@@ -665,6 +665,7 @@ void StoresByLayout::note(ValueSetMaker& maker, StoresIntoObjects& stores, Value
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
         return;
     }
 }

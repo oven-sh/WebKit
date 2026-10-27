@@ -322,6 +322,25 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     if (!holdsSomething(context, called))
         return;
 
+    // Native code only calls them. Whoever reads one off a value nobody knows holds it.
+    ValueFlowNodeID namesRead = context.nodes().ofHost(ValueFlowHostNode::NamesReadOffValuesNobodyKnows);
+    ValueFlowNodeID namesFoundBelow = context.nodes().ofHost(ValueFlowHostNode::NamesFoundBelowValuesNobodyKnows);
+    ValueFlowNodeID namesHandedOn = context.nodes().ofHost(ValueFlowHostNode::NamesOfReadsThatHandTheirValueOn);
+    ClimbingSet anyName(universe.unknownObjectAlone());
+    ClimbingSet names = context.unite(context.valueOf(context.read(above, ValueFlowCellName { ValueFlowNameKind::AddedNames })), context.valueOf(context.read(above, ValueFlowCellName { ValueFlowNameKind::NamesOfMethods })));
+    bool holdsThemUnderAnyName = context.meet(names, ValueSets::complement(universe.keys()));
+    bool isReadUnderSomeName = holdsSomething(context, context.valueOf(namesRead)) || (holdsSomething(context, context.valueOf(namesFoundBelow)) && holdsSomething(context, context.valueOf(namesHandedOn)));
+    if (context.holdsAnyOf(anyName, namesRead) || (holdsThemUnderAnyName && isReadUnderSomeName))
+        context.add(escapedNode, called);
+    else {
+        ClimbingSet keys = context.restrict(names, universe.keys());
+        ClimbingSet foundBelow = context.holdsAnyOf(anyName, namesFoundBelow) ? keys : context.valueWithin(keys, namesFoundBelow);
+        ClimbingSet handedOn = context.holdsAnyOf(anyName, namesHandedOn) ? foundBelow : context.valueWithin(foundBelow, namesHandedOn);
+        context.forEachMember(context.unite(context.valueWithin(keys, namesRead), handedOn), [&](ValueFlowObjectID key) {
+            context.connect(context.masked(context.readWhatWasWritten(above, ValueFlowName::property(program, universe.keyOf(key))), functions), escapedNode);
+        });
+    }
+
     ValueFlowCallGroup group = context.group(called, ValueFlowCallKind::CallByNativeCode);
     context.connect(context.masked(escapedNode, instances), group.thisValue);
     ValueFlowObjectID makersOfProxies[] { universe.objectOf(Builtins::Proxy), universe.objectOf(Builtins::ProxyRevocable) };
@@ -559,6 +578,7 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
         case ValueFlowNameKind::EveryMemberRead:
         case ValueFlowNameKind::RestArgument:
         case ValueFlowNameKind::AddedNames:
+        case ValueFlowNameKind::NamesOfMethods:
             return runLookup(statement, context);
         }
     case ValueFlowStatementKind::Behavior:

@@ -10,6 +10,7 @@
 
 #include "AOTArrayChains.h"
 #include "AOTBindGlobalNames.h"
+#include "AOTCastsWithoutFacts.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTCurrentWork.h"
@@ -351,7 +352,7 @@ PassOutcome PassRunner::runFunctionPass(PassID id, FunctionPassContext& context)
     CurrentWorkScope workScope(context.program, run.functionAsRead);
     PassOutcome outcome = runFunctionPass(id, context, run);
     addTotals(run, numberOfValuesAtStart);
-    return outcome;
+    return run.didMakeFacts ? PassOutcome::Changed : outcome;
 }
 
 void PassRunner::prepare(ScheduleRun& run) const
@@ -414,7 +415,7 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     if (schedule == FunctionSchedule::Resolve && entersTyped && !function.valuesAreTypedAsDefined() && !run.isStopped)
         runFunctionPass(PassID::RetypeValues, context, run);
     addTotals(run, numberOfValuesAtStart);
-    return run.numberOfChanges ? PassOutcome::Changed : PassOutcome::Unchanged;
+    return run.numberOfChanges || run.didMakeFacts ? PassOutcome::Changed : PassOutcome::Unchanged;
 }
 
 void PassRunner::didFinishFunctionLoop()
@@ -830,11 +831,40 @@ static bool isVerifiedElsewhere(const FunctionPassContext& context)
 }
 
 // Apart from the steps that are left out, which are nine in ten and need none of what a run needs.
+// These put operations where the program had none: in front of a loop, on the edges into it, at the head of a web. What they may put there is what names nothing that is defined behind the place.
+// Other passes put values in place of values, cut the code between a value and a cast of it and make casts where values are used, and move no cast: so each cast that stands apart from its value holds where
+// it stands, and is tied there before anything leaves a loop.
+static constexpr PassSet passesThatMoveOperationsOutOfLoops {
+    PassID::HoistLoopInvariantReads, PassID::PlaceTypeTests, PassID::SeparateUnlikelyLoopPaths, PassID::CreateStringBuilders, PassID::PlanArrayCapacities, PassID::PlanCollectionCapacities, PassID::Select,
+};
+// These also take a value away from its cast, which stays where it is. Behind the others no cast stands apart from its value without a fact.
+static constexpr PassSet passesThatMoveValuesAwayFromCasts { PassID::HoistLoopInvariantReads, PassID::PlaceTypeTests };
+
 NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, FunctionPassContext& context, ScheduleRun& run) const
 {
     const PassDescriptor& descriptor = descriptorOf(id);
     const unsigned index = static_cast<unsigned>(id);
 
+    auto tieCasts = [&] {
+        if (run.numberOfChangesWhenCastsWereTied == run.numberOfChanges)
+            return;
+        // A fact gives no pass anything to do, so no round follows for its sake.
+        if (Vector<BlockID, 4> changedBlocks = tieCastsWhereTheyStand(context.program, context.function); !changedBlocks.isEmpty()) {
+            context.analyses.didAddDetachedValue({ });
+            for (BlockID block : changedBlocks)
+                context.analyses.didChangeBlock(block);
+            run.contents = std::nullopt;
+            run.didMakeFacts = true;
+        }
+        run.numberOfChangesWhenCastsWereTied = run.numberOfChanges;
+    };
+    run.castsNameTheirFacts = false;
+    if (passesThatMoveOperationsOutOfLoops.contains(id) && context.program.form() == IRForm::Prepared) {
+        const OpcodeSet& opcodes = run.contentsOf(context.function, context.changes).opcodes;
+        run.castsNameTheirFacts = opcodes.contains(Opcode::LoopHint) && opcodes.contains(Opcode::AssumeType);
+    }
+    if (run.castsNameTheirFacts)
+        tieCasts();
     const bool isTimed = m_build.options().logging.logsPhaseTimes;
     size_t numberOfValuesBefore = context.function.values.size();
     const uint32_t weight = isTimed ? numberOfRunsThatTimedRunStandsFor(run.functionAsRead, numberOfValuesBefore) : 0;
@@ -868,6 +898,7 @@ NEVER_INLINE PassOutcome PassRunner::runFunctionPassThatMayFire(PassID id, Funct
     }
     currentWork().setPass(id);
     PassOutcome outcome = descriptor.run(context);
+    run.castsNameTheirFacts &= !passesThatMoveValuesAwayFromCasts.contains(id);
     if (reasons) [[unlikely]]
         context.function.setListenerForOperationsThatGo(reasons->outer());
     auto stopWhereThereIsOne = [&](const String& problem) {
@@ -947,9 +978,18 @@ void PassRunner::stopBehind(PassID id, ScheduleRun& run) const
 
 void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, FunctionPassContext& context, ScheduleRun& run) const
 {
+    IRForm form = descriptor.produces.value_or(context.program.form());
+    // One walk, which every build that verifies anything can afford.
+    if (run.castsNameTheirFacts && form == IRForm::Prepared && m_build.options().verifiesProgram && !m_build.options().verifiesAfterEveryPass) [[unlikely]] {
+        if (Vector<CastAwayFromItsValue, 4> found = findCastsAwayFromTheirValues(context.program, context.function); !found.isEmpty()) {
+            InternalError error { .kind = InternalErrorKind::CastWithoutFact, .function = context.id, .block = found[0].block, .value = found[0].cast, .pass = descriptor.id };
+            m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::VerificationFailedAfterPass, .function = run.functionAsRead, .pass = descriptor.id, .detail = describeError(error, context.function) });
+            m_build.diagnostics().add(WTF::move(error));
+            run.isStopped = true;
+        }
+    }
     if (!m_build.options().verifiesAfterEveryPass || isVerifiedElsewhere(context)) [[likely]]
         return;
-    IRForm form = descriptor.produces.value_or(context.program.form());
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
     if (!inputs.effects)
@@ -957,6 +997,7 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
     // A program pass that is given no summaries simplifies functions which the Optimize loop has left: their guards stand across calls that only the summaries call harmless.
     inputs.cannotJudgeGuards = context.inputs.effects.isEmpty() && m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID());
     inputs.otherFunctionsMayChange = true;
+    inputs.castsNameTheirFacts = form == IRForm::Prepared && run.castsNameTheirFacts;
     Vector<InternalError> errors;
     if (canVerify(form) && !descriptor.isVerifiedAfterNextPass)
         errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, inputs);

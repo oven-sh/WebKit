@@ -1238,6 +1238,16 @@ void nameFactsWhereReadsStand(const Program& program, Function& function, TypeAr
     }
 }
 
+// What a function says of what it is handed holds from its entry on. In a copy the value is the caller's, which has it at hand earlier.
+// A cast of a word that may be anything only hands the word on: with a fact it would say that the word is a value.
+bool narrowsWhatFunctionIsHanded(const Program& program, const Function& function, const Value& value)
+{
+    if (value.opcode != Opcode::AssumeType || value.factOperand() || program.typeOf(function, value.valueOperand()).mayBeUnspecified())
+        return false;
+    ValueID handed = sameObjectThroughCasts(function, value.valueOperand());
+    return function.at(handed).opcode == Opcode::Parameter && function.at(entryBlock).parameters.contains(handed);
+}
+
 void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::span<const BlockID> region, uint32_t firstFrame)
 {
     const Program& program = builder.context().program;
@@ -1245,7 +1255,7 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
     bool calleeIsPredicted = liesInCopyOfPredictedCallee(builder.function(), firstFrame);
     bool needsFact = std::ranges::any_of(region, [&](BlockID block) {
         return std::ranges::any_of(source.at(block).values, [&](ValueID id) {
-            return takesFactOfEntry(program, source.at(id), calleeIsPredicted);
+            return takesFactOfEntry(program, source.at(id), calleeIsPredicted) || narrowsWhatFunctionIsHanded(program, source, source.at(id));
         });
     });
     ValueID entered;
@@ -1254,10 +1264,12 @@ void cloneBlocksIntoInlineFrame(IRBuilder& builder, RegionCloner& cloner, std::s
         fact.setFunction(builder.function().inlineFrames[firstFrame].callee);
         entered = builder.append(WTF::move(fact));
     }
-    cloner.cloneBlocks(region, [&](ValueID, Value& clone) {
+    cloner.cloneBlocks(region, [&](ValueID original, Value& clone) {
         clone.inlineFrame += firstFrame;
         if (clone.opcode == Opcode::GetEnvironmentField)
             clone.setLeansOnEntryOfBody(false);
+        if (narrowsWhatFunctionIsHanded(program, source, source.at(original)))
+            clone.setFactOperand(entered);
     });
     for (BlockID id : cloner.clonedBlocks())
         builder.function().edit(id, BlockEdit::Terminator).terminator.inlineFrame += firstFrame;

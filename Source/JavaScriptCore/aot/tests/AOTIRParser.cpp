@@ -270,7 +270,7 @@ std::unique_ptr<Program> TextParser::run()
     m_program->adoptBuffer(m_builder.finish());
     Reader reader(*m_program, m_form, m_build);
     reader.setTypeCompletion([&](uint32_t wireIndex, Type& type) {
-        completeType(wireIndex, type);
+        completeType(wireIndex, type, reader.typesAsRead());
     });
     VerifierInputs inputsOfReader = m_verifierInputs;
     inputsOfReader.lacksEngineFields = true;

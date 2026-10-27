@@ -207,7 +207,7 @@ private:
     void parseTypePart(Wire::Type&, TypeParts&);
     void parseClassPart(TypeParts&, BuiltinClassID);
     Wire::PropertyKey parsePropertyKeyValue();
-    void completeType(uint32_t wireIndex, Type&) const;
+    void completeType(uint32_t wireIndex, Type&, std::span<const TypeID> earlierTypes) const;
 
     void applyPatches(Program&, std::span<const TypeID>);
     void applyValueEngineFields(const PatchContext&) const;

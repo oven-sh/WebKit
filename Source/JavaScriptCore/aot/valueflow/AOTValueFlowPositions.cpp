@@ -201,6 +201,26 @@ const ValueFlowLayoutsOfSite* ValueFlowPositions::findLayoutsPickedBy(ValueFlowO
     return found == bySite.end() ? nullptr : &found->value;
 }
 
+bool ValueFlowPositions::appendLayoutsExpectedOf(ValueFlowObjectID object, Vector<LayoutID, 8>& layouts)
+{
+    if (ValueFlowResultInputs::isPlaceholder(object))
+        return false;
+    auto append = [&](LayoutID layout) {
+        if (!layout || m_inputs.isLayoutOfDictionaries(layout))
+            return false;
+        if (!layouts.contains(layout))
+            layouts.append(layout);
+        return true;
+    };
+    const ValueFlowLayoutsOfSite* picked = findLayoutsPickedBy(object);
+    if (!picked)
+        return append(m_inputs.universe().layoutOf(object));
+    bool hasLayout = false;
+    for (LayoutID layout : picked->layouts)
+        hasLayout |= append(layout);
+    return hasLayout;
+}
+
 static bool picksOnlyAmong(const ValueFlowLayoutsOfSite& picked, std::span<const LayoutID> members)
 {
     return !picked.mayBeOtherObject && std::ranges::all_of(picked.layouts, [&](LayoutID layout) {
@@ -276,6 +296,10 @@ bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member
         if (isEnabled(FlowResultKind::ProvenContents) && !(site && site->origin == ValueFlowSiteOrigin::TypedResult)) {
             part.writtenContents = facts->contents;
             part.contentsAreProven = facts->contentsAreProven;
+            for (unsigned slot = 0; part.contentsAreProven && slot < facts->expectedContents.size(); ++slot) {
+                if (TypeID expected = facts->expectedContents[slot])
+                    part.expectContentsAt(slot, expected);
+            }
         }
         if (isEnabled(FlowResultKind::ArrayStorageKinds) && part.contentsAreProven)
             part.arrayStorage = facts->arrayStorage;
@@ -589,6 +613,24 @@ std::optional<Type> ValueFlowPositions::familyBehindDictionaries(const Type& fam
     return typeBehindDictionaries(m_inputs.program, *m_inputs.layoutsOfDictionaries, m_inputs.typesBehindDictionaries, family, m_types);
 }
 
+static void keepOnlyExpectedContentsThatNarrow(Type& type, const Type& family)
+{
+    bool hasChanged = false;
+    for (ClassPart& part : type.classes) {
+        if (!part.expectsContentsBesideProof())
+            continue;
+        const ClassPart* partOfFamily = family.findClassPart(part.builtinClass);
+        for (unsigned index = 0; index < ClassPart::maxContentsSlots; ++index) {
+            if (partOfFamily && partOfFamily->expectedContentsAt(index).predicted() != TypeTable::anything)
+                continue;
+            part.expectContentsAt(index, TypeTable::anything);
+            hasChanged = true;
+        }
+    }
+    if (hasChanged)
+        type.canonicalize();
+}
+
 template<typename KindOfType>
 ValueFlowPositionResult ValueFlowPositions::decide(KindOfType kindOfFamily, ValueSetID set, DeadZone deadZone, const ValueFlowNumbers* numbers, ValueFlowNodeID node)
 {
@@ -662,9 +704,10 @@ ValueFlowPositionResult ValueFlowPositions::decide(KindOfType kindOfFamily, Valu
         held = held.unionWith(family.withOnlyObjects(), m_types);
     held = withinLimits(WTF::move(held));
     Type narrowed = held.intersectWith(family, m_types);
+    keepOnlyExpectedContentsThatNarrow(narrowed, family);
     if (narrowed.isNever() || (narrowed == family && !familyBehind))
         return { .proof = ValueFlowProof::Proven };
-    bool isWhatFlowHolds = !holdsUntrackedObject && narrowed == held;
+    bool isWhatFlowHolds = !holdsUntrackedObject && (narrowed == held || held.isSubsetOf(narrowed, program));
     return { .proof = ValueFlowProof::Proven, .narrowed = WTF::move(narrowed), .isWhatFlowHolds = isWhatFlowHolds };
 }
 

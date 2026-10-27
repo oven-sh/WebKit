@@ -518,7 +518,8 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     const ModuleData& moduleData = data(module);
-    m_state.statics->fillVariablesOfModule(module);
+    if (m_state.statics->fillsVariablesWithFiles() && (status(module) == ModuleStatus::Linking || status(module) == ModuleStatus::Evaluating))
+        m_state.statics->fillVariablesOfAllFiles();
 
     if (moduleData.isUncompiledCode()) {
         JSObject* loaderNamespace = uncompiledNamespace(module, phase);
@@ -971,8 +972,9 @@ bool Modules::comesToCountedImport(ModuleID required)
     if (!mayComeToOne)
         return false;
     noteOrderAndModulesOfOnlyCountedImport();
-    BitVector seen(m_table.size());
-    seen.quickSet(required.index());
+    const uint32_t isSeen = takeMarkOfSearch();
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
+    placesSeen[required.index()] = isSeen;
     Vector<ModuleID, 16> modules { required };
     while (!modules.isEmpty()) {
         ModuleID module = modules.takeLast();
@@ -985,7 +987,7 @@ bool Modules::comesToCountedImport(ModuleID required)
             if (request.isHoisted || request.isRequire)
                 continue;
             ModuleID target = request.targetModule();
-            if (!seen.quickSet(target.index()) && !isLoadedModuleWithoutRecord(target))
+            if (std::exchange(placesSeen[target.index()], isSeen) != isSeen && !isLoadedModuleWithoutRecord(target))
                 modules.append(target);
         }
     }

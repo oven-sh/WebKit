@@ -52,7 +52,9 @@ static Value makeVariableAccess(Opcode opcode, VariableID variable, std::initial
     return access;
 }
 
-static ValueID assumeType(IRBuilder& builder, ValueID value, TypeID wanted)
+enum class ClaimHolds : uint8_t { WhereverValueIs, FromHereOn };
+
+static ValueID assumeType(IRBuilder& builder, ValueID value, TypeID wanted, ClaimHolds holds = ClaimHolds::WhereverValueIs)
 {
     TypeID type = builder.function().at(value).type;
     if (builder.types().at(type).isSubsetOf(builder.types().at(wanted), builder.context().program))
@@ -60,6 +62,8 @@ static ValueID assumeType(IRBuilder& builder, ValueID value, TypeID wanted)
     TypeID castType = builder.types().intersectionOf(type, wanted);
     if (builder.context().build.validates())
         builder.append(makeValidateType(value, castType));
+    if (holds == ClaimHolds::FromHereOn)
+        return builder.append(makeAssumeType(value, builder.append(Opcode::Specified, { }), Proven::behindFact(castType)));
     return builder.append(makeAssumeType(value, Proven::byRulesWithoutChecks(castType)));
 }
 
@@ -1216,7 +1220,7 @@ struct MovableCode {
             const Type& arrayType = typeOf(function, test.objectOperand());
             const ClassPart* part = hasOnlyPristineArrays(arrayType) ? arrayType.singleBuiltinClass() : nullptr;
             BlockID taken = block.terminator.targets[0].block;
-            if (!part || !part->contentsAreProven || part->writtenContents.isEmpty() || numberOfPredecessors[taken.index()] != 1)
+            if (!part || !part->contentsAreProven || part->contentsOfSlots().empty() || numberOfPredecessors[taken.index()] != 1)
                 continue;
             // Nothing in front of the read has run that could take the element away.
             const BlockValues& values = function.at(taken).values;
@@ -1982,9 +1986,9 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
         found.append(WTF::move(whatStays));
 }
 
-static ValueID assumeWithout(IRBuilder& builder, ValueID value, uint16_t primitives)
+static ValueID assumeWithout(IRBuilder& builder, ValueID value, uint16_t primitives, ClaimHolds holds = ClaimHolds::WhereverValueIs)
 {
-    return assumeType(builder, value, builder.types().intern(builder.types().at(builder.function().at(value).type).withoutPrimitives(primitives)));
+    return assumeType(builder, value, builder.types().intern(builder.types().at(builder.function().at(value).type).withoutPrimitives(primitives)), holds);
 }
 
 static void buildInitializerUnit(const InitializerUnit& unit, const Function& body, IRBuilder& builder)
@@ -2200,9 +2204,9 @@ static void fillVariablesAtReads(const InitializerPlan& plan, FunctionID id, IRB
             made = assumeWithout(builder, builder.append(makeVariableAccess(Opcode::GetModuleVariable, variable)), isMarkedByUndefined ? Primitive::Absent | Primitive::Undefined : Primitive::Absent);
         builder.endExpansion(expansion, made);
 
-        // A cast, which stays behind the test. What the edge of a test hands on is the read itself to the back end, which would take what hangs on it out of a loop and in front of the test.
+        // A cast that names a fact made behind the test: it stays there, and so does whoever looks at the value.
         builder.moveToEndOf(branch.notTaken);
-        builder.endExpansion(expansion, assumeWithout(builder, held, isMarkedByUndefined ? Primitive::Undefined : Primitive::Absent));
+        builder.endExpansion(expansion, assumeWithout(builder, held, isMarkedByUndefined ? Primitive::Undefined : Primitive::Absent, ClaimHolds::FromHereOn));
     });
 }
 

@@ -240,16 +240,16 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
 bool Object::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     Object* object = uncheckedDowncast<Object>(cell);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
     ASSERT(!field || !field->isPrivate());
     if (field && name.isSymbol()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         prepareForLookup(globalObject, object, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
     }
     if (field)
-        return defineFieldProperty(object, globalObject, *field, name, descriptor, shouldThrow);
-    return defineExtraProperty(object, globalObject, name, descriptor, shouldThrow);
+        RELEASE_AND_RETURN(scope, defineFieldProperty(object, globalObject, *field, name, descriptor, shouldThrow));
+    RELEASE_AND_RETURN(scope, defineExtraProperty(object, globalObject, name, descriptor, shouldThrow));
 }
 
 JSValue Object::getDirectFromNativeCode(VM& vm, PropertyName name, unsigned* attributes)
@@ -606,11 +606,12 @@ static void finishSlotOfExtraProperty(Object* object, PropertySlot& slot, bool f
 bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
 {
     Object* object = uncheckedDowncast<Object>(cell);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (const FieldData* field = object->fieldNamed(object->state(), name)) {
         if (field->isPrivate()) [[unlikely]]
             return false;
         if (name.isSymbol() && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
             prepareForLookup(globalObject, object, name.uid());
             RETURN_IF_EXCEPTION(scope, false);
         }
@@ -625,13 +626,11 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
             return true;
         }
     } else
-        object->state().objects->layouts.didReadAbsentField(globalObject->vm(), object->layout(), name.uid());
+        object->state().objects->layouts.didReadAbsentField(vm, object->layout(), name.uid());
     if (object->hasExtraProperties() && slot.internalMethodType() == PropertySlot::InternalMethodType::Get) {
-        VM& vm = globalObject->vm();
         if (std::optional<Object*> source = sourceOfPendingBinding(vm, *object, name.uid())) {
             if (!*source)
                 return false;
-            auto scope = DECLARE_THROW_SCOPE(vm);
             JSValue value = (*source)->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, false);
             slot.setValue(object, 0, value);
@@ -643,6 +642,7 @@ bool Object::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, Pr
     if (!extra)
         return false;
     bool found = extra->methodTable()->getOwnPropertySlot(extra, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, false);
     finishSlotOfExtraProperty(object, slot, found);
     return found;
 }
@@ -844,13 +844,13 @@ static bool isProxyThatDefinesOnTarget(VM& vm, JSValue receiver, Object* target)
 bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
 {
     Object* object = uncheckedDowncast<Object>(cell);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     const FieldData* field = object->fieldNamed(object->state(), name);
     if (field && name.isSymbol()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         prepareForLookup(globalObject, object, name.uid());
         RETURN_IF_EXCEPTION(scope, false);
     }
-    return putWithKnownField(cell, globalObject, name, value, slot, field);
+    RELEASE_AND_RETURN(scope, putWithKnownField(cell, globalObject, name, value, slot, field));
 }
 
 bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field)
@@ -931,13 +931,13 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
 {
     Object* object = uncheckedDowncast<Object>(cell);
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     State& state = object->state();
     const FieldData* field = object->fieldNamed(state, name);
     if (field) {
         if (field->isPrivate()) [[unlikely]]
             return true;
         if (name.isSymbol()) [[unlikely]] {
-            auto scope = DECLARE_THROW_SCOPE(vm);
             prepareForLookup(globalObject, object, name.uid());
             RETURN_IF_EXCEPTION(scope, false);
         }
@@ -960,6 +960,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
         return true;
     std::optional<uint32_t> ordinal = field ? std::nullopt : object->extraKeyOrdinal(name);
     bool isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, false);
     slot.disableCaching();
     if (!isDeleted)
         return false;

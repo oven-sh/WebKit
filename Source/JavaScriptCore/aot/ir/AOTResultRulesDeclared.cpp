@@ -303,7 +303,8 @@ std::optional<Type> tryTypeOfContentsRead(const TypingContext& context, const Ty
         }
         if (context.level == TypeLevel::Proven && !part.contentsAreProven)
             return std::nullopt;
-        result = result.unionWith(context.types.at(part.writtenContentsAt(builtins, slot)), context.types);
+        TypeID contents = context.level == TypeLevel::Proven ? part.writtenContentsAt(builtins, slot) : part.expectedContentsAt(builtins, slot).predicted();
+        result = result.unionWith(context.types.at(contents), context.types);
     }
     return result;
 }
@@ -374,7 +375,8 @@ std::optional<Type> tryTypeOfAwaited(const TypingContext& context, const Type& a
         break;
     }
 
-    const Type& fulfillment = context.types.at(promise->writtenContentsAt(context.program.builtins(), ContentsSlot::Value));
+    const BuiltinTable& builtins = context.program.builtins();
+    const Type& fulfillment = context.types.at(context.level == TypeLevel::Proven ? promise->writtenContentsAt(builtins, ContentsSlot::Value) : promise->expectedContentsAt(builtins, ContentsSlot::Value).predicted());
     return awaited.without(Type::builtinClass(BuiltinClasses::Promise), context.types).unionWith(fulfillment, context.types);
 }
 

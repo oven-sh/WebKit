@@ -1320,6 +1320,12 @@ void HeapRule::readFromStartsThatMayFindSomething(ClimbingSet start, const HeapK
         add(m_statement.result, m_universe.undefinedValue());
 }
 
+// Native code only calls the functions above an instance that has escaped. Whoever reads one off a value nobody knows holds it, unless the read is the callee of a call on that value.
+void HeapRule::noteName(ValueFlowHostNode names, const HeapKey& key)
+{
+    add(m_context.nodes().ofHost(names), key.keyClass == HeapKeyClass::Name ? only(m_universe.keyConstant(key.name)) : m_universe.unknownObjectAlone());
+}
+
 void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, const HeapReceiver& receiver, ValueFlowNodeID result)
 {
     Members builtinGetters;
@@ -1454,6 +1460,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
     } else if (chain.holdsUnknownObject) {
         connect(m_context.lookup(unknownObjectAlone(), value), result);
+        noteName(ValueFlowHostNode::NamesFoundBelowValuesNobodyKnows, key);
         if (handsOutEvaluators) {
             // The unknown object stands for no object that lets in unseen code: one that is written on an object listed beside it is read there.
             ClimbingSet listed = m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), m_context.lookup(chain.start, prototypeLinkName));
@@ -1748,6 +1755,7 @@ void HeapRule::runLookup()
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
         RELEASE_ASSERT(splitLookupThroughPlaceholders());
         return;
     }

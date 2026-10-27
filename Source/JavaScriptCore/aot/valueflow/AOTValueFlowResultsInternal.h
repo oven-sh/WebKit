@@ -41,6 +41,7 @@ FlowResultTables createUnknownResultTables(const Program&, BuildContext&);
 
 struct ValueFlowContainerFacts {
     Vector<TypeID, 2> contents;
+    Vector<TypeID, 2> expectedContents;
     bool contentsAreProven { false };
     ArrayStorage arrayStorage { ArrayStorage::Other };
     OptionSet<PristineAspects> pristine;

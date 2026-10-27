@@ -35,17 +35,16 @@ struct StaticsRun {
 };
 static_assert(sizeof(StaticsRun) == 16 && isImageRecord<StaticsRun>);
 
-// A file that the first entry point does not bring along. Its variables get their first words when code is entered that can name them: its own, or that of a file that imports it.
-// By the number of the module, and the words lie in the same order, one file behind the other. A file that only imports such files has no words.
-// The last record ends the lists. In the place of a number of words it has the offset of one byte for each file, in their order: whether its words are filled.
-struct StaticsOfFile {
-    uint32_t module;
+// A group of files that the first entry point does not bring along. Their variables get their first words when code is entered that can name them: that of a file of the group, or of a file that imports one.
+// The words of the groups lie in the order of the records, one group behind the other. A group that only imports such groups has no words.
+// The last record ends the lists. In the place of a number of words it has the offset of one byte for each group, in their order: whether its words are filled.
+struct StaticsOfFiles {
     uint32_t firstWord;
     uint32_t numberOfWords;
-    // In ProgramTables::staticsOfImportedFiles(): the files of this table that it imports.
-    uint32_t firstImportedFile;
+    // In ProgramTables::staticsOfImportedFiles(): the groups of this table that its files import.
+    uint32_t firstImportedGroup;
 };
-static_assert(sizeof(StaticsOfFile) == 16 && isImageRecord<StaticsOfFile>);
+static_assert(sizeof(StaticsOfFiles) == 12 && isImageRecord<StaticsOfFiles>);
 
 struct StaticsRange {
     uint32_t offset;
@@ -361,7 +360,7 @@ static_assert(static_cast<unsigned>(ThrowKind::ErrorWithMessage) < 1u << 3 && nu
 #define FOR_EACH_AOT_OPERATION_PROGRAM_TABLE(v) \
     v(staticsLayout, StaticsLayout) \
     v(staticsRuns, StaticsRun) \
-    v(staticsOfFiles, StaticsOfFile) \
+    v(staticsOfFiles, StaticsOfFiles) \
     v(staticsOfImportedFiles, uint32_t) \
     v(staticsRoots, StaticsRange) \
     v(staticsNarrowRoots, StaticsRange) \

@@ -1,0 +1,101 @@
+# Flow lost sight of the closures of f0, so once one is renamed only calls by value record which closure runs. A caller that creates such a closure and lets it escape around the call tests that no function was renamed before it calls directly. Behind a failed test the call stays by value. A closure that does not escape is called directly.
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="escapes" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCalleeOnceRenamed] {
+    Return v0
+}
+
+function f1 name="onlyCalls" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f0
+    v2 = Call v1, -, v0
+    Return v2
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: = CallDirect v0 function=f0
+}
+
+function f2 name="escapesBeforeTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    v3 = Call v0, -, v2
+    v4 = Call v2, -, v1
+    Return v4
+# CHECK: [[escapedBefore]]: f0 = NewClosure function=f0
+# CHECK: = AreFunctionNamesUnchanged
+# CHECK: = CallDirect v1 function=f0
+# CHECK: = Call [[escapedBefore]], -, v1
+}
+
+function f3 name="isConvertedBeforeTheCall" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    v3 = Add v0, v2
+    v4 = Call v2, -, v1
+    Return v4
+# CHECK: [[converted]]: f0 = NewClosure function=f0
+# CHECK: = AreFunctionNamesUnchanged
+# CHECK: = CallDirect v1 function=f0
+# CHECK: = Call [[converted]], -, v1
+}
+
+function f4 name="escapesAfterTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewClosure function=f0
+    v3 = Call v2, -, v1
+    v4 = Call v0, -, v2
+    Return v3
+# CHECK: [[escapedAfter]]: f0 = NewClosure function=f0
+# CHECK: = AreFunctionNamesUnchanged
+# CHECK: = CallDirect v1 function=f0
+# CHECK: = Call [[escapedAfter]], -, v1
+}
+
+function f5 name="escapesInRareCode" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Rare:
+    v3 = NewClosure function=f0
+    v4 = Call v1, -, v3
+    v5 = Call v3, -, v2
+    Return v5
+  b2():
+    Return v2
+# CHECK: [[escapedInRareCode]]: f0 = NewClosure function=f0
+# CHECK: = Call v1, -, [[escapedInRareCode]]
+# CHECK-NEXT: = AreFunctionNamesUnchanged
+# CHECK: = CallDirect v2 function=f0
+# CHECK: = Call [[escapedInRareCode]], -, v2
+}
+
+function f6 name="escapesOnTheOtherSide" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewClosure function=f0
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Call v3, -, v2
+    Return v4
+  b2():
+    v5 = Call v1, -, v3
+    Return v5
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: = CallDirect v2 function=f0
+# CHECK: = Call v1, -, v3
+}
+
+function f7 name="callsBehindAFailedTest" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = AreFunctionNamesUnchanged
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v2
+  b2() frequency=Unlikely:
+    Branch v0 -> taken b3(), notTaken b4()
+  b3():
+    v4 = NewClosure function=f0
+    v5 = Call v1, -, v4
+    Jump -> next b5(v4)
+  b4():
+    v6 = NewClosure function=f0
+    Jump -> next b5(v6)
+  b5(v7: f0):
+    v8 = Call v7, -, v2
+    Return v8
+# CHECK: b5([[eitherClosure]]: f0)
+# CHECK-NEXT: = Call [[eitherClosure]], -, v2
+}

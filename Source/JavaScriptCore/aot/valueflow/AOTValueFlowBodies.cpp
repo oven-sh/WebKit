@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCFG.h"
+#include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowOrder.h"
@@ -21,6 +22,7 @@
 #include "AOTValueFlowTypedResults.h"
 #include "AOTValueIdentity.h"
 #include <algorithm>
+#include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -1743,10 +1745,85 @@ private:
         return { NodeName::ofBody(value), 0, 0 };
     }
 
+    // The reads by name whose value goes anywhere but into tests and into the callee of a call on the object it was read from.
+    void findReadsHandedOn()
+    {
+        m_readsHandedOn = BitVector(m_function.values.size());
+        Vector<ValueID> narrowedFrom(m_function.values.size());
+        auto definitionOf = [&](ValueID id) {
+            for (unsigned steps = 0; steps < 8; ++steps) {
+                id = definitionThroughSameValues(m_function, id);
+                if (m_function.at(id).opcode != Opcode::Parameter || !narrowedFrom[id.index()])
+                    break;
+                id = narrowedFrom[id.index()];
+            }
+            return id;
+        };
+        auto handOn = [&](ValueID used) {
+            if (used)
+                m_readsHandedOn.quickSet(definitionOf(used).index());
+        };
+        Vector<ValueID, 8> narrowedTwice;
+        for (uint32_t from = 0; from < m_function.blocks.size(); ++from) {
+            const auto& targets = m_function.blocks[from].terminator.targets;
+            for (uint32_t targetIndex = 0; targetIndex < targets.size(); ++targetIndex) {
+                uint32_t first = firstEdgeResultParameter(m_function, BlockID(from), targetIndex);
+                for (uint32_t result = 0; result < numberOfEdgeResults(m_function, BlockID(from), targetIndex); ++result) {
+                    ValueID narrowed = operandNarrowedOnEdge(m_function, { BlockID(from), targetIndex, result });
+                    ValueID& origin = narrowedFrom[m_function.at(targets[targetIndex].block).parameters[first + result].index()];
+                    if (origin && origin != narrowed)
+                        narrowedTwice.appendList({ origin, narrowed });
+                    origin = narrowed;
+                }
+            }
+        }
+        for (ValueID narrowed : narrowedTwice)
+            handOn(narrowed);
+        for (const Block& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                const Value& user = m_function.at(id);
+                for (uint32_t index = 0; index < user.numberOfOperands(); ++index) {
+                    ValueID operand = user.operand(index);
+                    if (!operand || sameValueOperandOf(user) == operand)
+                        continue;
+                    const OperandInfo& info = operandInfoOf(user.opcode, index);
+                    if (info.uses.contains(OperandUse::Calls) && info.uses.containsOnly({ OperandUse::Inspects, OperandUse::Calls }) && (user.opcode == Opcode::Call || user.opcode == Opcode::CallList) && user.thisValueOperand()) {
+                        const Value& read = m_function.at(definitionOf(operand));
+                        if (read.opcode != Opcode::PropGet || definitionOf(read.objectOperand()) == definitionOf(user.thisValueOperand()))
+                            continue;
+                    }
+                    if (info.uses.containsOnly(OperandUse::Inspects) && info.protocols.isEmpty() && receiverOf(user.opcode) != index)
+                        continue;
+                    handOn(operand);
+                }
+            }
+            const Terminator& terminator = block.terminator;
+            std::span<const ValueID> operandsOfTerminator = terminator.operands();
+            for (uint32_t index = 0; index < operandsOfTerminator.size(); ++index) {
+                if (!operandInfoOf(terminator.kind, index).uses.containsOnly(OperandUse::Inspects))
+                    handOn(operandsOfTerminator[index]);
+            }
+            for (const Target& target : terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    handOn(argument);
+            }
+            if (block.handler) {
+                for (ValueID argument : block.handler->arguments)
+                    handOn(argument);
+            }
+            handOn(block.subject);
+        }
+    }
+
     void emitStatement(const PendingStatement& pending)
     {
         const Value& value = m_function.at(pending.site);
         Body::Statement statement { value.opcode, pending.site, static_cast<uint32_t>(m_body.operands.size()), pending.operandCount, { }, { } };
+        if (value.opcode == Opcode::PropGet) {
+            if (!std::exchange(m_hasFoundReadsHandedOn, true))
+                findReadsHandedOn();
+            statement.isOnlyCalledOnItsHolder = !m_readsHandedOn.quickGet(pending.site.index());
+        }
         for (uint32_t index = 0; index < pending.operandCount; ++index) {
             const UnobservedFieldDefinition* unobserved = findUnobservedDefinition(pending.site, index);
             m_body.operands.append(unobserved ? valueOf(*unobserved) : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
@@ -1800,6 +1877,8 @@ private:
     const Program& m_program;
     const ValueFlowBuiltinTables& m_tables;
     const UnobservedFieldDefinitions* m_unobservedDefinitions;
+    BitVector m_readsHandedOn;
+    bool m_hasFoundReadsHandedOn { false };
     FunctionID m_id;
     const Function& m_function;
     CFG m_cfg;

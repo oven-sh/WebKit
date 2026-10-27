@@ -80,9 +80,9 @@ static PropertyCaches* cachesWithPreparationBeforeLookupsUnder(VM& vm, UniquedSt
     return nullptr;
 }
 
-bool isPreparedBeforeLookups(VM& vm, UniquedStringImpl* uid)
+bool isPreparedBeforeLookupsSlow(VM& vm, UniquedStringImpl* symbol)
 {
-    return cachesWithPreparationBeforeLookupsUnder(vm, uid);
+    return cachesWithPreparationBeforeLookupsUnder(vm, symbol);
 }
 
 void prepareForLookup(JSGlobalObject* globalObject, JSObject* compiledObject, UniquedStringImpl* uid)
@@ -98,19 +98,18 @@ void prepareForLookup(JSGlobalObject* globalObject, JSObject* compiledObject, Un
     caches->setIsPreparingHolder(false);
 }
 
-LookByName::LookByName(VM& vm, JSValue holder, UniquedStringImpl* uid)
+void LookByName::begin(VM& vm, JSValue holder, UniquedStringImpl* symbol)
 {
     if (!holder.isCell())
         return;
-    m_caches = cachesWithPreparationBeforeLookupsUnder(vm, uid);
+    m_caches = cachesWithPreparationBeforeLookupsUnder(vm, symbol);
     if (m_caches)
         m_previous = m_caches->exchangeHolderLookedAtByName(holder.asCell());
 }
 
-LookByName::~LookByName()
+void LookByName::end()
 {
-    if (m_caches)
-        m_caches->exchangeHolderLookedAtByName(m_previous);
+    m_caches->exchangeHolderLookedAtByName(m_previous);
 }
 
 void prepareForWalk(JSGlobalObject* globalObject, JSObject* object)

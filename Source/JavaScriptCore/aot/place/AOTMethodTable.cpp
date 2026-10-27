@@ -71,7 +71,7 @@ static FunctionID findBodyEnteredAsGiven(const PlacementContext& context, Functi
     if (call.opcode != Opcode::CallDirect || call.argumentsOperands().size() != block.parameters.size())
         return { };
     for (ValueID id : block.values.span().first(block.values.size() - 1)) {
-        if (!isCast(entrypoint.at(id).opcode))
+        if (!isCast(entrypoint.at(id).opcode) && !makesFact(entrypoint.at(id).opcode))
             return { };
     }
     for (size_t index = 0; index < block.parameters.size(); ++index) {

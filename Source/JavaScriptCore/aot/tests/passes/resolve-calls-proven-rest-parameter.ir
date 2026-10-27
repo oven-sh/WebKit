@@ -38,7 +38,8 @@ function f6 name="element-outside-proven-contents" parameters=[{type=f1}, {type=
     v2 = Call v0, -, v1
     Return v2
 # CHECK-NEXT: b0(v0: f1, v1: anything):
-# CHECK-NEXT: [[element]]: number = AssumeType v1 provenType=number
+# CHECK-NEXT: [[here41]]: fact = Specified
+# CHECK-NEXT: [[element]]: number = AssumeType v1, [[here41]] provenType=number
 # CHECK-NEXT: = NewArray [[element]] contents=number
 # CHECK-NOT: Check
 # CHECK: [[outsideRest]]: Array<number, proven> =

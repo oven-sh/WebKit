@@ -25,6 +25,7 @@
 #include "AOTHeat.h"
 #include "AOTInlineCopy.h"
 #include "AOTLayout.h"
+#include "AOTMemoryLocation.h"
 #include "AOTMethodTableEntrypoints.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessInternal.h"
@@ -216,6 +217,20 @@ ValueID convertTo(const ValueInsertion& insertion, ValueID value, const Declared
     return insertWithOrigin(insertion, makeAssumeType(value, Proven::byRulesWithoutChecks(required)));
 }
 
+// Flow narrows a parameter from every call that it has followed to the function, so what such a call hands over has the type wherever the value is at hand. A callee that flow has not followed here says
+// nothing of the value: it has the type where the call stands, behind the test that has found the callee.
+static ValueID convertWhereCallStands(const ValueInsertion& insertion, ValueID value, const DeclaredType& target, ValueID& callStandsHere)
+{
+    TypeID required = requiredTypeOf(insertion, target);
+    if (isValueInside(insertion, value, required))
+        return value;
+    if (insertion.context.build.validates())
+        insertWithOrigin(insertion, makeValidateType(value, required));
+    if (!callStandsHere)
+        callStandsHere = insertWithOrigin(insertion, IRBuilder::make(Opcode::Specified));
+    return insertWithOrigin(insertion, makeAssumeType(value, callStandsHere, Proven::behindFact(required)));
+}
+
 ValueID convertTo(IRBuilder& builder, ValueID value, const DeclaredType& target)
 {
     return withInsertionAtEnd(builder, [&](const ValueInsertion& insertion) { return convertTo(insertion, value, target); });
@@ -248,8 +263,11 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     RELEASE_ASSERT(!request.restArray || callee.has(FunctionFlags::HasRestParameter));
 
     auto insert = [&](Value&& value) { return insertWithOrigin(insertion, WTF::move(value)); };
+    ValueID callStandsHere;
     auto convert = [&](ValueID value, const DeclaredType& target) {
-        return convertTo(insertion, value ? value : insert(IRBuilder::make(Opcode::Undefined)), target);
+        if (!value)
+            value = insert(IRBuilder::make(Opcode::Undefined));
+        return request.calleeIsPredicted ? convertWhereCallStands(insertion, value, target, callStandsHere) : convertTo(insertion, value, target);
     };
     size_t numberOfPositionalParameters = callee.numberOfPositionalParameters();
     auto insertArrayOfOtherArguments = [&](TypeID contents, bool convertsElements) {
@@ -454,6 +472,16 @@ bool canConstructWithoutClosure(const Program& program, FunctionID id)
 static constexpr OpcodeSet validationsOfValues { Opcode::ValidateType, Opcode::ValidateCallee };
 static constexpr OpcodeSet readsOfMembers { Opcode::PropGet, Opcode::SuperGet };
 
+static bool readsWhatNoOtherCodeChanges(FunctionPassContext& context, ValueID id)
+{
+    const Value& value = context.function.at(id);
+    MemoryAccess access = memoryAccessOf(context.function, value);
+    if (access.kind != MemoryAccess::Kind::Read || stabilityOf(context.program, value, access) == LocationStability::Unknown)
+        return false;
+    const Effects& effects = context.analyses.effectsOf(id).normal;
+    return !effects.mayThrow && effects.writes.isEmpty();
+}
+
 static bool canSinkToCall(FunctionPassContext& context, std::span<const ValueSite> links, const ValueSite& call)
 {
     if (std::ranges::any_of(links, [&](const ValueSite& link) { return link.block != call.block; }))
@@ -467,7 +495,7 @@ static bool canSinkToCall(FunctionPassContext& context, std::span<const ValueSit
         Effects effectsOfRead = context.analyses.effectsOf(read.value).normal;
         for (uint32_t index = read.index + 1; index < call.index; ++index) {
             ValueID id = values[index];
-            if (!std::ranges::contains(links, id, &ValueSite::value) && !validationsOfValues.contains(context.function.at(id).opcode) && context.analyses.effectsOf(id).normal.interferesWith(effectsOfRead))
+            if (!std::ranges::contains(links, id, &ValueSite::value) && !validationsOfValues.contains(context.function.at(id).opcode) && context.analyses.effectsOf(id).normal.interferesWith(effectsOfRead) && !readsWhatNoOtherCodeChanges(context, id))
                 return false;
         }
     }
@@ -1728,6 +1756,14 @@ struct CallResolver {
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    bool paysToDivideExpectedReceivers(const CallSite& site)
+    {
+        context.planAsksAboutPlace = true;
+        BlockID block = site.position.block;
+        Expected<HeatClass> heatClass = heatClassOf(context, block);
+        return function.at(block).frequency.predicted() == BlockFrequency::Normal && (isHot(heatClass).predicted() || heatClass.predicted() == HeatClass::Unknown);
+    }
+
     Plan planReceiverDispatch(const CallSite& site)
     {
         bool isCall = site.opcode == Opcode::Call;
@@ -1740,14 +1776,21 @@ struct CallResolver {
         ValueID receiver = access.objectOperand();
 
         ReceiverCandidates candidates = receiverCandidates(program, function, receiver, access.receivers());
-        if (!candidates.isProven())
+        bool dividesExpectedReceivers = !candidates.isProven() && isCall && candidates.expected.predicted().size() >= 2 && site.memberRead.canSinkToCall
+            && candidates.expected.predicted().size() <= context.limit(LimitID::MaxDispatchCases) && paysToDivideExpectedReceivers(site);
+        if (!candidates.isProven() && !dividesExpectedReceivers)
             return std::unexpected(!candidates.expected.predicted().isEmpty() ? CallDeclineReason::NeedsTest : isCall ? CallDeclineReason::UnknownMember : CallDeclineReason::None);
         bool checksReceiverAtRead = candidates.mayBeNullish;
         if (checksReceiverAtRead && !isCall)
             return declined;
 
-        MemberPartition partition = partitionMembers(accessContext(), candidates.proven.span(), key, accessOf(access.opcode));
+        MemberPartition partition = partitionMembers(accessContext(), (dividesExpectedReceivers ? candidates.expected.predicted() : candidates.proven).span(), key, accessOf(access.opcode));
         auto armsOfPartition = partition.arms.map<Vector<std::optional<CallArm>, 4>>([&](const MemberArm& arm) { return planReceiverArm(site, arm); });
+        if (dividesExpectedReceivers) {
+            bool everyArmEntersMethod = !partition.arms.isEmpty() && partition.rest.isEmpty() && std::ranges::all_of(armsOfPartition, [](const std::optional<CallArm>& arm) { return arm && arm->kind == CallArmKind::DirectCall; });
+            if (partition.arms.size() < 2 || !everyArmEntersMethod)
+                return std::unexpected(CallDeclineReason::NeedsTest);
+        }
         if (!armsOfPartition.containsIf([](const std::optional<CallArm>& arm) { return arm && arm->kind != CallArmKind::OriginalOperations; })) {
             if (partition.arms.containsIf([](const MemberArm& arm) { return !arm.answer.needsNoTest(); }))
                 return std::unexpected(CallDeclineReason::NeedsTest);
@@ -2059,8 +2102,15 @@ struct CallResolver {
         const Value& call = function.at(site.position.value);
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
         // From the first name on that a function object gets where nobody sees, a frame is named by the function object that a call by value has recorded. Until then nobody can tell how a function was entered.
-        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return !mayBeCalledDirectly(program, member) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
-        bool mayTestNames = std::ranges::any_of(candidates.listed().predicted(), isEnteredByValueOnceRenamed) && paysToTestFunctionNames(site);
+        bool calleeEscapes = false;
+        if (std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member); })) {
+            context.planAsksAboutPlace = true;
+            if (haveFunctionNamesChanged(site))
+                return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
+            calleeEscapes = std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member) && callsOwnClosureThatEscapes(site, candidates.value, member); });
+        }
+        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return (calleeEscapes || !mayBeCalledDirectly(program, member)) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
+        bool mayTestNames = std::ranges::any_of(candidates.listed().predicted(), isEnteredByValueOnceRenamed) && (calleeEscapes || paysToTestFunctionNames(site));
         auto members = chooseDispatchedCallees(site, candidates, mayTestNames ? mayBeCalledDirectlyWhileFunctionNamesAreUnchanged : mayBeCalledDirectly);
         if (!members)
             return std::unexpected(members.error());
@@ -2163,7 +2213,11 @@ struct CallResolver {
         const Function& callee = program.at(creation.function());
         if (creation.isMadeOnDemand() || namesClosureOfTable(program, creation) || callee.has(FunctionFlags::TakesCallee))
             return false;
+        return !escapesAround(site, closureCreation);
+    }
 
+    bool escapesAround(const CallSite& site, ValueID closureCreation)
+    {
         const UseLists& uses = context.analyses.useLists();
         BlockID made = uses.blockOf(closureCreation);
         Vector<ValueID, 4> sameObject { closureCreation };
@@ -2181,10 +2235,27 @@ struct CallResolver {
                         continue;
                 }
                 if (leadsToCall(use, site, made) || isReachedFromCall(use, site, made))
-                    return false;
+                    return true;
             }
         }
-        return true;
+        return false;
+    }
+
+    // Flow lost sight of the closures of such a function, so it cannot tell whether a statement renames one. Once one is renamed, only a call by value records which closure runs.
+    bool recordsCalleeOnlyOnceRenamed(FunctionID callee)
+    {
+        FunctionID source = callee;
+        while (FunctionID next = program.at(source).derivation.source)
+            source = next;
+        return program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed) && !program.at(source).has(FunctionCapabilities::RecordsCallee);
+    }
+
+    bool haveFunctionNamesChanged(const CallSite& site) { return hasFailedEarlier(IRBuilder::make(Opcode::AreFunctionNamesUnchanged), site); }
+
+    bool callsOwnClosureThatEscapes(const CallSite& site, ValueID closure, FunctionID callee)
+    {
+        ValueID closureCreation = findClosureCreation(function, closure, callee);
+        return closureCreation && escapesAround(site, closureCreation);
     }
 
     // A call of the one function that its callee can be, whose result is what the call gives: no test, no arm, no block.
@@ -2201,6 +2272,8 @@ struct CallResolver {
             return nullptr;
         bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only);
         if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only))))
+            return nullptr;
+        if (recordsCalleeOnlyOnceRenamed(only) && (haveFunctionNamesChanged(site) || callsOwnClosureThatEscapes(site, closure, only)))
             return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))

@@ -16,7 +16,6 @@
 #include "AOTModuleNamespace.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramStatics.h"
-#include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
@@ -812,8 +811,9 @@ bool Modules::comesToLoadInFlight(ModuleID required)
     if (!loaderGoesThroughGraph && rootsThatWait.isEmpty())
         return false;
 
-    BitVector seen(m_table.size());
-    seen.quickSet(required.index());
+    const uint32_t isSeen = takeMarkOfSearch();
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
+    placesSeen[required.index()] = isSeen;
     Vector<ModuleID, 16> modules { required };
     while (!modules.isEmpty()) {
         ModuleID module = modules.takeLast();
@@ -829,7 +829,7 @@ bool Modules::comesToLoadInFlight(ModuleID required)
             if (request.isHoisted || request.isRequire)
                 continue;
             ModuleID target = request.targetModule();
-            if (seen.quickSet(target.index()))
+            if (std::exchange(placesSeen[target.index()], isSeen) == isSeen)
                 continue;
             // Most of what a module of a large program imports is an ES module that has begun: it is loaded, and only as a root is it in the hands of the loader.
             if (isLoadedModuleWithoutRecord(target) && !rootsThatWait.contains(target))
@@ -976,7 +976,8 @@ bool Modules::isStillToBeLoaded(ModuleID module)
 // in the same turn one job later, and who asks later is answered at once. So all modules of a level are asked for their requests in one turn, a level takes five jobs, and a way down from the root takes
 // one job more for each module on it that was asked for by a count that was not the first to ask. The most such requests on a way to each module are found level by level. What the counts of a level go
 // through is gone through once for the count that comes to it first and once for all the others, however many they are.
-uint32_t Modules::countStepsOfWholeGraph(const PlanOfLoad& plan, uint32_t firstPlaceFound)
+// The search hands over, for each place, the places that it asks for, in the order of its requests.
+uint32_t Modules::countStepsOfWholeGraph(const PlanOfLoad& plan, std::span<uint32_t> firstRequestOfPlace, std::span<uint32_t> allRequestedPlaces)
 {
     // A level stands here as its number and one more: zero says none.
     struct Place {
@@ -990,94 +991,104 @@ uint32_t Modules::countStepsOfWholeGraph(const PlanOfLoad& plan, uint32_t firstP
         uint32_t levelComeToAgain;
         uint32_t mostLaterRequestsComeWith;
         uint32_t levelGoneThroughAgain;
-        // While the lists are made: the place that asked for it last, and one more.
-        uint32_t lastAsker;
-        bool isAskedFor;
+        // While the lists are made: the place that asked for it last, and one more. Then: whether a count has asked for it.
+        uint32_t lastAskerOrIsAskedFor;
     };
+    constexpr uint32_t isAskedFor = std::numeric_limits<uint32_t>::max();
     uint32_t numberOfPlaces = plan.found.size();
     uint32_t numberOfLevels = plan.levels.size();
-    Vector<Place> places(numberOfPlaces);
-    zeroSpan(places.mutableSpan());
-    Vector<uint32_t> toGoThrough;
+    Vector<Place> storageOfPlaces(numberOfPlaces);
+    std::span<Place> places = storageOfPlaces.mutableSpan();
+    zeroSpan(places);
     auto firstPlaceOfLevel = [&](uint32_t level) {
         return level < numberOfLevels ? plan.levels[level].first : numberOfPlaces;
     };
 
-    // For each place the places that it asks for, each once and in the order of its requests: they are gone through more than once.
-    Vector<uint32_t> firstRequestOfPlace(numberOfPlaces + 1);
-    Vector<uint32_t> requestedPlaces;
-    auto requestsOf = [&](uint32_t place) {
-        return requestedPlaces.span().subspan(firstRequestOfPlace[place], firstRequestOfPlace[place + 1] - firstRequestOfPlace[place]);
-    };
-    {
-        // Behind the last importer of each place, then in front of the first.
-        Vector<uint32_t> importersOfPlace;
-        importersOfPlace.fill(0, numberOfPlaces + 1);
-        for (uint32_t importer = 0; importer < numberOfPlaces; ++importer) {
-            firstRequestOfPlace[importer] = requestedPlaces.size();
-            if (plan.found[importer].isFile)
+    // Behind the last importer of each place, then in front of the first.
+    Vector<uint32_t> storageOfImportersOfPlaces;
+    storageOfImportersOfPlaces.fill(0, numberOfPlaces + 1);
+    std::span<uint32_t> importersOfPlace = storageOfImportersOfPlaces.mutableSpan();
+    // Each once: they are gone through more than once.
+    uint32_t numberOfRequests = 0;
+    for (uint32_t importer = 0; importer < numberOfPlaces; ++importer) {
+        uint32_t first = std::exchange(firstRequestOfPlace[importer], numberOfRequests);
+        for (uint32_t target : allRequestedPlaces.subspan(first, firstRequestOfPlace[importer + 1] - first)) {
+            if (std::exchange(places[target].lastAskerOrIsAskedFor, importer + 1) == importer + 1)
                 continue;
-            for (const ModuleRequestData& request : m_table.requests(plan.found[importer].module)) {
-                if (request.isHoisted || request.isRequire)
-                    continue;
-                uint32_t placeSeen = m_placesSeenByPlans[request.target()];
-                if (placeSeen < firstPlaceFound || std::exchange(places[placeSeen - firstPlaceFound].lastAsker, importer + 1) == importer + 1)
-                    continue;
-                requestedPlaces.append(placeSeen - firstPlaceFound);
-                ++importersOfPlace[placeSeen - firstPlaceFound];
-            }
+            allRequestedPlaces[numberOfRequests++] = target;
+            ++importersOfPlace[target];
         }
-        firstRequestOfPlace[numberOfPlaces] = requestedPlaces.size();
+    }
+    firstRequestOfPlace[numberOfPlaces] = numberOfRequests;
+    std::span<const uint32_t> requestedPlaces = allRequestedPlaces.first(numberOfRequests);
+    auto requestsOf = [&](uint32_t place) {
+        return requestedPlaces.subspan(firstRequestOfPlace[place], firstRequestOfPlace[place + 1] - firstRequestOfPlace[place]);
+    };
+    // No walk comes to more at a time than there are requests, and the place that it begins with.
+    Vector<uint32_t> storageOfPlacesToGoThrough(requestedPlaces.size() + 1);
+    std::span<uint32_t> toGoThrough = storageOfPlacesToGoThrough.mutableSpan();
+    uint32_t numberToGoThrough = 0;
+    {
         for (uint32_t place = 0; place < numberOfPlaces; ++place)
             importersOfPlace[place + 1] += importersOfPlace[place];
-        Vector<uint32_t> importers(requestedPlaces.size());
+        Vector<uint32_t> storageOfImporters(requestedPlaces.size());
+        std::span<uint32_t> importers = storageOfImporters.mutableSpan();
         for (uint32_t importer = 0; importer < numberOfPlaces; ++importer) {
             for (uint32_t target : requestsOf(importer))
                 importers[--importersOfPlace[target]] = importer;
         }
-        for (uint32_t level = numberOfLevels; level; --level) {
-            for (uint32_t lowest = firstPlaceOfLevel(level - 1); lowest < firstPlaceOfLevel(level); ++lowest) {
-                if (places[lowest].lowestLevelBelow)
-                    continue;
-                places[lowest].lowestLevelBelow = level;
-                toGoThrough.append(lowest);
-                while (!toGoThrough.isEmpty()) {
-                    uint32_t target = toGoThrough.takeLast();
-                    for (uint32_t importer : importers.span().subspan(importersOfPlace[target], importersOfPlace[target + 1] - importersOfPlace[target])) {
-                        if (places[importer].lowestLevelBelow)
-                            continue;
-                        places[importer].lowestLevelBelow = level;
-                        toGoThrough.append(importer);
-                    }
+        for (uint32_t lowest = numberOfPlaces, level = numberOfLevels; lowest--;) {
+            if (lowest < plan.levels[level - 1].first)
+                --level;
+            if (places[lowest].lowestLevelBelow)
+                continue;
+            places[lowest].lowestLevelBelow = level;
+            toGoThrough[numberToGoThrough++] = lowest;
+            while (numberToGoThrough) {
+                uint32_t target = toGoThrough[--numberToGoThrough];
+                for (uint32_t importer : importers.subspan(importersOfPlace[target], importersOfPlace[target + 1] - importersOfPlace[target])) {
+                    if (places[importer].lowestLevelBelow)
+                        continue;
+                    places[importer].lowestLevelBelow = level;
+                    toGoThrough[numberToGoThrough++] = importer;
                 }
             }
         }
     }
 
     // The places in the order in which they are asked for. A level holds what it holds in the plan.
-    Vector<uint32_t> counts(numberOfPlaces);
+    Vector<uint32_t> storageOfCounts(numberOfPlaces);
+    std::span<uint32_t> counts = storageOfCounts.mutableSpan();
     counts[0] = 0;
     uint32_t numberAskedFor = 1;
-    // The later requests in the upper half, the place in the lower.
-    Vector<uint64_t> comeToAgain;
+    // The places that counts came to again, in a list for each number of later requests: a place of a level has fewer than the level says. Each with the one behind it in its list, and one more.
+    struct ComeToAgain {
+        uint32_t place;
+        uint32_t next;
+    };
+    Vector<ComeToAgain> comeToAgain;
+    Vector<uint32_t> storageOfFirstComeToAgain;
+    storageOfFirstComeToAgain.fill(0, numberOfLevels);
+    std::span<uint32_t> firstComeToAgainWith = storageOfFirstComeToAgain.mutableSpan();
     uint32_t steps = 0;
     for (uint32_t level = 1; level <= numberOfLevels; ++level) {
         uint32_t firstPlaceOfNextLevel = firstPlaceOfLevel(level);
-        for (uint32_t count : counts.span().subspan(firstPlaceOfLevel(level - 1), firstPlaceOfNextLevel - firstPlaceOfLevel(level - 1))) {
+        for (uint32_t count : counts.subspan(firstPlaceOfLevel(level - 1), firstPlaceOfNextLevel - firstPlaceOfLevel(level - 1))) {
             uint32_t laterRequests = places[count].laterRequests;
             steps = std::max(steps, (level - 1) * PlanOfLoad::jobsOfLevel + laterRequests);
             if (places[count].lowestLevelBelow == level)
                 continue;
             // The loader goes on with what it came to last.
-            toGoThrough.append(count);
-            while (!toGoThrough.isEmpty()) {
-                uint32_t importer = toGoThrough.takeLast();
+            toGoThrough[numberToGoThrough++] = count;
+            while (numberToGoThrough) {
+                uint32_t importer = toGoThrough[--numberToGoThrough];
                 Place& goneThrough = places[importer];
                 if (goneThrough.levelGoneThrough == level) {
                     if (goneThrough.firstCount != count && (goneThrough.levelComeToAgain != level || goneThrough.mostLaterRequestsComeWith < laterRequests)) {
                         goneThrough.levelComeToAgain = level;
                         goneThrough.mostLaterRequestsComeWith = laterRequests;
-                        comeToAgain.append(static_cast<uint64_t>(laterRequests) << 32 | importer);
+                        comeToAgain.append(ComeToAgain { importer, firstComeToAgainWith[laterRequests] });
+                        firstComeToAgainWith[laterRequests] = comeToAgain.size();
                     }
                     continue;
                 }
@@ -1086,39 +1097,52 @@ uint32_t Modules::countStepsOfWholeGraph(const PlanOfLoad& plan, uint32_t firstP
                 for (uint32_t target : requestsOf(importer)) {
                     Place& askedFor = places[target];
                     if (target < firstPlaceOfNextLevel) {
-                        if (askedFor.lowestLevelBelow > level)
-                            toGoThrough.append(target);
+                        // What the count itself has gone through has nothing more to say to it.
+                        if (askedFor.lowestLevelBelow > level && (askedFor.levelGoneThrough != level || askedFor.firstCount != count))
+                            toGoThrough[numberToGoThrough++] = target;
                         continue;
                     }
-                    askedFor.laterRequests = std::max(askedFor.laterRequests, laterRequests + askedFor.isAskedFor);
-                    if (!askedFor.isAskedFor) {
-                        askedFor.isAskedFor = true;
-                        counts[numberAskedFor++] = target;
+                    if (askedFor.lastAskerOrIsAskedFor == isAskedFor) {
+                        askedFor.laterRequests = std::max(askedFor.laterRequests, laterRequests + 1);
+                        continue;
                     }
+                    askedFor.lastAskerOrIsAskedFor = isAskedFor;
+                    askedFor.laterRequests = laterRequests;
+                    counts[numberAskedFor++] = target;
                 }
             }
         }
         // Those with the most first: where one of them has been no other adds anything.
-        AOT::sort(comeToAgain);
-        while (!comeToAgain.isEmpty()) {
-            uint64_t again = comeToAgain.takeLast();
-            uint32_t laterRequests = (again >> 32) + 1;
-            toGoThrough.append(static_cast<uint32_t>(again));
-            while (!toGoThrough.isEmpty()) {
-                uint32_t importer = toGoThrough.takeLast();
-                if (std::exchange(places[importer].levelGoneThroughAgain, level) == level)
-                    continue;
-                for (uint32_t target : requestsOf(importer)) {
-                    Place& askedFor = places[target];
-                    if (target >= firstPlaceOfNextLevel)
-                        askedFor.laterRequests = std::max(askedFor.laterRequests, laterRequests);
-                    else if (askedFor.lowestLevelBelow > level && askedFor.levelGoneThroughAgain != level)
-                        toGoThrough.append(target);
+        for (uint32_t with = comeToAgain.isEmpty() ? 0 : level; with--;) {
+            for (uint32_t again = std::exchange(firstComeToAgainWith[with], 0); again; again = comeToAgain[again - 1].next) {
+                toGoThrough[numberToGoThrough++] = comeToAgain[again - 1].place;
+                while (numberToGoThrough) {
+                    uint32_t importer = toGoThrough[--numberToGoThrough];
+                    if (std::exchange(places[importer].levelGoneThroughAgain, level) == level)
+                        continue;
+                    for (uint32_t target : requestsOf(importer)) {
+                        Place& askedFor = places[target];
+                        if (target >= firstPlaceOfNextLevel)
+                            askedFor.laterRequests = std::max(askedFor.laterRequests, with + 1);
+                        else if (askedFor.lowestLevelBelow > level && askedFor.levelGoneThroughAgain != level)
+                            toGoThrough[numberToGoThrough++] = target;
+                    }
                 }
             }
         }
+        comeToAgain.shrink(0);
     }
     return steps;
+}
+
+// Every search begins to count where the one before it ended, so what that one has written says nothing to this one.
+uint32_t Modules::takeMarkOfSearch()
+{
+    if (m_placesSeenByPlans.size() != m_table.size() || m_firstPlaceOfNextPlan > std::numeric_limits<uint32_t>::max() - 3 - m_table.size()) {
+        m_placesSeenByPlans.fill(0, m_table.size());
+        m_firstPlaceOfNextPlan = 1;
+    }
+    return m_firstPlaceOfNextPlan++;
 }
 
 bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay)
@@ -1138,15 +1162,12 @@ bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay
             return load.root == module;
         });
     };
+    // The loader takes two graphs that share a module that is left to load, so the jobs of neither are counted.
+    const bool othersAreCounted = planWithoutWay && !m_orderOfCountedJobs.isEmpty();
     // Most requests of a large graph lead to a module that the search has come to. The number of a module says where it stands among what was found, or that it does not.
-    // Every search begins to count where the one before it ended, so what that one has written says nothing to this one.
-    if (m_placesSeenByPlans.size() != m_table.size() || m_firstPlaceOfNextPlan > std::numeric_limits<uint32_t>::max() - 2 - m_table.size()) {
-        m_placesSeenByPlans.fill(0, m_table.size());
-        m_firstPlaceOfNextPlan = 1;
-    }
-    auto& placesSeen = m_placesSeenByPlans;
-    const uint32_t isNotFound = m_firstPlaceOfNextPlan;
+    const uint32_t isNotFound = takeMarkOfSearch();
     const uint32_t firstPlaceFound = isNotFound + 1;
+    std::span<uint32_t> placesSeen = m_placesSeenByPlans.mutableSpan();
     bool isFoundAlready = !planWithoutWay && m_planOfRootKnownToBeWatched && m_rootKnownToBeWatched == root;
     Ref<PlanOfLoad> plan = isFoundAlready ? Ref(*m_planOfRootKnownToBeWatched) : adoptRef(*new PlanOfLoad);
     auto didEndSearch = makeScopeExit([&] {
@@ -1154,9 +1175,10 @@ bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay
     });
     auto& found = plan->found;
     auto& levels = plan->levels;
-    // The loader takes two graphs that share a module that is left to load, so the jobs of neither are counted.
-    const bool othersAreCounted = planWithoutWay && !m_orderOfCountedJobs.isEmpty();
     bool isSharedWithCountedImport = false;
+    // For each place the places that it asks for, in the order of its requests.
+    Vector<uint32_t, 64> firstRequestOfPlace;
+    Vector<uint32_t, 256> requestedPlaces;
     placesSeen[root.index()] = firstPlaceFound;
     if (isFoundAlready) {
         for (uint32_t place = 1; place < found.size(); ++place) {
@@ -1172,6 +1194,7 @@ bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay
         Level next { static_cast<uint32_t>(found.size()), 0, 0, false };
         uint32_t firstPlaceOfNext = firstPlaceFound + next.first;
         for (uint32_t importer = levels.last().first; importer < next.first; ++importer) {
+            firstRequestOfPlace.append(requestedPlaces.size());
             if (found[importer].isFile)
                 continue;
             uint32_t laterRequests = found[importer].laterRequests;
@@ -1181,8 +1204,11 @@ bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay
                 ModuleID target = request.targetModule();
                 uint32_t& placeSeen = placesSeen[target.index()];
                 if (placeSeen >= isNotFound) {
+                    if (placeSeen == isNotFound)
+                        continue;
+                    requestedPlaces.append(placeSeen - firstPlaceFound);
                     if (placeSeen < firstPlaceOfNext) {
-                        plan->asksAcrossLevels |= placeSeen != isNotFound;
+                        plan->asksAcrossLevels = true;
                         continue;
                     }
                     Found& askedFor = found[placeSeen - firstPlaceFound];
@@ -1195,42 +1221,36 @@ bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay
                     }
                     continue;
                 }
-                auto add = [&](bool isFile) ALWAYS_INLINE_LAMBDA {
-                    placeSeen = firstPlaceFound + found.size();
-                    isSharedWithCountedImport |= othersAreCounted && m_modulesOfCountedImports.get(target.index());
-                    found.append(Found { target, importer, laterRequests, isFile, false, false });
-                    if (laterRequests > next.laterRequests) {
-                        next.laterRequests = laterRequests;
-                        next.placeOfMostLaterRequests = found.size() - 1;
-                    }
-                };
                 const ModuleData& targetData = data(target);
                 StoredModuleStatus stored = storedStatus(target);
-                if (isModuleWithoutRecord(targetData, stored)) {
-                    if (isFoundWithoutRecord(target, targetData, stored))
-                        add(false);
-                    else
-                        placeSeen = isNotFound;
+                bool isFound;
+                bool isFile = false;
+                if (isModuleWithoutRecord(targetData, stored))
+                    isFound = isFoundWithoutRecord(target, targetData, stored);
+                else if (isNeitherOfProgramNorData(targetData, stored))
+                    isFound = isFile = isBuiltinModuleNewToLoader(target);
+                else if (wasLoadedWithEarlierGraph(target) || isLeftAsLoaded(target))
+                    isFound = false;
+                else {
+                    // Another graph that is being loaded has come to the module, or will.
+                    if (isInHandsOfLoader(target))
+                        return false;
+                    isFile = isCommonJSFileOrFace(target) || targetData.kind == ModuleKind::Data;
+                    isFound = isFile || isFileOfProgram(target);
+                }
+                if (!isFound) {
+                    placeSeen = isNotFound;
                     continue;
                 }
-                placeSeen = isNotFound;
-                if (isNeitherOfProgramNorData(targetData, stored)) {
-                    if (isBuiltinModuleNewToLoader(target)) {
-                        add(true);
-                        next.hasFiles = true;
-                    }
-                    continue;
+                placeSeen = firstPlaceFound + found.size();
+                requestedPlaces.append(found.size());
+                isSharedWithCountedImport |= othersAreCounted && m_modulesOfCountedImports.get(target.index());
+                found.append(Found { target, importer, laterRequests, isFile, false, false });
+                next.hasFiles |= isFile;
+                if (laterRequests > next.laterRequests) {
+                    next.laterRequests = laterRequests;
+                    next.placeOfMostLaterRequests = found.size() - 1;
                 }
-                if (wasLoadedWithEarlierGraph(target) || isLeftAsLoaded(target))
-                    continue;
-                // Another graph that is being loaded has come to the module, or will.
-                if (isInHandsOfLoader(target))
-                    return false;
-                if (isCommonJSFileOrFace(target) || targetData.kind == ModuleKind::Data) {
-                    add(true);
-                    next.hasFiles = true;
-                } else if (isFileOfProgram(target))
-                    add(false);
             }
             if (isSharedWithCountedImport)
                 return false;
@@ -1245,8 +1265,10 @@ bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay
             return false;
     }
 
-    if (plan->asksAcrossLevels && !isFoundAlready)
-        plan->stepsOfWholeGraph = countStepsOfWholeGraph(plan.get(), firstPlaceFound);
+    if (plan->asksAcrossLevels && !isFoundAlready) {
+        firstRequestOfPlace.append(requestedPlaces.size());
+        plan->stepsOfWholeGraph = countStepsOfWholeGraph(plan.get(), firstRequestOfPlace.mutableSpan(), requestedPlaces.mutableSpan());
+    }
     if (planWithoutWay) {
         *planWithoutWay = plan.ptr();
         return true;
@@ -1924,7 +1946,8 @@ JSValue Modules::require(ModuleID target)
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     const ModuleData& targetData = data(target);
-    m_state.statics->fillVariablesOfModule(target);
+    if (m_state.statics->fillsVariablesWithFiles() && (status(target) == ModuleStatus::Linking || status(target) == ModuleStatus::Evaluating))
+        m_state.statics->fillVariablesOfAllFiles();
 
     if (targetData.isUncompiledCode())
         RELEASE_AND_RETURN(scope, requireSpecifier(pathString(target), *targetData.referrerModule(), true));

@@ -43,6 +43,7 @@ struct Container {
     BuiltinClassID builtinClass;
     OptionSet<ObjectMutation> possibleMutations;
     Vector<ValueSetID, 2> stored;
+    Vector<ValueSetID, 2> seenToBeStored;
     ValueSetID writtenPrototypeLinks { ValueSets::nothing };
 };
 
@@ -332,6 +333,7 @@ private:
             found.append(Container { ValueFlowObjectID(index), builtinClass, markedMutationsOf(m_inputs, ValueFlowObjectID(index)), { } });
             if (builtinClass == BuiltinClasses::Array || builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::Promise)
                 found.last().stored.fill(ValueSets::nothing, builtins().numberOfSlotsInType(builtinClass));
+            found.last().seenToBeStored = found.last().stored;
         });
         Vector<ValueFlowObjectID> objects;
         Vector<ValueFlowObjectID> arrays;
@@ -390,6 +392,7 @@ private:
             case ValueFlowNameKind::RestArgument:
             case ValueFlowNameKind::AddedNames:
             case ValueFlowNameKind::FoundThroughEscapedInstances:
+            case ValueFlowNameKind::NamesOfMethods:
                 return false;
             }
         });
@@ -407,8 +410,10 @@ private:
                     if (container.stored.isEmpty())
                         return;
                     forEachContentsSlot(builtins(), container.builtinClass, [&](const BuiltinSlot& slot) {
-                        if (nameOf(slot) == name || mayBeTheSameName(name.kind, nameOf(slot).kind))
-                            container.stored[*slot.indexInType] = walker.maker.unite(container.stored[*slot.indexInType], node.value);
+                        if (nameOf(slot) != name && !mayBeTheSameName(name.kind, nameOf(slot).kind))
+                            return;
+                        container.stored[*slot.indexInType] = walker.maker.unite(container.stored[*slot.indexInType], node.value);
+                        container.seenToBeStored[*slot.indexInType] = walker.maker.unite(container.seenToBeStored[*slot.indexInType], node.seenValue);
                     });
                 });
             }
@@ -878,6 +883,31 @@ private:
         return type;
     }
 
+    std::optional<Type> typeOfObjectsSeenToBeStored(ValueFlowPositions& positions, ValueSetMaker& maker, TypeArena& types, uint32_t index, const BuiltinSlot& slot)
+    {
+        ValueSetID seen = m_containers[index].seenToBeStored[*slot.indexInType];
+        if (ValueSets::isComplement(seen))
+            return std::nullopt;
+        ValueSetID objects = maker.intersect(maker.intersect(seen, universe().knownObjects()), universe().objects());
+        if (objects == ValueSets::nothing)
+            return std::nullopt;
+        Vector<LayoutID, 8> layouts;
+        Type expected = Type::never();
+        sets().forEachMember(objects, [&](ValueFlowObjectID member) {
+            if (!positions.appendLayoutsExpectedOf(member, layouts))
+                expected = expected.unionWith(positions.typeOfObject(member), types);
+        });
+        if (layouts.size() > m_inputs.build.limit(LimitID::MaxLayoutsInType))
+            return std::nullopt;
+        if (!layouts.isEmpty()) {
+            AOT::sort(layouts);
+            expected = expected.unionWith(Type::forLayouts(layouts.span(), types), types);
+        }
+        if (expected.isNever() || expected.anyObject)
+            return std::nullopt;
+        return expected.withPrimitives(Primitive::All);
+    }
+
     // Whoever makes a container lists what it lays into each slot: an operation by its operands, the row of a built-in by the type of its result, a coroutine by its body. Nobody has the object before it is handed out.
     bool makerListsContentsOf(ValueFlowObjectID object) const
     {
@@ -929,13 +959,22 @@ private:
                 const Container& container = m_containers[index];
                 ValueFlowContainerFacts& facts = m_facts[index];
                 facts.contents.clear();
+                facts.expectedContents.clear();
                 Vector<Write, 4> writes = writesToContentsOf(container);
                 facts.contentsAreProven = !container.stored.isEmpty() && claimContentsAreWhatWasStored(Writers(writes.span(), actorsOpenOnContentsOf(container)));
                 if (!facts.contentsAreProven)
                     continue;
                 facts.contents.grow(container.stored.size());
                 forEachContentsSlot(builtins(), container.builtinClass, [&](const BuiltinSlot& slot) {
-                    facts.contents[*slot.indexInType] = arena.intern(typeOfContents(positions, index, slot));
+                    Type contents = typeOfContents(positions, index, slot);
+                    bool mayHoldAnyObject = contents.anyObject;
+                    facts.contents[*slot.indexInType] = arena.intern(WTF::move(contents));
+                    if (!mayHoldAnyObject)
+                        return;
+                    if (std::optional<Type> seen = typeOfObjectsSeenToBeStored(positions, makers.of(worker), arena, index, slot)) {
+                        facts.expectedContents.grow(container.stored.size());
+                        facts.expectedContents[*slot.indexInType] = arena.intern(*seen);
+                    }
                 });
             }
         });
@@ -944,6 +983,10 @@ private:
             for (uint32_t index : containersOf(task)) {
                 for (TypeID& contents : m_facts[index].contents)
                     remap.apply(contents);
+                for (TypeID& contents : m_facts[index].expectedContents) {
+                    if (contents)
+                        remap.apply(contents);
+                }
                 m_results.set(m_containers[index].object, ValueFlowContainerFacts(m_facts[index]));
             }
         });
@@ -997,7 +1040,17 @@ private:
         }
 
         TypeInterningPhase phase(m_types, 1);
-        Vector<std::pair<uint32_t, TypeID>> elementsOfComponent;
+        struct ElementsOfComponent {
+            uint32_t component;
+            TypeID elements;
+            TypeID expectedElements;
+        };
+        Vector<ElementsOfComponent> elementsOfComponent;
+        auto expectedElementsOf = [&](uint32_t array) {
+            const ValueFlowContainerFacts& facts = m_facts[array];
+            TypeID expected = m_indexOfElements < facts.expectedContents.size() ? facts.expectedContents[m_indexOfElements] : TypeID();
+            return expected ? expected : facts.contents[m_indexOfElements];
+        };
         {
             TypeArena arena(phase, 0);
             for (uint32_t component = 0; component < m_membersOfComponent.size(); ++component) {
@@ -1008,14 +1061,18 @@ private:
                 if (!isClean)
                     continue;
                 TypeID elements = m_facts[members[0]].contents[m_indexOfElements];
-                for (uint32_t array : members.span().subspan(1))
+                TypeID expectedElements = expectedElementsOf(members[0]);
+                for (uint32_t array : members.span().subspan(1)) {
                     elements = arena.unionOf(elements, m_facts[array].contents[m_indexOfElements]);
-                elementsOfComponent.append({ component, elements });
+                    expectedElements = arena.unionOf(expectedElements, expectedElementsOf(array));
+                }
+                elementsOfComponent.append({ component, elements, expectedElements });
             }
         }
         TypeRemap remap = phase.finish(StringRemap { }, &m_inputs.loops());
-        for (auto [component, elements] : elementsOfComponent) {
+        for (auto [component, elements, expectedElements] : elementsOfComponent) {
             remap.apply(elements);
+            remap.apply(expectedElements);
             const Type& type = m_types.at(elements);
             bool holdsMoreThanNumbers = std::ranges::any_of(m_membersOfComponent[component], [&](uint32_t array) {
                 return m_arrayWrites[array].has(ArrayWrites::IsGivenMoreThanNumbers);
@@ -1031,6 +1088,11 @@ private:
             for (uint32_t array : m_membersOfComponent[component]) {
                 m_facts[array].contents[m_indexOfElements] = elements;
                 m_facts[array].arrayStorage = storage;
+                m_facts[array].expectedContents.clear();
+                if (expectedElements != elements) {
+                    m_facts[array].expectedContents.grow(m_indexOfElements + 1);
+                    m_facts[array].expectedContents[m_indexOfElements] = expectedElements;
+                }
             }
         }
         Vector<ValueFlowObjectID> arraysThatMustNotBeConverted;

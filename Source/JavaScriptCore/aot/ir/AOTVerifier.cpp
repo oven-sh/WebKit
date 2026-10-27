@@ -81,6 +81,7 @@ bool FunctionVerifier::run()
         &FunctionVerifier::verifyEdges,
         &FunctionVerifier::verifyTypes,
         &FunctionVerifier::verifyDominance,
+        &FunctionVerifier::verifyCastsWithoutFacts,
         &FunctionVerifier::verifyGuards,
         &FunctionVerifier::verifyProofs,
         &FunctionVerifier::verifyOperations,

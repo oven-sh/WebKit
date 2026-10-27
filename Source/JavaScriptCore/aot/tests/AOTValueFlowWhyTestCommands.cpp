@@ -846,6 +846,7 @@ static void printFalsifiers(PrintStream& out, ValueFlowSolution& solution, std::
         case ValueFlowNameKind::RestArgument:
         case ValueFlowNameKind::AddedNames:
         case ValueFlowNameKind::FoundThroughEscapedInstances:
+        case ValueFlowNameKind::NamesOfMethods:
             return { };
         }
     };

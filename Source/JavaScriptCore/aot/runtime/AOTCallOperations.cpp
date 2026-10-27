@@ -20,6 +20,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
+#include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeFunctions.h"

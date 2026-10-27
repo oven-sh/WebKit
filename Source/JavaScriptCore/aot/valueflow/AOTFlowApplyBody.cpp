@@ -67,6 +67,13 @@ Value makeAssumeType(ValueID operand, ProvenType proven)
     return value;
 }
 
+Value makeAssumeType(ValueID operand, ValueID fact, ProvenInEveryVersion proven)
+{
+    Value value = makeAssumeType(operand, proven);
+    value.setFactOperand(fact);
+    return value;
+}
+
 Value makeValidateType(ValueID operand, TypeID validatedType)
 {
     Value value = IRBuilder::make(Opcode::ValidateType, { operand });

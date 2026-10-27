@@ -439,6 +439,7 @@ static constexpr bool looksIntoObject(ValueFlowNameKind kind)
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();

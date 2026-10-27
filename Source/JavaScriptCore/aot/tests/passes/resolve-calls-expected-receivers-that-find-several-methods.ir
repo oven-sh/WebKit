@@ -1,0 +1,72 @@
+# Receivers that are only expected, and that find a method of one name in several classes: no one test passes for all of them, so the call is divided among the methods, and whatever else arrives
+# takes the read and the call as they are. Expected receivers that find one method are left to the test that is placed in front of all that follows from it.
+# The read of the member moves to the call past a read of a variable that nothing assigns to, and past no other. Each method that is entered costs bytes: code that does not run often stays as it is.
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="fixed" module=m0 declared={type=anything} initialization=Undefined flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+variable g1 name="assigned" module=m0 declared={type=anything} initialization=Undefined
+layout L0 kind=Instance name="Animal" constructor=f0 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f1 mutability=Fixed}]}
+layout L1 kind=Instance name="Dog" base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f3 mutability=Fixed}]}
+layout L2 kind=Instance name="Cat" base=L0 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L0 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+layout L3 kind=Instance name="Puppy" base=L1 constructor=f5 flags=[HasHeritage] flow={baseState=Layout base=L1 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="speak" function=f6 mutability=Fixed}]}
+layout L4 kind=Instance name="Hound" base=L1 constructor=f7 flags=[HasHeritage] flow={baseState=Layout base=L1 impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true}
+function f0 name="Animal" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f1 name="speak" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 name="Dog" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="speak" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="Cat" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="Puppy" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f6 name="speak" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f7 name="Hound" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f8 name="two-methods" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L3):
+    v1 = PropGet v0 key="speak"
+    v2 = Call v1, v0 calleeKey="speak"
+    Return v2
+# CHECK: [[receiver]]: {{*}} = RequireObjectCoercible v0 name="speak"
+# CHECK: = TypeTest [[receiver]] testedType=L0
+# CHECK: ({{*}}: L0):
+# CHECK-NEXT: = CallDirect {{*}} function=f1
+# CHECK: = TypeTest {{*}} testedType=L3
+# CHECK: ({{*}}: L3):
+# CHECK-NEXT: = CallDirect {{*}} function=f6
+# CHECK: frequency=Unlikely:
+# CHECK-NEXT: = PropGet {{*}} key="speak"
+# CHECK-NEXT: = Call {{*}} calleeKey="speak"
+}
+function f9 name="one-method" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L2):
+    v1 = PropGet v0 key="speak"
+    v2 = Call v1, v0 calleeKey="speak"
+    Return v2
+# CHECK-NOT: CallDirect
+# CHECK: v2: anything = Call v1, v0 calleeKey="speak"
+}
+function f10 name="past-a-variable-that-nothing-assigns-to" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L3):
+    v1 = PropGet v0 key="speak"
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1, v0, v2 calleeKey="speak"
+    Return v3
+# CHECK: = CallDirect {{*}} function=f1
+# CHECK: = CallDirect {{*}} function=f6
+}
+function f11 name="past-no-other-variable" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ L0|L3):
+    v1 = PropGet v0 key="speak"
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v1, v0, v2 calleeKey="speak"
+    Return v3
+# CHECK-NOT: CallDirect
+# CHECK: v3: anything = Call v1, v0, v2 calleeKey="speak"
+}

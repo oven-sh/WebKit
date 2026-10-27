@@ -11,11 +11,13 @@
 #include "AOTArrayAllocationProfile.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCallGraph.h"
 #include "AOTFlowResults.h"
 #include "AOTOperationData.h"
 #include "AOTReuseEnvironments.h"
 #include "AOTSort.h"
 #include <algorithm>
+#include <optional>
 #include <ranges>
 #include <utility>
 #include <wtf/MathExtras.h>
@@ -175,56 +177,115 @@ static bool entersFile(const Function& function)
 
 // What a file has written runs, and its names are handed out, when the file has been entered or a file that imports it: by the function that evaluates what it imports,
 // by its code, or by the run time where somebody asks for it. So it is enough that whoever enters a file fills the first words of that file and of all that it imports, at whatever depth.
-static void chooseFilesFilledWhenEntered(const Program& program, StaticsPlan& plan)
+// To fill more is harmless as long as nothing of what is filled has been entered. So the files go in groups, each filled as a whole when the first of its files is entered:
+// a group is what the imports lead to from a file that nobody imports, less what they led to from an earlier one.
+static void chooseFilesFilledWhenEntered(const PlacementContext& context, StaticsPlan& plan)
 {
-    plan.numberOfFileFilledWhenEntered = Vector<std::optional<uint32_t>>(program.modules.size());
+    constexpr uint32_t none = UINT32_MAX;
+    const Program& program = context.program;
+    uint32_t numberOfModules = program.modules.size();
+    plan.groupOfFile = Vector<std::optional<uint32_t>>(numberOfModules);
     if (program.entries.isEmpty())
         return;
-    BitVector hasWords(program.modules.size());
+    BitVector hasWords(numberOfModules);
     for (uint32_t index = 0; index < plan.variables.size(); ++index) {
         ModuleID module = program.variables[index].module;
         if (plan.variables[index].hasWordInStatics() && plan.variables[index].initialWord && module && hasCodeOfProgram(program.at(module)))
             hasWords.quickSet(module.index());
     }
-    hasWords.exclude(findFilesBroughtByFirstEntryPoint(program));
+    BitVector isBroughtByFirstEntryPoint = findFilesBroughtByFirstEntryPoint(program);
+    hasWords.exclude(isBroughtByFirstEntryPoint);
     if (hasWords.isEmpty())
         return;
-
-    BitVector isEntered(program.modules.size());
+    BitVector isEntered(numberOfModules);
     for (const Function& function : program.functions) {
         if (entersFile(function))
             isEntered.quickSet(function.module.index());
     }
     hasWords.filter(isEntered);
+    if (hasWords.isEmpty())
+        return;
 
-    Vector<Vector<uint32_t, 2>> importers(program.modules.size());
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        for (const ModuleRequest& request : program.modules[index].requests) {
-            if (request.kind == ModuleRequestKind::Import)
-                importers[request.target.index()].append(index);
+    auto isGrouped = [&](uint32_t module) {
+        return hasCodeOfProgram(program.modules[module]) && !isBroughtByFirstEntryPoint.quickGet(module);
+    };
+    auto forEachImportedFile = [&](uint32_t module, const Invocable<void(uint32_t)> auto& functor) {
+        for (const ModuleRequest& request : program.modules[module].requests) {
+            if (request.kind == ModuleRequestKind::Import && isGrouped(request.target.index()))
+                functor(request.target.index());
         }
+    };
+    BitVector isImported(numberOfModules);
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        if (!isGrouped(module))
+            continue;
+        forEachImportedFile(module, [&](uint32_t imported) {
+            if (imported != module)
+                isImported.quickSet(imported);
+        });
     }
-    BitVector findsWords = hasWords;
+    Vector<uint32_t> groupOf(FillWith { }, numberOfModules, none);
+    Vector<uint32_t> firstFileOf;
     Vector<uint32_t, 64> pending;
-    for (size_t module : hasWords)
-        pending.append(static_cast<uint32_t>(module));
+    auto group = [&](uint32_t first) {
+        uint32_t number = firstFileOf.size();
+        firstFileOf.append(first);
+        groupOf[first] = number;
+        pending.append(first);
+        while (!pending.isEmpty()) {
+            forEachImportedFile(pending.takeLast(), [&](uint32_t imported) {
+                if (groupOf[imported] != none)
+                    return;
+                groupOf[imported] = number;
+                pending.append(imported);
+            });
+        }
+    };
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        if (isGrouped(module) && !isImported.quickGet(module))
+            group(module);
+    }
+    // What is left imports itself in a circle.
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        if (isGrouped(module) && groupOf[module] == none)
+            group(module);
+    }
+
+    Vector<std::pair<uint32_t, uint32_t>> importedAndImporter;
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        if (!isGrouped(module))
+            continue;
+        forEachImportedFile(module, [&](uint32_t imported) {
+            if (groupOf[imported] != groupOf[module])
+                importedAndImporter.append({ groupOf[imported], groupOf[module] });
+        });
+    }
+    AOT::sort(importedAndImporter);
+    importedAndImporter.shrink(std::ranges::unique(importedAndImporter).begin() - importedAndImporter.begin());
+    BitVector findsWords(firstFileOf.size());
+    for (size_t module : hasWords) {
+        if (!findsWords.quickSet(groupOf[module]))
+            pending.append(groupOf[module]);
+    }
     while (!pending.isEmpty()) {
-        for (uint32_t importer : importers[pending.takeLast()]) {
+        for (auto [imported, importer] : std::ranges::equal_range(importedAndImporter, pending.takeLast(), { }, &std::pair<uint32_t, uint32_t>::first)) {
             if (!findsWords.quickSet(importer))
                 pending.append(importer);
         }
     }
 
-    for (size_t module : findsWords) {
-        plan.numberOfFileFilledWhenEntered[module] = plan.filesFilledWhenEntered.size();
-        plan.filesFilledWhenEntered.append({ ModuleID(static_cast<uint32_t>(module)), 0, 0, { } });
+    Vector<uint32_t> numberOf(FillWith { }, firstFileOf.size(), none);
+    for (size_t found : findsWords) {
+        numberOf[found] = plan.groupsOfFilesFilledWhenEntered.size();
+        plan.groupsOfFilesFilledWhenEntered.append({ ModuleID(firstFileOf[found]), 0, 0, { } });
     }
-    for (PlacedStaticsOfFile& file : plan.filesFilledWhenEntered) {
-        for (const ModuleRequest& request : program.at(file.module).requests) {
-            std::optional<uint32_t> imported = plan.numberOfFileFilledWhenEntered[request.target.index()];
-            if (request.kind == ModuleRequestKind::Import && imported && !file.importedFiles.contains(*imported))
-                file.importedFiles.append(*imported);
-        }
+    for (auto [imported, importer] : importedAndImporter) {
+        if (findsWords.quickGet(imported))
+            plan.groupsOfFilesFilledWhenEntered[numberOf[importer]].importedGroups.append(numberOf[imported]);
+    }
+    for (uint32_t module = 0; module < numberOfModules; ++module) {
+        if (groupOf[module] != none && findsWords.quickGet(groupOf[module]))
+            plan.groupOfFile[module] = numberOf[groupOf[module]];
     }
     for (uint32_t index = 0; index < plan.variables.size(); ++index) {
         PlacedVariable& placed = plan.variables[index];
@@ -232,10 +293,42 @@ static void chooseFilesFilledWhenEntered(const Program& program, StaticsPlan& pl
         if (placed.hasWordInStatics() && placed.initialWord && module && hasWords.quickGet(module.index()))
             placed.region = StaticsRegion::FilledWithFile;
     }
+
+    Vector<std::optional<BitVector>> groupsFilledWith(plan.groupsOfFilesFilledWhenEntered.size());
+    auto isFilledWith = [&](uint32_t filled, uint32_t entered) {
+        if (filled == entered)
+            return true;
+        std::optional<BitVector>& known = groupsFilledWith[entered];
+        if (!known) {
+            known = BitVector(plan.groupsOfFilesFilledWhenEntered.size());
+            pending.append(entered);
+            while (!pending.isEmpty()) {
+                for (uint32_t imported : plan.groupsOfFilesFilledWhenEntered[pending.takeLast()].importedGroups) {
+                    if (!known->quickSet(imported))
+                        pending.append(imported);
+                }
+            }
+        }
+        return known->quickGet(filled);
+    };
+    // Where nobody comes to a function but functions that enter files whose group brings this one's along, the words are filled by then.
+    const CallGraph& callGraph = context.inputs.callGraph;
+    auto isEnteredBehindFill = [&](FunctionID id, uint32_t filled) {
+        if (callGraph.entrySet(id) != EntrySet::DirectCallers || callGraph.callerSet(id) != CallerSet::Complete)
+            return false;
+        return std::ranges::all_of(callGraph.callersOf(id), [&](FunctionID caller) {
+            const Function& function = program.at(caller);
+            std::optional<uint32_t> entered = entersFile(function) ? plan.groupOfFile[function.module.index()] : std::nullopt;
+            return entered && isFilledWith(filled, *entered);
+        });
+    };
     plan.functionsThatEnterFiles = BitVector(program.functions.size());
     for (uint32_t index = 0; index < program.functions.size(); ++index) {
         const Function& function = program.functions[index];
-        if (entersFile(function) && findsWords.quickGet(function.module.index()))
+        if (!entersFile(function))
+            continue;
+        std::optional<uint32_t> entered = plan.groupOfFile[function.module.index()];
+        if (entered && !isEnteredBehindFill(FunctionID(index), *entered))
             plan.functionsThatEnterFiles.quickSet(index);
     }
 }
@@ -312,10 +405,10 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
 
     auto placeVariables = [&] {
         plan.variables = createPlacedVariables(context, sites);
-        chooseFilesFilledWhenEntered(program, plan);
+        chooseFilesFilledWhenEntered(context, plan);
         // Filled at program entry, filled with the instance, filled with their files, zero.
         constexpr unsigned firstBucketFilledWithFiles = 2 * numberOfFilledGroups;
-        unsigned firstBucketOfZeroes = firstBucketFilledWithFiles + numberOfFilledGroups * plan.filesFilledWhenEntered.size();
+        unsigned firstBucketOfZeroes = firstBucketFilledWithFiles + numberOfFilledGroups * plan.groupsOfFilesFilledWhenEntered.size();
         Vector<std::pair<unsigned, uint32_t>> order;
         for (uint32_t index = 0; index < plan.variables.size(); ++index) {
             const PlacedVariable& placed = plan.variables[index];
@@ -330,7 +423,7 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
                 order.append({ group < numberOfFilledGroups ? numberOfFilledGroups + group : firstBucketOfZeroes + group, index });
                 break;
             case StaticsRegion::FilledWithFile:
-                order.append({ firstBucketFilledWithFiles + numberOfFilledGroups * plan.fileFilledWhenEntered(program.variables[index].module).value() + group, index });
+                order.append({ firstBucketFilledWithFiles + numberOfFilledGroups * plan.groupFilledWhenEntered(program.variables[index].module).value() + group, index });
                 break;
             }
         }
@@ -340,12 +433,12 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
             if (std::exchange(isFilledAtProgramEntry, false))
                 plan.sizeFilledAtProgramEntry = allocate(0, staticsWordSize);
         };
-        PlacedStaticsOfFile* file = nullptr;
+        PlacedStaticsOfFiles* file = nullptr;
         auto finishFile = [&] {
-            if (PlacedStaticsOfFile* finished = std::exchange(file, nullptr))
+            if (PlacedStaticsOfFiles* finished = std::exchange(file, nullptr))
                 finished->numberOfWords = allocate(0, staticsWordSize) / staticsWordSize - finished->firstWord;
         };
-        bool isInFrontOfFiles = !plan.filesFilledWhenEntered.isEmpty();
+        bool isInFrontOfFiles = !plan.groupsOfFilesFilledWhenEntered.isEmpty();
         auto beginFiles = [&] {
             if (std::exchange(isInFrontOfFiles, false))
                 plan.firstWordFilledWithFiles = allocate(0, staticsWordSize) / staticsWordSize;
@@ -364,7 +457,7 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
                 finishFiles();
             else if (bucket >= firstBucketFilledWithFiles) {
                 beginFiles();
-                PlacedStaticsOfFile& next = plan.filesFilledWhenEntered[(bucket - firstBucketFilledWithFiles) / numberOfFilledGroups];
+                PlacedStaticsOfFiles& next = plan.groupsOfFilesFilledWhenEntered[(bucket - firstBucketFilledWithFiles) / numberOfFilledGroups];
                 if (file != &next) {
                     finishFile();
                     file = &next;
@@ -384,12 +477,12 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
         finishVariablesFilledAtProgramEntry();
         finishFiles();
         uint32_t firstWordOfNext = plan.endWordFilledWithFiles;
-        for (PlacedStaticsOfFile& placed : plan.filesFilledWhenEntered | std::views::reverse) {
+        for (PlacedStaticsOfFiles& placed : plan.groupsOfFilesFilledWhenEntered | std::views::reverse) {
             if (!placed.numberOfWords)
                 placed.firstWord = firstWordOfNext;
             firstWordOfNext = placed.firstWord;
         }
-        plan.offsetOfFilledFiles = allocate(plan.filesFilledWhenEntered.size(), 1);
+        plan.offsetOfFilledFiles = allocate(plan.groupsOfFilesFilledWhenEntered.size(), 1);
     };
     auto placeModuleValues = [&] {
         plan.moduleValueOffsets = Vector<std::optional<uint32_t>>(program.modules.size(), [&](size_t index) {

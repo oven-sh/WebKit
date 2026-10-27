@@ -3304,6 +3304,31 @@ ValueSetID ValueFlowSolver::withoutWhatOtherMembersCover(ValueFlowNodeID node, V
     return node == m_input.escaped || node == m_input.lost ? withoutMarks(m_graph.valueOf(node), maker) : withoutWhatOtherMembersCover(m_graph.valueOf(node), maker);
 }
 
+// Many nodes hold the same value. What is asked of the value alone is remembered under it, the latest value of each slot.
+template<typename Answer>
+class AnswersAboutLatestValues {
+public:
+    AOT_THRESHOLD(size_t, numberOfSlots, 1 << 14);
+
+    Answer ensure(ValueSetID value, NOESCAPE const Invocable<Answer()> auto& find)
+    {
+        if (m_slots.isEmpty())
+            m_slots.grow(numberOfSlots);
+        Slot& slot = m_slots[(value.index() * 0x9e3779b1u) >> 18];
+        if (slot.value != value)
+            slot = { value, find() };
+        return slot.answer;
+    }
+
+private:
+    struct Slot {
+        ValueSetID value;
+        Answer answer { };
+    };
+    static_assert(numberOfSlots == 1ull << (32 - 18));
+    Vector<Slot> m_slots;
+};
+
 void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
 {
     if (!m_input.nodes || !m_input.universe)
@@ -3354,9 +3379,11 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         ValueSetMaker& maker = *m_makers[0];
         constructedByLibraryThatCome.fill(ValueSets::nothing, numberOfNodes);
         Vector<uint32_t> toVisit;
+        AnswersAboutLatestValues<bool> holdsWhatLibraryConstructs;
         for (uint32_t index = 0; index < numberOfNodes; ++index) {
             ValueFlowNodeID node(index);
-            if (m_graph.isConstant(node) || !m_sets.meet(m_graph.valueOf(node), constructedByLibrary))
+            ValueSetID value = m_graph.valueOf(node);
+            if (value == ValueSets::nothing || m_graph.isConstant(node) || !holdsWhatLibraryConstructs.ensure(value, [&] { return m_sets.meet(value, constructedByLibrary); }))
                 continue;
             ValueSetID come = ValueSets::nothing;
             m_graph.forEachPredecessor(node, [&](ValueFlowNodeID from) {
@@ -3469,6 +3496,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         ValueSetID handedOn = maker.intersect(maker.intersect(listed, constructedByLibrary), ValueSets::complement(maker.unite(constructedByLibraryThatCome[node.index()], left)));
         return handedOn == ValueSets::nothing ? listed : maker.intersect(listed, ValueSets::complement(handedOn));
     };
+    Vector<AnswersAboutLatestValues<ValueSetID>> leftOfValues(m_makers.size());
+    bool hasWrittenUnderNamesOfReads = !m_writtenUnderNamesOfReads.isEmpty();
     forEachIndexInParallel(m_loops, m_listedWithCoveredMembers.size(), [&](unsigned share, unsigned worker) {
         ValueSetMaker& maker = *m_makers[worker];
         for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
@@ -3476,9 +3505,11 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             ValueSetID value = m_graph.valueOf(node);
             if (value == ValueSets::nothing || !isReadByResults(node))
                 continue;
-            if (index < firstNodeOfHost)
+            if (hasWrittenUnderNamesOfReads && index < firstNodeOfHost)
                 value = maker.unite(value, writtenUnderNameOfReadSeenAt(node));
-            ValueSetID left = maker.unite(withoutWhatOtherMembersCover(value, maker), maker.intersect(value, m_takenByRetiredNodes));
+            ValueSetID left = leftOfValues[worker].ensure(value, [&] {
+                return maker.unite(withoutWhatOtherMembersCover(value, maker), maker.intersect(value, m_takenByRetiredNodes));
+            });
             if (left == value)
                 continue;
             m_graph.replaceValueAfterSolving(node, left);

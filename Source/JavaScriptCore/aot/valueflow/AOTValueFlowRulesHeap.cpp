@@ -87,6 +87,11 @@ ValueFlowOperand HeapRule::receiversUnder(const ValueFlowOperand& object, const 
 void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
 {
     ClimbingSet receivers = m_context.valueOf(object);
+    if (!m_statement.isOnlyCalledOnItsHolder) {
+        noteName(ValueFlowHostNode::NamesOfReadsThatHandTheirValueOn, key);
+        if (mayBeUnknownObject(receivers))
+            noteName(ValueFlowHostNode::NamesReadOffValuesNobodyKnows, key);
+    }
     // Beside a placeholder the receivers that it covers are listed for a while only: each list is looked up as it comes.
     bool areReceiversListedForGood = !m_context.meet(receivers, m_universe.placeholdersAlone());
     ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);

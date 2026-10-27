@@ -180,7 +180,8 @@ function f8 name="followedEdgeNarrows" parameters=[{type=anything}, {type=functi
     Return v1
 # The jump passes the value as the edge narrowed it
 # CHECK: = Call v1
-# CHECK-NEXT: [[number]]: number = AssumeType v0 provenType=number
+# CHECK-NEXT: [[here183]]: fact = Specified
+# CHECK-NEXT: [[number]]: number = AssumeType v0, [[here183]] provenType=number
 # CHECK: = Negate [[number]]
 # CHECK-NOT: Return v3
 }

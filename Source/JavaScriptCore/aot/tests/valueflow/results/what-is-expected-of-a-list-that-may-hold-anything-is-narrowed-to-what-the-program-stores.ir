@@ -1,0 +1,45 @@
+# function lists(x) { const list: Any[] = [new First(), x]; const other: Any[] = [new Second()]; const bare = [new Third(), x]; return [(x ? list : other)[0], bare[0]]; }   publish(lists)
+# Anything may be handed in, so anything may lie in the first list: that is proven, and says nothing. The list is declared to hold objects of three layouts: that stays beside the proof as what is
+# expected, narrowed to the objects that the program itself stores. Lists that meet at one read have one type of elements: both expect what is stored into either.
+# Of the last list nothing is declared, and what is stored into it is no reason to expect something.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="lists"
+# CHECK: provenType=Array<anything, proven, expected(undefined|L0|L1),
+# CHECK: provenType=Array<anything, proven, expected(undefined|L0|L1),
+# CHECK: provenType=Array<anything, proven, Contiguous,
+# CHECK: : anything ~ undefined|L0|L1 = ElemGet
+# CHECK: : anything = ElemGet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First" module=m0 position=10 fields=[{key="a" declared={type=anything}}]
+layout L1 name="Second" module=m0 position=20 fields=[{key="b" declared={type=anything}}]
+layout L2 name="Third" module=m0 position=30 fields=[{key="c" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return
+}
+function f1 name="lists" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = NewArray v2, v0 contents=undefined|L0|L1|L2
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    v5 = NewArray v4 contents=undefined|L0|L1|L2
+    v6 = NewObject -, v1 layout=L2 fields=[0]
+    v7 = NewArray v6, v0 contents=anything
+    v8 = ToBoolean v0
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v5)
+  b3(v9):
+    v10 = Integer
+    v11 = ElemGet v9, v10
+    v12 = ElemGet v7, v10
+    v13 = NewArray v11, v12 contents=anything
+    Return v13
+}

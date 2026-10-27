@@ -2072,7 +2072,7 @@ struct VariableCarrier : LoopEditor {
             };
             bool holdsNothingElse = std::ranges::all_of(block.values.span().first(block.values.size() - 1), [&](ValueID value) {
                 Opcode opcode = m_function.at(value).opcode;
-                return opcode == Opcode::LoopHint || opcode == Opcode::Entered || isCastBehindFact(value);
+                return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value);
             });
             if (test.opcode != Opcode::TypeTest || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
                 break;

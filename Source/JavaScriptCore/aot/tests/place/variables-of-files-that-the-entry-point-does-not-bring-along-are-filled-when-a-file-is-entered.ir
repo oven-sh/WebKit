@@ -1,5 +1,6 @@
-# main.js imports eager.js and loads top.js with import(). top.js imports between.js, which imports leaf.js; top.js and leaf.js have a variable that is read before it is stored, between.js has none.
-# The word of eager.js is filled when the program is entered. The words of top.js and leaf.js lie file by file behind it, no run goes on from one file into the next, and each of the three files lists the files it imports.
+# main.js imports eager.js and loads top.js and other.js with import(). top.js imports between.js, which imports leaf.js; other.js imports leaf.js too. All but between.js have variables that are read before they are stored.
+# The word of eager.js is filled when the program is entered. What the imports lead to from top.js is one group, with one run of words; other.js is a group of its own that lists the first, and no run goes on from one group into the next.
+# The loader comes to top.js and to other.js alone, by the function that evaluates what the file imports and by the entry in front of it: those four fill. What they call is entered behind them.
 # RUN(STATICS): tables statics
 # RUN(PLACED): place statics
 
@@ -8,13 +9,16 @@ module m1 path="eager.js" displayPath="eager.js" body=f1 exports=[{name="a" vari
 module m2 path="top.js" displayPath="top.js" body=f2 requests=[{target=m3 completes=true}] exports=[{name="b" variable=g1}]
 module m3 path="between.js" displayPath="between.js" body=f3 requests=[{target=m4 completes=true}]
 module m4 path="leaf.js" displayPath="leaf.js" body=f4 exports=[{name="c" variable=g2}, {name="d" variable=g3}]
+module m5 path="other.js" displayPath="other.js" body=f8 requests=[{target=m4 completes=true}] exports=[{name="e" variable=g4}]
 entry module=m0
 variable g0 name="a" module=m1 declared={type=anything} initialization=Undefined
 variable g1 name="b" module=m2 declared={type=anything} initialization=Undefined
 variable g2 name="c" module=m4 declared={type=anything} initialization=Undefined
 variable g3 name="d" module=m4 declared={type=anything} initialization=Undefined
+variable g4 name="e" module=m5 declared={type=anything} initialization=Undefined
 function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
     v0 = ImportModule module=m2 referrer=m0
+    v1 = ImportModule module=m5 referrer=m0
     Return
 }
 function f1 name="eager" module=m1 kind=Module results=[{type=anything}] {
@@ -66,20 +70,36 @@ function f7 name="readsCAndD" module=m4 results=[{type=anything}] {
     Return v2
 }
 
+function f8 name="other" module=m5 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f9
+    v3 = PropGet v0 key="publish" [isFreeName]
+    v4 = Call v3, -, v2
+    PutModuleVariable v1 variable=g4
+    Return
+}
+function f9 name="readsE" module=m5 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g4
+    Return v0
+}
+
 # STATICS: layout filledAtProgramEntry=8
 # STATICS-NEXT: run firstWord=0 words=1 bits=0xa
-# STATICS-NEXT: run firstWord=1 words=1 bits=0xa
-# STATICS-NEXT: run firstWord=2 words=2 bits=0xa
-# STATICS-NEXT: file module=2 firstWord=1 words=1 firstImportedFile=0
-# STATICS-NEXT: file module=3 firstWord=2 words=0 firstImportedFile=1
-# STATICS-NEXT: file module=4 firstWord=2 words=2 firstImportedFile=2
-# STATICS-NEXT: file module=4294967295 firstWord=4 words={{*}} firstImportedFile=2
-# STATICS-NEXT: importedFile file=1
-# STATICS-NEXT: importedFile file=2
-# PLACED: file m2 firstWord=1 words=1 imports=[1]
-# PLACED-NEXT: file m3 firstWord=2 words=0 imports=[2]
-# PLACED-NEXT: file m4 firstWord=2 words=2 imports=[]
-# PLACED: g0 offset=0 representation=JSValue {{*}}region=FilledAtProgramEntry
+# STATICS-NEXT: run firstWord=1 words=3 bits=0xa
+# STATICS-NEXT: run firstWord=4 words=1 bits=0xa
+# STATICS-NEXT: files firstWord=1 words=3 firstImportedGroup=0
+# STATICS-NEXT: files firstWord=4 words=1 firstImportedGroup=0
+# STATICS-NEXT: files firstWord=5 words={{*}} firstImportedGroup=1
+# STATICS-NEXT: importedFiles group=0
+# PLACED: files from m2 firstWord=1 words=3 imports=[]
+# PLACED-NEXT: files from m5 firstWord=4 words=1 imports=[0]
+# PLACED-NEXT: fills f2
+# PLACED-NEXT: fills f8
+# PLACED-NEXT: fills f16
+# PLACED-NEXT: fills f17
+# PLACED-NEXT: g0 offset=0 representation=JSValue {{*}}region=FilledAtProgramEntry
 # PLACED-NEXT: g1 offset=8 representation=JSValue {{*}}region=FilledWithFile
 # PLACED-NEXT: g2 offset=16 representation=JSValue {{*}}region=FilledWithFile
 # PLACED-NEXT: g3 offset=24 representation=JSValue {{*}}region=FilledWithFile
+# PLACED-NEXT: g4 offset=32 representation=JSValue {{*}}region=FilledWithFile

@@ -51,6 +51,7 @@ struct TextParser::TypeParts {
 
     struct EngineClassPart {
         bool contentsAreProven { false };
+        Vector<uint32_t, 2> expectedContents;
         ArrayStorage arrayStorage { ArrayStorage::Other };
         OptionSet<PristineAspects> provenPristine;
     };
@@ -484,6 +485,15 @@ void TextParser::parseClassPart(TypeParts& parts, BuiltinClassID builtinClass)
                 enginePart.contentsAreProven = true;
                 return;
             }
+            if (atWord("expected"_s) && nextToken().kind == TokenKind::LeftParenthesis) {
+                acceptWord("expected"_s);
+                parseList(TokenKind::LeftParenthesis, TokenKind::RightParenthesis, [&] {
+                    enginePart.expectedContents.append(parseTypeWord());
+                });
+                if (enginePart.expectedContents.size() != arity)
+                    fail(InternalErrorKind::IRTextError, position);
+                return;
+            }
             if (acceptWord("pristine"_s)) {
                 uint32_t aspects = parseFlagWord<PristineAspects>();
                 enginePart.provenPristine = OptionSet<PristineAspects>::fromRaw(static_cast<OptionSet<PristineAspects>::StorageType>(aspects));
@@ -510,7 +520,7 @@ void TextParser::parseClassPart(TypeParts& parts, BuiltinClassID builtinClass)
     parts.engineClassParts.insert(index, enginePart);
 }
 
-void TextParser::completeType(uint32_t wireIndex, Type& type) const
+void TextParser::completeType(uint32_t wireIndex, Type& type, std::span<const TypeID> earlierTypes) const
 {
     auto iterator = m_engineTypeParts.find(wireIndex);
     if (iterator == m_engineTypeParts.end())
@@ -526,6 +536,8 @@ void TextParser::completeType(uint32_t wireIndex, Type& type) const
         ClassPart& part = type.classes[index];
         const TypeParts::EngineClassPart& enginePart = parts.engineClassParts[index];
         part.contentsAreProven = enginePart.contentsAreProven;
+        for (unsigned slot = 0; part.contentsAreProven && slot < enginePart.expectedContents.size(); ++slot)
+            part.expectContentsAt(slot, earlierTypes[enginePart.expectedContents[slot]]);
         part.arrayStorage = enginePart.arrayStorage;
         part.provenPristine = enginePart.provenPristine;
     }

@@ -113,7 +113,7 @@ static void intersectBuiltins(Type& result, const Type& a, const Type& b, const 
 
 static ClassPart withoutProofs(ClassPart part)
 {
-    part.contentsAreProven = false;
+    part.forgetProofOfContents();
     part.arrayStorage = ArrayStorage::Other;
     part.provenPristine = { };
     return part;
@@ -137,10 +137,19 @@ static TypeID intersectKnownContents(TypeID first, TypeID second, TypeArena& are
 static void intersectContents(ClassPart& result, const ClassPart& a, const ClassPart& b, TypeArena& arena)
 {
     result.arrayStorage = a.arrayStorage != ArrayStorage::Other ? a.arrayStorage : b.arrayStorage;
-    size_t size = std::max(a.writtenContents.size(), b.writtenContents.size());
+    size_t size = std::max(a.contentsOfSlots().size(), b.contentsOfSlots().size());
     result.writtenContents.resize(size);
     for (unsigned index = 0; index < size; ++index)
         result.writtenContents[index] = intersectKnownContents(a.writtenContentsAt(index), b.writtenContentsAt(index), arena);
+}
+
+static void expectContentsOfBoth(ClassPart& result, const ClassPart& a, const ClassPart& b, TypeArena& arena)
+{
+    size_t size = std::max(a.contentsOfSlots().size(), b.contentsOfSlots().size());
+    if (a.expectsContentsBesideProof() || b.expectsContentsBesideProof())
+        size = ClassPart::maxContentsSlots;
+    for (unsigned index = 0; index < size; ++index)
+        result.expectContentsAt(index, intersectKnownContents(a.expectedContentsAt(index).predicted(), b.expectedContentsAt(index).predicted(), arena));
 }
 
 static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeArena& arena, DeclaredParts declared)
@@ -154,6 +163,8 @@ static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeAren
         intersectContents(result, a, b, arena);
     else
         copyContents(result, b.writtenContents.isEmpty() ? a : b);
+    if (result.contentsAreProven)
+        expectContentsOfBoth(result, a, b, arena);
     return result;
 }
 

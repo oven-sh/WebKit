@@ -889,6 +889,28 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
                 });
             });
         }
+        // The new target gives the prototype, and it need not be the constructor that is called: Reflect.construct(Uint8Array, [2], Other).
+        // Where no new target comes out of an operand each constructor is its own, also where one call may reach two of them.
+        bool newTargetsComeFromOperands = !inputs.sets().isEmpty(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands)));
+        if (const ValueFlowHeapIndex::NodesWrittenUnderName* links = newTargetsComeFromOperands ? heapIndex.findNodesWrittenUnder(prototypeLinkName) : nullptr) {
+            for (const ValueFlowHeapIndex::WrittenNode& node : links->nodes) {
+                if (ValueSets::isComplement(node.objects))
+                    continue;
+                inputs.sets().forEachMember(node.objects, [&](ValueFlowObjectID object) {
+                    BuiltinClassID made = classMadeAs.get(object.index());
+                    if (!made)
+                        return;
+                    if (ValueSets::isComplement(node.value)) {
+                        noted.append({ object, { } });
+                        return;
+                    }
+                    inputs.sets().forEachMember(node.value, [&](ValueFlowObjectID prototype) {
+                        if (prototype != universe.objectOf(builtins.at(made).prototype))
+                            noted.append({ object, { } });
+                    });
+                });
+            }
+        }
     }
     ValueFlowClassesOfBuiltinResults classes;
     for (auto [object, builtinClass] : noted) {

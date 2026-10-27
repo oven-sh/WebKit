@@ -575,6 +575,8 @@ void castArgumentsToParameters(IRBuilder& builder, BlockID block, bool validates
 
     builder.setOrigin(terminator.origin());
     Target& target = terminator.targets[0];
+    // What decided the test holds where the test stood, not wherever its subject is at hand.
+    ValueID testStoodHere;
     for (size_t index = 0; index < target.arguments.size(); ++index) {
         ValueID argument = target.arguments[index];
         ValueID parameter = function.at(target.block).parameters[index];
@@ -583,7 +585,9 @@ void castArgumentsToParameters(IRBuilder& builder, BlockID block, bool validates
         TypeID narrowed = function.at(parameter).type;
         if (validates)
             builder.insertBefore(pointBeforeTerminatorOf(function, block), makeValidateType(argument, narrowed));
-        target.arguments[index] = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(argument, Proven::byRulesWithoutChecks(narrowed)));
+        if (!testStoodHere)
+            testStoodHere = builder.insertBefore(pointBeforeTerminatorOf(function, block), IRBuilder::make(Opcode::Specified));
+        target.arguments[index] = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(argument, testStoodHere, Proven::behindFact(narrowed)));
     }
 }
 

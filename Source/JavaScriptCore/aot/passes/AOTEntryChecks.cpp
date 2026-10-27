@@ -299,7 +299,7 @@ static Vector<EntryCheck, 4> findEntryChecksThatMayFail(const Program& program, 
         return checks;
     for (ValueID id : entry.values) {
         const Value& value = function.at(id);
-        if (value.opcode == Opcode::ValidateType)
+        if (value.opcode == Opcode::ValidateType || makesFact(value.opcode))
             continue;
         if (value.opcode != Opcode::Check && !narrowsWithoutTest(value.opcode))
             break;

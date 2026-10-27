@@ -425,11 +425,16 @@ static void printStatics(PrintStream& out, const PlacedProgram& placed)
     const StaticsPlan& statics = placement.statics();
     IRPrinter printer(out, placed.program());
     out.println("statics size="_s, statics.size, " filledAtEntry="_s, statics.sizeFilledAtProgramEntry);
-    for (const PlacedStaticsOfFile& file : statics.filesFilledWhenEntered) {
-        out.print("file "_s);
-        printer.print(file.module);
-        out.print(" firstWord="_s, file.firstWord, " words="_s, file.numberOfWords, " imports="_s);
-        printNumbers(out, file.importedFiles);
+    for (const PlacedStaticsOfFiles& group : statics.groupsOfFilesFilledWhenEntered) {
+        out.print("files from "_s);
+        printer.print(group.firstFile);
+        out.print(" firstWord="_s, group.firstWord, " words="_s, group.numberOfWords, " imports="_s);
+        printNumbers(out, group.importedGroups);
+        out.print("\n"_s);
+    }
+    for (size_t function : statics.functionsThatEnterFiles) {
+        out.print("fills "_s);
+        printer.print(FunctionID(static_cast<uint32_t>(function)));
         out.print("\n"_s);
     }
     printVariables(printer, placement);

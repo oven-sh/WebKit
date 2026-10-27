@@ -1,0 +1,101 @@
+# class Base { id = 1 }   class Below extends Base { n: number; m: number; constructor(n: number) { super(); this.n = n; this.m = n; } }   new Below(2);
+# What super(..) answers is expected to have the layout of the class, and a check says so. In front of each `this` stands the test whether super(..) has been called.
+# An object is never absent, with the check or without it: no version of the constructor enters the blocks that throw, both stores run before anybody looks at the object,
+# and neither field holds the undefined of its definition.
+# `DecidedByCheck` stores only where its argument is not undefined, and that the check of the parameter alone decides: the generic version leaves the store out, and the undefined stays
+# FORM: AsRead
+# RUN: valueflow-apply
+
+# CHECK: layout L1 kind=Instance name="Below" {{*}}{key="n" declared={type=int[{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="m" declared={type=int[{{*}}occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="id"
+# CHECK: layout L2 kind=Instance name="DecidedByCheck" {{*}}{key="n" declared={type=undefined|int[
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Parameter
+layout L0 kind=Instance name="Base" constructor=f1 fields=[{key="id" declared={type=number} flags=[IsRequired]}]
+layout L1 kind=Instance name="Below" base=L0 constructor=f3 fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="m" declared={type=number} flags=[IsRequired]}] flags=[HasHeritage]
+layout L2 kind=Instance name="DecidedByCheck" base=L0 constructor=f5 fields=[{key="n" declared={type=undefined|number}}] flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = Undefined
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = NewClosure function=f3
+    v6 = ResolveHeritage v4
+    v7 = NewClass v5, v4, v6 layout=L1
+    v8 = FinishClass v7 layout=L1
+    v9 = Construct v8, -, v0
+    v10 = PropGet v9 key="n"
+    v11 = PropGet v9 key="m"
+    v12 = NewClosure function=f5
+    v13 = ResolveHeritage v4
+    v14 = NewClass v12, v4, v13 layout=L2
+    v15 = FinishClass v14 layout=L2
+    v16 = Construct v15, -, v0
+    v17 = Construct v15, -, v1
+    v18 = PropGet v17 key="n"
+    Return v18
+}
+function f1 name="Base" kind=BaseConstructor flags=[HasNewTarget, IsChecked] results=[{type=object flags=[IsFromCompiler]}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f2
+    Return v3
+}
+function f2 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Integer integer=1
+    PropDefine v0, v1 key="id"
+    Return v1
+}
+function f3 name="Below" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked] parameters=[{type=number site=w0 flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] {
+    v3 = Check v2 expectedType=number site=w0
+    v4 = GetSuperBase v0 homeKind=Object
+    v5 = SuperConstruct v4, v1 layout=L1
+    v6 = Check v5 expectedType=L1
+    v7 = CallDirect v6 function=f4
+    v8 = TypeTest v6 testedType=absent
+    Branch v8 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v9: anything):
+    v10 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v10
+  b2(v11: anything):
+    PropSet v11, v3 key="n" mode=Strict
+    v13 = TypeTest v11 testedType=absent
+    Branch v13 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v14: anything):
+    v15 = NewRuntimeError runtimeError=UninitializedThis
+    Throw v15
+  b4(v16: anything):
+    PropSet v16, v3 key="m" mode=Strict
+    Return v16
+}
+function f4 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L1 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="n"
+    PropDefine v0, v1 key="m"
+    Return v1
+}
+function f5 name="DecidedByCheck" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, IsChecked] parameters=[{type=number site=w1 flags=[IsExpected]}] results=[{type=object flags=[IsFromCompiler]}] {
+    v3 = Check v2 expectedType=number site=w1
+    v4 = GetSuperBase v0 homeKind=Object
+    v5 = SuperConstruct v4, v1 layout=L2
+    v6 = Check v5 expectedType=L2
+    v7 = CallDirect v6 function=f6
+    v8 = TypeTest v3 testedType=undefined
+    Branch v8 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v9: anything):
+    Jump -> next b3()
+  b2(v10: anything):
+    PropSet v6, v10 key="n" mode=Strict
+    Jump -> next b3()
+  b3():
+    Return v6
+}
+function f6 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L2 flags=[IsFromCompiler]} results=[{type=anything}] {
+    v1 = Undefined
+    PropDefine v0, v1 key="n"
+    Return v1
+}

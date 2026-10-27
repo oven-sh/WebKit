@@ -246,7 +246,7 @@ static ClosureDeferral deferralFor(const Program& program, FunctionID function)
 
 static bool createsValueWithoutRunningCode(const Value& value)
 {
-    if (isRematerializable(value) || isCastWithoutTest(value.opcode) || value.opcode == Opcode::AllGuards)
+    if (isRematerializable(value) || isCastWithoutTest(value.opcode) || value.opcode == Opcode::AllGuards || makesFact(value.opcode))
         return true;
     return interpretedOf(value.opcode) == Interpretation::Allocation && declaredBoundOf(value.opcode).isUnobservable();
 }

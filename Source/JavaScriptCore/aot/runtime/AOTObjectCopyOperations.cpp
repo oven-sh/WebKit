@@ -329,8 +329,10 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     ASSERT(hasOwnPropertiesToCopy(source));
     JSObject* from = source.isObject() ? asObject(source) : source.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, threw);
-    prepareForWalk(globalObject, from);
-    RETURN_IF_EXCEPTION(scope, threw);
+    if (isCompiledObject(from) && uncheckedDowncast<Object>(from)->layout().hasFieldsWithSymbolKeys) [[unlikely]] {
+        prepareForWalk(globalObject, from);
+        RETURN_IF_EXCEPTION(scope, threw);
+    }
     Object* record = compiledObjectOrNull(target);
     if (record) {
         Object* other = excluded.isEmpty() ? compiledObjectOrNull(from) : nullptr;

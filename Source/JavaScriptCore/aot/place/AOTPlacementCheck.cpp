@@ -1045,10 +1045,10 @@ static void checkVariable(const PlacementCheckContext& context, VariableID id, b
     bool isFilledAtProgramEntry = placed.region == StaticsRegion::FilledAtProgramEntry;
     bool mayBeFilledAtProgramEntry = placed.initialWord && !context.slots.variable(id).isUsedBeforeProgramEntry;
     context.expect(isFilledAtProgramEntry == (placed.offset < context.statics.sizeFilledAtProgramEntry) && (!isFilledAtProgramEntry || mayBeFilledAtProgramEntry), PlacementRule::VariableRegion, variable.owner);
-    std::optional<uint32_t> file = context.statics.fileFilledWhenEntered(variable.module);
+    std::optional<uint32_t> group = context.statics.groupFilledWhenEntered(variable.module);
     uint32_t word = placed.offset / sizeOfStaticsWord;
     bool liesAmongWordsOfFiles = word - context.statics.firstWordFilledWithFiles < context.statics.endWordFilledWithFiles - context.statics.firstWordFilledWithFiles;
-    bool liesAmongWordsOfItsFile = file && word - context.statics.filesFilledWhenEntered[*file].firstWord < context.statics.filesFilledWhenEntered[*file].numberOfWords;
+    bool liesAmongWordsOfItsFile = group && word - context.statics.groupsOfFilesFilledWhenEntered[*group].firstWord < context.statics.groupsOfFilesFilledWhenEntered[*group].numberOfWords;
     context.expect(liesAmongWordsOfFiles == (placed.region == StaticsRegion::FilledWithFile) && liesAmongWordsOfFiles == (liesAmongWordsOfItsFile && placed.initialWord), PlacementRule::VariableRegion, variable.owner);
     context.expect(hasValidInitialWord(variable, placed), PlacementRule::VariableLacksInitialValue, variable.owner);
     const Type& stored = context.program.at(context.program.provenTypeOf(variable.declared));

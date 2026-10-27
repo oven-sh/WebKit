@@ -162,25 +162,25 @@ struct ModuleBuiltinCell {
     uint32_t offset { 0 };
 };
 
-struct PlacedStaticsOfFile {
-    ModuleID module;
+struct PlacedStaticsOfFiles {
+    ModuleID firstFile;
     uint32_t firstWord { 0 };
     uint32_t numberOfWords { 0 };
-    Vector<uint32_t> importedFiles;
+    Vector<uint32_t> importedGroups;
 };
 
 struct StaticsPlan {
-    // Its number among filesFilledWhenEntered, if code that enters the file has words to fill.
-    std::optional<uint32_t> fileFilledWhenEntered(ModuleID module) const
+    // The number of its group among groupsOfFilesFilledWhenEntered, if code that enters the file has words to fill.
+    std::optional<uint32_t> groupFilledWhenEntered(ModuleID module) const
     {
-        return module && module.index() < numberOfFileFilledWhenEntered.size() ? numberOfFileFilledWhenEntered[module.index()] : std::nullopt;
+        return module && module.index() < groupOfFile.size() ? groupOfFile[module.index()] : std::nullopt;
     }
 
     Vector<PlacedVariable> variables;
-    Vector<PlacedStaticsOfFile> filesFilledWhenEntered;
-    // The code of those files: whoever evaluates one of them enters it here, before anything that the file has written runs.
+    Vector<PlacedStaticsOfFiles> groupsOfFilesFilledWhenEntered;
+    // Where somebody can come into the code of those files who has not filled their words.
     BitVector functionsThatEnterFiles;
-    Vector<std::optional<uint32_t>> numberOfFileFilledWhenEntered;
+    Vector<std::optional<uint32_t>> groupOfFile;
     uint32_t firstWordFilledWithFiles { 0 };
     uint32_t endWordFilledWithFiles { 0 };
     uint32_t offsetOfFilledFiles { 0 };

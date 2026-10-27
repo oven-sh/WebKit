@@ -1,0 +1,36 @@
+# Flow has followed every store into a list and found that anything may be stored, and the list is declared to hold numbers. The proof stays what it is, and what was declared stands beside it as
+# what is expected. An expectation that the proof implies or rules out is not kept, and a part whose contents are no longer proven says of them what was expected.
+# RUN: intersect
+# CHECK: t0 & t1 = Array<anything, proven, expected(int)>
+# CHECK: t0 & t2 = Array<number|string, proven>
+# CHECK: t0 & t3 = Array<anything, proven, expected(string)>
+# CHECK: t0 & t7 = Array<anything, proven, expected(int), Contiguous>
+# CHECK: t1 & t0 = Array<anything, proven, expected(int)>
+# CHECK: t1 & t2 = Array<number|string, proven, expected(int)>
+# CHECK: t1 & t3 = Array<anything, proven>
+# CHECK: t2 & t3 = Array<number|string, proven, expected(string)>
+# CHECK: t2 & t6 = Array<number|string, proven, expected(string)>
+# CHECK: t3 & t7 = Array<anything, proven, Contiguous>
+# CHECK: t4 & t5 = Map<string, anything, proven, expected(string, int)>
+# CHECK: laws hold
+# RUN(UNION): union
+# UNION: t0 | t1 = Array
+# UNION: t0 | t3 = Array<anything, proven>
+# UNION: t1 | t3 = Array<int|string>
+# UNION: t1 | t7 = Array<int>
+# UNION: t2 | t3 = Array<anything, proven, expected(number|string)>
+# UNION: t3 | t3 = Array<anything, proven, expected(string)>
+# UNION: t3 | t6 = Array<string>
+# UNION: t3 | t7 = Array<anything, proven, expected(int|string)>
+# UNION: laws hold
+# RUN(SUBSET): subset
+# SUBSET: t0 <= t3: yes overlaps: yes
+# SUBSET: t2 <= t3: yes overlaps: yes
+# SUBSET: t3 <= t0: yes overlaps: yes
+# SUBSET: t3 <= t2: no overlaps: yes
+# SUBSET: t3 <= t7: no overlaps: yes
+# SUBSET: t7 <= t3: yes overlaps: yes
+# SUBSET: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=Array<anything, proven>}, {type=Array<int>}, {type=Array<number|string, proven>}, {type=Array<anything, proven, expected(string)>}, {type=Map<string, anything, proven>}, {type=Map<string, int>}, {type=Array<string>}, {type=Array<anything, proven, expected(int), Contiguous>}] results=[{type=undefined}]

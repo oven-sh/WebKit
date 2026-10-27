@@ -9,7 +9,7 @@
 # CHECK-NEXT: [[known]]: {{*}} = AssumeType [[checked]] provenType=int [isBehindChecks]
 # CHECK-NEXT: [[element]]: {{*}} = AssumeType [[known]] provenType=undefined|1
 # CHECK-NEXT: [[inner]]: {{*}} = NewArray [[element]] contents=undefined|1
-# CHECK-NEXT: = AssumeType [[inner]] provenType=Array<undefined|1, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: = AssumeType [[inner]] provenType=Array<undefined|1, proven, expected(1), pristine[Storage, Names, Dense]>
 # CHECK-NOT: isBehindChecks
 # CHECK: = ElemGet
 

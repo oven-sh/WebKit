@@ -58,6 +58,7 @@ enum class ValueFlowNameKind : uint8_t {
     RestArgument,
     AddedNames,
     FoundThroughEscapedInstances,
+    NamesOfMethods,
 };
 
 enum class ValueFlowNameSort : uint8_t { Value, Getter, Setter, Deletion, Redefinition, PrototypeLink, Copy, Other };
@@ -130,6 +131,7 @@ constexpr ValueFlowNameShape shapeOf(ValueFlowNameKind kind)
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
         return { Sort::Other, Reach::NoKey };
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -186,6 +188,7 @@ constexpr bool mayBeTheSameName(ValueFlowNameKind written, ValueFlowNameKind rea
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
         return false;
     }
     return false;
@@ -324,6 +327,8 @@ struct ValueFlowStatement {
     ValueFlowNodeID result;
     ValueFlowNodeID thrown;
     uint32_t firstSite { UINT32_MAX };
+    // Of a PropGet: what it reads is tested, or is the callee of a call on the object it was read from, and goes nowhere else.
+    bool isOnlyCalledOnItsHolder { false };
 };
 
 enum class ValueFlowCallKind : uint8_t {

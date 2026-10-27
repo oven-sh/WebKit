@@ -243,7 +243,7 @@ bool isPartSubset(const ClassPart& a, const ClassPart& b, const TypeTable& types
         return false;
     if (b.arrayStorage != ArrayStorage::Other && a.arrayStorage != b.arrayStorage)
         return false;
-    for (unsigned index = 0; index < b.writtenContents.size(); ++index) {
+    for (unsigned index = 0; index < b.contentsOfSlots().size(); ++index) {
         if (!isSubset(types.at(a.writtenContentsAt(index)), types.at(b.writtenContentsAt(index)), types))
             return false;
     }

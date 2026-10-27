@@ -345,9 +345,12 @@ enum class ValueFlowHostNode : uint8_t {
     ClosuresThatDefinitionsCompare,
     PrototypeObjectsThatWritesUnderUnknownKeysReach,
     ObjectsNobodyFollowsThatDefinitionsName,
+    NamesReadOffValuesNobodyKnows,
+    NamesFoundBelowValuesNobodyKnows,
+    NamesOfReadsThatHandTheirValueOn,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 55;
+inline constexpr unsigned numberOfValueFlowHostNodes = 58;
 
 class ValueFlowProgramNodes {
 public:
@@ -510,6 +513,7 @@ struct ValueFlowBody {
         ValueFlowNodeName thrown;
         ValueFlowStatementKind kind { ValueFlowStatementKind::Operation };
         uint32_t firstSite { none };
+        bool isOnlyCalledOnItsHolder { false };
     };
 
     struct ObservedValue {

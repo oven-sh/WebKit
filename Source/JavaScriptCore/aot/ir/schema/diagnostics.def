@@ -116,6 +116,7 @@ enum InternalErrorKind (stage: Stage, message: Text) {
     UseNotDominated(ReadAndVerify, "the definition of an operand does not dominate the use")
     GuardNotAvailable(Optimize, "something between the guard and the use may write what the guard depends on")
     InvalidGuard(Optimize, "the guard does not prove what the operation relies on")
+    CastWithoutFact(Optimize, "a cast that no test backs says what holds of its value only from a place on, and names no fact made there")
     CopyRunsBehindLess(Optimize, "code is copied to where a value stands for another that is of a narrower type, or a guard for one that proves more")
     QuestionBeforeRepair(Optimize, "a question that follows values through block parameters is asked while uses wait for their repair")
     SlotOfOtherForm(Optimize, "the operation takes a slot of {layout} that holds the functions of an accessor for one that holds a value, or the other way round")

@@ -122,6 +122,7 @@ public:
     bool turnsAwayConstructedObject(ValueSetID, const Type&);
 
     Type typeOfObject(ValueFlowObjectID);
+    bool appendLayoutsExpectedOf(ValueFlowObjectID, Vector<LayoutID, 8>&);
 
     FlowSiteLoss lossOf(const ValueFlowPositionResult&, ValueFlowNodeID = { });
 

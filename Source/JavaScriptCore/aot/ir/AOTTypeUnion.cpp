@@ -37,10 +37,19 @@ static ClassPart uniteParts(const ClassPart& a, const ClassPart& b, TypeArena& a
     result.provenPristine = a.provenPristine & b.provenPristine;
     if (a.arrayStorage != b.arrayStorage)
         result.arrayStorage = ArrayStorage::Other;
-    size_t numberOfContents = std::max(a.writtenContents.size(), b.writtenContents.size());
-    result.writtenContents.grow(numberOfContents);
-    for (unsigned index = 0; index < numberOfContents; ++index)
-        result.writtenContents[index] = arena.unionOf(a.writtenContentsAt(index), b.writtenContentsAt(index));
+    size_t numberOfContents = std::max(a.contentsOfSlots().size(), b.contentsOfSlots().size());
+    bool expectsBesideProof = a.expectsContentsBesideProof() || b.expectsContentsBesideProof();
+    result.writtenContents.resize(numberOfContents);
+    for (unsigned index = 0; index < numberOfContents; ++index) {
+        if (result.contentsAreProven || !expectsBesideProof)
+            result.writtenContents[index] = arena.unionOf(a.writtenContentsAt(index), b.writtenContentsAt(index));
+        else
+            result.writtenContents[index] = arena.unionOf(a.expectedContentsAt(index).predicted(), b.expectedContentsAt(index).predicted());
+    }
+    if (result.contentsAreProven && expectsBesideProof) {
+        for (unsigned index = 0; index < numberOfContents; ++index)
+            result.expectContentsAt(index, arena.unionOf(a.expectedContentsAt(index).predicted(), b.expectedContentsAt(index).predicted()));
+    }
     return result;
 }
 

@@ -355,17 +355,17 @@ void encodeStaticsTables(TableEncoder& encoder)
         .sizeFilledAtProgramEntry = statics.sizeFilledAtProgramEntry,
         .distanceFromArrayProfileToLastArray = statics.distanceFromArrayProfileToLastArray,
     } });
-    Vector<StaticsOfFile> files;
+    Vector<StaticsOfFiles> files;
     Vector<uint32_t> importedFiles;
-    // No run goes on from one file into the next.
+    // No run goes on from one group into the next.
     BitVector beginsRun;
-    for (const PlacedStaticsOfFile& file : statics.filesFilledWhenEntered) {
-        files.append({ file.module.index(), file.firstWord, file.numberOfWords, static_cast<uint32_t>(importedFiles.size()) });
-        importedFiles.appendVector(file.importedFiles);
-        beginsRun.set(file.firstWord);
+    for (const PlacedStaticsOfFiles& group : statics.groupsOfFilesFilledWhenEntered) {
+        files.append({ group.firstWord, group.numberOfWords, static_cast<uint32_t>(importedFiles.size()) });
+        importedFiles.appendVector(group.importedGroups);
+        beginsRun.set(group.firstWord);
     }
     if (!files.isEmpty())
-        files.append({ UINT32_MAX, statics.endWordFilledWithFiles, statics.offsetOfFilledFiles, static_cast<uint32_t>(importedFiles.size()) });
+        files.append({ statics.endWordFilledWithFiles, statics.offsetOfFilledFiles, static_cast<uint32_t>(importedFiles.size()) });
     encoder.setTable(ProgramTableIndex::staticsOfFiles, files);
     encoder.setTable(ProgramTableIndex::staticsOfImportedFiles, importedFiles);
 

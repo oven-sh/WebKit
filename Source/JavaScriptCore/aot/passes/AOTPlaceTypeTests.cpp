@@ -3018,7 +3018,7 @@ struct TestPlacer {
                 return;
             }
             if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof))
-                proof = emit(makeAssumeType(proof, Proven::byRulesWithoutChecks(*castType)));
+                proof = emit(makeAssumeType(proof, emit(IRBuilder::make(Opcode::Specified)), Proven::behindFact(*castType)));
             test.setOperand(*prerequisite.narrowedOperand, proof);
         });
 
@@ -3219,7 +3219,7 @@ struct TestPlacer {
     {
         if (context.build.validates())
             builder.insertBefore(point, makeValidateType(value, castType));
-        return builder.insertBefore(point, makeAssumeType(value, Proven::byRulesWithoutChecks(castType)));
+        return builder.insertBefore(point, makeAssumeType(value, builder.insertBefore(point, IRBuilder::make(Opcode::Specified)), Proven::behindFact(castType)));
     }
 
     void rewriteUse(const PlannedUse& planned, uint32_t useIndex, ProgramPoint point)

@@ -346,7 +346,8 @@ private:
     void layWayOfLoad(PlanOfLoad&, LevelOfLoad* above);
     void layWayOfLoadAgain(LevelOfLoad&);
     void countStepsOfLevel(PlanOfLoad&, size_t depth);
-    uint32_t countStepsOfWholeGraph(const PlanOfLoad&, uint32_t firstPlaceFound);
+    uint32_t countStepsOfWholeGraph(const PlanOfLoad&, std::span<uint32_t> firstRequestOfPlace, std::span<uint32_t> allRequestedPlaces);
+    uint32_t takeMarkOfSearch();
     void takeUpWaysOfLoads();
     void markModulesOfPlan(const PlanOfLoad&);
     JSValue callBody(ModuleID);

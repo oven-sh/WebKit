@@ -701,7 +701,7 @@ struct GenericVersionBuilder {
             const BlockValues& values = function.at(point.block).values;
             auto isCastAt = [&](uint32_t index) {
                 Opcode opcode = function.at(values[index]).opcode;
-                return opcode == Opcode::Check || opcode == Opcode::Upcast || opcode == Opcode::AssumeType;
+                return opcode == Opcode::Check || opcode == Opcode::Upcast || opcode == Opcode::AssumeType || makesFact(opcode);
             };
             while (point.index && point.index < values.size() && isCastAt(point.index))
                 ++point.index;

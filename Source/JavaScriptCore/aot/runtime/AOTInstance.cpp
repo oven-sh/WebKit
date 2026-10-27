@@ -1239,50 +1239,51 @@ void ProgramStatics::initializeStatics(uint32_t firstWord, uint32_t endWord)
         std::ranges::fill(std::span { words + run->firstWord, run->numberOfWords }, run->bits());
 }
 
-uint32_t ProgramStatics::fileWithWord(uint32_t word) const
+uint32_t ProgramStatics::groupWithWord(uint32_t word) const
 {
-    std::span<const StaticsOfFile> files = m_tables.staticsOfFiles();
-    auto next = std::ranges::upper_bound(files, word, { }, &StaticsOfFile::firstWord);
-    RELEASE_ASSERT(next != files.begin());
-    return static_cast<uint32_t>(next - files.begin()) - 1;
-}
-
-void ProgramStatics::fillVariablesOfListedModule(ModuleID module)
-{
-    std::span<const StaticsOfFile> files = m_tables.staticsOfFiles();
-    auto found = std::ranges::lower_bound(files, module.index(), { }, &StaticsOfFile::module);
-    if (found != files.end() && found->module == module.index())
-        fillVariablesOfFile(static_cast<uint32_t>(found - files.begin()));
+    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
+    auto next = std::ranges::upper_bound(groups, word, { }, &StaticsOfFiles::firstWord);
+    RELEASE_ASSERT(next != groups.begin());
+    return static_cast<uint32_t>(next - groups.begin()) - 1;
 }
 
 bool ProgramStatics::isFilled(uint32_t offset) const
 {
     uint32_t word = offset / sizeof(uint64_t);
-    return word - m_firstWordFilledWithFiles >= m_numberOfWordsFilledWithFiles || m_filledFiles[fileWithWord(word)];
+    return word - m_firstWordFilledWithFiles >= m_numberOfWordsFilledWithFiles || m_filledFiles[groupWithWord(word)];
 }
 
-void ProgramStatics::fillVariablesOfFile(uint32_t first)
+void ProgramStatics::fillVariablesOfFiles(uint32_t first)
 {
-    std::span<const StaticsOfFile> files = m_tables.staticsOfFiles();
-    std::span<const uint32_t> importedFiles = m_tables.staticsOfImportedFiles();
-    RELEASE_ASSERT(first + 1 < files.size());
+    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
+    std::span<const uint32_t> importedGroups = m_tables.staticsOfImportedFiles();
+    RELEASE_ASSERT(first + 1 < groups.size());
     if (m_filledFiles[first])
         return;
     m_filledFiles[first] = true;
     Vector<uint32_t, 32> pending { first };
     while (!pending.isEmpty()) {
-        uint32_t file = pending.takeLast();
-        initializeStatics(files[file].firstWord, files[file].firstWord + files[file].numberOfWords);
-        for (uint32_t imported : importedFiles.subspan(files[file].firstImportedFile, files[file + 1].firstImportedFile - files[file].firstImportedFile)) {
+        uint32_t group = pending.takeLast();
+        initializeStatics(groups[group].firstWord, groups[group].firstWord + groups[group].numberOfWords);
+        for (uint32_t imported : importedGroups.subspan(groups[group].firstImportedGroup, groups[group + 1].firstImportedGroup - groups[group].firstImportedGroup)) {
             if (!std::exchange(m_filledFiles[imported], true))
                 pending.append(imported);
         }
     }
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillVariablesOfFile, void, (Instance* instance, uint32_t file))
+void ProgramStatics::fillVariablesOfAllFiles()
 {
-    instance->state->statics->fillVariablesOfFile(file);
+    std::span<const StaticsOfFiles> groups = m_tables.staticsOfFiles();
+    for (uint32_t group = 0; group + 1 < groups.size(); ++group) {
+        if (!std::exchange(m_filledFiles[group], true))
+            initializeStatics(groups[group].firstWord, groups[group].firstWord + groups[group].numberOfWords);
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillVariablesOfFiles, void, (Instance* instance, uint32_t group))
+{
+    instance->state->statics->fillVariablesOfFiles(group);
 }
 
 void ProgramStatics::initializeProgramStatics()
@@ -1414,7 +1415,7 @@ ProgramStatics::ProgramStatics(State& state)
     uint8_t* statics = m_instance.statics();
     uint32_t filled = sizeFilledAtProgramEntry(m_tables);
     uint32_t endOfWordsFilledNow = std::numeric_limits<uint32_t>::max();
-    if (std::span<const StaticsOfFile> files = m_tables.staticsOfFiles(); !files.empty()) {
+    if (std::span<const StaticsOfFiles> files = m_tables.staticsOfFiles(); !files.empty()) {
         // Nothing behind them starts as anything but zero.
         endOfWordsFilledNow = m_firstWordFilledWithFiles = files.front().firstWord;
         m_numberOfWordsFilledWithFiles = files.back().firstWord - files.front().firstWord;

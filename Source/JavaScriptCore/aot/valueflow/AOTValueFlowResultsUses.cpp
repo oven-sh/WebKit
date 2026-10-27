@@ -387,6 +387,7 @@ void UsesOfObjects::noteRead(Noter noter, const ValueFlowNodeKey& key, Reader re
     case ValueFlowNameKind::RestArgument:
     case ValueFlowNameKind::AddedNames:
     case ValueFlowNameKind::FoundThroughEscapedInstances:
+    case ValueFlowNameKind::NamesOfMethods:
         break;
     }
 }

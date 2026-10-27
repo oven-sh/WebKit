@@ -194,6 +194,7 @@ private:
         return storedThroughUntrackedObjectInto(objects, name) || isStoredThroughUnknownObject;
     }
     void forEachNodeHolding(ClimbingSet objects, ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
+    void noteName(ValueFlowHostNode, const HeapKey&);
     void forEachNodeReadByName(ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     void letPrototypeObjectsOfLanguageEscape() { add(ValueFlowProgramNodes::escaped(), m_tables.prototypeObjectsOfLanguage()); }
     void appendPrototypeAtCreation(ValueFlowObjectID, Members&) const;

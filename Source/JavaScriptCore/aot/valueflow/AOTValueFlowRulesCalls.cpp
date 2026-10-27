@@ -1112,6 +1112,7 @@ void runDefineMethod(const ValueFlowStatement& statement, ValueFlowRuleContext& 
 
     auto define = [&](PropertyKeyID key) {
         context.connect(operands[1], context.written(holder, nameOfMember(context.program(), operation.methodKind(), key)));
+        context.add(context.written(holder, ValueFlowCellName { ValueFlowNameKind::NamesOfMethods }), only(context, universe.keyConstant(key)));
         if (operation.methodKind() != MethodKind::Method && operation.side() != ClassSide::Static && key == context.program().keyOf(BuiltinNames::constructor))
             context.mark(holder, ObjectMutation::RedefineProperty);
     };
@@ -1128,6 +1129,7 @@ void runDefineMethod(const ValueFlowStatement& statement, ValueFlowRuleContext& 
     if (operation.methodKind() != MethodKind::Method && operation.side() != ClassSide::Static)
         context.mark(holder, ObjectMutation::RedefineProperty);
     context.connect(operands[1], context.written(holder, nameOfMember(context.program(), operation.methodKind(), { })));
+    context.add(context.written(holder, ValueFlowCellName { ValueFlowNameKind::NamesOfMethods }), universe.unknownObjectAlone());
 }
 
 void runReadOfPrototypeProperty(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
