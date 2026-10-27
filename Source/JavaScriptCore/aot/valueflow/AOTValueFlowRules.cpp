@@ -326,13 +326,16 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     ValueFlowNodeID namesRead = context.nodes().ofHost(ValueFlowHostNode::NamesReadOffValuesNobodyKnows);
     ValueFlowNodeID namesFoundBelow = context.nodes().ofHost(ValueFlowHostNode::NamesFoundBelowValuesNobodyKnows);
     ValueFlowNodeID namesHandedOn = context.nodes().ofHost(ValueFlowHostNode::NamesOfReadsThatHandTheirValueOn);
-    ClimbingSet anyName(universe.unknownObjectAlone());
+    ClimbingSet anyName(markOfAnyName(universe));
+    ClimbingSet anyIndex(context.maker().unite(markOfAnyIndex(universe), markOfAnyName(universe)));
     ClimbingSet names = context.unite(context.valueOf(context.read(above, ValueFlowCellName { ValueFlowNameKind::AddedNames })), context.valueOf(context.read(above, ValueFlowCellName { ValueFlowNameKind::NamesOfMethods })));
     bool holdsThemUnderAnyName = context.meet(names, ValueSets::complement(universe.keys()));
     bool isReadUnderSomeName = holdsSomething(context, context.valueOf(namesRead)) || (holdsSomething(context, context.valueOf(namesFoundBelow)) && holdsSomething(context, context.valueOf(namesHandedOn)));
-    if (context.holdsAnyOf(anyName, namesRead) || (holdsThemUnderAnyName && isReadUnderSomeName))
+    if (context.holdsAnyOf(anyName, namesRead) || (context.holdsAnyOf(anyName, namesFoundBelow) && context.holdsAnyOf(anyName, namesHandedOn)) || (holdsThemUnderAnyName && isReadUnderSomeName))
         context.add(escapedNode, called);
     else {
+        if (context.holdsAnyOf(anyIndex, namesRead) || (context.holdsAnyOf(anyIndex, namesFoundBelow) && context.holdsAnyOf(anyIndex, namesHandedOn)))
+            context.connect(context.masked(context.readWhatWasWritten(above, elementsName), functions), escapedNode);
         ClimbingSet keys = context.restrict(names, universe.keys());
         ClimbingSet foundBelow = context.holdsAnyOf(anyName, namesFoundBelow) ? keys : context.valueWithin(keys, namesFoundBelow);
         ClimbingSet handedOn = context.holdsAnyOf(anyName, namesHandedOn) ? foundBelow : context.valueWithin(foundBelow, namesHandedOn);

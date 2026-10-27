@@ -1338,7 +1338,17 @@ void HeapRule::readFromStartsThatMayFindSomething(ClimbingSet start, const HeapK
 // Native code only calls the functions above an instance that has escaped. Whoever reads one off a value nobody knows holds it, unless the read is the callee of a call on that value.
 void HeapRule::noteName(ValueFlowHostNode names, const HeapKey& key)
 {
-    add(m_context.nodes().ofHost(names), key.keyClass == HeapKeyClass::Name ? only(m_universe.keyConstant(key.name)) : m_universe.unknownObjectAlone());
+    switch (key.keyClass) {
+    case HeapKeyClass::Name:
+        add(m_context.nodes().ofHost(names), only(m_universe.keyConstant(key.name)));
+        return;
+    case HeapKeyClass::Index:
+        add(m_context.nodes().ofHost(names), markOfAnyIndex(m_universe));
+        return;
+    case HeapKeyClass::Unknown:
+        add(m_context.nodes().ofHost(names), markOfAnyName(m_universe));
+        return;
+    }
 }
 
 void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, const HeapReceiver& receiver, ValueFlowNodeID result)

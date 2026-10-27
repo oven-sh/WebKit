@@ -393,11 +393,16 @@ static KnownBoolean evaluateFieldTest(const ShapeContext& context, const Virtual
             return KnownBoolean::Unknown;
         return KnownBoolean::True;
     }
-    // The property is there. Whether its value lies in the slot nobody knows, and the way that looks for it by name finds it wherever it lies.
     if (field && hasStoredCounterpart(context.family, shape, *field)) {
         if (access.whenPresent != PresentField::IsOwnData)
             return KnownBoolean::Unknown;
-        return knownBoolean(test.opcode != Opcode::IsSlotFilled);
+        if (test.opcode != Opcode::IsSlotFilled)
+            return KnownBoolean::True;
+        // A failed test of the declared type is followed by a lookup by name. A failed test of a field that may leave its slot says nothing without HasNoFieldOutsideSlot.
+        if (rejectsNullishValues(test))
+            return KnownBoolean::False;
+        std::optional<uint32_t> layoutField = layoutFieldOf(context.objects.program, description, access.field);
+        return knownBoolean(layoutField && staysInSlot(context.objects.program, { description.layout, *layoutField }));
     }
     return access.whenAbsent == AbsentField::FindsNothing ? KnownBoolean::False : KnownBoolean::Unknown;
 }
