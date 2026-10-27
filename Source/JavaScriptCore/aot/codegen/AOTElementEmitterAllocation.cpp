@@ -101,19 +101,6 @@ static Integer plannedCapacityOf(CodeGenerator& generator, const ValueContext& l
     return operand.as<Integer>();
 }
 
-const Type& ArrayAllocationEmitter::typeGivenByOnlyCast(ValueID array)
-{
-    ValueID onlyCast;
-    for (const Use& use : analyses().useLists().usesOf(array)) {
-        if (use.kind == Use::Kind::Operand && m_function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard)
-            continue;
-        if (onlyCast || use.kind != Use::Kind::Operand || use.operandIndex || !isCast(m_function.at(use.user).opcode))
-            return typeOf(array);
-        onlyCast = use.user;
-    }
-    return typeOf(onlyCast ? onlyCast : array);
-}
-
 bool ArrayAllocationEmitter::isNumberOrMarker(ValueID element)
 {
     if (representationOf(element) == Representation::OptionalDouble)
@@ -162,7 +149,7 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         return newLiteralWithHoles(value);
     if (value->capacityOperand())
         return newLiteralWithCapacity(value);
-    return newArrayOf(value, value->elementsOperands(), typeGivenByOnlyCast(value.id()));
+    return newArrayOf(value, value->elementsOperands(), typeOf(value.id()));
 }
 
 Integer ArrayAllocationEmitter::headerOfNewArray(const ArrayStorageForm& form)

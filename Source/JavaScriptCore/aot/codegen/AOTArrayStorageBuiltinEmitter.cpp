@@ -221,8 +221,18 @@ void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer
 // What flow found in the arrays of the site stands in the cast behind the call. Their stores and reads expect the kind of storage that holds it.
 const Type& ArrayStorageBuiltinEmitter::typeOfArraysCreatedBy(const InlineCall& call)
 {
-    if (const ValueContext* value = call.value())
-        return ArrayAllocationEmitter(generator()).typeGivenByOnlyCast(value->id());
+    if (const ValueContext* value = call.value()) {
+        ValueID onlyCast;
+        for (const Use& use : analyses().useLists().usesOf(value->id())) {
+            if (use.kind == Use::Kind::Operand && m_function.at(use.user).operandKind(use.operandIndex) == OperandKind::Guard)
+                continue;
+            if (onlyCast || use.kind != Use::Kind::Operand || use.operandIndex || !isCast(m_function.at(use.user).opcode))
+                return resultTypeOf(call);
+            onlyCast = use.user;
+        }
+        if (onlyCast)
+            return typeOf(onlyCast);
+    }
     return resultTypeOf(call);
 }
 

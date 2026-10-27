@@ -113,11 +113,11 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 }
 
 # `for (const [key, count] of counts)` walks the table of the map in line, without an iterator object and without a result object.
-# Each turn unboxes key and value, makes the pair of them as an array of numbers, asks which storage that array has, and reads the two elements back with a test of the length in front of each.
+# Each turn makes the pair of key and value as an array, asks which storage that array has, and reads the two elements back with a test of the length in front of each.
 # CHECK-LABEL: name="total" role=Source
 # CHECK: Patchpoint({{*}}isLoopPoll{{*}}:LoopHint)
 # CHECK: Load(b@{{*}}Reads:CollectionEntries, {{*}}:MapNext)
-# CHECK: Int64 b@[[pair]] = Patchpoint($770(b@{{*}}):Register({{*}}), b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}:NewArray)
+# CHECK: Int64 b@[[pair]] = Patchpoint(b@{{*}}:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}:NewArray)
 # CHECK-NEXT: Int32 b@{{*}} = Load8Z(b@[[pair]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc, {{*}}:HasArrayStorage)
 # CHECK: Int64 b@[[storage]] = Load(b@[[pair]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:GetArrayElement)
 # CHECK: Double b@{{*}} = Load(b@[[storage]], ControlDependent|Reads:indexedDoubleProperties_0, {{*}}:GetArrayElement)
@@ -125,5 +125,5 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CHECK-LABEL: end of function
 # The two patchpoints on the likely paths are the poll and the allocation.
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 90, patchpoints: 2, rare instructions: 52
-# ARM64: instructions: 99, patchpoints: 2, rare instructions: 68
+# X64: instructions: 75, patchpoints: 2, rare instructions: 59
+# ARM64: instructions: 87, patchpoints: 2, rare instructions: 69
