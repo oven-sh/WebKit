@@ -51,6 +51,7 @@
 #include <wtf/SIMDHelpers.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
 #if OS(LINUX)
 #include <sys/mman.h>
 #if !defined(MADV_POPULATE_WRITE)

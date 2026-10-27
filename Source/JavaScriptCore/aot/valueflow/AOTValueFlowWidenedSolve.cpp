@@ -15,6 +15,7 @@
 #include "AOTValueFlowResultsUnseenCode.h"
 #include <wtf/HashSet.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 

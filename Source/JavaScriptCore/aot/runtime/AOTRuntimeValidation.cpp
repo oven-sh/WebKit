@@ -42,6 +42,7 @@
 #include <wtf/HexNumber.h>
 #include <wtf/Lock.h>
 #include <wtf/RawHex.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 

@@ -25,6 +25,7 @@
 #include "PropertyNameArray.h"
 #include <array>
 #include <wtf/SetForScope.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 

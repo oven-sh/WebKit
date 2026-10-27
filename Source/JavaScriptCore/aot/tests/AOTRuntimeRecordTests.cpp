@@ -22,6 +22,7 @@
 #include <bit>
 #include <optional>
 #include <wtf/HashSet.h>
+#include <wtf/text/MakeString.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 

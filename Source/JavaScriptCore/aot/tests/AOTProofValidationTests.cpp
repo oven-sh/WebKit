@@ -12,6 +12,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"
 #include "AOTVector.h"
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
