@@ -2673,8 +2673,10 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::requiredNames, lists.requiredNames);
     encoder.setTable(ProgramTableIndex::exportStatements, lists.exportStatements);
     encoder.setTableFrom<ModuleFailureData>(ProgramTableIndex::moduleFailures, program.moduleFailures, [&](const ModuleFailure& failure) {
-        if (failure.exportSpecifier)
-            return ModuleFailureData::ofExportStatement(encoder.shownStringNumber(failure.exportSpecifier), encoder.shownStringNumber(failure.specifier));
+        if (failure.exportSpecifier) {
+            uint32_t exportSpecifier = encoder.shownStringNumber(failure.exportSpecifier);
+            return ModuleFailureData::ofExportStatement(exportSpecifier, encoder.shownStringNumber(failure.specifier));
+        }
         return failure.exporter ? ModuleFailureData::ofAbsentExport(failure.exporter, encoder.shownStringNumber(failure.specifier)) : ModuleFailureData { failure.importer.index(), encoder.shownStringNumber(failure.specifier) };
     });
     appendTablesOfCompiledModules(encoder);

@@ -2091,8 +2091,13 @@ void AllocationSinking::computeInputs()
 
     m_inputs.blocksWithJoins.ensureSize(numberOfBlocks);
     for (const Candidate& candidate : m_candidates) {
-        if (!candidate.isAbandoned)
-            (candidate.isJoin ? m_inputs.blocksWithJoins : m_inputs.blocksWithCandidates).set(candidate.block.index());
+        if (candidate.isAbandoned)
+            continue;
+        (candidate.isJoin ? m_inputs.blocksWithJoins : m_inputs.blocksWithCandidates).set(candidate.block.index());
+        if (!candidate.isJoin) {
+            const Value& definition = m_function.at(candidate.definition);
+            m_inputs.hasObjectsGivenPrototypes |= definition.opcode == Opcode::NewObject && definition.prototypeOperand();
+        }
     }
 }
 
@@ -2103,6 +2108,7 @@ void AllocationSinking::computeInputsOf(BlockID block)
         bool writesObjects { false };
         bool callsUnknownCode { false };
         uint64_t endedMemberGuards { 0 };
+        uint64_t readMemberGuards { 0 };
     };
     auto traitsOf = [&](ValueID id) -> Traits {
         if (m_analyses.hasNoEffects(id))
@@ -2113,6 +2119,7 @@ void AllocationSinking::computeInputsOf(BlockID block)
             effects.normal.writes.containsAny(perObjectHeaps) || effects.handler.writes.containsAny(perObjectHeaps) || effects.normal.mayRunOtherCode(),
             effects.normal.mayCallUnknownCode && reliesOf(m_function.at(id).opcode).isEmpty(),
             effects.normal.mayRunOtherCode() ? LocationMasks::entireHeap : effects.normal.writes.maskOf(AbstractHeap::MemberGuards) | effects.handler.writes.maskOf(AbstractHeap::MemberGuards),
+            m_inputs.hasObjectsGivenPrototypes ? effects.normal.reads.maskOf(AbstractHeap::MemberGuards) : 0,
         };
     };
 
@@ -2132,9 +2139,11 @@ void AllocationSinking::computeInputsOf(BlockID block)
             m_inputs.valuesCallingUnknownCode.quickSet(id.index());
         if (traits.endedMemberGuards)
             m_inputs.memberGuardsEndedByValues.add(id.index() + 1, traits.endedMemberGuards);
+        if (traits.readMemberGuards)
+            m_inputs.memberGuardsReadByValues.add(id.index() + 1, traits.readMemberGuards);
         if (m_names.valuesMentioningNames.quickGet(id.index()) || m_candidateOfValue[id.index()])
             m_relevantValues.append(index);
-        else if (traits.writesObjects || traits.endedMemberGuards || (traits.mayThrow && contents.handler))
+        else if (traits.writesObjects || traits.endedMemberGuards || traits.readMemberGuards || (traits.mayThrow && contents.handler))
             m_relevantValues.append(index | onlyWritesOrThrows);
     }
     m_relevantValuesOfBlocks[block.index()] = { first, static_cast<uint32_t>(m_relevantValues.size()) };

@@ -999,6 +999,7 @@ private:
 
     bool m_saturates { false };
     ValueSetID m_untrackedObjectAlone;
+    bool m_hasSaidThatAllElseIsAtRest { false };
     ListWithRoomToFill<uint32_t> m_layoutOrCalleeOfMember;
     ListWithRoomToFill<uint32_t> m_lastCountThatSaw;
     uint32_t m_numberOfCounts { 0 };

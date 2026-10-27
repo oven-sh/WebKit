@@ -1256,8 +1256,15 @@ void releaseUnusedPagesOfThread()
         OSAllocator::releaseDecommitted(t_pagesOfThread, t_sizeOfPagesOfThread, 0);
     t_pagesOfThread = nullptr;
     t_sizeOfPagesOfThread = 0;
-    if (std::exchange(t_isStarting, false))
-        --s_numberOfThreadsStarting;
+}
+
+void didStartThread(VM* vm)
+{
+    if (!std::exchange(t_isStarting, false)) [[likely]]
+        return;
+    if (vm)
+        vm->heap.cage().willRunProgram();
+    --s_numberOfThreadsStarting;
 }
 
 static void* tryTakePagesOfThread(size_t bytes)
@@ -1274,6 +1281,7 @@ PagesForNewThread tryReservePagesForNewThread() { return { }; }
 void releasePagesForNewThread(void*) { }
 void adoptPagesForNewThread(void*) { }
 void releaseUnusedPagesOfThread() { }
+void didStartThread(VM*) { }
 static void* tryTakePagesOfThread(size_t) { return nullptr; }
 #endif
 

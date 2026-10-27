@@ -62,9 +62,9 @@ void SelectedOperatorEmitter::generateIntegerBound(const ValueContext& value)
 
     Number number = in<Number>(value->numberOperand());
     Integer rounded = emitter<ConversionEmitter>().toInteger(roundsUp ? ceil(number) : floor(number));
-    Integer bound = select(equal(number, number), rounded, integer(boundForNaN));
-    bound = select(lessThanOrEqual(number, this->number(-0x1p62)), integer(least), bound);
-    define(value, select(greaterThanOrEqual(number, this->number(0x1p62)), integer(greatest), bound));
+    Integer bound = select(equal(number, number), rounded, boundForNaN);
+    bound = select(lessThanOrEqual(number, this->number(-0x1p62)), least, bound);
+    define(value, select(greaterThanOrEqual(number, this->number(0x1p62)), greatest, bound));
 }
 
 void SelectedOperatorEmitter::generateRememberOwner(const ValueContext& value)
@@ -75,7 +75,8 @@ void SelectedOperatorEmitter::generateRememberOwner(const ValueContext& value)
 void SelectedOperatorEmitter::generateFulfillFreshPromise(const ValueContext& value)
 {
     ValueID fulfillment = value->valueOperand();
-    emitter<PromiseIntrinsicEmitter>().fulfillAtStore(value, in<CellPointer>(value->promiseOperand()), in<Boxed>(fulfillment), typeOf(fulfillment));
+    CellPointer promise = in<CellPointer>(value->promiseOperand());
+    emitter<PromiseIntrinsicEmitter>().fulfillAtStore(value, promise, in<Boxed>(fulfillment), typeOf(fulfillment));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -163,7 +163,7 @@ CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithStorage(const Operatio
     CellAllocationEmitter& cells = emitter<CellAllocationEmitter>();
     LBasicBlock isExhausted = newBlock();
     Join<Pointer> join(m_out);
-    Integer sizeInBytes = add(mul(capacity, integer(sizeof(EncodedJSValue))), integer(sizeOfArrayWithStorage(0)));
+    Integer sizeInBytes = add(mul(capacity, sizeof(EncodedJSValue)), sizeOfArrayWithStorage(0));
     Pointer allocator = cells.allocatorForSize(loadImmutablePointer(AOT_INSTANCE_OFFSET(allocation.cellSpace)), sizeInBytes, slowPath, isExhausted);
     join.add(asPointer(cells.allocateHeapCell(allocator, std::nullopt, isExhausted)));
 
@@ -205,7 +205,8 @@ CellPointer ArrayAllocationEmitter::allocateArrayOfHoles(const OperationContext&
     CellPointer array = callNewArrayWithLength(context, form, Integer(m_out.shl(capacity.value(), m_out.constInt32(holeArrayCapacityShift))));
     branchUnless(Condition(m_out.notNull(array.value())), slowPath);
     CodeGenerator::InitializationScope scope(generator());
-    m_out.store32(low32(length).value(), m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly), m_heaps.Butterfly_publicLength);
+    Word32 publicLength = low32(length);
+    m_out.store32(publicLength.value(), m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly), m_heaps.Butterfly_publicLength);
     return array;
 }
 
@@ -426,8 +427,8 @@ CellPointer ArrayAllocationEmitter::newLiteralWithCapacity(const ValueContext& v
         return CellPointer(m_out.int64Zero);
     }
     branchUnless(belowOrEqual(capacity, integer(maxCapacity)), fallback);
-    Integer total = length ? select(lessThan(capacity, integer(length)), integer(length), capacity) : capacity;
-    Integer lengthAndCapacity(m_out.shl(bitOr(total, integer(1)).value(), m_out.constInt32(holeArrayCapacityShift)));
+    Integer total = length ? select(lessThan(capacity, length), length, capacity) : capacity;
+    Integer lengthAndCapacity(m_out.shl(bitOr(total, 1).value(), holeArrayCapacityShift));
     if (length)
         lengthAndCapacity = bitOr(lengthAndCapacity, integer(length));
     CellPointer newArray = callNewArrayWithLength(value, form, lengthAndCapacity);

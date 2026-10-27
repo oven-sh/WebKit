@@ -78,7 +78,7 @@ void ArrayStorageBuiltinEmitter::generateArraySetLength(const InlineCall& call)
     branchUnless(belowOrEqual(sub(length, newLength), maxClearedElements), slowPath);
     Integer hole = integer(static_cast<int64_t>(arrayStorageForms.back().hole));
     for (const ArrayStorageForm& form : std::span(arrayStorageForms).first(arrayStorageForms.size() - 1))
-        hole = select(elements().hasWritableShape(mode, form), integer(static_cast<int64_t>(form.hole)), hole);
+        hole = select(elements().hasWritableShape(mode, form), static_cast<int64_t>(form.hole), hole);
     ValueFromBlock firstCleared = m_out.anchor(newLength.value());
     m_out.jump(clearLoop);
 
@@ -286,7 +286,8 @@ void ArrayStorageBuiltinEmitter::generateArrayIsArray(const InlineCall& call)
     join.add(boolean(true));
 
     m_out.appendTo(isOtherCell);
-    branch(hasCellType(cell, ProxyObjectType), { rareEdge(missBlockOf(call)), normalEdge(isNotArray) });
+    Condition isProxy = hasCellType(cell, ProxyObjectType);
+    branch(isProxy, { rareEdge(missBlockOf(call)), normalEdge(isNotArray) });
 
     m_out.appendTo(isNotArray);
     join.add(boolean(false));

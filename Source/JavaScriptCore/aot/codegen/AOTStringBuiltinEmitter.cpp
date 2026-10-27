@@ -189,7 +189,8 @@ void StringBuiltinEmitter::generateStringUTF8ByteLength(const InlineCall& call)
     if (call.canMiss()) {
         ValueID encoding = call.argument(1);
         const TypeTestPlan& isString = typeTestPlanFor(m_function.at(encoding).type, representationOf(encoding), TypeTable::string);
-        branchUnless(logicalNot(hasType(get(encoding), isString)), missBlockOf(call));
+        Condition isNoString = logicalNot(hasType(get(encoding), isString));
+        branchUnless(isNoString, missBlockOf(call));
     }
     CharacterView view = strings().viewOfString(call.context(), stringOperand(call.argument(0)));
     Integer byteLength = strings().selectByWidth<Integer>(view.is8Bit, [&](bool is8Bit) {
@@ -206,7 +207,8 @@ void StringBuiltinEmitter::generateStringRepeat(const InlineCall& call)
     Integer count = strings().truncateToIndex(numberOperand(call.argument(0)));
     Integer length = zeroExtended(strings().lengthOf(string));
     Integer limit = integer(maxFlatStringLength);
-    branchUnless(logicalAnd(belowOrEqual(count, limit), belowOrEqual(mul(count, length), limit)), miss);
+    Condition repeatsFewTimes = belowOrEqual(count, limit);
+    branchUnless(logicalAnd(repeatsFewTimes, belowOrEqual(mul(count, length), limit)), miss);
     finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringRepeat, { string, low32(count) }));
 }
 
@@ -257,7 +259,7 @@ void StringBuiltinEmitter::generateTrim(const InlineCall& call, TrimmedEnds ends
     continueIf(isNotZero(view.length), byCall);
     CharacterView narrowView { view.characters, view.length, boolean(true), view.owner };
     auto isPrintableASCII = [&](Word32 index) {
-        return belowOrEqual(add(strings().codeUnitAt(narrowView, index), word32(-0x21)), word32(0x7e - 0x21));
+        return belowOrEqual(add(strings().codeUnitAt(narrowView, index), -0x21), 0x7e - 0x21);
     };
     if (ends != TrimmedEnds::End)
         continueIf(isPrintableASCII(word32(0)), byCall);
@@ -342,7 +344,7 @@ void StringBuiltinEmitter::splitAtLiteral(const InlineCall& call, CellPointer st
 
     SplitResults results;
     if (!count) {
-        results.append(add(searchSeparators(view, separator), integer(1)));
+        results.append(add(searchSeparators(view, separator), 1));
         finishWithResults(call, results.span());
         return;
     }
@@ -357,7 +359,8 @@ void StringBuiltinEmitter::splitAtLiteral(const InlineCall& call, CellPointer st
         return zeroExtended(found);
     }, [&] {
         CharacterView rest = strings().subview(view, { add(positions[count - 1], size), view.length });
-        return add(integer(count), searchSeparators(rest, separator));
+        Integer found = integer(count);
+        return add(found, searchSeparators(rest, separator));
     });
 
     results.append(add(numberOfSeparators, integer(1)));
@@ -380,10 +383,12 @@ void StringBuiltinEmitter::generateHasAt(const InlineCall& call, LiteralEnd end)
     Integer at;
     Condition hasRoom;
     switch (end) {
-    case LiteralEnd::Start:
+    case LiteralEnd::Start: {
         at = zeroExtended(positionArgument(call, 1, length, word32(0)));
-        hasRoom = lessThanOrEqual(add(at, otherLength), zeroExtended(length));
+        Integer endOfOther = add(at, otherLength);
+        hasRoom = lessThanOrEqual(endOfOther, zeroExtended(length));
         break;
+    }
     case LiteralEnd::End:
         at = sub(zeroExtended(positionArgument(call, 1, length, length)), otherLength);
         hasRoom = greaterThanOrEqual(at, integer(0));
@@ -423,8 +428,10 @@ Condition StringBuiltinEmitter::hasCharactersAt(const InlineCall& call, CellPoin
 
         m_out.appendTo(compare);
         Integer lastOffset = sub(size, integer(width));
-        LValue firstDifference = m_out.bitXor(load(width, here), load(width, sought.characters));
-        LValue lastDifference = m_out.bitXor(load(width, offsetBy(here, lastOffset, 0)), load(width, offsetBy(sought.characters, lastOffset, 0)));
+        LValue firstHere = load(width, here);
+        LValue firstDifference = m_out.bitXor(firstHere, load(width, sought.characters));
+        LValue lastHere = load(width, offsetBy(here, lastOffset, 0));
+        LValue lastDifference = m_out.bitXor(lastHere, load(width, offsetBy(sought.characters, lastOffset, 0)));
         LValue difference = m_out.bitOr(firstDifference, lastDifference);
         join.add(Condition(width == 8 ? m_out.isZero64(difference) : m_out.isZero32(difference)));
 
@@ -435,7 +442,8 @@ Condition StringBuiltinEmitter::hasCharactersAt(const InlineCall& call, CellPoin
     m_out.branch(isNotZero(sought.length).value(), normalEdge(oneCharacter), normalEdge(noCharacter));
 
     m_out.appendTo(oneCharacter);
-    join.add(Condition(m_out.equal(load(1, here), load(1, sought.characters))));
+    LValue characterHere = load(1, here);
+    join.add(Condition(m_out.equal(characterHere, load(1, sought.characters))));
 
     m_out.appendTo(noCharacter);
     join.add(boolean(true));
@@ -454,14 +462,18 @@ void StringBuiltinEmitter::generateSearch(const InlineCall& call, SearchDirectio
 
     Word32 position;
     switch (direction) {
-    case SearchDirection::Forward:
-        position = positionArgument(call, 1, strings().lengthOf(string), word32(0));
+    case SearchDirection::Forward: {
+        Word32 length = strings().lengthOf(string);
+        position = positionArgument(call, 1, length, word32(0));
         break;
+    }
     case SearchDirection::Backward: {
         Word32 fromEnd = word32(INT32_MAX);
         position = fromEnd;
-        if (std::optional<Number> argument = numberArgument(call, 1))
-            position = select(equal(*argument, *argument), positionArgument(call, 1, fromEnd, fromEnd), fromEnd);
+        if (std::optional<Number> argument = numberArgument(call, 1)) {
+            Condition isNotNaN = equal(*argument, *argument);
+            position = select(isNotNaN, positionArgument(call, 1, fromEnd, fromEnd), fromEnd);
+        }
         break;
     }
     }

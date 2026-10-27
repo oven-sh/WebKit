@@ -73,12 +73,14 @@ static JSC_DECLARE_HOST_FUNCTION(functionUnlockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell);
 static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationOnResolve);
 static JSC_DECLARE_HOST_FUNCTION(functionCallAndCancelTermination);
+static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationAndCall);
+static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationAndConstruct);
 static JSC_DECLARE_CUSTOM_GETTER(getExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
-static constexpr std::array<ASCIILiteral, 12> functionNames {
+static constexpr std::array<ASCIILiteral, 14> functionNames {
     "runCompiledEntryPoint"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
@@ -91,6 +93,8 @@ static constexpr std::array<ASCIILiteral, 12> functionNames {
     "callWhileAnotherThreadLocksCell"_s,
     "requestTerminationOnResolve"_s,
     "callAndCancelTermination"_s,
+    "requestTerminationAndCall"_s,
+    "requestTerminationAndConstruct"_s,
 };
 
 static std::optional<ModuleID> s_terminateOnResolveModule;
@@ -338,6 +342,36 @@ JSC_DEFINE_HOST_FUNCTION(functionCallAndCancelTermination, (JSGlobalObject* glob
     return JSValue::encode(jsBoolean(wasPending));
 }
 
+// As a watchdog thread that fires behind the last check of a native caller. The callee gets the arguments behind itself.
+template<bool isConstruct>
+static EncodedJSValue requestTerminationAndEnter(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue callee = callFrame->argument(0);
+    if (isConstruct ? !callee.isConstructor() : !callee.isCallable())
+        return throwVMTypeError(globalObject, scope, "Expected a function"_s);
+    MarkedArgumentBuffer arguments;
+    for (unsigned index = 1; index < callFrame->argumentCount(); ++index)
+        arguments.append(callFrame->uncheckedArgument(index));
+    RELEASE_ASSERT(!arguments.hasOverflowed());
+    vm.notifyNeedTermination();
+    if constexpr (isConstruct)
+        RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, callee, arguments, "Expected a function"_s)));
+    else
+        RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, callee, jsUndefined(), arguments, "Expected a function"_s)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationAndCall, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return requestTerminationAndEnter<false>(globalObject, callFrame);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationAndConstruct, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return requestTerminationAndEnter<true>(globalObject, callFrame);
+}
+
 // An image locks `console`, so no script can give the shell one that prints.
 class ConsoleOfShell final : public ConsoleClient {
     WTF_MAKE_TZONE_ALLOCATED(ConsoleOfShell);
@@ -405,6 +439,8 @@ void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
         { functionCallWhileAnotherThreadLocksCell, 2 },
         { functionRequestTerminationOnResolve, 1 },
         { functionCallAndCancelTermination, 1 },
+        { functionRequestTerminationAndCall, 1 },
+        { functionRequestTerminationAndConstruct, 1 },
     };
     static_assert(std::size(functions) == functionNames.size());
 

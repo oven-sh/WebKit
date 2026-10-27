@@ -230,7 +230,7 @@ Boxed AccessEmitter::getFreeName(const ValueContext& value)
 Condition AccessEmitter::countMissAtSite(Pointer site)
 {
     Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStates));
-    LValue offset = m_out.bitAnd(m_out.lShr(site.value(), m_out.constInt32(SiteCacheState::slotAddressShift)), m_out.constIntPtr(SiteCacheState::offsetMask));
+    LValue offset = m_out.bitAnd(m_out.lShr(site.value(), SiteCacheState::slotAddressShift), SiteCacheState::offsetMask);
     LValue state = m_out.add(states.value(), offset);
     TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, SiteCacheState::offsetOfMissesLeft());
     Word32 count(m_out.load8ZeroExt32(missesLeft));
@@ -245,14 +245,15 @@ Boxed AccessEmitter::loadBySlotAtSite(CellPointer object, Pointer site, Slot::Ki
     auto partOfSlot = [&](ptrdiff_t offset) {
         return m_out.address(m_heaps.AOTInstance_siteCaches, site.value(), offset);
     };
-    branchUnless(equal(Word32(m_out.load32(partOfSlot(Slot::offsetOfStructureID()))), loadStructureID(object)), whenSlotIsOfOtherStructure);
-    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), word32(static_cast<int32_t>(kind))), whenSlotIsOfOtherKind);
+    Word32 structureIDOfSlot(m_out.load32(partOfSlot(Slot::offsetOfStructureID())));
+    branchUnless(equal(structureIDOfSlot, loadStructureID(object)), whenSlotIsOfOtherStructure);
+    branchUnless(equal(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfKind()))), static_cast<int32_t>(kind)), whenSlotIsOfOtherKind);
     // An own property has no holder.
     Pointer holder(m_out.load64(partOfSlot(Slot::offsetOfPayload())));
     Pointer owner = select(isZero(Integer(holder.value())), Pointer(object.value()), holder);
     Pointer butterfly(m_out.loadPtr(m_out.address(m_heaps.root, owner.value(), JSObject::butterflyOffset())));
     Pointer storage = select(hasBits(Word32(m_out.load8ZeroExt32(partOfSlot(Slot::offsetOfFlags()))), Slot::isOutOfLine), butterfly, owner);
-    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), m_out.constInt32(3));
+    LValue offset = m_out.shl(m_out.signExt32To64(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation()))), 3);
     return Boxed(m_out.load64(m_out.address(m_heaps.root, m_out.add(storage.value(), offset), 0)));
 }
 
@@ -379,7 +380,8 @@ TypedPointer AccessEmitter::globalBindingLocationOrElse(Pointer record, bool see
     Word32 structureID = loadStructureID(global);
     if (seesScriptBindings) {
         Integer epoch = zeroExtended(loadField<Word32>(global, m_heaps.JSGlobalObject_globalLexicalBindingEpoch));
-        Integer current = bitOr(zeroExtended(structureID), Integer(m_out.shl(epoch.value(), m_out.constInt32(32))));
+        Integer wideStructureID = zeroExtended(structureID);
+        Integer current = bitOr(wideStructureID, Integer(m_out.shl(epoch.value(), 32)));
         branchUnless(equal(current, Integer(m_out.load64(filedStructureID))), miss);
     } else
         branchUnless(equal(structureID, Word32(m_out.load32(filedStructureID))), miss);
@@ -509,7 +511,8 @@ void AccessEmitter::generatePropDefine(const ValueContext& value)
     if (m_program.nameClassOf(value->key()) == NameClass::Index) {
         std::optional<uint32_t> index = parseIndex(byteCast<Latin1Character>(m_program.strings[m_program.at(value->key()).text]));
         if (index && *index <= static_cast<uint32_t>(std::numeric_limits<int32_t>::max())) {
-            putByVal(value, object, Boxed(m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(*index))))), in<Boxed>(value->valueOperand()), PutMode::Define);
+            Boxed key(m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(*index)))));
+            putByVal(value, object, key, in<Boxed>(value->valueOperand()), PutMode::Define);
             return;
         }
     }
@@ -642,7 +645,8 @@ void AccessEmitter::generateElemSet(const ValueContext& value)
 
 void AccessEmitter::generateElemHas(const ValueContext& value)
 {
-    defineTest(value, hasByVal(value, in<Boxed>(value->objectOperand()), in<Boxed>(value->propertyOperand())));
+    Boxed object = in<Boxed>(value->objectOperand());
+    defineTest(value, hasByVal(value, object, in<Boxed>(value->propertyOperand())));
 }
 
 void AccessEmitter::generateElemDelete(const ValueContext& value)

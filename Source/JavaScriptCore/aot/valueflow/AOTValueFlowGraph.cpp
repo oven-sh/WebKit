@@ -318,7 +318,7 @@ ValueFlowNodeID ValueFlowGraph::addNodes(uint32_t count)
                 grown[word].store((*bits)[word].load(std::memory_order_relaxed), std::memory_order_relaxed);
             *bits = WTF::move(grown);
         }
-        m_hasMoved.ensureSize(capacity);
+        m_hasMoved.grow(m_numberOfNodes, capacity);
         for (Covering& covering : m_coverings) {
             covering.isRetired.ensureSize(capacity);
             covering.hasStoppedAt.ensureSize(capacity);
@@ -1216,7 +1216,7 @@ ALWAYS_INLINE void ValueFlowGraph::evaluate(uint32_t node, Arrivals& arrivals, W
     row.low = lowAfter;
     row.set = after.index();
     m_value[node] = value;
-    if (!m_hasMoved.quickSet(node))
+    if (!std::exchange(m_hasMoved[node], 1))
         worker.movedNodes.append(node);
 
     const Links& successors = m_successors[node];
@@ -1258,6 +1258,8 @@ ALWAYS_INLINE void ValueFlowGraph::evaluateAll(Arrivals& arrivals, Worker& worke
         if (index + distance < nodes.size()) {
             __builtin_prefetch(&m_gates[nodes[index + distance]]);
             __builtin_prefetch(&m_successors[nodes[index + distance]]);
+            __builtin_prefetch(&m_value[nodes[index + distance]], 1);
+            __builtin_prefetch(&m_hasMoved[nodes[index + distance]], 1);
         }
         evaluate(nodes[index], arrivals, worker, leave);
     }
@@ -1319,13 +1321,32 @@ void ValueFlowGraph::runWave(Team& team)
         unsigned number = shardsInOrder[position];
         Shard& shard = *m_shards[number];
         if (numberWithShards) {
+            // The list that one shard leaves for another is short, and another thread has written it: what is fetched ahead within one list comes too late.
+            uint64_t sources = 0;
             for (unsigned source = 0; source < numberOfShards; ++source) {
-                if (!(m_shardsWithMessagesOfShard[parity][source] >> number & 1))
-                    continue;
-                Vector<Message>& messages = m_shards[source]->messages[parity][number];
-                takeArrivals(shard.arrivals, messages.span());
-                messages.shrink(0);
+                if (m_shardsWithMessagesOfShard[parity][source] >> number & 1) {
+                    sources |= 1ull << source;
+                    __builtin_prefetch(&m_shards[source]->messages[parity][number]);
+                }
             }
+            auto forEachList = [&](NOESCAPE const Invocable<void(Vector<Message>&)> auto& functor) {
+                for (uint64_t rest = sources; rest; rest &= rest - 1)
+                    functor(m_shards[std::countr_zero(rest)]->messages[parity][number]);
+            };
+            forEachList([&](Vector<Message>& messages) {
+                constexpr size_t messagesPerLine = 64 / sizeof(Message);
+                for (size_t index = 0; index < messages.size(); index += messagesPerLine)
+                    __builtin_prefetch(&messages[index]);
+            });
+            forEachList([&](Vector<Message>& messages) {
+                for (const Message& message : messages)
+                    __builtin_prefetch(&m_rows[message.to], 1);
+            });
+            forEachList([&](Vector<Message>& messages) {
+                for (const Message& message : messages)
+                    takeArrival(shard.arrivals, message);
+                messages.shrink(0);
+            });
         }
         for (const Message& message : inOneList) {
             if (shardOf(message.to) == number)
@@ -1443,7 +1464,7 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
     if (numberMoved * 1024 < m_numberOfNodes) {
         for (const std::unique_ptr<Worker>& worker : m_workers) {
             for (uint32_t node : worker->movedNodes) {
-                m_hasMoved.quickClear(node);
+                m_hasMoved[node] = 0;
                 moved.append(ValueFlowNodeID(node));
             }
         }
@@ -1457,8 +1478,16 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
             Vector<uint32_t>& found = m_foundInShare[range];
             found.shrink(0);
             size_t end = std::min<size_t>(m_numberOfNodes, (range + 1) * nodesPerRange);
-            for (size_t node = m_hasMoved.findBit(range * nodesPerRange, true); node < end; node = m_hasMoved.findBit(node + 1, true))
-                found.append(static_cast<uint32_t>(node));
+            for (size_t first = range * nodesPerRange; first < end; first += sizeof(uint64_t)) {
+                uint64_t eightNodes;
+                memcpy(&eightNodes, &m_hasMoved[first], sizeof(eightNodes));
+                if (!eightNodes)
+                    continue;
+                for (size_t node = first; node < first + sizeof(uint64_t); ++node) {
+                    if (std::exchange(m_hasMoved[node], 0))
+                        found.append(static_cast<uint32_t>(node));
+                }
+            }
         });
         Vector<size_t> firstOfRange(numberOfRanges);
         size_t number = 0;
@@ -1470,7 +1499,6 @@ void ValueFlowGraph::solve(Vector<ValueFlowNodeID>& moved, RetiredNodes retiredN
             for (uint32_t node : m_foundInShare[range])
                 moved[position++] = ValueFlowNodeID(node);
         });
-        m_hasMoved.clearAll();
     }
     for (const std::unique_ptr<Worker>& worker : m_workers)
         worker->movedNodes.shrink(0);
@@ -1523,7 +1551,8 @@ void ValueFlowGraph::releaseSolvingState(Predecessors predecessors)
     auto giveUp = [](auto&... lists) {
         ((lists = { }), ...);
     };
-    giveUp(m_hasMoved, m_isNewEdge, m_edgesNotInLists, m_edgesOfSolve, m_indicesBySource, m_edgesByTarget, m_straightEdgesOfShare, m_straightEdges, m_messages, m_arrivals, m_nodesWoken, m_foundInShare, m_found, m_edgesThatLengthenFlow);
+    m_hasMoved.release();
+    giveUp(m_isNewEdge, m_edgesNotInLists, m_edgesOfSolve, m_indicesBySource, m_edgesByTarget, m_straightEdgesOfShare, m_straightEdges, m_messages, m_arrivals, m_nodesWoken, m_foundInShare, m_found, m_edgesThatLengthenFlow);
     for (const std::unique_ptr<Shard>& shard : m_shards) {
         shard->blocksOfPredecessors.release();
         giveUp(shard->edgesOfNodesWithManySuccessors, shard->edgesOutOfConstantsIntoNodesWithManyPredecessors, shard->listedEdgesOutOfConstants, shard->arrivals, shard->messages, shard->nodesWithRecentSuccessors, shard->nodesWithRecentPredecessors);

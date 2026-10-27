@@ -413,7 +413,6 @@ private:
 };
 
 Witness witnessOfAllocation(const ValueFlowResultInputs&, ValueFlowObjectID);
-bool isDataFromOutside(const ValueFlowResultInputs&, ValueFlowObjectID);
 Witness witnessOfStatement(const Program&, const ValueFlowStatement&);
 
 struct ValueFlowStampedCalls {

@@ -57,14 +57,14 @@ void ForInEmitter::generateForInOpen(const ValueContext& value)
     const B3::AbstractHeap& published = m_heaps.entire(AbstractHeap::RuntimeState);
     Word32 structureID = loadStructureID(cell);
     Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(cell);
-    Integer index = zeroExtended(bitAnd(add(shiftRightUnsigned(structureID, word32(enumeratorHashShift)), orderWord), word32(numberOfCachedEnumerators - 1)));
+    Integer index = zeroExtended(bitAnd(add(shiftRightUnsigned(structureID, enumeratorHashShift), orderWord), numberOfCachedEnumerators - 1));
     LValue entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.enumerators)), index, 4).value();
     takeSlowPathUnless(m_out, equal(Word32(m_out.load32(m_out.address(published, entry, OBJECT_OFFSETOF(EnumeratorCacheEntry, structureID)))), structureID), slowPath);
     takeSlowPathUnless(m_out, equal(Word32(m_out.load32(m_out.address(published, entry, OBJECT_OFFSETOF(EnumeratorCacheEntry, orderWord)))), orderWord), slowPath);
     join.add(CellPointer(m_out.loadPtr(m_out.address(published, entry, OBJECT_OFFSETOF(EnumeratorCacheEntry, enumerator)))));
 
     m_out.appendTo(isOtherCell);
-    Word32 indexingType = bitAnd(loadByte(cell, m_heaps.JSCell_indexingTypeAndMisc), word32(IndexingTypeMask));
+    Word32 indexingType = bitAnd(loadByte(cell, m_heaps.JSCell_indexingTypeAndMisc), IndexingTypeMask);
     takeSlowPathUnless(m_out, belowOrEqual(indexingType, word32(ArrayWithUndecided)), slowPath);
 
     Pointer previousOrRareData = loadField<Pointer>(loadStructure(cell), m_heaps.Structure_previousOrRareData);
@@ -111,7 +111,8 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     branch(greaterThanOrEqual(nameIndex, zeroExtended(fields.endGenericPropertyIndex)), { normalEdge(isPastEnd), unlikelyEdge(slowPath) });
 
     m_out.appendTo(isPastEnd);
-    join.add(boolean(true), emptyString(), position);
+    Condition hasEnded = boolean(true);
+    join.add(hasEnded, emptyString(), position);
 
     m_out.appendTo(slowPath);
     Operand arguments[] = { enumerator, object, position };

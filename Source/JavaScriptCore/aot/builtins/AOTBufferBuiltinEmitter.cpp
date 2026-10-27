@@ -171,7 +171,7 @@ Operand BufferBuiltinEmitter::loadBytes(const OperationContext& context, Pointer
         LValue bits = inByteOrder(size == 2 ? m_out.load16ZeroExt32(pointer) : size == 4 ? m_out.load32(pointer) : m_out.load64(pointer), size, order);
         switch (elements) {
         case TypeInt16:
-            element = shiftRight(shiftLeft(Word32(bits), word32(16)), word32(16));
+            element = shiftRight(shiftLeft(Word32(bits), 16), 16);
             break;
         case TypeUint16:
         case TypeInt32:
@@ -246,7 +246,8 @@ Integer BufferBuiltinEmitter::low64Of(CellPointer bigInt)
 {
     return either<Integer>(isNotZero(loadField<Word32>(bigInt, m_heaps.JSBigInt_length)), [&] {
         Integer digit = loadField<Integer>(bigInt, m_heaps.JSBigInt_data);
-        return select(isNegativeBigInt(bigInt), neg(digit), digit);
+        Condition isNegative = isNegativeBigInt(bigInt);
+        return select(isNegative, neg(digit), digit);
     }, [&] {
         return integer(0);
     });
@@ -288,16 +289,21 @@ Operand BufferBuiltinEmitter::valueToStoreOrElse(ValueID id, TypedArrayType elem
         return numberOperand(id);
     if (isBigInt(elements)) {
         CellPointer bigInt = cellOperand(id);
-        branchUnless(belowOrEqual(loadField<Word32>(bigInt, m_heaps.JSBigInt_length), word32(1)), otherwise);
+        branchUnless(belowOrEqual(loadField<Word32>(bigInt, m_heaps.JSBigInt_length), 1), otherwise);
         Integer value = low64Of(bigInt);
         Condition isNegative = isNegativeBigInt(bigInt);
-        branchUnless(elements == TypeBigUint64 ? logicalNot(isNegative) : logicalOr(isZero(value), equal(lessThan(value, integer(0)), isNegative)), otherwise);
+        if (elements == TypeBigUint64)
+            branchUnless(logicalNot(isNegative), otherwise);
+        else {
+            Condition valueIsZero = isZero(value);
+            branchUnless(logicalOr(valueIsZero, equal(lessThan(value, 0), isNegative)), otherwise);
+        }
         return value;
     }
     Integer value = offsetOrElse(id, otherwise);
     Range range = elementTypeOf(elements).integers;
     if (const Type& valueType = typeOf(id); !valueType.isInteger() || !valueType.integers.isSubsetOf(range))
-        branchUnless(belowOrEqual(sub(value, integer(range.minimum)), integer(range.maximum - range.minimum)), otherwise);
+        branchUnless(belowOrEqual(sub(value, range.minimum), range.maximum - range.minimum), otherwise);
     return low32(value);
 }
 

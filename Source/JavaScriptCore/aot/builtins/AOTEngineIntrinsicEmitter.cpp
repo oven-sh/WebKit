@@ -61,7 +61,7 @@ void EngineIntrinsicEmitter::generateToLength(const ValueContext& value)
     Boxed operand = boxedOperand(value, value->valueOperand());
     defineAs(value, either<Boxed>(isInt32(operand), [&] {
         Word32 length = unboxInt32(operand);
-        return boxInt32(select(lessThan(length, word32(0)), word32(0), length));
+        return boxInt32(select(lessThan(length, 0), 0, length));
     }, [&] {
         return callOperation<Boxed>(value, RuntimeOperation::ToLength, { operand }, { .isOnRarePath = true });
     }), m_program.at(TypeTable::number));

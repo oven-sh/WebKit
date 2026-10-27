@@ -144,7 +144,8 @@ CompactEffects InternedLocationMasks::compress(const Effects& effects)
         | (effects.mayCallUnknownCode ? CompactEffects::MayCallUnknownCode : 0)
         | (effects.maySuspend ? CompactEffects::MaySuspend : 0)
         | (effects.mayBeTerminated ? CompactEffects::MayBeTerminated : 0);
-    return CompactEffects(intern(effects.reads), intern(effects.writes), flags);
+    ID reads = intern(effects.reads);
+    return CompactEffects(reads, intern(effects.writes), flags);
 }
 
 static ThrowEffect throwEffectOf(uint8_t flags)
@@ -195,7 +196,8 @@ InternedLocationMasks::ID InternedLocationMasks::merge(ID a, ID b)
 void StoredFunctionEffects::computeEffectsOnCall(InternedLocationMasks& masks)
 {
     auto withParameters = [&](CompactEffects effects) {
-        return CompactEffects(masks.merge(effects.reads(), throughParameters.reads()), masks.merge(effects.writes(), throughParameters.writes()), effects.flags());
+        InternedLocationMasks::ID reads = masks.merge(effects.reads(), throughParameters.reads());
+        return CompactEffects(reads, masks.merge(effects.writes(), throughParameters.writes()), effects.flags());
     };
     normalOnCall = withParameters(normal);
     handlerOnCall = normal.mayThrow() ? withParameters(handler) : handler;

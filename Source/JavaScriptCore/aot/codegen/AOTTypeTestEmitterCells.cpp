@@ -314,7 +314,8 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
             RELEASE_ASSERT(below);
             OptionSet<PristineAspects> aspectsOfEither = aspects - PristineAspects::NamesKeptBelow;
             aspectsOfEither.add(PristineAspects::Names);
-            return logicalOr(emitter<ElementAccessEmitter>().isPristineInstance(cell, aspectsOfEither), isPristine(cell, below, aspectsOfEither));
+            Condition isPristineArray = emitter<ElementAccessEmitter>().isPristineInstance(cell, aspectsOfEither);
+            return logicalOr(isPristineArray, isPristine(cell, below, aspectsOfEither));
         }
         return emitter<ElementAccessEmitter>().isPristineInstance(cell, aspects);
     case PristineTest::ClosureAsCreated:
@@ -324,7 +325,8 @@ Condition TypeTestEmitter::isPristine(CellPointer cell, BuiltinClassID classID, 
             return boolean(false);
         std::optional<Receiver> receiver = receiverWithTestedStructure(classID);
         RELEASE_ASSERT(receiver);
-        return equal(loadStructureID(cell), loadMutable32(Instance::offsetOfReceiverStructureID(*receiver)));
+        Word32 structureID = loadStructureID(cell);
+        return equal(structureID, loadMutable32(Instance::offsetOfReceiverStructureID(*receiver)));
     }
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -347,7 +349,7 @@ Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, con
             bool switchesOnNumber = numbers.size() >= B3::Limits::minCasesForBitTests;
             LValue subject = word.value();
             if (switchesOnNumber)
-                subject = m_out.lShr(m_out.sub(subject, m_out.constInt64(emptyLiteralStringWord)), m_out.constInt32(literalStringShift));
+                subject = m_out.lShr(m_out.sub(subject, emptyLiteralStringWord), literalStringShift);
             Vector<SwitchTarget, 8> cases;
             for (uint32_t number : numbers)
                 cases.append({ static_cast<int64_t>(switchesOnNumber ? number : literalStringWord(number)), targets.taken });

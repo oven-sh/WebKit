@@ -86,7 +86,8 @@ Word32 StringEmitter::order(const OperationContext& context, CellPointer a, Cell
 
 void StringEmitter::generateStringOrder(const ValueContext& value)
 {
-    define(value, order(value, in<CellPointer>(value->leftOperand()), in<CellPointer>(value->rightOperand())));
+    CellPointer left = in<CellPointer>(value->leftOperand());
+    define(value, order(value, left, in<CellPointer>(value->rightOperand())));
 }
 
 Word32 StringEmitter::orderToCharacter(const CharacterView& view, char16_t character)
@@ -96,8 +97,10 @@ Word32 StringEmitter::orderToCharacter(const CharacterView& view, char16_t chara
         return word32(-1);
     }, [&] {
         Word32 first = codeUnitAt(view, word32(0));
-        Word32 orderAfterSameUnit = select(equal(view.length, word32(1)), word32(0), word32(1));
-        return select(below(first, codeUnit), word32(-1), select(above(first, codeUnit), word32(1), orderAfterSameUnit));
+        Word32 orderAfterSameUnit = select<Word32>(equal(view.length, 1), 0, 1);
+        Condition comesFirst = below(first, codeUnit);
+        Word32 before = word32(-1);
+        return select(comesFirst, before, select(above(first, codeUnit), 1, orderAfterSameUnit));
     });
 }
 
@@ -152,7 +155,7 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
     Pointer impl = source ? openedString->value.impl : subjectIsFlat ? implOfFlatString(string) : loadField<Pointer>(string, m_heaps.JSString_value);
     if (!subjectIsFlat)
         continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(slow));
-    continueIf(equal(source ? source->length : loadField<Word32>(impl, m_heaps.StringImpl_length), word32(text.length())), targets.notTaken);
+    continueIf(equal(source ? source->length : loadField<Word32>(impl, m_heaps.StringImpl_length), text.length()), targets.notTaken);
     continueIf(hasBits(source ? source->implFlags : flagsInImpl(impl, subjectIsFlat), StringImpl::flagIs8Bit()), unlikelyEdge(slow));
     Pointer characters = source ? source->characters : loadField<Pointer>(impl, m_heaps.StringImpl_data);
     branchOnBytesAt(characters, asBytes(text.span8()), m_heaps.characters8.atAnyIndex(), string, targets);
@@ -354,7 +357,7 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
             continueIf(aboveOrEqual(view.length, length), targets.notTaken);
             branchOnTextAt(view, word32(0), value->literal(), targets);
         });
-        define(value, select(isAtStart, word32(0), word32(-1)));
+        define(value, select<Word32>(isAtStart, 0, -1));
         return;
     }
     auto findInCell = [&] {
@@ -369,7 +372,8 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
     CharacterView view = viewOf(value, string);
     if (String text = textOf(value->literal()); !isForward && text.length() == 1) {
         // A position in front of the string stands for its start, and the leaf finds nothing from there.
-        define(value, findCodeUnit(view, word32(text[0]), select(lessThan(position, word32(0)), word32(0), position), direction));
+        Word32 codeUnit = word32(text[0]);
+        define(value, findCodeUnit(view, codeUnit, select(lessThan(position, 0), 0, position), direction));
         return;
     }
 

@@ -678,7 +678,8 @@ void EffectSummarizer::summarizeBodies()
     if (!m_kept.m_addedEffects.isEmpty()) {
         InternedLocationMasks& masks = m_kept.m_masks;
         auto mergedWith = [&](CompactEffects effects, CompactEffects added) {
-            return CompactEffects(masks.merge(effects.reads(), added.reads()), masks.merge(effects.writes(), added.writes()), effects.flags() | added.flags());
+            InternedLocationMasks::ID reads = masks.merge(effects.reads(), added.reads());
+            return CompactEffects(reads, masks.merge(effects.writes(), added.writes()), effects.flags() | added.flags());
         };
         CompactEffects cachedAddedEffects;
         CompactEffects cachedMemory;

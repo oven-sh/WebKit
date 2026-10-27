@@ -168,7 +168,8 @@ void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
     Word32 status(m_out.load8ZeroExt32(statusOf(module)));
     defineTest(value, selectByBranch<Condition>(belowOrEqual(status, inRecord), [&] {
         return either<Condition>(notEqual(status, inRecord), [&] {
-            m_out.store32As8(loadMutable32(AOT_INSTANCE_OFFSET(modules.evaluatingMark)).value(), statusOf(module));
+            Word32 evaluatingMark = loadMutable32(AOT_INSTANCE_OFFSET(modules.evaluatingMark));
+            m_out.store32As8(evaluatingMark.value(), statusOf(module));
             return boolean(true);
         }, [&] {
             return callOperation<Condition>(value, RuntimeOperation::BeginModuleEvaluation, { moduleIndex(module) }, { .isOnRarePath = true });
@@ -180,7 +181,8 @@ void ModuleEmitter::generateBeginModuleEvaluation(const ValueContext& value)
 
 void ModuleEmitter::generateFinishModuleEvaluation(const ValueContext& value)
 {
-    m_out.store32As8(m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated)), statusOf(value->module()));
+    LValue evaluated = m_out.constInt32(static_cast<int32_t>(StoredModuleStatus::Evaluated));
+    m_out.store32As8(evaluated, statusOf(value->module()));
 }
 
 // Whatever queues a job calls the run time, so the words of the queue are run-time state.

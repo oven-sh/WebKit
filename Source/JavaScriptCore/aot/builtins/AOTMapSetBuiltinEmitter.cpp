@@ -105,7 +105,7 @@ void MapSetBuiltinEmitter::probeWeakTable(const InlineCall& call, WeakLookup loo
     m_out.appendTo(loop);
     LValue unmasked = m_out.phi(B3::Int32, first);
     LValue index = m_out.bitAnd(unmasked, mask);
-    LValue bucket = m_out.add(buffer, m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(getLSBSet(bucketSize))));
+    LValue bucket = m_out.add(buffer, m_out.shl(m_out.zeroExtPtr(index), getLSBSet(bucketSize)));
     LValue bucketKey = m_out.loadPtr(bucket, m_heaps.WeakMapBucket_key);
     m_out.branch(m_out.equal(bucketKey, unboxCell(key).value()), normalEdge(found), normalEdge(isOtherKey));
 

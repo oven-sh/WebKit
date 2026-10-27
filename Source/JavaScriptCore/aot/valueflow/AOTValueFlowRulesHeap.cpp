@@ -910,7 +910,8 @@ void HeapRule::runOperation()
             if (layout && m_program.at(layout).kind == LayoutKind::Record)
                 records.append(object);
         });
-        add(m_statement.result, m_context.maker().of(records.span()));
+        if (!records.isEmpty() && isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
+            add(m_statement.result, m_context.maker().of(records.span()));
         add(m_statement.result, m_context.restrict(known(sources), m_universe.objectsThatMayBeAnything()));
         if (mayBeUnknownObject(sources))
             add(m_statement.result, unknownObjectAlone());

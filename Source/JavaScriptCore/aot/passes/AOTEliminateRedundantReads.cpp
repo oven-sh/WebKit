@@ -1445,7 +1445,10 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
         outcome = RedundantReadElimination { context }.run();
-    return outcome | dropRepeatedMapSets(context) | dropRepeatedBrandTests(context) | dropRepeatedInitializations(context);
+    outcome |= dropRepeatedMapSets(context);
+    outcome |= dropRepeatedBrandTests(context);
+    outcome |= dropRepeatedInitializations(context);
+    return outcome;
 }
 
 namespace {

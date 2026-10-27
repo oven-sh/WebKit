@@ -64,7 +64,7 @@ public:
     Operand fromBits(Integer, Representation);
     static uint64_t markerBits(uint16_t primitive, Representation);
     Condition isMarker(Operand);
-    Condition isMarker(Operand operand, uint64_t marker) { return equal(bitsOf(operand), integer(static_cast<int64_t>(marker))); }
+    Condition isMarker(Operand operand, uint64_t marker) { return equal(bitsOf(operand), static_cast<int64_t>(marker)); }
     Condition isAbsent(Operand);
     Operand withoutMarkers(Operand);
 
@@ -94,7 +94,7 @@ private:
     bool isSeldomEntered(const OperationContext&) const;
     CodeShape shapeAt(const OperationContext& context) const { return m_placeOnEdge ? m_placeOnEdge->shape : context.shape(); }
     Boxed boxByStub(BoxedNumberForm, LValue);
-    Integer quietNaNWithSignOf(Integer bits) { return Integer(m_out.shl(m_out.bitOr(m_out.lShr(bits.value(), m_out.constInt32(51)), m_out.constInt64(1)), m_out.constInt32(51))); }
+    Integer quietNaNWithSignOf(Integer bits) { return Integer(m_out.shl(m_out.bitOr(m_out.lShr(bits.value(), 51), 1), 51)); }
     Operand unboxOptional(Boxed, const Type&, Representation, NumberUnboxing);
 
     std::optional<PlaceOnEdge> m_placeOnEdge;

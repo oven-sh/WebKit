@@ -1024,7 +1024,8 @@ static void emitOwnEntriesStep(IterationExpansion& expansion, const ArmState& st
     ValueID key = expansion.appendElement(state, index);
     ValueID value = expansion.appendElement(state, expansion.appendIncrement(index, 1));
     expansion.define(*state.position, expansion.appendIncrement(index, 2));
-    expansion.finishStep(expansion.builder.appendBoolean(false), expansion.appendPair(key, value));
+    ValueID isDone = expansion.builder.appendBoolean(false);
+    expansion.finishStep(isDone, expansion.appendPair(key, value));
     expansion.finishStepAsDoneIn(branch.notTaken);
 }
 

@@ -887,6 +887,7 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
         // The attributes say as what a module outside of the image is loaded, and the image may hold it as that.
         if (!context.operandsOf(statement).empty())
             forEachFormInImage(program, operation.module(), import);
+        context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
     }
     case Opcode::RequireModule:

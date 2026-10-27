@@ -17,7 +17,7 @@ public:
     explicit JSONWriteEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     void generateStringBuilderReserve(const ValueContext& value) { define(value, builders().reserveAtMost(value, builderOf(value), value->size())); }
-    void generateStringBuilderCommit(const ValueContext& value) { builders().commit(builderOf(value), cursorOf(value)); }
+    void generateStringBuilderCommit(const ValueContext&);
     void generateJSONResetHolders(const ValueContext&);
     void generateJSONEnterHolder(const ValueContext&);
     void generateJSONLeaveHolder(const ValueContext&);

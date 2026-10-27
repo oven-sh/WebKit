@@ -187,6 +187,7 @@ public:
         uint8_t numberOfExtraMembers { 0 };
         bool wasFound { false };
         bool isOnlySeen { false };
+        bool isBeingLearned { false };
     };
     static constexpr unsigned numberOfLearnedObjects = 32;
     using LearnedObjects = std::array<LearnedObject, numberOfLearnedObjects>;
@@ -199,7 +200,7 @@ public:
         return quotes ? bytes & ((quotes & -quotes) - 1) : bytes;
     }
     static unsigned indexOfLearnedObject(uint32_t shape, uint64_t firstWord) { return ((firstWord ^ shape) * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfLearnedObjects)); }
-    LearnedObject& learnedObjectToReplace(uint32_t shape, uint64_t firstWord);
+    LearnedObject* learnedObjectToReplace(uint32_t shape, uint64_t firstWord);
     bool mayLearnAnotherObject();
     LearnedObject* learnedObjectFoundLast() const { return m_learnedObjectFoundLast; }
     void setLearnedObjectFoundLast(LearnedObject* learned) { m_learnedObjectFoundLast = learned; }

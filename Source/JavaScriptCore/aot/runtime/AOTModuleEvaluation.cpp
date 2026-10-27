@@ -477,6 +477,8 @@ JSValue Modules::callBody(ModuleID module)
     JSGlobalObject* realm = m_instance.globalObject;
     ClosureTable& closures = m_state.objects->closures;
     SetForScope isAskingHost(m_isAskingHost, false);
+    if (!moduleData.isOfLibrary())
+        didStartThread(&vm);
     // Nothing in a file of the program names the function that is its body, so the body needs no closure of its own: the entry takes the number of the function.
     if ((moduleData.kind == ModuleKind::SourceText && !moduleData.hasTopLevelAwait()) || moduleData.kind == ModuleKind::CommonJs) {
         EncodedJSValue function = JSValue::encode(jsNumber(static_cast<int32_t>(body->index())));

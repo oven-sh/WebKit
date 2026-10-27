@@ -1620,8 +1620,8 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
 #if ENABLE(AOT)
     if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
         compiled->takeStatus();
-        // A CommonJS file that runs is linked. The loader is through with the graph.
-        if (compiled->isRunningCommonJSFile()) {
+        // A module that is linked stays linked, however this step ends. The loader is through with the graph.
+        if (compiled->status() >= CyclicModuleRecord::Status::Linked) {
             AOT::ModuleLinkingStack stack;
             scope.release();
             compiled->innerModuleLinking(globalObject, stack, 0, WTF::move(scriptFetcher));

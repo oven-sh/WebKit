@@ -63,7 +63,8 @@ void EnvironmentEmitter::generateMarkEnvironmentEscaped(const ValueContext& valu
     std::optional<uint32_t> isEscapedOffset = m_placement.layout(typeOf(environment).environment).isEscapedOffset;
     if (!isEscapedOffset)
         return;
-    m_out.store32As8(m_out.constInt32(1), escapeMarkOf(in<CellPointer>(environment), *isEscapedOffset));
+    LValue isEscaped = m_out.constInt32(1);
+    m_out.store32As8(isEscaped, escapeMarkOf(in<CellPointer>(environment), *isEscapedOffset));
 }
 
 void EnvironmentEmitter::generateReleaseEnvironment(const ValueContext& value)
@@ -92,7 +93,7 @@ void EnvironmentEmitter::generateRecordCallee(const ValueContext& value)
 {
     CellPointer closure = in<CellPointer>(value->closureOperand());
     ptrdiff_t bytesAboveFrameRecord = sizeof(CallerFrameAndPC) + (inputs().conventions.of(m_program, m_id).spillsArgumentRegisters ? sizeOfSpilledArgumentRegisters : 0);
-    LValue stackPointerOfCaller = m_out.add(m_out.framePointer(), m_out.constIntPtr(bytesAboveFrameRecord));
+    LValue stackPointerOfCaller = m_out.add(m_out.framePointer(), bytesAboveFrameRecord);
     const B3::AbstractHeap& heap = m_heaps.collectorState;
     LValue entries = m_out.loadPtr(instanceField(heap, AOT_INSTANCE_OFFSET(heap.recordedCallees)));
 

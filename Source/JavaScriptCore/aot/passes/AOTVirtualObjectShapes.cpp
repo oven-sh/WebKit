@@ -455,22 +455,37 @@ static KnownBoolean evaluatePrototypeTest(const ShapeContext& context, const Vir
     return prototype && hasStored(shape, *prototype) ? KnownBoolean::Unknown : KnownBoolean::True;
 }
 
-bool mayTakePrototypeOfConstructorFunctionWhenBuilt(const Program& program, const VirtualObjectDescription& description)
+static bool takesPrototypeOfConstructorFunction(const Program& program, LayoutID declared)
 {
-    if (!isLayoutObject(description))
-        return false;
-    const Layout& layout = program.at(declaredLayoutOf(program, description.layout));
+    const Layout& layout = program.at(declared);
     return layout.has(LayoutFlags::IsConstructorFunction) && layout.classFlow.prototypeProperty != MemberMutability::Fixed;
 }
 
-LayoutID constructorFunctionWhosePrototypeIsTakenWhenBuilt(const ShapeContext& context, const VirtualShape& shape)
+bool creationMayBeOrderedWithGuards(const VirtualObjectContext& objects, const VirtualObjectDescription& description)
 {
-    if (shape.kind != VirtualShapeKind::Fields || evaluatePrototypeTest(context, shape) != KnownBoolean::True)
+    const Value& allocation = objects.function.at(description.allocation);
+    if (allocation.opcode != Opcode::NewObject)
+        return false;
+    return allocation.prototypeOperand() || takesPrototypeOfConstructorFunction(objects.program, declaredLayoutOf(objects.program, allocation.layout()));
+}
+
+GuardsOrderedWithCreation guardsOrderedWithCreation(const ShapeContext& context, const VirtualShape& shape)
+{
+    if (shape.kind != VirtualShapeKind::Fields)
         return { };
     const Program& program = context.objects.program;
-    LayoutID declared = declaredLayoutOf(program, context.family.descriptionOf(shape).layout);
-    const Layout& layout = program.at(declared);
-    return layout.has(LayoutFlags::IsConstructorFunction) && layout.classFlow.prototypeProperty != MemberMutability::Fixed ? declared : LayoutID();
+    const VirtualObjectDescription& description = context.family.descriptionOf(shape);
+    if (!isLayoutObject(description)) {
+        // The prototype decides which class the object belongs to.
+        bool isGivenPrototype = description.kind == VirtualObjectKind::Opaque && creationMayBeOrderedWithGuards(context.objects, description);
+        return isGivenPrototype ? GuardsOrderedWithCreation { LocationMasks::entireHeap, true } : GuardsOrderedWithCreation { };
+    }
+    LayoutID declared = declaredLayoutOf(program, description.layout);
+    if (evaluatePrototypeTest(context, shape) != KnownBoolean::True)
+        return { maskOf(program, MemoryLocation::memberGuards(declared)), true };
+    if (takesPrototypeOfConstructorFunction(program, declared))
+        return { maskOf(program, MemoryLocation::memberGuards(declared)), false };
+    return { };
 }
 
 static bool isSubjectOperand(Opcode opcode, uint32_t operandIndex)

@@ -59,10 +59,14 @@ public:
         ValueID left = value->leftOperand();
         ValueID right = value->rightOperand();
         switch (representationOf(left)) {
-        case Representation::Int32:
-            return equal(in<Word32>(left), in<Word32>(right));
-        case Representation::Int64:
-            return equal(in<Integer>(left), in<Integer>(right));
+        case Representation::Int32: {
+            Word32 x = in<Word32>(left);
+            return equal(x, in<Word32>(right));
+        }
+        case Representation::Int64: {
+            Integer x = in<Integer>(left);
+            return equal(x, in<Integer>(right));
+        }
         case Representation::Unchosen:
         case Representation::Void:
         case Representation::Boolean:
@@ -125,10 +129,14 @@ public:
         ValueID left = value->leftOperand();
         ValueID right = value->rightOperand();
         switch (representationOf(left)) {
-        case Representation::Cell:
-            return equal(in<CellPointer>(left), in<CellPointer>(right));
-        case Representation::JSValue:
-            return equalityOnBoxedBits(value, in<Boxed>(left), in<Boxed>(right), isStrict);
+        case Representation::Cell: {
+            CellPointer x = in<CellPointer>(left);
+            return equal(x, in<CellPointer>(right));
+        }
+        case Representation::JSValue: {
+            Boxed x = in<Boxed>(left);
+            return equalityOnBoxedBits(value, x, in<Boxed>(right), isStrict);
+        }
         case Representation::Unchosen:
         case Representation::Void:
         case Representation::Boolean:
@@ -152,14 +160,16 @@ public:
         ValueID left = value->leftOperand();
         ValueID right = value->rightOperand();
         switch (representationOf(left)) {
-        case Representation::Cell:
+        case Representation::Cell: {
             // Against a written text the other operand is read in place, as StringEqualsLiteral reads it.
             for (auto [written, other] : { std::pair { right, left }, std::pair { left, right } }) {
                 const Value& definition = m_function.at(definitionThroughUpcasts(m_function, written));
                 if (definition.opcode == Opcode::String)
                     return emitter<StringEmitter>().equalsLiteral(value, ComparedOperand::String, in<CellPointer>(other).value(), definition.string(), false, true);
             }
-            return emitter<StringEmitter>().areEqual(value, in<CellPointer>(left), in<CellPointer>(right));
+            CellPointer x = in<CellPointer>(left);
+            return emitter<StringEmitter>().areEqual(value, x, in<CellPointer>(right));
+        }
         case Representation::JSValue:
             return equalityOnNullableStrings(value, isStrict);
         case Representation::LiteralString:
@@ -186,7 +196,8 @@ public:
         auto [typed, boxed] = mixedOperandsOf(value);
         Number number = in<Number>(typed);
         Boxed other = in<Boxed>(boxed);
-        return logicalAnd(isNumber(other), equal(number, numberToDouble(other)));
+        Condition otherIsNumber = isNumber(other);
+        return logicalAnd(otherIsNumber, equal(number, numberToDouble(other)));
     }
 
     Condition equalityOnInt32AndValue(const ValueContext& value)
@@ -210,8 +221,11 @@ public:
         // Zero equals two doubles, 0 and -0. Every other int32 equals one.
         if (expected.value()->hasInt32() && expected.value()->asInt32())
             join.add(equal(other, boxedConstant(JSValue(JSValue::EncodeAsDouble, static_cast<double>(expected.value()->asInt32())))));
-        else
-            join.add(logicalAnd(isNumber(other), equal(unboxDouble(other), toNumber(expected))));
+        else {
+            Condition otherIsNumber = isNumber(other);
+            Number otherNumber = unboxDouble(other);
+            join.add(logicalAnd(otherIsNumber, equal(otherNumber, toNumber(expected))));
+        }
         return join.finish();
     }
 
@@ -321,7 +335,8 @@ private:
             return haveEqualWords;
 
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Condition areStringCells = logicalAnd(conversions.isStringCell(x), conversions.isStringCell(y));
+        Condition xIsStringCell = conversions.isStringCell(x);
+        Condition areStringCells = logicalAnd(xIsStringCell, conversions.isStringCell(y));
         return either<Condition>(logicalOr(haveEqualWords, logicalNot(areStringCells)), [&] {
             return haveEqualWords;
         }, [&] {
@@ -355,7 +370,12 @@ private:
         m_out.appendTo(areStrings);
         join.add(emitter<StringEmitter>().areEqual(value, unboxCell(x), unboxCell(y), StringEmitter::StringIdentity::Distinct));
         m_out.appendTo(oneIsNullish);
-        join.add(isStrict ? boolean(false) : logicalAnd(isNotCell(x), isNotCell(y)));
+        if (isStrict)
+            join.add(boolean(false));
+        else {
+            Condition xIsNullish = isNotCell(x);
+            join.add(logicalAnd(xIsNullish, isNotCell(y)));
+        }
         return join.finish();
     }
 
@@ -444,12 +464,16 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
     case OperatorForm::Bits:
         result = equality.equalityOnBits(value, isStrict);
         break;
-    case OperatorForm::Booleans:
-        result = equal(in<Condition>(left), in<Condition>(right));
+    case OperatorForm::Booleans: {
+        Condition x = in<Condition>(left);
+        result = equal(x, in<Condition>(right));
         break;
-    case OperatorForm::BigInts:
-        result = equality.callEqualStub(value, isStrict, boxCell(in<CellPointer>(left)), boxCell(in<CellPointer>(right)));
+    }
+    case OperatorForm::BigInts: {
+        CellPointer x = in<CellPointer>(left);
+        result = equality.callEqualStub(value, isStrict, boxCell(x), boxCell(in<CellPointer>(right)));
         break;
+    }
     case OperatorForm::Strings:
         result = equality.equalityOnStrings(value, true);
         break;

@@ -60,7 +60,7 @@ B3::FrequentedBlock ControlEmitter::countedEdgeTo(const TerminatorContext& termi
     LBasicBlock countingBlock = newBlock();
     m_out.appendTo(countingBlock);
     TypedPointer counter = emitter<StaticsEmitter>().branchCounter(*number);
-    m_out.store64(m_out.add(m_out.load64(counter), m_out.constInt64(1)), counter);
+    m_out.store64(m_out.add(m_out.load64(counter), 1), counter);
     m_out.jump(edge.block());
     m_out.appendTo(branchingBlock);
     edge.block() = countingBlock;
@@ -181,7 +181,7 @@ void ControlEmitter::testBitsOfWindow(const TerminatorContext& terminator, const
             m_out.jump(place.block());
             return;
         }
-        Condition isListed(m_out.testNonZero64(m_out.lShr(m_out.constInt64(static_cast<int64_t>(window.places[index].values)), shift), m_out.constInt64(1)));
+        Condition isListed(m_out.testNonZero64(m_out.lShr(m_out.constInt64(static_cast<int64_t>(window.places[index].values)), shift), 1));
         if (isLast) {
             branch(isListed, { place, otherwise });
             return;

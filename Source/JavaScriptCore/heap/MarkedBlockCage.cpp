@@ -49,8 +49,10 @@ static constexpr size_t reserveChunkSize = MarkedBlock::blockSize;
 // Kept beside the reserve, in one piece, for one cell that is larger than a block.
 static constexpr size_t largeCellReserveSize = MB;
 static constexpr size_t lastReserveDivisor = 4;
-// A VM takes at most this many pieces of the size of a block until the first statement of a small program runs: its blocks, and the chunks it keeps beside them.
+// A VM that has taken no more blocks than this has only just been created.
 static constexpr unsigned numberOfBlocksOfNewVM = 24;
+// The most pieces of the size of a block that a VM of this process has taken until the first statement of the program ran: its blocks, and the chunks it keeps beside them.
+static std::atomic<unsigned> s_numberOfBlocksOfStartedVM { numberOfBlocksOfNewVM };
 // Any of the VMs that share a range can fill it, however few cells another has and wherever they lie. Then all of them find no room at about the same time.
 // So each keeps, from its first blocks on, what a thread usually takes until it has ended alone. They lie in the pages that its first blocks have taken from the range anyway.
 static constexpr unsigned numberOfChunksOfNewVM = 3;
@@ -284,7 +286,7 @@ bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
 {
     // The range keeps pieces of different sizes in pages of different sizes. These fill the pages that a VM takes until the first statement of a small program runs:
     // 12 of 64 KB for cells outside blocks, and those of its blocks. The large ones come last: by then the small ones have divided what is free.
-    static constexpr ReservedRangeHeap::Pieces piecesOfVM[] = { { 8 * KB, 84 }, { MarkedBlock::blockSize, numberOfBlocksOfNewVM } };
+    ReservedRangeHeap::Pieces piecesOfVM[] = { { 8 * KB, 84 }, { MarkedBlock::blockSize, s_numberOfBlocksOfStartedVM.load(std::memory_order_relaxed) } };
     ReservedRangeHeap* range;
     bool isTaken;
     {
@@ -298,6 +300,13 @@ bool MarkedBlockCage::tryEnsureRoomForNewVMs(unsigned count)
         return false;
     // One more: the threads that run take from the range meanwhile.
     return range->tryEnsureRoomForNewThreads(count + 1, piecesOfVM);
+}
+
+void MarkedBlockCage::willRunProgram()
+{
+    unsigned taken = m_numberOfBlocksTaken.load(std::memory_order_relaxed) + m_reserve.size();
+    unsigned most = s_numberOfBlocksOfStartedVM.load(std::memory_order_relaxed);
+    while (taken > most && !s_numberOfBlocksOfStartedVM.compare_exchange_weak(most, taken, std::memory_order_relaxed)) { }
 }
 
 MarkedBlockCage::MarkedBlockCage()

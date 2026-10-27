@@ -45,7 +45,7 @@ void ArrayIntrinsicEmitter::generateArrayStorageKind(const ValueContext& value)
     Word32 shape = elements().indexingMode(in<CellPointer>(value->arrayOperand()), arrayStorageTestMask);
     Word32 kind = word32(static_cast<int32_t>(ArrayStorage::Other));
     for (const ArrayStorageForm& form : arrayStorageForms)
-        kind = select(elements().hasShape(shape, form), word32(static_cast<int32_t>(form.kind)), kind);
+        kind = select(elements().hasShape(shape, form), static_cast<int32_t>(form.kind), kind);
     define(value, kind);
 }
 
@@ -70,7 +70,8 @@ Boxed ArrayIntrinsicEmitter::contiguousElementOrEmpty(CellPointer array, Integer
     LBasicBlock otherwise = newBlock();
     Join<Boxed> join(m_out);
     Word32 shape = elements().indexingMode(array, arrayStorageTestMask);
-    branchUnless(logicalOr(elements().hasShape(shape, contiguous), elements().hasShape(shape, int32s)), otherwise);
+    Condition isContiguous = elements().hasShape(shape, contiguous);
+    branchUnless(logicalOr(isContiguous, elements().hasShape(shape, int32s)), otherwise);
     ArrayElements storage = elements().elementsOf(array);
     branchUnless(below(index, elements().publicLength(storage)), otherwise);
     Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, index)));
@@ -84,14 +85,17 @@ Boxed ArrayIntrinsicEmitter::contiguousElementOrEmpty(CellPointer array, Integer
 
 void ArrayIntrinsicEmitter::generateHasContiguousIndex(const ValueContext& value)
 {
-    Boxed element = contiguousElementOrEmpty(in<CellPointer>(value->arrayOperand()), integerOperand(value->positionOperand()));
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    Boxed element = contiguousElementOrEmpty(array, integerOperand(value->positionOperand()));
     define(value, isNotEmpty(element));
 }
 
 void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value)
 {
-    Boxed element = contiguousElementOrEmpty(in<CellPointer>(value->arrayOperand()), integerOperand(value->positionOperand()));
-    defineAs(value, select(isNotEmpty(element), element, undefined()), typeOf(value.id()));
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    Boxed element = contiguousElementOrEmpty(array, integerOperand(value->positionOperand()));
+    Condition isFilled = isNotEmpty(element);
+    defineAs(value, select(isFilled, element, undefined()), typeOf(value.id()));
 }
 
 void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArrayStorageForm& form)
@@ -133,7 +137,8 @@ CellPointer ArrayIntrinsicEmitter::sourceOrNull(ValueID id)
         return operand.as<CellPointer>();
     case Representation::Cell32: {
         NarrowReference reference = operand.as<NarrowReference>();
-        return select(isCellReference(reference), decode(reference), null);
+        Condition isCell = isCellReference(reference);
+        return select(isCell, decode(reference), null);
     }
     case Representation::JSValue: {
         Boxed boxed = operand.as<Boxed>();
@@ -256,11 +261,12 @@ void ArrayIntrinsicEmitter::generateTruncateNewArray(const ValueContext& value)
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
     static_assert(ArrayWithInt32 + 2 == ArrayWithDouble && ArrayWithDouble + 2 == ArrayWithContiguous, "an array has no mode between these");
-    branchUnless(belowOrEqual(sub(elements().indexingMode(array, IndexingShapeAndWritabilityMask), word32(ArrayWithInt32)), word32(ArrayWithContiguous - ArrayWithInt32)), slowPath);
+    branchUnless(belowOrEqual(sub(elements().indexingMode(array, IndexingShapeAndWritabilityMask), ArrayWithInt32), ArrayWithContiguous - ArrayWithInt32), slowPath);
     ArrayElements storage = elements().elementsOf(array);
     // Below a length that is above the capacity this wraps to more than any length.
     Integer unusedCapacity = sub(elements().publicLength(storage), length);
-    branchUnless(logicalOr(belowOrEqual(unusedCapacity, integer(smallUnusedCapacity)), belowOrEqual(unusedCapacity, length)), slowPath);
+    Condition leavesLittleUnused = belowOrEqual(unusedCapacity, smallUnusedCapacity);
+    branchUnless(logicalOr(leavesLittleUnused, belowOrEqual(unusedCapacity, length)), slowPath);
     elements().setPublicLength(storage, length);
     join.add(array);
 

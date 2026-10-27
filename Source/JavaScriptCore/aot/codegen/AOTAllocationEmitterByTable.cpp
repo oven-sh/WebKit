@@ -217,7 +217,7 @@ void AllocationEmitter::generateNewObjectChosenByTable(const ValueContext& value
             slots.storeAbsent(m_out.address(anyField, cell.value(), word.offset), word.representation);
         unsigned logWidth = WTF::fastLog2(widthOf(chosen.words.representationOfOwnWords));
         for (unsigned position = 0; position < chosen.words.maxOwnWords; ++position) {
-            Word32 place = bitAnd(shiftRightUnsigned(row, word32(16 + 8 * position)), word32(std::numeric_limits<uint8_t>::max()));
+            Word32 place = bitAnd(shiftRightUnsigned(row, 16 + 8 * position), std::numeric_limits<uint8_t>::max());
             slots.storeAbsent(m_out.address(anyField, offsetBy(asPointer(cell), zeroExtended(place), logWidth).value()), chosen.words.representationOfOwnWords);
         }
     }

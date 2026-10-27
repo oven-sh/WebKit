@@ -134,20 +134,25 @@ ShapeContext AllocationSinking::shapeContext(VirtualObjectID object) const
     return { m_objectContext, familyOf(object), m_orders };
 }
 
-const BitVector& AllocationSinking::familiesThatMayTakePrototypeOfConstructorFunction() const
+const Vector<VirtualObjectID>& AllocationSinking::objectsWhoseCreationMayBeOrderedWithGuards() const
 {
-    if (!m_familiesThatMayTakePrototypeOfConstructorFunction) {
+    if (!m_objectsWhoseCreationMayBeOrderedWithGuards) {
         BitVector families;
         for (uint32_t index = 0; index < m_families.size(); ++index) {
-            bool mayTake = std::ranges::any_of(m_families[index].descriptions(), [&](const VirtualObjectDescription& description) {
-                return mayTakePrototypeOfConstructorFunctionWhenBuilt(m_program, description);
+            bool mayBeOrdered = std::ranges::any_of(m_families[index].descriptions(), [&](const VirtualObjectDescription& description) {
+                return creationMayBeOrderedWithGuards(m_objectContext, description);
             });
-            if (mayTake)
+            if (mayBeOrdered)
                 families.set(index);
         }
-        m_familiesThatMayTakePrototypeOfConstructorFunction = WTF::move(families);
+        Vector<VirtualObjectID> objects;
+        for (uint32_t index = 0; index < m_candidates.size(); ++index) {
+            if (!m_candidates[index].isLeftOut && families.get(m_candidates[index].family.index()))
+                objects.append(VirtualObjectID(index));
+        }
+        m_objectsWhoseCreationMayBeOrderedWithGuards = WTF::move(objects);
     }
-    return *m_familiesThatMayTakePrototypeOfConstructorFunction;
+    return *m_objectsWhoseCreationMayBeOrderedWithGuards;
 }
 
 const VirtualObjectDescription& AllocationSinking::descriptionOf(VirtualObjectID object) const

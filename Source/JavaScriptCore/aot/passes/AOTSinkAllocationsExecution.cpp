@@ -614,36 +614,35 @@ void ObjectInterpreter::requireCellsOfOperandsBeside(ValueID id, uint32_t operan
     }
 }
 
-void ObjectInterpreter::buildObjectsWhosePrototypeMayBeReplacedBy(ValueID writer)
+void ObjectInterpreter::buildObjectsOrderedWithGuardsInFrontOf(ValueID id)
 {
-    uint64_t endedGuards = m_sinking.inputs().memberGuardsEndedByValues.get(writer.index() + 1);
-    if (!endedGuards)
-        return;
-    const BitVector& families = m_sinking.familiesThatMayTakePrototypeOfConstructorFunction();
-    if (families.isEmpty())
+    uint64_t endedGuards = m_sinking.inputs().memberGuardsEndedByValues.get(id.index() + 1);
+    uint64_t readGuards = m_sinking.inputs().memberGuardsReadByValues.get(id.index() + 1);
+    if (!(endedGuards | readGuards))
         return;
 
     Vector<VirtualObjectID, 2> objects;
-    for (const ObjectEntry& entry : m_state.objects) {
+    for (VirtualObjectID object : m_sinking.objectsWhoseCreationMayBeOrderedWithGuards()) {
+        const ObjectState* state = stateOf(object);
         // What is built stays as it is.
-        if (entry.state.isCell() || !families.get(m_sinking.at(entry.object).family.index()))
+        if (!state || state->isCell())
             continue;
-        ShapeContext context = m_sinking.shapeContext(entry.object);
-        bool takesReplacedPrototype = std::ranges::any_of(entry.state.variants, [&](const ObjectVariant& variant) {
-            LayoutID constructed = constructorFunctionWhosePrototypeIsTakenWhenBuilt(context, context.family.at(variant.shape));
-            return constructed && (endedGuards & maskOf(program(), MemoryLocation::memberGuards(constructed)));
+        ShapeContext context = m_sinking.shapeContext(object);
+        bool isOrdered = std::ranges::any_of(state->variants, [&](const ObjectVariant& variant) {
+            GuardsOrderedWithCreation guards = guardsOrderedWithCreation(context, context.family.at(variant.shape));
+            return !!(guards.mask & (guards.includesReads ? endedGuards | readGuards : endedGuards));
         });
-        if (takesReplacedPrototype)
-            objects.append(entry.object);
+        if (isOrdered)
+            objects.append(object);
     }
-    BuildCause cause { .opcode = function().at(writer).opcode, .admitsStoresByName = m_sinking.inputs().valuesCallingUnknownCode.get(writer.index()) };
+    BuildCause cause { .opcode = function().at(id).opcode, .admitsStoresByName = m_sinking.inputs().valuesCallingUnknownCode.get(id.index()) };
     for (VirtualObjectID object : objects)
         build(object, cause);
 }
 
 void ObjectInterpreter::forgetFieldsWrittenBy(ValueID id)
 {
-    buildObjectsWhosePrototypeMayBeReplacedBy(id);
+    buildObjectsOrderedWithGuardsInFrontOf(id);
     if (m_noCellHasValidFields || !m_sinking.inputs().valuesWritingObjects.get(id.index()))
         return;
 

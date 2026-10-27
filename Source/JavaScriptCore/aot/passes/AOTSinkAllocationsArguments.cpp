@@ -740,7 +740,7 @@ void ObjectInterpreter::passListedElements(ValueID call)
     if (!fitsParameters && (!callee || !handlerHasMetCurrentState))
         return executeOther(call);
 
-    buildObjectsWhosePrototypeMayBeReplacedBy(call);
+    buildObjectsOrderedWithGuardsInFrontOf(call);
     if (isRewriting()) {
         cursor().setOrigin(function().at(call).origin());
         Vector<ValueID, 8> elements = listedElementsOf(list);

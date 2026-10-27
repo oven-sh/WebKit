@@ -133,7 +133,8 @@ private:
             return callOperation<CellPointer>(context, RuntimeOperation::DoubleToString, { value });
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
         Word32 whole = low32(conversions.toInteger(value));
-        return selectByBranch<CellPointer>(equal(conversions.bitsOf(toNumber(whole)), conversions.bitsOf(value)), [&] {
+        Integer bitsOfWhole = conversions.bitsOf(toNumber(whole));
+        return selectByBranch<CellPointer>(equal(bitsOfWhole, conversions.bitsOf(value)), [&] {
             return emitter<StringEmitter>().integerToString(context, whole);
         }, [&] {
             return emitter<StringEmitter>().numberToString(context, value);

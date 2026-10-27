@@ -87,6 +87,17 @@ static void testRequiresSelectsRuns()
     expectRunLines(codeOfOtherSystems, Architecture::X86_64, { 1, 2 });
 #endif
 
+    static constexpr ASCIILiteral codeOfWindows =
+        "# RUN: print\n"
+        "# RUN(ARM): print\n"
+        "# REQUIRES(ARM): arm64 windows\n"
+        "# ARM: a\n"_s;
+#if OS(WINDOWS)
+    expectRunLines(codeOfWindows, Architecture::ARM64, { 1, 2 });
+#else
+    expectRunLines(codeOfWindows, Architecture::ARM64, { 1 });
+#endif
+
     static constexpr ASCIILiteral codeWithFaultingPolls =
         "# RUN: print\n"
         "# RUN(X64): print\n"

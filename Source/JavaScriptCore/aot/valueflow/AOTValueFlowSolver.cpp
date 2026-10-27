@@ -4481,6 +4481,11 @@ bool ValueFlowSolver::solve()
         giveBackRoomOfLargerRounds(m_roundsDone.last().statementRuns + static_cast<uint64_t>(m_roundsDone.last().edgesAdded) + m_roundsDone.last().evaluations);
 
         bool isQuiet = !hasAdded && moved.isEmpty() && m_due.isEmpty() && m_dueBehindLongRows.isEmpty() && m_dueLast.isEmpty() && m_dueStatementsThatWait.isEmpty() && m_edgesOfRound.isEmpty() && m_readToLink.isEmpty() && m_writtenToLink.isEmpty() && m_bodiesReachedInRound.isEmpty();
+        if (isQuiet && !m_hasSaidThatAllElseIsAtRest && m_input.nodes && m_input.placeholders.unknown) {
+            m_hasSaidThatAllElseIsAtRest = true;
+            m_edgesOfRound.append(ValueFlowEdge { ensureNodes(ValueFlowNodeKey::constant(m_makers[0]->of(m_input.placeholders.unknown))), m_input.nodes->ofHost(ValueFlowHostNode::AllElseIsAtRest) });
+            continue;
+        }
         if (isQuiet && isFullRound && m_rounds == Rounds::Due && !m_usesGeneralRulesOnly) {
             m_usesGeneralRulesOnly = true;
             heldAtRest.appendRange(m_graph.values().begin(), m_graph.values().end());

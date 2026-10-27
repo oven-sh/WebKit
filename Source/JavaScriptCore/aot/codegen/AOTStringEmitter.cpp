@@ -109,7 +109,8 @@ CellPointer StringEmitter::substringBaseOf(CellPointer rope)
     static_assert(widthOfFiber1Lower == 32 && shiftOfFiber2 == 16, "load32 and load16 read the two parts of fiber 1");
     LValue lower = m_out.load32(m_out.address(m_heaps.JSRopeString_fiber1, rope.value(), JSRopeString::offsetOfFiber1Lower()));
     LValue upper = m_out.load16ZeroExt32(m_out.address(m_heaps.JSRopeString_fiber2, rope.value(), JSRopeString::offsetOfFiber2()));
-    return CellPointer(m_out.bitOr(m_out.zeroExtPtr(lower), m_out.shl(m_out.zeroExtPtr(upper), m_out.constInt32(widthOfFiber1Lower))));
+    LValue lowerBits = m_out.zeroExtPtr(lower);
+    return CellPointer(m_out.bitOr(lowerBits, m_out.shl(m_out.zeroExtPtr(upper), widthOfFiber1Lower)));
 }
 
 CharacterSource StringEmitter::sourceOfRope(const OperationContext& context, CellPointer rope, Pointer fiber)
@@ -170,7 +171,8 @@ CharacterView StringEmitter::subview(const CharacterView& view, CodeUnitRange ra
 {
     if (range.start.value()->isInt32(0))
         return { view.characters, range.end, view.is8Bit, view.owner };
-    Integer offset(m_out.shl(zeroExtended(range.start).value(), logicalNot(view.is8Bit).value()));
+    Integer start = zeroExtended(range.start);
+    Integer offset(m_out.shl(start.value(), logicalNot(view.is8Bit).value()));
     return { offsetBy(view.characters, offset, 0), sub(range.end, range.start), view.is8Bit, view.owner };
 }
 
@@ -234,7 +236,7 @@ Word32 StringEmitter::codePointAt(const CharacterView& view, Word32 index)
     LBasicBlock isSingleUnit = newBlock();
     Join<Word32> join(m_out);
     auto isSurrogate = [&](Word32 unit, int32_t first) {
-        return equal(bitAnd(unit, word32(~0x3ff)), word32(first));
+        return equal(bitAnd(unit, ~0x3ff), first);
     };
 
     m_out.branch(view.is8Bit.value(), normalEdge(narrow), unlikelyEdge(wide));
@@ -255,7 +257,7 @@ Word32 StringEmitter::codePointAt(const CharacterView& view, Word32 index)
     m_out.branch(isSurrogate(trail, 0xdc00).value(), normalEdge(isPair), unlikelyEdge(isSingleUnit));
 
     m_out.appendTo(isPair);
-    join.add(sub(add(shiftLeft(lead, word32(10)), trail), word32(U16_SURROGATE_OFFSET)));
+    join.add(sub(add(shiftLeft(lead, 10), trail), U16_SURROGATE_OFFSET));
 
     m_out.appendTo(isSingleUnit);
     join.add(lead);
@@ -307,7 +309,7 @@ Integer StringEmitter::truncateToInteger(Number position)
 #if !CPU(ARM64)
     Number limit = number(static_cast<double>(1ll << 32));
     Number negativeLimit = number(-static_cast<double>(1ll << 32));
-    position = select(equal(position, position), position, number(0));
+    position = select(equal(position, position), position, 0);
     position = select(greaterThan(position, limit), limit, position);
     position = select(lessThan(position, negativeLimit), negativeLimit, position);
     return emitter<ConversionEmitter>().toInteger(position);
@@ -335,7 +337,7 @@ Integer StringEmitter::truncateToIndex(Number position)
     if (std::optional<LValue> source = integerBehindConversion(position))
         return (*source)->type() == B3::Int32 ? signExtended(Word32(*source)) : Integer(*source);
 #if !CPU(ARM64)
-    position = select(equal(position, position), position, number(0));
+    position = select(equal(position, position), position, 0);
 #endif
     return emitter<ConversionEmitter>().toInteger(position);
 }
@@ -351,7 +353,7 @@ Word32 StringEmitter::clampToLength(const StringPosition& position, Word32 lengt
         if (!isRelativeToEnd)
             return word32(0);
         Integer sum = add(limit, x);
-        return low32(select(lessThan(sum, integer(0)), integer(0), sum));
+        return low32(select(lessThan(sum, 0), 0, sum));
     };
 
     Range range = x.value()->hasInt() ? Range::one(x.value()->asInt()) : position.range;
@@ -391,7 +393,7 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
     auto singleUnit = [&](bool isRelativeToEnd) -> CodeUnitRange {
         // Outside the string the index is -1, so the end is 0.
         Word32 index = low32(indexInString(first.value, length, isRelativeToEnd));
-        Word32 start = select(lessThan(index, word32(0)), word32(0), index);
+        Word32 start = select(lessThan(index, 0), 0, index);
         return { start, add(index, word32(1)) };
     };
 
@@ -432,14 +434,17 @@ CodeUnitRange StringEmitter::clampRange(StringRangeMethod method, Word32 length,
 Integer StringEmitter::indexInString(Integer x, Word32 length, bool isRelativeToEnd)
 {
     Integer limit = zeroExtended(length);
-    if (isRelativeToEnd)
-        x = select(lessThan(x, integer(0)), add(x, limit), x);
-    return select(below(x, limit), x, integer(-1));
+    if (isRelativeToEnd) {
+        Condition countsFromEnd = lessThan(x, 0);
+        x = select(countsFromEnd, add(x, limit), x);
+    }
+    return select(below(x, limit), x, -1);
 }
 
 void StringEmitter::generateSubstring(const ValueContext& value)
 {
-    define(value, substring(value, in<CellPointer>(value->stringOperand()), { word32Of(value->startOperand()), word32Of(value->endOperand()) }));
+    CellPointer string = in<CellPointer>(value->stringOperand());
+    define(value, substring(value, string, { word32Of(value->startOperand()), word32Of(value->endOperand()) }));
 }
 
 void StringEmitter::generateSubstringOrUndefined(const ValueContext& value)
@@ -492,7 +497,8 @@ void StringEmitter::generateStringRange(const ValueContext& value)
     std::optional<StringPosition> second;
     if (ValueID operand = value->secondOperand())
         second = truncatedPositionOf(operand, value->method());
-    CodeUnitRange range = clampRange(value->method(), word32Of(value->lengthOperand()), truncatedPositionOf(value->firstOperand(), value->method()), second);
+    Word32 length = word32Of(value->lengthOperand());
+    CodeUnitRange range = clampRange(value->method(), length, truncatedPositionOf(value->firstOperand(), value->method()), second);
     defineResults(value, { range.start, range.end });
 }
 

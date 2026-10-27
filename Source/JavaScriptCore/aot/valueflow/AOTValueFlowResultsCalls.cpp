@@ -489,7 +489,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
                     return;
                 }
                 loss.witness = witness;
-                if (isDataFromOutside(inputs, object))
+                if (receiver.positions.isDataFromOutside(object))
                     loss.cause = UnprovenCause::DataFromOutside;
             });
             // No line of the program makes a built-in object, so the access is the place to show.

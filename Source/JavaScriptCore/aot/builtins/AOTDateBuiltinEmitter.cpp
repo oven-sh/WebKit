@@ -52,14 +52,15 @@ void DateBuiltinEmitter::generateDateGetTime(const InlineCall& call)
 void DateBuiltinEmitter::generateDateGetMilliseconds(const InlineCall& call)
 {
     Number time = timeValueOf(cellOperand(call.receiver()));
-    finish(call, sub(time, mul(floor(div(time, number(msPerSecond))), number(msPerSecond))));
+    finish(call, sub(time, mul(floor(div(time, msPerSecond)), msPerSecond)));
 }
 
 void DateBuiltinEmitter::generateDateSetTime(const InlineCall& call)
 {
     CellPointer date = cellOperand(call.receiver());
     Number unclippedTime = numberOperand(call.argument(0));
-    Number time = select(lessThanOrEqual(abs(unclippedTime), number(WTF::maxECMAScriptTime)), add(trunc(unclippedTime), number(0)), number(PNaN));
+    Condition isInRange = lessThanOrEqual(abs(unclippedTime), WTF::maxECMAScriptTime);
+    Number time = select(isInRange, add(trunc(unclippedTime), 0), PNaN);
     m_out.storeDouble(time.value(), fieldAt(date, DateInstance::offsetOfInternalNumber()));
     LValue stale = m_out.constInt64(PlainGregorianDateTime::staleMarker().payload());
     m_out.store64(stale, fieldAt(date, DateInstance::offsetOfCachedGregorianDateTime()));
@@ -113,8 +114,8 @@ void DateBuiltinEmitter::generateDateGetField(const InlineCall& call)
     LValue payload = m_out.load64(fieldAt(cellOperand(call.receiver()), offsetOfCachedDateTime(zone)));
     missUnless(call, Condition(m_out.testNonZero64(payload, integer(PlainGregorianDateTime::validityMask).value())));
     LValue bits = bitField.isSigned
-        ? m_out.aShr(m_out.shl(payload, m_out.constInt32(64 - bitField.width - bitField.offset)), m_out.constInt32(64 - bitField.width))
-        : m_out.bitAnd(m_out.lShr(payload, m_out.constInt32(bitField.offset)), m_out.constInt64((1ULL << bitField.width) - 1));
+        ? m_out.aShr(m_out.shl(payload, 64 - bitField.width - bitField.offset), 64 - bitField.width)
+        : m_out.bitAnd(m_out.lShr(payload, bitField.offset), (1ULL << bitField.width) - 1);
     Integer result(bits);
     if (field == DateField::TimezoneOffset)
         result = neg(result);

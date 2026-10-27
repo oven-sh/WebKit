@@ -61,7 +61,8 @@ void StaticsEmitter::storeVariable(VariableID id, Operand stored, const Type& st
         if (!(storedType.primitives & Primitive::Undefined))
             break;
         Boxed boxed = stored.as<Boxed>();
-        stored = select(equal(boxed, undefined()), boxedConstant(JSValue()), boxed);
+        Condition isUndefined = equal(boxed, undefined());
+        stored = select(isUndefined, boxedConstant(JSValue()), boxed);
         break;
     }
     }

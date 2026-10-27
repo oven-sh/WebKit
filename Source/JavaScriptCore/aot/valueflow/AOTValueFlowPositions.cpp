@@ -838,8 +838,9 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, Valu
     return callees;
 }
 
-bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID object)
+bool ValueFlowPositions::isDataFromOutside(ValueFlowObjectID object)
 {
+    const ValueFlowResultInputs& inputs = m_inputs;
     const ValueFlowUniverse& universe = inputs.universe();
     const BuiltinTable& builtins = inputs.program.builtins();
     if (object == universe.resultOf(Builtins::JSONParse, 0) || object == universe.resultOf(Builtins::JSONParse, 1))
@@ -849,9 +850,7 @@ bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID ob
     if (!function || site->origin != ValueFlowSiteOrigin::BuiltinResult || !site->value)
         return false;
     bool answersPlainData = false;
-    for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(function.index())) {
-        if (statement.kind != ValueFlowStatementKind::Operation || statement.site != site->value)
-            continue;
+    auto look = [&](const ValueFlowStatement& statement) {
         std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
         ValueSetID callees = !operands.empty() && operands[0].node ? inputs.solver().possibleValuesOf(operands[0].node) : ValueSets::nothing;
         inputs.sets().forEachMember(ValueSets::isComplement(callees) ? ValueSets::nothing : callees, [&](ValueFlowObjectID callee) {
@@ -861,7 +860,28 @@ bool isDataFromOutside(const ValueFlowResultInputs& inputs, ValueFlowObjectID ob
             for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin)))
                 answersPlainData |= overload.result.type && builtins.at(overload.result.type).flags.contains(BuiltinTypeFlag::HasPlainData);
         });
+    };
+    std::span<const ValueFlowStatement> statements = inputs.bodies().statementsOf(function.index());
+    if (m_functionOfOperations != function) {
+        m_functionOfOperations = function;
+        m_hasOperationsBySite = false;
+        for (const ValueFlowStatement& statement : statements) {
+            if (statement.kind == ValueFlowStatementKind::Operation && statement.site == site->value)
+                look(statement);
+        }
+        return answersPlainData;
     }
+    if (!m_hasOperationsBySite) {
+        m_operationsBySite.shrink(0);
+        for (uint32_t position = 0; position < statements.size(); ++position) {
+            if (statements[position].kind == ValueFlowStatementKind::Operation && statements[position].site)
+                m_operationsBySite.append({ statements[position].site.index(), position });
+        }
+        std::ranges::sort(m_operationsBySite);
+        m_hasOperationsBySite = true;
+    }
+    for (auto [index, position] : std::ranges::equal_range(m_operationsBySite, site->value.index(), { }, &std::pair<uint32_t, uint32_t>::first))
+        look(statements[position]);
     return answersPlainData;
 }
 
@@ -894,7 +914,7 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
     case ValueFlowProof::Untracked:
         return { .cause = UnprovenCause::Untracked };
     case ValueFlowProof::OutsideFamily:
-        return { .cause = result.stranger && isDataFromOutside(m_inputs, result.stranger) ? UnprovenCause::DataFromOutside : UnprovenCause::LayoutOutsideFamily, .witness = witnessOfStranger };
+        return { .cause = result.stranger && isDataFromOutside(result.stranger) ? UnprovenCause::DataFromOutside : UnprovenCause::LayoutOutsideFamily, .witness = witnessOfStranger };
     case ValueFlowProof::UndecidedLayout:
         return { .cause = UnprovenCause::OtherNewTarget, .witness = witnessOfStranger };
     }

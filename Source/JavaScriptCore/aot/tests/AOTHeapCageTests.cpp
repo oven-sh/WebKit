@@ -44,6 +44,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/ParkingLot.h>
 #include <wtf/Threading.h>
 #include <wtf/threads/BinarySemaphore.h>
 #include <wtf/text/MakeString.h>
@@ -745,6 +746,9 @@ static void checkThreadThatTakesSmallPagesOfWhatBallastLetGoOfIsTold()
         bool isExempt = &maker == &makers[1];
         maker.thread = Thread::create("small blocks"_s, [&maker, isExempt] {
             fastFree(fastMalloc(48));
+            // So does the first wait of a thread.
+            Atomic<uint8_t> word { 0 };
+            ParkingLot::compareAndPark(&word, static_cast<uint8_t>(1));
             if (isExempt)
                 bmalloc::api::exemptThisThreadFromAddressSpaceBallast();
             maker.isReady.signal();
@@ -804,6 +808,71 @@ static void checkThreadThatTakesSmallPagesOfWhatBallastLetGoOfIsTold()
         OSAllocator::releaseDecommitted(pages, size, 0);
     bmalloc::api::setAddressSpaceBallastHandler(nullptr);
     bmalloc::api::setAddressSpaceBallastKeeper(nullptr);
+}
+
+// All the address space is taken. The first request of a thread also needs what the allocator keeps for the thread. Where the request may not fail, both are served.
+static void checkFirstRequestsOfThreadsAreServed()
+{
+    static std::atomic<bool> mayAsk;
+    static std::atomic<bool> mayEnd;
+    static std::atomic<unsigned> numberServed;
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
+
+    // More threads than the allocator has room for in the pages it has.
+    std::array<RefPtr<Thread>, 48> threads;
+    for (auto& thread : threads) {
+        thread = Thread::create("first request"_s, [] {
+            while (!mayAsk.load())
+                usleep(1000);
+            void* block = fastMalloc(48);
+            fill(block, 48, 5);
+            ++numberServed;
+            while (!mayEnd.load())
+                usleep(1000);
+            AOT_TEST_CHECK(isFilled(block, 48, 5));
+            fastFree(block);
+        });
+    }
+
+    struct Mapping {
+        void* pages;
+        size_t size;
+    };
+    Vector<Mapping, 64> mappings;
+    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
+        while (void* pages = OSAllocator::tryReserveUncommitted(size))
+            mappings.append({ pages, size });
+    }
+    Vector<void*> pieces;
+    pieces.reserveInitialCapacity(256 * KB);
+    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
+        pieces.append(piece);
+    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
+    for (size_t size = 8 * KB; size >= 16; size /= 2) {
+        void* piece;
+        while (pieces.size() < pieces.capacity() && tryFastMalloc(size).getValue(piece))
+            pieces.append(piece);
+    }
+    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
+
+    // An allocator that does not remember what it refused cannot be asked again.
+    if (void* served = bmalloc::api::mallocAgainWithBallast()) {
+        mayAsk.store(true);
+        while (numberServed.load() < threads.size())
+            usleep(1000);
+        fastFree(served);
+    }
+
+    for (void* piece : pieces)
+        fastFree(piece);
+    for (auto [pages, size] : mappings)
+        OSAllocator::releaseDecommitted(pages, size, 0);
+    mayAsk.store(true);
+    mayEnd.store(true);
+    for (auto& thread : threads)
+        thread->waitForCompletion();
 }
 #endif
 #endif
@@ -1375,6 +1444,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/ballast/address-space-that-cannot-be-counted-counts-as-taken"_s, runInProcessWithSharedRange<checkAddressSpaceThatCannotBeCountedCountsAsTaken> },
         { "heap-cage/ballast/what-it-lets-go-of-stays-with-requests-that-may-not-fail"_s, runInProcessWithSharedRange<checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail> },
         { "heap-cage/ballast/a-thread-that-takes-small-pages-of-what-it-let-go-of-is-told"_s, runInProcessWithSharedRange<checkThreadThatTakesSmallPagesOfWhatBallastLetGoOfIsTold> },
+        { "heap-cage/ballast/first-requests-of-threads-are-served"_s, runInProcessWithSharedRange<checkFirstRequestsOfThreadsAreServed> },
         { "heap-cage/cage/error-owed-for-structures-then-storage-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Structures>> },
         { "heap-cage/cage/error-owed-for-storage-then-structures-is-taken-back-for-both"_s, runInProcessWithSharedRange<checkErrorOwedForStructuresAndStorageIsTakenBackForBoth<FirstToRunOut::Storage>> },
 #endif

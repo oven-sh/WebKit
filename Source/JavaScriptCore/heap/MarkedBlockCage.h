@@ -52,6 +52,8 @@ public:
     [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> initialize();
     // Where every VM shares a range that takes address space as it fills: makes sure that it has room for the cells that this many VMs make when they are created.
     JS_EXPORT_PRIVATE static bool tryEnsureRoomForNewVMs(unsigned count);
+    // On the thread of the VM, before the first statement of the program runs. The next VMs are given room for as much as this one has taken.
+    JS_EXPORT_PRIVATE void willRunProgram();
     [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> require();
 
     MarkedBlockCage();

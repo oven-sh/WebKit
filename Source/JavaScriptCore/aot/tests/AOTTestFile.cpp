@@ -66,6 +66,7 @@ private:
         bool hasRequiredArchitecture { false };
         bool requiresUnsanitizedCode { false };
         bool requiresOtherThanWindows { false };
+        bool requiresWindows { false };
         bool requiresFaultingLoopPolls { false };
         bool requiresCodeOutsideImage { false };
         bool requiresTargetWithoutJSCVT { false };
@@ -405,6 +406,8 @@ void TestFileParser::parseRun(const DirectiveLine& directive)
 static constexpr ASCIILiteral unsanitizedCode = "unsanitized-code"_s;
 // For Windows the code of x86-64 follows another calling convention.
 static constexpr ASCIILiteral notWindows = "not-windows"_s;
+// B3 numbers temporaries in the order in which the arguments of its calls are evaluated, which is another where the compiler was built for Windows. The register allocator breaks ties by those numbers.
+static constexpr ASCIILiteral windows = "windows"_s;
 // A loop poll is a load that faults where the target has that, and a comparison with a call on its slow path elsewhere.
 static constexpr ASCIILiteral faultingLoopPolls = "faulting-loop-polls"_s;
 // A hardened engine runs only the code of the image, whatever the options say.
@@ -432,12 +435,12 @@ void TestFileParser::parseRequires(const DirectiveLine& directive)
         return;
     }
     for (StringView word : words) {
-        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : group->hasRequiredArchitecture;
+        bool& isGiven = word == unsanitizedCode ? group->requiresUnsanitizedCode : word == notWindows ? group->requiresOtherThanWindows : word == windows ? group->requiresWindows : word == faultingLoopPolls ? group->requiresFaultingLoopPolls : word == codeOutsideImage ? group->requiresCodeOutsideImage : word == noJSCVT ? group->requiresTargetWithoutJSCVT : group->hasRequiredArchitecture;
         if (std::exchange(isGiven, true)) {
             addError(directive.line, "REQUIRES is given twice for "_s, prefix);
             return;
         }
-        if (word == unsanitizedCode || word == notWindows || word == faultingLoopPolls || word == codeOutsideImage || word == noJSCVT)
+        if (word == unsanitizedCode || word == notWindows || word == windows || word == faultingLoopPolls || word == codeOutsideImage || word == noJSCVT)
             continue;
         group->requiredArchitecture = findNamedValue(targetArchitectures, word);
         if (!group->requiredArchitecture) {
@@ -654,7 +657,7 @@ void TestFileParser::finishCheckGroups()
     for (PendingCheckGroup& group : m_checkGroups) {
         if (!group.hasMalformedLine)
             validateCheckGroup(group);
-        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT)) {
+        if (group.requiredArchitecture.value_or(m_architecture) != m_architecture || (group.requiresUnsanitizedCode && AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE) || (group.requiresOtherThanWindows && isForWindows) || (group.requiresWindows && !isForWindows) || (group.requiresFaultingLoopPolls && !hasFaultingLoopPolls) || (group.requiresCodeOutsideImage && runsOnlyCodeOfImage) || (group.requiresTargetWithoutJSCVT && targetHasJSCVT)) {
             m_file.runs.removeAllMatching([&](const RunDirective& run) {
                 return run.prefix == group.prefix;
             });

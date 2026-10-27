@@ -235,7 +235,7 @@ Operand OperatorEmitter::unaryOnIntegers(const ValueContext& value, UnaryOperato
     case UnaryOperator::Decrement:
         return arithmeticOnIntegers(value, ArithmeticOperator::Sub);
     case UnaryOperator::BitNot:
-        return bitXor(in<Word32>(value->valueOperand()), word32(-1));
+        return bitXor(in<Word32>(value->valueOperand()), -1);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -267,7 +267,7 @@ Operand OperatorEmitter::unaryOnNumbers(UnaryOperator op, Number operand)
     case UnaryOperator::Decrement:
         return sub(operand, number(1));
     case UnaryOperator::BitNot:
-        return bitXor(emitter<ConversionEmitter>().toInt32(operand), word32(-1));
+        return bitXor(emitter<ConversionEmitter>().toInt32(operand), -1);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -278,8 +278,11 @@ Number OperatorEmitter::asNumberLikeOperand(ValueID id)
         return toNumber(asWord32(in<Condition>(id)));
     Boxed value = in<Boxed>(id);
     Condition isTrue = equal(value, Boxed(m_out.constInt64(JSValue::ValueTrue)));
-    Number convertedPrimitive = select(equal(value, undefined()), number(PNaN), toNumber(asWord32(isTrue)));
-    return select(isNumber(value), numberToDouble(value), convertedPrimitive);
+    Condition isUndefined = equal(value, undefined());
+    Number notANumber = number(PNaN);
+    Number convertedPrimitive = select(isUndefined, notANumber, toNumber(asWord32(isTrue)));
+    Condition valueIsNumber = isNumber(value);
+    return select(valueIsNumber, numberToDouble(value), convertedPrimitive);
 }
 
 template<typename Functor>

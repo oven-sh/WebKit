@@ -120,7 +120,7 @@ private:
     void requireCellsOfOperands(ValueID, BuiltinCallForm formOfCall = BuiltinCallForm::Whole);
     void requireCellsOfOperandsBeside(ValueID, uint32_t operandIndex);
     void forgetFieldsWrittenBy(ValueID);
-    void buildObjectsWhosePrototypeMayBeReplacedBy(ValueID);
+    void buildObjectsOrderedWithGuardsInFrontOf(ValueID);
     BuildCause causeOf(ValueID user, uint32_t operandIndex) const;
     BuildCause causeOf(const Terminator&, uint32_t operandIndex) const;
     void keep(ValueID);

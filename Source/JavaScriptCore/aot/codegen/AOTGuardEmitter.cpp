@@ -42,8 +42,10 @@ static_assert(offsetOfFirstField <= MarkedBlock::atomSize);
 Condition GuardEmitter::isPresentCell(Boxed value, const Type& type)
 {
     // The empty value has no tag bits, so it passes isCell.
-    if (type.primitives & Primitive::Absent)
-        return logicalAnd(isCell(value), isNotEmpty(value));
+    if (type.primitives & Primitive::Absent) {
+        Condition hasNoTagBits = isCell(value);
+        return logicalAnd(hasNoTagBits, isNotEmpty(value));
+    }
     return isCell(value);
 }
 
@@ -348,7 +350,7 @@ void GuardEmitter::generateHasKeyOrder(const ValueContext& value)
         return;
     }
     Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(in<CellPointer>(value->objectOperand()));
-    defineTest(value, equal(bitAnd(orderWord, word32(orderAndCountMask)), word32(expected->value())));
+    defineTest(value, equal(bitAnd(orderWord, orderAndCountMask), expected->value()));
 }
 
 void GuardEmitter::generateIsClosureOf(const ValueContext& value)
@@ -428,7 +430,8 @@ Condition GuardEmitter::isNotThenable(const OperationContext&, Boxed value, cons
 
 Condition GuardEmitter::hasInstanceRealm(Pointer structure)
 {
-    return equal(loadField<Pointer>(structure, m_heaps.Structure_realm), loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
+    Pointer realm = loadField<Pointer>(structure, m_heaps.Structure_realm);
+    return equal(realm, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
 }
 
 void GuardEmitter::branchOnIsNotThenable(Boxed value, const Type& type, BranchTargets targets)
@@ -446,7 +449,7 @@ void GuardEmitter::branchOnIsNotThenable(Boxed value, const Type& type, BranchTa
     }
 
     Pointer structure = loadStructure(cell);
-    Word32 thenableState = bitAnd(loadField<Word32>(structure, m_heaps.Structure_bitField), word32(Structure::s_definitelyNonThenableStateBits));
+    Word32 thenableState = bitAnd(loadField<Word32>(structure, m_heaps.Structure_bitField), Structure::s_definitelyNonThenableStateBits);
     Condition isCachedAsNonThenable = equal(thenableState, word32(static_cast<int32_t>(Structure::DefinitelyNonThenableState::NonThenable) << Structure::s_definitelyNonThenableStateShift));
 
     // The Structure of a compiled object gets this state only where it lists the extra properties of its objects, or they have none.
@@ -469,7 +472,7 @@ void GuardEmitter::branchOnIsWatched(TypedPointer inlineWatchpointSet, BranchTar
     branch(hasNoBits(data, InlineWatchpointSet::IsThinFlag), { normalEdge(isInflated), targets.notTaken });
 
     m_out.appendTo(isInflated);
-    branch(equal(loadByte(data, m_heaps.WatchpointSet_state), word32(IsWatched)), targets);
+    branch(equal(loadByte(data, m_heaps.WatchpointSet_state), IsWatched), targets);
 }
 
 } } } // namespace JSC::AOT::Typed

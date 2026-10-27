@@ -84,9 +84,10 @@ static DescribedObject describeObject(const Program& program, const Function& fu
 {
     if (value.storage() != AllocationStorage::Heap)
         return unsupported(VirtualObjectSupport::HasChosenStorage);
-    // The run time learns the prototype of an object when the object is made. From then on the guards of the class answer for that object too.
-    if (value.prototypeOperand())
-        return unsupported(VirtualObjectSupport::HasEffectsAtAllocation);
+    if (!allocatesOwnLayout(program, value)) {
+        description.kind = VirtualObjectKind::Opaque;
+        return supported(description);
+    }
 
     description.layout = value.layout();
     const Layout& layout = program.at(description.layout);

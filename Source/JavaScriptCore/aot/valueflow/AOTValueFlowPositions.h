@@ -126,6 +126,7 @@ public:
     Type typeOfObject(ValueFlowObjectID);
 
     FlowSiteLoss lossOf(const ValueFlowPositionResult&, ValueFlowNodeID = { });
+    bool isDataFromOutside(ValueFlowObjectID);
 
 private:
     bool isEnabled(FlowResultKind kind) const { return m_inputs.build.isEnabled(kind, m_switchSubject); }
@@ -148,6 +149,10 @@ private:
     uint32_t m_switchSubject;
     ValueSetMaker* m_maker { nullptr };
     bool m_hasBorrowedMaker { false };
+    // The operations of the function that isDataFromOutside() was asked about last, by (site, position among the statements). Made at the second question about one function.
+    FunctionID m_functionOfOperations;
+    bool m_hasOperationsBySite { false };
+    Vector<std::pair<uint32_t, uint32_t>> m_operationsBySite;
     HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_indexOfSet;
     Vector<Type> m_typesOfSets;
 };

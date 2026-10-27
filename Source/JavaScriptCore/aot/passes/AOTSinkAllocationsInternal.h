@@ -280,12 +280,13 @@ struct VirtualReturn {
     ObjectState state;
 };
 
-// The first five are filled for a block when AllocationSinking::prepare() is called for it.
+// The first six are filled for a block when AllocationSinking::prepare() is called for it.
 struct SinkingInputs {
     BitVector throwingValues;
     BitVector valuesWritingObjects;
     BitVector valuesCallingUnknownCode;
     UncheckedKeyHashMap<uint32_t, uint64_t> memberGuardsEndedByValues;
+    UncheckedKeyHashMap<uint32_t, uint64_t> memberGuardsReadByValues;
     BitVector throwingTerminators;
     BitVector conditionsOnlyBranchedOn;
     BitVector blocksInCycles;
@@ -293,6 +294,7 @@ struct SinkingInputs {
     BitVector blocksWithCandidates;
     BitVector blocksWithJoins;
     bool hasOperationsOnSlots { false };
+    bool hasObjectsGivenPrototypes { false };
     bool isLargeForItsWork { false };
 };
 
@@ -443,7 +445,7 @@ public:
     const VirtualObjectContext& objectContext() const LIFETIME_BOUND { return m_objectContext; }
     ShapeContext shapeContext(VirtualObjectID) const;
     // By family. Empty: none does.
-    const BitVector& familiesThatMayTakePrototypeOfConstructorFunction() const LIFETIME_BOUND;
+    const Vector<VirtualObjectID>& objectsWhoseCreationMayBeOrderedWithGuards() const LIFETIME_BOUND;
 
     uint32_t numberOfCandidates() const { return m_candidates.size(); }
     Candidate& at(VirtualObjectID object) LIFETIME_BOUND { return m_candidates[object.index()]; }
@@ -610,7 +612,7 @@ private:
     Vector<std::optional<BitVector>> m_blocksWithLiveDefinition;
     Vector<uint64_t> m_tracesOfAllocations;
     Vector<VirtualFamily> m_families;
-    mutable std::optional<BitVector> m_familiesThatMayTakePrototypeOfConstructorFunction;
+    mutable std::optional<Vector<VirtualObjectID>> m_objectsWhoseCreationMayBeOrderedWithGuards;
     KeyOrderTable m_orders;
     SinkingDecisions m_decisions;
     SinkingInputs m_inputs;

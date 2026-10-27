@@ -446,7 +446,8 @@ private:
     ValueSetID m_allButKeptOutOfNodesMadeForPlaceholders { ValueSets::anything };
     uint64_t m_lowMembersKeptOutOfNodesMadeForPlaceholders { 0 };
     uint32_t m_coveredNodeThatTakesWhatIsKeptOut { 0 };
-    BitVector m_hasMoved;
+    // A byte a node: the 64 nodes that stand side by side in one shard fill a cache line, so no two shards write to one line.
+    ArrayByNode<uint8_t> m_hasMoved;
     static_assert(numberOfShards <= 64);
     std::array<std::array<uint64_t, numberOfShards>, 2> m_shardsWithMessagesOfShard { };
 

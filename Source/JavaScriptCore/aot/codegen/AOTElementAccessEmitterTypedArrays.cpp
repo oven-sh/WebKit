@@ -79,14 +79,14 @@ Operand ElementAccessEmitter::loadTypedArrayElement(const TypedArrayElements& el
 
 Word32 ElementAccessEmitter::clampedToUint8(Integer value)
 {
-    Integer nonNegative = select(lessThan(value, integer(0)), integer(0), value);
-    return low32(select(greaterThan(nonNegative, integer(UINT8_MAX)), integer(UINT8_MAX), nonNegative));
+    Integer nonNegative = select(lessThan(value, 0), 0, value);
+    return low32(select(greaterThan(nonNegative, UINT8_MAX), UINT8_MAX, nonNegative));
 }
 
 Word32 ElementAccessEmitter::clampedToUint8(Word32 value)
 {
-    Word32 nonNegative = select(lessThan(value, word32(0)), word32(0), value);
-    return select(greaterThan(nonNegative, word32(UINT8_MAX)), word32(UINT8_MAX), nonNegative);
+    Word32 nonNegative = select(lessThan(value, 0), 0, value);
+    return select(greaterThan(nonNegative, UINT8_MAX), UINT8_MAX, nonNegative);
 }
 
 void ElementAccessEmitter::storeTypedArrayElement(const TypedArrayElements& elements, Integer index, TypedArrayType type, Operand stored)
@@ -118,7 +118,7 @@ void ElementAccessEmitter::generateHasFixedBytes(const ValueContext& value)
     CellPointer view = in<CellPointer>(value->viewOperand());
     Condition hasFixedLength = hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask);
     Condition hasMemory = isNotZero(Integer(loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector).value()));
-    Condition isShort = belowOrEqual(loadField<Integer>(view, m_heaps.JSArrayBufferView_length), integer(std::numeric_limits<int32_t>::max()));
+    Condition isShort = belowOrEqual(loadField<Integer>(view, m_heaps.JSArrayBufferView_length), std::numeric_limits<int32_t>::max());
     defineTest(value, logicalAnd(logicalAnd(hasFixedLength, hasMemory), isShort));
 }
 

@@ -118,7 +118,8 @@ void RuntimeValidationEmitter::generateValidateType(const ValueContext& value)
     ValueID source = value->valueOperand();
     const Type& type = m_program.at(value->validatedType());
     if (type.isNever()) {
-        failUnless(boolean(false), ValidationFailureKind::UnreachableValue, hasTestableBits(source) ? get(source) : Operand(), value.id());
+        Condition never = boolean(false);
+        failUnless(never, ValidationFailureKind::UnreachableValue, hasTestableBits(source) ? get(source) : Operand(), value.id());
         return;
     }
     if (!hasTestableBits(source) || type.opaque || type.environment)
@@ -151,7 +152,7 @@ Condition RuntimeValidationEmitter::hasShapeAmong(CellPointer cell, LayoutSetID 
     Word32 shapeWord = shapeTests.shapeWordOf(cell);
     static_assert(AOT::shapeWordOf(2) + 1 == AOT::shapeWordOf(1));
     for (RunOfShapes run : runs)
-        hasShape = logicalOr(hasShape, below(add(shapeWord, word32(run.last)), word32(run.count)));
+        hasShape = logicalOr(hasShape, below(add(shapeWord, run.last), run.count));
     return hasShape;
 }
 
@@ -366,13 +367,15 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
     m_out.branch(m_out.equal(keptValue.value(), replacingValue.value()), normalEdge(continuation), rareEdge(differ));
 
     m_out.appendTo(differ);
-    failUnless(logicalAnd(hasType(keptValue, isNumber), hasType(replacingValue, isNumber)), kind, keptValue, value.id());
+    Condition keptIsNumber = hasType(keptValue, isNumber);
+    failUnless(logicalAnd(keptIsNumber, hasType(replacingValue, isNumber)), kind, keptValue, value.id());
     m_out.jump(areNumbers);
 
     m_out.appendTo(areNumbers);
     Number keptNumber = conversions.unbox(keptValue, m_program.at(TypeTable::number), Representation::Double).as<Number>();
     Number replacingNumber = conversions.unbox(replacingValue, m_program.at(TypeTable::number), Representation::Double).as<Number>();
-    Condition areBothNaN = logicalNot(logicalOr(equal(keptNumber, keptNumber), equal(replacingNumber, replacingNumber)));
+    Condition keptIsNotNaN = equal(keptNumber, keptNumber);
+    Condition areBothNaN = logicalNot(logicalOr(keptIsNotNaN, equal(replacingNumber, replacingNumber)));
     failUnless(logicalOr(equal(keptNumber, replacingNumber), areBothNaN), kind, keptValue, value.id());
     m_out.jump(continuation);
 
@@ -464,7 +467,8 @@ void RuntimeValidationEmitter::generateValidateLookup(const ValueContext& value)
         return;
     LBasicBlock areObjects = newBlock();
     LBasicBlock continuation = newBlock();
-    m_out.branch(logicalAnd(hasType(receiver, receiverIsObject), hasType(method, methodIsObject)).value(), normalEdge(areObjects), normalEdge(continuation));
+    Condition isReceiverObject = hasType(receiver, receiverIsObject);
+    m_out.branch(logicalAnd(isReceiverObject, hasType(method, methodIsObject)).value(), normalEdge(areObjects), normalEdge(continuation));
     m_out.appendTo(areObjects);
     Integer findsMethod = callWithoutSite<Integer>(RuntimeOperation::ValidateLookup, { cellOf(receiver), identifierNumber(value->key()), cellOf(method) });
     failUnless(isNotZero(findsMethod), ValidationFailureKind::LookupDiffers, receiver, value.id());
@@ -500,7 +504,7 @@ void RuntimeValidationEmitter::checkEnvironmentShape(CellPointer cell, LayoutID 
     static_assert(environmentShapesPerPageShift == 16);
     Word32 lowByte = loadByte(cell, m_heaps.JSCell_indexingTypeAndMisc);
     Word32 highByte = loadByte(cell, m_heaps.JSCell_typeInfoFlags);
-    Condition hasShape = equal(bitOr(lowByte, shiftLeft(highByte, word32(8))), word32(shape & 0xffff));
+    Condition hasShape = equal(bitOr(lowByte, shiftLeft(highByte, 8)), shape & 0xffff);
     if (inputs().frameAllocation.mayBeInFrame(layout))
         hasShape = logicalOr(isInStack(asPointer(cell)), hasShape);
     failUnless(hasShape, ValidationFailureKind::ValueType, { }, id);
@@ -620,7 +624,8 @@ void RuntimeValidationEmitter::poisonFields(CellPointer cell, LayoutID layout, A
 Condition RuntimeValidationEmitter::isInStack(Pointer pointer)
 {
     Pointer top(m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), vm().value(), VM::topEntryFrameOffset())));
-    return logicalAnd(aboveOrEqual(pointer, stackPointer()), below(pointer, top));
+    Condition isAboveStackPointer = aboveOrEqual(pointer, stackPointer());
+    return logicalAnd(isAboveStackPointer, below(pointer, top));
 }
 
 Pointer RuntimeValidationEmitter::stackPointer()

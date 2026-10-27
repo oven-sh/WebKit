@@ -55,7 +55,7 @@ Pointer JSONParseEmitter::findOrderAfter(Pointer numberedOrder, uint32_t shape, 
     LBasicBlock found = newBlock();
 
     Integer wordsBefore = bitOr(orderAndCount, integer(static_cast<int64_t>(static_cast<uint64_t>(shapeWord) << 32)));
-    Word32 product = mul(bitXor(low32(orderAndCount), word32(static_cast<int32_t>(constantHashTerms(shapeWord, slotKey)))), word32(static_cast<int32_t>(KeyOrderTransition::hashMultiplier)));
+    Word32 product = mul(bitXor(low32(orderAndCount), static_cast<int32_t>(constantHashTerms(shapeWord, slotKey))), static_cast<int32_t>(KeyOrderTransition::hashMultiplier));
     Word32 hash = bitXor(product, shiftRightUnsigned(product, word32(KeyOrderTransition::hashFoldShift)));
     // A table that grows moves, and the pages it leaves are unmapped: what an earlier probe loaded is loaded again.
     B3::PatchpointValue* clobber = m_out.patchpoint(B3::Void);
@@ -231,7 +231,7 @@ void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
         return;
     }
     Condition isParsed(m_out.notNull(next.value()));
-    Word32 outcome = select(isParsed, select(equal(next, cursor), word32(rejectedOutcome), word32(parsedOutcome)), word32(unknownOutcome));
+    Word32 outcome = select(isParsed, select<Word32>(equal(next, cursor), rejectedOutcome, parsedOutcome), unknownOutcome);
     defineResults(value, { outcome, state.extra, cursorOrSourceEnd(isParsed, next.value()), state.order });
 }
 

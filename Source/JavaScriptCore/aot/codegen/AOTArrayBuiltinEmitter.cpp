@@ -71,7 +71,8 @@ ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& cal
 void ArrayBuiltinEmitter::forEachFormOrMiss(const InlineCall& call, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>& functor)
 {
     ElementAccessEmitter::ShapeTest test = mask == IndexingShapeAndWritabilityMask ? &ElementAccessEmitter::hasWritableShape : &ElementAccessEmitter::hasShape;
-    elements().forEachFormByShape(elements().indexingMode(array, mask), test, candidateFormsOf(call), missBlockOf(call), functor);
+    Word32 mode = elements().indexingMode(array, mask);
+    elements().forEachFormByShape(mode, test, candidateFormsOf(call), missBlockOf(call), functor);
 }
 
 void ArrayBuiltinEmitter::generateArrayIterator(const InlineCall& call)
@@ -91,7 +92,8 @@ void ArrayBuiltinEmitter::generateArrayAt(const InlineCall& call)
     Integer index = typeOf(position).isInteger() ? integerOperand(position) : elements().indexOrElse(position, false, missBlockOf(call));
     ArrayElements storage = elements().elementsOf(array);
     Integer length = elements().publicLength(storage);
-    Integer relative = select(lessThan(index, integer(0)), add(index, length), index);
+    Condition countsFromEnd = lessThan(index, 0);
+    Integer relative = select(countsFromEnd, add(index, length), index);
     branchUnless(below(relative, length), isAbsent);
     forEachFormOrMiss(call, array, arrayStorageTestMask, [&](const ArrayStorageForm& form) {
         Operand raw = elements().loadRawElement(form, storage, relative);
@@ -124,7 +126,7 @@ void ArrayBuiltinEmitter::generateArrayJoin(const InlineCall& call)
 
 Operand ArrayBuiltinEmitter::removeFirstElement(const InlineCall& call, const ArrayStorageForm& form, const ArrayElements& storage, LBasicBlock isAbsent)
 {
-    Integer last = sub(elements().publicLength(storage), integer(1));
+    Integer last = sub(elements().publicLength(storage), 1);
     Operand first = elements().loadRawElement(form, storage, integer(0));
     branchUnless(logicalNot(elements().isHoleIn(call.receiver(), form, first)), isAbsent);
 
@@ -372,8 +374,10 @@ Integer ArrayBuiltinEmitter::indexOfSearched(const InlineCall& call, HoleIs hole
 {
     if (typeOf(call.argument(0)).isNumber())
         return indexOfNumber(call, receiverOf(call));
-    if (typeOf(call.argument(0)).isAnyString())
-        return indexOfString(call, receiverOf(call), cellOperand(call.argument(0)));
+    if (typeOf(call.argument(0)).isAnyString()) {
+        CellPointer array = receiverOf(call);
+        return indexOfString(call, array, cellOperand(call.argument(0)));
+    }
     return indexOfValueComparedByIdentity(call, receiverOf(call), hole);
 }
 
@@ -389,7 +393,7 @@ void ArrayBuiltinEmitter::generateArrayIncludes(const InlineCall& call)
 {
     if (!checkChosenForm(call, call.numberOfArguments() == 1 && (call.canMiss() || typeOf(call.argument(0)).isAnyString())))
         return;
-    finish(call, notEqual(indexOfSearched(call, HoleIs::Undefined), integer(-1)));
+    finish(call, notEqual(indexOfSearched(call, HoleIs::Undefined), -1));
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -126,7 +126,7 @@ GenerationResult CodeGenerator::run()
     createPhis();
     if (std::optional<uint32_t> number = m_inputs.program.branchCounters.counterOfEntries(m_inputs.id)) {
         TypedPointer counter = emitter<StaticsEmitter>().branchCounter(*number);
-        m_out.store64(m_out.add(m_out.load64(counter), m_out.constInt64(1)), counter);
+        m_out.store64(m_out.add(m_out.load64(counter), 1), counter);
     }
     emitter<StaticsEmitter>().fillVariablesOfEnteredFile();
     m_out.jump(blockFor(entryBlock));

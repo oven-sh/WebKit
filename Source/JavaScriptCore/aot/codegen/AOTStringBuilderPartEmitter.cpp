@@ -98,7 +98,8 @@ void StringBuilderPartEmitter::appendNullish(const OperationContext& context, Bu
         end.add(builders().writeBytes(cursor, "null"_s.span8()));
         return end.finish();
     }, [&] {
-        return Boxed(m_out.select(isUndefined.value(), undefined().value(), boxedConstant(jsNull()).value()));
+        Boxed whenUndefined = undefined();
+        return select(isUndefined, whenUndefined, boxedConstant(jsNull()));
     });
 }
 
@@ -153,7 +154,8 @@ void StringBuilderPartEmitter::generateStringBuilderAppendNumber(const ValueCont
     }
     Number appended = in<Number>(value->valueOperand());
     Integer truncated = emitter<ConversionEmitter>().toInteger(appended);
-    Condition hasFewDigits = logicalAnd(equal(toNumber(truncated), appended), below(truncated, integer(StringBuilderEmitter::firstIntegerWrittenByCall)));
+    Condition isWhole = equal(toNumber(truncated), appended);
+    Condition hasFewDigits = logicalAnd(isWhole, below(truncated, StringBuilderEmitter::firstIntegerWrittenByCall));
     emitDiamond(m_out, hasFewDigits, B3::FrequencyClass::Normal, [&] {
         appendDigits(value, builder, low32(truncated));
     }, [&] {
@@ -169,10 +171,12 @@ void StringBuilderPartEmitter::generateStringBuilderAppendBoolean(const ValueCon
     Builder builder = builderOf(value);
     Condition isTrue = in<Condition>(value->valueOperand());
     appendInWordsOrByCall(value, builder, bytesReservedForBoolean, [&](Pointer cursor) {
-        Word32 firstFourBytes = select(isTrue, word32('t' | 'r' << 8 | 'u' << 16 | 'e' << 24), word32('f' | 'a' << 8 | 'l' << 16 | 's' << 24));
+        Word32 firstFourBytes = select<Word32>(isTrue, 't' | 'r' << 8 | 'u' << 16 | 'e' << 24, 'f' | 'a' << 8 | 'l' << 16 | 's' << 24);
         m_out.store32(firstFourBytes.value(), builders().bytesAt(cursor));
-        m_out.store32As8(m_out.constInt32('e'), builders().bytesAt(cursor, 4));
-        return Pointer(m_out.sub(offsetBy(cursor, 5).value(), zeroExtended(isTrue).value()));
+        LValue lastByteOfFalse = m_out.constInt32('e');
+        m_out.store32As8(lastByteOfFalse, builders().bytesAt(cursor, 4));
+        Pointer endOfFalse = offsetBy(cursor, 5);
+        return Pointer(m_out.sub(endOfFalse.value(), zeroExtended(isTrue).value()));
     }, [&] {
         return boxBoolean(isTrue);
     });
@@ -201,7 +205,8 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringRange(const Valu
     branchUnless(below(view.length, word32(static_cast<int32_t>(build().limit(LimitID::MinLengthAppendedByReference)))), byCall);
     if (builder.onStack) {
         Pointer cursor = builders().cursorOf(*builder.onStack);
-        branchUnless(belowOrEqual(offsetBy(cursor, zeroExtended(view.length), 0), builders().limitOf(*builder.onStack)), byCall);
+        Pointer end = offsetBy(cursor, zeroExtended(view.length), 0);
+        branchUnless(belowOrEqual(end, builders().limitOf(*builder.onStack)), byCall);
         builders().setCursor(*builder.onStack, builders().copyLatin1Characters(cursor, view.characters, view.length));
     } else {
         Pointer cursor = builders().tryReserve(builder.storage, view.length, byCall);
@@ -233,7 +238,8 @@ void StringBuilderPartEmitter::generateStringBuilderAppendStringOrNullish(const 
 
 void StringBuilderPartEmitter::generateStringBuilderAppendValue(const ValueContext& value)
 {
-    appendPrimitive(value, builderOf(value), in<Boxed>(value->valueOperand()));
+    Builder builder = builderOf(value);
+    appendPrimitive(value, builder, in<Boxed>(value->valueOperand()));
 }
 
 } } } // namespace JSC::AOT::Typed

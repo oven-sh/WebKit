@@ -310,10 +310,13 @@ void AllocationEmitter::storeInitialFields(CellPointer cell, LayoutID layout, co
         MemoryLocation location = locationOfField(m_program, layout, field.field);
         if (field.slot->representation != SlotRepresentation::DeferredClosure)
             slots.storeSlot(cell, *field.slot, location, takeForSlot(field), nullptr, typeOf(field.value));
-        else if (isDeferredClosure(m_function, field.value))
-            m_out.store32(m_out.constInt32(uncreatedDeferredClosure), slots.addressOf(cell, *field.slot, location));
-        else
-            m_out.store32(in<NarrowReference>(field.value).value(), slots.addressOf(cell, *field.slot, location));
+        else if (isDeferredClosure(m_function, field.value)) {
+            LValue uncreated = m_out.constInt32(uncreatedDeferredClosure);
+            m_out.store32(uncreated, slots.addressOf(cell, *field.slot, location));
+        } else {
+            NarrowReference reference = in<NarrowReference>(field.value);
+            m_out.store32(reference.value(), slots.addressOf(cell, *field.slot, location));
+        }
     }
 }
 

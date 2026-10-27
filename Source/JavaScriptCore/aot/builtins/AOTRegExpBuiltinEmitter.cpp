@@ -39,7 +39,7 @@ TypedPointer RegExpBuiltinEmitter::fieldAt(LValue cell, ptrdiff_t offset)
 
 Pointer RegExpBuiltinEmitter::regExpOf(CellPointer regExpObject)
 {
-    return Pointer(m_out.bitAnd(m_out.load64(fieldAt(regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags())), m_out.constInt64(RegExpObject::regExpMask)));
+    return Pointer(m_out.bitAnd(m_out.load64(fieldAt(regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags())), RegExpObject::regExpMask));
 }
 
 Word32 RegExpBuiltinEmitter::flagsOf(CellPointer regExpObject)

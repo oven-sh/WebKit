@@ -45,11 +45,11 @@ public:
         static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
         ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
         const B3::AbstractHeap& heap = key == KeyListKey::Shape ? m_heaps.entire(AbstractHeap::RuntimeState) : m_heaps.collectorState;
-        Word32 shapeWord = key == KeyListKey::Shape ? shapeTests.shapeWordOf(object) : shiftRightUnsigned(loadStructureID(object), word32(1));
+        Word32 shapeWord = key == KeyListKey::Shape ? shapeTests.shapeWordOf(object) : shiftRightUnsigned(loadStructureID(object), 1);
         if (kind != KeyListKind::Strings)
             shapeWord = add(shapeWord, word32(keyListWordOf(0, kind)));
         Word32 objectOrderWord = shapeTests.orderWordOf(object);
-        Integer index = zeroExtended(bitAnd(add(shapeWord, objectOrderWord), word32(numberOfKeyLists - 1)));
+        Integer index = zeroExtended(bitAnd(add(shapeWord, objectOrderWord), numberOfKeyLists - 1));
         LValue entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.keyLists)), index, 4).value();
         leaveUnless(equal(Word32(m_out.load32(m_out.address(heap, entry, OBJECT_OFFSETOF(KeyListCacheEntry, shapeWord)))), shapeWord), otherwise);
         leaveUnless(equal(Word32(m_out.load32(m_out.address(heap, entry, OBJECT_OFFSETOF(KeyListCacheEntry, orderWord)))), objectOrderWord), otherwise);
