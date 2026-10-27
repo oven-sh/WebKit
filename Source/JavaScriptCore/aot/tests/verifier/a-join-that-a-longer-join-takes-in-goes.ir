@@ -1,0 +1,17 @@
+# function main(first: string, second: string) { return first + "-" + second }
+# The first addition may make a text longer than a string may be. FuseConcatenations takes its parts into the second one, which is no shorter and throws the same, and a build that verifies each pass has nothing to say.
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+# OPTIONS: check=VerifyEachPass
+# CHECK: outcome: Changed
+# CHECK-NOT: = Add
+# CHECK: = Strcat v0, v2, v1
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="main" parameters=[{type=string}, {type=string}] results=[{type=string}] {
+    v2 = String string="-"
+    v3 = Add v0, v2
+    v4 = Add v3, v1
+    Return v4
+}

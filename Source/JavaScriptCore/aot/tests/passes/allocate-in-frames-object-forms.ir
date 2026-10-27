@@ -1,0 +1,118 @@
+# What a plain object needs beside not escaping to be in the frame: a layout whose cells keep their form, and no native code that sees it
+# FORM: Prepared
+# RUN: frame-plan
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Record" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L0] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L1 kind=Instance name="Instance" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L1] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L2 name="DefersClosureOverObject" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="read" declared={type=f11} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f11} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L2] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L3 name="DefersClosureOverNothing" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="read" declared={type=f12} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesNothing deferredFunction=f12} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L3] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L4 name="FieldsCreatedLater" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L4] impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L5 name="MayGetProperty" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L5] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L6 name="MayLoseField" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L6] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+layout L7 name="MayBeFrozen" fields=[{key="x" declared={type=anything} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L7] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangePrototype, BecomePrototype, StoreAfterCreation, StoreOfOtherType]}
+
+function f0 name="record" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetSlot v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v1: Frame
+# CHECK-NOT: by
+
+function f1 name="instance" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = GetSlot v1 key="x" receivers=[L1] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v1: Frame
+# CHECK-NOT: by
+
+function f2 name="layoutDefersClosureOverObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = GetSlot v1 key="x" receivers=[L2] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v1: Heap LayoutDefersClosures
+# CHECK-NOT: by
+
+function f3 name="layoutDefersClosureOverNothing" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L3 fields=[0]
+    v2 = GetSlot v1 key="x" receivers=[L3] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v1: Frame
+# CHECK-NOT: by
+
+function f4 name="fieldsCreatedLater" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L4 fields=[0]
+    v2 = GetSlot v1 key="x" receivers=[L4] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v1: Heap FieldsCreatedLater
+# CHECK-NOT: by
+
+function f5 name="mayGetProperty" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L5 fields=[0]
+    v2 = GetSlot v1 key="x" receivers=[L5] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: v1: Heap ChangedByUse
+# CHECK-NOT: by
+
+function f6 name="mayLoseField" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L6 fields=[0]
+    v2 = GetSlot v1 key="x" receivers=[L6] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: v1: Heap ChangedByUse
+# CHECK-NOT: by
+
+function f7 name="mayBeFrozen" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L7 fields=[0]
+    v2 = GetSlot v1 key="x" receivers=[L7] level=Proven
+    Return v2
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: v1: Heap ChangedByUse
+# CHECK-NOT: by
+
+function f8 name="prototypeOperand" parameters=[{type=anything}, {type=object}] results=[{type=anything}] {
+    v2 = NewObject v1, v0 layout=L0 fields=[0]
+    v3 = GetSlot v2 key="x" receivers=[L0] level=Proven
+    Return v3
+}
+# CHECK-LABEL: function f8
+# CHECK-NEXT: v2: Heap ChangedByUse
+# CHECK-NOT: by
+
+function f9 name="inspectedByBuiltin" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = CallBuiltin -, v1 overload=ArrayIsArray/0
+    Return v2
+}
+# CHECK-LABEL: function f9
+# CHECK-NEXT: v1: Heap SeenByNativeCode by v2(1)
+
+function f10 name="inspectedByOperation" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = ShapeTest v1 layouts=[L0]
+    Return v2
+}
+# CHECK-LABEL: function f10
+# CHECK-NEXT: v1: Frame
+
+function f11 name="readsObject" kind=Arrow captures=[{type=L2}] results=[{type=anything}] {
+    Return
+}
+# CHECK-LABEL: function f11
+function f12 name="readsNothing" kind=Arrow results=[{type=anything}] {
+    Return
+}

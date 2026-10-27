@@ -1,0 +1,10 @@
+# An opaque value stays alone or beside absent. Mixed with a JavaScript value it is anything.
+# RUN: canonical
+# CHECK: t0..t0 = cursor
+# CHECK-NEXT: t0..t1 = absent|cursor
+# CHECK-NEXT: t0..t2 = anything|absent
+# CHECK-NEXT: t0..t3 = anything|absent
+# CHECK-NEXT: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=cursor}, {type=absent}, {type=null}, {type=object}] results=[{type=undefined}]

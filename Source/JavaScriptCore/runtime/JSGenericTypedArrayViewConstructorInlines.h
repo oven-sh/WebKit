@@ -43,6 +43,10 @@
 #include <wtf/Assertions.h>
 #include <wtf/text/ASCIILiteral.h>
 
+#if ENABLE(AOT)
+#include "AOTPropertyWalk.h"
+#endif
+
 namespace JSC {
 
 template<typename ViewClass>
@@ -260,6 +264,9 @@ inline JSObject* constructGenericTypedArrayViewWithArguments(JSGlobalObject* glo
                 && (iteratorFunc != object->realm()->arrayProtoValuesFunction()
                     || lengthSlot.isAccessor() || lengthSlot.isCustom() || lengthSlot.isTaintedByOpaqueObject()
                     || hasAnyArrayStorage(object->indexingType())
+#if ENABLE(AOT)
+                    || (AOT::PropertyWalk::isCompiledObject(object) && AOT::PropertyWalk::wouldHaveArrayStorage(object))
+#endif
                     || !object->realm()->arrayIteratorProtocolWatchpointSet().isStillValid())) {
                     RELEASE_AND_RETURN(scope, constructGenericTypedArrayViewFromIterator<ViewClass>(globalObject, structure, object, iteratorFunc));
             }

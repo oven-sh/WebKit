@@ -1,0 +1,60 @@
+# The conversion of a boxed number that the loop around it does not change computes both sides without a branch, so that the back end moves it out of the loop
+# FORM: Placed
+# OPTIONS: check=validate-back-end validate
+# RUN: generate-code NumbersUnboxedWithoutBranch
+# CHECK-COUNT-2: : size=
+# CHECK-NOT: no code
+# CHECK: statistic NumbersUnboxedWithoutBranch 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="definedInFrontOfLoop" parameters=[{type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything @JSValue, v1: i32 @Int32):
+    v2 @JSValue = AssumeType v0 provenType=number
+    v3 @Double = Double number=0.5
+    v4 @Int32 = Integer integer=0
+    Jump -> next b1(v3, v4)
+  b1(v5 @Double, v6 @Int32):
+    LoopHint
+    v8 @Boolean = Less v6, v1 form=Integers
+    TestAndBranch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 @Double = Unbox v2
+    v10 @Double = Add v5, v9 form=Numbers
+    v11 @Int32 = Integer integer=1
+    v12 @Int32 = BitXor v6, v11 form=Integers
+    Jump -> next b1(v10, v12)
+  b3():
+    v13 @JSValue = Box v5
+    Return v13
+}
+function f1 name="definedInOuterLoop" parameters=[{type=anything}, {type=anything}, {type=i32}] results=[{type=anything}] {
+  b0(v0: anything @JSValue, v1: anything @JSValue, v2: i32 @Int32):
+    v3 @JSValue = AssumeType v0 provenType=number
+    v4 @JSValue = AssumeType v1 provenType=number
+    v5 @Double = Double number=0.5
+    v6 @Int32 = Integer integer=0
+    Jump -> next b1(v5, v6, v3, v4)
+  b1(v7 @Double, v8 @Int32, v9 @JSValue, v10 @JSValue):
+    LoopHint
+    v12 @Boolean = Less v8, v2 form=Integers
+    TestAndBranch v12 -> taken b2(), notTaken b6()
+  b2():
+    Jump -> next b3(v7, v6)
+  b3(v13 @Double, v14 @Int32):
+    LoopHint
+    v16 @Boolean = Less v14, v2 form=Integers
+    TestAndBranch v16 -> taken b4(), notTaken b5()
+  b4():
+    v17 @Double = Unbox v9
+    v18 @Double = Add v13, v17 form=Numbers
+    v19 @Int32 = Integer integer=1
+    v20 @Int32 = BitXor v14, v19 form=Integers
+    Jump -> next b3(v18, v20)
+  b5():
+    v21 @Int32 = Integer integer=1
+    v22 @Int32 = BitXor v8, v21 form=Integers
+    Jump -> next b1(v13, v22, v10, v9)
+  b6():
+    v23 @JSValue = Box v7
+    Return v23
+}

@@ -25,6 +25,9 @@
 
 #pragma once
 
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/BigIntObject.h>
 #include <JavaScriptCore/BooleanObject.h>
@@ -731,11 +734,18 @@ protected:
                 if (!addToObjectPoolIfNotDupe<ObjectTag>(inObject))
                     break;
                 write(ObjectTag);
+#if ENABLE(AOT)
+                AOT::PropertyWalk::materializeLazyProperties(vm, inObject);
+#endif
                 // At this point, all supported objects other than Object
                 // objects have been handled. If we reach this point and
                 // the input is not an Object object then we should throw
                 // a DataCloneError.
-                if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != ObjectPrototype::info())
+                bool isPlainObject = inObject->classInfo() == JSFinalObject::info() || inObject->classInfo() == ObjectPrototype::info();
+#if ENABLE(AOT)
+                isPlainObject |= AOT::PropertyWalk::isCompiledObject(inObject);
+#endif
+                if (!isPlainObject)
                     return SerializationReturnCode::DataCloneError;
                 inputObjectStack.append(inObject);
                 indexStack.append(0);

@@ -1,0 +1,41 @@
+# A value that can throw between two stores to the same owner may skip the later barrier, so both stores keep theirs
+# FORM: Placed
+# RUN: pass RemoveRedundantBarriers
+# STATISTIC: BarriersOnUnmarkableOwners = 0
+# STATISTIC: BarriersCoveredLater = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Environment fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+function f0 name="throw-between" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: env L0 @Cell, v1: anything @JSValue):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    v3 @JSValue = RequireObjectCoercible v1 nullishAccess=Read
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Return
+# CHECK: PutEnvironmentField v0, v1 layout=L0
+# CHECK: PutEnvironmentField v0, v1 layout=L0 field=1
+# CHECK-NOT: laterBarrierCovers
+}
+function f1 name="throw-on-one-path" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: env L0 @Cell, v1: anything @JSValue):
+    v2 @Boolean = ToBoolean v1 form=Generic
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Throw v1
+  b2():
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Return
+# CHECK: PutEnvironmentField v0, v1 layout=L0
+# CHECK: PutEnvironmentField v0, v1 layout=L0 field=1
+# CHECK-NOT: laterBarrierCovers
+}
+function f2 name="pure-value-between" captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=undefined}] {
+  b0(v0: env L0 @Cell, v1: anything @JSValue):
+    PutEnvironmentField v0, v1 layout=L0 field=0
+    v3 @Boolean = ToBoolean v1 form=Generic
+    PutEnvironmentField v0, v1 layout=L0 field=1
+    Return
+# CHECK: PutEnvironmentField v0, v1 layout=L0 [laterBarrierCovers]
+# CHECK-NOT: laterBarrierCovers
+}

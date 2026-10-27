@@ -1,0 +1,58 @@
+# What a construction of a built-in makes is made at the call. A map that is made from entries holds what the entries hold: what is done to the operand is done to what it holds as well, so the own values of its own values lie in the map.
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> Map
+# CHECK-NEXT: f0 v7 -> MapPrototypeGet
+# CHECK-NEXT: f0 v8 -> f1 object
+# CHECK-NEXT: f0 v12 -> Set
+# CHECK-NEXT: f0 v15 -> SetPrototypeForEach
+# CHECK-NEXT: f0 v16 -> Map
+# CHECK-NEXT: f0 v19 -> MapPrototypeSet
+# CHECK-NEXT: f0 v20 -> MapPrototypeGet
+# CHECK-NEXT: f0 v21 -> f4
+# CHECK-NEXT: f3 v1 -> f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED-NOT: unreached f3
+# UNREACHED-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Map
+    v1 = NewClosure function=f1
+    v2 = String string="k"
+    v3 = NewArray v2, v1 contents=anything
+    v4 = NewArray v3 contents=anything
+    v5 = Construct v0, -, v4
+    v6 = Builtin builtin=MapPrototypeGet
+    v7 = Call v6, v5, v2
+    v8 = Call v7
+    v9 = Builtin builtin=Set
+    v10 = NewClosure function=f2
+    v11 = NewArray v10 contents=anything
+    v12 = Construct v9, -, v11
+    v13 = Builtin builtin=SetPrototypeForEach
+    v14 = NewClosure function=f3
+    v15 = Call v13, v12, v14
+    v16 = Construct v0
+    v17 = NewClosure function=f4
+    v18 = Builtin builtin=MapPrototypeSet
+    v19 = Call v18, v16, v2, v17
+    v20 = Call v6, v16, v2
+    v21 = Call v20
+    Return
+}
+function f1 name="valueOfEntry" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f2 name="element" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f3 name="overSet" kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0
+    Return
+}
+function f4 name="valueThatIsSet" kind=Arrow results=[{type=anything}] {
+    Return
+}

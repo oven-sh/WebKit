@@ -1,0 +1,75 @@
+# The copies of one site that two versions of a stretch of code hold meet in a block parameter. Where that value is only matched with, nobody can tell which object it is
+# FORM: Prepared
+# RUN: pass ShareRegExpLiterals
+# STATISTIC: ShareRegExpLiteralsChanges = 2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="matchedWhereTheyMeet" parameters=[{type=boolean}, {type=string}] results=[{type=boolean}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewRegExp pattern="a" @10
+    v3 = CallBuiltin v2, v1 overload=RegExpPrototypeTest/0
+    Branch v3 -> taken b3(v2), notTaken b4(v3)
+  b2():
+    v4 = NewRegExp pattern="a" @10
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = CallBuiltin v5, v1 overload=RegExpPrototypeTest/0
+    Jump -> next b4(v6)
+  b4(v7):
+    Return v7
+# CHECK-COUNT-2: SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp
+}
+
+function f1 name="matchedInTheNextTurn" parameters=[{type=string}] results=[{type=undefined}] {
+    v1 = NewRegExp pattern="a" @10
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = NewRegExp pattern="a" @20
+    v5 = CallBuiltin v2, v0 overload=RegExpPrototypeTest/0
+    Branch v5 -> taken b2(), notTaken b1(v4)
+  b2():
+    Return
+# CHECK-COUNT-2: SharedRegExpLiteral pattern="a"
+# CHECK-NOT: NewRegExp
+}
+
+function f2 name="comparedWhereTheyMeet" parameters=[{type=boolean}, {type=RegExp}] results=[{type=boolean}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewRegExp pattern="a" @10
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewRegExp pattern="a" @10
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = StrictEq v4, v1
+    Return v5
+# CHECK-COUNT-2: NewRegExp
+# CHECK-NOT: SharedRegExpLiteral
+}
+
+function f3 name="twoCopiesInTwoOperands" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = NewRegExp pattern="a" @10
+    v2 = NewRegExp pattern="a" @10
+    v3 = CallBuiltin v0, v1, v2 overload=StringPrototypeReplace/0
+    Return v3
+# CHECK-COUNT-2: NewRegExp
+# CHECK-NOT: SharedRegExpLiteral
+}
+
+function f4 name="comparedByABuiltinInTheNextTurn" parameters=[{type=string}] results=[{type=undefined}] {
+    v1 = Null
+    Jump -> next b1(v1)
+  b1(v2):
+    LoopHint
+    v4 = NewRegExp pattern="a" @10
+    v5 = CallBuiltin -, v2, v4 overload=ObjectIs/0
+    Branch v5 -> taken b2(), notTaken b1(v4)
+  b2():
+    Return
+# CHECK: NewRegExp
+# CHECK-NOT: SharedRegExpLiteral
+}

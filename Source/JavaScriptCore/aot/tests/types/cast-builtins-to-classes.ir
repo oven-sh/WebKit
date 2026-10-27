@@ -1,0 +1,15 @@
+# A built-in object that the cast type does not name is listed under what the cast type may hold it as: a class that is not known to be disjoint, or `function`. It is never kept under its own name outside the cast type, and never dropped where `subset` says the two overlap
+# FORM: Prepared
+# RUN(INTERSECT): intersect
+# RUN(CAST): cast
+# RUN(SUBSET): subset
+# INTERSECT: t0 & t1 = undefined|Array
+# INTERSECT: laws hold
+# CAST: t0 as t1 = undefined|Array
+# CAST: t3 as t6 = Array
+# CAST: t4 as t6 = Array
+# CAST: laws hold
+# SUBSET: laws hold
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="types" parameters=[{type=undefined|builtin(Object)|builtin(ObjectPrototype)|builtin(ObjectPrototypeHasOwnProperty)|Array}, {type=undefined|Array}, {type=undefined|null|Array}, {type=builtin(ObjectPrototypeHasOwnProperty)}, {type=builtin(ObjectPrototype)}, {type=builtin(ArrayPrototype)}, {type=Array}] results=[{type=anything}]

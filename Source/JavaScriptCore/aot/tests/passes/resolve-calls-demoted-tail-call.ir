@@ -1,0 +1,75 @@
+# A direct call made from a demoted tail call keeps its mark, and one that stays a tail call or was never one has none. The conversion of an argument stands in front of the call, so it ends no tail call
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 6
+# STATISTIC: ReturnCallsDemoted = 0
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+typesite w0 module=m0 position=9 kind=Parameter text="number"
+layout L0 kind=Instance name="Point" constructor=f11 flow={baseState=None impossibleMutations=[AddProperty, ChangePrototype]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true namedMembers=[{key="m" function=f4 mutability=Fixed}]}
+function f0 name="asynchronous" role=CoroutineRamp flags=[IsAsync] parameters=[{type=number site=w0}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f1
+    Return v1
+}
+function f1 name="asynchronous" role=CoroutineBody flags=[IsAsync] parameters=[{type=number}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+    Return
+}
+function f2 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="m" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+
+function f5 name="marked-call" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 @0 tail
+    Return v2
+# CHECK: anything = CallDirect v1 function=f2 [calleeIsPredicted] @0 tail
+}
+
+function f6 name="ordinary-call" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NOT: @{{*}} tail
+# CHECK: anything = CallDirect v1 function=f2
+# CHECK-NOT: @{{*}} tail
+}
+
+function f7 name="marked-call-of-two-callees" parameters=[{type=f2|f3}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 @0 tail
+    Return v2
+# CHECK: anything = CallDirect v1 function=f2 [calleeIsPredicted] @0 tail
+# CHECK: anything = CallDirect v1 function=f3 [calleeIsPredicted] @0 tail
+}
+
+function f8 name="tail-call-stays" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    ReturnCall v2
+# CHECK-NOT: @{{*}} tail
+# CHECK: [[tail8]]: anything = CallDirect v1 function=f2
+# CHECK-NOT: @{{*}} tail
+# CHECK: ReturnCall [[tail8]]
+}
+
+function f9 name="tail-call-behind-a-converted-argument" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 @40
+    ReturnCall v2
+# CHECK-NOT: @{{*}} tail
+# CHECK: [[argument9]]: number = AssumeType v1 provenType=number
+# CHECK-NEXT: [[call9]]: Promise = CallDirect [[argument9]] function=f0 [calleeIsPredicted] @40
+# CHECK-NEXT: ReturnCall [[call9]]
+# CHECK-NOT: @{{*}} tail
+}
+
+function f10 name="marked-method-call" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="m"
+    v3 = Call v2, v0, v1 calleeKey="m" @0 tail
+    Return v3
+# CHECK: anything = CallDirect v0, v1 function=f4 [calleeIsPredicted] @0 tail
+}
+function f11 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]

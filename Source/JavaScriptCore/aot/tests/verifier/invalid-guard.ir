@@ -1,0 +1,166 @@
+# an operation that relies on a proof names a guard that gives this proof about its own operand, or the type of the operand is enough
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidGuard 11
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="other.js" displayPath="other.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+layout L1 name="Size" fields=[{key="x" declared={type=anything}}]
+function f0 name="badGuardOnOtherObject" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+    v2 = ShapeTest v1 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    Return
+}
+function f1 name="badShapeGuardWiderThanReceivers" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0, L1]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    Return
+}
+function f2 name="badGuardOfOtherProof" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = IsNotFrozen v0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    Return
+}
+function f3 name="badNoGuardOnObject" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    Return v1
+}
+function f4 name="badProvenLayoutOutsideReceivers" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    Return v1
+}
+function f5 name="goodGuard" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = ShapeTest v0 layouts=[L0]
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0, L1] level=Proven
+    Return v3
+  b2():
+    Return
+}
+function f6 name="goodGuardOnUpcastOfObject" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = Upcast v0 castType=anything
+    v2 = ShapeTest v1 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetSlotOrUndefined v0, v3 key="x" receivers=[L0] level=Proven
+    Return v4
+  b2():
+    Return
+}
+function f7 name="goodAllocationAsGuard" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = GetSlot v1, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+}
+function f8 name="goodProvenLayoutWithoutGuard" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="x" receivers=[L0] level=Proven
+    Return v1
+}
+function f9 name="goodAllGuards" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = ShapeTest v1 layouts=[L1]
+    Branch v4 -> taken b2(| 0), notTaken b3()
+  b2(v5):
+    v6 = AllGuards v3, v5
+    v7 = GetSlotOrUndefined v0, v6 key="x" receivers=[L0] level=Proven
+    v8 = GetSlotOrUndefined v1, v6 key="x" receivers=[L1] level=Proven
+    Return v7
+  b3():
+    Return
+}
+function f10 name="badGuardOfOtherCase" parameters=[{type=object}] results=[{type=anything}] {
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b2()
+  b1(v1):
+    v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L1] level=Proven
+    Return v2
+  b2():
+    Return
+}
+function f11 name="badGuardOfCaseOnOtherObject" parameters=[{type=object}, {type=object}] results=[{type=anything}] {
+    SwitchOnShape v1 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b2()
+  b1(v2):
+    v3 = GetSlotOrUndefined v0, v2 key="x" receivers=[L0] level=Proven
+    Return v3
+  b2():
+    Return
+}
+function f12 name="goodGuardOfCase" parameters=[{type=object}] results=[{type=anything}] {
+    SwitchOnShape v0 layoutSets=[[L0], [L1]] -> case b1(| 0), case b2(), otherwise b2()
+  b1(v1):
+    v2 = GetSlotOrUndefined v0, v1 key="x" receivers=[L0] level=Proven
+    Return v2
+  b2():
+    Return
+}
+function f13 name="badTestOfSlotWithoutShape" parameters=[{type=object}] results=[{type=boolean}] {
+    v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Return v1
+}
+function f14 name="goodTestOfSlot" parameters=[{type=L0}] results=[{type=boolean}] {
+    v1 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    Return v1
+}
+function f15 name="badElementOfArrayWithoutGuard" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+    v2 = GetArrayElement v0, v1 level=Proven
+    Return v2
+}
+function f16 name="badStorageKindUnderPristineGuard" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 arrayStorage=Int32 level=Proven
+    Return v4
+  b2():
+    Return
+}
+function f17 name="goodElementOfPristineArray" parameters=[{type=Array}, {type=i32}] results=[{type=anything}] {
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3):
+    v4 = GetArrayElement v0, v1, v3 level=Proven
+    v5 = HasArrayStorage v0 arrayStorage=Int32
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6):
+    v7 = AllGuards v3, v6
+    v8 = GetArrayElement v0, v1, v7 arrayStorage=Int32 level=Proven
+    Return v8
+  b3():
+    Return
+}
+function f18 name="badGuardOfOtherEnumerator" parameters=[{type=object}, {type=object}, {type=string}, {type=i32}] results=[{type=anything}] {
+    v4 = ForInOpen v0
+    v5 = ForInOpen v1
+    v6 = IsEnumeratorCurrent v5, v1, v3
+    Branch v6 -> taken b1(| 0), notTaken b2()
+  b1(v7):
+    v8 = EnumeratorGetByVal v0, v2, v4, v3, v7
+    Return v8
+  b2():
+    Return
+}
+function f19 name="goodGuardOfEnumerator" parameters=[{type=object}, {type=string}, {type=i32}] results=[{type=anything}] {
+    v3 = ForInOpen v0
+    v4 = IsEnumeratorCurrent v3, v0, v2
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    v6 = EnumeratorGetByVal v0, v1, v3, v2, v5
+    Return v6
+  b2():
+    Return
+}

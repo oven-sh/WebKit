@@ -1,0 +1,69 @@
+# A row that has the text in its payload leaves no String operation behind, unless something else uses that value
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: StringLiteralFormsGroups = 8
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="equality" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = String string="accept"
+    v2 = StrictEq v0, v1
+    Return v2
+# CHECK: b0(v0: string):
+# CHECK-NEXT: v1: boolean = StringEqualsLiteral v0 literal="accept"
+# CHECK-NEXT: Return v1
+}
+
+function f1 name="literalOnLeft" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = String string="accept"
+    v2 = StrictEq v1, v0
+    Return v2
+# CHECK: b0(v0: string):
+# CHECK-NEXT: v1: boolean = StringEqualsLiteral v0 literal="accept"
+}
+
+function f2 name="prefix" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = String string="/api/"
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeStartsWith/1
+    Return v2
+# CHECK: b0(v0: string):
+# CHECK-NEXT: v1: boolean = StringStartsWithLiteral v0 literal="/api/"
+}
+
+function f3 name="search" parameters=[{type=string}] results=[{type=number}] {
+    v1 = String string="://"
+    v2 = CallBuiltin v0, v1 overload=StringPrototypeIndexOf/0
+    Return v2
+# CHECK-NOT: = String string
+# CHECK: = StringIndexOfLiteral v0, {{*}}literal="://"
+}
+
+function f4 name="orderToCharacter" parameters=[{type=string}] results=[{type=boolean}] {
+    v1 = String string="a"
+    v2 = Less v0, v1
+    Return v2
+# CHECK-NOT: = String string
+# CHECK: = StringOrderToCharacter v0 codeUnit=97
+}
+
+function f5 name="literalIsReturned" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="accept"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    Return v0
+# CHECK: v1: "accept" = String string="accept"
+# CHECK-NEXT: v2: boolean = StringEqualsLiteral v0 literal="accept"
+# CHECK: Return v1
+}
+
+function f6 name="literalComparedTwice" parameters=[{type=string}, {type=string}] results=[{type=anything}] {
+    v2 = String string="accept"
+    v3 = StrictEq v0, v2
+    v4 = StrictEq v1, v2
+    v5 = NewArray v3, v4 contents=anything
+    Return v5
+# CHECK: = StringEqualsLiteral v0 literal="accept"
+# CHECK: = StringEqualsLiteral v1 literal="accept"
+}

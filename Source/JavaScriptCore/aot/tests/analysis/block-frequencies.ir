@@ -1,0 +1,414 @@
+# How often a block runs per activation, and which blocks and edges are rare or unlikely
+# FORM: Prepared
+# RUN: frequencies
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returns" results=[{type=undefined}] {
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f1 name="neverReturns" results=[{type=never}] {
+    v0 = Undefined
+    Throw v0
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f2 name="rareBlocks" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v1 = Undefined
+    Throw v1
+  b2():
+    Branch v0 -> taken b3(), notTaken b4()
+  b3():
+    Unreachable
+  b4():
+    Branch v0 -> taken b5(), notTaken b6()
+  b5():
+    v2 = CallDirect function=f1
+    Unreachable
+  b6():
+    Branch v0 -> taken b7(), notTaken b8()
+  b7() frequency=Rare:
+    Jump -> next b8()
+  b8():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Rare count: 0.000977
+# CHECK-NEXT: b2 frequency: Normal count: 0.999023
+# CHECK-NEXT: b3 frequency: Rare count: 0.000976
+# CHECK-NEXT: b4 frequency: Normal count: 0.998048
+# CHECK-NEXT: b5 frequency: Rare count: 0.000975
+# CHECK-NEXT: b6 frequency: Normal count: 0.997073
+# CHECK-NEXT: b7 frequency: Rare count: 0.000974
+# CHECK-NEXT: b8 frequency: Normal count: 0.997073
+# CHECK-NOT: frequency
+function f3 name="handlers" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean) handler=b3():
+    v2 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b4()
+  b1() handler=b2():
+    v3 = PropGet v0 key="b"
+    Jump -> next b4()
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b4()
+  b3() role=CatchHandler:
+    v5 = CatchValue
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.499512
+# CHECK-NEXT: b2 frequency: Rare count: 0.000488
+# CHECK-NEXT: b3 frequency: Rare count: 0.000977
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f4 name="unwinding" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+  b0(v0: anything, v1: boolean) handler=b4():
+    v2 = PropGet v0 key="a"
+    Branch v1 -> taken b1(), notTaken b3()
+  b1() handler=b2():
+    v3 = Undefined
+    Throw v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    Jump -> next b3()
+  b3():
+    Return
+  b4() role=CatchHandler:
+    v5 = CatchException
+    Rethrow v5
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Rare count: 0.000977
+# CHECK-NEXT: b2 frequency: Rare count: 0.000001
+# CHECK-NEXT: b3 frequency: Normal count: 0.998048
+# CHECK-NEXT: b4 frequency: Rare count: 0.000977
+# CHECK-NOT: frequency
+function f5 name="allSuccessorsRare" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Branch v0 -> taken b3(), notTaken b4()
+  b2():
+    Return
+  b3():
+    Unreachable
+  b4():
+    Jump -> next b5()
+  b5():
+    Unreachable
+}
+# CHECK-LABEL: function f5
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Rare count: 0.000977
+# CHECK-NEXT: b2 frequency: Normal count: 0.999023
+# CHECK-NEXT: b3 frequency: Rare count: 0.000488
+# CHECK-NEXT: b4 frequency: Rare count: 0.000488
+# CHECK-NEXT: b5 frequency: Rare count: 0.000488
+# CHECK-NOT: frequency
+function f6 name="entryWithRareSuccessors" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Unreachable
+  b2():
+    Unreachable
+}
+# CHECK-LABEL: function f6
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Rare count: 0.500000
+# CHECK-NEXT: b2 frequency: Rare count: 0.500000
+# CHECK-NOT: frequency
+function f7 name="loopWithRareExit" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v0 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Unreachable
+}
+# CHECK-LABEL: function f7
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 10.000000
+# CHECK-NEXT: b2 frequency: Normal count: 9.999023
+# CHECK-NEXT: b3 frequency: Rare count: 0.000977
+# CHECK-NOT: frequency
+function f8 name="tailCall" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3()
+  b2():
+    Return
+  b3():
+    v1 = CallDirect function=f0
+    ReturnCall v1
+}
+# CHECK-LABEL: function f8
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 0.500000
+# CHECK-NEXT: b3 frequency: Normal count: 0.500000
+# CHECK-NOT: frequency
+function f9 name="unlikelyBlocks" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    Jump -> next b3()
+  b2():
+    Branch v0 -> taken b4(), notTaken b5()
+  b3():
+    Jump -> next b6()
+  b4() frequency=Unlikely:
+    Jump -> next b5()
+  b5():
+    Jump -> next b6()
+  b6():
+    Return
+}
+# CHECK-LABEL: function f9
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Unlikely count: 0.058824
+# CHECK-NEXT: b2 frequency: Normal count: 0.941176
+# CHECK-NEXT: b3 frequency: Unlikely count: 0.058824
+# CHECK-NEXT: b4 frequency: Unlikely count: 0.055363
+# CHECK-NEXT: b5 frequency: Normal count: 0.941176
+# CHECK-NEXT: b6 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f10 name="unlikelyLoop" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b4()
+  b1() frequency=Unlikely:
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Branch v0 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b2()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f10
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Unlikely count: 0.058824
+# CHECK-NEXT: b2 frequency: Unlikely count: 0.588235
+# CHECK-NEXT: b3 frequency: Unlikely count: 0.529412
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f11 name="nullishTests" parameters=[{type=null|object}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    v2 = ToBoolean v0
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    v3 = Null
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b5(), notTaken b6()
+  b5():
+    Jump -> next b6()
+  b6():
+    v5 = TypeTest v0 testedType=undefined|null
+    v6 = LogicalNot v5
+    Branch v6 -> taken b7(), notTaken b8()
+  b7():
+    Jump -> next b8()
+  b8():
+    Return
+}
+# CHECK-LABEL: function f11
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Unlikely count: 0.058824
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NEXT: b3 frequency: Normal count: 0.941176
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NEXT: b5 frequency: Unlikely count: 0.058824
+# CHECK-NEXT: b6 frequency: Normal count: 1.000000
+# CHECK-NEXT: b7 frequency: Normal count: 0.941176
+# CHECK-NEXT: b8 frequency: Normal count: 1.000000
+# CHECK-NEXT: b2.1 frequency: Unlikely
+# CHECK-NEXT: b6.1 frequency: Unlikely
+# CHECK-NOT: frequency
+function f12 name="nonReferenceNullishTests" parameters=[{type=undefined|number}, {type=undefined|string}] results=[{type=undefined}] {
+    v2 = TypeTest v0 testedType=undefined|null
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    v3 = ToBoolean v1
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f12
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NEXT: b3 frequency: Normal count: 0.500000
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f13 name="differentObjects" parameters=[{type=anything}, {type=anything}, {type=number}, {type=number}] results=[{type=undefined}] {
+    v4 = StrictEq v0, v1
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    v5 = StrictEq v2, v3
+    Branch v5 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Jump -> next b5()
+  b5():
+    LoopHint
+    v7 = StrictEq v0, v1
+    Branch v7 -> taken b6(), notTaken b5()
+  b6():
+    Return
+}
+# CHECK-LABEL: function f13
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.941176
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NEXT: b3 frequency: Normal count: 0.500000
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NEXT: b5 frequency: Normal count: 10.000000
+# CHECK-NEXT: b6 frequency: Normal count: 1.000000
+# CHECK-NEXT: b0.1 frequency: Unlikely
+# CHECK-NOT: frequency
+function f14 name="coveredCallNeverReturns" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b3()
+  b1() handler=b2():
+    v1 = CallDirect function=f1
+    Unreachable
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Jump -> next b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f14
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Rare count: 0.000977
+# CHECK-NEXT: b2 frequency: Rare count: 0.000001
+# CHECK-NEXT: b3 frequency: Normal count: 0.999024
+# CHECK-NOT: frequency
+function f15 name="recordedAfterJump" parameters=[{type=boolean}, {type=anything}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Call v1
+    Jump -> next b3()
+  b2():
+    Jump -> next b4()
+  b3() frequency=Unlikely:
+    Jump -> next b5()
+  b4() frequency=Rare:
+    Jump -> next b5()
+  b5():
+    Return
+}
+# CHECK-LABEL: function f15
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.999023
+# CHECK-NEXT: b2 frequency: Rare count: 0.000977
+# CHECK-NEXT: b3 frequency: Normal count: 0.999023
+# CHECK-NEXT: b4 frequency: Rare count: 0.000001
+# CHECK-NEXT: b5 frequency: Normal count: 0.999024
+# CHECK-NOT: frequency
+function f16 name="rarePredecessor" parameters=[{type=boolean}] results=[{type=undefined}] {
+    Branch v0 -> taken b1(), notTaken b3()
+  b1() frequency=Rare:
+    Jump -> next b2()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return
+}
+# CHECK-LABEL: function f16
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Rare count: 0.000977
+# CHECK-NEXT: b2 frequency: Rare count: 0.000977
+# CHECK-NEXT: b3 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f17 name="nonNullishTypeTests" parameters=[{type=null|object}, {type=null|string|object}] results=[{type=undefined}] {
+    v2 = TypeTest v0 testedType=object
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    v3 = TypeTest v1 testedType=object
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f17
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.941176
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NEXT: b3 frequency: Normal count: 0.500000
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NEXT: b0.1 frequency: Unlikely
+# CHECK-NOT: frequency
+function f18 name="nullishTestWithRareSide" parameters=[{type=null|object}] results=[{type=undefined}] {
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return
+  b2():
+    Unreachable
+}
+# CHECK-LABEL: function f18
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.999023
+# CHECK-NEXT: b2 frequency: Rare count: 0.000977
+# CHECK-NOT: frequency
+function f19 name="nullishComparisons" parameters=[{type=null|object}] results=[{type=undefined}] {
+    v1 = Null
+    v2 = Eq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    v3 = Undefined
+    v4 = StrictEq v3, v0
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Jump -> next b4()
+  b4():
+    Return
+}
+# CHECK-LABEL: function f19
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Unlikely count: 0.058824
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NEXT: b3 frequency: Unlikely count: 0.058824
+# CHECK-NEXT: b4 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency
+function f20 name="objectComparison" parameters=[{type=object}, {type=object}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b2()
+  b2():
+    Return
+}
+# CHECK-LABEL: function f20
+# CHECK-NEXT: b0 frequency: Normal count: 1.000000
+# CHECK-NEXT: b1 frequency: Normal count: 0.500000
+# CHECK-NEXT: b2 frequency: Normal count: 1.000000
+# CHECK-NOT: frequency

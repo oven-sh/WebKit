@@ -39,15 +39,27 @@ enum class FrequencyClass : uint8_t {
     // have to somehow construct a new frequency class from a merging of multiple classes. When
     // this happens, never choose Rare; always go with Normal. This is necessary because we
     // really do punish Rare code very badly.
-    Rare
+    Rare,
+
+    Unlikely,
 };
 
-inline FrequencyClass maxFrequency(FrequencyClass a, FrequencyClass b)
+constexpr unsigned rarityOf(FrequencyClass frequency)
 {
-    if (a == FrequencyClass::Normal)
-        return FrequencyClass::Normal;
-    return b;
+    switch (frequency) {
+    case FrequencyClass::Normal:
+        return 0;
+    case FrequencyClass::Unlikely:
+        return 1;
+    case FrequencyClass::Rare:
+        return 2;
+    }
+    return 0;
 }
+
+constexpr bool isRarerThan(FrequencyClass a, FrequencyClass b) { return rarityOf(a) > rarityOf(b); }
+constexpr FrequencyClass maxFrequency(FrequencyClass a, FrequencyClass b) { return isRarerThan(a, b) ? b : a; }
+constexpr FrequencyClass rarerOf(FrequencyClass a, FrequencyClass b) { return isRarerThan(a, b) ? a : b; }
 
 } } // namespace JSC::B3
 

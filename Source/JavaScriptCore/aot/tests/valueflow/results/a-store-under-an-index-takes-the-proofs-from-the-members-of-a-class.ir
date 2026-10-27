@@ -1,0 +1,31 @@
+# class Shelf { run() {} }  Shelf.prototype[5] = Shelf.prototype.run
+# A store under an index behind the definition may come with a length that nobody lists, so the prototype object no longer holds only what the class defines.
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}classFlow={
+# CHECK-NOT: layout L0 {{*}}prototypeNamesAreComplete=true
+# CHECK-NOT: layout L0 {{*}}key="run" kind=Method function=f2 mutability=Fixed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Shelf" constructor=f1 fields=[]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="run"
+    v4 = FinishClass v1 layout=L0
+    v5 = PropGet v4 key="prototype"
+    PropSet v5, v2 key="5" mode=Strict
+    v7 = Construct v4
+    v8 = PropGet v7 key="run"
+    v9 = Call v8, v7 calleeKey="run"
+    Return
+}
+function f1 name="Shelf" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

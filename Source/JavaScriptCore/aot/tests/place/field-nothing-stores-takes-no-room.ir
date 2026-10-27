@@ -1,0 +1,104 @@
+# A field that no code stores lies in the Extension, where it takes no room until something fills it, whatever its type requires. Evaluated text holds the objects, so nothing proves that the field stays empty.
+# One store in any function keeps the field in the cell, and so does a typed parse, which fills the objects in native code.
+# interface Node { kind: number; pos: number }  function NodeObject(this: Node, kind: number, pos: number) { this.kind = kind; this.pos = pos }
+# interface Identifier extends Node { kind: 1; text: string; _expressionBrand: any; _declarationBrand: any }  interface Literal extends Node { kind: 2; value: number; _expressionBrand: any }
+# The layout of a tag has the fields that its interface requires. Those count as filled only if something stores them
+# TODO: flow-termination: the read of a field that no code stores is by name: it no longer finds the slot in the Extension through the word in the cell
+# FORM: AsRead
+# OPTIONS: only-passes=ResolveAccesses references=narrow
+# RUN: plan-slots layouts
+# RUN(PARSED): plan-slots layouts
+# RUN(FILL): plan-slots fill
+# RUN(ACCESSES): place accesses
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+expectedresult x0 type=L2 layouts=[L2]
+layout L0 name="NothingStores" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="_firstBrand" declared={type=anything} flags=[IsRequired]}, {key="_secondBrand" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="StoredInOneFunction" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="_firstBrand" declared={type=anything} flags=[IsRequired]}, {key="_secondBrand" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="FilledByParse" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="_firstBrand" declared={type=anything} flags=[IsRequired]}, {key="_secondBrand" declared={type=anything} flags=[IsRequired]}]
+layout L3 kind=Instance name="NodeObject" constructor=f2 fields=[{key="kind" declared={type=number}}, {key="pos" declared={type=number}}] supertypes=[L4] flags=[IsConstructorFunction]
+layout L4 name="Node" fields=[{key="kind" declared={type=number} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}]
+layout L5 name="Identifier" fields=[{key="kind" declared={type=1} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}, {key="_expressionBrand" declared={type=anything} flags=[IsRequired]}, {key="_declarationBrand" declared={type=anything} flags=[IsRequired]}] supertypes=[L4]
+layout L6 name="Literal" fields=[{key="kind" declared={type=2} flags=[IsRequired]}, {key="pos" declared={type=number} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}, {key="_expressionBrand" declared={type=anything} flags=[IsRequired]}] supertypes=[L4]
+variable g0 name="parsed" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = ToNumber v1
+    v3 = ToString v1
+    v4 = Builtin builtin=Function
+    v5 = String string="object"
+    v6 = String string="return object"
+    v7 = Construct v4, -, v5, v6
+    v8 = NewObject -, v2 layout=L0 fields=[0]
+    v9 = FinishObject v8
+    v10 = Call v7, -, v9
+    v11 = PropGet v9 key="_firstBrand"
+    v12 = NewObject -, v2 layout=L1 fields=[0]
+    v13 = FinishObject v12
+    v14 = Call v7, -, v13
+    v15 = CallDirect v13, v3 function=f1
+    v16 = NewObject -, v2 layout=L2 fields=[0]
+    v17 = FinishObject v16
+    v18 = Call v7, -, v17
+    v19 = Builtin builtin=JSONParse
+    v20 = Call v19, -, v3 expectedResult=x0
+    PutModuleVariable v20 variable=g0
+    v22 = NewClosure function=f2
+    v23 = Integer integer=1
+    v24 = Construct v22, -, v23, v2
+    PropSet v24, v3 key="text"
+    v26 = Call v7, -, v24
+    v27 = Integer integer=2
+    v28 = Construct v22, -, v27, v2
+    PropSet v28, v2 key="value"
+    v30 = Call v7, -, v28
+    Return
+}
+function f1 name="brand" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="_firstBrand"
+    PropSet v0, v1 key="_secondBrand"
+    Return
+}
+function f2 name="NodeObject" flags=[HasThis] thisType={type=L4} parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="kind"
+    PropSet v0, v2 key="pos"
+    Return
+}
+
+# The cell holds the word for the Extension and "kind". With the two fields in it, it would have 48 bytes.
+# CHECK: L0 CompiledObject size=32 extension=24
+# CHECK-NEXT: .0 "kind" {{*}} @24
+# CHECK-NEXT: .1 "_firstBrand" JSValue out@
+# CHECK-NEXT: .2 "_secondBrand" JSValue out@
+# CHECK-NEXT: extension Cell32 @16
+# CHECK: L1 CompiledObject size=48 extension=0
+# CHECK-NEXT: .0 "kind"
+# CHECK-NEXT: .1 "_firstBrand" JSValue @
+# CHECK-NEXT: .2 "_secondBrand" JSValue @
+# The reader derives L7 for the tag 1 and L8 for the tag 2.
+# CHECK: L7 CompiledObject size=48 extension=24
+# CHECK: .2 "text" {{*}} @
+# CHECK-NEXT: .3 "_expressionBrand" JSValue out@
+# CHECK-NEXT: .4 "_declarationBrand" JSValue out@
+# CHECK-NEXT: extension Cell32 @16
+# CHECK: L8 CompiledObject size=48 extension=16
+# CHECK: .2 "value" {{*}} @
+# CHECK-NEXT: .3 "_expressionBrand" JSValue out@8
+# CHECK-NEXT: extension Cell32 @16
+
+# Compiled code allocates L2 without the two fields as well, and stores them nowhere.
+# PARSED: L2 CompiledObject size=48 extension=0
+# PARSED-NEXT: .0 "kind"
+# PARSED-NEXT: .1 "_firstBrand" JSValue @
+# PARSED-NEXT: .2 "_secondBrand" JSValue @
+
+# FILL-LABEL: L7 allocated=
+# FILL: .2 "text" filled={{*}} likely
+# FILL-NEXT: .3 "_expressionBrand" filled=0
+# FILL-NOT: likely
+# FILL-LABEL: L8 allocated=
+
+# A read finds the slot through the word in the cell, and the check of the placement has nothing to say.
+# ACCESSES: "_firstBrand" [L0] read {{*}}JSValue out@8{{*}}extension=Cell32 @16

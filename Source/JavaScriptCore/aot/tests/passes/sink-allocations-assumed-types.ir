@@ -1,0 +1,132 @@
+# What the flow analysis proved about a virtual object holds for the cell built for it, wherever the cell goes
+# FORM: Prepared
+# RUN: pass SinkAllocations
+# STATISTIC: AllocationsSunk = 7
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="returnedInOneBranch" parameters=[{type=anything}, {type=Array<anything, pristine[Storage]>}, {type=boolean}] results=[{type=Array<anything, pristine[Storage]>}] {
+    v3 = NewArray v0 contents=anything
+    v4 = AssumeType v3 provenType=Array<anything, Contiguous, pristine[Storage]>
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v4
+  b2():
+    Return v1
+# CHECK: b0(
+# CHECK-NOT: NewArray
+# CHECK: b1():
+# CHECK-NEXT: = NewArray v0 contents=anything
+# CHECK: b2():
+# CHECK-NEXT: Return v1
+}
+
+function f1 name="assumedParameterStays" parameters=[{type=Array}] results=[{type=Array<anything, pristine[Storage]>}] {
+    v1 = NewArray contents=anything
+    v2 = AssumeType v0 provenType=Array<anything, Contiguous, pristine[Storage]>
+    Return v2
+# CHECK-NOT: NewArray
+# CHECK: v2:{{*}}= AssumeType v0 provenType=
+# CHECK-NEXT: Return v2
+}
+
+function f2 name="twoArraysMeetThenReturned" parameters=[{type=anything}, {type=Array<anything, pristine[Storage]>}, {type=boolean}, {type=boolean}] results=[{type=Array<anything, pristine[Storage]>}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewArray contents=anything
+    v5 = AssumeType v4 provenType=Array<anything, Contiguous, pristine[Storage]>
+    Jump -> next b3(v5)
+  b2():
+    v6 = NewArray v0 contents=anything
+    v7 = AssumeType v6 provenType=Array<anything, Contiguous, pristine[Storage]>
+    Jump -> next b3(v7)
+  b3(v8):
+    Branch v3 -> taken b4(), notTaken b5()
+  b4():
+    Return v8
+  b5():
+    Return v1
+# CHECK: b1():
+# CHECK-NOT: NewArray
+# CHECK: b3([[tag2]]: i32, 
+# CHECK: b4():
+# CHECK-NEXT: Switch [[tag2]] cases=[1] -> case
+# CHECK-COUNT-2: = NewArray
+# CHECK-NOT: = NewArray
+}
+
+function f3 name="builtOnOnePathThenMerged" parameters=[{type=anything}, {type=boolean}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewArray contents=anything
+    v5 = AssumeType v4 provenType=Array<anything, Contiguous, pristine[Storage]>
+    Jump -> next b3(v5)
+  b2():
+    v6 = NewArray v0 contents=anything
+    v7 = AssumeType v6 provenType=Array<anything, Contiguous, pristine[Storage]>
+    Jump -> next b3(v7)
+  b3(v8):
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    v9 = Call v0, -, v8
+    Jump -> next b6()
+  b5():
+    Jump -> next b6()
+  b6():
+    Branch v3 -> taken b7(), notTaken b8()
+  b7():
+    v10 = Call v0, -, v8
+    Return v10
+  b8():
+    Return v0
+# CHECK: b1():
+# CHECK-NOT: NewArray
+# CHECK: b3([[tag3]]: i32, 
+# CHECK: b4():
+# CHECK-NEXT: Switch [[tag3]] cases=[1] -> case
+# CHECK: b5():
+# CHECK-NOT: NewArray
+# CHECK: b7():
+# CHECK-NEXT: Switch
+# CHECK: b8():
+# CHECK-COUNT-4: = NewArray
+# CHECK-NOT: = NewArray
+}
+
+function f4 name="metAtLoopHeaderThenPassedOnInAnotherLoop" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    v2 = AssumeType v1 provenType=Array<anything, Contiguous, pristine[Storage]>
+    v3 = Integer integer=0
+    Jump -> next b1(v2, v3)
+  b1(v4, v5):
+    LoopHint
+    v7 = Integer integer=3
+    v8 = Less v5, v7
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    v9 = NewArray v7 contents=anything
+    v10 = AssumeType v9 provenType=Array<anything, Contiguous, pristine[Storage]>
+    v11 = Integer integer=1
+    v12 = Add v5, v11
+    Jump -> next b1(v10, v12)
+  b3():
+    v13 = Integer integer=0
+    Jump -> next b4(v4, v13)
+  b4(v14, v15):
+    LoopHint
+    v17 = Integer integer=2
+    v18 = Less v15, v17
+    Branch v18 -> taken b5(), notTaken b6()
+  b5():
+    v19 = Call v0, -, v14
+    v20 = Integer integer=1
+    v21 = Add v15, v20
+    Jump -> next b4(v14, v21)
+  b6():
+    Return
+# CHECK: b0(
+# CHECK-NOT: NewArray
+# CHECK: b2():
+# CHECK-NOT: NewArray
+# CHECK: b3():
+}

@@ -1,0 +1,188 @@
+enum KnowledgeLevel { Unknown Expected Proven }
+enum AccessCost { ByName TestsReceiver TestsSlot Free }
+enum AccessKind { Unknown Read Store Define Has Delete Call Construct Truthiness Equality Arithmetic Comparison Conversion TypeOf InstanceOf Iteration Spread }
+enum UnprovenCauseFamily { UnprovenType UnknownCode Mutation Limit }
+enum UnprovenCause (family: UnprovenCauseFamily) {
+    Unknown(UnprovenType) ResultDisabled(UnprovenType) LimitReached(Limit) UnknownObject(UnknownCode) NonLayoutObject(UnprovenType) BuiltinBase(UnprovenType)
+    UnknownBase(UnknownCode) ClassEvaluatedAgain(UnknownCode) ReachesNativeCode(UnknownCode) ReachesUnknownJavaScript(UnknownCode) UnknownWriter(UnknownCode) UnknownCallee(UnknownCode)
+    UnprovenContents(UnprovenType) FieldDeleted(Mutation) UnknownKeyDelete(Mutation) PropertyRedefined(Mutation) PropertyAdded(Mutation) UnknownKeyStore(Mutation)
+    StoreOfOtherType(Mutation) IntegrityChanged(Mutation) PrototypeChanged(Mutation) OwnPropertyHidesMember(Mutation) OtherNewTarget(Mutation)
+    LeftByPasses(UnprovenType)
+    UndescribedNativeResult(UnknownCode) UnseenCode(UnknownCode) UncheckedConversionOfUntracked(UnprovenType) DataFromOutside(UnknownCode) ThrownByRunTime(UnknownCode)
+    ParameterOfEscapedFunction(UnknownCode) ContentsOfEscapedObject(UnknownCode) ResultOfUnknownCallee(UnknownCode) ObjectWithoutLayout(UnprovenType)
+    Untracked(UnprovenType) LayoutOutsideFamily(UnprovenType)
+}
+enum CheckCause { Unknown UnknownObject UnknownCallee UnprovenContents MayFail LimitReached ResultDisabled AddedByPass }
+enum UnseenCodeCause { Unknown EvaluatesText ImportsUncompiledModule LoadsModuleByName RunsUnseenCode OptionAdmitsCode LimitReached FlowResultDisabled RunsMachineCode LoadsCodeByName }
+flags BuiltinUse { Tested Read Called Constructed Written Escaped }
+enum FeatureUseKind { Named Unnamed }
+enum LocaleUseKind { Unknown HostDefault Constant }
+enum TypeTestFailure { TakesGenericPath Throws }
+enum ArrivalStamp { None Open Complete }
+flags ArrivalLayoutFlags { IsDerived }
+flags ArrivalFieldFlags { IsOptional }
+
+enum ImageVerdict {
+    Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned AlreadyInUse LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
+    MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress OutsideItsSegments CannotReadExecutable
+}
+enum DeclineKind (| engine reason: Type) {
+    Unknown(none) HotCallNotInlined(none) HotCallNotResolved(CallDeclineReason) GeneratorLoopNotFused(GeneratorFusionDeclineReason)
+    ArrayChainNotFused(ArrayChainDeclineReason) StringBuilderNotCreated(StringBuilderDeclineReason) StringBuildersNotJoined(none)
+    AllocationNotSunk(AllocationEscapeReason) TypedResultNotSelected(TypedResultDeclineReason) IterationNotExpandedByClass(none)
+    LoopNotVersioned(LoopDeclineReason) LoopBoundNotClamped(LoopDeclineReason) StretchNotGuarded(none) ResultNodeInterpreted(InterpretedCause)
+    GenericVersionNotCreated(none)
+}
+enum TypedResultDeclineReason {
+    None NoTarget TargetIsNotModeledByFlow TargetHasNoTypedPart PromiseIsNotAwaitedAtOnce HostHasNoBytesForm RowsHaveSeveralLayouts AnotherSourceIsOpen
+}
+enum CallDeclineReason { None UnknownCallee CalleeNotCallable CalleeNeedsClosure UnknownMember NeedsTest EffectsBeforeCall TooManyCallees }
+enum GeneratorFusionDeclineReason {
+    Unknown None BodyIsNotDescribed HasNoStep SeveralLiveInstances StepMayReachOtherGenerator MayEscapeBeforeStep BodyIsBoundToFrame BodyIsTooLarge
+    CallerIsTooLarge InlineDepth
+}
+enum ArrayChainDeclineReason {
+    Unknown None SourceIsNotPristine CallbackIsNotAFunction CalleeIsUnknown CallbackSeesIntermediateArray CallbacksInterfere SkippedCallIsObservable
+    CallbackWritesSource ValueBetweenLinksInterferes
+}
+enum StringBuilderDeclineReason { Unknown Created TooFewAppends TwoStatesLive StateIsNotFirstOperand WebLimit }
+enum LoopDeclineReason {
+    None NotInnermost SeveralEntries NoSingleLikelyPath UncloneableValue NothingToHoist NotCounted CounterMayWrap BoundNotInvariant TestNotOnLikelyPath
+    EffectsBeforeTopTest LimitReached
+}
+enum InterpretedCause {
+    None RepeatedRecursion LayoutIsNotModeled FieldTypeIsNotTestable
+}
+flags AllocationEscapeReason {
+    Returned Thrown StoredInUnknownMemory PassedToUnknownCode RetainedByCallee StoredInEscapingObject LeakedByContainer LimitReached
+}
+enum AllocationHeapCause {
+    None NotTracked HasNoFrameForm Escapes SeveralLiveInstances HasUntrackedAlias LiveAcrossSuspension LiveAtReturnCall HeldByHeapCell HeldAcrossIterations ChangedByUse
+    SeenByNativeCode ClosureIsNotOnlyCalled LayoutDefersClosures FieldsCreatedLater ExceedsLimit MaterializationDoesNotPay
+}
+enum AllocationOutcome (| engine rank: UInt32, refinesHeap: Bool) {
+    Unknown(0, false) Removed(1, false) Heap(6, false) Frame(2, false) FrameUntilMaterialized(3, false) Slim(5, true) Deferred(4, true)
+}
+enum AllocationKind {
+    Other Object Array Closure Environment Arguments Rest IteratorResult Generator Promise BoundFunction StringRange Collection
+}
+enum ResultSection {
+    Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed WorkerEntries Accesses AccessCounts TypeTests RemainingChecks
+    Declines AllocationRemarks Losses Functions OperationCounts PassTimes Statistics LimitValues Symbols ObfuscatedSites
+    ArrivalSites ArrivalSiteLayouts ArrivalLayouts ArrivalLayoutFields
+}
+
+record TextRange abi { offset: UInt32 length: UInt32 }
+record SourceLocation abi { module: Module? position: UInt32 }
+record Witness abi { function: Function? value: Value? location: SourceLocation }
+record UserDiagnosticRecord abi {
+    kind: UserDiagnosticKind function: Function? block: Block? value: Value? layout: Layout? limit: LimitID count: UInt32 location: SourceLocation
+    message: TextRange origin: SourceLocation siteKind: TypeSiteKind minimum: Double maximum: Double
+}
+record InternalErrorRecord abi {
+    kind: InternalErrorKind function: Function? block: Block? value: Value? layout: Layout? limit: LimitID pass: PassID count: UInt32
+    location: SourceLocation message: TextRange
+}
+record UnseenCodeRecord abi { cause: UnseenCodeCause builtin: Builtin? witness: Witness }
+record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness }
+record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
+record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
+record WorkerEntryRecord abi { path: TextRange isGuess: UInt32 hasOptions: UInt32 witness: Witness }
+record AccessRecord abi {
+    location: SourceLocation kind: AccessKind level: KnowledgeLevel cause: UnprovenCause limit: LimitID layout: Layout? copies: UInt32 distance: UInt32 witness: Witness
+    function: Function? illTypedCause: IllTypedCause cost: AccessCost hasOtherRoots: UInt32 reserved: UInt32 heat: Double
+}
+record AccessCountRecord abi { module: Module accesses: UInt32[3] calls: UInt32[3] typeTests: UInt32 accessCosts: UInt32[4] }
+record TypeTestRecord abi { location: SourceLocation function: Function? failure: TypeTestFailure copies: UInt32 }
+record RemainingCheckRecord abi { id: UInt64 witness: Witness origin: SourceLocation cause: CheckCause siteKind: TypeSiteKind }
+record DeclineRecord abi { kind: DeclineKind limit: LimitID count: UInt32 reason: UInt32 witness: Witness }
+record AllocationRemarkRecord abi {
+    location: SourceLocation forcedBy: SourceLocation outcome: AllocationOutcome copies: UInt32 forcingOperation: TextRange reasons: AllocationEscapeReason
+    limit: LimitID function: Function? kind: AllocationKind cause: AllocationHeapCause
+}
+record LossRecord abi { limit: LimitID stage: Stage layout: Layout? count: UInt32 witness: Witness }
+record FunctionReportRecord abi {
+    source: Function? role: TextRange codeBytes: UInt32 accesses: UInt32[3] calls: UInt32[3] firstOperation: UInt32 operationCount: UInt32
+    accessCosts: UInt32[4]
+}
+record OperationCountRecord abi { name: TextRange count: UInt32 }
+record PassTimeRecord abi { pass: PassID reserved: UInt32 runs: UInt64 wallNanoseconds: UInt64 cpuNanoseconds: UInt64 }
+record ObfuscatedSiteRecord abi { function: UInt32 site: UInt32 location: SourceLocation name: TextRange }
+record ArrivalSiteRecord abi {
+    number: UInt32 location: SourceLocation function: Function? operation: TextRange kind: AccessKind level: KnowledgeLevel cause: UnprovenCause
+    firstExpectedLayout: UInt32 expectedLayoutCount: UInt32 stamp: ArrivalStamp
+}
+record ArrivalLayoutRecord abi {
+    layout: Layout base: Layout? kind: TextRange name: TextRange firstField: UInt32 fieldCount: UInt32 flags: ArrivalLayoutFlags
+}
+record ArrivalLayoutFieldRecord abi { name: TextRange flags: ArrivalFieldFlags }
+
+enum CompileAction { Compile VerifyOnly CheckOnly }
+enum Architecture { ARM64 X86_64 }
+enum ReferenceWidth { Wide Narrow }
+enum ImageForm { Absolute PositionIndependent }
+enum MismatchPolicy { Silent Report }
+enum HeatOverride { None OnlyLoopsAreHot EverythingIsHot EverythingIsCold NothingIsHottest Shuffled }
+enum FlowOverride { None Widened }
+flags CheckSet { VerifyEachPass Validate ValidateBackEnd ValidateReferences VerifyEachStage ValidateReferenceGuards FlowFixpoint UsedValuesAreListed ClaimsToBackEnd MovedLoads }
+flags ReportSet { Flow Declines Symbols Allocations Functions Arrivals }
+flags TestingSwitch { IgnoreBranchHints ForceGCSlowPaths MayEncounterMasqueradesAsUndefined DropGuard IgnoreExpectedTypes DropReferenceGuards ProveEverything NoCallConvertsCells NoLayoutIsMadeSeldom DelayFlowRules DelayOtherFlowRules CheckProofsAtRunTime FailPredictions FoldLoadsPastCollections OverwriteDeadValuesAtCollections ShuffleExpectedTypes }
+enum Sabotage {
+    None
+    NoCallCollects StoresNeedNoBarrier
+    NoCallWrites FieldsNeverChange ClosureInFrameKeepsNoCaptures RangesEndOneEarly
+    WritesMayRunTwice SharedPatternsReachCalls SharedPatternsAreSticky SharedPatternsAdvance SharedPatternsAreUsedInUnknownWays FirstStepsStandUnderHandlers GeneratorsAreReadBeforeTheirFirstStep StepsInCyclesAreFirstSteps RemovedLoopsHaveEffects PromotedEnvironmentsAreMadeOften FlooredQuotientsHaveAnyDivisor RoundedQuotientsHaveAnySign SkippedBlocksHaveEffects RemovedFieldsHaveUnknownReaders ProofsOutlastWritesToTheirSubject
+    RemovedLoopsMayNotEnd GeneratorHeadsHaveEffects
+    ProofsOutlastWritesToEverything ErasedValuesHaveEffects
+    WalkedLiteralsAreAsTheyWereMade WalkedKeysStandInTheFirstOrder WrittenRecordsHaveTheirKeysInOneOrder WrittenRecordsStayAsTheyWere TaggedMakersAreOnlyConstructed TaggedMakersAnswerWithTheirOwnObject FusedConversionsRunCode UnfinishedObjectsPassForFinished BirthsEndWithoutALook
+    FunctionPassFailsAssertion FunctionPassReadsBadAddress FunctionPassRunsOutOfStack FunctionPassNeverEnds ProgramPassFailsAssertion FlowAnalysisFailsAssertion CodeGenerationFailsAssertion ImageBuildingFailsAssertion LoweringPanics
+    HoistedReadsAreStoredInTheirLoops CarriedVariablesAreWrittenByOthers DelayedStoresAreLeftOut TailCallsSwapTheirLastArguments RememberedReadsOutlastStoresThroughOtherNames RememberedReadsOutlastWrites FusedGeneratorsAreSeenByOthers DelayedStoresPassWhatMayThrow ParsedMembersComeOnce GrowingTextsAreHeldInOneState
+    PartsOfViewsEndOneLater
+    StoredValuesAreNeverRead
+    WhatIsGivenTakesThePlaceOfWhatComes
+}
+flags Instrumentation { CountBranches CountArrivals }
+flags AdmittedCode { Inspector }
+flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage }
+flags OutputOptions { Obfuscate }
+record SwitchRange abi { firstID: UInt32 count: UInt32 }
+record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }
+record PredictionFailureWords abi { period: UInt32 seed: UInt32 }
+record BisectionSwitches abi {
+    disabledFlowResults: UInt64 disabledPasses: UInt64[4] disabledSelectionRules: UInt64 disabledBackEndSwitches: UInt64 switchRange: SwitchRange
+    droppedGuard: DroppedGuardWords predictionFailure: PredictionFailureWords
+}
+record TargetOptions abi { features: UInt64 featuresKeptOnlyWhenNamed: UInt64[8] architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
+record CompileOptions abi {
+    bisection: BisectionSwitches target: TargetOptions loweredLimitValue: UInt64 sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
+    action: CompileAction mismatchPolicy: MismatchPolicy checks: CheckSet reports: ReportSet testing: TestingSwitch instrumentation: Instrumentation
+    heatOverride: HeatOverride loweredLimit: LimitID threadCount: UInt32 layoutSeed: UInt32 admittedCode: AdmittedCode output: OutputOptions
+    excludedCode: ExcludedCode sabotage: Sabotage flowOverride: FlowOverride
+}
+
+word "validate" sets checks Validate
+word "check" "<name>,.." "check" names checks
+word "verify-only" sets action VerifyOnly
+word "check-only" sets action CheckOnly
+word "disable" "<switch>,.." custom applyDisable listSwitches
+word "only-passes" "<PassID>,.." "pass" custom applyOnlyPasses listOptionalPasses
+word "disable-in" "<first>[:<count>]" custom applyDisableIn
+word "limit" "<LimitID>:<n>" "limit" custom applyLimit listLimits
+word "heat" "<HeatOverride>" "heat override" names heatOverride
+word "flow" "<FlowOverride>" "flow override" names flowOverride
+word "testing" "<name>,.." "testing switch" custom applyTesting listTestingSwitches
+word "sabotage" "<Sabotage>" "sabotage" names sabotage
+word "count-branches" sets instrumentation CountBranches
+word "count-arrivals" sets instrumentation CountArrivals
+word "drop-guard" "<Opcode>:<n>" "opcode" custom applyDropGuard
+word "references" "narrow|wide" "reference width" names target::referenceWidth Narrow Wide
+word "image-form" "absolute|position-independent" "image form" names target::imageForm Absolute PositionIndependent
+word "type-errors" "silent|log" "type error policy" names mismatchPolicy Silent Report
+word "layout-seed" "<n>" number layoutSeed
+word "threads" "<n>" number threadCount "the number of threads is at least 1"
+word "report" "<name>,.." "report" names reports
+word "admit" "<name>,.." "admitted code" names admittedCode
+word "exclude" "<name>,.." "excluded code" names excludedCode
+word "obfuscate" sets output Obfuscate
+word "erase-types" frontEnd
+word "out" "<file>" frontEnd

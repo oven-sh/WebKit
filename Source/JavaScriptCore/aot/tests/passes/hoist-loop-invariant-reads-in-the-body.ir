@@ -1,0 +1,88 @@
+# A block of a loop other than its header may not run at all, and that a variable is stored before it is read may hang on a test in front of the read: from there only a read of what cannot change while the function runs leaves the loop
+# FORM: Prepared
+# RUN: pass HoistLoopInvariantReads
+# STATISTIC: HoistLoopInvariantReadsChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="neverStored" declared={type=number} flow={writers=AllKnown stores=Never initialization=SetAtCreation isUnchangedDuringActivation=true}
+variable g1 name="storedOnce" declared={type=number} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+
+function f0 name="readInBody" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = GetModuleVariable variable=g0
+    v4 = ToBoolean v3
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK: b1():
+# CHECK-NOT: GetModuleVariable
+}
+
+function f1 name="readInInnerBody" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b5()
+  b2():
+    Jump -> next b3()
+  b3():
+    LoopHint
+    Branch v1 -> taken b4(), notTaken b1()
+  b4():
+    v4 = GetModuleVariable variable=g0
+    v5 = ToBoolean v4
+    Jump -> next b3()
+  b5():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK: b1():
+# CHECK-NOT: GetModuleVariable
+}
+
+function f2 name="storedOnceStaysBehindWhateverLetsItRun" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    v3 = GetModuleVariable variable=g1
+    v4 = ToBoolean v3
+    Jump -> next b1()
+  b3():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b2():
+# CHECK-NEXT: GetModuleVariable variable=g1
+}
+
+function f3 name="closedOnlyByWayBack" parameters=[{type=anything}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    Jump -> next b2()
+  b2():
+    LoopHint
+    Branch v1 -> taken b3(), notTaken b5()
+  b3():
+    v4 = GetModuleVariable variable=g0
+    Branch v2 -> taken b2(), notTaken b4()
+  b4() frequency=Unlikely:
+    v5 = Call v0, v4
+    Jump -> next b1()
+  b5():
+    Return v0
+# The read leaves the loop, and is made again behind the call at each way back.
+# CHECK: b0(
+# CHECK-NEXT: Jump -> next b1()
+# CHECK: b1():
+# CHECK-NEXT: GetModuleVariable variable=g0
+# CHECK: b3():
+# CHECK-NOT: GetModuleVariable
+}

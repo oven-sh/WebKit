@@ -68,7 +68,7 @@ static JSC_DECLARE_HOST_FUNCTION(callIntlDateTimeFormat);
 static JSC_DECLARE_HOST_FUNCTION(constructIntlDateTimeFormat);
 
 IntlDateTimeFormatConstructor::IntlDateTimeFormatConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callIntlDateTimeFormat, constructIntlDateTimeFormat)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callIntlDateTimeFormat), JSC_REGISTERED_HOST_FUNCTION(constructIntlDateTimeFormat))
 {
 }
 

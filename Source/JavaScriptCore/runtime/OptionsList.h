@@ -115,6 +115,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useBaselineJIT, true, Normal, "allows the baseline JIT to be used if true"_s) \
     v(Bool, useDFGJIT, jitEnabledByDefault(), Normal, "allows the DFG JIT to be used if true"_s) \
     v(Bool, useRegExpJIT, jitEnabledByDefault(), Normal, "allows the RegExp JIT to be used if true"_s) \
+    v(Bool, validateRegExpFlatProgram, false, Normal, "runs both the flat program and the bytecode interpreter and crashes if they differ"_s) \
     v(Bool, useDOMJIT, jitEnabledByDefault(), Normal, "allows the DOMJIT to be used if true"_s) \
     v(Bool, useRegExpLookbehindJIT, true, Normal, "allows patterns containing lookbehind assertions to use the RegExp JIT"_s) \
     v(Bool, useRegExpAlternationFactoring, true, Normal, "factors shared prefixes out of wide alternations and folds wide top-level alternations into a group"_s) \
@@ -136,6 +137,7 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Bool, crashOnDisallowedVMEntry, ASSERT_ENABLED, Normal, "Forces a crash if we attempt to enter the VM when disallowed"_s) \
     v(Bool, crashIfCantAllocateJITMemory, false, Normal, nullptr) \
+    v(Bool, crashIfInterpreterIsUsed, false, Normal, "Crash, printing the name of the code, when bytecode is about to run in the interpreter."_s) \
     v(Unsigned, structureHeapSizeInKB, 0, Normal, "Override for Structure Heap size (in KBs) if non-zero"_s) \
     v(Unsigned, jitMemoryReservationSize, 0, Normal, "Set this number to change the executable allocation size in ExecutableAllocatorFixedVMPool. (In bytes.)"_s) \
     v(Size, jitMemoryReservationAddress, 0, Restricted, "If non-zero, we will attempt to allocate JIT memory at the address provided and crash if we cannot.") \
@@ -144,6 +146,24 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceCodeBlockLiveness, false, Normal, nullptr) \
     v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
+    \
+    v(Bool, keepDenseArraysDense, false, Normal, "For testing. Arrays get the storage they get in a VM that runs ahead-of-time compiled code: a dense array stays Int32, Double or Contiguous."_s) \
+    v(Bool, useAOT, false, Normal, "Run ahead-of-time compiled code from the image the embedder registers. Turns the JIT off."_s) \
+    v(OptionString, aotImagePath, nullptr, Normal, "jsc shell and testaot only. Path of an image written by testaot compile. Implies useAOT."_s) \
+    v(Unsigned, markedBlockCageSizeInMB, 32 * 1024, Normal, "With useAOT: the address space reserved for the cells of each heap, a power of two, at most 32768. 0: none is reserved, and blocks come from fastMalloc as without useAOT."_s) \
+    v(Bool, useNarrowReferenceScan, true, Normal, "With useAOT: the collector's scan of stacks and registers also takes each 32-bit half of a word for a reference to a cell. Tests turn it off to show that compiled code keeps a pointer next to each such reference."_s) \
+    v(Bool, useAOTPerfMap, false, Normal, "Linux. When running: the code of the image is copied to anonymous memory and /tmp/perf-<pid>.map names each function in it, so that perf, which reads such a map for anonymous memory alone, shows compiled functions by name."_s) \
+    v(OptionString, aotCountsPath, nullptr, Normal, "The counts of the AoT run time are written to this path at exit. %p stands for the process ID."_s) \
+    v(Bool, validateAOTRuntime, false, Normal, "Run the validators of the AoT run time on any image and crash on a mismatch. An image compiled with validation runs them without this option."_s) \
+    v(Bool, logAOTPhaseTimes, false, Normal, "Log the wall time of each AOT compiler phase and the CPU time of the process during it."_s) \
+    v(Bool, verifyAOTProgram, true, Normal, "When compiling: verify the program as read, its placement, its representations and the program handed to the back end. No byte of the output depends on it. Bun turns it off outside its own tests."_s) \
+    v(OptionString, dumpAOTIR, nullptr, Normal, "When compiling: print the IR of aotFunctionToDump, or of every function, at these points: AsRead, Prepared, Selected, Placed, or the name of a pass to print after. Comma-separated."_s) \
+    v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \
+    v(Bool, dumpAOTDisassembly, false, Normal, "Dump the machine code the AOT compiler generates."_s) \
+    v(OptionString, aotFunctionToDump, nullptr, Normal, "If set, dumpAOTIR, dumpAOTB3Graph and dumpAOTDisassembly only cover the functions of this name."_s) \
+    v(OptionString, aotMapFilePath, nullptr, Normal, "When compiling: write a map of the image (the location and key of each function, and the identifier of each inline cache slot) to this file, for symbolicating profiles."_s) \
+    v(Bool, useRegExpImageMode, false, Normal, "jsc and testRegExp. Yarr compiles every pattern as for an image, and that code runs. For running the regexp corpus against image mode."_s) \
+    v(Bool, dropLastFastVisitReferenceForTesting, false, Normal, "For testing. With verifyGC, or an image compiled with validation: the last cell that each inline visit of the collector marked counts as missed, so the check of inline visits crashes."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
@@ -479,6 +499,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, minHeapUtilization, 0.8, Normal, nullptr) \
     v(Double, minMarkedBlockUtilization, 0.9, Normal, nullptr) \
     v(Unsigned, slowPathAllocsBetweenGCs, 0, Normal, "force a GC on every Nth slow path alloc, where N is specified by this option"_s) \
+    v(Bool, useEdenCollectionsAtSlowPathAllocs, false, Normal, "the GCs that slowPathAllocsBetweenGCs forces are eden collections, which depend on write barriers"_s) \
     /* WARNING: this option is important for compatibility be *VERY* careful when lowering it. See: rdar://145585141 and https://bugs.webkit.org/show_bug.cgi?id=289330 */ \
     /* Cap on the bytecode RegExp interpreter's backtracking-context pool (allocated a page at a time, only while a match runs, and released after it). Each quantified-group iteration takes a context sized by the pattern's call frame, which grew with the ParenthesesOnce/BackReference slots and the alternation folding; 192MB keeps the reach interpreter-only patterns had at 128MB (prism/highlight.js tokenizers over ~600KB inputs). */ \
     v(Unsigned, maxRegExpStackSize, 192 * MB, Normal, nullptr) \

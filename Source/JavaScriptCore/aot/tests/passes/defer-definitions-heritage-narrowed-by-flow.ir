@@ -1,0 +1,62 @@
+# class Plain {}   class Derived extends Plain {}   class Checked extends Plain {}
+# The look at the heritage gives null or an object. Flow knows that the heritage of Derived is a class, so it says "object" with a cast between the look and the definition.
+# The cast does nothing, so the record still says all that the definition does: look, cast and definition go, and the variable is born as the constructor.
+# A Check on the way may throw, which no record says: Checked keeps its definition.
+# FORM: Prepared
+# RUN: pass DeferDefinitions
+# STATISTIC: ClassesDeferredInVariables = 2
+# CHECK: outcome: Changed
+# CHECK: variable g1 name="Derived" module=m0 declared={type=f2} initialization=Function function=f2
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: layout=L0
+# CHECK-NOT: layout=L1
+# CHECK: = ResolveHeritage
+# CHECK-NEXT: = Check
+# CHECK: = NewClass {{*}}layout=L2
+# CHECK-NOT: ResolveHeritage
+# CHECK: Return
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="Plain" module=m0 constructor=f1 flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Derived" module=m0 base=L0 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce}
+layout L2 kind=Instance name="Checked" module=m0 base=L0 constructor=f3 flags=[HasHeritage] flow={baseState=Layout base=L0} classFlow={evaluations=AtMostOnce}
+variable g0 name="Plain" module=m0 declared={type=f1} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g1 name="Derived" module=m0 declared={type=f2} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+variable g2 name="Checked" module=m0 declared={type=f3} flow={writers=AllKnown stores=AtMostOnce initialization=StoredBeforeEveryRead}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    PutModuleVariable v2 variable=g0
+    v4 = GetModuleVariable variable=g0
+    v5 = ResolveHeritage v4
+    v6 = AssumeType v5 provenType=object
+    v7 = NewClosure function=f2
+    v8 = NewClass v7, v4, v6 layout=L1
+    v9 = FinishClass v8 layout=L1
+    PutModuleVariable v9 variable=g1
+    v11 = GetModuleVariable variable=g0
+    v12 = ResolveHeritage v11
+    v13 = Check v12 expectedType=object
+    v14 = NewClosure function=f3
+    v15 = NewClass v14, v11, v13 layout=L2
+    v16 = FinishClass v15 layout=L2
+    PutModuleVariable v16 variable=g2
+    Return
+}
+function f1 name="Plain" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="Derived" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    Return v3
+}
+function f3 name="Checked" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}

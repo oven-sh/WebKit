@@ -26,7 +26,7 @@
 #include "config.h"
 #include "FTLOutput.h"
 
-#if ENABLE(FTL_JIT)
+#if ENABLE(B3_JIT)
 
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
@@ -46,8 +46,16 @@ namespace JSC { namespace FTL {
 
 using namespace B3;
 
+#if ENABLE(FTL_JIT)
 Output::Output(State& state)
     : m_proc(*state.proc)
+{
+}
+#endif
+
+Output::Output(B3::Procedure& proc)
+    : m_proc(proc)
+    , m_blockLinks { BlockLink { } }
 {
 }
 
@@ -62,6 +70,18 @@ LBasicBlock Output::newBlock()
 {
     LBasicBlock result = m_proc.addBlock(m_frequency);
 
+    if (ordersBlocksByIndex()) {
+        unsigned link = result->index() + 1;
+        unsigned next = m_nextBlock ? m_nextBlock->index() + 1 : 0;
+        if (m_blockLinks.size() <= link)
+            m_blockLinks.grow(link + 1);
+        unsigned previous = m_blockLinks[next].previous;
+        m_blockLinks[link] = { result, previous, next };
+        m_blockLinks[previous].next = link;
+        m_blockLinks[next].previous = link;
+        return result;
+    }
+
     if (!m_nextBlock)
         m_blockOrder.append(result);
     else
@@ -72,6 +92,15 @@ LBasicBlock Output::newBlock()
 
 void Output::applyBlockOrder()
 {
+    if (ordersBlocksByIndex()) {
+        Vector<LBasicBlock, 32> blocks;
+        blocks.reserveInitialCapacity(m_blockLinks.size() - 1);
+        for (unsigned link = m_blockLinks[0].next; link; link = m_blockLinks[link].next)
+            blocks.append(m_blockLinks[link].block);
+        m_proc.setBlockOrder(blocks);
+        return;
+    }
+
     m_proc.setBlockOrder(m_blockOrder);
 }
 
@@ -308,10 +337,12 @@ LValue Output::doubleTrunc(LValue operand)
     return m_block->appendNew<B3::Value>(m_proc, B3::FTrunc, origin(), operand);
 }
 
+#if ENABLE(FTL_JIT)
 LValue Output::doubleUnary(DFG::Arith::UnaryType type, LValue value)
 {
     return callWithoutSideEffects(B3::Double, DFG::arithUnaryFunction(type), value);
 }
+#endif
 
 LValue Output::doubleStdPow(LValue xOperand, LValue yOperand)
 {
@@ -1012,5 +1043,5 @@ TypedPointer Output::baseIndex(IndexedAbstractHeap& heap, LValue base, LValue in
 
 } } // namespace JSC::FTL
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(B3_JIT)
 

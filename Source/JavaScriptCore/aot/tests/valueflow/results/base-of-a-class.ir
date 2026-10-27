@@ -1,0 +1,107 @@
+# class A { a = 1 }  class B extends A { b = 2 }  class Other {}  class Either extends (Math.random() ? A : Other) {}  class Outside extends outside {}  class Bare extends null {}  class Failure extends Error {}  new B()
+# The base of a class is what arrives as the heritage of its definition. A class without a heritage, and one that extends null, has none. One class of the program is a proven base,
+# and the class below lists the fields of that base as inherited entries. The constructor of one built-in class is a proven built-in base.
+# Two classes prove nothing, whatever the front end expects the base to be, and neither does a value from code that nobody compiles: nothing is said, and no field is inherited
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}flow={{*}}baseState=None
+# CHECK: layout L1 {{*}}{key="a" {{*}}IsInherited{{*}}originLayout=L0{{*}}flow={{*}}baseState=Layout base=L0
+# CHECK: layout L2 {{*}}flow={{*}}baseState=None
+# CHECK: layout L3 kind=Instance name="Either"
+# CHECK-NOT: IsInherited
+# CHECK-NOT: baseState=
+# CHECK: layout L4 kind=Instance name="Outside"
+# CHECK-NOT: baseState=
+# CHECK: layout L5 {{*}}flow={{*}}baseState=None
+# CHECK: layout L6 {{*}}flow={{*}}baseState=BuiltinClass baseClass=Error
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="A" constructor=f1 fields=[{key="a" declared={type=anything}}]
+layout L1 kind=Instance name="B" base=L0 constructor=f2 fields=[{key="b" declared={type=anything}}] flags=[HasHeritage]
+layout L2 kind=Instance name="Other" constructor=f3
+layout L3 kind=Instance name="Either" base=L0 constructor=f4 flags=[HasHeritage]
+layout L4 kind=Instance name="Outside" constructor=f5 flags=[HasHeritage]
+layout L5 kind=Instance name="Bare" constructor=f6 flags=[HasHeritage]
+layout L6 kind=Instance name="Failure" constructor=f7 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = ResolveHeritage v2
+    v4 = NewClosure function=f2
+    v5 = NewClass v4, v2, v3 layout=L1
+    v6 = FinishClass v5 layout=L1
+    v7 = NewClosure function=f3
+    v8 = NewClass v7 layout=L2
+    v9 = FinishClass v8 layout=L2
+    v10 = Builtin builtin=MathRandom
+    v11 = Call v10
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v2)
+  b2():
+    Jump -> next b3(v9)
+  b3(v13):
+    v14 = ResolveHeritage v13
+    v15 = NewClosure function=f4
+    v16 = NewClass v15, v13, v14 layout=L3
+    v17 = FinishClass v16 layout=L3
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="outside" [isFreeName]
+    v20 = ResolveHeritage v19
+    v21 = NewClosure function=f5
+    v22 = NewClass v21, v19, v20 layout=L4
+    v23 = FinishClass v22 layout=L4
+    v24 = Null
+    v25 = ResolveHeritage v24
+    v26 = NewClosure function=f6
+    v27 = NewClass v26, v24, v25 layout=L5
+    v28 = FinishClass v27 layout=L5
+    v29 = Builtin builtin=Error
+    v30 = ResolveHeritage v29
+    v31 = NewClosure function=f7
+    v32 = NewClass v31, v29, v30 layout=L6
+    v33 = FinishClass v32 layout=L6
+    v34 = Construct v6
+    Return
+}
+function f1 name="A" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="a" mode=Strict
+    Return v2
+}
+function f2 name="B" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L1
+    v4 = Integer integer=2
+    PropSet v3, v4 key="b" mode=Strict
+    Return v3
+}
+function f3 name="Other" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f4 name="Either" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L3
+    Return v3
+}
+function f5 name="Outside" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L4
+    Return v3
+}
+function f6 name="Bare" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L5
+    Return v3
+}
+function f7 name="Failure" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L6
+    Return v3
+}

@@ -1,0 +1,20 @@
+# const pair = { left: 1 }; take(pair.left)
+# The literal is born with `left`, so the read surely finds it, and what it finds is what was stored there.
+# FORM: AsRead
+# RUN: pipeline AnalyzeFlow
+# CHECK: PropGet
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Pair" fields=[{key="left" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = PropGet v1 key="left"
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2
+    Return
+}
+function f1 name="take" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

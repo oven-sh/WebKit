@@ -1,0 +1,6 @@
+# values handed over for later destruction are all destroyed by the end of the build, at width one at once
+# RUN(ONE): build-context destroy-later 1
+# RUN(TWO): build-context destroy-later 2
+# ONE: destroyed [0 1 2 3 4]
+# ONE-NEXT: destroyed at once: yes
+# TWO: destroyed [0 1 2 3 4]

@@ -1,0 +1,36 @@
+# Inline code for a built-in keeps the mark of a demoted tail call, and so does the call on the miss side of inline code that may miss
+# FORM: Prepared
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass Select
+# STATISTIC: InlineBuiltinGroups = 4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="markedWhole" parameters=[{type=Map<anything, anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=MapPrototypeHas/0 @0 tail
+    Return v2
+# CHECK: = CallInline v0, v1 inlineBuiltin=MapHas overload=MapPrototypeHas/0 @0 tail
+}
+
+function f1 name="whole" parameters=[{type=Map<anything, anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=MapPrototypeHas/0
+    Return v2
+# CHECK-NOT: @{{*}} tail
+# CHECK: = CallInline v0, v1 inlineBuiltin=MapHas overload=MapPrototypeHas/0
+# CHECK-NOT: @{{*}} tail
+}
+
+function f2 name="markedTwoWay" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0 @0 tail
+    Return v2
+# CHECK: TryCallInline v0, v1 overload=ArrayPrototypeAt/0 -> done [[done2]](), miss [[miss2]]()
+# CHECK: [[miss2]]()
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0 @0 tail
+}
+
+function f3 name="twoWay" parameters=[{type=Array<anything, pristine[Storage]>}, {type=number}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+    Return v2
+# CHECK-NOT: @{{*}} tail
+# CHECK: = CallBuiltin v0, v1 overload=ArrayPrototypeAt/0
+# CHECK-NOT: @{{*}} tail
+}

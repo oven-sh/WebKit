@@ -25,6 +25,8 @@
 
 #include "config.h"
 
+#include "AOTBuiltinModules.h"
+#include "AOTRemovableFeature.h"
 #include "CodeBlock.h"
 #include "CompilationResult.h"
 #include "Debugger.h"
@@ -391,7 +393,7 @@ static void setupLLInt(CodeBlock* codeBlock)
 static void setupJIT(VM& vm, CodeBlock* codeBlock)
 {
 #if ENABLE(JIT)
-    CompilationResult result = JIT::compileSync(vm, codeBlock, JITCompilationMustSucceed);
+    CompilationResult result = callRemovable<RemovableFeature::JIT, RemovedFeatureStub::Abort, &JIT::compileSync>(vm, codeBlock, JITCompilationMustSucceed);
     RELEASE_ASSERT(result == CompilationResult::CompilationSuccessful);
 #else
     UNUSED_PARAM(vm);
@@ -415,6 +417,13 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     // Nothing runs without a CodeBlock, and this is the only caller of newCodeBlockFor().
     if (Options::disallowNonStaticCode() && source().provider()->provenance() != SourceProvenance::Static) [[unlikely]] {
         throwNonStaticCodeError(scope->realm(), throwScope);
+        return;
+    }
+#endif
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && AOT::refusesToInterpret(scope->realm(), *this)) [[unlikely]] {
+        throwScope.release();
+        AOT::throwLibraryFunctionNotCompiled(scope->realm(), *this);
         return;
     }
 #endif

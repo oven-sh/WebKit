@@ -1,0 +1,33 @@
+# The copy of the head returns its argument, a string, and the caller tests the result for a number or undefined. Nothing enters the side that passes.
+# Its first block stands in a try, and behind the try the value is tested once more. The handler and what follows it go with the block.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsInlined = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=string}, {type=function}] results=[{type=anything}] {
+    v2 = CallDirect v0 function=f1
+    v3 = TypeTest v2 testedType=undefined|number
+    TestAndBranch v3 -> taken b1(| 0), notTaken b6(| 0)
+  b1(v4: undefined|number) handler=b2():
+    v5 = Call v1, -, v4
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    Jump -> next b3()
+  b3():
+    v6 = TypeTest v4 testedType=number
+    TestAndBranch v6 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v7: number):
+    Return v7
+  b5(v8: undefined):
+    Return v8
+  b6(v9: null|boolean|string|symbol|bigint|object):
+    Return v9
+# CHECK-NOT: handler=
+# CHECK-NOT: CatchHandler
+# CHECK-NOT: testedType=number
+}
+function f1 name="same" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

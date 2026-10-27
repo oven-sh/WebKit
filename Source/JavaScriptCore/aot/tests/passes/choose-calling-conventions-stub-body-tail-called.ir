@@ -1,0 +1,19 @@
+# A jump into a stub body would leave with the saved registers of another function, so a function that is tail called stays a library function
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# CHECK: function f2 name="fastPath"{{*}}role=Library
+# CHECK-NOT: role=StubBody
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="firstCaller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0, v0, v0 function=f2
+    Return v1
+}
+function f1 name="secondCaller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallDirect v0, v0, v0 function=f2
+    ReturnCall v1 requirement=Allowed
+}
+function f2 name="fastPath" role=Library enclosingRuntimeFunction=131087 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}
+runtimefunction id=131087 function=f2

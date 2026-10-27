@@ -1,0 +1,49 @@
+# The stub that calls a value finds what is no function, and the error it throws names the value, not the callee's name in the source: a call under a name is the call without one, however large the number of the name.
+# A callee that is known to be an object enters the stub behind its test for a cell.
+# In tail position the frame is gone when the stub runs, so the callee is tested in front of the call: outside fast code a closure that is as it was created passes in line and one stub knows every other function and throws
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls ThrowSites
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="callsUnderName" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -, v0 calleeName="input" @30
+    v2 = Call v0, v1, v1 calleeName="input" @40
+    v3 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v2 calleeName="input" @50
+    Return v3
+}
+# CHECK: f0: size=
+# CHECK-NEXT: stub CallValue.n1 x1
+# CHECK-NEXT: stub CallValueWithCount x1
+# CHECK-NEXT: stub CallValueWithoutThis.n1 x1
+# CHECK-NEXT: f1: size=[[tail]] frame=
+function f1 name="tailCallUnderName" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -, v0 calleeName="input" @30
+    ReturnCall v1
+}
+# CHECK-NEXT: stub CallValueWithoutThis.n1 x1
+# CHECK-NEXT: stub ThrowUnlessCallable x1
+# CHECK-NEXT: f2: size=[[tail]] frame=
+function f2 name="tailCallWithoutName" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Call v0, -, v0 @30
+    ReturnCall v1
+}
+# CHECK-NEXT: stub CallValueWithoutThis.n1 x1
+# CHECK-NEXT: stub ThrowUnlessCallable x1
+# CHECK-NEXT: f3: size=
+function f3 name="tailCallOfFunction" parameters=[{type=function}] results=[{type=anything}] {
+    v1 = Call v0, -, v0 calleeName="input" @30
+    ReturnCall v1
+}
+# CHECK-NEXT: stub CallValueCellWithoutThis.n1 x1
+# CHECK-NEXT: f4: size=
+function f4 name="callsObject" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = Call v0, -, v0 @30
+    v2 = Call v0, v1, v1 @40
+    v3 = Call v0, -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v2 @50
+    Return v3
+}
+# CHECK-NEXT: stub CallCellWithCount x1
+# CHECK-NEXT: stub CallValueCell.n1 x1
+# CHECK-NEXT: stub CallValueCellWithoutThis.n1 x1
+# CHECK-NEXT: statistic ThrowSites 0

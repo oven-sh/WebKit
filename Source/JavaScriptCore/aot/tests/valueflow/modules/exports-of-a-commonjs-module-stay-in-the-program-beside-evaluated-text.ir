@@ -1,0 +1,38 @@
+# helper.cjs: exports.twice = function twice(box) { .. };   main.cjs: require("./helper.cjs").twice(box); new Function(input)()
+# Text that Function is given runs in the global scope. Nothing there leads to a module object but process.mainModule, which the host answers with undefined in an image whose code does not name it.
+# So what a file exports has not escaped: the function is entered by its call alone. main-module-that-the-program-names-is-in-the-hands-of-evaluated-text.ir names the way
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText
+# RUN(WHY): valueflow-why escaped=f2
+# WHY: not held
+
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m1 kind=Require completes=true}]
+module m1 path="/helper.cjs" displayPath="helper.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m0
+    v1 = GetModuleVariable variable=g1
+    v2 = PropGet v1 key="twice"
+    v3 = Integer integer=21
+    v4 = Call v2, v1, v3
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = Builtin builtin=Function
+    v8 = Construct v7, -, v6
+    v9 = Call v8
+    v10 = Undefined
+    Return v10
+}
+function f1 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+    v0 = NewDictionary
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f2
+    PropSet v0, v2 key="twice" mode=Sloppy
+    v4 = Undefined
+    Return v4
+}
+function f2 name="twice" module=m1 parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

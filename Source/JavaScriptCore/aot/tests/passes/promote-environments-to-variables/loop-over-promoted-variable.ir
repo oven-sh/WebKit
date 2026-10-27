@@ -1,0 +1,89 @@
+# A promoted variable that only inlined closures use costs no memory access in a loop: the reads are forwarded and the stores go with the last read. A variable that a published closure reads is stored in every iteration
+# FORM: AsRead
+# RUN: pipeline NumberLiteralStrings
+# OPTIONS: check=VerifyEachPass
+# STATISTIC: EnvironmentsPromotedToVariables = 2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment name="private" fields=[{key=@"sum.0" declared={type=anything}}]
+layout L1 kind=Environment name="observed" fields=[{key=@"sum.0" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f3
+    Return
+}
+
+function f1 name="sumsPrivately" results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure v1 function=f2
+    Jump -> next b1(v0)
+  b1(v3: anything):
+    LoopHint
+    v5 = Call v2, -, v3
+    v6 = Integer integer=1
+    v7 = Add v3, v6
+    v8 = Integer integer=1000000
+    v9 = Less v7, v8
+    Branch v9 -> taken b1(v7), notTaken b2()
+  b2():
+    v10 = GetEnvironmentField v1 layout=L0 field=0
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="print" [isFreeName]
+    v13 = Call v12, -, v10
+    Return
+}
+function f2 name="add" kind=Arrow captures=[{type=env L0}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=0
+    v3 = Add v2, v1
+    PutEnvironmentField v0, v3 layout=L0 field=0
+    Return
+}
+
+function f3 name="sumsObserved" results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClosure v1 function=f4
+    v3 = NewClosure v1 function=f5
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="publish" [isFreeName]
+    v6 = Call v5, -, v3
+    Jump -> next b1(v0)
+  b1(v7: anything):
+    LoopHint
+    v9 = Call v2, -, v7
+    v10 = Call v5
+    v11 = Integer integer=1
+    v12 = Add v7, v11
+    v13 = Integer integer=1000000
+    v14 = Less v12, v13
+    Branch v14 -> taken b1(v12), notTaken b2()
+  b2():
+    Return
+}
+function f4 name="add" kind=Arrow captures=[{type=env L1}] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: env L1, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L1 field=0
+    v3 = Add v2, v1
+    PutEnvironmentField v0, v3 layout=L1 field=0
+    Return
+}
+function f5 name="observes" kind=Arrow captures=[{type=env L1}] results=[{type=anything}] {
+  b0(v0: env L1):
+    v1 = GetEnvironmentField v0 layout=L1 field=0
+    Return v1
+}
+
+# CHECK: variable g0 name="sum.0"{{*}}stores=Never{{*}}reads=NeverRead
+# CHECK: variable g1 name="sum.0"
+# CHECK-NOT: variable=g0
+# CHECK: LoopHint
+# CHECK-NOT: variable=g0
+# CHECK: LoopHint
+# CHECK: PutModuleVariable {{*}}variable=g1
+# CHECK: Branch
+# CHECK: name="observes"
+# CHECK: = GetModuleVariable {{*}}variable=g1

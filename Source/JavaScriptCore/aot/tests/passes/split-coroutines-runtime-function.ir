@@ -1,0 +1,55 @@
+# The ramp and the body of a coroutine of the library keep the runtime function that encloses it, those of a function of the program have none
+# FORM: Prepared
+# RUN: pass SplitCoroutines
+# STATISTIC: CoroutinesSplit = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+runtimefunction id=0 function=f0
+function f0 name="registered" role=Library enclosingRuntimeFunction=0 results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+# CHECK: role=Library enclosingRuntimeFunction=0
+}
+function f1 name="nestedGenerator" role=Library flags=[IsGenerator, TakesCallee] enclosingRuntimeFunction=0 parameters=[{type=number}] results=[{type=Generator}] {
+    InitialYield
+    v3 = Yield v1 @11
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v4
+  b2():
+    Return v4
+  b3():
+    Return v1
+# CHECK: role=CoroutineRamp flags=[IsGenerator, TakesCallee] enclosingRuntimeFunction=0
+}
+function f2 name="nestedAsyncFunction" role=Library flags=[IsAsync] enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=Promise}] {
+    v1 = Await v0
+    Return v1
+# CHECK: role=CoroutineRamp flags=[IsAsync] enclosingRuntimeFunction=0
+}
+function f3 name="ownGenerator" flags=[IsGenerator, TakesCallee] parameters=[{type=number}] results=[{type=Generator}] {
+    InitialYield
+    v3 = Yield v1 @11
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v4
+  b2():
+    Return v4
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f3 name="ownGenerator"
+# CHECK: role=CoroutineRamp
+# CHECK-NOT: enclosingRuntimeFunction
+# CHECK-LABEL: function f4 name="nestedGenerator"
+# CHECK: role=CoroutineBody flags=[IsGenerator, TakesCallee] enclosingRuntimeFunction=0
+# CHECK-LABEL: function f5 name="nestedAsyncFunction"
+# CHECK: role=CoroutineBody flags=[IsAsync] enclosingRuntimeFunction=0
+# CHECK-LABEL: function f6 name="ownGenerator"
+# CHECK: role=CoroutineBody
+# CHECK-NOT: enclosingRuntimeFunction

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ModuleProgramExecutable.h"
 
+#include "AOTRemovableFeature.h"
 #include "CodeCache.h"
 #include "Debugger.h"
 #include "Error.h"
@@ -64,8 +65,9 @@ ModuleProgramExecutable::ModuleProgramExecutable(JSGlobalObject* globalObject, c
 }
 
 
-UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JSGlobalObject* globalObject)
+NEVER_INLINE UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JSGlobalObject* globalObject)
 {
+    JSC_REMOVABLE_DEFINITION(Interpreter, &ModuleProgramExecutable::getUnlinkedCodeBlock);
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 

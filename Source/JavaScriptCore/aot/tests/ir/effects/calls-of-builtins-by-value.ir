@@ -1,0 +1,37 @@
+# A built-in among the callees of a call by value is entered with operands nobody looked at: it has its own effects only where no parameter can run code
+# FORM: Prepared
+# RUN: effects summaries f2
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="count" declared={type=number} initialization=Undefined
+runtimefunction id=60 function=f0
+function f0 name="groupBy" role=Library enclosingRuntimeFunction=60 parameters=[{type=anything}, {type=anything}] results=[{type=undefined}] {
+    v2 = Integer integer=1
+    PutModuleVariable v2 variable=g0
+    Return
+}
+function f1 name="writesVariable" results=[{type=undefined}] {
+    v0 = Integer integer=2
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f2 name="calls" parameters=[{type=builtin(MathRandom)}, {type=builtin(ArrayIsArray)}, {type=builtin(MathAbs)}, {type=builtin(ObjectKeys)}, {type=builtin(ObjectGroupBy)}, {type=builtin(MapGroupBy)}, {type=anything}, {type=f1|builtin(MathRandom)}, {type=f1|builtin(MathAbs)}] results=[{type=undefined}] {
+    v9 = Call v0 callees=[builtin(MathRandom)]
+    v10 = Call v1, -, v6 callees=[builtin(ArrayIsArray)]
+    v11 = Call v2, -, v6 callees=[builtin(MathAbs)]
+    v12 = Call v3, -, v6 callees=[builtin(ObjectKeys)]
+    v13 = Call v4, -, v6, v6 callees=[builtin(ObjectGroupBy)]
+    v14 = Call v5, -, v6, v6 callees=[builtin(MapGroupBy)]
+    v15 = Call v7 callees=[f1, builtin(MathRandom)]
+    v16 = Call v8, -, v6 callees=[f1, builtin(MathAbs)]
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v9 Call: reads(RuntimeState) writes(RuntimeState)
+# CHECK-NEXT: v10 Call: reads(StringStorage, AllocatorState, RuntimeState) writes(StringStorage, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v11 Call: {{*}}callsUnknownCode
+# CHECK-NEXT: v12 Call: {{*}}callsUnknownCode
+# CHECK-NEXT: v13 Call: writes(ModuleVariables/1)
+# CHECK-NEXT: v14 Call: {{*}}callsUnknownCode
+# CHECK-NEXT: v15 Call: reads(RuntimeState) writes(ModuleVariables/1, RuntimeState)
+# CHECK-NEXT: v16 Call: {{*}}callsUnknownCode

@@ -1,0 +1,180 @@
+# A region that costs more than the limit to copy stays one copy, and each operation of the iteration switches on the form
+# FORM: Prepared optimizing
+# OPTIONS: limit=MaxVersionedIterationBytes:0
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+# RUN(SELECTED): pass ExpandIteration Select
+# RUN(LEFT): pass ExpandIteration
+# LOSS: MaxVersionedIterationBytes x2 f0 v2
+# STATISTIC: IterationsExpandedByClass = 3
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {type=anything}] results=[{type=anything}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b7(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b6():
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v2
+    Jump -> next b5()
+  b5():
+    Return v7
+  b6() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+  b7():
+    Return v1
+# CHECK: b1([[index0]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Switch [[form0]] cases=[0] -> case [[arrayStep0]](), otherwise [[protocolStep0]]()
+# CHECK: b3() handler=b6():
+# CHECK-NEXT: v7: anything = Call v1, -, v6
+# CHECK: b4():
+# CHECK-NEXT: Switch [[form0]] cases=[0] -> case [[arrayClose0]](), otherwise [[protocolClose0]]()
+# CHECK: b6() role=CleanupHandler:
+# CHECK-NEXT: v10: exception = CatchException
+# CHECK-NEXT: Switch [[form0]] cases=[0] -> case [[arrayLanding0]](), otherwise [[protocolLanding0]]()
+# CHECK: [[open0]]: undefined = CallDirect {{*}} function=f4 [isNeverInlined]
+# CHECK-NEXT: [[opened0]]: object = ResultAt [[open0]]
+# CHECK-NEXT: [[method0]]: anything = ResultAt [[open0]] index=1
+# CHECK-NEXT: [[isProtocolForm0]]: 1 = Integer integer=1
+# CHECK-NEXT: [[noArray0]]: Array<number> = Unspecified valueType=Array<number>
+# CHECK-NEXT: [[noIndex0]]: int[0, 9007199254740991] = Unspecified valueType=int[0, 9007199254740991]
+# CHECK-NEXT: Jump -> next [[join0]]([[isProtocolForm0]], [[noArray0]], [[opened0]], [[method0]], [[noIndex0]])
+# CHECK: ([[first0]]: int[0, 9007199254740991]):
+# CHECK-NEXT: [[isArrayForm0]]: 0 = Integer
+# CHECK-NEXT: [[noIterator0]]: object = Unspecified valueType=object
+# CHECK-NEXT: [[noNext0]]: anything = Unspecified valueType=anything
+# CHECK-NEXT: Jump -> next [[join0]]([[isArrayForm0]], [[subject0]], [[noIterator0]], [[noNext0]], [[first0]])
+# CHECK: [[join0]]([[form0]]: int[0, 1], [[array0]]: Array<number>, [[iterator0]]: object, [[next0]]: anything, {{*}}: int[0, 9007199254740991]):
+# CHECK: [[arrayLanding0]]():
+# CHECK-NEXT: Jump
+# CHECK: [[protocolLanding0]]() frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterator0]] function=f6 [isNeverInlined]
+# CHECK: [[arrayClose0]]():
+# CHECK-NEXT: Jump
+# CHECK: [[protocolClose0]]() frequency=Unlikely:
+# CHECK-NEXT: = CallDirect [[iterator0]] function=f5 [isNeverInlined]
+# CHECK: [[arrayStep0]]():
+# CHECK-NEXT: = PropGet [[array0]] key="length"
+# CHECK: [[protocolStep0]]() frequency=Unlikely:
+# CHECK-NEXT: = Call [[next0]], [[iterator0]]
+# CHECK: = ElemGet [[array0]], {{*}} [keyIsIntegral]
+# On the edge of the array form next is a value nobody reads, so selection resolves no call target from it in front of the loop, where both forms pass.
+# SELECTED: ({{*}}: int[0, 1], {{*}}: Array<number>, [[selectedIterator0]]: object, [[selectedNext0]]: anything,
+# SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
+# SELECTED: = ResolveCallTarget v1 argumentCount=1
+# SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
+# SELECTED: = Call [[selectedNext0]], [[selectedIterator0]]
+# SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
+# ABSENT-NOT: role=IterationCleanup
+# ABSENT-NOT: subject=
+# ABSENT-COUNT-1: LoopHint
+# ABSENT-NOT: LoopHint
+# ABSENT-COUNT-1: = Call v1, -,
+# ABSENT-NOT: = Call v1, -,
+}
+
+function f1 name="oneForm" parameters=[{type=Array<number, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b7(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b6():
+    v7 = Call v1, -, v6
+    v8 = ToBoolean v7
+    Branch v8 -> taken b4(), notTaken b1()
+  b4():
+    IteratorClose v2
+    Jump -> next b5()
+  b5():
+    Return v7
+  b6() role=IterationCleanup subject=v2:
+    v10 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v10
+  b7():
+    Return v1
+}
+# One form needs no copy, so the limit is not asked.
+# CHECK-LABEL: function f1 name="oneForm"
+# CHECK: = ElemGet v0,
+# SELECTED-LABEL: function f1 name="oneForm"
+# ABSENT-LABEL: function f1 name="oneForm"
+# ABSENT-NOT: Switch
+# ABSENT-NOT: Unspecified
+# ABSENT-NOT: handler=
+
+function f2 name="coroutine" role=CoroutineRamp flags=[IsAsync] parameters=[{type=undefined|null|Array<number>}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f3
+    v3 = AssumeType v2 provenType=Promise
+    Return v3
+}
+# CHECK-LABEL: function f2 name="coroutine"
+# ABSENT-LABEL: function f2 name="coroutine"
+
+function f3 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{type=undefined|null|Array<number>}, {type=undefined|Promise}] results=[{type=anything}] derivation={source=f2} creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    v2 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = IteratorResume v2
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    Branch v5 -> taken b5(), notTaken b2()
+  b2():
+    Jump -> next b3()
+  b3() handler=b4():
+    v7 = AwaitBySavingFrame v6, v1
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v2:
+    v8 = CatchException
+    IteratorClose v2 completion=Throw
+    Rethrow v8
+  b5():
+    v10 = Undefined
+    v11 = ReturnAsyncResult v1, v10
+    Return v11
+# The form, the array, the iterator and the index are values like any other across the suspension.
+# CHECK: b1([[index3]]: int[0, 9007199254740991]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Switch [[form3]] cases=[0] -> case [[arrayStep3]](), otherwise [[protocolStep3]]()
+# CHECK: b3() handler=b4():
+# CHECK-NEXT: v7: anything = AwaitBySavingFrame v6, v1
+# CHECK-NEXT: Jump -> next b1([[carried3]])
+# CHECK: b4() role=CleanupHandler:
+# CHECK-NEXT: v8: exception = CatchException
+# CHECK-NEXT: Switch [[form3]] cases=[0] -> case
+# CHECK: [[join3]]([[form3]]: int[0, 1], [[array3]]: Array<number>, [[iterator3]]: object, [[next3]]: anything, {{*}}: int[0, 9007199254740991]):
+# CHECK: (v5: boolean, v6: anything, [[carried3]]: int[0, 9007199254740991]):
+# CHECK: [[arrayStep3]]():
+# CHECK-NEXT: = PropGet [[array3]] key="length"
+# CHECK: [[protocolStep3]]() frequency=Unlikely:
+# CHECK-NEXT: = Call [[next3]], [[iterator3]]
+# ABSENT-COUNT-1: AwaitBySavingFrame
+# ABSENT-NOT: AwaitBySavingFrame
+}
+
+# LEFT-NOT: IteratorOpen
+# LEFT-NOT: IteratorResume
+# LEFT-NOT: IteratorClose
+# LEFT-NOT: AppendSpread

@@ -1,0 +1,70 @@
+# A store that only expects the layout of its object leaves its closure unmade where no code that is expected to run often reads the field, by slot or by name. A store by name is no read.
+# FORM: Prepared
+# OPTIONS: references=narrow check=VerifyEachPass heat=EverythingIsHot
+# RUN: pass DeferClosuresInFields
+# STATISTIC: FieldsDeferringClosures = 2
+# STATISTIC: ClosuresDeferredInFields = 2
+# CHECK: outcome: Changed
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+layout L0 name="Holder" fields=[{key="readBySlot" declared={type=function}}, {key="readByName" declared={type=function}}, {key="onlyStored" declared={type=function}}, {key="readWhereTheLayoutIsProven" declared={type=function}}]
+
+# CHECK: layout L0 {{*}}{key="readBySlot" declared={type=function}}, {key="readByName" declared={type=function}}, {key="onlyStored" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f3}}}, {key="readWhereTheLayoutIsProven" declared={type=function} flow={location={deferral=CapturesObject deferredFunction=f3}}}]
+
+function f0 name="main" module=m0 kind=Module results=[{type=undefined}] {
+    v0 = NewObject layout=L0 fields=[]
+    PutModuleVariable v0 variable=g0
+    Return
+}
+
+function f1 name="fills" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = NewClosure v0 function=f3
+    PutSlotOrAdd v0, -, v1 key="readWhereTheLayoutIsProven" receivers=[L0] level=Proven
+    v3 = HasNoFieldOutsideSlot v0
+    Branch v3 -> taken b1(| 0), notTaken b2()
+  b1(v4: guard):
+    v5 = NewClosure v0 function=f3
+    PutSlotOrAdd v0, v4, v5 key="readBySlot" receivers=[L0] level=Expected
+    v7 = NewClosure v0 function=f3
+    PutSlotOrAdd v0, v4, v7 key="readByName" receivers=[L0] level=Expected
+    v9 = NewClosure v0 function=f3
+    PutSlotOrAdd v0, v4, v9 key="onlyStored" receivers=[L0] level=Expected
+    Return
+  b2():
+    v11 = NewClosure v0 function=f3
+    PropSet v0, v11 key="onlyStored"
+    Return
+}
+# CHECK-LABEL: function f1 name="fills"
+# CHECK: = NewClosure function=f3 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, -, {{*}} key="readWhereTheLayoutIsProven"
+# CHECK: = NewClosure v0 function=f3
+# CHECK-NEXT: PutSlotOrAdd v0, v4, {{*}} key="readBySlot"
+# CHECK-NEXT: = NewClosure v0 function=f3
+# CHECK-NEXT: PutSlotOrAdd v0, v4, {{*}} key="readByName"
+# CHECK-NEXT: = NewClosure function=f3 [isMadeOnDemand]
+# CHECK-NEXT: PutSlotOrAdd v0, v4, {{*}} key="onlyStored"
+
+function f2 name="reads" module=m0 parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="readByName"
+    v2 = IsSlotFilled v0 key="readWhereTheLayoutIsProven" receivers=[L0] level=Proven
+    Branch v2 -> taken b1(| 0), notTaken b3()
+  b1(v3: guard):
+    v4 = GetSlot v0, v3 key="readWhereTheLayoutIsProven" receivers=[L0] level=Proven
+    v5 = IsSlotFilled v0 key="readBySlot" receivers=[L0] level=Expected
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6: guard):
+    v7 = GetSlot v0, v6 key="readBySlot" receivers=[L0] level=Expected
+    Return v7
+  b3():
+    Return v1
+}
+# CHECK-LABEL: function f2 name="reads"
+# CHECK: = GetDeferredClosureSlot v0, v3 key="readWhereTheLayoutIsProven"
+# CHECK: = GetSlot v0, v6 key="readBySlot"
+
+function f3 name="overObject" module=m0 kind=Arrow captures=[{type=object}] results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,23 @@
+# A private field of an instance that a direct eval can name has its key among the identifiers, also where no code creates the class or an instance of it
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: tables requests
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="NeverCreated" fields=[{key=#"count"@L0 declared={type=number} flags=[IsPrivate]}]
+evalscope e0 flags=[IsInFunction] bindings=[{name="#count" kind=PrivateName layout=L0 field=0 operand=0}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = CallDirect v1, v1 function=f1
+    Return
+}
+function f1 name="evaluates" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = DirectEval v0, v2, -, v1 evalScope=e0
+    Return v3
+}
+# CHECK: request 4 DirectEval module=m0 strict inFunction
+# CHECK-NEXT: binding name={{*}} kind=PrivateName depth=0 operand=2 function=- setter=- privateKey=#"count"@L0

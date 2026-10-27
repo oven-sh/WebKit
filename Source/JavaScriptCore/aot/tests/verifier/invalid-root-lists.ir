@@ -1,0 +1,10 @@
+# a module is an entry once
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: DuplicateListEntry 1
+
+module m0 path="main" displayPath="main"
+module m1 path="other" displayPath="other"
+entry module=m0
+entry module=m1
+entry module=m0

@@ -30,6 +30,7 @@
 #include "ExecutableBaseInlines.h"
 #include "JSCInlines.h"
 #include "VMInlines.h"
+#include <wtf/text/MakeString.h>
 
 namespace JSC {
 
@@ -78,7 +79,7 @@ NativeExecutable::NativeExecutable(VM& vm, TaggedNativeFunction function, Tagged
     : ExecutableBase(vm, vm.nativeExecutableStructure.get())
     , m_function(function)
     , m_constructor(constructor)
-    , m_implementationVisibility(static_cast<unsigned>(implementationVisibility))
+    , m_implementationVisibility(static_cast<uint8_t>(implementationVisibility))
 {
 }
 
@@ -138,6 +139,8 @@ JSString* NativeExecutable::toStringSlow(JSGlobalObject *globalObject)
 
 JSString* NativeExecutable::nameJSString(VM& vm) const
 {
+    if (m_isNamedAsBound) [[unlikely]]
+        return jsString(vm, makeString("bound "_s, m_name));
     return m_name.isNull() ? jsEmptyString(vm) : jsString(vm, m_name);
 }
 

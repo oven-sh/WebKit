@@ -1,0 +1,69 @@
+# What each test that holds for a stretch reads, against what stores write: a store to a filled slot ends only the test of that slot, a store that may add a field also ends what reads the order words, and only a definition ends a shape test (a store that is no exact access is judged by masks: the bits of the two keys differ)
+# FORM: Prepared
+# RUN: write-overlap tests
+# RUN(E): effects
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+function f0 name="slotStores" parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+    v2 = ShapeTest v0 layouts=[L0]
+    v3 = HasKeyOrder v0 layout=L0 fields=[0, 1]
+    v4 = IsNotFrozen v0
+    v5 = IsSlotFilled v0 key="x" receivers=[L0] level=Proven
+    v6 = IsSlotFilled v0 key="y" receivers=[L0] level=Proven
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    Return
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: v7 on v2 ShapeWords[L0]: None
+# CHECK-NEXT: v8 on v2 ShapeWords[L0]: None
+# CHECK-NEXT: v7 on v3 OrderWords: None
+# CHECK-NEXT: v8 on v3 OrderWords: May
+# CHECK-NEXT: v7 on v4 ShapeWords: None
+# CHECK-NEXT: v8 on v4 ShapeWords: None
+# CHECK-NEXT: v7 on v4 OrderWords: None
+# CHECK-NEXT: v8 on v4 OrderWords: May
+# CHECK-NEXT: v7 on v5 ObjectFields["x"]: Exact
+# CHECK-NEXT: v8 on v5 ObjectFields["x"]: None
+# CHECK-NEXT: v7 on v6 ObjectFields["y"]: None
+# CHECK-NEXT: v8 on v6 ObjectFields["y"]: May
+# E-LABEL: function f0
+# E-NEXT: v2 ShapeTest: reads(ShapeWords/1)
+# E-NEXT: v3 HasKeyOrder: reads(OrderWords)
+# E-NEXT: v4 IsNotFrozen: reads(ShapeWords, OrderWords)
+# E-NEXT: v5 IsSlotFilled: reads(ObjectFields/1)
+# E-NEXT: v6 IsSlotFilled: reads(ObjectFields/1)
+# E-NEXT: v7 PutSlot: writes(ObjectFields/1)
+# E-NEXT: v8 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState)
+function f1 name="elementStores" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 10]}, {type=number}] results=[{type=undefined}] {
+    v3 = HasArrayStorage v0 arrayStorage=Double
+    v4 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
+    PutArrayElement v0, v1, v2 level=Proven [keyIsIntegral]
+    PutArrayElement v0, v2, v2 level=Proven
+    Return
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: v5 on v3 ArrayStorage: May
+# CHECK-NEXT: v6 on v3 ArrayStorage: May
+# CHECK-NEXT: v5 on v4 NamedProperties: None
+# CHECK-NEXT: v6 on v4 NamedProperties: May
+# CHECK-NEXT: v5 on v4 PrototypeLinks: None
+# CHECK-NEXT: v6 on v4 PrototypeLinks: None
+# E-LABEL: function f1
+# E-NEXT: v3 HasArrayStorage: reads(ArrayStorage)
+# E-NEXT: v4 IsPristine: reads(PrototypeLinks, NamedProperties)
+function f2 name="definition" parameters=[{type=object}, {type=function}] results=[{type=undefined}] {
+    v2 = ShapeTest v0 layouts=[L0]
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    DefineGetter v0, v1 key="z"
+    Return
+  b2():
+    Return
+}
+# CHECK-LABEL: function f2
+# CHECK-NEXT: v4 on v2 ShapeWords[L0]: May
+# E-LABEL: function f2
+# E: v4 DefineGetter: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, MemberGuards, NamedProperties, AllocatorState, RuntimeState) throws collects
+# E-NEXT: b1 Return

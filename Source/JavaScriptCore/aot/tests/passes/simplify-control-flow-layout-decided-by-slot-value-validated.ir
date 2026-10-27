@@ -1,0 +1,28 @@
+# A build that validates checks at run time the layout that the value of a slot decided
+# FORM: Prepared
+# OPTIONS: validate
+# RUN: pass SimplifyControlFlow
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Round" fields=[{key="kind" declared={type=1} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="r" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+layout L1 name="Wide" fields=[{key="kind" declared={type=2} flags=[IsRequired] flow={occupancy=AlwaysFilled}}, {key="w" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled}}]
+
+function f0 name="caseOfSwitch" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = GetSlot v0 key="kind" receivers=[L0, L1] level=Proven
+    Switch v1 cases=[1] -> case b1(), otherwise b4()
+  b1():
+    v2 = TypeTest v0 testedType=L0
+    Branch v2 -> taken b2(| 0), notTaken b3()
+  b2(v3):
+    v4 = GetSlot v3 key="r" receivers=[L0] level=Proven
+    Return v4
+  b3():
+    v5 = Undefined
+    Return v5
+  b4():
+    v6 = Null
+    Return v6
+# CHECK: ValidateType v0 validatedType=L0
+# CHECK-NEXT: = AssumeType v0 provenType=L0
+}

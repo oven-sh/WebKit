@@ -1,0 +1,91 @@
+# A callback that a function of the program calls in a loop counts with the weight of the site that hands it over, also through a function that only hands it on. The function that hands its own parameter on adds nothing. A callback that its receiver calls once has the edge out of the receiver alone
+# FORM: AsRead
+# RUN: heat-graph flow
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="input" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = ToBoolean v0
+    v2 = NewClosure function=f2
+    v3 = CallDirect v0, v2 function=f1
+    v4 = NewClosure function=f5
+    v5 = CallDirect v0, v4 function=f6
+    v6 = NewClosure function=f8
+    v7 = CallDirect v0, v6 function=f7
+    v8 = NewClosure function=f10
+    v9 = CallDirect v0, v8 function=f9
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v12 = NewClosure function=f3
+    v13 = CallDirect v0, v12 function=f1
+    Branch v1 -> taken b2(), notTaken b3()
+  b3():
+    Branch v1 -> taken b1(), notTaken b4()
+  b4():
+    Branch v1 -> taken b5(), notTaken b6()
+  b5():
+    v14 = NewClosure function=f4
+    v15 = CallDirect v0, v14 function=f1
+    Throw v0
+  b6():
+    Return
+}
+function f1 name="callsInLoop" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = Call v1, -, v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f2 name="handedOverOnce" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="handedOverInNestedLoops" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f4 name="handedOverInRareBlock" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f5 name="calledOnceByReceiver" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f6 name="callsOnce" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v1, -, v0
+    Return v2
+}
+function f7 name="handsOn" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallDirect v0, v1 function=f1
+    Return v2
+}
+function f8 name="handedOverToFunctionThatHandsOn" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f9 name="handsOnInLoopToItself" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = ToBoolean v0
+    v3 = Call v1, -, v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallDirect v0, v1 function=f9
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+function f10 name="handedOverToRecursiveFunction" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+# CHECK: f0 size {{*}}: f1*101.000977 f2*63.000000 f3*6300.000000 f4*0.061523 f6*1.000000 f7*1.000000 f8*63.000000 f9*1.000000 f10*63.000000
+# CHECK: f6 size {{*}}: f5*1.000000
+# CHECK-NOT: f8*
+# CHECK: f8 size
+# CHECK: f9 size {{*}}: f9*10.000000 f10*1.000000

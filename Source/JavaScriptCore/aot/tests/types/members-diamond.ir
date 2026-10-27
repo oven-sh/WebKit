@@ -1,0 +1,24 @@
+# A layout reached along two paths is a member once. The members of a type are the members of its set, with or without other parts.
+# RUN: members
+# CHECK: L0: members [L0, L1, L2, L3]
+# CHECK-NEXT: L1: members [L1, L3]
+# CHECK-NEXT: L2: members [L2, L3]
+# CHECK-NEXT: L3: members [L3]
+# CHECK-NEXT: L4: members [L4]
+# CHECK-NEXT: t0: members [L0, L1, L2, L3] only-layouts: yes
+# CHECK-NEXT: t1: members [L0] only-layouts: yes
+# CHECK-NEXT: t2: members [L1, L2, L3] only-layouts: yes
+# CHECK-NEXT: t3: members [] only-layouts: no
+# CHECK-NEXT: t4: members [L0, L1] only-layouts: yes
+# CHECK-NEXT: t5: members [L0, L1] only-layouts: no
+# CHECK-NEXT: t6: members [L0] only-layouts: no
+# CHECK-NEXT: t7: members [] only-layouts: no
+# CHECK-NEXT: t8: members [] only-layouts: no
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Shape"
+layout L1 name="Circle" supertypes=[L0]
+layout L2 name="Square" supertypes=[L0]
+layout L3 name="Both" supertypes=[L1, L2]
+layout L4 kind=Environment name="scope"
+function f0 name="types" parameters=[{type=L0|L1|L2|L3}, {type=L0}, {type=L3|L1|L2}, {type=number}, {type=undefined|null|L0|L1}, {type=number|L0|L1}, {type=L0|Array<number>}, {type=object}, {type=env L4}] results=[{type=undefined}]

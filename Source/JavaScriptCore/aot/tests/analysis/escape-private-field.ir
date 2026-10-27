@@ -1,0 +1,52 @@
+# Private field accesses run no other code, so they keep a fresh object of an open layout local; an access by name to such an object does not
+# FORM: Prepared
+# RUN: analyses escape
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Once" fields=[{key=#"#secret"@L0 declared={type=number} flags=[IsRequired, IsPrivate] flow={location={initialization=SetAtCreation} prototypeName=AbsentOnPrototypes}}] flow={baseState=None members=[L0]} classFlow={evaluations=AtMostOnce}
+layout L1 kind=Instance name="Repeated" fields=[{key=#"#secret"@L1 declared={type=number} flags=[IsRequired, IsPrivate] flow={location={initialization=SetAtCreation} prototypeName=AbsentOnPrototypes}}] flow={baseState=None members=[L1]}
+layout L2 kind=Instance name="Public" fields=[{key="shown" declared={type=number} flags=[IsRequired] flow={location={initialization=SetAtCreation} prototypeName=AbsentOnPrototypes}}] flow={baseState=None members=[L2]} classFlow={evaluations=AtMostOnce}
+function f0 name="classEvaluatedOnce" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClassToken layout=L0
+    v3 = PrivateGet v1, v2 layout=L0 field=0 receivers=[L0]
+    PrivateSet v1, v2, v0 layout=L0 field=0 receivers=[L0]
+    Return v3
+}
+function f1 name="classEvaluatedRepeatedly" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L1 fields=[0]
+    v2 = NewClassToken layout=L1
+    v3 = PrivateGet v1, v2 layout=L1 field=0 receivers=[L1]
+    Return v3
+}
+function f2 name="publicFieldByName" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = PropGet v1 key="shown" receivers=[L2]
+    Return v2
+}
+# CHECK: function f0
+# CHECK: objects: 1
+# CHECK: o0 definition: v1
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o0 reasons: []
+# CHECK: o0 uses: [Inspects]
+# CHECK: o0 object uses: [v3(0) v4(0)]
+# CHECK: o0 escaping uses: []
+# CHECK: function f1
+# CHECK: objects: 1
+# CHECK: o0 definition: v1
+# CHECK: o0 state: DoesNotEscape
+# CHECK: o0 reasons: []
+# CHECK: o0 uses: [Inspects]
+# CHECK: o0 object uses: [v3(0)]
+# CHECK: o0 escaping uses: []
+# CHECK: function f2
+# CHECK: objects: 1
+# CHECK: o0 definition: v1
+# CHECK: o0 state: Escapes
+# CHECK: o0 reasons: [PassedToUnknownCode]
+# CHECK: o0 first escape: v2(0)
+# CHECK: o0 escaping uses: [v2(0)]

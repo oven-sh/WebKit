@@ -1,0 +1,69 @@
+# String.raw on the template object of a site is a concatenation of the raw texts and the substitutions
+# FORM: Prepared
+# RUN: pass SimplifyBuiltinCalls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="noSubstitution" results=[{type=string}] {
+    v0 = NewTemplateObject templateStrings=[{cooked="d+x" raw="\\d+x"}]
+    v1 = CallBuiltin -, v0 overload=StringRaw/0
+    Return v1
+# CHECK-NOT: CallBuiltin
+# CHECK: [[text0]]: "\\d+x" = String string="\\d+x"
+# CHECK-NEXT: v1: string = ToString [[text0]]
+}
+
+function f1 name="substitutions" parameters=[{type=string}, {type=number}] results=[{type=string}] {
+    v2 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="\n" raw="\\n"}, {cooked="c" raw="c"}]
+    v3 = CallBuiltin -, v2, v0, v1 overload=StringRaw/0
+    Return v3
+# CHECK: [[first1]]: "a" = String string="a"
+# CHECK-NEXT: [[second1]]: "\\n" = String string="\\n"
+# CHECK-NEXT: [[third1]]: "c" = String string="c"
+# CHECK-NEXT: v3: string = Strcat [[first1]], v0, [[second1]], v1, [[third1]]
+}
+
+function f2 name="undefinedSubstitutionHasText" parameters=[{type=undefined|string}] results=[{type=string}] {
+    v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}]
+    v2 = CallBuiltin -, v1, v0 overload=StringRaw/0
+    Return v2
+# CHECK: v2: string = Strcat {{*}}, v0,
+}
+
+function f3 name="surplusSubstitutionIsIgnored" parameters=[{type=string}, {type=anything}] results=[{type=string}] {
+    v2 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}]
+    v3 = CallBuiltin -, v2, v0, v1 overload=StringRaw/0
+    Return v3
+# CHECK: v3: string = Strcat [[first3]], v0, [[second3]]
+# CHECK-NEXT: Return v3
+}
+
+function f4 name="missingSubstitution" results=[{type=string}] {
+    v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}]
+    v1 = CallBuiltin -, v0 overload=StringRaw/0
+    Return v1
+# CHECK: v1: string = Strcat [[first4]], [[second4]]
+# CHECK-NEXT: Return v1
+}
+
+function f5 name="templateObjectEscapes" parameters=[{type=anything}] results=[{type=string}] {
+    v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    v2 = Call v0, -, v1
+    v3 = CallBuiltin -, v1 overload=StringRaw/0
+    Return v3
+# CHECK: v3: string = ToString
+}
+
+function f6 name="substitutionMayBeObject" parameters=[{type=anything}] results=[{type=string}] {
+    v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}]
+    v2 = CallBuiltin -, v1, v0 overload=StringRaw/0
+    Return v2
+# CHECK-NOT: Strcat
+# CHECK: v2: string = CallBuiltin -, v1, v0 overload=StringRaw/0
+}
+
+function f7 name="otherObject" parameters=[{type=object}] results=[{type=string}] {
+    v1 = CallBuiltin -, v0 overload=StringRaw/0
+    Return v1
+# CHECK-NOT: ToString
+# CHECK: v1: string = CallBuiltin -, v0 overload=StringRaw/0
+}

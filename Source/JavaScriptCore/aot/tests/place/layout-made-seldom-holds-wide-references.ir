@@ -1,0 +1,23 @@
+# A 32-bit reference saves four bytes an object and is decoded at each read. In a layout that the program makes seldom every reference is a 64-bit one, and its cell grows for that. A hidden word stays as it is.
+# The same program as widen-reference-into-padding.ir, where `testing=NoLayoutIsMadeSeldom` keeps the references narrow but for those that find free bytes in their cells
+# FORM: AsRead
+# OPTIONS: references=narrow only-passes=AnalyzeFlow
+# RUN: plan-slots
+
+# CHECK: L0 CompiledObject size=32
+# CHECK-NEXT: "next" JSValue @16
+# CHECK-NEXT: L1 CompiledObject size=32
+# CHECK-NEXT: "node" Cell @16
+# CHECK-NEXT: L2 CompiledObject size=32
+# CHECK-NEXT: "label" Cell @16
+# CHECK-NEXT: L3 CompiledObject size=32
+# CHECK-NEXT: "title" JSValue @16
+# CHECK-NEXT: L4 CompiledObject size=48
+# CHECK-NEXT: "left" JSValue @16
+# CHECK-NEXT: "right" JSValue @24
+# CHECK-NEXT: "parent" JSValue @32
+# CHECK-NEXT: "child" JSValue @40
+# CHECK-NEXT: L5 CompiledObject size=32
+# CHECK-NEXT: "link" JSValue @16
+# CHECK-NEXT: extra Cell32 @24
+# PROGRAM-OF: widen-reference-into-padding.ir

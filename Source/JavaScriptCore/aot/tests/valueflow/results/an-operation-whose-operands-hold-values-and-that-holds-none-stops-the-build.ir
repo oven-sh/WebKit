@@ -1,0 +1,7 @@
+# const pair = { left: 1 }; take(pair.left)
+# What was stored is left out of what a read finds. The read then has a receiver and no value, and nothing says why it should never complete: the build stops and names the read.
+# FORM: AsRead
+# RUN: pipeline AnalyzeFlow
+# OPTIONS: sabotage=StoredValuesAreNeverRead
+# DIAGNOSTIC: OperationWithoutValue 1
+# PROGRAM-OF: an-operation-whose-operands-hold-values-holds-one.ir

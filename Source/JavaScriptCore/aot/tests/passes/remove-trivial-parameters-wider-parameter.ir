@@ -1,0 +1,48 @@
+# A parameter whose stored type is wider than the one value it receives becomes an Upcast of that value
+# FORM: Prepared optimizing
+# RUN: pass SimplifyControlFlow RemoveTrivialParameters
+# STATISTIC: RemoveTrivialParametersChanges = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="edgeWithWiderValueWentAway" parameters=[{type=i32}, {type=number}, {type=boolean}] results=[{type=number}] {
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b5(v1)
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Negate v1
+    Jump -> next b5(v0)
+  b4():
+    v5 = Negate v1
+    Jump -> next b5(v0)
+  b5(v6):
+    Return v6
+}
+# CHECK: Jump -> next b5()
+# CHECK: Jump -> next b5()
+# CHECK: b5():
+# CHECK-NEXT: v6: number = Upcast v0 castType=number
+# CHECK-NEXT: Return v6
+
+function f1 name="widerParameterOfCoveredBlock" parameters=[{type=i32}, {type=number}, {type=anything}] results=[{type=number}] {
+    v3 = Boolean boolean=false
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v1)
+  b2():
+    Jump -> next b3(v0)
+  b3(v4) handler=b4():
+    v5 = Call v2
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v6 = CatchValue
+    Jump -> next b5()
+  b5():
+    Return v4
+# CHECK: Jump -> next b3(v0)
+# CHECK: b3(v4: number) handler=b4():
+# CHECK-NOT: Upcast
+# CHECK: Return v4
+}

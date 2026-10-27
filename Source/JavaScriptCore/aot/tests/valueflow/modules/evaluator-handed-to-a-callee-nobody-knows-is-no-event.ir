@@ -1,0 +1,25 @@
+# input(eval); input({ make: eval })
+# An evaluator that is handed to a callee nobody knows, by itself or inside an object, is a value like any other: the program mentions it and calls it nowhere, so nothing opens.
+# The run time refuses an evaluator in an image whose build saw no application of one.
+# evaluator-that-stays-in-the-hands-of-the-program-is-no-event.ir has the same reads without the calls
+# RUN: valueflow-solve unseen
+# CHECK-NOT: unseen EvaluatesText
+# CHECK: unseen-code no
+# RUN(WHY): valueflow-why escaped-builtin=Eval
+# WHY: escaped-builtin=Eval
+# WHY-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Holder" fields=[{key="make" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = PropGet v0 key="eval" [isFreeName]
+    v3 = Call v1, -, v2
+    v4 = PropGet v0 key="eval" [isFreeName]
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = Call v1, -, v6
+    Return
+}

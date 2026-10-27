@@ -1,0 +1,71 @@
+# Each kind of literal site gets its words of the statics: shared storage for an array of constants that holds cells and is made more than once, a profile and a last array for an empty array literal in fast code, a cell for a RegExp literal and for a template object
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow heat=EverythingIsHot
+# RUN: place statics requests program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=MathRandom
+    v1 = Call v0
+    v2 = Data data=d0 @10
+    PutModuleVariable v2 variable=g0
+    v4 = Data data=d1 @20
+    PutModuleVariable v4 variable=g0
+    v6 = NewArray contents=anything @30
+    AppendElement v6, v1
+    PutModuleVariable v6 variable=g0
+    v9 = NewArray v1 contents=anything @40
+    PutModuleVariable v9 variable=g0
+    v11 = NewRegExp pattern="a+" regExpFlags=[Global] @50
+    PutModuleVariable v11 variable=g0
+    v13 = NewTemplateObject templateStrings=[{cooked="x" raw="x"}] @60
+    PutModuleVariable v13 variable=g0
+    v15 = CallDirect v1 function=f1
+    v16 = CallDirect v1 function=f1
+    Return
+}
+function f1 name="runsOften" parameters=[{type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v2 = NewArray contents=anything @70
+    AppendElement v2, v0
+    PutModuleVariable v2 variable=g0
+    v5 = Data data=d2 @80
+    PutModuleVariable v5 variable=g0
+    v7 = ToBoolean v0
+    Branch v7 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}, Number{value=16}, Number{value=17}]} module=m0
+data d1 root=Array{contents=number elements=[Hole, Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}, Number{value=9}, Number{value=10}, Number{value=11}, Number{value=12}, Number{value=13}, Number{value=14}, Number{value=15}, Number{value=16}]} module=m0
+data d2 root=Array{contents=string elements=[String{value="a"}, String{value="b"}, String{value="c"}, String{value="d"}, String{value="e"}, String{value="f"}, String{value="g"}, String{value="h"}, String{value="i"}, String{value="j"}, String{value="k"}, String{value="l"}, String{value="m"}, String{value="n"}, String{value="o"}, String{value="p"}, String{value="q"}]}
+
+# CHECK: statics size=48
+# CHECK: g0 offset=0
+# CHECK-NEXT: storage-in-image d0 @1
+# CHECK-NEXT: storage-in-image d1 @20
+# CHECK-NEXT: shared-storage d2 @8
+# CHECK-NEXT: site-cell NewRegExp @16
+# CHECK-NEXT: site-cell NewTemplateObject @24
+# CHECK-NEXT: site-cell NewArray @32 lastArray@40
+# CHECK-NEXT: roots=[0 8 16 24]
+# CHECK-NEXT: cleared=[40+8]
+# CHECK-NEXT: request @4 Data d0 node@1
+# CHECK-NEXT: request @[[holes]] Data d1 node@20
+# CHECK-NEXT: request @[[template]] TemplateObject ["x"/"x"]
+# CHECK-NEXT: request @[[strings]] Data d2 sharedStorage@8
+# CHECK-NEXT: requests size={{*}} shared=0
+# CHECK: = Data data=d0 {{*}}encoding=CopyOnWriteArray request=4 @10
+# CHECK: = Data data=d1 {{*}}encoding=CopyOnWriteArray request=[[holes]] @20
+# CHECK-NOT: staticsOffset
+# CHECK: = NewRegExp pattern="a+" regExpFlags=[Global] {{*}}staticsOffset=16 @50
+# CHECK: = NewTemplateObject templateStrings=[{cooked="x" raw="x"}] request=[[template]] staticsOffset=24 @60
+# CHECK-LABEL: function f1 name="runsOften"
+# CHECK: = NewArray {{*}}literalStorage=Profiled staticsOffset=32 [contentsAreProven] @70
+# CHECK: = Data data=d2 {{*}}encoding=CopyOnWriteArray request=[[strings]] @80
+# CHECK-NOT: staticsOffset
+# CHECK-LABEL: function f2

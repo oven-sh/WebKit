@@ -1,0 +1,57 @@
+# Past the work limit every object of the one function is unknown, and the functions beside it are analyzed
+# FORM: Prepared
+# OPTIONS: limit=MaxEscapeAnalysisWork:4
+# RUN: analyses escape
+# LOSS: MaxEscapeAnalysisWork x1 f0
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point"
+function f0 name="fiveObjects" results=[{type=boolean}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewObject layout=L0 fields=[]
+    v4 = NewObject layout=L0 fields=[]
+    v5 = TypeTest v0 testedType=object
+    Return v5
+}
+# CHECK-LABEL: function f0
+# CHECK-NEXT: escape:
+# CHECK-NEXT: gave up: true
+# CHECK-NEXT: objects: 5
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: Unknown
+# CHECK-NEXT: o0 reasons: [LimitReached]
+# CHECK: o0 uses: all
+# CHECK-NEXT: o0 live instances: Unknown
+# REPEAT: i = 1..4
+# CHECK: o%(i) definition: v%(i)
+# CHECK-NEXT: o%(i) kind: Allocation
+# CHECK-NEXT: o%(i) state: Unknown
+# CHECK-NEXT: o%(i) reasons: [LimitReached]
+# END REPEAT
+# CHECK: o4 uses: all
+# CHECK-NEXT: o4 live instances: Unknown
+function f1 name="fourObjects" results=[{type=boolean}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewObject layout=L0 fields=[]
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewObject layout=L0 fields=[]
+    v4 = TypeTest v0 testedType=object
+    Return v4
+}
+# CHECK-LABEL: function f1
+# CHECK-NEXT: escape:
+# CHECK-NEXT: objects: 4
+# CHECK-NEXT: o0 definition: v0
+# CHECK-NEXT: o0 kind: Allocation
+# CHECK-NEXT: o0 state: DoesNotEscape
+# CHECK-NEXT: o0 reasons: []
+# CHECK-NEXT: o0 first escape: none
+# CHECK-NEXT: o0 uses: [Inspects]
+# CHECK-NEXT: o0 live instances: AtMostOne
+# CHECK: o3 definition: v3
+# CHECK-NEXT: o3 kind: Allocation
+# CHECK-NEXT: o3 state: DoesNotEscape
+# CHECK-NEXT: o3 reasons: []

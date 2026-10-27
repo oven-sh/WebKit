@@ -1,0 +1,31 @@
+# Several values of one block are erased in one pass
+# FORM: Prepared
+# RUN: erase-values function=f0 block=b0 indexes=1,2,4
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="erase" parameters=[{type=boolean}, {type=number}] results=[{type=number}] {
+    v2 = Add v1, v1
+    v3 = Mul v1, v1
+    v4 = Sub v1, v1
+    v5 = Add v2, v1
+    v6 = Negate v1
+    v7 = Mul v5, v2
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Negate v1
+    Return v7
+  b2():
+    Return v5
+}
+# CHECK: function f0
+# CHECK: b0(v0: boolean, v1: number):
+# CHECK: v2: number = Add v1, v1
+# CHECK-NOT: Mul
+# CHECK-NOT: Sub
+# CHECK: v5: number = Add v2, v1
+# CHECK-NOT: Negate
+# CHECK: v7: number = Mul v5, v2
+# CHECK: Branch v0 -> taken b1(), notTaken b2()
+# CHECK: b1():
+# CHECK: v8: number = Negate v1
+# CHECK: Return v7

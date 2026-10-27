@@ -1,0 +1,86 @@
+# A store into a slot that is still empty adds the property, so it first asks the objects above for a setter or a read-only property of the name. The prototype of the layout has none.
+# An object that was handed another prototype stores by name where the store stands. Neither arm is marked as the rarer one, and what follows reads its slots for both.
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot
+# RUN: pipeline ConvertCountersToIntegers
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Reply" constructor=f1 fields=[{key="status" declared={type=anything}}]
+layout L1 name="Heir" fields=[{key="ended" declared={type=anything}}, {key="bytes" declared={type=anything}}, {key="early" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="finish"
+    v4 = FinishClass v1 layout=L0
+    v5 = Integer integer=1
+    v6 = Construct v4, v4, v5
+    v7 = NewObject -, v5, v5, v5 layout=L1 fields=[0, 1, 2]
+    v8 = Builtin builtin=ObjectSetPrototypeOf
+    v9 = Call v8, -, v6, v7
+    v10 = PropGet v6 key="finish"
+    v11 = Call v10, v6, v5
+    v12 = NewClosure function=f3
+    v13 = Call v12, -, v6, v5
+    v14 = Builtin builtin=GlobalThis
+    v15 = PropGet v14 key="register" [isFreeName]
+    v16 = Call v15, -, v12
+    Return v11
+}
+
+# Nobody has seen the object that the constructor fills: its stores get no arm that goes by name.
+function f1 name="Reply" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    PropSet v3, v1 key="status" mode=Strict
+    PropSet v3, v1 key="early" mode=Strict
+    Return v3
+# CHECK-NOT: HasLayoutPrototype
+# CHECK: = NewObject -, v1, v1 layout=L0 fields=[0, 3]
+# CHECK-NOT: HasLayoutPrototype
+}
+
+function f2 name="finish" kind=Method flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="ended" mode=Strict
+    PropSet v0, v1 key="bytes" mode=Strict
+    v4 = PropGet v0 key="status"
+    Return v4
+# CHECK: [[hasOwnAtFirst]]: boolean = HasLayoutPrototype v0
+# CHECK-NEXT: Branch [[hasOwnAtFirst]] -> taken [[addsEnded]](| 0), notTaken [[endedByName]]()
+# CHECK: = GetSlot v0 key="status" receivers=[L0] level=Proven
+# CHECK: [[bytesByName]]():
+# CHECK-NEXT: PropSet v0, v1 key="bytes"
+# CHECK-NEXT: Jump -> next [[behindBoth]]()
+# CHECK: PutSlot v0, {{*}}, v1 key="bytes" receivers=[L0] level=Expected
+# CHECK-NEXT: Jump -> next [[behindBoth]]()
+# CHECK: [[second]]():
+# CHECK-NEXT: = HasLayoutPrototype v0
+# CHECK-NEXT: notTaken [[bytesByName]]()
+# CHECK: [[endedByName]]():
+# CHECK-NEXT: PropSet v0, v1 key="ended"
+# CHECK-NEXT: Jump -> next [[second]]()
+# CHECK: [[addsEnded]]([[hasOwn]]: guard):
+# CHECK-NEXT: PutSlot v0, [[hasOwn]], v1 key="ended" receivers=[L0] level=Expected
+# CHECK-NEXT: Jump -> next [[second]]()
+}
+
+# The layouts of what is handed in are tested for first.
+function f3 name="finishGiven" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="ended" mode=Strict
+    v3 = PropGet v0 key="status"
+    Return v3
+# CHECK: [[isReply]]: boolean ~ true = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch [[isReply]] -> taken [[typed]](| 0), notTaken
+# CHECK: [[typed]]([[reply]]: L0):
+# CHECK-NEXT: [[keepsPrototype]]: boolean = HasLayoutPrototype [[reply]]
+# CHECK-NEXT: Branch [[keepsPrototype]] -> taken [[adds]](| 0), notTaken [[byName]]()
+# CHECK: = GetSlot [[reply]] key="status" receivers=[L0] level=Expected
+# CHECK: [[byName]]():
+# CHECK-NEXT: PropSet [[reply]], v1 key="ended"
+# CHECK-NEXT: Jump -> next [[behind]]()
+# CHECK: [[adds]]([[kept]]: guard):
+# CHECK-NEXT: PutSlot [[reply]], [[kept]], v1 key="ended" receivers=[L0] level=Expected
+# CHECK-NEXT: Jump -> next [[behind]]()
+}

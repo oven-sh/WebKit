@@ -1,0 +1,33 @@
+# class Cache extends Map { constructor(entries) { super(entries) } set(key, value) {} }; new Cache([[1, 2]])
+# With entries the constructor of Map calls `set` as it finds it on the new object, once for each. No record says so, so native code has all that the class hands down.
+# LIBRARY: own
+# RUN: valueflow-why escaped=f2
+# CHECK: escaped=f2
+# CHECK-NEXT: n0 escaped
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Cache" constructor=f1 flags=[HasHeritage]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Map
+    v1 = NewClosure function=f1
+    v2 = ResolveHeritage v0
+    v3 = NewClass v1, v0, v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 key="set"
+    v6 = FinishClass v3 layout=L0
+    v7 = Integer integer=1
+    v8 = Integer integer=2
+    v9 = NewArray v7, v8 contents=anything
+    v10 = NewArray v9 contents=anything
+    v11 = Construct v6, -, v10
+    Return v11
+}
+function f1 name="Cache" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=anything}] {
+    v3 = GetSuperBase v0 homeKind=Object
+    v4 = SuperConstruct v3, v1, v2 layout=L0
+    Return v4
+}
+function f2 name="set" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return
+}

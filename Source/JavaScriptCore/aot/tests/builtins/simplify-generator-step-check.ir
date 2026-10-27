@@ -1,0 +1,63 @@
+# A step of a generator tests only what the type of the generator does not prove
+# FORM: Prepared optimizing
+# RUN: pass SimplifyBuiltinCalls SimplifyBuiltinCalls
+# CHECK: outcome: Changed
+# CHECK-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="classIsProven" parameters=[{type=Generator}, {type=anything}] results=[{type=anything}] {
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2 index=0
+    Return v3
+# CHECK: v2:{{*}}= StepGenerator v0, v1 check=None
+}
+
+function f1 name="namesAreNotProven" parameters=[{type=Generator}, {type=anything}] results=[{type=anything}] {
+    v2 = StepGenerator v0, v1 resumeMode=Return
+    v3 = ResultAt v2 index=0
+    Return v3
+# CHECK: v2:{{*}}= StepGenerator v0, v1 resumeMode=Return check=IsUnmodified
+}
+
+function f2 name="classAndNamesAreProven" parameters=[{type=Generator<anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = StepGenerator v0, v1 resumeMode=Return
+    v3 = ResultAt v2 index=0
+    Return v3
+# CHECK: v2:{{*}}= StepGenerator v0, v1 resumeMode=Return check=None
+}
+
+function f3 name="namesAreProvenLater" parameters=[{type=Generator<anything, pristine[Names]>}, {type=anything}] results=[{type=anything}] {
+    v2 = StepGenerator v0, v1 resumeMode=Throw check=IsUnmodified
+    v3 = ResultAt v2 index=0
+    Return v3
+# CHECK: v2:{{*}}= StepGenerator v0, v1 resumeMode=Throw check=None
+}
+
+function f4 name="unknownReceiver" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2 index=0
+    Return v3
+# CHECK: v2:{{*}}= StepGenerator v0, v1 check=IsGenerator
+}
+
+function f5 name="mayBeUndefined" parameters=[{type=undefined|Generator}, {type=anything}] results=[{type=anything}] {
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2 index=0
+    Return v3
+# CHECK: v2:{{*}}= StepGenerator v0, v1 check=IsGenerator
+}
+
+function f6 name="mayBeAnotherClass" parameters=[{type=Generator|Array}, {type=anything}] results=[{type=anything}] {
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2 index=0
+    Return v3
+# CHECK: v2:{{*}}= StepGenerator v0, v1 check=IsGenerator
+}
+
+function f7 name="expectedOnly" parameters=[{type=Generator flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ Generator, v1: anything):
+    v2 = StepGenerator v0, v1 check=IsGenerator
+    v3 = ResultAt v2 index=0
+    Return v3
+# CHECK: v2:{{*}}= StepGenerator v0, v1 check=IsGenerator
+}

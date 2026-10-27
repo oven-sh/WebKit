@@ -26,13 +26,15 @@
 #include "config.h"
 #include "YarrFlags.h"
 
+#include "AOTRemovableFeature.h"
 #include <wtf/OptionSet.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace Yarr {
 
-std::optional<OptionSet<Flags>> parseFlags(StringView string)
+NEVER_INLINE std::optional<OptionSet<Flags>> parseFlags(StringView string)
 {
+    JSC_REMOVABLE_DEFINITION(RegExp, parseFlags);
     OptionSet<Flags> flags;
     for (auto character : string.codeUnits()) {
         switch (character) {

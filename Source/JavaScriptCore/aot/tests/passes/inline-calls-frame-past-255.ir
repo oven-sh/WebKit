@@ -1,0 +1,46 @@
+# A function takes as many inlined calls as it may have inline frames: 300 sites are all inlined, and one site past the limit stays a call
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot limit=InlineFramesPerFunction:301
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 600
+# STATISTIC: InlineDecisionCallerSizeLimit = 1
+# LOSS: InlineFramesPerFunction x1 f2
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="squares" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0 @3
+    Return v1 @4
+}
+
+function f1 name="threeHundredSites" parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 0..299
+    v%(i+1) = CallDirect v%(i) function=f0 @%(i+1001)
+# END REPEAT
+    Return v300
+}
+# CHECK-LABEL: function f1 name="threeHundredSites"
+# CHECK: inlineFrames=[{}, {callee=f0 callPosition=1300 module=m0}, {callee=f0 callPosition=1299 module=m0},
+# CHECK: {callee=f0 callPosition=1002 module=m0}, {callee=f0 callPosition=1001 module=m0}] {
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v299, v299 @3:1
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v46, v46 @3:254
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v45, v45 @3:255
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v44, v44 @3:256
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v43, v43 @3:257
+# CHECK-NOT: CallDirect
+# CHECK: = Mul v0, v0 @3:300
+# CHECK-NOT: CallDirect
+
+function f2 name="oneSiteMore" parameters=[{type=number}] results=[{type=number}] {
+# REPEAT: i = 0..300
+    v%(i+1) = CallDirect v%(i) function=f0 @%(i+1001)
+# END REPEAT
+    Return v301
+}
+# CHECK-LABEL: function f2 name="oneSiteMore"
+# CHECK-COUNT-1: = CallDirect
+# CHECK-NOT: = CallDirect

@@ -1,0 +1,25 @@
+# A function called with undefined for its last arguments gets an entry that fills them in, one for each number of arguments left out
+# FORM: Prepared
+# RUN: pass ChooseCallingConventions
+# STATISTIC: SecondaryEntries = 2
+# CHECK: f0 Direct ({{*}}:JSValue, {{*}}:JSValue, {{*}}:JSValue) -> ({{*}}:JSValue) entries=[1@1, 2@2]
+# CHECK-NEXT: f1 Direct ({{*}}:JSValue, {{*}}:JSValue, {{*}}:JSValue) -> ({{*}}:JSValue)
+# CHECK-NEXT: f2 Direct
+# CHECK-NOT: entries=
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="calledWithFewer" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f1 name="calledWithAll" parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f2 name="caller" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = CallDirect v0, v1, v1 function=f0
+    v3 = CallDirect v0, v0, v1 function=f0
+    v4 = CallDirect v0, v0, v1 function=f0
+    v5 = CallDirect v0, v0, v0 function=f1
+    v6 = CallDirect v1, v0, v0 function=f1
+    Return v0
+}

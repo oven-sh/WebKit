@@ -24,10 +24,12 @@
 
 #include "JSCJSValueInlines.h"
 
+#include "AOTRemovableFeature.h"
 #include "BaselineJITCode.h"
 #include "BuiltinExecutables.h"
 #include "ButterflyInlines.h"
 #include "CachedTypes.h"
+#include "CagedAlignedMemoryAllocator.h"
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectingScope.h"
@@ -83,6 +85,7 @@
 #include "JSWeakSet.h"
 #include "MachineStackMarker.h"
 #include "MarkStackMergingConstraint.h"
+#include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
 #include "MarkingConstraintSet.h"
 #include "MegamorphicCache.h"
@@ -98,6 +101,7 @@
 #include "ShadowChicken.h"
 #include "SimpleMarkingConstraint.h"
 #include "StopIfNecessaryTimer.h"
+#include "StoredCellLog.h"
 #include "StringSplitCache.h"
 #include "StructureAlignedMemoryAllocator.h"
 #include "StructureArrayStorageInlines.h"
@@ -135,6 +139,10 @@
 #include "JSFFIFunction.h"
 #include "JSString.h"
 #include <wtf/text/ExternalStringImpl.h>
+#endif
+
+#if ENABLE(AOT)
+#include "AOTHeapHooks.h"
 #endif
 
 #if USE(FOUNDATION)
@@ -356,7 +364,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     , intlSegmentIteratorHeapCellType(IsoHeapCellType::Args<IntlSegmentIterator>())
     , intlSegmenterHeapCellType(IsoHeapCellType::Args<IntlSegmenter>())
     , intlSegmentsHeapCellType(IsoHeapCellType::Args<IntlSegments>())
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
     , ffiFunctionHeapCellType(IsoHeapCellType::Args<JSFFIFunction>())
     , ffiCallbackHeapCellType(IsoHeapCellType::Args<JSFFICallback>())
 #endif
@@ -375,15 +383,16 @@ Heap::Heap(VM& vm, HeapType heapType)
     , fastMallocAllocator(makeUnique<FastMallocAlignedMemoryAllocator>())
     , primitiveGigacageAllocator(makeUnique<GigacageAlignedMemoryAllocator>(Gigacage::Primitive))
     , structureAllocator(makeUnique<StructureAlignedMemoryAllocator>())
+    , cagedAllocator(MarkedBlockCage::isEnabled() ? makeUnique<CagedAlignedMemoryAllocator>() : nullptr)
 
     // Subspaces
     , primitiveGigacageAuxiliarySpace("Primitive Gigacage Auxiliary"_s, *this, auxiliaryHeapCellType, primitiveGigacageAllocator.get()) // Hash:0x3e7cd762
     , auxiliarySpace("Auxiliary"_s, *this, auxiliaryHeapCellType, fastMallocAllocator.get()) // Hash:0x96255ba1
-    , immutableButterflyAuxiliarySpace("ImmutableButterfly JSCellWithIndexingHeader"_s, *this, immutableButterflyHeapCellType, fastMallocAllocator.get()) // Hash:0xaadcb3c1
-    , cellSpace("JSCell"_s, *this, cellHeapCellType, fastMallocAllocator.get()) // Hash:0xadfb5a79
-    , destructibleObjectSpace("JSDestructibleObject"_s, *this, destructibleObjectHeapCellType, fastMallocAllocator.get()) // Hash:0x4f5ed7a9
+    , immutableButterflyAuxiliarySpace("ImmutableButterfly JSCellWithIndexingHeader"_s, *this, immutableButterflyHeapCellType, cellAllocator()) // Hash:0xaadcb3c1
+    , cellSpace("JSCell"_s, *this, cellHeapCellType, cellAllocator()) // Hash:0xadfb5a79
+    , destructibleObjectSpace("JSDestructibleObject"_s, *this, destructibleObjectHeapCellType, cellAllocator()) // Hash:0x4f5ed7a9
     FOR_EACH_JSC_COMMON_ISO_SUBSPACE(INIT_SERVER_ISO_SUBSPACE)
-    FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(INIT_SERVER_STRUCTURE_ISO_SUBSPACE)
+    FOR_EACH_JSC_STATIC_STRUCTURE_ISO_SUBSPACE(INIT_SERVER_STRUCTURE_ISO_SUBSPACE)
     , codeBlockSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, CodeBlock) // Hash:0x2b743c6a
     , functionExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, FunctionExecutable) // Hash:0xbcb36268
     , programExecutableSpaceAndSet ISO_SUBSPACE_INIT(*this, destructibleCellHeapCellType, ProgramExecutable) // Hash:0x4c9208f7
@@ -403,6 +412,8 @@ Heap::Heap(VM& vm, HeapType heapType)
     // When memory is critical, allow allocating 25% of the amount above the critical threshold before collecting.
     size_t memoryAboveCriticalThreshold = static_cast<size_t>(static_cast<double>(m_ramSize) * (1.0 - Options::criticalGCMemoryThreshold()));
     m_maxEdenSizeWhenCritical = memoryAboveCriticalThreshold / 4;
+
+    m_validatesCellVisits = Options::verifyGC();
 }
 
 #undef INIT_SERVER_ISO_SUBSPACE
@@ -419,6 +430,18 @@ Heap::~Heap()
         WeakBlock::destroy(*this, block);
     destroyAllPooledWeakBlocks();
     ASSERT(!m_weakBlockCount);
+}
+
+MarkedBlockCage& Heap::cage()
+{
+    if (!cagedAllocator) [[unlikely]]
+        cagedAllocator = makeUnique<CagedAlignedMemoryAllocator>();
+    return cagedAllocator->cage();
+}
+
+AlignedMemoryAllocator* Heap::cellAllocator()
+{
+    return MarkedBlockCage::isEnabled() ? static_cast<AlignedMemoryAllocator*>(cagedAllocator.get()) : fastMallocAllocator.get();
 }
 
 void Heap::dumpHeapStatisticsAtVMDestruction()
@@ -588,6 +611,7 @@ void Heap::reportExtraMemoryAllocatedSlowCase(GCDeferralContext* deferralContext
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
+    m_hasAllocatedSinceLastCollection = true;
     m_extraMemoryBytesSinceLastCollectionCheck += size;
     bool shouldCheckForCollection = m_extraMemoryBytesSinceLastCollectionCheck >= MarkedBlock::blockSize;
     if (shouldCheckForCollection) {
@@ -715,6 +739,11 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 {
     CollectionScope collectionScope = this->collectionScope().value_or(CollectionScope::Full);
 
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::HeapHooks::finalize(vm(), collectionScope, m_collector->m_phaseVersion);
+#endif
+
     {
         // Executables go before CodeBlock, since CodeBlock::reconcileWeakReferencesAtGCEnd looks at the owner executable's installed CodeBlock.
 
@@ -737,6 +766,10 @@ void Heap::reconcileWeakReferencesAtGCEnd()
     if (collectionScope == CollectionScope::Full) {
         reconcileWeakReferencesInMarkedCells<Structure>(structureSpace, collectionScope);
         reconcileWeakReferencesInMarkedCells<BrandedStructure>(brandedStructureSpace, collectionScope);
+#if ENABLE(AOT)
+        if (m_compiledStructureSpace)
+            reconcileWeakReferencesInMarkedCells<AOT::CompiledStructure>(*m_compiledStructureSpace, collectionScope);
+#endif
 #if ENABLE(WEBASSEMBLY)
         reconcileWeakReferencesInMarkedCells<WebAssemblyGCStructure>(webAssemblyGCStructureSpace, collectionScope);
 #endif
@@ -965,10 +998,19 @@ void Heap::verifyHeapAfterMarking()
     }
 }
 
+bool Heap::canSkipMarking() const
+{
+    return isEdenCollectionWithEmptyEden() && !m_verifier && !Options::verifyGC() && !m_validatesCellVisits;
+}
+
 void Heap::pruneDeadReferences()
 {
     ASSERT(isInPhase(CollectorPhase::End));
     ASSERT(!m_objectSpace.isMarking());
+
+    m_didSkipMarkingInLastCollection = canSkipMarking();
+    if (m_didSkipMarkingInLastCollection)
+        return;
 
     // This doesn't necessarily run on this heap's mutator thread. Clear the atom string table so that
     // destroying an atom string here fails whichever thread it runs on.
@@ -1003,9 +1045,17 @@ void Heap::prepareForAllocation()
     ASSERT(isInPhase(CollectorPhase::End));
     ASSERT(!m_objectSpace.isMarking());
 
-    m_sweeper->startSweeping(*this);
+    if (!isEdenCollectionWithEmptyEden())
+        m_sweeper->startSweeping(*this);
 
     m_objectSpace.prepareForAllocation();
+#if ASAN_ENABLED
+    if (Options::runsCompiledImage()) {
+        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+            handle->poisonDeadCellsIfUnswept();
+        });
+    }
+#endif
     updateAllocationLimits();
 
     if (m_verifier) [[unlikely]] {
@@ -1442,8 +1492,13 @@ static void forEachLiveCellOfSettledBlock(MarkedBlock::Handle& handle, const Fun
     if (handle.isAllocated()) {
         char* cell = std::bit_cast<char*>(handle.start());
         char* end = std::bit_cast<char*>(handle.end());
-        for (; cell + handle.cellSize() <= end; cell += handle.cellSize())
+        for (; cell + handle.cellSize() <= end; cell += handle.cellSize()) {
+#if ASAN_ENABLED
+            if (handle.isRedZoneCell(cell))
+                continue;
+#endif
             func(std::bit_cast<HeapCell*>(cell));
+        }
         return;
     }
     handle.forEachMarkedCell([&](size_t, HeapCell* cell, HeapCell::Kind) {
@@ -1456,9 +1511,13 @@ static size_t liveCellCountOfSettledBlock(MarkedBlock::Handle& handle)
 {
     ASSERT(!handle.block().hasAnyNewlyAllocated());
     size_t result;
-    if (handle.isAllocated())
+    if (handle.isAllocated()) {
         result = handle.cellsPerBlock();
-    else if (handle.block().areMarksStale())
+#if ASAN_ENABLED
+        if (MarkedBlock::Handle::hasRedZoneCells())
+            result = (result + 1) / 2;
+#endif
+    } else if (handle.block().areMarksStale())
         result = 0;
     else
         result = handle.block().markCount();
@@ -2058,7 +2117,7 @@ bool Heap::stopIfNecessarySlow(unsigned oldState)
     // prevent us from polling this so much. Ideally, stopIfNecessary would ignore the mutatorHasConnBit
     // and there would be some other bit indicating whether we were in some GC phase other than the
     // NotRunning or Concurrent ones.
-    if (oldState & mutatorHasConnBit)
+    if ((oldState & mutatorHasConnBit) && !(Options::runsCompiledImage() && m_collector->isNotRunning()))
         collectInMutatorThread();
     
     return false;
@@ -2096,7 +2155,10 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
         m_mutatorDidRun = true;
         // FIXME: We wouldn't need this if stopIfNecessarySlow() had a mode where it knew to just
         // do the collection.
-        relinquishConn();
+        if (!Options::runsCompiledImage())
+            relinquishConn();
+        else if (relinquishConn(oldState))
+            continue;
 
         if (done) {
             clearMutatorWaiting(); // Clean up just in case.
@@ -2257,14 +2319,8 @@ void Heap::clearMutatorWaiting()
     m_worldState.exchangeAnd(~mutatorWaitingBit);
 }
 
-void Heap::runCollectionEpilogue()
+void Heap::sweepAndClearCachesInEpilogue()
 {
-    MonotonicTime before;
-    if (Options::logGC()) [[unlikely]] {
-        before = MonotonicTime::now();
-        dataLog("[GC<", RawPointer(this), ">: epilogue ");
-    }
-    
     {
         SweepingScope sweepingScope(*this);
         pruneUnusedSourceProviderCaches();
@@ -2281,7 +2337,9 @@ void Heap::runCollectionEpilogue()
 
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
         vm().jsonCache().clearStrings();
-        vm().numericStrings.clearOnGarbageCollection();
+        // Compiled code reads these tables itself. They have a fixed size, so what they keep is bounded.
+        if (!Options::runsCompiledImage())
+            vm().numericStrings.clearOnGarbageCollection();
         vm().stringReplaceCache.clear();
     }
     vm().keyAtomStringCache.clear();
@@ -2297,7 +2355,19 @@ void Heap::runCollectionEpilogue()
     m_stringsFoundOnStack.clear();
 
     vm().immutableButterflyToStringCache.clear();
-    
+}
+
+void Heap::runCollectionEpilogue()
+{
+    MonotonicTime before;
+    if (Options::logGC()) [[unlikely]] {
+        before = MonotonicTime::now();
+        dataLog("[GC<", RawPointer(this), ">: epilogue ");
+    }
+
+    if (!m_didSkipMarkingInLastCollection)
+        sweepAndClearCachesInEpilogue();
+
     for (const GCCompletionCallback& callback : m_gcCompletionCallbacks)
         callback.run(vm());
 
@@ -2483,7 +2553,8 @@ void Heap::updateAllocationLimits()
         // the new allocation limit based on the current size of the heap, with a
         // fixed minimum.
         size_t lastMaxHeapSize = m_maxHeapSize;
-        m_maxHeapSize = std::max(minHeapSize(m_heapType, m_ramSize), proportionalHeapSize(currentHeapSize, m_ramSize));
+        size_t limit = memoryLimitForGrowth();
+        m_maxHeapSize = std::max(minHeapSize(m_heapType, limit), proportionalHeapSize(currentHeapSize, limit));
         m_maxEdenSize = m_maxHeapSize - currentHeapSize;
         if (m_isInOpportunisticTask && !isCritical) {
             // After an Opportunistic Full GC, we allow eden to occupy all the space we recovered.
@@ -2531,6 +2602,7 @@ void Heap::updateAllocationLimits()
 #endif
     m_nonOversizedBytesAllocatedThisCycle = 0;
     m_oversizedBytesAllocatedThisCycle = 0;
+    m_hasAllocatedSinceLastCollection = !Options::runsCompiledImage();
     m_lastOversizedAllocationThisCycle = 0;
 
     dataLogIf(Options::logGC(), "=> ", currentHeapSize / 1024, "kb, ");
@@ -2614,6 +2686,7 @@ void Heap::setGarbageCollectionTimerEnabled(bool enable)
 constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
+    m_hasAllocatedSinceLastCollection = true;
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversizedAllocationThisCycle = bytes;
@@ -2692,7 +2765,7 @@ void Heap::disableStopIfNecessaryTimer()
 bool Heap::shouldSweepSynchronously()
 {
     // updateAllocationLimits() updates info that overCriticalMemoryThreshold() needs.
-    return overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
+    return (ASAN_ENABLED && Options::runsCompiledImage()) || overCriticalMemoryThreshold() || Options::sweepSynchronously() || VM::isInMiniMode();
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -2809,6 +2882,71 @@ void Heap::writeBarrierSlowPath(const JSCell* from)
     addToRememberedSet(from);
 }
 
+void Heap::writeBarrierSlowPath(const JSCell* from, JSCell* to)
+{
+    if (m_storedCellLog && !mutatorShouldBeFenced() && m_storedCellLog->tryRemember(from, to))
+        return;
+    writeBarrierSlowPath(from);
+}
+
+StoredCellLog& Heap::storedCellLog()
+{
+    if (!m_storedCellLog)
+        m_storedCellLog = makeUniqueWithoutFastMallocCheck<StoredCellLog>();
+    return *m_storedCellLog;
+}
+
+bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
+{
+    if (!MarkedBlockCage::isRequired())
+        return false;
+    if (deferralContext || isDeferred()) {
+        cage().didFindNoRoomWhereNothingCollects();
+        if (deferralContext)
+            deferralContext->m_shouldGC = true;
+        else
+            m_didDeferGCWork = true;
+        return false;
+    }
+    collectForExhaustedCage();
+    return true;
+}
+
+void Heap::collectForExhaustedCage()
+{
+    collectNow(Sync, CollectionScope::Full);
+#if ASAN_ENABLED
+    // Under ASan a block keeps the cells that a collection found dead until the next collection.
+    collectNow(Sync, CollectionScope::Full);
+#endif
+}
+
+bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)
+{
+    if (!MarkedBlockCage::isRequired())
+        return false;
+    if (exhaustedAllocator == structureAllocator.get()) {
+        if (!StructureAlignedMemoryAllocator::releaseReserve())
+            return false;
+        cage().setExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Structures);
+        vm().traps().setNeedsOutOfMemoryError(true);
+        return true;
+    }
+    if (cage().releaseReserve()) {
+        vm().traps().setNeedsOutOfMemoryError(true);
+        return true;
+    }
+    if (!cage().releaseLastReserve())
+        return false;
+    MarkedBlockCage::willUseLastReserve(vm());
+    return true;
+}
+
+size_t Heap::memoryLimitForGrowth()
+{
+    return MarkedBlockCage::isRequired() ? std::min(m_ramSize, cage().size()) : m_ramSize;
+}
+
 bool Heap::currentThreadIsDoingGCWork()
 {
     return Thread::mayBeGCThread() || mutatorState() != MutatorState::Running;
@@ -2864,6 +3002,11 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
     }
     if (!Options::useGC()) [[unlikely]]
         return;
+
+    if (MarkedBlockCage::isRequired() && !deferralContext && !isDeferred() && cage().owesCollection()) [[unlikely]] {
+        cage().tryTakeBackOutOfMemoryError(vm());
+        return;
+    }
     
     if (mayNeedToStop()) {
         if (deferralContext)
@@ -2997,11 +3140,13 @@ static ALWAYS_INLINE void visitSamplingProfiler(VM& vm, Visitor& visitor)
 {
     SamplingProfiler* samplingProfiler = vm.samplingProfiler();
     if (samplingProfiler) [[unlikely]] {
+        JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, Abort, void)
         Locker locker { samplingProfiler->getLock() };
         samplingProfiler->processUnverifiedStackTraces();
         samplingProfiler->visit(visitor);
         if (Options::logGC() == GCLogging::Verbose)
             dataLog("Sampling Profiler data:\n", visitor);
+        JSC_END_REMOVABLE_ENTRY_POINT
     }
 };
 #else
@@ -3044,9 +3189,17 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
 
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ConservativeScan);
                 visitor.append(conservativeRoots);
+#if ENABLE(AOT)
+                if (vm().hasCompiledCode())
+                    AOT::HeapHooks::visitCalleesOfFrames(vm(), visitor, m_collector->m_phaseVersion);
+#endif
                 if (auto* verifierVisitor = m_collector->m_verifierSlotVisitor.get()) [[unlikely]] {
                     SetRootMarkReasonScope rootScope(*verifierVisitor, RootMarkReason::ConservativeScan);
                     verifierVisitor->append(conservativeRoots);
+#if ENABLE(AOT)
+                    if (vm().hasCompiledCode())
+                        AOT::HeapHooks::visitCalleesOfFrames(vm(), static_cast<AbstractSlotVisitor&>(*verifierVisitor), m_collector->m_phaseVersion);
+#endif
                 }
             }
 
@@ -3094,6 +3247,11 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
                     visitor.appendUnbarriered(pair.key);
             }
             
+            if (m_storedCellLog) {
+                SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ExternalRememberedSet);
+                m_storedCellLog->visitAndReset(visitor);
+            }
+
             if (!m_markListSet.isEmpty()) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::ConservativeScan);
                 MarkedVectorBase::markLists(visitor, m_markListSet);
@@ -3265,6 +3423,13 @@ Vector<std::unique_ptr<MarkingConstraint>> Heap::createCoreConstraints()
     
     constraints.append(makeUnique<MarkStackMergingConstraint>(*this));
 
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode()) {
+        for (auto& constraint : AOT::createMarkingConstraints(vm()))
+            constraints.append(WTF::move(constraint));
+    }
+#endif
+
     return constraints;
 }
 
@@ -3273,7 +3438,7 @@ void Heap::addMarkingConstraint(std::unique_ptr<MarkingConstraint> constraint)
     // With collection off, the heap never joins and no constraint would run.
     if (!Options::useGC()) [[unlikely]]
         return;
-    ASSERT(m_isSafeToCollect);
+    ASSERT(!m_isShuttingDown);
     waitForMembershipChange(m_collector->requestMembershipChange({ Collector::MembershipChange::Kind::AddConstraint, this, WTF::move(constraint) }));
 }
 
@@ -3336,6 +3501,10 @@ void Heap::setMutatorShouldBeFenced(bool value)
 {
     m_mutatorShouldBeFenced = value;
     m_barrierThreshold = value ? tautologicalThreshold : blackThreshold;
+#if ENABLE(AOT)
+    if (vm().hasCompiledCode())
+        AOT::HeapHooks::didChangeBarrierThreshold(vm(), m_barrierThreshold, value);
+#endif
 }
 
 void Heap::performIncrement(size_t bytes)
@@ -3393,9 +3562,23 @@ void Heap::scheduleOpportunisticFullCollection()
         return m_##name.get(); \
     }
 
-FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(DEFINE_DYNAMIC_ISO_SUBSPACE_MEMBER_SLOW)
+FOR_EACH_JSC_DYNAMIC_COMMON_ISO_SUBSPACE(DEFINE_DYNAMIC_ISO_SUBSPACE_MEMBER_SLOW)
 
 #undef DEFINE_DYNAMIC_ISO_SUBSPACE_MEMBER_SLOW
+
+#define DEFINE_DYNAMIC_STRUCTURE_ISO_SUBSPACE_MEMBER_SLOW(name, heapCellType, type) \
+    IsoSubspace* Heap::name##Slow() \
+    { \
+        ASSERT(!m_##name); \
+        auto space = makeUnique<IsoSubspace>(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get()); \
+        WTF::storeStoreFence(); \
+        m_##name = WTF::move(space); \
+        return m_##name.get(); \
+    }
+
+FOR_EACH_JSC_DYNAMIC_STRUCTURE_ISO_SUBSPACE(DEFINE_DYNAMIC_STRUCTURE_ISO_SUBSPACE_MEMBER_SLOW)
+
+#undef DEFINE_DYNAMIC_STRUCTURE_ISO_SUBSPACE_MEMBER_SLOW
 
 #define DEFINE_DYNAMIC_SPACE_AND_SET_MEMBER_SLOW(name, heapCellType, type, spaceType) \
     IsoSubspace* Heap::name##Slow() \
@@ -3416,13 +3599,13 @@ DEFINE_DYNAMIC_SPACE_AND_SET_MEMBER_SLOW(moduleProgramExecutableSpace, destructi
     SubspaceType* Heap::name##Slow() \
     { \
         ASSERT(!m_##name); \
-        auto space = makeUnique<SubspaceType>(ASCIILiteral(#SubspaceType " " #name), *this, heapCellType, fastMallocAllocator.get()); \
+        auto space = makeUnique<SubspaceType>(ASCIILiteral(#SubspaceType " " #name), *this, heapCellType, cellAllocator()); \
         WTF::storeStoreFence(); \
         m_##name = WTF::move(space); \
         return m_##name.get(); \
     }
 
-FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_DYNAMIC_NON_ISO_SUBSPACE_MEMBER_SLOW)
+FOR_EACH_JSC_DYNAMIC_NON_ISO_SUBSPACE(DEFINE_DYNAMIC_NON_ISO_SUBSPACE_MEMBER_SLOW)
 #undef DEFINE_DYNAMIC_NON_ISO_SUBSPACE_MEMBER_SLOW
 
 #if ENABLE(WEBASSEMBLY)

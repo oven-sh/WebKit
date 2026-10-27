@@ -1,0 +1,16 @@
+# The host's body is reached from the start, so it says what every variable holds before any code has run: a declared function its closure, a hoisted variable undefined,
+# a lexical one the mark of a variable that is not initialized.
+# RUN: valueflow-body host
+# CHECK: body host:
+# CHECK: reached: seed g0 <- closure f0
+# CHECK-NEXT: reached: seed g1 <- undefined
+# CHECK-NEXT: reached: seed g2 <- absent
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+variable g0 name="declared" module=m0 declared={type=anything} initialization=Function function=f0
+variable g1 name="hoisted" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="lexical" module=m0 declared={type=anything}
+function f0 name="declared" results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,12 @@
+# In compact code the string of a literal string is one call of the stub that finds or creates its cell
+# FORM: Selected
+# OPTIONS: heat=everything-is-cold
+# RUN: generate-code calls
+
+# CHECK: f0: size={{*}}
+# CHECK-NEXT: stub LiteralStringToString x1
+# CHECK-NOT: operation operationAOTLiteralStringToString
+# CHECK: f1: size={{*}}
+# CHECK-NEXT: stub LiteralStringToString x1
+# CHECK-NOT: operation operationAOTLiteralStringToString
+# PROGRAM-OF: literal-string-to-string-fast.ir

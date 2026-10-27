@@ -1,0 +1,42 @@
+# A position of slice, substring or substr that is a double: the conversion to int64 truncates it. On x86-64 it makes the least int64 of NaN and of whatever lies beyond int64, and that arrives on the side for
+# negative positions, which lies out of line: there the number is asked whether it lay above. So the way of a position inside the text has the conversion, the test of the sign and the clamp against the length,
+# and no constant is loaded for it. An index is not clamped and NaN is the index 0, so it is made ready in front of the conversion as before (f3)
+# FORM: Selected
+# OPTIONS: check=validate-back-end
+# RUN: generate-code
+# RUN(X64): generate-code
+# REQUIRES(X64): x86_64
+# CHECK-COUNT-4: : size=
+# CHECK-NOT: no code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slice" parameters=[{type=int[0, 2147483647]}, {type=number}] results=[{type=int}] {
+    v2 = StringRange v0, v1 method=Slice
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    Return v3
+}
+function f1 name="substring" parameters=[{type=int[0, 2147483647]}, {type=number}, {type=number}] results=[{type=int}] {
+    v3 = StringRange v0, v1, v2 method=Substring
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Sub v5, v4 form=Integers
+    Return v6
+}
+function f2 name="substr" parameters=[{type=int[0, 2147483647]}, {type=number}, {type=number}] results=[{type=int}] {
+    v3 = StringRange v0, v1, v2 method=Substr
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Sub v5, v4 form=Integers
+    Return v6
+}
+function f3 name="index" parameters=[{type=int[0, 2147483647]}, {type=number}] results=[{type=int}] {
+    v2 = StringRange v0, v1 method=SingleIndex
+    v3 = ResultAt v2 index=0
+    v4 = ResultAt v2 index=1
+    Return v4
+}
+# X64: f0: size=55 frame=none {{*}}constants=0
+# X64: f1: size=90 frame=none {{*}}constants=0
+# X64: f2: size=88 frame=none {{*}}constants=0
+# X64: f3: size=75 frame=none {{*}}constants=1

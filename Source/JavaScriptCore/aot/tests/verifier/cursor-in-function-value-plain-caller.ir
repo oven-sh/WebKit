@@ -1,0 +1,21 @@
+# a closure of a function with a cursor in its signature is refused wherever it is created, also in a function without an operation on typed data
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: CursorInFunctionValue 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="skips" role=Parser parameters=[{type=cursor}] results=[{type=cursor}] creator=Parser{type=anything} {
+    v1 = JSONSkipWhitespace v0
+    Return v1
+}
+function f1 name="plain" results=[{type=undefined}] {
+    Return
+}
+function f2 name="goodClosure" results=[{type=function}] {
+    v0 = NewClosure function=f1
+    Return v0
+}
+function f3 name="badClosure" results=[{type=function}] {
+    v0 = NewClosure function=f0
+    Return v0
+}

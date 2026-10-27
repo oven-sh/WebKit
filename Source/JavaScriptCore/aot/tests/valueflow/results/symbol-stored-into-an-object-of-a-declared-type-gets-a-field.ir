@@ -1,0 +1,36 @@
+# const kState = Symbol("state"); interface MessageType { a: number; [kState]: number }
+# const message: MessageType = { a: 1 }; message[kState] = 2; (message as any).other = 2; and the same with an object that has no declared type
+# Where the program declares a type for the objects, a name that the type does not have gets no room: it is an extra property.
+# No layout can list a symbol that the program creates, whatever the type says about it, so its absence from the declared type says nothing: the symbol gets a field like that of an untyped object
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Message" fields=[{key="a"
+# CHECK-NOT: key="other"
+# CHECK: {key=symbol("state")@m0:100 declared={type=2} flags=[IsAddedLate
+# CHECK-NOT: key="other"
+# CHECK: layout L1 name="MessageType"
+# CHECK: layout L2 name="Untyped" fields=[{key="a"
+# CHECK: {key="other" declared={type=2} flags=[IsAddedLate
+# CHECK: {key=symbol("state")@m0:100 declared={type=2} flags=[IsAddedLate
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Message" fields=[{key="a" declared={type=number}}] supertypes=[L1]
+layout L1 name="MessageType" fields=[{key="a" declared={type=number} flags=[IsRequired]}]
+layout L2 name="Untyped" fields=[{key="a" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Symbol
+    v1 = String string="state"
+    v2 = Call v0, -, v1 callNumber=100 @100
+    v3 = Integer integer=1
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Integer integer=2
+    ElemSet v4, v2, v5 mode=Strict
+    PropSet v4, v5 key="other" mode=Strict
+    v8 = NewObject -, v3 layout=L2 fields=[0]
+    ElemSet v8, v2, v5 mode=Strict
+    PropSet v8, v5 key="other" mode=Strict
+    v11 = ElemGet v4, v2
+    v12 = ElemGet v8, v2
+    v13 = Add v11, v12
+    Return v13
+}

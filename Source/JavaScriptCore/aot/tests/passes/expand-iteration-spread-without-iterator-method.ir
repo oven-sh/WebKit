@@ -1,0 +1,71 @@
+# A spread of a value in which the protocol finds no method throws where it stands: no call of the function that walks anything comes between a test and the store that relies on it
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(ABSENT): pass ExpandIteration
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="storesBehindTheSpread" parameters=[{type=Array}, {type=int[0, 10]}] results=[{type=undefined}] {
+  b0(v0: Array, v1: int[0, 10]):
+    v2 = IsPristine v0 builtinClass=Array aspects=[Storage]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3: guard):
+    v4 = NewArray contents=never
+    v5 = Integer integer=7
+    AppendSpread v4, v5
+    v7 = HasArrayStorage v0 arrayStorage=Contiguous [isWritable]
+    Branch v7 -> taken b2(| 0), notTaken b4()
+  b2(v8: guard):
+    v9 = IsInBounds v0, v1
+    Branch v9 -> taken b3(| 0), notTaken b4()
+  b3(v10: guard):
+    v11 = AllGuards v3, v8, v10
+    PutArrayElement v0, v1, v4, v11 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds]
+    Jump -> next b4()
+  b4():
+    v13 = Undefined
+    Return v13
+# CHECK: b0(v0: Array, v1: int[0, 10]):
+# CHECK: ([[seven]]: 7):
+# CHECK-NEXT: never = ThrowNotIterable [[seven]] [isSpread]
+# CHECK-NEXT: Unreachable
+# ABSENT-NOT: CallDirect
+# ABSENT-NOT: PutArrayElement
+}
+
+function f1 name="booleanOrNothing" parameters=[{type=undefined|boolean}] results=[{type=anything}] {
+    v1 = NewArray contents=never
+    AppendSpread v1, v0
+    Return v1
+# CHECK: [[present]]: boolean = RequireObjectCoercible {{*}} nullishAccess=Spread
+# CHECK-NEXT: never = ThrowNotIterable [[present]] [isSpread]
+# CHECK-NEXT: Unreachable
+# ABSENT-NOT: CallDirect
+# ABSENT-NOT: Return
+}
+
+function f2 name="string" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# CHECK: Return v1
+# ABSENT-NOT: ThrowNotIterable
+}
+
+function f3 name="stringOrNumber" parameters=[{type=string|number}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# CHECK: Return v1
+# CHECK: [[isString]]: boolean = TypeTest {{*}} testedType=string
+# CHECK-NEXT: Branch [[isString]] -> taken {{*}}(| 0), notTaken [[other]](| 0)
+# CHECK: [[other]]([[number]]: number) frequency=Rare:
+# CHECK-NEXT: never = ThrowNotIterable [[number]] [isSpread]
+# CHECK-NEXT: Unreachable
+# ABSENT-NOT: CallDirect
+}
+
+function f4 name="namesTheKey" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key=@@iterator
+    Return v1
+}

@@ -1,0 +1,11 @@
+# while a function is optimized an operation may name a field whose record says that nothing reads or stores it
+# FORM: Prepared optimizing
+# RUN: verify optimizing
+# CHECK: valid
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="unused" declared={type=anything} flow={location={writers=AllKnown stores=Never reads=NeverRead}}}]
+function f0 name="read" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = GetSlotOrUndefined v0 key="unused" receivers=[L0] level=Proven
+    Return v1
+}

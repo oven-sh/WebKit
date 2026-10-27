@@ -33,6 +33,8 @@ class CodeBlock;
 class CallFrame;
 class Heap;
 class JSCell;
+class JSGlobalObject;
+class JSObject;
 class JSValue;
 class VM;
 

@@ -1,0 +1,68 @@
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Pair" fields=[{key="a" declared={type=i32} flags=[IsRequired]}, {key="b" declared={type=i32} flags=[IsRequired]}]
+
+function f0 name="builtOnlyWhereTheSecondAnswerNeedsIt" parameters=[{type=i32}, {type=i32}, {type=boolean}, {type=boolean}] results=[{type=anything}] {
+    v4 = Integer
+    v5 = StrictEq v0, v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Null
+    Jump -> next b5(v6)
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3():
+    v7 = Undefined
+    Jump -> next b5(v7)
+  b4():
+    v8 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    Jump -> next b5(v8)
+  b5(v9: undefined|null|L0):
+    Branch v2 -> taken b6(), notTaken b7()
+  b6():
+    Return
+  b7():
+    v10 = ToBoolean v9
+    Branch v10 -> taken b8(), notTaken b9()
+  b8():
+    v11 = Boolean boolean=true
+    Jump -> next b10(v11)
+  b9():
+    v12 = String string="none"
+    Jump -> next b10(v12)
+  b10(v13: true|"none"):
+    Branch v10 -> taken b11(| 0), notTaken b12()
+  b11(v14: L0):
+    v15 = String string="b"
+    v16 = CallBuiltin -, v14, v15 overload=ObjectHasOwn/0
+    Jump -> next b13(v16)
+  b12():
+    v17 = String string="none"
+    Jump -> next b13(v17)
+  b13(v18: boolean|"none"):
+    v19 = TypeTest v9 testedType=undefined|null
+    Branch v19 -> taken b14(), notTaken b15(| 0)
+  b14():
+    Return v13
+  b15(v20: L0):
+    v21 = IsSlotFilled v20 key="b" receivers=[L0] level=Expected
+    Branch v21 -> taken b16(| 0), notTaken b17()
+  b16(v22: guard):
+    v23 = GetSlot v20, v22 key="b" receivers=[L0] level=Expected
+    Return v23
+  b17():
+    Return v18
+}
+# CHECK-LABEL: name="builtOnlyWhereTheSecondAnswerNeedsIt"
+# CHECK: b4():
+# CHECK-NOT: NewObject
+# CHECK: b10({{*}}, [[tag]]: i32,
+# CHECK-NEXT: Branch v10 -> taken b11(), notTaken b12()
+# CHECK-NEXT: b11():
+# CHECK: = NewObject
+# CHECK: b12():
+# CHECK: [[missing]]:{{*}}= Unspecified valueType=undefined|null|L0
+# CHECK-NEXT: Jump -> next b13({{*}}, [[tag]], [[missing]])

@@ -1,0 +1,57 @@
+# function Helper(target) { this.target = target; }   Helper.prototype.define = function (name) { this.target[name] = function () { return name; }; return this; };
+# new Helper(object).define("a").define("b");
+# Nothing proves what `define` holds when the chain runs, so each link tests it. Where it holds the function that the text stores, the link calls a copy of its own.
+# The copy tests that the field holds the object the helper was made for, and from there on has two versions: one stores into that object, the other is the text as written.
+# FORM: AsRead
+# RUN: pass CopyClosureFactories
+# CHECK: outcome: Changed
+# CHECK-LABEL: function f0 name="main"
+# CHECK: [[isFirst]]{{*}} = IsClosureOf v8 function=f2
+# CHECK-NEXT: Branch [[isFirst]]
+# CHECK: [[first]]{{*}} = NewClosure v5 function=f5
+# CHECK-NEXT: Call [[first]], v7, v9
+# CHECK: Call v8, v7, v9
+# CHECK: [[second]]{{*}} = NewClosure v5 function=f7
+# CHECK-LABEL: function f5 name="define"
+# CHECK: [[read]]{{*}} = PropGet {{*}} key="target"
+# CHECK: [[member]]{{*}} = NewClosure [[name]] function=f4
+# CHECK: [[same]]{{*}} = StrictEq [[read]], [[object]]
+# CHECK-NEXT: Branch [[same]]
+# CHECK: ElemSet [[object]], [[name]], [[member]]
+# CHECK: ElemSet [[read]], [[name]], [[member]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 module=m0 fields=[]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="define" mode=Sloppy
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    v6 = Undefined
+    v7 = Construct v0, -, v5
+    v8 = PropGet v7 key="define"
+    v9 = String string="a"
+    v10 = Call v8, v7, v9
+    v11 = PropGet v10 key="define"
+    v12 = String string="b"
+    v13 = Call v11, v10, v12
+    Return
+}
+function f1 name="Helper" module=m0 position=10 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = ToThis v0
+    PropSet v2, v1 key="target" mode=Sloppy
+    Return
+}
+function f2 name="define" module=m0 position=20 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = ToThis v0
+    v3 = PropGet v2 key="target"
+    v4 = NewClosure v1 function=f3
+    ElemSet v3, v1, v4 mode=Sloppy
+    Return v2
+}
+function f3 name="member" module=m0 position=30 captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

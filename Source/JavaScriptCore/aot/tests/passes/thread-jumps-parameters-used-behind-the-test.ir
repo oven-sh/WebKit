@@ -1,0 +1,99 @@
+# An edge whose argument decides the test of a merge block skips the block also where the block's parameters are used behind it:
+# the edge has a value for each of them, and the block that it jumps to gets a parameter for the value of either way in.
+# Not where the block computes something that is used behind it, which exists only behind the block, and not in a function with a handler
+# FORM: Prepared optimizing
+# RUN: pass ThreadJumps VerifyProgram
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Holder" fields=[{key="next" declared={type=anything}}]
+
+function f0 name="secondParameterIsUsedBehindTheTest" parameters=[{type=i32}, {type=anything}, {type=boolean}, {type=L0}, {type=L0}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0, v3)
+  b2() frequency=Unlikely:
+    Jump -> next b3(v1, v4)
+  b3(v5, v6):
+    v7 = TypeTest v5 testedType=number
+    Branch v7 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v8):
+    PropSet v6, v8 key="next" mode=Strict
+    Return v6
+  b5(v10) frequency=Rare:
+    Return v10
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next [[skipping]](v0, v3)
+# CHECK: b2() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b3(v1, v4)
+# CHECK: Branch v7 -> taken b4(v6 | 0), notTaken b5(| 0)
+# CHECK-NEXT: b4([[holder]]: L0, v8: number{{*}}):
+# CHECK-NEXT: PropSet [[holder]], v8 key="next"
+# CHECK-NEXT: Return [[holder]]
+# CHECK: [[skipping]]([[number]]: i32, [[passed]]: L0):
+# CHECK-NEXT: Jump -> next b4([[passed]], [[number]])
+}
+
+function f1 name="testedParameterIsUsedBehindTheTest" parameters=[{type=string}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0)
+  b2():
+    Jump -> next b3(v1)
+  b3(v3):
+    v4 = TypeTest v3 testedType=string
+    Branch v4 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v5):
+    v6 = GetStringLength v5
+    v7 = Add v6, v3
+    Return v7
+  b5(v8):
+    Return v8
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next [[skipping]](v0)
+# CHECK: b2():
+# CHECK-NEXT: Jump -> next b3(v1)
+# CHECK: Branch v4 -> taken b4(v3 | 0), notTaken b5(| 0)
+# CHECK-NEXT: b4([[untested]]: anything, v5: string):
+# CHECK: = Add v6, [[untested]]
+# CHECK: [[skipping]]([[text]]: string):
+# CHECK-NEXT: Jump -> next b4([[text]], [[text]])
+}
+
+function f2 name="blockComputesWhatIsUsedBehindIt" parameters=[{type=i32}, {type=anything}, {type=boolean}, {type=L0}, {type=L0}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0, v3)
+  b2():
+    Jump -> next b3(v1, v4)
+  b3(v5, v6):
+    v7 = StrictEq v6, v3
+    v8 = TypeTest v5 testedType=number
+    Branch v8 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v9):
+    Return v7
+  b5(v10):
+    Return v10
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0, v3)
+}
+
+function f3 name="functionHasHandler" parameters=[{type=i32}, {type=anything}, {type=boolean}, {type=L0}, {type=L0}] results=[{type=anything}] {
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v0, v3)
+  b2():
+    Jump -> next b3(v1, v4)
+  b3(v5, v6):
+    v7 = TypeTest v5 testedType=number
+    Branch v7 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v8) handler=b6():
+    v9 = Call v1
+    Return v6
+  b5(v10):
+    Return v10
+  b6() role=CatchHandler:
+    v11 = CatchValue
+    Return v6
+# CHECK: b1():
+# CHECK-NEXT: Jump -> next b3(v0, v3)
+}

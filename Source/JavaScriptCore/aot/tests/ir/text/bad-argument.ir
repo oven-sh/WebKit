@@ -1,0 +1,28 @@
+# A word that a command cannot use prints one error line and nothing else
+# RUN(WORD): round-trip f0
+# WORD-NOT: function f0
+# WORD: error: bad argument f0
+# WORD-NOT: function f0
+# WORD-NOT: round trip:
+# RUN(RANGE): print f0 f1
+# RANGE-NOT: function f0
+# RANGE: error: bad argument f1
+# RANGE-NOT: function f0
+# RUN(MALFORMED): print f0 f0x
+# MALFORMED-NOT: function f0
+# MALFORMED: error: bad argument f0x
+# MALFORMED-NOT: function f0
+# RUN(VERIFY): verify f0
+# VERIFY-NOT: valid
+# VERIFY: error: bad argument f0
+# VERIFY-NOT: valid
+# RUN(TYPES): result-types f0 v0
+# TYPES-NOT: function f0
+# TYPES: error: bad argument v0
+# TYPES-NOT: function f0
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="only" results=[{type=undefined}] {
+    Return
+}

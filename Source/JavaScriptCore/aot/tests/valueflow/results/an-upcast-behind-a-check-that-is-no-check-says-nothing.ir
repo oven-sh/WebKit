@@ -1,0 +1,73 @@
+# class A {}   class B { x = 1 }   let held: A | null = null; held = Object.create(A.prototype)
+# function alone() { const it = held; if (it === null) return 0; return (it as any).missing }
+# function either(first: boolean) { const it = held; if (it === null) return 0; const one: A | B = first ? it : new B(); return (one as any).x }
+# The type of the variable is only expected, so a check stands behind each read, and each cast to `any` behind it is an Upcast that names the type the value had then: what the check proved.
+# Flow knows every store to `held`: null, and an object that Object.create has made, which has no layout of the program. Nothing but null passes the check, so it is no check, and the value has the type of what arrives.
+# An Upcast tests nothing. One that is typed from such a check, through the edge of a branch or through a join, says nothing any more: what goes in comes out.
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="alone"
+# CHECK: = AssumeType v0 provenType=undefined|null|Object
+# CHECK: b2([[there]]: undefined|Object):
+# CHECK-NEXT: [[alone]]: undefined|Object = Upcast [[there]] castType=anything|absent
+# CHECK-NEXT: = PropGet [[alone]] key="missing"
+# CHECK-LABEL: function f2 name="either"
+# CHECK: = AssumeType v1 provenType=undefined|null|Object
+# CHECK: b5([[one]]: undefined|L1|Object {{*}}):
+# CHECK-NEXT: [[either]]: undefined|L1|Object {{*}}= Upcast [[one]] castType=anything|absent
+# CHECK-NEXT: = PropGet [[either]] key="x"
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="A" fields=[]
+layout L1 name="B" fields=[{key="x" declared={type=number} flags=[IsRequired]}]
+variable g0 name="held" module=m0 declared={type=null|L0 flags=[IsExpected]} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Null
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Builtin builtin=Object
+    v4 = Call v2, v3, v0
+    PutModuleVariable v4 variable=g0
+    v6 = CallDirect function=f1
+    v7 = Boolean boolean=true
+    v8 = CallDirect v7 function=f2
+    v9 = Boolean
+    v10 = CallDirect v9 function=f2
+    Return
+}
+function f1 name="alone" module=m0 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Check v0 expectedType=null|L0
+    v2 = TypeTest v1 testedType=null
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = Integer
+    Return v4
+  b2(v5):
+    v6 = Upcast v5 castType=L0
+    v7 = PropGet v6 key="missing"
+    Return v7
+}
+function f2 name="either" module=m0 parameters=[{type=boolean}] results=[{type=anything}] {
+  b0(v0):
+    v1 = GetModuleVariable variable=g0
+    v2 = Check v1 expectedType=null|L0
+    v3 = TypeTest v2 testedType=null
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = Integer
+    Return v5
+  b2(v6):
+    v7 = ToBoolean v0
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v8):
+    Jump -> next b5(v6)
+  b4(v9):
+    v10 = Integer integer=1
+    v11 = NewObject -, v10 layout=L1 fields=[0]
+    Jump -> next b5(v11)
+  b5(v12):
+    v13 = Upcast v12 castType=L0|L1
+    v14 = PropGet v13 key="x"
+    Return v14
+}

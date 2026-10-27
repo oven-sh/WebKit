@@ -189,8 +189,9 @@ JSWebAssemblyInstance::~JSWebAssemblyInstance()
         std::destroy_at(&slot);
 }
 
-void JSWebAssemblyInstance::destroy(JSCell* cell)
+NEVER_INLINE void JSWebAssemblyInstance::destroy(JSCell* cell)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssemblyInstance::destroy);
     static_cast<JSWebAssemblyInstance*>(cell)->JSWebAssemblyInstance::~JSWebAssemblyInstance();
 }
 
@@ -301,6 +302,12 @@ void JSWebAssemblyInstance::finalizeCreation(VM& vm, JSGlobalObject* globalObjec
         UNUSED_PARAM(startResult);
         RETURN_IF_EXCEPTION(scope, void());
     }
+}
+
+void JSWebAssemblyInstance::adoptCalleeGroup(const CalleeGroup& calleeGroup)
+{
+    m_imageCodePointers = calleeGroup.imageCodePointers();
+    module().createInterpreterMetadataIfNeeded(calleeGroup);
 }
 
 Identifier JSWebAssemblyInstance::createPrivateModuleKey()
@@ -442,8 +449,9 @@ JSWebAssemblyInstance* JSWebAssemblyInstance::tryCreate(VM& vm, Structure* insta
     return jsInstance;
 }
 
-void JSWebAssemblyInstance::clearJSCallICs(VM& vm)
+NEVER_INLINE void JSWebAssemblyInstance::clearJSCallICs(VM& vm)
 {
+    JSC_REMOVABLE_DEFINITION(WebAssembly, &JSWebAssemblyInstance::clearJSCallICs);
     for (unsigned index = 0; index < numImportFunctions(); ++index) {
         auto* info = importFunctionInfo(index);
         if (auto* callLinkInfo = info->callLinkInfo.get())

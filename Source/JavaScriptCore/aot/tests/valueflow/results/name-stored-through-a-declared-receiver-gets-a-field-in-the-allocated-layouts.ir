@@ -1,0 +1,46 @@
+# interface TypeLike { flags: number; id?: number }   interface OtherLike { bits: number; id?: number }
+# function mark(type: TypeLike) { type.id = 2 }   function markAny(type) { type.extra = 2 }
+# publish({ flags: 1 } as TypeLike, { bits: 1 } as OtherLike, mark, markAny): unknown code has the objects and calls the functions with whatever it likes.
+# An object that has escaped is not listed beside the unknown object, so no store lists its layout among its receivers. Where the receiver has a declared type that lists layouts, the type names them:
+# the name gets a field in those of them that have an object in unknown hands (Made). The layout of the interface itself, which nothing allocates, is left as it is.
+# A layout of another type, which has no `flags`, gets nothing (Other), and a name that is stored only through a receiver without a type stays an extra property everywhere (ruling 74).
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Made" fields=[{key="flags"
+# CHECK-NOT: key="extra"
+# CHECK: {key="id" {{*}} flags=[IsAddedLate
+# CHECK-NOT: key="extra"
+# CHECK: layout L1 name="TypeLike"
+# CHECK-NOT: IsAddedLate
+# CHECK: layout L2 name="Other" fields=[{key="bits"
+# CHECK-NOT: IsAddedLate
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Made" fields=[{key="flags" declared={type=number}}] supertypes=[L1]
+layout L1 name="TypeLike" fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number}}]
+layout L2 name="Other" fields=[{key="bits" declared={type=number}}] supertypes=[L3]
+layout L3 name="OtherLike" fields=[{key="bits" declared={type=number} flags=[IsRequired]}, {key="id" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewObject -, v0 layout=L2 fields=[0]
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="publish" [isFreeName]
+    v7 = Call v6, -, v1, v2, v3, v4
+    Return
+}
+function f1 name="mark" parameters=[{type=L0|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=L0|L1
+    v2 = Integer integer=2
+    PropSet v1, v2 key="id" mode=Strict
+    Return
+}
+function f2 name="markAny" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Integer integer=2
+    PropSet v0, v1 key="extra" mode=Strict
+    Return
+}

@@ -1,0 +1,48 @@
+# const above = { plain: 1, get lazy() { return 2 } }   let either = above   either = unknown(above)   const heir = { __proto__: either }
+# Unknown code holds the object, so the unknown object that is put above the heir beside it stands for it as well. It stays listed among what is put above another object:
+# the accessor of L0 stays an extra property.
+# RUN: valueflow-apply
+# CHECK: layout L0
+# CHECK-NOT: IsAccessor
+# CHECK: function f0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="plain" declared={type=anything} flags=[IsRequired]}]
+layout L1
+variable g0 name="heir" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="above" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="either" module=m0 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    DefineGetter v1, v2 key="lazy"
+    v4 = FinishObject v1
+    PutModuleVariable v4 variable=g1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="unknown" [isFreeName]
+    v8 = Call v7, -, v4
+    PutModuleVariable v4 variable=g2
+    PutModuleVariable v8 variable=g2
+    v11 = GetModuleVariable variable=g2
+    v12 = NewObject layout=L1
+    SetLiteralPrototype v12, v11
+    v14 = FinishObject v12
+    PutModuleVariable v14 variable=g0
+    v16 = NewClosure function=f1
+    v17 = Call v16, -
+    Return
+}
+function f1 name="read" results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="lazy"
+    v2 = GetModuleVariable variable=g1
+    v3 = PropGet v2 key="lazy"
+    v4 = Add v1, v3
+    Return v4
+}
+function f2 name="lazy" kind=Getter results=[{type=anything}] {
+    v0 = Integer integer=2
+    Return v0
+}

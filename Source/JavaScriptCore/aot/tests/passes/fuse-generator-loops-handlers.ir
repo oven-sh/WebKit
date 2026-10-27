@@ -1,0 +1,240 @@
+# An exception that leaves a merged generator completes it and goes to the handler of the place that resumed it, and the handlers of the generator come along
+# FORM: Prepared
+# OPTIONS: report=Declines
+# RUN: pass FuseGeneratorLoops
+# RUN(ABSENT): pass FuseGeneratorLoops
+# STATISTIC: GeneratorLoopsFused = 4
+# CHECK: outcome: Changed
+# CHECK-NOT: decline
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="throwReachesHandlerOfSite" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewClosure function=f4
+    v3 = NewGenerator v2 function=f4 @40
+    v4 = CallDirect v2, v0, v3 function=f7 @40
+    Jump -> next b1()
+  b1() handler=b3():
+    v5 = StepGenerator v3, v1 check=None @50
+    v6 = ResultAt v5 index=0
+    Jump -> next b2()
+  b2():
+    Return v6
+  b3() role=CatchHandler:
+    v7 = CatchValue
+    v8 = StepGenerator v3, v1 check=None @50
+    v9 = ResultAt v8 index=1
+    Return v9
+# The place under the try rethrows under its handler and hands it the mark of a completed generator. The step in the catch block finds that mark.
+# CHECK: b3([[resumePointAtCatch0]]: int[-1, 2]{{*}}) role=CatchHandler:
+# CHECK-NEXT: v7: anything = CatchValue
+# CHECK: Jump -> next [[enter0]](v1, {{*}}, [[resumePointAtCatch0]],
+# CHECK: [[enter0]]([[sent0]]: anything, [[mode0]]: int[0, 2], [[resumePoint0]]: int[-1, 2], [[placeAtEnter0]]: int[0, 2]
+# CHECK-NEXT: Switch [[resumePoint0]] cases=[1, 2] -> case {{*}}, case {{*}}, otherwise [[finished0]]()
+# CHECK-NEXT: [[leave0]](
+# CHECK: [[failed0]]([[place0]]: int[0, 2]{{*}}) role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: [[exception0]]: exception = CatchException @40
+# CHECK-NEXT: [[completed0]]: -1 = Integer integer=-1 @40
+# CHECK-NEXT: Switch [[place0]] cases=[0, 1] -> case [[fromStart0]]([[exception0]]), case [[fromStep0]]([[exception0]]), otherwise [[fromCatch0]]([[exception0]])
+# CHECK-NEXT: [[fromStart0]]([[startException0]]: exception) frequency=Rare:
+# CHECK-NEXT: Rethrow [[startException0]]
+# CHECK-NEXT: [[fromStep0]]([[stepException0]]: exception) frequency=Rare handler=b3([[completed0]]
+# CHECK-NEXT: Rethrow [[stepException0]]
+# CHECK-NEXT: [[fromCatch0]]([[catchException0]]: exception) frequency=Rare:
+# CHECK-NEXT: Rethrow [[catchException0]]
+# CHECK: () handler=[[failed0]]([[placeAtEnter0]]
+# CHECK-NEXT: = Call v0 @11:1
+# CHECK: () handler=[[failed0]]([[placeAtEnter0]]
+# CHECK-NEXT: Throw {{*}} @13:1
+# CHECK: [[finished0]]() frequency=Unlikely:
+# CHECK-NEXT: Switch [[mode0]] cases=[1, 2] -> case {{*}}, case {{*}}, otherwise [[stepped0]]()
+# CHECK-NEXT: [[stepped0]]() frequency=Unlikely:
+# CHECK-NEXT: [[nothing0]]: undefined = Undefined
+# CHECK-NEXT: [[isCompleted0]]: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next [[leave0]]([[nothing0]], [[isCompleted0]],
+# ABSENT-NOT: StepGenerator
+# ABSENT-NOT: YieldBySavingFrame
+}
+
+function f1 name="twoSitesUnderDifferentHandlers" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewClosure function=f4
+    v3 = NewGenerator v2 function=f4 @41
+    v4 = CallDirect v2, v0, v3 function=f7 @41
+    Jump -> next b1()
+  b1() handler=b4():
+    v5 = StepGenerator v3, v1 check=None @60
+    Jump -> next b2()
+  b2() handler=b5():
+    v6 = StepGenerator v3, v1 check=None @60
+    v7 = ResultAt v6 index=0
+    Jump -> next b3()
+  b3():
+    Return v7
+  b4() role=CatchHandler:
+    v8 = CatchValue
+    Return v8
+  b5() role=CatchHandler:
+    v9 = CatchValue
+    v10 = TypeOf v9
+    Return v10
+# CHECK: [[failed1]]([[place1]]: int[0, 2]) role=CleanupHandler frequency=Rare:
+# CHECK-NEXT: [[exception1]]: exception = CatchException @41
+# CHECK-NEXT: : -1 = Integer integer=-1 @41
+# CHECK-NEXT: Switch [[place1]] cases=[0, 1] -> case [[fromStart1]]([[exception1]]), case [[fromFirst1]]([[exception1]]), otherwise [[fromSecond1]]([[exception1]])
+# CHECK-NEXT: [[fromStart1]]([[startException1]]: exception) frequency=Rare:
+# CHECK-NEXT: Rethrow [[startException1]]
+# CHECK-NEXT: [[fromFirst1]]([[firstException1]]: exception) frequency=Rare handler=b4():
+# CHECK-NEXT: Rethrow [[firstException1]]
+# CHECK-NEXT: [[fromSecond1]]([[secondException1]]: exception) frequency=Rare handler=b5():
+# CHECK-NEXT: Rethrow [[secondException1]]
+# ABSENT-NOT: StepGenerator
+# ABSENT-NOT: YieldBySavingFrame
+# ABSENT-COUNT-3: Rethrow
+# ABSENT-NOT: Rethrow
+}
+
+function f2 name="finallyRunsOnReturn" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewClosure function=f5
+    v3 = NewGenerator v2 function=f5 @42
+    v4 = CallDirect v2, v0, v3 function=f8 @42
+    v5 = StepGenerator v3, v1 check=None @70
+    v6 = ResultAt v5 index=0
+    v7 = StepGenerator v3, v6 resumeMode=Return check=None @70
+    v8 = ResultAt v7 index=0
+    Return v8
+# The switch on the mode behind the yield is copied with the body, so a step with Return runs the finally block and then completes the generator.
+# CHECK: [[leave2]]({{*}}: anything, {{*}}: int[0, 1],
+# CHECK: [[closePlace2]]: 2 = Integer integer=2 @70
+# CHECK-NEXT: [[return2]]: 2 = Integer integer=2 @70
+# CHECK-NEXT: Jump -> next [[enter2]](v6, [[return2]], {{*}}, [[closePlace2]])
+# CHECK: [[failed2]]({{*}}) role=CleanupHandler frequency=Rare:
+# CHECK: frequency=Rare handler=[[ownLanding2]]():
+# CHECK-NEXT: Throw
+# CHECK-NEXT: [[returns2]]() frequency=Rare handler=[[failed2]](
+# CHECK-NEXT: = Call v0 @22:1
+# CHECK-NEXT: [[completed2]]: -1 = Integer integer=-1
+# CHECK-NEXT: Jump -> next [[returned2]]()
+# CHECK: [[ownLanding2]]() role=CleanupHandler handler=[[failed2]](
+# CHECK-NEXT: [[caught2]]: exception = CatchException
+# CHECK-NEXT: = Call v0 @24:1
+# CHECK-NEXT: Rethrow [[caught2]]
+# CHECK-NEXT: {{*}}([[sentAtYield2]]: anything, [[modeAtYield2]]: int[0, 2]) handler=[[ownLanding2]]():
+# CHECK: Switch [[modeAtYield2]] cases=[1, 2] -> case {{*}}, case [[returns2]](), otherwise
+# CHECK: [[returned2]]() frequency=Rare handler=[[failed2]](
+# CHECK-NEXT: [[isCompleted2]]: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next [[leave2]]([[sentAtYield2]], [[isCompleted2]], [[completed2]])
+# ABSENT-NOT: StepGenerator
+# ABSENT-NOT: YieldBySavingFrame
+}
+
+function f3 name="bodyCatchesItsOwnThrow" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Undefined
+    v2 = NewClosure function=f6
+    v3 = NewGenerator v2 function=f6 @43
+    v4 = CallDirect v2, v0, v3 function=f9 @43
+    v5 = StepGenerator v3, v1 check=None @80
+    v6 = ResultAt v5 index=0
+    Return v6
+# A block of the body that has a handler keeps it. Only what leaves the generator goes to the block that completes it.
+# CHECK: [[failed3]]({{*}}) role=CleanupHandler frequency=Rare:
+# CHECK: () handler=[[ownHandler3]]():
+# CHECK-NEXT: = Call v0 @31:1
+# CHECK: [[ownHandler3]]() role=CatchHandler handler=[[failed3]](
+# CHECK-NEXT: [[caught3]]: anything = CatchValue
+# CHECK-NEXT: = Call v0, -, [[caught3]] @32:1
+# ABSENT-NOT: StepGenerator
+# ABSENT-NOT: YieldBySavingFrame
+}
+
+function f4 name="throws" position=10 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f4 body=f7 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f4 @10
+    v3 = CallDirect v0, v1, v2 function=f7 @10
+    Return v2 @10
+}
+# CHECK-LABEL: function f4 name="throws"
+# ABSENT-LABEL: function f4 name="throws"
+function f5 name="cleansUp" position=20 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f5 body=f8 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f5 @20
+    v3 = CallDirect v0, v1, v2 function=f8 @20
+    Return v2 @20
+}
+function f6 name="catches" position=30 role=CoroutineRamp flags=[IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=Generator}] creator=Coroutine{ramp=f6 body=f9 promiseParameter=2} {
+    v2 = NewGenerator v0 function=f6 @30
+    v3 = CallDirect v0, v1, v2 function=f9 @30
+    Return v2 @30
+}
+function f7 name="throws" position=10 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f4} creator=Coroutine{ramp=f4 body=f7 promiseParameter=2} {
+    v3 = Undefined @10
+    v4 = YieldBySavingFrame v2, v3 @10
+    v5 = ResultAt v4 index=0 @10
+    v6 = ResultAt v4 index=1 @10
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @10
+  b1() frequency=Rare:
+    Throw v5 @10
+  b2() frequency=Rare:
+    Return v5 @10
+  b3():
+    v7 = Call v1 @11
+    v8 = YieldBySavingFrame v2, v7 @12
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare:
+    Throw v9
+  b5() frequency=Rare:
+    Return v9
+  b6():
+    Throw v7 @13
+}
+function f8 name="cleansUp" position=20 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f5} creator=Coroutine{ramp=f5 body=f8 promiseParameter=2} {
+    v3 = Undefined @20
+    v4 = YieldBySavingFrame v2, v3 @20
+    v5 = ResultAt v4 index=0 @20
+    v6 = ResultAt v4 index=1 @20
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @20
+  b1() frequency=Rare:
+    Throw v5 @20
+  b2() frequency=Rare:
+    Return v5 @20
+  b3() handler=b7():
+    v7 = YieldBySavingFrame v2, v1 @21
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    Switch v9 cases=[1, 2] -> case b4(), case b5(), otherwise b6()
+  b4() frequency=Rare handler=b7():
+    Throw v8
+  b5() frequency=Rare:
+    v10 = Call v1 @22
+    Return v8
+  b6():
+    v11 = Call v1 @23
+    v12 = Undefined
+    Return v12
+  b7() role=CleanupHandler:
+    v13 = CatchException
+    v14 = Call v1 @24
+    Rethrow v13
+}
+function f9 name="catches" position=30 role=CoroutineBody flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=Generator}] results=[{type=anything}] derivation={source=f6} creator=Coroutine{ramp=f6 body=f9 promiseParameter=2} {
+    v3 = Undefined @30
+    v4 = YieldBySavingFrame v2, v3 @30
+    v5 = ResultAt v4 index=0 @30
+    v6 = ResultAt v4 index=1 @30
+    Switch v6 cases=[1, 2] -> case b1(), case b2(), otherwise b3() @30
+  b1() frequency=Rare:
+    Throw v5 @30
+  b2() frequency=Rare:
+    Return v5 @30
+  b3() handler=b5():
+    v7 = Call v1 @31
+    Jump -> next b4()
+  b4():
+    Return v7
+  b5() role=CatchHandler:
+    v8 = CatchValue
+    v9 = Call v1, -, v8 @32
+    Return v9
+}

@@ -1,0 +1,9 @@
+# function make(on) { return { isOn: !!on } }  function level(lamp: Lamp) { return lamp.isOn ? 9 : 1 }  register(make, level)
+# The lie: sabotage=RangesEndOneEarly tells the back end that a flag read from a field is at most 0
+# FORM: AsRead
+# RUN: run-in-shell globalThis.register = (make, level) => { print("off " + level(make(false))); print("on " + level(make(true))); };
+# OPTIONS: check=ClaimsToBackEnd sabotage=RangesEndOneEarly disable=pass:InlineCalls
+# CHECK: off 1
+# CHECK-NEXT: AOT claim check: ValueIsInRange f
+# CHECK: crashed with
+# PROGRAM-OF: a-flag-within-its-range-passes.ir

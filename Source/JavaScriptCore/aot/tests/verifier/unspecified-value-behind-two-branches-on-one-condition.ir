@@ -1,0 +1,150 @@
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: UnspecifiedValueInspected 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Made" fields=[{key="value" declared={type=anything}}]
+function f0 name="goodTestWhereTheSameConditionChoseTheTag" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=8
+    Jump -> next b3(v2)
+  b2():
+    v3 = Integer integer=1
+    Jump -> next b3(v3)
+  b3(v4: int[1, 8]):
+    Branch v0 -> taken b4(), notTaken b5()
+  b4():
+    v5 = Integer integer=16
+    Jump -> next b6(v5, v1)
+  b5():
+    v6 = Unspecified valueType=null|L0
+    Jump -> next b6(v4, v6)
+  b6(v7: int[1, 16], v8: null|L0):
+    Switch v7 cases=[1] -> case b7(), otherwise b8()
+  b7():
+    v9 = Null
+    Return v9
+  b8():
+    v10 = TypeTest v8 testedType=null
+    Return v10
+}
+function f1 name="goodTestWhereTheConditionComesFromAnEarlierTag" parameters=[{type=boolean}, {type=L0}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = Integer integer=2
+    Jump -> next b3(v2)
+  b2():
+    v3 = Integer integer=1
+    Jump -> next b3(v3)
+  b3(v4: int[1, 2]):
+    v5 = Integer integer=2
+    v6 = BitAnd v4, v5
+    v7 = ToBoolean v6
+    Branch v7 -> taken b4(), notTaken b5()
+  b4():
+    v8 = Integer integer=8
+    Jump -> next b6(v8)
+  b5():
+    Jump -> next b6(v4)
+  b6(v9: int[1, 8]):
+    Branch v7 -> taken b7(), notTaken b8()
+  b7():
+    v10 = Integer integer=16
+    Jump -> next b9(v10, v1)
+  b8():
+    v11 = Unspecified valueType=null|L0
+    Jump -> next b9(v9, v11)
+  b9(v12: int[1, 16], v13: null|L0):
+    Switch v12 cases=[1] -> case b10(), otherwise b11()
+  b10():
+    v14 = Null
+    Return v14
+  b11():
+    v15 = TypeTest v13 testedType=null
+    Return v15
+}
+function f2 name="goodTestWhereTheSameSubjectChoseTheTag" parameters=[{type=boolean}, {type=L0}, {type=boolean}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=1
+    Jump -> next b5(v3)
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3():
+    v4 = Integer integer=2
+    Jump -> next b5(v4)
+  b4():
+    v5 = Integer integer=4
+    Jump -> next b5(v5)
+  b5(v6: int[1, 4]):
+    Switch v6 cases=[2] -> case b6(), otherwise b7()
+  b6():
+    v7 = Integer integer=8
+    Jump -> next b8(v7)
+  b7():
+    Jump -> next b8(v6)
+  b8(v8: int[1, 8]):
+    Switch v6 cases=[2] -> case b9(), otherwise b10()
+  b9():
+    v9 = Integer integer=16
+    Jump -> next b11(v9, v1)
+  b10():
+    v10 = Unspecified valueType=undefined|null|L0
+    Jump -> next b11(v8, v10)
+  b11(v11: int[1, 16], v12: undefined|null|L0):
+    Switch v11 cases=[1, 4] -> case b12(), case b12(), otherwise b13()
+  b12():
+    Return
+  b13():
+    v13 = TypeTest v12 testedType=undefined|null
+    Return v13
+}
+function f3 name="badTestWhereAnotherConditionChoseTheTag" parameters=[{type=boolean}, {type=L0}, {type=boolean}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Integer integer=8
+    Jump -> next b3(v3)
+  b2():
+    v4 = Integer integer=1
+    Jump -> next b3(v4)
+  b3(v5: int[1, 8]):
+    Branch v2 -> taken b4(), notTaken b5()
+  b4():
+    v6 = Integer integer=16
+    Jump -> next b6(v6, v1)
+  b5():
+    v7 = Unspecified valueType=null|L0
+    Jump -> next b6(v5, v7)
+  b6(v8: int[1, 16], v9: null|L0):
+    Switch v8 cases=[1] -> case b7(), otherwise b8()
+  b7():
+    v10 = Null
+    Return v10
+  b8():
+    v11 = TypeTest v9 testedType=null
+    Return v11
+}
+function f4 name="badTestWhereTheConditionIsMadeAnewInALoop" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = Integer integer=8
+    Jump -> next b1(v1)
+  b1(v2: int[1, 8]):
+    LoopHint
+    v4 = CallBuiltin overload=MathRandom/0
+    v5 = ToBoolean v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = Integer integer=8
+    Jump -> next b1(v6)
+  b3():
+    v7 = Unspecified valueType=null|L0
+    Jump -> next b4(v2, v7)
+  b4(v8: int[1, 8], v9: null|L0):
+    Switch v8 cases=[1] -> case b5(), otherwise b6()
+  b5():
+    v10 = Null
+    Return v10
+  b6():
+    v11 = TypeTest v9 testedType=null
+    Return v11
+}

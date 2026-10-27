@@ -1,0 +1,39 @@
+# A class beside objects of no known class: the edge of a test cannot keep what the type proves about the class, and its failing edge cannot take the class out of the type.
+# The test on the entry of the loop decides the tests in both copies all the same, so a second run finds nothing to place. Behind the passing edge the value is used with what the test and its type say together
+# FORM: Prepared optimizing
+# RUN(SIMPLE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks
+# RUN(TWICE): pass PlaceTypeTests FoldConstants SimplifyControlFlow RemoveTrivialParameters PropagateBranchConditions SimplifyControlFlow SimplifyCasts RetypeValues EliminateDeadCode CompactBlocks PlaceTypeTests
+# TWICE-COUNT-10: outcome:
+# TWICE-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="sink" declared={type=anything} initialization=Undefined
+
+function f0 name="arrayBesideObjects" parameters=[{type=undefined|string|Array<number, proven, pristine[Storage, Names]>|Object}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = RequireObjectCoercible v0 name="length"
+    v4 = TypeTest v3 testedType=Array
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = CallBuiltin v5 overload=ArrayPrototypeLength/0
+    PutModuleVariable v6 variable=g0
+    Branch v1 -> taken b1(), notTaken b4()
+  b3(v8):
+    PutModuleVariable v8 variable=g0
+    Branch v1 -> taken b1(), notTaken b4()
+  b4():
+    Return
+# SIMPLE: = TypeTest v0 testedType=Array
+# SIMPLE-NOT: TypeTest
+# SIMPLE: LoopHint
+# SIMPLE-NOT: TypeTest
+# SIMPLE-NOT: RequireObjectCoercible
+# SIMPLE: = CallBuiltin {{*}} overload=ArrayPrototypeLength/0
+# SIMPLE-NOT: TypeTest
+# SIMPLE-NOT: frequency=
+# SIMPLE: LoopHint
+# SIMPLE-NOT: TypeTest
+# SIMPLE-NOT: ArrayPrototypeLength
+}

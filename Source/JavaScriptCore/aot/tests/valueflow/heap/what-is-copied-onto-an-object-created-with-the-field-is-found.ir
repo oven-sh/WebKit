@@ -1,0 +1,34 @@
+# `Object.assign(cell, { leaf: null })`: the object is created with the field, so a read of it ends at the object. What was copied onto it lies there all the same. Beside it an object onto which nothing is copied
+# FORM: AsRead
+# RUN: flow
+# CHECK: function f1 result 0 type=undefined|null|int proven
+# CHECK: function f2 result 0 type=int proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Cell" fields=[{key="leaf" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Patch" fields=[{key="leaf" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Kept" fields=[{key="leaf" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    v1 = CallDirect function=f2
+    Return v0
+}
+function f1 name="copiedOnto" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Null
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectAssign
+    v6 = Call v5, v4, v1, v3
+    v7 = PropGet v1 key="leaf"
+    Return v7
+}
+function f2 name="leftAlone" results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L2 fields=[0]
+    v2 = PropGet v1 key="leaf"
+    Return v2
+}

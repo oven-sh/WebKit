@@ -1,0 +1,713 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "AOTSlotRepresentation.h"
+#include "JSCJSValue.h"
+#include "JSObject.h"
+#include "MarkedBlockCage.h"
+#include "PropertyOffset.h"
+#include "StructureID.h"
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <limits>
+#include <optional>
+#include <span>
+#include <wtf/MathExtras.h>
+#include <wtf/StdLibExtras.h>
+#include <wtf/text/UniquedStringImpl.h>
+
+namespace JSC {
+
+class JSCell;
+class JSGlobalObject;
+class LocalAllocator;
+template<typename> class RememberedSlot;
+
+namespace AOT {
+
+// A deletion asks the receiver alone, so nothing that is filed for one depends on a chain, and only the hashed table has them.
+enum class SlotAccess : uint8_t { Read, Store, Define, Delete };
+static constexpr unsigned numberOfSlotAccesses = 3;
+inline constexpr std::array allSlotAccesses { SlotAccess::Read, SlotAccess::Store, SlotAccess::Define };
+static_assert(allSlotAccesses.size() == numberOfSlotAccesses);
+constexpr bool hasFrontCells(SlotAccess access) { return access != SlotAccess::Delete; }
+
+constexpr SlotAccess accessFor(PutMode mode)
+{
+    switch (mode) {
+    case PutMode::Strict:
+    case PutMode::Sloppy:
+        return SlotAccess::Store;
+    case PutMode::Define:
+        return SlotAccess::Define;
+    }
+    RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
+}
+
+enum class SlotPayload : uint8_t { None, Holder, WordIndex, Field, FieldAndHolder, ExtraProperty, ExtraPropertyAddition, Transition, Removal, OrderWords, CustomAccessor, Constant, Key };
+enum class SlotLocation : uint8_t { None, WordIndex, HiddenWordOffset };
+enum class SlotPresence : uint8_t { Unknown, Present, Absent, ReadsSlot };
+
+// What is written into the slot of a field that goes away.
+enum class AbsentPattern : uint8_t { ZeroInEightBytes, ZeroInFourBytes, ZeroInOneByte, Int32, Integer, Double };
+
+constexpr std::optional<AbsentPattern> absentPatternOf(SlotRepresentation representation)
+{
+    SlotTraits traits = traitsOf(representation);
+    if (!traits.hasAbsent || representation == SlotRepresentation::DeferredClosure)
+        return std::nullopt;
+    if (!traits.absentBits) {
+        if (traits.width == sizeof(uint64_t))
+            return AbsentPattern::ZeroInEightBytes;
+        if (traits.width == sizeof(uint32_t))
+            return AbsentPattern::ZeroInFourBytes;
+        return traits.width == sizeof(uint8_t) ? std::optional { AbsentPattern::ZeroInOneByte } : std::nullopt;
+    }
+    if (traits.width == sizeof(uint32_t) && traits.absentBits == static_cast<uint32_t>(absentInt32))
+        return AbsentPattern::Int32;
+    if (traits.width == sizeof(uint64_t) && traits.absentBits == static_cast<uint64_t>(absentInteger))
+        return AbsentPattern::Integer;
+    if (traits.width == sizeof(uint64_t) && traits.absentBits == absentDouble)
+        return AbsentPattern::Double;
+    return std::nullopt;
+}
+
+enum class SlotKindFlag : uint8_t {
+    None = 0,
+    AbsentIsUndefined = 1 << 3,
+    GrowsStorage = 1 << 4,
+    InheritsGetter = 1 << 5,
+};
+
+#define FOR_EACH_AOT_SLOT_KIND(v) \
+    v(Empty, None, None, Unknown, None) \
+    v(Value, Holder, WordIndex, Present, None) \
+    v(FarValue, WordIndex, None, Present, None) \
+    v(Absent, None, None, Absent, None) \
+    v(Getter, Holder, WordIndex, Present, None) \
+    v(Setter, Holder, WordIndex, Unknown, None) \
+    v(CustomGetter, CustomAccessor, None, Unknown, None) \
+    v(CustomSetter, CustomAccessor, None, Unknown, None) \
+    v(Field, Field, HiddenWordOffset, ReadsSlot, AbsentIsUndefined) \
+    v(FieldGetter, Field, HiddenWordOffset, ReadsSlot, AbsentIsUndefined) \
+    v(FieldCreation, Field, HiddenWordOffset, Unknown, None) \
+    v(FieldOrInherited, FieldAndHolder, WordIndex, Unknown, InheritsGetter) \
+    v(FieldOrInheritedSetter, FieldAndHolder, WordIndex, Unknown, None) \
+    v(InheritedField, Holder, None, Unknown, None) \
+    v(FieldOrInheritedField, FieldAndHolder, HiddenWordOffset, Unknown, None) \
+    v(Variable, Field, None, Present, None) \
+    v(ExtraProperty, ExtraProperty, HiddenWordOffset, Present, None) \
+    v(ExtraGetter, ExtraProperty, HiddenWordOffset, Present, None) \
+    v(ExtraSetter, ExtraProperty, HiddenWordOffset, Unknown, None) \
+    v(ExtraPropertyAddition, ExtraPropertyAddition, HiddenWordOffset, Unknown, GrowsStorage) \
+    v(Transition, Transition, WordIndex, Unknown, GrowsStorage) \
+    v(ArrayLength, None, None, Present, None) \
+    v(TypedArrayLength, None, None, Present, None) \
+    v(StringLength, None, None, Present, None) \
+    v(ClosureLength, None, None, Present, None) \
+    v(ClosureName, None, None, Unknown, None) \
+    v(Constant, Constant, None, Present, None) \
+    v(Uncacheable, Key, None, Unknown, None) \
+    v(Removal, Removal, WordIndex, Unknown, None) \
+    v(ExtraPropertyRemoval, Removal, WordIndex, Unknown, None) \
+    v(FieldRemoval, OrderWords, HiddenWordOffset, Unknown, None) \
+    v(NothingToRemove, None, None, Unknown, None)
+
+struct alignas(16) Slot {
+    enum class Kind : uint8_t {
+#define AOT_DECLARE_SLOT_KIND(name, payload, location, presence, kindFlag) name,
+        FOR_EACH_AOT_SLOT_KIND(AOT_DECLARE_SLOT_KIND)
+#undef AOT_DECLARE_SLOT_KIND
+    };
+
+    static constexpr uint8_t isOwn = 1 << 0;
+    static constexpr uint8_t isOutOfLine = 1 << 1;
+    static constexpr uint8_t dependsOnChain = 1 << 2;
+    static constexpr uint8_t absentIsUndefined = static_cast<uint8_t>(SlotKindFlag::AbsentIsUndefined);
+    static constexpr uint8_t growsStorage = static_cast<uint8_t>(SlotKindFlag::GrowsStorage);
+    static constexpr uint8_t inheritsGetter = static_cast<uint8_t>(SlotKindFlag::InheritsGetter);
+    static constexpr uint8_t storageHasIndexingHeader = 1 << 6;
+    static constexpr uint8_t inheritedIsOutOfLine = 1 << 7;
+    // Of FieldCreation, which never has absentIsUndefined: the key order alone says that the field exists, and its slot admits undefined. A store of undefined that finds no granule lists the key and asks for none.
+    static constexpr uint8_t undefinedNeedsNoStorage = absentIsUndefined;
+    // Of FieldCreation, for a field in the cell whose slot holds any value as it is and whose type is that of any value, so that the type has nothing to say.
+    static constexpr uint8_t remembersOrder = growsStorage;
+    // Of Field and FieldOrInherited in a slot for reads, which never grow storage: the field may exist where its slot is empty, it is undefined then, and only the key order says whether it does.
+    static constexpr uint8_t emptySlotMayBeUndefined = growsStorage;
+    // Of FieldRemoval, whose location is the offset of the slot of the field in the cell: the field is filled at birth, and the AbsentPattern of the slot.
+    static constexpr uint8_t leavesStateOfBirth = absentIsUndefined;
+    static constexpr unsigned absentPatternShift = 4;
+    static constexpr uint8_t absentPatternMask = 7;
+    static constexpr uint8_t allFlags = UINT8_MAX;
+
+    struct FieldPayload {
+        SlotData slot;
+        uint32_t type;
+    };
+    // Where the slot of the field is empty, the property of the holder counts: the location and inheritedIsOutOfLine say where it is.
+    struct FieldAndHolderPayload {
+        SlotData slot;
+        uint32_t holder;
+    };
+    struct ExtraPropertyPayload {
+        StructureID structureID;
+        int32_t wordIndex;
+    };
+    struct ExtraPropertyAdditionPayload {
+        StructureID newStructureID;
+        int32_t wordIndex;
+    };
+    struct TransitionPayload {
+        StructureID newStructureID;
+        uint32_t newStorageCapacity;
+    };
+    // Of ExtraPropertyRemoval: the order word of the objects that the removal was seen on. It stays as it is.
+    struct RemovalPayload {
+        StructureID newStructureID;
+        uint32_t orderWord;
+    };
+    struct OrderWordsPayload {
+        uint32_t before;
+        uint32_t after;
+    };
+    struct CustomAccessorPayload {
+        uint32_t index;
+        uint32_t unused;
+    };
+    struct WordIndexPayload {
+        int32_t wordIndex;
+        uint32_t unused;
+    };
+
+    static constexpr SlotPayload payloadOf(Kind);
+    static constexpr SlotLocation locationOf(Kind);
+    static constexpr SlotPresence presenceOf(Kind);
+    static constexpr uint8_t kindFlagOf(Kind);
+
+    static constexpr int32_t wordIndexFor(PropertyOffset offset)
+    {
+        if (isInlineOffset(offset))
+            return static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue)) + offset;
+        return static_cast<int32_t>(offsetInButterfly(offset));
+    }
+    static constexpr PropertyOffset offsetFor(int32_t wordIndex)
+    {
+        if (wordIndex >= 0)
+            return wordIndex - static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue));
+        return firstOutOfLineOffset - wordIndex - 2;
+    }
+    static constexpr bool fitsInLocation(int32_t wordIndex) { return wordIndex >= std::numeric_limits<int16_t>::min() && wordIndex <= std::numeric_limits<int16_t>::max(); }
+    static constexpr uint32_t storageCapacityAfterAdding(int32_t wordIndex)
+    {
+        uint32_t size = static_cast<uint32_t>(-wordIndex - 1);
+        return size <= initialOutOfLineCapacity ? initialOutOfLineCapacity : WTF::roundUpToPowerOfTwo(size);
+    }
+
+    static Slot create(StructureID structureID, Kind kind, uint8_t flags, uint16_t location)
+    {
+        Slot slot { };
+        slot.structureID = structureID;
+        slot.kind = kind;
+        slot.flags = flags;
+        slot.location = location;
+        return slot;
+    }
+    static Slot createWithoutPayload(StructureID structureID, Kind kind, uint8_t flags)
+    {
+        ASSERT(payloadOf(kind) == SlotPayload::None || payloadOf(kind) == SlotPayload::Key);
+        return create(structureID, kind, flags, 0);
+    }
+    static Slot createInStorage(StructureID, Kind, uint8_t flags, JSCell* holderOrNull, PropertyOffset);
+    static Slot createField(StructureID structureID, Kind kind, uint8_t flags, SlotData slotData, uint32_t type, uint16_t extensionWordOffset)
+    {
+        ASSERT(payloadOf(kind) == SlotPayload::Field);
+        Slot slot = create(structureID, kind, flags, extensionWordOffset);
+        slot.field = { slotData, type };
+        return slot;
+    }
+    static std::optional<Slot> tryCreateFieldAndHolder(StructureID, Kind, uint8_t flags, SlotData, JSCell* holder, PropertyOffset, uintptr_t cageBase);
+    // The holder is a compiled object above the receiver with a field of this name.
+    static Slot createInheritedField(StructureID structureID, uint8_t flags, JSCell* holder)
+    {
+        ASSERT(holder && !(flags & (isOwn | isOutOfLine)));
+        Slot slot = create(structureID, Kind::InheritedField, flags, 0);
+        slot.holder = holder;
+        return slot;
+    }
+    static std::optional<Slot> tryCreateFieldOrInheritedField(StructureID, uint8_t flags, SlotData, JSCell* holder, uint16_t extensionWordOffset, uintptr_t cageBase);
+    static Slot createExtraProperty(StructureID structureID, Kind kind, uint8_t flags, StructureID otherStructureID, PropertyOffset offset, uint16_t extraPropertiesWordOffset)
+    {
+        ASSERT(payloadOf(kind) == SlotPayload::ExtraProperty);
+        Slot slot = create(structureID, kind, isInlineOffset(offset) ? flags : flags | isOutOfLine, extraPropertiesWordOffset);
+        slot.extraProperty = { otherStructureID, wordIndexFor(offset) };
+        return slot;
+    }
+    static Slot createExtraPropertyAddition(StructureID structureID, uint8_t flags, StructureID newStructureID, PropertyOffset offset, uint16_t extraPropertiesWordOffset)
+    {
+        Slot slot = create(structureID, Kind::ExtraPropertyAddition, isInlineOffset(offset) ? flags : flags | isOutOfLine, extraPropertiesWordOffset);
+        slot.extraPropertyAddition = { newStructureID, wordIndexFor(offset) };
+        return slot;
+    }
+    static std::optional<Slot> tryCreateTransition(StructureID, uint8_t flags, StructureID newStructureID, PropertyOffset, uint32_t newStorageCapacityOrZero);
+    static std::optional<Slot> tryCreateRemoval(StructureID structureID, Kind kind, uint8_t flags, StructureID newStructureID, PropertyOffset offset, uint32_t orderWord)
+    {
+        ASSERT(payloadOf(kind) == SlotPayload::Removal);
+        int32_t index = wordIndexFor(offset);
+        if (!fitsInLocation(index))
+            return std::nullopt;
+        Slot slot = create(structureID, kind, isInlineOffset(offset) ? flags : flags | isOutOfLine, static_cast<uint16_t>(static_cast<int16_t>(index)));
+        slot.removal = { newStructureID, orderWord };
+        return slot;
+    }
+    static Slot createFieldRemoval(StructureID structureID, uint8_t flags, AbsentPattern pattern, uint16_t offsetInCell, uint32_t orderWordBefore, uint32_t orderWordAfter)
+    {
+        ASSERT(!(flags >> absentPatternShift));
+        Slot slot = create(structureID, Kind::FieldRemoval, flags | static_cast<uint8_t>(pattern) << absentPatternShift, offsetInCell);
+        slot.orderWords = { orderWordBefore, orderWordAfter };
+        return slot;
+    }
+    static Slot createCustomAccessor(StructureID structureID, Kind kind, uint8_t flags, uint32_t index)
+    {
+        ASSERT(payloadOf(kind) == SlotPayload::CustomAccessor);
+        Slot slot = create(structureID, kind, flags, 0);
+        slot.customAccessor = { index, 0 };
+        return slot;
+    }
+    // The receivers are proxies, whose handlers answer. The key is what an access hands to the trap. The location is the number of the name where the front tables have a column for it, or zero.
+    static Slot createForProxies(StructureID structureID, JSCell* key, uint16_t columnOfName)
+    {
+        Slot slot = create(structureID, Kind::Uncacheable, 0, columnOfName);
+        slot.holder = key;
+        return slot;
+    }
+    static Slot createConstant(StructureID structureID, uint8_t flags, JSValue value)
+    {
+        Slot slot = create(structureID, Kind::Constant, flags, 0);
+        slot.constant = JSValue::encode(value);
+        return slot;
+    }
+
+    bool isEmpty() const { return kind == Kind::Empty; }
+    bool has(uint8_t flag) const { return flags & flag; }
+    int32_t wordIndex() const
+    {
+        ASSERT(locationOf(kind) == SlotLocation::WordIndex);
+        return static_cast<int16_t>(location);
+    }
+    PropertyOffset offsetInStorage() const { return offsetFor(kind == Kind::FarValue ? farValue.wordIndex : wordIndex()); }
+    uint16_t hiddenWordOffset() const
+    {
+        ASSERT(locationOf(kind) == SlotLocation::HiddenWordOffset);
+        return location;
+    }
+    uint64_t payloadBits() const { return std::bit_cast<std::array<uint64_t, 2>>(*this)[1]; }
+    uint64_t headerBits() const { return std::bit_cast<std::array<uint64_t, 2>>(*this)[0]; }
+
+    SlotData fieldSlot() const
+    {
+        static_assert(OBJECT_OFFSETOF(FieldPayload, slot) == OBJECT_OFFSETOF(FieldAndHolderPayload, slot));
+        ASSERT(payloadOf(kind) == SlotPayload::Field || payloadOf(kind) == SlotPayload::FieldAndHolder);
+        return field.slot;
+    }
+    bool namesOnlyLiveCells(const Invocable<bool(JSCell*)> auto& isMarked, uintptr_t cageBase) const;
+
+    static constexpr ptrdiff_t offsetOfStructureID() { return OBJECT_OFFSETOF(Slot, structureID); }
+    static constexpr ptrdiff_t offsetOfKind() { return OBJECT_OFFSETOF(Slot, kind); }
+    static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(Slot, flags); }
+    static constexpr ptrdiff_t offsetOfLocation() { return OBJECT_OFFSETOF(Slot, location); }
+    static constexpr ptrdiff_t offsetOfPayload() { return OBJECT_OFFSETOF(Slot, holder); }
+    static constexpr ptrdiff_t offsetOfSecondPayloadWord() { return OBJECT_OFFSETOF(Slot, field.type); }
+    static constexpr unsigned kindShiftInHeader = 32;
+    static constexpr unsigned flagsShiftInHeader = 40;
+    static constexpr unsigned locationShiftInHeader = 48;
+
+    StructureID structureID;
+    Kind kind;
+    uint8_t flags;
+    uint16_t location;
+    union {
+        JSCell* holder;
+        WordIndexPayload farValue;
+        FieldPayload field;
+        FieldAndHolderPayload fieldAndHolder;
+        ExtraPropertyPayload extraProperty;
+        ExtraPropertyAdditionPayload extraPropertyAddition;
+        TransitionPayload transition;
+        RemovalPayload removal;
+        OrderWordsPayload orderWords;
+        CustomAccessorPayload customAccessor;
+        EncodedJSValue constant;
+    };
+};
+
+using SiteCache = RememberedSlot<Slot>*;
+
+inline constexpr std::array allSlotKinds {
+#define AOT_LIST_SLOT_KIND(name, payload, location, presence, kindFlag) Slot::Kind::name,
+    FOR_EACH_AOT_SLOT_KIND(AOT_LIST_SLOT_KIND)
+#undef AOT_LIST_SLOT_KIND
+};
+inline constexpr unsigned numberOfSlotKinds = allSlotKinds.size();
+// The kinds behind are filed for deletions, which look at the kind themselves.
+inline constexpr unsigned numberOfSlotKindsWithHandlers = static_cast<unsigned>(Slot::Kind::Uncacheable) + 1;
+inline constexpr std::span slotKindsWithHandlers = std::span { allSlotKinds }.first<numberOfSlotKindsWithHandlers>();
+
+struct SlotKindTraits {
+    SlotPayload payload;
+    SlotLocation location;
+    SlotPresence presence;
+    SlotKindFlag kindFlag;
+};
+
+inline constexpr SlotKindTraits slotKindTraits[] = {
+#define AOT_SLOT_KIND_TRAITS(name, payload, location, presence, kindFlag) { SlotPayload::payload, SlotLocation::location, SlotPresence::presence, SlotKindFlag::kindFlag },
+    FOR_EACH_AOT_SLOT_KIND(AOT_SLOT_KIND_TRAITS)
+#undef AOT_SLOT_KIND_TRAITS
+};
+
+constexpr SlotKindTraits traitsOf(Slot::Kind kind)
+{
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(static_cast<unsigned>(kind) < numberOfSlotKinds);
+    return slotKindTraits[static_cast<unsigned>(kind)];
+}
+
+constexpr SlotPayload Slot::payloadOf(Kind kind) { return traitsOf(kind).payload; }
+constexpr SlotLocation Slot::locationOf(Kind kind) { return traitsOf(kind).location; }
+constexpr SlotPresence Slot::presenceOf(Kind kind) { return traitsOf(kind).presence; }
+constexpr uint8_t Slot::kindFlagOf(Kind kind) { return static_cast<uint8_t>(traitsOf(kind).kindFlag); }
+
+inline Slot Slot::createInStorage(StructureID structureID, Kind kind, uint8_t flags, JSCell* holderOrNull, PropertyOffset offset)
+{
+    ASSERT(payloadOf(kind) == SlotPayload::Holder && locationOf(kind) == SlotLocation::WordIndex);
+    ASSERT(!!holderOrNull == !(flags & isOwn));
+    int32_t index = wordIndexFor(offset);
+    if (!isInlineOffset(offset))
+        flags |= isOutOfLine;
+    if (fitsInLocation(index)) [[likely]] {
+        Slot slot = create(structureID, kind, flags, static_cast<uint16_t>(static_cast<int16_t>(index)));
+        slot.holder = holderOrNull;
+        return slot;
+    }
+    if (kind != Kind::Value || holderOrNull)
+        return createWithoutPayload(structureID, Kind::Uncacheable, flags & dependsOnChain);
+    Slot slot = create(structureID, Kind::FarValue, flags, 0);
+    slot.farValue = { index, 0 };
+    return slot;
+}
+
+inline std::optional<Slot> Slot::tryCreateFieldAndHolder(StructureID structureID, Kind kind, uint8_t flags, SlotData slotData, JSCell* holder, PropertyOffset offset, uintptr_t cageBase)
+{
+    ASSERT(payloadOf(kind) == SlotPayload::FieldAndHolder && locationOf(kind) == SlotLocation::WordIndex);
+    int32_t index = wordIndexFor(offset);
+    if (!fitsInLocation(index) || MarkedBlockCage::baseOf(holder) != cageBase)
+        return std::nullopt;
+    if (!isInlineOffset(offset))
+        flags |= inheritedIsOutOfLine;
+    Slot slot = create(structureID, kind, flags, static_cast<uint16_t>(static_cast<int16_t>(index)));
+    slot.fieldAndHolder = { slotData, MarkedBlockCage::encode(cageBase, holder) };
+    return slot;
+}
+
+inline std::optional<Slot> Slot::tryCreateFieldOrInheritedField(StructureID structureID, uint8_t flags, SlotData slotData, JSCell* holder, uint16_t extensionWordOffset, uintptr_t cageBase)
+{
+    if (MarkedBlockCage::baseOf(holder) != cageBase)
+        return std::nullopt;
+    Slot slot = create(structureID, Kind::FieldOrInheritedField, flags, extensionWordOffset);
+    slot.fieldAndHolder = { slotData, MarkedBlockCage::encode(cageBase, holder) };
+    return slot;
+}
+
+inline std::optional<Slot> Slot::tryCreateTransition(StructureID structureID, uint8_t flags, StructureID newStructureID, PropertyOffset offset, uint32_t newStorageCapacityOrZero)
+{
+    int32_t index = wordIndexFor(offset);
+    if (!fitsInLocation(index))
+        return std::nullopt;
+    if (!isInlineOffset(offset))
+        flags |= isOutOfLine;
+    ASSERT(newStorageCapacityOrZero || !(flags & storageHasIndexingHeader));
+    if (newStorageCapacityOrZero) {
+        ASSERT(newStorageCapacityOrZero == storageCapacityAfterAdding(index));
+        flags |= growsStorage;
+    }
+    Slot slot = create(structureID, Kind::Transition, flags | isOwn, static_cast<uint16_t>(static_cast<int16_t>(index)));
+    slot.transition = { newStructureID, newStorageCapacityOrZero };
+    return slot;
+}
+
+bool isStructureIDMarked(StructureID id, const Invocable<bool(JSCell*)> auto& isMarked)
+{
+    return isMarked(std::bit_cast<JSCell*>(id.decode()));
+}
+
+bool Slot::namesOnlyLiveCells(const Invocable<bool(JSCell*)> auto& isMarked, uintptr_t cageBase) const
+{
+    if (kind == Kind::Empty)
+        return true;
+    if (structureID && !isStructureIDMarked(structureID, isMarked))
+        return false;
+    switch (payloadOf(kind)) {
+    case SlotPayload::None:
+    case SlotPayload::WordIndex:
+    case SlotPayload::Field:
+    case SlotPayload::OrderWords:
+    case SlotPayload::CustomAccessor:
+        return true;
+    case SlotPayload::Holder:
+    case SlotPayload::Key:
+        return !holder || isMarked(holder);
+    case SlotPayload::FieldAndHolder:
+        return isMarked(MarkedBlockCage::decode(cageBase, fieldAndHolder.holder));
+    case SlotPayload::ExtraProperty:
+        return !extraProperty.structureID || isStructureIDMarked(extraProperty.structureID, isMarked);
+    case SlotPayload::ExtraPropertyAddition:
+        return isStructureIDMarked(extraPropertyAddition.newStructureID, isMarked);
+    case SlotPayload::Transition:
+        return isStructureIDMarked(transition.newStructureID, isMarked);
+    case SlotPayload::Removal:
+        return isStructureIDMarked(removal.newStructureID, isMarked);
+    case SlotPayload::Constant: {
+        JSValue value = JSValue::decode(constant);
+        return !value.isCell() || isMarked(value.asCell());
+    }
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+struct PackedSlot {
+    static constexpr unsigned kindBits = 5;
+    static constexpr uint8_t kindMask = (1 << kindBits) - 1;
+    static constexpr uint8_t isOwn = 1 << kindBits;
+    static constexpr uint8_t isOutOfLine = 2 << kindBits;
+    static constexpr uint8_t kindFlag = 4 << kindBits;
+    static constexpr uint8_t ownInlineValueBits = static_cast<uint8_t>(Slot::Kind::Value) | isOwn;
+    static constexpr unsigned hiddenWordOffsetShift = 2;
+    static constexpr uint16_t noName = 0;
+    static constexpr uint32_t maxName = UINT16_MAX;
+
+    static std::optional<PackedSlot> tryPack(const Slot&, uint16_t name, uintptr_t cageBase);
+    Slot unpack(StructureID, uintptr_t cageBase, bool dependsOnChain) const;
+
+    bool isEmpty() const { return name == noName; }
+    uint8_t unbiasedKindAndFlags() const { return biasedKindAndFlags ^ ownInlineValueBits; }
+    Slot::Kind kind() const { return static_cast<Slot::Kind>(unbiasedKindAndFlags() & kindMask); }
+    bool canOutliveWhatItNames() const;
+    static constexpr uint32_t upperHalfForOwnInlineValue(uint16_t name) { return static_cast<uint32_t>(name) << 16; }
+
+    static constexpr ptrdiff_t offsetOfPayload() { return OBJECT_OFFSETOF(PackedSlot, payload); }
+    static constexpr ptrdiff_t offsetOfLocation() { return OBJECT_OFFSETOF(PackedSlot, location); }
+    static constexpr ptrdiff_t offsetOfBiasedKindAndFlags() { return OBJECT_OFFSETOF(PackedSlot, biasedKindAndFlags); }
+    static constexpr ptrdiff_t offsetOfName() { return OBJECT_OFFSETOF(PackedSlot, name); }
+
+    uint32_t payload;
+    uint8_t location;
+    uint8_t biasedKindAndFlags;
+    uint16_t name;
+};
+
+inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t name, uintptr_t cageBase)
+{
+    ASSERT(name != noName);
+    uint8_t carriedFlag = Slot::kindFlagOf(slot.kind);
+    if (slot.flags & ~(Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | carriedFlag))
+        return std::nullopt;
+    Slot::Kind kind = slot.kind;
+    uint32_t payload = 0;
+    uint8_t location = 0;
+    auto packWordIndex = [&](int32_t wordIndex) {
+        if (wordIndex < std::numeric_limits<int8_t>::min() || wordIndex > std::numeric_limits<int8_t>::max())
+            return false;
+        location = static_cast<uint8_t>(static_cast<int8_t>(wordIndex));
+        return true;
+    };
+    auto packHiddenWordOffset = [&] {
+        uint32_t offset = slot.hiddenWordOffset();
+        if (offset & ((1 << hiddenWordOffsetShift) - 1) || offset >> hiddenWordOffsetShift > UINT8_MAX)
+            return false;
+        location = static_cast<uint8_t>(offset >> hiddenWordOffsetShift);
+        return true;
+    };
+    switch (Slot::payloadOf(kind)) {
+    case SlotPayload::None:
+        break;
+    case SlotPayload::Holder:
+        if (!slot.holder)
+            payload = static_cast<uint32_t>(slot.wordIndex());
+        else {
+            if (MarkedBlockCage::baseOf(slot.holder) != cageBase || (Slot::locationOf(kind) == SlotLocation::WordIndex && !packWordIndex(slot.wordIndex())))
+                return std::nullopt;
+            payload = MarkedBlockCage::encode(cageBase, slot.holder);
+        }
+        break;
+    case SlotPayload::WordIndex:
+        kind = Slot::Kind::Value;
+        payload = static_cast<uint32_t>(slot.farValue.wordIndex);
+        break;
+    case SlotPayload::Field:
+        if (slot.field.type || (Slot::locationOf(kind) == SlotLocation::HiddenWordOffset && !packHiddenWordOffset()))
+            return std::nullopt;
+        payload = slot.field.slot.encoded();
+        break;
+    case SlotPayload::ExtraProperty:
+        if (slot.extraProperty.structureID || !packHiddenWordOffset())
+            return std::nullopt;
+        payload = static_cast<uint32_t>(slot.extraProperty.wordIndex);
+        break;
+    case SlotPayload::Transition:
+        if (!packWordIndex(slot.wordIndex()))
+            return std::nullopt;
+        payload = slot.transition.newStructureID.bits();
+        break;
+    case SlotPayload::CustomAccessor:
+        payload = slot.customAccessor.index;
+        break;
+    case SlotPayload::Key:
+        if (slot.holder)
+            return std::nullopt;
+        break;
+    case SlotPayload::FieldAndHolder:
+    case SlotPayload::ExtraPropertyAddition:
+    case SlotPayload::Removal:
+    case SlotPayload::OrderWords:
+    case SlotPayload::Constant:
+        return std::nullopt;
+    }
+    uint8_t kindAndFlags = static_cast<uint8_t>(kind);
+    if (slot.flags & Slot::isOwn)
+        kindAndFlags |= isOwn;
+    if (slot.flags & Slot::isOutOfLine)
+        kindAndFlags |= isOutOfLine;
+    if (carriedFlag && slot.flags & carriedFlag)
+        kindAndFlags |= kindFlag;
+    return PackedSlot { payload, location, static_cast<uint8_t>(kindAndFlags ^ ownInlineValueBits), name };
+}
+
+inline bool PackedSlot::canOutliveWhatItNames() const
+{
+    switch (Slot::payloadOf(kind())) {
+    case SlotPayload::Holder:
+        return !(unbiasedKindAndFlags() & isOwn);
+    case SlotPayload::Transition:
+    case SlotPayload::CustomAccessor:
+        return true;
+    case SlotPayload::None:
+    case SlotPayload::WordIndex:
+    case SlotPayload::Field:
+    case SlotPayload::ExtraProperty:
+    case SlotPayload::Key:
+        return false;
+    case SlotPayload::FieldAndHolder:
+    case SlotPayload::ExtraPropertyAddition:
+    case SlotPayload::Removal:
+    case SlotPayload::OrderWords:
+    case SlotPayload::Constant:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool dependsOnChain) const
+{
+    if (isEmpty())
+        return Slot { };
+    uint8_t kindAndFlags = unbiasedKindAndFlags();
+    Slot::Kind kind = this->kind();
+    uint8_t flags = dependsOnChain ? Slot::dependsOnChain : 0;
+    if (kindAndFlags & isOwn)
+        flags |= Slot::isOwn;
+    if (kindAndFlags & isOutOfLine)
+        flags |= Slot::isOutOfLine;
+    if (kindAndFlags & kindFlag)
+        flags |= Slot::kindFlagOf(kind);
+    int32_t shortWordIndex = static_cast<int8_t>(location);
+    uint16_t hiddenWordOffset = static_cast<uint16_t>(location << hiddenWordOffsetShift);
+    switch (Slot::payloadOf(kind)) {
+    case SlotPayload::None:
+    case SlotPayload::Key:
+        return Slot::create(structureID, kind, flags, 0);
+    case SlotPayload::Holder: {
+        if (kind == Slot::Kind::InheritedField)
+            return Slot::createInheritedField(structureID, flags, MarkedBlockCage::decode(cageBase, payload));
+        if (flags & Slot::isOwn)
+            return Slot::createInStorage(structureID, kind, flags & ~Slot::isOutOfLine, nullptr, Slot::offsetFor(static_cast<int32_t>(payload)));
+        return Slot::createInStorage(structureID, kind, flags & ~Slot::isOutOfLine, MarkedBlockCage::decode(cageBase, payload), Slot::offsetFor(shortWordIndex));
+    }
+    case SlotPayload::Field:
+        return Slot::createField(structureID, kind, flags, SlotData::decode(payload), 0, hiddenWordOffset);
+    case SlotPayload::ExtraProperty:
+        return Slot::createExtraProperty(structureID, kind, flags & ~Slot::isOutOfLine, StructureID(), Slot::offsetFor(static_cast<int32_t>(payload)), hiddenWordOffset);
+    case SlotPayload::Transition:
+        return *Slot::tryCreateTransition(structureID, flags & ~(Slot::isOutOfLine | Slot::growsStorage), std::bit_cast<StructureID>(payload), Slot::offsetFor(shortWordIndex), flags & Slot::growsStorage ? Slot::storageCapacityAfterAdding(shortWordIndex) : 0);
+    case SlotPayload::CustomAccessor:
+        return Slot::createCustomAccessor(structureID, kind, flags, payload);
+    case SlotPayload::WordIndex:
+    case SlotPayload::FieldAndHolder:
+    case SlotPayload::ExtraPropertyAddition:
+    case SlotPayload::Removal:
+    case SlotPayload::OrderWords:
+    case SlotPayload::Constant:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+struct SiteCacheState {
+    static constexpr unsigned maxRefillCount = 3;
+    static constexpr unsigned slotAddressShift = 3;
+    // Sites share the states by address: what a state says only decides when a filled site asks to be filled again.
+    static constexpr unsigned numberOfStates = 4096;
+    static constexpr uint32_t offsetMask = (numberOfStates - 1) * 2;
+    // The misses of all empty sites with lookup tables behind them are counted together: the counter goes up by this step, and the miss that wraps it is a sample. A site is filled at its second sample.
+    static constexpr unsigned missesOfEmptySitesPerSample = 32;
+    static constexpr unsigned sampleStep = (UINT8_MAX + 1) / missesOfEmptySitesPerSample;
+    static constexpr uint8_t missesBeforeRefill(unsigned refillCount) { return static_cast<uint8_t>((4u << (2 * std::min(refillCount, maxRefillCount))) - 1); }
+
+    static constexpr ptrdiff_t offsetOfMissesLeft() { return OBJECT_OFFSETOF(SiteCacheState, missesLeft); }
+
+    uint8_t refillCount;
+    uint8_t missesLeft;
+};
+
+struct CustomAccessorRecord {
+    void* function;
+    JSObject* slotBase;
+    JSGlobalObject* globalObject;
+    uint32_t offsetOfCachedValue;
+    uint32_t unused;
+};
+
+static_assert(static_cast<unsigned>(SlotAccess::Define) + 1 == numberOfSlotAccesses && static_cast<unsigned>(SlotAccess::Delete) == numberOfSlotAccesses);
+
+static_assert(sizeof(Slot) == 16 && alignof(Slot) == 16);
+static_assert(Slot::kindShiftInHeader == 8 * Slot::offsetOfKind());
+static_assert(Slot::flagsShiftInHeader == 8 * Slot::offsetOfFlags());
+static_assert(Slot::locationShiftInHeader == 8 * Slot::offsetOfLocation());
+static_assert((Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter | Slot::storageHasIndexingHeader | Slot::inheritedIsOutOfLine) == Slot::allFlags);
+static_assert(!static_cast<unsigned>(Slot::Kind::Empty));
+// Whoever asks whether a property is there reads the slot of either in the same way, and tells the two from all other kinds by one comparison.
+static_assert((static_cast<unsigned>(Slot::Kind::Field) | 1) == static_cast<unsigned>(Slot::Kind::FieldGetter) && !(static_cast<unsigned>(Slot::Kind::Field) & 1));
+static_assert(numberOfSlotKinds <= 1u << PackedSlot::kindBits);
+static_assert(std::is_aggregate_v<Slot> && std::is_trivially_copyable_v<Slot>);
+static_assert(Slot::offsetFor(Slot::wordIndexFor(0)) == 0);
+static_assert(Slot::offsetFor(Slot::wordIndexFor(firstOutOfLineOffset)) == firstOutOfLineOffset);
+static_assert(Slot::wordIndexFor(firstOutOfLineOffset) == -2);
+static_assert(Slot::storageCapacityAfterAdding(Slot::wordIndexFor(firstOutOfLineOffset)) == initialOutOfLineCapacity);
+static_assert(Slot::storageCapacityAfterAdding(Slot::wordIndexFor(firstOutOfLineOffset + 4)) == 8);
+
+static_assert(sizeof(PackedSlot) == 8 && std::is_trivially_copyable_v<PackedSlot>);
+
+static_assert(sizeof(SiteCacheState) == 2);
+static_assert(sizeof(Slot) >> SiteCacheState::slotAddressShift == sizeof(SiteCacheState));
+static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) == 255);
+
+static_assert(sizeof(CustomAccessorRecord) == 32);
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

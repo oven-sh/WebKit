@@ -1,0 +1,16 @@
+# A value that is used after a suspension is a root of the saved frame
+# RUN: frame-maps
+# CHECK: f0:
+# CHECK-NEXT: v3: v1:value
+# CHECK-NOT: v
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 declared={type=anything} initialization=Undefined
+function f0 name="live-after-suspension" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=2} {
+  b0(v0: anything @JSValue, v1: anything @JSValue, v2: undefined|Promise @JSValue):
+    v3 @JSValue = AwaitBySavingFrame v0, v2
+    PutModuleVariable v1 variable=g0
+    v5 @JSValue = Undefined
+    Return v5
+}
+function f1 name="live-after-suspension" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}, {type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f0 promiseType=Promise promiseParameter=2}

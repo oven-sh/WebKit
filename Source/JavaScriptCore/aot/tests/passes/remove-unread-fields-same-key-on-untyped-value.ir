@@ -1,0 +1,40 @@
+# A read of the same key on a value of any type does not keep a field that flow says nothing reads: only a receiver set that holds the layout does
+# FORM: Prepared
+# RUN: pass RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 2
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Span" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="SpanBesideUnstampedRead" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="SpanInReceiverSet" fields=[{key="id" declared={type=anything} flags=[IsRequired] flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n" declared={type=anything} flags=[IsRequired]}]
+layout L3 name="Token" fields=[{key="id" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L0 name="Span" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L1 name="SpanBesideUnstampedRead" fields=[{key="id"{{*}}flow={location={writers=AllKnown stores=Never storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+# CHECK: layout L2 name="SpanInReceiverSet" fields=[{key="id"{{*}}flow={location={writers=AllKnown storeNaming=EveryStoreNamesLocation reads=NeverRead}}}, {key="n"
+
+function f0 name="receiverSetWithoutSpan" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L0 fields=[0, 1]
+    v3 = PropGet v1 key="id" receivers=[L3]
+    v4 = Call v3, -, v2
+    Return v4
+# CHECK: = NewObject -, v0 layout=L0 fields=[1]
+# CHECK-NEXT: = PropGet v1 key="id" receivers=[L3]
+}
+
+function f1 name="noReceiverSet" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L1 fields=[0, 1]
+    v3 = PropGet v1 key="id"
+    v4 = Call v3, -, v2
+    Return v4
+# CHECK: = NewObject -, v0 layout=L1 fields=[1]
+# CHECK-NEXT: = PropGet v1 key="id"
+}
+
+function f2 name="receiverSetWithSpan" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+    v3 = PropGet v1 key="id" receivers=[L2, L3]
+    v4 = Call v3, -, v2
+    Return v4
+# CHECK: = NewObject -, v0, v0 layout=L2 fields=[0, 1]
+# CHECK-NEXT: = PropGet v1 key="id" receivers=[L2, L3]
+}

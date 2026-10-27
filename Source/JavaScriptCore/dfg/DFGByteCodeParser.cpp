@@ -2642,7 +2642,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                 if (executable->intrinsic() == WasmFunctionIntrinsic && !Options::forceICFailure())
                     return inliningResult;
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
                 if (Options::useFFICallInDFG() && (callOp == Call || callOp == TailCall) && callee.function() && callee.function()->inherits<JSFFIFunction>()
                     && !uncheckedDowncast<JSFFIFunction>(callee.function())->isHostPathOnly() // hooked => host path only
                     && uncheckedDowncast<JSFFIFunction>(callee.function())->signature().invokeThunk()) {
@@ -3082,7 +3082,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 break;
             case F16RoundIntrinsic:
                 nodeType = ArithF16Round;
-                if (!CCallHelpers::supportsFloat16())
+                if (!CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                     return CallOptimizationResult::DidNothing;
                 break;
             case SqrtIntrinsic:
@@ -5214,7 +5214,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
-            if (!MacroAssembler::supportsFloatingPointRounding())
+            if (!MacroAssembler::supportsFloatingPointRounding(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
             insertChecks();
             Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
@@ -5290,7 +5290,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
-            if (intrinsic == DataViewGetFloat16 && !CCallHelpers::supportsFloat16())
+            if (intrinsic == DataViewGetFloat16 && !CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -5396,7 +5396,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
-            if (intrinsic == DataViewSetFloat16 && !CCallHelpers::supportsFloat16())
+            if (intrinsic == DataViewSetFloat16 && !CCallHelpers::supportsFloat16(CPUFeatureSet::host()))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -11031,6 +11031,13 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 if (status.numVariants() != 1
                     || status[0].kind() != PutByVariant::Replace
                     || status[0].structure().size() != 1) {
+#if USE(BUN_JSC_ADDITIONS)
+                    // A store by id adds a property that is gone. This store throws a ReferenceError then.
+                    if (uid && getPutInfo.resolveMode() == ThrowIfNotFound) {
+                        addToGraph(PutDynamicVar, OpInfo(makeDynamicVarOpInfo(identifierNumber, getPutInfo.operand())), OpInfo(getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
+                        break;
+                    }
+#endif
                     addToGraph(PutById, OpInfo(CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid)), OpInfo(bytecode.m_getPutInfo.ecmaMode()), get(bytecode.m_scope), get(bytecode.m_value));
                     break;
                 }

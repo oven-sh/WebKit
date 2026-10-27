@@ -1,0 +1,39 @@
+# A block merged into its only predecessor leaves the rarer of the two frequencies
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# STATISTIC: SimplifyControlFlowChanges = 3
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="unlikelySuccessor" parameters=[{type=number}] results=[{type=number}] {
+    Jump -> next b1()
+  b1() frequency=Unlikely:
+    Return v0
+# CHECK: b0(v0: number) frequency=Unlikely:
+# CHECK-NEXT: Return v0
+}
+
+function f1 name="unlikelyPredecessor" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    Jump -> next b3()
+  b2():
+    Return v0
+  b3():
+    Return v0
+# CHECK: b1() frequency=Unlikely:
+# CHECK-NEXT: Return v0
+}
+
+function f2 name="rareSuccessorOfUnlikelyBlock" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    Branch v1 -> taken b1(), notTaken b2()
+  b1() frequency=Unlikely:
+    v2 = Negate v0
+    Jump -> next b3()
+  b2():
+    Return v0
+  b3() frequency=Rare:
+    Return v2
+# CHECK: b1() frequency=Rare:
+# CHECK-NEXT: = Negate v0
+# CHECK-NEXT: Return v2
+}

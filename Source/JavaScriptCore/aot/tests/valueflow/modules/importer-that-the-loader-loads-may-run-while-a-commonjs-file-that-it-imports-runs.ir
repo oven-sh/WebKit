@@ -1,0 +1,42 @@
+# main.mjs: import * as ns from "./a.cjs"; export const sum = ns.v + ns.default.w        a.cjs: exports.v = 1; require("./d.mjs"); exports.w = 2        d.mjs: import "./a.cjs"
+# The loader loads the program. It has a.cjs from the moment at which d.mjs imports the file, so it evaluates main.mjs inside the `require`, while the body of a.cjs runs.
+# Neither the file nor the module that stands for it has run to its end before main.mjs reads their variables
+# RUN: valueflow-apply
+# CHECK: variable g1 name="w" {{*}}flow={writers=AllKnown stores=AtMostOnce storeNaming=EveryStoreNamesLocation
+# CHECK-NOT: variable g1 name="w" {{*}}initialization=StoredBeforeEveryRead
+# CHECK-NOT: variable g2 name="v" {{*}}initialization=StoredBeforeEveryRead
+
+variable g0 name="v" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="w" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="v" module=m2 declared={type=anything|absent}
+variable g3 name="sum" module=m3 declared={type=anything|absent}
+module m0 path="/app/d.mjs" displayPath="d.mjs" flags=[KeepsError, IsLoadedByLoader, IsRequiredDuringLoad] body=f0 requests=[{target=m2 completes=true}]
+module m1 path="/app/a.cjs" displayPath="a.cjs" kind=CommonJs flags=[KeepsError, IsLoadedByLoader] requireResult=ModuleExports body=f1
+module m2 path="#2" displayPath="a.cjs" flags=[KeepsError] body=f2 requests=[{target=m1 kind=Require completes=true}]
+module m3 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError, IsLoadedByLoader] body=f3 requests=[{target=m2 completes=true}]
+entry module=m3
+function f0 name="d" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f1 name="a" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = RequireModule module=m0 referrer=m1 specifier="./d.mjs"
+    v3 = Integer integer=2
+    PutModuleVariable v3 variable=g1
+    Return
+}
+function f2 name="names of a" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m1 referrer=m2 [isBare]
+    v1 = GetModuleVariable variable=g0
+    PutModuleVariable v1 variable=g2
+    Return
+}
+function f3 name="main" module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g2
+    v1 = CheckInitialized v0 name="v"
+    v2 = GetModuleVariable variable=g1
+    v3 = Add v1, v2
+    PutModuleVariable v3 variable=g3
+    Return
+}

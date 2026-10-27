@@ -1,0 +1,37 @@
+# A closure that a constructor only stores into a deferred closure slot becomes the initial value of the slot and has no code. Validation passes over it and over the allocation that lists it, and the build succeeds
+# FORM: AsRead
+# RUN: compile
+# RUN(PLACED): pipeline CheckPlacement
+# OPTIONS: validate check=validate-back-end references=narrow disable=pass:InlineCalls,pass:SinkAllocations,pass:PromoteEnvironmentsToVariables
+# STATISTIC: FieldsDeferringClosures >= 1
+# STATISTIC: DeferredClosureSlots >= 1
+# CHECK: image not empty
+# PLACED: = GetDeferredClosureSlot
+# PLACED: [[closure]]: f2 = NewClosure function=f2 {{*}}closureForm=Deferred [isMadeOnDemand]
+# PLACED-NEXT: = NewObject {{*}}, [[closure]] layout=L0 fields=[0]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Widget" constructor=f1 fields=[{key="handler" declared={type=anything} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = Construct v2
+    v4 = PropGet v3 key="handler"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="register" [isFreeName]
+    v7 = Call v6, -, v4
+    Return v7
+}
+function f1 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = NewClosure v2 function=f2
+    PropSet v2, v3 key="handler" mode=Strict
+    Return v2
+}
+function f2 name="handler" kind=Arrow captures=[{type=L0}] results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,8 @@
+# drop-guard=<Opcode>:<n> leaves out, in every function, the n-th pointer that would stand beside a narrow reference which an operation of that opcode defines. The check of references fails the build
+# FORM: AsRead
+# RUN: compile NarrowReferenceGuards NarrowReferencesAcrossSafepoints
+# OPTIONS: references=narrow check=validate-back-end,validate-reference-guards testing=NoLayoutIsMadeSeldom drop-guard=GetSlot:0
+# OPTIONS: disable=pass:InlineCalls,pass:HoistTestsIntoPredecessors,pass:ThreadJumps,pass:SinkAllocations,pass:AllocateInFrames,pass:RemoveUnreadFields
+# DIAGNOSTIC: NarrowReferenceWithoutPointer
+# CHECK: statistic NarrowReferenceGuards 0
+# PROGRAM-OF: narrow-reference-has-pointer-over-call.ir

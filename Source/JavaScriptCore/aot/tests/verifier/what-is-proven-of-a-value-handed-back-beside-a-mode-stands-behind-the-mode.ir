@@ -1,0 +1,273 @@
+# async function* made(p) { const sent = yield p }   for await (const each of made()) ..
+# A yield that awaits its value by itself resumes with what was sent in, or with what the value rejects with: that arrives as a value to be thrown.
+# A step of an async generator hands back a result object, a yielded value or the value the generator ended with.
+# Both hand a mode back beside the value. What is taken for proven of the value without a test stands behind the mode: in an arm of the switch, or of a comparison, that is not the arm of the mode that throws,
+# or where every way from the operation leads through such an arm. A cast that says nothing new, and a test, stand anywhere.
+# Value and mode may go on as arguments of edges. A parameter stands for the mode where every edge that comes from the operation hands the mode on.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: ProofInFrontOfMode 11
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="made" role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f1 promiseType=Promise promiseParameter=2}
+function f1 name="goodProofsInTheArmsThatDoNotThrow" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f1 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
+  b1():
+    Throw v4
+  b2():
+    ValidateType v4 validatedType=undefined|int
+    v7 = AssumeType v4 provenType=undefined|int
+    Return v7
+  b3():
+    v8 = AssumeType v4 provenType=undefined|int
+    v9 = AssumeType v8 provenType=int
+    Return v9
+}
+function f2 name="goodProofWhereTheArmsThatDoNotThrowMeet" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f2 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b2()
+  b1():
+    Throw v4
+  b2():
+    v6 = AssumeType v4 provenType=undefined|int
+    Return v6
+}
+function f3 name="goodProofBehindComparisons" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f3 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Integer integer=1
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Throw v4
+  b2():
+    v8 = AssumeType v4 provenType=undefined|int
+    v9 = Integer integer=2
+    v10 = StrictEq v9, v5
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    Return v8
+  b4():
+    Return v1
+}
+function f4 name="goodProofBehindTheComparisonWithAnotherMode" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f4 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Integer integer=2
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = AssumeType v4 provenType=undefined|int
+    Return v8
+  b2():
+    Throw v4
+}
+function f5 name="goodCastsThatSayNothingNewAndTestsInFront" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f5 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Upcast v4 castType=anything
+    ValidateType v6 validatedType=anything
+    v8 = TypeTest v6 testedType=int
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b2()
+  b1():
+    Throw v6
+  b2():
+    Return v8
+}
+function f6 name="goodArgumentOfAnArmThatDoesNotThrow" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f6 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(), case b3(v4), otherwise b2()
+  b1():
+    Throw v4
+  b2():
+    v6 = Undefined
+    Jump -> next b3(v6)
+  b3(v7):
+    v8 = AssumeType v7 provenType=undefined|int
+    Return v8
+}
+function f7 name="goodProofOfAStepBehindItsStatus" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f7 promiseType=Promise promiseParameter=2} {
+    v3 = StepAsyncGenerator v2, v1, v2 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Integer integer=0
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = AssumeType v4 provenType=object
+    Return v8
+  b2():
+    v9 = AssumeType v4 provenType=undefined|int
+    Return v9
+}
+function f8 name="badProofInFrontOfTheSwitch" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f8 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = AssumeType v4 provenType=undefined|int
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b2()
+  b1():
+    Throw v4
+  b2():
+    Return v6
+}
+function f9 name="badValidationInFrontOfTheSwitch" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f9 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    ValidateType v4 validatedType=undefined|int
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b2()
+  b1():
+    Throw v4
+  b2():
+    Return v4
+}
+function f10 name="badProofInTheArmThatThrows" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f10 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b2()
+  b1():
+    v6 = AssumeType v4 provenType=undefined|int
+    Throw v6
+  b2():
+    Return v4
+}
+function f11 name="badProofBehindACastThatSaysNothingNew" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f11 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Upcast v4 castType=anything
+    v7 = AssumeType v6 provenType=undefined|int
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b2()
+  b1():
+    Throw v4
+  b2():
+    Return v7
+}
+function f12 name="badProofWhereNoCaseIsForTheModeThatThrows" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f12 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[2] -> case b1(), otherwise b2()
+  b1():
+    Return v4
+  b2():
+    v6 = AssumeType v4 provenType=undefined|int
+    Return v6
+}
+function f13 name="badProofWhereTheArmThatThrowsMeetsAnother" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f13 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(), case b2(), otherwise b1()
+  b1():
+    v6 = AssumeType v4 provenType=undefined|int
+    Return v6
+  b2():
+    Return v4
+}
+function f14 name="badProofOfTheArgumentOfTheArmThatThrows" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f14 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Switch v5 cases=[1, 2] -> case b1(v4), case b2(), otherwise b2()
+  b1(v6):
+    v7 = AssumeType v6 provenType=undefined|int
+    Throw v7
+  b2():
+    Return v4
+}
+function f15 name="badProofOnTheSideOfAComparisonThatMayThrow" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f15 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Integer integer=2
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    Return v4
+  b2():
+    v8 = AssumeType v4 provenType=undefined|int
+    Return v8
+}
+function f16 name="badProofWithoutAnyoneAskingTheMode" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f16 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = AssumeType v4 provenType=undefined|int
+    Return v5
+}
+function f17 name="badProofOfAStepInFrontOfItsStatus" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f17 promiseType=Promise promiseParameter=2} {
+    v3 = StepAsyncGenerator v2, v1, v2 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = AssumeType v4 provenType=object
+    v7 = Integer integer=0
+    v8 = StrictEq v5, v7
+    Branch v8 -> taken b1(), notTaken b2()
+  b1():
+    Return v6
+  b2():
+    Return v4
+}
+function f18 name="goodValueAndModeGoOnAsArguments" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f18 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    Jump -> next b1(v4, v5)
+  b1(v6, v7):
+    Switch v7 cases=[1, 2] -> case b2(), case b3(), otherwise b3()
+  b2():
+    Throw v6
+  b3():
+    v8 = AssumeType v6 provenType=undefined|int
+    Return v8
+}
+function f19 name="goodModeIsAskedAgainAsTheFirstTestLeftIt" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f19 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = Integer integer=2
+    v7 = StrictEq v5, v6
+    Branch v7 -> taken b1(), notTaken b2(| 0)
+  b1():
+    Return v4
+  b2(v8):
+    v9 = Integer integer=1
+    v10 = StrictEq v8, v9
+    Branch v10 -> taken b3(), notTaken b4()
+  b3():
+    Throw v4
+  b4():
+    v11 = AssumeType v4 provenType=undefined|int
+    Return v11
+}
+function f20 name="badParameterTakesTheModeOnOneEdgeOnly" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f20 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = ToBoolean v1
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v5)
+  b2():
+    v7 = Integer integer=0
+    Jump -> next b3(v7)
+  b3(v8):
+    Switch v8 cases=[1, 2] -> case b4(), case b5(), otherwise b5()
+  b4():
+    Throw v4
+  b5():
+    v9 = AssumeType v4 provenType=undefined|int
+    Return v9
+}

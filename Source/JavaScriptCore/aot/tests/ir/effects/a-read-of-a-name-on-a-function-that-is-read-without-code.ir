@@ -1,0 +1,26 @@
+# A read of a name on a closure of a function whose closures are read without code walks the chain and does no more. A read of `caller`, which Function.prototype answers with an accessor, may do anything, and so may a read on any other function
+# FORM: Prepared
+# RUN: effects summaries f0 f1 f2
+# CHECK: f0 return: reads(ObjectFields/1, PrototypeLinks, NamedProperties/1) collects throw: none p0: [Inspects, RetainsContents]
+# CHECK-NEXT: f1 return: reads(all) writes(
+# CHECK-NEXT: f2 return: reads(all) writes(
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="readsMember" parameters=[{type=f3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="member"
+    Return v1
+}
+function f1 name="readsCaller" parameters=[{type=f3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="caller"
+    Return v1
+}
+function f2 name="readsMemberOfAnother" parameters=[{type=f4}] results=[{type=anything}] {
+    v1 = PropGet v0 key="member"
+    Return v1
+}
+function f3 name="plain" results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+    Return
+}
+function f4 name="other" results=[{type=anything}] {
+    Return
+}

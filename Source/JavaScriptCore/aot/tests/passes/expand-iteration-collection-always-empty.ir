@@ -1,0 +1,74 @@
+# A Set or a Map whose contents are proven to have the type never holds nothing. The arm of the step that has an entry ends at the value that says so: nothing follows a value that never completes
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 3
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="emptySet" parameters=[{type=Set<never, proven, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# CHECK: [[step0]]: undefined = SetNext v0,
+# CHECK-NEXT: [[hasEntry0]]: boolean = ResultAt [[step0]]
+# CHECK-NEXT: = ResultAt [[step0]] index=1
+# CHECK-NEXT: [[element0]]: undefined = ResultAt [[step0]] index=2
+# CHECK-NEXT: Branch [[hasEntry0]] -> taken [[found0]](), notTaken [[end0]]()
+# CHECK: [[found0]]():
+# CHECK-NEXT: : never = AssumeType [[element0]] provenType=never
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: [[end0]]():
+# CHECK-NEXT: [[yes0]]: true = Boolean boolean=true
+# CHECK-NEXT: [[nothing0]]: undefined = Undefined
+# CHECK-NEXT: Jump -> next {{*}}([[yes0]], [[nothing0]])
+}
+
+function f1 name="emptyMap" parameters=[{type=Map<never, never, proven, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# CHECK: [[step1]]: undefined = MapNext v0,
+# CHECK: [[key1]]: undefined = ResultAt [[step1]] index=2
+# CHECK: Branch {{*}} -> taken [[found1]](), notTaken [[end1]]()
+# CHECK: [[found1]]():
+# CHECK-NEXT: : never = AssumeType [[key1]] provenType=never
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: [[end1]]():
+# CHECK-NOT: NewArray
+}
+
+function f2 name="setOfNumbers" parameters=[{type=Set<number, proven, pristine[Names]>}] results=[{type=anything}] {
+    v1 = IteratorOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = IteratorResume v1
+    v4 = ResultAt v3
+    v5 = ResultAt v3 index=1
+    Branch v4 -> taken b2(), notTaken b1()
+  b2():
+    Return v5
+# CHECK: [[step2]]: undefined = SetNext v0,
+# CHECK: [[element2]]: undefined|number = ResultAt [[step2]] index=2
+# CHECK: Branch {{*}} -> taken [[found2]](), notTaken [[end2]]()
+# CHECK: [[found2]]():
+# CHECK-NEXT: [[number2]]: number = AssumeType [[element2]] provenType=number
+# CHECK-NEXT: = CollectionTable v0
+# CHECK: [[no2]]: false = Boolean
+# CHECK-NEXT: Jump -> next {{*}}([[no2]], [[number2]],
+}

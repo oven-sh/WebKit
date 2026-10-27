@@ -29,6 +29,8 @@
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
 
+#include "AOTCompiledCallee.h"
+
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(FunctionPrototype);
@@ -37,7 +39,7 @@ const ClassInfo FunctionPrototype::s_info = { "Function"_s, &Base::s_info, nullp
 CLASSINFO_KEEP_ADDRESS_UNIQUE(FunctionPrototype);
 
 static JSC_DECLARE_HOST_FUNCTION(functionProtoFuncToString);
-static JSC_DECLARE_HOST_FUNCTION(functionProtoFuncBind);
+JSC_DECLARE_HOST_FUNCTION(functionProtoFuncBind);
 static JSC_DECLARE_HOST_FUNCTION(functionProtoFuncSymbolHasInstance);
 static JSC_DECLARE_HOST_FUNCTION(callFunctionPrototype);
 
@@ -98,6 +100,10 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncToString, (JSGlobalObject* globalObjec
     if (thisValue.isObject()) {
         JSObject* object = asObject(thisValue);
         Integrity::auditStructureID(object->structureID());
+#if ENABLE(AOT)
+        if (isCompiledCalleeType(object->type()))
+            RELEASE_AND_RETURN(scope, JSValue::encode(AOT::CompiledCallee::sourceText(globalObject, object)));
+#endif
         if (object->isCallable())
             RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, object->classInfo()->className, "() { [native code] }"_s)));
     }
@@ -125,6 +131,11 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncSymbolHasInstance, (JSGlobalObject* gl
         // 2.b. Return ? InstanceofOperator(instance, boundConstructor).
         RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(boundFunction->targetFunction()->hasInstance(globalObject, instance))));
     }
+#if ENABLE(AOT)
+    // So has the closure of a bound function that was compiled ahead of time.
+    if (JSObject* callee = asObject(thisValue); isCompiledCalleeType(callee->type()) && AOT::CompiledCallee::isBoundFunction(callee))
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(callee->methodTable()->customHasInstance(callee, globalObject, instance))));
+#endif
 
     // 3. If instance is not an Object, return false.
     if (!instance.isObject())
@@ -163,7 +174,12 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
     double length = 0;
     JSString* name = nullptr;
     JSFunction* function = dynamicDowncast<JSFunction>(target);
-    if (function && function->canAssumeNameAndLengthAreOriginal(vm)) [[likely]] {
+    bool canAssumeNameAndLengthAreOriginal = function && function->canAssumeNameAndLengthAreOriginal(vm);
+#if ENABLE(AOT)
+    if (isSlimClosureType(target->type()))
+        canAssumeNameAndLengthAreOriginal = AOT::CompiledCallee::canAssumeNameAndLengthAreOriginal(vm, target);
+#endif
+    if (canAssumeNameAndLengthAreOriginal) [[likely]] {
         // Do nothing! 'length' and 'name' computation are lazily done.
         // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
         // at the time of creation of JSBoundFunction.
@@ -245,6 +261,16 @@ static JSValue retrieveArguments(VM& vm, CallFrame* callFrame, JSFunction* funct
     return functor.result();
 }
 
+static bool isSloppyCompiledFunction(JSValue receiver)
+{
+#if ENABLE(AOT)
+    return receiver.isCell() && isCompiledCalleeType(receiver.asCell()->type()) && AOT::CompiledCallee::kind(asObject(receiver.asCell())) == AOT::CompiledCallee::FunctionKind::Sloppy;
+#else
+    UNUSED_PARAM(receiver);
+    return false;
+#endif
+}
+
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#get-functionprototypearguments
 JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
 {
@@ -252,8 +278,11 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
+        if (isSloppyCompiledFunction(JSValue::decode(thisValue)))
+            return JSValue::encode(jsNull());
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    }
 
     JSValue result = retrieveArguments(vm, vm.topCallFrame, thisObj);
     EXCEPTION_ASSERT(scope.exception() || result);
@@ -323,8 +352,11 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
+        if (isSloppyCompiledFunction(JSValue::decode(thisValue)))
+            return JSValue::encode(jsNull());
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    }
 
     JSValue caller = retrieveCallerFunction(vm, vm.topCallFrame, thisObj);
     if (caller.isNull())
@@ -355,7 +387,7 @@ JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+    if ((!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) && !isSloppyCompiledFunction(JSValue::decode(thisValue)))
         throwTypeError(globalObject, scope, RestrictedPropertyAccessError);
 
     return true;

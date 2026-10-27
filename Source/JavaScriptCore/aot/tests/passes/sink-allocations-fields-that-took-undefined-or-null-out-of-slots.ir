@@ -1,0 +1,87 @@
+# A literal is filled field by field out of slots that have room for undefined and null beside numbers. What its fields carry keeps the types it was read with: where the object is made, where it is copied into the next literal, and where a test asks for a number
+# FORM: Prepared optimizing
+# RUN: pass SinkAllocations
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="O" module=m0 fields=[{key="a" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown initialization=SetAtCreation} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=int} flags=[IsRequired, IsEnforced] flow={location={writers=AllKnown initialization=SetAtCreation} stability=[IsNeverDeleted, IsNeverRedefined]}}] flow={constructorOrders=[{}, {fields=[0, 1]}]}
+
+function f0 name="madeOnOneWay" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0, v1: boolean):
+    v2 = NewObject layout=L0
+    v3 = HasKeyOrder v0 layout=L0 fields=[0, 1]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4: guard):
+    v5 = GetSlot v0, v4 key="a" receivers=[L0] level=Expected
+    v6 = GetSlot v0, v4 key="b" receivers=[L0] level=Expected
+    PropDefine v2, v5 key="a"
+    PropDefine v2, v6 key="b"
+    v9 = FinishObject v2
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Return v9
+  b3():
+    v10 = Integer integer=0
+    Return v10
+# CHECK: b0(
+# CHECK-NOT: NewObject
+# CHECK: [[a]]: int = GetSlot v0, v4 key="a"
+# CHECK: [[b]]: undefined|null|int ~ int = GetSlot v0, v4 key="b"
+# CHECK-NOT: AssumeType
+# CHECK: = NewObject -, [[a]], [[b]] layout=L0 fields=[0, 1]
+# CHECK-NOT: AssumeType
+}
+
+function f1 name="copiedOnAndMade" parameters=[{type=L0}, {type=boolean}] results=[{type=anything}] {
+  b0(v0: L0, v1: boolean):
+    v2 = NewObject layout=L0
+    v3 = HasKeyOrder v0 layout=L0 fields=[0, 1]
+    Branch v3 -> taken b1(| 0), notTaken b3()
+  b1(v4: guard):
+    v5 = GetSlot v0, v4 key="a" receivers=[L0] level=Expected
+    v6 = GetSlot v0, v4 key="b" receivers=[L0] level=Expected
+    PropDefine v2, v5 key="a"
+    PropDefine v2, v6 key="b"
+    v9 = FinishObject v2
+    v10 = NewObject layout=L0
+    CopyDataProperties v10, v9
+    v12 = FinishObject v10
+    Branch v1 -> taken b2(), notTaken b3()
+  b2():
+    Return v12
+  b3():
+    v13 = Integer integer=0
+    Return v13
+# CHECK: b0(
+# CHECK-NOT: NewObject
+# CHECK: [[first]]: int = GetSlot v0, v4 key="a"
+# CHECK: [[second]]: undefined|null|int ~ int = GetSlot v0, v4 key="b"
+# CHECK-NOT: AssumeType
+# CHECK: = NewObject -, [[first]], [[second]] layout=L0 fields=[0, 1]
+# CHECK-NOT: NewObject
+}
+
+function f2 name="askedForNumber" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = NewObject layout=L0
+    v2 = HasKeyOrder v0 layout=L0 fields=[0, 1]
+    Branch v2 -> taken b1(| 0), notTaken b4()
+  b1(v3: guard):
+    v4 = GetSlot v0, v3 key="a" receivers=[L0] level=Expected
+    v5 = GetSlot v0, v3 key="b" receivers=[L0] level=Expected
+    PropDefine v1, v4 key="a"
+    PropDefine v1, v5 key="b"
+    v8 = FinishObject v1
+    v9 = IsSlotFilled v8 key="b" receivers=[L0] level=Expected [holdsDeclaredType]
+    Branch v9 -> taken b2(| 0), notTaken b3()
+  b2(v10: guard):
+    v11 = GetSlot v8, v10 key="b" receivers=[L0] level=Expected [holdsDeclaredType]
+    Return v11
+  b3() frequency=Rare:
+    v12 = PropGet v8 key="b" receivers=[L0]
+    Return v12
+  b4():
+    v13 = Integer integer=0
+    Return v13
+# CHECK: = IsSlotFilled {{*}} key="b" receivers=[L0] level=Expected [holdsDeclaredType]
+# CHECK-NOT: AssumeType
+}

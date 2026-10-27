@@ -1,0 +1,23 @@
+# class Greeter { greet() { return "as defined" } }  function greetingOf(greeter: Greeter) { return greeter.greet() }  register(greetingOf, new Greeter())
+# A layout says where the fields of an object lie. It does not say what a lookup of a method finds: the method is no storage of the object, and a property of the object's own hides it.
+# A method call on a receiver with a proven layout is a direct call all the same, behind one test of a bit of the class. The run time clears the bit as soon as one object of the layout no longer finds the method where the class definition put it.
+# The lie: that test passes whatever the bit says (drop-guard), as if the run time had missed the store or flow had called the class closed. The caller has given the instance a property `greet` of its own.
+# A validating build looks the name up in front of every method call that became direct (the run with the prefix IR), without running code of the program. It finds a function of another definition and ends the process.
+# Beside it, in the same build: the instance gets a property of another name, which hides nothing, and the instance is left alone
+# FORM: AsRead
+# RUN(IR): pipeline ResolveCalls
+# RUN: run-in-shell globalThis.register = (greetingOf, greeter) => { greeter.greet = () => "replaced"; print(greetingOf(greeter)); };
+# RUN(OTHER): run-in-shell globalThis.register = (greetingOf, greeter) => { greeter.other = () => "replaced"; print(greetingOf(greeter)); };
+# RUN(SAME): run-in-shell globalThis.register = (greetingOf, greeter) => { print(greetingOf(greeter)); };
+# OPTIONS: validate drop-guard=AreMembersUnchanged:0 heat=OnlyLoopsAreHot
+# IR: ValidateLookup [[receiver]], {{*}} key="greet"
+# IR: = CallDirect [[receiver]] function=f2
+# CHECK: AOT validation: LookupDiffers f
+# CHECK: crashed with
+# OTHER-NOT: AOT validation
+# OTHER: as defined
+# OTHER-NEXT: exited with 0
+# SAME-NOT: AOT validation
+# SAME: as defined
+# SAME-NEXT: exited with 0
+# PROGRAM-OF: method-replaced-by-reparenting.ir

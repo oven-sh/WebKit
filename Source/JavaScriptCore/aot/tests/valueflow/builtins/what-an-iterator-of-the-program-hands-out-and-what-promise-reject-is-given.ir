@@ -1,0 +1,101 @@
+# new Map(once(["a", item])).get("a").double(): the entries of the map are what the iteration over the operand hands out. An iterator that the program has written makes them in `next`: they lie nowhere on the operand,
+# so "all that is reachable from the operand" has to take in what the iteration hands out. The method that is called only on what comes out of the map is reached.
+# Promise.reject(item): the host hands the reason of a promise that nobody handles to the listeners for unhandled rejections, and Promise.any puts it among the errors of what it rejects with: it has escaped.
+# The method of a class whose instances go nowhere is not reached.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f5
+# CHECK-NOT: unreached f7
+# CHECK: unreached f9
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Mapped" constructor=f4 fields=[]
+layout L1 kind=Instance name="Rejected" constructor=f6 fields=[]
+layout L2 kind=Instance name="Kept" constructor=f8 fields=[]
+layout L3 name="Iterable" fields=[]
+layout L4 name="Iterator" fields=[{key="next" declared={type=anything} flags=[IsRequired]}]
+layout L5 name="Step" fields=[{key="done" declared={type=anything} flags=[IsRequired]}, {key="value" declared={type=anything} flags=[IsRequired]}]
+layout L6 kind=Environment name="scope" fields=[{key="pair" declared={type=anything}}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f4
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f5
+    DefineMethod v1, v2 layout=L0 key="double"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = String string="a"
+    v7 = NewArray v6, v5 contents=anything
+    v8 = CallDirect v7 function=f1
+    v9 = Builtin builtin=Map
+    v10 = Construct v9, -, v8
+    v11 = PropGet v10 key="get"
+    v12 = Call v11, v10, v6 calleeKey="get"
+    v13 = PropGet v12 key="double"
+    v14 = Call v13, v12 calleeKey="double"
+    v15 = NewClosure function=f6
+    v16 = NewClass v15 layout=L1
+    v17 = NewClosure function=f7
+    DefineMethod v16, v17 layout=L1 key="double"
+    v19 = FinishClass v16 layout=L1
+    v20 = Construct v19
+    v21 = Builtin builtin=Promise
+    v22 = Builtin builtin=PromiseReject
+    v23 = Call v22, v21, v20
+    v24 = NewClosure function=f8
+    v25 = NewClass v24 layout=L2
+    v26 = NewClosure function=f9
+    DefineMethod v25, v26 layout=L2 key="double"
+    v28 = FinishClass v25 layout=L2
+    v29 = Construct v28
+    Return v14
+}
+function f1 name="once" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject -, v0 layout=L6 fields=[0]
+    v2 = NewObject layout=L3
+    v3 = NewClosure v1 function=f2
+    PropSet v2, v3 key=@@iterator mode=Strict
+    Return v2
+}
+function f2 name="open" captures=[{type=env L6}] results=[{type=anything}] {
+  b0(v0: env L6):
+    v1 = NewClosure v0 function=f3
+    v2 = NewObject -, v1 layout=L4 fields=[0]
+    Return v2
+}
+function f3 name="next" captures=[{type=env L6}] results=[{type=anything}] {
+  b0(v0: env L6):
+    v1 = Builtin builtin=MathRandom
+    v2 = Call v1
+    v3 = ToBoolean v2
+    v4 = GetEnvironmentField v0 layout=L6
+    v5 = NewObject -, v3, v4 layout=L5 fields=[0, 1]
+    Return v5
+}
+function f4 name="Mapped" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f5 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=4
+    Return v1
+}
+function f6 name="Rejected" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f7 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=4
+    Return v1
+}
+function f8 name="Kept" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2 fields=[]
+    Return v2
+}
+function f9 name="double" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = Integer integer=4
+    Return v1
+}

@@ -1,0 +1,399 @@
+# A check that fails leaves the typed code for the operation behind it in the one generic version of the function: a copy of all that can run behind a check, in which a check and an assumed type say nothing. The copy comes back where every live value passes a test for the type it has in the typed code
+# FORM: Prepared
+# OPTIONS: heat=NothingIsHottest
+# RUN: pass AddGenericVersion
+# RUN(BACK): pass AddGenericVersion
+# RUN(COPIES): pass AddGenericVersion
+# RUN(STEPS): pass AddGenericVersion
+# STATISTIC: GenericVersionsCreated = 14
+# STATISTIC: GenericVersionsNotCreated = 1
+# STATISTIC: ExitsToGenericVersion = 16
+# STATISTIC: WaysBackFromGenericVersion = 8
+# STATISTIC: BlocksInGenericVersions = 25
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" flags=[IsLibrary]
+layout L0 name="Sized" fields=[{key="size" declared={type=anything}}]
+variable g0 name="first" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="second" module=m0 declared={type=anything} initialization=Undefined
+
+# The passing edge carries the proven value under the id of the check. The failing edge enters the copy of the operation behind the check: the call in front of it has run
+function f0 name="straightLine" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Call v0
+    v3 = Check v2 expectedType=number
+    v4 = Add v3, v1
+    Return v4
+# CHECK: v2: anything = Call v0
+# CHECK: [[test0]]: boolean = TypeTest v2 testedType=number
+# CHECK-NEXT: Branch [[test0]] -> taken [[passed0]](| 0), notTaken [[failed0]](
+# CHECK: [[behind0]]():
+# CHECK-NEXT: v4: number = Add v3, v1
+# CHECK-NEXT: Return v4
+# CHECK: [[copy0]]() frequency=Unlikely:
+# CHECK-NEXT: [[sum0]]: number|string|bigint{{*}} = Add [[unchecked0]], v1
+# CHECK-NEXT: Return [[sum0]]
+# CHECK: [[passed0]]([[proven0]]: number):
+# CHECK-NEXT: v3: number = Upcast [[proven0]] castType=number
+# CHECK-NEXT: Jump -> next [[behind0]]()
+# CHECK: [[failed0]]([[turnedAway0]]:{{*}}) frequency=Unlikely:
+# CHECK-NEXT: [[unchecked0]]:{{*}} = Expect [[turnedAway0]] expectedType=anything|absent
+# CHECK-NEXT: Jump -> next [[copy0]]()
+# COPIES-NOT: = Check
+# COPIES: = Call v0
+# COPIES-NOT: = Call v0
+# COPIES-NOT: = Check
+}
+
+# f(step(1), step(2), first + second), with `first` read behind step(1) and `second` behind step(2): where the second check fails both calls of step have run. The copy takes their results and runs neither again
+function f1 name="secondExitRunsNoCallAgain" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Integer integer=1
+    v3 = Call v1, -, v2
+    v4 = GetModuleVariable variable=g0
+    v5 = Check v4 expectedType=number
+    v6 = Integer integer=2
+    v7 = Call v1, -, v6
+    v8 = GetModuleVariable variable=g1
+    v9 = Check v8 expectedType=number
+    v10 = Add v5, v9
+    v11 = Call v0, -, v3, v7, v10
+    Return v11
+# CHECK: [[read1]]: anything = GetModuleVariable variable=g1
+# CHECK-NEXT: [[second1]]: boolean = TypeTest [[read1]] testedType=number
+# CHECK-NEXT: Branch [[second1]] -> taken [[passed1]](| 0), notTaken [[failed1]](
+# CHECK: [[failed1]]({{*}}) frequency=
+# CHECK-NEXT: = Expect
+# CHECK-NEXT: Jump -> next [[last1]](
+# CHECK: [[last1]]({{*}}) frequency=
+# CHECK-NEXT: = Add
+# CHECK-NEXT: [[result1]]: anything = Call v0, -, v3,
+# CHECK-NEXT: Return [[result1]]
+# STEPS-COUNT-3: = Call v1, -,
+# STEPS-NOT: = Call v1, -,
+# COPIES-COUNT-2: = Call v0, -,
+# COPIES-NOT: = Call v0, -,
+}
+
+# In the copy the second check is a cast to the type of its operand. The block behind both checks is copied once
+function f2 name="twoChecksShareOneCopy" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=number
+    v3 = Check v1 expectedType=number
+    v4 = Add v2, v3
+    Return v4
+}
+# CHECK-LABEL: function f2 name="twoChecksShareOneCopy"
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: = TypeTest v1 testedType=number
+# CHECK: v4: number = Add v2, v3
+# CHECK: ) frequency=
+# CHECK-NEXT: : anything ~ number = Expect v1 expectedType=number
+# CHECK-NEXT: Jump -> next [[sum2]](
+# CHECK: [[sum2]]({{*}}) frequency=
+# CHECK-NEXT: : number|string|bigint{{*}} = Add
+# STEPS-LABEL: function f2 name="twoChecksShareOneCopy"
+# COPIES-LABEL: function f2 name="twoChecksShareOneCopy"
+# COPIES-COUNT-2: = Add
+# COPIES-NOT: = Add
+
+# The sum stays a number in the typed loop. What goes around the copy is tested at the end of the turn, and what passes enters the block in front of the typed header, so the copy is no part of the typed loop. The copy hands its counter back as an int32 alone
+function f3 name="checkInLoop" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = Integer integer=0
+    v2 = Integer integer=0
+    Jump -> next b1(v1, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v0
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = GetModuleVariable variable=g0
+    v8 = Check v7 expectedType=number
+    v9 = Add v3, v8
+    v10 = Increment v4
+    Jump -> next b1(v9, v10)
+  b3():
+    Return v3
+}
+# CHECK-LABEL: function f3 name="checkInLoop"
+# CHECK: Jump -> next [[entry3]](v1, v2)
+# CHECK-NEXT: b1(v3: number, v4: int|whole):
+# CHECK: v9: number = Add v3, v8
+# CHECK-NEXT: v10: int|whole = Increment v4
+# CHECK-NEXT: Jump -> next b1(v9, v10)
+# CHECK: [[entry3]]([[sum3]]: number{{*}}, [[index3]]: int[0, 2147483647]{{*}}):
+# CHECK-NEXT: Jump -> next b1([[sum3]], [[index3]])
+# COPIES-LABEL: function f3 name="checkInLoop"
+# BACK-LABEL: function f3 name="checkInLoop"
+# BACK: Jump -> next [[entry3]](v1, v2)
+# BACK: = TypeTest v7 testedType=number
+# BACK: : number|string|bigint{{*}} = Add
+# BACK: Jump -> next [[tests3]](
+# BACK: [[tests3]]([[carried3]]: number|string|bigint{{*}}, [[counter3]]: int|whole{{*}}) frequency=
+# BACK-NEXT: [[test3]]: boolean = TypeTest [[carried3]] testedType=number
+# BACK-NEXT: Branch [[test3]] -> taken [[passed3]](| 0), notTaken [[failed3]](
+# BACK: [[passed3]]([[narrowed3]]: number) frequency=
+# BACK-NEXT: [[testOfCounter3]]: boolean = TypeTest [[counter3]] testedType=int[0, 2147483647]
+# BACK-NEXT: Branch [[testOfCounter3]] -> taken [[counted3]](| 0), notTaken [[beyond3]](
+# BACK: [[failed3]]({{*}}) frequency=
+# BACK-NEXT: Jump -> next [[header3]]([[carried3]], [[counter3]])
+# BACK: [[counted3]]([[integer3]]: int[0, 2147483647]) frequency=
+# BACK-NEXT: Jump -> next [[entry3]]([[narrowed3]], [[integer3]])
+# BACK: [[beyond3]]({{*}}) frequency=
+# BACK-NEXT: Jump -> next [[header3]]([[carried3]], [[counter3]])
+
+# Behind the call the typed code has nothing left to lose but the type of the sum, which is read there: the copy tests its own sum
+function f4 name="narrowedValueIsLiveBehindTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=number
+    v3 = Add v2, v2
+    v4 = Call v1
+    v5 = Add v3, v3
+    Return v5
+# CHECK: v3: number = Add v2, v2
+# CHECK-NEXT: v4: anything = Call v1
+# CHECK-NEXT: Jump -> next [[behindCall4]](v3)
+# CHECK: [[behindCall4]]([[live4]]: number):
+# CHECK-NEXT: v5: number = Add [[live4]], [[live4]]
+# CHECK: ) frequency=
+# CHECK-NEXT: [[sum4]]: number|string|bigint{{*}} = Add
+# CHECK-NEXT: = Call v1
+# CHECK-NEXT: Jump -> next [[tests4]](
+# CHECK: [[tests4]]({{*}}) frequency=
+# CHECK-NEXT: [[test4]]: boolean = TypeTest [[sum4]] testedType=number
+# CHECK-NEXT: Branch [[test4]] -> taken [[passed4]](| 0), notTaken [[failed4]](
+# CHECK: [[passed4]]([[narrowed4]]: number) frequency=
+# CHECK-NEXT: Jump -> next [[behindCall4]]([[narrowed4]])
+}
+
+# Nothing that the check narrowed is read behind the call: the copy jumps back
+function f5 name="checkedValueIsDeadBehindTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=number
+    v3 = Add v2, v2
+    v4 = Call v1, -, v3
+    v5 = Call v1
+    Return v5
+# CHECK: = TypeTest v0 testedType=number
+# CHECK-NOT: = TypeTest
+# CHECK: v4: anything = Call v1, -, v3
+# CHECK-NEXT: Jump -> next [[behindCall5]]()
+# CHECK: [[behindCall5]]():
+# CHECK-NEXT: v5: anything = Call v1
+# CHECK-NEXT: Return v5
+# CHECK: ) frequency=
+# CHECK-NEXT: = Add
+# CHECK-NEXT: = Call v1, -,
+# CHECK-NEXT: Jump -> next [[behindCall5]]()
+# CHECK-NOT: = TypeTest
+# COPIES-COUNT-3: = Call v1
+# COPIES-NOT: = Call v1
+}
+
+# What the copy throws is caught by the handler of the typed code, which is not copied
+function f6 name="checkUnderHandler" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    v2 = Check v0 expectedType=number
+    v3 = Add v2, v2
+    v4 = Call v1, -, v3
+    Jump -> next b3()
+  b2() role=CatchHandler:
+    v5 = CatchValue
+    Return v5
+  b3():
+    Return
+# CHECK: b1() handler=b2():
+# CHECK-NEXT: = TypeTest v0 testedType=number
+# CHECK: () handler=b2():
+# CHECK-NEXT: v3: number = Add v2, v2
+# CHECK-NEXT: v4: anything = Call v1, -, v3
+# CHECK-NEXT: Jump -> next b3()
+# CHECK: ) frequency={{*}} handler=b2():
+# CHECK-NEXT: = Add
+# CHECK-NEXT: = Call v1, -,
+# CHECK-NEXT: Jump -> next b3()
+# COPIES: = CatchValue
+# COPIES-NOT: = CatchValue
+}
+
+# An async function gets a copy like any other function: an await is copied like a call. With a guard at each use instead, all that rests on a check would only be expected for the rest of the body
+function f7 name="asyncFunctionGetsACopy" flags=[IsAsync] parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+    v2 = Await v0
+    v3 = Check v2 expectedType=number
+    v4 = Add v3, v1
+    Return v4
+# CHECK: v2: anything = Await v0
+# CHECK: = TypeTest v2 testedType=number
+# CHECK: v4: number = Add v3, v1
+# CHECK: frequency=Unlikely:
+# CHECK: : number|string|bigint{{*}} = Add
+# COPIES: = Await v0
+# COPIES-NOT: = Await
+}
+
+# The results of a call are read where it is: the copy comes back behind the reads
+function f8 name="noWayBackBetweenACallAndItsResults" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=number
+    v3 = Add v2, v2
+    v4 = CallDirect v1 function=f9
+    v5 = ResultAt v4
+    v6 = ResultAt v4 index=1
+    v7 = Add v5, v6
+    v8 = Add v7, v3
+    Return v8
+# CHECK: v4{{*}}= CallDirect v1 function=f9
+# CHECK-NEXT: v5: number = ResultAt v4
+# CHECK-NEXT: v6: number = ResultAt v4 index=1
+# CHECK-NEXT: Jump -> next
+# CHECK: ) frequency=
+# CHECK-NEXT: [[sum8]]: number|string|bigint{{*}} = Add
+# CHECK-NEXT: [[call8]]{{*}}= CallDirect v1 function=f9
+# CHECK-NEXT: = ResultAt [[call8]]
+# CHECK-NEXT: = ResultAt [[call8]] index=1
+# CHECK-NEXT: Jump -> next [[tests8]](
+# CHECK: [[tests8]]({{*}}) frequency=
+# CHECK-NEXT: = TypeTest [[sum8]] testedType=number
+}
+
+function f9 name="twoResults" parameters=[{type=anything}] results=[{type=number}, {type=number}] {
+    v1 = Call v0
+    v2 = Integer integer=1
+    v3 = Results v2, v2
+    Return v3
+}
+
+# What is assumed of a checked value rests on the check
+function f10 name="assumedTypeSaysNothingInTheCopy" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number
+    v2 = AssumeType v1 provenType=i32 [isBehindChecks]
+    v3 = Add v2, v2
+    Return v3
+}
+# CHECK-LABEL: function f10 name="assumedTypeSaysNothingInTheCopy"
+# CHECK: v2: i32 = AssumeType v1 provenType=i32
+# CHECK-NEXT: v3:{{*}}= Add v2, v2
+# CHECK: ) frequency=
+# CHECK-NEXT: [[wide10]]:{{*}}= Expect {{*}} expectedType=i32
+# CHECK-NEXT: : number|string|bigint{{*}} = Add [[wide10]], [[wide10]]
+# COPIES-LABEL: function f10 name="assumedTypeSaysNothingInTheCopy"
+# COPIES: = AssumeType
+# COPIES-NOT: = AssumeType
+# COPIES-LABEL: function f11 name="nothingIsChecked"
+
+function f11 name="nothingIsChecked" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Add v0, v0
+    Return v1
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NEXT: v1: number = Add v0, v0
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+}
+
+# A check of a value that has the type already tests nothing: no test, no copy
+function f12 name="checkOfProvenValue" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Check v0 expectedType=number
+    v2 = Add v1, v1
+    Return v2
+# CHECK-NEXT: b0(v0: number):
+# CHECK-NOT: = Check
+# CHECK-NOT: = TypeTest
+# CHECK-NOT: frequency=
+# CHECK: Return v2
+# CHECK-NEXT: }
+}
+
+# Flow has seen all that the operation makes of what the check turns away, has proven the result and says so in front of the store. By its operands the product in the copy is number|bigint, and the copy keeps what holds in every version
+function f13 name="computedValueGoesToProvenPosition" parameters=[{type=anything}] results=[{type=number}] {
+    v1 = Check v0 expectedType=number
+    v2 = Mul v1, v1
+    v3 = AssumeType v2 provenType=number
+    Return v3
+# CHECK: v2: number = Mul v1, v1
+# CHECK-NEXT: v3: number = AssumeType v2 provenType=number
+# CHECK-NEXT: Return v3
+# CHECK: ) frequency=Unlikely:
+# CHECK: [[product13]]: number|bigint{{*}} = Mul
+# CHECK-NEXT: [[assumed13]]: number = AssumeType [[product13]] provenType=number
+# CHECK-NEXT: Return [[assumed13]]
+}
+
+# What later passes prove of a value that rests on a check is what is expected of it now. The copy comes back only with a value of that type, so the join behind the call takes nothing from the typed code.
+# It comes back behind the call and not behind the read: in the typed code the read becomes a load, and a join there would end what is known about the heap
+function f14 name="wayBackTestsTheExpectedType" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=L0
+    v3: anything ~ number = PropGet v2 key="size"
+    v4 = Call v1
+    v5 = Add v3, v3
+    Return v5
+# BACK: ) frequency=Unlikely:
+# BACK-NEXT: [[sizeInCopy]]: anything ~ number = PropGet {{*}} key="size"
+# BACK: = Call v1 [isNeverInlined]
+# BACK: [[test14]]: boolean{{*}} = TypeTest [[sizeInCopy]] testedType=number
+# BACK-NEXT: Branch [[test14]] -> taken
+# BACK-NOT: = TypeTest [[sizeInCopy]]
+}
+
+# The checked value is only handed on: to a call by value, into a variable of any type and out of the function. Both versions would do the same with it, so there is no test and no copy
+function f15 name="checkedValueIsOnlyHandedOn" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=number
+    v3 = Call v1, -, v2
+    PutModuleVariable v2 variable=g0
+    Return v2
+# CHECK-NEXT: b0(v0: anything, v1: anything):
+# CHECK-NEXT: v2: anything ~ number = Expect v0 expectedType=number
+# CHECK-NOT: = TypeTest
+# CHECK-NOT: frequency=
+# CHECK: Return v2
+# CHECK-NEXT: }
+}
+
+# What the call makes of the value does not depend on the check, so what flow has proven of its result stays on the tail call
+function f16 name="droppedCheckLeavesTailCasts" parameters=[{type=anything}, {type=anything}] results=[{type=boolean}] {
+    v2 = Check v0 expectedType=number
+    v3 = Call v1, -, v2
+    ReturnCall v3 casts=[{declared={type=boolean} resolution=Assume}]
+# CHECK-NOT: = TypeTest
+# CHECK: v3: anything = Call v1, -, v2
+# CHECK-NEXT: ReturnCall v3 casts=[{declared={type=boolean} resolution=Assume}]
+# CHECK-NEXT: }
+}
+
+# A store by name may turn out to be a store into a typed field, which tests a value that is not proven at every store. So the check of a value that is stored twice stays
+function f17 name="valueStoredTwiceKeepsItsCheck" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=number
+    PropSet v1, v2 key="x" mode=Strict
+    PropSet v1, v2 key="y" mode=Strict
+    Return
+# CHECK: = TypeTest v0 testedType=number
+# CHECK: PropSet v1, v2 key="x"
+# CHECK: ) frequency=Unlikely:
+# CHECK: PropSet v1, {{*}} key="x"
+}
+
+# A slow path of the typed code is typed by the check as all that is behind it, so the copy has one of its own and does not go on in that of the typed code
+function f18 name="slowPathThatRestsOnTheCheckIsCopied" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    v2 = Check v0 expectedType=number
+    v3 = Add v2, v2
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    Return v3
+  b2() frequency=Unlikely:
+    v4 = Mul v2, v3
+    Return v4
+# CHECK: v4: number = Mul v2, v3
+# CHECK: frequency=Rare:
+# CHECK-NEXT: : number|bigint{{*}} = Mul
+}
+
+# The first suspension of a generator stands once in its body, so a generator that is not split yet gets no copy. Nothing throws: what the check says is expected of the value, and each use is guarded by itself
+function f19 name="generatorGetsNoCopy" flags=[IsGenerator, TakesCallee] parameters=[{type=anything}, {type=number}] results=[{type=Generator}] {
+    InitialYield
+    v4 = Check v1 expectedType=number
+    v5 = Add v4, v2
+    Return v5
+# CHECK-NEXT: b0(v0: function, v1: anything, v2: number):
+# CHECK-NOT: = Check
+# CHECK-NOT: = TypeTest
+# CHECK: : anything ~ number =
+# CHECK-NOT: = Check
+# CHECK-NOT: = TypeTest
+# CHECK: v5: number|string|bigint{{*}} = Add
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }
+}

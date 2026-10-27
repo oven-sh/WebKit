@@ -204,6 +204,25 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
 #endif
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() { [native code] }"_s));
 
+#if ENABLE(FUZZILLI)
+    // What a program that was built without its source text says.
+    static const bool hidesText = getenv("BUN_FUZZILLI_HIDES_FUNCTION_TEXT");
+    if (hidesText && !isBuiltinFunction()) {
+        SourceParseMode mode = parseMode();
+        ASCIILiteral async = isAsyncFunctionParseMode(mode) ? "async "_s : ""_s;
+        if (isArrowFunctionParseMode(mode))
+            return cacheIfNoException(jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s));
+        ASCIILiteral accessor = mode == SourceParseMode::GetterMode ? "get "_s : mode == SourceParseMode::SetterMode ? "set "_s : ""_s;
+        String name = ecmaName().string();
+        if (isClass())
+            return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, name, name.isEmpty() ? ""_s : " "_s, "{ [native code] }"_s));
+        bool isGenerator = isGeneratorParseMode(mode) || isAsyncGeneratorParseMode(mode);
+        if (isMethodParseMode(mode))
+            return cacheIfNoException(jsMakeNontrivialString(globalObject, async, isGenerator ? "*"_s : ""_s, accessor, name, "() { [native code] }"_s));
+        return cacheIfNoException(jsMakeNontrivialString(globalObject, async, isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
+    }
+#endif
+
     if (isClass())
         return cache(jsString(vm, classSource().view()));
 

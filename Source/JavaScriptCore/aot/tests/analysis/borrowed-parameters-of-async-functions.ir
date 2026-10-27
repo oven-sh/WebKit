@@ -1,0 +1,142 @@
+# An async function runs on its caller's stack until its first await, and the frame it saves there keeps only live values. It borrows a parameter that no await finds live.
+# FORM: Prepared
+# RUN: borrowed-parameters
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="callsBeforeAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f1
+    Return v1
+}
+# CHECK-LABEL: f0: 0 borrowed
+
+function f1 name="callsBeforeAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f0 body=f1 entryWithoutPromise=f1 promiseType=Promise promiseParameter=1} {
+    v2 = Call v0
+    v3 = AwaitBySavingFrame v2, v1
+    Return v3
+}
+# CHECK-LABEL: f1: 0 borrowed, 1 leaks
+
+function f2 name="callsAfterAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f3
+    Return v1
+}
+# CHECK-LABEL: f2: 0 leaks
+
+function f3 name="callsAfterAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f2 body=f3 entryWithoutPromise=f3 promiseType=Promise promiseParameter=1} {
+    v2 = Null
+    v3 = AwaitBySavingFrame v2, v1
+    v4 = Call v0
+    Return v4
+}
+# CHECK-LABEL: f3: 0 leaks, 1 leaks
+
+function f4 name="callsBeforeEachAwaitOfLoop" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f5
+    Return v1
+}
+# CHECK-LABEL: f4: 0 leaks
+
+function f5 name="callsBeforeEachAwaitOfLoop" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f4 body=f5 entryWithoutPromise=f5 promiseType=Promise promiseParameter=1} {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = Call v0
+    v4 = AwaitBySavingFrame v3, v1
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b2():
+    Return v4
+}
+# CHECK-LABEL: f5: 0 leaks, 1 leaks
+
+function f6 name="callsBeforeSecondAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f7
+    Return v1
+}
+# CHECK-LABEL: f6: 0 leaks
+
+function f7 name="callsBeforeSecondAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f6 body=f7 entryWithoutPromise=f7 promiseType=Promise promiseParameter=1} {
+    v2 = Null
+    v3 = AwaitBySavingFrame v2, v1
+    v4 = Call v0
+    v5 = AwaitBySavingFrame v4, v1
+    Return v5
+}
+# CHECK-LABEL: f7: 0 leaks, 1 leaks
+
+function f8 name="awaitsParameter" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f8 body=f9 entryWithoutPromise=f9 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f9
+    Return v1
+}
+# CHECK-LABEL: f8: 0 leaks
+
+function f9 name="awaitsParameter" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f8 body=f9 entryWithoutPromise=f9 promiseType=Promise promiseParameter=1} {
+    v2 = AwaitBySavingFrame v0, v1
+    Return v2
+}
+# CHECK-LABEL: f9: 0 leaks, 1 leaks
+
+function f10 name="keepsCastAcrossAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f10 body=f11 entryWithoutPromise=f11 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f11
+    Return v1
+}
+# CHECK-LABEL: f10: 0 leaks
+
+function f11 name="keepsCastAcrossAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f10 body=f11 entryWithoutPromise=f11 promiseType=Promise promiseParameter=1} {
+    v2 = Upcast v0 castType=anything
+    v3 = Null
+    v4 = AwaitBySavingFrame v3, v1
+    v5 = Call v2
+    Return v5
+}
+# CHECK-LABEL: f11: 0 leaks, 1 leaks
+
+function f12 name="callsOnOneArmBeforeAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f12 body=f13 entryWithoutPromise=f13 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f13
+    Return v1
+}
+# CHECK-LABEL: f12: 0 borrowed
+
+function f13 name="callsOnOneArmBeforeAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f12 body=f13 entryWithoutPromise=f13 promiseType=Promise promiseParameter=1} {
+    v2 = ToBoolean v0
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Call v0
+    Jump -> next b3(v3)
+  b2():
+    v4 = Null
+    Jump -> next b3(v4)
+  b3(v5: anything):
+    v6 = AwaitBySavingFrame v5, v1
+    Return v6
+}
+# CHECK-LABEL: f13: 0 borrowed, 1 leaks
+
+function f14 name="callsInHandlerOfAwait" role=CoroutineRamp flags=[IsAsync] parameters=[{type=anything}] results=[{type=Promise}] creator=Coroutine{kind=AsyncFunction ramp=f14 body=f15 entryWithoutPromise=f15 promiseType=Promise promiseParameter=1} {
+    v1 = NewPromise
+    v2 = CallDirect v0, v1 function=f15
+    Return v1
+}
+# CHECK-LABEL: f14: 0 leaks
+
+function f15 name="callsInHandlerOfAwait" role=CoroutineBody flags=[IsAsync] parameters=[{type=anything}, {type=undefined|Promise}] results=[{type=anything}] creator=Coroutine{kind=AsyncFunction ramp=f14 body=f15 entryWithoutPromise=f15 promiseType=Promise promiseParameter=1} {
+  b0(v0: anything, v1: undefined|Promise) handler=b2():
+    v2 = Null
+    v3 = AwaitBySavingFrame v2, v1
+    Jump -> next b1()
+  b1():
+    Return v3
+  b2() role=CatchHandler:
+    v4 = CatchValue
+    v5 = Call v0
+    Return v5
+}
+# CHECK-LABEL: f15: 0 leaks, 1 leaks

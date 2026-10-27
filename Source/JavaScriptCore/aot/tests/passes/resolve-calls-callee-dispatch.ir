@@ -1,0 +1,92 @@
+# A call whose callee is proven to be one of a few functions tests for each of them, and what cannot be called directly is left to one rest
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: CallsResolved = 5
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f3 flow={baseState=None}
+function f0 name="first" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f1 name="second" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f2 name="counted" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f3 name="Point" kind=BaseConstructor flags=[HasNewTarget] results=[{type=L0}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+
+function f4 name="two-functions-or-undefined" parameters=[{type=undefined|f0|f1}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: undefined|f0|f1, v1: anything):
+# CHECK-NEXT: [[isFirst]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isFirst]] -> taken [[firstArm]](| 0), notTaken [[notFirst]](| 0)
+# CHECK-NEXT: [[join]](v2: anything):
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: [[firstArm]]({{*}}: f0):
+# CHECK-NEXT: [[firstResult]]: anything = CallDirect v1 function=f0
+# CHECK-NEXT: Jump -> next [[join]]([[firstResult]])
+# CHECK-NEXT: [[notFirst]]([[secondOrNothing]]: undefined|f1)
+# CHECK-NEXT: [[isSecond]]: boolean = TypeTest [[secondOrNothing]] testedType=f1
+# CHECK-NEXT: Branch [[isSecond]] -> taken [[secondArm]](| 0), notTaken [[rest]](| 0)
+# CHECK-NEXT: [[secondArm]]({{*}}: f1)
+# CHECK-NEXT: [[secondResult]]: anything = CallDirect v1 function=f1
+# CHECK-NEXT: Jump -> next [[join]]([[secondResult]])
+# CHECK-NEXT: [[rest]]([[nothing]]: undefined)
+# CHECK-NEXT: : never = Call [[nothing]], -, v1
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: }
+}
+function f5 name="two-functions" parameters=[{type=f0|f1}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=f0
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v1 function=f0
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v1 function=f1
+# CHECK-NOT: = Call v
+}
+function f6 name="rest-keeps-its-stamp" parameters=[{type=undefined|f0|f1}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 callees=[f0, f1, builtin(MathMax), ..]
+    Return v2
+# CHECK: = CallDirect v1 function=f0
+# CHECK: = CallDirect v1 function=f1
+# CHECK: ([[stampedNothing]]: undefined)
+# CHECK-NEXT: = Call [[stampedNothing]], -, v1 callees=[f0, f1, builtin(MathMax), ..]
+}
+function f7 name="constructor-among-the-callees" parameters=[{type=f0|f3}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1 callees=[f0, f3]
+    Return v2
+# CHECK: = TypeTest v0 testedType=f0
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v1 function=f0
+# CHECK-NOT: function=f3
+# CHECK: ([[class]]: f3)
+# CHECK-NEXT: = Call [[class]], -, v1 callees=[f0, f3]
+# CHECK-NOT: function=f3
+}
+function f8 name="only-a-constructor" parameters=[{type=f3}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK-NEXT: b0(v0: f3, v1: anything):
+# CHECK-NEXT: v2: anything = Call v0, -, v1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f9 name="captures-are-read-off-the-narrowed-closure" parameters=[{type=f0|f2}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v2
+# CHECK: = TypeTest v0 testedType=f0
+# CHECK-NOT: GetCapture
+# CHECK: = CallDirect v1 function=f0
+# CHECK: ([[closure]]: f2)
+# CHECK-NEXT: [[count]]: number = GetCapture [[closure]] function=f2
+# CHECK-NEXT: = CallDirect [[count]], v1 function=f2
+}

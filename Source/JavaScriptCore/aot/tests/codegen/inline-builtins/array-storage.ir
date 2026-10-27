@@ -1,0 +1,678 @@
+# The inline code of push, isArray, the length, its setter and the array constructors has code for each representation and number of operands, in the three code shapes
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code
+# CHECK-COUNT-21: : size=
+# CHECK-NOT: no code
+# RUN(S): code-shapes
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="pushOneToInt32" parameters=[{type=Array<i32, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v10 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v11 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v12 = NewArray v7, v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v15 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v16 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v17 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v18 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v19 = NewArray v14, v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v21 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v22 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v23 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v24 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v25 = NewArray v20, v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f0 b0 Balanced
+# S: f0 b1 Fast
+# S: f0 b3 Compact
+function f1 name="pushOneToNumbers" parameters=[{type=Array<number, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v10 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v11 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v12 = NewArray v7, v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v15 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v16 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v17 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v18 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v19 = NewArray v14, v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v21 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v22 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v23 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v24 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v25 = NewArray v20, v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f1 b0 Balanced
+# S: f1 b1 Fast
+# S: f1 b3 Compact
+function f2 name="pushOneToAnything" parameters=[{type=Array<anything, pristine[Storage]>}, {type=i32}, {type=number}, {type=undefined|number}, {type=string}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v7 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v8 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v9 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v10 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v11 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v12 = NewArray v7, v8, v9, v10, v11 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v14 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v15 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v16 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v17 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v18 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v19 = NewArray v14, v15, v16, v17, v18 contents=anything
+    Branch v6 -> taken b1(), notTaken b2()
+  b2():
+    Branch v6 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v20 = CallInline v0, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v21 = CallInline v0, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v22 = CallInline v0, v3 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v23 = CallInline v0, v4 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v24 = CallInline v0, v5 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0
+    v25 = NewArray v20, v21, v22, v23, v24 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f2 b0 Balanced
+# S: f2 b1 Fast
+# S: f2 b3 Compact
+function f3 name="pushTwo" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f3 b0 Balanced
+# S: f3 b3 Fast
+# S: f3 b7 Compact
+function f4 name="pushThree" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f4 b0 Balanced
+# S: f4 b3 Fast
+# S: f4 b7 Compact
+function f5 name="pushFour" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f5 b0 Balanced
+# S: f5 b3 Fast
+# S: f5 b7 Compact
+function f6 name="pushFive" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f6 b0 Balanced
+# S: f6 b3 Fast
+# S: f6 b7 Compact
+function f7 name="pushSix" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f7 b0 Balanced
+# S: f7 b3 Fast
+# S: f7 b7 Compact
+function f8 name="pushSeven" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f8 b0 Balanced
+# S: f8 b3 Fast
+# S: f8 b7 Compact
+function f9 name="pushEight" parameters=[{type=Array<anything, pristine[Storage]>}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1, v1, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v1, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1, v1, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v1, v1, v1, v1, v1, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v1, v1, v1, v1, v1, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f9 b0 Balanced
+# S: f9 b3 Fast
+# S: f9 b7 Compact
+function f10 name="pushTwoNumbers" parameters=[{type=Array<number, pristine[Storage]>}, {type=number}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v4):
+    v5 = NewArray v4 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v6 = CallBuiltin v0, v1, v2 overload=ArrayPrototypePush/0
+    Jump -> next b1(v6)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v8):
+    v9 = NewArray v8 contents=anything
+    Branch v3 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v10 = CallBuiltin v0, v1, v2 overload=ArrayPrototypePush/0
+    Jump -> next b4(v10)
+  b6():
+    Branch v3 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v2 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v11) frequency=Rare:
+    v12 = NewArray v11 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v13 = CallBuiltin v0, v1, v2 overload=ArrayPrototypePush/0
+    Jump -> next b8(v13)
+  b10():
+    Return
+}
+# S: f10 b0 Balanced
+# S: f10 b3 Fast
+# S: f10 b7 Compact
+function f11 name="pushTwoInt32" parameters=[{type=Array<i32, pristine[Storage]>}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b1(), miss b2()
+  b1(v3):
+    v4 = NewArray v3 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v5 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b4(), miss b5()
+  b4(v7):
+    v8 = NewArray v7 contents=anything
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v9 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1, v1 inlineBuiltin=ArrayPush overload=ArrayPrototypePush/0 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    v11 = NewArray v10 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v12 = CallBuiltin v0, v1, v1 overload=ArrayPrototypePush/0
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f11 b0 Balanced
+# S: f11 b3 Fast
+# S: f11 b7 Compact
+function f12 name="isArrayOfPrimitive" parameters=[{type=number}, {type=undefined|string}, {type=boolean}] results=[{type=undefined}] {
+    v3 = CallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
+    v4 = CallInline -, v1 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
+    v5 = NewArray v3, v4 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v7 = CallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
+    v8 = CallInline -, v1 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
+    v9 = NewArray v7, v8 contents=anything
+    Branch v2 -> taken b1(), notTaken b2()
+  b2():
+    Branch v2 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v10 = CallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
+    v11 = CallInline -, v1 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0
+    v12 = NewArray v10, v11 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f12 b0 Balanced
+# S: f12 b1 Fast
+# S: f12 b3 Compact
+function f13 name="isArrayOfAnything" parameters=[{type=anything}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f13 b0 Balanced
+# S: f13 b3 Fast
+# S: f13 b7 Compact
+function f14 name="isArrayOfObject" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done b1(), miss b2()
+  b1(v2):
+    v3 = NewArray v2 contents=anything
+    Jump -> next b3()
+  b2() frequency=Rare:
+    v4 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Jump -> next b1(v4)
+  b3():
+    LoopHint
+    TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done b4(), miss b5()
+  b4(v6):
+    v7 = NewArray v6 contents=anything
+    Branch v1 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    v8 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Jump -> next b4(v8)
+  b6():
+    Branch v1 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline -, v0 inlineBuiltin=ArrayIsArray overload=ArrayIsArray/0 -> done b8(), miss b9()
+  b8(v9) frequency=Rare:
+    v10 = NewArray v9 contents=anything
+    Jump -> next b10()
+  b9() frequency=Rare:
+    v11 = CallBuiltin -, v0 overload=ArrayIsArray/0
+    Jump -> next b8(v11)
+  b10():
+    Return
+}
+# S: f14 b0 Balanced
+# S: f14 b3 Fast
+# S: f14 b7 Compact
+function f15 name="length" parameters=[{type=Array}, {type=boolean}] results=[{type=undefined}] {
+    v2 = CallInline v0 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+    v3 = NewArray v2 contents=anything
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = CallInline v0 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+    v6 = NewArray v5 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Branch v1 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v7 = CallInline v0 inlineBuiltin=ArrayLength overload=ArrayPrototypeLength/0
+    v8 = NewArray v7 contents=anything
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f15 b0 Balanced
+# S: f15 b1 Fast
+# S: f15 b3 Compact
+function f16 name="setLength" parameters=[{type=Array}, {type=number}, {type=i32}, {type=int}, {type=boolean}] results=[{type=undefined}] {
+    v5 = CallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    v6 = CallInline v0, v2 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    v7 = CallInline v0, v3 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v9 = CallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    v10 = CallInline v0, v2 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    v11 = CallInline v0, v3 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    Branch v4 -> taken b1(), notTaken b2()
+  b2():
+    Branch v4 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v12 = CallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    v13 = CallInline v0, v2 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    v14 = CallInline v0, v3 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f16 b0 Balanced
+# S: f16 b1 Fast
+# S: f16 b3 Compact
+function f17 name="setLengthWithMissToNumber" parameters=[{type=Array}, {type=number}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1 -> done b1(), miss b2()
+  b1(v3):
+    Jump -> next b3()
+  b2() frequency=Rare:
+    PropSet v0, v1 key="length"
+    v5 = Undefined
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1 -> done b4(), miss b5()
+  b4(v7):
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    PropSet v0, v1 key="length"
+    v9 = Undefined
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    Jump -> next b10()
+  b9() frequency=Rare:
+    PropSet v0, v1 key="length"
+    v12 = Undefined
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f17 b0 Balanced
+# S: f17 b3 Fast
+# S: f17 b7 Compact
+function f18 name="setLengthWithMissToInt32" parameters=[{type=Array}, {type=i32}, {type=boolean}] results=[{type=undefined}] {
+    TryCallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1 -> done b1(), miss b2()
+  b1(v3):
+    Jump -> next b3()
+  b2() frequency=Rare:
+    PropSet v0, v1 key="length"
+    v5 = Undefined
+    Jump -> next b1(v5)
+  b3():
+    LoopHint
+    TryCallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1 -> done b4(), miss b5()
+  b4(v7):
+    Branch v2 -> taken b3(), notTaken b6()
+  b5() frequency=Rare:
+    PropSet v0, v1 key="length"
+    v9 = Undefined
+    Jump -> next b4(v9)
+  b6():
+    Branch v2 -> taken b7(), notTaken b10()
+  b7() frequency=Rare:
+    TryCallInline v0, v1 inlineBuiltin=ArraySetLength overload=ArrayPrototypeLength/1 -> done b8(), miss b9()
+  b8(v10) frequency=Rare:
+    Jump -> next b10()
+  b9() frequency=Rare:
+    PropSet v0, v1 key="length"
+    v12 = Undefined
+    Jump -> next b8(v12)
+  b10():
+    Return
+}
+# S: f18 b0 Balanced
+# S: f18 b3 Fast
+# S: f18 b7 Compact
+function f19 name="withLength" parameters=[{type=number}, {type=i32}, {type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {
+    v4 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0
+    v5 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/2
+    v6 = CallInline -, v1 inlineBuiltin=ArrayWithLength overload=Array/0
+    v7 = CallInline -, v1 inlineBuiltin=ArrayWithLength overload=Array/2
+    v8 = CallInline -, v2 inlineBuiltin=ArrayWithLength overload=Array/0
+    v9 = CallInline -, v2 inlineBuiltin=ArrayWithLength overload=Array/2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v11 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0
+    v12 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/2
+    v13 = CallInline -, v1 inlineBuiltin=ArrayWithLength overload=Array/0
+    v14 = CallInline -, v1 inlineBuiltin=ArrayWithLength overload=Array/2
+    v15 = CallInline -, v2 inlineBuiltin=ArrayWithLength overload=Array/0
+    v16 = CallInline -, v2 inlineBuiltin=ArrayWithLength overload=Array/2
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v17 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/0
+    v18 = CallInline -, v0 inlineBuiltin=ArrayWithLength overload=Array/2
+    v19 = CallInline -, v1 inlineBuiltin=ArrayWithLength overload=Array/0
+    v20 = CallInline -, v1 inlineBuiltin=ArrayWithLength overload=Array/2
+    v21 = CallInline -, v2 inlineBuiltin=ArrayWithLength overload=Array/0
+    v22 = CallInline -, v2 inlineBuiltin=ArrayWithLength overload=Array/2
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f19 b0 Balanced
+# S: f19 b1 Fast
+# S: f19 b3 Compact
+function f20 name="arrayOf" parameters=[{type=i32}, {type=number}, {type=anything}, {type=boolean}] results=[{type=undefined}] {
+    v4 = Builtin builtin=Array
+    v5 = CallInline v4 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v6 = CallInline v4, v0, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v7 = CallInline v4, v1 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v8 = CallInline v4, v0, v1, v2 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v9 = CallInline inlineBuiltin=ArrayOf overload=Array/3
+    v10 = CallInline -, v0, v0 inlineBuiltin=ArrayOf overload=Array/3
+    v11 = CallInline -, v2, v1 inlineBuiltin=ArrayOf overload=Array/1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = Builtin builtin=Array
+    v14 = CallInline v13 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v15 = CallInline v13, v0, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v16 = CallInline v13, v1 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v17 = CallInline v13, v0, v1, v2 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v18 = CallInline inlineBuiltin=ArrayOf overload=Array/3
+    v19 = CallInline -, v0, v0 inlineBuiltin=ArrayOf overload=Array/3
+    v20 = CallInline -, v2, v1 inlineBuiltin=ArrayOf overload=Array/1
+    Branch v3 -> taken b1(), notTaken b2()
+  b2():
+    Branch v3 -> taken b3(), notTaken b4()
+  b3() frequency=Rare:
+    v21 = Builtin builtin=Array
+    v22 = CallInline v21 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v23 = CallInline v21, v0, v0 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v24 = CallInline v21, v1 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v25 = CallInline v21, v0, v1, v2 inlineBuiltin=ArrayOf overload=ArrayOf/0
+    v26 = CallInline inlineBuiltin=ArrayOf overload=Array/3
+    v27 = CallInline -, v0, v0 inlineBuiltin=ArrayOf overload=Array/3
+    v28 = CallInline -, v2, v1 inlineBuiltin=ArrayOf overload=Array/1
+    Jump -> next b4()
+  b4():
+    Return
+}
+# S: f20 b0 Balanced
+# S: f20 b1 Fast
+# S: f20 b3 Compact

@@ -1,0 +1,112 @@
+# The pattern [a, b] over the pair of a step over a map takes the array arm alone, without a test: flow types the pair as the array that the expansion of the loop creates and proves it pristine. A pair that gets a property of its own is tested, with the protocol behind the test
+# RUN: pipeline ExpandIteration
+# RUN(TYPE): pipeline ExpandIteration
+# RUN(NOWHERE): pipeline ExpandIteration
+# STATISTIC: IterationsExpandedByClass = 4
+# STATISTIC: IterationsExpandedGenerically = 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="tagged.js" displayPath="tagged.js" body=f1
+entry module=m0
+layout L0 name="Key" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Value" fields=[{key="y" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="Map" [isFreeName]
+    v3 = Construct v2
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v4 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = PropGet v3 key="set"
+    v10 = Call v9, v3, v6, v8 calleeKey="set"
+    v11 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = IteratorResume v11
+    v14 = ResultAt v13 index=0
+    Branch v14 -> taken b3(), notTaken b2()
+  b2():
+    v15 = ResultAt v13 index=1
+    v16 = IteratorOpen v15 elementCount=2 [isDestructuring]
+    v17 = IteratorResume v16 stepIndex=0
+    v18 = ResultAt v17 index=1
+    v19 = IteratorResume v16 stepIndex=1
+    v20 = ResultAt v19 index=1
+    IteratorClose v16
+    v22 = PropGet v18 key="x"
+    v23 = Call v1, -, v22
+    v24 = PropGet v20 key="y"
+    v25 = Call v1, -, v24
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="tagged" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = PropGet v0 key="Map" [isFreeName]
+    v3 = Construct v2
+    v4 = Integer integer=1
+    v5 = NewObject -, v4 layout=L0 fields=[0]
+    v6 = FinishObject v5
+    v7 = NewObject -, v4 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = PropGet v3 key="set"
+    v10 = Call v9, v3, v6, v8 calleeKey="set"
+    v11 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = IteratorResume v11
+    v14 = ResultAt v13 index=0
+    Branch v14 -> taken b3(), notTaken b2()
+  b2():
+    v15 = ResultAt v13 index=1
+    PropSet v15, v4 key="tag" mode=Strict
+    v17 = IteratorOpen v15 elementCount=2 [isDestructuring]
+    v18 = IteratorResume v17 stepIndex=0
+    v19 = ResultAt v18 index=1
+    v20 = IteratorResume v17 stepIndex=1
+    v21 = ResultAt v20 index=1
+    IteratorClose v17
+    v23 = PropGet v19 key="x"
+    v24 = Call v1, -, v23
+    v25 = PropGet v21 key="y"
+    v26 = Call v1, -, v25
+    Jump -> next b1()
+  b3():
+    Return
+}
+# This module imports nothing, so its body stays the function that it was read as, in front of the function with the code of `main`.
+# CHECK-LABEL: function f1 name="tagged"
+# CHECK: = IsPristine {{*}} builtinClass=Array aspects=[Storage, Names]
+# CHECK: = DestructureIterable {{*}} count=2
+# CHECK-LABEL: function f2 name=
+# TYPE-LABEL: function f1 name="tagged"
+# TYPE: = AssumeType {{*}} provenType=Array<L0|L1, proven, pristine[Storage, Dense]>
+# TYPE-LABEL: function f2 name=
+# NOWHERE-LABEL: function f1 name="tagged"
+# NOWHERE-NOT: Unreachable
+# NOWHERE-LABEL: function f2 name=
+# The module imports another, so its body calls that one's and then its own code, which stands in a function of its own (CallModules).
+# CHECK-LABEL: function f3 name="main"
+# CHECK: [[step]]: undefined = MapNext
+# CHECK: [[key]]: undefined|L0 = ResultAt [[step]] index=2
+# CHECK: [[value]]: undefined|L1 = ResultAt [[step]] index=3
+# CHECK: [[keyOfEntry]]: L0 = AssumeType [[key]] provenType=L0
+# CHECK: [[valueOfEntry]]: L1 = AssumeType [[value]] provenType=L1
+# CHECK: Array = NewArray [[keyOfEntry]], [[valueOfEntry]] contents=anything
+# TYPE-LABEL: function f3 name="main"
+# TYPE: = AssumeType {{*}} provenType=Array<L0|L1, proven, pristine[Storage, Names, Dense]>
+# The loop is expanded in front of the optimizer, so at this point the reads of `x` and `y` have their own tests of L0|L1. None is a test of the pair.
+# NOWHERE-LABEL: function f3 name="main"
+# NOWHERE-NOT: testedType=Array
+# NOWHERE-NOT: testedType=undefined
+# NOWHERE-NOT: = IsPristine
+# NOWHERE-NOT: DestructureIterable
+# NOWHERE-NOT: Unreachable
+# NOWHERE-LABEL: function f4 name=

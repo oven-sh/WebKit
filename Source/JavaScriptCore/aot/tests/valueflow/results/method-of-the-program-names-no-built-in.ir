@@ -1,0 +1,23 @@
+# new Function(input)(); const own = {}; own.normalize = function () {}; own.normalize()
+# RUN: valueflow-results
+# CHECK: feature 47 StringPrototypeNormalize Unnamed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Own"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = Builtin builtin=Function
+    v3 = Construct v2, -, v1
+    v4 = Call v3, -
+    v5 = NewClosure function=f1
+    v6 = NewObject layout=L0 fields=[]
+    PropSet v6, v5 key="normalize" mode=Strict
+    v8 = PropGet v6 key="normalize"
+    v9 = Call v8, v6 calleeKey="normalize"
+    Return
+}
+function f1 name="normalize" results=[{type=anything}] {
+    Return
+}

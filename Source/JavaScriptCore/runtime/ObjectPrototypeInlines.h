@@ -55,6 +55,7 @@ inline std::tuple<ASCIILiteral, JSString*> inferBuiltinTag(JSGlobalObject* globa
     case ClonedArgumentsType:
         return std::tuple { "Arguments"_s, vm.smallStrings.objectArgumentsString() };
     case JSFunctionType:
+    case CompiledClosureType:
     case InternalFunctionType:
         return std::tuple { "Function"_s, vm.smallStrings.objectFunctionString() };
     case ErrorInstanceType:

@@ -1,0 +1,66 @@
+# main.cjs: require("./inner.cjs"); require(globalThis.name)()   built with two entry points, main.cjs and other.cjs
+# Of the program's own files a require() under a name that is put together at run time finds the entry points and no other, as in an executable that `bun build --compile` makes: the position gets what
+# an entry point exports. A file that is in the image because another file names it by a constant is no answer, and a file that nothing names is not evaluated: the run time refuses both.
+# No code that the build has not seen runs for that: a function that a module keeps to itself stays unreached
+# The build excludes code outside the image, as a hardened Bun does: the run time refuses a file with code that is not in the image.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: valueflow-solve calls
+# CHECK: f0 v5 -> {{*}}f2
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED-NOT: unreached f2
+# UNREACHED: unreached f3
+# UNREACHED-NEXT: unreached f5
+# UNREACHED-NEXT: unreached f6
+# UNREACHED-NEXT: unreached f7
+# RUN(UNSEEN): valueflow-solve unseen
+# UNSEEN: unseen LoadsModuleByName f0:v4
+# UNSEEN-NEXT: unseen-code no
+# UNSEEN-NEXT: modules-by-name yes
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="exports" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g3 name="exports" module=m3 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}]
+module m1 path="/app/other.cjs" displayPath="other.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g1
+module m2 path="/app/inner.cjs" displayPath="inner.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f4 exportsVariable=g2
+module m3 path="/app/unnamed.cjs" displayPath="unnamed.cjs" kind=CommonJs flags=[KeepsError] exportRule=CommonJs requireResult=ModuleExports body=f6 exportsVariable=g3
+entry module=m0
+entry module=m1
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m0
+    v1 = GetModuleVariable variable=g2
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="name" [isFreeName]
+    v4 = RequireDynamic v3 referrer=m0
+    v5 = Call v4
+    Return
+}
+function f1 name="other" module=m1 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g1
+    v2 = NewClosure function=f3
+    Return
+}
+function f2 name="exported" module=m1 results=[{type=anything}] {
+    Return
+}
+function f3 name="keptInside" module=m1 results=[{type=anything}] {
+    Return
+}
+function f4 name="inner" module=m2 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    PutModuleVariable v0 variable=g2
+    Return
+}
+function f5 name="exportedByInner" module=m2 results=[{type=anything}] {
+    Return
+}
+function f6 name="unnamed" module=m3 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+    v0 = NewClosure function=f7
+    PutModuleVariable v0 variable=g3
+    Return
+}
+function f7 name="exportedByUnnamed" module=m3 results=[{type=anything}] {
+    Return
+}

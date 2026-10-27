@@ -26,6 +26,7 @@
 #include "JSGlobalObjectFunctions.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSObjectInlines.h"
+#include "JSStringVisitInlines.h"
 #include "StringObject.h"
 #include "StrongInlines.h"
 #include "StructureCreateInlines.h"
@@ -91,6 +92,136 @@ bool JSString::equalSlowCase(JSGlobalObject* globalObject, JSString* other) cons
     return equalInline(globalObject, other);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool JSString::equalResolvingRopes(JSString* other) const
+{
+    if (length() != other->length())
+        return false;
+    const JSString* operands[2] { this, other };
+    if (isNonSubstringRope() && other->isNonSubstringRope())
+        static_cast<const JSRopeString*>(this)->resolveRope(nullptr);
+    if (!equalWithoutResolvingRopes(other)) {
+        for (auto* operand : operands) {
+            if (operand->isNonSubstringRope())
+                static_cast<const JSRopeString*>(operand)->resolveRope(nullptr);
+        }
+        return false;
+    }
+    if (isNonSubstringRope() && other->isRope())
+        static_cast<const JSRopeString*>(this)->resolveRope(nullptr);
+    else if (isRope() && other->isNonSubstringRope())
+        static_cast<const JSRopeString*>(other)->resolveRope(nullptr);
+    // A piece of another string takes the characters of its equal as well: whoever compares it again finds them in one piece.
+    for (unsigned i = 0; i < 2; ++i) {
+        const JSString* flat = operands[1 - i];
+        if (!operands[i]->isRope() || flat->isRope())
+            continue;
+        StringImpl* impl = flat->valueInternal().impl();
+        if (impl && (impl->is8Bit() || !operands[i]->is8Bit()))
+            static_cast<const JSRopeString*>(operands[i])->convertToNonRope(String { *impl });
+    }
+    return true;
+}
+
+StringView JSRopeString::LeafIterator::next()
+{
+    while (true) {
+        const JSString* string = m_pending.takeLast();
+        if (!string->isRope())
+            return StringView { string->valueInternal().impl() };
+        auto* rope = static_cast<const JSRopeString*>(string);
+        if (rope->isSubstring())
+            return StringView { rope->substringBase()->valueInternal().impl() }.substring(rope->substringOffset(), rope->length());
+        for (unsigned i = JSRopeString::s_maxInternalRopeLength; i--;) {
+            if (const JSString* fiber = rope->fiber(i))
+                m_pending.append(fiber);
+        }
+    }
+}
+
+bool JSString::equalWithoutResolvingRopes(JSString* other) const
+{
+    // A rope beside characters that lie in one piece, all of 8 bits: `type + "; charset=" + charset` beside the text that was there the last time. Each piece of the rope is compared where it
+    // would lie. Nothing is answered for a rope that is deeper than the room here, or that holds a piece of 16 bits.
+    auto ropeEqualsCharacters = [](const JSRopeString* rope, std::span<const Latin1Character> characters) -> std::optional<bool> {
+        constexpr unsigned room = 24;
+        std::array<const JSString*, room> pending;
+        unsigned count = 0;
+        pending[count++] = rope;
+        size_t position = 0;
+        while (count) {
+            const JSString* string = pending[--count];
+            std::span<const Latin1Character> piece;
+            if (!string->isRope()) {
+                const StringImpl* impl = string->tryGetValueImpl();
+                if (!impl)
+                    continue;
+                if (!impl->is8Bit())
+                    return std::nullopt;
+                piece = impl->span8();
+            } else if (auto* part = static_cast<const JSRopeString*>(string); part->isSubstring()) {
+                const StringImpl* impl = part->substringBase()->tryGetValueImpl();
+                if (!impl->is8Bit())
+                    return std::nullopt;
+                piece = impl->span8().subspan(part->substringOffset(), part->length());
+            } else {
+                if (count + JSRopeString::s_maxInternalRopeLength > room)
+                    return std::nullopt;
+                for (unsigned i = JSRopeString::s_maxInternalRopeLength; i--;) {
+                    if (const JSString* fiber = part->fiber(i))
+                        pending[count++] = fiber;
+                }
+                continue;
+            }
+            if (!equalSpans(piece, characters.subspan(position, piece.size())))
+                return false;
+            position += piece.size();
+        }
+        return true;
+    };
+    for (auto [rope, flat] : { std::pair { this, static_cast<const JSString*>(other) }, std::pair { static_cast<const JSString*>(other), this } }) {
+        if (!rope->isNonSubstringRope() || flat->isRope())
+            continue;
+        const StringImpl* impl = flat->tryGetValueImpl();
+        if (!impl || !impl->is8Bit())
+            break;
+        if (std::optional<bool> answer = ropeEqualsCharacters(static_cast<const JSRopeString*>(rope), impl->span8()))
+            return *answer;
+        break;
+    }
+
+    auto runOf = [](const JSString* string) -> StringView {
+        if (!string->isRope())
+            return StringView { string->valueInternal().impl() };
+        auto* part = static_cast<const JSRopeString*>(string);
+        return StringView { part->substringBase()->valueInternal().impl() }.substring(part->substringOffset(), part->length());
+    };
+    if (!isNonSubstringRope() && !other->isNonSubstringRope())
+        return runOf(this) == runOf(other);
+
+    unsigned remaining = length();
+    ASSERT(remaining == other->length());
+    JSRopeString::LeafIterator left { this };
+    JSRopeString::LeafIterator right { other };
+    StringView a;
+    StringView b;
+    while (remaining) {
+        while (a.isEmpty())
+            a = left.next();
+        while (b.isEmpty())
+            b = right.next();
+        unsigned common = std::min(a.length(), b.length());
+        bool isSameMemory = a.rawCharacters() == b.rawCharacters() && a.is8Bit() == b.is8Bit();
+        if (!isSameMemory && a.left(common) != b.left(common))
+            return false;
+        a = a.substring(common);
+        b = b.substring(common);
+        remaining -= common;
+    }
+    return true;
+}
+#endif
+
 size_t JSString::estimatedSize(JSCell* cell, VM& vm)
 {
     JSString* thisObject = asString(cell);
@@ -107,36 +238,7 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    uintptr_t pointer = thisObject->fiberConcurrently();
-    if (pointer & isRopeInPointer) {
-        if (pointer & JSRopeString::isSubstringInPointer) {
-            visitor.appendUnbarriered(static_cast<JSRopeString*>(thisObject)->fiber1());
-            return;
-        }
-        for (unsigned index = 0; index < JSRopeString::s_maxInternalRopeLength; ++index) {
-            JSString* fiber = nullptr;
-            switch (index) {
-            case 0:
-                fiber = std::bit_cast<JSString*>(pointer & JSRopeString::stringMask);
-                break;
-            case 1:
-                fiber = static_cast<JSRopeString*>(thisObject)->fiber1();
-                break;
-            case 2:
-                fiber = static_cast<JSRopeString*>(thisObject)->fiber2();
-                break;
-            default:
-                ASSERT_NOT_REACHED();
-                return;
-            }
-            if (!fiber)
-                break;
-            visitor.appendUnbarriered(fiber);
-        }
-        return;
-    }
-    if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer))
-        visitor.reportExtraMemoryVisited(impl->costDuringGC());
+    visitFields(thisObject, visitor);
 }
 
 DEFINE_VISIT_CHILDREN(JSString);

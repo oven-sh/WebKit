@@ -1,0 +1,31 @@
+# Behind a Check a truthiness test still filters: the generic version runs the same test on the same value. So do RequireObjectCoercible and RequireObject, which throw in every version.
+# RUN: valueflow-body f0 f1 f2
+# CHECK: body f0
+# CHECK: filter - undefined|null
+# CHECK: filter - object
+# CHECK: body f1
+# CHECK: returns n0 - undefined|null as it came
+# CHECK: body f2
+# CHECK: returns n0 & object as it came
+
+module m0 path="main.js" displayPath="main.js"
+entry module=m0
+function f0 name="truthiness" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|string
+    v2 = ToBoolean v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return v3
+  b2(v4):
+    Return v4
+}
+function f1 name="requireObjectCoercible" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|string
+    v2 = RequireObjectCoercible v1 nullishAccess=Read
+    Return v2
+}
+function f2 name="requireObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=undefined|object
+    v2 = RequireObject v1 runtimeError=IteratorResultNotObject
+    Return v2
+}

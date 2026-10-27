@@ -45,6 +45,7 @@ public:
 
 protected:
     JSPromiseConstructor(VM&, FunctionExecutable*, JSGlobalObject*, Structure*);
+    JSPromiseConstructor(VM&, NativeExecutable*, JSGlobalObject*, Structure*);
     void finishCreation(VM&, JSPromisePrototype*);
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -62,6 +63,10 @@ JSC_DECLARE_HOST_FUNCTION(promiseAllSettledSlowFulfillFunction);
 JSC_DECLARE_HOST_FUNCTION(promiseAllSettledSlowRejectFunction);
 JSC_DECLARE_HOST_FUNCTION(promiseAnyRejectFunction);
 JSC_DECLARE_HOST_FUNCTION(promiseAnySlowRejectFunction);
+
+#if ENABLE(AOT)
+JS_EXPORT_PRIVATE JSPromise* promiseAllOfElements(JSGlobalObject*, std::span<const EncodedJSValue>, uint32_t directCalls);
+#endif
 
 Structure* createPromiseAllSettledFulfilledResultStructure(VM&, JSGlobalObject&);
 Structure* createPromiseAllSettledRejectedResultStructure(VM&, JSGlobalObject&);

@@ -1,0 +1,85 @@
+# Every writer checks a value against the type of the field it stores into, so what a slot read gives has the type of the field as its proven type: the next access in `p.next.next.f0` needs no test of its receiver and no check of what it read.
+# The pass resolves one link of the chain in a run, because a read by name proves nothing about what it gives
+# FORM: Prepared
+# RUN: pass ResolveAccesses ResolveAccesses ResolveAccesses
+# RUN(NIL): pass ResolveAccesses PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.ts" displayPath="main.ts"
+layout L0 name="Node" fields=[{key="next" declared={type=L0} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="f0" declared={type=number} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="loose" declared={type=L0 flags=[IsExpected]} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="link" declared={type=undefined|null|L0} flags=[IsRequired, IsEnforced] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+
+function f0 name="proven-head" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="next"
+    v2 = PropGet v1 key="next"
+    v3 = PropGet v2 key="f0"
+    Return v3
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: L0 = GetSlot v0 key="next" receivers=[L0] level=Proven
+# CHECK-NEXT: v2: L0 = GetSlot v1 key="next" receivers=[L0] level=Proven
+# CHECK-NEXT: v3: number = GetSlot v2 key="f0" receivers=[L0] level=Proven
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+}
+
+# The test that passed at the head of the chain pays for all of it
+function f1 name="one-test-at-the-head" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = TypeTest v0 testedType=L0
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = PropGet v2 key="next"
+    v4 = PropGet v3 key="next"
+    v5 = PropGet v4 key="f0"
+    Return v5
+  b2() frequency=Unlikely:
+    v6 = PropGet v0 key="next"
+    v7 = PropGet v6 key="next"
+    v8 = PropGet v7 key="f0"
+    Return v8
+# CHECK-NEXT: b0(v0: anything ~ L0):
+# CHECK-NEXT: = TypeTest v0 testedType=L0
+# CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2()
+# CHECK-NEXT: b1(v2: L0):
+# CHECK-NEXT: v3: L0 = GetSlot v2 key="next" receivers=[L0] level=Proven
+# CHECK-NEXT: v4: L0 = GetSlot v3 key="next" receivers=[L0] level=Proven
+# CHECK-NEXT: v5: number = GetSlot v4 key="f0" receivers=[L0] level=Proven
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2() frequency=Unlikely:
+# CHECK-NEXT: = PropGet v0 key="next"
+# CHECK-NEXT: = PropGet v6 key="next"
+# CHECK-NEXT: = PropGet v7 key="f0"
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+}
+
+# Nothing checks what is stored into a field whose type is only expected: its slot holds anything, and the next access stays by name
+function f2 name="field-is-only-expected" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="loose"
+    v2 = PropGet v1 key="f0"
+    Return v2
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: anything ~ L0 = GetSlot v0 key="loose" receivers=[L0] level=Proven
+# CHECK-NEXT: = PropGet v1 key="f0"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+
+# Undefined and null are values of the field's type. The next access throws for either, so it asks whether it has an object, and never which
+function f3 name="field-may-hold-null" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="link"
+    v2 = PropGet v1 key="f0"
+    Return v2
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: v1: undefined|null|L0 = GetSlot v0 key="link" receivers=[L0] level=Proven
+# CHECK-NEXT: = PropGet v1 key="f0"
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+# NIL-NEXT: b0(v0: L0):
+# NIL-NEXT: v1: undefined|null|L0 = GetSlot v0 key="link" receivers=[L0] level=Proven
+# NIL-NEXT: = TypeTest v1 testedType=object
+# NIL-NOT: = TypeTest
+# NIL-NOT: = BelongsToInstance
+# NIL: : number = GetSlot {{*}} key="f0" receivers=[L0] level=Expected
+# NIL-NOT: = TypeTest
+# NIL-NOT: = BelongsToInstance
+}

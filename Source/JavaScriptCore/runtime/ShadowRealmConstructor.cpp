@@ -29,6 +29,8 @@
 #include "JSCInlines.h"
 #include "ShadowRealmObjectInlines.h"
 
+#if ENABLE(SHADOW_REALM)
+
 namespace JSC {
 
 const ClassInfo ShadowRealmConstructor::s_info = { "Function"_s, &InternalFunction::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ShadowRealmConstructor) };
@@ -40,7 +42,7 @@ static JSC_DECLARE_HOST_FUNCTION(callShadowRealm);
 static JSC_DECLARE_HOST_FUNCTION(constructWithShadowRealmConstructor);
 
 ShadowRealmConstructor::ShadowRealmConstructor(VM& vm, Structure* structure)
-    : InternalFunction(vm, structure, callShadowRealm, constructWithShadowRealmConstructor)
+    : InternalFunction(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callShadowRealm), JSC_REGISTERED_HOST_FUNCTION(constructWithShadowRealmConstructor))
 {
 }
 
@@ -65,3 +67,5 @@ JSC_DEFINE_HOST_FUNCTION(callShadowRealm, (JSGlobalObject* globalObject, CallFra
 }
 
 } // namespace JSC
+
+#endif // ENABLE(SHADOW_REALM)

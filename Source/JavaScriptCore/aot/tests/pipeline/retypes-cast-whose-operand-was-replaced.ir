@@ -1,0 +1,60 @@
+# `parse` holds JSON.parse or String, so the call in the loop is split by its callee. String(text) becomes its operand and takes the operand's narrower type.
+# The cast that read the call now reads the operand. It is retyped too, so the next round removes it.
+# RUN: pipeline Select
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="text" module=m0 declared={type=undefined|null|absent|"{\"id\":7}" flags=[IsExpected]} flags=[IsImmutable]
+variable g1 name="parse" module=m0 declared={type=undefined|null|function|absent|builtin(String)|builtin(JSONParse) flags=[IsExpected]}
+
+function f0 name="" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = String string="{\"id\":7}"
+    PutModuleVariable v1 variable=g0
+    v3 = Builtin builtin=JSONParse
+    PutModuleVariable v3 variable=g1
+    v5 = PropGet v1 key="length"
+    v6 = Integer integer=1000
+    v7 = Greater v5, v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Builtin builtin=String
+    PutModuleVariable v8 variable=g1
+    Jump -> next b2()
+  b2():
+    v10 = Integer integer=10
+    v11 = Call v0, -, v10
+    Return v11
+}
+
+function f1 name="read" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    Jump -> next b1(v1, v1)
+  b1(v2, v3):
+    LoopHint
+    v5 = Less v3, v0
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = GetModuleVariable variable=g1
+    v7 = CheckInitialized v6 name="parse"
+    v8 = Convert v7 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v9 = GetModuleVariable variable=g0
+    v10 = CheckInitialized v9 name="text"
+    v11 = Call v8, -, v10
+    v12 = Convert v11 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v13 = PropGet v12 key="id"
+    v14 = Add v2, v13
+    v15 = Integer integer=0
+    v16 = BitOr v14, v15
+    v17 = Increment v3
+    Jump -> next b1(v16, v17)
+  b3():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="read"
+# CHECK-NOT: overload=String/0
+# CHECK-NOT: : string = Upcast
+# CHECK: frequency=Unlikely
+# CHECK-NEXT: = PropGet v9 key="id"

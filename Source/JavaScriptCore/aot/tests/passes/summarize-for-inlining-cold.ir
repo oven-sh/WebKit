@@ -1,0 +1,26 @@
+# A cold function has a size, and neither a head nor conditions
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass SummarizeForInlining
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="returnsCachedOrComputes" parameters=[{type=undefined|object}, {type=number}] results=[{type=number}] {
+    v2 = TypeTest v0 testedType=undefined|null
+    Branch v2 -> taken b2(), notTaken b1()
+  b1():
+    Return v1
+  b2() frequency=Unlikely:
+    v3 = Mul v1, v1
+    v4 = Mul v3, v1
+    v5 = Mul v4, v1
+    v6 = Mul v5, v1
+    v7 = Mul v6, v1
+    v8 = Mul v7, v1
+    v9 = Mul v8, v1
+    v10 = Mul v9, v1
+    Return v10
+}
+# CHECK: f0: barrier=None bytes=96
+# CHECK-NOT: head=
+# CHECK-NOT: condition(
+# CHECK: outcome: Unchanged

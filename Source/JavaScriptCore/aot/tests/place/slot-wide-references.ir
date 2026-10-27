@@ -1,0 +1,52 @@
+# With wide references the slots that take 32 bits in slot-compressed-reference.ir take 64. A slot for int32s holds no reference, so it takes 32 as in slot-number-field-narrowed-to-int32.ir
+# FORM: AsRead
+# OPTIONS: references=wide only-passes=AnalyzeFlow disable=flow:NarrowedTypes
+# RUN: plan-slots
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Leaf" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+layout L1 name="HoldsCells" fields=[{key="exact" declared={type=L0} flags=[IsRequired]}, {key="nullable" declared={type=null|L0} flags=[IsRequired]}, {key="text" declared={type=string} flags=[IsRequired]}]
+layout L2 name="TwoIntegers" fields=[{key="first" declared={type=number} flags=[IsRequired]}, {key="second" declared={type=number}}]
+layout L3 kind=Environment name="scope" fields=[{key="leaf" declared={type=L0}}]
+layout L4 name="GetsOtherProperties" fields=[{key="value" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = ToNumber v1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Null
+    v6 = ToString v1
+    v7 = NewObject -, v4, v5, v6 layout=L1 fields=[0, 1, 2]
+    v8 = FinishObject v7
+    v9 = Integer integer=1
+    v10 = NewObject -, v9, v9 layout=L2 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = NewObject -, v9 layout=L2 fields=[0]
+    v13 = FinishObject v12
+    v14 = NewObject -, v4 layout=L3 fields=[0]
+    v15 = NewClosure v14 function=f1
+    v16 = NewObject -, v2 layout=L4 fields=[0]
+    v17 = FinishObject v16
+    ElemSet v17, v6, v2
+    Return
+}
+function f1 name="closure" kind=Arrow captures=[{type=env L3}] results=[{type=anything}] {
+  b0(v0: env L3):
+    v1 = GetEnvironmentField v0 layout=L3 field=0
+    Return v1
+}
+# CHECK: L1 CompiledObject size=48 fields=3 wide
+# CHECK-NEXT: "exact" Cell @
+# CHECK-NEXT: "nullable" JSValue @
+# CHECK-NEXT: "text" Cell @
+# CHECK-NEXT: L2 CompiledObject size=32 fields=2 wide
+# CHECK-NEXT: "first" {{*}}Int32 @
+# CHECK-NEXT: "second" {{*}}Int32 @
+# CHECK-NEXT: L3 Environment size=16 wide
+# CHECK-NEXT: "leaf" Cell @8
+# CHECK-NEXT: L4 CompiledObject size=32 fields=1 wide
+# CHECK-NEXT: "value" {{*}} @16
+# CHECK-NEXT: extra Cell @24

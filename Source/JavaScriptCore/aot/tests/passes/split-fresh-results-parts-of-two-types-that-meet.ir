@@ -1,0 +1,182 @@
+# Where two fresh values meet in front of a return, one value carries a part for both. A part that has one type in both is returned as a part.
+# One that has two types is not: the function keeps its result whole. Only the elements of lists meet with two types, and each is returned with the type of its own list
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass SplitFreshResults VerifyProgram
+# STATISTIC: FreshResultsSplit = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Whole" fields=[{key="x" declared={type=i32} flags=[IsRequired]}]
+layout L1 name="Any" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="Fraction" fields=[{key="x" declared={type=fractional} flags=[IsRequired]}]
+layout L3 name="WholeAndMore" fields=[{key="x" declared={type=i32} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}]
+layout L4 name="Above" fields=[{key="a" declared={type=i32} flags=[IsRequired]}]
+layout L5 name="AlsoAbove" fields=[{key="b" declared={type=i32} flags=[IsRequired]}]
+variable g0 name="choose" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="slotOfWholeNumbersOrOfAnything" parameters=[{type=boolean}, {type=i32}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v2 layout=L1 fields=[0]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -
+    Return v5
+}
+# CHECK-LABEL: function f0 name="slotOfWholeNumbersOrOfAnything" module=m0 thisType=
+# CHECK: = NewObject -, v1 layout=L0 fields=[0]
+# CHECK: = NewObject -, v2 layout=L1 fields=[0]
+
+function f1 name="slotOfWholeNumbersOrOfFractions" parameters=[{type=boolean}, {type=i32}, {type=fractional}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v2 layout=L2 fields=[0]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -
+    Return v5
+}
+# CHECK-LABEL: function f1 name="slotOfWholeNumbersOrOfFractions" module=m0 thisType=
+# CHECK: = NewObject -, v1 layout=L0 fields=[0]
+# CHECK: = NewObject -, v2 layout=L2 fields=[0]
+
+function f2 name="slotOfWholeNumbersInTwoLayouts" parameters=[{type=boolean}, {type=i32}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewObject -, v1 layout=L0 fields=[0]
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewObject -, v1, v2 layout=L3 fields=[0, 1]
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -
+    Return v5
+}
+# CHECK-LABEL: function f2 name="slotOfWholeNumbersInTwoLayouts" module=m0 role=ResultWrapper
+# CHECK: [[whole]]: i32 = ResultAt [[call]] index=1
+# CHECK: = NewObject -, [[whole]] layout=L0 fields=[0]
+# CHECK: = NewObject -, [[whole]], [[other]] layout=L3 fields=[0, 1]
+
+function f3 name="readsWholeNumber" captures=[{type=i32}] results=[{type=i32}] {
+    Return v0
+}
+function f4 name="alsoReadsWholeNumber" captures=[{type=i32}] results=[{type=i32}] {
+    Return v0
+}
+function f5 name="readsAnything" captures=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+
+function f6 name="captureOfWholeNumbersOrOfAnything" parameters=[{type=boolean}, {type=i32}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewClosure v1 function=f3
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewClosure v2 function=f5
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -
+    Return v5
+}
+# CHECK-LABEL: function f6 name="captureOfWholeNumbersOrOfAnything" module=m0 thisType=
+# CHECK: = NewClosure v1 function=f3
+# CHECK: = NewClosure v2 function=f5
+
+function f7 name="captureOfWholeNumbersInTwoFunctions" parameters=[{type=boolean}, {type=i32}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v2 = NewClosure v1 function=f3
+    Jump -> next b3(v2)
+  b2():
+    v3 = NewClosure v1 function=f4
+    Jump -> next b3(v3)
+  b3(v4):
+    v5 = GetModuleVariable variable=g0
+    v6 = Call v5, -
+    Return v4
+}
+# CHECK-LABEL: function f7 name="captureOfWholeNumbersInTwoFunctions" module=m0 role=ResultWrapper
+# CHECK: [[captured]]: i32 = ResultAt [[callOfClosures]] index=1
+# CHECK: = NewClosure [[captured]] function=f3
+# CHECK: = NewClosure [[captured]] function=f4
+
+function f8 name="boundsOfAStringOrAnyIntegers" parameters=[{type=boolean}, {type=string}, {type=int}, {type=int}] results=[{type=string}] {
+    v4 = GetStringLength v1
+    v5 = StringRange v4, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Substring v1, v6, v7
+    Jump -> next b3(v8)
+  b2():
+    v9 = Substring v1, v3, v3
+    Jump -> next b3(v9)
+  b3(v10: string):
+    v11 = GetModuleVariable variable=g0
+    v12 = Call v11, -
+    Return v10
+}
+# CHECK-LABEL: function f8 name="boundsOfAStringOrAnyIntegers" module=m0 thisType=
+# CHECK: = Substring v1, v6, v7
+# CHECK: = Substring v1, v3, v3
+
+function f9 name="prototypesOfTwoLayouts" parameters=[{type=boolean}, {type=L4}, {type=L5}, {type=i32}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v4 = NewObject v1, v3 layout=L0 fields=[0]
+    Jump -> next b3(v4)
+  b2():
+    v5 = NewObject v2, v3 layout=L0 fields=[0]
+    Jump -> next b3(v5)
+  b3(v6):
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v7, -
+    Return v6
+}
+# CHECK-LABEL: function f9 name="prototypesOfTwoLayouts" module=m0 thisType=
+# CHECK: = NewObject v1, v3 layout=L0 fields=[0]
+# CHECK: = NewObject v2, v3 layout=L0 fields=[0]
+
+function f10 name="listOfWholeNumbersOrOfAnything" parameters=[{type=boolean}, {type=i32}, {type=anything}] results=[{type=anything}] {
+    Branch v0 -> taken b1(), notTaken b2()
+  b1():
+    v3 = NewArray v1 contents=i32
+    Jump -> next b3(v3)
+  b2():
+    v4 = NewArray v2 contents=anything
+    Jump -> next b3(v4)
+  b3(v5):
+    v6 = GetModuleVariable variable=g0
+    v7 = Call v6, -
+    Return v5
+}
+# CHECK-LABEL: function f10 name="listOfWholeNumbersOrOfAnything" module=m0 role=ResultWrapper
+# CHECK: [[element]]: i32 = ResultAt [[callOfLists]] index=1
+# CHECK-NEXT: [[otherElement]]: anything = ResultAt [[callOfLists]] index=2
+# CHECK: = NewArray [[element]] contents=i32
+# CHECK: = NewArray [[otherElement]] contents=anything
+
+function f11 name="callsThemAll" parameters=[{type=boolean}, {type=i32}, {type=anything}, {type=fractional}, {type=string}, {type=int}, {type=int}, {type=L4}, {type=L5}] results=[{type=undefined}] {
+    v9 = CallDirect v0, v1, v2 function=f0
+    v10 = CallDirect v0, v1, v3 function=f1
+    v11 = CallDirect v0, v1, v2 function=f2
+    v12 = CallDirect v0, v1, v2 function=f6
+    v13 = CallDirect v0, v1 function=f7
+    v14 = CallDirect v0, v4, v5, v6 function=f8
+    v15 = CallDirect v0, v7, v8, v1 function=f9
+    v16 = CallDirect v0, v1, v2 function=f10
+    v17 = Undefined
+    Return v17
+}

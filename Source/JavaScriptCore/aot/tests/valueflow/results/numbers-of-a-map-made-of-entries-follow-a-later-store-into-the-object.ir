@@ -1,0 +1,22 @@
+# words = { a: 1 }; words.late = 4000000000; return new Map(Object.entries(words)).get("a")
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|int[1, 4000000000]}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Words" fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Integer integer=4000000000
+    PropSet v1, v2 key="late"
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectEntries
+    v6 = Call v5, v4, v1
+    v7 = Builtin builtin=Map
+    v8 = Construct v7, -, v6
+    v9 = Builtin builtin=MapPrototypeGet
+    v10 = String string="a"
+    v11 = Call v9, v8, v10
+    Return v11
+}

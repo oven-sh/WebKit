@@ -1,0 +1,62 @@
+# class Kept {}  kept = new Kept();  class Parent { constructor() { return kept } }  class Child extends Parent {}  new Parent().x; new Child().x
+# A construction is answered the instances of its own class only where every constructor that runs answers what it constructs. The constructor of Parent answers an instance of another class,
+# so whoever constructs Parent gets that instance, and so does whoever constructs a class below Parent.
+# override-sees-only-the-instances-of-its-class.ir has constructors that answer what they construct
+# RUN: valueflow-why values=f0:v15 values=f0:v17 values=f0:v19
+# CHECK: values=f0:v15
+# CHECK: operand 0 {{*}} 1 members: [[kept]]
+# CHECK: values=f0:v17
+# CHECK: operand 0 {{*}} members: [[kept]]
+# CHECK: values=f0:v19
+# CHECK: operand 0 {{*}} members: [[kept]]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Kept" constructor=f1
+layout L1 kind=Instance name="Parent" constructor=f2
+layout L2 kind=Instance name="Child" base=L1 constructor=f3 flags=[HasHeritage]
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = FinishClass v1 layout=L0
+    v3 = NewClosure function=f2
+    v4 = NewClass v3 layout=L1
+    v5 = FinishClass v4 layout=L1
+    v6 = ResolveHeritage v5
+    v7 = NewClosure function=f3
+    v8 = NewClass v7, v5, v6 layout=L2
+    v9 = FinishClass v8 layout=L2
+    v10 = Construct v2
+    PutModuleVariable v10 variable=g0
+    v12 = Construct v5
+    v13 = Construct v9
+    v14 = Undefined
+    v15 = PropGet v10 key="x"
+    v16 = Undefined
+    v17 = PropGet v12 key="x"
+    v18 = Undefined
+    v19 = PropGet v13 key="x"
+    Return
+}
+function f1 name="Kept" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="Parent" module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = GetModuleVariable variable=g0
+    v4 = TypeTest v3 testedType=object
+    Branch v4 -> taken b1(| 0), notTaken b2()
+  b1(v5):
+    Return v5
+  b2():
+    Return v2
+}
+function f3 name="Child" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=object}] {
+    v2 = GetSuperBase v0
+    v3 = SuperConstruct v2, v1 layout=L2
+    Return v3
+}

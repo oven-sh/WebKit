@@ -1,0 +1,32 @@
+# The caller tests what the call returns for the type that the callee declares. Behind the copy of the head the result of the call meets what the copy returns in front of that test.
+# A callee that promises its result answers a test that stands right behind the call, so the call gets a test of its own. What the copy returns is tested where the two met.
+# FORM: Selected
+# OPTIONS: heat=EverythingIsHot
+# RUN: pass InlineHeads
+# STATISTIC: SelectedHeadsInlined = 1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="caller" parameters=[{type=anything}, {type=anything}, {type=function}] results=[{type=anything}] {
+    v3 = CallDirect v0, v1, v2 function=f1
+    v4 = TypeTest v3 testedType=string
+    TestAndBranch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5: string):
+    Return v5
+  b2(v6: undefined|null|boolean|number|symbol|bigint|object):
+    v7 = Call v2, -, v6
+    Return v7
+}
+function f1 name="early" parameters=[{type=anything}, {type=anything}, {type=function}] results=[{type=string flags=[IsExpected]}] {
+    v3 = TypeTest v0 testedType=i32
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v4 = Call v2, -, v0
+    Return v4
+}
+# CHECK-LABEL: function f0 name="caller"
+# CHECK: [[called]]: anything = CallDirect v0, v1, v2 function=f1 [isAfterInlinedHead]
+# CHECK-NEXT: [[test]]: boolean = TypeTest [[called]] testedType=string
+# CHECK-NEXT: TestAndBranch [[test]] -> taken b1(| 0), notTaken b2(| 0)
+# CHECK-LABEL: function f1 name="early"

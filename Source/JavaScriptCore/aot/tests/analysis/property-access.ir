@@ -1,0 +1,340 @@
+# What planPropertyAccess answers: each resolved access is followed by the cases that drop one of the facts it relies on
+# FORM: Prepared
+# RUN: property-access
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="w" declared={type=number} flow={prototypeName=AbsentOnPrototypes}}, {key="d" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="fixed" declared={type=number} flags=[IsRequired, IsImmutable] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="r" declared={type=number} flags=[IsRequired] flow={prototypeName=AbsentOnPrototypes}}, {key="label" declared={type=string} flags=[IsRequired] flow={prototypeName=AbsentOnPrototypes}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 kind=Instance name="Scanner" constructor=f0 fields=[{key="pos" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="text" declared={type=string} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="mark" declared={type=number}}] flow={baseState=None members=[L1] impossibleMutations=[ChangePrototype] addedKeysAreComplete=true} classFlow={prototypeLink=Fixed prototypeNamesAreComplete=true}
+layout L2 kind=Instance name="SubScanner" base=L1 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L1 members=[L2] impossibleMutations=[ChangePrototype]} classFlow={prototypeLink=Fixed prototypeNamesAreComplete=true}
+layout L3 name="Named" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="name" declared={type=string} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L3] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L4 name="Freezable" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L4] impossibleMutations=[AddProperty, ChangePrototype]}
+layout L5 name="NeverEnumerated" fields=[{key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="z" declared={type=number} flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L5] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype] keys=NeverEnumerated}
+layout L6 kind=Instance name="Once" constructor=f2 fields=[{key=#"#secret"@L6 declared={type=number} flags=[IsRequired, IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L6]} classFlow={evaluations=AtMostOnce}
+layout L7 kind=Instance name="Repeated" fields=[{key=#"#secret"@L7 declared={type=number} flags=[IsRequired, IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L7]}
+layout L8 kind=Instance name="Unrelated" fields=[{key=#"#secret"@L8 declared={type=number} flags=[IsRequired, IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L8] impossibleMutations=[AddProperty]} classFlow={evaluations=AtMostOnce}
+layout L9 kind=Instance name="Derived" base=L6 flags=[HasHeritage] flow={baseState=Layout base=L6 members=[L9]} classFlow={evaluations=AtMostOnce}
+layout L10 kind=Instance name="Redeclaring" base=L6 fields=[{key=#"#secret"@L10 declared={type=number} flags=[IsRequired, IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flags=[HasHeritage] flow={baseState=Layout base=L6 members=[L10]} classFlow={evaluations=AtMostOnce}
+layout L11 kind=Instance name="MayBeEmpty" fields=[{key=#"#secret"@L11 declared={type=number} flags=[IsPrivate] flow={stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L11]} classFlow={evaluations=AtMostOnce}
+layout L12 kind=Instance name="UnrelatedAndExtensible" fields=[{key=#"#secret"@L12 declared={type=number} flags=[IsRequired, IsPrivate] flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None members=[L12]} classFlow={evaluations=AtMostOnce}
+
+function f0 name="Scanner" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L1
+function f1 name="SubScanner" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f2 name="Once" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L6
+function f3 name="read-filled" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK: F3 v1 PropGet [[pos]]: form=Slot level=Proven operation=GetSlot receivers=[L1] member=(Field level=Proven holder=L1 field=0)
+function f4 name="read-empty-slot-is-no-property" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="text"
+    Return v1
+}
+# CHECK-NEXT: F4 v1 PropGet [[text]]: form=Slot level=Proven operation=GetSlotOrUndefined receivers=[L1] member=(Field level=Proven holder=L1 field=1)
+function f5 name="read-nothing-known-of-the-field" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="mark"
+    Return v1
+}
+# CHECK-NEXT: F5 v1 PropGet [[mark]]: form=Slot level=Expected operation=GetSlot receivers=[L1] proofs=[SlotFilled] testsDeclaredType missPath member=(Field level=Proven holder=L1 field=2)
+function f6 name="read-of-a-slot-that-may-be-empty-under-a-fixed-prototype" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="z"
+    Return v1
+}
+# CHECK-NEXT: F6 v1 PropGet [[z]]: form=Slot level=Proven operation=GetSlotOrUndefined receivers=[L0] member=(Field level=Proven holder=L0 field=2)
+function f7 name="read-optional-may-have-moved-out" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="w"
+    Return v1
+}
+# CHECK-NEXT: F7 v1 PropGet [[w]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] testsDeclaredType missPath member=(Field level=Proven holder=L0 field=3)
+function f8 name="read-filled-may-be-deleted" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="d"
+    Return v1
+}
+# CHECK-NEXT: F8 v1 PropGet [[d]]: form=Slot level=Proven operation=GetSlotOrUndefined receivers=[L0] member=(Field level=Proven holder=L0 field=4)
+function f9 name="read-class-and-subclass" parameters=[{type=L1|L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-NEXT: F9 v1 PropGet [[pos]]: form=Slot level=Proven operation=GetSlot receivers=[L1, L2] member=(Field level=Proven holder=L1 field=0)
+function f10 name="read-two-records" parameters=[{type=L0|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F10 v1 PropGet [[x]]: form=Slot level=Proven operation=GetSlot receivers=[L0, L3] member=(Field level=Proven)
+function f11 name="read-member-without-field" parameters=[{type=L0|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="name"
+    Return v1
+}
+# CHECK-NEXT: F11 v1 PropGet [[name]]: form=Split level=Proven receivers=[L0, L3]
+function f12 name="read-checked-receiver" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=L1
+    v2 = PropGet v1 key="pos"
+    Return v2
+}
+# CHECK-NEXT: F12 v2 PropGet [[pos]]: form=Slot level=Proven operation=GetSlot receivers=[L1] member=(Field level=Proven holder=L1 field=0)
+function f13 name="read-nullish-receiver" parameters=[{type=undefined|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-NEXT: F13 v1 PropGet [[pos]]: form=Slot level=Expected operation=GetSlot receivers=[L1] proofs=[NotNullish] missPath member=(Field level=Proven holder=L1 field=0)
+function f14 name="read-receiver-may-be-a-number" parameters=[{type=number|L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-NEXT: F14 v1 PropGet [[pos]]: form=Split level=Proven receivers=[L1]
+function f15 name="read-free-name" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="pos" [isFreeName]
+    Return v1
+}
+# CHECK-NOT: F15 v1
+function f16 name="read-proto" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="__proto__"
+    Return v1
+}
+# CHECK: F16 v1 PropGet [[proto]]: form=ByName level=Unknown receivers=[]
+function f17 name="read-index-name" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="0"
+    Return v1
+}
+# CHECK-NEXT: F17 v1 PropGet [[index]]: form=ByName level=Unknown receivers=[]
+function f18 name="read-canonical-numeric-name" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="1.5"
+    Return v1
+}
+# CHECK-NEXT: F18 v1 PropGet [[numeric]]: form=ByName level=Unknown receivers=[]
+function f19 name="read-absent-name" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = PropGet v0 key="nope"
+    Return v1
+}
+# CHECK-NEXT: F19 v1 PropGet [[nope]]: form=Constant level=Proven operation=Undefined receivers=[L1] member=(Absent level=Proven)
+function f20 name="read-absent-name-may-be-added" parameters=[{type=L2}] results=[{type=anything}] {
+    v1 = PropGet v0 key="nope"
+    Return v1
+}
+# CHECK-NEXT: F20 v1 PropGet [[nope]]: form=Constant level=Expected operation=Undefined receivers=[L2] proofs=[NoExtraProperties] missPath member=(Absent level=Expected proofs=[NoExtraProperties]) cause=OwnPropertyHidesMember
+function f21 name="read-absent-name-of-record" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="nope"
+    Return v1
+}
+# CHECK-NEXT: F21 v1 PropGet [[nope]]: form=Constant level=Proven operation=Undefined receivers=[L0] member=(Absent level=Proven)
+function f22 name="read-unknown-object" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-NEXT: F22 v1 PropGet [[pos]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
+function f23 name="read-untyped-receiver" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-NEXT: F23 v1 PropGet [[pos]]: form=ByName level=Unknown receivers=[] cause=UnknownObject
+function f24 name="read-expected-receiver" parameters=[{type=L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L1):
+    v1 = PropGet v0 key="pos"
+    Return v1
+}
+# CHECK-NEXT: F24 v1 PropGet [[pos]]: form=Slot level=Expected operation=GetSlot receivers=[L1] receiverTest=Type proofs=[OwnInstance] missPath member=(Field level=Proven holder=L1 field=0)
+
+function f25 name="store-filled" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F25 v2 PropSet [[x]]: form=Slot level=Proven operation=PutSlot receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=0)
+function f26 name="store-other-type" parameters=[{type=L0}, {type=string}] results=[{type=anything}] {
+    PropSet v0, v1 key="x" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F26 v2 PropSet [[x]]: form=Slot level=Expected operation=PutSlot receivers=[L0] testsStoredValue missPath member=(Field level=Proven holder=L0 field=0)
+function f27 name="store-wider-type" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="x" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F27 v2 PropSet [[x]]: form=Slot level=Expected operation=PutSlot receivers=[L0] testsStoredValue missPath member=(Field level=Proven holder=L0 field=0)
+function f28 name="store-may-be-frozen" parameters=[{type=L4}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="x" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F28 v2 PropSet [[x]]: form=Slot level=Expected operation=PutSlot receivers=[L4] proofs=[NotFrozen] storedValueFits missPath member=(Field level=Proven holder=L4 field=0)
+function f29 name="store-expected-receiver" parameters=[{type=L0 flags=[IsExpected]}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything ~ L0, v1: number):
+    PropSet v0, v1 key="x" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F29 v2 PropSet [[x]]: form=Slot level=Expected operation=PutSlot receivers=[L0] receiverTest=Type proofs=[OwnInstance] storedValueFits missPath member=(Field level=Proven holder=L0 field=0)
+function f30 name="store-creates-the-property" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="y" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F30 v2 PropSet [[y]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=1)
+function f31 name="store-creates-the-property-keys-never-enumerated" parameters=[{type=L5}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="y" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F31 v2 PropSet [[y]]: form=Slot level=Proven operation=PutSlot receivers=[L5] storedValueFits member=(Field level=Proven holder=L5 field=0)
+function f32 name="store-creates-where-no-prototype-can-have-the-name" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="z" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F32 v2 PropSet [[z]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=2)
+function f33 name="define-ignores-setters" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="z"
+    Return v0
+}
+# CHECK-NEXT: F33 v2 PropDefine [[z]]: form=Slot level=Proven operation=PutSlotOrAdd receivers=[L0] storedValueFits member=(Field level=Proven holder=L0 field=2)
+function f34 name="define-may-have-moved-out" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropDefine v0, v1 key="w"
+    Return v0
+}
+# CHECK-NEXT: F34 v2 PropDefine [[w]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot] storedValueFits missPath member=(Field level=Proven holder=L0 field=3)
+function f35 name="store-immutable-field" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="fixed" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F35 v2 PropSet [[fixed]]: form=ByName level=Unknown receivers=[L0] member=(Field level=Proven holder=L0 field=5)
+function f36 name="store-member-without-field" parameters=[{type=L0|L3}, {type=string}] results=[{type=anything}] {
+    PropSet v0, v1 key="name" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F36 v2 PropSet [[name]]: form=Split level=Proven receivers=[L0, L3]
+function f37 name="store-absent-name" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="nope" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F37 v2 PropSet [[nope]]: form=ByName level=Unknown receivers=[L0] member=(Absent level=Proven)
+
+function f38 name="has-filled" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHas v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F38 v1 PropHas [[x]]: form=Constant level=Proven operation=Boolean value=true receivers=[L0] member=(Field level=Proven holder=L0 field=0)
+function f39 name="has-empty-slot-is-no-property" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHas v0 key="y"
+    Return v1
+}
+# CHECK-NEXT: F39 v1 PropHas [[y]]: form=Slot level=Proven operation=IsSlotFilled receivers=[L0] member=(Field level=Proven holder=L0 field=1)
+function f40 name="has-may-be-inherited" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHas v0 key="z"
+    Return v1
+}
+# CHECK-NEXT: F40 v1 PropHas [[z]]: form=ByName level=Unknown receivers=[L0] member=(Field level=Proven holder=L0 field=2)
+function f41 name="has-expected-receiver" parameters=[{type=L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L0):
+    v1 = PropHas v0 key="x"
+    Return v1
+}
+# CHECK-NEXT: F41 v1 PropHas [[x]]: form=Constant level=Expected operation=Boolean value=true receivers=[L0] receiverTest=Type proofs=[OwnInstance] missPath member=(Field level=Proven holder=L0 field=0)
+function f42 name="has-absent-name" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHas v0 key="nope"
+    Return v1
+}
+# CHECK-NEXT: F42 v1 PropHas [[nope]]: form=Constant level=Proven operation=Boolean value=false receivers=[L0] member=(Absent level=Proven)
+
+function f43 name="private-class-evaluated-once" parameters=[{type=L6}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateGet v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F43 v2 PrivateGet [[secret]]: form=Slot level=Proven operation=GetSlot receivers=[L6] member=(Field level=Proven holder=L6 field=0)
+function f44 name="private-class-evaluated-repeatedly" parameters=[{type=L7}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L7
+    v2 = PrivateGet v0, v1 layout=L7 field=0
+    Return v2
+}
+# CHECK-NEXT: F44 v2 PrivateGet [[repeated]]: form=Slot level=Expected operation=GetSlot receivers=[L7] conditions=[ClassEvaluatedOnce(L7)] missPath member=(Field level=Proven holder=L7 field=0)
+function f45 name="private-expected-receiver" parameters=[{type=L6 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything ~ L6):
+    v1 = NewClassToken layout=L6
+    v2 = PrivateGet v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F45 v2 PrivateGet [[secret]]: form=Slot level=Expected operation=GetSlot receivers=[L6] receiverTest=Type proofs=[OwnInstance] missPath member=(Field level=Proven holder=L6 field=0)
+function f46 name="private-of-unrelated-class" parameters=[{type=L6|L8}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateGet v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F46 v2 PrivateGet [[secret]]: form=Split level=Proven receivers=[L6, L8]
+function f47 name="private-only-of-unrelated-class" parameters=[{type=L8}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateGet v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F47 v2 PrivateGet [[secret]]: form=ByName level=Unknown receivers=[L8] member=(Absent level=Proven)
+function f48 name="private-may-have-been-added-to-unrelated-object" parameters=[{type=L12}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateGet v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F48 v2 PrivateGet [[secret]]: form=ByName level=Unknown receivers=[L12] member=(Absent level=Expected proofs=[NoExtraProperties]) cause=OwnPropertyHidesMember
+function f49 name="private-inherited-field" parameters=[{type=L9}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateGet v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F49 v2 PrivateGet [[secret]]: form=Slot level=Proven operation=GetSlot receivers=[L9] member=(Field level=Proven holder=L6 field=0)
+function f50 name="private-redeclared-in-subclass" parameters=[{type=L10}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateGet v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F50 v2 PrivateGet [[secret]]: form=Slot level=Proven operation=GetSlot receivers=[L10] member=(Field level=Proven holder=L6 field=0)
+function f51 name="private-may-be-empty" parameters=[{type=L11}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L11
+    v2 = PrivateGet v0, v1 layout=L11 field=0
+    Return v2
+}
+# CHECK-NEXT: F51 v2 PrivateGet [[empty]]: form=Slot level=Expected operation=GetSlot receivers=[L11] proofs=[SlotFilled] testsDeclaredType missPath member=(Field level=Proven holder=L11 field=0)
+function f52 name="private-set" parameters=[{type=L6}, {type=number}] results=[{type=anything}] {
+    v2 = NewClassToken layout=L6
+    PrivateSet v0, v2, v1 layout=L6 field=0
+    Return v0
+}
+# CHECK-NEXT: F52 v3 PrivateSet [[secret]]: form=Slot level=Proven operation=PutSlot receivers=[L6] storedValueFits member=(Field level=Proven holder=L6 field=0)
+function f53 name="private-has" parameters=[{type=L6}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateHas v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F53 v2 PrivateHas [[secret]]: form=Constant level=Proven operation=Boolean value=true receivers=[L6] member=(Field level=Proven holder=L6 field=0)
+function f54 name="private-has-of-unrelated-class" parameters=[{type=L8}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateHas v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F54 v2 PrivateHas [[secret]]: form=Constant level=Proven operation=Boolean value=false receivers=[L8] member=(Absent level=Proven)
+function f55 name="private-has-may-have-been-added-to-unrelated-object" parameters=[{type=L12}] results=[{type=anything}] {
+    v1 = NewClassToken layout=L6
+    v2 = PrivateHas v0, v1 layout=L6 field=0
+    Return v2
+}
+# CHECK-NEXT: F55 v2 PrivateHas [[secret]]: form=Constant level=Expected operation=Boolean value=false receivers=[L12] proofs=[NoExtraProperties] missPath member=(Absent level=Expected proofs=[NoExtraProperties]) cause=OwnPropertyHidesMember
+function f56 name="define-on-the-allocation-may-have-moved-out" parameters=[{type=number}] results=[{type=anything}] {
+    v1 = NewObject -, v0, v0, v0 layout=L0 fields=[0, 4, 5]
+    PropDefine v1, v0 key="w"
+    Return v1
+}
+# CHECK-NEXT: F56 v2 PropDefine [[w]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot] storedValueFits missPath member=(Field level=Proven holder=L0 field=3)
+function f57 name="store-may-have-moved-out-needs-an-object-without-extra-properties" parameters=[{type=L0}, {type=number}] results=[{type=anything}] {
+    PropSet v0, v1 key="w" mode=Strict
+    Return v0
+}
+# CHECK-NEXT: F57 v2 PropSet [[w]]: form=Slot level=Expected operation=PutSlotOrAdd receivers=[L0] proofs=[NoFieldOutsideSlot] storedValueFits missPath member=(Field level=Proven holder=L0 field=3)
+function f58 name="read-required-may-have-moved-out" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="r"
+    Return v1
+}
+# CHECK-NEXT: F58 v1 PropGet [[r]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] testsDeclaredType missPath member=(Field level=Proven holder=L0 field=6)
+function f59 name="read-required-string-may-have-moved-out" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="label"
+    Return v1
+}
+# CHECK-NEXT: F59 v1 PropGet [[label]]: form=Slot level=Expected operation=GetSlot receivers=[L0] proofs=[SlotFilled] missPath member=(Field level=Proven holder=L0 field=7)
+function f60 name="has-may-have-moved-out" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropHas v0 key="w"
+    Return v1
+}
+# CHECK-NEXT: F60 v1 PropHas [[w]]: form=Slot level=Expected operation=IsSlotFilled receivers=[L0] proofs=[NoFieldOutsideSlot] missPath member=(Field level=Proven holder=L0 field=3)
+function f61 name="read-nullish-receiver-with-two-arms" parameters=[{type=null|L0|L3}] results=[{type=anything}] {
+    v1 = PropGet v0 key="name"
+    Return v1
+}
+# CHECK-NEXT: F61 v1 PropGet [[name]]: form=Split level=Proven receivers=[L0, L3]

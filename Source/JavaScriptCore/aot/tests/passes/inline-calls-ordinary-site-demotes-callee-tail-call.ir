@@ -1,0 +1,81 @@
+# A tail call of the callee, copied to a site that is not a tail call, becomes the call, its casts and a jump to the code after the site
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls
+# STATISTIC: InlineDecisionInline = 4
+# STATISTIC: ReturnCallsDemoted = 0
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="withoutBody" parameters=[{type=number}] results=[{type=anything}]
+
+function f1 name="mustTailCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    v2 = CallDirect v1 function=f0
+    ReturnCall v2 casts=[{declared={type=number} resolution=Assume}]
+}
+
+function f2 name="mayTailCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = Mul v0, v0
+    v2 = CallDirect v1 function=f0
+    ReturnCall v2 casts=[{declared={type=number} resolution=Assume}] requirement=Allowed
+}
+
+function f3 name="resultIsUsed" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    v2 = Mul v1, v1
+    Return v2
+}
+# CHECK-LABEL: name="resultIsUsed"
+# CHECK-NOT: isTailCall
+# CHECK-NOT: ReturnCall
+# CHECK: [[after3]](v1: number):
+# CHECK-NEXT: v2: number = Mul v1, v1
+# CHECK-NOT: ReturnCall
+# CHECK: [[call3]]: anything = CallDirect {{*}} function=f0
+# CHECK-NEXT: [[cast3]]: number = AssumeType [[call3]] provenType=number
+# CHECK-NEXT: Jump -> next [[after3]]([[cast3]])
+# CHECK-NOT: ReturnCall
+
+function f4 name="resultIsReturned" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f2
+    Return v1
+}
+# CHECK-LABEL: name="resultIsReturned"
+# CHECK-NOT: isTailCall
+# CHECK-NOT: ReturnCall
+# CHECK: [[after4]](v1: number):
+# CHECK-NEXT: Return v1
+# CHECK-NOT: ReturnCall
+# CHECK: [[call4]]: anything = CallDirect {{*}} function=f0
+# CHECK-NEXT: [[cast4]]: number = AssumeType [[call4]] provenType=number
+# CHECK-NEXT: Jump -> next [[after4]]([[cast4]])
+# CHECK-NOT: ReturnCall
+
+function f5 name="siteUnderHandler" parameters=[{type=number}] results=[{type=anything}] {
+  b0(v0: number) handler=b1():
+    v1 = CallDirect v0 function=f1
+    Return v1
+  b1() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}
+# CHECK-LABEL: name="siteUnderHandler"
+# CHECK-NOT: isTailCall
+# CHECK-NOT: ReturnCall
+# CHECK: [[after5]](v1: number) handler=b1():
+# CHECK-NOT: ReturnCall
+# CHECK: () handler=b1():
+# CHECK-NEXT: = Mul v0, v0
+# CHECK-NEXT: [[call5]]: anything = CallDirect {{*}} function=f0
+# CHECK-NEXT: [[cast5]]: number = AssumeType [[call5]] provenType=number
+# CHECK-NEXT: Jump -> next [[after5]]([[cast5]])
+# CHECK-NOT: ReturnCall
+
+function f6 name="siteIsTailCall" parameters=[{type=number}] results=[{type=number}] {
+    v1 = CallDirect v0 function=f1
+    ReturnCall v1
+}
+# CHECK-LABEL: name="siteIsTailCall"
+# CHECK-NOT: AssumeType
+# CHECK: [[call6]]: anything = CallDirect {{*}} function=f0
+# CHECK-NEXT: ReturnCall [[call6]] casts=[{declared={type=number} resolution=Assume}]

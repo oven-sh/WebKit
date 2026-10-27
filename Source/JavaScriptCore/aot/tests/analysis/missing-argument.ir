@@ -1,0 +1,29 @@
+# The analysis commands report a required argument that is absent as an error and print nothing else
+# FORM: Prepared
+# RUN(BLOCK): split-block function=f0 indexes=0
+# RUN(SECTION): analyses reachability
+# RUN(TEST): branch-with-proof function=f1 block=b0
+# RUN(LAYOUT): member-lookup key="x"
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="only" results=[{type=undefined}] {
+    Return
+}
+function f1 name="endsInUnreachable" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = TypeTest v0 testedType=string
+    Unreachable
+}
+# BLOCK-NOT: function f0
+# BLOCK: error: missing argument
+# BLOCK-NOT: error
+# BLOCK-NOT: function f0
+# SECTION-NOT: function f0
+# SECTION: error: missing argument
+# SECTION-NOT: function f0
+# TEST-NOT: function f1
+# TEST: error: missing argument
+# TEST-NOT: error
+# TEST-NOT: function f1
+# LAYOUT: error: missing argument
+# LAYOUT-NOT: error
+# LAYOUT-NOT: level=

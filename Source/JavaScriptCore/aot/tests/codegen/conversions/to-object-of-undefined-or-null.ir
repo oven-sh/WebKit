@@ -1,0 +1,60 @@
+# The conversion of undefined or of null to an object always throws: its type is never, code is generated for it and the block ends behind it
+# FORM: AsRead
+# RUN: compile
+# RUN(SELECTED): pipeline Select
+# OPTIONS: disable=pass:InlineCalls
+# CHECK: image not empty
+# SELECTED-LABEL: name="ofUndefined"
+# SELECTED: [[undefined]]: undefined = Undefined
+# SELECTED-NEXT: : never = ToObject [[undefined]]
+# SELECTED-NEXT: Unreachable
+# SELECTED-LABEL: name="ofNull"
+# SELECTED: : never = ToObject
+# SELECTED-NEXT: Unreachable
+# SELECTED-LABEL: name="ofNullOrObject"
+# SELECTED: : object = ToObject
+# SELECTED-NOT: Unreachable
+# SELECTED-LABEL: name="inTryBlock"
+# SELECTED: : never = ToObject
+# SELECTED-NEXT: Unreachable
+# SELECTED: CatchValue
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="registry" [isFreeName]
+    v2 = NewClosure function=f1
+    PropSet v1, v2 key="ofUndefined"
+    v4 = NewClosure function=f2
+    PropSet v1, v4 key="ofNull"
+    v6 = NewClosure function=f3
+    PropSet v1, v6 key="ofNullOrObject"
+    v8 = NewClosure function=f4
+    PropSet v1, v8 key="inTryBlock"
+    Return
+}
+function f1 name="ofUndefined" results=[{type=anything}] {
+    v0 = Undefined
+    v1 = ToObject v0
+    Return v1
+}
+function f2 name="ofNull" results=[{type=anything}] {
+    v0 = Null
+    v1 = ToObject v0
+    Return v1
+}
+function f3 name="ofNullOrObject" parameters=[{type=object|null}] results=[{type=anything}] {
+    v1 = ToObject v0
+    Return v1
+}
+function f4 name="inTryBlock" results=[{type=anything}] {
+    Jump -> next b1()
+  b1() handler=b2():
+    v0 = Undefined
+    v1 = ToObject v0
+    Return v1
+  b2() role=CatchHandler:
+    v2 = CatchValue
+    Return v2
+}

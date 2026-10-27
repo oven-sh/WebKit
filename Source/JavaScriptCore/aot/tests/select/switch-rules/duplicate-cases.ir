@@ -1,0 +1,98 @@
+# When two links compare with the same constant the first one wins, and a target reached only from the second is dropped
+# FORM: Prepared
+# RUN: pass Select
+# STATISTIC: SwitchStringGroups = 2
+
+module m0 path="main.js" displayPath="main.js"
+# CHECK-LABEL: function f0 name="repeated-constant"
+# CHECK-NEXT: b0(v0: anything):
+# CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(), case b2(), case b3(), otherwise b4()
+# CHECK-NOT: StrictEq
+# CHECK-NOT: key="x"
+# CHECK-NOT: b5():
+function f0 name="repeated-constant" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = String string="a"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    v7 = PropGet v0 key="x"
+    Return v7
+  b6():
+    v8 = String string="c"
+    v9 = StrictEq v0, v8
+    Branch v9 -> taken b7(), notTaken b8()
+  b7():
+    Return v0
+  b8():
+    Return v0
+}
+
+# CHECK-LABEL: function f1 name="repeated-constant-with-shared-target"
+# CHECK: SwitchString v0 strings=["a", "b", "c"] -> case b1(), case b2(), case b3(), otherwise b4()
+# CHECK: b2():
+# CHECK-NEXT: [[read]]: anything = PropGet v0 key="x"
+# CHECK-NEXT: Return [[read]]
+# CHECK-NOT: StrictEq
+# CHECK-NOT: b5():
+function f1 name="repeated-constant-with-shared-target" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    v5 = PropGet v0 key="x"
+    Return v5
+  b4():
+    v6 = String string="a"
+    v7 = StrictEq v0, v6
+    Branch v7 -> taken b3(), notTaken b5()
+  b5():
+    v8 = String string="c"
+    v9 = StrictEq v0, v8
+    Branch v9 -> taken b6(), notTaken b7()
+  b6():
+    Return v0
+  b7():
+    Return v0
+}
+
+# CHECK-LABEL: function f2 name="two-distinct-constants"
+# CHECK-NOT: Switch
+function f2 name="two-distinct-constants" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="a"
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v0
+  b2():
+    v3 = String string="b"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b3(), notTaken b4()
+  b3():
+    Return v0
+  b4():
+    v5 = String string="a"
+    v6 = StrictEq v0, v5
+    Branch v6 -> taken b5(), notTaken b6()
+  b5():
+    Return v0
+  b6():
+    Return v0
+}

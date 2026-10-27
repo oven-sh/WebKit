@@ -111,6 +111,15 @@ public:
     JSString* addJSString(VM&, int);
     JSString* addJSString(VM&, double);
 
+    void setJSString(int i, const String& value, JSString* string)
+    {
+        ASSERT(static_cast<unsigned>(i) >= cacheSize);
+        auto& entry = lookup(i);
+        entry.key = i;
+        entry.value = value;
+        entry.jsString = string;
+    }
+
     void clearOnGarbageCollection()
     {
         for (auto& entry : m_intCache)

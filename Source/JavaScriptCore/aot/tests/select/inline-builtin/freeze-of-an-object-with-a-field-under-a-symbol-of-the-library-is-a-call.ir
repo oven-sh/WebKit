@@ -1,0 +1,28 @@
+# library.js: const kState = Symbol("state")  function Holder() { this[kState] = null }   main.js: Object.freeze(new Holder())
+# The library may keep what lies under a symbol of its own in a form of its own, and the run time asks the object to put the field right before its fields close.
+# The inline code sets the bits of an ordinary compiled object and asks nobody: the call stays. A symbol that the program creates changes nothing.
+# FORM: Prepared
+# RUN: inline-forms
+# CHECK: function f0
+# CHECK-NEXT: v1 {{*}} ObjectFreeze {{*}} Call
+# CHECK: function f1
+# CHECK-NEXT: v1 {{*}} ObjectFreeze {{*}} Call
+# CHECK: function f2
+# CHECK-NEXT: v1 {{*}} ObjectFreeze {{*}} TwoWay
+
+module m0 path="main.js" displayPath="main.js"
+module m1 path="library.js" displayPath="library.js" flags=[IsLibrary]
+layout L0 name="Holder" fields=[{key="plain" declared={type=number}}, {key=symbol("state")@m1:100 declared={type=anything}}]
+layout L1 name="OfProgram" fields=[{key="plain" declared={type=number}}, {key=symbol("own")@m0:100 declared={type=anything}}]
+function f0 name="freezeHolder" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
+    Return v1
+}
+function f1 name="freezeEither" parameters=[{type=L0|L1}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
+    Return v1
+}
+function f2 name="freezeObjectOfProgram" parameters=[{type=L1}] results=[{type=anything}] {
+    v1 = CallBuiltin -, v0 overload=ObjectFreeze/0
+    Return v1
+}

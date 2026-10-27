@@ -1,0 +1,22 @@
+# Promise.withResolvers().resolve(handed)
+# No record of the row stores into `resolve`, and nothing says that the field holds only what is stored: it holds any function, as its type says. So nobody knows the callee, and what it is handed is entered.
+# RUN: valueflow-solve calls
+# CHECK: f0 v2 -> PromiseWithResolvers
+# CHECK-NEXT: f0 v5 -> unknown
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Promise
+    v1 = Builtin builtin=PromiseWithResolvers
+    v2 = Call v1, v0
+    v3 = PropGet v2 key="resolve"
+    v4 = NewClosure function=f1
+    v5 = Call v3, -, v4
+    Return
+}
+function f1 name="handed" results=[{type=anything}] {
+    Return
+}

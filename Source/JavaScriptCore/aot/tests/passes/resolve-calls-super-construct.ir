@@ -1,0 +1,170 @@
+# A super call whose parent is proven calls the parent's constructor directly with the new.target of the derived constructor
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# STATISTIC: ConstructsResolved = 9
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Shape" constructor=f0 flow={baseState=None members=[L0, L1]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L1 kind=Instance name="Circle" base=L0 constructor=f1 flags=[HasHeritage] flow={baseState=Layout base=L0 members=[L1]} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L2 kind=Instance name="Disc" base=L1 constructor=f2 flags=[HasHeritage] flow={baseState=Layout base=L1} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L3 kind=Instance name="Legacy" constructor=f3 flags=[IsConstructorFunction] flow={baseState=None} classFlow={evaluations=AtMostOnce}
+layout L4 kind=Instance name="BelowLegacy" base=L3 constructor=f4 flags=[HasHeritage] flow={baseState=Layout base=L3} classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+layout L5 kind=Instance name="Counted" constructor=f5 flow={baseState=None} classFlow={prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed}
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}, {type=anything}] results=[{type=L0|L1}] {
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    v5 = AssumeType v4 provenType=L0|L1
+    Return v5
+}
+function f1 name="Circle" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] parameters=[{type=anything}] results=[{type=object}] {
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    Return v4
+}
+function f2 name="Disc" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f3 name="Legacy" flags=[HasThis] thisType={type=object} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f4 name="BelowLegacy" kind=DerivedConstructor flags=[HasNewTarget] results=[{type=anything}]
+function f5 name="Counted" kind=BaseConstructor flags=[HasNewTarget] captures=[{type=number}] results=[{type=object}] {
+    v2 = GetConstructPrototype v1 layout=L5
+    v3 = NewObject v2 layout=L5
+    Return v3
+}
+
+function f6 name="parent-is-a-class" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = SuperConstruct v0, v1, v2 layout=L1
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: [[missing]]: undefined = Undefined
+# CHECK-NEXT: : L0|L1 = CallDirect v1, v2, [[missing]] function=f0 [isConstruction, calleeIsPredicted]
+# CHECK-NOT: Check
+# CHECK-NOT: NewObject
+# CHECK-NOT: SuperConstruct
+}
+function f7 name="parent-is-a-derived-class" parameters=[{type=f1}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = SuperConstruct v0, v1, v2 layout=L2
+    Return v3
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything):
+# CHECK-NEXT: = CallDirect v0, v1, v2 function=f1 [isConstruction, calleeIsPredicted]
+# CHECK-NOT: SuperConstruct
+}
+function f8 name="parent-with-capture" parameters=[{type=f5}, {type=anything}] results=[{type=anything}] {
+    v2 = SuperConstruct v0, v1 layout=L2
+    Return v2
+# CHECK-NEXT: b0(v0: f5, v1: anything):
+# CHECK-NEXT: [[count]]: number = GetCapture v0 function=f5
+# CHECK-NEXT: = CallDirect [[count]], v1 function=f5 [isConstruction, calleeIsPredicted]
+# CHECK-NOT: SuperConstruct
+}
+function f9 name="parent-is-a-constructor-function" parameters=[{type=f3}, {type=f4}, {type=anything}] results=[{type=anything}] {
+    v3 = SuperConstruct v0, v1, v2 layout=L4
+    Return v3
+# CHECK-NEXT: b0(v0: f3, v1: f4, v2: anything):
+# CHECK-NEXT: [[prototype]]: object = GetConstructPrototype v1 layout=L4
+# CHECK-NEXT: [[allocated]]: object ~ L4 = NewObject [[prototype]] layout=L4
+# CHECK-NEXT: [[returned]]: anything = CallDirect [[allocated]], v2 function=f3 [isConstruction, calleeIsPredicted]
+# CHECK-NEXT: [[isObject]]: boolean = TypeTest [[returned]] testedType=object
+# CHECK-NEXT: Branch [[isObject]] -> taken [[replaced]](| 0), notTaken [[kept]](
+# CHECK: [[join]](v3
+# CHECK: [[replaced]]([[other]]: object) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next [[join]]([[other]])
+# CHECK: [[kept]](
+# CHECK-NEXT: Jump -> next [[join]]([[allocated]])
+# CHECK-NOT: SuperConstruct
+}
+function f10 name="literal-list" parameters=[{type=f0}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v4 = NewArray v2, v3 contents=anything
+    v5 = SuperConstructList v0, v1, v4 layout=L1
+    Return v5
+# CHECK: = CallDirect v1, v2, v3 function=f0 [isConstruction, calleeIsPredicted]
+# CHECK-NOT: SuperConstructList
+}
+function f11 name="literal-list-through-a-cast" parameters=[{type=f0}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v4 = NewArray v2, v3 contents=anything
+    v5 = Upcast v4 castType=Array
+    v6 = SuperConstructList v0, v1, v5 layout=L1
+    Return v6
+# CHECK: = CallDirect v1, v2, v3 function=f0 [isConstruction, calleeIsPredicted]
+# CHECK-NOT: SuperConstructList
+}
+function f12 name="empty-literal-list" parameters=[{type=f5}, {type=anything}] results=[{type=anything}] {
+    v2 = NewArray contents=anything
+    v3 = SuperConstructList v0, v1, v2 layout=L2
+    Return v3
+# CHECK: [[emptyCount]]: number = GetCapture v0 function=f5
+# CHECK-NEXT: = CallDirect [[emptyCount]], v1 function=f5 [isConstruction, calleeIsPredicted]
+# CHECK-NOT: SuperConstructList
+}
+function f13 name="rest-parameter-as-list" flags=[HasRestParameter] parameters=[{type=f0}, {type=anything}, {type=Array}] results=[{type=anything}] {
+    v3 = SuperConstructList v0, v1, v2 layout=L1
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: Array):
+# CHECK-NEXT: = SuperConstructList v0, v1, v2 layout=L1
+# CHECK-NEXT: Return v3
+# CHECK-NEXT: }
+}
+function f14 name="list-is-used-again" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewArray v2 contents=anything
+    v4 = SuperConstructList v0, v1, v3 layout=L1
+    Return v3
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: = NewArray v2 contents=anything
+# CHECK: Return v3
+# CHECK-COUNT-2: = ElemGet v3,
+# CHECK-NEXT: = SuperConstruct v0, v1, {{*}}, {{*}} layout=L1
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = SuperConstructList v0, v1, v3 layout=L1
+}
+function f15 name="list-with-a-hole" parameters=[{type=f0}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = NewArray v2 contents=anything holes=[0]
+    v4 = SuperConstructList v0, v1, v3 layout=L1
+    Return v4
+# CHECK-NEXT: b0(v0: f0, v1: anything, v2: anything):
+# CHECK-NEXT: = NewArray v2 contents=anything holes=[0]
+# CHECK-COUNT-2: = ElemGet v3,
+# CHECK-NEXT: = SuperConstruct v0, v1, {{*}}, {{*}} layout=L1
+# CHECK: frequency=Rare:
+# CHECK-NEXT: = SuperConstructList v0, v1, v3 layout=L1
+}
+function f16 name="parent-is-a-built-in" parameters=[{type=builtin(Error)}, {type=anything}] results=[{type=anything}] {
+    v2 = SuperConstruct v0, v1 layout=L1
+    Return v2
+# CHECK-NEXT: b0(v0: builtin(Error), v1: anything):
+# CHECK-NEXT: = SuperConstruct v0, v1 layout=L1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}
+function f17 name="two-parents" parameters=[{type=f0|f5}, {type=anything}] results=[{type=anything}] {
+    v2 = SuperConstruct v0, v1 layout=L1
+    Return v2
+# CHECK-NEXT: b0(v0: f0|f5, v1: anything):
+# CHECK-NEXT: [[isShape]]: boolean = TypeTest v0 testedType=f0
+# CHECK-NEXT: Branch [[isShape]] -> taken [[shapeArm]](| 0), notTaken [[countedArm]](| 0)
+# CHECK: [[shapeArm]]({{*}}: f0):
+# CHECK: = CallDirect v1, {{*}} function=f0 [isConstruction, calleeIsPredicted]
+# CHECK-NOT: TypeTest
+# CHECK: [[countedArm]]([[counted]]: f5)
+# CHECK-NEXT: [[countOfArm]]: number = GetCapture [[counted]] function=f5
+# CHECK-NEXT: = CallDirect [[countOfArm]], v1 function=f5 [isConstruction, calleeIsPredicted]
+# CHECK-NOT: SuperConstruct
+}
+function f18 name="parent-may-be-null" parameters=[{type=null|f0}, {type=anything}] results=[{type=anything}] {
+    v2 = SuperConstruct v0, v1 layout=L1
+    Return v2
+# CHECK-NEXT: b0(v0: null|f0, v1: anything):
+# CHECK-NEXT: = TypeTest v0 testedType=f0
+# CHECK: = CallDirect v1, {{*}} function=f0 [isConstruction, calleeIsPredicted]
+# CHECK: ([[noParent]]: null)
+# CHECK-NEXT: = SuperConstruct [[noParent]], v1 layout=L1
+}
+function f19 name="parent-is-only-expected" parameters=[{type=f0 flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything ~ f0, v1: anything):
+    v2 = SuperConstruct v0, v1 layout=L1
+    Return v2
+# CHECK-NEXT: b0(v0: anything ~ f0, v1: anything):
+# CHECK-NEXT: = SuperConstruct v0, v1 layout=L1
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }
+}

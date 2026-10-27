@@ -1,0 +1,11 @@
+# a function of the library that the run time calls by number captures nothing
+# FORM: AsRead
+# RUN: verify
+# DIAGNOSTIC: InvalidCreatorRecord 1
+
+module m0 path="main" displayPath="main"
+entry module=m0
+runtimefunction id=0 function=f0
+runtimefunction id=1 function=f1
+function f0 name="good" role=Library enclosingRuntimeFunction=0 results=[{type=anything}]
+function f1 name="badCapture" role=Library enclosingRuntimeFunction=1 captures=[{type=anything}] results=[{type=anything}]

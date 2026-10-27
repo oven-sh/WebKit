@@ -1,0 +1,19 @@
+# `this.late = value`, where the slot may be empty: the store creates the field while nothing of that name lies above the object, which the guards of the class say.
+# The guards of a constructor function that may be created again describe its first closure. They hold for the objects that have its prototype object, so the store tests the object and the guards
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Many" constructor=f0 fields=[{key="late" declared={type=anything} flags=[IsAddedLate, IsEnforced]}] flags=[IsConstructorFunction] flow={baseState=None} classFlow={staticLink=Fixed}
+function f0 name="Many" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+function f1 name="stores" parameters=[{type=L0 flags=[IsExpected]}, {type=anything}] results=[{type=undefined}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="late"
+    Return
+# CHECK: PutSlotOrAdd {{*}} key="late" receivers=[L0]
+# CHECK: = HasLayoutPrototype
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="late"}, {kind=PrototypeLinkUnchanged layout=L0}]
+}

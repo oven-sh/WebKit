@@ -1,0 +1,66 @@
+# The fields of an instance of a class that extends a built-in class are ordinary properties of a cell of that class: every access goes by name, without a test of a shape that the object never has. A class of the program beside it gets slot accesses
+# RUN: pipeline ResolveAccesses
+# RUN(COMPILED): pipeline ResolveAccesses
+# OPTIONS: disable=pass:InlineCalls
+# CHECK-LABEL: function f0 name="main"
+# CHECK-NOT: ShapeTest
+# CHECK: = PropGet {{*}} key="tag"
+# CHECK-LABEL: function f1 name="List"
+# CHECK-NOT: PutSlot
+# CHECK-NOT: ShapeTest
+# CHECK: PropSet {{*}} key="tag"
+# CHECK-NOT: PutSlot
+# CHECK: PropSet {{*}} key="size"
+# CHECK-LABEL: function f2 name="label"
+# CHECK-NOT: GetSlot
+# CHECK-NOT: ShapeTest
+# CHECK: = PropGet v0 key="tag"
+# COMPILED-LABEL: function f3 name="Plain"
+# COMPILED: PutSlot {{*}} key="x" receivers=[L1] level=Proven
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="List" constructor=f1 fields=[{key="tag" declared={type=anything}}, {key="size" declared={type=anything}}] flags=[HasHeritage]
+layout L1 kind=Instance name="Plain" constructor=f3 fields=[{key="x" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = PropGet v0 key="Array" [isFreeName]
+    v3 = NewClosure function=f1
+    v4 = ResolveHeritage v2
+    v5 = NewClass v3, v2, v4 layout=L0
+    v6 = NewClosure function=f2
+    DefineMethod v5, v6 layout=L0 key="label"
+    v8 = FinishClass v5 layout=L0
+    v9 = NewClosure function=f3
+    v10 = NewClass v9 layout=L1
+    v11 = FinishClass v10 layout=L1
+    v12 = Construct v8
+    v13 = PropGet v12 key="tag"
+    v14 = PropGet v12 key="label"
+    v15 = Call v14, v12 calleeKey="label"
+    v16 = Construct v11
+    v17 = PropGet v16 key="x"
+    v18 = Call v1, -, v13, v15, v17
+    Return
+}
+function f1 name="List" kind=DerivedConstructor flags=[HasNewTarget, TakesCallee] results=[{type=anything}] {
+    v2 = GetSuperBase v0 homeKind=Object
+    v3 = SuperConstruct v2, v1 layout=L0
+    v4 = String string="t"
+    PropSet v3, v4 key="tag" mode=Strict
+    v6 = Double number=1.5
+    PropSet v3, v6 key="size" mode=Strict
+    Return v3
+}
+function f2 name="label" kind=Method flags=[HasThis] results=[{type=anything}] {
+    v1 = PropGet v0 key="tag"
+    Return v1
+}
+function f3 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    v3 = Integer integer=1
+    PropSet v2, v3 key="x" mode=Strict
+    Return v2
+}

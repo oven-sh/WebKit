@@ -1,0 +1,40 @@
+# byCall = {}; Object.setPrototypeOf({}, byCall); ofFunction = {}; function Maker() {}  Maker.prototype = ofFunction; atAllocation = {}; an allocation under atAllocation; byCreate = {}; Object.create(byCreate); lone = {}
+# An object becomes a prototype where it is what a prototype link is given: by Object.setPrototypeOf, by an allocation that names it as the prototype, by Object.create.
+# And where it is stored under `prototype` of a function, because whatever that function constructs is made under it. Each takes "never becomes a prototype" from all objects of the layout.
+# None of that changes the prototype of the object itself, and nothing is stored into it.
+# Beside them: an object that is handed to nobody never becomes one, and the objects that were given the prototypes may have another prototype than their layout says, and become none themselves
+# RUN: valueflow-results
+# CHECK: class [[byCall]] layout=L0 impossibleMutations=[{{*}}ChangeIntegrity, ChangePrototype, StoreAfterCreation
+# CHECK-NEXT: class [[ofFunction]] layout=L1 impossibleMutations=[{{*}}ChangeIntegrity, ChangePrototype, StoreAfterCreation
+# CHECK-NEXT: class [[atAllocation]] layout=L2 impossibleMutations=[{{*}}ChangeIntegrity, ChangePrototype, StoreAfterCreation
+# CHECK-NEXT: class [[byCreate]] layout=L3 impossibleMutations=[{{*}}ChangeIntegrity, ChangePrototype, StoreAfterCreation
+# CHECK-NEXT: class [[lone]] layout=L4 impossibleMutations=[{{*}}ChangeIntegrity, ChangePrototype, BecomePrototype, StoreAfterCreation
+# CHECK-NEXT: class [[heir]] layout=L5 impossibleMutations=[{{*}}ChangeIntegrity, BecomePrototype, StoreAfterCreation
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ByCall"
+layout L1 name="OfFunction"
+layout L2 name="AtAllocation"
+layout L3 name="ByCreate"
+layout L4 name="Lone"
+layout L5 name="Heir"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0 fields=[]
+    v1 = NewObject layout=L5 fields=[]
+    v2 = Builtin builtin=ObjectSetPrototypeOf
+    v3 = Call v2, -, v1, v0
+    v4 = NewObject layout=L1 fields=[]
+    v5 = NewClosure function=f1
+    PropSet v5, v4 key="prototype" mode=Strict
+    v7 = NewObject layout=L2 fields=[]
+    v8 = NewObject v7 layout=L5 fields=[]
+    v9 = NewObject layout=L3 fields=[]
+    v10 = Builtin builtin=ObjectCreate
+    v11 = Call v10, -, v9
+    v12 = NewObject layout=L4 fields=[]
+    Return
+}
+function f1 name="Maker" flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,15 @@
+# Offset 0 of the request table says that an operation has no request, so the first record starts at offset 4
+# FORM: AsRead
+# OPTIONS: only-passes=AnalyzeFlow
+# RUN: place requests program
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
+    Return
+}
+# CHECK: request @4 TemplateObject ["a"/"a"]
+# CHECK-NEXT: requests size=16 shared=0
+# CHECK: = NewTemplateObject {{*}} request=4

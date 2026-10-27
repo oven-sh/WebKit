@@ -71,6 +71,11 @@ public:
 
     DECLARE_VISIT_CHILDREN;
 
+    template<typename Visitor> ALWAYS_INLINE static void visitFields(JSFunctionWithFields* thisObject, Visitor& visitor)
+    {
+        visitor.appendValues(thisObject->m_internalFields, numberOfInternalFields);
+    }
+
     static JSFunctionWithFields* create(VM&, JSGlobalObject*, NativeExecutable*);
 
     template<typename CellType, SubspaceAccess mode>

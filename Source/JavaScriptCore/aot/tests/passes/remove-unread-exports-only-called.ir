@@ -1,0 +1,35 @@
+# A store to a variable that is read only to be called stays: the call still reads the variable
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadExports
+# OPTIONS: only-passes=RemoveUnreadExports
+# STATISTIC: UnreadVariableStoresRemoved = 1
+# CHECK: variable g0 name="called"{{*}}writers=AllKnown stores=AtMostOnce{{*}}reads=OnlyCalled
+# CHECK: variable g1 name="unread"{{*}}writers=AllKnown stores=Never{{*}}reads=NeverRead
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/library.ts" displayPath="library.ts" body=f1 exports=[{name="called" variable=g0}, {name="unread" variable=g1}]
+entry module=m0
+variable g0 name="called" module=m1 declared={type=anything}
+variable g1 name="unread" module=m1 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = Call v0
+    Return
+# CHECK: [[callee]]:{{*}}= GetModuleVariable variable=g0
+# CHECK-NEXT: = Call [[callee]]
+}
+
+function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f2
+    PutModuleVariable v2 variable=g1
+    Return
+# CHECK: PutModuleVariable v0 variable=g0
+# CHECK-NOT: PutModuleVariable
+}
+
+function f2 name="callback" module=m1 kind=Arrow results=[{type=anything}] {
+    Return
+}

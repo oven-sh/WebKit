@@ -2121,7 +2121,7 @@ private:
             }
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
+#if ENABLE(FFI)
             if (FFI::tryConvertCallToCallFFI(m_graph, m_insertionSet, m_nodeIndex, m_node, function)) {
                 m_changed = true;
                 break;

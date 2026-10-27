@@ -1,0 +1,46 @@
+# A cast of a constant is left in the body. So is the constant that a variable holds, with the call and the store that take it.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: InitializersDeferred = 0
+# CHECK-LABEL: function f1 name="castsWhatItStores"
+# CHECK: [[constant]]: 1 = Integer integer=1
+# CHECK: Call {{*}}, -, [[constant]] {{*}}callees=[f3]
+# CHECK: [[expected]]: 1 = Expect [[constant]]
+# CHECK: [[stored]]: 1 = AssumeType [[expected]]
+# CHECK: PutModuleVariable [[stored]] variable=g0
+# CHECK: [[element]]: 1 = AssumeType [[expected]]
+# CHECK: NewArray [[element]]
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+variable g0 name="held" module=m0 declared={type=anything}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Call v0, -
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="publish" [isFreeName]
+    v4 = NewClosure function=f2
+    v5 = Call v3, -, v4
+    Return
+}
+function f1 name="castsWhatItStores" module=m0 results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewClosure function=f3
+    v2 = Call v1, -, v0
+    v3 = Convert v0 declared={type=undefined|null|object} illTypedCause=Assertion
+    PutModuleVariable v3 variable=g0
+    v5 = NewArray v3, v3 contents=undefined|null|object
+    v6 = Integer integer=1
+    v7 = ElemGet v5, v6
+    v8 = PropGet v7 key="c"
+    v9 = PropGet v8 key="c"
+    Return v9
+}
+function f2 name="reader" module=m0 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+function f3 name="doesNothing" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

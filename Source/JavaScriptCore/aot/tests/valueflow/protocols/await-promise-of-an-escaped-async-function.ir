@@ -1,0 +1,26 @@
+# async function count() { return 1 }  somethingNoTableLists(count);  await count()
+# Code that nobody compiles holds the function and calls it. Each call makes a promise of its own: what such code does to the promises of its calls is not done to the promise that the program
+# gets from a call of its own, which nobody else has seen. So the await gives what the body returns and nothing else: not the promise, which still finds the built-in `then`, and nothing unknown.
+# RUN: valueflow-why values=f1:v5
+# CHECK: Await
+# CHECK: result {{*}} 1 members: primitive
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = CallDirect function=f1
+    Return
+}
+function f1 name="run" flags=[IsAsync] results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="somethingThatNoTableLists" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = Call v0
+    v5 = Await v4
+    Return v5
+}
+function f2 name="count" flags=[IsAsync] results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

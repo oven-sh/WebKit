@@ -1,0 +1,146 @@
+# Behind an edge of a test, a test of the same value for the same type has the same outcome, whichever cast of the value it names. The jump passes the value as the edge narrowed it
+# FORM: Prepared
+# RUN: pass SimplifyControlFlow
+# CHECK: outcome: Changed
+# RUN(AGAIN): pass SimplifyControlFlow SimplifyControlFlow
+# AGAIN: outcome: Changed
+# AGAIN-NEXT: outcome: Unchanged
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="behindTheTestThatPassed" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v3 = Call v1
+    v4 = RequireObjectCoercible v0 name="length"
+    v5 = TypeTest v4 testedType=string
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v6):
+    v7 = GetStringLength v6
+    Return v7
+  b3(v8):
+    v9 = Call v1, -, v8
+    Return v9
+  b4():
+    Return v1
+# CHECK: Branch v2 -> taken b1(), notTaken b4()
+# CHECK: = RequireObjectCoercible v0 name="length"
+# CHECK: [[text]]: string = AssumeType v4 provenType=string
+# CHECK: = GetStringLength [[text]]
+# CHECK-NOT: = Call v1, -,
+}
+
+function f1 name="behindTheTestThatFailed" parameters=[{type=number|string}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b4(), notTaken b1()
+  b1():
+    v3 = Call v1
+    v4 = TypeTest v0 testedType=string
+    Branch v4 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v5):
+    v6 = GetStringLength v5
+    Return v6
+  b3(v7):
+    v8 = Negate v7
+    Return v8
+  b4():
+    Return v1
+# CHECK: Branch v2 -> taken b4(), notTaken b1()
+# CHECK: [[number]]: number = AssumeType v0 provenType=number
+# CHECK: = Negate [[number]]
+# CHECK-NOT: GetStringLength
+}
+
+function f2 name="whatTheTypeCannotSay" parameters=[{type=string|Array<number>|Object}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=Array
+    Branch v2 -> taken b4(), notTaken b1(| 0)
+  b1(v3):
+    v4 = Call v1
+    v5 = TypeTest v3 testedType=Array
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v6):
+    v7 = Call v1, -, v6
+    Return v7
+  b3(v8):
+    Return v8
+  b4():
+    Return v1
+# CHECK: Branch v2 -> taken b4(), notTaken b1(| 0)
+# CHECK-NOT: Branch
+# CHECK-NOT: = Call v1, -,
+# CHECK: Return v3
+}
+
+function f3 name="anotherType" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b4(), notTaken b1()
+  b1():
+    v3 = TypeTest v0 testedType=number
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4):
+    v5 = Negate v4
+    Return v5
+  b3(v6):
+    Return v6
+  b4():
+    Return v1
+# CHECK: Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+}
+
+function f4 name="anotherValue" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(), notTaken b4()
+  b1():
+    v3 = TypeTest v1 testedType=number
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4):
+    v5 = Negate v4
+    Return v5
+  b3(v6):
+    Return v6
+  b4():
+    Return v1
+# CHECK: Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+}
+
+function f5 name="behindTheJoinOfBothEdges" parameters=[{type=anything}, {type=function}] results=[{type=anything}] {
+    v2 = TypeTest v0 testedType=number
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    v3 = Call v1
+    Jump -> next b3()
+  b2():
+    v4 = Call v1, -, v1
+    Jump -> next b3()
+  b3():
+    v5 = TypeTest v0 testedType=number
+    Branch v5 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v6):
+    v7 = Negate v6
+    Return v7
+  b5(v8):
+    Return v8
+# CHECK: Branch v5 -> taken b4(| 0), notTaken b5(| 0)
+}
+
+function f6 name="valueOfAnotherTurn" parameters=[{type=Array<anything>}, {type=function}] results=[{type=anything}] {
+    v2 = Call v1
+    Jump -> next b1(v2)
+  b1(v3: anything):
+    LoopHint
+    v5 = TypeTest v3 testedType=number
+    Branch v5 -> taken b2(), notTaken b5()
+  b2():
+    v6 = Call v1, -, v3
+    v7 = TypeTest v6 testedType=number
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v8):
+    Jump -> next b1(v8)
+  b4(v9):
+    Return v9
+  b5():
+    Return v3
+# CHECK: Branch v5 -> taken b2(), notTaken b5()
+# CHECK: Branch v7 -> taken
+}

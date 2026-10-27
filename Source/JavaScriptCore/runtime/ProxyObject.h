@@ -86,6 +86,16 @@ public:
     static void validateNegativeHasTrapResult(JSGlobalObject*, JSObject*, PropertyName);
     static void validatePositiveSetTrapResult(JSGlobalObject*, JSObject*, PropertyName, JSValue putValue);
     static void validateGetTrapResult(JSGlobalObject*, JSValue trapResult, JSObject*, PropertyName);
+#if ENABLE(AOT)
+    // For a caller that has read the trap off the handler itself. The target and the handler are those that the proxy had before that read.
+    JS_EXPORT_PRIVATE static JSValue getWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key, JSValue receiver);
+    JS_EXPORT_PRIVATE static void validateGetTrapResultWhereBound(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key);
+    JS_EXPORT_PRIVATE static bool hasWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key);
+    JS_EXPORT_PRIVATE static void setWithTrap(JSGlobalObject*, JSObject* target, JSObject* handler, JSValue trap, JSValue key, JSValue putValue, JSValue receiver, bool shouldThrow);
+    // What follows the call of the trap.
+    JS_EXPORT_PRIVATE static bool finishHas(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key);
+    JS_EXPORT_PRIVATE static void finishSet(JSGlobalObject*, JSValue trapResult, JSObject* target, JSValue key, JSValue putValue, bool shouldThrow);
+#endif
 
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow);
@@ -110,6 +120,9 @@ private:
     bool isConstructibleProxy() const { return TypeInfo::perCellBit(inlineTypeFlags()); }
 
     bool isHandlerTrapsCacheValid(JSObject* handler);
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE bool isCachedTrapFieldEmpty(JSObject* handler, PropertyOffset cached);
+#endif
     void LEGACY_NODELETE clearHandlerTrapsOffsetsCache();
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -163,9 +176,14 @@ inline JSObject* ProxyObject::callTargetIfKnownToHaveNoApplyTrap()
         return nullptr;
     if (!isHandlerTrapsCacheValid(asObject(handlerValue)))
         return nullptr;
-    if (m_handlerTrapsOffsetsCache[static_cast<uint8_t>(HandlerTrap::Apply)] != invalidOffset)
-        return nullptr;
-    return target();
+    PropertyOffset offset = m_handlerTrapsOffsetsCache[static_cast<uint8_t>(HandlerTrap::Apply)];
+    if (offset == invalidOffset)
+        return target();
+#if ENABLE(AOT)
+    if (offset < invalidOffset && isCachedTrapFieldEmpty(asObject(handlerValue), offset))
+        return target();
+#endif
+    return nullptr;
 }
 
 } // namespace JSC

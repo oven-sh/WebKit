@@ -13,8 +13,12 @@ ARG ENABLE_ASSERTS="AUTO"
 ARG ENABLE_FUZZILLI="OFF"
 # Added to the flags ICU and WebKit are compiled with.
 ARG HARDENING_FLAGS=""
+# OFF leaves WebAssembly out of JavaScriptCore. CMake options and not a flag in CFLAGS: cmakeconfig.h defines them.
+ARG ENABLE_WEBASSEMBLY="ON"
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
+# Test programs to build besides what ships. They go to /output/test-bin, which CI hands to its `test` job and does not package.
+ARG TEST_PROGRAMS=""
 # What the lane is built for: x86_64, which is what this container is, or aarch64, cross-compiled against the sysroot
 # `base` carries. The container itself is always linux/amd64.
 ARG LINUX_ARCH="x86_64"
@@ -313,8 +317,10 @@ ARG ENABLE_SANITIZERS
 ARG ENABLE_ASSERTS
 ARG ENABLE_FUZZILLI
 ARG HARDENING_FLAGS
+ARG ENABLE_WEBASSEMBLY
 ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
+ARG TEST_PROGRAMS
 ARG LINUX_ARCH
 ARG ICU_VERSION
 
@@ -402,11 +408,18 @@ ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 # With ENABLE_FUZZILLI the libraries must call the coverage callbacks and leave them undefined: Bun defines its own.
 #
 # With HARDENING_FLAGS jsc must import what the stack protector and _FORTIFY_SOURCE call. It is read off jsc because the
-# archives of an LTO lane are bitcode, which does not name __stack_chk_fail yet.
+# archives of an LTO lane are bitcode, which does not name __stack_chk_fail yet. That jsc imports a checked function says
+# little: one caller is enough. So jsc must also hold no copy of glibc's always-inline wrappers (memcpy.inline, ...): a
+# wrapper that was not inlined cannot see the size of the destination, and calls the plain function.
 #
 # clang searches C_INCLUDE_PATH (gcc-13's builtin-header dir) before its own
 # resource dir, so C TUs including <immintrin.h> (mimalloc static.c, -march=nehalem)
 # pick up gcc's incompatible copy. clang ships its own; drop it for this step.
+#
+#
+# The programs ship without debug info: each of them would carry another copy of the library's.
+#
+# find-structures-decoded-behind-calls.py (Tools/Scripts/aot/README.md) reads the machine code of jsc in the optimized lanes. It fails the lane on x86-64 with LTO: that code is what ships. Without LTO, where what is inlined moves with every change, and on ARM64 it only prints its rows: the list of expected rows was made on x86-64 with LTO.
 RUN --mount=type=tmpfs,target=/webkitbuild \
     unset C_INCLUDE_PATH && \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
@@ -434,7 +447,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
     -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
     -DENABLE_REMOTE_INSPECTOR=ON \
-    -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
+    -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld $(if [ -n "$HARDENING_FLAGS" ]; then echo -pie; fi)" \
     -DCMAKE_AR=$(which llvm-ar) \
     -DCMAKE_RANLIB=$(which llvm-ranlib) \
     -DCMAKE_C_FLAGS="$CFLAGS" \
@@ -446,13 +459,18 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DENABLE_SANITIZERS="$ENABLE_SANITIZERS" \
     -DENABLE_ASSERTS="$ENABLE_ASSERTS" \
     -DENABLE_FUZZILLI="$ENABLE_FUZZILLI" \
+    $(if [ "$ENABLE_WEBASSEMBLY" = OFF ]; then echo "-DENABLE_WEBASSEMBLY=OFF -DENABLE_WEBASSEMBLY_BBQJIT=OFF -DENABLE_WEBASSEMBLY_OMGJIT=OFF"; fi) \
     -DUSE_MIMALLOC="$USE_MIMALLOC" \
     -DUSE_EXTERNAL_MIMALLOC="$USE_EXTERNAL_MIMALLOC" \
+    -DENABLE_BUN_TEST_PROGRAMS=$(if [ -n "$TEST_PROGRAMS" ]; then echo ON; else echo OFF; fi) \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
-    cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" && \
+    cmake --build /webkitbuild --config $WEBKIT_RELEASE_TYPE --target "jsc" --target "testFFI" --target "testaot" $(for program in $TEST_PROGRAMS; do echo "--target $program"; done) && \
     python3 /webkit/Tools/Scripts/check-classinfo-uniqueness.py $WEBKIT_OUT_DIR/bin/jsc && \
+    if [ "$USE_MIMALLOC" = ON ] && [ "$ENABLE_ASSERTS" != ON ] && [ "$ENABLE_FUZZILLI" != ON ]; then \
+        python3 /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py $WEBKIT_OUT_DIR/bin/jsc --expected /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt || { { [ "$LINUX_ARCH" = aarch64 ] || [ -z "${LTO_FLAG:-}" ]; } && echo "find-structures-decoded-behind-calls.py: not fatal here"; }; \
+    fi && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep Machine: && \
     llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q "Machine:.*$(if [ "$LINUX_ARCH" = aarch64 ]; then echo AArch64; else echo X86-64; fi)" && \
     llvm-readelf -d $WEBKIT_OUT_DIR/bin/jsc | grep NEEDED && \
@@ -469,21 +487,40 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     if [ -n "$HARDENING_FLAGS" ]; then \
         llvm-readelf --dyn-syms $WEBKIT_OUT_DIR/bin/jsc | grep -o '__[a-z_]*_chk[a-z_]*' | sort -u > /tmp/chk && cat /tmp/chk && \
         grep -qx __stack_chk_fail /tmp/chk || { echo "error: jsc has no stack protector" >&2; exit 1; }; \
+        llvm-readelf -h $WEBKIT_OUT_DIR/bin/jsc | grep -q 'Type:.*DYN' || { echo "error: jsc is not position-independent" >&2; exit 1; }; \
         grep -qv __stack_chk /tmp/chk || { echo "error: jsc calls no checked libc function, _FORTIFY_SOURCE did nothing" >&2; exit 1; }; \
+        ! llvm-nm --defined-only $WEBKIT_OUT_DIR/bin/jsc | grep -E ' [a-z_0-9]+\.inline(\.llvm\.[0-9]+)?$' || { echo "error: these _FORTIFY_SOURCE wrappers were not inlined, so they check nothing" >&2; exit 1; }; \
     fi && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
+    llvm-strip --strip-debug /output/bin/jsc /output/bin/testaot /output/bin/testFFI && \
+    if [ -n "$TEST_PROGRAMS" ]; then \
+        mkdir /output/test-bin && \
+        for program in $TEST_PROGRAMS; do mv "$(find /output/bin -type f -name "$program")" /output/test-bin/ || exit 1; done && \
+        rm -rf /output/bin/testapiScripts /output/lib/libgtest.a && \
+        find /output/bin -mindepth 1 -type d -empty -delete; \
+    fi && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
     cp $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
+    find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \( -name "*.h" -o -name "*.def" -o -name "*.inc" \) -exec cp {} /output/include/JavaScriptCore/ \; && \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \
     cp -r $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/ /output/include && \
     mkdir -p /output/Source/JavaScriptCore && \
     cp -r /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
-    cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore
+    cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
+    mkdir -p /output/Source/JavaScriptCore/aot/ir /output/Source/JavaScriptCore/aot/builtins && \
+    cp /webkit/Source/JavaScriptCore/aot/ir/AOTSchema.def /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/schema /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/ir/generator /output/Source/JavaScriptCore/aot/ir && \
+    cp -r /webkit/Source/JavaScriptCore/aot/builtins/generator /output/Source/JavaScriptCore/aot/builtins && \
+    cp -r $WEBKIT_OUT_DIR/JavaScriptCore/ReleasedSources/aot/builtins/generated /output/Source/JavaScriptCore/aot/builtins && \
+    mkdir -p /output/Tools/Scripts/aot && \
+    cp /webkit/Tools/Scripts/aot/find-structures-decoded-behind-calls.py /webkit/Tools/Scripts/aot/calls-that-never-collect.txt /webkit/Tools/Scripts/aot/structures-decoded-behind-calls-expected.txt /output/Tools/Scripts/aot && \
+    cp -r /webkit/Source/JavaScriptCore/aot/tests /output/Source/JavaScriptCore/aot/tests && \
+    find /output/Source/JavaScriptCore/aot/tests -type f ! -name '*.ir' -delete
 
 FROM scratch as artifact
 

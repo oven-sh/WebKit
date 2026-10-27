@@ -1,0 +1,45 @@
+# A class whose one definition runs at most once is evaluated at most once. Its members stay what it defines as long as nothing stores to, deletes from or redefines the object that holds them:
+# a store to the prototype object of the second class under the name of its method takes that away from the method, and what is stored is listed beside it. Nothing takes the closure of its method as a value, so that closure is only ever called
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="run" function=f2 mutability=Fixed isWritableData=true}]
+# CHECK: layout L1 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true staticNamesAreComplete=true members=[{key="handle" function=f4 closureUse=CalledOnly isWritableData=true}] namedMembers=[{key="handle" function=f2 isWritableData=true}, {key="handle" function=f4 closureUse=CalledOnly isWritableData=true}]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Worker" constructor=f1 fields=[{key="count" declared={type=anything}}]
+layout L1 kind=Instance name="Listener" constructor=f3 fields=[{key="count" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="run"
+    v4 = FinishClass v1 layout=L0
+    v5 = Construct v4
+    v6 = PropGet v5 key="run"
+    v7 = Call v6, v5 calleeKey="run"
+    v8 = NewClosure function=f3
+    v9 = NewClass v8 layout=L1
+    v10 = NewClosure function=f4
+    DefineMethod v9, v10 layout=L1 key="handle"
+    v12 = FinishClass v9 layout=L1
+    v13 = PropGet v12 key="prototype"
+    PropSet v13, v2 key="handle" mode=Strict
+    Return
+}
+function f1 name="Worker" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0 fields=[]
+    Return v2
+}
+function f2 name="run" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="count"
+    Return v1
+}
+function f3 name="Listener" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1 fields=[]
+    Return v2
+}
+function f4 name="handle" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}

@@ -1,0 +1,39 @@
+# class Point { constructor(x) {} static origin(label) { return label } }; back = input(new Point(1)); new back.maker("s"); back.maker.origin("s")
+# Nothing lies under `maker` on the instance or above it, so the read answers what has escaped and no more. The class has not escaped with its instance: its constructor takes the integer alone, and
+# its static method stays unreached.
+# RUN: valueflow-solve unreached calls
+# CHECK: f0 v12 -> unknown
+# CHECK-NOT: f1
+# CHECK: unreached f2
+# RUN(APPLY): valueflow-apply
+# APPLY: function f1 name="Point" {{*}}parameters=[{type=int}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 side=Static key="origin"
+    v4 = FinishClass v1 layout=L0
+    v5 = Integer integer=1
+    v6 = Construct v4, -, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Call v8, -, v6
+    v10 = PropGet v9 key="maker"
+    v11 = String string="s"
+    v12 = Construct v10, -, v11
+    v13 = PropGet v10 key="origin"
+    v14 = Call v13, v10, v11
+    Return
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    Return v3
+}
+function f2 name="origin" kind=Method flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return v1
+}

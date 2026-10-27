@@ -1,0 +1,51 @@
+# What a value does to memory other than the objects its operands refer to: the writes of a row that names the operands it writes go, reads stay, and of a call the part of the summary no operand maps to stays
+# FORM: Prepared
+# RUN: effects summaries beyond f3 f4
+# RUN(SAME): effects summaries beyond f3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=number} flags=[IsRequired] flow={occupancy=AlwaysFilled prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="y" declared={type=number} flow={prototypeName=AbsentOnPrototypes stability=[IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={members=[L0] impossibleMutations=[AddProperty, ChangeIntegrity, ChangePrototype]}
+layout L1 kind=Environment fields=[{key="count" declared={type=number}}]
+layout L2 kind=Instance name="Shape" constructor=f0 flow={baseState=None members=[L2]}
+variable g0 name="made" declared={type=number} initialization=Undefined
+function f0 name="Shape" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L2
+function f1 name="constructor" flags=[HasThis] thisType={type=L0} parameters=[{type=number}] results=[{type=undefined}] {
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    PutModuleVariable v1 variable=g0
+    Return
+}
+function f2 name="counts" kind=Arrow captures=[{type=env L1}] parameters=[{type=L0}, {type=number}] results=[{type=undefined}] {
+  b0(v0: env L1, v1: L0, v2: number):
+    PutEnvironmentField v0, v2 layout=L1 field=0
+    PutSlot v1, -, v2 key="x" receivers=[L0] level=Proven
+    Return
+}
+# CHECK: f1 return: writes(ModuleVariables/1) throw: none p0: [Inspects] writes(ObjectFields/1)
+# CHECK: f2 return: none throw: none p0: [Inspects] writes(EnvironmentFields/1) p1: [Inspects] writes(ObjectFields/1)
+function f3 name="rows" parameters=[{type=L0}, {type=number}, {type=function}, {type=function}, {type=object}] results=[{type=undefined}] {
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    v7 = GetSlot v0 key="x" receivers=[L0] level=Proven
+    DefineMethod v2, v3 layout=L2 key="area"
+    PropSet v4, v1 key="x"
+    Return
+}
+# CHECK-LABEL: function f3
+# CHECK-NEXT: v5 PutSlot: writes(ObjectFields/1) | beyond operands: none
+# CHECK-NEXT: v6 PutSlotOrAdd: reads(ObjectFields/1, OrderWords, AllocatorState) writes(ObjectFields/1, OrderWords, AllocatorState, RuntimeState) | beyond operands: reads(ObjectFields/1, OrderWords, AllocatorState) writes(AllocatorState, RuntimeState)
+# CHECK-NEXT: v7 GetSlot: reads(ObjectFields/1)
+# CHECK-NEXT: v8 DefineMethod: reads(ObjectFields, ShapeWords, OrderWords, NamedProperties, AllocatorState) writes(ObjectFields, ShapeWords, OrderWords, MemberGuards/1, NamedProperties, AllocatorState, RuntimeState) throws collects
+# CHECK-NEXT: v9 PropSet: {{*}}callsUnknownCode
+# CHECK-NEXT: b0 Return
+# SAME-LABEL: function f3
+# SAME-NOT: GetSlot:{{*}}beyond
+# SAME-NOT: DefineMethod:{{*}}beyond
+# SAME-NOT: PropSet:{{*}}beyond
+function f4 name="calls" parameters=[{type=L0}, {type=number}, {type=f2}] results=[{type=undefined}] {
+    v3 = CallDirect v0, v1 function=f1
+    v4 = Call v2, -, v0, v1 callees=[f2]
+    Return
+}
+# CHECK-LABEL: function f4
+# CHECK-NEXT: v3 CallDirect: writes(ModuleVariables/1, ObjectFields/1) | beyond operands: writes(ModuleVariables/1)
+# CHECK-NEXT: v4 Call: writes(EnvironmentFields/1, ObjectFields/1) | beyond operands: writes(EnvironmentFields/1)

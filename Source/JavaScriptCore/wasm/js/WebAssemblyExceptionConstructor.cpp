@@ -135,7 +135,7 @@ void WebAssemblyExceptionConstructor::finishCreation(VM& vm, WebAssemblyExceptio
 }
 
 WebAssemblyExceptionConstructor::WebAssemblyExceptionConstructor(VM& vm, Structure* structure)
-    : Base(vm, structure, callJSWebAssemblyException, constructJSWebAssemblyException)
+    : Base(vm, structure, JSC_REGISTERED_HOST_FUNCTION(callJSWebAssemblyException), JSC_REGISTERED_HOST_FUNCTION(constructJSWebAssemblyException))
 {
 }
 
