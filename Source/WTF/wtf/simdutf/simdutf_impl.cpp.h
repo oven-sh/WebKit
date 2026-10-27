@@ -17715,6 +17715,9 @@ uint64_t to_base64_mask(block64 *b, bool *error) {
   uint8x16_t hi_bits1 = vshrq_n_u8(b->chunks[1], 3);
   uint8x16_t hi_bits2 = vshrq_n_u8(b->chunks[2], 3);
   uint8x16_t hi_bits3 = vshrq_n_u8(b->chunks[3], 3);
+  // In the default_or_url table '+' has bit 2, as '-' and '/' have: all three
+  // are in row 5 of lut_hi. With bit 1, which '_' has in row 11, '[' passed as
+  // a base64 character: it has the column of '+' and the row of '_'.
   uint8x16_t lut_lo;
 #ifdef SIMDUTF_REGULAR_VISUAL_STUDIO
   if (default_or_url) {
@@ -18145,6 +18148,9 @@ compress_decode_base64(char *dst, const char_type *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
+    // The walk also stops at the start of the input: it counts with the scalar
+    // table, and left the input where the kernel had staged a byte that table
+    // rejects.
     while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
         while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
@@ -35631,6 +35637,9 @@ compress_decode_base64(char *dst, const chartype *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
+    // The walk also stops at the start of the input: it counts with the scalar
+    // table, and left the input where the kernel had staged a byte that table
+    // rejects.
     while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
         while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
@@ -42548,13 +42557,13 @@ compress_decode_base64(char *dst, const chartype *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0 && src > srcinit) {
+    while (leftover > 0) {
       if (!ignore_garbage) {
-        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
+        while (to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
@@ -51397,6 +51406,9 @@ compress_decode_base64(char *dst, const chartype *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
+    // The walk also stops at the start of the input: it counts with the scalar
+    // table, and left the input where the kernel had staged a byte that table
+    // rejects.
     while (leftover > 0 && src > srcinit) {
       if (!ignore_garbage) {
         while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
@@ -56311,13 +56323,13 @@ compress_decode_base64(char *dst, const chartype *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0 && src > srcinit) {
+    while (leftover > 0) {
       if (!ignore_garbage) {
-        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
+        while (to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
@@ -63262,13 +63274,13 @@ compress_decode_base64(char *dst, const char_type *src, size_t srclen,
     // we may have 1, 2 or 3 bytes left and we need to decode them so let us
     // backtrack
     int leftover = int(bufferptr - buffer_start);
-    while (leftover > 0 && src > srcinit) {
+    while (leftover > 0) {
       if (!ignore_garbage) {
-        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] == 64) {
+        while (to_base64[uint8_t(*(src - 1))] == 64) {
           src--;
         }
       } else {
-        while (src - 1 > srcinit && to_base64[uint8_t(*(src - 1))] >= 64) {
+        while (to_base64[uint8_t(*(src - 1))] >= 64) {
           src--;
         }
       }
