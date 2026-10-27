@@ -1499,6 +1499,10 @@ static bool expandAccessesThroughProxies(FunctionPassContext& context, IRBuilder
             BlockID block = site.point().block;
             return expandsOutOfSight && function.at(block).frequency.predicted() == BlockFrequency::Normal && !isCold(heatClassOf(context, block)).predicted();
         };
+        // What a proxy holds may be a proxy again. That is rare, and each would be written out inside the other without end.
+        auto isHeldByProxy = [&] {
+            return function.at(context.analyses.identities().identityOf(access.objectOperand())).opcode == Opcode::GetInternalField;
+        };
         if (isProxyIfObject) {
             proxy = findProxyMadeInSight(program, function, access.objectOperand());
             if (proxy || runsOften()) {
@@ -1506,7 +1510,7 @@ static bool expandAccessesThroughProxies(FunctionPassContext& context, IRBuilder
                 receiver = typeOfReceiver.isObject() ? ReceiverOfAccess::IsProxy : ReceiverOfAccess::MayBeProxy;
                 found = site;
             }
-        } else if (runsOften() && isExpectedToBeTargetOfProxy(context, access)) {
+        } else if (runsOften() && isExpectedToBeTargetOfProxy(context, access) && !isHeldByProxy()) {
             receiver = ReceiverOfAccess::MayBeProxy;
             found = site;
         }
