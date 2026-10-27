@@ -403,7 +403,10 @@ ENV MARCH_FLAG=${MARCH_FLAG}
 ENV RELEASE_FLAGS=${RELEASE_FLAGS}
 
 # After linking, the newest glibc symbol version jsc needs is read off it: that is the oldest glibc the artifact runs
-# on, and it must not be past the container's, 2.31.
+# on, and it must not be past the container's, 2.31. A version of glibc that is not a number says what the loader has to
+# be able to do, and jsc must need none: the loader of 2.31 is older than all of them. GLIBC_ABI_DT_RELR is the loader
+# of 2.36, for the relative relocations that LD_PACK_RELATIVE_RELOCS packs. Upstream turns that on wherever the linker
+# can do it, so it is turned off here.
 #
 # With ENABLE_FUZZILLI the libraries must call the coverage callbacks and leave them undefined: Bun defines its own.
 #
@@ -441,6 +444,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
     -DCMAKE_BUILD_TYPE=$WEBKIT_RELEASE_TYPE \
     -DUSE_THIN_ARCHIVES=OFF \
+    -DLD_PACK_RELATIVE_RELOCS=OFF \
     -DUSE_BUN_JSC_ADDITIONS=ON \
     -DUSE_BUN_EVENT_LOOP=ON \
     -DENABLE_FTL_JIT=ON \
@@ -478,6 +482,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     glibc=$(llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[0-9][0-9.]*' | sort -uV | tail -1) && \
     echo "jsc needs glibc symbols up to $glibc" && \
     { [ -n "$glibc" ] && [ "$(printf '%s\n' GLIBC_2.31 "$glibc" | sort -V | tail -1)" = GLIBC_2.31 ] || { echo "error: that is newer than GLIBC_2.31" >&2; exit 1; }; } && \
+    { ! llvm-readelf --version-info $WEBKIT_OUT_DIR/bin/jsc | grep -o 'GLIBC_[A-Z][A-Z0-9_]*' | sort -u | grep . || { echo "error: jsc needs that of the loader, and the loader of glibc 2.31 has none of it" >&2; exit 1; }; } && \
     if [ "$ENABLE_FUZZILLI" = ON ]; then \
         for callback in __sanitizer_cov_trace_pc_guard __sanitizer_cov_trace_pc_guard_init; do \
             llvm-nm --undefined-only $WEBKIT_OUT_DIR/lib/libJavaScriptCore.a | grep -qw $callback || { echo "error: libJavaScriptCore.a does not call $callback" >&2; exit 1; }; \
