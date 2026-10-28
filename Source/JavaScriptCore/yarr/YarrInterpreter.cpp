@@ -290,7 +290,9 @@ public:
 
         void LEGACY_NODELETE rewind(unsigned amount)
         {
-            ASSERT(pos >= amount);
+            // pos is unsigned: a rewind past the start wraps to a huge position, which
+            // every read from then on treats as valid. Stop here instead.
+            RELEASE_ASSERT(pos >= amount);
             pos -= amount;
         }
 
@@ -1064,6 +1066,11 @@ public:
             while ((matchAmount < term.atom.quantityMaxCount) && tryConsumeBackReference(matchBegin, matchEnd, term))
                 ++matchAmount;
             backTrack->matchAmount = matchAmount;
+            // Every repetition took this many characters, and nothing else reaches the
+            // capture while this loop runs. Record it: by the time this term backtracks
+            // the capture can say something else, and the backtrack gives back what was
+            // taken here. The JIT keeps the same value in the same slot.
+            backTrack->backReferenceSize = matchEnd - matchBegin;
             return true;
         }
 
@@ -1080,12 +1087,41 @@ public:
         ASSERT(term.type == ByteTerm::Type::BackReference);
         BackTrackInfoBackReference* backTrack = reinterpret_cast<BackTrackInfoBackReference*>(context->frame + term.frameLocation);
 
+        // The capture this term read is not the capture it reads now. A backreference to
+        // a duplicate named group reads whichever group of that name matched last, and a
+        // group that holds this term writes its own when it completes, so what output[]
+        // says here can differ in length from what this term took, or say nothing at all.
+        // What this term took is in its frame, so undo the frame, not the capture.
+        switch (term.atom.quantityType) {
+        case QuantifierType::FixedCount:
+            // for quantityMaxCount == 1, could rewind.
+            input.setPos(backTrack->begin);
+            return false;
+
+        case QuantifierType::Greedy:
+            if (backTrack->matchAmount) {
+                // Give one repetition back. Each of them took backReferenceSize characters.
+                --backTrack->matchAmount;
+                if (term.matchDirection() == Backward)
+                    return input.checkInput(backTrack->backReferenceSize);
+                input.rewind(backTrack->backReferenceSize);
+                return true;
+            }
+            return false;
+
+        case QuantifierType::NonGreedy:
+            break;
+        }
+
+        // A non-greedy backreference took nothing when it matched. Each backtrack asks it
+        // for one more repetition, which it takes from the capture as it stands now.
         unsigned subpatternId;
 
         if (auto duplicateNamedGroupId = term.duplicateNamedGroupId()) {
             subpatternId = output[pattern->offsetForDuplicateNamedGroupId(duplicateNamedGroupId)];
             if (subpatternId < 1) {
                 // If we don't have a subpattern that matched, then the string to match is empty.
+                input.setPos(backTrack->begin);
                 return false;
             }
         } else
@@ -1094,39 +1130,21 @@ public:
         unsigned matchBegin = output[(subpatternId << 1)];
         unsigned matchEnd = output[(subpatternId << 1) + 1];
 
-        if (matchBegin == offsetNoMatch || matchEnd == offsetNoMatch)
+        // An empty repetition would end where it starts, so there is no further way to
+        // match: give back the repetitions this term took and fail, as the JIT does.
+        if (matchBegin == offsetNoMatch || matchEnd == offsetNoMatch || matchBegin == matchEnd) {
+            input.setPos(backTrack->begin);
             return false;
+        }
 
         ASSERT(matchBegin <= matchEnd);
 
-        if (matchBegin == matchEnd)
-            return false;
-
-        switch (term.atom.quantityType) {
-        case QuantifierType::FixedCount:
-            // for quantityMaxCount == 1, could rewind.
-            input.setPos(backTrack->begin);
-            break;
-
-        case QuantifierType::Greedy:
-            if (backTrack->matchAmount) {
-                --backTrack->matchAmount;
-                if (term.matchDirection() == Backward)
-                    return input.checkInput(matchEnd - matchBegin);
-                input.rewind(matchEnd - matchBegin);
-                return true;
-            }
-            break;
-
-        case QuantifierType::NonGreedy:
-            if ((backTrack->matchAmount < term.atom.quantityMaxCount) && tryConsumeBackReference(matchBegin, matchEnd, term)) {
-                ++backTrack->matchAmount;
-                return true;
-            }
-            input.setPos(backTrack->begin);
-            break;
+        if ((backTrack->matchAmount < term.atom.quantityMaxCount) && tryConsumeBackReference(matchBegin, matchEnd, term)) {
+            ++backTrack->matchAmount;
+            return true;
         }
 
+        input.setPos(backTrack->begin);
         return false;
     }
 
@@ -2391,6 +2409,11 @@ public:
         JSRegExpResult result = matchDisjunction(pattern->m_body.get(), context, /* btrack= */ false);
         m_result = result;
         if (result == JSRegExpResult::Match) {
+            // Every consumer of a match takes these two as a span of the subject and reads
+            // it. Nothing below checks them, so a term that moved the cursor out of the
+            // subject would be answered with a read outside the string. Stop here instead.
+            RELEASE_ASSERT(startOffset <= context->matchBegin && context->matchBegin <= context->matchEnd && context->matchEnd <= input.end(),
+                startOffset, context->matchBegin, context->matchEnd, input.end());
             output[0] = context->matchBegin;
             output[1] = context->matchEnd;
         }
