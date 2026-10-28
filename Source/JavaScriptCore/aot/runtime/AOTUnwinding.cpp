@@ -13,6 +13,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
+#include "AOTRuntimeValidation.h"
 #include "AOTSavedFrame.h"
 #include "AOTStackTrace.h"
 #include "AOTState.h"
@@ -377,6 +378,40 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
 std::optional<HandlerType> findNearestHandler(VM& vm, CallFrame* stubFrame)
 {
     return findHandlerInRun<HandlerSearch::Nearest>(vm, stubFrame, stackPointerOfCaller(stubFrame), stubFrame->callerFrameOrEntryFrame(), vm.topEntryFrame);
+}
+
+void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance* instance, CallFrame* stubFrame)
+{
+    VM& vm = *instance->vm;
+    Exception* exception = vm.exceptionForInspection();
+    if (exception && vm.isTerminationException(exception))
+        return;
+    auto* error = exception ? dynamicDowncast<ErrorInstance>(exception->value()) : nullptr;
+    bool isForLackOfMemory = error && error->isOutOfMemoryError();
+    const VMState& state = vm.aotState();
+    CallFrame* callee = stubFrame;
+    void* stackPointer = stackPointerOfCaller(stubFrame);
+    void* framePointer = stubFrame->callerFrameOrEntryFrame();
+    while (framePointer != vm.topEntryFrame) {
+        const void* pc = removeCodePtrTag(callee->rawReturnPC());
+        const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, pc);
+        if (!site)
+            return;
+        if (!site->isStubReturnSite()) {
+            // findReturnIntoFunctionWithoutHandlers().
+            if (isForLackOfMemory && !catchesExceptions(*state.image, site->code.index()))
+                return;
+            if (std::optional<MarkOfCallWithoutSite> mark = MarkOfCallWithoutSite::read(pc))
+                crashOnValidationFailure(vm, { ValidationFailureKind::CallThrew, state.image->rootFunctionOf(site->code.index()), mark->value, jsNumber(mark->callee) });
+            return;
+        }
+        if (!letsThrowPass(site->stubFrameKind))
+            return;
+        callee = frameAtReturnSite(site->frame, stackPointer, static_cast<CallFrame*>(framePointer));
+        stackPointer = stackPointerOfCaller(callee, bytesAboveReturnAddressOf(*site));
+        if (site->frame.hasFrameRecord())
+            framePointer = callee->callerFrameOrEntryFrame();
+    }
 }
 
 // Asked before every error of a throw site is created.

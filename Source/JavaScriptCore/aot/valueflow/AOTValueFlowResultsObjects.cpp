@@ -17,6 +17,7 @@
 #include "AOTSort.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueIdentity.h"
+#include "AOTWrittenFunction.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -385,13 +386,6 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, const Prototype
             }
         }
     }
-}
-
-static FunctionID writtenFunctionOf(const Program& program, FunctionID id)
-{
-    while (FunctionID source = program.at(id).derivation.source)
-        id = source;
-    return id;
 }
 
 // One text that statements give to every function object of a function as it is written names the function itself. So does the key under which a function stands where its object is made: who reads the key's type decides that.

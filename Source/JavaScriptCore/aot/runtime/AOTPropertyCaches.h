@@ -323,6 +323,13 @@ public:
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
     void dumpNamedCounts(PrintStream&) const;
     // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
+    void remember(const FieldExit& exit) { placeOf(exit.structureBefore, exit.field->name) = exit; }
+    void forgetFieldExits() { m_fieldExits.fill({ }); }
+    const FieldExit* findFieldExit(StructureID structureID, uint32_t name)
+    {
+        const FieldExit& exit = placeOf(structureID, name);
+        return exit.field && exit.structureBefore == structureID && exit.field->name == name ? &exit : nullptr;
+    }
     bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
@@ -379,6 +386,8 @@ private:
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     uint8_t* m_counterOfPairToFile { nullptr };
     StructureID m_structureOfLastFieldCreatedOutsideStubs;
+    FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % m_fieldExits.size()]; }
+    std::array<FieldExit, 64> m_fieldExits { };
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
     UncheckedKeyHashMap<String, uint64_t> m_namedCounts;

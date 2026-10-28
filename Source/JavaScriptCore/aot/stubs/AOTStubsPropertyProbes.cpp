@@ -428,7 +428,12 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     }
 
     // Whether the slot is empty is for the record of the field to say: the word of an empty reference is also that of a closure that is not made yet.
+    // Where some field of the object lies outside its slot, the row of the Structure says where.
     jit.bindEntry(getByIdOfSilentSlot().withCallerFrame(callerFrame));
+    auto branchIfSomeFieldLiesOutsideItsSlot = [&] {
+        return jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot)));
+    };
+    otherwise.append(branchIfSomeFieldLiesOutsideItsSlot());
     locateFieldTableEntry(jit, probe, otherwise);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.fieldRecordIndices)), probe.table);
     jit.load16(BaseIndex(probe.table, probe.index, CCallHelpers::TimesTwo), probe.index);
@@ -443,7 +448,8 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
     jit.load32(Address(record, static_cast<int32_t>(sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, slot))), field.slotData);
     computeFieldAddress(jit, field, false, otherwise);
     JumpList isPresent;
-    branchOnFieldPresence(jit, field, T10, isPresent, isAbsent);
+    JumpList isAbsentInObjectWithEveryFieldInItsSlot;
+    branchOnFieldPresence(jit, field, T10, isPresent, isAbsentInObjectWithEveryFieldInItsSlot);
 
     // A closure that is made at its first use. The object and the name say all that making it takes, so nothing is looked up and nothing is filed.
     static_assert(!uncreatedDeferredClosure);
@@ -454,7 +460,8 @@ void answerMissingField(StubAssembler& jit, CallerFrame callerFrame, GPRReg obje
 
     isAbsent.link(&jit);
     jit.bindEntry(getByIdOfEmptySlot().withCallerFrame(callerFrame));
-    otherwise.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))));
+    otherwise.append(branchIfSomeFieldLiesOutsideItsSlot());
+    isAbsentInObjectWithEveryFieldInItsSlot.link(&jit);
 #if CPU(X86_64)
     JumpList isNotBelowObjectPrototype;
     branchUnlessNameIsAbsent(jit, probe, otherwise, &isNotBelowObjectPrototype);

@@ -195,6 +195,8 @@ public:
         unsigned attributes { 0 };
     };
     void moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
+    // False where the object is not in the state that the other object was in, or the slot takes the value.
+    bool tryRepeat(VM&, const FieldExit&, JSValue);
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;

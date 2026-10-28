@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCirclesOfModuleLoads.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTRegionCloner.h"
@@ -389,6 +390,7 @@ struct Copier {
     UncheckedKeyHashMap<uint32_t, DataID> arraysInConstants;
     std::optional<BitVector> modulesThatRequireMayLoad;
     bool requiresByNameNobodyKnows { false };
+    std::optional<StronglyConnectedComponents> circlesOfLoads;
     UncheckedKeyHashMap<uint32_t, bool> variablesStoredOnEveryWayToEnd;
     unsigned numberOfValuesAsRead { 0 };
     unsigned numberOfValuesInCopiesOfFactories { 0 };
@@ -495,19 +497,11 @@ struct Copier {
         return requiresByNameNobodyKnows || modulesThatRequireMayLoad->quickGet(asked.index());
     }
 
-    bool comesBackTo(ModuleID from, ModuleID asked)
+    bool lieOnOneCircleOfLoads(ModuleID first, ModuleID second)
     {
-        BitVector visited(program.modules.size());
-        Vector<ModuleID, 16> pending { from };
-        while (!pending.isEmpty()) {
-            for (const ModuleRequest& request : program.at(pending.takeLast()).requests) {
-                if (request.target == asked)
-                    return true;
-                if (!visited.set(request.target.index()))
-                    pending.append(request.target);
-            }
-        }
-        return false;
+        if (!circlesOfLoads)
+            circlesOfLoads = computeCirclesOfModuleLoads(program, build.parallelLoops());
+        return circlesOfLoads->componentOf[first.index()] == circlesOfLoads->componentOf[second.index()];
     }
 
     // The loader runs the body of a file when every file that it imports by a statement has run to its end, unless the two lie on a cycle.
@@ -523,7 +517,7 @@ struct Copier {
         bool isImportedByStatement = std::ranges::any_of(program.at(importer).requests, [&](const ModuleRequest& request) {
             return request.target == exporter && request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation && request.completes;
         });
-        if (!isImportedByStatement || mayBeLoadedByRequire(importer) || comesBackTo(exporter, importer))
+        if (!isImportedByStatement || mayBeLoadedByRequire(importer) || lieOnOneCircleOfLoads(exporter, importer))
             return false;
         return variablesStoredOnEveryWayToEnd.ensure(variable.index() + 1, [&] {
             const Function& body = program.at(bodyID);

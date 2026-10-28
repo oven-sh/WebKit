@@ -86,6 +86,8 @@ void ValueFlowHeapIndex::collectNodesWritten(const ValueFlowResultInputs& inputs
             const ValueFlowNodeKey& key = *solver.keyOfMadeNode(node);
             switch (key.kind) {
             case ValueFlowMadeNodeKind::Written:
+                if (solver.graph().isAtRest(node))
+                    break;
                 if (ValueSetID value = solver.possibleValuesOf(node); value != ValueSets::nothing)
                     found.written.append({ numberOf(key.name()), node.index(), { key.set, value, solver.seenValuesOf(node) } });
                 break;

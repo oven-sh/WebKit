@@ -256,7 +256,7 @@ def declaration_of(tokens, start, end, has_body, scope, is_in_unnamed_namespace)
             is_static = True
         elif text == "extern":
             is_extern = True
-        elif text in ("constexpr", "const", "constinit"):
+        elif text in ("constexpr", "const"):
             is_constant = True
         elif text == "operator":
             return None

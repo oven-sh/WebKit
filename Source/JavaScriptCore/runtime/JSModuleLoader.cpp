@@ -424,7 +424,7 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
                 promise = entry->ensureFetchPromise(globalObject);
 #if USE(BUN_JSC_ADDITIONS)
                 // require(esm) of a module whose fetch an import already started.
-                if (vm.m_synchronousModuleQueue && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
+                if (vm.synchronousModuleQueue() && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
                     fetchSynchronously(globalObject, promise, specifier, referrer, parameters.copyRef(), scriptFetcher.copyRef());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
@@ -879,7 +879,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         }
 
 #if USE(BUN_JSC_ADDITIONS)
-        if (vm.m_synchronousModuleQueue && mapEntry->status() == ModuleRegistryEntry::Status::Fetching) {
+        if (vm.synchronousModuleQueue() && mapEntry->status() == ModuleRegistryEntry::Status::Fetching) {
             // require(esm) hit a dependency that the surrounding async graph
             // already started loading. Force the fetch+makeModule chain through
             // synchronously so this graph can complete without yielding; the

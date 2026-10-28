@@ -58,6 +58,7 @@
 #include "AOTStubFrontEnds.h"
 #include "AOTStubsExceptions.h"
 #include "AOTThreshold.h"
+#include "AOTUnwinding.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "AddressSpaceBudget.h"
@@ -882,6 +883,7 @@ static void fillThunkAndPointers(void** entries, const Image& image)
     set(Entry::NonConstructorHostFunction, std::bit_cast<void*>(&callHostFunctionAsConstructor));
     set(Entry::CallNativeFunctionUnderValidation, std::bit_cast<void*>(&callNativeFunctionUnderValidation));
     set(Entry::ConstructNativeFunctionUnderValidation, std::bit_cast<void*>(&constructNativeFunctionUnderValidation));
+    set(Entry::CheckThatThrowingCallHasSite, std::bit_cast<void*>(&checkThatThrowingCallHasSite));
     set(Entry::ErrorConstructorClassInfo, const_cast<ClassInfo*>(ErrorConstructor::info()));
     set(Entry::GeneratorClassInfo, const_cast<ClassInfo*>(Generator::info()));
     set(Entry::AsyncGeneratorClassInfo, const_cast<ClassInfo*>(JSAsyncGenerator::info()));

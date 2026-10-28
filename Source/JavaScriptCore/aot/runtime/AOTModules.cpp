@@ -261,7 +261,7 @@ bool Modules::hasRunToItsEndWithItsCycle(const ModuleRecord& record) const
 // An ES module of the program that has run needs no record, like one that ran with the graph of another: whoever asks for it again is handed a record that says so.
 void Modules::retireRecordsOfSettledLoads()
 {
-    if (m_instance.vm->m_synchronousModuleQueue || m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
+    if (m_instance.vm->synchronousModuleQueue() || m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
         return;
     // The host loads the graph of the entry point.
     if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
@@ -963,7 +963,7 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
 
 bool Modules::isAnythingBeingLoaded() const
 {
-    if (m_instance.vm->m_synchronousModuleQueue || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
+    if (m_instance.vm->synchronousModuleQueue() || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
         return true;
     // The host loads the graph of the entry point.
     if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
@@ -1071,7 +1071,7 @@ void Modules::handCountedImportsToLoader()
     // Every counted import reaches the loader. A termination requested meanwhile is thrown at the caller's exception check.
     DeferTerminationForAWhile deferTermination(vm);
     // The calls came ahead of any require() that is under way, so their steps are jobs, not steps of its load.
-    SetForScope noSynchronousLoad(vm.m_synchronousModuleQueue, nullptr);
+    SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, vm.m_synchronousModuleQueue);
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     size_t numberOfJobsOfOthers = queue.size();
     noteOrderAndModulesOfOnlyCountedImport();
@@ -1345,7 +1345,7 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
 // The steps of the loader find nothing to load, to link or to run, and no other load meets them: the module has no step of its own left that a synchronous load could take over.
 bool Modules::loaderOnlyHandsOverNamespace(ModuleID module) const
 {
-    if (status(module) != ModuleStatus::Evaluated || isCommonJSFileOrFace(module) || m_instance.vm->m_synchronousModuleQueue || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead)
+    if (status(module) != ModuleStatus::Evaluated || isCommonJSFileOrFace(module) || m_instance.vm->synchronousModuleQueue() || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead)
         return false;
     // An import() of a module of a cycle settles as the evaluation of the root of the cycle does, which may wait or have failed behind an await when the module itself has run.
     // Such a module has a record.
@@ -1583,7 +1583,7 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
     // No code of the program has run when the host asks for the module that it starts with.
     if (m_firstModuleRequestedByHost == root)
         return false;
-    if (vm.m_synchronousModuleQueue || numberOfGraphsBeingLoaded() > 1)
+    if (vm.synchronousModuleQueue() || numberOfGraphsBeingLoaded() > 1)
         return true;
     // No step of the loader waits for a graph whose root has not run to its end: it goes on with a job of the program.
     if (m_loadsInFlight.containsIf([&](const LoadInFlight& load) { return load.isLoaded && status(load.root) != ModuleStatus::Evaluating && status(load.root) != ModuleStatus::EvaluatingAsync; }))
@@ -1639,7 +1639,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
         if (level->next && level->plan && (!m_levelsOfLoads.contains(*level->next) || !isStillToBeLoaded(*level->next)))
             layWayOfLoadAgain(*level);
         // Nobody sees how many steps are taken before require() returns.
-        if (level->next && level->plan && !m_instance.vm->m_synchronousModuleQueue)
+        if (level->next && level->plan && !m_instance.vm->synchronousModuleQueue())
             countStepsOfLevel(*level->plan, level->depth + 1);
         if (m_showsWaysBetweenModuleObjects && level->next && level->plan && level->depth + 1 < level->plan->levels.size()) {
             for (const PlanOfLoad::Found& found : level->plan->level(level->depth + 1))

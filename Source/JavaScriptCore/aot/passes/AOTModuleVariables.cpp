@@ -14,6 +14,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCirclesOfModuleLoads.h"
 #include "AOTClaims.h"
 #include "AOTDeferDefinitions.h"
 #include "AOTDefinitions.h"
@@ -34,7 +35,6 @@
 #include "AOTPredictedValues.h"
 #include "AOTProgramCaches.h"
 #include "AOTSlotPlan.h"
-#include "AOTStronglyConnectedComponents.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTWholeLiterals.h"
@@ -582,8 +582,8 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
                 variable.initialization = VariableInitialization::Function;
                 variable.function = deferral.function;
                 variable.flow.stores = StoreCount::Never;
-                if (id == deferral.variableReadInBody)
-                    variable.flow.reads = ReadState::Unknown;
+                if (id == deferral.variableReadInBody && variable.flow.reads == ReadState::NeverRead)
+                    variable.flow.reads = ReadState::OnlyWhereDefined;
                 break;
             case Deferral::Kind::RegExp:
                 variable.declared.changeType(Proven::byPosition(editor.types().intern(program.at(variable.declared.written()).withPrimitives(Primitive::Absent))));
@@ -2298,22 +2298,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
     times.didFinish("collectVariableFacts"_s);
     if (std::ranges::all_of(variables.emptiness, [](Emptiness emptiness) { return emptiness == Emptiness::None; }))
         return;
-    // A module that requires its importer while its own body runs closes a circle too.
-    using ModulePair = std::pair<ModuleID, ModuleID>;
-    Vector<ModulePair> requiredModules = collectInParallel<ModulePair>(loops, program.functions.size(), [&](unsigned index, Vector<ModulePair>& found) {
-        forEachValueListedOrNot(program, FunctionID(index), { Opcode::RequireModule, Opcode::EvaluateModule }, [&](ValueID, const Value& value) {
-            if (value.opcode == Opcode::RequireModule && program.functions[index].module)
-                found.append({ program.functions[index].module, value.module() });
-            if (value.opcode == Opcode::EvaluateModule)
-                found.append({ value.referrer(), value.module() });
-        });
-    });
-    Vector<Vector<ModuleID>> modulesReachedFrom(program.modules.size(), [&](size_t index) {
-        return program.modules[index].requests.map([](const ModuleRequest& request) { return request.target; });
-    });
-    for (auto [from, to] : requiredModules)
-        modulesReachedFrom[from.index()].append(to);
-    StronglyConnectedComponents circlesOfImports = computeStronglyConnectedComponents(program.modules.size(), [&](unsigned index) -> const Vector<ModuleID>& { return modulesReachedFrom[index]; });
+    StronglyConnectedComponents circlesOfImports = computeCirclesOfModuleLoads(program, loops);
     InitializerScanContext context { program, inputs, runner, variables, circlesOfImports, moduleWithBody };
 
     InitializerPlan plan { variables.emptiness };

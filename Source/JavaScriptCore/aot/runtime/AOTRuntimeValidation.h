@@ -49,13 +49,25 @@ struct ChangedRegister {
     }
 };
 
-// What ValidationFailure::found holds for CallCollected: an int32 that says who was called.
+// What ValidationFailure::found holds for CallCollected and CallThrew: an int32 that says who was called.
 struct CalledCode {
     enum class Kind : uint32_t { Operation, Stub, Function, Address };
     static constexpr unsigned kindShift = 28;
     static constexpr uint32_t maxNumber = (1u << kindShift) - 1;
 
     static constexpr int32_t encode(Kind kind, uint32_t number) { return static_cast<int32_t>(static_cast<uint32_t>(kind) << kindShift | std::min(number, maxNumber)); }
+};
+
+// In a validated image two moves stand behind every call that has no site: into a scratch register on x86-64, into the zero register on ARM64. They say which value of the function calls, and whom.
+struct MarkOfCallWithoutSite {
+    static constexpr uint64_t tag = 0xa07c;
+    static constexpr unsigned tagShift = 32;
+
+    static constexpr uint64_t wordFor(uint32_t payload) { return tag << tagShift | payload; }
+    static std::optional<MarkOfCallWithoutSite> read(const void* returnAddress);
+
+    Typed::ValueID value;
+    int32_t callee;
 };
 
 // The third argument of operationAOTCompareOperandWithPhotograph: which photograph, and who was called between it and the comparison: an entry of the run-time table or a family of stubs.

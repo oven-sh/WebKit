@@ -181,6 +181,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.overlooksWritesBetweenLoadsAndTheirUsers = build.isSabotaged(Sabotage::LoadsFoldedIntoTheirUsersOutlastWrites);
     validation.overlooksWritesBetweenPairedLoads = build.isSabotaged(Sabotage::PairedLoadsOutlastWrites);
     validation.leavesRoomForOneTurnTooFew = build.isSabotaged(Sabotage::WrittenOutTurnsAlwaysFit);
+    validation.overlooksWritesBetweenReadsOfBound = build.isSabotaged(Sabotage::BoundsReadTwiceOutlastWrites);
     validation.takesAccessesOfVectorTurnsToLieApart = build.isSabotaged(Sabotage::VectorTurnsMeetNoOtherAccess);
     validation.takesLanesToHoldWholeValues = build.isSabotaged(Sabotage::LanesHoldWhateverIsComputed);
     validation.setsUpFrameBehindWrites = build.isSabotaged(Sabotage::FramesAlwaysFit);

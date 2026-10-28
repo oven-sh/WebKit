@@ -660,7 +660,59 @@ static void testUnrollLoopsKeepsPollThatMustRunOnEveryTurn()
     }
 }
 
-// A turn that leaves by a rare edge may do anything to the counter before it comes back, and may be every turn. Such a loop keeps its poll.
+// What lies behind a rare edge has a copy of its own behind the turns that are written out, which asks again whether there is room for them. So the loop itself never gets more turns
+// than are written out and goes without its poll. The turns that are written out poll once together.
+static void testUnrollLoopsTakesPollOutOfLoopItselfWhereRarePathsComeBack()
+{
+    constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
+    for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+        for (SidePath sidePath : { SidePath::EndsTurnItself, SidePath::ComesBackInTurn }) {
+            // A loop that was turned round has a side path that ends its turn outside.
+            if (place == TestPlace::Bottom && sidePath == SidePath::EndsTurnItself)
+                continue;
+            CountedSum sum(LessThan, 1, 0, policyThatPollsBetweenStretches());
+            auto& [proc, graph, loop, relation, step, firstIndex] = sum;
+            PollState state;
+            appendPollOfShortTurns(graph, loop.body, state);
+            BasicBlock* side = proc.addBlock();
+            BasicBlock* stays = proc.addBlock();
+            BasicBlock* last = proc.addBlock();
+            Value* isMarked = graph.make(loop.body, Equal, graph.make(loop.body, BitAnd, graph.get(loop.body, loop.index), loop.extra), graph.int64(loop.body, 0));
+            graph.branch(loop.body, isMarked, rarely(side), FrequentedBlock(stays));
+            graph.increase(side, loop.sum, 1000);
+            if (sidePath == SidePath::EndsTurnItself) {
+                graph.increase(side, loop.index, 1);
+                graph.jump(side, loop.header);
+            } else
+                graph.jump(side, last);
+            graph.increase(stays, loop.sum, graph.get(stays, loop.index));
+            graph.jump(stays, last);
+            loop.endBody(last);
+            proc.setKnownRange(loop.counter(), IntRange(0, 1 << 28));
+            if (place == TestPlace::Bottom)
+                loop.rotate();
+
+            CHECK(unrollLoopsAndValidate(proc));
+            CHECK(proc.report().countOf(Counter::LoopPollsRemoved));
+            auto code = compileProc(proc);
+            // With this mask only the first turn takes the side path.
+            int64_t turns = 3 * stretch + 5;
+            CHECK_EQ(run(*code, turns, nullptr, -1), sumBelow(turns) + 1000);
+            CHECK(state.numberOfPolls >= turns / static_cast<int64_t>(Limits::maxTurnsPerUnrolledLoop) - 2);
+            CHECK(state.numberOfPolls <= turns / static_cast<int64_t>(Limits::minTurnsPerUnrolledLoop) + 2);
+            // Too few turns for those that are written out.
+            state = { };
+            CHECK_EQ(run(*code, 3, nullptr, -1), sumBelow(3) + 1000);
+            CHECK_EQ(state.numberOfPolls, 0);
+            // With this one every turn does.
+            state = { };
+            CHECK_EQ(run(*code, 800, nullptr, 0), 800 * 1000);
+            CHECK(state.numberOfPolls >= 800 - 2 * static_cast<int64_t>(Limits::maxTurnsPerUnrolledLoop));
+        }
+    }
+}
+
+// A turn that leaves by a rare edge and has no such copy may be every turn. Such a loop keeps its poll.
 static void testUnrollLoopsKeepsPollOfLoopThatComesBackFromBehindRareEdge()
 {
     for (Walks walks : { Walks::Nothing, Walks::Data }) {
@@ -721,6 +773,88 @@ static void testUnrollLoopsLeavesPollToCopyOfLoopOfCountersThatMeet()
         state = { };
         CHECK_EQ(invoke<int64_t>(*code, int64_t { -7 }, -7 + distance), turns);
         CHECK_EQ(state.numberOfPolls, distance <= 2 * stretch ? 0 : turns);
+    }
+}
+
+// The number that ends a loop may be a constant that stands in the loop. What is asked in front of the loop has a constant of its own.
+static void testUnrollLoopsAsksInFrontOfLoopAboutBoundThatStandsInLoop()
+{
+    constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
+    constexpr int64_t bound = 3 * stretch;
+    Procedure proc(policyThatPollsBetweenStretches());
+    Graph graph { proc };
+    PollState state;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* sum = proc.addVariable(Int64);
+    auto arguments = cCallArgumentValues<int64_t>(proc, root).eager();
+    graph.set(root, index, arguments[0]);
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.jump(root, body);
+    appendPollOfShortTurns(graph, body, state);
+    graph.increase(body, sum, 1);
+    graph.increase(body, index, 1);
+    graph.branch(body, graph.make(body, LessThan, graph.get(body, index), graph.int64(body, bound)), body, exit);
+    graph.ret(exit, graph.get(exit, sum));
+    proc.resetReachability();
+    fixSSA(proc);
+
+    CHECK(unrollLoopsAndValidate(proc));
+    CHECK_EQ(proc.report().countOf(Counter::LoopPollsRemoved), 1u);
+    checkValueCountInEachLoop(proc, isLoopPoll, "polls"_s, { 0, 1 });
+    auto code = compileProc(proc);
+    for (int64_t turns : { int64_t { 1 }, int64_t { 9 }, stretch, stretch + 1, 3 * stretch }) {
+        state = { };
+        CHECK_EQ(invoke<int64_t>(*code, bound - turns), turns);
+        CHECK_EQ(state.numberOfPolls, turns <= stretch ? 0 : turns);
+    }
+}
+
+// Two loops in a row leave their polls to copies. The second goes on from the counter of the first, whichever of the first loop and its copy has run.
+static void testUnrollLoopsAsksInFrontOfLoopAboutCounterOfCopiedLoop()
+{
+    constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
+    Procedure proc(policyThatPollsBetweenStretches());
+    Graph graph { proc };
+    PollState state;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* first = proc.addBlock();
+    BasicBlock* between = proc.addBlock();
+    BasicBlock* second = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* sum = proc.addVariable(Int64);
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root).eager();
+    graph.set(root, index, graph.int64(root, 0));
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.jump(root, first);
+    auto appendTurn = [&](BasicBlock* body, int64_t summand, Value* bound, BasicBlock* behind) {
+        appendPollOfShortTurns(graph, body, state);
+        graph.increase(body, sum, summand);
+        graph.increase(body, index, 1);
+        graph.branch(body, graph.make(body, LessThan, graph.get(body, index), bound), body, behind);
+    };
+    appendTurn(first, 1, arguments[0], between);
+    graph.jump(between, second);
+    appendTurn(second, 3, arguments[1], exit);
+    graph.ret(exit, graph.get(exit, sum));
+    proc.resetReachability();
+    fixSSA(proc);
+
+    CHECK(unrollLoopsAndValidate(proc));
+    CHECK_EQ(proc.report().countOf(Counter::LoopPollsRemoved), 2u);
+    auto code = compileProc(proc);
+    auto pollsOf = [](int64_t turns) {
+        return turns <= stretch ? 0 : turns;
+    };
+    for (int64_t firstTurns : { int64_t { 1 }, int64_t { 9 }, stretch, stretch + 1 }) {
+        for (int64_t secondTurns : { int64_t { 1 }, int64_t { 9 }, stretch, stretch + 1 }) {
+            state = { };
+            CHECK_EQ(invoke<int64_t>(*code, firstTurns, firstTurns + secondTurns), firstTurns + 3 * secondTurns);
+            CHECK_EQ(state.numberOfPolls, pollsOf(firstTurns) + pollsOf(secondTurns));
+        }
     }
 }
 
@@ -1027,8 +1161,11 @@ void addBunLoopUnrollingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut());
     RUN(testUnrollLoopsDropsPollOfLoopWhoseTurnsAreKnownToBeFew());
     RUN(testUnrollLoopsKeepsPollThatMustRunOnEveryTurn());
+    RUN(testUnrollLoopsTakesPollOutOfLoopItselfWhereRarePathsComeBack());
     RUN(testUnrollLoopsKeepsPollOfLoopThatComesBackFromBehindRareEdge());
     RUN(testUnrollLoopsLeavesPollToCopyOfLoopOfCountersThatMeet());
+    RUN(testUnrollLoopsAsksInFrontOfLoopAboutBoundThatStandsInLoop());
+    RUN(testUnrollLoopsAsksInFrontOfLoopAboutCounterOfCopiedLoop());
     RUN(testUnrollLoopsWritesFewerTurnsOfLargerLoop());
     RUN(testUnrollLoopsSkipsLoopThatEndsBeforeAllTurns());
     RUN(testUnrollLoopsSkipsLoopThatRunsRarely());

@@ -167,6 +167,8 @@ public:
     // In a frame of this stub, ahead of the call that returns to the label. What the poll throws leaves the frame as if the callee had thrown it.
     void pollBeforeCall(Label returnSite);
     static Address limitOfCallsByValue();
+    static Address softStackLimitWord();
+    static Address trapAwareSoftStackLimitWord();
 
     void returnFlags32(RelationalCondition, GPRReg, GPRReg);
     void returnFlags32(RelationalCondition, GPRReg, TrustedImm32);

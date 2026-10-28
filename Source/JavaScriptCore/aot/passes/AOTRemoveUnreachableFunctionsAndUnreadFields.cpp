@@ -19,6 +19,7 @@
 #include "AOTHeldOperands.h"
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTObservableOperations.h"
 #include "AOTPassRunner.h"
 #include "AOTPhaseTimes.h"
 #include "AOTProgramCaches.h"
@@ -217,6 +218,7 @@ static bool isUnread(const BuildContext& build, const Layout& layout, const Fiel
     case ReadState::Unknown:
         return build.isSabotaged(Sabotage::RemovedFieldsHaveUnknownReaders);
     case ReadState::OnlyAccessed:
+    case ReadState::OnlyWhereDefined:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -1100,13 +1102,16 @@ void removeUnreadExports(ProgramEditor& editor, const FlowResults& flow, BuildCo
             });
         }
         // The annotation says that the call may go when nobody uses its answer. An argument can be such a call too, and a cast that tests nothing is no use by itself.
+        ObservableOperations observable({ program, unknownSummaries }, function);
         for (bool didRemove = true; std::exchange(didRemove, false);) {
             BitVector usedValues = findUsedValues(function);
             for (Block& block : function.editAllBlocks()) {
                 didRemove |= !!block.values.removeAllMatching([&](ValueID id) {
                     const Value& value = function.at(id);
+                    if (usedValues.quickGet(id.index()))
+                        return false;
                     bool isAnnotatedPure = (value.opcode == Opcode::Call || value.opcode == Opcode::Construct) && value.isAnnotatedPure();
-                    return (isAnnotatedPure || isCastWithoutTest(value.opcode) || resultRuleOf(value.opcode) == ResultRule::Constant) && !usedValues.quickGet(id.index());
+                    return isAnnotatedPure || isCastWithoutTest(value.opcode) || (resultRuleOf(value.opcode) == ResultRule::Constant && observable.neitherThrowsNorRunsCode(id));
                 });
             }
         }

@@ -1,0 +1,26 @@
+# function Point() { this.size = 0 }; Point.prototype.count = 1; Point.prototype.reset = Point; new Point(); Point.call(Point.prototype)
+# The store `this.size = 0` has two receivers, an instance and the prototype object. They arrive one after the other, and the store is first looked at with one of them alone.
+# What the results say goes by what the store writes to in the end, both of them, and not by what it was seen with on the way: `size` is no member that the prototype object alone was given.
+# RUN: valueflow-apply
+# CHECK: layout L0 kind=Instance name="Point" {{*}}namedMembers=[{key="count"}, {key="reset" function=f1}]}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" constructor=f1 fields=[{key="size" declared={type=anything}}] flags=[IsConstructorFunction]
+variable g0 name="Point" module=m0 declared={type=function flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="prototype"
+    v2 = Integer integer=1
+    PropSet v1, v2 key="count" mode=Strict
+    PropSet v1, v0 key="reset" mode=Strict
+    v5 = Construct v0
+    v6 = Call v0, v1
+    Return
+}
+function f1 name="Point" flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    PropSet v0, v1 key="size" mode=Strict
+    Return
+}

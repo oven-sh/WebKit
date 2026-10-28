@@ -624,21 +624,28 @@ CCallHelpers::Address StubAssembler::limitOfCallsByValue()
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(callsByValue.limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
 }
 
-static constexpr CCallHelpers::Address softStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit() };
-static constexpr CCallHelpers::Address trapAwareSoftStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit() };
+CCallHelpers::Address StubAssembler::softStackLimitWord()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit());
+}
+
+CCallHelpers::Address StubAssembler::trapAwareSoftStackLimitWord()
+{
+    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
+}
 
 void StubAssembler::checkStackBeforeEntering()
 {
-    pollIfBelow(trapAwareSoftStackLimitWord, pollBeforeEntering(PollBeforeEnteringForm::Plain));
+    pollIfBelow(trapAwareSoftStackLimitWord(), pollBeforeEntering(PollBeforeEnteringForm::Plain));
 }
 
 void StubAssembler::checkStackBeforeEntering(GPRReg endOfFrame)
 {
-    Jump mayNotFit = branchPtr(Below, endOfFrame, trapAwareSoftStackLimitWord);
+    Jump mayNotFit = branchPtr(Below, endOfFrame, trapAwareSoftStackLimitWord());
     Label afterCheck = label();
     addOutOfLinePart([mayNotFit, afterCheck, endOfFrame](StubAssembler& jit) {
         mayNotFit.link(&jit);
-        jit.linkToStub(jit.branchPtr(Below, endOfFrame, softStackLimitWord), throwStackOverflow());
+        jit.linkToStub(jit.branchPtr(Below, endOfFrame, softStackLimitWord()), throwStackOverflow());
         jit.pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain));
         jit.jump().linkTo(afterCheck, &jit);
     });

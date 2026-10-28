@@ -67,6 +67,10 @@ public:
             for (BasicBlock* block : plan.blocks)
                 cloner.addBlock(block);
         }
+        for (Plan& plan : m_plans)
+            nameEndsInPreHeader(cloner, plan);
+        for (Plan& plan : m_plansOfCopiesThatPoll)
+            nameEndsInPreHeader(cloner, plan);
         cloner.demoteEscapingValues();
         m_proc.resetValueOwners();
         for (const Plan& plan : m_plans)
@@ -124,6 +128,8 @@ private:
         Vector<BasicBlock*, 4> blocksBehindRareEdges;
         // Set where the loop polls between stretches of turns instead of on every turn.
         PatchpointValue* poll { nullptr };
+        // The turns that are written out poll once together and run in no stretches: only the loop itself, which takes fewer turns than are written out, goes without its poll.
+        bool pollsOnceForAllWrittenOutTurns { false };
     };
 
     struct Counter {
@@ -132,6 +138,22 @@ private:
         Value* next { nullptr };
         int64_t step { 0 };
     };
+
+    // What is asked in front of a loop names where the loop starts and where it ends. A block that is copied may compute that: a user in the pre-header makes it a value that leaves the block.
+    void nameEndsInPreHeader(const RegionCloner& cloner, Plan& plan)
+    {
+        auto name = [&](Value*& value) {
+            if (!cloner.contains(value->owner))
+                return;
+            Value* named = value->isConstant() ? m_proc.clone(value) : m_proc.add<Value>(Identity, value->origin(), value);
+            plan.preHeader->appendNonTerminal(named);
+            value = named;
+        };
+        name(plan.start);
+        name(plan.bound);
+        for (SumOfIntegers& sum : plan.sums)
+            name(sum.start);
+    }
 
     // Beside a call the test of the counter costs little.
     static bool isCall(const Value* value)
@@ -603,7 +625,7 @@ private:
         plan.preHeader = findPreHeader(loops, loop);
         if (!plan.preHeader)
             return;
-        m_pollsOfLoopCanMove = !hasBlocksBehindRareEdges(loops, loop);
+        m_pollsOfLoopCanMove = true;
 
         // Only the likely blocks are written out. A rare edge leads into the loop itself, which takes the turns that are left.
         IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
@@ -695,12 +717,6 @@ private:
     static IndexSet<BasicBlock*> findBlocksInFrontOfRareEdges(const NaturalLoops& loops, const NaturalLoop& loop)
     {
         return findBlocksThatCanRun(loops, loop, RareEdges::EndTheWalk);
-    }
-
-    // Whoever leaves a copy of the loop by a rare edge and stays in the loop ends in the loop itself, with any number of turns in front of him.
-    static bool hasBlocksBehindRareEdges(const NaturalLoops& loops, const NaturalLoop& loop)
-    {
-        return findBlocksInFrontOfRareEdges(loops, loop).size() != findBlocksThatCanRun(loops, loop, RareEdges::AreFollowed).size();
     }
 
     // A loop that seldom ends by the test of its counter and often by another test ends after who knows how few turns: asking in front of it would cost more than its polls.
@@ -861,6 +877,12 @@ private:
     {
         Origin origin = plan.preHeader->last()->origin();
         bool rises = plan.step > 0;
+        // A constant may stand in the loop.
+        auto inBlock = [&](Value* value) {
+            return value->hasInt() ? block->appendIntConstant(m_proc, origin, value->type(), value->asInt()) : value;
+        };
+        counter = inBlock(counter);
+        bound = inBlock(bound);
         Value* distance = block->appendNew<Value>(m_proc, Sub, origin, rises ? bound : counter, rises ? counter : bound);
         Value* greatest = block->appendIntConstant(m_proc, origin, distance->type(), Limits::maxTurnsWithoutPoll * (rises ? plan.step : -plan.step));
         block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, BelowEqual, origin, distance, greatest));
@@ -878,12 +900,21 @@ private:
     }
 
     // Every turn moves the counter one step towards a bound that does not change, so the turns between two polls can be counted. That takes a plan that holds the whole loop:
-    // a block that it leaves out leads back into the loop itself, from any copy and with any number of turns left.
+    // a block that it leaves out leads back into the loop itself, from any copy and with any number of turns left. What lies behind the rare edges of the turns that are written out
+    // has a copy of its own, which asks again how many turns are left. In the loop itself it goes round as it did, so there too it must move the counter one step.
     void findPoll(const NaturalLoops& loops, const NaturalLoop& loop, Plan& plan)
     {
         IndexSet<BasicBlock*> blocksThatCanRun = findBlocksThatCanRun(loops, loop, RareEdges::AreFollowed);
         for (BasicBlock* block : plan.blocks)
             blocksThatCanRun.remove(block);
+        if (!plan.blocksBehindRareEdges.isEmpty()) {
+            for (UpsilonValue* upsilon : prepareToReadCounters()[plan.counter]) {
+                if (blocksThatCanRun.contains(upsilon->owner) && stepOf(upsilon->child(0)->foldIdentity(), plan.counter) != plan.step)
+                    return;
+            }
+            for (BasicBlock* block : plan.blocksBehindRareEdges)
+                blocksThatCanRun.remove(block);
+        }
         if (!blocksThatCanRun.isEmpty())
             return;
         PatchpointValue* poll = nullptr;
@@ -897,6 +928,8 @@ private:
             }
         }
         plan.poll = poll;
+        // A loop with rare paths that come back is seldom one that walks for long, and a stretch costs more at its start than the polls of a few passes.
+        plan.pollsOnceForAllWrittenOutTurns = !plan.blocksBehindRareEdges.isEmpty() && !fitsOneStretch(plan);
     }
 
     // What lies behind a rare edge is not written out with each turn. It gets one copy, with the rest of the turn, for all the turns that are written out,
@@ -1108,6 +1141,8 @@ private:
             return;
         Origin origin = plan.test->last()->origin();
         BasicBlock* again = m_proc.addBlock();
+        if (!plan.pollsOnceForAllWrittenOutTurns)
+            appendPoll(plan, again);
         Value* counter = again->appendNew<VariableValue>(m_proc, Get, origin, variableOfCounter(plan));
         Value* bound = bounds.bound;
         Opcode relation = plan.relation;
@@ -1477,7 +1512,7 @@ private:
         Stretch stretch;
         // Behind a stretch there may be room for another.
         BasicBlock* headerBehindRest = plan.header;
-        if (!plan.sums.isEmpty() || (plan.poll && !fitsOneStretch(plan))) {
+        if (!plan.sums.isEmpty() || (plan.poll && !plan.pollsOnceForAllWrittenOutTurns && !fitsOneStretch(plan))) {
             stretch.first = m_proc.addBlock();
             stretch.tests = m_proc.addBlock();
             stretch.next = m_proc.addBlock();
@@ -1507,7 +1542,7 @@ private:
             for (BasicBlock* block : plan.blocks) {
                 BasicBlock* copy = turns[turn].get(block);
                 copy->replaceSuccessor(ownHeader, nextHeader);
-                if (!turn && !plan.poll)
+                if (!turn && (!plan.poll || plan.pollsOnceForAllWrittenOutTurns))
                     continue;
                 for (Value* value : *copy) {
                     if (isLoopPoll(value))

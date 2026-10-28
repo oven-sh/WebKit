@@ -62,6 +62,9 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     validateMutation(vm, *this, field, mutationOf(reason));
     RELEASE_ASSERT(field.canLeaveSlot());
     UniquedStringImpl* name = propertyNameOf(vm, *this, field);
+    JSObject* extraBefore = extraPropertiesIfMade(*this);
+    FieldExit exit { &field, structureID(), { }, extraBefore ? extraBefore->structureID() : StructureID(), { }, orderWord(), 0, invalidOffset, isInSlot(field) };
+    bool hadOtherCellInPlaceOfExtraProperties = !extraBefore && hasExtraProperties();
     JSObject* extra = ensureExtraProperties(vm);
     RELEASE_ASSERT(extra);
     State& state = this->state();
@@ -75,6 +78,55 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name);
     count(instance(), counterFor(reason));
     state.propertyCaches->countNamed(describeExit(reason, leaving.valueOrAccessor), name);
+
+    if (reason != SlotExitReason::StoreOfOtherType || leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot())
+        return;
+    Structure* extraStructure = extra->structure();
+    if (structure()->mayBePrototype() || extraStructure->isDictionary())
+        return;
+    unsigned attributes;
+    exit.offset = extraStructure->get(vm, name, attributes);
+    if (!isValidOffset(exit.offset) || !isInlineOffset(exit.offset) || attributes)
+        return;
+    exit.structureAfter = structureID();
+    exit.extraPropertiesAfter = extraStructure->id();
+    exit.orderWordAfter = orderWord();
+    state.propertyCaches->remember(exit);
+}
+
+bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
+{
+    const FieldData& field = *exit.field;
+    if (structureID() != exit.structureBefore || orderWord() != exit.orderWordBefore || isInFrame() || isInSlot(field) != exit.wasInSlot)
+        return false;
+    if (state().objects->layouts.slotAdmits(field, value))
+        return false;
+    JSObject* extra = extraPropertiesIfMade(*this);
+    if (exit.extraPropertiesBefore ? !extra || extra->structureID() != exit.extraPropertiesBefore : hasExtraProperties())
+        return false;
+    willLeaveStateOfBirth(vm, *this, field, ObjectMutation::StoreOfOtherType);
+    validateMutation(vm, *this, field, ObjectMutation::StoreOfOtherType);
+    // A collection forgets the exit, and then these pointers alone keep the Structures alive.
+    auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(exit.structureAfter.decode()));
+    Structure* extraStructureAfter = WTF::opaque(exit.extraPropertiesAfter.decode());
+    uint32_t orderWordAfter = exit.orderWordAfter;
+    PropertyOffset offset = exit.offset;
+    if (extra) {
+        extra->putDirectOffset(vm, offset, value);
+        extra->setStructure(vm, extraStructureAfter);
+        JSCell::setStructure(vm, structureAfter);
+    } else {
+        extra = constructEmptyObject(vm, extraStructureAfter);
+        extra->putDirectOffset(vm, offset, value);
+        setExtraProperties(vm, extra, structureAfter);
+    }
+    at<uint32_t>(offsetOfOrderWord) = orderWordAfter;
+    setPerCellBit(true);
+    clear(field);
+    count(instance(), counterFor(SlotExitReason::StoreOfOtherType));
+    ensureStillAliveHere(structureAfter);
+    ensureStillAliveHere(extraStructureAfter);
+    return true;
 }
 
 bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)

@@ -94,6 +94,20 @@ struct FieldData {
 };
 static_assert(sizeof(FieldData) == 16 && isImageRecord<FieldData>);
 
+// What a store of a value that the slot of a field does not take made of an object. It makes the same of every object in the same state.
+struct FieldExit {
+    const FieldData* field;
+    StructureID structureBefore;
+    StructureID structureAfter;
+    // None where the object had no extra properties.
+    StructureID extraPropertiesBefore;
+    StructureID extraPropertiesAfter;
+    uint32_t orderWordBefore;
+    uint32_t orderWordAfter;
+    PropertyOffset offset;
+    bool wasInSlot;
+};
+
 struct VariableData {
     uint32_t name;
     SlotData slot;

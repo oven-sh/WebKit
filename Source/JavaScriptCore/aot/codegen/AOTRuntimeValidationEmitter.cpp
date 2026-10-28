@@ -38,7 +38,7 @@ void RuntimeValidationEmitter::validateParameters(BlockID, const Block& block)
     }
 }
 
-static bool hasClassProofs(const Type& type)
+static bool hasClassProofsToCheck(const Type& type)
 {
     return std::ranges::any_of(type.classes, [](const ClassPart& part) {
         return part.contentsAreProven || !part.provenPristine.isEmpty();
@@ -80,7 +80,7 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         if (type.layouts || !type.classes.isEmpty() || type.environment || generator().checksKeptRegisters())
             checkValue(operand, get(operand));
         // Nothing has written to the heap since an earlier operation made the same check.
-        if (hasTestableBits(operand) && hasClassProofs(type) && !m_checkedClassProofs.contains(operand)) {
+        if (hasTestableBits(operand) && hasClassProofsToCheck(type) && !m_checkedClassProofs.contains(operand)) {
             checkClassProofs(operand, get(operand), type);
             m_checkedClassProofs.append(operand);
         }

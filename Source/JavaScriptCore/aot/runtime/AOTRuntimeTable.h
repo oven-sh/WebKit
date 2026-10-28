@@ -72,7 +72,8 @@ enum class BrokenClaim : uint32_t {
     v(GeneratorClassInfo) \
     v(WebAssemblyFunctionClassInfo) \
     v(CallNativeFunctionUnderValidation) \
-    v(ConstructNativeFunctionUnderValidation)
+    v(ConstructNativeFunctionUnderValidation) \
+    v(CheckThatThrowingCallHasSite)
 
 enum class Entry : uint16_t {
 #define AOT_DEFINE_SCHEMA_ENTRY(name) operationAOT##name,

@@ -151,6 +151,8 @@ enum Sabotage {
     VariablesReadAgainInLoopsOutlastWrites
     LoadsFoldedIntoTheirUsersOutlastWrites PairedLoadsOutlastWrites
     WrittenOutTurnsAlwaysFit
+    CallsThatThrowHaveNoSite
+    BoundsReadTwiceOutlastWrites
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

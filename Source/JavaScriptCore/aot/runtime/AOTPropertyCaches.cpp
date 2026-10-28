@@ -1229,6 +1229,7 @@ PropertyCaches::PropertyCaches(State& state)
 {
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
+    state.caches->addClearedEachCollection("exits of fields"_s, asMutableByteSpan(std::span { m_fieldExits }));
     if (Options::aotCountsPath())
         m_countedFilings = makeUnique<UncheckedKeyHashSet<uint64_t>>();
 }

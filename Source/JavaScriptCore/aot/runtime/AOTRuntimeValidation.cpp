@@ -251,6 +251,47 @@ static void dumpCalledCode(PrintStream& out, JSValue found)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static std::optional<uint32_t> readWordOfMark(const uint8_t*& cursor)
+{
+    uint64_t word = 0;
+#if CPU(X86_64)
+    // movabs into r11.
+    if (cursor[0] != 0x49 || cursor[1] != 0xbb)
+        return std::nullopt;
+    memcpySpan(asMutableByteSpan(word), unsafeMakeSpan(cursor + 2, sizeof(word)));
+    cursor += 2 + sizeof(word);
+#elif CPU(ARM64)
+    // movz and two movk into the zero register.
+    constexpr std::array<uint32_t, 3> opcodes { 0xd280001f, 0xf2a0001f, 0xf2c0001f };
+    for (unsigned i = 0; i < opcodes.size(); ++i) {
+        uint32_t instruction = 0;
+        memcpySpan(asMutableByteSpan(instruction), unsafeMakeSpan(cursor, sizeof(instruction)));
+        if ((instruction & 0xffe0001f) != opcodes[i])
+            return std::nullopt;
+        word |= static_cast<uint64_t>(instruction >> 5 & 0xffff) << 16 * i;
+        cursor += sizeof(instruction);
+    }
+#else
+    UNUSED_PARAM(cursor);
+    return std::nullopt;
+#endif
+    if (word >> MarkOfCallWithoutSite::tagShift != MarkOfCallWithoutSite::tag)
+        return std::nullopt;
+    return static_cast<uint32_t>(word);
+}
+
+std::optional<MarkOfCallWithoutSite> MarkOfCallWithoutSite::read(const void* returnAddress)
+{
+    const uint8_t* cursor = static_cast<const uint8_t*>(returnAddress);
+    std::optional<uint32_t> value = readWordOfMark(cursor);
+    if (!value)
+        return std::nullopt;
+    std::optional<uint32_t> callee = readWordOfMark(cursor);
+    if (!callee)
+        return std::nullopt;
+    return MarkOfCallWithoutSite { Typed::ValueID(*value), static_cast<int32_t>(*callee) };
+}
+
 void crashOnValidationFailure(VM&, const ValidationFailure& failure)
 {
     // Never released: another thread that fails waits here until this one has crashed.
@@ -264,7 +305,7 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
     dataLog("AOT validation: ", nameOf(failure.kind), " f", numberOrDash(failure.function), " v", numberOrDash(failure.value), " ");
     if (failure.kind == ValidationFailureKind::CallChangedKeptRegister || failure.kind == ValidationFailureKind::UnwindingChangedKeptRegister)
         dumpChangedRegister(WTF::dataFile(), failure.found);
-    else if (failure.kind == ValidationFailureKind::CallCollected)
+    else if (failure.kind == ValidationFailureKind::CallCollected || failure.kind == ValidationFailureKind::CallThrew)
         dumpCalledCode(WTF::dataFile(), failure.found);
     else
         dumpClassOf(WTF::dataFile(), failure.found);

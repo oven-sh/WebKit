@@ -661,7 +661,7 @@ void Modules::forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)>
 // `bun run` evaluates a CommonJS file inside JSModuleLoader::makeModule(), while its registry entry is still being fetched: an asynchronous load waits for the entry, a synchronous one makes the record again.
 bool Modules::asyncLoadMustWaitFor(ModuleID fileOrFace) const
 {
-    return !m_instance.vm->m_synchronousModuleQueue && isEvaluatedByLoader(fileOf(fileOrFace));
+    return !m_instance.vm->synchronousModuleQueue() && isEvaluatedByLoader(fileOf(fileOrFace));
 }
 
 bool Modules::isEvaluatedByLoader(ModuleID file) const
@@ -700,7 +700,7 @@ bool Modules::hasKey(ModuleID file, const Identifier& key)
 
 std::optional<ModuleID> Modules::fileToWaitFor(const Identifier& key)
 {
-    if (!m_innermostFilesBeingRun || m_instance.vm->m_synchronousModuleQueue) [[likely]]
+    if (!m_innermostFilesBeingRun || m_instance.vm->synchronousModuleQueue()) [[likely]]
         return std::nullopt;
     std::optional<ModuleID> found;
     forEachFileEvaluatedByLoader([&](ModuleID file) {
@@ -1106,7 +1106,7 @@ void Modules::handGraphToLoader(FilesBeingRun& files)
         DeferTerminationForAWhile deferTermination(vm);
         SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(*running));
         // The steps were due before any require() of the file began.
-        SetForScope noSynchronousLoad(vm.m_synchronousModuleQueue, nullptr);
+        SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, vm.m_synchronousModuleQueue);
         if (files.load) {
             ModuleRecord* record = recordIfExists(files.root);
             files.load->forgetVisited(record);
