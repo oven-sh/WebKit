@@ -1513,29 +1513,19 @@ static bool isCalledInPlace(FunctionPassContext& context, ValueID read)
     return anyUserBehindCasts(context.analyses, read, isCalleeOf);
 }
 
-static bool isGetterAlone(const BuiltinTable& builtins, BuiltinID member)
-{
-    return builtins.at(member).kind == BuiltinKind::Accessor && !std::ranges::contains(builtins.overloadSummariesOf(member), BuiltinCallMode::Set, &BuiltinOverloadSummary::mode);
-}
-
 static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key)
 {
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinMemberName name = builtinMemberNameOf(context.program, key);
     if (!isOrdinaryText(context.program, key) || !name || name.isPrivateAlias)
         return false;
-    bool stores = accessOf(context.function.at(access).opcode) == Access::Store;
     bool asksForMethod = accessOf(context.function.at(access).opcode) == Access::Read && isCalledInPlace(context, access);
     std::span<const BuiltinClassID> classes = builtins.classesWithInstanceMember(name.name);
     if (asksForMethod && classes.empty())
         return false;
     return std::ranges::all_of(classes, [&](BuiltinClassID builtinClass) {
         BuiltinMemberLookup found = builtins.findForInstance(builtinClass, name.name);
-        if (found.outcome != BuiltinMemberLookup::Outcome::Found)
-            return false;
-        BuiltinID member = builtins.canonicalID(found.member);
-        // `response.body = text` stores nothing: whoever stores under the name has an object in mind that takes the value.
-        return (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
+        return found.outcome == BuiltinMemberLookup::Outcome::Found && (builtins.at(builtins.canonicalID(found.member)).kind == BuiltinKind::Method) != asksForMethod;
     });
 }
 

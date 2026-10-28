@@ -1,6 +1,5 @@
 # A name that a built-in has too says nothing about whether the object has a layout, but among the layouts it tells as much as any other name.
 # Where instances of built-in classes have only a method under the name, whoever reads it and does not call it has a field in mind
-# Where they have only a getter under the name, so has whoever stores under it
 # FORM: Prepared optimizing
 # RUN: pass PlaceTypeTests
 
@@ -54,13 +53,3 @@ function f6 name="Message" kind=BaseConstructor flags=[HasNewTarget] results=[{t
 function f7 name="Label" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L3
 function f8 name="TreeNode" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L4
 function f9 name="Sized" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] constructedClass=L5
-
-function f10 name="getterOfBuiltinsStoredTo" parameters=[{type=object flags=[IsExpected]}] results=[{type=anything}] {
-  b0(v0: anything ~ object):
-    v1 = Integer integer=1
-    PropSet v0, v1 key="size"
-    Return v1
-# CHECK-NEXT: b0(v0: anything ~ L5
-# CHECK: = TypeTest v0 testedType=L5
-# CHECK: PutSlotOrAdd {{*}} key="size" receivers=[L5
-}
