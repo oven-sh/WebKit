@@ -675,16 +675,17 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
         return jit.branchTest8(CCallHelpers::NonZero, memberOfExit(OBJECT_OFFSETOF(FieldExit, widthOfSlot)), TrustedImm32(sizeof(uint64_t)));
     };
 
+    // The object has the field, or lacks it, as the other object did.
+    Jump slotIsWide = branchIfSlotIsWide();
+    jit.load32(slot, scratch);
+    Jump isLoaded = jit.jump();
+    slotIsWide.link(&jit);
+    jit.load64(slot, scratch);
+    isLoaded.link(&jit);
+    Jump isInSlot = jit.branch64(CCallHelpers::NotEqual, scratch, memberOfExit(OBJECT_OFFSETOF(FieldExit, absentBits)));
+    cannot.append(jit.branchTest8(CCallHelpers::NonZero, memberOfExit(OBJECT_OFFSETOF(FieldExit, wasInSlot))));
     // A store that creates the field asks what is above the object. Nothing there has changed since the other store asked.
     if (mode != PutMode::Define) {
-        Jump isWide = branchIfSlotIsWide();
-        jit.load32(slot, scratch);
-        Jump isLoaded = jit.jump();
-        isWide.link(&jit);
-        jit.load64(slot, scratch);
-        isLoaded.link(&jit);
-        Jump isInSlot = jit.branch64(CCallHelpers::NotEqual, scratch, memberOfExit(OBJECT_OFFSETOF(FieldExit, absentBits)));
-        cannot.append(jit.branchTest8(CCallHelpers::NonZero, memberOfExit(OBJECT_OFFSETOF(FieldExit, wasInSlot))));
         jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.absenceFilterGenerationForStores)), scratch);
         cannot.append(jit.branch32(CCallHelpers::NotEqual, memberOfExit(OBJECT_OFFSETOF(FieldExit, generationForStores)), scratch));
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesChangedOnChains)), scratch);
@@ -692,8 +693,11 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
         jit.load64(BaseIndex(scratch, extra, CCallHelpers::TimesEight), scratch);
         jit.urshift64(name, scratch);
         cannot.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
-        isInSlot.link(&jit);
     }
+    Jump isCreated = jit.jump();
+    isInSlot.link(&jit);
+    cannot.append(jit.branchTest8(CCallHelpers::Zero, memberOfExit(OBJECT_OFFSETOF(FieldExit, wasInSlot))));
+    isCreated.link(&jit);
 
     jit.load32(memberOfExit(OBJECT_OFFSETOF(FieldExit, extraPropertiesBefore)), scratch);
     Jump hasNone = jit.branchTest32(CCallHelpers::Zero, scratch);
