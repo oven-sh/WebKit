@@ -10,6 +10,7 @@
 
 #include "AOTHost.h"
 #include "AOTImage.h"
+#include "AOTLoadedObject.h"
 #include "Options.h"
 #include "WasmCodeInImage.h"
 #include <wtf/AccessibleAddress.h>
@@ -31,7 +32,6 @@
 #endif
 #if OS(LINUX) || OS(FREEBSD)
 #include <fcntl.h>
-#include <link.h>
 #include <unistd.h>
 #if OS(LINUX)
 #include <sys/auxv.h>
@@ -272,27 +272,46 @@ struct SegmentOfExecutable {
 
 static constexpr bool dataHasSegmentsOfItsOwn = true;
 
+const ProgramHeader* LoadedObject::findSegment(uintptr_t address) const
+{
+    for (const ProgramHeader& header : programHeaders) {
+        uintptr_t start = loadBias + header.p_vaddr;
+        if (header.p_type == PT_LOAD && address >= start && address - start < header.p_filesz)
+            return &header;
+    }
+    return nullptr;
+}
+
+int LoadedObjectSearch::visit(const LoadedObject& object)
+{
+    if (!object.findSegment(m_address))
+        return 0;
+    m_found = object;
+    return 1;
+}
+
+const LoadedObject& loadedExecutable()
+{
+    static const LoadedObject executable = [] {
+        static constexpr uint8_t byteOfEngine { };
+        LoadedObjectSearch search(reinterpret_cast<uintptr_t>(&byteOfEngine));
+        dl_iterate_phdr([](struct dl_phdr_info* object, size_t, void* data) {
+            size_t numberOfHeaders = object->dlpi_phdr ? object->dlpi_phnum : 0;
+            return static_cast<LoadedObjectSearch*>(data)->visit({ object->dlpi_addr, { object->dlpi_phdr, numberOfHeaders } });
+        }, &search);
+        return search.found().value_or(LoadedObject { });
+    }();
+    return executable;
+}
+
 static std::optional<SegmentOfExecutable> findSegmentOfExecutable(const uint8_t* address)
 {
-    struct Search {
-        uintptr_t address;
-        std::optional<SegmentOfExecutable> found;
-    };
-    Search search { reinterpret_cast<uintptr_t>(address), std::nullopt };
-    dl_iterate_phdr([](struct dl_phdr_info* object, size_t, void* data) {
-        auto& search = *static_cast<Search*>(data);
-        for (unsigned index = 0; index < object->dlpi_phnum; ++index) {
-            const auto& header = object->dlpi_phdr[index];
-            uintptr_t start = object->dlpi_addr + header.p_vaddr;
-            if (header.p_type != PT_LOAD || search.address < start || search.address - start >= header.p_filesz)
-                continue;
-            search.found = SegmentOfExecutable { header.p_filesz - (search.address - start), !!(header.p_flags & PF_W), !!(header.p_flags & PF_X), static_cast<int64_t>(header.p_offset + (search.address - start)), !object->dlpi_addr };
-            break;
-        }
-        // The executable is the first object, and the image is in no other.
-        return 1;
-    }, &search);
-    return search.found;
+    const LoadedObject& executable = loadedExecutable();
+    const ProgramHeader* segment = executable.findSegment(reinterpret_cast<uintptr_t>(address));
+    if (!segment)
+        return std::nullopt;
+    uint64_t offsetInSegment = reinterpret_cast<uintptr_t>(address) - (executable.loadBias + segment->p_vaddr);
+    return SegmentOfExecutable { segment->p_filesz - offsetInSegment, !!(segment->p_flags & PF_W), !!(segment->p_flags & PF_X), static_cast<int64_t>(segment->p_offset + offsetInSegment), !executable.loadBias };
 }
 
 #elif OS(DARWIN)

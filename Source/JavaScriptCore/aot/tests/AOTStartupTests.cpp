@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
+#include "AOTLoadedObject.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRealmTestSupport.h"
@@ -19,6 +20,8 @@
 #include "DeferGCInlines.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include <algorithm>
+#include <array>
 #include <wtf/StackBounds.h>
 
 #if OS(LINUX)
@@ -267,6 +270,97 @@ static void testMainThreadStackEndsAboveItsFirstFrame()
     entry->a_un.a_val = original;
     AOT_TEST_CHECK(!isPlanted || isRight(boundsUnderTracer));
 }
+
+static ProgramHeader segmentOfKind(unsigned kind, uintptr_t address, size_t sizeInFile, size_t sizeInMemory, unsigned flags)
+{
+    ProgramHeader header { };
+    header.p_type = kind;
+    header.p_flags = flags;
+    header.p_offset = address;
+    header.p_vaddr = address;
+    header.p_filesz = sizeInFile;
+    header.p_memsz = sizeInMemory;
+    return header;
+}
+
+// Hands the objects over as dl_iterate_phdr() does.
+static std::optional<LoadedObject> findObjectAmong(std::span<const LoadedObject> objects, uintptr_t address)
+{
+    LoadedObjectSearch search(address);
+    for (const LoadedObject& object : objects) {
+        if (search.visit(object))
+            break;
+    }
+    return search.found();
+}
+
+static void testObjectIsFoundWhereverItIsListed()
+{
+    constexpr size_t page = 4 * KB;
+    const ProgramHeader segmentsOfLinker[] = {
+        segmentOfKind(PT_LOAD, 0, page, page, PF_R),
+        segmentOfKind(PT_LOAD, page, page, page, PF_R | PF_X),
+    };
+    const ProgramHeader segmentsOfExecutable[] = {
+        segmentOfKind(PT_NOTE, 5 * page, page, page, PF_R),
+        segmentOfKind(PT_LOAD, 0, page, page, PF_R),
+        segmentOfKind(PT_LOAD, page, 2 * page, 2 * page, PF_R | PF_X),
+        segmentOfKind(PT_LOAD, 3 * page, page, 2 * page, PF_R | PF_W),
+    };
+    const ProgramHeader segmentsOfLibrary[] = {
+        segmentOfKind(PT_LOAD, 0, 8 * page, 8 * page, PF_R | PF_X),
+    };
+    const LoadedObject linker { 0x7000000000, segmentsOfLinker };
+    const LoadedObject executable { 0x5000000000, segmentsOfExecutable };
+    const LoadedObject library { 0x6000000000, segmentsOfLibrary };
+    const LoadedObject withoutHeaders;
+
+    std::array<unsigned, 4> order { 0, 1, 2, 3 };
+    do {
+        const LoadedObject all[] = { executable, linker, library, withoutHeaders };
+        const LoadedObject listed[] = { all[order[0]], all[order[1]], all[order[2]], all[order[3]] };
+        std::optional<LoadedObject> found = findObjectAmong(listed, executable.loadBias + page + 16);
+        AOT_TEST_CHECK(found && found->loadBias == executable.loadBias && found->programHeaders.data() == segmentsOfExecutable);
+        AOT_TEST_CHECK(!findObjectAmong(listed, 0x4000000000));
+
+        AOT_TEST_CHECK(found->findSegment(executable.loadBias) == &segmentsOfExecutable[1]);
+        AOT_TEST_CHECK(found->findSegment(executable.loadBias + page) == &segmentsOfExecutable[2]);
+        AOT_TEST_CHECK(found->findSegment(executable.loadBias + 3 * page - 1) == &segmentsOfExecutable[2]);
+        AOT_TEST_CHECK(found->findSegment(executable.loadBias + 4 * page - 1) == &segmentsOfExecutable[3]);
+        // Not from the file, not loaded, below the first segment.
+        AOT_TEST_CHECK(!found->findSegment(executable.loadBias + 4 * page));
+        AOT_TEST_CHECK(!found->findSegment(executable.loadBias + 5 * page));
+        AOT_TEST_CHECK(!found->findSegment(executable.loadBias - 1));
+        // What another object holds is in no segment of this one.
+        AOT_TEST_CHECK(!found->findSegment(linker.loadBias + page + 16));
+        AOT_TEST_CHECK(!found->findSegment(library.loadBias + page + 16));
+    } while (std::ranges::next_permutation(order).found);
+}
+
+static void testLoadedExecutableIsThisProgramAlone()
+{
+    struct Others {
+        const LoadedObject& executable;
+        unsigned segmentsTakenForThoseOfExecutable { 0 };
+    };
+    Others others { loadedExecutable() };
+    const ProgramHeader* code = others.executable.findSegment(reinterpret_cast<uintptr_t>(&testLoadedExecutableIsThisProgramAlone));
+    AOT_TEST_CHECK(code && code->p_flags & PF_X);
+    AOT_TEST_CHECK(reinterpret_cast<uintptr_t>(others.executable.programHeaders.data()) == getauxval(AT_PHDR));
+    AOT_TEST_CHECK(others.executable.programHeaders.size() == getauxval(AT_PHNUM));
+
+    dl_iterate_phdr([](dl_phdr_info* object, size_t, void* data) {
+        auto& others = *static_cast<Others*>(data);
+        if (!object->dlpi_phdr || object->dlpi_phdr == others.executable.programHeaders.data())
+            return 0;
+        for (const ProgramHeader& header : std::span { object->dlpi_phdr, object->dlpi_phnum }) {
+            if (header.p_type == PT_LOAD && header.p_filesz && others.executable.findSegment(object->dlpi_addr + header.p_vaddr))
+                ++others.segmentsTakenForThoseOfExecutable;
+        }
+        return 0;
+    }, &others);
+    AOT_TEST_CHECK(!others.segmentsTakenForThoseOfExecutable);
+}
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
@@ -291,6 +385,8 @@ std::span<const NativeTest> startupTests()
         { "startup/borrowed-text-of-a-string-is-counted-without-an-image"_s, testBorrowedTextOfStringIsCountedWithoutImage },
 #if OS(LINUX)
         { "startup/main-thread-stack-ends-above-its-first-frame"_s, testMainThreadStackEndsAboveItsFirstFrame },
+        { "startup/an-object-is-found-wherever-the-process-lists-it"_s, testObjectIsFoundWhereverItIsListed },
+        { "startup/the-loaded-executable-is-this-program-alone"_s, testLoadedExecutableIsThisProgramAlone },
 #endif
         { "startup/property-caches-are-created-at-first-use"_s, withProgram<testPropertyCachesAreCreatedAtFirstUse> },
         { "startup/global-object-reports-changes-once-an-answer-depends-on-it"_s, withProgram<testGlobalObjectReportsChangesOnceAnAnswerDependsOnIt> },
