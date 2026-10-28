@@ -111,7 +111,10 @@ public:
     };
     static DateTimeValueRecord handleDateTimeValue(JSGlobalObject*, const IntlDateTimeFormat*, JSValue);
 
-    JSValue format(JSGlobalObject*, double value) const;
+    // What format() does when ICU fails to compute the date in the calendar of the formatter. Date.prototype.toLocaleString()
+    // and its siblings are `! FormatDateTime()` in ECMA-402: they keep the text that ICU made before it failed.
+    enum class ICUFailure : bool { Throw, ReturnPartialText };
+    JSValue format(JSGlobalObject*, double value, ICUFailure = ICUFailure::Throw) const;
     // https://tc39.es/proposal-temporal/#sec-formatdatetime
     JSValue format(JSGlobalObject*, JSValue) const;
     JSValue formatToParts(JSGlobalObject*, JSValue) const;

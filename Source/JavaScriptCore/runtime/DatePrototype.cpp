@@ -977,7 +977,7 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToLocaleString, (JSGlobalObject* globalObj
         dateTimeFormat->initializeDateTimeFormat(globalObject, locales, options, IntlDateTimeFormat::RequiredComponent::Any, IntlDateTimeFormat::Defaults::All);
     }
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(dateTimeFormat->format(globalObject, milli)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(dateTimeFormat->format(globalObject, milli, IntlDateTimeFormat::ICUFailure::ReturnPartialText)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToLocaleDateString, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1003,7 +1003,7 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToLocaleDateString, (JSGlobalObject* globa
         dateTimeFormat->initializeDateTimeFormat(globalObject, locales, options, IntlDateTimeFormat::RequiredComponent::Date, IntlDateTimeFormat::Defaults::Date);
     }
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(dateTimeFormat->format(globalObject, milli)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(dateTimeFormat->format(globalObject, milli, IntlDateTimeFormat::ICUFailure::ReturnPartialText)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToLocaleTimeString, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1029,7 +1029,7 @@ JSC_DEFINE_HOST_FUNCTION(dateProtoFuncToLocaleTimeString, (JSGlobalObject* globa
         dateTimeFormat->initializeDateTimeFormat(globalObject, locales, options, IntlDateTimeFormat::RequiredComponent::Time, IntlDateTimeFormat::Defaults::Time);
     }
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(dateTimeFormat->format(globalObject, milli)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(dateTimeFormat->format(globalObject, milli, IntlDateTimeFormat::ICUFailure::ReturnPartialText)));
 }
 
 } // namespace JSC

@@ -1402,6 +1402,33 @@ static void LEGACY_NODELETE replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(
     }
 }
 
+// Every path that prints a single date formats here. udat_format() is not used for that: it has no way to report that
+// ICU failed to compute the date in the calendar of the formatter, and returns the text that ICU made before it failed.
+static UErrorCode formatDateToBuffer(UDateFormat* format, double value, Vector<char16_t, 32>& result, UFieldPositionIterator* fields = nullptr)
+{
+    auto status = callBufferProducingFunction(udat_formatForFields, format, value, result, fields);
+    if (U_FAILURE(status)) [[unlikely]]
+        return status;
+    replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
+    return status;
+}
+
+static JSValue formatDateToString(JSGlobalObject* globalObject, UDateFormat* format, double value, IntlDateTimeFormat::ICUFailure icuFailure = IntlDateTimeFormat::ICUFailure::Throw)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<char16_t, 32> result;
+    auto status = formatDateToBuffer(format, value, result);
+    if (U_FAILURE(status) && icuFailure == IntlDateTimeFormat::ICUFailure::ReturnPartialText) [[unlikely]] {
+        status = callBufferProducingFunction(udat_format, format, value, result, nullptr);
+        replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
+    }
+    if (U_FAILURE(status)) [[unlikely]]
+        return throwTypeError(globalObject, scope, "failed to format date value"_s);
+    return jsString(vm, String(WTF::move(result)));
+}
+
 // ICU4C-WORKAROUND: rdar://182953351 - Islamic calendars never expose a second era
 // (architecturally locked to one); Coptic has a second era but never selects it.
 // Substitute CLDR's "Before Hijra"/"Anno Martyrum" text ourselves. islamic-tbla's
@@ -1470,10 +1497,9 @@ static JSValue formatWithEraOverride(JSGlobalObject* globalObject, UDateFormat* 
     if (U_FAILURE(fieldsStatus)) [[unlikely]]
         return throwTypeError(globalObject, scope, "failed to open field position iterator"_s);
     Vector<char16_t, 32> result;
-    fieldsStatus = callBufferProducingFunction(udat_formatForFields, format, value, result, fields.get());
+    fieldsStatus = formatDateToBuffer(format, value, result, fields.get());
     if (U_FAILURE(fieldsStatus)) [[unlikely]]
         return throwTypeError(globalObject, scope, "failed to format date value"_s);
-    replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
 
     // Find the era field, and (only if needed) the year field, so both splice in one pass.
     int32_t eraBegin = -1, eraEnd = -1;
@@ -1536,7 +1562,7 @@ static JSValue formatWithEraOverride(JSGlobalObject* globalObject, UDateFormat* 
 }
 
 // https://tc39.es/proposal-temporal/#sec-formatdatetime
-JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, double value) const
+JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, double value, ICUFailure icuFailure) const
 {
     ASSERT(m_impl->m_dateFormat);
 
@@ -1551,13 +1577,7 @@ JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, double value) c
     if (eraOverride)
         RELEASE_AND_RETURN(scope, formatWithEraOverride(globalObject, m_impl->m_dateFormat.get(), value, *eraOverride, m_impl->m_year == Year::TwoDigit));
 
-    Vector<char16_t, 32> result;
-    auto status = callBufferProducingFunction(udat_format, m_impl->m_dateFormat.get(), value, result, nullptr);
-    if (U_FAILURE(status)) [[unlikely]]
-        return throwTypeError(globalObject, scope, "failed to format date value"_s);
-    replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
-
-    return jsString(vm, String(WTF::move(result)));
+    RELEASE_AND_RETURN(scope, formatDateToString(globalObject, m_impl->m_dateFormat.get(), value, icuFailure));
 }
 
 static ASCIILiteral partTypeString(UDateFormatField field)
@@ -1637,10 +1657,9 @@ static JSValue buildFormattedDateTimeParts(JSGlobalObject* globalObject, UDateFo
         return throwTypeError(globalObject, scope, "failed to open field position iterator"_s);
 
     Vector<char16_t, 32> result;
-    status = callBufferProducingFunction(udat_formatForFields, format, value, result, fields.get());
+    status = formatDateToBuffer(format, value, result, fields.get());
     if (U_FAILURE(status)) [[unlikely]]
         return throwTypeError(globalObject, scope, "failed to format date value"_s);
-    replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
 
     JSArray* parts = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), 0);
     if (!parts) [[unlikely]]
@@ -2589,12 +2608,7 @@ JSValue IntlDateTimeFormat::format(JSGlobalObject* globalObject, JSValue x) cons
     if (eraOverride)
         RELEASE_AND_RETURN(scope, formatWithEraOverride(globalObject, tempFormat, record.value, *eraOverride, m_impl->m_year == Year::TwoDigit));
 
-    Vector<char16_t, 32> result;
-    auto fmtStatus = callBufferProducingFunction(udat_format, tempFormat, record.value, result, nullptr);
-    if (U_FAILURE(fmtStatus)) [[unlikely]]
-        return throwTypeError(globalObject, scope, "failed to format date value"_s);
-    replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
-    return jsString(vm, String(WTF::move(result)));
+    RELEASE_AND_RETURN(scope, formatDateToString(globalObject, tempFormat, record.value));
 }
 
 // https://tc39.es/proposal-temporal/#sec-formatdatetimetoparts
@@ -2693,14 +2707,8 @@ JSValue IntlDateTimeFormat::formatRange(JSGlobalObject* globalObject, JSValue xV
         return { };
     }
 
-    if (preamble->equal) {
-        Vector<char16_t, 32> singleResult;
-        auto singleStatus = callBufferProducingFunction(udat_format, preamble->tempFormat, preamble->startMs, singleResult, nullptr);
-        if (U_FAILURE(singleStatus)) [[unlikely]]
-            return throwTypeError(globalObject, scope, "failed to format date value"_s);
-        replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(singleResult);
-        return jsString(vm, String(WTF::move(singleResult)));
-    }
+    if (preamble->equal)
+        RELEASE_AND_RETURN(scope, formatDateToString(globalObject, preamble->tempFormat, preamble->startMs));
 
     Vector<char16_t, 32> resultChars(std::span(chars, length));
     replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(resultChars);
