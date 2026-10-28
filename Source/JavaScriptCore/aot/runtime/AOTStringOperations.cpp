@@ -378,14 +378,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToLiteralString, EncodedJSValue, (
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLiteralStringToString, JSCell*, (Instance* instance, uint64_t word))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTLiteralStringToString);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, instance->state->strings->stringForLiteralStringWord(word));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTConcat, JSCell*, (Instance* instance, JSCell* left, JSCell* right))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcat);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSString* leftString = cellArgument<JSString>(left, Entry::operationAOTConcat);
     JSString* rightString = cellArgument<JSString>(right, Entry::operationAOTConcat);
     OPERATION_RETURN(scope, jsString(globalObject, leftString, rightString));
@@ -394,7 +392,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcat, JSCell*, (Instance* instance, JSCel
 JSC_DEFINE_JIT_OPERATION(operationAOTConcatThree, JSCell*, (Instance* instance, JSCell* first, JSCell* second, JSCell* third))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTConcatThree);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSString* firstString = cellArgument<JSString>(first, Entry::operationAOTConcatThree);
     JSString* secondString = cellArgument<JSString>(second, Entry::operationAOTConcatThree);
     JSString* thirdString = cellArgument<JSString>(third, Entry::operationAOTConcatThree);
@@ -404,7 +401,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcatThree, JSCell*, (Instance* instance, 
 JSC_DEFINE_JIT_OPERATION(operationAOTSubstring, JSCell*, (Instance* instance, JSCell* string, int32_t from, int32_t to))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSubstring);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     leaveCellsForRopes(instance);
     OPERATION_RETURN(scope, jsSubstring(globalObject, cellArgument<JSString>(string, Entry::operationAOTSubstring), from, to - from));
 }
@@ -658,7 +654,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringEqualsLiteral, size_t, (Inst
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIntToString, JSCell*, (Instance* instance, uint64_t bits))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTIntToString);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     int64_t value = static_cast<int64_t>(bits);
     if (value >= static_cast<int64_t>(NumericStrings::cacheSize) && value <= INT32_MAX) {
         StringKeyCache& keys = *instance->state->stringKeys;
@@ -696,7 +691,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance
         return operationAOTIntToString(instance, static_cast<uint64_t>(integer));
     }
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDoubleToString);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     if (integer == value)
         OPERATION_RETURN(scope, int32ToString(vm, integer, 10));
     OPERATION_RETURN(scope, vm.numericStrings.addJSString(vm, value));
@@ -705,7 +699,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToString, JSCell*, (Instance
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCharToString, JSCell*, (Instance* instance, uint32_t character))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCharToString);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, jsSingleCharacterString(vm, static_cast<char16_t>(character)));
 }
 

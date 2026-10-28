@@ -535,6 +535,38 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         ++numberOfBoxedResults;
     };
 
+    // Where the tail calls of the callee come to an end, whoever calls it in tail position may keep his frame until it returns.
+    auto isNumberInRegister = [](Representation representation) {
+        return representation == Representation::Int32 || isInt64OrMarker(representation) || isDoubleOrMarker(representation);
+    };
+    std::optional<BitVector> functionsThatEndTheirTailCalls;
+    auto endsItsTailCalls = [&](FunctionID id) {
+        if (!functionsThatEndTheirTailCalls) {
+            BitVector ends(count);
+            for (unsigned index = 0; index < count; ++index) {
+                if (recordFactsOf(program, FunctionID(index)).hasBody)
+                    ends.quickSet(index);
+            }
+            for (const TailCallSite& site : sites)
+                ends.quickClear(site.caller.index());
+            for (bool hasChanged = true; std::exchange(hasChanged, false);) {
+                for (size_t first = 0; first < sites.size();) {
+                    std::span<const TailCallSite> sitesOfCaller = sitesOf(sites.span(), sites[first].caller);
+                    bool everyCalleeEnds = std::ranges::all_of(sitesOfCaller, [&](const TailCallSite& site) { return site.calleeKind == TailCalleeKind::Direct && ends.quickGet(site.callee.index()); });
+                    if (everyCalleeEnds)
+                        hasChanged |= !ends.quickSet(sites[first].caller.index());
+                    first += sitesOfCaller.size();
+                }
+            }
+            functionsThatEndTheirTailCalls = WTF::move(ends);
+        }
+        return functionsThatEndTheirTailCalls->quickGet(id.index());
+    };
+    auto mayKeepFrameToConvertNumber = [&](const TailCallSite& site) {
+        return site.calleeKind == TailCalleeKind::Direct && !site.hasCheckedCast
+            && isNumberInRegister(resultOf(site.caller)) && isNumberInRegister(resultOf(site.callee)) && !haveSameRegisterRepresentation(resultOf(site.callee), resultOf(site.caller))
+            && program.at(site.caller).hasOrdinaryFrame() && isEnabledFor(site.caller) && endsItsTailCalls(site.callee);
+    };
     // A cell beside a boxed value is boxed with it.
     auto returnSameBits = [](Representation first, Representation second) {
         return first == second || (!isCellOrBoxedValue(first) && haveSameRegisterRepresentation(first, second));
@@ -542,9 +574,15 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     auto boxMixedClasses = [&] {
         unsigned callByValue = count;
         Vector<ConventionResultNode> nodes(count + 1);
-        for (const TailCallSite& site : sites) {
-            if (site.requirement == TailCallRequirement::Required)
-                nodes[site.caller.index()].unify(&nodes[site.calleeKind == TailCalleeKind::Unknown ? callByValue : site.callee.index()]);
+        for (TailCallSite& site : sites) {
+            if (site.requirement != TailCallRequirement::Required)
+                continue;
+            // An integer where the caller returns a fraction: to have both in one form would box both, and whoever else they jump to. The caller calls, converts and returns.
+            if (mayKeepFrameToConvertNumber(site)) {
+                site.requirement = TailCallRequirement::Allowed;
+                continue;
+            }
+            nodes[site.caller.index()].unify(&nodes[site.calleeKind == TailCalleeKind::Unknown ? callByValue : site.callee.index()]);
         }
 
         Vector<uint32_t> roots(count + 1);

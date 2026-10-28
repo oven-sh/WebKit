@@ -737,20 +737,37 @@ static bool walksWithoutTests(const OwnKeyWalkPlan& plan)
     return plan.arms.size() == 1 && !plan.needsShapeTest && !plan.needsKeyOrderTest && !plan.needsOriginalCall;
 }
 
+// The one test is that of a validating build, which holds the proven order against the object.
+static bool walksOneProvenOrder(FunctionPassContext& context, const OwnKeyWalkPlan& plan)
+{
+    if (plan.arms.size() != 1 || plan.needsShapeTest || plan.needsOriginalCall || plan.arms[0].copiesFieldsAtOnce)
+        return false;
+    return !plan.needsKeyOrderTest || (context.build.validates() && hasOnlyFilledFields(context.program, plan.arms[0]));
+}
+
 // The sites are listed last first: an expansion moves only the values after its point.
 static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
 {
     const Function& function = context.function;
     Vector<OwnKeyWalkSite, 4> sites;
     Vector<ValueID, 4> fillingLiteralsOutsideHotCode;
+    // The operation finds out at run time which names the source holds, and what it has found out serves the next run. Code that runs once, or seldom, pays for that and gets nothing back.
+    BitVector copiesThatSeldomRun;
     for (BlockID block : context.analyses.cfg().reversePostOrder() | std::views::reverse) {
         if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
             continue;
         for (uint32_t index = function.at(block).values.size(); index--;) {
             std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, { block, index });
-            if (!site || context.runsAtMostOnce(block))
+            if (!site)
                 continue;
             Expected<HeatClass> heat = heatClassByOwnLoops(context, block);
+            if (context.runsAtMostOnce(block) || isCold(heat).predicted()) {
+                if (site->walk == OwnKeyWalk::Spread || site->walk == OwnKeyWalk::Assign) {
+                    copiesThatSeldomRun.set(site->value.index());
+                    sites.append(WTF::move(*site));
+                }
+                continue;
+            }
             // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
             if (!isCold(heat).predicted() && (site->walk != OwnKeyWalk::Copy || isHot(heat).predicted()) && !isListThatLivesOn(context, *site)) {
                 if (!isHot(heat).predicted() && fillsEmptyLiteral(function, *site))
@@ -764,12 +781,15 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
     Vector<PlannedWalk, 4> walks;
     for (OwnKeyWalkSite& site : sites) {
         PlannedWalk walk { WTF::move(site), { }, { } };
+        bool seldomRuns = copiesThatSeldomRun.get(walk.site.value.index());
         if (walk.site.walk == OwnKeyWalk::Assign) {
             if (!planAssign(context, unchanged, walk))
                 continue;
+            if (seldomRuns && (walk.remainingSourcesCall || !std::ranges::all_of(walk.walkedSources, [&](const WalkedSource& source) { return walksOneProvenOrder(context, source.plan); })))
+                continue;
         } else if (isExpandedByPlan(walk.site.walk)) {
             std::optional<OwnKeyWalkPlan> plan = planOwnKeyWalk(context, unchanged, walk.site);
-            if (!plan)
+            if (!plan || (seldomRuns && !walksOneProvenOrder(context, *plan)))
                 continue;
             // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
             if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target)) {
@@ -1221,6 +1241,140 @@ static PassOutcome editLoopsOneAtATime(FunctionPassContext& context, NOESCAPE co
     }
 }
 
+namespace {
+
+struct ForInLoop {
+    BlockID header;
+    BlockID entry;
+    ValueID step;
+    ValueID open;
+    ValueID source;
+    std::span<const BlockID> region;
+};
+
+} // anonymous namespace
+
+static bool isExpectedToBeList(const Program& program, const Function& function, ValueID source)
+{
+    return program.expectedOrTypeOf(function, source).predicted().findClassPart(BuiltinClasses::Array);
+}
+
+// `list[key]` under the text of an index is `list[index]`, whatever the object is.
+static void readUnderIndexInPlaceOfItsText(Function& function, std::span<const BlockID> blocks, ValueID text, ValueID index)
+{
+    auto isText = [&](ValueID key) {
+        while (key != text && isCastWithoutTest(function.at(key).opcode))
+            key = function.at(key).operand(0);
+        return key == text;
+    };
+    for (BlockID block : blocks) {
+        for (ValueID id : function.at(block).values) {
+            const Value& access = function.at(id);
+            if (elementAccessOf(access.opcode) && isText(access.propertyOperand()))
+                function.edit(id).setPropertyOperand(index);
+        }
+    }
+}
+
+// A for-in loop over a list gets a copy of its body for the indexed part of the enumerator. There the key is an integer, a read under it is a read of an element, and its text is made only for
+// whoever else asks for it. A turn that finds no element in the storage, and the turn behind the last index, go on in the loop as written, from the same position.
+static PassOutcome expandForInLoopOverList(FunctionPassContext& context, Emission& emission, const ForInLoop& loop)
+{
+    const Program& program = context.program;
+    Function& function = context.function;
+    IRBuilder& builder = emission.builder();
+    // The copy is as much code again as the loop.
+    if (!isHot(heatClassOf(context, loop.header)).predicted())
+        return PassOutcome::Unchanged;
+    uint64_t bytesOfRegion = 0;
+    for (BlockID block : loop.region)
+        bytesOfRegion += estimatedCodeBytes(program, function, function.at(block));
+    if (context.exceeds(LimitID::MaxVersionedIterationBytes, bytesOfRegion, loop.open))
+        return PassOutcome::Unchanged;
+
+    builder.setOrigin(function.at(loop.open).origin());
+    Vector<std::unique_ptr<RegionCloner>, 1> cloners;
+    cloners.append(makeUniqueWithoutFastMallocCheck<RegionCloner>(builder, function));
+    RegionCloner& cloner = *cloners.first();
+    cloner.cloneBlocks(loop.region, [](ValueID, Value&) { });
+    BlockID header = cloner.cloneOf(loop.header);
+    ValueID step = cloner.cloneOf(loop.step);
+
+    // The region may hold a cycle with a step of its own, which goes on to any position. The loop as written takes them all.
+    size_t positionIndex = function.at(header).parameters.find(function.at(step).positionOperand());
+    auto isPositionBehindStep = [&](ValueID position) {
+        const Value& next = function.at(definitionThroughUpcasts(function, position));
+        if (next.opcode != Opcode::Add)
+            return false;
+        const Value& found = function.at(next.operand(0));
+        const Value& distance = function.at(next.operand(1));
+        return found.opcode == Opcode::ResultAt && found.operand(OperandIndex::ResultAt::results) == step && found.index() == static_cast<uint32_t>(ForInStepResult::Position)
+            && distance.opcode == Opcode::Integer && distance.integer() == 1;
+    };
+    for (BlockID block : cloner.clonedBlocks()) {
+        for (Target& target : function.edit(block, editsOfTargets).terminator.targets) {
+            if (target.block == header && !(positionIndex < target.arguments.size() && isPositionBehindStep(target.arguments[positionIndex])))
+                target.block = loop.header;
+        }
+    }
+    context.analyses.didChangeControlFlow();
+
+    // An enumerator without an indexed part goes straight to the loop as written.
+    Target toLoop = function.at(loop.entry).terminator.targets[0];
+    RELEASE_ASSERT(positionIndex < toLoop.arguments.size());
+    function.edit(loop.entry, editsOfTargets).terminator = Terminator();
+    context.analyses.didChangeControlFlow();
+    builder.setHandler(function.at(loop.entry).handler);
+    builder.moveToEndOf(loop.entry);
+    ValueID indexedLength = builder.append(Opcode::GetEnumeratorIndexedLength, { loop.open });
+    ValueID hasIndexedPart = builder.append(Opcode::Less, { toLoop.arguments[positionIndex], indexedLength });
+    builder.emitBranch(hasIndexedPart, Target { header, Arguments(toLoop.arguments), { } }, Target { loop.header, Arguments(toLoop.arguments), { } });
+    RegionCloner::repairSSA(context.analyses, cloners.span());
+
+    // The repair splits a block that has a handler after each value that other blocks read, so the step may have left the header.
+    ValueLocation placeOfStep = context.analyses.useLists().locationOf(step);
+    RELEASE_ASSERT(placeOfStep.placement == ValuePlacement::InBlock);
+
+    Arguments carriedValues(function.at(header).parameters);
+    ValueID object = function.at(step).objectOperand();
+    ValueID position = function.at(step).positionOperand();
+    Expected<BlockFrequency> frequency = function.at(header).frequency;
+    Expected<BlockFrequency> unlikely = rarerOf(frequency, BlockFrequency::Unlikely);
+    builder.setOrigin(function.at(step).origin());
+    IRBuilder::Expansion expansion = builder.beginExpansion({ placeOfStep.block, placeOfStep.index });
+    // A later copy of these blocks without their proofs takes the position for any number. What goes on to a step is an integer by the operation that makes it.
+    auto goOnInLoopAsWritten = [&] {
+        Arguments arguments(carriedValues);
+        arguments[positionIndex] = builder.append(Opcode::ToEnumeratorPosition, { position });
+        builder.emitJump(loop.header, WTF::move(arguments));
+    };
+    if (BlockID failedUnasked = builder.beginPrediction()) {
+        BlockID tests = builder.currentBlock();
+        builder.moveToEndOf(failedUnasked);
+        goOnInLoopAsWritten();
+        builder.moveToEndOf(tests);
+    }
+    IRBuilder::ProvenBranch isIndex = builder.emitBranchWithProof(builder.append(Opcode::Less, { position, indexedLength }), 0, frequency, unlikely);
+    builder.moveToEndOf(isIndex.notTaken);
+    goOnInLoopAsWritten();
+    builder.moveToEndOf(isIndex.taken);
+    ValueID index = isIndex.provenOnTaken;
+    IRBuilder::BranchBlocks isThere = builder.emitBranch(builder.append(Opcode::IsElementInStorage, { object, index }), frequency, unlikely);
+    builder.moveToEndOf(isThere.notTaken);
+    goOnInLoopAsWritten();
+    builder.moveToEndOf(isThere.taken);
+    ValueID key = builder.append(Opcode::ToString, { index });
+    std::array<ValueID, 3> results { builder.appendBoolean(false), key, index };
+    builder.endExpansion(expansion, results);
+
+    Vector<BlockID> blocksOfCopy(cloner.clonedBlocks());
+    blocksOfCopy.append(expansion.continuation);
+    readUnderIndexInPlaceOfItsText(function, blocksOfCopy.span(), expansion.results[static_cast<size_t>(ForInStepResult::Key)], index);
+    context.analyses.didChangeValues();
+    context.build.statistics().count(StatisticID::OwnKeyWalksExpanded);
+    return PassOutcome::Changed;
+}
+
 // A for-in loop over an object of a few expected layouts gets, per layout and key order, one copy of its body for each name.
 static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emission, const NaturalLoop& naturalLoop)
 {
@@ -1250,6 +1404,8 @@ static PassOutcome expandForInLoop(FunctionPassContext& context, Emission& emiss
         return PassOutcome::Unchanged;
 
     std::optional<OwnKeyWalkPlan> plan = planWalkByLayouts(context, OwnKeyWalkSite { .value = open, .source = source });
+    if (!plan && isExpectedToBeList(program, function, source))
+        return expandForInLoopOverList(context, emission, { header, entry, step, open, source, region.span() });
     if (!plan)
         return PassOutcome::Unchanged;
 

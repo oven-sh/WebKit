@@ -51,6 +51,9 @@ public:
     void generateConvertToDoubleStorage(const ValueContext&);
     void generateGetTypedArrayLength(const ValueContext&);
     void generateHasFixedBytes(const ValueContext&);
+    void generateGetEnumeratorIndexedLength(const ValueContext&);
+    void generateIsElementInStorage(const ValueContext&);
+    void generateToEnumeratorPosition(const ValueContext&);
     void generateTypedArrayRange(const ValueContext&);
     void generateGetTypedArrayElement(const ValueContext&);
     void generatePutTypedArrayElement(const ValueContext&);
@@ -62,6 +65,8 @@ public:
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
     Condition isPristineInstance(CellPointer, OptionSet<PristineAspects>);
     Condition hasArrayStorage(CellPointer array, ArrayStorage, bool isWritable = false);
+    // Emits nothing but in a build that validates or checks proofs: there an array with another kind of storage is reported.
+    void validateStorage(const OperationContext&, CellPointer array, ArrayStorage);
     Word32 indexingMode(CellPointer array, IndexingType mask);
     Condition hasShape(Word32 maskedMode, const ArrayStorageForm& form) { return equal(maskedMode, word32(form.shape)); }
     // Storage of int32 and contiguous storage both hold boxed values, with 0 for a hole.
@@ -119,7 +124,6 @@ public:
     void storeTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType, Operand stored);
 
 private:
-    void validateStorage(const ValueContext&, CellPointer array, ArrayStorage);
     void readWithKnownStorage(const ValueContext&, const ArrayStorageForm&);
     void readInsideLength(const ValueContext&, const ArrayStorageForm&);
     void readWithAnyStorage(const ValueContext&);

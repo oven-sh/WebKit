@@ -1219,6 +1219,12 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         guards.append({ guard, appendAggregatesOf(encoder, GuardBitID(static_cast<size_t>(&placed - table.bits.begin()))) });
         data.guardWordsOffset[static_cast<unsigned>(placed.side)] = placed.wordOffset - placed.bit / MemberGuardData::bitsPerWord * static_cast<uint32_t>(sizeof(uint64_t));
     }
+    bool listsNamesOfFields = hasTestForOtherNames(program, id);
+    Vector<uint32_t, 8> namesOfFields;
+    if (listsNamesOfFields) {
+        for (const Field& field : layout.fields)
+            namesOfFields.append(encoder.identifierNumber(field.key, "a field of a class below a built-in class"_s, id));
+    }
     PartWithoutNames rest(encoder);
     if (!rest.isWritten())
         return parts;
@@ -1256,6 +1262,11 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
         Vector<uint32_t, 8> list { static_cast<uint32_t>(subclasses.size()) };
         list.appendVector(subclasses);
         data.subclassesOffset = encoder.writer.append(list);
+    }
+    if (listsNamesOfFields) {
+        AOT::sort(namesOfFields);
+        namesOfFields.insert(0, static_cast<uint32_t>(namesOfFields.size()));
+        data.namesOfFieldsOffset = encoder.writer.append(namesOfFields);
     }
     return parts;
 }

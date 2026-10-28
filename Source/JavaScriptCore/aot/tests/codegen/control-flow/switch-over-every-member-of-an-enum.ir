@@ -92,6 +92,7 @@ function f1 name="step" module=m0 position=41 flags=[IsChecked, HasExplicitName]
 
 # Four cases are too few for a table: the value is compared in a tree, at most three tests deep. The type says that the four cases are all there is, and a number that is none of them still has to fall out of the switch.
 # So the function may answer undefined: the block behind the last failed test returns the pattern of bits that stands for it in a floating-point register, and every arm returns its number there as it is. Nothing is boxed.
+# The written result type excludes what that block returns, so both edges to it are rare.
 # CHECK-LABEL: name="step" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NOT: pureFunction
@@ -100,6 +101,7 @@ function f1 name="step" module=m0 position=41 flags=[IsChecked, HasExplicitName]
 # CHECK: Branch(b@[[isUpOrDown]], Terminal)
 # CHECK: Branch(b@[[direction]], Terminal)
 # CHECK: Equal(b@[[direction]], $1(
+# CHECK: Successors: Then:#{{*}}, Else:Rare:#[[fallsOut]]
 # CHECK: Double b@[[down]] = Add(b@[[position]], b@[[width]], {{*}}:Add)
 # CHECK-NEXT: Return(b@[[down]], Terminal)
 # CHECK-NOT: pureFunction
@@ -110,4 +112,5 @@ function f1 name="step" module=m0 position=41 flags=[IsChecked, HasExplicitName]
 # CHECK-NOT: BitwiseCast(
 # CHECK: Equal(b@[[direction]], $2(
 # CHECK: Equal(b@[[direction]], $3(
+# CHECK: Successors: Then:#{{*}}, Else:Rare:#[[fallsOut]]
 # CHECK-LABEL: end of function

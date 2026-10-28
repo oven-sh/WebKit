@@ -37,6 +37,8 @@ public:
     Condition isCompiledObject(CellPointer);
     Condition hasPrototypeOfItsClass(CellPointer, const Type& cellsWithBrands);
     Condition hasNoPropertyOfItsOwn(CellPointer);
+    bool hasOnlyCellsBornWithoutProperties(const Type& cellsWithBrands) const;
+    Condition hasOnlyNamesOfItsClass(CellPointer);
 
 private:
     Condition passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);

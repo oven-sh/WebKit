@@ -87,6 +87,8 @@ ClassTable::ClassTable(State& state)
     state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
     state.caches->addClearedEachCollection("instances of classes below"_s, asWritableBytes(std::span { m_instancesOfClassesBelow }));
     state.caches->addClearedEachCollection("structures with brands"_s, asWritableBytes(std::span { m_structuresWithBrands }));
+    state.instance.classes.structuresWhoseNamesAreKnown = m_structuresWhoseNamesAreKnown.data();
+    state.caches->addClearedEachCollection("structures whose names are known"_s, asWritableBytes(std::span { m_structuresWhoseNamesAreKnown }));
 }
 
 ClassTable::~ClassTable() = default;
@@ -404,6 +406,7 @@ Symbol* ClassTable::brandOfInstanceMadeBy(VM& vm, JSCell* parent, JSCell* newTar
     Symbol* brand = Symbol::create(vm, PrivateSymbolImpl::create(*StringImpl::empty()).get());
     m_state.immortalCells->add(brand);
     m_brandsOfInstances.add(rank + 1, brand);
+    m_classesByBrand.add(&brand->uid(), classLayout);
     m_state.instance.classes.brandsOfInstances[rank] = &brand->uid();
     return brand;
 }
@@ -416,6 +419,57 @@ Structure* ClassTable::structureOfInstanceMadeBy(VM& vm, JSCell* parent, JSCell*
     Symbol* brand = brandOfInstanceMadeBy(vm, parent, newTarget);
     last = { parent, newTarget, structure, brand ? Structure::setBrandTransition(vm, structure, brand) : structure };
     return last.withBrand;
+}
+
+static bool isLaidOnNewInstancesBy(const BuiltinTable& table, BuiltinClassID builtinClass, UniquedStringImpl* uid)
+{
+    if (uid->isSymbol())
+        return false;
+    for (BuiltinClassID current = builtinClass; current; current = table.at(current).parent) {
+        for (BuiltinName name : table.at(current).namesDefinedOnNewInstances) {
+            if (equal(uid, byteCast<Latin1Character>(table.textOf(name))))
+                return true;
+        }
+    }
+    return false;
+}
+
+bool ClassTable::learnWhetherStructureHasOnlyNamesOfItsClass(Structure* structure)
+{
+    // A dictionary gets and loses names and stays the same Structure.
+    if (!structure->isBrandedStructure() || structure->isDictionary())
+        return false;
+    const LayoutData* classLayout = nullptr;
+    for (auto& [brand, layoutOfBrand] : m_classesByBrand) {
+        if (carriesBrandOfClass(structure, m_tables.rankOfClass(layoutOfBrand->index)))
+            classLayout = layoutOfBrand;
+    }
+    uint32_t id = structure->id().bits();
+    uint32_t& known = m_structuresWhoseNamesAreKnown[id >> shiftOfStructureWhoseNamesAreKnown & (numberOfStructuresWhoseNamesAreKnown - 1)];
+    uint32_t namesOffset = classLayout ? classLayout->classData().namesOfFieldsOffset : 0;
+    if (!namesOffset) {
+        known = id | structureHasOtherNames;
+        return false;
+    }
+    const uint32_t* counted = m_tables.at<uint32_t>(namesOffset);
+    std::span<const uint32_t> namesOfFields = unsafeMakeSpan(counted + 1, *counted);
+
+    const LayoutData* highest = classLayout;
+    while (const LayoutData* base = baseOf(*highest))
+        highest = base;
+    const BuiltinTable& table = BuiltinTable::singleton();
+    BuiltinClassID builtinClass = table.at(BuiltinID(highest->classData().builtinBase)).instanceClass;
+
+    const ProgramIdentifiers& identifiers = *m_state.instance.vm->aotState().identifiers;
+    bool hasOnlyNamesOfItsClass = true;
+    structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+        UniquedStringImpl* uid = entry.key();
+        std::optional<uint32_t> number = identifiers.numberOf(uid);
+        hasOnlyNamesOfItsClass = (number && std::ranges::binary_search(namesOfFields, *number)) || isLaidOnNewInstancesBy(table, builtinClass, uid);
+        return hasOnlyNamesOfItsClass;
+    });
+    known = hasOnlyNamesOfItsClass ? id : id | structureHasOtherNames;
+    return hasOnlyNamesOfItsClass;
 }
 
 bool ClassTable::carriesBrandOfClass(Structure* structure, uint32_t rankOfClass) const

@@ -92,8 +92,8 @@ bool isCaughtAboveCleanup(VM&, const ReturnSiteInRun& siteOfCleanup);
 bool beginsInTopCompiledFrame(VM&, const ReturnAddressTrace&);
 
 inline constexpr ptrdiff_t offsetOfDivertedReturnInLoopPollPage = 8;
-CallFrame* findReturnIntoFunctionWithoutHandlers(VM&, CallFrame* operationFrame);
-void throwOutOfMemoryErrorAtReturnOf(Instance&, CallFrame* frameThatReturns);
+// The frame of the operation, or of the plain stub that has called it, where that frame returns into a function and nothing is thrown yet.
+CallFrame* findReturnIntoFunction(VM&, CallFrame* operationFrame);
 void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance&, CallerFrameAndPC* frameRecordOfOperation);
 
 class ThrowsOwedOutOfMemoryErrorAtReturn {

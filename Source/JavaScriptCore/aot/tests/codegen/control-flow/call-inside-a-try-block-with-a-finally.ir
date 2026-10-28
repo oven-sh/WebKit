@@ -126,17 +126,13 @@ function f2 name="enter" module=m0 position=31 flags=[IsChecked, HasExplicitName
     Throw v19
 }
 
-# The statements of a short finally block stand once for each way into them. Behind the call the way without an exception polls, subtracts, stores and returns the double as it came:
+# The statements of a short finally block stand once for each way into them. Behind the call the way without an exception subtracts, stores and returns the double as it came:
 # no completion kind, no merge, no branch, nothing boxed. The handler has its own subtraction and store and throws on.
 # CHECK-LABEL: name="enter" role=Source
 # CHECK-NOT: pureFunction
 # CHECK: Double b@[[result]] = Patchpoint(b@{{*}}:Register({{*}}Terminal|ExitsSideways{{*}}:CallDirect)
 # CHECK-NEXT: Successors: #[[next]], Rare:#[[handler]]
 # CHECK-NEXT: BB#[[next]]:
-# CHECK-NOT: Store(
-# CHECK: Void b@{{*}} = Patchpoint({{*}}Terminal|ExitsSideways{{*}}:LoopHint)
-# CHECK-NEXT: Successors: #[[left]], Rare:#[[handler]]
-# CHECK-NEXT: BB#[[left]]:
 # CHECK-NOT: Phi(
 # CHECK-NOT: Branch(
 # CHECK-NOT: pureFunction
@@ -146,5 +142,5 @@ function f2 name="enter" module=m0 position=31 flags=[IsChecked, HasExplicitName
 # CHECK: Store(b@{{*}}, b@{{*}}Writes:ModuleVariables{{*}}:PutModuleVariable)
 # CHECK-LABEL: end of function
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 10, patchpoints: 2, rare instructions: 8
-# ARM64: instructions: 12, patchpoints: 2, rare instructions: 9
+# X64: instructions: 10, patchpoints: 1, rare instructions: 8
+# ARM64: instructions: 12, patchpoints: 1, rare instructions: 9

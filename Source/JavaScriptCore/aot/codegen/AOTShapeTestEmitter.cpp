@@ -141,6 +141,32 @@ Condition ShapeTestEmitter::hasNoPropertyOfItsOwn(CellPointer cell)
     return equal(Word32(m_out.load16ZeroExt32(structure.value(), m_heaps.Structure_maxOffset)), word32(static_cast<uint32_t>(Structure::greatestMaxOffsetOutsideRareData + 1)));
 }
 
+bool ShapeTestEmitter::hasOnlyCellsBornWithoutProperties(const Type& cellsWithBrands) const
+{
+    return std::ranges::none_of(membersOf(m_program, cellsWithBrands), [&](LayoutID member) {
+        return isBornWithProperties(m_program, member, m_program.at(member).writtenBuiltinBase);
+    });
+}
+
+// The run time looks at each Structure once between two collections.
+Condition ShapeTestEmitter::hasOnlyNamesOfItsClass(CellPointer cell)
+{
+    Word32 structureID = loadStructureID(cell);
+    Pointer known = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.structuresWhoseNamesAreKnown));
+    Word32 index = bitAnd(shiftRightUnsigned(structureID, static_cast<int32_t>(shiftOfStructureWhoseNamesAreKnown)), word32(numberOfStructuresWhoseNamesAreKnown - 1));
+    LValue place = m_out.add(known.value(), m_out.shl(m_out.zeroExtPtr(index.value()), m_out.constIntPtr(2)));
+    Word32 entry(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), place, 0)));
+    return either<Condition>(equal(entry, structureID), [&] {
+        return boolean(true);
+    }, [&] {
+        return either<Condition>(equal(entry, bitOr(structureID, word32(structureHasOtherNames))), [&] {
+            return boolean(false);
+        }, [&] {
+            return callWithoutSite<Condition>(RuntimeOperation::HasOnlyNamesOfItsClass, { cell }, { .isOnRarePath = true });
+        });
+    });
+}
+
 Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)
 {
     const ShapeTable& shapes = m_placement.shapes();

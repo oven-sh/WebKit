@@ -200,6 +200,8 @@ struct ClassData {
     uint32_t guardWordsOffset[numberOfClassSides];
     // In the program tables: how many classes have this one as their assumed base, then their indexes, ascending. 0 where there is none.
     uint32_t subclassesOffset;
+    // In the program tables, for a class whose objects carry its brand: how many fields the objects have, then the numbers of their names, ascending. 0 where a field has no name that the build knows.
+    uint32_t namesOfFieldsOffset;
 
     std::optional<uint32_t> guardWordsOffsetFor(ClassSide side) const
     {
@@ -209,7 +211,7 @@ struct ClassData {
         return offset;
     }
 };
-static_assert(sizeof(ClassData) == 48 && isImageRecord<ClassData>);
+static_assert(sizeof(ClassData) == 52 && isImageRecord<ClassData>);
 
 struct ExtensionLayoutData {
     SlotData extension;

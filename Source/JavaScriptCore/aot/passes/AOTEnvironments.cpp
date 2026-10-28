@@ -1801,7 +1801,8 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
                     wanted.declared.changeType(Proven::byPosition(typeInPlaceOf(plan.closures[capturedClosure], program.at(wanted.declared.written()))));
                 bool isEnvironmentItself = true;
                 for (uint32_t run : runs) {
-                    const FoundCaptures& store = *std::ranges::find(runsOfLayout[run], member.candidate, &FoundCaptures::candidate);
+                    const FoundCaptures& store = *std::ranges::lower_bound(runsOfLayout[run], member.candidate, { }, &FoundCaptures::candidate);
+                    ASSERT(store.candidate == member.candidate);
                     std::span<const ValueID> captured = program.at(store.function).at(store.closure).variadicOperands();
                     RELEASE_ASSERT(index < captured.size());
                     wanted.operands.append(capturedClosure != noCandidate ? environmentInPlaceOf(store.function, captured[index]) : captured[index]);
@@ -1855,7 +1856,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
     auto forEachLayout = [&](NOESCAPE const Invocable<void(LayoutID, Stores, std::span<const Stores>, Vector<Member, 16>&)> auto& functor) {
         for (Stores stores : found.span() | std::views::chunk_by(haveSameLayout)) {
             LayoutID layout = layoutOf(stores[0]);
-            // The stores of one block into one environment.
+            // The stores of one block into one environment, by candidate.
             Vector<Stores, 2> runs;
             for (auto run : stores | std::views::chunk_by([](const FoundCaptures& a, const FoundCaptures& b) { return a.function == b.function && a.environment == b.environment && a.block == b.block; }))
                 runs.append(Stores(run));
@@ -1866,7 +1867,7 @@ static CaptureReadPlan planCaptureReads(ProgramEditor& editor, const CaptureCand
                     return;
                 Member member { { }, candidate };
                 for (uint32_t index = 0; index < runs.size(); ++index) {
-                    size_t numberOfStores = std::ranges::count(runs[index], candidate, &FoundCaptures::candidate);
+                    size_t numberOfStores = std::ranges::equal_range(runs[index], candidate, { }, &FoundCaptures::candidate).size();
                     if (numberOfStores > 1) {
                         reject(candidate, Obstacle::IsFilledTwiceInOneBlock);
                         return;

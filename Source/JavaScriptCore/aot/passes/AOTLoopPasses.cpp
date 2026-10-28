@@ -22,6 +22,7 @@
 #include "AOTInductionVariables.h"
 #include "AOTMemoryLocation.h"
 #include "AOTNaturalLoops.h"
+#include "AOTOperatorForms.h"
 #include "AOTProgramPasses.h"
 #include "AOTRegionCloner.h"
 #include "AOTSort.h"
@@ -469,6 +470,81 @@ static Vector<ValueID, 4> boundTallies(FunctionPassContext& context, IRBuilder& 
     return bounded;
 }
 
+// On a whole number that is kept as a double such an operator converts its operand in every turn, and calls where that fails. A number that is only counted up is cheapest as a double.
+static bool hasUseThatIsCheaperOnIntegers(FunctionPassContext& context, const NaturalLoop& loop, ValueID parameter)
+{
+    const Function& function = context.function;
+    for (unsigned index = 0; index < loop.size(); ++index) {
+        for (ValueID id : function.at(loop.at(index)).values) {
+            const Value& value = function.at(id);
+            if (!hasOperatorForm(value.opcode) || !isLegalOperatorForm(value.opcode, OperatorForm::Integers) || !mayCallRuntime(value.opcode, OperatorForm::Numbers))
+                continue;
+            bool usesParameter = false;
+            bool othersAreIntegers = true;
+            value.forEachOperand([&](ValueID operand, uint32_t) {
+                if (context.analyses.identityOf(operand) == parameter)
+                    usesParameter = true;
+                else
+                    othersAreIntegers &= context.program.typeOf(function, operand).isInteger();
+            });
+            if (usesParameter && othersAreIntegers)
+                return true;
+        }
+    }
+    return false;
+}
+
+// A whole number that a loop hands from turn to turn, that starts as an int32 and changes by a constant in every turn, and that no test bounds, is expected to stay an int32. What is expected is tested behind the step.
+static bool expectUnboundedCountersToStayInt32(FunctionPassContext& context, IRBuilder& builder)
+{
+    struct SteppedArgument {
+        Edge edge;
+        uint32_t parameterIndex;
+    };
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<SteppedArgument, 4> arguments;
+    for (const LoopInduction& loop : analyses.inductionVariables().loops()) {
+        const NaturalLoop& naturalLoop = analyses.naturalLoops().loop(loop.loopIndex);
+        std::optional<bool> isLoopExpectedToRun;
+        for (const InductionVariable& variable : loop.variables) {
+            const Type& type = context.program.typeOf(function, variable.parameter);
+            if (!type.isNumberWithoutFraction() || type.isInteger() || function.at(variable.parameter).expected().predicted())
+                continue;
+            if (!isLoopExpectedToRun)
+                isLoopExpectedToRun = isExpectedToRun(context, naturalLoop).predicted();
+            if (!*isLoopExpectedToRun)
+                break;
+            if (!variable.start || !context.program.typeOf(function, variable.start).isInt32() || variable.step.kind != InductionStepKind::Constant || !Range::int32().contains(variable.step.constant))
+                continue;
+            // Where a test bounds it by a number, that number is tested for an integer in front of the loop.
+            if (std::ranges::any_of(variable.tests, [&](const InductionTest& test) { return isBoundingRelation(test.relation, variable.direction); }))
+                continue;
+            if (!hasUseThatIsCheaperOnIntegers(context, naturalLoop, variable.parameter))
+                continue;
+            for (Edge edge : analyses.cfg().incomingEdges(loop.header)) {
+                if (analyses.naturalLoops().belongsTo(edge.from, naturalLoop))
+                    arguments.append({ edge, variable.parameterIndex });
+            }
+        }
+    }
+    for (auto [edge, parameterIndex] : arguments) {
+        ValueID handedOn = targetOf(function, edge).arguments[parameterIndex];
+        TypeID type = function.at(handedOn).type;
+        Value cast = IRBuilder::make(Opcode::Upcast, { handedOn });
+        cast.setCastType(type);
+        cast.setExpected(ExpectedType(context.types.intersectionOf(type, TypeTable::int32)));
+        builder.setOrigin(function.at(handedOn).origin());
+        ValueID expected = builder.insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(cast));
+        replaceUse(function, Use { .kind = Use::Kind::EdgeArgument, .block = edge.from, .operandIndex = parameterIndex, .targetIndex = edge.targetIndex }, expected);
+    }
+    if (arguments.isEmpty())
+        return false;
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    return true;
+}
+
 namespace {
 
 struct SumWithCounter {
@@ -625,6 +701,10 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     if (numberOfConvertedCounters) {
         context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);
         context.hasCountersConvertedSinceTestsWerePlaced = true;
+    }
+    if (expectUnboundedCountersToStayInt32(context, builder)) {
+        context.hasCountersConvertedSinceTestsWerePlaced = true;
+        outcome = PassOutcome::Changed;
     }
     // The analyses were told of every edit, and the search that found no more candidates came behind the last one.
     if (outcome == PassOutcome::Changed)
@@ -1070,7 +1150,7 @@ static bool eraseLoopHints(IRBuilder& builder, const Function& function, BlockID
     BitVector hints;
     std::span<const ValueID> values = function.at(block).values.span();
     for (size_t index = 0; index < values.size(); ++index) {
-        if (function.at(values[index]).opcode == Opcode::LoopHint && !function.at(values[index]).leavesHandler())
+        if (function.at(values[index]).opcode == Opcode::LoopHint)
             hints.set(index);
     }
     if (hints.isEmpty())

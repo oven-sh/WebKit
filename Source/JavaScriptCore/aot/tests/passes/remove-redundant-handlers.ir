@@ -1,7 +1,7 @@
 # A block that cannot throw loses its handler, a block that calls a function keeps it, and a cleanup that only throws on what it caught is skipped. A `catch` that throws the value again stays: that is another throw. It is skipped where a `catch` of the function takes that throw
 # FORM: Prepared
 # RUN: pass RemoveRedundantHandlers
-# STATISTIC: RemoveRedundantHandlersChanges = 23
+# STATISTIC: RemoveRedundantHandlersChanges = 13
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Point" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]

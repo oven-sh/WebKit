@@ -1,0 +1,82 @@
+# The operation behind a spread, a rest or Object.assign finds out at run time which names its source holds, and what it has found out serves its next run. In code that seldom runs that is paid
+# for nothing. Where the source has one proven layout with one order of keys, all of them filled, a read and a definition for each field take the place of the call, without a test.
+# A source that is only expected to have the layout, or that has two orders, would need tests with the call behind them: there cold code keeps the call alone.
+# FORM: Prepared optimizing
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass ExpandOwnKeys
+# STATISTIC: OwnKeyWalksExpanded = 3
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Copy" fields=[{key="first" declared={type=number}}, {key="a" declared={type=number}}, {key="b" declared={type=string}}]
+layout L1 name="Options" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=string} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None allocationClasses=[0] constructorOrders=[{fields=[0, 1]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] addedKeysAreComplete=true}
+layout L2 name="InTwoOrders" fields=[{key="a" declared={type=number} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=string} flow={occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] flow={baseState=None allocationClasses=[1] constructorOrders=[{fields=[0, 1]}, {fields=[1, 0]}] fieldCreation=OnlyAtConstruction impossibleMutations=[ReachNativeCode, ReachUnknownJavaScript, DeleteField, RedefineProperty, AddProperty, ChangeIntegrity, ChangePrototype, BecomePrototype, StoreOfOtherType] addedKeysAreComplete=true}
+
+function f0 name="spreadOfProvenLayout" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: = NewObject
+# CHECK-NOT: CopyDataProperties
+# CHECK: [[a0]]:{{*}}= GetSlot v0{{*}} key="a"
+# CHECK: [[b0]]:{{*}}= GetSlot v0{{*}} key="b"
+# CHECK: PropDefine v2, [[a0]] key="a"
+# CHECK-NEXT: PropDefine v2, [[b0]] key="b"
+# CHECK-NOT: CopyDataProperties
+}
+
+function f1 name="restOfProvenLayout" parameters=[{type=L1}] results=[{type=anything}] {
+  b0(v0: L1):
+    v1 = NewObject layout=L0
+    CopyDataProperties v1, v0 excludedKeys=["a"]
+    v3 = FinishObject v1
+    Return v3
+# CHECK: b0(
+# CHECK-NOT: CopyDataProperties
+# CHECK: [[b1]]:{{*}}= GetSlot v0{{*}} key="b"
+# CHECK: PropDefine v1, [[b1]] key="b"
+# CHECK-NOT: key="a"
+}
+
+function f2 name="assignOfProvenLayout" parameters=[{type=L1}, {type=number}] results=[{type=anything}] {
+  b0(v0: L1, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = CallBuiltin -, v3, v0 overload=ObjectAssign/0
+    Return v4
+# CHECK: b0(
+# CHECK-NOT: CallBuiltin
+# CHECK: [[a2]]:{{*}}= GetSlot v0{{*}} key="a"
+# CHECK: [[b2]]:{{*}}= GetSlot v0{{*}} key="b"
+# CHECK: PropSet {{*}}, [[a2]] key="a"
+# CHECK: PropSet {{*}}, [[b2]] key="b"
+# CHECK-NOT: CallBuiltin
+}
+
+function f3 name="spreadOfExpectedLayout" parameters=[{type=object}, {type=number}] results=[{type=anything}] {
+  b0(v0: object ~ L1, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: = NewObject
+# CHECK-NEXT: CopyDataProperties v2, v0
+# CHECK-NEXT: = FinishObject v2
+# CHECK-NEXT: Return v4
+}
+
+function f4 name="spreadOfTwoOrders" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
+  b0(v0: L2, v1: number):
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    CopyDataProperties v2, v0
+    v4 = FinishObject v2
+    Return v4
+# CHECK: b0(
+# CHECK-NEXT: = NewObject
+# CHECK-NEXT: CopyDataProperties v2, v0
+# CHECK-NEXT: = FinishObject v2
+# CHECK-NEXT: Return v4
+}

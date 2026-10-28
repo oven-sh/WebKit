@@ -52,6 +52,7 @@ struct FlowAppendedField {
     FlowPositionUpdate position;
     FieldFlow flow;
     FlowAccessorField accessor;
+    bool isFilledByMakers { false };
 };
 
 struct FlowLayoutUpdate {

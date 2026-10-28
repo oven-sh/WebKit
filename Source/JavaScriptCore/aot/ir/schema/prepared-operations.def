@@ -75,6 +75,9 @@ operation GetTypedArrayLength (view: Object/inspects, typedArrayType: TypedArray
 operation GetTypedArrayElement (view: Object/inspects, position: Number/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> natural(number | bigint | undefined) ; Allocates reads(TypedArrayStorage, TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemGet ; accessClass = Slot
 operation PutTypedArrayElement (view: Object/inspects+writesContents, position: Number/inspects, value: Any/inspects, guard?: Guard/inspects, typedArrayType: TypedArrayType, level: KnowledgeLevel, accessSite?: AccessSite) [keyIsIntegral isInsideView] -> none ; reads(TypedArrayStorage) writes(TypedArrayElements) ; relies = InBounds ; guarded = view ; replaces = ElemSet ; accessClass = Slot
 operation HasFixedBytes (view: Object/inspects) -> natural(boolean) ; reads(TypedArrayStorage)
+operation GetEnumeratorIndexedLength (enumerator: Enumerator/inspects) -> natural(uint32) ; none
+operation IsElementInStorage (object: Any/inspects, position: Number/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) ; branches = May
+operation ToEnumeratorPosition (position: Number/inspects) -> natural(uint32) ; none
 operation TypedArrayRange (view: Object/retains(result), start: Integer/inspects, end: Integer/inspects, valueType: Type, allocationSite?: AllocationSite) -> declared(valueType) ; Allocates reads(TypedArrayStorage) writes(TypedArrayStorage) throws ; interpreted = Allocation ; runtime = TypedArrayRange
 operation GetStringLength (string: String/inspects) -> natural(int[0, 2147483647]) ; none ; interpreted = Read ; hasKnownValueRule = true
 operation GetStringCodeUnit (string: String/inspects, position: Integer/inspects) -> natural(int[0, 65535]) ; ResolvesRopes ; interpreted = Read

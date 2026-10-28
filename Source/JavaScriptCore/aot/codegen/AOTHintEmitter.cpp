@@ -84,34 +84,6 @@ HintEmitter::HintEmitter(CodeGenerator& generator)
 {
 }
 
-// In a function without handlers an allocation that finds no room throws by itself.
-bool HintEmitter::allocatesWhereErrorsAreCaught(BlockID block)
-{
-    if (!analyses().cfg().hasHandlers())
-        return false;
-    const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
-    if (!loop)
-        return false;
-    auto leavesHandler = [&](ValueID id) {
-        return m_function.at(id).opcode == Opcode::LoopHint && m_function.at(id).leavesHandler();
-    };
-    // What polls for itself before it goes on leaves nothing to the poll of the loop.
-    auto pollsAtHead = [&](const Target& target) {
-        const Block& block = m_function.at(target.block);
-        return !block.values.isEmpty() && leavesHandler(block.values.first());
-    };
-    for (unsigned index = 0; index < loop->size(); ++index) {
-        BlockID member = loop->at(index);
-        bool mayOwe = false;
-        for (ValueID id : m_function.at(member).values)
-            mayOwe = m_function.at(id).opcode == Opcode::LoopHint ? mayOwe && !leavesHandler(id) : mayOwe || analyses().effectsOf(id).onAnyEdge().mayCollect;
-        mayOwe |= analyses().effectsOfTerminator(member).onAnyEdge().mayCollect;
-        if (mayOwe && !std::ranges::all_of(m_function.at(member).terminator.targets, pollsAtHead))
-            return true;
-    }
-    return false;
-}
-
 void HintEmitter::generateLoopHint(const ValueContext& value)
 {
     if (generator().validates())
@@ -136,7 +108,6 @@ void HintEmitter::emitPoll(const ValueContext& value)
 {
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
     patchpoint->isLoopPoll = !emitter<ExceptionEmitter>().unwindsWithinFunction(value);
-    patchpoint->throwsWhatIsOwed = allocatesWhereErrorsAreCaught(value.block());
     const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(value.block());
     patchpoint->turnsAreShort = loop && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
     Effects effects = value.effects().onAnyEdge();

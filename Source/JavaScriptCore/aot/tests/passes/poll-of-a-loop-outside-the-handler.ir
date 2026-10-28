@@ -1,5 +1,4 @@
-# All that a poll throws to a handler is the error that an allocation under the handler has left to it. Where the likely turns of a loop allocate nothing, the poll of the loop has no handler,
-# and what may have allocated polls under the handler before it comes to that poll.
+# All that a poll throws to a handler is the error that an allocation has left to it. Where the likely turns of a loop allocate nothing, the poll of the loop has no handler.
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass RemoveRedundantHandlers
@@ -49,8 +48,7 @@ function f1 name="allocatesInFrontOfTheLoop" parameters=[{type=int[0, 100]}, {ty
     Return v10
 # CHECK: handler=b4():
 # CHECK-NEXT: = Call v1
-# CHECK: LoopHint [leavesHandler]
-# CHECK-NEXT: Jump -> next b1(
+# CHECK: Jump -> next b1(
 # CHECK-NEXT: b1(v4: {{*}}):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: LoopHint
@@ -107,7 +105,6 @@ function f3 name="rarePathAllocates" parameters=[{type=int[0, 100]}, {type=boole
 # CHECK-NEXT: LoopHint
 # CHECK: b3() frequency=Rare handler=b6():
 # CHECK-NEXT: = NewObject
-# CHECK-NEXT: LoopHint [leavesHandler]
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4():
 # CHECK-NOT: LoopHint
@@ -140,7 +137,6 @@ function f4 name="rarePathComesBackToWhatMayThrow" parameters=[{type=int[0, 100]
 # CHECK-NEXT: LoopHint
 # CHECK: b3() frequency=Rare handler=b6():
 # CHECK-NEXT: = NewObject
-# CHECK-NEXT: LoopHint [leavesHandler]
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b6():
 # CHECK-NEXT: = RequireObjectCoercible
@@ -199,8 +195,7 @@ function f6 name="innerOfTwoHandlers" parameters=[{type=int[0, 100]}, {type=anyt
     Return v14
 # CHECK: handler=b6():
 # CHECK-NEXT: = Call v1
-# CHECK: LoopHint [leavesHandler]
-# CHECK-NEXT: Jump -> next b1(
+# CHECK: Jump -> next b1(
 # CHECK-NEXT: b1(v4: {{*}}):
 # CHECK-NEXT: LoopHint
 # CHECK-NOT: handler=b5()

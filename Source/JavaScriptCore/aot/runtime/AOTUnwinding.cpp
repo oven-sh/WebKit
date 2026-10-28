@@ -398,8 +398,8 @@ void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance* instance, C
         if (!site)
             return;
         if (!site->isStubReturnSite()) {
-            // findReturnIntoFunctionWithoutHandlers().
-            if (isForLackOfMemory && !catchesExceptions(*state.image, site->code.index()))
+            // throwOwedOutOfMemoryErrorAtReturnOfOperation().
+            if (isForLackOfMemory)
                 return;
             if (std::optional<MarkOfCallWithoutSite> mark = MarkOfCallWithoutSite::read(pc))
                 crashOnValidationFailure(vm, { ValidationFailureKind::CallThrew, state.image->rootFunctionOf(site->code.index()), mark->value, jsNumber(mark->callee) });
@@ -495,30 +495,10 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
     return isCaughtByCallersOfNativeCode(vm, runWithoutHandler->exit) ? Action::CaptureStack : Action::CaptureStackOfThrow;
 }
 
-// A caller that has handlers, and none at its call, plans no error there: the call may stand in a try. Then the error waits for the next poll.
-static bool callersPlanErrors(VM& vm, const Image& image, CallFrame* frameThatReturns)
-{
-    if (frameThatReturns->callerFrameOrEntryFrame() == vm.topEntryFrame)
-        return true;
-    std::optional<CompiledFrameIterator> frames = CompiledFrameIterator::tryCreateAtCallerOf(vm, frameThatReturns, vm.topEntryFrame);
-    if (!frames)
-        return true;
-    for (; !frames->isAtEnd(); frames->advanceToCallerMachineFrame()) {
-        if (frames->asyncGeneratorStubFrameLeft())
-            return true;
-        const auto& site = frames->callSite();
-        if (site.exceptionHandler() || site.rejectsOnThrow)
-            return true;
-        if (catchesExceptions(image, site.code.index()))
-            return false;
-    }
-    return true;
-}
-
-CallFrame* findReturnIntoFunctionWithoutHandlers(VM& vm, CallFrame* operationFrame)
+CallFrame* findReturnIntoFunction(VM& vm, CallFrame* operationFrame)
 {
     const Image& image = *vm.aotState().image;
-    if (vm.exceptionForInspection() || vm.heap.cage().errorWaitsForPoll() || !image.stubAddress(handleException(false)))
+    if (vm.exceptionForInspection() || !image.stubAddress(handleException(false)))
         return nullptr;
     CallFrame* frame = operationFrame;
     CodeLocation location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
@@ -528,20 +508,18 @@ CallFrame* findReturnIntoFunctionWithoutHandlers(VM& vm, CallFrame* operationFra
         frame = static_cast<CallFrame*>(frame->callerFrameOrEntryFrame());
         location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
     }
-    if (location.kind != CodeKind::Function || catchesExceptions(image, location.function) || !callersPlanErrors(vm, image, frame))
-        return nullptr;
-    return frame;
+    return location.kind == CodeKind::Function ? frame : nullptr;
 }
 
+// Under a handler the site of whatever may allocate names the handler, so the error is unwound from the site as any other.
 void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
 {
-    if (CallFrame* frameThatReturns = findReturnIntoFunctionWithoutHandlers(*instance.vm, std::bit_cast<CallFrame*>(frameRecordOfOperation)))
-        throwOutOfMemoryErrorAtReturnOf(instance, frameThatReturns);
-}
-
-void throwOutOfMemoryErrorAtReturnOf(Instance& instance, CallFrame* frameThatReturns)
-{
     VM& vm = *instance.vm;
+    CallFrame* frameThatReturns = findReturnIntoFunction(vm, std::bit_cast<CallFrame*>(frameRecordOfOperation));
+    if (!frameThatReturns)
+        return;
+    if (vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) || !vm.traps().needsOutOfMemoryError())
+        return;
     {
         DeferGCForAWhile deferGC(vm);
         auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

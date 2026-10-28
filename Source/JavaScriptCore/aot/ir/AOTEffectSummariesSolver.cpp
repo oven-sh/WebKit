@@ -1621,13 +1621,23 @@ void EffectSummarizer::resolveNodesInAndAboveCycles(std::span<const uint32_t> no
         Effects united = Effects::none();
         uint8_t takesInUnknownCode = 0;
         std::span<const uint32_t> members = components.membersOf(component);
+        // Many nodes have the same effects, and what is in the union stays there.
+        std::array<CompactEffects, 16> lastMerged { };
+        auto mergeEffectsOf = [&](uint32_t node) {
+            CompactEffects effects = m_kept.m_effects[node];
+            CompactEffects& last = lastMerged[(effects.reads() ^ effects.writes()) % lastMerged.size()];
+            if (last == effects)
+                return;
+            last = effects;
+            masks.mergeInto(united, effects);
+        };
         for (uint32_t member : members) {
-            masks.mergeInto(united, m_kept.m_effects[nodes[member]]);
+            mergeEffectsOf(nodes[member]);
             takesInUnknownCode |= m_kept.m_takesInUnknownCode[nodes[member]];
             for (uint32_t source : sourcesAt(member)) {
                 if (components.componentOf[source] == component)
                     continue;
-                masks.mergeInto(united, m_kept.m_effects[nodes[source]]);
+                mergeEffectsOf(nodes[source]);
                 takesInUnknownCode |= m_kept.m_takesInUnknownCode[nodes[source]];
             }
         }

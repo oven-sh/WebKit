@@ -43,17 +43,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlow, JSCell*, (Instance* 
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAllocateSlow);
     if (allocation & allocatesInstanceOfClassBelow) [[unlikely]] {
-        ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
         OPERATION_RETURN(scope, instance->state->objects->classes.createInstanceOfClassBelow(vm, allocation & ~allocatesInstanceOfClassBelow));
     }
     if (AllocationCounts::isEnabled()) [[unlikely]]
         AllocationCounts::willAllocate(*instance, allocation);
     if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryError(vm)) [[unlikely]] {
-        if (CallFrame* frameThatReturns = findReturnIntoFunctionWithoutHandlers(vm, std::bit_cast<CallFrame*>(frameRecord))) {
-            JSCell* cell = instance->state->objects->structures.allocate(vm, allocation);
-            throwOutOfMemoryErrorAtReturnOf(*instance, frameThatReturns);
-            OPERATION_RETURN(scope, cell);
-        }
+        if (findReturnIntoFunction(vm, std::bit_cast<CallFrame*>(frameRecord)))
+            OPERATION_RETURN(scope, instance->state->objects->structures.allocate(vm, allocation));
     }
     OPERATION_RETURN(scope, instance->state->objects->structures.allocateAsCompiledCodeDoes(vm, allocation));
 }
@@ -68,7 +64,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetHeaderOfAllocation, uint64_t, (
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMaterializeEnvironment, JSCell*, (Instance* instance, uint32_t allocation, const EncodedJSValue* source))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTMaterializeEnvironment);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     if (AllocationCounts::isEnabled()) [[unlikely]]
         AllocationCounts::willAllocate(*instance, allocation);
     const ProgramTables& tables = instance->tables();
@@ -83,7 +78,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClosureSlow, JSCell*, (Instance
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewClosureSlow);
     DeferTerminationForAWhile deferTermination(vm);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     ObjectModel& objects = *instance->state->objects;
     uint64_t captures[] = { first, second, third, fourth };
     RELEASE_ASSERT(ClosureRequest::countOf(request) <= (ClosureRequest::isSlim(request) ? ClosureRequest::maxSlimClosureCaptures : ClosureRequest::maxNumberOfCaptures));
@@ -140,7 +134,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Insta
     { \
         AOT_OPERATION_BEGIN(instance, Entry::operation); \
         DeferTerminationForAWhile deferTermination(vm); \
-        ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord); \
         if (AllocationCounts::isEnabled()) [[unlikely]] \
             AllocationCounts::willAllocate ## name(*instance); \
         Structure* structure = globalObject->structureOfRealm(); \

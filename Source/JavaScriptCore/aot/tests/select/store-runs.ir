@@ -309,7 +309,7 @@ function f25 name="by-name-under-handler" parameters=[{type=object}, {type=anyth
 # CHECK-NEXT: PropSet v0, v2 key="b"
 # CHECK-NEXT: PropSet v0, v3 key="c"
 # CHECK-NEXT: Jump -> next [[join]]()
-# CHECK-NEXT: [[join]]() handler=[[handler]]():
+# CHECK-NEXT: [[join]]():
 # CHECK: [[handler]]() role=CatchHandler:
 }
 function f26 name="instance-of-object-by-name" parameters=[{type=Object}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {

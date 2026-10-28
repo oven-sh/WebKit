@@ -2129,6 +2129,24 @@ static bool isReadOfUntypedFieldInColdCode(TestSiteReporter& reporter, const Val
     });
 }
 
+// Which objects have a field that makers outside the class fill, nobody knows. The field lies beside the cell more often than not, and a read of it there costs more bytes than a read by name.
+static bool isReadOfFieldFilledByMakersOutsideInWarmCode(TestSiteReporter& reporter, const Value& access, const PlannedAccess& tested)
+{
+    FunctionPassContext& context = reporter.context();
+    const Function& function = reporter.function();
+    BlockID block = reporter.point().block;
+    if (access.opcode != Opcode::PropGet || tested.plan.form != AccessForm::Slot || heatClassOf(context, block).predicted() > HeatClass::Warm)
+        return false;
+    if (std::min(function.values.size(), context.program.sourceFunctionOf(function, access.origin()).values.size()) <= HeatModel::maxSizeOfSmallFunction)
+        return false;
+    if (context.analyses.naturalLoops().innerMostLoopOf(block))
+        return false;
+    return std::ranges::all_of(tested.plan.receivers, [&](LayoutID layout) {
+        std::optional<FieldReference> field = findField(context.program, layout, access.key(), BaseChain::Proven);
+        return field && fieldAt(context.program, *field).flags.containsAll({ FieldFlags::IsAddedLate, FieldFlags::IsFilledByCreator });
+    });
+}
+
 // `this._events = ..` in EventEmitter, for every emitter of the program.
 static std::optional<PlannedAccess> planForReceiversThatClaimNoAbsence(TestSiteReporter& reporter, const Value& access, PropertyAccessQuery& query, const PropertyAccessPlan& refused)
 {
@@ -2270,7 +2288,7 @@ void reportPropertyAccessTests(TestSiteReporter& reporter)
             PropertyAccessPlan refused = WTF::move(tested->plan);
             tested = planForReceiversThatClaimNoAbsence(reporter, access, *query, refused);
         }
-        if (!tested || testsPrototypeThatWasJustReplaced(reporter, access, *tested) || isReadOfUntypedFieldInColdCode(reporter, access, *tested))
+        if (!tested || testsPrototypeThatWasJustReplaced(reporter, access, *tested) || isReadOfUntypedFieldInColdCode(reporter, access, *tested) || isReadOfFieldFilledByMakersOutsideInWarmCode(reporter, access, *tested))
             return;
         if (tested->plan.member.kind == MemberKind::Absent && access.opcode == Opcode::PropGet && isProvenToFindFunctions(reporter.context(), reporter.use()))
             return;

@@ -108,6 +108,7 @@ void generateCallDirectFunction(StubAssembler& jit)
     }
     jit.emitFunctionEpilogue();
     Jump exception = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 
     exception.link(&jit);

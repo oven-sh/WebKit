@@ -22,7 +22,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
   b1():
     LoopHint
     v4 = NewObject -, v2 layout=L0 fields=[0]
-    PropSet v4, v2 key="a" mode=Strict
+    PropSet v4, v2 key="b" mode=Strict
     v6 = PropGet v0 key="JSON" [isFreeName]
     v7 = PropGet v6 key="stringify"
     v8 = Call v7, v6, v4 calleeKey="stringify"

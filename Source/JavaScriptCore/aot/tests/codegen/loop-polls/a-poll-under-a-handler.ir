@@ -1,10 +1,10 @@
 # A program that has run out of memory is told so at the poll of a loop, so the poll of a loop that may allocate under a handler has the handler at its site: here the copy of the loop that compares with a BigInt.
-# The copy that compares two integers allocates nothing, and its poll has no handler. The third poll leaves the handler.
+# The copy that compares two integers allocates nothing, and its poll has no handler.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:UnrollLoops
 # RUN(X64): generate-code
 # REQUIRES(X64): x86_64 faulting-loop-polls
-# X64: f1: size={{*}} handlers=2{{*}} polls=3
+# X64: f1: size={{*}} handlers=1{{*}} polls=2
 # X64: f2: size={{*}} handlers=0{{*}} polls=2
 
 module m0 path="main.js" displayPath="main.js" body=f0

@@ -820,6 +820,21 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
     Vector<Index> indexOf(count);
     for (unsigned index = 0; index < returns.size(); ++index)
         indexOf[returns[index].function.index()] = Index(index);
+    // Whoever leaves by a call is gone from the stack when the callee throws. A call that ends its block for want of a result is no way out, so such a callee keeps its result.
+    BitVector isLeftBy(count);
+    for (FunctionID callee : collectInParallel<FunctionID>(loops, count, [&](unsigned caller, Vector<FunctionID>& found) {
+        const Function& function = program.functions[caller];
+        forEachBlockEndingWith(program, FunctionID(caller), { TerminatorKind::ReturnCall }, [&](BlockID block) {
+            const Terminator& terminator = function.at(block).terminator;
+            if (terminator.requirement() != TailCallRequirement::Required)
+                return;
+            const Value& call = function.at(terminator.callOperand());
+            FunctionID callee = call.opcode == Opcode::CallDirect ? call.function() : call.opcode == Opcode::Call ? onlyCalleeOf(program, program.typeOf(function, call.calleeOperand())) : FunctionID();
+            if (callee && indexOf[callee.index()])
+                found.append(callee);
+        });
+    }))
+        isLeftBy.quickSet(callee.index());
     Vector<DirectTailCall> tailCalls = collectInParallel<DirectTailCall>(loops, count, [&](unsigned caller, Vector<DirectTailCall>& found) {
         const Function& function = program.functions[caller];
         forEachBlockEndingWith(program, FunctionID(caller), { TerminatorKind::ReturnCall }, [&](BlockID block) {
@@ -874,7 +889,7 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
                 continue;
             chosen[index] = returned[index].hasOtherValues ? Representation::JSValue : defaultRepresentationOf(returned[index].type());
             // A function that comes to an end and returns nowhere throws: it hands nothing back, and a call of it ends its block.
-            bool neverReturns = !returned[index].hasOtherValues && returned[index].type().isNever() && !returns[index].hasLoop && returns[index].handedOn.isEmpty()
+            bool neverReturns = !returned[index].hasOtherValues && returned[index].type().isNever() && !returns[index].hasLoop && returns[index].handedOn.isEmpty() && !isLeftBy.quickGet(returns[index].function.index())
                 && !program.at(program.at(returns[index].function).result().written()).isNever();
             if (chosen[index] == Representation::JSValue || (chosen[index] == Representation::Void && !neverReturns) || chosen[index] == representationOfResult(program, program.at(returns[index].function)))
                 keepAsDeclared(returns[index].function);

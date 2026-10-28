@@ -24,7 +24,6 @@ function f0 name="call-under-handler" parameters=[{type=anything}, {type=boolean
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: b2() handler=b4():
 # CHECK-NEXT: anything = CallResolved v0, [[target]], -, v2
-# CHECK-NEXT: LoopHint [leavesHandler]
 # CHECK-NEXT: Jump -> next b3()
 }
 

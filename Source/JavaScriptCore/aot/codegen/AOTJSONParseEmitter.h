@@ -39,9 +39,6 @@ public:
     void generateJSONHasStackSpace(const ValueContext&);
     void generateJSONObjectBegin(const ValueContext&);
     void generateJSONObjectKey(const ValueContext& value) { define(value, advanceKeyOrder(value, in<Pointer>(value->orderOperand()))); }
-    void generateGetOrderWord(const ValueContext&);
-    void generateGetFieldInKeyOrder(const ValueContext&);
-    void generateGetKeyNamesInOrder(const ValueContext&);
     void generateJSONObjectFinish(const ValueContext&);
     void generateJSONParseExtraMembers(const ValueContext&);
 
@@ -65,7 +62,6 @@ private:
     void parseDigits(const ValueContext&, bool isInteger);
     // Zero where the layout has no shape, which is reported as an internal error.
     uint32_t shapeOfParsedObject(const ValueContext&);
-    uint32_t shapeWithKeyOrderOf(LayoutID) const;
     Pointer findOrderAfter(Pointer numberedOrder, uint32_t shape, uint32_t slotKey, LBasicBlock miss);
     Pointer advanceKeyOrder(const ValueContext&, Pointer order);
     ExtraMemberState updateInBuffer(ExtraMemberState, NOESCAPE const Invocable<void(Pointer buffer)> auto& call);

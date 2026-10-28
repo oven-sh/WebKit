@@ -1570,7 +1570,7 @@ struct FieldResults {
         return keys;
     }
 
-    KeysByLayout chooseAppendedKeys() const
+    KeysByLayout chooseAppendedKeys(KeysByLayout& keysFilledByMakersOutside) const
     {
         ValueSetMakers makers(inputs);
         KeysByLayout keysByLayout(numberOfLayouts);
@@ -1744,10 +1744,11 @@ struct FieldResults {
             uniteSortedKeys(keys, accessors);
             keepMostAccessedKeys(counts, LimitID::FieldsInKeyOrder, layout, largestFieldCountBelow + numberOfInheritedKeys, keys);
         }
+        keysFilledByMakersOutside = WTF::move(keysNamedWhereObjectsWereFollowedTo);
         return keysByLayout;
     }
 
-    void appendFields(const KeysByLayout& keysByLayout, ValueFlowFieldContents& contents) const
+    void appendFields(const KeysByLayout& keysByLayout, const KeysByLayout& keysFilledByMakersOutside, ValueFlowFieldContents& contents) const
     {
         ValueSetMakers makers(inputs);
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
@@ -1755,6 +1756,7 @@ struct FieldResults {
             for (PropertyKeyID key : keysByLayout[index]) {
                 FlowAppendedField field;
                 field.key = key;
+                field.isFilledByMakers = std::ranges::binary_search(keysFilledByMakersOutside[index], key);
                 OptionSet<ObjectMutation> possible;
                 OptionSet<Actor> open;
                 OptionSet<Actor> writers;
@@ -2231,9 +2233,10 @@ ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, 
         if (LayoutID base = provenBaseOf(results.application, LayoutID(index)))
             results.layoutsDirectlyBelow[base.index()].append(LayoutID(index));
     }
-    KeysByLayout appendedKeys = results.chooseAppendedKeys();
+    KeysByLayout keysFilledByMakersOutside;
+    KeysByLayout appendedKeys = results.chooseAppendedKeys(keysFilledByMakersOutside);
     times.didFinish("fields: appended keys chosen"_s);
-    results.appendFields(appendedKeys, contents);
+    results.appendFields(appendedKeys, keysFilledByMakersOutside, contents);
     times.didFinish("fields: fields appended"_s);
     results.computeAddedKeys(appendedKeys);
     times.didFinish("fields: added keys"_s);

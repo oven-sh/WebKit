@@ -122,6 +122,8 @@ void noteClassesWrittenBelowBuiltinClasses(Program&, const ParallelLoops&);
 bool carriesBrandOfClass(const Program&, LayoutID);
 // The objects of a class below a built-in class have properties from their construction on: the fields of the class, or what the built-in constructor lays on them.
 bool isBornWithProperties(const Program&, LayoutID, BuiltinClassID builtinBase);
+// HasNoExtraProperties can tell such an object that has only those properties from one that has got others.
+bool hasTestForOtherNames(const Program&, LayoutID);
 bool hasOnlyCompiledBases(const Program&, LayoutID);
 bool isEvaluatedOnce(const Program&, const Layout&);
 bool guardsAreNeverSet(const Program&, const Layout&);

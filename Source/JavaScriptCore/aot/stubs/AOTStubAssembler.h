@@ -160,6 +160,7 @@ public:
     void loadCallerReturnAddress(unsigned bytesPushed, GPRReg result);
     void jumpToExceptionHandler();
     void checkStackBeforeEntering();
+    void pollBeforeReturningFromNativeCode();
     // For a frame that ends at the address in the register.
     void checkStackBeforeEntering(GPRReg endOfFrame);
     // The next thing is a jump into the code of the function object in calleeGPR, with the stack as at the entry of this stub.

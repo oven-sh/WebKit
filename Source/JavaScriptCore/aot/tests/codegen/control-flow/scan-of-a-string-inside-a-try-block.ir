@@ -106,7 +106,7 @@ function f1 name="commas" module=m0 flags=[IsChecked, HasExplicitName] length=1 
     Return v27
 }
 
-# The string is made flat once, in front of the loop and under the handler of the try block, and that block polls before it enters the loop. Nothing in the loop allocates then: no block of it has a handler.
+# The string is made flat once, in front of the loop and under the handler of the try block. Nothing in the loop allocates then: no block of it has a handler.
 # IR-LABEL: function f1 name="commas"
 # IR: Jump -> next [[entry]]()
 # IR-NEXT: b1({{*}}):
@@ -116,7 +116,6 @@ function f1 name="commas" module=m0 flags=[IsChecked, HasExplicitName] length=1 
 # IR: role=CatchHandler
 # IR: [[entry]]() handler=
 # IR-NEXT: flatstring = FlattenString v0
-# IR-NEXT: LoopHint [leavesHandler]
 # IR-NEXT: Jump -> next b1(
 
 # The loop is the one that stands outside a try block: eight characters a turn off one address, no poll, no test of the string.

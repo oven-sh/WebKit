@@ -1,0 +1,7 @@
+# The program of ../../answers is one in which tests of elements are placed and lists of whole numbers are converted behind a failed test of their storage.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: ElementPresenceTestsPlaced >= 1
+# STATISTIC: IntegerArrayConversionsPlaced >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/sums-over-lists-that-the-program-makes.ir

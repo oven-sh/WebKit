@@ -99,6 +99,8 @@ public:
     Symbol* brandOfInstanceMadeBy(VM&, JSCell* parent, JSCell* newTarget);
     Structure* structureOfInstanceMadeBy(VM&, JSCell* parent, JSCell* newTarget, Structure*);
     bool carriesBrandOfClass(Structure*, uint32_t rankOfClass) const;
+    // Allocates nothing.
+    bool learnWhetherStructureHasOnlyNamesOfItsClass(Structure*);
     Structure* lazyClassObjectStructureInheritingFrom(VM&, JSObject* parent);
     Structure* classObjectStructureInheritingFrom(VM&, JSObject* parent);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -231,6 +233,8 @@ private:
     std::array<InstanceOfClassBelow, numberOfInstancesOfClassesBelow> m_instancesOfClassesBelow { };
     // By the rank of the class plus one.
     HashMap<uint32_t, Symbol*> m_brandsOfInstances;
+    HashMap<UniquedStringImpl*, const LayoutData*> m_classesByBrand;
+    std::array<uint32_t, numberOfStructuresWhoseNamesAreKnown> m_structuresWhoseNamesAreKnown { };
     struct StructureWithBrand {
         JSCell* parent;
         JSCell* newTarget;

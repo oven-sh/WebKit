@@ -1,0 +1,228 @@
+# interface Point { x: number; y: number }
+# let calls = 0;
+# const log: string[] = [];
+# function sum(point: Point): number { return point.x + point.y; }
+# function countThenSum(point: Point): number { calls++; return point.x + point.y + calls * 100; }
+# function sumThenCount(point: Point): number { const total = point.x + point.y; calls++; return total + calls * 100; }
+# function between(point: Point): number { const x = point.x; log.push("between"); return x + point.y + log.length * 100; }
+# function made(point: Point): Point { const copy: Point = { x: point.x, y: 0 }; copy.y = point.y; return copy; }
+# function both(a: Point, b: Point): number { return a.x + a.y + b.x + b.y; }
+# function stored(point: Point, other: Point): number { point.x = other.y; return point.x + point.y; }
+# function storedLate(point: Point, other: Point): number { const y = other.y; point.x = y; return point.x + other.x; }
+# register(sum, countThenSum, sumThenCount, between, made, both, stored, storedLate);
+# Code that nobody knows calls these, so each has a typed body behind tests at its entrance and a generic version. A test that fails in the typed body before anything can be seen begins the call again in the generic version.
+# The shell hands each function 15 points (a field outside its slot, getters that log, a proxy that logs, members from above) and runs the same text itself: the answers, the counters and the order of what the getters logged are the same.
+# FORM: AsRead
+# RUN: run-in-shell (function () { "use strict"; const seen = []; let calls = 0; const log = []; globalThis.register = (...compiled) => { const twins = [function sum(point) { return point.x + point.y; }, function countThenSum(point) { calls++; return point.x + point.y + calls * 100; }, function sumThenCount(point) { const total = point.x + point.y; calls++; return total + calls * 100; }, function between(point) { const x = point.x; log.push("between"); return x + point.y + log.length * 100; }, function made(point) { const copy = { x: point.x, y: 0 }; copy.y = point.y; return copy; }, function both(a, b) { return a.x + a.y + b.x + b.y; }, function stored(point, other) { point.x = other.y; return point.x + point.y; }, function storedLate(point, other) { const y = other.y; point.x = y; return point.x + other.x; }]; const inputs = [() => ({ x: 1, y: 2 }), () => ({ x: 1.5, y: 2.5 }), () => ({ y: 2, x: 1 }), () => { const point = { x: 3, y: 4 }; delete point.y; point.y = 4; return point; }, () => { const point = { x: 3, y: 4 }; delete point.x; point.x = 3; return point; }, () => { const point = { x: 3, y: 4 }; delete point.x; delete point.y; point.y = 4; point.x = 3; return point; }, () => ({ x: 1, y: 2, z: 3 }), () => ({ get x() { seen.push("x"); return 5; }, y: 2 }), () => ({ x: 1, get y() { seen.push("y"); return 6; } }), () => ({ get x() { seen.push("x"); return 5; }, get y() { seen.push("y"); return 6; } }), () => Object.create({ x: 1, y: 2 }), () => Object.assign(Object.create({ y: 2 }), { x: 1 }), () => new Proxy({ x: 1, y: 2 }, { get(target, key) { seen.push(String(key)); return target[key]; } }), () => Object.freeze({ x: 1, y: 2 }), () => new (class { x = 1; y = 2; })()]; const show = (value, depth = 0) => { if (typeof value === "string") return JSON.stringify(value); if (typeof value === "symbol") return "symbol"; if (typeof value === "bigint") return value + "n"; if (typeof value === "function") return "function"; if (Object.is(value, -0)) return "-0"; if (typeof value !== "object" || value === null || depth > 2) return String(value); let text = Array.isArray(value) ? "[" : "{"; const keys = Reflect.ownKeys(value); for (let i = 0; i < keys.length; i++) { const described = Reflect.getOwnPropertyDescriptor(value, keys[i]); text += String(keys[i]) + ":" + ("value" in described ? show(described.value, depth + 1) : "accessor") + ","; } return text + "}"; }; const tell = (run, operand, other) => { seen.length = 0; try { return show(run(operand, other)) + " " + seen.join() + " " + show(operand); } catch (error) { return "throws " + error.name + " " + seen.join() + " " + show(operand); } }; for (let k = 0; k < compiled.length; k++) { let same = 0; for (let n = 0; n < inputs.length; n++) { const next = inputs[(n + 1) % inputs.length]; const got = tell(compiled[k], inputs[n](), next()), expected = tell(twins[k], inputs[n](), next()); if (got === expected) same++; else print(twins[k].name + " of " + inputs[n] + ": " + got.slice(0, 90) + " and not " + expected.slice(0, 90)); } print(twins[k].name + ": " + same + " of " + inputs.length); } }; })();
+# CHECK: sum: 15 of 15
+# CHECK-NEXT: countThenSum: 15 of 15
+# CHECK-NEXT: sumThenCount: 15 of 15
+# CHECK-NEXT: between: 15 of 15
+# CHECK-NEXT: made: 15 of 15
+# CHECK-NEXT: both: 15 of 15
+# CHECK-NEXT: stored: 15 of 15
+# CHECK-NEXT: storedLate: 15 of 15
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+typesite w0 module=m0 kind=Variable
+typesite w1 module=m0 kind=Variable
+typesite w2 module=m0 kind=Parameter
+typesite w3 module=m0 kind=Result
+typesite w4 module=m0 kind=Parameter
+typesite w5 module=m0 kind=Result
+typesite w6 module=m0 kind=Parameter
+typesite w7 module=m0 kind=Result
+typesite w8 module=m0 kind=Parameter
+typesite w9 module=m0 kind=Result
+typesite w10 module=m0 kind=Parameter
+typesite w11 module=m0 kind=Result
+typesite w12 module=m0 kind=Parameter
+typesite w13 module=m0 kind=Parameter
+typesite w14 module=m0 kind=Result
+typesite w15 module=m0 kind=Parameter
+typesite w16 module=m0 kind=Parameter
+typesite w17 module=m0 kind=Result
+typesite w18 module=m0 kind=Parameter
+typesite w19 module=m0 kind=Parameter
+typesite w20 module=m0 kind=Result
+typesite w21 module=m0 kind=Variable
+typesite w22 module=m0 kind=Variable
+typesite w23 module=m0 kind=CallResult
+typesite w24 module=m0 kind=PropertyRead
+typesite w25 module=m0 kind=Variable
+typesite w26 module=m0 kind=Field
+typesite w27 module=m0 kind=Field
+typesite w28 module=m0 kind=Variable
+layout L0 name="Point" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Array{contents=undefined|null|string} module=m0
+variable g0 name="calls" module=m0 declared={type=number|absent site=w0}
+variable g1 name="log" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f6
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f7
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = NewClosure function=f8
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = Integer
+    v17 = Convert v16 declared={type=number site=w0}
+    PutModuleVariable v17 variable=g0
+    v19 = Data data=d0
+    v20 = Convert v19 declared={type=undefined|null|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v20 variable=g1
+    v22 = Builtin builtin=GlobalThis
+    v23 = PropGet v22 key="register" [isFreeName]
+    v24 = Call v23, -, v1, v3, v5, v7, v9, v11, v13, v15
+    v25 = Undefined
+    Return v25
+}
+function f1 name="sum" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number site=w3}
+    Return v4
+}
+function f2 name="countThenSum" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w5}] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="calls"
+    v3 = Increment v2
+    v4 = Convert v3 declared={type=number site=w0}
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="calls"
+    PutModuleVariable v4 variable=g0
+    v8 = PropGet v0 key="x"
+    v9 = PropGet v0 key="y"
+    v10 = Add v8, v9
+    v11 = GetModuleVariable variable=g0
+    v12 = CheckInitialized v11 name="calls"
+    v13 = Integer integer=100
+    v14 = Mul v12, v13
+    v15 = Add v10, v14
+    v16 = Convert v15 declared={type=number site=w5}
+    Return v16
+}
+function f3 name="sumThenCount" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w7}] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Add v1, v2
+    v4 = Convert v3 declared={type=number site=w21}
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="calls"
+    v7 = Increment v6
+    v8 = Convert v7 declared={type=number site=w0}
+    v9 = GetModuleVariable variable=g0
+    v10 = CheckInitialized v9 name="calls"
+    PutModuleVariable v8 variable=g0
+    v12 = GetModuleVariable variable=g0
+    v13 = CheckInitialized v12 name="calls"
+    v14 = Integer integer=100
+    v15 = Mul v13, v14
+    v16 = Add v4, v15
+    v17 = Convert v16 declared={type=number site=w7}
+    Return v17
+}
+function f4 name="between" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w9}] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="x"
+    v2 = Convert v1 declared={type=number site=w22}
+    v3 = GetModuleVariable variable=g1
+    v4 = CheckInitialized v3 name="log"
+    v5 = PropGet v4 key="push"
+    v6 = String string="between"
+    v7 = Call v5, v4, v6 calleeKey="push"
+    v8 = Convert v7 declared={type=number site=w23} illTypedCause=DeclarationWithoutBody
+    v9 = PropGet v0 key="y"
+    v10 = Add v2, v9
+    v11 = GetModuleVariable variable=g1
+    v12 = CheckInitialized v11 name="log"
+    v13 = PropGet v12 key="length"
+    v14 = Convert v13 declared={type=number site=w24} illTypedCause=Assertion
+    v15 = Integer integer=100
+    v16 = Mul v14, v15
+    v17 = Add v10, v16
+    v18 = Convert v17 declared={type=number site=w9}
+    Return v18
+}
+function f5 name="made" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w10 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w11 flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="x"
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = Convert v6 declared={type=undefined|null|L0 site=w25 flags=[OmitsNull, OmitsUndefined]}
+    v8 = PropGet v0 key="y"
+    v9 = Convert v8 declared={type=number site=w26}
+    PropSet v7, v9 key="y"
+    Return v7
+}
+function f6 name="both" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w12 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w14}] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v0 key="x"
+    v3 = PropGet v0 key="y"
+    v4 = Add v2, v3
+    v5 = PropGet v1 key="x"
+    v6 = Add v4, v5
+    v7 = PropGet v1 key="y"
+    v8 = Add v6, v7
+    v9 = Convert v8 declared={type=number site=w14}
+    Return v9
+}
+function f7 name="stored" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w17}] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v1 key="y"
+    v3 = Convert v2 declared={type=number site=w27}
+    PropSet v0, v3 key="x"
+    v5 = PropGet v0 key="x"
+    v6 = PropGet v0 key="y"
+    v7 = Add v5, v6
+    v8 = Convert v7 declared={type=number site=w17}
+    Return v8
+}
+function f8 name="storedLate" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w18 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w19 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w20}] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v2 = PropGet v1 key="y"
+    v3 = Convert v2 declared={type=number site=w28}
+    PropSet v0, v3 key="x"
+    v5 = PropGet v0 key="x"
+    v6 = PropGet v1 key="x"
+    v7 = Add v5, v6
+    v8 = Convert v7 declared={type=number site=w20}
+    Return v8
+}

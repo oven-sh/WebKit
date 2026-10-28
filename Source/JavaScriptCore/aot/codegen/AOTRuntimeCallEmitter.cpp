@@ -619,7 +619,9 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     if (options.pureFunction)
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
-    bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
+    // What finds no room for what it allocates throws where it returns. In a function with handlers its site says which handler is in force there, or that none is.
+    bool mayFindNoRoom = context && returns && effects.mayCollect && !options.followsThrow && analyses().cfg().hasHandlers();
+    bool hasSite = effects.mayExitSideways() || options.capturesStackTrace || mayFindNoRoom;
     if (m_options.recorded.isSabotaged(Sabotage::CallsThatThrowHaveNoSite) && returns && context && !effects.mayRunOtherCode() && !options.capturesStackTrace && !options.throwSite && !request.firstRead) [[unlikely]]
         hasSite = false;
     RELEASE_ASSERT(context || (!hasSite && (!effects.mayCollect || options.followsThrow)));
@@ -704,7 +706,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         }
         return { };
     }
-    if (effects.mayThrow && site)
+    if ((effects.mayThrow || mayFindNoRoom) && site)
         emitter<ExceptionEmitter>().attachLandingPad(*context, patchpoint, *site, returns);
     if (neverReturns) {
         m_out.appendTo(newBlock());
@@ -779,7 +781,7 @@ B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationCon
 
 void RuntimeCallEmitter::finishCallPatchpoint(const OperationContext& context, B3::PatchpointValue* patchpoint, uint32_t site, const CallPatchpointRequest& request)
 {
-    if (request.effects.mayThrow)
+    if (request.effects.mayThrow || request.effects.mayCollect)
         emitter<ExceptionEmitter>().attachLandingPad(context, patchpoint, site, !request.neverReturns);
     if (request.neverReturns)
         m_out.appendTo(newBlock());

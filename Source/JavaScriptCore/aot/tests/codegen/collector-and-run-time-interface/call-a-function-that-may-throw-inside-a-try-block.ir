@@ -102,7 +102,6 @@ function f2 name="orZero" module=m0 position=115 flags=[IsChecked, HasExplicitNa
 }
 
 # Inside a try block the call ends its block and has two ways on: the return, and a rare edge to the handler. The way of the return has no test.
-# The callee may have allocated, so the block polls before it leaves the handler.
 # CHECK-LABEL: name="orZero" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK: Double b@[[doubled]] = Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), {{*}}Terminal|ExitsSideways|{{*}}:CallDirect)
@@ -111,14 +110,11 @@ function f2 name="orZero" module=m0 position=115 flags=[IsChecked, HasExplicitNa
 # CHECK-NOT: Branch(
 # CHECK-NOT: Patchpoint(
 # CHECK: Double b@[[sum]] = Add(b@[[doubled]], 
-# CHECK-NEXT: Void b@{{*}} = Patchpoint({{*}}Terminal|ExitsSideways{{*}}:LoopHint)
-# CHECK-NEXT: Successors: #[[left]], Rare:#[[caught]]
-# CHECK-NEXT: BB#[[left]]:
-# CHECK: Return(b@[[sum]], Terminal)
+# CHECK-NEXT: Return(b@[[sum]], Terminal)
 # CHECK-NEXT: BB#[[caught]]:
 # CHECK: Return($0.000000(b@{{*}}), Terminal)
 # CHECK-LABEL: end of function
 # CODE: f2: size={{*}} handlers=1
-# The frame, the call, the addition, the poll and the return.
-# X64: instructions: 4, patchpoints: 2
-# ARM64: instructions: 5, patchpoints: 2
+# The frame, the call, the addition and the return.
+# X64: instructions: 4, patchpoints: 1
+# ARM64: instructions: 5, patchpoints: 1

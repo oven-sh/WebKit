@@ -1,0 +1,10 @@
+# The program of ../../answers is one in which tests of elements are placed, lists of whole numbers are converted behind a failed test of their storage, lists stay in frames and sums of texts are fused.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: ElementPresenceTestsPlaced >= 1
+# STATISTIC: IntegerArrayConversionsPlaced >= 1
+# STATISTIC: ArraysInFrames >= 1
+# STATISTIC: ConcatenationsFused >= 1
+# STATISTIC: StretchCopiesToWaysBack >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/loops-with-a-turn-that-is-seldom-taken.ir

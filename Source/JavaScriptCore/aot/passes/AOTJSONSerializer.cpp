@@ -186,9 +186,6 @@ struct JSONTextWriter final : Emission {
         const Field& field = program().at(id).fields[fieldIndex];
         if (!isEnumerableStringField(program(), field))
             return MemberSupport::NotSerialized;
-        // The slot of an accessor holds its functions. What is written is what the getter answers.
-        if (field.form.contains(FieldForm::IsAccessor))
-            return MemberSupport::ByName;
         if (hasNoJSONText(slotContentsTypeOf(program(), { id, fieldIndex })))
             return MemberSupport::WithoutText;
 
@@ -972,6 +969,7 @@ struct JSONTextWriter final : Emission {
         if (!receiverStateOf(program(), layout).cannot(ObjectMutation::ChangePrototype))
             emitJumpUnless(builder().append(Opcode::HasLayoutPrototype, { tested.object, tested.guard }), whenShapeDiffers);
         BlockID done = builder().addBlock();
+        BlockID noOrder = builder().addBlock(BlockFrequency::Rare);
 
         // An order that is a prefix of another order shares its arm and costs one test, and an order of n fields has n + 1 prefixes.
         BuildContext& build = inputs().build;
@@ -979,27 +977,17 @@ struct JSONTextWriter final : Emission {
         uint64_t maxFields = build.limit(LimitID::MaxExpandedKeyFields);
         ExpectedKeyOrders expectedOrders = expectedKeyOrdersOf(program(), layout, KeyOrderLimits { maxArms * (maxFields + 1), maxFields });
         Vector<KeyOrderFamily, 4> families = groupKeyOrders(layout, expectedOrders.orders.span(), maxArms);
-        // Stores behind the creation of an object give it keys in an order that nobody has listed.
-        bool writesAnyOrder = !expectedOrders.coversEveryObject && !families.isEmpty() && tested.guard && keysAreSeenToBeAdded(layout);
-        Expected<BlockFrequency> frequencyOfOtherOrders = writesAnyOrder ? BlockFrequency::Normal : BlockFrequency::Rare;
-        BlockID noOrder = builder().addBlock(frequencyOfOtherOrders);
-        // An arm of its own is the fastest code for an order. Of the orders at creation the longest is the likeliest to be left as it is.
-        if (writesAnyOrder) {
-            auto longest = std::ranges::max_element(families, { }, [](const KeyOrderFamily& family) { return family.longestOrder.size(); });
-            std::swap(families.first(), *longest);
-            maxArms = 1;
-        }
 
         uint64_t numberOfArmsLeftOut = expectedOrders.numberOfOrdersLeftOut;
         if (families.size() > maxArms) {
             numberOfArmsLeftOut += families.size() - maxArms;
             families.shrink(static_cast<size_t>(maxArms));
         }
-        if (numberOfArmsLeftOut && !writesAnyOrder)
+        if (numberOfArmsLeftOut)
             build.exceeds(LimitID::MaxExpandedKeyOrders, maxArms + numberOfArmsLeftOut, Subject { .function = inputs().functionAsRead, .layout = layout });
 
         for (const KeyOrderFamily& family : families) {
-            BlockID next = builder().addBlock(&family == &families.last() ? frequencyOfOtherOrders : BlockFrequency::Normal);
+            BlockID next = builder().addBlock(&family == &families.last() ? BlockFrequency::Rare : BlockFrequency::Normal);
 
             ObjectArm arm { { tested.object, { } }, layout, family, { }, { }, { }, done };
             for (uint32_t position = 0; position < family.longestOrder.size(); ++position) {
@@ -1033,160 +1021,8 @@ struct JSONTextWriter final : Emission {
         builder().emitJump(noOrder);
 
         builder().moveToEndOf(noOrder);
-        if (writesAnyOrder)
-            appendObjectInAnyOrder(tested, layout, whenShapeDiffers, done);
-        else
-            builder().emitJump(whenShapeDiffers);
+        builder().emitJump(whenShapeDiffers);
         builder().moveToEndOf(done);
-    }
-
-    // Every store to some member is in sight, and not every one of them is part of a creation: the program itself gives objects of the layout a key later.
-    bool keysAreSeenToBeAdded(LayoutID layout) const
-    {
-        // What a key that is computed when the class is evaluated turns out to be, a text or a symbol, nobody knows here.
-        if (std::ranges::any_of(program().at(layout).fields, [](const Field& field) { return !!field.computedKey; }))
-            return false;
-        for (uint32_t field = 0; field < program().at(layout).fields.size(); ++field) {
-            if (!isEnumerableStringField(program(), program().at(layout).fields[field]))
-                continue;
-            const FieldFlow& flow = flowOf(program(), { layout, field });
-            if (flow.location.writers == WriterState::AllKnown && flow.location.stores != StoreCount::Never && flow.location.initialization != InitializationState::SetAtCreation && flow.occupancy != Occupancy::AlwaysFilled)
-                return true;
-        }
-        return false;
-    }
-
-    ValueID appendFieldInKeyOrder(ValueID order, ValueID position, LayoutID layout)
-    {
-        return builder().append(make<&Value::setLayout>(Opcode::GetFieldInKeyOrder, { order, position }, layout));
-    }
-
-    // A loop over the keys of the object, in their order. Each key leads to the code that writes the member of its field.
-    void appendObjectInAnyOrder(const TestedObject& tested, LayoutID layout, BlockID whenOrderIsNotListed, BlockID done)
-    {
-        static constexpr int64_t orderIsNotListed = -2;
-        Expected<BlockFrequency> frequency = currentFrequency();
-        ValueID object = tested.object;
-
-        ValueID order = builder().append(make<&Value::setLayout>(Opcode::GetOrderWord, { object, tested.guard }, layout));
-        ValueID firstField = appendFieldInKeyOrder(order, builder().appendInteger(0), layout);
-        emitJumpIf(builder().append(Opcode::StrictEq, { firstField, builder().appendInteger(orderIsNotListed) }), whenOrderIsNotListed);
-        ValueID count = builder().append(Opcode::BitAnd, { builder().append(Opcode::URShift, { order, builder().appendInteger(orderWordCountShift) }), builder().appendInteger(maxFieldsInOrder) });
-
-        Vector<Member, 8> members;
-        for (uint32_t field = 0; field < program().at(layout).fields.size(); ++field) {
-            if (memberSupportOf(layout, field) == MemberSupport::NotSerialized)
-                continue;
-            members.append(Member { program().at(layout).fields[field].key, field, 0, planField(layout, field) });
-            // The read does not rely on the key being listed.
-            members.last().plan.mayBeNullish = true;
-        }
-
-        m_holders.append(Holder { object });
-        ListedHolders listed;
-        if (std::ranges::any_of(members, [&](const Member& member) { return callsSerializerThatRunsCode(member.plan); }))
-            listed = listHolders(m_holders.size());
-        appendToken(JSONToken::OpenObject);
-
-        BlockID head = builder().addBlock(frequency);
-        ValueID position = builder().addParameter(head, inputs().types.intern(Type::integer({ 0, typeOf(count).integers.maximum })));
-        ValueID cursor = builder().addParameter(head, cursorType());
-        ValueID guard = builder().addParameter(head, TypeTable::guard);
-        builder().emitJump(head, { builder().appendInteger(0), m_cursor.value, tested.guard });
-
-        // One reservation serves whichever member comes next.
-        continueAt(head, { cursor, 0 });
-        builder().append(Opcode::LoopHint, { });
-        ensureCursor(1);
-        Cursor atKey = m_cursor;
-        IRBuilder::ProvenBranch hasKey = builder().emitBranchWithProof(builder().append(Opcode::Less, { position, count }));
-        ValueID field = appendFieldInKeyOrder(order, hasKey.provenOnTaken, layout);
-        Vector<std::pair<int64_t, Target>> cases;
-        for (const Member& member : members)
-            cases.append({ static_cast<int64_t>(member.field), Target { builder().addBlock(frequency), { }, { } } });
-        Vector<BlockID, 8> blocksOfMembers = cases.map<Vector<BlockID, 8>>([](auto& entry) { return entry.second.block; });
-        BlockID isNotWritten = builder().addBlock(frequency);
-        builder().emitSwitch(field, WTF::move(cases), Target { isNotWritten, { }, { } });
-
-        MergePoint next { .frequency = frequency };
-        BlockID remainder;
-        continueAt(isNotWritten, atKey);
-        jumpTo(next, guard);
-
-        for (size_t index = 0; index < members.size(); ++index) {
-            const Member& member = members[index];
-            continueAt(blocksOfMembers[index], atKey);
-            ValueID value;
-            bool isReadByName = false;
-            switch (memberSupportOf(layout, member.field)) {
-            case MemberSupport::WithoutText:
-                jumpTo(next, guard);
-                continue;
-            case MemberSupport::Slot:
-                value = appendFieldRead({ object, guard }, layout, member.field, Opcode::GetSlotOrUndefined);
-                break;
-            case MemberSupport::ByName:
-                commit();
-                value = builder().append(make<&Value::setKey>(Opcode::PropGet, { object }, member.key));
-                isReadByName = true;
-                break;
-            case MemberSupport::NotSerialized:
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-
-            MergePoint afterUnknownCode { .frequency = BlockFrequency::Rare };
-            MergePoint* outer = std::exchange(m_afterUnknownCode, &afterUnknownCode);
-            appendValue(value, member.plan, Position { JSONPosition::Property, member.key, { }, afterSeparator });
-            if (isReadByName)
-                leaveAfterUnknownCode();
-            m_afterUnknownCode = outer;
-            jumpTo(next, guard);
-            if (!afterUnknownCode.block)
-                continue;
-
-            // The keys that are written are those the object had at the beginning.
-            continueAt(afterUnknownCode);
-            commit();
-            BlockID stale = builder().addBlock(BlockFrequency::Rare);
-            TestedObject renewed = emitShapeTest(object, singleElementSpan(layout), stale);
-            emitJumpUnless(builder().append(Opcode::StrictEq, { builder().append(make<&Value::setLayout>(Opcode::GetOrderWord, { object, renewed.guard }, layout)), order }), stale);
-            jumpTo(next, renewed.guard ? renewed.guard : guard);
-
-            builder().moveToEndOf(stale);
-            if (!remainder)
-                remainder = builder().addBlock(BlockFrequency::Rare);
-            builder().emitJump(remainder);
-        }
-
-        continueAt(next);
-        builder().emitJump(head, { builder().append(Opcode::Add, { hasKey.provenOnTaken, builder().appendInteger(1) }), m_cursor.value, next.guard });
-
-        continueAt(hasKey.notTaken, atKey);
-        appendToken(JSONToken::CloseObjectOverComma);
-        commit();
-        appendLeaveHolders(listed);
-        builder().emitJump(done);
-
-        if (remainder) {
-            builder().moveToEndOf(remainder);
-            ValueID names = builder().append(make<&Value::setLayout>(Opcode::GetKeyNamesInOrder, { order, builder().append(Opcode::Add, { hasKey.provenOnTaken, builder().appendInteger(1) }) }, layout));
-            ListedHolders listedForHost = listHolders(m_holders.size() - 1);
-            ValueID innermostHolder = m_holders.last().listed ? builder().append(Opcode::Undefined, { }) : object;
-            ValueID hasText = builder().append(make<&Value::setCalledBuiltin>(Opcode::StringBuilderAppendJSONMembers, { m_stringBuilder, object, names, builder().appendInteger(0), innermostHolder }, m_calledBuiltin));
-            unlistHolders(listedForHost);
-            BlockID hasNoText = builder().emitBranch(hasText).notTaken;
-            appendText(appendString("}"_s));
-            appendLeaveHolders(listed);
-            builder().emitJump(done);
-
-            builder().moveToEndOf(hasNoText);
-            appendToken(JSONToken::CloseObjectOverComma);
-            commit();
-            appendLeaveHolders(listed);
-            builder().emitJump(done);
-        }
-        markHoldersAsNotListed(listed);
-        m_holders.removeLast();
     }
 
     // An arm of its own is the fastest code for an order, so orders share an arm only where there are more of them than arms, and those first that differ least.

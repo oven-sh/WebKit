@@ -639,6 +639,13 @@ void StubAssembler::checkStackBeforeEntering()
     pollIfBelow(trapAwareSoftStackLimitWord(), pollBeforeEntering(PollBeforeEnteringForm::Plain));
 }
 
+// Native code that finds no room for what it allocates goes on with what is kept aside. sp is as at the entry of this stub, so what the poll throws is thrown at the site of the call.
+void StubAssembler::pollBeforeReturningFromNativeCode()
+{
+    if (key().callerFrame() != CallerFrame::StubFrame)
+        checkStackBeforeEntering();
+}
+
 void StubAssembler::checkStackBeforeEntering(GPRReg endOfFrame)
 {
     Jump mayNotFit = branchPtr(Below, endOfFrame, trapAwareSoftStackLimitWord());

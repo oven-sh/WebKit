@@ -110,15 +110,13 @@ function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CHECK-NEXT: Int32 b@[[inside]] = Above(b@[[wide]], b@[[place]])
 # CHECK: Branch(b@[[inside]], Terminal)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# The kind of storage is compared with integers first, and that arm is one load of the element.
-# CHECK: Int32 b@[[byte]] = Load8Z(b@[[list]], offset = 4, ControlDependent|Reads:JSCell_indexingTypeAndMisc)
-# CHECK: Int32 b@[[kind]] = BitAnd(b@[[byte]], $14(b@{{*}}))
-# CHECK: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $4(b@{{*}}))
-# CHECK: Branch(b@[[isIntegers]], Terminal)
+# Every list that arrives holds integers in storage for integers, which its type says: nothing looks at the kind of storage, the element is one load, and nothing is called.
+# CHECK-NOT: Reads:JSCell_indexingTypeAndMisc
 # CHECK: Int64 b@[[offset]] = Shl(b@[[place]], $3(b@{{*}}))
 # CHECK-NEXT: Int64 b@[[address]] = Add(b@[[offset]], b@[[storage]])
 # CHECK-NEXT: Int64 b@{{*}} = Load(b@[[address]], ControlDependent|Reads:indexedInt32Properties)
+# CHECK-NOT: Reads:JSCell_indexingTypeAndMisc
+# CHECK-NOT: Patchpoint(
 # CHECK-LABEL: end of function
-# The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 36, patchpoints: 4, rare instructions: 23
-# ARM64: instructions: 35, patchpoints: 4, rare instructions: 24
+# X64: instructions: 9, patchpoints: 0, rare instructions: 2
+# ARM64: instructions: 9, patchpoints: 0, rare instructions: 2

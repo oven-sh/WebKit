@@ -20,15 +20,19 @@ struct ArrayWords {
     AOT_CLASS_THRESHOLD(uint32_t, minLengthThatPaysAtOnce, 32);
     AOT_CLASS_THRESHOLD(uint32_t, maxShortYoungArraysConverted, 16);
     static constexpr uint32_t numberOfCounts = 64;
+    static constexpr uint32_t numberOfStructuresWithoutNames = 4;
 
     uint64_t distanceFromProfileToLastArray;
     const void* lastArrayLookedAtInVain;
     uint32_t elementsLookedAtInVain;
     uint32_t placeThatConverts;
     uint8_t shortYoungArraysConverted[numberOfCounts];
+    // A for-in loop over a list of such a Structure finds no name, on the list or above it, while the objects above have the Structures of the chain.
+    const void* chainsAboveListsWithoutNames[numberOfStructuresWithoutNames];
+    uint32_t structuresOfListsWithoutNames[numberOfStructuresWithoutNames];
 };
 
-static_assert(sizeof(ArrayWords) == 24 + ArrayWords::numberOfCounts);
+static_assert(sizeof(ArrayWords) == 24 + ArrayWords::numberOfCounts + 12 * ArrayWords::numberOfStructuresWithoutNames);
 static_assert(std::is_trivially_default_constructible_v<ArrayWords> && std::is_standard_layout_v<ArrayWords>);
 
 } } // namespace JSC::AOT

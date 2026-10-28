@@ -482,6 +482,12 @@ static void printClassRecord(const TablesContext& context, const LayoutData& lay
         RecordLine(context, "  guard"_s).identifier("name"_s, guard.name).field("kind"_s, nameOf(guard.kind())).field("side"_s, guard.side()).field("bit"_s, guard.bit);
         printSetsOfGuard(context, layout.aggregatesOf(guard));
     }
+    if (data.namesOfFieldsOffset) {
+        const uint32_t* names = context.tables.at<uint32_t>(data.namesOfFieldsOffset);
+        RecordLine(context, "  namesOfFields"_s).list("names"_s, unsafeMakeSpan(names, 1 + static_cast<size_t>(*names)).subspan(1), [&](uint32_t number) {
+            printIdentifier(context, number);
+        });
+    }
     if (data.subclassesOffset) {
         const uint32_t* subclasses = context.tables.at<uint32_t>(data.subclassesOffset);
         RecordLine(context, "  subclasses"_s).list("classes"_s, unsafeMakeSpan(subclasses, 1 + static_cast<size_t>(*subclasses)).subspan(1), [&](uint32_t index) {

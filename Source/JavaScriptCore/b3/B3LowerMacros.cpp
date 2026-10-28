@@ -1818,7 +1818,9 @@ private:
                         before->appendIntConstant(
                             m_proc, m_origin, type,
                             cases[start + i].caseValue())));
-                before->setSuccessors(cases[start + i].target(), FrequentedBlock(nextCheck));
+                // The block behind the last comparison only jumps to the fall-through, so it is entered as often as that is. Once the jump is threaded this edge is all that says so.
+                bool leadsToFallThrough = i + 1 == limit && !allConsecutive && m_proc.policy().optimization.estimatesFrequencies;
+                before->setSuccessors(cases[start + i].target(), FrequentedBlock(nextCheck, leadsToFallThrough ? fallThrough.frequency() : FrequencyClass::Normal));
 
                 before = nextCheck;
             }

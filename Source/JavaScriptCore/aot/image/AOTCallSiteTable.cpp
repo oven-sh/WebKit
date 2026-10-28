@@ -508,21 +508,6 @@ std::optional<HandlerRecord> findHandler(std::span<const uint8_t> handlers, Call
     return std::nullopt;
 }
 
-bool catchesExceptions(const Image& image, uint32_t function)
-{
-    const ImageFunction& record = image.function(function);
-    if (!record.has(ImageFunctionFlag::HasHandlers))
-        return false;
-    std::span<const uint8_t> handlers = SideTableParts::read(record, image.section<uint8_t>(ImageSection::SideTables).data()).handlers;
-    const uint8_t* cursor = handlers.data();
-    const uint8_t* end = cursor + handlers.size();
-    while (cursor < end) {
-        if (HandlerRecord { 0, HandlerRow::read(cursor).type }.catchesExceptions())
-            return true;
-    }
-    return false;
-}
-
 static_assert(sitesBetweenPositionCheckpoints * (2 + ConstructionStartRow::maxSize + PositionRow::maxSize) <= std::numeric_limits<uint16_t>::max(), "a checkpoint stores the size of a run of positions in 16 bits");
 
 namespace {

@@ -302,6 +302,8 @@ static void checkClassRecord(const TableCheck& check, const LayoutData& layout, 
         if (check.expect(areClasses, ProgramTableRule::TableOutOfBounds, id))
             check.expect(isStrictlyAscending(subclasses, std::identity { }), ProgramTableRule::TableNotSorted, id);
     }
+    if (uint32_t offset = layout.classData().namesOfFieldsOffset)
+        check.expect(layout.classData().instancesCarryBrand && check.tryGetCountedWords(offset).size() == check.program.at(id).fields.size(), ProgramTableRule::TableOutOfBounds, id);
     bool guardsAreSorted = isStrictlyAscending(layout.memberGuards(), [](const MemberGuardData& guard) {
         return std::tuple { guard.side(), guard.kind(), static_cast<uint32_t>(guard.name) };
     });

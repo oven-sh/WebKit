@@ -526,7 +526,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryCopyTwoObjects, JSCell*, (Insta
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryCopyTwoObjects);
     DeferTerminationForAWhile deferTermination(vm);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     AssignmentPlanCache& plans = instance->state->objects->caches->assignmentPlans;
     JSFinalObject* copy = tryCopyTwoObjects(vm, *instance->state, globalObject, JSValue::decode(first), JSValue::decode(second));
     if (copy)

@@ -8,12 +8,9 @@
 
 #if ENABLE(AOT)
 
-#include "AOTInstance.h"
-#include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTSchemaRuntimeOperations.h"
-#include "AOTState.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "JSCInlines.h"
@@ -328,35 +325,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTJSONAppendValue, UGPRPair, (Instance* insta
     if (Latin1Character* end = tryAppendValueAtCursor(builder, cursor, value)) [[likely]]
         return toRegisterPair({ end, JSONOutcome::Parsed });
     return appendJSONValueInFrame(*instance, AOT_OPERATION_FRAME_RECORD(), builder, cursor, value, static_cast<JSONPosition>(position));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTKeyOrderEntries, const uint8_t*, (Instance* instance, uint32_t shape, uint32_t orderWord))
-{
-    ObjectModel& objects = *instance->state->objects;
-    return reinterpret_cast<const uint8_t*>(objects.keyOrders.publishEntriesOfFields(objects.layouts.layoutForShape(shape), orderWord));
-}
-
-// The names that JSON.stringify lists for an object with the order word, without those in front of a position in the order.
-JSC_DEFINE_JIT_OPERATION(operationAOTKeyNamesInOrder, EncodedJSValue, (Instance* instance, uint32_t shape, uint32_t orderWord, uint32_t position))
-{
-    constexpr Entry entry = Entry::operationAOTKeyNamesInOrder;
-    AOT_OPERATION_BEGIN(instance, entry);
-    ObjectModel& objects = *instance->state->objects;
-    const LayoutData& layout = objects.layouts.layoutForShape(shape);
-    if (isOrderStoredOutOfLine(orderWord) || position > countOf(orderWord)) [[unlikely]]
-        crashOnWrongOperand(entry);
-    JSArray* names = constructEmptyArray(globalObject, nullptr);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    for (uint16_t index : objects.keyOrders.entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord)).subspan(position)) {
-        if (index >= layout.numberOfFields) [[unlikely]]
-            crashOnWrongOperand(entry);
-        const FieldData& field = layout.fields()[index];
-        if (!objects.layouts.hasStringKey(field) || field.attributes() & PropertyAttribute::DontEnum)
-            continue;
-        names->push(globalObject, jsOwnedString(vm, String(objects.layouts.nameOf(vm, field))));
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    }
-    OPERATION_RETURN(scope, JSValue::encode(names));
 }
 
 // The engine reserves room for the longest escaped form of a string before it reads the string, and throws if no string is that long.

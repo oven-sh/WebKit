@@ -28,7 +28,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr OpcodeSet operationsIndexedByNumber {
     Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::HasArrayElement, Opcode::IsElementPresent,
-    Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement, Opcode::IsInsideView,
+    Opcode::GetTypedArrayElement, Opcode::PutTypedArrayElement, Opcode::IsInsideView, Opcode::IsElementInStorage, Opcode::ToEnumeratorPosition,
     Opcode::StringRangeCodeUnitOrNaN, Opcode::StringRangeCodeUnitOrMinusOne, Opcode::StringRangeCodePointOrUndefined, Opcode::StringRangeCharacterOrEmpty, Opcode::StringRangeCharacterOrUndefined
 };
 static constexpr OpcodeSet numberTruncations { Opcode::ToInt32, Opcode::ToUint32 };

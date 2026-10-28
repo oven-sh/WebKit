@@ -813,6 +813,50 @@ static void testStorageOfArray()
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number\n"_s, { "validate"_s }, "globalThis.sink = function () { this.k[0] = 7; };"_s);
 }
 
+// The same list, asked for its first element by Array.prototype.at, which is written out for the kind of storage that the type of the list names.
+static constexpr ASCIILiteral leakedArrayOfIntegersAskedByBuiltin = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=7
+    v1 = NewArray v0, v0, v0 contents=anything holes=[]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="sink" [isFreeName]
+    v4 = NewObject -, v1, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = PropGet v5 key="toLocaleString"
+    v7 = Call v6, v5 calleeKey="toLocaleString"
+    v8 = Integer integer=0
+    v9 = PropGet v1 key="at"
+    v10 = Call v9, v1, v8 calleeKey="at"
+    v11 = TypeOf v10
+    v12 = PropGet v2 key="print" [isFreeName]
+    v13 = Call v12, -, v11
+    Return
+}
+function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThis] enclosingRuntimeFunction=$toLocaleString thisType={type=anything} results=[{type=anything}] {
+    v1 = PropGet v0 key="toString"
+    v2 = TypeOf v1
+    v3 = PropGet v0 key="k"
+    v4 = TypeOf v3
+    Return
+}
+runtimefunction id=$toLocaleString function=f1
+)IR"_s;
+
+// The built-in makes no test of the kind of storage. A build that checks its proofs at run time makes it, and reports a list of another kind.
+static void testStorageOfArrayAskedByBuiltin()
+{
+    for (ASCIILiteral statements : { "globalThis.sink = function () { this.k[0] = 0.5; };"_s, "globalThis.sink = function () { this.k[0] = 'text'; };"_s }) {
+        checkValidationFails(leakedArrayOfIntegersAskedByBuiltin, ValidationFailureKind::ArrayStorageKind, statements, { "validate"_s, "heat=EverythingIsHot"_s });
+        checkValidationFails(leakedArrayOfIntegersAskedByBuiltin, ValidationFailureKind::ValueType, statements, { "testing=CheckProofsAtRunTime"_s, "heat=EverythingIsHot"_s });
+    }
+
+    UTF8CString numberedText = withNumbersOfModels(leakedArrayOfIntegersAskedByBuiltin);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number\n"_s, { "testing=CheckProofsAtRunTime"_s, "heat=EverythingIsHot"_s }, "globalThis.sink = function () { this.k[0] = 7; };"_s);
+}
+
 // Nothing in the program does any of this to the object, and the object never escapes: each is a mutation that flow calls impossible for its layout.
 static void testEveryKindOfMutation()
 {
@@ -1032,6 +1076,7 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/contents-of-long-array"_s, testContentsOfLongArray },
         { "proof-validation/contents-of-map"_s, testContentsOfMap },
         { "proof-validation/storage-of-array"_s, testStorageOfArray },
+        { "proof-validation/storage-of-array-asked-by-built-in"_s, testStorageOfArrayAskedByBuiltin },
         { "proof-validation/every-kind-of-mutation"_s, testEveryKindOfMutation },
         { "proof-validation/pristine-array"_s, testPristineArray },
         { "proof-validation/pristine-array-with-many-names"_s, testPristineArrayWithManyNames },

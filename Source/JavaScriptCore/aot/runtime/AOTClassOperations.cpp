@@ -132,7 +132,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetConstructPrototype, JSCell*, (I
 {
     constexpr Entry entry = Entry::operationAOTSetConstructPrototype;
     AOT_OPERATION_BEGIN(instance, entry);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     DeferGC deferGC(vm);
     ObjectModel& objects = *instance->state->objects;
     // The stub that looks at the prototype first has allocated nothing.

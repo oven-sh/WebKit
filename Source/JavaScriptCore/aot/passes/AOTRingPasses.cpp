@@ -3301,7 +3301,7 @@ PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)
 
 // RemoveRedundantHandlers.
 
-// What allocates may leave an error to the poll that leaves the handler, which finds by the handler of the block that the handler covers it.
+// An operation that finds no room for what it allocates throws where it returns.
 static void removeUnusedHandler(Rewrite& rewrite, BlockID id, const Block& block)
 {
     auto needsHandler = [](const EffectsOnEdges& effects) {
@@ -3362,11 +3362,6 @@ static constexpr Rule redundantHandlerRules[] {
     { TerminatorKindSet { TerminatorKind::Throw, TerminatorKind::Rethrow }, skipRethrowingHandler },
 };
 
-static bool isPollOfLoop(const Function& function, ValueID id)
-{
-    return function.at(id).opcode == Opcode::LoopHint && !function.at(id).leavesHandler();
-}
-
 static bool isRare(const Block& block)
 {
     return block.frequency.predicted() == BlockFrequency::Rare;
@@ -3389,8 +3384,7 @@ static bool likelyTurnsAllocateNothing(FunctionAnalyses& analyses, const Natural
     return true;
 }
 
-// All that a poll throws to a handler is the error that an allocation under the handler has left to it. Where the likely turns of a loop allocate nothing, the poll of the loop stands outside the handler:
-// whatever may have allocated polls under the handler before it comes to that poll, as it does on every other way out.
+// All that a poll throws to a handler is the error that an allocation has left to it. Where the likely turns of a loop allocate nothing, the poll of the loop stands outside the handler.
 static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context)
 {
     Function& function = context.function;
@@ -3415,7 +3409,7 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context)
             if (!block.handler || loops.innerMostLoopOf(id) != &loop)
                 continue;
             size_t position = block.values.findIf([&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
-            if (position == notFound || !isPollOfLoop(function, block.values[position]))
+            if (position == notFound || function.at(block.values[position]).opcode != Opcode::LoopHint)
                 continue;
             if (!allocatesNothing)
                 allocatesNothing = likelyTurnsAllocateNothing(analyses, loop);
@@ -3436,185 +3430,14 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context)
     return !polls.isEmpty();
 }
 
-// An operation that finds no room for what it allocates goes on with what is kept aside, and the error is thrown at the next poll. What a handler covers polls before it leaves the handler,
-// so the handler that covers the operation takes the error. Only a way on which something may have allocated since the last poll has such a poll.
-static PassOutcome pollWhereHandlersAreLeft(FunctionPassContext& context)
-{
-    Function& function = context.function;
-    FunctionAnalyses& analyses = context.analyses;
-    std::span<const BlockID> blocks = analyses.cfg().reversePostOrder();
-    auto isPollOfThisPass = [&](ValueID id) {
-        return function.at(id).opcode == Opcode::LoopHint && function.at(id).leavesHandler();
-    };
-    // A test that is one operation with the branch behind it belongs to the branch.
-    auto isFusedWithTest = [&](const Block& block) {
-        return block.terminator.kind == TerminatorKind::TestAndBranch && !block.values.isEmpty() && block.values.last() == block.terminator.conditionOperand();
-    };
-    // What hands over the result of an async function belongs to the Return behind it: the function has ended by then.
-    auto valuesInFrontOfEnd = [&](const Block& block) {
-        std::span<const ValueID> values = block.values.span();
-        bool endsWithResult = !values.empty() && function.at(values.back()).opcode == Opcode::ReturnAsyncResult;
-        return values.first(values.size() - (endsWithResult || isFusedWithTest(block)));
-    };
-    auto endMayAllocate = [&](BlockID id) {
-        const Block& block = function.at(id);
-        return analyses.effectsOfTerminator(id).onAnyEdge().mayCollect || (isFusedWithTest(block) && analyses.effectsOf(block.values.last()).onAnyEdge().mayCollect);
-    };
-    auto pollsOutsideHandlers = [&](const Block& block) {
-        return !block.handler && std::ranges::any_of(block.values, [&](ValueID value) { return isPollOfLoop(function, value); });
-    };
-    // Where the likely turns of a loop allocate nothing and its poll stands outside the handlers, a rare path polls for itself before it comes back to them, and they have nothing to poll for.
-    BitVector likelyTurnsOweNothing(function.blocks.size());
-    if (analyses.cfg().hasCycle()) {
-        const NaturalLoops& loops = analyses.naturalLoops();
-        for (BlockID id : blocks) {
-            const NaturalLoop* loop = pollsOutsideHandlers(function.at(id)) ? loops.innerMostLoopOf(id) : nullptr;
-            if (!loop || !likelyTurnsAllocateNothing(analyses, *loop))
-                continue;
-            for (unsigned index = 0; index < loop->size(); ++index)
-                likelyTurnsOweNothing.quickSet(loop->at(index).index());
-        }
-    }
-    // A block that can neither throw nor allocate has lost its handler. It lies inside what the handler covers if every way in and every way out does.
-    Vector<BlockID> handlerAround(function.blocks.size());
-    for (BlockID id : blocks) {
-        if (const std::optional<Target>& handler = function.at(id).handler)
-            handlerAround[id.index()] = handler->block;
-    }
-    auto findHandlerAround = [&](BlockID id) {
-        const Block& block = function.at(id);
-        BlockID found;
-        auto isUnder = [&](BlockID neighbor) {
-            BlockID handler = handlerAround[neighbor.index()];
-            if (!found)
-                found = handler;
-            return handler && handler == found;
-        };
-        bool isInside = !block.isHandlerBlock() && !block.terminator.targets.isEmpty() && id != entryBlock && !pollsOutsideHandlers(block)
-            && std::ranges::all_of(block.terminator.targets, [&](const Target& target) { return isUnder(target.block); })
-            && std::ranges::all_of(analyses.cfg().incomingEdges(id), [&](Edge edge) { return !edge.isHandlerEdge() && isUnder(edge.from); });
-        return isInside ? found : BlockID();
-    };
-    for (bool hasChanged = true; std::exchange(hasChanged, false);) {
-        for (BlockID id : blocks) {
-            if (function.at(id).handler || handlerAround[id.index()])
-                continue;
-            if (BlockID handler = findHandlerAround(id)) {
-                handlerAround[id.index()] = handler;
-                hasChanged = true;
-            }
-        }
-    }
-    auto staysUnderHandler = [&](BlockID from, const Target& target) {
-        if (likelyTurnsOweNothing.quickGet(from.index()) && isRare(function.at(from)) && !isRare(function.at(target.block)))
-            return false;
-        return handlerAround[target.block.index()] == handlerAround[from.index()];
-    };
-
-    BitVector mayOweAtHead(function.blocks.size());
-    BitVector mayOweAtTerminator(function.blocks.size());
-    for (bool hasChanged = true; std::exchange(hasChanged, false);) {
-        for (BlockID id : blocks) {
-            const Block& block = function.at(id);
-            if (!handlerAround[id.index()])
-                continue;
-            bool mayOwe = mayOweAtHead.quickGet(id.index());
-            for (ValueID value : valuesInFrontOfEnd(block)) {
-                if (isPollOfThisPass(value))
-                    continue;
-                mayOwe = function.at(value).opcode != Opcode::LoopHint && (mayOwe || analyses.effectsOf(value).onAnyEdge().mayCollect);
-            }
-            mayOweAtTerminator.quickSet(id.index(), mayOwe);
-            if (!mayOwe && !endMayAllocate(id))
-                continue;
-            for (const Target& target : block.terminator.targets) {
-                if (staysUnderHandler(id, target))
-                    hasChanged |= !mayOweAtHead.quickSet(target.block.index());
-            }
-        }
-    }
-
-    IRBuilder builder(analyses.context(), function, context.types, &analyses);
-    Vector<Edge, 4> edgesToSplit;
-    bool hasChanged = false;
-    for (BlockID id : blocks) {
-        const Block& block = function.at(id);
-        const Terminator& terminator = block.terminator;
-        // What a call at the end finds owed it throws at its entry, which the handler covers.
-        bool returns = terminator.kind == TerminatorKind::Return;
-        bool leavesOnEveryEdge = block.handler && (returns || (!terminator.targets.isEmpty() && std::ranges::none_of(terminator.targets, [&](const Target& target) { return staysUnderHandler(id, target); })));
-        bool terminatorMayOwe = block.handler && endMayAllocate(id);
-        bool pollsAtEnd = leavesOnEveryEdge && !terminatorMayOwe && mayOweAtTerminator.quickGet(id.index());
-
-        // At the end, but in front of what is written behind the last operation that may leave an error. That may have stood behind the handler: a block that cannot throw is joined to the one in front of it,
-        // and the handler must not find its stores done.
-        uint32_t end = valuesInFrontOfEnd(block).size();
-        uint32_t place = end;
-        for (uint32_t index = end; pollsAtEnd && index--;) {
-            if (isPollOfThisPass(block.values[index]))
-                continue;
-            Effects effects = analyses.effectsOf(block.values[index]).onAnyEdge();
-            if (effects.mayCollect)
-                break;
-            if (!effects.writes.containsOnly(heapsWhoseWritesNobodySees))
-                place = index;
-        }
-        bool hasPollInPlace = pollsAtEnd && place && isPollOfThisPass(block.values[place - 1]);
-        BitVector erased(block.values.size());
-        uint32_t numberOfErasedInFrontOfPlace = 0;
-        for (uint32_t index = 0; index < block.values.size(); ++index) {
-            if (!isPollOfThisPass(block.values[index]) || (hasPollInPlace && index + 1 == place))
-                continue;
-            erased.quickSet(index);
-            numberOfErasedInFrontOfPlace += index < place;
-        }
-        if (block.handler && !pollsAtEnd && !returns && (terminatorMayOwe || mayOweAtTerminator.quickGet(id.index()))) {
-            for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
-                if (!staysUnderHandler(id, terminator.targets[targetIndex]))
-                    edgesToSplit.append({ id, targetIndex });
-            }
-        }
-        if (!erased.isEmpty()) {
-            builder.applyInsertions();
-            builder.eraseValues(id, erased);
-            hasChanged = true;
-        }
-        if (pollsAtEnd && !hasPollInPlace) {
-            Value poll = IRBuilder::make(Opcode::LoopHint);
-            poll.setLeavesHandler(true);
-            builder.setOrigin(function.at(id).terminator.origin());
-            builder.insertBefore({ id, place - numberOfErasedInFrontOfPlace }, WTF::move(poll));
-            hasChanged = true;
-        }
-    }
-    builder.applyInsertions();
-    for (Edge edge : edgesToSplit) {
-        Target handler = *function.at(edge.from).handler;
-        builder.setOrigin(function.at(edge.from).terminator.origin());
-        BlockID added = builder.splitEdge(edge);
-        builder.coverWithHandler(singleElementSpan(added), handler);
-        Value poll = IRBuilder::make(Opcode::LoopHint);
-        poll.setLeavesHandler(true);
-        builder.insertBefore(ProgramPoint::atHeadOf(added), WTF::move(poll));
-        builder.applyInsertions();
-        hasChanged = true;
-    }
-    return hasChanged ? PassOutcome::Changed : PassOutcome::Unchanged;
-}
-
 PassOutcome removeRedundantHandlers(FunctionPassContext& context)
 {
-    // Another pass may have taken the last handler away, and the polls that left it stand there yet.
     if (!context.analyses.cfg().hasHandlers())
-        return context.analyses.opcodesOfValues().contains(Opcode::LoopHint) ? pollWhereHandlersAreLeft(context) : PassOutcome::Unchanged;
+        return PassOutcome::Unchanged;
     bool hasTakenPollsOut = takePollsOfLoopsOutOfHandlers(context);
-    PassOutcome outcome = pollWhereHandlersAreLeft(context);
-    if (hasTakenPollsOut)
-        outcome = PassOutcome::Changed;
     if (runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
-        return outcome;
+        return hasTakenPollsOut ? PassOutcome::Changed : PassOutcome::Unchanged;
     Rewrite(context).builder().emptyUnreachableBlocks();
-    pollWhereHandlersAreLeft(context);
     return PassOutcome::Changed;
 }
 

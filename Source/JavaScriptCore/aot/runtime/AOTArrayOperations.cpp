@@ -126,7 +126,6 @@ JSArray* copyFrameArrayToHeap(Instance* instance, JSCell* frameArray)
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, JSCell* cell, JSCell* sourceCell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendElements);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSArray* target = cellArgument<JSArray>(cell, Entry::operationAOTAppendElements);
     JSArray* source = cellArgument<JSArray>(sourceCell, Entry::operationAOTAppendElements);
     // No dense storage holds more, and element by element the rest would go into a sparse map.
@@ -153,7 +152,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAppendElements, void, (Instance* instance, 
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendHole, JSCell*, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTAppendHole);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTAppendHole);
     array->setLength(globalObject, array->length() + 1, true);
     OPERATION_RETURN(scope, array);
@@ -207,7 +205,6 @@ JSArray* tryCreateArrayWithStorage(VM& vm, Structure* structure, unsigned public
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveArrayCapacity, void, (Instance* instance, JSCell* cell, uint64_t additional))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveArrayCapacity);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     reserveArrayCapacity(vm, cellArgument<JSArray>(cell, Entry::operationAOTReserveArrayCapacity), additional);
 }
 
@@ -300,7 +297,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConvertToDoubleStorage, void, (Ins
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* values))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArray);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     static_assert(storageOfItsOwnInArrayLiteralCount < 1u << capacityShiftInArrayLiteralCount);
     unsigned emptyCapacity = count >> capacityShiftInArrayLiteralCount;
     bool hasStorageOfItsOwn = count & storageOfItsOwnInArrayLiteralCount;
@@ -345,7 +341,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayOfLengthOrElement, JSCell*, (Instance*
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instance, uint32_t lengthAndCapacity, uint32_t flags))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayOfHoles);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     unsigned length = lengthAndCapacity & ((1u << holeArrayCapacityShift) - 1);
     unsigned capacity = lengthAndCapacity >> holeArrayCapacityShift;
     RELEASE_ASSERT(length <= capacity && (flags == ArrayWithDouble || flags == ArrayWithInt32 || flags == ArrayWithContiguous));
@@ -455,7 +450,6 @@ static EncodedJSValue pushToArray(Instance* instance, JSArray* array, JSValue va
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPush, EncodedJSValue, (Instance* instance, JSCell* cell, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayPush);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayPush);
     OPERATION_RETURN(scope, pushToArray(instance, array, JSValue::decode(value)));
 }
@@ -463,7 +457,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPush, EncodedJSValue, (Instance* insta
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayPushNumber, EncodedJSValue, (Instance* instance, JSCell* cell, uint64_t numberBits))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayPushNumber);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayPushNumber);
     double number = std::bit_cast<double>(numberBits);
     if (number == number)
@@ -502,7 +495,6 @@ static JSArray* tryFastSlice(VM& vm, JSGlobalObject* globalObject, JSArray* arra
 JSC_DEFINE_JIT_OPERATION(operationAOTArrayCopy, EncodedJSValue, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayCopy);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayCopy);
     if (JSArray* copy = tryFastSlice(vm, globalObject, array, 0, std::numeric_limits<int64_t>::max()))
         OPERATION_RETURN(scope, JSValue::encode(copy));
@@ -512,7 +504,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayCopy, EncodedJSValue, (Instance* insta
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySlice, EncodedJSValue, (Instance* instance, JSCell* cell, int64_t from, int64_t to))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTArraySlice);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArraySlice);
     if (JSArray* part = tryFastSlice(vm, globalObject, array, from, to))
         OPERATION_RETURN(scope, JSValue::encode(part));
@@ -578,7 +569,6 @@ void reviewArrayAllocationProfile(ArrayAllocationProfile& profile, JSArray* last
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayAtReviewedSite, JSCell*, (Instance* instance, void* profileAddress, uint32_t seedIndexingType))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewArrayAtReviewedSite);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     uint8_t* statics = instance->statics();
     uint8_t* address = static_cast<uint8_t*>(profileAddress);
     uint64_t distanceToLastArray = instance->arrays.distanceFromProfileToLastArray;

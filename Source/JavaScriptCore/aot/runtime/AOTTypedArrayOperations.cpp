@@ -53,7 +53,6 @@ static JSCell* newTypedArrayView(Instance* instance, JSGlobalObject* globalObjec
 JSC_DEFINE_JIT_OPERATION(operationAOTNewTypedArray, JSCell*, (Instance* instance, uint32_t type, double length))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewTypedArray);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     // As the constructor converts its operand. A length that no memory holds is refused by the allocation.
     size_t elementCount = jsNumber(purifyNaN(length)).toIndex(globalObject, "length"_s);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);

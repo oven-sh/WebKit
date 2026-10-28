@@ -416,6 +416,20 @@ bool isBornWithProperties(const Program& program, LayoutID id, BuiltinClassID bu
     return false;
 }
 
+bool hasTestForOtherNames(const Program& program, LayoutID id)
+{
+    if (!carriesBrandOfClass(program, id))
+        return false;
+    const BuiltinTable& builtins = program.builtins();
+    for (BuiltinClassID current = program.at(id).writtenBuiltinBase; current; current = builtins.at(current).parent) {
+        if (!builtins.at(current).listsNamesDefinedOnNewInstances)
+            return false;
+    }
+    return std::ranges::all_of(program.at(id).fields, [](const Field& field) {
+        return !!field.key;
+    });
+}
+
 bool carriesBrandOfClass(const Program& program, LayoutID id)
 {
     const Layout& layout = program.at(id);

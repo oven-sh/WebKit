@@ -181,8 +181,9 @@ void GuardEmitter::defineTestOfCompiledObject(const ValueContext& value, NOESCAP
 void GuardEmitter::generateHasNoExtraProperties(const ValueContext& value)
 {
     ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
-    if (shapes.hasOnlyCellsWithBrands(typeOf(value->objectOperand()))) {
-        defineTest(value, shapes.hasNoPropertyOfItsOwn(in<CellPointer>(value->objectOperand())));
+    if (const Type& type = typeOf(value->objectOperand()); shapes.hasOnlyCellsWithBrands(type)) {
+        CellPointer cell = in<CellPointer>(value->objectOperand());
+        defineTest(value, shapes.hasOnlyCellsBornWithoutProperties(type) ? shapes.hasNoPropertyOfItsOwn(cell) : shapes.hasOnlyNamesOfItsClass(cell));
         return;
     }
     defineTestOfCompiledObject(value, [&] {

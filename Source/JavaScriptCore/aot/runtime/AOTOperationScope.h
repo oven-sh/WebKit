@@ -14,6 +14,7 @@
 #include "AOTProgramIdentifiers.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTUnwinding.h"
 #include "DeferGC.h"
 #include "DeferTermination.h"
 #include "FrameTracers.h"
@@ -151,7 +152,8 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
 
 #define AOT_OPERATION_BEGIN(instance, entry) \
     static_assert(!JSC::AOT::isDeclaredNotToCollect(entry), "an operation that is declared not to collect begins with AOT_OPERATION_BEGIN_WITHOUT_COLLECTION"); \
-    AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
+    AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry); \
+    JSC::AOT::ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord)
 
 // The operation puts collections off while it runs. An error is a new object, and what takes the exception runs the collection.
 #define AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry) \

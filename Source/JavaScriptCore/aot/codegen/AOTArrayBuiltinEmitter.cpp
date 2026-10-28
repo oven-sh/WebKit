@@ -51,8 +51,25 @@ Operand ArrayBuiltinEmitter::undefinedResult(const InlineCall& call)
     return elements().absentElement(call.context(), representation);
 }
 
+const ArrayStorageForm* ArrayBuiltinEmitter::provenFormOf(const InlineCall& call)
+{
+    const Type& array = typeOf(call.receiver());
+    const ClassPart* part = array.singleBuiltinClass();
+    return part && part->contentsAreProven && !array.mayBeUndefinedOrNull() ? findArrayStorageForm(part->arrayStorage) : nullptr;
+}
+
+const ArrayStorageForm* ArrayBuiltinEmitter::provenFormOf(const InlineCall& call, CellPointer array)
+{
+    const ArrayStorageForm* proven = provenFormOf(call);
+    if (proven)
+        elements().validateStorage(call.context(), array, proven->kind);
+    return proven;
+}
+
 ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& call)
 {
+    if (const ArrayStorageForm* proven = provenFormOf(call))
+        return { proven };
     const Type& array = typeOf(call.receiver());
     Type contents = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Expected }, array, ContentsSlot::Element);
     const ArrayStorageForm& expected = ArrayAllocationEmitter(generator()).formAtAllocation(array);
@@ -70,6 +87,9 @@ ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& cal
 
 void ArrayBuiltinEmitter::forEachFormOrMiss(const InlineCall& call, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>& functor)
 {
+    // The kind of storage does not say whether the storage is shared with a literal.
+    if (const ArrayStorageForm* proven = provenFormOf(call, array); proven && mask != IndexingShapeAndWritabilityMask)
+        return functor(*proven);
     ElementAccessEmitter::ShapeTest test = mask == IndexingShapeAndWritabilityMask ? &ElementAccessEmitter::hasWritableShape : &ElementAccessEmitter::hasShape;
     Word32 mode = elements().indexingMode(array, mask);
     elements().forEachFormByShape(mode, test, candidateFormsOf(call), missBlockOf(call), functor);
@@ -300,26 +320,42 @@ void ArrayBuiltinEmitter::scanShortVector(const InlineCall& call, const ArraySto
 Integer ArrayBuiltinEmitter::indexOfNumber(const InlineCall& call, CellPointer array)
 {
     Number searched = numberOperand(call.argument(0));
+    Join<Integer> join(m_out);
+    auto searchDoubles = [&] {
+        scanShortVector(call, arrayStorageFormOf(ArrayStorage::Double), array, searched, join);
+        join.add(callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfDouble, { array, searched }));
+    };
+    auto searchIntegers = [&] {
+        Word32 truncated = low32(emitter<ConversionEmitter>().toInteger(searched));
+        join.add(either<Integer>(equal(toNumber(truncated), searched), [&] {
+            Boxed boxed = boxInt32(truncated);
+            scanShortVector(call, arrayStorageFormOf(ArrayStorage::Int32), array, boxed, join);
+            return callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfInt32, { array, boxed });
+        }, [&] {
+            return integer(-1);
+        }));
+    };
+    const ArrayStorageForm* proven = provenFormOf(call, array);
+    if (proven && proven->kind == ArrayStorage::Double) {
+        searchDoubles();
+        return join.finish();
+    }
+    if (proven && proven->kind == ArrayStorage::Int32) {
+        searchIntegers();
+        return join.finish();
+    }
+
     Word32 shape = elements().indexingMode(array, arrayStorageTestMask);
     LBasicBlock holdsDoubles = newBlock();
     LBasicBlock holdsNoDoubles = newBlock();
-    Join<Integer> join(m_out);
     branch(elements().hasShape(shape, arrayStorageFormOf(ArrayStorage::Double)), { normalEdge(holdsDoubles), normalEdge(holdsNoDoubles) });
 
     m_out.appendTo(holdsDoubles);
-    scanShortVector(call, arrayStorageFormOf(ArrayStorage::Double), array, searched, join);
-    join.add(callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfDouble, { array, searched }));
+    searchDoubles();
 
     m_out.appendTo(holdsNoDoubles);
     missUnless(call, elements().hasShape(shape, arrayStorageFormOf(ArrayStorage::Int32)));
-    Word32 truncated = low32(emitter<ConversionEmitter>().toInteger(searched));
-    join.add(either<Integer>(equal(toNumber(truncated), searched), [&] {
-        Boxed boxed = boxInt32(truncated);
-        scanShortVector(call, arrayStorageFormOf(ArrayStorage::Int32), array, boxed, join);
-        return callOperation<Integer>(call.context(), RuntimeOperation::ArrayIndexOfInt32, { array, boxed });
-    }, [&] {
-        return integer(-1);
-    }));
+    searchIntegers();
     return join.finish();
 }
 
@@ -341,7 +377,8 @@ Integer ArrayBuiltinEmitter::indexOfValueComparedByIdentity(const InlineCall& ca
         join.add(indexOfString(call, array, unboxCell(searched)));
         m_out.appendTo(isNotString);
     }
-    missUnless(call, elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), form));
+    if (const ArrayStorageForm* proven = provenFormOf(call, array); !proven || proven->kind != form.kind)
+        missUnless(call, elements().hasShape(elements().indexingMode(array, arrayStorageTestMask), form));
     if (primitives & Primitive::Number)
         missUnless(call, logicalNot(isNumber(searched)));
     // A hole is the empty word, which equals nothing that is searched.

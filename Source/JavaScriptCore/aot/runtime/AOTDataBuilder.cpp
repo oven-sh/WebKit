@@ -551,7 +551,6 @@ JSMap* tryBuildMap(JSGlobalObject* realm, State& state, const CollectionDataRequ
 JSC_DEFINE_JIT_OPERATION(operationAOTNewFromData, JSCell*, (Instance* instance, uint32_t request))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewFromData);
-    ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, tryBuildData(globalObject, *instance->state, requestAt<DataRequest>(instance, request)));
 }
 

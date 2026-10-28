@@ -1,0 +1,8 @@
+# The program of ../../answers is one in which functions are split behind the tests at their entrance, tests are placed in the typed bodies, and failing tests begin the call again.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: FunctionsSplitBehindEntryChecks >= 1
+# STATISTIC: TypeTestsPlaced >= 1
+# STATISTIC: RestartsInGenericVersion >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/a-call-that-begins-again-has-done-nothing-yet.ir

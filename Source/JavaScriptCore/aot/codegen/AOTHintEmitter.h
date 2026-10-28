@@ -19,7 +19,6 @@ public:
     void pollWhereNoFrameIsSetUp(const OperationContext&);
 
 private:
-    bool allocatesWhereErrorsAreCaught(BlockID);
     void emitPoll(const ValueContext&);
 };
 
