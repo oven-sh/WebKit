@@ -1027,7 +1027,7 @@ const constructionWithAnyArguments: UseOf<"Calls"> = {
 };
 
 export function applyWrittenUses(context: OverloadContext): void {
-  const { uses = {}, isUndeclared, mode, constructs } = context.signature;
+  const { uses = {}, isUndeclared, mode, constructs, refusalsPrintNoValue = false } = context.signature;
   if (constructs !== undefined) {
     const constructed = constructs === "this" ? receiverOperand : ({ operand: "Argument", index: constructs } as const);
     applyCallback(context, constructed, constructionWithAnyArguments);
@@ -1038,7 +1038,7 @@ export function applyWrittenUses(context: OverloadContext): void {
   for (const state of context.states) {
     const { name, operand, accepted, converted } = state.parameter;
     // The host describes an argument or a receiver that it refuses in the message of the error.
-    const isDescribed = !accepted.isAnything && !(namesNoReceiver && operand.operand === "Receiver");
+    const isDescribed = !refusalsPrintNoValue && !accepted.isAnything && !(namesNoReceiver && operand.operand === "Receiver");
     if (context.source.origin === "Host" && !isUndeclared && isDescribed) state.roles.add("DescribedWhenRefused");
     const isWritten = !isUndeclared && Object.hasOwn(uses, name);
     if (isWritten) {

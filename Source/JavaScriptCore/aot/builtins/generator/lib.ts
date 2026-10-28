@@ -938,6 +938,7 @@ const signatureColumnKeys = [
   "writes",
   "runsOnlyOperandCode",
   "readsStateBeforeConversions",
+  "refusalsPrintNoValue",
   "isSpecialCase",
   "resultIsDeclaredOnly",
   "range",

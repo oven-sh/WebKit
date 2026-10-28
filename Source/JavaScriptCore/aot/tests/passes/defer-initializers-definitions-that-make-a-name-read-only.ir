@@ -1,0 +1,97 @@
+# Object.defineProperty makes a name of a function read-only unless the descriptor says that it is writable, and a store under that name throws in strict code. The function goes on to other bodies, where such a store may stand.
+# A definition that makes a name read-only stays where it stands, and the function with it. It is put off under a name under which no store to a function is: `name`, `length`, a symbol. A definition of a writable name is put off under any name.
+#   function set(f) { f.k = 2 }
+#   function readOnly() { const f = function () {}; Object.defineProperty(f, "k", { value: 1 }); set(f); return f }
+#   function writable() { const f = function () {}; Object.defineProperty(f, "k", { value: 1, writable: true }); set(f); return f }
+#   function named() { const f = function () {}; Object.defineProperty(f, "name", { value: "n" }); return f }
+#   const first = readOnly(), second = writable(), third = named(); function read() { return [first, second, third] }
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: InitializersDeferred = 2
+
+# CHECK-LABEL: function f0 name="main"
+# CHECK: = Call {{*}} callees=[f2]
+# CHECK-NEXT: PutModuleVariable {{*}} variable=g0
+# CHECK-NOT: callees=[f3]
+# CHECK-NOT: callees=[f4]
+# CHECK: Return
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 fields=[{key="value" declared={type=anything}}, {key="writable" declared={type=anything}}] ownFieldCount=2
+variable g0 name="first" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="second" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="third" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = Call v0, -
+    PutModuleVariable v1 variable=g0
+    v3 = NewClosure function=f3
+    v4 = Call v3, -
+    PutModuleVariable v4 variable=g1
+    v6 = NewClosure function=f4
+    v7 = Call v6, -
+    PutModuleVariable v7 variable=g2
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="publish" [isFreeName]
+    v11 = NewClosure function=f6
+    v12 = Call v10, -, v11
+    Return
+}
+function f1 name="set" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    PropSet v0, v1 key="k" mode=Strict
+    Return
+}
+function f2 name="readOnly" module=m0 results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = String string="k"
+    v4 = Integer integer=1
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v4 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = Call v2, v1, v0, v3, v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v0
+    Return v0
+}
+function f3 name="writable" module=m0 results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = String string="k"
+    v4 = Integer integer=1
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v4, v5 layout=L0 fields=[0, 1]
+    v7 = FinishObject v6
+    v8 = Call v2, v1, v0, v3, v7
+    v9 = NewClosure function=f1
+    v10 = Call v9, -, v0
+    Return v0
+}
+function f4 name="named" module=m0 results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectDefineProperty
+    v3 = String string="name"
+    v4 = String string="n"
+    v5 = Boolean boolean=true
+    v6 = NewObject -, v4 layout=L0 fields=[0]
+    v7 = FinishObject v6
+    v8 = Call v2, v1, v0, v3, v7
+    Return v0
+}
+function f5 name="f" module=m0 results=[{type=anything}] {
+    Return
+}
+function f6 name="read" module=m0 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = NewArray v0, v1, v2
+    Return v3
+}

@@ -3110,7 +3110,7 @@ PassOutcome sinkConstants(FunctionPassContext& context)
 
 using TypePredicate = bool (Type::*)() const;
 
-static bool canHoistIntoPredecessors(Rewrite& rewrite, BlockID mergePoint, size_t parameterIndex, TypePredicate isCheap)
+static bool canHoistIntoPredecessors(Rewrite& rewrite, BlockID mergePoint, size_t parameterIndex, NOESCAPE const Invocable<bool(const Type&)> auto& isCheap)
 {
     if (rewrite.at(mergePoint).isHandlerBlock())
         return false;
@@ -3118,7 +3118,7 @@ static bool canHoistIntoPredecessors(Rewrite& rewrite, BlockID mergePoint, size_
     for (Edge edge : rewrite.cfg().incomingEdges(mergePoint)) {
         if (edge.isHandlerEdge() || edge.from == mergePoint || rewrite.at(edge.from).terminator.kind != TerminatorKind::Jump)
             return false;
-        hasCheapArgument |= (rewrite.typeOf(targetOf(rewrite.function, edge).arguments[parameterIndex]).*isCheap)();
+        hasCheapArgument |= std::invoke(isCheap, rewrite.typeOf(targetOf(rewrite.function, edge).arguments[parameterIndex]));
     }
     return hasCheapArgument && !rewrite.analyses.isEnteredFromUnreachableBlock(mergePoint);
 }
@@ -3197,9 +3197,45 @@ static void hoistOperatorOnParameter(Rewrite& rewrite, BlockID id, const Block& 
     });
 }
 
+// `target.add(round)` behind the choice among what `add` may be: the declared type of the result is expected of what the ways hand on together.
+// A way that proves the type needs no guard, and a test in place of the guard asks the other ways alone.
+static void hoistGuardOnParameter(Rewrite& rewrite, BlockID id, const Block& block)
+{
+    if (id == entryBlock)
+        return;
+    size_t valueIndex = block.values.findIf([&](ValueID value) { return !isRematerializable(rewrite.at(value)); });
+    if (valueIndex == notFound || rewrite.at(block.values[valueIndex]).opcode != Opcode::Expect)
+        return;
+    ValueID guard = block.values[valueIndex];
+    ValueID parameter = rewrite.at(guard).valueOperand();
+    size_t parameterIndex = block.parameters.find(parameter);
+    if (parameterIndex == notFound || rewrite.uses().useCount(parameter) != 1)
+        return;
+    const Type& expected = rewrite.context.types.at(rewrite.at(guard).expectedType().predicted());
+    auto needsNoGuard = [&](const Type& type) { return type.isSubsetOf(expected, rewrite.program); };
+    if (!canHoistIntoPredecessors(rewrite, id, parameterIndex, needsNoGuard))
+        return;
+    rewrite.claim(id);
+    rewrite.later([&rewrite, id, guard, parameter, parameterIndex, edges = rewrite.keep(rewrite.cfg().incomingEdges(id))] {
+        const Type& expected = rewrite.context.types.at(rewrite.at(guard).expectedType().predicted());
+        for (Edge edge : edges) {
+            ValueID argument = targetOf(rewrite.function, edge).arguments[parameterIndex];
+            if (rewrite.typeOf(argument).isSubsetOf(expected, rewrite.program))
+                continue;
+            Value copy(rewrite.at(guard));
+            copy.setValueOperand(argument);
+            editTarget(rewrite.function, edge).arguments[parameterIndex] = rewrite.insertBefore(pointBeforeTerminatorOf(rewrite.function, edge.from), rewrite.at(guard).origin(), WTF::move(copy));
+        }
+        rewrite.replaceUsesOf(guard, parameter);
+        rewrite.erase(id, guard);
+        rewrite.retype(parameter);
+    });
+}
+
 static constexpr Rule hoistedTestRules[] {
     { TerminatorKindSet { TerminatorKind::Branch }, hoistTruthinessTest, BlocksShown::WithParameters },
     { allTerminators, hoistOperatorOnParameter, BlocksShown::WithParameters },
+    { allTerminators, hoistGuardOnParameter, BlocksShown::WithParameters },
 };
 
 PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)

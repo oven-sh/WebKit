@@ -605,7 +605,7 @@ private:
             openProxiesWithTrap(value, BuiltinNames::getPrototypeOf);
             return value;
         }
-        if ((!m_asksProxiesInReceiverByTheirTraps || position.kind() != BuiltinOperand::Kind::Receiver) && (isConstruction(m_call.kind) || position.kind() == BuiltinOperand::Kind::ArgumentsFrom || !onlyCallsOperand(m_builtins, m_builtin, position)) && (isConstruction(m_call.kind) || !onlyListsOperand(m_builtins, m_builtin, position)))
+        if ((!m_asksProxiesInReceiverByTheirTraps || position.kind() != BuiltinOperand::Kind::Receiver) && (isConstruction(m_call.kind) || position.kind() == BuiltinOperand::Kind::ArgumentsFrom || !onlyCallsOperand(m_builtins, m_builtin, position)) && (isConstruction(m_call.kind) || (!onlyListsOperand(m_builtins, m_builtin, position) && !onlyPassesOperandOn(m_builtins, m_builtin, position))))
             m_context.openProxiesAmong(value);
         return value;
     }
@@ -1228,6 +1228,7 @@ private:
             appendHoldersOf(BuiltinClasses::Promise);
 
         m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins), m_context.maker().of(holdersOfRows.span()));
+        m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::HoldersOfClassesThatAppliedRowsName), m_context.maker().of(holdersOfRows.span()));
         noteInstancesIn(m_context, overload.result.type);
         if (overload.isUndeclared() && m_builtins.at(m_builtin).origin == BuiltinOrigin::Host)
             m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances), m_tables.heap().prototypeObjectsOfHost());
@@ -1465,7 +1466,7 @@ private:
     {
         SetForScope everyReceiver(m_receiversAccepted, ValueSets::anything);
         ValueFlowNodeID description = m_context.hub(m_tables.descriptionOfRefusedOperands());
-        bool takesAnyObject = !parameter.accepted || m_builtins.at(parameter.accepted).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasPlainData });
+        bool takesAnyObject = !parameter.accepted || parameter.conversion == BuiltinConversion::Dictionary || m_builtins.at(parameter.accepted).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasPlainData });
         if (!takesAnyObject) {
             ValueSetID refused = ValueSets::complement(m_context.maker().unite(m_universe.callables(), m_tables.membersSurelyOf(parameter.accepted)));
             if (parameter.operand.isReceiver() && m_call.isFoundOnReceiver)
@@ -1479,9 +1480,17 @@ private:
 
         ValueSetID allButFunctions = ValueSets::complement(m_universe.callables());
         ValueFlowBehaviorID behavior = m_tables.behaviorOf(parameter);
-        if (behavior && m_tables.at(behavior).isTransitive)
-            m_context.connect(m_context.masked(m_context.hub(behavior), allButFunctions), description);
-        else {
+        if (behavior && m_tables.at(behavior).isTransitive) {
+            // An object is what the parameter takes: the message describes what is read out of it, and out of that.
+            ClimbingSet holders = m_context.restrict(m_context.valueOf(m_context.hub(behavior)), m_universe.objects());
+            auto describe = [&](ValueFlowNodeID read) {
+                m_context.connect(m_context.masked(read, allButFunctions), description);
+            };
+            describe(m_context.readWhatWasWritten(holders, everyPropertyName));
+            describe(m_context.lookup(m_context.restrict(holders, m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()))), elementsName));
+            for (BuiltinName name : parameter.namedMembers)
+                describe(m_context.lookup(holders, property(m_context, name)));
+        } else {
             for (BuiltinName name : parameter.namedMembers)
                 m_context.connect(m_context.masked(m_context.lookup(valueAt(parameter.operand), property(m_context, name)), allButFunctions), description);
         }
@@ -1547,7 +1556,7 @@ private:
         if (parameter.protocols.contains(Protocol::Species))
             constructSpecies(parameter.operand);
 
-        if (parameter.protocols.containsAny({ Protocol::Named, Protocol::CallsNamed }) && mayReturnUnknownObject(m_builtins.at(m_overload->result.type))) {
+        if (parameter.protocols.containsAny({ Protocol::Named, Protocol::CallsNamed }) && !parameter.roles.contains(BuiltinOperandRole::MembersAreOnlyInspected) && mayReturnUnknownObject(m_builtins.at(m_overload->result.type))) {
             ClimbingSet holders = valueAt(parameter.operand);
             for (BuiltinName name : parameter.namedMembers)
                 m_context.connect(m_context.lookup(holders, property(m_context, name)), escaped());
@@ -2692,8 +2701,26 @@ private:
         });
     }
 
+    // Native code turns what lies at the end of a path into a primitive: in front of its return it calls these three on it and drops what is no primitive.
+    static bool isStepOfConversionToPrimitive(const BuiltinHandlerCall& handlerCall)
+    {
+        const BuiltinPlace& callee = handlerCall.callee;
+        const BuiltinPlace& converted = handlerCall.thisValue;
+        if (callee.kind != BuiltinPlaceKind::Member || converted.kind != BuiltinPlaceKind::Member || callee.operand != converted.operand)
+            return false;
+        if (handlerCall.times != BuiltinCallbackTimes::Once || handlerCall.resultUse != BuiltinCallbackResultUse::Ignored)
+            return false;
+        BuiltinName called = callee.memberPath.back();
+        return std::ranges::equal(callee.memberPath.first(callee.memberPath.size() - 1), converted.memberPath)
+            && (called == BuiltinNames::toPrimitiveSymbol || called == BuiltinNames::valueOf || called == BuiltinNames::toString);
+    }
+
     void applyHandlerCall(const BuiltinHandlerCall& handlerCall)
     {
+        if (isStepOfConversionToPrimitive(handlerCall)) {
+            connectFrom(handlerCall.thisValue, m_context.hub(m_tables.conversionToPrimitive()));
+            return;
+        }
         forEachPartOfCallees(m_context, m_context.restrict(valueAt(handlerCall.callee), m_universe.callables()), [&](ClimbingSet callees) {
             ValueFlowCallGroup group = m_context.group(callees, ValueFlowCallKind::CallByNativeCode, originOfOperands());
             if (handlerCall.thisValue.kind == BuiltinPlaceKind::None)
@@ -3244,6 +3271,30 @@ bool onlyAsksWhatStandsAbove(const BuiltinTable& builtins, BuiltinID builtin, Bu
     return asks;
 }
 
+// The operand is handed to the code that the built-in calls, as its receiver or as an argument. The built-in itself asks nothing of it.
+bool onlyPassesOperandOn(const BuiltinTable& builtins, BuiltinID builtin, BuiltinOperand operand)
+{
+    constexpr OperandUses usesOfPassedOperand { OperandUse::Inspects, OperandUse::PassesToUserCode };
+    if (builtins.at(builtin).origin == BuiltinOrigin::Host || operand.kind() == BuiltinOperand::Kind::Receiver)
+        return false;
+    bool isPassedOn = false;
+    for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {
+        if (overload.mode != BuiltinCallMode::Call)
+            continue;
+        if (overload.isUndeclared())
+            return false;
+        auto parameter = std::ranges::find_if(overload.parameters, [&](const BuiltinParameter& candidate) {
+            if (candidate.operand == operand)
+                return true;
+            return candidate.operand.kind() == BuiltinOperand::Kind::ArgumentsFrom && operand.kind() == BuiltinOperand::Kind::Argument && candidate.operand.argumentIndex() <= operand.argumentIndex();
+        });
+        if (parameter == overload.parameters.end() || !usesOfPassedOperand.containsAll(parameter->uses) || !parameter->protocols.isEmpty() || !parameter->roles.isEmpty() || parameter->conversion != BuiltinConversion::None)
+            return false;
+        isPassedOn |= parameter->uses.contains(OperandUse::PassesToUserCode);
+    }
+    return isPassedOn;
+}
+
 bool onlyLists(const ValueFlowBehavior& behavior)
 {
     return behavior.protocols == Protocols { Protocol::OwnValues } && !behavior.isTransitive && !behavior.describesRefusedOperands && behavior.namedMembers.empty() && behavior.calledMembers.empty();
@@ -3658,7 +3709,13 @@ void carryOut(ValueFlowRuleContext& context, ValueFlowNodeID values)
 
 void carryOut(ValueFlowRuleContext& context, const ValueFlowOperand& values)
 {
-    context.connect(values, values.maskKind == ValueFlowMaskKind::Plain ? context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut) : ValueFlowProgramNodes::escaped());
+    if (values.maskKind == ValueFlowMaskKind::Plain) {
+        context.connect(values, context.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut));
+        return;
+    }
+    // Behind a check the value goes where the node of the values carried out hands it on.
+    context.connect(values, ValueFlowProgramNodes::escaped());
+    context.connect(values, context.nodes().ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues));
 }
 
 void noteCallOfBuiltin(BuiltinID builtin, ValueFlowCallKind kind, ValueFlowRuleContext& context)
@@ -4010,9 +4067,10 @@ bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName na
     const ValueFlowHeapTables& heap = universe.builtinTables().heap();
     const ValueFlowMembersUnderKey& members = heap.under(context.program().keyOf(name));
     ClimbingSet prototypes(context.maker().unite(members.prototypeObjects, context.maker().intersect(members.holdersOfUndeclaredProperties, heap.prototypeObjectsOfHost())));
-    // An instance that a row names is made where an entry of its class is in use.
+    // An instance is made where the class is constructed or called, or where a row that names the class in its answer is applied. A class that is only read has none.
     ValueFlowNodeID usedBuiltins = context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins);
-    if (context.holdsAnyOf(ClimbingSet(members.hostClassesWithSuchMethod), usedBuiltins))
+    ClimbingSet hostClasses(members.hostClassesWithSuchMethod);
+    if (context.holdsAnyOf(hostClasses, context.nodes().ofHost(ValueFlowHostNode::RunBuiltins)) || context.holdsAnyOf(hostClasses, context.nodes().ofHost(ValueFlowHostNode::HoldersOfClassesThatAppliedRowsName)))
         return true;
     // What native code answers without a description may be one too. Native code that may make one is listed with the feature that guards the class, whether or not a row says what it answers.
     if (context.holdsAnyOf(ClimbingSet(universe.unknownObjectAlone()), context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances))) {

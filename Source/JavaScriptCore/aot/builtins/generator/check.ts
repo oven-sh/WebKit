@@ -622,17 +622,17 @@ function checkHandlerCall(
   if (times === "PerElement") report(problems, overload, "a handler is not called per element");
   if (callee.place !== "Member") return;
   if (!isCalledAfterReturn(times)) {
-    if (callee.path.at(-1) !== null) {
+    if (callee.path.length === 1 && callee.path[0] !== null) {
       report(
         problems,
         overload,
-        "a member under a name that is called before the call returns is written with b.calls",
+        "a member of the operand under a name that is called before the call returns is written with b.calls",
       );
     } else if (overload.flags.includes("RunsOnlyOperandCode")) {
       report(
         problems,
         overload,
-        "the effects of runsOnlyOperandCode follow no call of every own value before the call returns",
+        "the effects of runsOnlyOperandCode follow no call of every own value, or further down a path, before the call returns",
       );
     }
   }

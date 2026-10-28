@@ -1356,6 +1356,27 @@ struct OutliningScan {
                 }
             }
         };
+        // Other code cannot reach an object that was stored into another one while that one is seen to be allocated in this function and to stay in it.
+        BitVector objectsWhoseHoldersAreBound;
+        auto bindHoldersOf = [&](const EscapeAnalysis& escape, ValueID pointer) {
+            if (escape.gaveUp())
+                return;
+            Vector<ObjectID, 8> worklist;
+            auto visit = [&](ObjectID object) {
+                if (!objectsWhoseHoldersAreBound.set(object.index()))
+                    worklist.append(object);
+            };
+            for (ObjectID object : escape.pointsTo(pointer).objects)
+                visit(object);
+            while (!worklist.isEmpty()) {
+                for (ObjectID holder : escape.containersOf(worklist.takeLast())) {
+                    if (isOpenContainer(escape.at(holder)))
+                        continue;
+                    bound.quickSet(escape.at(holder).definition.index());
+                    visit(holder);
+                }
+            }
+        };
 
         // What another rule wants in the function where it stands.
         for (BlockID block : cfg.reversePostOrder()) {
@@ -1380,6 +1401,7 @@ struct OutliningScan {
                     bound.quickSet(tested.index());
                 // The subject may be one of several allocations that meet in a block parameter, or that were read out of another one.
                 bindObjectsOf(analyses.escape(), tested);
+                bindHoldersOf(analyses.escape(), tested);
             }
         }
 

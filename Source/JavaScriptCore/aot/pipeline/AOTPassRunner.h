@@ -331,6 +331,7 @@ private:
     mutable std::atomic<bool> m_didRunLastPass { false };
     mutable std::array<FunctionPassTotals, numberOfPasses> m_functionPassTotals { };
     mutable std::array<CountsOfPasses, numberOfSharesOfCounts> m_countsOfPasses { };
+    mutable std::atomic<bool> m_hasFunctionPassTotals { false };
     mutable std::array<FunctionPassTotals, numberOfSizeClasses> m_totalsBySize { };
 };
 

@@ -454,7 +454,15 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
         connect(context, value, context.written(namespaceObject, writtenNameOf(program, program.stringOf(BuiltinNames::defaultKeyword))));
         ClimbingSet values = valueOf(context, value);
         context.add(holdersOfNames, context.restrict(values, universe.knownObjects()));
-        connect(context, readOwnProperties(context, values, std::nullopt).others, underAnyName);
+        // Where every own key of what the module exports is known, what the getter under a key answers lies under that key.
+        std::optional<ValueSetID> keysAtCreation = keysThatObjectsWereMadeWith(context, values, OwnKeys::All);
+        ClimbingSet keys = keysAtCreation ? context.unite(ClimbingSet(*keysAtCreation), context.valueOf(context.read(values, ValueFlowCellName { ValueFlowNameKind::AddedNames }))) : ClimbingSet();
+        if (keysAtCreation && !context.meet(keys, ValueSets::complement(universe.keys()))) {
+            context.forEachMember(keys, [&](ValueFlowObjectID key) {
+                connect(context, readOwnProperties(context, values, universe.keyOf(key)).others, context.written(namespaceObject, ValueFlowName::property(program, universe.keyOf(key))));
+            });
+        } else
+            connect(context, readOwnProperties(context, values, std::nullopt).others, underAnyName);
         listOwnPropertiesNobodyWrote(context, values, std::nullopt, underAnyName);
     } else if (module.kind != ModuleKind::SourceText)
         context.add(underAnyName, unknownValue(context, sourceOfWhatLoaderMakes(module)));

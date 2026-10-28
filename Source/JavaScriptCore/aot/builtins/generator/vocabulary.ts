@@ -538,6 +538,8 @@ export interface SignatureColumns {
   writes?: readonly Heap[];
   runsOnlyOperandCode?: boolean;
   readsStateBeforeConversions?: boolean;
+  // The message of a refusal names the operand or the member that is refused and prints nothing of its value.
+  refusalsPrintNoValue?: boolean;
   // A faster form of the next overload for some of its operands. The next one is right for them too, so a call whose operands are not known well enough to tell takes that one.
   isSpecialCase?: boolean;
   // Nothing proves the result type: native code may hand back any value. Compiled code expects the type and tests the value where it arrives.

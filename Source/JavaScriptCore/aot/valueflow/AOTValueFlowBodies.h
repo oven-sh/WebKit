@@ -400,9 +400,10 @@ enum class ValueFlowHostNode : uint8_t {
     StoredByLibraryUnderSymbolsNobodyKnows,
     SymbolsThatHostLooksForMayBeInHand,
     HoldersOfLibraryExportsThatProgramWrites,
+    HoldersOfClassesThatAppliedRowsName,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 73;
+inline constexpr unsigned numberOfValueFlowHostNodes = 74;
 
 class ValueFlowProgramNodes {
 public:

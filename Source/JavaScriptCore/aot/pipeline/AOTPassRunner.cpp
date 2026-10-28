@@ -1149,6 +1149,8 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
 
 void PassRunner::addTotals(const ScheduleRun& run, size_t numberOfValuesAtStart) const
 {
+    if (!m_hasFunctionPassTotals.load(std::memory_order_relaxed))
+        m_hasFunctionPassTotals.store(true, std::memory_order_relaxed);
     if (run.numberOfSkippedRuns)
         m_build.statistics().count(StatisticID::FunctionPassRunsSkipped, run.numberOfSkippedRuns);
     if (m_build.options().logging.logsPhaseTimes) {
@@ -1208,6 +1210,9 @@ void PassRunner::addTotals(const ScheduleRun& run, size_t numberOfValuesAtStart)
 
 void PassRunner::flushFunctionPassTotals()
 {
+    // Most program passes run no schedule of function passes, and the counts are thousands of words.
+    if (!m_hasFunctionPassTotals.exchange(false, std::memory_order_relaxed) && !m_build.options().logging.logsPhaseTimes)
+        return;
     for (PassID id : allMembersOf<PassID>) {
         FunctionPassTotals& totals = m_functionPassTotals[static_cast<unsigned>(id)];
         uint64_t runs = 0;

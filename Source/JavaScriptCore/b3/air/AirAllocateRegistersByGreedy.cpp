@@ -927,6 +927,8 @@ struct TmpData {
     }
 
     Tmp neighbours[2];
+    // How often the Shuffles run that hand this half of a cut live range over. Zero for any other Tmp.
+    float frequencyOfCuts { 0 };
 
     void addNeighbor(Tmp tmp)
     {
@@ -4106,6 +4108,11 @@ private:
 
     // Two Tmps that get one register: a conditional move on x86 then needs no copy in front of it, and a pair of a Shuffle no move at all.
     // A Shuffle stands where a live range was cut in two on purpose, so its pairs are not made one Tmp again: whichever half is assigned first names its register to the other.
+    bool isSavedByFrame(Reg reg) const
+    {
+        return (RegisterSet::calleeSaveRegisters().contains(reg, IgnoreVectors) && !m_code.unsavedCalleeSaves().contains(reg, IgnoreVectors)) || m_registerPolicy.savedByCallee.contains(reg, IgnoreVectors);
+    }
+
     void recordNeighbors()
     {
         for (unsigned ordinal : m_instsThatNameNeighbors) {
@@ -4120,6 +4127,9 @@ private:
                     TmpData& destinationData = m_map[destination.tmp()];
                     sourceData.addNeighbor(destination.tmp());
                     destinationData.addNeighbor(source.tmp());
+                    float frequency = adjustedBlockFrequency(m_code[m_instBlockIndex[ordinal]]);
+                    sourceData.frequencyOfCuts += frequency;
+                    destinationData.frequencyOfCuts += frequency;
                     // What one half already wishes for, as the register that an argument arrives in, the other wishes for too.
                     prefer(destinationData, sourceData.preferredReg, 0);
                     prefer(sourceData, destinationData.preferredReg, 0);
@@ -4141,9 +4151,16 @@ private:
 
     NEVER_INLINE void notifyNeighbors(TmpData& tmpData, Reg reg)
     {
+        // A live range is cut so that the half outside needs no frame. In a register that a frame saves it would need one wherever it lives:
+        // that is a wish only for a half that does little but cross the border, where the frame is set up anyway.
+        bool needsFrame = tmpData.frequencyOfCuts && isSavedByFrame(reg);
         for (Tmp neighbour : tmpData.neighbours) {
-            if (neighbour)
-                prefer(m_map[neighbour], reg, 0);
+            if (!neighbour)
+                continue;
+            TmpData& neighbourData = m_map[neighbour];
+            if (needsFrame && neighbourData.useDefCost.value() > 2 * neighbourData.frequencyOfCuts)
+                continue;
+            prefer(neighbourData, reg, 0);
         }
     }
 

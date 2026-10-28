@@ -1,0 +1,78 @@
+# The prototype property of a class cannot be redefined: a static member of that name throws a TypeError where the class is made. `static prototype() {}` does not parse, `static ["prototype"]() {}` does.
+# The class with such a member stays where it stands. A member of that name on the prototype object, and a static member of another name, are put off with their classes.
+#   const first = class { static ["prototype"]() {} }, second = class { ["prototype"]() {} }, third = class { static other() {} }; function read() { return [first, second, third] }
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline DeferInitializers
+# STATISTIC: VariablesFilledByInitializers = 2
+
+# CHECK: variable g0 name="first" module=m0 declared={type=f1}
+# CHECK-NEXT: variable g1 name="second" module=m0 declared={type=absent|f2}
+# CHECK-NEXT: variable g2 name="third" module=m0 declared={type=absent|f3}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: DefineMethod {{*}} layout=L0 side=Static key="prototype"
+# CHECK: PutModuleVariable {{*}} variable=g0
+# CHECK-NOT: DefineMethod
+# CHECK: Return
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance module=m0 constructor=f1
+layout L1 kind=Instance module=m0 constructor=f2
+layout L2 kind=Instance module=m0 constructor=f3
+variable g0 name="first" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g1 name="second" module=m0 declared={type=anything} flags=[IsImmutable]
+variable g2 name="third" module=m0 declared={type=anything} flags=[IsImmutable]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f4
+    DefineMethod v1, v2 layout=L0 side=Static key="prototype"
+    v4 = FinishClass v1 layout=L0
+    PutModuleVariable v4 variable=g0
+    v6 = NewClosure function=f2
+    v7 = NewClass v6 layout=L1
+    v8 = NewClosure function=f4
+    DefineMethod v7, v8 layout=L1 side=Prototype key="prototype"
+    v10 = FinishClass v7 layout=L1
+    PutModuleVariable v10 variable=g1
+    v12 = NewClosure function=f3
+    v13 = NewClass v12 layout=L2
+    v14 = NewClosure function=f4
+    DefineMethod v13, v14 layout=L2 side=Static key="other"
+    v16 = FinishClass v13 layout=L2
+    PutModuleVariable v16 variable=g2
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="publish" [isFreeName]
+    v20 = NewClosure function=f5
+    v21 = Call v19, -, v20
+    Return
+}
+function f1 module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 module=m0 kind=BaseConstructor flags=[HasNewTarget] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L2 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L2
+    v2 = NewObject v1 layout=L2
+    Return v2
+}
+function f4 name="member" module=m0 kind=Method results=[{type=anything}] {
+    Return
+}
+function f5 name="read" module=m0 results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = GetModuleVariable variable=g1
+    v2 = GetModuleVariable variable=g2
+    v3 = NewArray v0, v1, v2
+    Return v3
+}

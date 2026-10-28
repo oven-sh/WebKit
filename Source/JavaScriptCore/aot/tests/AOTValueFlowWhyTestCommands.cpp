@@ -11,6 +11,7 @@
 #include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
+#include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowRuleContext.h"
 #include <wtf/HashMap.h>
 #include <wtf/StringPrintStream.h>
@@ -335,6 +336,57 @@ static void printEdgesInto(PrintStream& out, ValueFlowSolution& solution, ValueF
         out.print("      by ");
         printStatement(out, solver, logged.statement);
         out.println();
+    }
+}
+
+// The way that printWhyHeld() prints is one way in the graph as it ends. These are the edges in the order in which they were logged.
+static void printFirstEdgesCarrying(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node, ValueFlowObjectID member)
+{
+    constexpr unsigned numberOfEdgesPrinted = 6;
+    const ValueFlowSolver& solver = solution.solver();
+    unsigned printed = 0;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        if (logged.edge.to != node || !solver.sets().contains(solver.possibleValuesOf(logged.edge.from), member))
+            continue;
+        if (++printed > numberOfEdgesPrinted)
+            return;
+        out.print("  round ", logged.round, " <- ");
+        printNode(out, solution, logged.edge.from);
+        out.print("   by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+}
+
+// Back from a node along the earliest logged edge that carries the object. Where the heap feeds a node without a logged edge, the next node is the one that explain() names.
+static void printFirstWay(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node, ValueFlowObjectID member)
+{
+    constexpr unsigned numberOfStepsPrinted = 40;
+    const ValueFlowSolver& solver = solution.solver();
+    Vector<ValueFlowNodeID> visited;
+    for (unsigned step = 0; step < numberOfStepsPrinted; ++step) {
+        visited.append(node);
+        out.print("  ");
+        printNode(out, solution, node);
+        const ValueFlowSolver::LoggedEdge* first = nullptr;
+        for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+            if (logged.edge.to == node && !visited.contains(logged.edge.from) && solver.sets().contains(solver.possibleValuesOf(logged.edge.from), member)) {
+                first = &logged;
+                break;
+            }
+        }
+        if (first) {
+            out.print("   round ", first->round, " by ");
+            printStatement(out, solver, first->statement);
+            out.println();
+            node = first->edge.from;
+            continue;
+        }
+        out.println();
+        Vector<ValueFlowNodeID> way = solver.explain(node, member);
+        if (way.size() < 2 || visited.contains(way[1]))
+            return;
+        node = way[1];
     }
 }
 
@@ -1172,6 +1224,56 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 return printBadArgument(out, word);
             out.println(word);
             printWhyHeld(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
+            continue;
+        }
+        if (word.startsWith("first-way="_s)) {
+            size_t colon = word.find(':');
+            std::optional<uint32_t> node = numberAfter(word, 11);
+            std::optional<uint32_t> object = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
+            if (!node || !object || *node >= solver.graph().numberOfNodes() || *object >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            out.println(word);
+            printFirstWay(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
+            continue;
+        }
+        if (word.startsWith("first-into="_s)) {
+            size_t colon = word.find(':');
+            std::optional<uint32_t> node = numberAfter(word, 12);
+            std::optional<uint32_t> object = colon == notFound ? std::nullopt : numberAfter(word, colon + 2);
+            if (!node || !object || *node >= solver.graph().numberOfNodes() || *object >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            out.println(word);
+            printFirstEdgesCarrying(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
+            continue;
+        }
+        if (word.startsWith("object=o"_s)) {
+            std::optional<uint32_t> number = numberAfter(word, 8);
+            if (!number || *number >= universe.numberOfObjects())
+                return printBadArgument(out, word);
+            ValueFlowObjectID object(*number);
+            out.print(word, " kind ", static_cast<unsigned>(universe.kindOf(object)));
+            if (BuiltinID builtin = universe.builtinOf(object))
+                out.print(" built-in ", builtins.tokenOf(builtin));
+            if (BuiltinClassID builtinClass = universe.classOf(object))
+                out.print(" class ", builtins.tokenOf(builtinClass), builtins.at(builtinClass).listsNamesDefinedOnNewInstances ? " (lists own names)" : " (lists no own names)");
+            const ValueFlowHeapTables& heap = universe.builtinTables().heap();
+            out.println(solver.sets().contains(universe.knownObjects(), object) ? " known" : "", solver.sets().contains(universe.builtinObjects(), object) ? " built-in-object" : "", solver.sets().contains(heap.objectsOfRealm(), object) ? " of-realm" : "", solver.sets().contains(heap.lockedObjects(), object) ? " locked" : "", solver.sets().contains(universe.objectsThatMayBeAnything(), object) ? " may-be-anything" : "");
+            continue;
+        }
+        if (word.startsWith("out-of="_s)) {
+            std::optional<uint32_t> node = numberAfter(word, 8);
+            if (!node || *node >= solver.graph().numberOfNodes())
+                return printBadArgument(out, word);
+            out.println(word);
+            for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+                if (logged.edge.from != ValueFlowNodeID(*node))
+                    continue;
+                out.print("  round ", logged.round, " -> ");
+                printNode(out, solution, logged.edge.to);
+                out.print("   by ");
+                printStatement(out, solver, logged.statement);
+                out.println();
+            }
             continue;
         }
         if (word.startsWith("into="_s)) {

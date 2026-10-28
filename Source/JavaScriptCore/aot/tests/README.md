@@ -553,7 +553,7 @@ testaot compile main.bin --output=main.image validate
 jsc --aotImagePath=main.image -e "runCompiledEntryPoint(1)"
 ```
 
-The shell has eleven functions for compiled code:
+The shell has twelve functions for compiled code:
 
 - `runCompiledEntryPoint(id)` takes an id that `testaot compile` printed, runs that entry point and returns its promise. A
   rejection prints `Exception: ..` and exits with 3.
@@ -561,6 +561,8 @@ The shell has eleven functions for compiled code:
   tells it for `delete require.cache[path]`, `require.cache[path] = entry` and `Module.prototype.require = f`.
 - `aotOperationCount(name)` returns how often a run-time operation ran. It needs `--aotCountsPath=<path>`.
 - `aotRuntimeCounters()` returns the run-time counters as text.
+- `aotInstructionCount()` returns how many instructions the thread has retired in user mode since the first call, by the counter of the hardware,
+  and null where that cannot be read. The difference of two calls around many turns of a loop, by the number of turns, is what a turn takes: no clock, the same at any load.
 - `aotBuiltinEntries()` returns the built-ins table as Bun's `test/aot/builtins` reads it.
 - `storeInSlotWithoutTest(object, name, value)` writes the value into the slot of that field of a compiled object and tests no type: the
   writer that nobody listed, for the tests in `validation/`. It throws where the object has no such slot or the form of the slot cannot

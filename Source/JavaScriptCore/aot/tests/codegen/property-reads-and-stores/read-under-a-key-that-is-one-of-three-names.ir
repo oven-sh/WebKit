@@ -120,4 +120,4 @@ function f1 name="pick" module=m0 position=50 flags=[IsChecked, HasExplicitName]
 # X64-LABEL: name="pick" role=Source
 # X64-NEXT: instructions: 26, patchpoints: 2
 # ARM64-LABEL: name="pick" role=Source
-# ARM64-NEXT: instructions: 28, patchpoints: 2
+# ARM64-NEXT: instructions: 32, patchpoints: 2

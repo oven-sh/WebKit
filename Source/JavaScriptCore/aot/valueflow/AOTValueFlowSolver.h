@@ -340,6 +340,17 @@ public:
         }
         return m_graph.valueOf(node);
     }
+    // The functions of the engine that came to the node before the unknown object covered them. Which they are hangs on the order of the rules: only the report reads this, for a place to name.
+    ValueSetID functionsOfEngineListedAt(ValueFlowNodeID node) const
+    {
+        if (size_t share = node.index() / nodesPerShareOfListed; share < m_functionsOfEngineListed.size()) {
+            const Vector<ValueFlowNodeSet>& listed = m_functionsOfEngineListed[share];
+            const ValueFlowNodeSet* found = std::ranges::lower_bound(listed, node, { }, &ValueFlowNodeSet::node);
+            if (found != listed.end() && found->node == node)
+                return found->set;
+        }
+        return ValueSets::nothing;
+    }
     // All that the set stands for: its members, and what they cover now that the solve has ended.
     ValueSetID withWhatMembersCover(ValueSetID, ValueSetMaker&) const;
     enum class GivenToNode : uint8_t { Nothing, UnknownObject, ValueNobodyKnows, WhatAnotherNodeOfBodyHolds };
@@ -999,6 +1010,7 @@ private:
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;
+    Vector<Vector<ValueFlowNodeSet>> m_functionsOfEngineListed;
     bool m_haveLostObjectsEscaped { false };
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };
     ValueSetID m_objectsAlwaysFollowed { ValueSets::nothing };
@@ -1103,6 +1115,7 @@ private:
     BitVector m_statementsThatAskProxiesByTheirTraps;
     BitVector m_libraryFunctionsLacked;
     ValueSetID followedProxiesThatMoreMayBeDoneTo();
+    bool wakeReadersOfNodesThatShowSomethingElse();
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;

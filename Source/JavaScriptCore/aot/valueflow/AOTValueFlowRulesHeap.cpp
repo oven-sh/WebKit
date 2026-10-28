@@ -642,16 +642,23 @@ void HeapRule::noteWhatMayLieUnderSymbolThatHostLooksFor(const HeapKey& key, con
         connect(stored, m_context.nodes().ofHost(isInProgramCode() ? ValueFlowHostNode::StoredUnderSymbolsNobodyKnows : ValueFlowHostNode::StoredByLibraryUnderSymbolsNobodyKnows));
 }
 
-void HeapRule::noteHoldersOfLibraryExportsThatProgramWrites(ClimbingSet receivers)
+// The body of a module fills the object that it exports with what is the library's. A function of the library that stores into it later may store what the program has handed in.
+void HeapRule::noteHoldersOfLibraryExportsThatProgramWrites(ClimbingSet receivers, const ValueFlowOperand& stored)
 {
-    if (m_context.meet(receivers, m_universe.holdersOfLibraryExports()) && isInProgramCode())
-        add(m_context.nodes().ofHost(ValueFlowHostNode::HoldersOfLibraryExportsThatProgramWrites), m_context.restrict(receivers, m_universe.holdersOfLibraryExports()));
+    if (!m_context.meet(receivers, m_universe.holdersOfLibraryExports()))
+        return;
+    if (!isInProgramCode()) {
+        FunctionID writer = m_statement.function ? m_statement.function : m_context.functionOfStatement();
+        if ((writer && m_universe.moduleWithBody(writer)) || !m_context.meet(m_context.valueOf(stored), m_universe.placeholdersAlone()))
+            return;
+    }
+    add(m_context.nodes().ofHost(ValueFlowHostNode::HoldersOfLibraryExportsThatProgramWrites), m_context.restrict(receivers, m_universe.holdersOfLibraryExports()));
 }
 
 void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPropertyPart part, const ValueFlowOperand& value)
 {
     ClimbingSet receivers = m_context.valueOf(object);
-    noteHoldersOfLibraryExportsThatProgramWrites(receivers);
+    noteHoldersOfLibraryExportsThatProgramWrites(receivers, value);
     if (part != HeapPropertyPart::Setter)
         noteWhatMayLieUnderSymbolThatHostLooksFor(key, value);
     write(receivers, writtenName(key, part), value);
@@ -860,7 +867,7 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
     askProxiesByTheirTrap(key, BuiltinNames::set, { }, &value);
     ClimbingSet receivers = m_context.valueOf(object);
     m_context.openProxiesAmong(receivers);
-    noteHoldersOfLibraryExportsThatProgramWrites(receivers);
+    noteHoldersOfLibraryExportsThatProgramWrites(receivers, value);
     noteWhatMayLieUnderSymbolThatHostLooksFor(key, value);
     write(receivers, writtenName(key, HeapPropertyPart::Value), value);
     convertStoredValue(receivers, key, value);

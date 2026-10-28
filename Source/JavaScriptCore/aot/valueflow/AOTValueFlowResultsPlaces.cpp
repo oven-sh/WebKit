@@ -123,8 +123,10 @@ ValueFlowPlacesInProgram::ValueFlowPlacesInProgram(const ValueFlowResultInputs& 
 
             const Value& operation = function.at(statement.site);
             std::span<const ValueFlowOperand> operands = bodies.operandsOf(statement);
-            if (statement.result)
+            if (statement.result) {
                 noteBuiltinsIn(solver.seenValuesOf(statement.result), statement.site);
+                noteBuiltinsIn(solver.functionsOfEngineListedAt(statement.result), statement.site);
+            }
             for (uint32_t position = 0; position < operands.size(); ++position) {
                 if (!operands[position].constant)
                     continue;
@@ -153,7 +155,7 @@ ValueFlowPlacesInProgram::ValueFlowPlacesInProgram(const ValueFlowResultInputs& 
             case Opcode::ConstructList:
             case Opcode::SuperConstruct:
             case Opcode::SuperConstructList: {
-                ValueSetID callees = ValueFlowRuleContext::valueShownToRules(operands[0], solver, maker);
+                ValueSetID callees = maker.unite(ValueFlowRuleContext::valueShownToRules(operands[0], solver, maker), inputs.seenValuesOf(maker, operands[0]));
                 if (ValueSets::isComplement(callees) || !sets.meet(callees, closuresOfLibrary))
                     break;
                 sets.forEachMember(maker.intersect(callees, closuresOfLibrary), [&](ValueFlowObjectID callee) {
