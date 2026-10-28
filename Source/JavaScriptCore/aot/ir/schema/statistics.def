@@ -1,6 +1,6 @@
 enum StatisticID {
     None
-    SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceBytes SourceLines
+    SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceFilesOfBunParsed SourceBytes SourceLines
     AotFilesUsed CheckerQueries CheckerQueriesGivenUp CheckerMembersGivenUp UnionMembersCompared BuiltinTypesDegradedToViews ModulesBound FunctionsLowered
     KnownHelperFunctions KnownHelperCalls
     FunctionsDroppedByLink ProgramBytes EngineRuns WholeEngineRuns

@@ -3026,8 +3026,10 @@ ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext& context, BuiltinNam
             continue;
         ValueFlowObjectID object = record.function ? universe.objectOf(record.function) : universe.hostObject(index);
         context.add(nodeWrittenToNativeCell(context, cell), only(context, object));
-        if (record.function)
+        if (record.function) {
+            context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfHostTakenFromKnownHolders), only(context, object));
             continue;
+        }
         ValueFlowBuiltinCall noCall { .kind = ValueFlowCallKind::CallByHost };
         BuiltinApplication(Builtins::UndeclaredNativeCode, noCall, context).describeHostObject(record, object);
     }

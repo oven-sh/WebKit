@@ -173,11 +173,17 @@ class HandedOutValueCollector {
   readonly objects = new Set<ModelBuiltin>();
   undescribedValue: string | null = null;
   readonly #classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>;
+  readonly #functionsInCells: ReadonlyMap<ModelName, readonly ModelBuiltin[]>;
   readonly #receiverObject: ModelBuiltin | null;
   readonly #visited = new Set<ModelType>();
 
-  constructor(classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>, receiverObject: ModelBuiltin | null) {
+  constructor(
+    classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>,
+    functionsInCells: ReadonlyMap<ModelName, readonly ModelBuiltin[]>,
+    receiverObject: ModelBuiltin | null,
+  ) {
     this.#classObjects = classObjects;
+    this.#functionsInCells = functionsInCells;
     this.#receiverObject = receiverObject;
   }
 
@@ -222,7 +228,9 @@ class HandedOutValueCollector {
       case "Result":
       case "ResultField":
       case "NativeMemory":
+        return;
       case "NativeCell":
+        for (const made of this.#functionsInCells.get(place.cell) ?? []) this.objects.add(made);
         return;
     }
   }
@@ -279,6 +287,7 @@ class HandedOutValueCollector {
 export class DependencyClosure {
   readonly #builtins: readonly ModelBuiltin[];
   readonly #classObjects: ReadonlyMap<ModelClass, readonly ModelBuiltin[]>;
+  readonly #functionsInCells: ReadonlyMap<ModelName, readonly ModelBuiltin[]>;
   readonly #hostClassObjectsInEveryExecutable: readonly ModelBuiltin[];
   readonly #hostClassObjectsOfFeature: ReadonlyMap<FeatureName, readonly ModelBuiltin[]>;
   readonly #engineClassObjects: ReadonlySet<ModelBuiltin>;
@@ -292,6 +301,11 @@ export class DependencyClosure {
       model.classes.filter(builtinClass => builtinClass.origin === origin);
     this.#builtins = model.builtins;
     this.#classObjects = collectClassObjects(model.classes);
+    const functionsInCells = new Map<ModelName, ModelBuiltin[]>();
+    for (const { cell, function: made } of model.hostObjects) {
+      if (made !== null) functionsInCells.set(cell, [...(functionsInCells.get(cell) ?? []), made]);
+    }
+    this.#functionsInCells = functionsInCells;
     // The native code that makes an instance of a class is linked with the features of the class.
     const inEveryExecutable: ModelBuiltin[] = [];
     const ofFeature = new Map<FeatureName, ModelBuiltin[]>();
@@ -409,7 +423,7 @@ export class DependencyClosure {
   }
 
   #collectHandedOutValues(builtin: ModelBuiltin): HandedOutValues {
-    const collector = new HandedOutValueCollector(this.#classObjects, receiverObjectOf(builtin));
+    const collector = new HandedOutValueCollector(this.#classObjects, this.#functionsInCells, receiverObjectOf(builtin));
     for (const overload of builtin.overloads) collector.addOverload(overload);
     return {
       objects: [...collector.objects].sort((left, right) => left.id - right.id),

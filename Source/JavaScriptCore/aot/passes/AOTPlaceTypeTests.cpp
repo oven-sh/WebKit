@@ -3859,6 +3859,49 @@ static PassOutcome markArmsThatAreSeldomTaken(FunctionPassContext& context)
     return outcome;
 }
 
+// `x !== x`: only NaN differs from itself. So what is no number has its answer, and the test for a number is no guess that sends other values into a copy.
+static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().contains(Opcode::StrictEq))
+        return PassOutcome::Unchanged;
+    Vector<ValueID, 4> comparisons;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        if (function.at(block).frequency.predicted() == BlockFrequency::Rare)
+            continue;
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::StrictEq || value.leftOperand() != value.rightOperand())
+                continue;
+            // What a branch hands on of the operands of its test, it hands on of the comparison itself.
+            bool isTestOfBranchWithProofs = std::ranges::any_of(analyses.useLists().usesOf(id), [&](const Use& use) {
+                return use.kind == Use::Kind::TerminatorOperand && function.at(use.block).terminator.targets.containsIf([](const Target& target) { return !target.proofs.isEmpty(); });
+            });
+            const Type& type = context.program.typeOf(function, value.leftOperand());
+            if ((type.primitives & Primitive::Number) && !type.isNumber() && !isTestOfBranchWithProofs)
+                comparisons.append(id);
+        }
+    }
+    if (comparisons.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    for (ValueID id : comparisons) {
+        ValueLocation location = analyses.useLists().locationOf(id);
+        ValueID compared = function.at(id).leftOperand();
+        Expected<BlockFrequency> frequency = function.at(location.block).frequency;
+        builder.setOrigin(function.at(id).origin());
+        IRBuilder::Expansion expansion = builder.beginExpansion(ProgramPoint { location.block, location.index });
+        IRBuilder::ProvenBranch isNumber = builder.emitBranchWithProof(builder.appendTypeTest(compared, TypeTable::number), OperandIndex::TypeTest::value, frequency, frequency);
+        builder.moveToEndOf(isNumber.taken);
+        builder.endExpansion(expansion, builder.append(Opcode::StrictEq, { isNumber.provenOnTaken, isNumber.provenOnTaken }));
+        builder.moveToEndOf(isNumber.notTaken);
+        builder.endExpansion(expansion, builder.appendBoolean(true));
+    }
+    return PassOutcome::Changed;
+}
+
 PassOutcome placeTypeTests(FunctionPassContext& context)
 {
     const Heat& heat = context.inputs.heat;
@@ -3873,6 +3916,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     PassOutcome marked = markArmsThatAreSeldomTaken(context);
+    marked |= askOnlyNumbersWhetherTheyEqualThemselves(context);
     ExpectedTypesByUse expectations(context.function);
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.build.recordedOptions().usesExpectedTypes()) {

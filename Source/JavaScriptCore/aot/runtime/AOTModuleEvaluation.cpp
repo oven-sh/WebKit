@@ -2757,6 +2757,9 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         markNamespaceAsRequired(target);
     if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || targetData.kind == ModuleKind::Data))
         return;
+    // A file without a module object to hand out is shown neither as a child nor as a parent. Which file is the main one hangs on the calls that come before that is decided.
+    if (m_isMainCommonJSModuleDecided && (!mayHandOutModuleObject(target) || !mayHandOutModuleObject(referrer)))
+        return;
     // A require() is recorded in front of the evaluation and behind it. The module has its parent from the first record on. It is a child from the second on, which a call that throws does not reach.
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     uint64_t pair = (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
@@ -2842,8 +2845,34 @@ bool Modules::wasRequestedByLoader(ModuleID file)
     return wasRequested;
 }
 
+void Modules::findDistanceOfFiles(FilesBeingRun& load)
+{
+    load.distanceOfFiles.fill(UINT32_MAX, m_table.size());
+    BitVector seen(m_table.size());
+    seen.quickSet(load.root.index());
+    Vector<ModuleID> importers { load.root };
+    size_t endOfLevel = 1;
+    uint32_t distance = 0;
+    for (size_t index = 0; index < importers.size(); ++index) {
+        if (index == endOfLevel) {
+            ++distance;
+            endOfLevel = importers.size();
+        }
+        for (const ModuleRequestData& request : m_table.requests(importers[index])) {
+            if (request.isHoisted || request.isRequire || request.isDeferred)
+                continue;
+            ModuleID target = request.targetModule();
+            if (isCommonJSFileOrFace(target)) {
+                uint32_t& nearest = load.distanceOfFiles[fileOf(target).index()];
+                nearest = std::min(nearest, distance);
+            } else if (isLoadedWithRequests(target) && !seen.quickSet(target.index()))
+                importers.append(target);
+        }
+    }
+}
+
 // The loader asks for everything that stands as far from the root before a file among it runs.
-bool Modules::hasReachedLevelOf(const FilesBeingRun& load, ModuleID file)
+bool Modules::hasReachedLevelOf(FilesBeingRun& load, ModuleID file)
 {
     auto fileBehind = [&](ModuleID fileOrFace) {
         return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace);
@@ -2860,30 +2889,10 @@ bool Modules::hasReachedLevelOf(const FilesBeingRun& load, ModuleID file)
         return false;
     running = fileBehind(*running);
 
-    BitVector seen(m_table.size());
-    seen.quickSet(load.root.index());
-    Vector<ModuleID> importers { load.root };
-    size_t endOfLevel = 1;
-    bool levelHoldsRunningFile = false;
-    for (size_t index = 0; index < importers.size(); ++index) {
-        if (index == endOfLevel) {
-            if (levelHoldsRunningFile)
-                return false;
-            endOfLevel = importers.size();
-        }
-        for (const ModuleRequestData& request : m_table.requests(importers[index])) {
-            if (request.isHoisted || request.isRequire || request.isDeferred)
-                continue;
-            ModuleID target = request.targetModule();
-            if (isCommonJSFileOrFace(target)) {
-                if (fileBehind(target) == file)
-                    return true;
-                levelHoldsRunningFile |= fileBehind(target) == *running;
-            } else if (isLoadedWithRequests(target) && !seen.quickSet(target.index()))
-                importers.append(target);
-        }
-    }
-    return false;
+    if (load.distanceOfFiles.isEmpty())
+        findDistanceOfFiles(load);
+    uint32_t distance = load.distanceOfFiles[file.index()];
+    return distance != UINT32_MAX && distance <= load.distanceOfFiles[running->index()];
 }
 
 JSObject* Modules::parentModuleObject(ModuleID module)

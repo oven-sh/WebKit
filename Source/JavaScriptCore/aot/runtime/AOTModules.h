@@ -465,6 +465,8 @@ private:
         size_t numberOfJobsInFrontOfFile { 0 };
         // The loader has gone through the graph as far as the step in which this file runs.
         std::optional<ModuleID> fileHandedToLoader { };
+        // By a CommonJS file: how many modules stand between the root and the nearest one that imports it. Made when something asks.
+        Vector<uint32_t> distanceOfFiles { };
     };
     void handGraphToLoader(FilesBeingRun&);
     static void runJobsThatAreDue(VM&, MicrotaskQueue&);
@@ -474,7 +476,8 @@ private:
     FilesBeingRun* m_innermostFilesBeingRun { nullptr };
     void noteRequestByLoader(ModuleID fileOrFace);
     bool wasRequestedByLoader(ModuleID file);
-    bool hasReachedLevelOf(const FilesBeingRun&, ModuleID file);
+    bool hasReachedLevelOf(FilesBeingRun&, ModuleID file);
+    void findDistanceOfFiles(FilesBeingRun&);
     BitVector m_modulesWithMarkOfRequire;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;

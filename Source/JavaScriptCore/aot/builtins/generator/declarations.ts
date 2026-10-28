@@ -24,6 +24,7 @@ import type {
   NativeCallerSpec,
   NativeCallKind,
   NativeMentionSpec,
+  OperandName,
   Origin,
   ParameterType,
   Scope,
