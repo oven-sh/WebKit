@@ -1931,18 +1931,10 @@ public:
             return;
         }
 
-        PatternAlternative* currentAlternative = m_alternative;
-        ASSERT(currentAlternative);
-
         // Note to self: if we waited until the AST was baked, we could also remove forwards refs 
-        while ((currentAlternative = currentAlternative->m_parent->m_parent)) {
-            PatternTerm& term = currentAlternative->lastTerm();
-            ASSERT((term.type == PatternTerm::Type::ParenthesesSubpattern) || (term.type == PatternTerm::Type::ParentheticalAssertion));
-
-            if ((term.type == PatternTerm::Type::ParenthesesSubpattern) && term.capture() && (subpatternId == term.parentheses.subpatternId)) {
-                m_alternative->m_terms.append(PatternTerm::NumberedForwardReference(m_flags));
-                return;
-            }
+        if (isInsideCaptureGroup(subpatternId)) {
+            m_alternative->m_terms.append(PatternTerm::NumberedForwardReference(m_flags));
+            return;
         }
 
         m_alternative->m_terms.append(PatternTerm(subpatternId, m_flags));
@@ -1951,27 +1943,16 @@ public:
 
     void atomNamedBackReference(const String& subpatternName)
     {
-        ASSERT(m_pattern.m_namedGroupToParenIndices.find(subpatternName) != m_pattern.m_namedGroupToParenIndices.end());
-        auto parenIndices = m_pattern.m_namedGroupToParenIndices.get(subpatternName);
+        auto namedGroup = m_pattern.m_namedGroupToParenIndices.find(subpatternName);
+        ASSERT(namedGroup != m_pattern.m_namedGroupToParenIndices.end());
+        const Vector<unsigned>& parenIndices = namedGroup->value;
 
-        if (parenIndices.size() == 2) {
-            // If this isn't a duplicate group, we need to go through the same analysis as a non-named backreferece to determine if
-            // this backreference appears in the capture itself. A duplicate could be satisfied by a prior capture and therefore doesn't
-            // need this analysis.
-            unsigned subpatternId = parenIndices.last();
-
-            PatternAlternative* currentAlternative = m_alternative;
-            ASSERT(currentAlternative);
-
-            while ((currentAlternative = currentAlternative->m_parent->m_parent)) {
-                PatternTerm& term = currentAlternative->lastTerm();
-                ASSERT((term.type == PatternTerm::Type::ParenthesesSubpattern) || (term.type == PatternTerm::Type::ParentheticalAssertion));
-
-                if ((term.type == PatternTerm::Type::ParenthesesSubpattern) && term.capture() && (subpatternId == term.parentheses.subpatternId)) {
-                    m_alternative->m_terms.append(PatternTerm::NamedForwardReference(m_flags));
-                    return;
-                }
-            }
+        // A reference inside a group of its own name matches the empty string, as a numbered reference inside its own group does:
+        // that group has not captured yet, and every other group of the name is in another alternative, so it holds no capture here.
+        // Groups of one name cannot nest (the parser rejects that), so only the last one opened can hold this reference.
+        if (isInsideCaptureGroup(parenIndices.last())) {
+            m_alternative->m_terms.append(PatternTerm::NamedForwardReference(m_flags));
+            return;
         }
 
         // parenIndices.last() is the highest subpattern id carrying this name (duplicates included);
@@ -3983,6 +3964,23 @@ private:
     bool LEGACY_NODELETE insideLookbehind() const
     {
         return m_parenthesisContext.insideLookbehind();
+    }
+
+    // Whether the term that comes next in m_alternative is inside the capture group with this id.
+    bool isInsideCaptureGroup(unsigned subpatternId) const
+    {
+        PatternAlternative* currentAlternative = m_alternative;
+        ASSERT(currentAlternative);
+
+        while ((currentAlternative = currentAlternative->m_parent->m_parent)) {
+            const PatternTerm& term = currentAlternative->lastTerm();
+            ASSERT((term.type == PatternTerm::Type::ParenthesesSubpattern) || (term.type == PatternTerm::Type::ParentheticalAssertion));
+
+            if ((term.type == PatternTerm::Type::ParenthesesSubpattern) && term.capture() && (subpatternId == term.parentheses.subpatternId))
+                return true;
+        }
+
+        return false;
     }
 
     bool ignoreCase() const
