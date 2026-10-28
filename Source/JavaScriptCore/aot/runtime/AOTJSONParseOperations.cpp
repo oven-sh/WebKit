@@ -1650,7 +1650,8 @@ static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm,
         return { jsBoolean(true), start + 4 };
     else if (WTF::unalignedLoad<uint32_t>(start + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24) && *start == 'f')
         return { jsBoolean(false), start + 5 };
-    if (shapeOfObject)
+    // What the general parser makes of an object or a list is none of the field's type.
+    if (shapeOfObject && (*start == '{' || *start == '['))
         return parseLearnedObjectInside(instance, vm, shapeOfObject, start);
     return parseJSONValueAt(instance, vm, instance.globalObject, start);
 }
@@ -1790,6 +1791,8 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
     learned.wordsBehindHeader.shrink(0);
     learned.isBeingLearned = true;
     bool isLearned = false;
+    if (!depth)
+        instance.json.runtime->setWaitsForShapeOfMember(false);
     auto endLearning = makeScopeExit([&] {
         learned.isBeingLearned = false;
         if (isLearned)
@@ -1798,6 +1801,7 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
         learned.keys.shrink(0);
         learned.stores.shrink(0);
         learned.plan = nullptr;
+        learned.isOnlySeen = !depth && instance.json.runtime->waitsForShapeOfMember();
         // The object around this one is refused. Another text that begins with the same name may still be learned.
         if (depth)
             learned.shape = 0;
@@ -1834,9 +1838,18 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
             kindsOfFields.append(*value == '"' ? Learned::String : *value == 't' || *value == 'f' ? Learned::Boolean : tryParseSmallJSONInteger(value, integer) ? Learned::SmallInteger : Learned::OtherKind);
             if (fieldNames.contains(name) || fieldNames.size() == Learned::maxNumberOfFields)
                 return false;
-            if ((*value == '{' || *value == '[') && !layouts.typeOf(*field).acceptsEveryObject()) {
-                member.shapeOfValue = *value == '{' ? instance.json.runtime->shapeOfMember(shape, layout.indexOf(*field)) : 0;
-                if (!learnObjectInside(instance, vm, member.shapeOfValue, value, depth))
+            if (!layouts.typeOf(*field).acceptsEveryObject()) {
+                // Only the form that was learned over a record looks for one: two forms that both did would each parse what lies inside, at every level.
+                member.shapeOfValue = *value == '{' ? instance.json.runtime->shapeOfMember(shape, layout.indexOf(*field)) : Learned::shapeOfNoObject;
+                if (*value == '[')
+                    return false;
+                if (*value == '{' && !member.shapeOfValue) {
+                    // The objects finished so far held no record here. The next one is looked at again.
+                    instance.json.runtime->forgetFinishedObjects();
+                    instance.json.runtime->setWaitsForShapeOfMember(true);
+                    return false;
+                }
+                if (*value == '{' && !learnObjectInside(instance, vm, member.shapeOfValue, value, depth))
                     return false;
             }
             positionExtraNames();

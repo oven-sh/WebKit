@@ -11,6 +11,7 @@
 
 #include "WasmFormat.h"
 #include <array>
+#include <bmalloc/Gigacage.h>
 #include <optional>
 #include <utility>
 #include <wtf/HashMap.h>
@@ -151,7 +152,13 @@ struct ImagePointerTable {
 #undef COUNT_OPERATION
     static constexpr uint32_t genericJSEntrypoint = numberOfOperations;
     static constexpr uint32_t interpreterEntrypoint = numberOfOperations + 1;
+#if GIGACAGE_ENABLED
+    static constexpr uint32_t primitiveGigacageDisableRequest = numberOfOperations + 2;
+    static constexpr uint32_t primitiveGigacageBase = numberOfOperations + 3;
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 4;
+#else
     static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 2;
+#endif
 
     static constexpr uint32_t slotOf(ImageCodeOperation operation) { return static_cast<uint32_t>(operation); }
     JS_EXPORT_PRIVATE static std::optional<uint32_t> slotOfOperation(const void* taggedOperation);

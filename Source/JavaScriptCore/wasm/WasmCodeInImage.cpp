@@ -245,6 +245,10 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
         m_pointers[slot] = operations[slot];
     m_pointers[ImagePointerTable::genericJSEntrypoint] = LLInt::getCodePtr<JSEntryPtrTag>(js_to_wasm_wrapper_entry).taggedPtr();
     m_pointers[ImagePointerTable::interpreterEntrypoint] = interpreterEntrypoint.taggedPtr();
+#if GIGACAGE_ENABLED
+    m_pointers[ImagePointerTable::primitiveGigacageDisableRequest] = &Gigacage::disablePrimitiveGigacageRequested;
+    m_pointers[ImagePointerTable::primitiveGigacageBase] = Gigacage::addressOfBasePtr(Gigacage::Primitive);
+#endif
 
     const PublishedImage& image = imageHolding(module);
     const uint8_t* directory = image.directory.data();

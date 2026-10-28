@@ -282,6 +282,7 @@ std::unique_ptr<Program> TextParser::run()
     if (m_form == IRForm::AsRead)
         return WTF::move(m_program);
 
+    m_program->collectConstructionStarts();
     m_program->setNumberOfFunctionsAsRead(countFunctionsAsRead(*m_program));
     if (!verifyPatchedReferences(*m_program, m_form, m_build, m_verifierInputs))
         return nullptr;

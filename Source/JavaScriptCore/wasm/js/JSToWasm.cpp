@@ -34,6 +34,7 @@
 #include "JSWebAssemblyInstance.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "ThunkGenerator.h"
+#include "WasmBinding.h"
 #include "WasmCallingConvention.h"
 #include "WasmContext.h"
 #include "WasmOperations.h"
@@ -699,7 +700,8 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
     // At this point, we're committed to doing a fast call.
     // We don't know what memory mode we're about to call into but it's always valid to fill both bounds checking and base memory.
     jit.loadPairPtr(GPRInfo::wasmContextInstancePointer, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-    jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, stackLimitGPR, scratchGPR);
+    emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, scratchGPR);
+    emitCageMemoryBase(jit, scratchGPR);
 
     // FIXME: We could load this much earlier on ARM64 since we have a ton of scratch registers and already have callee in a register. Maybe that's profitable?
     jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::callee), stackLimitGPR);

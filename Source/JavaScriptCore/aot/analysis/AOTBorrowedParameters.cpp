@@ -492,8 +492,9 @@ static uint64_t bitsLostThrough(const Vector<uint64_t>& words, const HandedOnRef
     return bitsLostThrough(entry.callee.index() < words.size() ? words[entry.callee.index()] : 0, entry);
 }
 
-static void takeAwayWhatCalleesLose(const ParallelLoops& loops, Vector<uint64_t>& words, const Vector<BorrowingBody>& bodies)
+static void takeAwayWhatCalleesLose(BuildContext& build, Vector<uint64_t>& words, const Vector<BorrowingBody>& bodies)
 {
+    const ParallelLoops& loops = build.parallelLoops();
     unsigned numberOfFunctions = words.size();
     Vector<uint32_t> callers = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
         return !bodies[index].handedOn.isEmpty();
@@ -530,10 +531,12 @@ static void takeAwayWhatCalleesLose(const ParallelLoops& loops, Vector<uint64_t>
         isQueued[index] = 1;
     };
 
+    uint64_t numberOfEntriesRead = 0;
     for (uint32_t caller : callers) {
         uint64_t lost = 0;
         for (const HandedOnReferences& entry : bodies[caller].handedOn)
             lost |= bitsLostThrough(words, entry);
+        numberOfEntriesRead += bodies[caller].handedOn.size();
         takeAway(caller, lost);
     }
     while (!worklist.isEmpty()) {
@@ -544,11 +547,14 @@ static void takeAwayWhatCalleesLose(const ParallelLoops& loops, Vector<uint64_t>
             if (!words[caller])
                 continue;
             uint64_t lost = 0;
-            for (const HandedOnReferences& entry : std::ranges::equal_range(bodies[caller].handedOn, callee, { }, &HandedOnReferences::callee))
+            for (const HandedOnReferences& entry : std::ranges::equal_range(bodies[caller].handedOn, callee, { }, &HandedOnReferences::callee)) {
                 lost |= bitsLostThrough(words[callee.index()], entry);
+                ++numberOfEntriesRead;
+            }
             takeAway(caller, lost);
         }
     }
+    build.statistics().count(StatisticID::HandedOnReferencesRead, numberOfEntriesRead);
 }
 
 static void explainLosses(const Program& program, BuildContext& build, const Vector<uint64_t>& words, const Vector<BorrowingBody>& bodies, const OpcodeSet& opcodesThatBorrowNothing)
@@ -658,7 +664,7 @@ BorrowedParameters computeBorrowedParameters(const Program& program, BuildContex
     });
 
     if (someBodySaysSomethingElse.load(std::memory_order_relaxed)) {
-        takeAwayWhatCalleesLose(loops, words, kept.m_bodies);
+        takeAwayWhatCalleesLose(build, words, kept.m_bodies);
         kept.m_wordsOfLatestTable = words;
         if (build.options().logging.dumpedPass == PassID::AllocateInFrames) [[unlikely]]
             explainLosses(program, build, words, kept.m_bodies, opcodesThatBorrowNothing);
@@ -666,7 +672,7 @@ BorrowedParameters computeBorrowedParameters(const Program& program, BuildContex
     }
     kept.m_wordsOfLatestTable.insertFill(numberOfKeptBodies, 0, numberOfFunctions - numberOfKeptBodies);
     if (checksKeptBodies) {
-        takeAwayWhatCalleesLose(loops, words, kept.m_bodies);
+        takeAwayWhatCalleesLose(build, words, kept.m_bodies);
         RELEASE_ASSERT(words == kept.m_wordsOfLatestTable);
     }
     words = kept.m_wordsOfLatestTable;

@@ -1686,8 +1686,7 @@ void AssemblyHelpers::cage(Gigacage::Kind kind, GPRReg storage)
 void AssemblyHelpers::cageConditionally(Gigacage::Kind kind, GPRReg storage, GPRReg length, GPRReg scratch)
 {
 #if GIGACAGE_ENABLED
-    // Where the cage is, only the process that runs the code knows.
-    if (Gigacage::isEnabled(kind) && !policy().recordsProcessAddresses) {
+    if (Gigacage::isEnabled(kind)) {
         if (kind != Gigacage::Primitive || Gigacage::disablingPrimitiveGigacageIsForbidden())
             cage(kind, storage);
         else {

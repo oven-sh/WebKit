@@ -524,7 +524,13 @@ bool mayLeakFramePointer(const Program& program, const FlowResults* flow, const 
 {
     if (isLentTo(function, user, operandIndex))
         return false;
-    OperandSummary summary = summarizeFramePointerUse(program, flow, function, user, operandIndex);
+    return mayLeakFramePointer(program, function, user, operandIndex, summarizeFramePointerUse(program, flow, function, user, operandIndex));
+}
+
+bool mayLeakFramePointer(const Program& program, const Function& function, const Value& user, uint32_t operandIndex, const OperandSummary& summary)
+{
+    if (isLentTo(function, user, operandIndex))
+        return false;
     if (summary.uses.containsAny(unfollowedLeakingUses))
         return true;
     bool isRetained = summary.uses.contains(OperandUse::Retains);

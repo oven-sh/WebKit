@@ -11,6 +11,7 @@
 #include "AOTBlockCycles.h"
 #include "AOTNameCreatedSymbols.h"
 #include "AOTThreads.h"
+#include "AOTWrittenFunction.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -107,19 +108,27 @@ void computeClosuresMadeOnce(const ValueFlowResultInputs& inputs, FlowResultTabl
     });
 
     BitVector isMadeSomewhere(program.functions.size());
+    BitVector isMadeInSomeForm(program.functions.size());
     BitVector& hasOneClosure = tables.functions.functionsWithOneClosure;
+    BitVector hasOneFunctionObject(program.functions.size());
     hasOneClosure = BitVector(program.functions.size());
     for (const ClosureMade& closure : closures) {
         bool isMadeElsewhere = isMadeSomewhere.set(closure.function.index());
         hasOneClosure.set(closure.function.index(), closure.isMadeAtMostOnce && !isMadeElsewhere);
+        uint32_t written = writtenFunctionOf(program, closure.function).index();
+        bool isMadeInOtherPlace = isMadeInSomeForm.set(written);
+        hasOneFunctionObject.set(written, closure.isMadeAtMostOnce && !isMadeInOtherPlace);
     }
     tables.functions.functionsWhoseClosuresAreMadeOnce = hasOneClosure;
     for (const Variable& variable : program.variables) {
         if (variable.initialization == VariableInitialization::Function && variable.function) {
             hasOneClosure.clear(variable.function.index());
             tables.functions.functionsWhoseClosuresAreMadeOnce.set(variable.function.index(), !isMadeSomewhere.get(variable.function.index()));
+            uint32_t written = writtenFunctionOf(program, variable.function).index();
+            hasOneFunctionObject.set(written, !isMadeInSomeForm.set(written));
         }
     }
+    tables.functions.writtenFunctionsWithOneFunctionObject = WTF::move(hasOneFunctionObject);
     for (const Layout& layout : program.layouts) {
         for (const ClassMember& member : layout.classFlow.members) {
             if (member.function && !layout.has(LayoutFlags::IsConstructorFunction))

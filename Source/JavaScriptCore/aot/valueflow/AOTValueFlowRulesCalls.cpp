@@ -62,6 +62,14 @@ static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRul
         });
         for (ValueSetID group : receivers.groups)
             answers.append(context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), key), ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver)));
+        // A text or a symbol that is known finds what any of its kind finds.
+        for (auto [kind, all] : { std::pair { PrimitiveSet::String, universe.strings() }, std::pair { PrimitiveSet::Symbol, universe.symbols() } }) {
+            ValueSetID known = context.maker().intersect(all, universe.keys());
+            if (!context.meet(context.valueOf(context.operandsOf(statement)[1]), known))
+                continue;
+            receivers.groups.append(known);
+            answers.append(context.valueOf(context.lookup(only(context, ValueFlowUniverse::primitive(kind)), ValueFlowName::property(context.program(), key), ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver)));
+        }
         if (context.contains(all, ValueFlowUniverse::unknownObject()))
             receivers.rest = context.maker().unite(receivers.rest, receiversFollowedBehindUnknownObject);
     }
@@ -70,7 +78,7 @@ static void callListedBuiltins(const ValueFlowStatement& statement, ValueFlowRul
             applyBuiltin(universe.builtinOf(callee), kind, statement, context);
             return;
         }
-        ValueSetID found = context.maker().unite(ValueSets::complement(context.maker().unite(universe.knownObjects(), universe.anyPrimitive())), receivers.rest);
+        ValueSetID found = context.maker().unite(ValueSets::complement(context.maker().unite(context.maker().unite(universe.knownObjects(), universe.anyPrimitive()), universe.keys())), receivers.rest);
         for (size_t index = 0; index < answers.size(); ++index) {
             if (context.contains(answers[index], callee) || context.meet(answers[index], universe.placeholdersAlone()))
                 found = context.maker().unite(found, receivers.groups[index]);

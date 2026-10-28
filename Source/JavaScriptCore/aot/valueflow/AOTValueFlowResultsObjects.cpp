@@ -388,8 +388,8 @@ static void recordWitnesses(const ValueFlowResultInputs& inputs, const Prototype
     }
 }
 
-// One text that statements give to every function object of a function as it is written names the function itself. So does the key under which a function stands where its object is made: who reads the key's type decides that.
-static BitVector findWrittenFunctionsNamedWithSeveralTexts(const ValueFlowResultInputs& inputs)
+// One text that statements give to the one function object of a function as it is written names the function itself. So does the key under which a function stands where its object is made: who reads the key's type decides that.
+static BitVector findWrittenFunctionsNamedApartFromTheirFunctionObjects(const ValueFlowResultInputs& inputs, const BitVector& writtenFunctionsWithOneFunctionObject)
 {
     const Program& program = inputs.program;
     const ValueFlowUniverse& universe = inputs.universe();
@@ -407,11 +407,14 @@ static BitVector findWrittenFunctionsNamedWithSeveralTexts(const ValueFlowResult
                 if (universe.kindOf(object) != ValueFlowObjectKind::Closure)
                     return;
                 FunctionID function = universe.closureFunction(object);
-                if (!program.at(function).constructedClass && !inputs.sets().contains(namedByStatements, object))
+                bool isNamedByStatement = inputs.sets().contains(namedByStatements, object);
+                if (!program.at(function).constructedClass && !isNamedByStatement)
                     return;
                 uint32_t written = writtenFunctionOf(program, function).index();
+                // A statement names the function object that it is handed, and leaves the others as they are.
+                bool leavesOthersUnnamed = isNamedByStatement && !writtenFunctionsWithOneFunctionObject.get(written);
                 // The tables of names leave async functions out.
-                if (!isOneText || program.at(function).has(FunctionFlags::IsAsync) || textOfFunction.add(written, text.index()).iterator->value != text.index())
+                if (!isOneText || leavesOthersUnnamed || program.at(function).has(FunctionFlags::IsAsync) || textOfFunction.add(written, text.index()).iterator->value != text.index())
                     functions.quickSet(written);
             });
         }
@@ -436,10 +439,10 @@ static bool isWrittenUnderAnyKeyThat(std::span<const Write> writes, NOESCAPE con
     });
 }
 
-static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, std::span<const AllocationClass> classesOfClosures)
+static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, std::span<const AllocationClass> classesOfClosures, const BitVector& writtenFunctionsWithOneFunctionObject)
 {
     const Program& program = inputs.program;
-    BitVector namedWithSeveralTexts = findWrittenFunctionsNamedWithSeveralTexts(inputs);
+    BitVector namedApartFromFunctionObjects = findWrittenFunctionsNamedApartFromTheirFunctionObjects(inputs, writtenFunctionsWithOneFunctionObject);
     Vector<PropertyKeyID, 2> keys { program.keyOf(BuiltinNames::name) };
     if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span))) {
         if (auto key = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }))
@@ -479,7 +482,7 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
         uint32_t index = closures.closureFunction.index();
         LayoutID constructedClass = program.functions[index].constructedClass;
         auto mayNameFramesOfThisFunction = [&](PropertyKeyID key) {
-            return key == keys[0] ? namedWithSeveralTexts.quickGet(writtenFunctionOf(program, closures.closureFunction).index()) : mayNameFrames(key);
+            return key == keys[0] ? namedApartFromFunctionObjects.quickGet(writtenFunctionOf(program, closures.closureFunction).index()) : mayNameFrames(key);
         };
         ValueFlowObjectID closure = inputs.universe().closureOf(closures.closureFunction);
         std::span<const Write> writtenOnThisFunction = ledger.writesFiledOn(closure);
@@ -496,6 +499,16 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
     for (unsigned index = 0; index < program.functions.size(); ++index) {
         if (!inputs.build.isEnabled(FlowResultKind::HolderMutations, index))
             functions.quickSet(index);
+    }
+    // The run time keeps a name for the function as it is written, so what holds of one form holds of all.
+    for (BitVector* forms : { &functions, &onlyWhereNobodySees, &outOfSight }) {
+        BitVector written(program.functions.size());
+        for (size_t index : *forms)
+            written.quickSet(writtenFunctionOf(program, FunctionID(static_cast<uint32_t>(index))).index());
+        for (uint32_t index = 0; index < program.functions.size(); ++index) {
+            if (written.quickGet(writtenFunctionOf(program, FunctionID(index)).index()))
+                forms->quickSet(index);
+        }
     }
     onlyWhereNobodySees.exclude(functions);
     functions.merge(onlyWhereNobodySees);
@@ -603,7 +616,7 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
         classes.append(WTF::move(closures));
     });
     noteClosuresBelowFunctions(inputs, links, classesOfClosures.mutableSpan());
-    FunctionsWhoseClosuresMayBeRenamed renamed = findFunctionsWhoseClosuresMayBeRenamed(inputs, links, classesOfClosures.span());
+    FunctionsWhoseClosuresMayBeRenamed renamed = findFunctionsWhoseClosuresMayBeRenamed(inputs, links, classesOfClosures.span(), tables.functions.writtenFunctionsWithOneFunctionObject);
     tables.functions.functionsWhoseClosuresMayBeRenamed = WTF::move(renamed.all);
     tables.functions.functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees = WTF::move(renamed.onlyWhereNobodySees);
     tables.functions.functionsWhoseClosuresGoOutOfSightUnnamed = WTF::move(renamed.outOfSight);

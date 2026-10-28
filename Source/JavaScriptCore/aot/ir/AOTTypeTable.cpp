@@ -255,35 +255,14 @@ bool isSubsetOf(const LayoutSet& a, const LayoutSet& b)
         return true;
     if (!a.listsEveryLayout())
         return false;
-    std::span<const LayoutID> inA = a.completeMembers();
-    std::span<const LayoutID> inB = b.completeMembers();
-    if (inA.size() > inB.size())
-        return false;
-    if (inA.size() * 16 < inB.size()) {
-        return std::ranges::all_of(inA, [&](LayoutID member) {
-            return std::ranges::binary_search(inB, member);
-        });
-    }
-    return std::ranges::includes(inB, inA);
+    return sortedListIncludes<LayoutID>(b.completeMembers(), a.completeMembers());
 }
 
 bool overlaps(const LayoutSet& a, const LayoutSet& b)
 {
     if (!a.listsEveryLayout() || !b.listsEveryLayout())
         return true;
-    std::span<const LayoutID> inA = a.completeMembers();
-    std::span<const LayoutID> inB = b.completeMembers();
-    size_t indexInA = 0;
-    size_t indexInB = 0;
-    while (indexInA < inA.size() && indexInB < inB.size()) {
-        if (inA[indexInA] == inB[indexInB])
-            return true;
-        if (inA[indexInA] < inB[indexInB])
-            ++indexInA;
-        else
-            ++indexInB;
-    }
-    return false;
+    return sortedListsOverlap<LayoutID>(a.completeMembers(), b.completeMembers());
 }
 
 } } } // namespace JSC::AOT::Typed

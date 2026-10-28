@@ -1,7 +1,7 @@
 enum StatisticID {
     None
     SourceFilesChecked SourceFilesInferred SourceFilesTypesOnly SourceFilesData SourceFilesRuntime SourceFilesDemoted SourceBytes SourceLines
-    AotFilesUsed CheckerQueries CheckerQueriesGivenUp CheckerMembersGivenUp BuiltinTypesDegradedToViews ModulesBound FunctionsLowered
+    AotFilesUsed CheckerQueries CheckerQueriesGivenUp CheckerMembersGivenUp UnionMembersCompared BuiltinTypesDegradedToViews ModulesBound FunctionsLowered
     KnownHelperFunctions KnownHelperCalls
     FunctionsDroppedByLink ProgramBytes EngineRuns
     LoadRuntimeProjectNanoseconds LinkMergeKeysNanoseconds LinkChooseDefinitionsNanoseconds LinkMarkNanoseconds LinkMergeStringsAndTypesNanoseconds
@@ -29,6 +29,7 @@ enum StatisticID {
     FunctionsTypedFromNever FunctionsTypedFromChanges FunctionsTypedAsBefore
     FunctionPassRunsSkipped
     EffectsComputed EffectsKept
+    HandedOnReferencesRead CallOperandsSummarizedForFrames FunctionsBelowEntrancesInCyclesVisited
     StackChecksCoveredByCallers StackChecksDeferredToCallee TailRecursionsEliminated ReturnCallsDemoted ResultsBoxedForTailCalls SecondaryEntries
     StretchesGuarded TypeTestsPlaced StretchesNotClonable GuardsEliminated UnionsSplit
     GenericVersionsCreated GenericVersionsNotCreated ExitsToGenericVersion WaysBackFromGenericVersion RestartsInGenericVersion BlocksInGenericVersions ChecksReplacedByGuards

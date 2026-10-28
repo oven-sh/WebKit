@@ -638,7 +638,7 @@ void HeapRule::collectChain()
         if (ValueFlowNodeID links = readWhereWritten(m_context.restrict(known(start), ValueSets::complement(m_tables.holdersWithLockedPrototypeLink())), prototypeLinkName))
             connect(m_context.masked(m_context.lookup(m_context.valueWithinAskedLast(ClimbingSet(objectsOfProgram), links), nameOfChain), m_universe.holdersOfLibraryExports()), m_statement.result);
     }
-    ClimbingSet targetsOfCopies = nameOfChain == chainWithoutCopiesOntoRealmName ? m_context.restrict(known(start), ValueSets::complement(m_tables.objectsOfRealm())) : known(start);
+    ClimbingSet targetsOfCopies = m_context.withoutProxiesThatWalksPass(nameOfChain == chainWithoutCopiesOntoRealmName ? m_context.restrict(known(start), ValueSets::complement(m_tables.objectsOfRealm())) : known(start));
     ValueFlowNodeID sourcesOfCopies = readWhereWritten(targetsOfCopies, copiedFromName);
     above = m_context.unite(above, withSourcesOfCopies(m_context, known(valueOfNodeIfAny(sourcesOfCopies))));
     add(m_statement.result, m_context.withoutProxiesThatWalksPass(known(above)));
@@ -1181,9 +1181,6 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     if (chain.holdsUnknownObject) {
         AOT_THRESHOLD(unsigned, longestChain, 8);
         ClimbingSet above = known(chain.start);
-        // The object nobody knows stands for no evaluator, so a function that it covers still counts here.
-        if (object.node)
-            above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_universe.closures()), object.node));
         above = m_context.unite(above, m_context.restrict(publicModulesThatMayBe(object), m_context.maker().intersect(holders, allButBunUnlessNamed(object))));
         Vector<ClimbingSet, longestChain> walked;
         for (unsigned step = 0; step < longestChain && holdsAnything(above); ++step) {
@@ -1462,8 +1459,15 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         readOwnPropertiesListedAbove(chain.objects, result, builtinGetters);
     if (key.namesEnumerableProperty && holdsAnything(m_context.markedAmong(chain.objects, { ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype })))
         readWhatNamesOfProgramMayHaveHidden(chain, result, builtinGetters);
-    if (mayHoldUndeclaredProperty(chain.objects, key))
+    if (mayHoldUndeclaredProperty(chain.objects, key)) {
         builtinGetters.append(m_tables.undescribedNativeCode());
+        // What a name finds on the prototype object of a host class and the table does not list may be a method of the class.
+        if (key.keyClass == HeapKeyClass::Name) {
+            m_context.forEachMember(m_context.restrict(m_context.restrict(chain.objects, holdersOfUndeclaredPropertiesUnder(key)), m_tables.prototypeObjectsOfHost()), [&](ValueFlowObjectID holder) {
+                use(m_universe.builtinOf(holder), BuiltinUse::Called);
+            });
+        }
+    }
     if (key.keyClass == HeapKeyClass::Unknown || (key.keyClass == HeapKeyClass::Name && key.name == m_tables.prototypeKey())) {
         Members classes;
         m_context.forEachMember(m_context.restrict(chain.objects, holdersOfUndeclaredPropertiesUnder(key)), [&](ValueFlowObjectID holder) {

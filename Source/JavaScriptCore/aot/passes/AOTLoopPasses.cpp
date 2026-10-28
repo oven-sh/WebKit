@@ -30,6 +30,7 @@
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
+#include <wtf/CheckedArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -414,8 +415,11 @@ static Vector<Tally, 2> findTallies(FunctionPassContext& context)
             });
             if (!isTally || starts.isEmpty() || !starts.isSubsetOf(Range::int32()) || *turns > UINT32_MAX)
                 continue;
-            // Each factor has at most 32 bits and a sign.
-            Range range { starts.minimum + change.least * *turns, starts.maximum + change.most * *turns };
+            CheckedInt64 least = CheckedInt64(change.least) * *turns + starts.minimum;
+            CheckedInt64 most = CheckedInt64(change.most) * *turns + starts.maximum;
+            if (least.hasOverflowed() || most.hasOverflowed())
+                continue;
+            Range range { least.value(), most.value() };
             if (range.isSubsetOf(Range::exact()))
                 tallies.append({ index, range, WTF::move(edgesOfNextTurns) });
         }

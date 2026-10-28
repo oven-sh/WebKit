@@ -170,6 +170,8 @@ struct FlowFunctionTables {
     BitVector functionsWhoseClosuresGoOutOfSightUnnamed;
     BitVector functionsWhoseClosuresAreGivenDisplayName;
     BitVector functionsWhoseClosuresAreMadeOnce;
+    // By the function as it is written: all its forms together.
+    BitVector writtenFunctionsWithOneFunctionObject;
 };
 
 struct WrittenPositionOfSite {

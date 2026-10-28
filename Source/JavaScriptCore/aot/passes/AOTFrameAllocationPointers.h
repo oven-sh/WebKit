@@ -162,6 +162,7 @@ void propagateUntilNothingChanges(const Function& function, const auto& blocks, 
 
 OperandSummary summarizeFramePointerUse(const Program&, const FlowResults*, const Function&, const Value& user, uint32_t operandIndex);
 bool mayLeakFramePointer(const Program&, const FlowResults*, const Function&, const Value& user, uint32_t operandIndex);
+bool mayLeakFramePointer(const Program&, const Function&, const Value& user, uint32_t operandIndex, const OperandSummary& summaryOfFramePointerUse);
 bool mayLeakFramePointer(const Program&, const FlowResults*, const Function&, const Terminator& user, uint32_t operandIndex);
 bool mayLeakContents(const Program&, const FlowResults*, const Function&, const Value& user, uint32_t operandIndex);
 bool mayLeakCapture(const Program&, const FlowResults*, const Value& closure, uint32_t captureIndex);

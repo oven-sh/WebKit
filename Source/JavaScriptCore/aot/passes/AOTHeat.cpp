@@ -1442,9 +1442,10 @@ struct OutliningScan {
         if (value.isTailCall && callOpcodes.contains(value.opcode))
             return false;
         // Reflect.construct(..) is shown at one place where it constructs and at another where it calls. The call of a body does neither.
+        // The read of an update is shown at one place where it throws and at another where it calls. The call of a body always calls.
         if (value.isPartOfConstruction) {
             const ConstructionStart* construction = program.findConstructionReportedAt(program.sourceFunctionOf(function, value).module, value.position);
-            if (construction && construction->isWrittenAsCall)
+            if (construction && (construction->isWrittenAsCall || construction->isForCallers))
                 return false;
         }
         bool dependsOnInlineFrame = std::ranges::any_of(payloadFieldsOf(value.opcode), [&](const PayloadFieldInfo& field) {
