@@ -475,7 +475,7 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
         JSObject* object = asObject(cell);
         if (JSGlobalObject* globalObject = object->realmMayBeNull()) {
             PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_profiler.vm());
-            if (!object->getOwnPropertySlot(object, globalObject, m_profiler.vm().propertyNames->constructor, slot)) {
+            if (!object->ordinaryGetOwnPropertySlot(globalObject, m_profiler.vm().propertyNames->constructor, slot)) {
                 name = JSObject::calculatedClassName(object);
             }
         }

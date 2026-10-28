@@ -62,7 +62,7 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
         NarrowReference word = operand.as<NarrowReference>();
         if (!(type.primitives & (Primitive::AnyString | Primitive::BigInt)))
             return isCellReference(word);
-        return either<Condition>(isCellReference(word), [&] {
+        return selectByBranch<Condition>(isCellReference(word), [&] {
             return isTruthyCell(decode(word), type);
         }, [&] {
             return boolean(false);
@@ -197,7 +197,7 @@ Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxe
         static_assert(JSValue::ValueTrue & 1 && !(JSValue::ValueFalse & 1) && !(JSValue::ValueNull & 1) && !(JSValue::ValueUndefined & 1));
         return Condition(m_out.notEqual(m_out.bitAnd(value.value(), 3), JSValue::OtherTag));
     }
-    return either<Condition>(isCell(value), [&] {
+    return selectByBranch<Condition>(isCell(value), [&] {
         return isTruthyCell(unboxCell(value), type);
     }, isTrue);
 }

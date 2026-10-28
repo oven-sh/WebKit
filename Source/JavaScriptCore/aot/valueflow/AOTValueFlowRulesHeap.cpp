@@ -499,12 +499,8 @@ bool HeapRule::replaceMembersThroughSettersFoundFrom(ClimbingSet receivers, cons
         if (key.keyClass == HeapKeyClass::Index || (key.keyClass == HeapKeyClass::Name && key.name != member.key))
             continue;
         ClimbingSet holder(only(member.holder));
-        bool searchesChain = search != PropertySearch::OwnProperty;
-        HeapChain chain = searchesChain ? chainFrom(receivers) : HeapChain { };
-        bool isListed = m_context.contains(searchesChain ? chain.objects : receivers, member.holder);
-        bool mayBeUnknown = mayBeUnknownObject(receivers) || chain.holdsUnknownObject;
-        bool mayBeUntracked = mayBeUntrackedObject(receivers) || chain.holdsUntrackedObject;
-        bool isNamedOnObjectNobodyFollows = key.keyClass == HeapKeyClass::Name && ((mayBeUnknown && hasEscaped(holder)) || (mayBeUntracked && hasBeenLost(holder)));
+        bool isListed = m_context.contains(search == PropertySearch::OwnProperty ? receivers : chainFrom(receivers).objects, member.holder);
+        bool isNamedOnObjectNobodyFollows = key.keyClass == HeapKeyClass::Name && ((mayBeUnknownObject(receivers) && hasEscaped(holder)) || (mayBeUntrackedObject(receivers) && hasBeenLost(holder)));
         if (!isListed && !isNamedOnObjectNobodyFollows)
             continue;
         isFound = true;

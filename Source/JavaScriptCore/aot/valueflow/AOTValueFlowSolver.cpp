@@ -4362,7 +4362,7 @@ String ValueFlowSolver::describeWayOf(const ObjectOutsideFamily& entry) const
 bool ValueFlowSolver::solve()
 {
     if (m_input.build)
-        m_seedOfSchedule = m_input.build->recordedOptions().has(TestingSwitch::DelayFlowRules) + 2 * m_input.build->recordedOptions().has(TestingSwitch::DelayOtherFlowRules);
+        m_seedOfSchedule = m_input.build->recordedOptions().has(TestingSwitch::DelayFlowRules) + 2 * m_input.build->recordedOptions().has(TestingSwitch::DelayOtherFlowRules) + 4 * m_input.build->recordedOptions().numberOfFlowSchedule;
     m_stepTimes.isOn = m_input.build && m_input.build->options().logging.logsPhaseTimes;
     m_stepTimes.begin();
     m_graph.addNodes(m_input.numberOfNodes);

@@ -28,7 +28,7 @@ Value* appendBoundOfStretch(Procedure& proc, BasicBlock* block, Origin origin, c
     bool rises = stretch.step > 0;
     // Where the bound lies beyond, the distance is no more than the type holds without a sign. The end is taken only where it lies nearer, so there it has not wrapped around.
     Value* distance = rises ? block->appendNew<Value>(proc, Sub, origin, stretch.bound, stretch.from) : block->appendNew<Value>(proc, Sub, origin, stretch.from, stretch.bound);
-    Value* length = block->appendIntConstant(proc, origin, type, std::min<int64_t>(Limits::maxTurnsWithoutPoll * (rises ? stretch.step : -stretch.step), type == Int32 ? 1ll << 30 : 1ll << 62));
+    Value* length = block->appendIntConstant(proc, origin, type, std::min<int64_t>(stretch.turns * (rises ? stretch.step : -stretch.step), type == Int32 ? 1ll << 30 : 1ll << 62));
     Value* end = block->appendNew<Value>(proc, rises ? Add : Sub, origin, stretch.from, length);
     Value* endIsNearer = block->appendNew<Value>(proc, Above, origin, distance, length);
     if (stretch.boundLiesBeyond == BoundLiesBeyond::No)

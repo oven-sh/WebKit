@@ -54,6 +54,7 @@ struct ValidationPolicy {
     bool leavesRoomForOneTurnTooFew { false };
     bool takesAccessesOfVectorTurnsToLieApart { false };
     bool takesLanesToHoldWholeValues { false };
+    bool takesSumsOfNumbersToBeWhole { false };
     bool setsUpFrameBehindWrites { false };
 };
 

@@ -1641,7 +1641,8 @@ TypePropagationOutcome typeChangedValues(const TypePropagationInputs& inputs)
         }
         outcome = typeUntilNothingIsCut(inputs, TypedFirst::PendingValues);
         statistics.count(outcome.didChange() ? StatisticID::FunctionsTypedFromChanges : StatisticID::FunctionsTypedAsBefore);
-        if (ValueID value = typedFromNever && !outcome.dependsOnTypesBefore() ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
+        // Where the log ran full while this typing wrote into it, every value is pending again.
+        if (ValueID value = typedFromNever && !outcome.dependsOnTypesBefore() && !pending->isEverythingPending(log) ? findValueTypedWider(inputs, *typedFromNever) : ValueID())
             inputs.build.diagnostics().add(InternalError { .kind = InternalErrorKind::TypeOutOfDate, .function = inputs.analyses.subject().function, .value = value, .detail = "typed from what changed it is wider than typed from nothing"_s });
     }
     if (pending->isEmpty(log)) {

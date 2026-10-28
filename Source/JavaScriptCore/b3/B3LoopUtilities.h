@@ -104,9 +104,10 @@ struct StretchOfTurns {
     int64_t step { 0 };
     // Whether relation(from, bound) is known to hold.
     BoundLiesBeyond boundLiesBeyond { BoundLiesBeyond::No };
+    int64_t turns { Limits::maxTurnsWithoutPoll };
 };
 
-// The bound, or the place that the counter reaches in Limits::maxTurnsWithoutPoll turns, whichever is nearer. A loop that is tested against it may go without a poll.
+// The bound, or the place that the counter reaches in so many turns, whichever is nearer. A loop that is tested against it may go without a poll.
 JS_EXPORT_PRIVATE Value* appendBoundOfStretch(Procedure&, BasicBlock*, Origin, const StretchOfTurns&);
 
 JS_EXPORT_PRIVATE BasicBlock* findPreHeader(const NaturalLoops&, const NaturalLoop&);

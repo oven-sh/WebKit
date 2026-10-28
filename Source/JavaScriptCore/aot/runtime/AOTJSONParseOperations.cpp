@@ -1825,6 +1825,9 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
         learned.keys.shrink(0);
         learned.stores.shrink(0);
         learned.plan = nullptr;
+        // The object around this one is refused. Another text that begins with the same name may still be learned.
+        if (depth)
+            learned.shape = 0;
     });
 
     const LayoutData& layout = layoutOf(instance, shape);

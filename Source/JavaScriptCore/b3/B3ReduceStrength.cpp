@@ -3536,6 +3536,11 @@ private:
             // Turn this: VectorDotProduct(v, splatOne16)
             // Into this: VectorExtaddPairwise(v)
             constexpr v128_t splatOne16 = v128_t::fromU16x8(1, 1, 1, 1, 1, 1, 1, 1);
+#if CPU(X86_64)
+            // There it is the same multiplication with the ones made on the spot, in a form that needs AVX.
+            if (!m_proc.policy().targetFeatures.contains(CPUFeature::AVX))
+                break;
+#endif
             if (m_value->child(1)->hasV128() && bitEquals(m_value->child(1)->asV128(), splatOne16)) {
                 // VectorExtaddPairwise uses the input lane type (i16x8), not the output (i32x4).
                 replaceWithNew<SIMDValue>(m_value->origin(), VectorExtaddPairwise, B3::V128, SIMDLane::i16x8, SIMDSignMode::Signed, m_value->child(0));

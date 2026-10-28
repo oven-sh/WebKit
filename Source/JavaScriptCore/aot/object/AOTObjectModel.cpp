@@ -1248,6 +1248,7 @@ CompiledStructure::CompiledStructure(VM& vm, const TypeInfo& typeInfo, const Cla
     ASSERT(typeInfo.type() == CompiledObjectType);
     setIsQuickPropertyAccessAllowedForEnumeration(false);
     setDidPreventExtensions(false);
+    setDidTransition(true);
     setHasAnyKindOfGetterSetterProperties(true);
     setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
     setHasNonEnumerableProperties(true);

@@ -18,6 +18,7 @@ namespace JSC {
 class JSCellButterfly;
 class JSGlobalObject;
 class JSObject;
+class PropertySlot;
 class Structure;
 class Symbol;
 class VM;
@@ -61,6 +62,8 @@ Presence hasPropertyOnChain(Structure*, UniquedStringImpl*);
 // A compiled object whose Structure says nothing about its extra properties gets the Structure that lists them. Whether it has another Structure now. Collects nothing.
 bool listExtraPropertiesInStructure(VM&, JSObject*);
 JS_EXPORT_PRIVATE JSValue getDirect(VM&, const JSObject*, PropertyName, unsigned* attributesOrNull);
+// What JSObject::getOwnPropertySlot() finds on the ordinary object that would stand in the place of this one. Runs no code.
+JS_EXPORT_PRIVATE bool ordinaryGetOwnPropertySlot(JSGlobalObject*, JSObject*, PropertyName, PropertySlot&);
 // What a read by name finds on the compiled object itself.
 JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStringImpl*, JSValue&);
 JS_EXPORT_PRIVATE void putDirect(VM&, JSObject*, PropertyName, JSValue, unsigned attributes);

@@ -1023,6 +1023,194 @@ static void testVectorizeLoopsTakesGreaterOfTwoElements()
     }
 }
 
+// sum = start; for (index = 0; index < bound; index++) sum += element(index). The third argument holds the bits of the start. The bits of the sum are returned.
+struct LoopThatAddsUp {
+    LoopThatAddsUp(const Policy& policy, Type typeOfSum)
+        : proc(policy)
+        , loop(graph)
+        , typeOfSum(typeOfSum)
+        , total(proc.addVariable(typeOfSum))
+    {
+        Value* jump = loop.root->values().takeLast();
+        graph.set(loop.root, total, typeOfSum == Double ? graph.make(loop.root, BitwiseCast, loop.extra) : typeOfSum == Int32 ? graph.make(loop.root, Trunc, loop.extra) : loop.extra);
+        loop.root->values().append(jump);
+        for (Value* value : *loop.exit)
+            proc.deleteValue(value);
+        loop.exit->values().clear();
+        Value* result = graph.get(loop.exit, total);
+        graph.ret(loop.exit, typeOfSum == Double ? graph.make(loop.exit, BitwiseCast, result) : typeOfSum == Int32 ? graph.make(loop.exit, ZExt32, result) : result);
+    }
+
+    Value* element(const ElementKind& kind)
+    {
+        Value* index = graph.get(loop.body, loop.index);
+        Value* distance = kind.bytes == 1 ? index : graph.make(loop.body, Shl, index, graph.int32(loop.body, WTF::fastLog2(kind.bytes)));
+        Value* address = graph.make(loop.body, Add, loop.pointer, distance);
+        if (kind.load == Load)
+            return loop.body->appendNew<MemoryValue>(proc, Load, kind.type, Origin(), address, 0, firstHeap);
+        return loop.body->appendNew<MemoryValue>(proc, kind.load, Origin(), address, 0, firstHeap);
+    }
+
+    void add(Value* integer, B3::Opcode opcode = Add)
+    {
+        Value* added = typeOfSum == Double ? graph.make(loop.body, IToD, integer) : typeOfSum == Int64 ? graph.make(loop.body, SExt32, integer) : integer;
+        graph.set(loop.body, total, graph.make(loop.body, opcode, graph.get(loop.body, total), added));
+    }
+
+    Procedure proc;
+    Graph graph { proc };
+    TopTestedLoop loop;
+    Type typeOfSum;
+    Variable* total;
+};
+
+static int64_t readElement(const ElementKind& kind, const uint8_t* at)
+{
+    uint32_t bits = 0;
+    memcpy(&bits, at, kind.bytes);
+    if (kind.load == Load8S)
+        return static_cast<int8_t>(bits);
+    if (kind.load == Load16S)
+        return static_cast<int16_t>(bits);
+    if (kind.load == Load)
+        return static_cast<int32_t>(bits);
+    return bits;
+}
+
+// One element after the other, as the loop is written.
+static uint64_t addUpInTurns(const ElementKind& kind, Type typeOfSum, uint64_t start, const uint8_t* elements, int64_t bound, int64_t addedToEach = 0, bool takesAway = false)
+{
+    if (typeOfSum == Double) {
+        double sum = std::bit_cast<double>(start);
+        for (int64_t index = 0; index < bound; ++index) {
+            double element = static_cast<double>(readElement(kind, elements + index * kind.bytes) + addedToEach);
+            sum = takesAway ? sum - element : sum + element;
+        }
+        return std::bit_cast<uint64_t>(sum);
+    }
+    uint64_t sum = start;
+    for (int64_t index = 0; index < bound; ++index)
+        sum += static_cast<uint64_t>((readElement(kind, elements + index * kind.bytes) + addedToEach) * (takesAway ? -1 : 1));
+    return typeOfSum == Int32 ? static_cast<uint32_t>(sum) : sum;
+}
+
+static void testVectorizeLoopsAddsUpElementsOfEveryKind()
+{
+    const double starts[] = { 0, 1, -7, 0.5, -0.0, 4294967296.0, 2251799813685247.0, 2251799813685248.0, -2251799813685248.0, 4503599627370497.0, 9007199254740992.0, 1e300,
+        std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::denorm_min() };
+    for (CPUFeatureSet features : featureSets()) {
+        for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+            const ElementKind& kind = elementKinds[kindIndex];
+            for (Type typeOfSum : { Double, Int32, Int64 }) {
+                for (int32_t addedToEach : { 0, 5, -5 }) {
+                    // The last takes away what the second adds.
+                    bool takesAway = addedToEach < 0;
+                    if (takesAway)
+                        addedToEach = 5;
+                    LoopThatAddsUp loop { vectorPolicy(features), typeOfSum };
+                    Value* element = loop.element(kind);
+                    // Five more than an integer of 32 bits may be too much for 32 bits.
+                    if (addedToEach && kind.bytes == 4)
+                        continue;
+                    loop.add(addedToEach ? loop.graph.make(loop.loop.body, Add, element, loop.graph.int32(loop.loop.body, addedToEach)) : element, takesAway ? Sub : Add);
+                    loop.loop.endBody(loop.loop.body);
+                    CHECK(vectorizeLoopsAndValidate(loop.proc));
+                    // The loop itself, the turns of a stretch, and the stretches.
+                    CHECK_EQ(loop.proc.naturalLoops().numLoops(), 3u);
+                    auto code = compileForTarget(loop.proc);
+                    alignas(16) uint8_t elements[bytesOfBuffer];
+                    fillWithBytes(elements, kindIndex + 1);
+                    for (int64_t bound = 0; bound <= 70; ++bound) {
+                        for (double number : starts) {
+                            uint64_t start = typeOfSum == Double ? std::bit_cast<uint64_t>(number) : static_cast<uint64_t>(static_cast<int64_t>(std::isfinite(number) && std::abs(number) < 1e18 ? number : 12345.0) * 0x100000001ll);
+                            if (typeOfSum == Int32)
+                                start = static_cast<uint32_t>(start);
+                            const uint8_t* at = elements + 3 * kind.bytes;
+                            CHECK_EQ(static_cast<uint64_t>(invoke<int64_t>(*code, bound, at, start)), addUpInTurns(kind, typeOfSum, start, at, bound, addedToEach, takesAway));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// More elements than the lanes of a sum hold, each as far from zero as it can be. Where a sum of numbers leaves the whole numbers that a number tells apart, every addition rounds, in the order of the turns.
+static void testVectorizeLoopsAddsUpManyElements()
+{
+    constexpr int64_t numberOfElements = 5000000;
+    for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+        const ElementKind& kind = elementKinds[kindIndex];
+        Vector<uint8_t> elements(numberOfElements * kind.bytes + 64);
+        for (Type typeOfSum : { Double, Int32, Int64 }) {
+            LoopThatAddsUp loop { vectorPolicy(), typeOfSum };
+            loop.add(loop.element(kind));
+            loop.loop.endBody(loop.loop.body);
+            CHECK(vectorizeLoopsAndValidate(loop.proc));
+            auto code = compileForTarget(loop.proc);
+            for (unsigned filling = 0; filling < 3; ++filling) {
+                // The greatest, the least, and whatever.
+                if (filling == 2)
+                    fillWithBytes(elements.mutableSpan(), kindIndex);
+                else {
+                    uint32_t bits = kind.load == Load8Z || kind.load == Load16Z ? (filling ? 0 : 0xffffffffu) : (filling ? 1u << (kind.bytes * 8 - 1) : (1u << (kind.bytes * 8 - 1)) - 1);
+                    for (int64_t index = 0; index < numberOfElements; ++index)
+                        memcpy(elements.mutableSpan().data() + index * kind.bytes, &bits, kind.bytes);
+                }
+                for (int64_t bound : { numberOfElements, numberOfElements - 1, static_cast<int64_t>(131072), static_cast<int64_t>(131073), static_cast<int64_t>(2097152 + 3) }) {
+                    uint64_t start = typeOfSum == Double ? std::bit_cast<uint64_t>(3.0) : 3;
+                    CHECK_EQ(static_cast<uint64_t>(invoke<int64_t>(*code, bound, elements.span().data(), start)), addUpInTurns(kind, typeOfSum, start, elements.span().data(), bound));
+                }
+            }
+        }
+    }
+}
+
+// Zero has a sign. What is left of it depends on whether all elements are zero or only their sum.
+static void testVectorizeLoopsKeepsSignOfZeroSum()
+{
+    const ElementKind& kind = elementKinds[3];
+    for (bool takesAway : { false, true }) {
+        LoopThatAddsUp loop { vectorPolicy(), Double };
+        loop.add(loop.element(kind), takesAway ? Sub : Add);
+        loop.loop.endBody(loop.loop.body);
+        CHECK(vectorizeLoopsAndValidate(loop.proc));
+        auto code = compileForTarget(loop.proc);
+        for (int16_t first : { 0, 5 }) {
+            for (double number : { 0.0, -0.0, 5.0, -5.0 }) {
+                for (int64_t bound : { 0, 1, 2, 8, 16, 17, 40 }) {
+                    alignas(16) int16_t elements[64] = { };
+                    elements[0] = first;
+                    elements[1] = -first;
+                    elements[9] = number ? (takesAway ? number : -number) : 0;
+                    uint64_t start = std::bit_cast<uint64_t>(number);
+                    const uint8_t* at = reinterpret_cast<const uint8_t*>(elements);
+                    CHECK_EQ(static_cast<uint64_t>(invoke<int64_t>(*code, bound, at, start)), addUpInTurns(kind, Double, start, at, bound, 0, takesAway));
+                }
+            }
+        }
+    }
+}
+
+static void testVectorizeLoopsSkipsSumThatTurnLooksAt()
+{
+    const ElementKind& words = elementKinds[4];
+    // to[index] = the sum so far.
+    LoopThatAddsUp loop { vectorPolicy(), Int32 };
+    loop.add(loop.element(words));
+    Value* address = loop.graph.make(loop.loop.body, Add, loop.loop.pointer, loop.graph.make(loop.loop.body, Shl, loop.graph.get(loop.loop.body, loop.loop.index), loop.graph.int32(loop.loop.body, 2)));
+    loop.loop.body->appendNew<MemoryValue>(loop.proc, Store, Origin(), loop.graph.get(loop.loop.body, loop.total), address, 0, firstHeap);
+    loop.loop.endBody(loop.loop.body);
+    CHECK(!vectorizeLoopsAndValidate(loop.proc));
+
+    // Numbers that need not be whole are added in the order of the turns.
+    LoopThatAddsUp numbers { vectorPolicy(), Double };
+    Value* number = numbers.element(elementKinds[6]);
+    numbers.graph.set(numbers.loop.body, numbers.total, numbers.graph.make(numbers.loop.body, Add, numbers.graph.get(numbers.loop.body, numbers.total), number));
+    numbers.loop.endBody(numbers.loop.body);
+    CHECK(!vectorizeLoopsAndValidate(numbers.proc));
+}
+
 static void testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike()
 {
     const ElementKind& bytes = elementKinds[0];
@@ -1522,6 +1710,10 @@ void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVectorizeLoopsCountsBytes());
     RUN(testVectorizeLoopsComputesInLanesWiderThanElements());
     RUN(testVectorizeLoopsTakesGreaterOfTwoElements());
+    RUN(testVectorizeLoopsAddsUpElementsOfEveryKind());
+    RUN(testVectorizeLoopsAddsUpManyElements());
+    RUN(testVectorizeLoopsKeepsSignOfZeroSum());
+    RUN(testVectorizeLoopsSkipsSumThatTurnLooksAt());
     RUN(testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike());
     RUN(testVectorizeLoopsSkipsLoopWithSecondWayOut());
     RUN(testVectorizeLoopsTakesBranchOnConstantForJump());

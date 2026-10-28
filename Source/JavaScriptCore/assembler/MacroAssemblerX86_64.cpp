@@ -599,12 +599,12 @@ void MacroAssemblerX86_64::emitVectorOperationWithoutAVX(VectorOperationWithoutA
         { 0, with66 | 0x63, with66 | 0x6b, 0, 0, 0 }, // packsswb packssdw
         { 0, with66 | 0x67, with6638 | 0x2b, 0, 0, 0 }, // packuswb packusdw
     };
-    static constexpr uint16_t onBits[4] = { 0x54, 0x56, 0x57, with6638 | 0x00 }; // andps orps xorps pshufb
+    static constexpr uint16_t whateverLane[5] = { 0x54, 0x56, 0x57, with6638 | 0x00, with66 | 0xf5 }; // andps orps xorps pshufb pmaddwd
     static_assert(static_cast<unsigned>(SIMDLane::i8x16) + 5 == static_cast<unsigned>(SIMDLane::f64x2));
-    static_assert(static_cast<unsigned>(VectorOperationWithoutAVX::And) == 10 && static_cast<unsigned>(VectorOperationWithoutAVX::Swizzle) == 13);
+    static_assert(static_cast<unsigned>(VectorOperationWithoutAVX::And) == 10 && static_cast<unsigned>(VectorOperationWithoutAVX::DotProduct) == 14);
     uint16_t instruction = 0;
     if (operation >= VectorOperationWithoutAVX::And)
-        instruction = onBits[static_cast<unsigned>(operation) - 10];
+        instruction = whateverLane[static_cast<unsigned>(operation) - 10];
     else {
         RELEASE_ASSERT(lane >= SIMDLane::i8x16 && lane <= SIMDLane::f64x2);
         instruction = arithmetic[static_cast<unsigned>(operation)][static_cast<unsigned>(lane) - static_cast<unsigned>(SIMDLane::i8x16)];

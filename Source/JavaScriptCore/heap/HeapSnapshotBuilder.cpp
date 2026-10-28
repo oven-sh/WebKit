@@ -392,7 +392,7 @@ NEVER_INLINE void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
             JSObject* object = asObject(node.cell);
             if (JSGlobalObject* globalObject = object->realmMayBeNull()) {
                 PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-                if (!object->getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, slot))
+                if (!object->ordinaryGetOwnPropertySlot(globalObject, vm.propertyNames->constructor, slot))
                     className = JSObject::calculatedClassName(object);
             }
         }

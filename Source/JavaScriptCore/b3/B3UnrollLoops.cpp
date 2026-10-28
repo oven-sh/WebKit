@@ -1224,9 +1224,9 @@ private:
 
     static bool includesEqual(Opcode relation) { return relation == LessEqual || relation == GreaterEqual || relation == BelowEqual || relation == AboveEqual; }
 
-    // Where the turns run in stretches: the block in front of the first stretch of a loop of any length, and the one in front of every stretch, with the variable that holds the far bound of the stretch.
+    // Where the turns run in stretches: the block where the first stretch begins, and the variable that holds the far bound of the stretch.
     struct StretchEntry {
-        BasicBlock* tests { nullptr };
+        BasicBlock* begins { nullptr };
         Variable* farBoundVariable { nullptr };
     };
 
@@ -1281,12 +1281,12 @@ private:
                 Value* isNotShort = appendInFront(m_proc.add<Value>(AboveEqual, origin, turnsBehindFirst, appendInFront(m_proc.addIntConstant(origin, type, room))));
                 testOfFirstTurn->last()->child(0) = isNotShort;
                 // A loop that fits one stretch pays nothing for the stretches: the test that there is a first turn gives way to the test that the turns are neither none nor too many.
-                if (stretch.tests) {
+                if (stretch.begins) {
                     BasicBlock* fits = m_proc.addBlock();
                     Value* farBoundOfAllTurns = fits->appendNew<Value>(m_proc, Sub, origin, bound, fits->appendIntConstant(m_proc, origin, type, room));
                     fits->appendNew<VariableValue>(m_proc, Set, origin, stretch.farBoundVariable, farBoundOfAllTurns);
                     fits->appendNew<Value>(m_proc, Jump, origin);
-                    fits->setSuccessors(FrequentedBlock(stretch.tests));
+                    fits->setSuccessors(FrequentedBlock(stretch.begins));
                     notShort = m_proc.addBlock();
                     Value* most = notShort->appendIntConstant(m_proc, origin, type, Limits::maxTurnsWithoutPoll * plan.step - 1);
                     notShort->appendNew<Value>(m_proc, Branch, origin, notShort->appendNew<Value>(m_proc, BelowEqual, origin, turnsBehindFirst, most));
@@ -1340,6 +1340,8 @@ private:
     struct Stretch {
         BasicBlock* first { nullptr };
         BasicBlock* tests { nullptr };
+        // Behind the tests. The first stretch begins here where the sums start at constants that pass them.
+        BasicBlock* begins { nullptr };
         BasicBlock* next { nullptr };
         Variable* farBoundVariable { nullptr };
         Vector<Variable*, 1> firstSums;
@@ -1354,14 +1356,28 @@ private:
         return block->appendNew<Value>(m_proc, Sub, origin, bounds.bound, block->appendIntConstant(m_proc, origin, bounds.bound->type(), roomForTurnsBehindFirst(plan)));
     }
 
-    void appendFarBoundOfStretch(const Plan& plan, const Stretch& stretch, const Bounds& bounds, BasicBlock* block, Variable* beginning, BoundLiesBeyond farBoundLiesBeyond)
+    void appendFarBoundOfStretch(const Plan& plan, const Stretch& stretch, const Bounds& bounds, BasicBlock* block, Variable* beginning, BoundLiesBeyond farBoundLiesBeyond, BasicBlock* successor)
     {
         Origin origin = plan.test->last()->origin();
         Value* from = block->appendNew<VariableValue>(m_proc, Get, origin, beginning);
         Value* farBound = appendBoundOfStretch(m_proc, block, origin, { from, appendFarBound(plan, bounds, block), plan.relation, plan.step, farBoundLiesBeyond });
         block->appendNew<VariableValue>(m_proc, Set, origin, stretch.farBoundVariable, farBound);
         block->appendNew<Value>(m_proc, Jump, origin);
-        block->setSuccessors(FrequentedBlock(stretch.tests));
+        block->setSuccessors(FrequentedBlock(successor));
+    }
+
+    static constexpr double roundingOfSums = 1.5 * static_cast<double>(greatestSumOfIntegers);
+    static constexpr double greatestStartOfSum = static_cast<double>(greatestSumOfIntegers / 2);
+
+    static bool startPassesTests(const SumOfIntegers& sum)
+    {
+        Value* start = sum.start->foldIdentity();
+        if (!start->hasDouble())
+            return false;
+        double value = start->asDouble();
+        bool isWhole = (value + roundingOfSums) - roundingOfSums == value;
+        bool isMinusZero = std::bit_cast<int64_t>(value) == std::numeric_limits<int64_t>::min();
+        return isWhole && std::abs(value) < greatestStartOfSum && (sum.sum->opcode() != Sub || !isMinusZero);
     }
 
     // Adding 1.5 * 2^52 to a number under 2^51 rounds it to a whole number.
@@ -1369,23 +1385,24 @@ private:
     {
         Origin origin = plan.test->last()->origin();
         BasicBlock* tests = stretch.tests;
+        BasicBlock* begins = stretch.begins;
         // A test at the bottom is reached only where there is room for the turns that are written out. A test at the top asks that by itself.
-        appendFarBoundOfStretch(plan, stretch, bounds, stretch.first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes);
+        appendFarBoundOfStretch(plan, stretch, bounds, stretch.first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, begins);
         appendPoll(plan, stretch.next);
         // The counter has passed the end of the last stretch by less than the turns that are written out. Nothing but the test of those turns looks at the counter here, so it stays in one register.
-        appendFarBoundOfStretch(plan, stretch, bounds, stretch.next, stretch.farBoundVariable, BoundLiesBeyond::Yes);
-        stretch.farBound = tests->appendNew<VariableValue>(m_proc, Get, origin, stretch.farBoundVariable);
+        appendFarBoundOfStretch(plan, stretch, bounds, stretch.next, stretch.farBoundVariable, BoundLiesBeyond::Yes, tests);
+        stretch.farBound = begins->appendNew<VariableValue>(m_proc, Get, origin, stretch.farBoundVariable);
         if (plan.sums.isEmpty()) {
             tests->appendNew<Value>(m_proc, Jump, origin);
             tests->setSuccessors(FrequentedBlock(unrolledHeader));
             return;
         }
-        Value* rounding = tests->appendNew<ConstDoubleValue>(m_proc, origin, 1.5 * static_cast<double>(greatestSumOfIntegers));
-        Value* greatestStart = tests->appendNew<ConstDoubleValue>(m_proc, origin, static_cast<double>(greatestSumOfIntegers / 2));
+        Value* rounding = tests->appendNew<ConstDoubleValue>(m_proc, origin, roundingOfSums);
+        Value* greatestStart = tests->appendNew<ConstDoubleValue>(m_proc, origin, greatestStartOfSum);
         Value* enters = nullptr;
         for (unsigned index = 0; index < plan.sums.size(); ++index) {
             Value* start = tests->appendNew<VariableValue>(m_proc, Get, origin, stretch.firstSums[index]);
-            stretch.sumsInFront.append(start);
+            stretch.sumsInFront.append(begins == tests ? start : begins->appendNew<VariableValue>(m_proc, Get, origin, stretch.firstSums[index]));
             Value* rounded = tests->appendNew<Value>(m_proc, Sub, origin, tests->appendNew<Value>(m_proc, Add, origin, start, rounding), rounding);
             Value* isWhole = tests->appendNew<Value>(m_proc, Equal, origin, rounded, start);
             Value* isSmall = tests->appendNew<Value>(m_proc, LessThan, origin, tests->appendNew<Value>(m_proc, Abs, origin, start), greatestStart);
@@ -1396,10 +1413,14 @@ private:
                 fits = tests->appendNew<Value>(m_proc, BitAnd, origin, fits, isNotMinusZero);
             }
             enters = enters ? tests->appendNew<Value>(m_proc, BitAnd, origin, enters, fits) : fits;
-            tests->appendNew<VariableValue>(m_proc, Set, origin, integers[index], tests->appendIntConstant(m_proc, origin, Int64, 0));
+            begins->appendNew<VariableValue>(m_proc, Set, origin, integers[index], begins->appendIntConstant(m_proc, origin, Int64, 0));
         }
         tests->appendNew<Value>(m_proc, Branch, origin, enters);
-        tests->setSuccessors(FrequentedBlock(unrolledHeader), FrequentedBlock(headerOfLoopThatPolls, FrequencyClass::Rare));
+        tests->setSuccessors(FrequentedBlock(begins == tests ? unrolledHeader : begins), FrequentedBlock(headerOfLoopThatPolls, FrequencyClass::Rare));
+        if (begins == tests)
+            return;
+        begins->appendNew<Value>(m_proc, Jump, origin);
+        begins->setSuccessors(FrequentedBlock(unrolledHeader));
     }
 
     static Value* insertBehind(Value* place, Value* value)
@@ -1515,6 +1536,7 @@ private:
         if (!plan.sums.isEmpty() || (plan.poll && !plan.pollsOnceForAllWrittenOutTurns && !fitsOneStretch(plan))) {
             stretch.first = m_proc.addBlock();
             stretch.tests = m_proc.addBlock();
+            stretch.begins = !plan.sums.isEmpty() && std::ranges::all_of(plan.sums, startPassesTests) ? m_proc.addBlock() : stretch.tests;
             stretch.next = m_proc.addBlock();
             stretch.farBoundVariable = m_proc.addVariable(plan.tested->type());
             headerBehindRest = m_proc.addBlock();
@@ -1524,7 +1546,7 @@ private:
             }
         }
         BasicBlock* unrolledHeader = stretch.first ? stretch.first : turns[0].get(plan.header);
-        Bounds bounds = appendBoundsAndEnter(plan, unrolledHeader, { stretch.tests, stretch.farBoundVariable });
+        Bounds bounds = appendBoundsAndEnter(plan, unrolledHeader, { stretch.begins, stretch.farBoundVariable });
         if (stretch.tests) {
             appendStartOfStretch(plan, stretch, integers.span(), bounds, turns[0].get(plan.header), headerOfLoopThatPolls);
             headerBehindRest->appendNew<Value>(m_proc, Branch, origin, headerBehindRest->appendNew<Value>(m_proc, plan.relation, origin, headerBehindRest->appendNew<VariableValue>(m_proc, Get, origin, testedVariable), appendFarBound(plan, bounds, headerBehindRest)));

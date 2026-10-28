@@ -10,6 +10,7 @@
 
 #include "AllowMacroScratchRegisterUsage.h"
 #include "B3BasicBlockInlines.h"
+#include "B3ConstDoubleValue.h"
 #include "B3CountedLoops.h"
 #include "B3DominatingConditions.h"
 #include "B3Dominators.h"
@@ -77,6 +78,8 @@ public:
                 if (!plan->testsCounterBeforeStep)
                     valuesToDemote.add(counter.next);
             }
+            for (const Sum& sum : plan->sums())
+                valuesToDemote.add(sum.phi);
         }
         demoteValues(m_proc, valuesToDemote);
         for (auto& plan : m_plans)
@@ -118,7 +121,10 @@ private:
             // packuswb, packsswb | packusdw, packssdw.
             return lane == SIMDLane::i16x8 ? nothing : nothing.with(CPUFeature::SSE4_1);
         case VectorExtractLane:
-            // The lowest number of a vector is the register itself.
+            // The lowest number of a vector is the register itself. An integer: pextrd | pextrq.
+            return lane == SIMDLane::f64x2 ? nothing : nothing.with(CPUFeature::SSE4_1);
+        case VectorDotProduct:
+            // pmaddwd.
             return nothing;
         case VectorAdd:
         case VectorSub:
@@ -155,8 +161,22 @@ private:
         Value* start;
         Value* next;
         int64_t step;
+        Value* atHeadOfStretch;
         Value* phiOfVectorLoop;
         Value* nextOfVectorLoop;
+    };
+
+    // A Phi of the header to which every turn adds an integer, or from which it takes one: as an integer, or as a number. Numbers that are whole add up without rounding while they stay under 2^53, in whatever order.
+    struct Sum {
+        Value* phi;
+        Value* start;
+        Value* next;
+        Value* addend;
+        bool isTakenAway;
+        // At the head of a stretch of turns, in its lanes, and behind it.
+        Value* atHeadOfStretch;
+        Value* lanes;
+        Value* behindStretch;
     };
 
     // factorOfCounter * counter + constant + the sum of factor * value over the terms, in arithmetic modulo 2^64. No term changes in the loop.
@@ -246,6 +266,10 @@ private:
         // The first is the one that is tested.
         Counter counterTable[Limits::maxCountersOfVectorizedLoop] { };
         unsigned numberOfCounters { 0 };
+        Sum sumTable[Limits::maxSumsOfVectorizedLoop] { };
+        unsigned numberOfSums { 0 };
+        // No more, so that no lane of a sum wraps around and no sum of numbers is rounded.
+        int64_t turnsPerStretch { Limits::maxTurnsWithoutPoll };
         // It is tested against a value that does not change in the loop, or against another counter.
         Value* bound { nullptr };
         unsigned indexOfBoundingCounter { 0 };
@@ -280,12 +304,16 @@ private:
         BasicBlock* turn { nullptr };
         BasicBlock* again { nullptr };
         BasicBlock* left { nullptr };
+        // From the head of a stretch: a sum of numbers is not whole, or too far from zero.
+        BasicBlock* givenUp { nullptr };
         // The loop itself keeps one way in.
         BasicBlock* inFrontOfLoop { nullptr };
         Value* lanesInOppositeOrder { nullptr };
 
         std::span<Counter> counters() { return std::span { counterTable, numberOfCounters }; }
         std::span<const Counter> counters() const { return std::span { counterTable, numberOfCounters }; }
+        std::span<Sum> sums() { return std::span { sumTable, numberOfSums }; }
+        std::span<const Sum> sums() const { return std::span { sumTable, numberOfSums }; }
         unsigned lanes() const { return bytesPerVector / bytesPerLane; }
         bool hasWideLanes() const { return bytesPerLane != bytesPerElement; }
         const Counter& tested() const { return counterTable[0]; }
@@ -301,6 +329,15 @@ private:
             for (const Counter& counter : counters()) {
                 if (counter.phi == value)
                     return &counter;
+            }
+            return nullptr;
+        }
+
+        const Sum* sumFor(const Value* value) const
+        {
+            for (const Sum& sum : sums()) {
+                if (sum.phi == value)
+                    return &sum;
             }
             return nullptr;
         }
@@ -411,7 +448,9 @@ private:
                 return false;
             place = input;
         }
-        if (!counter.start || !counter.next || !counter.phi->type().isInt())
+        if (!counter.start || !counter.next)
+            return false;
+        if (!counter.phi->type().isInt())
             return false;
         std::optional<int64_t> step = stepOf(counter.next, counter.phi);
         if (!step || !*step || *step > Limits::maxCountedLoopStep || *step < -Limits::maxCountedLoopStep)
@@ -427,14 +466,57 @@ private:
                 continue;
             if (plan.numberOfCounters == Limits::maxCountersOfVectorizedLoop)
                 return false;
-            Counter& counter = plan.counterTable[plan.numberOfCounters++];
+            Counter& counter = plan.counterTable[plan.numberOfCounters];
+            counter = { };
             counter.phi = phi;
-            if (!readCounter(phiChildren, plan, counter)) {
+            if (readCounter(phiChildren, plan, counter)) {
+                ++plan.numberOfCounters;
+                continue;
+            }
+            if (!readSum(plan, counter)) {
                 dataLogLnIf(verbose, "   phi: ", deepDump(phi));
                 return false;
             }
         }
         return plan.numberOfCounters;
+    }
+
+    // What was read of a Phi that is no counter.
+    static bool readSum(Plan& plan, const Counter& read)
+    {
+        if (!read.start || !read.next || (read.next->opcode() != Add && read.next->opcode() != Sub) || plan.numberOfSums == Limits::maxSumsOfVectorizedLoop)
+            return false;
+        Value* added = read.next->child(0) == read.phi ? read.next->child(1) : read.next->child(1) == read.phi && read.next->opcode() == Add ? read.next->child(0) : nullptr;
+        if (!added || added == read.phi)
+            return false;
+        if (read.phi->type() == Double) {
+            if (added->opcode() != IToD)
+                return false;
+            added = added->child(0);
+        } else if (!read.phi->type().isInt())
+            return false;
+        // Nothing else in a turn looks at the sum.
+        for (BasicBlock* block : plan.blocks) {
+            for (Value* value : *block) {
+                if (value == read.next)
+                    continue;
+                auto* upsilon = value->as<UpsilonValue>();
+                if (upsilon && !plan.blockSet.contains(upsilon->phi()->owner))
+                    continue;
+                for (Value* child : value->children()) {
+                    if (child == read.phi || (child == read.next && !(upsilon && upsilon->phi() == read.phi)))
+                        return false;
+                }
+            }
+        }
+        Sum& sum = plan.sumTable[plan.numberOfSums++];
+        sum = { };
+        sum.phi = read.phi;
+        sum.start = read.start;
+        sum.next = read.next;
+        sum.addend = added;
+        sum.isTakenAway = read.next->opcode() == Sub;
+        return true;
     }
 
     // A test at the top has nothing in front of it that must not run once more. A test at the bottom has nothing behind it but what hands values to the next turn.
@@ -599,7 +681,7 @@ private:
                 }
                 // From turn to turn every access goes on to the element beside.
                 int64_t stride = access.address.counter ? LinearForm::times(access.address.factorOfCounter, plan.counterFor(access.address.counter)->step) : 0;
-                if (bytes != plan.bytesPerElement || plan.bytesPerLane > 8 || (stride != bytes && stride != -bytes) || (plan.hasWideLanes() && (stride < 0 || plan.bytesPerLane > 4 || memory->accessType().isFloat()))) {
+                if (bytes != plan.bytesPerElement || plan.bytesPerLane > 8 || (stride != bytes && stride != -bytes) || (plan.hasWideLanes() && (stride < 0 || (plan.bytesPerLane > 4 && (!plan.numberOfSums || memory->isStore())) || memory->accessType().isFloat()))) {
                     dataLogLnIf(verbose, "   stride: ", deepDump(memory), " goes on by ", stride);
                     return false;
                 }
@@ -613,7 +695,7 @@ private:
             if (plan.accessTable[index].falls != plan.lanesRunBackward && !(targetHas(VectorSwizzle, SIMDLane::i8x16) && targetHas(VectorReplaceLane, SIMDLane::i64x2) && targetHas(VectorSplat, SIMDLane::i64x2)))
                 return false;
         }
-        return stores;
+        return stores || plan.numberOfSums;
     }
 
     // The address in the first turn.
@@ -906,7 +988,7 @@ private:
     bool needVector(Plan& plan, Value* value)
     {
         Type type = value->type();
-        if (type.isFloat() ? sizeofType(type) != plan.bytesPerLane : !type.isInt() || sizeofType(type) < plan.bytesPerLane)
+        if (type.isFloat() ? sizeofType(type) != plan.bytesPerLane : !type.isInt() || (sizeofType(type) < plan.bytesPerLane && !plan.hasWideLanes()))
             return false;
         if (plan.counterFor(value))
             return false;
@@ -969,7 +1051,7 @@ private:
         case Trunc:
         case ZExt32:
         case SExt32:
-            isSupported = plan.bytesPerLane <= 4;
+            isSupported = plan.bytesPerLane <= 4 || plan.hasWideLanes();
             break;
         default:
             break;
@@ -983,6 +1065,38 @@ private:
                 return false;
         }
         return true;
+    }
+
+    static SIMDLane laneOfSums(const Plan& plan)
+    {
+        return plan.bytesPerLane == 8 ? SIMDLane::i64x2 : SIMDLane::i32x4;
+    }
+
+    // How many turns a stretch may have so that no lane of a sum wraps around. A sum of numbers is under 2^51 at the head of a stretch, and a stretch adds no more than 2^52 to it.
+    bool planSums(Plan& plan)
+    {
+        plan.turnsPerStretch = Limits::maxTurnsWithoutPoll;
+        if (!plan.numberOfSums)
+            return true;
+        SIMDLane lane = laneOfSums(plan);
+        if (!plan.testsCounterBeforeStep || plan.boundingCounter() || plan.bytesPerLane < 2
+            || !targetHas(VectorAdd, lane) || !targetHas(VectorSplat, lane) || !targetHas(VectorExtractLane, lane) || !targetHas(VectorDotProduct, SIMDLane::i32x4))
+            return false;
+        Int128 turns = plan.turnsPerStretch;
+        for (const Sum& sum : plan.sums()) {
+            auto interval = intervalInTurn(plan, sum.addend, Limits::maxDepthOfAddressInVectorizedLoop);
+            if (!interval || !holdsWholeValue(plan, sum.addend) || !needVector(plan, sum.addend)) {
+                dataLogLnIf(verbose, "   sum: ", deepDump(sum.next));
+                return false;
+            }
+            Int128 farthest = std::max<Int128>({ 1, interval->max, -interval->min });
+            // A test that includes the bound lets one turn more through.
+            turns = std::min(turns, (Int128 { 1 } << (plan.bytesPerLane == 8 ? 62 : 31)) / (farthest * (plan.bytesPerLane == 2 ? 2 : 1)) - 2);
+            if (sum.phi->type() == Double)
+                turns = std::min(turns, (Int128 { 1 } << 52) / (farthest * plan.lanes()));
+        }
+        plan.turnsPerStretch = static_cast<int64_t>(turns);
+        return turns >= Limits::minTurnsPerStretchOfVectorizedLoop;
     }
 
     bool findRoles(Plan& plan)
@@ -1020,12 +1134,12 @@ private:
                     continue;
                 }
                 if (value->opcode() == Phi) {
-                    if (!plan.counterFor(value))
+                    if (!plan.counterFor(value) && !plan.sumFor(value))
                         return false;
                     continue;
                 }
                 if (auto* upsilon = value->as<UpsilonValue>()) {
-                    if (plan.counterFor(upsilon->phi()))
+                    if (plan.counterFor(upsilon->phi()) || plan.sumFor(upsilon->phi()))
                         continue;
                     if (plan.blockSet.contains(upsilon->phi()->owner))
                         return false;
@@ -1041,7 +1155,7 @@ private:
                 }
             }
         }
-        return true;
+        return planSums(plan);
     }
 
     // The bound that leaves room for the other turns must not wrap around, and some start must reach it.
@@ -1110,10 +1224,12 @@ private:
             return;
         }
         unsigned numberOfValues = 0;
+        unsigned numberOfPhis = 0;
         bool stores = false;
         for (BasicBlock* block : plan->blocks) {
             numberOfValues += block->size();
             for (Value* value : *block) {
+                numberOfPhis += value->opcode() == Phi;
                 MemoryValue* memory = value->as<MemoryValue>();
                 if (!memory || !memory->isStore())
                     continue;
@@ -1123,13 +1239,14 @@ private:
                 stores = true;
             }
         }
-        if (!stores || numberOfValues > Limits::maxValuesPerTurnOfVectorizedLoop)
+        // A loop that stores nothing may add something up, beside its counter.
+        if ((!stores && numberOfPhis < 2) || numberOfValues > Limits::maxValuesPerTurnOfVectorizedLoop)
             return;
         PhiChildren& phiChildren = prepareToReadCounters();
         // The loop in front takes room, which pays where the loop is run often.
         if (plan->header->frequency() < m_proc.policy().loops.minFrequencyOfUnrolledLoop)
             return;
-        const char* reason = !findCounters(phiChildren, *plan) ? "counters" : !readTest(*plan) ? "test" : nullptr;
+        const char* reason = !findCounters(phiChildren, *plan) ? "counters" : !stores && !plan->numberOfSums ? "nothing stored or added up" : !readTest(*plan) ? "test" : nullptr;
         for (unsigned lanesPerElementWidth = 1; !reason; ++lanesPerElementWidth) {
             reason = !findAccesses(*plan, lanesPerElementWidth) ? "accesses" : !keepsOrderOfAccesses(*plan) ? "order" : !findRoles(*plan) ? "roles" : !planFarBound(*plan) ? "far bound" : nullptr;
             if (!reason || lanesPerElementWidth == 2)
@@ -1219,7 +1336,7 @@ private:
     NEVER_INLINE Value* appendVector(BasicBlock* block, Opcode opcode, Origin origin, SIMDLane lane, Value* first, Value* second = nullptr, uint8_t immediate = 0, SIMDSignMode signMode = SIMDSignMode::None)
     {
         RELEASE_ASSERT(targetHas(opcode, lane));
-        Type type = opcode == VectorExtractLane ? Double : V128;
+        Type type = opcode != VectorExtractLane ? V128 : lane == SIMDLane::f64x2 ? Double : lane == SIMDLane::i64x2 ? Int64 : Int32;
         if (second)
             return block->appendNew<SIMDValue>(m_proc, origin, opcode, type, lane, signMode, immediate, first, second);
         return block->appendNew<SIMDValue>(m_proc, origin, opcode, type, lane, signMode, immediate, first);
@@ -1274,6 +1391,8 @@ private:
         Value* lane = value->isConstant() ? appendCopy(plan.entered, value) : value;
         if (lane->type() == Int64 && plan.bytesPerLane <= 4)
             lane = append(plan.entered, Trunc, value->origin(), lane);
+        if (lane->type() == Int32 && plan.bytesPerLane == 8)
+            lane = append(plan.entered, SExt32, value->origin(), lane);
         copy->vector = appendVector(plan.entered, VectorSplat, value->origin(), laneFor(plan, value->type()), lane);
         return copy->vector;
     }
@@ -1405,10 +1524,49 @@ private:
                     if (isInOppositeOrder)
                         copy->vector = appendInOppositeOrder(plan, origin, copy->vector);
                     if (plan.hasWideLanes())
-                        copy->vector = appendVector(turn, VectorExtendLow, origin, lane, copy->vector, nullptr, 0, memory->opcode() == Load8S || memory->opcode() == Load16S ? SIMDSignMode::Signed : SIMDSignMode::Unsigned);
+                        copy->vector = appendVector(turn, VectorExtendLow, origin, lane, copy->vector, nullptr, 0, memory->opcode() == Load8Z || memory->opcode() == Load16Z ? SIMDSignMode::Unsigned : SIMDSignMode::Signed);
                 }
             }
         }
+        for (Sum& sum : plan.sums()) {
+            Origin origin = sum.next->origin();
+            Value* added = vectorFor(plan, sum.addend);
+            // Lanes of sixteen bits are added up in pairs.
+            if (plan.bytesPerLane == 2)
+                added = appendVector(turn, VectorDotProduct, origin, SIMDLane::i32x4, added, appendLanesOf(plan, origin, 1));
+            sum.behindStretch = appendVector(turn, VectorAdd, origin, laneOfSums(plan), sum.lanes, added);
+            appendUpsilon(turn, origin, sum.behindStretch, sum.lanes);
+        }
+    }
+
+    // The lanes of a sum are added up and join what the stretches before have added.
+    void appendSumBehindStretch(Plan& plan, BasicBlock* block, Sum& sum)
+    {
+        Origin origin = sum.next->origin();
+        SIMDLane lane = laneOfSums(plan);
+        Value* total = nullptr;
+        for (unsigned index = 0; index < bytesPerVector / elementByteSize(lane); ++index) {
+            Value* part = appendVector(block, VectorExtractLane, origin, lane, sum.behindStretch, nullptr, index);
+            if (part->type() == Int32)
+                part = append(block, SExt32, origin, part);
+            total = total ? append(block, Add, origin, total, part) : part;
+        }
+        Type type = sum.phi->type();
+        if (type != Int64)
+            total = append(block, type == Double ? IToD : Trunc, origin, total);
+        sum.behindStretch = append(block, sum.isTakenAway ? Sub : Add, origin, sum.atHeadOfStretch, total);
+    }
+
+    // Whether a number is whole and under 2^51. Added to 1.5 * 2^52 such a number loses whatever it has behind the point.
+    // Minus zero stays minus zero while zeros are taken away from it, and no longer. So it is left to the loop itself.
+    Value* appendTestOfWholeNumber(BasicBlock* block, Origin origin, Value* number, bool isTakenAwayFrom)
+    {
+        Value* shift = block->appendNew<ConstDoubleValue>(m_proc, origin, 6755399441055744.0);
+        Value* limit = block->appendNew<ConstDoubleValue>(m_proc, origin, 2251799813685248.0);
+        Value* isWhole = append(block, Equal, origin, append(block, Sub, origin, append(block, Add, origin, number, shift), shift), number);
+        if (isTakenAwayFrom)
+            isWhole = append(block, BitAnd, origin, isWhole, append(block, NotEqual, origin, append(block, BitwiseCast, origin, number), appendInteger(block, origin, Int64, std::numeric_limits<int64_t>::min())));
+        return append(block, BitAnd, origin, isWhole, append(block, LessThan, origin, append(block, Abs, origin, number), limit));
     }
 
     Value* appendSum(BasicBlock* block, Origin origin, const LinearForm& form, int64_t addend)
@@ -1473,14 +1631,29 @@ private:
         }
         // Where a stretch of turns begins.
         bool hasFarBound = !bounding || plan.meetsAtFixedLimit;
-        bool runsInStretches = plan.poll && hasFarBound;
+        bool runsInStretches = (plan.poll || plan.numberOfSums) && hasFarBound;
+        // A stretch that adds numbers up begins with a test of its own. The block in front of the turns leads nowhere else.
+        BasicBlock* head = entered;
+        bool testsSumsOfNumbers = !m_proc.policy().validation.takesSumsOfNumbersToBeWhole;
+        for (const Sum& sum : plan.sums()) {
+            if (sum.phi->type() == Double && head == entered && testsSumsOfNumbers)
+                head = m_proc.addBlock(frequency);
+        }
         Value* from[Limits::maxCountersOfVectorizedLoop];
         for (unsigned index = 0; index < plan.numberOfCounters; ++index) {
             from[index] = starts[index];
             if (!runsInStretches)
                 continue;
-            from[index] = entered->appendNew<Value>(m_proc, Phi, starts[index]->type(), origin);
+            from[index] = head->appendNew<Value>(m_proc, Phi, starts[index]->type(), origin);
             appendUpsilon(first, origin, starts[index], from[index]);
+        }
+        for (unsigned index = 0; index < plan.numberOfCounters; ++index)
+            plan.counterTable[index].atHeadOfStretch = from[index];
+        for (Sum& sum : plan.sums()) {
+            sum.atHeadOfStretch = head->appendNew<Value>(m_proc, Phi, sum.phi->type(), origin);
+            appendUpsilon(first, origin, sum.start->isConstant() ? appendCopy(first, sum.start) : sum.start, sum.atHeadOfStretch);
+            sum.lanes = turn->appendNew<Value>(m_proc, Phi, V128, origin);
+            appendUpsilon(entered, origin, appendVector(entered, VectorSplat, origin, laneOfSums(plan), appendInteger(entered, origin, plan.bytesPerLane == 8 ? Int64 : Int32, 0)), sum.lanes);
         }
         Value* bound = bounding ? starts[plan.indexOfBoundingCounter] : plan.bound->isConstant() ? appendCopy(first, plan.bound) : plan.bound;
         int64_t room = plan.room();
@@ -1501,9 +1674,9 @@ private:
             int64_t farthest = Limits::maxTurnsWithoutPoll * (approach > 0 ? approach : -approach) * static_cast<int64_t>(plan.lanes());
             enters = append(first, BitAnd, origin, enters, append(first, BelowEqual, origin, distance, appendInteger(first, origin, type, farthest)));
         }
-        BasicBlock* behindTests = entered;
+        BasicBlock* behindTests = head;
         if (plan.numberOfDistancesCheckedAtEntry) {
-            BasicBlock* next = entered;
+            BasicBlock* next = head;
             for (unsigned index = 0; index < plan.numberOfDistancesCheckedAtEntry; ++index) {
                 behindTests = m_proc.addBlock(frequency);
                 BasicBlock* reports = m_proc.addBlock(0);
@@ -1559,14 +1732,30 @@ private:
         if (!runsInStretches)
             goesOn = appendTestOfRoom(plan, turn, origin, farBound);
         else {
-            goesOn = append(turn, plan.relation, origin, next, appendBoundOfStretch(m_proc, entered, origin, { from[0], farBound, plan.relation, plan.tested().step * static_cast<int64_t>(plan.lanes()), BoundLiesBeyond::Yes }));
+            goesOn = append(turn, plan.relation, origin, next, appendBoundOfStretch(m_proc, entered, origin, { from[0], farBound, plan.relation, plan.tested().step * static_cast<int64_t>(plan.lanes()), BoundLiesBeyond::Yes, plan.turnsPerStretch }));
             behindTurns = m_proc.addBlock(frequency);
             BasicBlock* betweenStretches = m_proc.addBlock(frequency);
+            for (Sum& sum : plan.sums()) {
+                appendSumBehindStretch(plan, behindTurns, sum);
+                appendUpsilon(betweenStretches, origin, sum.behindStretch, sum.atHeadOfStretch);
+            }
             appendBranch(behindTurns, origin, appendTestOfRoom(plan, behindTurns, origin, farBound), FrequentedBlock(betweenStretches, FrequencyClass::Rare), FrequentedBlock(rest));
-            appendCopy(betweenStretches, plan.poll);
+            if (plan.poll)
+                appendCopy(betweenStretches, plan.poll);
             for (unsigned index = 0; index < plan.numberOfCounters; ++index)
                 appendUpsilon(betweenStretches, origin, plan.counterTable[index].nextOfVectorLoop, from[index]);
-            appendJump(betweenStretches, origin, entered);
+            appendJump(betweenStretches, origin, head);
+        }
+        Value* staysWhole = nullptr;
+        for (const Sum& sum : plan.sums()) {
+            if (sum.phi->type() != Double || !testsSumsOfNumbers)
+                continue;
+            Value* isWhole = appendTestOfWholeNumber(head, origin, sum.atHeadOfStretch, sum.isTakenAway);
+            staysWhole = staysWhole ? append(head, BitAnd, origin, staysWhole, isWhole) : isWhole;
+        }
+        if (staysWhole) {
+            plan.givenUp = m_proc.addBlock(frequency);
+            appendBranch(head, origin, staysWhole, FrequentedBlock(entered), FrequentedBlock(plan.givenUp, FrequencyClass::Rare));
         }
         appendJump(entered, origin, turn);
         appendBranch(turn, origin, goesOn, FrequentedBlock(turn, plan.test->successor(plan.stayingSuccessorIndex).frequency()), FrequentedBlock(behindTurns, plan.test->successor(1 - plan.stayingSuccessorIndex).frequency()));
@@ -1590,12 +1779,22 @@ private:
             Value* next = counter.nextOfVectorLoop;
             RELEASE_ASSERT(counter.phi->opcode() == Identity && counter.phi->child(0)->opcode() == Get);
             appendSet(plan.again, origin, counter.phi->child(0)->as<VariableValue>()->variable(), next);
+            if (plan.givenUp)
+                appendSet(plan.givenUp, origin, counter.phi->child(0)->as<VariableValue>()->variable(), counter.atHeadOfStretch);
             if (!left)
                 continue;
             appendSet(left, origin, variableOf(counter.phi), append(left, Sub, origin, next, appendInteger(left, origin, next->type(), counter.step)));
             appendSet(left, origin, variableOf(counter.next), next);
         }
+        for (const Sum& sum : plan.sums()) {
+            RELEASE_ASSERT(sum.phi->opcode() == Identity && sum.phi->child(0)->opcode() == Get);
+            appendSet(plan.again, origin, sum.phi->child(0)->as<VariableValue>()->variable(), sum.behindStretch);
+            if (plan.givenUp)
+                appendSet(plan.givenUp, origin, sum.phi->child(0)->as<VariableValue>()->variable(), sum.atHeadOfStretch);
+        }
         appendJump(plan.again, origin, plan.inFrontOfLoop);
+        if (plan.givenUp)
+            appendJump(plan.givenUp, origin, plan.inFrontOfLoop);
         if (!left)
             return;
         for (Value* upsilon : plan.upsilonsForPhisBehindLoop) {

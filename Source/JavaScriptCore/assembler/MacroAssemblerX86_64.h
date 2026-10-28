@@ -6712,7 +6712,7 @@ public:
     }
 
     // Without AVX an operation on vectors overwrites its left operand.
-    enum class VectorOperationWithoutAVX : uint8_t { Add, Sub, Mul, Div, MaxSigned, MinSigned, MaxUnsigned, MinUnsigned, NarrowSigned, NarrowUnsigned, And, Or, Xor, Swizzle };
+    enum class VectorOperationWithoutAVX : uint8_t { Add, Sub, Mul, Div, MaxSigned, MinSigned, MaxUnsigned, MinUnsigned, NarrowSigned, NarrowUnsigned, And, Or, Xor, Swizzle, DotProduct };
     JS_EXPORT_PRIVATE void emitVectorOperationWithoutAVX(VectorOperationWithoutAVX, SIMDLane, FPRegisterID left, FPRegisterID right, FPRegisterID dest);
 
     void compare64(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID dest)
@@ -10028,7 +10028,8 @@ public:
 
     void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
     {
-        RELEASE_ASSERT(supportsAVX());
+        if (!supportsAVX())
+            return emitVectorOperationWithoutAVX(VectorOperationWithoutAVX::DotProduct, SIMDLane::i32x4, a, b, dest);
         m_assembler.vpmaddwd_rrr(b, a, dest);
     }
 

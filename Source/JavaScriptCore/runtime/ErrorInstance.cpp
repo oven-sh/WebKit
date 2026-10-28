@@ -424,7 +424,8 @@ String ErrorInstance::sanitizedNameString(JSGlobalObject* globalObject)
     // a name property for the type of error e.g. "SyntaxError".
     while (currentObj.isCell() && prototypeDepth++ < 2) {
         JSObject* obj = uncheckedDowncast<JSObject>(currentObj);
-        if (JSObject::getOwnPropertySlot(obj, globalObject, namePropertName, nameSlot) && nameSlot.isValue()) {
+        bool isFound = obj == this ? JSObject::getOwnPropertySlot(obj, globalObject, namePropertName, nameSlot) : obj->ordinaryGetOwnPropertySlot(globalObject, namePropertName, nameSlot);
+        if (isFound && nameSlot.isValue()) {
             nameValue = nameSlot.getValue(globalObject, namePropertName);
             break;
         }

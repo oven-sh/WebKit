@@ -328,6 +328,30 @@ inline bool JSObject::getOwnPropertySlotInline(JSGlobalObject* globalObject, Pro
     return JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
 }
 
+inline bool JSObject::ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+#if ENABLE(AOT)
+    if (!structure()->propertyAccessesAreCacheableForAbsence()) [[unlikely]]
+        return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
+#endif
+    return JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
+}
+
+inline bool JSObject::hasDirectProperty(JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    VM& vm = getVM(globalObject);
+    Structure* structure = this->structure();
+    if (isValidOffset(structure->get(vm, propertyName)))
+        return true;
+#if ENABLE(AOT)
+    if (!structure->propertyAccessesAreCacheableForAbsence()) [[unlikely]] {
+        PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        return AOT::PropertyWalk::ordinaryGetOwnPropertySlot(globalObject, this, propertyName, slot);
+    }
+#endif
+    return false;
+}
+
 template<typename PropertyNameType> inline JSValue JSObject::getIfPropertyExists(JSGlobalObject* globalObject, const PropertyNameType& propertyName)
 {
     VM& vm = globalObject->vm();
