@@ -495,12 +495,12 @@ static uint64_t bitsLostThrough(const Vector<uint64_t>& words, const HandedOnRef
 static void takeAwayWhatCalleesLose(const ParallelLoops& loops, Vector<uint64_t>& words, const Vector<BorrowingBody>& bodies)
 {
     unsigned numberOfFunctions = words.size();
-    Vector<uint32_t> worklist = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
+    Vector<uint32_t> callers = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
         return !bodies[index].handedOn.isEmpty();
     });
 
-    Vector<uint64_t> edges = collectInParallel<uint64_t>(loops, worklist.size(), [&](unsigned position, Vector<uint64_t>& found) {
-        uint32_t caller = worklist[position];
+    Vector<uint64_t> edges = collectInParallel<uint64_t>(loops, callers.size(), [&](unsigned position, Vector<uint64_t>& found) {
+        uint32_t caller = callers[position];
         FunctionID previous;
         for (const HandedOnReferences& entry : bodies[caller].handedOn) {
             if (entry.callee == previous || entry.callee.index() >= numberOfFunctions)
@@ -516,27 +516,37 @@ static void takeAwayWhatCalleesLose(const ParallelLoops& loops, Vector<uint64_t>
     for (unsigned index = 0; index < numberOfFunctions; ++index)
         firstCallerOf[index + 1] += firstCallerOf[index];
 
+    // A function is queued while its callers have not heard of what it lost.
+    Vector<uint32_t> worklist;
     Vector<uint8_t> isQueued(FillWith { }, numberOfFunctions, 0);
-    for (uint32_t index : worklist)
-        isQueued[index] = 1;
-    while (!worklist.isEmpty()) {
-        unsigned index = worklist.takeLast();
-        isQueued[index] = 0;
-
-        uint64_t lost = 0;
-        for (const HandedOnReferences& entry : bodies[index].handedOn)
-            lost |= bitsLostThrough(words, entry);
+    auto takeAway = [&](uint32_t index, uint64_t lost) {
         lost = withDependentBits(lost) & words[index];
         if (!lost)
-            continue;
-
+            return;
         words[index] &= ~lost;
-        for (uint32_t position = firstCallerOf[index]; position < firstCallerOf[index + 1]; ++position) {
+        if (isQueued[index] || firstCallerOf[index] == firstCallerOf[index + 1])
+            return;
+        worklist.append(index);
+        isQueued[index] = 1;
+    };
+
+    for (uint32_t caller : callers) {
+        uint64_t lost = 0;
+        for (const HandedOnReferences& entry : bodies[caller].handedOn)
+            lost |= bitsLostThrough(words, entry);
+        takeAway(caller, lost);
+    }
+    while (!worklist.isEmpty()) {
+        FunctionID callee(worklist.takeLast());
+        isQueued[callee.index()] = 0;
+        for (uint32_t position = firstCallerOf[callee.index()]; position < firstCallerOf[callee.index() + 1]; ++position) {
             uint32_t caller = static_cast<uint32_t>(edges[position]);
-            if (!words[caller] || isQueued[caller])
+            if (!words[caller])
                 continue;
-            worklist.append(caller);
-            isQueued[caller] = 1;
+            uint64_t lost = 0;
+            for (const HandedOnReferences& entry : std::ranges::equal_range(bodies[caller].handedOn, callee, { }, &HandedOnReferences::callee))
+                lost |= bitsLostThrough(words[callee.index()], entry);
+            takeAway(caller, lost);
         }
     }
 }

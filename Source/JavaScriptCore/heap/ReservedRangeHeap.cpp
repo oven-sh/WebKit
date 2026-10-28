@@ -38,13 +38,7 @@
 #include <wtf/MathExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-#if USE(LIBPAS)
-#include <bmalloc/bmalloc_heap.h>
-#include <bmalloc/bmalloc_heap_config.h>
-#include <bmalloc/bmalloc_heap_inlines.h>
-#include <bmalloc/bmalloc_heap_ref.h>
-#include <bmalloc/pas_primitive_heap_ref.h>
-#elif USE(MIMALLOC)
+#if USE(MIMALLOC)
 #include <bmalloc/mimalloc.h>
 #endif
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -96,7 +90,7 @@ static constexpr bool refusalMeansNoRoomAnywhere = false;
 
 static bool usesMalloc()
 {
-#if USE(LIBPAS) || USE(MIMALLOC)
+#if USE(MIMALLOC)
     return bmalloc::api::isEnabled();
 #else
     return false;
@@ -116,14 +110,7 @@ static bool canGrow(const ReservedRangeHeap::Request& request)
 static bool reservesWithoutAccess(const ReservedRangeHeap::Request& request)
 {
 #if OS(LINUX)
-    if (request.initialAccess != ReservedRangeHeap::InitialAccess::None)
-        return false;
-#if USE(LIBPAS)
-    // libpas never commits, so its memory has to be readable and writable from the start.
-    if (usesMalloc())
-        return false;
-#endif
-    return true;
+    return request.initialAccess == ReservedRangeHeap::InitialAccess::None;
 #else
     UNUSED_PARAM(request);
     return false;
@@ -267,17 +254,7 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     if (!usesMalloc())
         return Backing { BackEnd::Granules, nullptr, size };
 
-#if USE(LIBPAS)
-    auto* type = new (NotNull, fastMalloc(sizeof(bmalloc_type))) bmalloc_type(BMALLOC_TYPE_INITIALIZER(1, 1, request.name.characters()));
-    auto* heapRef = new (NotNull, fastMalloc(sizeof(pas_primitive_heap_ref))) pas_primitive_heap_ref(BMALLOC_AUXILIARY_HEAP_REF_INITIALIZER(type));
-#if PLATFORM(PLAYSTATION)
-    // libpas isn't calling pas_page_malloc commit, so we've got to commit the region ourselves
-    // https://bugs.webkit.org/show_bug.cgi?id=292771
-    OSAllocator::commit(std::bit_cast<void*>(start), granuleSize, true, false);
-#endif
-    bmalloc_force_auxiliary_heap_into_reserved_memory(heapRef, start + request.unusedPrefixSize, start + size);
-    return Backing { BackEnd::Malloc, heapRef, size };
-#elif USE(MIMALLOC)
+#if USE(MIMALLOC)
     // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
     // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
     // for a 4 GB region is about 40 KB of pages touched before the first allocation.
@@ -334,18 +311,7 @@ ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, const Backing
 
 void* ReservedRangeHeap::tryAllocateAligned(size_t alignment, size_t size)
 {
-#if USE(LIBPAS)
-    if (m_backEnd == BackEnd::Malloc) [[likely]] {
-        void* result = bmalloc_try_allocate_auxiliary_with_alignment_inline(static_cast<pas_primitive_heap_ref*>(m_mallocHeap.load(std::memory_order_relaxed)), size, alignment);
-#if PLATFORM(PLAYSTATION)
-        // libpas isn't calling pas_page_malloc commit, so we've got to commit the region ourselves
-        // https://bugs.webkit.org/show_bug.cgi?id=292771
-        if (result)
-            OSAllocator::commit(result, size, true, false);
-#endif
-        return result;
-    }
-#elif USE(MIMALLOC)
+#if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) [[likely]] {
         void* result = mi_heap_malloc_aligned(static_cast<mi_heap_t*>(m_mallocHeap.load(std::memory_order_acquire)), size, alignment);
         if (!result && m_isGrowable) [[unlikely]]
@@ -359,10 +325,7 @@ void* ReservedRangeHeap::tryAllocateAligned(size_t alignment, size_t size)
 
 void* ReservedRangeHeap::tryAllocate(size_t size)
 {
-#if USE(LIBPAS)
-    if (m_backEnd == BackEnd::Malloc) [[likely]]
-        return bmalloc_try_allocate_auxiliary_inline(static_cast<pas_primitive_heap_ref*>(m_mallocHeap.load(std::memory_order_relaxed)), size);
-#elif USE(MIMALLOC)
+#if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) [[likely]] {
         void* result = mi_heap_malloc(static_cast<mi_heap_t*>(m_mallocHeap.load(std::memory_order_acquire)), size);
         if (!result && m_isGrowable) [[unlikely]]
@@ -375,10 +338,7 @@ void* ReservedRangeHeap::tryAllocate(size_t size)
 
 void* ReservedRangeHeap::tryReallocate(void* pointer, size_t size)
 {
-#if USE(LIBPAS)
-    if (m_backEnd == BackEnd::Malloc) [[likely]]
-        return bmalloc_try_reallocate_auxiliary_inline(pointer, static_cast<pas_primitive_heap_ref*>(m_mallocHeap.load(std::memory_order_relaxed)), size, pas_reallocate_free_if_successful);
-#elif USE(MIMALLOC)
+#if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) [[likely]] {
         void* result = mi_heap_realloc(static_cast<mi_heap_t*>(m_mallocHeap.load(std::memory_order_acquire)), pointer, size);
         if (result || !m_isGrowable) [[likely]]
@@ -405,12 +365,7 @@ void* ReservedRangeHeap::tryReallocate(void* pointer, size_t size)
 
 void ReservedRangeHeap::free(void* pointer)
 {
-#if USE(LIBPAS)
-    if (m_backEnd == BackEnd::Malloc) [[likely]] {
-        bmalloc_deallocate_inline(pointer);
-        return;
-    }
-#elif USE(MIMALLOC)
+#if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) [[likely]] {
         mi_free(pointer);
         return;
@@ -421,10 +376,7 @@ void ReservedRangeHeap::free(void* pointer)
 
 size_t ReservedRangeHeap::sizeOf(const void* pointer)
 {
-#if USE(LIBPAS)
-    if (m_backEnd == BackEnd::Malloc) [[likely]]
-        return bmalloc_get_allocation_size(const_cast<void*>(pointer));
-#elif USE(MIMALLOC)
+#if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) [[likely]]
         return mi_usable_size(pointer);
 #endif
@@ -436,7 +388,7 @@ size_t ReservedRangeHeap::sizeOf(const void* pointer)
 
 void ReservedRangeHeap::releaseFreeMemory()
 {
-    // The scavenger of libpas does this by itself, and a freed run of granules is decommitted at once.
+    // A freed run of granules is decommitted at once.
 #if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) {
         Locker locker { m_lock };

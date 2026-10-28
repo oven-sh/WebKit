@@ -1722,6 +1722,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
         return isReadBack;
     };
     BitVector readsProxy(m_madeNodes.size());
+    bool someReadHoldsProxy = false;
     for (const MadeNodes& made : m_madeNodes) {
         const ValueFlowNodeKey& key = made.key;
         switch (key.kind) {
@@ -1769,6 +1770,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
                 note(isLink ? maker.intersect(key.set, stopWalks) : key.set);
             if (!isOfModel && key.kind != ValueFlowMadeNodeKind::Written && key.kind != ValueFlowMadeNodeKind::WrittenUnderKind && maker.meet(isLink ? maker.intersect(m_graph.valueOf(made.first), stopWalks) : m_graph.valueOf(made.first), asked))
                 readsProxy.set(&made - m_madeNodes.span().data());
+                someReadHoldsProxy = true;
             if (isLink) {
                 note(maker.intersect(m_graph.valueOf(made.first), stopWalks));
                 if (key.kind == ValueFlowMadeNodeKind::Written)
@@ -1859,15 +1861,17 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             holdsSome |= operand.node && operand.node.index() < m_input.numberOfNodes && holdsProxy.quickGet(operand.node.index());
         auto forEachProxyReadByStatement = [&](NOESCAPE const Invocable<void(ValueSetID)> auto& functor) {
             for (uint32_t use = isOperation && index < m_firstUseOfStatement.size() ? m_firstUseOfStatement[index] : UINT32_MAX; use != UINT32_MAX; use = m_uses[use].next) {
-                if (readsProxy.get(m_uses[use].madeNodes))
+                if (readsProxy.quickGet(m_uses[use].madeNodes))
                     functor(m_graph.valueOf(m_madeNodes[m_uses[use].madeNodes].first));
             }
         };
         bool hasReadSome = false;
-        if (!readsProxy.isEmpty()) {
-            forEachProxyReadByStatement([&](ValueSetID) {
-                hasReadSome = true;
-            });
+        bool callsSomething = false;
+        for (unsigned position = 0; someReadHoldsProxy && isOperation && !callsSomething && position < operands.size(); ++position)
+            callsSomething = operandUsesOf(statement.opcode, position).contains(OperandUse::Calls);
+        if (callsSomething && index < m_firstUseOfStatement.size()) {
+            for (uint32_t use = m_firstUseOfStatement[index]; use != UINT32_MAX && !hasReadSome; use = m_uses[use].next)
+                hasReadSome = readsProxy.quickGet(m_uses[use].madeNodes);
         }
         if (!holdsSome && !hasReadSome)
             continue;
