@@ -2268,6 +2268,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionFlattenDictionaryObject);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBasicBlockExecutionRanges);
 static JSC_DECLARE_HOST_FUNCTION(functionHasBasicBlockExecuted);
 static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
+static JSC_DECLARE_HOST_FUNCTION(functionBranchExecutionCounts);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
@@ -4120,6 +4121,37 @@ JSC_DEFINE_HOST_FUNCTION(functionBasicBlockExecutionCount, (JSGlobalObject* glob
     
     size_t executionCount = vm.controlFlowProfiler()->basicBlockExecutionCountAtTextOffset(offset, executable->sourceID(), vm);
     return JSValue::encode(JSValue(executionCount));
+}
+
+// The execution count of each branch of the decisions that start where the substring does.
+JSC_DEFINE_HOST_FUNCTION(functionBranchExecutionCounts, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_ASSERT(vm.controlFlowProfiler());
+
+    JSValue functionValue = callFrame->argument(0);
+    RELEASE_ASSERT(functionValue.isCallable());
+    FunctionExecutable* executable = (dynamicDowncast<JSFunction>(functionValue.asCell()->getObject()))->jsExecutable();
+
+    RELEASE_ASSERT(callFrame->argument(1).isString());
+    auto substring = asString(callFrame->argument(1))->value(globalObject);
+    String sourceCodeText = executable->source().view().toString();
+    RELEASE_ASSERT(sourceCodeText.contains(substring));
+    int offset = sourceCodeText.find(substring) + executable->source().startOffset();
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (CodeBlock* codeBlock = executable->eitherCodeBlock())
+        vm.controlFlowProfiler()->generateBytecodeForFunctions(vm, codeBlock->unlinkedCodeBlock(), executable->source());
+    for (const BranchRange& branch : vm.controlFlowProfiler()->getBranchesForSourceID(executable->sourceID())) {
+        if (branch.m_decisionStartOffset != offset)
+            continue;
+        result->push(globalObject, JSValue(branch.m_executionCount));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
 }
 
 class DoNothingDebugger final : public Debugger {
@@ -6176,6 +6208,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "dumpBasicBlockExecutionRanges"_s, functionDumpBasicBlockExecutionRanges , 0);
     addFunction(vm, allowIfNotFuzz, "hasBasicBlockExecuted"_s, functionHasBasicBlockExecuted, 2);
     addFunction(vm, allowIfNotFuzz, "basicBlockExecutionCount"_s, functionBasicBlockExecutionCount, 2);
+    addFunction(vm, allowIfNotFuzz, "branchExecutionCounts"_s, functionBranchExecutionCounts, 2);
 
     addFunction(vm, alwaysAllow, "enableDebuggerModeWhenIdle"_s, functionEnableDebuggerModeWhenIdle, 0);
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);

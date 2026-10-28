@@ -3667,16 +3667,20 @@ RegisterID* InNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
 RegisterID* LogicalOpNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    Decision decision { m_expr1->endOffset(), m_expr2->endOffset() };
+
     if (dst == generator.ignoredResult()) {
         Ref<Label> afterExpr1 = generator.newLabel();
         Ref<Label> afterExpr2 = generator.newLabel();
+        Label& skipExpr2 = generator.newBranchLabel(decision, 1, afterExpr2.get());
         if (m_operator == LogicalOperator::And)
-            generator.emitNodeInConditionContext(m_expr1, afterExpr1.get(), afterExpr2.get(), FallThroughMeansTrue);
+            generator.emitNodeInConditionContext(m_expr1, afterExpr1.get(), skipExpr2, FallThroughMeansTrue);
         else
-            generator.emitNodeInConditionContext(m_expr1, afterExpr2.get(), afterExpr1.get(), FallThroughMeansFalse);
+            generator.emitNodeInConditionContext(m_expr1, skipExpr2, afterExpr1.get(), FallThroughMeansFalse);
         generator.emitLabel(afterExpr1.get());
 
         generator.emitProfileControlFlow(m_expr1->endOffset(), m_expr2->endOffset());
+        generator.emitProfileBranch(decision, 0);
         generator.emitNodeInTailPosition(dst, m_expr2);
         generator.emitLabel(afterExpr2.get());
         return dst;
@@ -3687,10 +3691,11 @@ RegisterID* LogicalOpNode::emitBytecode(BytecodeGenerator& generator, RegisterID
     
     generator.emitNode(temp.get(), m_expr1);
     if (m_operator == LogicalOperator::And)
-        generator.emitJumpIfFalse(temp.get(), target.get());
+        generator.emitJumpIfFalse(temp.get(), generator.newBranchLabel(decision, 1, target.get()));
     else
-        generator.emitJumpIfTrue(temp.get(), target.get());
+        generator.emitJumpIfTrue(temp.get(), generator.newBranchLabel(decision, 1, target.get()));
     generator.emitProfileControlFlow(m_expr1->endOffset(), m_expr2->endOffset());
+    generator.emitProfileBranch(decision, 0);
     generator.emitNodeInTailPosition(temp.get(), m_expr2);
     generator.emitLabel(target.get());
 
@@ -3702,14 +3707,16 @@ void LogicalOpNode::emitBytecodeInConditionContext(BytecodeGenerator& generator,
     if (needsDebugHook()) [[unlikely]]
         generator.emitDebugHook(this);
 
+    Decision decision { m_expr1->endOffset(), m_expr2->endOffset() };
     Ref<Label> afterExpr1 = generator.newLabel();
     if (m_operator == LogicalOperator::And)
-        generator.emitNodeInConditionContext(m_expr1, afterExpr1.get(), falseTarget, FallThroughMeansTrue);
+        generator.emitNodeInConditionContext(m_expr1, afterExpr1.get(), generator.newBranchLabel(decision, 1, falseTarget), FallThroughMeansTrue);
     else 
-        generator.emitNodeInConditionContext(m_expr1, trueTarget, afterExpr1.get(), FallThroughMeansFalse);
+        generator.emitNodeInConditionContext(m_expr1, generator.newBranchLabel(decision, 1, trueTarget), afterExpr1.get(), FallThroughMeansFalse);
     generator.emitLabel(afterExpr1.get());
 
     generator.emitProfileControlFlow(m_expr1->endOffset(), m_expr2->endOffset());
+    generator.emitProfileBranch(decision, 0);
     generator.emitNodeInConditionContext(m_expr2, trueTarget, falseTarget, fallThroughMode);
 }
 
@@ -3717,17 +3724,19 @@ void LogicalOpNode::emitBytecodeInConditionContext(BytecodeGenerator& generator,
 
 RegisterID* CoalesceNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    Decision decision { m_expr1->endOffset(), m_expr2->endOffset() };
     RefPtr<RegisterID> temp = generator.tempDestination(dst);
     Ref<Label> endLabel = generator.newLabel();
 
     if (m_hasAbsorbedOptionalChain)
         generator.pushOptionalChainTarget(m_optionalChainEndOffset);
     generator.emitNode(temp.get(), m_expr1);
-    generator.emitJumpIfFalse(generator.emitIsUndefinedOrNull(generator.newTemporary(), temp.get()), endLabel.get());
+    generator.emitJumpIfFalse(generator.emitIsUndefinedOrNull(generator.newTemporary(), temp.get()), generator.newBranchLabel(decision, 1, endLabel.get()));
 
     if (m_hasAbsorbedOptionalChain)
         generator.popOptionalChainTarget();
     generator.emitProfileControlFlow(m_expr1->endOffset(), m_expr2->endOffset());
+    generator.emitProfileBranch(decision, 0);
     generator.emitNodeInTailPosition(temp.get(), m_expr2);
 
     generator.emitLabel(endLabel.get());
@@ -3739,6 +3748,7 @@ void CoalesceNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, 
     if (needsDebugHook()) [[unlikely]]
         generator.emitDebugHook(this);
 
+    Decision decision { m_expr1->endOffset(), m_expr2->endOffset() };
     Ref<Label> nullishTarget = generator.newLabel();
 
     if (m_hasAbsorbedOptionalChain)
@@ -3748,6 +3758,7 @@ void CoalesceNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, 
     if (m_hasAbsorbedOptionalChain)
         generator.discardOptionalChainTarget();
 
+    generator.emitProfileBranch(decision, 1);
     if (fallThroughMode == FallThroughMeansTrue) {
         generator.emitJumpIfFalse(value.get(), falseTarget);
         generator.emitJump(trueTarget);
@@ -3758,6 +3769,7 @@ void CoalesceNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, 
 
     generator.emitLabel(nullishTarget.get());
     generator.emitProfileControlFlow(m_expr1->endOffset(), m_expr2->endOffset());
+    generator.emitProfileBranch(decision, 0);
     generator.emitNodeInConditionContext(m_expr2, trueTarget, falseTarget, fallThroughMode);
 }
 
@@ -3847,12 +3859,15 @@ RegisterID* ConditionalNode::emitBytecode(BytecodeGenerator& generator, Register
     generator.emitNodeInConditionContext(m_logical, beforeThen.get(), beforeElse.get(), FallThroughMeansTrue);
     generator.emitLabel(beforeThen.get());
 
+    Decision decision { startOffset(), m_expr2->endOffset() };
     generator.emitProfileControlFlow(startOffsetOfBasicBlock(m_expr1), m_expr1->endOffset());
+    generator.emitProfileBranch(decision, 0);
     generator.emitNodeInTailPosition(newDst.get(), m_expr1);
     generator.emitJump(afterElse.get());
 
     generator.emitLabel(beforeElse.get());
     generator.emitProfileControlFlow(m_expr1->endOffset(), m_expr2->endOffset());
+    generator.emitProfileBranch(decision, 1);
     generator.emitNodeInTailPosition(newDst.get(), m_expr2);
 
     generator.emitLabel(afterElse.get());
@@ -3872,12 +3887,15 @@ void ConditionalNode::emitBytecodeInConditionContext(BytecodeGenerator& generato
     generator.emitNodeInConditionContext(m_logical, beforeThen.get(), beforeElse.get(), FallThroughMeansTrue);
     generator.emitLabel(beforeThen.get());
 
+    Decision decision { startOffset(), m_expr2->endOffset() };
     generator.emitProfileControlFlow(startOffsetOfBasicBlock(m_expr1), m_expr1->endOffset());
+    generator.emitProfileBranch(decision, 0);
     generator.emitNodeInConditionContext(m_expr1, trueTarget, falseTarget, fallThroughMode);
     generator.emitJump(end.get());
 
     generator.emitLabel(beforeElse.get());
     generator.emitProfileControlFlow(m_expr1->endOffset(), m_expr2->endOffset());
+    generator.emitProfileBranch(decision, 1);
     generator.emitNodeInConditionContext(m_expr2, trueTarget, falseTarget, fallThroughMode);
 
     generator.emitLabel(end.get());
@@ -4000,17 +4018,19 @@ RegisterID* ReadModifyResolveNode::emitBytecode(BytecodeGenerator& generator, Re
 
 static ALWAYS_INLINE void emitShortCircuitAssignment(BytecodeGenerator& generator, RegisterID* value, Operator oper, Label& afterAssignment, ExpressionNode* right, const JSTextPosition& end)
 {
+    Decision decision { startOffsetOfBasicBlock(right), end.offset };
+    Label& skipAssignment = generator.newBranchLabel(decision, 1, afterAssignment);
     switch (oper) {
     case Operator::CoalesceEq:
-        generator.emitJumpIfFalse(generator.emitIsUndefinedOrNull(generator.newTemporary(), value), afterAssignment);
+        generator.emitJumpIfFalse(generator.emitIsUndefinedOrNull(generator.newTemporary(), value), skipAssignment);
         break;
 
     case Operator::OrEq:
-        generator.emitJumpIfTrue(value, afterAssignment);
+        generator.emitJumpIfTrue(value, skipAssignment);
         break;
 
     case Operator::AndEq:
-        generator.emitJumpIfFalse(value, afterAssignment);
+        generator.emitJumpIfFalse(value, skipAssignment);
         break;
 
     default:
@@ -4018,6 +4038,7 @@ static ALWAYS_INLINE void emitShortCircuitAssignment(BytecodeGenerator& generato
         break;
     }
     generator.emitProfileControlFlowOutsideOfCaseTest(startOffsetOfBasicBlock(right), end.offset);
+    generator.emitProfileBranch(decision, 0);
 }
 
 RegisterID* ShortCircuitReadModifyResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
@@ -4568,14 +4589,17 @@ void IfElseNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     Ref<Label> beforeElse = generator.newLabel();
     Ref<Label> afterElse = generator.newLabel();
 
+    // Not startOffset(): for an `else if` that is the offset of its `else`.
+    Decision decision { m_condition->startOffset(), endOffset() };
     Label* trueTarget = beforeThen.ptr();
-    Label& falseTarget = beforeElse.get();
+    Label& falseTarget = m_elseBlock ? beforeElse.get() : generator.newBranchLabel(decision, 1, beforeElse.get());
     FallThroughMode fallThroughMode = FallThroughMeansTrue;
     bool didFoldIfBlock = tryFoldBreakAndContinue(generator, m_ifBlock, trueTarget, fallThroughMode);
 
     generator.emitNodeInConditionContext(m_condition, *trueTarget, falseTarget, fallThroughMode);
     generator.emitLabel(beforeThen.get());
     generator.emitProfileControlFlow(m_ifBlock->startOffset(), m_ifBlock->endOffset());
+    generator.emitProfileBranch(decision, 0);
 
     if (!didFoldIfBlock) {
         generator.emitNodeInTailPosition(dst, m_ifBlock);
@@ -4587,6 +4611,7 @@ void IfElseNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
     if (m_elseBlock) {
         generator.emitProfileControlFlow(m_ifBlock->endOffset(), m_elseBlock->endOffset());
+        generator.emitProfileBranch(decision, 1);
         generator.emitNodeInTailPosition(dst, m_elseBlock);
     }
 
@@ -4612,8 +4637,12 @@ void DoWhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
     generator.emitLabel(*scope->continueTarget());
     generator.emitProfileControlFlow(m_statement->endOffset(), endOffset());
-    generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
+    Decision decision { m_expr->startOffset(), endOffset() };
+    Ref<Label> conditionIsFalse = generator.newLabel();
+    generator.emitNodeInConditionContext(m_expr, generator.newBranchLabel(decision, 0, topOfLoop.get()), conditionIsFalse.get(), FallThroughMeansFalse);
 
+    generator.emitLabel(conditionIsFalse.get());
+    generator.emitProfileBranch(decision, 1);
     generator.emitLabel(scope->breakTarget());
     generator.emitProfileControlFlowAfter(this);
 }
@@ -4627,21 +4656,26 @@ void WhileNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
     Ref<LabelScope> scope = generator.newLabelScope(LabelScope::Loop);
     Ref<Label> topOfLoop = generator.newLabel();
+    Ref<Label> conditionIsFalse = generator.newLabel();
+    Decision decision { startOffset(), endOffset() };
 
     generator.emitProfileControlFlowForLoopHeader(m_expr);
-    generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
+    generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), conditionIsFalse.get(), FallThroughMeansTrue);
 
     generator.emitLabel(topOfLoop.get());
     generator.emitLoopHint();
     
     generator.emitProfileControlFlow(m_statement->startOffset(), m_statement->endOffset());
+    generator.emitProfileBranch(decision, 0);
     generator.emitNodeInTailPosition(dst, m_statement);
 
     generator.emitLabel(*scope->continueTarget());
 
     generator.emitProfileControlFlowForLoopHeader(m_expr);
-    generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
+    generator.emitNodeInConditionContext(m_expr, topOfLoop.get(), conditionIsFalse.get(), FallThroughMeansFalse);
 
+    generator.emitLabel(conditionIsFalse.get());
+    generator.emitProfileBranch(decision, 1);
     generator.emitLabel(scope->breakTarget());
 
     generator.emitProfileControlFlowAfter(this);
@@ -4668,13 +4702,17 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
             }
 
             Ref<Label> topOfLoop = generator.newLabel();
+            Ref<Label> conditionIsFalse = generator.newLabel();
+            Decision decision { startOffset(), endOffset() };
             generator.emitProfileControlFlowForLoopHeader(m_expr2);
             if (m_expr2)
-                generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansTrue);
+                generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), conditionIsFalse.get(), FallThroughMeansTrue);
 
             generator.emitLabel(topOfLoop.get());
             generator.emitLoopHint();
             generator.emitProfileControlFlow(m_statement->startOffset(), m_statement->endOffset());
+            if (m_expr2)
+                generator.emitProfileBranch(decision, 0);
 
             generator.emitNodeInTailPosition(dst, m_statement);
 
@@ -4685,9 +4723,11 @@ void ForNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
                 generator.emitNodeInIgnoreResultPosition(m_expr3);
 
             generator.emitProfileControlFlowForLoopHeader(m_expr2);
-            if (m_expr2)
-                generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), scope->breakTarget(), FallThroughMeansFalse);
-            else
+            if (m_expr2) {
+                generator.emitNodeInConditionContext(m_expr2, topOfLoop.get(), conditionIsFalse.get(), FallThroughMeansFalse);
+                generator.emitLabel(conditionIsFalse.get());
+                generator.emitProfileBranch(decision, 1);
+            } else
                 generator.emitJump(topOfLoop.get());
 
             generator.emitLabel(scope->breakTarget());
@@ -4853,6 +4893,7 @@ void ForInNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
         this->emitLoopHeader(generator, propertyName.get());
 
         generator.emitProfileControlFlow(m_statement->startOffset(), m_statement->endOffset());
+        generator.emitProfileBranch({ startOffset(), endOffset() }, 0);
 
         generator.pushForInScope(local.get(), propertyName.get(), index.get(), enumerator.get(), mode.get(), baseVariable);
         generator.emitNode(dst, m_statement);
@@ -4932,6 +4973,7 @@ void ForOfNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
                 assignNode->bindings()->bindValue(generator, value);
             }
             generator.emitProfileControlFlow(m_statement->startOffset(), m_statement->endOffset());
+            generator.emitProfileBranch({ startOffset(), endOffset() }, 0);
             generator.emitNode(dst, m_statement);
         };
 
@@ -5155,7 +5197,7 @@ SwitchInfo::SwitchType CaseBlockNode::tryTableSwitch(Vector<ExpressionNode*, 8>&
     return SwitchInfo::SwitchType::String;
 }
 
-void CaseBlockNode::emitBytecodeForBlock(BytecodeGenerator& generator, RegisterID* switchExpression, RegisterID* dst)
+void CaseBlockNode::emitBytecodeForBlock(BytecodeGenerator& generator, RegisterID* switchExpression, RegisterID* dst, const Decision& decision)
 {
     Vector<Ref<Label>, 8> labelVector;
     Vector<ExpressionNode*, 8> literalVector;
@@ -5204,23 +5246,38 @@ void CaseBlockNode::emitBytecodeForBlock(BytecodeGenerator& generator, RegisterI
         generator.emitJump(defaultLabel.get());
     }
 
+    // A branch is the jump to a clause, without what falls through from the clause before it.
+    bool hasBranches = generator.shouldEmitControlFlowProfilerHooks() && (m_list1 || m_defaultClause);
+    unsigned branchIndex = 0;
+    auto emitClauseLabel = [&](Label& label) {
+        if (!hasBranches) {
+            generator.emitLabel(label);
+            return;
+        }
+        Ref<Label> fallThrough = generator.newLabel();
+        generator.emitJump(fallThrough.get());
+        generator.emitLabel(label);
+        generator.emitProfileBranch(decision, branchIndex++);
+        generator.emitLabel(fallThrough.get());
+    };
+
     size_t i = 0;
     for (ClauseListNode* list = m_list1; list; list = list->getNext()) {
-        generator.emitLabel(labelVector[i++].get());
+        emitClauseLabel(labelVector[i++].get());
         list->getClause()->emitBytecode(generator, dst);
     }
 
     if (m_defaultClause) {
-        generator.emitLabel(defaultLabel.get());
+        emitClauseLabel(defaultLabel.get());
         m_defaultClause->emitBytecode(generator, dst);
     }
 
     for (ClauseListNode* list = m_list2; list; list = list->getNext()) {
-        generator.emitLabel(labelVector[i++].get());
+        emitClauseLabel(labelVector[i++].get());
         list->getClause()->emitBytecode(generator, dst);
     }
     if (!m_defaultClause)
-        generator.emitLabel(defaultLabel.get());
+        emitClauseLabel(defaultLabel.get());
 
     ASSERT(i == labelVector.size());
     if (switchType != SwitchInfo::SwitchType::None) {
@@ -5244,7 +5301,7 @@ void SwitchNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
     generator.emitBodyWithUsingIfNeeded(usingDeclarationCount(), hasAwaitUsingDeclaration(),
         [&](BytecodeGenerator& generator) {
-            m_block->emitBytecodeForBlock(generator, r0.get(), dst);
+            m_block->emitBytecodeForBlock(generator, r0.get(), dst, { startOffset(), endOffset() });
         }
     );
 
@@ -5315,6 +5372,11 @@ void TryNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
         catchEndLabel = generator.newLabel();
     }
 
+    // Nothing runs only when no exception is caught, so that branch is the entries to the `try` less the catches.
+    Decision decision { startOffset(), endOffset() };
+    if (m_catchBlock)
+        generator.emitProfileBranchThatCountsOtherBranches(decision, 1);
+
     Ref<Label> tryLabel = generator.newEmittedLabel();
     Label& tryHandlerLabel = m_catchBlock ? *catchLabel : *finallyLabel;
     HandlerType tryHandlerType = m_catchBlock ? HandlerType::Catch : HandlerType::Finally;
@@ -5351,6 +5413,7 @@ void TryNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
         generator.emitOutOfLineCatchHandler(thrownValueRegister.get(), completionTypeRegister, tryData);
         if (scopeRegisterMayBeClobbered())
             generator.restoreScopeRegister();
+        generator.emitProfileBranch(decision, 0);
 
         if (m_finallyBlock) {
             // If the catch block throws an exception and we have a finally block, then the finally
@@ -6117,9 +6180,11 @@ RegisterID* DestructuringAssignmentNode::emitBytecode(BytecodeGenerator& generat
 static void assignDefaultValueIfUndefined(BytecodeGenerator& generator, RegisterID* maybeUndefined, ExpressionNode* defaultValue)
 {
     ASSERT(defaultValue);
+    Decision decision { startOffsetOfBasicBlock(defaultValue), defaultValue->endOffset() };
     Ref<Label> isNotUndefined = generator.newLabel();
-    generator.emitJumpIfFalse(generator.emitIsUndefined(generator.newTemporary(), maybeUndefined), isNotUndefined.get());
+    generator.emitJumpIfFalse(generator.emitIsUndefined(generator.newTemporary(), maybeUndefined), generator.newBranchLabel(decision, 1, isNotUndefined.get()));
     generator.emitProfileControlFlowOutsideOfCaseTest(startOffsetOfBasicBlock(defaultValue), defaultValue->endOffset());
+    generator.emitProfileBranch(decision, 0);
     generator.emitNode(maybeUndefined, defaultValue);
     generator.emitLabel(isNotUndefined.get());
 }
