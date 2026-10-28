@@ -126,17 +126,17 @@ elseif (APPLE)
     )
 elseif (ANDROID)
     list(APPEND WTF_SOURCES
-        linux/CurrentProcessMemoryStatus.cpp
         linux/HighPriorityThreads.cpp
-        linux/MemoryFootprintLinux.cpp
 
+        generic/MemoryFootprintGeneric.cpp
         generic/MemoryPressureHandlerGeneric.cpp
     )
 elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
     list(APPEND WTF_SOURCES
         linux/CurrentProcessMemoryStatus.cpp
         linux/HighPriorityThreads.cpp
-        linux/MemoryFootprintLinux.cpp
+
+        generic/MemoryFootprintGeneric.cpp
 
         unix/MemoryPressureHandlerUnix.cpp
     )
