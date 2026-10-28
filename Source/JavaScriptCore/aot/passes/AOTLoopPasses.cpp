@@ -1045,7 +1045,7 @@ static std::optional<ShortLoop> planTurnsInFrontOf(FunctionPassContext& context,
 
 static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
 {
-    if (!mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(loop.header())) || !isHotLoop(context, loop).predicted())
+    if (!mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(loop.header())) || !isExpectedToRun(context, loop).predicted())
         return std::nullopt;
     std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
     if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
@@ -1167,7 +1167,7 @@ static PassOutcome takeFirstTurnsThatInitializeOutOfLoops(FunctionPassContext& c
         NaturalLoops& loops = context.analyses.naturalLoops();
         for (unsigned index = 0; index < loops.numLoops() && !found; ++index) {
             const NaturalLoop& loop = loops.loop(index);
-            if (!initializes(loop) || !isHotLoop(context, loop).predicted())
+            if (!initializes(loop) || !isExpectedToRun(context, loop).predicted())
                 continue;
             std::optional<ShortLoop> plan = planTurnsInFrontOf(context, loop, 1);
             if (!plan || plan->entries.isEmpty() || keepsNothingAtHandAnyway(context, *plan))

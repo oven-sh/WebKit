@@ -36,6 +36,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -364,11 +365,11 @@ static OpcodeObjectFacts computeObjectFactsOf(Opcode opcode)
 
 static const OpcodeObjectFacts& objectFactsOf(Opcode opcode)
 {
-    static const std::array<OpcodeObjectFacts, numberOfOpcodes> factsOfOpcodes = [] {
-        std::array<OpcodeObjectFacts, numberOfOpcodes> result { };
+    static const std::array<OpcodeObjectFacts, numberOfOpcodes>& factsOfOpcodes = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<std::array<OpcodeObjectFacts, numberOfOpcodes>>();
         for (Opcode member : allMembersOf<Opcode>)
-            result[static_cast<unsigned>(member)] = computeObjectFactsOf(member);
-        return result;
+            (*result)[static_cast<unsigned>(member)] = computeObjectFactsOf(member);
+        return result.release();
     }();
     return factsOfOpcodes[static_cast<unsigned>(opcode)];
 }
@@ -493,14 +494,15 @@ static const DeclaredOperandFacts& declaredOperandFactsOf(Opcode opcode, uint32_
 {
     static constexpr uint32_t maxDeclaredOperands = 8;
     static const DeclaredOperandFacts unknown;
-    static const std::array<std::array<DeclaredOperandFacts, maxDeclaredOperands>, numberOfOpcodes> factsOfOpcodes = [] {
-        std::array<std::array<DeclaredOperandFacts, maxDeclaredOperands>, numberOfOpcodes> result { };
+    using FactsOfOpcodes = std::array<std::array<DeclaredOperandFacts, maxDeclaredOperands>, numberOfOpcodes>;
+    static const FactsOfOpcodes& factsOfOpcodes = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<FactsOfOpcodes>();
         for (Opcode member : allMembersOf<Opcode>) {
             uint32_t numberOfDeclaredOperands = numberOfNamedOperandsOf(member) + (hasVariadicOperand(member) ? 1 : 0);
             for (uint32_t index = 0; index < std::min(numberOfDeclaredOperands, maxDeclaredOperands); ++index)
-                result[static_cast<unsigned>(member)][index] = computeDeclaredOperandFacts(member, index);
+                (*result)[static_cast<unsigned>(member)][index] = computeDeclaredOperandFacts(member, index);
         }
-        return result;
+        return result.release();
     }();
     uint32_t declaredIndex = std::min(operandIndex, numberOfNamedOperandsOf(opcode));
     return declaredIndex < maxDeclaredOperands ? factsOfOpcodes[static_cast<unsigned>(opcode)][declaredIndex] : unknown;

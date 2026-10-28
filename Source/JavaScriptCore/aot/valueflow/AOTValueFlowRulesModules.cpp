@@ -647,6 +647,9 @@ static void passOperandsOfBody(ValueFlowRuleContext& context, const Module& modu
 
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     context.connect(nodes.thrown(body), escaped);
+    // What is thrown or what a promise is rejected with ends at the host where nobody catches it. The host prints it the way console.error does, whatever lies inside it too.
+    if (mayProgramHaveStoredMethodThatHostLooksFor(context))
+        letHostChooseOperands(context);
     if (function.isUnsplitCoroutine()) {
         context.add(escaped, only(context, universe.coroutineResultOf(body)));
         for (unsigned index = 0; index < function.results.size(); ++index)

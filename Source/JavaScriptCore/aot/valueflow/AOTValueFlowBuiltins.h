@@ -58,6 +58,7 @@ bool doRecordsDescribe(const BuiltinTable&, const BuiltinOverload&);
 // True where every way to call the built-in does nothing to the operand but call it.
 bool onlyCallsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
 bool onlyListsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
+bool onlyAsksWhatStandsAbove(const BuiltinTable&, BuiltinID, BuiltinOperand, BuiltinCallMode);
 bool onlyLists(const ValueFlowBehavior&);
 bool standsBehindDescribedBuiltins(const Program&, FunctionID);
 bool isEnteredByCallsAlone(const Program&, RuntimeFunctionID);
@@ -96,6 +97,7 @@ std::optional<ValueSetID> keysThatObjectsWereMadeWith(ValueFlowRuleContext&, Cli
 void carryOut(ValueFlowRuleContext&, ValueFlowNodeID values);
 void carryOut(ValueFlowRuleContext&, const ValueFlowOperand& values);
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext&, BuiltinName);
+bool mayProgramHaveStoredMethodThatHostLooksFor(ValueFlowRuleContext&);
 bool isCodeBehindDeclaredEntries(const Program&, FunctionID);
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&);
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);

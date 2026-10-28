@@ -2568,64 +2568,6 @@ struct LoopPathSeparator : LoopEditor {
         return false;
     }
 
-    // A loop that is only expected to run earns its copy when a number gets another representation on the likely paths and a value that is computed from itself in every iteration depends on it: the next iteration waits for that arithmetic. An integer costs the same in either width.
-    bool changesRepresentationOfLoopCarriedNumber(BlockID header, const BitVector& isInLoop, const BitVector& leaves)
-    {
-        const UseLists& uses = m_analyses.useLists();
-        auto stays = [&](BlockID block) {
-            return isInLoop.get(block.index()) && !leaves.get(block.index());
-        };
-        auto findDependents = [&](ValueID value) {
-            BitVector dependents(m_function.values.size());
-            Vector<ValueID, 16> worklist { value };
-            auto visit = [&](ValueID dependent) {
-                if (!dependents.set(dependent.index()))
-                    worklist.append(dependent);
-            };
-            while (!worklist.isEmpty()) {
-                for (const Use& use : uses.usesOf(worklist.takeLast())) {
-                    if (!stays(use.block))
-                        continue;
-                    if (use.kind == Use::Kind::Operand)
-                        visit(use.user);
-                    else if (use.kind == Use::Kind::EdgeArgument && stays(targetOf(m_function, use.edge()).block))
-                        visit(m_function.at(targetOf(m_function, use.edge()).block).parameters[use.operandIndex]);
-                    else if (use.kind == Use::Kind::TerminatorOperand) {
-                        // What a test proves about its operand is that operand.
-                        const Terminator& terminator = m_function.at(use.block).terminator;
-                        for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
-                            if (!stays(terminator.targets[targetIndex].block))
-                                continue;
-                            for (ValueID result : m_function.at(terminator.targets[targetIndex].block).parameters.span().last(numberOfEdgeResults(m_function, use.block, targetIndex)))
-                                visit(result);
-                        }
-                    }
-                }
-            }
-            return dependents;
-        };
-
-        BitVector isComputedFromItself(m_function.values.size());
-        for (ValueID carried : m_function.at(header).parameters) {
-            if (findDependents(carried).get(carried.index()))
-                isComputedFromItself.set(carried.index());
-        }
-        if (isComputedFromItself.isEmpty())
-            return false;
-        Vector<std::optional<Type>> typeWithoutLeavingPaths = typeParametersWithout(isInLoop, leaves);
-        for (size_t index = 0; index < typeWithoutLeavingPaths.size(); ++index) {
-            const std::optional<Type>& narrowed = typeWithoutLeavingPaths[index];
-            const Type& type = typeOf(ValueID(index));
-            if (!narrowed || !narrowed->isNumber() || type.isInteger() || defaultRepresentationOf(type) == defaultRepresentationOf(*narrowed))
-                continue;
-            BitVector dependents = findDependents(ValueID(index));
-            dependents.filter(isComputedFromItself);
-            if (!dependents.isEmpty())
-                return true;
-        }
-        return false;
-    }
-
     // What the likely paths make of a parameter that gets narrower may get narrower with it.
     BitVector findValuesMadeOfNarrowedParameters(const BitVector& isInLoop, const BitVector& leaves, const Vector<std::optional<Type>>& typeWithoutLeavingPaths)
     {
@@ -2779,9 +2721,7 @@ struct LoopPathSeparator : LoopEditor {
     std::optional<SeparationPlan> planFor(const NaturalLoop& loop, bool mayCarryVariables, PathsThatOnlyCompute pathsThatOnlyCompute)
     {
         BlockID header = loop.header();
-        // What is hot is a share of the program, so other code decides it. A loop that is expected to run is copied too when it is small and the copy shortens its loop-carried arithmetic.
-        bool isHot = isHotLoop(m_context, loop).predicted();
-        if (!isHot && (m_analyses.blockFrequencies().classOf(header).predicted() != BlockFrequency::Normal || isCold(heatClassOf(m_context, header)).predicted()))
+        if (!isExpectedToRun(m_context, loop).predicted())
             return std::nullopt;
         if (!isHeaderOfLoopOfProgram(header))
             return std::nullopt;
@@ -2806,11 +2746,9 @@ struct LoopPathSeparator : LoopEditor {
         }
         // The likely paths end up in the program twice, and the longer an iteration is, the less of it waits for one number.
         bool isShort = bytesOfLikelyPaths <= m_context.limit(LimitID::MaxBytesOfSeparatedLoop) / 8;
-        if (!isHot && !isShort)
-            return std::nullopt;
 
         BitVector leaves = findLeavingBlocks(loop, isInLoop, pathsThatOnlyCompute, plan.emptyPathsThatStay);
-        plan.letsVariablesBeCarried = isHot && mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
+        plan.letsVariablesBeCarried = mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
         plan.carriedValuesThatMayBeUnspecified = BitVector(parameters.size());
@@ -2818,10 +2756,10 @@ struct LoopPathSeparator : LoopEditor {
             if (typeOf(parameters[index]).mayBeUnspecified())
                 plan.carriedValuesThatMayBeUnspecified.set(index);
         }
-        bool movesTest = isHot && std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
+        bool movesTest = std::ranges::any_of(findTestsOfEveryTurn(loop, leaves, plan.carriedValuesThatMayBeUnspecified), [](TypeID tested) {
             return !!tested;
         });
-        if (!movesTest && !plan.letsVariablesBeCarried && !(isHot ? narrowsParameter(isInLoop, leaves) || (isShort && (leavesAllocationAlone(isInLoop, leaves) || leavesTestWithOneAnswer(isInLoop, leaves))) : changesRepresentationOfLoopCarriedNumber(header, isInLoop, leaves)))
+        if (!movesTest && !plan.letsVariablesBeCarried && !narrowsParameter(isInLoop, leaves) && !(isShort && (leavesAllocationAlone(isInLoop, leaves) || leavesTestWithOneAnswer(isInLoop, leaves))))
             return std::nullopt;
 
         BitVector isEntryOfCopy(m_function.blocks.size());

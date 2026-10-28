@@ -1173,6 +1173,12 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     });
     m_closuresWithPrototypeProperty = maker.of(closuresWithPrototypeProperty.span());
     m_closuresWrittenInProgram = maker.of(closuresWrittenInProgram.span());
+    Vector<ValueFlowObjectID> namespacesOfLibrary;
+    for (uint32_t index = 0; index < program.modules.size(); ++index) {
+        if (program.modules[index].exportRule == SyntheticExportRule::RuntimeModule)
+            namespacesOfLibrary.append(universe.namespaceOf(ModuleID(index)));
+    }
+    m_objectsShowingLibraryExports = maker.unite(universe.holdersOfLibraryExports(), maker.of(namespacesOfLibrary.span()));
     m_templateObjects = maker.of(templateObjects.span());
     m_argumentsObjects = maker.of(argumentsObjects.span());
     m_arraysThatOperationsAllocate = maker.of(arraysThatOperationsAllocate.span());

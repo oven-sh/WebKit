@@ -1773,7 +1773,7 @@ public:
 
                 unsigned allMentionTraits = 0;
                 bool isTmpMove = false;
-                bool isConditionalMove = false;
+                bool namesNeighbors = false;
                 switch (opcode) {
                 case Move:
                 case Move32:
@@ -1799,7 +1799,10 @@ public:
                 case MoveConditionallyTest64:
                 case MoveConditionallyDouble:
                 case MoveConditionallyFloat:
-                    isConditionalMove = recordsNeighbors && numberOfArgs == 6;
+                    namesNeighbors = recordsNeighbors && numberOfArgs == 6;
+                    break;
+                case Shuffle:
+                    namesNeighbors = true;
                     break;
                 default:
                     break;
@@ -1868,9 +1871,9 @@ public:
 
                 if (isTmpMove)
                     *nextTmpMove++ = ordinal;
-                else if (opcode == Patch || isConditionalMove || (instTraits & Mentions::coldUse)) [[unlikely]] {
-                    if (isConditionalMove)
-                        m_conditionalMoves.append(unsigned { ordinal });
+                else if (opcode == Patch || namesNeighbors || (instTraits & Mentions::coldUse)) [[unlikely]] {
+                    if (namesNeighbors)
+                        m_instsThatNameNeighbors.append(unsigned { ordinal });
                     if (instTraits & Mentions::coldUse) {
                         for (unsigned i = firstMention; i < numberOfMentions; ++i) {
                             if (mentionTraits[i] & Mentions::coldUse)
@@ -4101,12 +4104,28 @@ private:
             tmpData.spillCostDiscount = tmpData.preferredWeight + tmpData.secondPreferredWeight;
     }
 
+    // Two Tmps that get one register: a conditional move on x86 then needs no copy in front of it, and a pair of a Shuffle no move at all.
+    // A Shuffle stands where a live range was cut in two on purpose, so its pairs are not made one Tmp again: whichever half is assigned first names its register to the other.
     void recordNeighbors()
     {
-        if (!isX86() || !m_registerPolicy.hintsTwoAddressOperands)
-            return;
-        for (unsigned ordinal : m_conditionalMoves) {
+        for (unsigned ordinal : m_instsThatNameNeighbors) {
             Inst& inst = instAtOrdinal(ordinal);
+            if (inst.kind.opcode == Shuffle) {
+                for (unsigned i = 0; i + 2 < inst.args().size(); i += 3) {
+                    Arg& source = inst.args()[i];
+                    Arg& destination = inst.args()[i + 1];
+                    if (!source.isTmp() || source.isReg() || !destination.isTmp() || destination.isReg() || source.tmp() == destination.tmp() || source.tmp().bank() != destination.tmp().bank())
+                        continue;
+                    TmpData& sourceData = m_map[source.tmp()];
+                    TmpData& destinationData = m_map[destination.tmp()];
+                    sourceData.addNeighbor(destination.tmp());
+                    destinationData.addNeighbor(source.tmp());
+                    // What one half already wishes for, as the register that an argument arrives in, the other wishes for too.
+                    prefer(destinationData, sourceData.preferredReg, 0);
+                    prefer(sourceData, destinationData.preferredReg, 0);
+                }
+                continue;
+            }
             Arg& yielded = inst.args()[5];
             if (!yielded.isTmp() || yielded.isReg() || yielded.tmp().bank() != GP)
                 continue;
@@ -6105,7 +6124,7 @@ private:
     Mentions m_mentions;
     Vector<unsigned> m_tmpMoves;
     Vector<Tmp> m_tmpsWithCoalescables;
-    Vector<unsigned> m_conditionalMoves;
+    Vector<unsigned> m_instsThatNameNeighbors;
     unsigned m_gpIndicesEnd { 0 };
     unsigned m_numberOfLinearIndices { 0 };
     struct SmallConstantDef {

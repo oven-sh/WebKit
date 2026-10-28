@@ -1,8 +1,7 @@
-# A loop that is expected to run, beside code that runs more often, keeps its unlikely paths where the copy would save a test in each turn and nothing goes round the loop in another form
+# A loop that is expected to run, beside code that runs more often, is separated from its unlikely paths where the copy saves a test in each turn: what else the program holds does not decide it
 # FORM: Prepared
 # RUN: pass SeparateUnlikelyLoopPaths
-# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 0
-# CHECK: outcome: Unchanged
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths = 1
 
 module m0 path="main.js" displayPath="main.js" body=f2
 entry module=m0

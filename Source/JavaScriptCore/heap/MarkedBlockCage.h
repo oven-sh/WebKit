@@ -135,7 +135,7 @@ public:
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError();
-    // Where storage is among what the program is owed an error for, this error is that error.
+    // Where storage is among what the program is owed an error for, this error is that error. So it is for cells under a limit on address space.
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError(VM&);
 
     struct ReservationFailure {

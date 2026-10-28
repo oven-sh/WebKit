@@ -131,10 +131,10 @@ function f1 name="turn" module=m0 position=66 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
-# The loop for fewer than sixteen bytes, the one for fewer than eight times sixteen, and the one above.
+# Three loops, in the order in which they are emitted: one for fewer than sixteen bytes (6 | 7 instructions), one for fewer than eight times sixteen (4), and the one above.
 # X64-NOT: loop #
-# X64: loop #{{*}}, instructions: 6, patchpoints: 2
 # X64: loop #{{*}}, instructions: 4, patchpoints: 2, {{*}} steps by 16
+# X64: loop #{{*}}, instructions: 6, patchpoints: 2
 # X64: loop #{{*}}, instructions: 18, patchpoints: 16, {{*}} steps by 128
 # ARM64-NOT: loop #
 # ARM64: loop #{{*}}, instructions: 7, patchpoints: 2

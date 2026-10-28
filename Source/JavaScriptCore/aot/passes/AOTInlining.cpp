@@ -1751,7 +1751,9 @@ static bool namesOneFunction(const Program& program, const Type& type)
     return type.singleFunction() || singleBuiltinFunction(program, type);
 }
 
-static bool passesEveryEntryCheck(const Program& program, const Function& caller, const Value& call)
+enum class ArgumentTypes : uint8_t { Proven, Expected };
+
+static bool passesEveryEntryCheck(const Program& program, const Function& caller, const Value& call, ArgumentTypes argumentTypes = ArgumentTypes::Proven)
 {
     const Function& checks = program.at(call.function());
     auto& parameters = checks.at(entryBlock).parameters;
@@ -1762,7 +1764,10 @@ static bool passesEveryEntryCheck(const Program& program, const Function& caller
                 return true;
             size_t index = parameters.find(test.valueOperand());
             ValueID argument = index == notFound ? ValueID() : argumentAt(call, index);
-            return argument && program.typeOf(caller, argument).isSubsetOf(program.at(test.testedType()), program);
+            if (!argument)
+                return false;
+            const Type& type = argumentTypes == ArgumentTypes::Proven ? program.typeOf(caller, argument) : program.expectedOrTypeOf(caller, argument).predicted();
+            return type.isSubsetOf(program.at(test.testedType()), program);
         });
     });
 }
@@ -2285,7 +2290,9 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool isEntryChecks = callee.role == FunctionRole::EntryChecks;
     bool callerIsEntrypoint = caller.role == FunctionRole::GenericEntrypoint || caller.role == FunctionRole::TableEntrypoint;
     bool leavesEntryChecksOutside = wouldCopySharedEntryChecksIntoEntrypoint(context, value, heat);
-    bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
+    // In a loop of the caller the tests run at every turn wherever they stand. Beside the call they are the same tests, and the typed body behind them can be copied in.
+    bool isExpectedToPassInLoop = isEntryChecks && !isCold(heat).predicted() && context.analyses.isInCycle(block) && passesEveryEntryCheck(program, caller, value, ArgumentTypes::Expected);
+    bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || isExpectedToPassInLoop || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
     bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
     if (canInlineWholeBody && (value.isAlwaysInlined() || isAlwaysWorthInlining)) {
         addBenefit(value.isAlwaysInlined() ? InlineBenefit::CallOverhead : InlineBenefit::Wrapper, cost);

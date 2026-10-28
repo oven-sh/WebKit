@@ -1592,7 +1592,7 @@ static bool cutOutRegionOfReads(FunctionPassContext& context, IRBuilder& builder
         if (location.placement == ValuePlacement::InBlock)
             endOfUses[location.block.index()] = std::max(endOfUses[location.block.index()], location.index + 1);
         const NaturalLoop* loop = isRepeated ? nullptr : context.analyses.naturalLoops().innerMostLoopOf(location.block);
-        isRepeated = isRepeated || (loop && isHotLoop(context, *loop).predicted());
+        isRepeated = isRepeated || (loop && isExpectedToRun(context, *loop).predicted());
     };
     std::ranges::for_each(found.proofs, addUse);
     std::ranges::for_each(found.reads, addUse);

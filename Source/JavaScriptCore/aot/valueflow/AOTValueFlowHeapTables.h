@@ -150,6 +150,7 @@ private:
     macro(ValueSetID, objectsWithoutPropertiesOfNativeCode) \
     macro(ValueSetID, objectsThatTheirClassAnswersFor) \
     macro(ValueSetID, closuresWrittenInProgram) \
+    macro(ValueSetID, objectsShowingLibraryExports) \
     macro(ValueSetID, objectsMadeWithPropertiesListedAboveThem) \
     macro(ValueSetID, prototypeObjectsOfClassesThatListNoOwnNames) \
     macro(ValueSetID, prototypeObjectsListingOwnPropertiesOfInstances) \

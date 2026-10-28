@@ -1353,6 +1353,27 @@ static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
     traps.setNeedsOutOfMemoryError(false);
 }
 
+// A request for storage that fails gives the program an error of its own. Cells in a range of a fixed size have nothing to do with it. Cells in a range that grows lack the same room.
+template<bool isSettled>
+static void checkErrorOfAnotherRequestAndErrorOwedForCells()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+    auto findNoRoomAfterAllocating = [&](size_t bytes) {
+        vm.heap.didAllocate(bytes);
+        test.cage().didFindNoRoom(vm, MarkedBlockCage::ExhaustedHeap::Cells);
+    };
+    // Much has been allocated since the last time, which starts the count anew.
+    findNoRoomAfterAllocating(vm.heap.objectSpace().capacity() / 64);
+    for (unsigned times = 0; times < 4; ++times)
+        findNoRoomAfterAllocating(1);
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError());
+    AOT_TEST_CHECK(createOutOfMemoryError(realm));
+    AOT_TEST_CHECK(vm.traps().needsOutOfMemoryError() == !isSettled);
+    vm.traps().setNeedsOutOfMemoryError(false);
+}
+
 // The error that barren collections owe is offered to a poll first: one more full collection runs there. If little can be allocated behind that one too, the error is owed again and is anybody's to throw.
 static void checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce()
 {
@@ -1653,6 +1674,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/shared-reserve-holds-large-cells-of-several-cages"_s, runInProcessWithSharedRange<checkSharedReserveHoldsLargeCellsOfSeveralCages> },
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
         { "heap-cage/cage/no-address-in-the-image-names-a-cell-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkNoAddressInImageNamesCell> },
+        { "heap-cage/cage/error-of-another-request-settles-cells-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkErrorOfAnotherRequestAndErrorOwedForCells<true>> },
 #if USE(MIMALLOC)
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
         { "heap-cage/ballast/requests-that-may-not-fail-look-in-what-the-last-piece-left"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailLookInWhatLastPieceLeft> },
@@ -1686,6 +1708,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/error-owed-for-storage-then-structures-is-heard-of-by-both"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Storage, ErrorGiven::TheOneOwed>> },
         { "heap-cage/cage/error-of-another-request-settles-structures-then-storage"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Structures, ErrorGiven::OneOfAnotherRequest>> },
         { "heap-cage/cage/error-of-another-request-settles-storage-then-structures"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Storage, ErrorGiven::OneOfAnotherRequest>> },
+        { "heap-cage/cage/error-of-another-request-leaves-what-is-owed-for-cells"_s, withCage<checkErrorOfAnotherRequestAndErrorOwedForCells<false>> },
         { "heap-cage/cage/blocks-to-fill-are-fresh-blocks-of-the-cage"_s, withCage<checkBlocksToFillAreFreshBlocksOfTheCage> },
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
         { "heap-cage/cage/other-allocator-warms-up-with-the-cage"_s, withCage<checkOtherAllocatorWarmsUpWithTheCage> },

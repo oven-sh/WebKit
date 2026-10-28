@@ -838,8 +838,8 @@ private:
     // Flow hands the operands of a function it does not know to native code.
     void checkOperandsOfUnknownFunction()
     {
-        // A bound function hands its operands on to its target, which flow calls in its place.
-        if (m_declaration.source != NativeCallDeclarationSource::NotInTable || isHelperOfLibraryFunctions() || m_call.callee->inherits<JSBoundFunction>())
+        // A bound function hands its operands on to its target, and a proxy to its target or its trap, which flow calls in its place.
+        if (m_declaration.source != NativeCallDeclarationSource::NotInTable || isHelperOfLibraryFunctions() || m_call.callee->inherits<JSBoundFunction>() || m_call.callee->type() == ProxyObjectType)
             return;
         for (const Operand& operand : m_operands) {
             Object* compiled = compiledObjectOrNull(operand.object);

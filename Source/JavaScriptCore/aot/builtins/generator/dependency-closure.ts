@@ -36,6 +36,8 @@ export interface RuntimeDependencies {
   /** Of the entry that is named, by the position and the texts. What is reached by value has none: nobody sees its calls. */
   callsForTexts: Map<string, CallsForTexts>;
   implementedBy: Set<ModelFunction>;
+  /** Those of `calls` and `implementedBy` that every use of the named entry needs. The others hang on its operands, or on what is done with a value that it hands out. */
+  certain: Set<ModelFunction>;
   namedBy: Map<ModelModule | ModelFunction, ModelBuiltin>;
 }
 
@@ -54,7 +56,14 @@ interface HandedOutValues {
 const nothingHandedOut: HandedOutValues = { objects: [], undescribedValue: null, features: [] };
 
 function createDependencies(): RuntimeDependencies {
-  return { loads: new Map(), calls: new Set(), callsForTexts: new Map(), implementedBy: new Set(), namedBy: new Map() };
+  return {
+    loads: new Map(),
+    calls: new Set(),
+    callsForTexts: new Map(),
+    implementedBy: new Set(),
+    certain: new Set(),
+    namedBy: new Map(),
+  };
 }
 
 function addLoad(dependencies: RuntimeDependencies, module: ModelModule, load: LoadedModule): void {
@@ -98,6 +107,7 @@ function mergeDependencies(into: RuntimeDependencies, from: RuntimeDependencies)
   for (const called of from.calls) into.calls.add(called);
   for (const [key, listed] of from.callsForTexts) addCallsForTexts(into, key, listed);
   for (const implementation of from.implementedBy) into.implementedBy.add(implementation);
+  for (const needed of from.certain) into.certain.add(needed);
   for (const [dependency, builtin] of from.namedBy) {
     if (!into.namedBy.has(dependency)) into.namedBy.set(dependency, builtin);
   }
@@ -336,6 +346,9 @@ export class DependencyClosure {
     if (this.#engineClassObjects.has(builtin)) {
       mergeDependencies(dependencies, this.#reachableFrom({ ...nothingHandedOut, objects: [builtin] }));
     }
+    if (DependencyClosure.isInEveryProgram(builtin)) {
+      dependencies.certain = dependencies.calls.union(dependencies.implementedBy);
+    }
     for (const [key, listed] of dependencies.callsForTexts) {
       listed.calls = listed.calls.difference(dependencies.calls);
       if (listed.calls.size === 0) dependencies.callsForTexts.delete(key);
@@ -392,6 +405,7 @@ export class DependencyClosure {
       const decided = condition === null ? null : textsDecidingCall(condition);
       if (condition === null || decided === null) {
         own.calls.add(called);
+        if (condition === null && !isReachedByValue) own.certain.add(called);
       } else if (reachedWith === null) {
         const key = `${decided.argument} ${decided.texts.map(text => text.number).join(",")}`;
         addCallsForTexts(own, key, { ...decided, calls: new Set([called]) });
@@ -407,6 +421,7 @@ export class DependencyClosure {
     for (const { code } of builtin.overloads) {
       if (code.model !== null) own.implementedBy.add(code.model);
     }
+    if (!isReachedByValue) own.certain = own.certain.union(own.implementedBy);
     for (const dependency of [...own.loads.keys(), ...own.calls, ...own.implementedBy]) {
       own.namedBy.set(dependency, builtin);
     }

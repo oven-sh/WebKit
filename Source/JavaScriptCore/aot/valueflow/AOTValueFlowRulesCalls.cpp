@@ -481,9 +481,27 @@ static PropertyKeyID keyOfMemberCalledOnItsHolder(const Program& program, const 
     if (!receiver)
         return { };
     const Value& read = function.at(definitionThroughTests(function, call.calleeOperand()));
+    // A member of the namespace object of a module of the library is read out of the variable of the export.
+    if (read.opcode == Opcode::GetModuleVariable) {
+        const Value& holder = function.at(definitionThroughTests(function, receiver));
+        if (holder.opcode != Opcode::ModuleNamespace)
+            return { };
+        for (const SyntheticExport& entry : program.at(holder.module()).syntheticExports) {
+            if (entry.variable == read.variable())
+                return program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name }).value_or(PropertyKeyID());
+        }
+        return { };
+    }
     if (read.opcode != Opcode::PropGet || read.isFreeName() || program.isIndexLike(read.key()))
         return { };
     return definitionThroughTests(function, read.objectOperand()) == definitionThroughTests(function, receiver) ? read.key() : PropertyKeyID();
+}
+
+// What a module of the library has stored in the object that it exports reaches that object by itself: as a receiver the object is handed to nobody new.
+// Where the program has written to the object, the member may be a function of the program's.
+static ValueSetID objectsShowingOnlyWhatLibraryExports(ValueFlowRuleContext& context)
+{
+    return context.withMembersOf(ValueSets::nothing, context.membersMissingFrom(context.nodes().ofHost(ValueFlowHostNode::HoldersOfLibraryExportsThatProgramWrites), ClimbingSet(context.universe().builtinTables().heap().objectsShowingLibraryExports())));
 }
 
 static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures)
@@ -543,14 +561,14 @@ static ReceiversOfEveryCallee passKnownReceiversToTheirCallees(ValueFlowRuleCont
     return { ValueSets::nothing, receivers.rest };
 }
 
-static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID keyReadFromReceiver = { })
+static void callOperandOfDescribedCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context, PropertyKeyID keyReadFromReceiver = { }, bool isCalledOnItsHolder = false)
 {
     // A member that nobody knows is called on the receivers that find it, or find a function that it stands for. Any other object of the program stays with the callees that it finds.
     if (keyReadFromReceiver) {
         const ValueFlowUniverse& universe = context.universe();
         const ValueFlowOperand& receiver = context.operandsOf(statement)[1];
         ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.builtinObjects()));
-        ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.membersMissingFrom(ValueFlowProgramNodes::escaped(), context.restrict(context.valueOf(receiver), objectsOfProgram)));
+        ValueFlowObjectsToldApart receivers = tellObjectsApart(context, context.membersMissingFrom(ValueFlowProgramNodes::escaped(), context.restrict(context.valueOf(receiver), context.maker().intersect(objectsOfProgram, ValueSets::complement(objectsShowingOnlyWhatLibraryExports(context))))));
         for (ValueSetID group : receivers.groups) {
             ClimbingSet answered = context.valueOf(context.lookup(ClimbingSet(group), ValueFlowName::property(context.program(), keyReadFromReceiver), ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver));
             if (context.meet(answered, universe.placeholdersAlone()) || context.holdsAnyOf(context.restrict(answered, universe.callables()), ValueFlowProgramNodes::escaped()))
@@ -559,8 +577,12 @@ static void callOperandOfDescribedCall(const ValueFlowStatement& statement, Valu
         context.add(ValueFlowProgramNodes::escaped(), receivers.rest);
         passThis(context, statement, receiver, { ValueSets::complement(objectsOfProgram), ValueSets::nothing }, ValueFlowProgramNodes::escaped());
     }
-    if (!keyReadFromReceiver)
-        context.connect(context.operandsOf(statement)[1], ValueFlowProgramNodes::escaped());
+    if (!keyReadFromReceiver) {
+        ValueFlowOperand receiver = context.operandsOf(statement)[1];
+        if (isCalledOnItsHolder)
+            receiver.mask = context.maker().intersect(receiver.mask, ValueSets::complement(objectsShowingOnlyWhatLibraryExports(context)));
+        context.connect(receiver, ValueFlowProgramNodes::escaped());
+    }
     bool isInLibrary = isLibraryCode(context.program(), context.program().at(statement.function));
     for (const ValueFlowOperand& argument : context.operandsOf(statement).subspan(2)) {
         if (isInLibrary)
@@ -583,7 +605,7 @@ ClimbingSet escapedMembersUnder(ValueFlowRuleContext& context, PropertyKeyID key
 static bool findsValueNobodyKnowsThatProgramHasStored(ValueFlowRuleContext& context, ClimbingSet receivers, PropertyKeyID key)
 {
     const ValueFlowUniverse& universe = context.universe();
-    ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(context.maker().unite(universe.builtinObjects(), universe.objectsThatMayBeAnything())));
+    ValueSetID objectsOfProgram = context.maker().intersect(universe.knownObjects(), ValueSets::complement(context.maker().unite(context.maker().unite(universe.builtinObjects(), universe.objectsThatMayBeAnything()), objectsShowingOnlyWhatLibraryExports(context))));
     ClimbingSet start = context.restrict(receivers, objectsOfProgram);
     if (!context.meet(start, ValueSets::anything))
         return false;
@@ -602,7 +624,7 @@ static void callMemberNobodyKnows(const ValueFlowStatement& statement, ValueFlow
     // A proxy answers any name with what its trap returns.
     if (context.holdsAnyOf(ClimbingSet(context.universe().builtinTables().heap().objectsThatLetInUnseenCode()), ValueFlowProgramNodes::escaped()))
         letWhateverHasEscapedBeCalled(context);
-    callOperandOfDescribedCall(statement, context, receiversAreToldApart && keyReadFromReceiver(context.program(), statement) == key ? key : PropertyKeyID());
+    callOperandOfDescribedCall(statement, context, receiversAreToldApart && keyReadFromReceiver(context.program(), statement) == key ? key : PropertyKeyID(), true);
 }
 
 static ClimbingSet passOperandsToInstances(ValueFlowRuleContext& context, const ValueFlowStatement& statement, ClimbingSet closures, ValueFlowCallKind kind)

@@ -642,9 +642,16 @@ void HeapRule::noteWhatMayLieUnderSymbolThatHostLooksFor(const HeapKey& key, con
         connect(stored, m_context.nodes().ofHost(isInProgramCode() ? ValueFlowHostNode::StoredUnderSymbolsNobodyKnows : ValueFlowHostNode::StoredByLibraryUnderSymbolsNobodyKnows));
 }
 
+void HeapRule::noteHoldersOfLibraryExportsThatProgramWrites(ClimbingSet receivers)
+{
+    if (m_context.meet(receivers, m_universe.holdersOfLibraryExports()) && isInProgramCode())
+        add(m_context.nodes().ofHost(ValueFlowHostNode::HoldersOfLibraryExportsThatProgramWrites), m_context.restrict(receivers, m_universe.holdersOfLibraryExports()));
+}
+
 void HeapRule::define(const ValueFlowOperand& object, const HeapKey& key, HeapPropertyPart part, const ValueFlowOperand& value)
 {
     ClimbingSet receivers = m_context.valueOf(object);
+    noteHoldersOfLibraryExportsThatProgramWrites(receivers);
     if (part != HeapPropertyPart::Setter)
         noteWhatMayLieUnderSymbolThatHostLooksFor(key, value);
     write(receivers, writtenName(key, part), value);
@@ -853,6 +860,7 @@ void HeapRule::store(const ValueFlowOperand& object, const HeapKey& key, const V
     askProxiesByTheirTrap(key, BuiltinNames::set, { }, &value);
     ClimbingSet receivers = m_context.valueOf(object);
     m_context.openProxiesAmong(receivers);
+    noteHoldersOfLibraryExportsThatProgramWrites(receivers);
     noteWhatMayLieUnderSymbolThatHostLooksFor(key, value);
     write(receivers, writtenName(key, HeapPropertyPart::Value), value);
     convertStoredValue(receivers, key, value);

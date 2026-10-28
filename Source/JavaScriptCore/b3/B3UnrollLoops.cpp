@@ -449,16 +449,28 @@ private:
         return nullptr;
     }
 
+    // A fast version still holds the paths behind the comparisons that were decided for it. Nothing takes them.
+    static bool isNeverTaken(const BasicBlock* block, unsigned successorIndex)
+    {
+        Value* condition = block->last()->opcode() == Branch ? block->last()->child(0) : nullptr;
+        return condition && condition->hasInt() && successorIndex == (condition->asInt() ? 1u : 0u);
+    }
+
     // While a sum of whole numbers stays under 2^53 every addition of doubles is exact, so the turns that are written out may add integers.
     // The sum is made a double again where they are left, which is at the test alone.
     void findSumsOfIntegers(PhiChildren& phiChildren, Plan& plan)
     {
         if (plan.testsCounterBeforeStep)
             return;
+        IndexSet<BasicBlock*> blocksNeverEntered;
         for (BasicBlock* block : plan.blocks) {
             for (unsigned index = 0; index < block->numSuccessors(); ++index) {
-                if (!plan.blocks.contains(block->successorBlock(index)) && (block != plan.test || index == plan.stayingSuccessorIndex))
+                BasicBlock* successor = block->successorBlock(index);
+                if (plan.blocks.contains(successor) || (block == plan.test && index != plan.stayingSuccessorIndex))
+                    continue;
+                if (!isNeverTaken(block, index) || successor->numPredecessors() != 1)
                     return;
+                blocksNeverEntered.add(successor);
             }
         }
         for (Value* phi : *plan.header) {
@@ -483,6 +495,8 @@ private:
         if (plan.sums.isEmpty())
             return;
         for (Value* value : m_proc.values()) {
+            if (blocksNeverEntered.contains(value->owner))
+                continue;
             for (Value* child : value->children()) {
                 plan.sums.removeAllMatching([&](const SumOfIntegers& sum) {
                     if (child == sum.phi)
@@ -685,7 +699,6 @@ private:
 
     enum class RareEdges : bool { AreFollowed, EndTheWalk };
 
-    // A fast version still holds the paths behind the comparisons that were decided for it. Nothing takes them.
     static IndexSet<BasicBlock*> findBlocksThatCanRun(const NaturalLoops& loops, const NaturalLoop& loop, RareEdges rareEdges)
     {
         IndexSet<BasicBlock*> result;
@@ -693,10 +706,9 @@ private:
         result.add(loop.header());
         while (!worklist.isEmpty()) {
             BasicBlock* block = worklist.takeLast();
-            Value* condition = block->last()->opcode() == Branch ? block->last()->child(0) : nullptr;
             for (unsigned i = block->numSuccessors(); i--;) {
                 const FrequentedBlock& successor = block->successor(i);
-                if (condition && condition->hasInt() && i == (condition->asInt() ? 1u : 0u))
+                if (isNeverTaken(block, i))
                     continue;
                 if (successor.isRare() && rareEdges == RareEdges::EndTheWalk)
                     continue;
@@ -1356,6 +1368,8 @@ private:
         BasicBlock* tests { nullptr };
         // Behind the tests. The first stretch begins here where the sums start at constants that pass them.
         BasicBlock* begins { nullptr };
+        // Where the first stretch is entered: behind the tests, or at the question in front of them whether every sum starts at zero.
+        BasicBlock* entered { nullptr };
         BasicBlock* next { nullptr };
         Variable* farBoundVariable { nullptr };
         Vector<Variable*, 1> firstSums;
@@ -1429,6 +1443,7 @@ private:
         Origin origin = plan.test->last()->origin();
         BasicBlock* tests = stretch.tests;
         BasicBlock* begins = stretch.begins;
+        BasicBlock* entered = stretch.entered;
         // Where the lower end of what the counter walks is not below zero, the two ends lie nearer to each other than the upper end lies to zero:
         // that the upper end lies within a stretch of zero needs no subtraction to be told.
         BasicBlock* first = stretch.first;
@@ -1441,7 +1456,7 @@ private:
             first->appendNew<VariableValue>(m_proc, Set, origin, stretch.farBoundVariable, farBound);
             first->appendNew<Value>(m_proc, Branch, origin, first->appendNew<Value>(m_proc, Above, origin, upperEnd, farthest));
             BasicBlock* liesFarther = m_proc.addBlock();
-            first->setSuccessors(FrequentedBlock(liesFarther, FrequencyClass::Rare), FrequentedBlock(begins));
+            first->setSuccessors(FrequentedBlock(liesFarther, FrequencyClass::Rare), FrequentedBlock(entered));
             first = liesFarther;
             // A few turns far from zero are one stretch as well, which ends at the far bound. The bound lies beyond the far bound by the room, and is at hand.
             if (lowerEndMayLieFartherThanStretch(plan, bounds)) {
@@ -1451,19 +1466,30 @@ private:
                 Value* farthestWithRoom = liesFarther->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type) + (rises ? room : -room));
                 liesFarther->appendNew<Value>(m_proc, Branch, origin, liesFarther->appendNew<Value>(m_proc, Above, origin, distance, farthestWithRoom));
                 first = m_proc.addBlock();
-                liesFarther->setSuccessors(FrequentedBlock(first, FrequencyClass::Rare), FrequentedBlock(begins));
+                liesFarther->setSuccessors(FrequentedBlock(first, FrequencyClass::Rare), FrequentedBlock(entered));
             }
         }
         // A test at the bottom is reached only where there is room for the turns that are written out. A test at the top asks that by itself.
-        appendFarBoundOfStretch(plan, stretch, bounds, first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, begins);
+        appendFarBoundOfStretch(plan, stretch, bounds, first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, entered);
         appendPoll(plan, stretch.next);
         // The counter has passed the end of the last stretch by less than the turns that are written out. Nothing but the test of those turns looks at the counter here, so it stays in one register.
-        appendFarBoundOfStretch(plan, stretch, bounds, stretch.next, stretch.farBoundVariable, BoundLiesBeyond::Yes, tests);
+        // Every stretch comes in by one block, so that the stretches are a loop with one way in.
+        appendFarBoundOfStretch(plan, stretch, bounds, stretch.next, stretch.farBoundVariable, BoundLiesBeyond::Yes, entered == begins ? tests : entered);
         stretch.farBound = begins->appendNew<VariableValue>(m_proc, Get, origin, stretch.farBoundVariable);
         if (plan.sums.isEmpty()) {
             tests->appendNew<Value>(m_proc, Jump, origin);
             tests->setSuccessors(FrequentedBlock(unrolledHeader));
             return;
+        }
+        // Most sums start at zero, which passes every test and is told by its bits. Where the start is no constant, as where a rare path hands a sum back in front of the loop, that is asked first.
+        if (entered != begins) {
+            Value* bits = nullptr;
+            for (Variable* firstSum : stretch.firstSums) {
+                Value* bitsOfStart = entered->appendNew<Value>(m_proc, BitwiseCast, origin, entered->appendNew<VariableValue>(m_proc, Get, origin, firstSum));
+                bits = bits ? entered->appendNew<Value>(m_proc, BitOr, origin, bits, bitsOfStart) : bitsOfStart;
+            }
+            entered->appendNew<Value>(m_proc, Branch, origin, bits);
+            entered->setSuccessors(FrequentedBlock(tests, FrequencyClass::Unlikely), FrequentedBlock(begins));
         }
         Value* rounding = tests->appendNew<ConstDoubleValue>(m_proc, origin, roundingOfSums);
         Value* greatestStart = tests->appendNew<ConstDoubleValue>(m_proc, origin, greatestStartOfSum);
@@ -1604,7 +1630,8 @@ private:
         if (!plan.sums.isEmpty() || (plan.poll && !plan.pollsOnceForAllWrittenOutTurns && !fitsOneStretch(plan))) {
             stretch.first = m_proc.addBlock();
             stretch.tests = m_proc.addBlock();
-            stretch.begins = !plan.sums.isEmpty() && std::ranges::all_of(plan.sums, startPassesTests) ? m_proc.addBlock() : stretch.tests;
+            stretch.begins = plan.sums.isEmpty() ? stretch.tests : m_proc.addBlock();
+            stretch.entered = plan.sums.isEmpty() || std::ranges::all_of(plan.sums, startPassesTests) ? stretch.begins : m_proc.addBlock();
             stretch.next = m_proc.addBlock();
             stretch.farBoundVariable = m_proc.addVariable(plan.tested->type());
             headerBehindRest = m_proc.addBlock();
@@ -1614,7 +1641,7 @@ private:
             }
         }
         BasicBlock* unrolledHeader = stretch.first ? stretch.first : turns[0].get(plan.header);
-        Bounds bounds = appendBoundsAndEnter(plan, unrolledHeader, { stretch.begins, stretch.farBoundVariable });
+        Bounds bounds = appendBoundsAndEnter(plan, unrolledHeader, { stretch.entered, stretch.farBoundVariable });
         if (stretch.tests) {
             appendStartOfStretch(plan, stretch, integers.span(), bounds, turns[0].get(plan.header), headerOfLoopThatPolls);
             BasicBlock* asks = headerBehindRest;

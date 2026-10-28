@@ -1719,7 +1719,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
         bool readsOnlyData = true;
         m_sets.forEachMember(group.set, [&](ValueFlowObjectID callee) {
             BuiltinID builtin = m_input.universe->builtinOf(callee);
-            readsOnlyData &= m_sets.contains(closures, callee) || (builtin && m_input.program->builtins().at(builtin).kind == BuiltinKind::DataProperty);
+            readsOnlyData &= m_sets.contains(closures, callee) || (builtin && (m_input.program->builtins().at(builtin).kind == BuiltinKind::DataProperty || onlyAsksWhatStandsAbove(m_input.program->builtins(), builtin, BuiltinOperand::receiver(), BuiltinCallMode::Get)));
         });
         return readsOnlyData;
     };
@@ -1878,7 +1878,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
         // Reflect.get hands its receiver to the accessor that it finds.
         if (builtins.canonicalID(builtin) == Builtins::ReflectGet && argument == 2)
             return true;
-        if (onlyCallsOperand(builtins, builtin, BuiltinOperand::argument(argument)) || onlyListsOperand(builtins, builtin, BuiltinOperand::argument(argument)))
+        if (onlyCallsOperand(builtins, builtin, BuiltinOperand::argument(argument)) || onlyListsOperand(builtins, builtin, BuiltinOperand::argument(argument)) || onlyAsksWhatStandsAbove(builtins, builtin, BuiltinOperand::argument(argument), BuiltinCallMode::Call))
             return true;
         bool isDescribed = false;
         for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {

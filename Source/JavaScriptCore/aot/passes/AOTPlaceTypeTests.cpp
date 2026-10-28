@@ -3293,6 +3293,12 @@ struct TestPlacer {
             return passed;
         // An intersection names an object as its second type does: as the test did.
         Type both = operandType.intersectWith(passedType, types);
+        // Beside a class that no test tells from others that intersection keeps every class that the second type lists. The operand's own type says which of them are left.
+        bool listsClassThatOperandRulesOut = !operandType.anyObject && !operandType.anyFunction && std::ranges::any_of(passedType.classes, [&](const ClassPart& part) {
+            return !operandType.findClassPart(part.builtinClass);
+        });
+        if (both == passedType && listsClassThatOperandRulesOut)
+            both = passedType.intersectWith(operandType, types);
         if (both.isNever() || both == passedType)
             return passed;
 

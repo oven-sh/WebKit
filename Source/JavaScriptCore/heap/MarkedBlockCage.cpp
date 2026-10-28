@@ -773,7 +773,8 @@ void MarkedBlockCage::didCreateOutOfMemoryError()
 void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
-    if (!m_exhaustedHeaps.contains(ExhaustedHeap::Storage))
+    // A range that grows takes its room from where storage takes it.
+    if (!m_exhaustedHeaps.contains(ExhaustedHeap::Storage) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
     didThrowOutOfMemoryError();
     vm.traps().setNeedsOutOfMemoryError(false);
