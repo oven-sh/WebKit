@@ -268,11 +268,14 @@ inline bool JSFunction::mayHaveNonReifiedPrototype()
 inline bool JSFunction::canPerformFastEnumerablePropertyEnumeration(VM& vm)
 {
 #if ENABLE(AOT)
-    // Listing the own properties of a compiled closure makes its class object and its static fields first
-    // (AOT::Closure::getOwnSpecialPropertyNames). A walk of its Structure would not see them.
-    if (isCompiledClosure()) [[unlikely]]
-        return false;
-#endif
+    // Bun: the fast path of WebKit e04a6f9faecf is off for every function. A copy that looks every own key up makes `name` a property of
+    // the function, and Bun's stack frames show that property in front of a displayName. Compiled code copies from a closure that way,
+    // and plain code has to print the same frames.
+    // A compiled closure stays out of the fast path in any case: listing its own properties makes its class object and its static
+    // fields first (AOT::Closure::getOwnSpecialPropertyNames), and a walk of its Structure would not see them.
+    UNUSED_PARAM(vm);
+    return false;
+#else
     if (!canAssumeNameAndLengthAreOriginal(vm))
         return false;
     Structure* structure = this->structure();
@@ -283,6 +286,7 @@ inline bool JSFunction::canPerformFastEnumerablePropertyEnumeration(VM& vm)
     if (structure->hasUnderscoreProtoPropertyExcludingOriginalProto())
         return false;
     return true;
+#endif
 }
 
 inline bool JSFunction::canUseAllocationProfiles()
