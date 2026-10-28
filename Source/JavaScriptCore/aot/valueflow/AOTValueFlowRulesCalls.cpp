@@ -536,8 +536,15 @@ static void callOperandOfDescribedCall(const ValueFlowStatement& statement, Valu
         context.add(ValueFlowProgramNodes::escaped(), receivers.rest);
         passThis(context, statement, receiver, { ValueSets::complement(objectsOfProgram), ValueSets::nothing }, ValueFlowProgramNodes::escaped());
     }
-    for (const ValueFlowOperand& operand : context.operandsOf(statement).subspan(keyReadFromReceiver ? 2 : 1))
-        context.connect(operand, ValueFlowProgramNodes::escaped());
+    if (!keyReadFromReceiver)
+        context.connect(context.operandsOf(statement)[1], ValueFlowProgramNodes::escaped());
+    bool isInLibrary = isLibraryCode(context.program(), context.program().at(statement.function));
+    for (const ValueFlowOperand& argument : context.operandsOf(statement).subspan(2)) {
+        if (isInLibrary)
+            context.connect(argument, ValueFlowProgramNodes::escaped());
+        else
+            carryOut(context, argument);
+    }
     ValueSetID anything = unknownValue(context, ValueFlowUnknownSource::ResultOfUnknownCallee);
     if (statement.result)
         context.add(statement.result, anything);
@@ -1164,13 +1171,17 @@ void runDefineMethod(const ValueFlowStatement& statement, ValueFlowRuleContext& 
 
 void runReadOfPrototypeProperty(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
-    if (!statement.result)
-        return;
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet holders = context.valueOf(context.operandsOf(statement)[0]);
     ValueSetID null = context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::Null));
     ValueSetID answers = statement.opcode == Opcode::ResolveHeritage ? context.maker().unite(universe.objects(), null) : universe.objects();
-    context.connect(context.masked(context.lookup(holders, prototypeProperty(context)), answers), statement.result);
+    // A getter runs, and the operation throws, whether or not anybody takes the answer.
+    ValueFlowNodeID held = context.lookup(holders, prototypeProperty(context));
+    if (statement.thrown)
+        context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
+    if (!statement.result)
+        return;
+    context.connect(context.masked(held, answers), statement.result);
     switch (statement.opcode) {
     case Opcode::ResolveHeritage:
         if (context.meet(holders, null) || context.contains(holders, ValueFlowUniverse::unknownObject()))
@@ -1189,8 +1200,6 @@ void runReadOfPrototypeProperty(const ValueFlowStatement& statement, ValueFlowRu
     default:
         break;
     }
-    if (statement.thrown)
-        context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 }
 
 } } } // namespace JSC::AOT::Typed

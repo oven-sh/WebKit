@@ -144,7 +144,7 @@ public:
     size_t maxCachedKeyLength() const { return m_maxCachedKeyLength; }
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
     enum class EqualHashes : uint8_t { AreToldApart, LeaveUndecided };
-    // Calls nothing where equal hashes leave it undecided, which is then no answer.
+    // Calls nothing where equal hashes or a 16-bit key leave it undecided, which is then no answer.
     template<EqualHashes equalHashes>
     ALWAYS_INLINE std::optional<JSString*> lookUpCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
     {
@@ -162,6 +162,10 @@ public:
                 return std::nullopt;
             else
                 return findAmongEqualHashes(pair, characters);
+        }
+        if constexpr (equalHashes == EqualHashes::LeaveUndecided) {
+            if (!cachedKey(entry)->tryGetValueImpl()->is8Bit()) [[unlikely]]
+                return std::nullopt;
         }
         return matchingKey(entry, characters);
     }
@@ -290,10 +294,15 @@ private:
         if (evicts && ++m_keysByPartsEvictionCount > tableSize / 4) [[unlikely]]
             growKeysByParts();
     }
+    ALWAYS_INLINE JSString* cachedKey(uint64_t entry) const { return uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry))); }
+    // A key that has named a property holds the atom of its characters, which may be a 16-bit string.
     ALWAYS_INLINE JSString* matchingKey(uint64_t entry, std::span<const Latin1Character> characters) const
     {
-        auto* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(m_cageBase, static_cast<uint32_t>(entry)));
-        return CompactTable::hasCharacters<Latin1Character>(*candidate->tryGetValueImpl(), characters) ? candidate : nullptr;
+        JSString* candidate = cachedKey(entry);
+        const StringImpl& impl = *candidate->tryGetValueImpl();
+        if (!impl.is8Bit()) [[unlikely]]
+            return equal(&impl, characters) ? candidate : nullptr;
+        return CompactTable::hasCharacters<Latin1Character>(impl, characters) ? candidate : nullptr;
     }
     JSString* findAmongEqualHashes(const uint64_t* pair, std::span<const Latin1Character>) const;
     size_t removeDeadEntries(VM&, std::span<uint64_t>);

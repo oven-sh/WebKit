@@ -19,10 +19,8 @@
 #include "JSCInlines.h"
 #include "MicrotaskQueueInlines.h"
 
-#if CPU(X86_64) && OS(LINUX)
-#include <sys/mman.h>
+#include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
-#endif
 
 namespace JSC::AOT::RuntimeHooks {
 
@@ -101,15 +99,10 @@ void didChangeMicrotaskQueueing(VM& vm)
 
 CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)
 {
-#if CPU(X86_64) && OS(LINUX)
     VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
     Locker locker { loopPollPages.lock };
     for (void* page : loopPollPages.pages)
-        RELEASE_ASSERT(!mprotect(page, WTF::pageSize(), enabled ? PROT_NONE : PROT_READ | PROT_WRITE));
-#else
-    UNUSED_PARAM(vm);
-    UNUSED_PARAM(enabled);
-#endif
+        OSAllocator::protect(page, WTF::pageSize(), !enabled, !enabled);
 }
 
 } // namespace JSC::AOT::RuntimeHooks

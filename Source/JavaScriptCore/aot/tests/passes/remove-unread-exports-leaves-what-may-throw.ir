@@ -1,0 +1,33 @@
+# export const unread = module   export const alsoUnread = 2
+# The stores of variables that nothing reads go, and with them what only they used. The object of a module is made on demand, which may throw: it stays where it was written. A number goes.
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pass TypeValues AnalyzeFlow ApplyFlowResults RemoveUnreadExports
+# STATISTIC: UnreadVariableStoresRemoved = 2
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0 requests=[{target=m1 completes=true}]
+module m1 path="/library.ts" displayPath="library.ts" body=f1 exports=[{name="alsoUnread" variable=g2}, {name="read" variable=g0}, {name="unread" variable=g1}]
+entry module=m0
+variable g0 name="read" module=m1 declared={type=anything}
+variable g1 name="unread" module=m1 declared={type=anything}
+variable g2 name="alsoUnread" module=m1 declared={type=anything}
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}
+
+function f1 name="library" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    PutModuleVariable v0 variable=g0
+    v2 = ModuleBuiltin builtin=ModuleObject module=m1
+    PutModuleVariable v2 variable=g1
+    v4 = Integer integer=2
+    PutModuleVariable v4 variable=g2
+    Return
+# CHECK: v0: 1 = Integer integer=1
+# CHECK-NEXT: PutModuleVariable v0 variable=g0
+# CHECK-NEXT: v2: {{*}} = ModuleBuiltin builtin=ModuleObject module=m1
+# CHECK-NEXT: Return
+# CHECK-NEXT: }
+}

@@ -197,7 +197,8 @@ public:
     bool hasNotBegunAsFile(ModuleID) const;
     void markModulesBelowWalkedRoot(ModuleID root);
     void didStartLoad(JSPromise*, ModuleID root);
-    ModuleRecord* recordOfCommonJSFile(ModuleID);
+    enum class LoadOfFile : bool { IsAskedFor, HasComeToFile };
+    ModuleRecord* recordOfCommonJSFile(ModuleID, LoadOfFile = LoadOfFile::HasComeToFile);
     void noteLoadOfFile(ModuleID fileOrFace);
     bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
     bool importsFileBeingEvaluated(ModuleID root) const;

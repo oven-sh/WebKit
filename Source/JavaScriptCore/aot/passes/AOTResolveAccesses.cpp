@@ -285,8 +285,10 @@ Effects effectsAfterRewrite(FunctionPassContext& context, const PropertyAccessPl
         if (!getters)
             return Effects::unknownCode();
         Effects effects = effectsOfAccessForm(program, plan.operation, stamp.key, stamp.receivers);
-        for (FunctionID getter : *getters)
-            effects.merge(effectsOfCalling({ program, context.inputs.effects }, getter).normal);
+        for (FunctionID getter : *getters) {
+            if (!context.build.isSabotaged(Sabotage::GettersInSlotsHaveNoEffects))
+                effects.merge(effectsOfCalling({ program, context.inputs.effects }, getter).normal);
+        }
         return effects;
     }
     case AccessForm::SetterInSlot:
@@ -1199,12 +1201,12 @@ static ValueID emitTestsOfObject(IRBuilder& builder, std::span<Value> tests, Val
 {
     ValueID proven = object;
     for (Value& test : tests) {
-        bool provesType = !provesForStretch(provesOf(test.opcode));
+        // A test of members of other objects has no operand.
+        bool asksObject = test.numberOfOperands() && test.operand(testedOperandIndex) == object;
+        bool provesType = asksObject && !provesForStretch(provesOf(test.opcode));
         bool provesFilledSlot = provesOf(test.opcode) == Proof::SlotFilled;
-        if (test.operand(testedOperandIndex) == object)
+        if (asksObject)
             test.setOperand(testedOperandIndex, proven);
-        else
-            provesType = false;
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(builder.append(WTF::move(test)), testedOperandIndex, frequency, frequencyOfFailure);
         builder.moveToEndOf(branch.notTaken);
         builder.emitJump(whenFailed);

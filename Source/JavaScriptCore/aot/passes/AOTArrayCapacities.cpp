@@ -1343,7 +1343,7 @@ static Vector<FailedStorageTest, 4> collectFailedTestsForDoubleStorage(FunctionP
 // The code behind a failing edge is generic as a rule and relies on no proof about an array.
 static void findConversionsEndingProofs(FunctionPassContext& context, Vector<FailedStorageTest, 4>& failedTests)
 {
-    if (failedTests.isEmpty())
+    if (failedTests.isEmpty() || context.build.isSabotaged(Sabotage::ConversionsOfStorageEndNoProofs))
         return;
     const Function& function = context.function;
     const GuardAvailability& guards = context.analyses.guards();
@@ -1736,10 +1736,15 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
         builder.applyInsertions();
     }
 
+    // The test of one read cuts its block in two, and a validating build keeps two reads in one block.
+    Vector<Target, 8> targetsWhenAbsent = copiedReads.map<Vector<Target, 8>>([&](ValueID copied) {
+        return function.at(analyses.cfg().predecessors(analyses.useLists().locationOf(copied).block).front()).terminator.targets.last();
+    });
     // What a read gives follows its kind of storage.
-    for (ValueID copied : copiedReads) {
+    for (size_t index = 0; index < copiedReads.size(); ++index) {
+        ValueID copied = copiedReads[index];
+        Target& whenAbsent = targetsWhenAbsent[index];
         ValueLocation location = analyses.useLists().locationOf(copied);
-        Target whenAbsent = function.at(analyses.cfg().predecessors(location.block).front()).terminator.targets.last();
         Value read = function.at(copied);
         read.setExpected({ });
         builder.setOrigin(read.origin());

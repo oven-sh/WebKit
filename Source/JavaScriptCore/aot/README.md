@@ -36,7 +36,7 @@ Without any build, in seconds: `Tools/Scripts/aot/check-unified-sources.py` (nam
 ## Things that have bitten
 
 - **`aot/` is compiled in unified bundles.** A `static` function, a type, or anything in an unnamed namespace needs a name that no other source of `aot/` uses.
-- **A new source goes into `Sources.txt`** (or `SourcesCompiledForSize.txt`). Bun reads the same lists when it builds this folder itself.
+- **A new source goes into `Sources.txt`** (or, if builds spend no time in it, `SourcesCompiledForSize.txt` or `SourcesCompiledForMinimumSize.txt`: `AOT.cmake` says which). Bun reads the same lists when it builds this folder itself.
 - **Nothing that a generator writes is checked in.** A new generated header that Bun's build reads must also be copied into the release by every Dockerfile's pack step, or Bun cannot be built against the prebuilt engine.
 - **No static initializers.**
 - **A change to the IR's schema (`ir/schema/*.def`) changes both repositories.** They land together.

@@ -125,16 +125,17 @@ function f2 name="total" module=m0 position=44 flags=[IsChecked, HasExplicitName
 # CHECK-LABEL: steps by 1
 # CHECK: Int32 b@[[k]] = Phi(
 # CHECK-NEXT: Double b@[[sum]] = Phi(
-# CHECK-NEXT: Patchpoint({{*}}isLoopPoll{{*}}:LoopHint)
 # CHECK-NEXT: Double b@[[value]] = IToD(b@[[k]], 
 # CHECK-NEXT: Double b@{{*}} = Add(b@[[value]], b@[[sum]], {{*}}:Add)
-# CHECK-NEXT: Patchpoint({{*}}isLoopPoll{{*}}:LoopHint)
 # CHECK-NOT: Patchpoint
 # CHECK-NOT: Reads:
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-NOT: Patchpoint
 # CHECK-NOT: Branch(
 # CHECK-LABEL: end of loop
-# The loop polls twice a turn: once for the loop of the generator and once for the loop that steps it.
+# The turns are counted in front of the loop: where they are few it goes without its poll, and a copy of it that polls takes the others.
+# The copy polls twice a turn: once for the loop of the generator and once for the loop that steps it.
+# X64: loop #{{*}}, instructions: 5, patchpoints: 0, {{*}} steps by 1
 # X64: loop #{{*}}, instructions: 5, patchpoints: 2, {{*}} steps by 1
+# ARM64: loop #{{*}}, instructions: 4, patchpoints: 0, {{*}} steps by 1
 # ARM64: loop #{{*}}, instructions: 4, patchpoints: 2, {{*}} steps by 1

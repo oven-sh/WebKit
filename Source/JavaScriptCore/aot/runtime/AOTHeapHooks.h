@@ -13,6 +13,7 @@
 #include <memory>
 #include <span>
 #include <wtf/Forward.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -45,6 +46,15 @@ String nameOfCompiledCallee(JSCell*);
 std::span<const uint32_t> offsetsOfNarrowReferences(const Structure*);
 // For a validating image, while the mutators are stopped. Allocates nothing and runs no code, so a thread that marks may call it.
 void validateSlotsOf(VM&, const JSCell* compiledObject);
+
+// While a heap snapshot names an object after the function that it finds under `constructor`. The name is a label for whoever reads the snapshot, so the compiler
+// counts no read for it. A validating image lets this one look name a field that was removed as unread, and no other name and no other look.
+class LookForConstructorBySnapshot {
+    WTF_MAKE_NONCOPYABLE(LookForConstructorBySnapshot);
+public:
+    JS_EXPORT_PRIVATE LookForConstructorBySnapshot();
+    JS_EXPORT_PRIVATE ~LookForConstructorBySnapshot();
+};
 
 } // namespace HeapHooks
 

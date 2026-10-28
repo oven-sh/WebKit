@@ -462,6 +462,109 @@ static void testSuperConstructionsWithLists(bool hasOneInstance)
     calls.runner.countCallsOf(Entry::operationAOTSuperConstruct);
 }
 
+namespace {
+
+struct alignas(16) FakeList {
+    WTF_MAKE_NONCOPYABLE(FakeList);
+public:
+    static constexpr uint32_t capacity = numberOfArgumentGPRs + 1;
+
+    FakeList(IndexingType shape, uint32_t length, uint8_t flags = IsPristine)
+        : indexingTypeAndMisc(IsArray | shape)
+        , flags(flags)
+        , publicLength(length)
+    {
+        butterfly = elements.data();
+        elements.fill(0);
+    }
+
+    uint64_t address() const { return std::bit_cast<uintptr_t>(this); }
+
+    uint32_t structureID { 0 };
+    uint8_t indexingTypeAndMisc;
+    uint8_t type { ArrayType };
+    uint8_t flags;
+    uint8_t cellState { 0 };
+    uint64_t* butterfly { nullptr };
+    uint32_t publicLength;
+    uint32_t vectorLength { capacity };
+    std::array<uint64_t, capacity> elements;
+};
+static_assert(OBJECT_OFFSETOF(FakeList, indexingTypeAndMisc) == JSCell::indexingTypeAndMiscOffset() && OBJECT_OFFSETOF(FakeList, flags) == JSCell::typeInfoFlagsOffset());
+static_assert(OBJECT_OFFSETOF(FakeList, butterfly) == JSObject::butterflyOffset());
+static_assert(static_cast<ptrdiff_t>(OBJECT_OFFSETOF(FakeList, publicLength)) - static_cast<ptrdiff_t>(OBJECT_OFFSETOF(FakeList, elements)) == Butterfly::offsetOfPublicLength());
+
+} // anonymous namespace
+
+static void testSuperConstructionsWithArrays(bool hasOneInstance)
+{
+    Calls calls(hasOneInstance);
+    constexpr uint64_t newTarget = boxedInt32(90);
+    constexpr unsigned maxLengthInRegisters = numberOfArgumentGPRs - 1;
+    FakeClosure classObject;
+    calls.initializeClosure(classObject, StructureOf::PlainClosure, calls.runner.closureWord(numberOfArgumentGPRs, { .isNotCallable = true, .takesNewTarget = true }));
+
+    auto fill = [](FakeList& list) {
+        bool holdsDoubles = (list.indexingTypeAndMisc & IndexingShapeMask) == DoubleShape;
+        for (uint32_t i = 0; i < list.publicLength; ++i)
+            list.elements[i] = holdsDoubles ? std::bit_cast<uint64_t>(i + 0.5) : boxedInt32(100 + i);
+    };
+    auto boxedElement = [](const FakeList& list, uint32_t i) {
+        bool holdsDoubles = (list.indexingTypeAndMisc & IndexingShapeMask) == DoubleShape;
+        return holdsDoubles ? static_cast<uint64_t>(JSValue::encode(jsDoubleNumber(i + 0.5))) : list.elements[i];
+    };
+
+    for (IndexingType shape : { Int32Shape, ContiguousShape, DoubleShape, static_cast<IndexingType>(Int32Shape | CopyOnWrite) }) {
+        for (unsigned length = 0; length <= maxLengthInRegisters; ++length) {
+            FakeList list(shape, length);
+            fill(list);
+            ArgumentRegisters expected;
+            expected.fill(undefinedBits);
+            expected[0] = newTarget;
+            for (unsigned i = 0; i < length; ++i)
+                expected[i + 1] = boxedElement(list, i);
+            StubRun run = calls.runner.run(superConstructWithArray(), { classObject.address(), newTarget, list.address() });
+            checkLandedInFunction(run, classObject.address(), undefinedBits, expected);
+            AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == length + 1);
+        }
+    }
+    {
+        FakeList empty(UndecidedShape, 0);
+        ArgumentRegisters expected;
+        expected.fill(undefinedBits);
+        expected[0] = newTarget;
+        StubRun run = calls.runner.run(superConstructWithArray(), { classObject.address(), newTarget, empty.address() });
+        checkLandedInFunction(run, classObject.address(), undefinedBits, expected);
+        AOT_TEST_CHECK(static_cast<uint32_t>(run.landedCall.count) == 1);
+    }
+
+    calls.runner.recordCallsOf(Entry::operationAOTSuperConstructList);
+    auto checkLeftToOperation = [&](FakeList& list) {
+        StubRun run = calls.runner.run(superConstructWithArray(), { classObject.address(), newTarget, list.address() });
+        AOT_TEST_CHECK(run.landedCall.place == LandedCall::Place::Nowhere && run.numberOfRecordedCalls == 1);
+        AOT_TEST_CHECK(run.recordedArguments[0] == classObject.address() && run.recordedArguments[1] == newTarget && run.recordedArguments[2] == list.address());
+    };
+    for (IndexingType shape : { Int32Shape, ContiguousShape, DoubleShape }) {
+        FakeList tooLong(shape, maxLengthInRegisters + 1);
+        fill(tooLong);
+        checkLeftToOperation(tooLong);
+
+        FakeList withHole(shape, 2);
+        fill(withHole);
+        withHole.elements[1] = shape == DoubleShape ? std::bit_cast<uint64_t>(PNaN) : 0;
+        checkLeftToOperation(withHole);
+
+        FakeList changed(shape, 1, 0);
+        fill(changed);
+        checkLeftToOperation(changed);
+    }
+    FakeList holesOnly(UndecidedShape, 1);
+    checkLeftToOperation(holesOnly);
+    FakeList sparse(ArrayStorageShape, 0);
+    checkLeftToOperation(sparse);
+    calls.runner.countCallsOf(Entry::operationAOTSuperConstructList);
+}
+
 static void testCallsWithLists(bool hasOneInstance)
 {
     Calls calls(hasOneInstance);
@@ -528,6 +631,7 @@ std::span<const NativeTest> stubCallTests()
         { "stubs/call-value/bound-functions"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsOfBoundFunctions>> },
         { "stubs/construct-value/class-objects-and-other-callees"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testConstructions>> },
         { "stubs/super-construct-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testSuperConstructionsWithLists>> },
+        { "stubs/super-construct-with-array/arrays-of-every-shape-and-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testSuperConstructionsWithArrays>> },
         { "stubs/call-with-list/lists-of-every-length"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsWithLists>> },
         { "stubs/call-with-list/long-lists-by-callee"_s, ImageTests::whenExecutable<withAnyNumberOfInstances<testCallsWithLongLists>> },
     };

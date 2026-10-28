@@ -3344,6 +3344,8 @@ struct TestPlacer {
     // Nobody can tell that it ran, so nobody can tell that the copy runs it again.
     bool canRunTwice(BlockID block)
     {
+        if (context.build.isSabotaged(Sabotage::WhatRunsAgainLeavesNoTrace))
+            return true;
         auto canRunTwice = [](const EffectsOnEdges& effects) {
             auto isUnseen = [](const Effects& effects) { return effects.writes.containsOnly(heapsWhoseWritesNobodySees) && !effects.mayRunOtherCode(); };
             return isUnseen(effects.normal) && isUnseen(effects.handler);

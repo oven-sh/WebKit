@@ -338,13 +338,39 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     ensureStillAliveHere(structureBefore);
 }
 
+// As branchIfChainMayHaveName() of the stubs: no object above has an accessor or a property that cannot be written under the name.
+static bool storeCreatesOwnField(const VMPropertyCaches& tables, const Object& object, uint32_t name)
+{
+    if (!FieldTableEntry::hasColumn(name))
+        return false;
+    if (object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        return !tables.mayBeNameOfObjectPrototype(name);
+    const AbsenceFilter& filter = tables.absenceFilterFor(object.structureID());
+    return filter.structureID == object.structureID().bits() && filter.generationForStores == tables.absenceFilterGenerationForStores() && filter.letsStoresPass(name) && !tables.wasChangedOnSomeChain(name);
+}
+
+static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, JSValue value, PutMode mode)
+{
+    if (!base.isCell())
+        return false;
+    PropertyCaches& caches = *instance->state->propertyCaches;
+    const FieldExit* exit = caches.findFieldExit(base.asCell()->structureID(), key);
+    if (!exit || caches.countsNames())
+        return false;
+    auto* object = uncheckedDowncast<Object>(base.asCell());
+    // A definition asks nothing of what is above the object.
+    return (exit->wasInSlot || mode == PutMode::Define || storeCreatesOwnField(caches.tables(), *object, key)) && object->tryRepeat(*instance->vm, *exit, value);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTPutByIdAndCache, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedValue, uint32_t key, SiteCache cache, uint32_t putMode))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPutByIdAndCache);
-    NamedAccess access { instance, identifierAt(instance, key), key, cache };
     JSValue base = JSValue::decode(encodedBase);
     JSValue value = JSValue::decode(encodedValue);
     PutMode mode = static_cast<PutMode>(putMode);
+    if (tryRepeatFieldExit(instance, base, key, value, mode))
+        OPERATION_RETURN(scope);
+    NamedAccess access { instance, identifierAt(instance, key), key, cache };
     LookByName look(vm, base, access.ident.impl());
     if (base.isUndefinedOrNull()) [[unlikely]]
         throwException(globalObject, scope, createNotAnObjectError(globalObject, base, access.ident));

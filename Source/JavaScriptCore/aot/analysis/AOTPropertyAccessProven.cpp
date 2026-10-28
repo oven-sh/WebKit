@@ -528,9 +528,9 @@ static bool addStepOnLayout(const Program& program, LayoutID layout, Protocol ke
 {
     switch (keylessProtocol) {
     case Protocol::OwnKeys:
-        return true;
+        return !hasFieldUnderSymbolCreatedByLibrary(program, program.at(layout));
     case Protocol::OwnValues:
-        return addOwnValues(program, layout, result);
+        return !hasFieldUnderSymbolCreatedByLibrary(program, program.at(layout)) && addOwnValues(program, layout, result);
     case Protocol::PrototypeChain:
         return hasProvenPrototypeChain(program, layout);
     case Protocol::ToPrimitive:

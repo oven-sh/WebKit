@@ -149,7 +149,8 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # LOOP: Int64 b@{{*}} = Patchpoint(b@[[map]]:Register({{*}}), b@[[word]]:Register({{*}}), b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallInline)
 # LOOP-LABEL: end of loop
 # CALLS-LABEL: loop #
-# CALLS-COUNT-2: ExitsSideways
+# A stub may write the length, which is read again on every turn: nothing counts the turns ahead of the loop, so the loop polls on each of them.
+# CALLS-COUNT-3: ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
 # The members of Map.prototype cannot be replaced, so nothing in the function reads them by name, makes their function objects or tests which functions they are.
@@ -159,5 +160,5 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # WHOLE-NOT: :Call)
 # WHOLE-LABEL: end of function
 # The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 33, patchpoints: 4
-# ARM64: loop #{{*}}, instructions: 34, patchpoints: 5
+# X64: loop #{{*}}, instructions: 33, patchpoints: 5
+# ARM64: loop #{{*}}, instructions: 34, patchpoints: 6

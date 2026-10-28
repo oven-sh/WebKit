@@ -11,6 +11,7 @@
 #include "AirCode.h"
 #include "AirInstInlines.h"
 #include "AirOpcodeUtils.h"
+#include "B3Value.h"
 #include "CallFrame.h"
 #include "GPRInfo.h"
 
@@ -61,6 +62,21 @@ bool isIncomingArgumentAddress(const Arg& arg)
     return arg.isAddr()
         && arg.base() == Tmp(GPRInfo::callFrameRegister)
         && arg.offset() >= static_cast<Value::OffsetType>(sizeof(CallerFrameAndPC));
+}
+
+bool writesMemoryOutsideFrame(Inst& inst)
+{
+    if (inst.kind.opcode == Patch) {
+        if (!inst.origin)
+            return true;
+        B3::Effects effects = inst.origin->effects();
+        return effects.writes || effects.fence;
+    }
+    bool result = false;
+    inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
+        result |= Arg::isAnyDef(role) && arg.isMemory() && !arg.isStack() && !arg.isCallArg();
+    });
+    return result;
 }
 
 FrameNeeds frameNeedsOf(Inst& inst, uint64_t savedCalleeSaves)
@@ -145,6 +161,47 @@ FrameState FrameStates::stateAfter(BasicBlock* block, FrameState state)
     return state;
 }
 
+static std::optional<FrameStateViolation> findWriteAheadOfFrame(Code& code)
+{
+    unsigned smallestFrameTested = code.policy().frame.smallestFrameTestedAtSetup;
+    if (smallestFrameTested && (!code.frameLayout().isPlanned || code.frameSize() < smallestFrameTested))
+        return std::nullopt;
+
+    enum : uint8_t { HasHadNoFrame = 1, HasWritten = 2 };
+    IndexMap<BasicBlock*, uint8_t> atHead(code.size(), static_cast<uint8_t>(0));
+    Vector<BasicBlock*, 16> worklist;
+    auto reach = [&](BasicBlock* block, uint8_t state) {
+        if ((atHead[block] | state) == atHead[block])
+            return;
+        atHead[block] |= state;
+        worklist.append(block);
+    };
+    if (code.numEntrypoints()) {
+        for (const FrequentedBlock& entrypoint : code.entrypoints())
+            reach(entrypoint.block(), HasHadNoFrame);
+    } else
+        reach(code[0], HasHadNoFrame);
+
+    while (!worklist.isEmpty()) {
+        BasicBlock* block = worklist.takeLast();
+        uint8_t state = atHead[block];
+        for (unsigned instIndex = 0; instIndex < block->size() && state; ++instIndex) {
+            Inst& inst = block->at(instIndex);
+            if (inst.kind.opcode == EnterFrame) {
+                if (state & HasWritten)
+                    return FrameStateViolation { FrameStateViolation::Kind::WritesAheadOfFrame, block, instIndex };
+                state = 0;
+            } else if (writesMemoryOutsideFrame(inst))
+                state |= HasWritten;
+        }
+        if (!state)
+            continue;
+        for (BasicBlock* successor : block->successorBlocks())
+            reach(successor, state);
+    }
+    return std::nullopt;
+}
+
 std::optional<FrameStateViolation> findFrameStateViolation(Code& code)
 {
     FrameStates states(code);
@@ -166,7 +223,7 @@ std::optional<FrameStateViolation> findFrameStateViolation(Code& code)
             state = stateAfterInst(inst, state);
         }
     }
-    return std::nullopt;
+    return findWriteAheadOfFrame(code);
 }
 
 } } } // namespace JSC::B3::Air

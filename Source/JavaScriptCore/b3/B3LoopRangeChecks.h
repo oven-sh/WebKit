@@ -105,11 +105,6 @@ struct RangeCheckPlan {
     std::unique_ptr<StridedRangeChecks> strided;
     Vector<EntryGuard, 8> entryGuards;
     bool relationHoldsOnEntry { false };
-    // The number of turns is at most each limit, and at most the bound of a counter that starts at zero or above. One of these is the length of a view, of the characters of a string
-    // or of an array, or a small number: any other number is the program's to choose.
-    bool endsWithinData { false };
-    // The length of an array may be set to more than the array holds. Where this is the only length that bounds the turns, the fast version is for an array that has room for as many.
-    MemoryValue* lengthThatArrayMustHold { nullptr };
 
     bool clampsBound() const { return !bounds.isEmpty(); }
     bool dependsOnLoopTest() const { return clampsBound() || strided; }
@@ -139,7 +134,6 @@ struct MeetingCountersInputs {
 RangeCheckPlan planRangeChecksOfMeetingCounters(const MeetingCountersInputs&);
 void appendEntryGuards(FastPreHeader&, Origin, std::span<const EntryGuard>, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 void appendStridedRangeCheckGuards(FastPreHeader&, const StridedRangeChecks&, const CountedLoop&, const ScopedLambda<Value*(Value*)>& valueInPreHeader, StridedIndexVariables&);
-void appendGuardThatArrayHoldsLength(FastPreHeader&, Origin, MemoryValue* length, const ScopedLambda<Value*(Value*)>& valueInPreHeader);
 
 inline int64_t maxLimitForRangeChecks(Type type)
 {

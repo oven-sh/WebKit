@@ -106,7 +106,7 @@ def main():
         found = [os.path.relpath(os.path.join(folder, name), ROOT) for folder, _, names in os.walk(os.path.join(ROOT, "Source/JavaScriptCore/aot")) for name in names]
         # A build has no command for a source that it compiles inside a bundle.
         bundled = set()
-        for name in ("Sources.txt", "SourcesCompiledForSize.txt"):
+        for name in ("Sources.txt", "SourcesCompiledForSize.txt", "SourcesCompiledForMinimumSize.txt"):
             with open(os.path.join(ROOT, "Source/JavaScriptCore/aot", name)) as file:
                 bundled.update("Source/JavaScriptCore/" + line for line in file.read().split())
         files = sorted(f for f in found if f.endswith(suffix) and (entries.get(os.path.realpath(os.path.join(ROOT, f))) or f in bundled or arguments.headers))

@@ -474,8 +474,11 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
         // "Object" in snapshots and not get the name of the prototype's parent.
         JSObject* object = asObject(cell);
         if (JSGlobalObject* globalObject = object->realmMayBeNull()) {
+#if ENABLE(AOT)
+            AOT::HeapHooks::LookForConstructorBySnapshot look;
+#endif
             PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_profiler.vm());
-            if (!object->getOwnPropertySlot(object, globalObject, m_profiler.vm().propertyNames->constructor, slot)) {
+            if (!object->ordinaryGetOwnPropertySlot(globalObject, m_profiler.vm().propertyNames->constructor, slot)) {
                 name = JSObject::calculatedClassName(object);
             }
         }

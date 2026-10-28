@@ -808,6 +808,13 @@ void ClassDefinition::chooseStructures()
         m_shared = { };
 }
 
+static Structure* createStructureOfOrdinaryPrototype(VM& vm, JSGlobalObject* globalObject, JSValue parent, unsigned inlineCapacity)
+{
+    Structure* structure = JSFinalObject::createStructure(vm, globalObject, parent, inlineCapacity);
+    structure->setDidTransition(true);
+    return structure;
+}
+
 void ClassDefinition::createPrototype()
 {
     if (isShared()) {
@@ -815,7 +822,7 @@ void ClassDefinition::createPrototype()
         return;
     }
     if (m_part == ClassPart::Everything) {
-        m_prototype = constructEmptyObject(m_vm, JSFinalObject::createStructure(m_vm, m_globalObject, m_prototypeParent, JSFinalObject::defaultInlineCapacity));
+        m_prototype = constructEmptyObject(m_vm, createStructureOfOrdinaryPrototype(m_vm, m_globalObject, m_prototypeParent, JSFinalObject::defaultInlineCapacity));
         if (m_classLayout.evaluation() == EvaluationState::ProvenOnce)
             m_classes.registerClassPrototype(m_classLayout, m_prototype);
         return;
@@ -856,7 +863,7 @@ void ClassDefinition::prepareObjects()
         m_classObject->initializeClassObject(m_vm, m_classObjectParent ? m_classObjectParent : m_classObject->getPrototypeDirect().getObject(), m_prototype);
     }
     if (m_part == ClassPart::PrototypeMembers) {
-        Structure* ordinaryStructure = JSFinalObject::createStructure(m_vm, m_globalObject, m_prototypeParent, ClassPrototype::inlineCapacity);
+        Structure* ordinaryStructure = createStructureOfOrdinaryPrototype(m_vm, m_globalObject, m_prototypeParent, ClassPrototype::inlineCapacity);
         if (m_prototype->butterfly())
             m_earlyPrototypeStores.takeFrom(m_globalObject, m_prototype);
         uncheckedDowncast<ClassPrototype>(m_prototype)->convertToOrdinaryObject(m_vm, ordinaryStructure);
@@ -1154,6 +1161,7 @@ Structure* ClassPrototype::createStructure(VM& vm, JSGlobalObject* globalObject,
 {
     Structure* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
     structure->setMayBePrototype(true);
+    structure->setDidTransition(true);
     return structure;
 }
 
@@ -1179,13 +1187,19 @@ void ClassPrototype::convertToOrdinaryObject(VM& vm, Structure* ordinary)
     setStructure(vm, ordinary);
 }
 
+JSObject* ClassPrototype::classObject() const
+{
+    State& state = stateOf(this);
+    const LayoutData& classLayout = *state.objects->classes.classWithIndex(m_classIndex);
+    return asObject(state.objects->closures.closure(vm(), FunctionID(classLayout.classData().classConstructor)));
+}
+
 void ClassPrototype::createMembers(JSObject* object)
 {
     VM& vm = object->vm();
     State& state = stateOf(object);
     ClassTable& classes = state.objects->classes;
-    const LayoutData& classLayout = *classes.classWithIndex(uncheckedDowncast<ClassPrototype>(object)->classIndex());
-    Closure* classObject = uncheckedDowncast<Closure>(state.objects->closures.closure(vm, FunctionID(classLayout.classData().classConstructor)));
+    Closure* classObject = uncheckedDowncast<Closure>(uncheckedDowncast<ClassPrototype>(object)->classObject());
     VMPropertyCaches::UnreportedChange change(*vm.aotState().propertyCaches, object);
     classes.createClassPart(state.instance.globalObject, classObject, ClassTable::ClassPart::PrototypeMembers);
     RELEASE_ASSERT(object->type() == FinalObjectType);

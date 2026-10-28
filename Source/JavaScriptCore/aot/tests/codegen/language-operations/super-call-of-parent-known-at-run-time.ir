@@ -1,4 +1,4 @@
-# A super call whose parent is known only at run time goes through the stub that enters a constructor of the program, like a construction whose callee is known only at run time. With an argument list it is an operation
+# A super call whose parent is known only at run time goes through the stub that enters a constructor of the program, like a construction whose callee is known only at run time. With an argument list it goes through the stub that loads the elements of a short list into the registers and goes on to that one
 # RUN: generate-code calls
 # OPTIONS: heat=everything-is-hot check=validate-back-end only-passes=EstimateHeat
 # CHECK-LABEL: f1: size=
@@ -9,7 +9,8 @@
 # CHECK: stub ConstructValue.SuperCall x1
 # CHECK-NOT: stub ConstructValue.NewExpression
 # CHECK-LABEL: f4: size=
-# CHECK: operation operationAOTSuperConstructList x1
+# CHECK-NOT: operation operationAOTSuperConstructList x
+# CHECK: stub SuperConstructWithArray x1
 # CHECK-NOT: stub ConstructValue
 
 module m0 path="main.js" displayPath="main.js" body=f0

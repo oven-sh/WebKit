@@ -11,6 +11,7 @@
 #include "AOTCodeGenerator.h"
 #include "AOTHeaps.h"
 #include "AOTSlotRepresentation.h"
+#include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubRegisters.h"
 #include "AOTVector.h"
@@ -171,7 +172,7 @@ private:
         for (uint32_t component = 0; component < components.numberOfComponents; ++component) {
             uint32_t begin = components.firstMemberOf[component];
             std::span<uint32_t> positions = components.members.mutableSpan().subspan(begin, components.firstMemberOf[component + 1] - begin);
-            std::ranges::sort(positions);
+            AOT::sort(positions);
             blocks.shrink(0);
             for (uint32_t position : positions)
                 blocks.append(postOrder[position]);
@@ -514,7 +515,9 @@ private:
         auto* memory = word->as<B3::MemoryValue>();
         if (!memory || memory->opcode() != B3::Load || !memory->range())
             return false;
-        return m_heaps.permanentCells.begin() <= memory->range().begin() && memory->range().end() <= m_heaps.permanentCells.end();
+        return std::ranges::any_of(m_heaps.permanentCells, [&](B3::HeapRange cells) {
+            return cells.begin() <= memory->range().begin() && memory->range().end() <= cells.end();
+        });
     }
 
     bool definesReference(B3::Value* value) const
@@ -978,7 +981,7 @@ static HeapsOfCollection heapsOfCollectionIn(B3::Procedure& proc)
         .collectorState = heaps.rangeOf(heaps.collectorState),
         .weakTableStorage = heaps.rangeOf(heaps.weakTableStorage),
         .frameSlots = heaps.rangeOf(heaps.frameSlots),
-        .permanentCells = heaps.rangeOf(heaps.AOTInstance_stringCells),
+        .permanentCells = { heaps.rangeOf(heaps.AOTInstance_stringCells), heaps.rangeOf(heaps.AOTInstance_closureCells) },
     };
 }
 

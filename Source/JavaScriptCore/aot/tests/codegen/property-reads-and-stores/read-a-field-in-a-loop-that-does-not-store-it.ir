@@ -85,10 +85,9 @@ function f1 name="walk" module=m0 position=30 flags=[IsChecked, HasExplicitName]
     Return v19
 }
 
-# The field is loaded once, in the block that leads into the loop.
+# The field is loaded once, in the block that leads into the loop. That block also asks whether the turns are few enough to go without a poll.
 # CHECK-LABEL: name="walk" role=Source
 # CHECK: Double b@[[size]] = Load(b@[[step]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK-NEXT: Jump(Terminal
 # CHECK-NOT: Reads:ObjectFields
 # CHECK: Double b@[[total]] = Add(b@[[size]], b@
 # CHECK-NOT: Reads:ObjectFields

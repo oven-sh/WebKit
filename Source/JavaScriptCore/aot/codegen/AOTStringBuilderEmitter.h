@@ -31,6 +31,7 @@ public:
     void generateStringBuilderDiscard(const ValueContext&);
     void generateStringBuilderCheckpoint(const ValueContext&);
     void generateStringBuilderRollBack(const ValueContext&);
+    void generateStringBuilderCheckLength(const ValueContext&);
 
     struct StackBuilder {
         B3::Air::StackSlot* slot { nullptr };

@@ -79,8 +79,8 @@ function f1 name="weightOf" module=m0 position=34 flags=[IsChecked, HasExplicitN
     Return v7
 }
 
-# The answer is a number or undefined, and it stays a double: undefined is a bit pattern that is no number. One comparison with undefined, one load,
-# and a test that the loaded double is a number, so that no other bit pattern gets out. Nothing is boxed.
+# The answer is a number or undefined, and it stays a double: undefined is the bits of a NaN with a payload, which no double has. One comparison with undefined and one load.
+# Nothing is boxed.
 # CHECK-LABEL: name="weightOf" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[parcel]] = ArgumentReg(
@@ -91,14 +91,11 @@ function f1 name="weightOf" module=m0 position=34 flags=[IsChecked, HasExplicitN
 # CHECK-NEXT: BB#[[read]]:
 # CHECK-NEXT: Predecessors:
 # CHECK-NEXT: Double b@[[weight]] = Load(b@[[parcel]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK-NEXT: Int32 b@[[isNumber]] = Equal(b@[[weight]], b@[[weight]])
-# CHECK-NEXT: Branch(b@[[isNumber]], Terminal)
-# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
 # CHECK: Double b@[[answer]] = Phi(ReadsLocalState, {{*}}:Parameter)
 # CHECK-NEXT: Return(b@[[answer]], Terminal)
 # CHECK-LABEL: end of function
 # BRANCHES-LABEL: name="weightOf" role=Source
-# BRANCHES-COUNT-2: Branch(
+# BRANCHES-COUNT-1: Branch(
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of function
 # NONE-LABEL: name="weightOf" role=Source

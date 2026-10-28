@@ -594,22 +594,6 @@ static void testPlansOutliveCollectionsWhileTheirStructuresLive(LoadedProgram& p
     AOT_TEST_CHECK(valueOf(vm, RuntimeCounterID::AssignmentPlansMade) == plansMade);
 }
 
-static void testClonedStructuresAreForgottenAtEachCollection(LoadedProgram& program)
-{
-    VM& vm = program.vm();
-    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
-        JSObject* source = constructEmptyObject(program.realm());
-        put(program, source, "a"_s, 1);
-        put(program, source, "b"_s, 2);
-        ClonedStructure& cloned = program.instance().allocation.clonedStructures[AllocationWords::placeOfClonedStructure(source->structureID().bits())];
-        JSObject* copy = uncheckedDowncast<JSObject>(callOperationFromTest(vm, operationAOTCopyObject, &program.instance(), JSValue::encode(source), 0, 0, nullptr).value);
-        AOT_TEST_CHECK(copy != source && copy->structureID() == source->structureID() && holdsPropertiesOf(program, copy, source));
-        AOT_TEST_CHECK(static_cast<uint32_t>(cloned.header) == source->structureID().bits() && cloned.cellSize == JSFinalObject::allocationSize(source->structure()->inlineCapacity()));
-        vm.heap.collectSync(scope);
-        AOT_TEST_CHECK(!cloned.header && !cloned.cellSize);
-    }
-}
-
 static void testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -748,7 +732,6 @@ std::span<const NativeTest> assignmentPlanTests()
         { "assignment-plans/kinds-of-pairs-that-come-in-turns-keep-their-plans"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<24, 4>> },
         { "assignment-plans/kinds-of-pairs-that-find-no-place-leave-the-plans-of-others"_s, withPoints<testKindsOfPairsThatComeInTurnsKeepTheirPlans<60, 60>> },
         { "assignment-plans/plans-outlive-collections-while-their-structures-live"_s, withPoints<testPlansOutliveCollectionsWhileTheirStructuresLive> },
-        { "assignment-plans/cloned-structures-are-forgotten-at-each-collection"_s, withPoints<testClonedStructuresAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-fill-empty-objects-and-are-forgotten-at-each-collection"_s, withPoints<testCopiesWithoutFrameFillEmptyObjectsAndAreForgottenAtEachCollection> },
         { "assignment-plans/copies-without-frame-overwrite-fields-that-the-target-lists"_s, withPoints<testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists> },
         { "assignment-plans/integers-move-into-slots-that-may-hold-none"_s, testIntegersMoveIntoSlotsThatMayHoldNone },

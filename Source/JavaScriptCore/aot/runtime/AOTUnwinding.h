@@ -84,6 +84,8 @@ Exception::StackCaptureAction stackCaptureActionOfThrow(VM&, const Instance&, JS
 bool nearestHandlerIgnoresValue(VM&, const Instance&, CallFrame* stubFrame);
 // Of the run of compiled frames that has called the frame. Nothing is no answer.
 std::optional<HandlerType> findNearestHandler(VM&, CallFrame* stubFrame);
+// Under validation, before a throw is unwound. A handler is found by the site of the call that the throw leaves.
+void JIT_OPERATION_ATTRIBUTES checkThatThrowingCallHasSite(Instance*, CallFrame* stubFrame);
 // For a throw whose nearest handler takes the Exception and throws it on.
 bool isCaughtAboveCleanup(VM&, const ReturnSiteInRun& siteOfCleanup);
 // Whether the trace was taken where native code now stands. True where compiled code has not called it.

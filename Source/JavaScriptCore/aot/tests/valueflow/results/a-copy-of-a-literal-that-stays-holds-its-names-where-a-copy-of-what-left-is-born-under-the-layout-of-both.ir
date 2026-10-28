@@ -1,0 +1,32 @@
+# const defaults = { a: 1, b: 2 }   const handedOver = { a: 1, b: 2 }   unknown(handedOver)   const twin = { ...handedOver }   const merged = { ...defaults }
+# `twin` is born under the layout of the two literals. Unknown code holds `handedOver` and can take any name from it, so `twin` holds no name for sure. `defaults` lists `a` and `b`
+# itself and nobody else holds it, so a copy of `defaults` holds both, each in a field that the analysis appends and that is always filled.
+# RUN: valueflow-apply
+# CHECK: layout L1 name="OfWhatStays" fields=[{key="a"{{*}}occupancy=AlwaysFilled{{*}}{key="b"{{*}}occupancy=AlwaysFilled
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Defaults" fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="OfWhatStays"
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = Integer integer=1
+    v3 = Integer integer=2
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v6 = Call v1, -, v5
+    v7 = NewObject layout=L0
+    CopyDataProperties v7, v5
+    v9 = FinishObject v7
+    v10 = NewObject layout=L1
+    CopyDataProperties v10, v4
+    v12 = FinishObject v10
+    v13 = PropGet v12 key="a"
+    v14 = PropGet v12 key="b"
+    v15 = PropGet v9 key="a"
+    Return
+}

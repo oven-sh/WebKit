@@ -3065,9 +3065,12 @@ static std::optional<size_t> roomForListedScalars(JSGlobalObject& globalObject, 
             continue;
         if (value.asCell()->type() != StringType || !asString(value.asCell())->is8Bit())
             return std::nullopt;
-        asString(value.asCell())->value(&globalObject);
+        // A piece of a string resolves to the width that the storage of that string has now.
+        auto text = asString(value.asCell())->value(&globalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        room += 1 + asString(value.asCell())->length() + 1;
+        if (!text->is8Bit())
+            return std::nullopt;
+        room += 1 + text->length() + 1;
     }
     return room;
 }

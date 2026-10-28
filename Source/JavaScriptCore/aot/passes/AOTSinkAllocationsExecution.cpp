@@ -201,6 +201,16 @@ VirtualObjectID ObjectInterpreter::destructuredObjectOf(ValueID value) const
 
 void ObjectInterpreter::execute(ValueID id)
 {
+    executeByInterpretation(id);
+    if (!m_sinking.checksShortcuts()) [[likely]]
+        return;
+    const AliasEntry* alias = m_state.findAlias(id);
+    const ObjectState* state = alias ? stateOf(alias->object) : nullptr;
+    m_sinking.holdRoadAgainstCount(m_mode, id, alias ? 1 + 8 * alias->object.index() + 2 * static_cast<uint32_t>(alias->kind == AliasKind::Guard) + 4 * static_cast<uint32_t>(state && state->isCell()) : 0);
+}
+
+void ObjectInterpreter::executeByInterpretation(ValueID id)
+{
     Interpretation interpretation = interpretationOf(program(), function().at(id));
     if (m_state.objects.isEmpty() && interpretation != Interpretation::Allocation) {
         keep(id);
@@ -323,15 +333,24 @@ void ObjectInterpreter::executeCast(ValueID id)
 void ObjectInterpreter::executeGuards(ValueID id)
 {
     VirtualObjectID guarded;
+    Vector<ValueID, 2> guardsOfNoObject;
     for (ValueID guard : function().at(id).guardsOperands()) {
         VirtualObjectID object = guardedObjectOf(guard);
-        if (!object || (guarded && guarded != object))
+        if (!object) {
+            guardsOfNoObject.append(guard);
+            continue;
+        }
+        if (guarded && guarded != object)
             return executeOther(id);
         guarded = object;
+        guardsOfNoObject.append(m_sinking.guardsOfNoObjectIn(guard));
     }
     if (!guarded || m_sinking.decisions().holdsCells(id))
         return executeOther(id);
+    if (!guardsOfNoObject.isEmpty() && m_sinking.inputs().guardsThatMoreThanOperationsTake.get(id.index()))
+        return executeOther(id);
 
+    m_sinking.setGuardsOfNoObjectIn(id, WTF::move(guardsOfNoObject));
     bind(id, guarded, AliasKind::Guard);
 }
 
@@ -2263,8 +2282,10 @@ void ObjectInterpreter::executeCopyDataProperties(ValueID id)
     for (const CopiedField& field : *fields)
         requireCellOfHeldObject(source, field.sourceField, cause);
     targetIsVirtual = targetIsVirtual && stateOf(target)->isVirtual();
-    if (!targetIsVirtual)
+    if (!targetIsVirtual) {
         requireCell(targetValue, causeOf(id, OperandIndex::CopyDataProperties::target));
+        buildObjectsOrderedWithGuardsInFrontOf(id);
+    }
     if (!singleDescriptionOf(source))
         return executeOther(id);
 
@@ -2955,7 +2976,15 @@ ValueID ObjectInterpreter::resolveGuard(ValueID guard)
     RELEASE_ASSERT(stateOf(object)->isCell());
     ValueID cellGuard = values().find(object)->guard;
     RELEASE_ASSERT(cellGuard);
-    return cellGuard;
+    std::span<const ValueID> guardsOfNoObject = m_sinking.guardsOfNoObjectIn(guard);
+    if (guardsOfNoObject.empty())
+        return cellGuard;
+
+    Vector<ValueID, 4> guards { cellGuard };
+    guards.append(guardsOfNoObject);
+    Value all(Opcode::AllGuards);
+    all.setGuardsOperands(guards.span());
+    return cursor().emit(WTF::move(all));
 }
 
 } } } // namespace JSC::AOT::Typed

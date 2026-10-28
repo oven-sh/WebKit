@@ -21,6 +21,7 @@
 #include "AOTLayout.h"
 #include "AOTNameCreatedSymbols.h"
 #include "AOTSchemaOperandIndexes.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowRulesModules.h"
@@ -393,7 +394,7 @@ ConstantsHoldingModules::ConstantsHoldingModules(const Program& program)
             }
         }
     }
-    std::ranges::sort(m_fields);
+    AOT::sort(m_fields);
 }
 
 bool ConstantsHoldingModules::isReadBy(const Value& read) const
@@ -437,6 +438,58 @@ static BitVector findKeysStoredUnderOnGlobalObject(const Program& program, const
     return keys;
 }
 
+void ValueFlowHeapTables::listWherePackagesAreNamedInPaths()
+{
+    static constexpr std::array<uint8_t, 12> folder { 'n', 'o', 'd', 'e', '_', 'm', 'o', 'd', 'u', 'l', 'e', 's' };
+    static constexpr std::array<uint8_t, 5> prefixOfLibrary { 'n', 'o', 'd', 'e', ':' };
+    m_mayAnswerToName.ensureSize(m_program.modules.size());
+    for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+        if (!Typed::mayAnswerToName(m_program, ModuleID(index)))
+            continue;
+        m_mayAnswerToName.quickSet(index);
+        StringID path = m_program.modules[index].path;
+        std::span<const uint8_t> text = m_program.string(path);
+        m_whereNamesOfPackagesBegin.append(RestOfPath { path, 0 });
+        if (const Module& module = m_program.modules[index]; module.runtimeModule && (!module.body || isAskedOfHostByName(module))) {
+            m_namesOfLibraryModules.append(RestOfPath { path, 0 });
+            if (spanHasPrefix(text, std::span(prefixOfLibrary)))
+                m_namesOfLibraryModules.append(RestOfPath { path, static_cast<uint32_t>(prefixOfLibrary.size()) });
+        }
+        for (size_t start = 0; start + folder.size() < text.size(); ++start) {
+            uint8_t separator = text[start + folder.size()];
+            if ((separator == '/' || separator == '\\') && spanHasPrefix(text.subspan(start), std::span(folder)))
+                m_whereNamesOfPackagesBegin.append(RestOfPath { path, static_cast<uint32_t>(start + folder.size() + 1) });
+        }
+    }
+    for (Vector<RestOfPath>* list : { &m_whereNamesOfPackagesBegin, &m_namesOfLibraryModules }) {
+        AOT::sort(*list, [&](RestOfPath first, RestOfPath second) {
+            return std::ranges::lexicographical_compare(textOf(first), textOf(second));
+        });
+    }
+}
+
+auto ValueFlowHeapTables::findFirstNotBefore(const Vector<RestOfPath>& sorted, std::span<const uint8_t> text) const -> const RestOfPath*
+{
+    auto found = std::ranges::lower_bound(sorted, text, [](std::span<const uint8_t> first, std::span<const uint8_t> second) {
+        return std::ranges::lexicographical_compare(first, second);
+    }, [&](RestOfPath rest) {
+        return textOf(rest);
+    });
+    return found == sorted.end() ? nullptr : &*found;
+}
+
+bool ValueFlowHeapTables::holdsModuleOfPackage(std::span<const uint8_t> package) const
+{
+    const RestOfPath* found = findFirstNotBefore(m_whereNamesOfPackagesBegin, package);
+    return found && spanHasPrefix(textOf(*found), package);
+}
+
+bool ValueFlowHeapTables::isNameOfLibraryModule(std::span<const uint8_t> name) const
+{
+    const RestOfPath* found = findFirstNotBefore(m_namesOfLibraryModules, name);
+    return found && equalSpans(textOf(*found), name);
+}
+
 ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlowUniverse& universe, ValueSets& allSets, ValueSetMaker& maker, const ParallelLoops& loops, NOESCAPE const ScopedLambda<void()>& runBesideTables)
     : m_program(program)
     , m_maker(allSets)
@@ -473,6 +526,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     m_nameKey = program.keyOf(BuiltinNames::name);
     if (StringID text = program.strings.find(byteCast<uint8_t>("displayName"_span)))
         m_displayNameKey = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }).value_or(PropertyKeyID());
+    listWherePackagesAreNamedInPaths();
 
     m_prototypesAtCreation = ZeroFilledPages<std::atomic<uint64_t>>(universe.numberOfObjects());
     unsigned bitsOfBlocks = std::clamp<unsigned>(std::bit_width(static_cast<uint64_t>(universe.numberOfObjects())) + 2, 12, 20);
@@ -605,6 +659,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects holdersClosedToOtherNames;
         Objects functionsOfEngine;
         Objects prototypesOfInstancesWithNames;
+        Objects prototypeObjectsListingOwnPropertiesOfInstances;
         struct NamedMember {
             BuiltinName name;
             MemberOfHolder member;
@@ -681,10 +736,12 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             bool hasMemberThatHostMakes = false;
             bool hasReplaceableMember = false;
             bool hasMemberUnderNumericName = false;
+            bool listsOwnPropertyOfInstances = false;
             for (BuiltinID member : builtins.membersOf(holder)) {
                 const Builtin& memberEntry = builtins.at(member);
                 if (!memberEntry.name)
                     continue;
+                listsOwnPropertyOfInstances |= memberEntry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
                 if (memberEntry.flags.contains(BuiltinFlag::IsDefaultExport)) {
                     if (hasClosedKeys)
                         listName(memberEntry.name);
@@ -724,6 +781,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 holdersOfReplaceableMembers.appendVector(objects);
             if (hasMemberUnderNumericName)
                 holdersWithMembersUnderNumericNames.appendVector(objects);
+            if (listsOwnPropertyOfInstances)
+                prototypeObjectsListingOwnPropertiesOfInstances.appendVector(objects);
         }
         m_membersUnderNames.grow(layOutByKey(m_endOfMembersUnderName));
         for (const NamedMember& named : namedMembers)
@@ -771,7 +830,10 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         }
         m_entriesOpenToTableOrNativeCode = without(maker.unite(openTo(Actor::Table), openTo(Actor::NativeCode)), placeholders);
         m_holdersOfUndeclaredPropertiesUnderIndexes = m_entriesOpenToTableOrNativeCode;
-        m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_entriesOpenToTableOrNativeCode, maker.of(prototypesOfInstancesWithNames.span()));
+        m_prototypeObjectsOfClassesThatListNamesWithoutTypes = maker.of(prototypesOfInstancesWithNames.span());
+        m_prototypeObjectsListingOwnPropertiesOfInstances = maker.of(prototypeObjectsListingOwnPropertiesOfInstances.span());
+        m_prototypeObjectsOfClassesThatLayPropertiesOnInstances = maker.unite(maker.unite(m_prototypeObjectsListingOwnPropertiesOfInstances, m_prototypeObjectsOfClassesThatListNamesWithoutTypes), maker.unite(m_prototypeObjectsOfClassesThatListNoOwnNames, m_prototypesAboveNativeElements));
+        m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_entriesOpenToTableOrNativeCode, m_prototypeObjectsOfClassesThatListNamesWithoutTypes);
 
         m_lockedObjects = maker.of(lockedObjects.span());
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());

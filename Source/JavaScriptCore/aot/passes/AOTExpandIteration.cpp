@@ -65,7 +65,7 @@ static_assert(static_cast<uint32_t>(StepArrayIteratorResult::Value) == static_ca
 
 namespace {
 
-enum class IterationForm : uint8_t { Protocol, Array, TypedArray, String, SplitString, OwnEntries, Map, Set, Generator, AsyncGenerator };
+enum class IterationForm : uint8_t { Protocol, Array, Arguments, TypedArray, String, SplitString, OwnEntries, Map, Set, Generator, AsyncGenerator };
 enum class IterationOrigin : uint8_t { Source, Spread, Delegation };
 enum class PatternRead : uint8_t { BySteps, ByIndex, InOneRead };
 // Proven: the plan has one arm, the arm has no test, and closing does nothing.
@@ -476,6 +476,8 @@ static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, Bu
         return IterationForm::AsyncGenerator;
     if (id == BuiltinClasses::Array)
         return IterationForm::Array;
+    if (kind == IteratorKind::Sync && id == BuiltinClasses::Arguments)
+        return IterationForm::Arguments;
     if (id == BuiltinClasses::Map)
         return IterationForm::Map;
     if (id == BuiltinClasses::Set)
@@ -485,10 +487,47 @@ static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, Bu
     return std::nullopt;
 }
 
+// An arguments object holds its length and Array.prototype.values under @@iterator itself. It holds what it was made with where it stays in its function and the function only reads and walks it.
+static bool isArgumentsObjectAsCreated(FunctionPassContext& pass, ValueID value)
+{
+    constexpr OperandUses usesOfContents { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents };
+
+    const Function& function = pass.function;
+    const EscapeAnalysis& escape = pass.analyses.escape();
+    std::optional<ObjectID> object = escape.gaveUp() ? std::nullopt : escape.singleObject(value);
+    if (!object || escape.at(*object).state == EscapeState::Unknown)
+        return false;
+    const Value& maker = function.at(escape.at(*object).definition);
+    const ClassPart* madeClass = pass.program.at(maker.type).singleBuiltinClass();
+    if (resultRuleOf(maker.opcode) != ResultRule::Allocation || !madeClass || madeClass->builtinClass != BuiltinClasses::Arguments)
+        return false;
+
+    // By what the schema says of the operand. A walk calls the method that the object was made with, and a read that runs no code hands the object to nobody.
+    auto readsOrWalks = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        OperandBehavior declared = declaredBehaviorOf(user.opcode, use.operandIndex);
+        if (declared.retainedIn == RetainedIn::Result)
+            declared.uses.remove(OperandUse::Retains);
+        if (!declared.uses.containsOnly(usesOfContents))
+            return false;
+        if (declared.protocols.isEmpty())
+            return !pass.analyses.effectsOf(use.user).onAnyEdge().mayRunOtherCode();
+        bool looksForAnotherMethodFirst = user.opcode == Opcode::IteratorOpen && user.iteratorKind() == IteratorKind::Async;
+        return declared.protocols.containsOnly({ Protocol::Iterate }) && !looksForAnotherMethodFirst;
+    };
+    return std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) {
+        return readsOrWalks(objectUse.use) || (!objectUse.isEscape && objectUse.uses.containsOnly(usesOfContents));
+    });
+}
+
 // Flow proves an instance pristine from what is done to the instance. What its prototypes hold under @@iterator has a proof of its own.
 static bool hasConstantIteratorMethod(FunctionPassContext& pass, const IterationArm& arm)
 {
     const Program& program = pass.program;
+    if (arm.form == IterationForm::Arguments)
+        return arm.namesAreProven;
     auto findMethod = [&](WellKnownSymbol symbol) {
         return findMemberOfInstances({ program, pass.inputs.flow }, arm.form == IterationForm::String ? BuiltinClasses::String : arm.builtinClass, program.keyOf(program.builtins().nameOf(symbol)));
     };
@@ -509,7 +548,11 @@ static bool namesOnlyLayoutsWithoutIterator(FunctionPassContext& pass, const Typ
     if (!expected.layouts || expected.anyObject || expected.anyFunction || !expected.classes.isEmpty() || !expected.functions.isEmpty() || !expected.builtins.isEmpty())
         return false;
     auto hasMethod = [&](LayoutID layout, WellKnownSymbol symbol) {
-        return hasMemberToFindUnder(program, layout, program.keyOf(program.builtins().nameOf(symbol)));
+        PropertyKeyID key = program.keyOf(program.builtins().nameOf(symbol));
+        if (hasMemberToFindUnder(program, layout, key))
+            return true;
+        BuiltinClassID builtinBase = builtinBaseClassOf(program, layout);
+        return builtinBase && findMemberOfInstances({ program, pass.inputs.flow }, builtinBase, key).outcome != BuiltinMemberLookup::Outcome::Absent;
     };
     return std::ranges::none_of(pass.types.at(expected.layouts).seen().predicted(), [&](LayoutID layout) {
         return hasMethod(layout, WellKnownSymbol::Iterator) || (kind == IteratorKind::Async && hasMethod(layout, WellKnownSymbol::AsyncIterator));
@@ -588,6 +631,7 @@ static Arms findClassArms(FunctionPassContext& pass, const PlannedValue& planned
     Arms arms;
     for (IterationArm& arm : collectCandidates(pass, planned)) {
         arm.namesAreProven = arm.form == IterationForm::String
+            || (arm.form == IterationForm::Arguments && isArgumentsObjectAsCreated(pass, planned.value))
             || pristineAspectsProvenBy(pass.program.typeOf(pass.function, planned.value).intersectWith(pass.types.at(arm.testedType), pass.types), arm.builtinClass).containsAll(planned.aspects);
         if (canServe(pass, planned, arm))
             arms.append(arm);
@@ -904,6 +948,7 @@ static Range positionRangeOf(IterationForm form)
 {
     switch (form) {
     case IterationForm::Array:
+    case IterationForm::Arguments:
     case IterationForm::TypedArray:
         return { 0, maxExactInteger - 1 };
     case IterationForm::OwnEntries:
@@ -1471,6 +1516,7 @@ static void emitArmStep(IterationExpansion& expansion, const ArmState& state, co
 
     switch (state.arm.form) {
     case IterationForm::Array:
+    case IterationForm::Arguments:
     case IterationForm::TypedArray:
         emitElementStep(expansion, state);
         return;
@@ -1782,6 +1828,8 @@ static bool anyOperationBetweenSteps(FunctionPassContext& pass, const Iteration&
 // The reads stay where the steps stood, so what stands between them only has to leave alone what they rely on: the length, and what the open tested.
 static bool regionMayChangeArray(FunctionPassContext& pass, const Iteration& iteration, const IterationArm& arm, std::span<const BlockID> liveRegion, ValueID array)
 {
+    if (pass.build.isSabotaged(Sabotage::WalkedArraysStayAsTheyWereOpened))
+        return false;
     FunctionAnalyses& analyses = pass.analyses;
     Vector<GuardDependencies, 2> dependencies;
     auto relyOn = [&](const Value& test) {
@@ -2231,6 +2279,7 @@ struct ArmDispatcher {
         ArmState& state = states.last();
         switch (arm.form) {
         case IterationForm::Array:
+        case IterationForm::Arguments:
         case IterationForm::TypedArray:
         case IterationForm::String:
         case IterationForm::SplitString:

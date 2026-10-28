@@ -332,7 +332,7 @@ static void testLengthOfTypedArrays(LoadedProgram& program)
         PropertyAnswer answer = readAndClassify(program, view, length);
         AOT_TEST_CHECK_FOR_SOURCE(answer.kind == PropertyAnswerKind::TypedArrayLength && !answer.isOwn && !answer.dependsOnChain(), source);
         Slot slot = slotFor(answer, view->structure());
-        AOT_TEST_CHECK_FOR_SOURCE(slot.kind == Slot::Kind::TypedArrayLength && !slot.flags && !slot.payloadBits(), source);
+        AOT_TEST_CHECK_FOR_SOURCE(slot.kind == Slot::Kind::TypedArrayLength && slot.flags == Slot::needsHandler && !slot.payloadBits(), source);
     }
 
     JSObject* instanceOfSubclass = realms.object(program.realm(), "new (class extends Uint8Array { })(4)"_s);

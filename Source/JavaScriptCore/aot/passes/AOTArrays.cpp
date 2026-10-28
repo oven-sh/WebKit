@@ -629,7 +629,7 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         for (size_t later = earlier + 1; later < effects.size(); ++later) {
             const Effects& a = effects[earlier];
             const Effects& b = effects[later];
-            if (mayAccessSameMemory(a, b) || (mayStop(a) && (canBeObserved(b) || mayStop(b))))
+            if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (mayStop(a) && (canBeObserved(b) || mayStop(b))))
                 return ArrayChainDeclineReason::CallbacksInterfere;
             if (mayStop(b) && canBeObserved(a))
                 return ArrayChainDeclineReason::SkippedCallIsObservable;

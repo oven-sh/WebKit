@@ -1,0 +1,61 @@
+# A run of stores by name is refused whole where one of its names meets a setter. A store under a name for which the text defines an accessor, or a property by a descriptor,
+# joins no run: the stores on either side of it are runs of their own.
+# FORM: Prepared
+# OPTIONS: heat=only-loops-are-hot
+# STATISTIC: PropertyRunGroups = 5
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="definesAccessors" parameters=[{type=object}, {type=function}, {type=object}] results=[{type=anything}] {
+    DefineSetter v0, v1 key="bySetter"
+    DefineGetter v0, v1 key="byGetter"
+    v5 = String string="byDescriptor"
+    v6 = CallBuiltin -, v0, v5, v2 overload=ObjectDefineProperty/0
+    Return v0
+}
+
+function f1 name="aSetterInTheMiddle" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v1 key="b" mode=Strict
+    PropSet v0, v1 key="c" mode=Strict
+    PropSet v0, v1 key="bySetter" mode=Strict
+    PropSet v0, v1 key="d" mode=Strict
+    PropSet v0, v1 key="e" mode=Strict
+    PropSet v0, v1 key="f" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: name="aSetterInTheMiddle"
+# CHECK: TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
+# CHECK: TryPutByIds v0, v1, v1, v1 keys=["d", "e", "f"]
+
+function f2 name="aGetterOrADescriptorInTheMiddle" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v1 key="b" mode=Strict
+    PropSet v0, v1 key="c" mode=Strict
+    PropSet v0, v1 key="byGetter" mode=Strict
+    PropSet v0, v1 key="d" mode=Strict
+    PropSet v0, v1 key="e" mode=Strict
+    PropSet v0, v1 key="f" mode=Strict
+    PropSet v0, v1 key="byDescriptor" mode=Strict
+    PropSet v0, v1 key="g" mode=Strict
+    PropSet v0, v1 key="h" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: name="aGetterOrADescriptorInTheMiddle"
+# CHECK: TryPutByIds v0, v1, v1, v1 keys=["a", "b", "c"]
+# CHECK: TryPutByIds v0, v1, v1, v1 keys=["d", "e", "f"]
+# CHECK-NOT: TryPutByIds
+
+function f3 name="noSuchName" parameters=[{type=object}, {type=anything}] results=[{type=anything}] {
+    PropSet v0, v1 key="a" mode=Strict
+    PropSet v0, v1 key="b" mode=Strict
+    PropSet v0, v1 key="c" mode=Strict
+    PropSet v0, v1 key="plain" mode=Strict
+    PropSet v0, v1 key="d" mode=Strict
+    PropSet v0, v1 key="e" mode=Strict
+    PropSet v0, v1 key="f" mode=Strict
+    Return v0
+}
+# CHECK-LABEL: name="noSuchName"
+# CHECK: TryPutByIds v0, v1, v1, v1, v1, v1, v1, v1 keys=["a", "b", "c", "plain", "d", "e", "f"]

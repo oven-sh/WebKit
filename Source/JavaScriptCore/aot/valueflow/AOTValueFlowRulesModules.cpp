@@ -179,6 +179,18 @@ struct OwnProperties {
     ValueFlowSources others;
 };
 
+ClimbingSet knownObjectsThatAreFollowed(ValueFlowRuleContext& context, ClimbingSet set)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet objects = context.restrict(set, universe.knownObjects());
+    if (!context.contains(set, ValueFlowUniverse::unknownObject()))
+        return objects;
+    ClimbingSet listedForTheirCalls = context.restrict(objects, universe.builtinTables().heap().objectsThatLetInUnseenCode());
+    if (!context.meet(listedForTheirCalls, ValueSets::anything))
+        return objects;
+    return context.restrict(objects, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.valueWithin(listedForTheirCalls, ValueFlowProgramNodes::escaped()))));
+}
+
 ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objects)
 {
     ClimbingSet all = objects;
@@ -841,19 +853,6 @@ static void runDirectEval(const ValueFlowStatement& statement, ValueFlowRuleCont
         context.add(statement.thrown, unknown);
 }
 
-static void forEachFormInImage(const Program& program, ModuleID outside, NOESCAPE const Invocable<void(ModuleID)> auto& functor)
-{
-    if (program.at(outside).kind != ModuleKind::External)
-        return;
-    std::span<const uint8_t> path = program.string(program.at(outside).path);
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        const Module& module = program.modules[index];
-        std::span<const uint8_t> pathOfForm = program.string(module.path);
-        if (module.kind == ModuleKind::Data && pathOfForm.size() > path.size() && pathOfForm[path.size()] == '?' && spanHasPrefix(pathOfForm, path))
-            functor(ModuleID(index));
-    }
-}
-
 void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
@@ -884,9 +883,10 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
             connect(context, evaluationErrorsOf(context, module), ValueFlowProgramNodes::escaped());
         };
         import(operation.module());
-        // The attributes say as what a module outside of the image is loaded, and the image may hold it as that.
-        if (!context.operandsOf(statement).empty())
-            forEachFormInImage(program, operation.module(), import);
+        if (!context.operandsOf(statement).empty()) {
+            for (ModuleID form : formsInImage(program, operation.module()))
+                import(form);
+        }
         context.add(reasonOfPromiseAt(statement, context), unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
         break;
     }

@@ -432,7 +432,7 @@ void CodeGenerator::generateNullishCheckBehindFailedTest(BlockID id, ValueID che
 
 void CodeGenerator::finishProcedure()
 {
-    emitter<RuntimeCallEmitter>().stateWhichCallsChangeSlotsOfSites();
+    emitter<RuntimeCallEmitter>().stateWhichCallsChangeWhatOnlyGeneratedCodeReads();
     m_heaps.computeRangesAndDecorateInstructions();
     if (!build().recordedOptions().has(TestingSwitch::FoldLoadsPastCollections))
         m_proc.setHeapThatLoadsStayInFrontOf(m_heaps.rangeWrittenByWhateverMayCollect());

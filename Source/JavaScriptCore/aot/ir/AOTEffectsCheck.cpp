@@ -172,7 +172,11 @@ static bool liesWithinReplacedEntries(Entry entry)
         allowed.merge(fullBoundOf(operation));
     for (TerminatorKind terminator : terminators)
         allowed.merge(fullBoundOf(terminator));
-    return fullBoundOf(entry).isSubsetOf(allowed);
+    Effects bound = fullBoundOf(entry);
+    // checkReplacement() sees which operands a replacement is given.
+    if constexpr (std::is_same_v<Entry, Opcode>)
+        bound.writes.remove(heapsWrittenForOptionalOperands(entry));
+    return bound.isSubsetOf(allowed);
 }
 
 template<typename Entry>

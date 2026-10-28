@@ -324,6 +324,8 @@ static void testBodyEntries()
     StubCatalog catalog(StubOptions { }, StubPolicy { });
     checkEntries(catalog, getByVal(false), { getByVal(false), getByVal(true) });
     checkEntries(catalog, getByValCached(), { getByValCached(), getByValCachedCells() });
+    checkEntries(catalog, getByIdAtSite(), { getByIdAtSite(), getByIdOfObjectAtSite() });
+    checkEntries(catalog, getByIdAtSiteHashed(), { getByIdAtSiteHashed() });
     checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody() });
     checkEntries(catalog, runAsyncGeneratorStep(), { runAsyncGeneratorStep(), stepAsyncIteratorInEngine() });
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {

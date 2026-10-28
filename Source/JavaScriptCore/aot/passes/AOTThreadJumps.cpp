@@ -12,6 +12,7 @@
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
 #include "AOTKnownValue.h"
+#include "AOTNaturalLoops.h"
 #include "AOTRegionCloner.h"
 #include "AOTRewrite.h"
 #include "AOTSSARepair.h"
@@ -181,9 +182,34 @@ struct EdgeThreader : Rewrite {
 
     void redirect(Edge edge, Target&& target)
     {
+        raiseFrequencyBehind(edge, target.block);
         builder().redirectEdge(edge, WTF::move(target));
         didAddEdge(edge);
         outcome = PassOutcome::Changed;
+    }
+
+    // A block is rare because the test above it seldom sends anybody there. Whoever passes the test by, because its outcome is known on his way, always goes there.
+    // The frequency of a block also stands for the edges into it, so nothing changes for a way that is itself unlikely, nor for a block that others than that test lead to.
+    // How often the way itself is taken nobody knows. In a loop that matters: what is held for unlikely there is sent round another header, and the loop is entered anew behind it.
+    void raiseFrequencyBehind(Edge edge, BlockID block)
+    {
+        BlockID passedBy = targetOf(function, edge).block;
+        Expected<BlockFrequency> frequency = rarerOf(at(edge.from).frequency, at(passedBy).frequency);
+        if (frequency.predicted() != BlockFrequency::Normal)
+            return;
+        for (BlockID from = passedBy; isRarerThan(at(block).frequency, frequency).predicted(); block = at(block).terminator.targets[0].block) {
+            for (Edge incoming : analyses.cfg().incomingEdges(block)) {
+                if (incoming.from != from)
+                    return;
+            }
+            const NaturalLoop* loop = analyses.naturalLoops().innerMostLoopOf(block);
+            if (!loop || loop != analyses.naturalLoops().innerMostLoopOf(edge.from))
+                return;
+            builder().function().edit(block, BlockEdit::Rest).frequency = frequency;
+            if (at(block).terminator.kind != TerminatorKind::Jump)
+                return;
+            from = block;
+        }
     }
 
     // Each of the copies is one more definition of what the original beside it stands for. The variables of one block follow each other, and the first copy of the block makes them.

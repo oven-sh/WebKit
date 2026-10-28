@@ -428,7 +428,7 @@ static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
     return true;
 }
 
-#if CPU(X86_64) && OS(LINUX)
+#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
 static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 {
     static_assert(hasFaultingLoopPolls);
@@ -500,7 +500,7 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
     case FaultSiteKind::NullCheck:
         return handleNullCheck(fault, registers);
     case FaultSiteKind::LoopPoll:
-#if CPU(X86_64) && OS(LINUX)
+#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
         return handleLoopPoll(fault, registers);
 #else
         static_assert(!hasFaultingLoopPolls);

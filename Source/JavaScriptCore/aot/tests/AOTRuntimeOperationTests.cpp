@@ -307,13 +307,13 @@ static void checkCallsAreCounted(LoadedProgram& program)
 {
     VM& vm = program.vm();
     AOT_TEST_CHECK(Options::aotCountsPath());
-    AOT_TEST_CHECK(vm.aotState().runtimeTable->countsCalls() == !!HAVE_MUST_TAIL_CALL);
+    AOT_TEST_CHECK(vm.aotState().runtimeTable->countsCalls());
 
     uint64_t countBefore = operationCallCount(vm, Entry::operationAOTValueAdd);
     uint64_t otherCountBefore = operationCallCount(vm, Entry::operationAOTValueSub);
     AOT_TEST_CHECK(addThroughTable(program, jsNumber(1), jsNumber(2)) == jsNumber(3));
     AOT_TEST_CHECK(addThroughTable(program, jsNumber(3), jsNumber(4)) == jsNumber(7));
-    AOT_TEST_CHECK(operationCallCount(vm, Entry::operationAOTValueAdd) == countBefore + (HAVE_MUST_TAIL_CALL ? 2 : 0));
+    AOT_TEST_CHECK(operationCallCount(vm, Entry::operationAOTValueAdd) == countBefore + 2);
     AOT_TEST_CHECK(operationCallCount(vm, Entry::operationAOTValueSub) == otherCountBefore);
 }
 

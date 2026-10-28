@@ -615,6 +615,21 @@ static void checkRequestsThatMayNotFailUseBallast()
     bmalloc::api::setAddressSpaceBallastHandler(nullptr);
 }
 
+// Each VM that runs compiled code adds to the ballast, and what it added is let go of when the VM is gone.
+static void checkBallastGrowsWithVMs()
+{
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::sizeOfAddressSpaceBallastKept() == sizeOfAddressSpaceBallast);
+    size_t numberOfVMsToPiece = MB / sizeOfAddressSpaceBallastOfVM;
+    g_numberOfVMsWithAddressSpaceBallast = 2 * numberOfVMsToPiece + 1;
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::sizeOfAddressSpaceBallastKept() == sizeOfAddressSpaceBallast + 2 * MB && bmalloc::api::hasWholeAddressSpaceBallast());
+    g_numberOfVMsWithAddressSpaceBallast = numberOfVMsToPiece - 1;
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::sizeOfAddressSpaceBallastKept() == sizeOfAddressSpaceBallast && bmalloc::api::hasWholeAddressSpaceBallast());
+    g_numberOfVMsWithAddressSpaceBallast = 0;
+}
+
 // Who asks for address space of its own takes the whole limit for free, and who decides for others takes it for taken.
 static void checkAddressSpaceThatCannotBeCountedCountsAsTaken()
 {
@@ -653,13 +668,18 @@ static void checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail()
         fastFree(memory);
         return true;
     };
-    // There will be no room for the stack of a thread.
+    // There will be no room for the stack of a thread, nor for what its first wait asks malloc for.
+    BinarySemaphore isReady;
     BinarySemaphore mayAsk;
     bool foundOnOtherThread = true;
     Ref otherThread = Thread::create("large request"_s, [&] {
+        Atomic<uint8_t> word { 0 };
+        ParkingLot::compareAndPark(&word, static_cast<uint8_t>(1));
+        isReady.signal();
         mayAsk.wait();
         foundOnOtherThread = largeRequestFindsMemory();
     });
+    isReady.wait();
 
     struct Mapping {
         void* pages;
@@ -1441,6 +1461,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
 #if USE(MIMALLOC)
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
+        { "heap-cage/ballast/it-grows-with-the-vms"_s, runInProcessWithSharedRange<checkBallastGrowsWithVMs> },
         { "heap-cage/ballast/address-space-that-cannot-be-counted-counts-as-taken"_s, runInProcessWithSharedRange<checkAddressSpaceThatCannotBeCountedCountsAsTaken> },
         { "heap-cage/ballast/what-it-lets-go-of-stays-with-requests-that-may-not-fail"_s, runInProcessWithSharedRange<checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail> },
         { "heap-cage/ballast/a-thread-that-takes-small-pages-of-what-it-let-go-of-is-told"_s, runInProcessWithSharedRange<checkThreadThatTakesSmallPagesOfWhatBallastLetGoOfIsTold> },

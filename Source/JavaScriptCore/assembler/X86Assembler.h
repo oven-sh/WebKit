@@ -2942,6 +2942,17 @@ public:
         m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_38, OP3_PMULLD_VdqWdq, (RegisterID)vd, (RegisterID)vn);
     }
 
+    // [66] 0F [38] opcode /r: an operation on two vector registers that overwrites the second.
+    void vectorOp_rr(bool hasPrefix66, bool hasEscape38, uint8_t opcode, XMMRegisterID vn, XMMRegisterID vd)
+    {
+        if (hasPrefix66)
+            m_formatter.prefix(PRE_SSE_66);
+        if (hasEscape38)
+            m_formatter.threeByteOp(OP2_3BYTE_ESCAPE_38, static_cast<ThreeByteOpcodeID>(opcode), (RegisterID)vd, (RegisterID)vn);
+        else
+            m_formatter.twoByteOp(static_cast<TwoByteOpcodeID>(opcode), (RegisterID)vd, (RegisterID)vn);
+    }
+
     void paddb_rr(XMMRegisterID vn, XMMRegisterID vd)
     {
         // https://www.felixcloutier.com/x86/paddb:paddw:paddd:paddq

@@ -74,16 +74,19 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GP
     genericPath.append(jit.branchPtr(CCallHelpers::Equal, function, scratch));
 }
 
+// A frame with few arguments lies where those of CallHostFunction and CallInternalFunction lie: in the part of the stack that is kept for native functions, untested.
 [[nodiscard]] static JumpList checkHostFrameCapacity(StubAssembler& jit, GPRReg count, GPRReg scratch)
 {
     JumpList overflowsStack;
     static_assert(stackAlignmentRegisters() == 2);
+    Jump hasFewArguments = jit.branch32(CCallHelpers::BelowOrEqual, count, TrustedImm32(maxArgumentCountOfUntestedHostFrame));
     jit.add32(TrustedImm32(CallFrame::headerSizeInRegisters + 1 + 1), count, scratch);
     jit.and32(TrustedImm32(~1), scratch);
     jit.lshiftPtr(TrustedImm32(3), scratch);
     jit.subPtr(sp, scratch, scratch);
     overflowsStack.append(jit.branchPtr(CCallHelpers::Above, softStackLimit(), scratch));
     overflowsStack.append(jit.branchPtr(CCallHelpers::Above, scratch, fp));
+    hasFewArguments.link(&jit);
     return overflowsStack;
 }
 

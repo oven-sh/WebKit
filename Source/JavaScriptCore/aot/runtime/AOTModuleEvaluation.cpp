@@ -553,6 +553,9 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
         setFailed(module, error);
     else
         setStatus(module, ModuleStatus::Evaluated);
+    // Whoever runs the file hears of the error. Whoever asks later gets what the loader has.
+    if (isCommonJSFileOrFace(module) && wasImportedWhileItRan(m_table.fileBehindFace(module).value_or(module)))
+        dropErrorOfFile(module);
 }
 
 void Modules::abandonEvaluation(ModuleID module, JSValue error)
@@ -661,7 +664,7 @@ void Modules::forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)>
 // `bun run` evaluates a CommonJS file inside JSModuleLoader::makeModule(), while its registry entry is still being fetched: an asynchronous load waits for the entry, a synchronous one makes the record again.
 bool Modules::asyncLoadMustWaitFor(ModuleID fileOrFace) const
 {
-    return !m_instance.vm->m_synchronousModuleQueue && isEvaluatedByLoader(fileOf(fileOrFace));
+    return !m_instance.vm->synchronousModuleQueue() && isEvaluatedByLoader(fileOf(fileOrFace));
 }
 
 bool Modules::isEvaluatedByLoader(ModuleID file) const
@@ -700,7 +703,7 @@ bool Modules::hasKey(ModuleID file, const Identifier& key)
 
 std::optional<ModuleID> Modules::fileToWaitFor(const Identifier& key)
 {
-    if (!m_innermostFilesBeingRun || m_instance.vm->m_synchronousModuleQueue) [[likely]]
+    if (!m_innermostFilesBeingRun || m_instance.vm->synchronousModuleQueue()) [[likely]]
         return std::nullopt;
     std::optional<ModuleID> found;
     forEachFileEvaluatedByLoader([&](ModuleID file) {
@@ -869,6 +872,22 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         if (loadEndsEarly) {
             m_rootWhoseFilesRanAhead = root;
             return false;
+        }
+    }
+
+    // No link has come to the files. Whoever evaluates a record takes the names behind the body.
+    for (const ModuleRequestData& request : m_table.requests(root)) {
+        if (request.isRequire)
+            continue;
+        ModuleID imported = request.targetModule();
+        if (request.isDeferred || !isCommonJSFileOrFace(imported)) {
+            if (request.isHoisted)
+                continue;
+            break;
+        }
+        if (data(imported).capturesExportsBehindEvaluation()) {
+            captureExportsBehindEvaluation(imported);
+            RETURN_IF_EXCEPTION(scope, false);
         }
     }
 
@@ -1090,7 +1109,7 @@ void Modules::handGraphToLoader(FilesBeingRun& files)
         DeferTerminationForAWhile deferTermination(vm);
         SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(*running));
         // The steps were due before any require() of the file began.
-        SetForScope noSynchronousLoad(vm.m_synchronousModuleQueue, nullptr);
+        SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, vm.m_synchronousModuleQueue);
         if (files.load) {
             ModuleRecord* record = recordIfExists(files.root);
             files.load->forgetVisited(record);
@@ -1909,11 +1928,13 @@ void Modules::noteLoadOfFile(ModuleID module)
         RELEASE_AND_RETURN(scope, captureExports(file));
 }
 
-ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module)
+ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module, LoadOfFile load)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    noteLoadOfFile(module);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (load == LoadOfFile::HasComeToFile) {
+        noteLoadOfFile(module);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     ModuleRecord* record = ensureRecord(module);
     record->retain();
     record->setRunsWhenLoaded();
@@ -2018,8 +2039,16 @@ void Modules::evaluateWithOwnStack(ModuleID root)
     innerModuleEvaluation(root, context);
     Exception* exception = scope.exception();
     ASSERT(exception || stack.isEmpty());
-    if (!exception)
+    // An import() of the root that was called while the root ran has given it a capability, which CyclicModuleRecord::evaluate() would settle here.
+    ModuleRecord* record = recordIfExists(root);
+    JSPromise* capability = record ? record->topLevelCapability() : nullptr;
+    if (capability && capability->status() != JSPromise::Status::Pending)
+        capability = nullptr;
+    if (!exception) {
+        if (capability) [[unlikely]]
+            capability->fulfill(vm, jsUndefined());
         return;
+    }
     for (AbstractModuleRecord* member : stack) {
         auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(member);
         cyclic->setStatus(CyclicModuleRecord::Status::Evaluated);
@@ -2027,6 +2056,8 @@ void Modules::evaluateWithOwnStack(ModuleID root)
         if (auto* compiled = dynamicDowncast<ModuleRecord>(member))
             compiled->retain();
     }
+    if (capability && !vm.isTerminationException(exception)) [[unlikely]]
+        capability->reject(vm, exception->value());
 }
 
 JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsyncOrder, JSPromise* importPromise, const ModuleLinkWalk* linkWalk, bool isLinked)

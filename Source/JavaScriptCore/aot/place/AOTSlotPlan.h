@@ -208,6 +208,8 @@ public:
     JS_EXPORT_PRIVATE MemberCreation creationOf(const Program&, LayoutID classLayout, FunctionID member) const;
 
     bool hasColumn(PropertyKeyID key) const { return m_keysWithColumn.get(key.index()); }
+    // Somewhere the text gives an object an accessor under the name, or a property by a descriptor, or a class declares an accessor: a store under it may meet a setter.
+    bool isDefinedByDescriptor(PropertyKeyID key) const { return m_keysDefinedByDescriptor.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_keysWithColumn; }
 
     unsigned numberOfLayouts() const { return m_layouts.size(); }
@@ -223,6 +225,7 @@ private:
     Vector<ClosureForm> m_closureForms;
     Vector<ClassCreationPlan> m_classCreation;
     BitVector m_keysWithColumn;
+    BitVector m_keysDefinedByDescriptor;
     PlannedLayout m_unplannedLayout;
     PlacedSlot m_unplannedSlot;
     ClassCreationPlan m_unplannedClass;

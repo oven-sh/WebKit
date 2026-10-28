@@ -261,7 +261,7 @@ bool Modules::hasRunToItsEndWithItsCycle(const ModuleRecord& record) const
 // An ES module of the program that has run needs no record, like one that ran with the graph of another: whoever asks for it again is handed a record that says so.
 void Modules::retireRecordsOfSettledLoads()
 {
-    if (m_instance.vm->m_synchronousModuleQueue || m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
+    if (m_instance.vm->synchronousModuleQueue() || m_innermostEvaluation || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
         return;
     // The host loads the graph of the entry point.
     if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
@@ -793,8 +793,14 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
         return fetchParameters.error();
-    if (!data(module).isUncompiledCode())
+    if (!data(module).isUncompiledCode()) {
+        // The build has bound the call by what its text says of the attributes. The image may hold the file as what the options ask for.
+        if (const ScriptFetchParameters* attributes = fetchParameters->get()) {
+            if (std::optional<ModuleID> form = findWithAttributes(moduleKey(fileOf(module)), attributes))
+                module = m_table.faceOfFile(*form).value_or(*form);
+        }
         RELEASE_AND_RETURN(scope, startImport(module, asyncEvaluationOrder(referrer)));
+    }
 
     const Identifier& key = resolvedKey(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -952,7 +958,10 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
     ModuleRecord* record = nullptr;
     {
         SetForScope stackPointerOfImport(m_instance.vm->aotState().stackPointerOfImport, currentStackPointer());
-        record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module) : exposeRecord(module, RecordHolder::Loader);
+        // Where the loader makes the record of a file inline, what the file throws rejects at once: no step of this import() comes to the file ahead of that.
+        ModuleRecord* made = recordIfExists(module);
+        bool isMadeInline = made && loader()->isMakingRecordInline(made->moduleKey());
+        record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module, isMadeInline ? LoadOfFile::IsAskedFor : LoadOfFile::HasComeToFile) : exposeRecord(module, RecordHolder::Loader);
     }
     JSPromise* loaded = scope.exception() ? nullptr : loader()->requestImportModuleForKey(m_instance.globalObject, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), record);
     setIsAskingHost(wasAskingHost);
@@ -963,7 +972,7 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
 
 bool Modules::isAnythingBeingLoaded() const
 {
-    if (m_instance.vm->m_synchronousModuleQueue || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
+    if (m_instance.vm->synchronousModuleQueue() || m_rootWhoseFilesRun || m_rootWhoseFilesRanAhead || m_fileWhoseJobsWaitForLoader || !m_levelsOfLoads.isEmpty())
         return true;
     // The host loads the graph of the entry point.
     if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
@@ -1070,6 +1079,8 @@ void Modules::handCountedImportsToLoader()
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Every counted import reaches the loader. A termination requested meanwhile is thrown at the caller's exception check.
     DeferTerminationForAWhile deferTermination(vm);
+    // The calls came ahead of any require() that is under way, so their steps are jobs, not steps of its load.
+    SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, vm.m_synchronousModuleQueue);
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     size_t numberOfJobsOfOthers = queue.size();
     noteOrderAndModulesOfOnlyCountedImport();
@@ -1343,7 +1354,7 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
 // The steps of the loader find nothing to load, to link or to run, and no other load meets them: the module has no step of its own left that a synchronous load could take over.
 bool Modules::loaderOnlyHandsOverNamespace(ModuleID module) const
 {
-    if (status(module) != ModuleStatus::Evaluated || isCommonJSFileOrFace(module) || m_instance.vm->m_synchronousModuleQueue || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead)
+    if (status(module) != ModuleStatus::Evaluated || isCommonJSFileOrFace(module) || m_instance.vm->synchronousModuleQueue() || m_fileWhoseJobsWaitForLoader || m_rootWhoseFilesRanAhead)
         return false;
     // An import() of a module of a cycle settles as the evaluation of the root of the cycle does, which may wait or have failed behind an await when the module itself has run.
     // Such a module has a record.
@@ -1490,6 +1501,8 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     handCountedImportsToLoader();
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    VM& vm = *m_instance.vm;
+    SetForScope frameOfImportThatAsksLoader(vm.aotState().frameOfImportThatAsksLoader, vm.topCallFrame);
     JSPromise* loaded = loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     RELEASE_AND_RETURN(scope, createPromiseOfProgram(realm, loaded));
@@ -1579,7 +1592,7 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
     // No code of the program has run when the host asks for the module that it starts with.
     if (m_firstModuleRequestedByHost == root)
         return false;
-    if (vm.m_synchronousModuleQueue || numberOfGraphsBeingLoaded() > 1)
+    if (vm.synchronousModuleQueue() || numberOfGraphsBeingLoaded() > 1)
         return true;
     // No step of the loader waits for a graph whose root has not run to its end: it goes on with a job of the program.
     if (m_loadsInFlight.containsIf([&](const LoadInFlight& load) { return load.isLoaded && status(load.root) != ModuleStatus::Evaluating && status(load.root) != ModuleStatus::EvaluatingAsync; }))
@@ -1635,7 +1648,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
         if (level->next && level->plan && (!m_levelsOfLoads.contains(*level->next) || !isStillToBeLoaded(*level->next)))
             layWayOfLoadAgain(*level);
         // Nobody sees how many steps are taken before require() returns.
-        if (level->next && level->plan && !m_instance.vm->m_synchronousModuleQueue)
+        if (level->next && level->plan && !m_instance.vm->synchronousModuleQueue())
             countStepsOfLevel(*level->plan, level->depth + 1);
         if (m_showsWaysBetweenModuleObjects && level->next && level->plan && level->depth + 1 < level->plan->levels.size()) {
             for (const PlanOfLoad::Found& found : level->plan->level(level->depth + 1))

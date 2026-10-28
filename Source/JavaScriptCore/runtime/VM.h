@@ -1556,6 +1556,21 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+#if ENABLE(AOT)
+    // While the innermost queue is this one, reactions go to the microtask queue. It stays in the chain, where the collector finds it.
+    SynchronousModuleQueue* m_synchronousModuleQueueSetAside { nullptr };
+#endif
+    // The queue that reactions are diverted to.
+    SynchronousModuleQueue* synchronousModuleQueue() const
+    {
+        if (!m_synchronousModuleQueue) [[likely]]
+            return nullptr;
+#if ENABLE(AOT)
+        if (m_synchronousModuleQueue == m_synchronousModuleQueueSetAside) [[unlikely]]
+            return nullptr;
+#endif
+        return m_synchronousModuleQueue;
+    }
 
     class SynchronousModuleQueueScope {
         WTF_MAKE_NONCOPYABLE(SynchronousModuleQueueScope);

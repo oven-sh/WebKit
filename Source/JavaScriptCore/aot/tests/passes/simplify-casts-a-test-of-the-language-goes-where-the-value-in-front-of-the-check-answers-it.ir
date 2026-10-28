@@ -1,0 +1,39 @@
+# const N: number = process.argv.length; class C { run() { return N; } }
+# A check hands on the value that it was given. Where the type of that value in front of the check answers what the language asks, the answer holds in every version, whatever becomes
+# of the check: the test goes at once, and the body is as small as without types when InlineCalls weighs it. Where only the check answers, the test stays.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass SimplifyCasts VerifyProgram
+# CHECK: outcome: Changed
+# RUN(VERSIONS): pass SimplifyCasts AddGenericVersion SimplifyCasts VerifyProgram
+
+module m0 path="main.ts" displayPath="main.ts"
+entry module=m0
+typesite w0 module=m0 position=10 kind=Variable
+function f0 name="initializedInFrontOfCheck" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number|absent site=w0 cause=MayFail
+    v2 = CheckInitialized v1 name="N"
+    Return v2
+# CHECK: v1: number = Check v0 expectedType=number|absent site=w0
+# CHECK-NEXT: Return v1
+}
+function f1 name="initializedBehindCheckAlone" parameters=[{type=anything|absent}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=number site=w0 cause=MayFail
+    v2 = CheckInitialized v1 name="N"
+    Return v2
+# CHECK: v1: number = Check v0 expectedType=number site=w0
+# CHECK-NEXT: v2: number = CheckInitialized v1 name="N"
+# CHECK-NEXT: Return v2
+}
+function f2 name="coercibleInFrontOfTwoCasts" parameters=[{type=number|string}] results=[{type=anything}] {
+    v1 = Check v0 expectedType=string site=w0 cause=MayFail
+    v2 = Upcast v1 castType=anything
+    v3 = RequireObjectCoercible v2 nullishAccess=Iterate
+    Return v3
+# CHECK: v1: string = Check v0 expectedType=string site=w0
+# CHECK-NOT: RequireObjectCoercible
+}
+# VERSIONS-LABEL: function f0 name="initializedInFrontOfCheck"
+# VERSIONS-NOT: = CheckInitialized
+# VERSIONS-LABEL: function f1 name="initializedBehindCheckAlone"
+# VERSIONS: = CheckInitialized

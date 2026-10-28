@@ -418,6 +418,38 @@ JSValue getDirect(VM& vm, const JSObject* object, PropertyName name, unsigned* a
     return uncheckedDowncast<Object>(const_cast<JSObject*>(object))->getDirectFromNativeCode(vm, name, attributesOrNull);
 }
 
+bool ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, JSObject* object, PropertyName name, PropertySlot& slot)
+{
+    ASSERT(slot.isVMInquiry());
+    VM& vm = globalObject->vm();
+    if (isCompiledObject(object)) {
+        DeferTerminationForAWhile deferTermination(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        bool isFound = Object::getOwnPropertySlot(object, globalObject, name, slot);
+        scope.assertNoException();
+        return isFound;
+    }
+    if (isCompiledClosure(object)) {
+        Closure& closure = *uncheckedDowncast<Closure>(object);
+        if (const FieldData* field = StaticFields::findOwnField(closure, name.uid())) {
+            if (JSValue value = closure.state().objects->classes.readStaticField(*field)) {
+                slot.setValue(object, static_cast<unsigned>(PropertyAttribute::None), value);
+                return true;
+            }
+        }
+        if (declaresStaticMethod(closure, name.uid()))
+            closure.ensureClassObject(vm);
+    } else if (object->classInfo() == ClassPrototype::info()) {
+        if (name == vm.propertyNames->constructor) {
+            slot.setValue(object, static_cast<unsigned>(PropertyAttribute::DontEnum), uncheckedDowncast<ClassPrototype>(object)->classObject());
+            return true;
+        }
+        if (ClassPrototype::hasMember(object, name))
+            ClassPrototype::ensureMembers(object);
+    }
+    return JSObject::getOwnPropertySlot(object, globalObject, name, slot);
+}
+
 Presence tryGetOwnValue(JSObject* object, UniquedStringImpl* name, JSValue& value)
 {
     ASSERT(isCompiledObject(object));

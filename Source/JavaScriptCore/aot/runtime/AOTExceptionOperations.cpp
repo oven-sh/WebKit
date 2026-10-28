@@ -111,8 +111,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPollAtPrologue, void*, (Instance* instance,
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* instance, EncodedJSValue value))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowToHandlerInFunction);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowToHandlerInFunction);
     bool stackIsUnobserved = !needsExceptionForEveryThrow(*instance) && vm.interpreter.isExceptionCaughtByUserCatchClause();
     throwException(globalObject, scope, Exception::create(vm, JSValue::decode(value), stackIsUnobserved ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStackOfThrow));
     OPERATION_RETURN(scope);
@@ -121,7 +120,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowToHandlerInFunction, void, (Instance* 
 // The program threw the value somewhere else, and a cleanup that took the value throws it on.
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instance, EncodedJSValue value, uint64_t kept))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowAfterCleanup);
+    AOT_OPERATION_BEGIN_THROW_OF_VALUE(instance, Entry::operationAOTThrowAfterCleanup);
     if (vm.exceptionForInspection()) [[unlikely]] {
         DeferGCForAWhile deferGC(vm);
         throwException(globalObject, scope, JSValue::decode(value));
@@ -141,7 +140,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddressOfThrow, uint64_t, (Instanc
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrow, void, (Instance* instance, EncodedJSValue value))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrow);
+    AOT_OPERATION_BEGIN_THROW_OF_VALUE(instance, Entry::operationAOTThrow);
     if (vm.exceptionForInspection()) [[unlikely]] {
         DeferGCForAWhile deferGC(vm);
         throwException(globalObject, scope, JSValue::decode(value));
@@ -199,8 +198,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatchValueAndException, UGPRPair, 
 
 JSC_DEFINE_JIT_OPERATION(operationAOTReportMismatch, void, (Instance* instance, EncodedJSValue value, uint32_t type, uint32_t typeSite))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReportMismatch);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTReportMismatch);
     JSValue decoded = JSValue::decode(value);
     JSValue checked = decoded ? decoded : jsUndefined();
     const RuntimeType& expected = runtimeTypeAt(instance, type);

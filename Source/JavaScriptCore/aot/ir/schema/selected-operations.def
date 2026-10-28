@@ -69,7 +69,7 @@ operation CallResolved (callee: Any/calls, target: CodeAddress/inspects, thisVal
 operation RegExpMatchLiteral (overload: BuiltinOverload, string: String/inspects, regExp?: Object/inspects, guard?: Guard/inspects, pattern: String, regExpFlags: RegExpFlags, matchForm: RegExpMatchForm, from Placed regExpRecord?: RegExpRecord) -> declared(overload) ; CreatesString reads(RegExpState) writes(RegExpState) ; relies = Pristine ; guarded = regExp ; replaces = CallBuiltin
 
 family InlineBuiltin Selected..Placed ; replaces = CallBuiltin
-operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite) [| engine isDoneInPlace] -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall
+operation CallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, calleeName?: String, accessSite?: AccessSite, allocationSite?: AllocationSite) [| engine isDoneInPlace] -> declared(overload) ; unknownCode by Inline ; accessClass = DirectCall
 terminator TryCallInline (inlineBuiltin: InlineBuiltin, inlineParameters: List<UInt32>, overload: BuiltinOverload, receiver?: Any/retains+returns+calls, arguments...: Any/retains+returns+calls, accessSite?: AccessSite, allocationSite?: AllocationSite) -> done(declared(overload)), miss ; unknownCode by Inline ; accessClass = DirectCall
 
 family Control Selected..Placed

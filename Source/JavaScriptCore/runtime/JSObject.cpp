@@ -247,15 +247,7 @@ String JSObject::calculatedClassName(JSObject* object)
     // Check for a display name of obj.constructor.
     // This is useful to get `Foo` for the `(class Foo).prototype` object.
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    auto getOwnConstructor = [&] {
-#if ENABLE(AOT)
-        // The properties of a compiled object lie where only its own hook finds them.
-        if (object->structure()->isCompiledStructure())
-            return object->methodTable()->getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, slot);
-#endif
-        return object->getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, slot);
-    };
-    if (getOwnConstructor()) {
+    if (object->ordinaryGetOwnPropertySlot(globalObject, vm.propertyNames->constructor, slot)) {
         EXCEPTION_ASSERT(!scope.exception());
         if (slot.isValue()) {
             if (JSObject* ctorObject = dynamicDowncast<JSObject>(slot.getValue(globalObject, vm.propertyNames->constructor))) {
@@ -411,6 +403,7 @@ bool JSObject::getOwnPropertySlotByIndex(JSObject* thisObject, JSGlobalObject* g
 
 bool JSObject::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
+    ASSERT(object->type() != CompiledObjectType);
     return getOwnPropertySlotImpl(object, globalObject, propertyName, slot);
 }
 #endif // ASSERT_ENABLED

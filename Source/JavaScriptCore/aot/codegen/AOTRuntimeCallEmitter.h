@@ -71,10 +71,11 @@ public:
     void finishCallPatchpoint(const OperationContext&, B3::PatchpointValue*, uint32_t site, const CallPatchpointRequest&);
     enum class CellConversions : uint8_t { AsEffectsSay, None, WhateverEffectsSay };
     // The slot of a site is filled, emptied and filled again by the stubs and the run time. No operation of the IR says so: only generated code reads the slots.
+    // The cell that the closure table has for a function is filled where the closure is first asked for, which no operation and no summary of a callee says either. It goes by the same rule: whoever fills it makes a cell.
     enum class SlotsOfSites : uint8_t { MayChange, StayAsTheyAre };
-    SlotsOfSites slotsOfSitesBehindStub(const OperationContext*, const Effects&) const;
+    SlotsOfSites slotsOfSitesBehindStub(const OperationContext*, const Effects&, bool makesClosureOfTable = false) const;
     // For the end of a procedure. A write matters to a reader in the same procedure, and a call that writes nothing may be moved, merged or left out.
-    void stateWhichCallsChangeSlotsOfSites();
+    void stateWhichCallsChangeWhatOnlyGeneratedCodeReads();
     void applyEffects(B3::PatchpointValue*, const Effects&, ArgumentBufferAccess, bool accessesCollectorState = false, CellConversions = CellConversions::AsEffectsSay, SlotsOfSites = SlotsOfSites::MayChange);
     Effects effectsOfCall(const OperationContext&, const Effects& effectsOfCallee) const;
 

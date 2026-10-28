@@ -278,6 +278,8 @@ static bool tryLoadPair(Code& code, BasicBlock* block, unsigned current, Inst& i
         return tmp == Tmp(CCallHelpers::stackPointerRegister) ? offset - bytesBelowFrameRecord : offset;
     };
     auto mayOverlap = [&](const Arg& arg, Width width) {
+        if (code.proc().policy().validation.overlooksWritesBetweenPairedLoads) [[unlikely]]
+            return false;
         if (!arg.isAddr() && !arg.isSimpleAddr())
             return true;
         int64_t offset = arg.isAddr() ? static_cast<int64_t>(arg.offset()) : 0;

@@ -238,19 +238,27 @@ static std::optional<unsigned> forEachPlainQueryPair(std::span<const Latin1Chara
     }
 }
 
-static std::optional<std::span<const Latin1Character>> latin1SpanWithoutResolving(JSGlobalObject* globalObject, JSValue value)
+using NarrowCopy = Vector<Latin1Character, 128>;
+
+// The width is that of the storage now: what was 8-bit at one call may be 16-bit at the next, and its Latin-1 characters are copied then.
+static std::optional<std::span<const Latin1Character>> latin1SpanWithoutResolving(JSGlobalObject* globalObject, JSValue value, NarrowCopy& copy)
 {
-    if (!value.isString())
+    if (!value.isString() || asString(value)->isNonSubstringRope())
         return std::nullopt;
-    JSString* string = asString(value);
-    if ((string->isRope() && !string->isSubstring()) || !string->is8Bit())
+    auto view = asString(value)->view(globalObject);
+    if (view->is8Bit())
+        return view->span8();
+    if (view->length() > Typed::PlainURL::maxOffset || !WTF::charactersAreAllLatin1(view->span16()))
         return std::nullopt;
-    return string->view(globalObject)->span8();
+    copy.grow(view->length());
+    view->getCharacters(copy.mutableSpan());
+    return copy.span();
 }
 
 static int32_t scanQuery(JSGlobalObject* globalObject, JSValue textValue)
 {
-    auto text = latin1SpanWithoutResolving(globalObject, textValue);
+    NarrowCopy copy;
+    auto text = latin1SpanWithoutResolving(globalObject, textValue, copy);
     if (!text)
         return Typed::PlainURL::notPlain;
     auto count = forEachPlainQueryPair(*text, [](auto, size_t, size_t) {
@@ -261,8 +269,10 @@ static int32_t scanQuery(JSGlobalObject* globalObject, JSValue textValue)
 
 static int32_t findInQuery(JSGlobalObject* globalObject, JSValue textValue, JSValue nameValue)
 {
-    auto text = latin1SpanWithoutResolving(globalObject, textValue);
-    auto name = latin1SpanWithoutResolving(globalObject, nameValue);
+    NarrowCopy copyOfText;
+    NarrowCopy copyOfName;
+    auto text = latin1SpanWithoutResolving(globalObject, textValue, copyOfText);
+    auto name = latin1SpanWithoutResolving(globalObject, nameValue, copyOfName);
     if (!text || !name)
         return Typed::PlainURL::needsObject;
     int32_t found = Typed::PlainURL::absent;
@@ -288,7 +298,8 @@ static JSString* keyString(VM& vm, std::span<const Latin1Character> name)
 static EncodedJSValue listQueryPairs(JSGlobalObject* globalObject, JSValue textValue, JSValue query, IterationKind kind)
 {
     VM& vm = globalObject->vm();
-    auto text = *latin1SpanWithoutResolving(globalObject, textValue);
+    NarrowCopy copy;
+    auto text = *latin1SpanWithoutResolving(globalObject, textValue, copy);
     Structure* structure = globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous);
     JSArray* list = JSArray::create(vm, structure, Typed::PlainURL::numberOfPairs(query.asInt32()));
     unsigned index = 0;

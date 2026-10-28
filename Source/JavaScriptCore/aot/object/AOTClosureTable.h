@@ -48,7 +48,6 @@ public:
     bool hasSingletonClosure(FunctionID) const;
     void registerClassObject(Closure*);
     void registerClosureOfMember(FunctionID, JSCell*);
-    void forgetClosure(FunctionID);
     JSObject* createClosure(VM&, FunctionID, std::span<const uint64_t> captures, unsigned numberOfReferences);
     JSObject* createClosureOver(VM&, FunctionID, JSValue captured);
     // For a function that captures nothing and that no value of the program names, as the body of a module: the table does not keep the closure.

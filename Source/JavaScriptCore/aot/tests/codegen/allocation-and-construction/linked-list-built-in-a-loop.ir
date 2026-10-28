@@ -84,33 +84,32 @@ function f1 name="build" module=m0 position=50 flags=[IsChecked, HasExplicitName
     Return v20
 }
 
-# Each turn allocates one cell and stores the counter, as a 32-bit integer, and the cell of the turn before. The third store clears the word for a value that is no such integer.
+# Nothing that flow sees bounds the counter, so the field holds a number in 64 bits. Each turn allocates one cell and stores the counter, as a double, and the cell of the turn before. No store is tested, so the cell has no word for a value that fails a test.
 # CHECK-LABEL: steps by 1
 # CHECK: Int64 b@[[head]] = Phi(
 # CHECK-NEXT: Int32 b@[[k]] = Phi(
+# CHECK-NEXT: Double b@[[value]] = IToD(b@[[k]], {{*}}:NewObject)
 # CHECK-NEXT: Int64 b@[[cell]] = Patchpoint($1(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
-# CHECK-NEXT: Store($0(b@{{*}}), b@[[cell]], offset = 24, ControlDependent|Writes:ObjectFields, {{*}}:NewObject)
-# CHECK-NEXT: Store(b@[[k]], b@[[cell]], offset = 32, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK-NEXT: Store(b@[[value]], b@[[cell]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
 # CHECK-NEXT: Store(b@[[head]], b@[[cell]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK: Upsilon(b@[[cell]], ^[[head]],
 # CHECK-LABEL: end of loop
-# The older cell goes into the newer one, so there is no write barrier. The counter is not converted or boxed.
+# The older cell goes into the newer one, so there is no write barrier. The counter is not boxed.
 # NONE-LABEL: steps by 1
 # NONE-NOT: Reads:JSCell
 # NONE-NOT: offset = 7,
-# NONE-NOT: IToD(
 # NONE-NOT: Reads:ObjectFields
 # NONE-LABEL: end of loop
 # CALLS: f1: size=
 # CALLS-NOT: stub
-# CALLS: stub AllocateCell.HeaderAndWords.n3 x1
+# CALLS: stub AllocateCell.HeaderAndWords.n2 x1
 # CALLS-NOT: stub
 # CALLS: f{{*}}: size=
 # The back edge is a block of its own, with a move and a jump.
 # X64-NOT: , instructions:
-# X64: loop #{{*}}, instructions: 9, patchpoints: 2
+# X64: loop #{{*}}, instructions: 10, patchpoints: 2
 # X64-NOT: , instructions:
 # ARM64-NOT: , instructions:
-# ARM64: loop #{{*}}, instructions: 9, patchpoints: 2, rare instructions: 2
+# ARM64: loop #{{*}}, instructions: 10, patchpoints: 2, rare instructions: 2
 # ARM64-NOT: , instructions:

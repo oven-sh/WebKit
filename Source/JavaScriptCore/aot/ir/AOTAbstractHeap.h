@@ -41,7 +41,8 @@ inline constexpr AbstractHeapSet perObjectHeaps = heapsMatching([](AbstractHeap 
 inline constexpr AbstractHeapSet indexedHeaps = heapsMatching([](AbstractHeap heap) { return numberOfIndexesOf(heap) > 0; });
 
 inline constexpr AbstractHeapSet bookkeepingHeaps { AbstractHeap::AllocatorState, AbstractHeap::RuntimeState };
-inline constexpr AbstractHeapSet heapsWhoseWritesNobodySees = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage, AbstractHeap::CollectionStorage };
+// A guard ends because of what is done to an object. Where that is left out, the guard goes on telling the truth.
+inline constexpr AbstractHeapSet heapsWhoseWritesNobodySees = bookkeepingHeaps | AbstractHeapSet { AbstractHeap::StringStorage, AbstractHeap::CollectionStorage, AbstractHeap::MemberGuards };
 inline constexpr AbstractHeapSet compiledCodeHeaps { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
 
 inline constexpr unsigned numberOfIndexedHeaps = static_cast<unsigned>(indexedHeaps.size());

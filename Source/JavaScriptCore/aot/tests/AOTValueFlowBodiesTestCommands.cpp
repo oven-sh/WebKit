@@ -84,6 +84,8 @@ static void printValueFlowBody(PrintStream& out, const Program& program, const V
             return printBefore(FunctionID(name.owner), ".thrown"_s);
         case Kind::OfHost:
             return out.print("host"_s, name.owner);
+        case Kind::Hub:
+            return out.print("host"_s, numberOfValueFlowHostNodes + name.owner);
         }
         RELEASE_ASSERT_NOT_REACHED();
     };

@@ -142,9 +142,11 @@ static bool isLegalFlagSet(Slot::Kind kind, uint8_t flags)
 {
     if (flags & (Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter) & ~Slot::kindFlagOf(kind))
         return false;
-    if ((flags & Slot::storageHasIndexingHeader) && !(flags & Slot::growsStorage))
+    if (flags & Slot::needsHandler)
         return false;
-    if ((flags & Slot::inheritedIsOutOfLine) && (Slot::payloadOf(kind) != SlotPayload::FieldAndHolder || Slot::locationOf(kind) != SlotLocation::WordIndex))
+    static_assert(Slot::inheritedIsOutOfLine == Slot::storageHasIndexingHeader);
+    bool namesPlaceInHolder = Slot::payloadOf(kind) == SlotPayload::FieldAndHolder && Slot::locationOf(kind) == SlotLocation::WordIndex;
+    if ((flags & Slot::storageHasIndexingHeader) && !(flags & Slot::growsStorage) && !namesPlaceInHolder)
         return false;
     if (kind == Slot::Kind::InheritedField)
         return !(flags & (Slot::isOwn | Slot::isOutOfLine));
@@ -198,14 +200,15 @@ static void testEveryKindReadsBack()
         previousKind = kind;
 
         AOT_TEST_CHECK(!slot.isEmpty());
-        AOT_TEST_CHECK(slot.kind == kind && slot.flags == flags && slot.structureID == cells.id());
-        for (uint8_t flag : { Slot::isOwn, Slot::isOutOfLine, Slot::dependsOnChain, Slot::absentIsUndefined, Slot::growsStorage, Slot::inheritsGetter, Slot::storageHasIndexingHeader, Slot::inheritedIsOutOfLine })
+        AOT_TEST_CHECK(slot.kind == kind && slot.flags == (flags | Slot::flagsFixedBy(kind)) && slot.structureID == cells.id());
+        for (uint8_t flag : { Slot::isOwn, Slot::isOutOfLine, Slot::dependsOnChain, Slot::absentIsUndefined, Slot::growsStorage, Slot::inheritsGetter, Slot::storageHasIndexingHeader })
             AOT_TEST_CHECK(slot.has(flag) == !!(flags & flag));
+        AOT_TEST_CHECK(slot.has(Slot::needsHandler) == (kind != Slot::Kind::Value && kind != Slot::Kind::Absent));
 
         uint64_t header = slot.headerBits();
         AOT_TEST_CHECK(static_cast<uint32_t>(header) == cells.id().bits());
         AOT_TEST_CHECK(static_cast<uint8_t>(header >> Slot::kindShiftInHeader) == static_cast<uint8_t>(kind));
-        AOT_TEST_CHECK(static_cast<uint8_t>(header >> Slot::flagsShiftInHeader) == flags);
+        AOT_TEST_CHECK(static_cast<uint8_t>(header >> Slot::flagsShiftInHeader) == slot.flags);
         AOT_TEST_CHECK(static_cast<uint16_t>(header >> Slot::locationShiftInHeader) == slot.location);
 
         bool isOutOfLine = flags & Slot::isOutOfLine;
@@ -356,11 +359,11 @@ static void testFarIndexDegrades()
 
     Slot farSlot = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::isOwn | Slot::dependsOnChain, nullptr, firstFarOffset);
     AOT_TEST_CHECK(farSlot.kind == Slot::Kind::FarValue && farSlot.offsetInStorage() == firstFarOffset);
-    AOT_TEST_CHECK(farSlot.flags == (Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain));
+    AOT_TEST_CHECK(farSlot.flags == (Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::needsHandler));
 
     Slot inherited = Slot::createInStorage(cells.id(), Slot::Kind::Value, Slot::dependsOnChain, cells.holder, firstFarOffset);
     AOT_TEST_CHECK(inherited.kind == Slot::Kind::Uncacheable && inherited.structureID == cells.id() && !inherited.payloadBits());
-    AOT_TEST_CHECK(inherited.flags == Slot::dependsOnChain);
+    AOT_TEST_CHECK(inherited.flags == (Slot::dependsOnChain | Slot::needsHandler));
 
     for (Slot::Kind kind : { Slot::Kind::Getter, Slot::Kind::Setter }) {
         AOT_TEST_CHECK(Slot::createInStorage(cells.id(), kind, Slot::isOwn, nullptr, lastOffsetInLocation).kind == kind);
@@ -587,8 +590,11 @@ static void testMissesBeforeRefill()
     AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(1) == 15);
     AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(2) == 63);
     AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(3) == 255);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(4) == 255);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(200) == 255);
+    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(4) == 1023);
+    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(5) == 4095);
+    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(6) == 16383);
+    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(7) == 16383);
+    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(200) == 16383);
 }
 
 static void testInstanceLayoutOffsets()

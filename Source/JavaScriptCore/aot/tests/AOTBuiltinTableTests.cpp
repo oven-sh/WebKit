@@ -14,6 +14,7 @@
 #include "AOTNativeTest.h"
 #include "AOTResultRules.h"
 #include "AOTRuntimeDescription.h"
+#include "AOTStubsConstruct.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include "IdentifierInlines.h"
@@ -386,6 +387,23 @@ static void testUndeclaredOverloadClaimsNothing()
     AOT_TEST_CHECK(numberOfUndeclaredOverloads);
     for (const BuiltinOverload& overload : table().overloadsOf(Builtins::MathAbs))
         AOT_TEST_CHECK(!overload.isUndeclared());
+}
+
+// A constructor that throws nothing is entered without a test of the stack.
+static void testConstructorsThatThrowNothingTakeFewArguments()
+{
+    unsigned numberOfConstructors = 0;
+    forEachID<BuiltinOverloadID>(table().overloadCount(), [&](BuiltinOverloadID id) {
+        const BuiltinOverload& overload = table().at(id);
+        if (overload.mode != BuiltinCallMode::Construct || overload.throws())
+            return;
+        ++numberOfConstructors;
+        AOT_TEST_CHECK(overload.parameters.size() <= maxArgumentCountOfUntestedHostFrame);
+        AOT_TEST_CHECK(std::ranges::none_of(overload.parameters, [](const BuiltinParameter& parameter) {
+            return parameter.mode == BuiltinParameterMode::Rest;
+        }));
+    });
+    AOT_TEST_CHECK(numberOfConstructors);
 }
 
 static void testParameterFor()
@@ -1239,6 +1257,7 @@ std::span<const NativeTest> builtinTableTests()
         { "builtin-table/overloads-are-one-run-in-mode-order"_s, testOverloadsAreOneRunInModeOrder },
         { "builtin-table/dispatch-is-total"_s, testDispatchIsTotal },
         { "builtin-table/undeclared-overload-claims-nothing"_s, testUndeclaredOverloadClaimsNothing },
+        { "builtin-table/constructors-that-throw-nothing-take-few-arguments"_s, testConstructorsThatThrowNothingTakeFewArguments },
         { "builtin-table/parameter-for"_s, testParameterFor },
         { "builtin-table/classes-and-slots"_s, testClassesAndSlots },
         { "builtin-table/class-relations"_s, testClassRelations },

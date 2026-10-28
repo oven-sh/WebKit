@@ -32,6 +32,7 @@
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <array>
 #include <wtf/BitVector.h>
@@ -82,16 +83,10 @@ static bool mayBeReadWithItsFunction(const Variable& variable)
         // A call cannot name its callee while another value may be stored, so it reads the variable.
         return variable.flow.stores != StoreCount::Never;
     case ReadState::NeverRead:
+    case ReadState::OnlyWhereDefined:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-static FunctionID writtenFunctionOf(const Program& program, FunctionID id)
-{
-    while (FunctionID source = program.at(id).derivation.source)
-        id = source;
-    return id;
 }
 
 // A function under a key in brackets takes its name from the key where its object is made. One key names the function as it is written.

@@ -840,6 +840,11 @@ FunctionKind kind(JSObject* callee)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+String ownDisplayName(JSObject* object)
+{
+    return ownStringProperty(object, object->vm().propertyNames->displayName);
+}
+
 String displayName(JSObject* object)
 {
     std::optional<FunctionID> function = functionOf(object);

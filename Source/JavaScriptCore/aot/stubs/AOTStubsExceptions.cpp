@@ -121,11 +121,25 @@ static void clearDownTo(StubAssembler& jit, GPRReg lowest, GPRReg cursor)
     isEmpty.link(&jit);
 }
 
+// In the frame of the stub, in front of callLookupExceptionHandler(), whose operands it loads again.
+static void checkThatThrowingCallHasSite(StubAssembler& jit)
+{
+    if (!jit.options().validates)
+        return;
+    jit.move(instanceGPR, A0);
+    jit.move(GPRInfo::callFrameRegister, A1);
+    jit.loadRuntimePointer(Entry::CheckThatThrowingCallHasSite, T11);
+    jit.call(T11, OperationPtrTag);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), T10);
+    jit.loadOperation(Entry::operationAOTLookupExceptionHandler, T11);
+}
+
 void emitUnwind(StubAssembler& jit)
 {
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), T10);
     jit.loadOperation(Entry::operationAOTLookupExceptionHandler, T11);
     jit.emitFunctionPrologue();
+    checkThatThrowingCallHasSite(jit);
     callLookupExceptionHandler(jit);
     Jump isNotInCompiledCallers = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     jit.move(GPRInfo::returnValueGPR2, GPRInfo::callFrameRegister);
@@ -185,6 +199,7 @@ void generateHandleExceptionPreservingRegisters(StubAssembler& jit)
     }
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), T10);
     jit.loadOperation(Entry::operationAOTLookupExceptionHandler, T11);
+    checkThatThrowingCallHasSite(jit);
     callLookupExceptionHandler(jit);
     Jump isNotInCompiledCallers = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     jit.move(GPRInfo::returnValueGPR, landingPad);

@@ -15,10 +15,14 @@ struct BuiltinPropertyAction;
 
 namespace Typed {
 
-// A lookup under this name answers what readOwnPropertiesNobodyWrote() answers under any key.
+// A lookup under this name answers what readOwnPropertiesNobodyWrote() answers under the key of an enumerable property, and under any key for a receiver with a property that was defined again.
 inline constexpr ValueFlowName everyOwnPropertyNobodyWroteName { ValueFlowNameKind::EveryProperty, 4 };
+// The same for native code, to which what a built-in class lays on its instances is nothing new.
+inline constexpr ValueFlowName everyOwnPropertyNewToNativeCodeName { ValueFlowNameKind::EveryProperty, 7 };
 // A lookup under this name answers every own property that the receivers hold, and nothing for a name that they lack.
 inline constexpr ValueFlowName everyOwnPropertyHeldName { ValueFlowNameKind::EveryProperty, 5 };
+// The same without the properties that are not enumerable on an instance of a built-in class since it was made.
+inline constexpr ValueFlowName everyEnumerableOwnPropertyHeldName { ValueFlowNameKind::EveryProperty, 6 };
 
 void runHeapOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 

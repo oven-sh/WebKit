@@ -65,6 +65,11 @@ Boxed CallEmitter::superConstructWithList(const OperationContext& context, Boxed
     return Boxed(callStub(context, AOT::superConstructWithList(), { parent.value(), newTarget.value(), zeroExtended(count).value(), list.value() }, { .constructs = true }).first);
 }
 
+Boxed CallEmitter::superConstructWithArray(const OperationContext& context, Boxed parent, Boxed newTarget, CellPointer list)
+{
+    return Boxed(callStub(context, AOT::superConstructWithArray(), { parent.value(), newTarget.value(), list.value() }, { .constructs = true }).first);
+}
+
 void CallEmitter::generateConstruct(const ValueContext& value)
 {
     RELEASE_ASSERT(!value.returnCall());

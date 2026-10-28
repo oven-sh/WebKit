@@ -74,6 +74,12 @@ bool slotHoldsUndefinedAndNull(const Program& program, FieldReference reference)
     return hasMarkers && !flowOf(program, reference).stability.contains(FieldStability::IsNeverStoredWithOtherType);
 }
 
+Type slotContentsTypeOf(const Program& program, FieldReference reference)
+{
+    const Type& type = program.at(slotTypeOf(program, fieldAt(program, reference)));
+    return slotHoldsUndefinedAndNull(program, reference) ? type.withPrimitives(Primitive::UndefinedOrNull) : type;
+}
+
 bool holdsRawValueFromBirth(const Program& program, FieldReference reference)
 {
     if (!isFilledWithValueAtBirth(program, reference))
@@ -426,6 +432,7 @@ static void updateInheritedFields(Program& program, const ParallelLoops& loops)
             const Field& declaration = fieldAt(program, { field.originLayout, *field.originField });
             field.declared = declaration.declared;
             field.slotType = declaration.slotType;
+            field.typeBeforeNarrowing = declaration.typeBeforeNarrowing;
             field.form = declaration.form;
             field.flags.set(FieldFlags::IsEnforced, declaration.flags.contains(FieldFlags::IsEnforced));
         }
@@ -778,7 +785,12 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
         Field& field = program.at(reference.layout).fields[reference.field];
         if (field.declared.established() == type)
             return false;
+        // A written type that leaves these integers out was a prediction of what the field holds at first.
+        if (!field.typeBeforeNarrowing && !field.declared.has(PositionFlags::IsInt32Promise))
+            field.typeBeforeNarrowing = field.declared.written() && expected.isSubsetOf(program.at(field.declared.written()), program) ? field.declared.written() : slotTypeOf(program, field);
         field.declared.establish(Proven::byTestsAtStores(ExpectedType(type)));
+        field.flags.set(FieldFlags::IsCountedWith, evidence->stores.isAddedTo(reference.layout, reference.field).predicted() || evidence->stores.isUsedAsInteger(reference.layout, reference.field).predicted()
+            || evidence->stores.isUsedAsBits(reference.layout, reference.field).predicted() || evidence->stores.isStoredCopiesOfIntegers(reference.layout, reference.field).predicted());
         narrowedKeys.set(field.key.index());
         return true;
     };

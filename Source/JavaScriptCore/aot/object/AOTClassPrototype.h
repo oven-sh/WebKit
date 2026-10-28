@@ -50,6 +50,7 @@ public:
 
     static bool hasMember(JSObject* classPrototype, PropertyName);
     uint32_t classIndex() const { return m_classIndex; }
+    JSObject* classObject() const;
     static constexpr ptrdiff_t offsetOfMemberRow() { return OBJECT_OFFSETOF(ClassPrototype, m_memberRow); }
     std::optional<bool> tryGetDeclaredMember(VM&, PropertyName, PropertySlot&);
 

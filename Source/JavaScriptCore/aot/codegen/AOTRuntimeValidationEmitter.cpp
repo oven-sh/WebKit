@@ -19,6 +19,8 @@
 #include "AOTResultRules.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
+#include <algorithm>
+#include <utility>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -36,9 +38,34 @@ void RuntimeValidationEmitter::validateParameters(BlockID, const Block& block)
     }
 }
 
+static bool hasClassProofsToCheck(const Type& type)
+{
+    return std::ranges::any_of(type.classes, [](const ClassPart& part) {
+        return part.contentsAreProven || !part.provenPristine.isEmpty();
+    });
+}
+
+// A block with a single predecessor inherits the checks that still hold at the end of that predecessor.
+void RuntimeValidationEmitter::inheritCheckedClassProofs(BlockID block)
+{
+    if (block == m_blockOfCheckedClassProofs)
+        return;
+    if (m_checkedClassProofsAtEnd.isEmpty())
+        m_checkedClassProofsAtEnd.grow(analyses().cfg().numNodes());
+    if (m_blockOfCheckedClassProofs)
+        m_checkedClassProofsAtEnd[m_blockOfCheckedClassProofs.index()] = std::exchange(m_checkedClassProofs, { });
+    m_blockOfCheckedClassProofs = block;
+    std::span<const Edge> edges = analyses().cfg().incomingEdges(block);
+    if (edges.size() == 1 && !edges[0].isHandlerEdge())
+        m_checkedClassProofs = m_checkedClassProofsAtEnd[edges[0].from.index()];
+}
+
+static constexpr AbstractHeapSet heapsUnrelatedToClassProofs = heapsWhoseWritesNobodySees | compiledCodeHeaps | AbstractHeapSet { AbstractHeap::ValidationState };
+
 template<typename User>
 void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& context, const User& user, ValueID ownedValue)
 {
+    inheritCheckedClassProofs(context.block());
     user.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
         if (user.operandKind(operandIndex) == OperandKind::Guard) {
             checkGuardIsAvailable(context, operand, operandIndex);
@@ -52,13 +79,19 @@ void RuntimeValidationEmitter::validateOperandsOf(const OperationContext& contex
         const Type& type = typeOf(operand);
         if (type.layouts || !type.classes.isEmpty() || type.environment || generator().checksKeptRegisters())
             checkValue(operand, get(operand));
-        if (hasTestableBits(operand))
+        // Nothing has written to the heap since an earlier operation made the same check.
+        if (hasTestableBits(operand) && hasClassProofsToCheck(type) && !m_checkedClassProofs.contains(operand)) {
             checkClassProofs(operand, get(operand), type);
+            m_checkedClassProofs.append(operand);
+        }
         if (type.environment && representationOf(operand) == Representation::Cell)
             checkIsNotReleased(context, in<CellPointer>(operand), type.environment);
         checkRetainedOperand(context, user, operand, operandIndex);
         checkIsNoFrameArray(context, user, operand, operandIndex);
     });
+    Effects effects = context.effects().onAnyEdge();
+    if (effects.mayRunOtherCode() || !effects.writes.containsOnly(heapsUnrelatedToClassProofs))
+        m_checkedClassProofs.clear();
 }
 
 void RuntimeValidationEmitter::validateOperands(const OperationContext& context)

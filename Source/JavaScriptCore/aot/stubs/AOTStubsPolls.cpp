@@ -21,9 +21,6 @@
 
 namespace JSC { namespace AOT {
 
-static constexpr Address softStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit() };
-static constexpr Address trapAwareSoftStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit() };
-
 // In a frame with a record, with the stack pointer aligned as at the entry of a stub.
 static void callPollSlow(StubAssembler& jit)
 {
@@ -89,7 +86,8 @@ void generatePollAtPrologue(StubAssembler& jit)
     constexpr GPRReg stackPointerAtSite = X86Registers::eax;
     jit.push(stackPointerAtSite);
     jit.addPtr(TrustedImm32(2 * sizeof(void*)), sp, stackPointerAtSite);
-    jit.m_assembler.cmpq_mr(softStackLimitWord.offset, softStackLimitWord.base, stackPointerAtSite);
+    Address limit = StubAssembler::softStackLimitWord();
+    jit.m_assembler.cmpq_mr(limit.offset, limit.base, stackPointerAtSite);
     jit.pop(stackPointerAtSite);
     Jump doesNotFit(jit.m_assembler.jCC(X86Assembler::ConditionB));
     Jump hasThrown;
@@ -113,7 +111,7 @@ void generatePollAtPrologue(StubAssembler& jit)
     doesNotFit.link(&jit);
     leaveFunctionAtPrologue(jit, throwStackOverflow(false));
 #else
-    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, sp, softStackLimitWord), throwStackOverflow(true));
+    jit.linkToStub(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::softStackLimitWord()), throwStackOverflow(true));
     jit.preservingCallerSavedRegisters(false, [&](unsigned bytes) {
         jit.loadCallerReturnAddress(bytes, A1);
         jit.move(instanceGPR, A0);
@@ -164,7 +162,7 @@ void generatePollBeforeEntering(StubAssembler& jit)
     Jump doesNotFit;
     if (recordsCallees) {
         // The limit that traps raise is the limit of the stack or lies above it.
-        Jump mayNotFit = jit.branchPtr(CCallHelpers::Below, scratch, trapAwareSoftStackLimitWord);
+        Jump mayNotFit = jit.branchPtr(CCallHelpers::Below, scratch, StubAssembler::trapAwareSoftStackLimitWord());
         JumpList callsRunTime;
         callsRunTime.append(jit.branchTestPtr(CCallHelpers::Zero, isRenamedAtRunTime));
         Jump isNotSlim = jit.branch8(CCallHelpers::NotEqual, typeOfCallee, TrustedImm32(SlimClosureType));
@@ -187,10 +185,10 @@ void generatePollBeforeEntering(StubAssembler& jit)
         jit.jump().linkTo(hasFunction, &jit);
 
         mayNotFit.link(&jit);
-        doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, softStackLimitWord);
+        doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, StubAssembler::softStackLimitWord());
         callsRunTime.link(&jit);
     } else
-        doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, softStackLimitWord);
+        doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, StubAssembler::softStackLimitWord());
     jit.emitFunctionPrologue();
     // The frame record, the return address of this stub and the return address of the call.
     callPollBeforeEntering(jit, 3 * sizeof(void*));
@@ -210,13 +208,13 @@ void generatePollBeforeEntering(StubAssembler& jit)
 #else
     constexpr GPRReg siteReturnAddress = ARM64Registers::x16;
     constexpr GPRReg scratch = ARM64Registers::x17;
-    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, sp, softStackLimitWord);
+    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::softStackLimitWord());
     jit.pushPair(siteReturnAddress, CCallHelpers::linkRegister);
     if (recordsCallees) {
         // Both return addresses are on the stack.
         constexpr GPRReg isRenamed = siteReturnAddress;
         JumpList callsRunTime;
-        callsRunTime.append(jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimitWord));
+        callsRunTime.append(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::trapAwareSoftStackLimitWord()));
         jit.loadPtr(isRenamedAtRunTime, isRenamed);
         callsRunTime.append(jit.branchTestPtr(CCallHelpers::Zero, isRenamed));
         jit.load8(typeOfCallee, scratch);

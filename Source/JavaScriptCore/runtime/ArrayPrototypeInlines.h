@@ -32,13 +32,10 @@
 #include "ExceptionHelpers.h"
 #include "GetVM.h"
 #include "JSGlobalObject.h"
+#include "JSObjectInlines.h"
 #include "JSStringJoiner.h"
 #include "JSStringInlines.h"
 #include "ObjectPrototype.h"
-
-#if ENABLE(AOT)
-#include "AOTPropertyWalk.h"
-#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -67,7 +64,7 @@ ALWAYS_INLINE bool arraySpeciesWatchpointIsValid(VM& vm, JSObject* thisObject)
     if (!thisObject->hasCustomProperties())
         return true;
 
-    return thisObject->getDirectOffset(vm, vm.propertyNames->constructor) == invalidOffset;
+    return !thisObject->hasDirectProperty(globalObject, vm.propertyNames->constructor);
 }
 
 ALWAYS_INLINE bool arrayMissingIsConcatSpreadable(VM& vm, JSObject* thisObject)
@@ -86,16 +83,12 @@ ALWAYS_INLINE bool arrayMissingIsConcatSpreadable(VM& vm, JSObject* thisObject)
     } else {
         if (globalObject->objectPrototype() != thisObject->getPrototypeDirect())
             return false;
-#if ENABLE(AOT)
-        if (AOT::PropertyWalk::isCompiledObject(thisObject))
-            return AOT::PropertyWalk::hasOwnProperty(thisObject, vm.propertyNames->isConcatSpreadableSymbol.impl()) == AOT::PropertyWalk::Presence::Absent;
-#endif
     }
 
     if (!thisObject->hasCustomProperties())
         return true;
 
-    return thisObject->getDirectOffset(vm, vm.propertyNames->isConcatSpreadableSymbol) == invalidOffset;
+    return !thisObject->hasDirectProperty(globalObject, vm.propertyNames->isConcatSpreadableSymbol);
 }
 
 ALWAYS_INLINE std::pair<SpeciesConstructResult, JSObject*> speciesConstructArray(JSGlobalObject* globalObject, JSObject* thisObject, uint64_t length)

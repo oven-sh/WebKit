@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTSlotRepresentation.h"
+#include "AOTThreshold.h"
 #include "JSCJSValue.h"
 #include "JSObject.h"
 #include "MarkedBlockCage.h"
@@ -127,14 +128,17 @@ struct alignas(16) Slot {
 #undef AOT_DECLARE_SLOT_KIND
     };
 
-    static constexpr uint8_t isOwn = 1 << 0;
-    static constexpr uint8_t isOutOfLine = 1 << 1;
-    static constexpr uint8_t dependsOnChain = 1 << 2;
+    static constexpr uint8_t isOutOfLine = 1 << 0;
+    static constexpr uint8_t dependsOnChain = 1 << 1;
+    static constexpr uint8_t isOwn = 1 << 2;
     static constexpr uint8_t absentIsUndefined = static_cast<uint8_t>(SlotKindFlag::AbsentIsUndefined);
     static constexpr uint8_t growsStorage = static_cast<uint8_t>(SlotKindFlag::GrowsStorage);
     static constexpr uint8_t inheritsGetter = static_cast<uint8_t>(SlotKindFlag::InheritsGetter);
     static constexpr uint8_t storageHasIndexingHeader = 1 << 6;
-    static constexpr uint8_t inheritedIsOutOfLine = 1 << 7;
+    // Of every kind but Value and Absent. One comparison of the flags with isOwn sorts a slot for reads: equal is an own value in the cell, below is an inherited value or Absent, above is another own value, and negative is a slot for the handler of its kind.
+    static constexpr uint8_t needsHandler = 1 << 7;
+    // Of FieldOrInherited and FieldOrInheritedSetter, which never grow storage.
+    static constexpr uint8_t inheritedIsOutOfLine = storageHasIndexingHeader;
     // Of FieldCreation, which never has absentIsUndefined: the key order alone says that the field exists, and its slot admits undefined. A store of undefined that finds no granule lists the key and asks for none.
     static constexpr uint8_t undefinedNeedsNoStorage = absentIsUndefined;
     // Of FieldCreation, for a field in the cell whose slot holds any value as it is and whose type is that of any value, so that the type has nothing to say.
@@ -190,6 +194,7 @@ struct alignas(16) Slot {
     static constexpr SlotLocation locationOf(Kind);
     static constexpr SlotPresence presenceOf(Kind);
     static constexpr uint8_t kindFlagOf(Kind);
+    static constexpr uint8_t flagsFixedBy(Kind kind) { return kind == Kind::Empty || kind == Kind::Value || kind == Kind::Absent ? 0 : needsHandler; }
 
     static constexpr int32_t wordIndexFor(PropertyOffset offset)
     {
@@ -215,7 +220,7 @@ struct alignas(16) Slot {
         Slot slot { };
         slot.structureID = structureID;
         slot.kind = kind;
-        slot.flags = flags;
+        slot.flags = flags | flagsFixedBy(kind);
         slot.location = location;
         return slot;
     }
@@ -515,7 +520,7 @@ inline std::optional<PackedSlot> PackedSlot::tryPack(const Slot& slot, uint16_t 
 {
     ASSERT(name != noName);
     uint8_t carriedFlag = Slot::kindFlagOf(slot.kind);
-    if (slot.flags & ~(Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | carriedFlag))
+    if (slot.flags & ~(Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::needsHandler | carriedFlag))
         return std::nullopt;
     Slot::Kind kind = slot.kind;
     uint32_t payload = 0;
@@ -658,7 +663,10 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
 }
 
 struct SiteCacheState {
-    static constexpr unsigned maxRefillCount = 3;
+    // A site that goes on missing behind every fill meets objects of many Structures, and no fill helps it.
+    static constexpr unsigned maxRefillCount = 6;
+    // A miss at the site of a run of stores costs a store for each name, so such a site does not wait as long.
+    AOT_CLASS_THRESHOLD(unsigned, maxRefillCountOfRun, 3);
     static constexpr unsigned slotAddressShift = 3;
     // Sites share the states by address: what a state says only decides when a filled site asks to be filled again.
     static constexpr unsigned numberOfStates = 4096;
@@ -666,12 +674,9 @@ struct SiteCacheState {
     // The misses of all empty sites with lookup tables behind them are counted together: the counter goes up by this step, and the miss that wraps it is a sample. A site is filled at its second sample.
     static constexpr unsigned missesOfEmptySitesPerSample = 32;
     static constexpr unsigned sampleStep = (UINT8_MAX + 1) / missesOfEmptySitesPerSample;
-    static constexpr uint8_t missesBeforeRefill(unsigned refillCount) { return static_cast<uint8_t>((4u << (2 * std::min(refillCount, maxRefillCount))) - 1); }
+    static constexpr uint16_t missesBeforeRefill(unsigned refillCount, unsigned mostThatCount = maxRefillCount) { return static_cast<uint16_t>((4u << (2 * std::min(refillCount, mostThatCount))) - 1); }
 
-    static constexpr ptrdiff_t offsetOfMissesLeft() { return OBJECT_OFFSETOF(SiteCacheState, missesLeft); }
-
-    uint8_t refillCount;
-    uint8_t missesLeft;
+    uint16_t missesLeft;
 };
 
 struct CustomAccessorRecord {
@@ -688,7 +693,8 @@ static_assert(sizeof(Slot) == 16 && alignof(Slot) == 16);
 static_assert(Slot::kindShiftInHeader == 8 * Slot::offsetOfKind());
 static_assert(Slot::flagsShiftInHeader == 8 * Slot::offsetOfFlags());
 static_assert(Slot::locationShiftInHeader == 8 * Slot::offsetOfLocation());
-static_assert((Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter | Slot::storageHasIndexingHeader | Slot::inheritedIsOutOfLine) == Slot::allFlags);
+static_assert((Slot::isOwn | Slot::isOutOfLine | Slot::dependsOnChain | Slot::absentIsUndefined | Slot::growsStorage | Slot::inheritsGetter | Slot::storageHasIndexingHeader | Slot::needsHandler) == Slot::allFlags);
+static_assert(Slot::isOwn > (Slot::isOutOfLine | Slot::dependsOnChain) && static_cast<int8_t>(Slot::needsHandler) < 0);
 static_assert(!static_cast<unsigned>(Slot::Kind::Empty));
 // Whoever asks whether a property is there reads the slot of either in the same way, and tells the two from all other kinds by one comparison.
 static_assert((static_cast<unsigned>(Slot::Kind::Field) | 1) == static_cast<unsigned>(Slot::Kind::FieldGetter) && !(static_cast<unsigned>(Slot::Kind::Field) & 1));
@@ -704,7 +710,7 @@ static_assert(sizeof(PackedSlot) == 8 && std::is_trivially_copyable_v<PackedSlot
 
 static_assert(sizeof(SiteCacheState) == 2);
 static_assert(sizeof(Slot) >> SiteCacheState::slotAddressShift == sizeof(SiteCacheState));
-static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) == 255);
+static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) == 16383);
 
 static_assert(sizeof(CustomAccessorRecord) == 32);
 

@@ -19,6 +19,8 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v3 = Construct v2, -, v1
     PutModuleVariable v3 variable=g0
     v5 = CallDirect v3, v1 function=f7
+    v6 = Convert v3 declared={type=L0}
+    PutModuleVariable v6 variable=g1
     Return
 }
 function f1 name="Router" flags=[HasThis] thisType={type=L0} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {

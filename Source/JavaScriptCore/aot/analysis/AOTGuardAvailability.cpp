@@ -1170,7 +1170,7 @@ bool GuardAvailability::isAvailableIn(const BitVector& available, ValueID guard,
     const GuardFacts& facts = factsOf(guard);
     for (uint32_t factIndex = 0; factIndex < facts.facts.size(); ++factIndex) {
         const GuardFact& candidate = facts.facts[factIndex];
-        if (available.quickGet(firstComponent + factIndex) && candidate.subject == subject && candidate.position == position && isAsStrongAs(candidate, fact))
+        if (available.quickGet(firstComponent + factIndex) && candidate.subject == subject && isSamePosition(candidate.position, position) && isAsStrongAs(candidate, fact))
             return true;
     }
     return false;

@@ -275,7 +275,7 @@ schema is the reference for every keyword, field, operand, payload name and flag
 - A type is parts joined by `|`: `undefined|number`, `i32`, `int[0, 9]`, `"a"|"b"`, `L3|L4`, `Array<number>`, `function`, `f3`, `env L1`,
   `builtin(MathMax)`, `anything`, `never`, `object`, `absent`, an opaque kind in lower case (`guard`, `iteratorstate`). `L3` reads as its
   family: the layouts below it. `f3` names a function, or a function type (a function with `role=Signature`), which reads as the functions
-  converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-ins converted into it (`builtinMembers=[MathAbs]` on the function type). The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
+  converted into it (`functionTypes=[f3]` on a function or on a function type below it) and the built-in functions converted into it (`builtinMembers=[MathAbs]` on the function type). `builtin(..)` names no constant: `Symbol.iterator` is a `symbol` and `Math.PI` a `number`. The contents of `Array<L3>` are expected. The engine has more parts than the wire: `whole`, `fractional`, `double`, a
   symbol key, `Array<L3, proven>` (contents proven), `Array<number, proven, Int32>` (storage kind), `RegExp<"ab+c"[Global]>`.
 - A position is `{type=T site=w0 flags=[..]}`. Every value that enters it is inside `T`, by a conversion that the families cover or by a
   `Check`. With the flag `IsExpected` nothing checks what enters: a read of it proves nothing and expects `T`.

@@ -32,7 +32,11 @@ constexpr StubKey getByIdOfSilentSlot() { return StubKey(StubFamily::GetByIdOfSi
 constexpr StubKey getByIdOfNarrowCellInExtension() { return StubKey(StubFamily::GetByIdOfNarrowCellInExtension); }
 constexpr StubKey getByIdOfEmptySlot() { return StubKey(StubFamily::GetByIdOfEmptySlot); }
 constexpr StubKey getByIdBehindFieldTable() { return StubKey(StubFamily::GetByIdBehindFieldTable); }
+// For a name that has a column in the front tables: RowDisplacementTable::hasColumn(). So is getLengthAtSite().
 constexpr StubKey getByIdAtSite() { return StubKey(StubFamily::GetByIdAtSite); }
+// getByIdAtSite() behind its test for a cell.
+constexpr StubKey getByIdOfObjectAtSite() { return StubKey(StubFamily::GetByIdOfObjectAtSite); }
+constexpr StubKey getByIdAtSiteHashed() { return StubKey(StubFamily::GetByIdAtSiteHashed); }
 constexpr StubKey getLengthAtSite() { return StubKey(StubFamily::GetLengthAtSite); }
 // The operands: the proxy, the key as its trap takes it, and of a store the value and whether the code is strict.
 constexpr StubKey throughProxy(TrapOfProxy trap) { return StubKey(StubFamily::ThroughProxy).withForm(static_cast<uint8_t>(trap)); }
@@ -56,12 +60,15 @@ constexpr StubKey putByIdAfterFrontProbe(PutMode mode) { return StubKey(StubFami
 constexpr StubKey putByIdHashed(PutMode mode) { return StubKey(StubFamily::PutByIdHashed).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdBehindFieldTable(PutMode mode) { return StubKey(StubFamily::PutByIdBehindFieldTable).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putByIdAtSite(PutMode mode) { return StubKey(StubFamily::PutByIdAtSite).withForm(static_cast<uint8_t>(mode)); }
+constexpr StubKey putByIdAtSiteBehindFieldTable(PutMode mode) { return StubKey(StubFamily::PutByIdAtSiteBehindFieldTable).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putKnownField(PutMode mode) { return StubKey(StubFamily::PutKnownField).withForm(static_cast<uint8_t>(mode)); }
 // For a caller that knows that the slot lies in the cell and holds any value as it is, and that the type of the field is that of any value.
 constexpr StubKey putKnownFieldThatTakesAnyValue(PutMode mode) { return putKnownField(mode).withCount(1); }
 constexpr StubKey putByIdOnce(PutMode mode) { return StubKey(StubFamily::PutByIdOnce).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey createKnownField(PutMode mode) { return StubKey(StubFamily::CreateKnownField).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putBooleanOrDoubleField(PutMode mode) { return StubKey(StubFamily::PutBooleanOrDoubleField).withForm(static_cast<uint8_t>(mode)); }
+constexpr unsigned numberOfPutModes = 3;
+constexpr StubKey putValueThatSlotRefuses(PutMode mode, bool isAtSite) { return StubKey(StubFamily::PutValueThatSlotRefuses).withForm(static_cast<uint8_t>(mode) + (isAtSite ? numberOfPutModes : 0)); }
 constexpr StubKey setFreeName(PutMode mode)
 {
     ASSERT_UNDER_CONSTEXPR_CONTEXT(mode != PutMode::Define);
@@ -187,11 +194,11 @@ static_assert(!static_cast<uint8_t>(PutMode::Strict) && static_cast<uint8_t>(Put
 static_assert(PackedSlot::maxName == (1u << secondNameShift) - 1);
 static_assert([] {
     for (StubKey lastFormKey : {
-        getById(), getByIdAfterFrontProbe(), getByIdHashed(), getByIdOfSilentSlot(), getByIdOfEmptySlot(), getByIdOfNarrowCellInExtension(), getByIdBehindFieldTable(), getByIdAtSite(), getLengthAtSite(), inById(PresenceQuestion::HasOwn),
+        getById(), getByIdAfterFrontProbe(), getByIdHashed(), getByIdOfSilentSlot(), getByIdOfEmptySlot(), getByIdOfNarrowCellInExtension(), getByIdBehindFieldTable(), getByIdAtSite(), getByIdOfObjectAtSite(), getByIdAtSiteHashed(), getLengthAtSite(), inById(PresenceQuestion::HasOwn),
         getByIdChain(), getByIdPair(SecondReceiver::Other), getByIdIsTruthy(), getByIdEqualsLiteral(1),
         callMethodById(0), tryGetSuperById(), getSuperBaseOfClass(),
         getFreeName(FreeNameRead::TypeOf), setFreeName(PutMode::Sloppy), instanceOf(InstanceOfOperand::Prototype),
-        putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putByIdAtSite(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define),
+        putById(PutMode::Define), putByIdAfterFrontProbe(PutMode::Define), putByIdHashed(PutMode::Define), putByIdBehindFieldTable(PutMode::Define), putByIdAtSite(PutMode::Define), putKnownField(PutMode::Define), putByIdOnce(PutMode::Define), createKnownField(PutMode::Define), putBooleanOrDoubleField(PutMode::Define), putValueThatSlotRefuses(PutMode::Define, true), putByIdAtSiteBehindFieldTable(PutMode::Define),
         didCreateField(CreatedFields::Run), didCreateFieldAtPlace(CreatedFieldsAtPlace::Run),
         getByValCached(), getByValCachedCells(), getSuperByVal(), inByValCached(PresenceQuestion::HasOwn), deleteByIdCached(PutMode::Sloppy), deleteByValCached(PutMode::Sloppy), putByValCached(PutMode::Sloppy), defineByValCached(), toPropertyKey(),
     }) {
