@@ -55,6 +55,9 @@ test/built-ins/Proxy/construct/trap-is-not-callable-realm.js:
 test/built-ins/Uint8Array/prototype/setFromBase64/trailing-garbage.js:
   default: 3
   strict mode: 3
+test/intl402/DateTimeFormat/prototype/formatToParts/era.js:
+  default: 3
+  strict mode: 3
 test/intl402/Locale/prototype/getHourCycles/region-priority.js:
   default: 3
   strict mode: 3
