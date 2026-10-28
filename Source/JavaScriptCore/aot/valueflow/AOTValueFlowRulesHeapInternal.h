@@ -37,6 +37,7 @@ struct HeapKey {
     bool namesEnumerableProperty { false };
     HeapKeyReceivers receivers { HeapKeyReceivers::All };
     bool isComputed { false };
+    bool namesNoSymbol { false };
 
     bool mayNameNonEnumerable(PropertyKeyID other) const { return (keyClass == HeapKeyClass::Unknown && !namesEnumerableProperty) || (keyClass == HeapKeyClass::Name && name == other); }
 };
@@ -159,8 +160,12 @@ private:
     ValueFlowOperand withoutProxiesAskedByTheirTraps(const ValueFlowOperand& object);
     void askProxiesByTheirTrap(const HeapKey&, BuiltinName trap, ValueFlowNodeID result, const ValueFlowOperand* stored = nullptr);
     void readThroughProxies(ClimbingSet proxies, const HeapKey&, ValueFlowNodeID result);
+    ValueFlowOperand withoutProxiesEnumeratedByTheirTraps(const ValueFlowOperand& object);
 public:
     void readForReceiver(const ValueFlowOperand& object, const ValueFlowOperand& property, const ValueFlowOperand& receiver);
+    void listProxiesByTheirTraps(ClimbingSet proxies);
+    ClimbingSet targetsListedInPlaceOf(ClimbingSet proxies);
+    void askProxiesForListedValues(ClimbingSet proxies, ValueFlowNodeID result);
 private:
     void mayThrow() { add(m_statement.thrown, unknownValue(ValueFlowUnknownSource::ThrownByRunTime)); }
     void answerBoolean() { add(m_statement.result, m_tables.booleanKinds()); }
@@ -178,6 +183,7 @@ private:
     HeapKeyReceivers receiversOfSymbolNobodyKnows(ClimbingSet keys, const HeapKeyUse&);
     ValueFlowOperand receiversUnder(const ValueFlowOperand& object, const HeapKey&);
     void forEachKey(const ValueFlowOperand& property, const ScopedLambda<void(const HeapKey&)>&, HeapKeyUse = { });
+    void noteWhatMayLieUnderSymbolThatHostLooksFor(const HeapKey&, const ValueFlowOperand& stored);
     void forEachKeyOfOperation(uint32_t computedKeyIndex, NOESCAPE const Invocable<void(const HeapKey&)> auto&, HeapKeyUse = { });
     void forEachKeyOfAction(const BuiltinKey&, const ValueFlowOperand& keyOperand, NOESCAPE const Invocable<void(const HeapKey&)> auto&, HeapKeyUse = { });
 
@@ -364,7 +370,9 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
     if (m_context.meet(otherKeys, m_tables.keysNobodyKnows())) {
         HeapKeyReceivers receiversOfSymbols = receiversOfSymbolNobodyKnows(otherKeys, use);
         if (receiversOfSymbols == HeapKeyReceivers::AllButBuiltinObjects) {
-            functor(unknownHeapKey);
+            HeapKey nobodyKnows = unknownHeapKey;
+            nobodyKnows.namesNoSymbol = !m_context.meet(otherKeys, m_context.maker().intersect(m_tables.keysNobodyKnows(), ValueSets::complement(only(ValueFlowUniverse::primitive(PrimitiveSet::String)))));
+            functor(nobodyKnows);
             if (!use.isRead || !property.node)
                 return;
             auto forEachKeyListedAmong = [&](ValueSetID all, NOESCAPE const Invocable<void(const HeapKey&)> auto& take) {

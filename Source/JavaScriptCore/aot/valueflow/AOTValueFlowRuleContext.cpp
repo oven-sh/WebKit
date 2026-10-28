@@ -680,7 +680,7 @@ ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName
             add(nodeFor(ValueFlowNodeKey::holdersOfLibraryExportsWrittenUnder(PropertyKeyID(name.payload))), restrict(objects, universe().objectsOfLibraryFoundByNameAlone()));
     }
     ValueFlowNodeID written = nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Written, objects.m_set, name));
-    if (name.kind == ValueFlowNameKind::Property && m_solver.m_input.nodes) {
+    if ((name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter) && m_solver.m_input.nodes) {
         for (BuiltinName called : program().builtins().namesOfHostMethodsCallingStartupLoads()) {
             if (program().keyOf(called).index() == name.payload)
                 connect(written, nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads));

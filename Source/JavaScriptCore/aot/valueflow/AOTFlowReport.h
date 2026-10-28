@@ -16,6 +16,7 @@
 #include <span>
 #include <wtf/BitVector.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT {
 
@@ -105,6 +106,8 @@ struct FlowReportBodyRecords {
 FlowReportBodyRecords collectFlowReportBodyRecords(const Program&, BuildContext&);
 // Of the report: unseenCode, builtinsUsed and libraryFunctionsLacked.
 FlowReport reportUsesOfLibraryCode(const FlowResults&);
+using JudgeOfUsesOfLibraryCode = ScopedLambda<bool(const FlowReport&)>;
+FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unseenCode, std::span<const Wire::UnseenCodeRecord> loadsOfMachineCode, std::span<const Wire::BuiltinUseRecord>, std::span<const RuntimeFunctionID> libraryFunctionsLacked);
 FlowReport buildFlowReport(const Program&, const FlowResults&, const GradedSites&, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

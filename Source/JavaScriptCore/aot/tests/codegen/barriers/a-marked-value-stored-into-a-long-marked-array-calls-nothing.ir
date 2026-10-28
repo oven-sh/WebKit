@@ -1,0 +1,93 @@
+# A long array that has been marked stays marked, so every store of a cell into it takes the rare side of the test of the array's state. There the first questions of the stub that
+# remembers a stored element are asked in place, in the stub's order: does anything mark, is the array long, is the value a cell, has the value been marked. A value that is no cell
+# or has been marked ends it without a call. Every other answer goes to the stub.
+#
+# function fill(list: string[], text: string): void {
+#   for (let i = 0; i < list.length; i++) list[i] = text;
+# }
+# declare const input: any;
+# fill(input, input);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+
+typesite w0 module=m0 position=14 kind=Parameter
+typesite w1 module=m0 position=30 kind=Parameter
+typesite w2 module=m0 position=63 kind=Variable
+typesite w3 module=m0 position=74 kind=PropertyRead
+typesite w4 module=m0 position=92 kind=Element
+module m0 path="main.ts" displayPath="main.ts" body=f0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="input" [isFreeName]
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
+    v8 = Call v1, -, v4, v7 calleeName="fill"
+    v9 = Undefined
+    Return v9
+}
+function f1 name="fill" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array<undefined|null|string>, v1: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w2}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
+    v6 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v7 = PropGet v0 key="length"
+    v8 = Convert v7 declared={type=number site=w3} illTypedCause=Assertion
+    v9 = Less v6, v8
+    Branch v9 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
+    v11 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v12 = Convert v1 declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}
+    ElemSet v0, v11, v12
+    Jump -> next b5()
+  b5():
+    v14 = Increment v11
+    v15 = Convert v14 declared={type=number site=w2}
+    Jump -> next b2(v15)
+  b6(v16):
+    Jump -> next b7()
+  b7():
+    v17 = Undefined
+    Return v17
+}
+entry module=m0
+
+# CHECK-LABEL: name="fill" role=Source
+# CHECK: Int32 b@[[state]] = Load8Z(b@[[list]], offset = 7, ControlDependent|Reads:collectorState, [[store]]:PutArrayElement)
+# CHECK: Successors: Then:#[[stored]], Else:Rare:#[[isMarked]]
+# CHECK: BB#[[isMarked]]:
+# CHECK: Int32 b@[[marks]] = Load8Z(b@{{*}}, offset = {{*}}, ControlDependent|Reads:collectorState, [[store]]:PutArrayElement)
+# CHECK: Branch(b@[[marks]], Terminal, [[store]]:PutArrayElement)
+# CHECK-NEXT: Successors: Then:Rare:#[[remembers]], Else:#[[nothingMarks]]
+# CHECK: BB#[[nothingMarks]]:
+# CHECK: Int32 b@[[room]] = Load(b@{{*}}, offset = -4, ControlDependent|Reads:Butterfly_vectorLength, [[store]]:PutArrayElement)
+# CHECK: Int32 b@[[isShort]] = Below(b@[[room]], $1024(
+# CHECK: Branch(b@[[isShort]], Terminal, [[store]]:PutArrayElement)
+# CHECK-NEXT: Successors: Then:#[[remembers]], Else:#[[isLong]]
+# CHECK: BB#[[remembers]]:
+# CHECK: Patchpoint(b@[[list]]:Register({{*}}), b@[[text]]:Register({{*}}), resultConstraints = WarmAny, ControlDependent|Writes:collectorState|
+# CHECK: Successors: #[[next]]
+# CHECK: BB#[[isLong]]:
+# CHECK: Int64 b@[[tags]] = BitAnd(b@[[text]], b@{{*}}, [[store]]:PutArrayElement)
+# CHECK: Branch(b@[[tags]], Terminal, [[store]]:PutArrayElement)
+# CHECK-NEXT: Successors: Then:#[[next]], Else:#[[isCell]]
+# CHECK: BB#[[isCell]]:
+# CHECK: Int32 b@[[stateOfText]] = Load8Z(b@[[text]], offset = 7, ControlDependent|Reads:collectorState, [[store]]:PutArrayElement)
+# CHECK: Branch(b@[[stateOfText]], Terminal, [[store]]:PutArrayElement)
+# CHECK-NEXT: Successors: Then:#[[remembers]], Else:#[[next]]
+# CHECK-LABEL: end of function

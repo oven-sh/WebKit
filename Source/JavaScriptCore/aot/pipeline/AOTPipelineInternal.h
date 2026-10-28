@@ -32,7 +32,7 @@ public:
     Pipeline(Program&, PassRunner&);
     ~Pipeline();
 
-    void runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries = [](const PipelineOutput&) { }, NOESCAPE const JudgeOfFlowResults& goesOnBehindFlowAnalysis = [](const FlowResults&) { return true; });
+    void runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries = [](const PipelineOutput&) { }, NOESCAPE const JudgeOfUsesOfLibraryCode& goesOnBehindFlowAnalysis = [](const FlowReport&) { return true; });
     std::unique_ptr<PipelineOutput> takeOutput() { return WTF::move(m_output); }
 
     void runReadStage();
@@ -122,6 +122,7 @@ private:
     std::unique_ptr<FactsOfSelectedBodies> m_factsOfSelectedBodies;
     BitVector m_copiedFunctions;
     Vector<Int32ParameterCandidate> m_int32ParameterCandidates;
+    const JudgeOfUsesOfLibraryCode* m_goesOnBehindFlowAnalysis { nullptr };
 };
 
 void computeResultsForTesting(Pipeline&, OptionSet<ProgramResult> needed);

@@ -207,6 +207,17 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
                 m_behaviorOfOperand.add(&info, behavior);
         }
     }
+    // The engine reads what a trap answers as it reads the list that Reflect.apply is handed and the descriptor that Reflect.defineProperty is handed.
+    auto behaviorOfThirdArgument = [&](BuiltinID builtin) {
+        for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {
+            if (auto parameter = std::ranges::find(overload.parameters, BuiltinOperand::argument(2), &BuiltinParameter::operand); parameter != overload.parameters.end())
+                return m_behaviorOfParameter.get(&*parameter);
+        }
+        return ValueFlowBehaviorID();
+    };
+    m_listOfKeysThatTrapAnswers = behaviorOfThirdArgument(Builtins::ReflectApply);
+    m_descriptorThatTrapAnswers = behaviorOfThirdArgument(Builtins::ReflectDefineProperty);
+    RELEASE_ASSERT(m_listOfKeysThatTrapAnswers && m_descriptorThatTrapAnswers);
 }
 
 static bool usesPutValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)

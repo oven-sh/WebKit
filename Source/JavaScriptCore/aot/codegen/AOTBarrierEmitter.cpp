@@ -18,6 +18,7 @@
 #include "CellState.h"
 #include "JSCell.h"
 #include "RememberedSlot.h"
+#include "StoredCellLog.h"
 #include <algorithm>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -211,8 +212,32 @@ void BarrierEmitter::elementBarrierAfterStore(const ValueContext& store, CellPoi
     LBasicBlock continuation = newBlock();
     m_out.branch(isBeyondBarrierThreshold(array).value(), normalEdge(continuation), rareEdge(slowPath));
     m_out.appendTo(slowPath);
-    for (Boxed value : stored)
+    for (Boxed value : stored) {
+        LBasicBlock remembers = newBlock();
+        LBasicBlock next = newBlock();
+        // A long array that has been marked stays so, and every store into it comes here. The first questions of generateRememberElement() are asked in place, in its order:
+        // where they end it with nothing to remember, nothing is called. Every other answer is left to the stub, which asks again.
+        if (store.shape() == CodeShape::Fast) {
+            LBasicBlock nothingMarks = newBlock();
+            LBasicBlock isLong = newBlock();
+            LBasicBlock isStoredCell = newBlock();
+            m_out.branch(m_out.load8ZeroExt32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(mutatorShouldBeFenced))), rareEdge(remembers), normalEdge(nothingMarks));
+            m_out.appendTo(nothingMarks);
+            // Read anew, as the stub reads it: a read that the store shared with this side would no longer be part of the store's own comparison.
+            Word32 vectorLength = loadField<Word32>(loadField<Pointer>(CellPointer(m_out.opaque(array.value())), m_heaps.JSObject_butterfly), m_heaps.Butterfly_vectorLength);
+            m_out.branch(m_out.below(vectorLength.value(), m_out.constInt32(StoredCellLog::minVectorLengthOfOwner)), normalEdge(remembers), normalEdge(isLong));
+            m_out.appendTo(isLong);
+            m_out.branch(isCell(value).value(), normalEdge(isStoredCell), normalEdge(next));
+            m_out.appendTo(isStoredCell);
+            static_assert(!static_cast<unsigned>(CellState::PossiblyBlack));
+            m_out.branch(m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, value.value(), JSCell::cellStateOffset())), normalEdge(remembers), normalEdge(next));
+        } else
+            m_out.jump(remembers);
+        m_out.appendTo(remembers);
         callBarrierStub(store, rememberElement(), { array.value(), value.value() }, { .isOnRarePath = true });
+        m_out.jump(next);
+        m_out.appendTo(next);
+    }
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }

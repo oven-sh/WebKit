@@ -631,7 +631,7 @@ private:
         const Block& block = m_function.at(id);
         for (uint32_t index = 0; index < block.parameters.size(); ++index) {
             ValueID parameter = block.parameters[index];
-            if (!carriesValue(parameter) || !isBehindCheck(parameter))
+            if (!carriesValue(parameter) || (!isBehindCheck(parameter) && (m_function.role != FunctionRole::Library || m_function.kind == FunctionKind::Module)))
                 continue;
             IncomingValue value = incomingValueOf(m_function, incoming[0], index);
             if (value.kind != IncomingValue::Kind::EdgeResult)
@@ -1993,7 +1993,8 @@ private:
                 }
             }
         }
-        if (!callsHelperOfCompiler(value)) {
+        // A record of data goes into the program wherever its operation stands, and what it fills its fields with counts for their types.
+        if (!callsHelperOfCompiler(value) && value.opcode != Opcode::Data) {
             statement.firstGuard = guards.first;
             statement.guardCount = guards.count;
         }

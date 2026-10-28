@@ -1062,7 +1062,7 @@ static void checkUsedIndicesCoverAllocations()
     AOT_TEST_CHECK(memory && moved);
     MarkedBlockCage::Indices indices = cage.usedIndices();
     AOT_TEST_CHECK(covers(indices, cage.base(), block, blockSize) && covers(indices, cage.base(), memory, 100 * KB) && covers(indices, cage.base(), moved, 3 * MB));
-    AOT_TEST_CHECK(static_cast<uint64_t>(indices.first) + indices.count <= cage.size() >> MarkedBlockCage::shift);
+    AOT_TEST_CHECK(static_cast<uint64_t>(indices.first) + indices.count <= (cage.start() - cage.base() + cage.size()) >> MarkedBlockCage::shift);
 
     cage.free(block);
     cage.free(memory);
@@ -1088,6 +1088,22 @@ static void checkEveryCellIsInside()
     });
     AOT_TEST_CHECK(numberOfStructures > 100 && numberOfCells > 2 * numberOfStructures);
 }
+
+#if OS(LINUX)
+extern "C" char _end;
+
+static void checkNoAddressInImageNamesCell()
+{
+    uintptr_t endOfImage = std::bit_cast<uintptr_t>(&_end);
+    if (endOfImage > std::numeric_limits<uint32_t>::max())
+        return;
+    TestVM test;
+    test.createRealm();
+    MarkedBlockCage::Indices indices = test.cage().usedIndices();
+    AOT_TEST_CHECK(indices.count && indices.first >= endOfImage);
+    AOT_TEST_CHECK(test.cage().start() - test.cage().base() == MarkedBlockCage::distanceOfStartFromBase());
+}
+#endif
 
 static void checkPreciseCellIsInside()
 {
@@ -1143,7 +1159,7 @@ static void checkReserveIsKeptOnceHalfFull()
     AOT_TEST_CHECK(!cage.reserveSize() && !cage.releaseReserve());
 
     Vector<void*> blocks;
-    uintptr_t middle = cage.base() + cage.size() / 2;
+    uintptr_t middle = cage.start() + cage.size() / 2;
     do {
         blocks.append(cage.tryAllocateAligned(blockSize, blockSize));
         AOT_TEST_CHECK(blocks.last() && blocks.size() <= cage.size() / blockSize);
@@ -1636,6 +1652,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/shared-reserve-is-whole-again-behind-a-cage-that-stays"_s, runInProcessWithSharedRange<checkSharedReserveIsWholeAgainBehindCageThatStays> },
         { "heap-cage/cage/shared-reserve-holds-large-cells-of-several-cages"_s, runInProcessWithSharedRange<checkSharedReserveHoldsLargeCellsOfSeveralCages> },
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
+        { "heap-cage/cage/no-address-in-the-image-names-a-cell-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkNoAddressInImageNamesCell> },
 #if USE(MIMALLOC)
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
         { "heap-cage/ballast/requests-that-may-not-fail-look-in-what-the-last-piece-left"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailLookInWhatLastPieceLeft> },
@@ -1650,6 +1667,9 @@ std::span<const NativeTest> heapCageTests()
 #endif
         { "heap-cage/cage/used-indices-cover-allocations"_s, withCage<checkUsedIndicesCoverAllocations> },
         { "heap-cage/cage/every-cell-is-inside"_s, withCage<checkEveryCellIsInside> },
+#if OS(LINUX)
+        { "heap-cage/cage/no-address-in-the-image-names-a-cell"_s, withCage<checkNoAddressInImageNamesCell> },
+#endif
         { "heap-cage/cage/precise-cell-is-inside"_s, withCage<checkPreciseCellIsInside> },
         { "heap-cage/cage/lower-tier-cell-is-inside"_s, withCage<checkLowerTierCellIsInside> },
         { "heap-cage/cage/butterfly-is-outside"_s, withCage<checkButterflyIsOutside> },

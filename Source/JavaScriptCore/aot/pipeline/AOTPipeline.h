@@ -75,15 +75,15 @@ struct PipelineOutput {
     Vector<Vector<FunctionID>> calledFunctions;
     bool isComplete { false };
     bool endedBehindFlowAnalysis { false };
+    // Of a run that ended there: what the judge was asked with.
+    FlowReport usesOfLibraryCode;
 };
 
 using ReaderOfFinishedBodies = ScopedLambda<void(const PipelineOutput&)>;
-// False: the run ends behind the flow analysis.
-using JudgeOfFlowResults = ScopedLambda<bool(const FlowResults&)>;
-
-std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, const ExternalFunctionBodies*, BuildContext&, NOESCAPE const ScopedLambda<void()>& didReadProgram, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, NOESCAPE const JudgeOfFlowResults& goesOnBehindFlowAnalysis);
+// False: the run ends in the flow analysis.
+std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, const ExternalFunctionBodies*, BuildContext&, NOESCAPE const ScopedLambda<void()>& didReadProgram, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, NOESCAPE const JudgeOfUsesOfLibraryCode& goesOnBehindFlowAnalysis);
 // Where a last pass is named, the run stops behind it.
-std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program>, BuildContext&, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries = [](const PipelineOutput&) { }, std::optional<PassID> last = std::nullopt, NOESCAPE const JudgeOfFlowResults& goesOnBehindFlowAnalysis = [](const FlowResults&) { return true; });
+std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program>, BuildContext&, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries = [](const PipelineOutput&) { }, std::optional<PassID> last = std::nullopt, NOESCAPE const JudgeOfUsesOfLibraryCode& goesOnBehindFlowAnalysis = [](const FlowReport&) { return true; });
 std::unique_ptr<PipelineOutput> runPipelineUntil(PassID last, std::unique_ptr<Program>, BuildContext&);
 
 bool canRunPassForTesting(PassID, IRForm);

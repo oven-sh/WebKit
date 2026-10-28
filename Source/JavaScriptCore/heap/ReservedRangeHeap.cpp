@@ -165,6 +165,9 @@ ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
     RELEASE_ASSERT(request.minSize && !(request.size % sizeStep) && !(request.minSize % sizeStep) && request.minSize <= request.size, request.size, request.minSize);
     RELEASE_ASSERT(!request.alignment || hasOneBitSet(request.alignment), request.alignment);
     RELEASE_ASSERT(!(request.unusedPrefixSize % granuleSize) && request.unusedPrefixSize < request.minSize, request.unusedPrefixSize, request.minSize);
+    RELEASE_ASSERT(!(request.unreservedPrefixSize % granuleSize) && request.unreservedPrefixSize <= request.unusedPrefixSize, request.unreservedPrefixSize, request.unusedPrefixSize);
+    RELEASE_ASSERT((request.placement == Placement::AtStart) == !!request.start && (request.start || !request.unreservedPrefixSize), request.start, request.unreservedPrefixSize);
+    RELEASE_ASSERT(!(request.reservedSizeBelowStart % granuleSize) && (!request.start || !request.reservedSizeBelowStart), request.start, request.reservedSizeBelowStart);
 
     bool isGrowable = canGrow(request);
     size_t size = std::max(std::min(isGrowable ? request.initialSegmentSize : request.size, request.addressSpaceBudget / sizeStep * sizeStep), request.minSize);
@@ -177,7 +180,7 @@ ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
                 backing = Backing { BackEnd::Granules, nullptr, size };
             if (backing)
                 return new ReservedRangeHeap(start, isGrowable && backing->backEnd == BackEnd::Malloc ? request.size : backing->size, *backing, request);
-            releaseReservation(start, size);
+            releaseReservation(start, size, request);
         }
         if (!hasAnotherAttempt)
             break;
@@ -220,32 +223,52 @@ void* ReservedRangeHeap::tryReserveRandomWindow(size_t size, size_t alignment, O
 
 uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
 {
-    size_t alignment = std::max(request.alignment, roundUpToPowerOfTwo(size));
     bool isWritable = !reservesWithoutAccess(request);
     void* address = nullptr;
+    if (request.placement == Placement::AtStart) {
+        void* requestedAddress = std::bit_cast<void*>(request.start + request.unreservedPrefixSize);
+        size_t reservedSize = size - request.unreservedPrefixSize;
+        address = OSAllocator::tryReserveUncommitted(reservedSize, request.usage, requestedAddress, isWritable);
+        if (!address)
+            return 0;
+        if (address != requestedAddress) {
+            OSAllocator::releaseDecommitted(address, reservedSize, 0);
+            return 0;
+        }
+#if OS(UNIX)
+        if (request.initialAccess == InitialAccess::None) {
+            size_t inaccessibleSize = isWritable ? request.unusedPrefixSize - request.unreservedPrefixSize : reservedSize;
+            RELEASE_ASSERT(!inaccessibleSize || !mprotect(address, inaccessibleSize, PROT_NONE));
+        }
+#endif
+        return request.start;
+    }
+    size_t reservedSize = request.reservedSizeBelowStart + size;
+    size_t alignment = std::max(request.alignment, roundUpToPowerOfTwo(reservedSize));
     if (request.placement == Placement::RandomWindow)
-        address = tryReserveRandomWindow(size, alignment, request.usage, isWritable);
+        address = tryReserveRandomWindow(reservedSize, alignment, request.usage, isWritable);
     if (!address)
-        address = OSAllocator::tryReserveUncommittedAligned(size, alignment, request.usage, nullptr, isWritable);
+        address = OSAllocator::tryReserveUncommittedAligned(reservedSize, alignment, request.usage, nullptr, isWritable);
     if (!address)
         return 0;
 #if OS(UNIX)
     if (request.initialAccess == InitialAccess::None) {
-        size_t inaccessibleSize = isWritable ? request.unusedPrefixSize : size;
+        size_t inaccessibleSize = isWritable ? request.reservedSizeBelowStart + request.unusedPrefixSize : reservedSize;
         RELEASE_ASSERT(!inaccessibleSize || !mprotect(address, inaccessibleSize, PROT_NONE));
     }
 #endif
-    return std::bit_cast<uintptr_t>(address);
+    return std::bit_cast<uintptr_t>(address) + request.reservedSizeBelowStart;
 }
 
-void ReservedRangeHeap::releaseReservation(uintptr_t start, size_t size)
+void ReservedRangeHeap::releaseReservation(uintptr_t start, size_t size, const Request& request)
 {
 #if OS(WINDOWS)
     // An aligned reservation cannot be released on Windows.
     UNUSED_PARAM(start);
     UNUSED_PARAM(size);
+    UNUSED_PARAM(request);
 #else
-    OSAllocator::releaseDecommitted(std::bit_cast<void*>(start), size, 0);
+    OSAllocator::releaseDecommitted(std::bit_cast<void*>(start + request.unreservedPrefixSize - request.reservedSizeBelowStart), size - request.unreservedPrefixSize + request.reservedSizeBelowStart, 0);
 #endif
 }
 
@@ -267,7 +290,7 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
     // mi_arena_t and theaps inside this region and registers them in
     // process-wide lists that _mi_process_fork_child walks pre-exec.
-    while (madvise(std::bit_cast<void*>(start), size, MADV_DOFORK) == -1 && errno == EAGAIN) { }
+    while (madvise(std::bit_cast<void*>(start + request.unreservedPrefixSize - request.reservedSizeBelowStart), size - request.unreservedPrefixSize + request.reservedSizeBelowStart, MADV_DOFORK) == -1 && errno == EAGAIN) { }
 #elif OS(DARWIN)
     // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
     // same rationale as the Linux MADV_DOFORK branch above.
@@ -513,7 +536,7 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
 
         std::optional<Backing> backing = tryCreateBacking(m_start + offset, size, request);
         if (!backing) {
-            releaseReservation(m_start + offset, size);
+            releaseReservation(m_start + offset, size, request);
             return false;
         }
         m_segmentHeaps.append(backing->mallocHeap);

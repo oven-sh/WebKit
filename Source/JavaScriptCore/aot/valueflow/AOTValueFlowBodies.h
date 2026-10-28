@@ -392,12 +392,16 @@ enum class ValueFlowHostNode : uint8_t {
     ProxiesThatAreOpen,
     ProxiesThatHandOnWhatComesFromBelow,
     ProxiesWithTrapsForWhatComesFromBelow,
+    TargetsOfProxiesThatAreListed,
     LibraryModulesRequestedByProgram,
     LibraryModulesHandedOut,
     ObjectsNobodyFollowsThatDefinitionsName,
+    StoredUnderSymbolsNobodyKnows,
+    StoredByLibraryUnderSymbolsNobodyKnows,
+    SymbolsThatHostLooksForAreRegisteredByProgram,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 68;
+inline constexpr unsigned numberOfValueFlowHostNodes = 72;
 
 class ValueFlowProgramNodes {
 public:

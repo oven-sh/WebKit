@@ -84,8 +84,8 @@ struct FlowFindings {
 };
 
 // The compiler calls release(owner) at most once, on any thread, when it has read the program bytes.
-// It calls goesOnBehindFlowAnalysis(owner, ..) at most once, on any thread, when the flow analysis has ended. False: the caller hands over
-// another program in place of this one, so the build ends there, with the flow report and without an image.
+// It calls goesOnBehindFlowAnalysis(owner, ..) at most once, on any thread, as soon as the flow analysis knows the lists. False: the caller hands over
+// another program in place of this one, so the build ends there, with those lists for its flow report, without an image, and without what it would have said about the program from there on.
 struct ProgramOwner {
     void (*release)(void* owner) { nullptr };
     void* owner { nullptr };

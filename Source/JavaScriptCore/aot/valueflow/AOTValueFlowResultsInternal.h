@@ -868,8 +868,17 @@ struct ValueFlowWriteUnderNewName {
     Witness witness;
 };
 
+// What the solve alone tells.
+struct ValueFlowUsesOfLibraryCode {
+    Vector<UnseenCodeRecord> unseenCode;
+    Vector<UnseenCodeRecord> loadsOfMachineCode;
+    Vector<BuiltinUseRecord> builtinUses;
+    Vector<RuntimeFunctionID> libraryFunctionsLacked;
+};
+ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs&);
+
 // Hands out the part of the ledger that holds the places on the objects of the table.
-Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs&, FlowResultTables&, std::unique_ptr<LedgerPart>&);
+Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs&, ValueFlowUsesOfLibraryCode&&, FlowResultTables&, std::unique_ptr<LedgerPart>&);
 void findHoldersWithListedKeys(const ValueFlowResultInputs&, const ValueFlowUsesOfHeap&, FlowBuiltinTables&);
 void recordLockedWritesUnderNewNames(const Program&, TypeTable&, std::span<const ValueFlowWriteUnderNewName>, FlowResultTables&);
 ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs&, const ValueFlowHeapIndex&);

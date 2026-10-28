@@ -13,12 +13,15 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties copiedProperties)
+void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& everySource, CopiedProperties copiedProperties)
 {
     bool storesThroughSetters = copiedProperties == CopiedProperties::AreAssigned;
     bool keepsAccessors = copiedProperties == CopiedProperties::AreDefinedAsTheyStand;
+    // A proxy is listed by its traps, and what it answers comes under keys that nobody lists.
+    ValueFlowOperand source = keepsAccessors ? everySource : withoutProxiesAskedByTheirTraps(everySource);
+    ClimbingSet proxies = std::exchange(m_proxiesAskedByTheirTraps, { });
     ClimbingSet targets = m_context.valueOf(target);
-    ClimbingSet sources = m_context.valueOf(source);
+    ClimbingSet sources = m_context.unite(m_context.valueOf(source), targetsListedInPlaceOf(proxies));
     ValueFlowName everyValue = foundName(unknownHeapKey, HeapPropertyPart::Value);
     ValueFlowName everyGetter = foundName(unknownHeapKey, HeapPropertyPart::Getter);
     ValueFlowName everySetter = foundName(unknownHeapKey, HeapPropertyPart::Setter);
@@ -26,7 +29,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
 
     // The copy stays a copy. Of the setters above the target it runs those under the keys of the sources.
     ClimbingSet sourcesWithKeys = objectsWithOwnKeysAmong(m_context, sources);
-    std::optional<ValueSetID> keysOfNewSources = storesThroughSetters ? keysThatObjectsWereMadeWith(m_context, sourcesWithKeys, OwnKeys::All) : std::nullopt;
+    std::optional<ValueSetID> keysOfNewSources = storesThroughSetters && !holdsAnything(proxies) ? keysThatObjectsWereMadeWith(m_context, sourcesWithKeys, OwnKeys::All) : std::nullopt;
     auto forEachKeyOfSource = [&](NOESCAPE const Invocable<void(const HeapKey&)> auto& functor) {
         if (!keysOfNewSources)
             return functor(unknownHeapKey);
@@ -93,6 +96,12 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         }
     }
 
+    if (holdsAnything(proxies)) {
+        listProxiesByTheirTraps(proxies);
+        for (ValueFlowNodeID node : nodesTakingCopies)
+            askProxiesForListedValues(proxies, node);
+        noteWhatMayLieUnderSymbolThatHostLooksFor(unknownHeapKey, operandOf(copied));
+    }
     if (holdsNamedOrLoadedBun(source)) {
         for (ValueFlowNodeID node : nodesTakingCopies)
             add(node, only(ValueFlowUniverse::markOfLoadedBun()));
@@ -127,7 +136,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         }
     }
     // A getter nobody knows is entered with the source that holds it, whichever others are copied beside it.
-    HeapReceiver readSources { nullptr, sources, { } };
+    HeapReceiver readSources { nullptr, holdsAnything(proxies) ? m_context.unite(sources, m_context.valueOf(m_context.read(proxies, proxyItselfName))) : sources, { } };
     if (!keepsAccessors && mayBeAccessorNobodyKnows(getters)) {
         ValueFlowObjectsToldApart toldApart = tellObjectsApart(m_context, m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), known(sources)));
         ClimbingSet holdingSuchGetter(toldApart.rest);

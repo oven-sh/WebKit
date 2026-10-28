@@ -504,14 +504,27 @@ private:
         return true;
     }
 
+    // versionLoops writes the stride of a running index as a product, and nothing has folded it yet.
+    static std::optional<int64_t> constantOf(Value* value)
+    {
+        if (value->hasInt())
+            return value->asInt();
+        if (value->opcode() == Mul && value->child(0)->hasInt64() && value->child(1)->hasInt64())
+            return static_cast<int64_t>(static_cast<uint64_t>(value->child(0)->asInt64()) * static_cast<uint64_t>(value->child(1)->asInt64()));
+        return std::nullopt;
+    }
+
     static std::optional<int64_t> stepOf(Value* next, Value* phi)
     {
-        if (next->opcode() == Add && next->child(0) == phi && next->child(1)->hasInt())
-            return next->child(1)->asInt();
-        if (next->opcode() == Add && next->child(1) == phi && next->child(0)->hasInt())
-            return next->child(0)->asInt();
-        if (next->opcode() == Sub && next->child(0) == phi && next->child(1)->hasInt() && next->child(1)->asInt() != std::numeric_limits<int64_t>::min())
-            return -next->child(1)->asInt();
+        if (next->opcode() == Add && next->child(0) == phi)
+            return constantOf(next->child(1));
+        if (next->opcode() == Add && next->child(1) == phi)
+            return constantOf(next->child(0));
+        if (next->opcode() == Sub && next->child(0) == phi) {
+            std::optional<int64_t> subtracted = constantOf(next->child(1));
+            if (subtracted && *subtracted != std::numeric_limits<int64_t>::min())
+                return -*subtracted;
+        }
         return std::nullopt;
     }
 

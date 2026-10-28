@@ -990,6 +990,12 @@ private:
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_writtenUnderNamesOfReads;
+    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_seenBehindTheRounds;
+    ValueSetID seenBehindTheRoundsAt(ValueFlowNodeID node) const
+    {
+        auto found = m_seenBehindTheRounds.find(node.index());
+        return found == m_seenBehindTheRounds.end() ? ValueSets::nothing : found->value;
+    }
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;

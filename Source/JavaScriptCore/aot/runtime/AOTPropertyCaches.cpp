@@ -2410,7 +2410,7 @@ size_t SiteCaches::removeDeadEntries(VM& vm, CollectionScope scope)
 StringKeyCache::StringKeyCache(State& state)
     : m_instance(state.instance)
     , m_cageBase(state.instance.vm->heap.cage().base())
-    , m_cageSize(state.instance.vm->heap.cage().size())
+    , m_cageSize(state.instance.vm->heap.cage().start() - state.instance.vm->heap.cage().base() + state.instance.vm->heap.cage().size())
     , m_maxCachedKeyLength(runtimeLimitValue(*state.instance.vm, LimitID::MaxCachedKeyLength))
 {
     state.caches->add(CacheKind::WeakByKey, "StringKeyCache"_s, *this);

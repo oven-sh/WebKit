@@ -601,7 +601,7 @@ private:
         forEachOperandAt(position, [&](const ValueFlowOperand& operand) {
             value = m_context.unite(value, m_context.valueOf(operand));
         });
-        if ((!m_asksProxiesInReceiverByTheirTraps || position.kind() != BuiltinOperand::Kind::Receiver) && (isConstruction(m_call.kind) || position.kind() == BuiltinOperand::Kind::ArgumentsFrom || !onlyCallsOperand(m_builtins, m_builtin, position)))
+        if ((!m_asksProxiesInReceiverByTheirTraps || position.kind() != BuiltinOperand::Kind::Receiver) && (isConstruction(m_call.kind) || position.kind() == BuiltinOperand::Kind::ArgumentsFrom || !onlyCallsOperand(m_builtins, m_builtin, position)) && (isConstruction(m_call.kind) || !onlyListsOperand(m_builtins, m_builtin, position)))
             m_context.openProxiesAmong(value);
         return value;
     }
@@ -1032,6 +1032,7 @@ private:
         m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::PairsOfEntries), pair);
         m_context.add(m_context.written(array, elementsName), pair);
         BuiltinPlace ownValues { .kind = BuiltinPlaceKind::OwnValues, .operand = BuiltinOperand::argument(0) };
+        listProxiesAt(BuiltinOperand::argument(0));
         for (ValueFlowName name : std::initializer_list<ValueFlowName> { elementsName, keyOfEntriesPair })
             m_context.add(m_context.written(pair, name), m_universe.strings());
         for (ValueFlowName name : std::initializer_list<ValueFlowName> { elementsName, valueOfEntriesPair })
@@ -1478,6 +1479,17 @@ private:
         }
     }
 
+    void listProxiesAt(BuiltinOperand operand)
+    {
+        if (isConstruction(m_call.kind) || !onlyListsOperand(m_builtins, m_builtin, operand))
+            return;
+        ClimbingSet proxies = m_context.followedProxiesAmong(valueAt(operand));
+        if (!holdsAnything(proxies))
+            return;
+        listProxiesByTheirTraps(m_context, proxies);
+        throwValue(unknownValue(m_context, ValueFlowUnknownSource::ThrownByRunTime));
+    }
+
     void applyParameter(const BuiltinParameter& parameter)
     {
         if (parameter.uses == OperandUses::all()) {
@@ -1487,6 +1499,8 @@ private:
 
         if (parameter.uses.containsAny({ OperandUse::WritesContents, OperandUse::MovesElements }))
             m_context.mark(objectsAt(parameter.operand), ObjectMutation::StoreAfterCreation);
+
+        listProxiesAt(parameter.operand);
 
         if (ValueFlowBehaviorID behavior = m_tables.behaviorOf(parameter)) {
             ValueFlowNodeID hub = m_context.hub(behavior);
@@ -1690,6 +1704,13 @@ private:
 
     void forEachNodeHoldingOwnValuesOf(ClimbingSet holders, ValueSetID& constant, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
     {
+        // A proxy answers by its trap, or its target does in its place.
+        ClimbingSet proxies = m_context.followedProxiesAmong(holders);
+        if (holdsAnything(proxies)) {
+            askProxiesForListedValues(m_context, proxies, m_context.written(proxies, listedValuesOfProxyName));
+            functor(m_context.read(proxies, listedValuesOfProxyName));
+            holders = m_context.unite(m_context.restrict(holders, ValueSets::complement(m_context.withMembersOf(ValueSets::nothing, proxies))), targetsListedInPlaceOf(m_context, proxies));
+        }
         forEachNodeReadByWalkOver(m_context, m_context.restrict(holders, m_universe.builtinObjects()), { }, functor);
         // A definition makes enumerable what a built-in object holds since it was made.
         if (ClimbingSet redefined = m_context.markedAmong(m_context.restrict(holders, m_universe.builtinObjects()), ObjectMutation::RedefineProperty); holdsAnything(redefined))
@@ -1713,6 +1734,8 @@ private:
         forEachPartOfCallees(m_context, m_context.restrict(getters, m_universe.callables()), [&](ClimbingSet callees) {
             ValueFlowCallGroup group = m_context.group(callees, ValueFlowCallKind::Get);
             m_context.add(group.thisValue, objects);
+            if (holdsAnything(proxies))
+                m_context.connect(m_context.read(proxies, proxyItselfName), group.thisValue);
             connectThrown(group, BuiltinCallbackTimes::Once);
             functor(group.result);
         });
@@ -3149,6 +3172,38 @@ bool onlyCallsOperand(const BuiltinTable& builtins, BuiltinID builtin, BuiltinOp
     return isCalled;
 }
 
+// The keys of the operand, whether each is enumerable, and what it holds under them: nothing else is asked of it, and it goes nowhere.
+bool onlyListsOperand(const BuiltinTable& builtins, BuiltinID builtin, BuiltinOperand operand)
+{
+    constexpr OperandUses usesOfListedObject { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents };
+    constexpr Protocols protocolsOfListing { Protocol::OwnKeys, Protocol::OwnValues };
+    if (builtins.at(builtin).origin == BuiltinOrigin::Host || operand.kind() == BuiltinOperand::Kind::Receiver)
+        return false;
+    bool isListed = false;
+    for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {
+        if (overload.mode != BuiltinCallMode::Call)
+            continue;
+        if (overload.isUndeclared())
+            return false;
+        auto parameter = std::ranges::find_if(overload.parameters, [&](const BuiltinParameter& candidate) {
+            if (candidate.operand == operand)
+                return true;
+            return candidate.operand.kind() == BuiltinOperand::Kind::ArgumentsFrom && operand.kind() == BuiltinOperand::Kind::Argument && candidate.operand.argumentIndex() <= operand.argumentIndex();
+        });
+        if (parameter == overload.parameters.end() || !usesOfListedObject.containsAll(parameter->uses) || !protocolsOfListing.containsAll(parameter->protocols) || !parameter->roles.isEmpty())
+            return false;
+        if (parameter->conversion != BuiltinConversion::None && parameter->conversion != BuiltinConversion::ToObject)
+            return false;
+        isListed |= parameter->protocols.contains(Protocol::OwnKeys);
+    }
+    return isListed;
+}
+
+bool onlyLists(const ValueFlowBehavior& behavior)
+{
+    return behavior.protocols == Protocols { Protocol::OwnValues } && !behavior.isTransitive && !behavior.describesRefusedOperands && behavior.namedMembers.empty() && behavior.calledMembers.empty();
+}
+
 bool doRecordsDescribe(const BuiltinTable& builtins, const BuiltinOverload& overload)
 {
     return doRecordsDescribeUsesOfOperands(overload) && !builtins.at(overload.result.type).isAnything();
@@ -3261,6 +3316,9 @@ void applyBuiltin(BuiltinID builtin, const ValueFlowBuiltinCall& call, ValueFlow
 {
     if (applyStepOfBuiltinIterator(builtin, call, context) || applyConstructionOfPromise(builtin, call, context) || applyValueFromLibrary(builtin, call, context))
         return;
+    // Symbol.for() of a text nobody knows answers any registered symbol.
+    if (context.program().builtins().canonicalID(builtin) == Builtins::SymbolFor)
+        raiseHostFlag(context, ValueFlowHostNode::SymbolsThatHostLooksForAreRegisteredByProgram);
     BuiltinApplication(builtin, call, context).run();
     holdContentsIteratedByResult(builtin, call, context);
 }
@@ -3275,6 +3333,8 @@ void applyBuiltin(BuiltinID builtin, ValueFlowCallKind kind, const ValueFlowStat
         std::optional<PropertyKey> named = canonical == Builtins::Symbol ? keyOfSymbolsCreatedBy(function, operation) : keyOfSymbolRegisteredBy(program.builtins(), function, operation);
         if (std::optional<PropertyKeyID> key = named ? program.types.find(*named) : std::nullopt) {
             noteCallOfBuiltin(builtin, kind, context);
+            if (std::ranges::contains(program.builtins().namesOfHostMethodsCallingStartupLoads(), *key, [&](BuiltinName name) { return program.keyOf(name); }))
+                raiseHostFlag(context, ValueFlowHostNode::SymbolsThatHostLooksForAreRegisteredByProgram);
             if (call.result)
                 context.add(call.result, only(context, context.universe().keyConstant(*key)));
             return;
@@ -3793,6 +3853,10 @@ static void readMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
         context.connect(context.readWhatWasWritten(chainOfProgramFrom(context, objects), everyPropertyName), hub);
     for (BuiltinName name : behavior.namedMembers) {
         ValueFlowNodeID member = context.lookup(receivers, property(context, name));
+        if (behavior.isTransitive && name == BuiltinNames::constructor) {
+            context.connect(context.lookup(context.valueOf(member), property(context, BuiltinNames::name)), hub);
+            continue;
+        }
         if (behavior.isTransitive) {
             context.connect(member, hub);
             continue;
@@ -3849,10 +3913,39 @@ static bool isCalledWithFunctionsOfStartupModules(ValueFlowRuleContext& context,
     return std::ranges::contains(context.program().builtins().namesOfHostMethodsCallingStartupLoads(), name);
 }
 
+// The program comes by a symbol under which the host looks for a method in three ways: it registers the text, native code that no row describes answers the symbol,
+// or it lists the own symbols of an object that holds a member under it.
+static bool maySymbolNobodyKnowsBeOneThatHostLooksFor(ValueFlowRuleContext& context)
+{
+    if (isHostFlagRaised(context, ValueFlowHostNode::SymbolsThatHostLooksForAreRegisteredByProgram))
+        return true;
+    const ValueFlowUniverse& universe = context.universe();
+    if (context.holdsAnyOf(ClimbingSet(universe.unknownObjectAlone()), context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances)))
+        return true;
+    ValueFlowObjectID listing[] { universe.objectOf(Builtins::ReflectOwnKeys), universe.objectOf(Builtins::ObjectGetOwnPropertySymbols), universe.objectOf(Builtins::ObjectGetOwnPropertyDescriptors) };
+    return context.holdsAnyOf(ClimbingSet(context.maker().of(std::span<const ValueFlowObjectID>(listing))), context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins));
+}
+
+// A store that the program has written puts whatever it stores under the key. The library stores under a key of the program what the program has handed it:
+// a function of the program, or a value nobody knows where a function of the program has escaped.
+static bool mayLieUnderSymbolNobodyKnows(ValueFlowRuleContext& context)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    if (context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredUnderSymbolsNobodyKnows)), universe.callables()))
+        return true;
+    ClimbingSet storedByLibrary = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredByLibraryUnderSymbolsNobodyKnows));
+    ValueSetID closuresOfProgram = universe.builtinTables().heap().closuresWrittenInProgram();
+    if (context.meet(storedByLibrary, closuresOfProgram))
+        return true;
+    return context.meet(storedByLibrary, universe.placeholdersAlone()) && context.holdsAnyOf(ClimbingSet(closuresOfProgram), ValueFlowProgramNodes::escaped());
+}
+
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName name)
 {
     const ValueFlowUniverse& universe = context.universe();
     if (context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads)), universe.callables()))
+        return true;
+    if (mayLieUnderSymbolNobodyKnows(context) && maySymbolNobodyKnowsBeOneThatHostLooksFor(context))
         return true;
     const ValueFlowHeapTables& heap = universe.builtinTables().heap();
     const ValueFlowMembersUnderKey& members = heap.under(context.program().keyOf(name));
@@ -4100,6 +4193,11 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
 
     ValueSetID mask = everythingButUnknownObject(context);
     ClimbingSet receivers = context.restrict(context.valueOf(hub), mask);
+    // Whoever sends a proxy here to be listed has asked it by its traps.
+    if (onlyLists(behavior)) {
+        mask = context.maker().intersect(mask, ValueSets::complement(context.withMembersOf(ValueSets::nothing, context.followedProxiesAmong(receivers))));
+        receivers = context.restrict(receivers, mask);
+    }
     readMembersOfReceivers(context, hub, behavior, receivers);
     forEachReceiverToldApart(context, receivers, operandOfBuiltinAt(hub, mask), [&](ClimbingSet toldApart, const ValueFlowOperand& thisValue) {
         callMembersOfReceivers(context, hub, behavior, toldApart, thisValue);

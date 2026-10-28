@@ -31,6 +31,13 @@
 #include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
 
+#if OS(LINUX) || OS(FREEBSD)
+#include <link.h>
+#endif
+#if OS(UNIX)
+#include <sys/mman.h>
+#endif
+
 namespace JSC {
 
 static_assert(1 << MarkedBlockCage::shift <= MarkedBlock::atomSize);
@@ -182,6 +189,43 @@ static void makeEmptyExtensionReadable(uintptr_t start)
 }
 #endif
 
+// 0 where no address in the image fits in 32 bits.
+static uintptr_t endOfImageBelow4GB()
+{
+    uintptr_t start = std::numeric_limits<uintptr_t>::max();
+    uintptr_t end = 0;
+#if OS(LINUX) || OS(FREEBSD)
+    struct Bounds {
+        uintptr_t& start;
+        uintptr_t& end;
+    } bounds { start, end };
+    dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) {
+        auto& bounds = *static_cast<Bounds*>(data);
+        for (unsigned index = 0; index < info->dlpi_phnum; ++index) {
+            const auto& header = info->dlpi_phdr[index];
+            if (header.p_type != PT_LOAD)
+                continue;
+            uintptr_t address = info->dlpi_addr + header.p_vaddr;
+            bounds.start = std::min(bounds.start, address);
+            bounds.end = std::max(bounds.end, address + header.p_memsz);
+        }
+        // The executable comes first.
+        return 1;
+    }, &bounds);
+#endif
+    return start <= std::numeric_limits<uint32_t>::max() ? end : 0;
+}
+
+size_t MarkedBlockCage::distanceOfStartFromBase()
+{
+    static const size_t result = [] {
+        constexpr size_t granule = 32 * MB;
+        uint64_t endOfImage = endOfImageBelow4GB();
+        return static_cast<size_t>(std::min<uint64_t>(roundUpToMultipleOf<granule>(endOfImage << shift), maxSize / 2));
+    }();
+    return result;
+}
+
 static size_t remainingAddressSpace() WTF_REQUIRES_LOCK(s_poolLock)
 {
     size_t budget = addressSpaceForMarkedBlockCages();
@@ -190,6 +234,9 @@ static size_t remainingAddressSpace() WTF_REQUIRES_LOCK(s_poolLock)
 
 static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t randomPrefixRange, size_t initialSegmentSize = 0) WTF_REQUIRES_LOCK(s_poolLock)
 {
+    size_t distanceFromBase = MarkedBlockCage::distanceOfStartFromBase();
+    size = std::min(size, static_cast<size_t>(MarkedBlockCage::maxSize) - distanceFromBase);
+    minSize = std::min(minSize, size);
     RELEASE_ASSERT(minSize >= smallestUsableSize && minSize <= size, minSize, size);
     RELEASE_ASSERT(randomPrefixRange >= randomPrefixGranule && unusedPrefixSize + randomPrefixRange < minSize, randomPrefixRange, minSize);
 
@@ -201,7 +248,7 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
     uint64_t random = Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint64_t>();
     size_t prefixSize = unusedPrefixSize + random % (randomPrefixRange / randomPrefixGranule) * randomPrefixGranule;
 
-    ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
+    ReservedRangeHeap::Request request {
         .name = "Cell Cage"_s,
         .size = size,
         .minSize = minSize,
@@ -212,14 +259,38 @@ static ReservedRangeHeap* tryCreateRange(size_t size, size_t minSize, size_t ran
         .usage = OSAllocator::FastMallocPages,
         .placement = ReservedRangeHeap::Placement::RandomWindow,
         .initialAccess = ReservedRangeHeap::InitialAccess::None,
-    });
+    };
+    ReservedRangeHeap* range = nullptr;
+    bool reservesAllAboveBase = !distanceFromBase || !hasAddressSpaceLimit();
+    if (reservesAllAboveBase) {
+        request.reservedSizeBelowStart = distanceFromBase;
+        range = ReservedRangeHeap::tryCreate(request);
+    }
+#if OS(UNIX)
+    // Under a limit on address space nothing is reserved between what lies at the base and the range.
+    constexpr unsigned maxPlacements = 4;
+    for (unsigned attempt = 0; !reservesAllAboveBase && !range && attempt < maxPlacements; ++attempt) {
+        void* base = ReservedRangeHeap::tryReserveRandomWindow(unusedPrefixSize, MarkedBlockCage::maxSize, request.usage, false);
+        if (!base)
+            base = OSAllocator::tryReserveUncommittedAligned(unusedPrefixSize, MarkedBlockCage::maxSize, request.usage, nullptr, false);
+        if (!base)
+            return nullptr;
+        RELEASE_ASSERT(!mprotect(base, unusedPrefixSize, PROT_NONE));
+        request.placement = ReservedRangeHeap::Placement::AtStart;
+        request.start = std::bit_cast<uintptr_t>(base) + distanceFromBase;
+        request.unreservedPrefixSize = unusedPrefixSize;
+        range = ReservedRangeHeap::tryCreate(request);
+        if (!range)
+            OSAllocator::releaseDecommitted(base, unusedPrefixSize, 0);
+    }
+#endif
     if (!range)
         return nullptr;
 
-    RELEASE_ASSERT(!(range->start() & (MarkedBlockCage::maxSize - 1)), range->start(), range->size());
+    RELEASE_ASSERT(!((range->start() - distanceFromBase) & (MarkedBlockCage::maxSize - 1)), range->start(), range->size());
     s_totalReservedSize += range->reservedSize();
 #if ENABLE(AOT)
-    makeEmptyExtensionReadable(range->start());
+    makeEmptyExtensionReadable(range->start() - distanceFromBase);
 #endif
     return range;
 }
@@ -329,7 +400,8 @@ MarkedBlockCage::MarkedBlockCage()
             m_sharesRange = true;
         }
         m_isInFirstRange = m_range == s_firstRange;
-        m_base = m_range->start();
+        m_start = m_range->start();
+        m_base = m_start - distanceOfStartFromBase();
         m_size = m_range->size();
     }
     if (m_sharesRange)
@@ -445,7 +517,7 @@ void MarkedBlockCage::keepReserveOnceHalfFull()
     if (m_hasReleasedReserve)
         return;
     size_t size = std::clamp(m_range->reservedSize() / reserveDivisor, smallestReserveSize, largestReserveSize);
-    if (m_numberOfBlocksTaken.load(std::memory_order_relaxed) <= numberOfBlocksOfNewVM || m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_base + m_range->initialSegmentSize() / 2) {
+    if (m_numberOfBlocksTaken.load(std::memory_order_relaxed) <= numberOfBlocksOfNewVM || m_endOfHighestAllocation.load(std::memory_order_relaxed) <= m_start + m_range->initialSegmentSize() / 2) {
         if (!s_isGrowable && !m_sharesRange)
             return;
         size = numberOfChunksOfNewVM * reserveChunkSize;
@@ -663,7 +735,7 @@ String describeLimitOfMarkedBlockCage()
         return noRoomUnderLimitOnAddressSpace;
     size_t size = g_jscConfig.markedBlockCageSize;
     bool isInGB = !(size % GB);
-    if (size < static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB)
+    if (size < std::min(static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB, static_cast<size_t>(MarkedBlockCage::maxSize) - MarkedBlockCage::distanceOfStartFromBase()))
         return makeString("The limit on address space (ulimit -v) leaves the threads of this executable "_s, size / MB, " MB for JavaScript objects. Raise the limit, or build with --aot-huge-heap."_s);
     return makeString("Each thread of a compiled executable can use "_s, size / (isInGB ? GB : MB), isInGB ? " GB"_s : " MB"_s, " for JavaScript objects. Build with --aot-huge-heap to remove the limit. The executable then uses more memory and runs slower."_s);
 }

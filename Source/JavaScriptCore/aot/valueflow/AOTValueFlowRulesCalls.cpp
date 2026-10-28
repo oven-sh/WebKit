@@ -1190,6 +1190,8 @@ void runDefineMethod(const ValueFlowStatement& statement, ValueFlowRuleContext& 
         return;
     if (operation.methodKind() != MethodKind::Method && operation.side() != ClassSide::Static)
         context.mark(holder, ObjectMutation::RedefineProperty);
+    if (operation.methodKind() != MethodKind::Setter && context.meet(keys, ValueSets::complement(context.maker().unite(universe.keys(), context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::String))))))
+        context.connect(operands[1], context.nodes().ofHost(isWrittenInProgram(context.program().at(statement.function)) ? ValueFlowHostNode::StoredUnderSymbolsNobodyKnows : ValueFlowHostNode::StoredByLibraryUnderSymbolsNobodyKnows));
     context.connect(operands[1], context.written(holder, nameOfMember(context.program(), operation.methodKind(), { })));
     context.add(context.written(holder, ValueFlowCellName { ValueFlowNameKind::NamesOfMethods }), universe.unknownObjectAlone());
 }

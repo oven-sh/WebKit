@@ -57,6 +57,8 @@ void callFromHost(BuiltinID onBehalfOf, const ValueFlowOperand& callees, const B
 bool doRecordsDescribe(const BuiltinTable&, const BuiltinOverload&);
 // True where every way to call the built-in does nothing to the operand but call it.
 bool onlyCallsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
+bool onlyListsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
+bool onlyLists(const ValueFlowBehavior&);
 bool standsBehindDescribedBuiltins(const Program&, FunctionID);
 bool isEnteredByCallsAlone(const Program&, RuntimeFunctionID);
 ValueFlowObjectID calleeOfDescribedCall(const ValueFlowUniverse&);

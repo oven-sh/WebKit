@@ -54,6 +54,8 @@ public:
     const ValueFlowBehavior& at(ValueFlowBehaviorID behavior) const LIFETIME_BOUND { return m_behaviors[behavior.index()]; }
     unsigned numberOfBehaviors() const { return m_behaviors.size(); }
     ValueFlowBehaviorID conversionToPrimitive() const { return m_conversionToPrimitive; }
+    ValueFlowBehaviorID listOfKeysThatTrapAnswers() const { return m_listOfKeysThatTrapAnswers; }
+    ValueFlowBehaviorID descriptorThatTrapAnswers() const { return m_descriptorThatTrapAnswers; }
     ValueFlowBehaviorID descriptionOfRefusedOperands() const { return m_descriptionOfRefusedOperands; }
     ValueFlowBehaviorID formatterOfMessages() const { return m_formatterOfMessages; }
 
@@ -86,6 +88,8 @@ private:
     ValueFlowBehaviorID m_conversionToPrimitive;
     ValueFlowBehaviorID m_descriptionOfRefusedOperands;
     std::array<BuiltinName, 1> m_namesReadFromRefusedOperands { BuiltinNames::constructor };
+    ValueFlowBehaviorID m_listOfKeysThatTrapAnswers;
+    ValueFlowBehaviorID m_descriptorThatTrapAnswers;
     ValueFlowBehaviorID m_formatterOfMessages;
     BitVector m_functionsWithTypedResults;
     Vector<BuiltinName> m_namesOfFunctionsWithTypedResults;

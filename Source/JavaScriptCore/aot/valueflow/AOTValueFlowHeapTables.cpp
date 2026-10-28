@@ -594,6 +594,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
     uint32_t numberOfKeys = universe.numberOfObjects() - universe.keyConstant(PropertyKeyID(0u)).index();
     ValueSetID knownObjectsOfProgram = without(universe.knownObjects(), builtinObjects);
     Vector<ValueFlowObjectID> closuresWithPrototypeProperty;
+    Vector<ValueFlowObjectID> closuresWrittenInProgram;
     Vector<ValueFlowObjectID> templateObjects;
     Vector<ValueFlowObjectID> argumentsObjects;
     Vector<ValueFlowObjectID> arraysThatOperationsAllocate;
@@ -1162,6 +1163,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 const Function& function = program.functions[index];
                 if (hasPrototypeProperty(program, function) || (function.constructedClass && isInRuntimeModule(program, function)))
                     closuresWithPrototypeProperty.append(universe.closureOf(FunctionID(index)));
+                if (isWrittenInProgram(function))
+                    closuresWrittenInProgram.append(universe.closureOf(FunctionID(index)));
             }
         },
         [&] {
@@ -1169,6 +1172,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         },
     });
     m_closuresWithPrototypeProperty = maker.of(closuresWithPrototypeProperty.span());
+    m_closuresWrittenInProgram = maker.of(closuresWrittenInProgram.span());
     m_templateObjects = maker.of(templateObjects.span());
     m_argumentsObjects = maker.of(argumentsObjects.span());
     m_arraysThatOperationsAllocate = maker.of(arraysThatOperationsAllocate.span());
