@@ -3312,13 +3312,20 @@ bool isCodeBehindDeclaredEntries(const Program& program, FunctionID id)
     });
 }
 
+static bool isCalledByLibrary(ValueFlowRuleContext& context)
+{
+    FunctionID caller = context.functionOfStatement();
+    return caller && !isWrittenInProgram(context.program().at(caller));
+}
+
 void applyBuiltin(BuiltinID builtin, const ValueFlowBuiltinCall& call, ValueFlowRuleContext& context)
 {
     if (applyStepOfBuiltinIterator(builtin, call, context) || applyConstructionOfPromise(builtin, call, context) || applyValueFromLibrary(builtin, call, context))
         return;
-    // Symbol.for() of a text nobody knows answers any registered symbol.
-    if (context.program().builtins().canonicalID(builtin) == Builtins::SymbolFor)
-        raiseHostFlag(context, ValueFlowHostNode::SymbolsThatHostLooksForAreRegisteredByProgram);
+    // Symbol.for() of a text nobody knows answers any registered symbol, and a list of own symbols holds whatever lies on the object.
+    BuiltinID canonical = context.program().builtins().canonicalID(builtin);
+    if ((canonical == Builtins::SymbolFor || canonical == Builtins::ReflectOwnKeys || canonical == Builtins::ObjectGetOwnPropertySymbols || canonical == Builtins::ObjectGetOwnPropertyDescriptors) && !isCalledByLibrary(context))
+        raiseHostFlag(context, ValueFlowHostNode::SymbolsThatHostLooksForMayBeInHand);
     BuiltinApplication(builtin, call, context).run();
     holdContentsIteratedByResult(builtin, call, context);
 }
@@ -3333,8 +3340,8 @@ void applyBuiltin(BuiltinID builtin, ValueFlowCallKind kind, const ValueFlowStat
         std::optional<PropertyKey> named = canonical == Builtins::Symbol ? keyOfSymbolsCreatedBy(function, operation) : keyOfSymbolRegisteredBy(program.builtins(), function, operation);
         if (std::optional<PropertyKeyID> key = named ? program.types.find(*named) : std::nullopt) {
             noteCallOfBuiltin(builtin, kind, context);
-            if (std::ranges::contains(program.builtins().namesOfHostMethodsCallingStartupLoads(), *key, [&](BuiltinName name) { return program.keyOf(name); }))
-                raiseHostFlag(context, ValueFlowHostNode::SymbolsThatHostLooksForAreRegisteredByProgram);
+            if (!isCalledByLibrary(context) && std::ranges::contains(program.builtins().namesOfHostMethodsCallingStartupLoads(), *key, [&](BuiltinName name) { return program.keyOf(name); }))
+                raiseHostFlag(context, ValueFlowHostNode::SymbolsThatHostLooksForMayBeInHand);
             if (call.result)
                 context.add(call.result, only(context, context.universe().keyConstant(*key)));
             return;
@@ -3913,17 +3920,11 @@ static bool isCalledWithFunctionsOfStartupModules(ValueFlowRuleContext& context,
     return std::ranges::contains(context.program().builtins().namesOfHostMethodsCallingStartupLoads(), name);
 }
 
-// The program comes by a symbol under which the host looks for a method in three ways: it registers the text, native code that no row describes answers the symbol,
-// or it lists the own symbols of an object that holds a member under it.
+// The program comes by a symbol under which the host looks for a method in three ways: it registers the text, it reads a member without an entry off a function of the host,
+// or it lists the own symbols of an object that holds a member under it. What the library registers or lists it keeps to itself, or hands out as a key that is known.
 static bool maySymbolNobodyKnowsBeOneThatHostLooksFor(ValueFlowRuleContext& context)
 {
-    if (isHostFlagRaised(context, ValueFlowHostNode::SymbolsThatHostLooksForAreRegisteredByProgram))
-        return true;
-    const ValueFlowUniverse& universe = context.universe();
-    if (context.holdsAnyOf(ClimbingSet(universe.unknownObjectAlone()), context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances)))
-        return true;
-    ValueFlowObjectID listing[] { universe.objectOf(Builtins::ReflectOwnKeys), universe.objectOf(Builtins::ObjectGetOwnPropertySymbols), universe.objectOf(Builtins::ObjectGetOwnPropertyDescriptors) };
-    return context.holdsAnyOf(ClimbingSet(context.maker().of(std::span<const ValueFlowObjectID>(listing))), context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins));
+    return isHostFlagRaised(context, ValueFlowHostNode::SymbolsThatHostLooksForMayBeInHand);
 }
 
 // A store that the program has written puts whatever it stores under the key. The library stores under a key of the program what the program has handed it:

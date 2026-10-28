@@ -207,7 +207,7 @@ static uintptr_t endOfImageBelow4GB()
                 continue;
             uintptr_t address = info->dlpi_addr + header.p_vaddr;
             bounds.start = std::min(bounds.start, address);
-            bounds.end = std::max(bounds.end, address + header.p_memsz);
+            bounds.end = std::max<uintptr_t>(bounds.end, address + header.p_memsz);
         }
         // The executable comes first.
         return 1;
