@@ -416,7 +416,6 @@ void JSONRuntime::clear()
             learned.forgetCells();
     }
     m_numberOfObjectsLearned = 0;
-    m_numberOfObjectsFinishedUnremembered = 0;
     m_timesNotFoundInARow.fill(0);
     m_timesRefusedInARow.fill(0);
     if (m_recordPlanCache)
@@ -1292,24 +1291,19 @@ static bool tryFinishObject(VM& vm, Instance& instance, Object& object, JSObject
     if (!initial)
         return false;
     object.setInitialKeyOrder(vm, *initial, extraProperties);
-    JSONRuntime& runtime = *instance.json.runtime;
-    bool isEveryShapeKnown = true;
     if (extraProperties) {
         const LayoutData& layout = object.layout();
-        RuntimeLayoutTable& layouts = instance.state->objects->layouts;
         for (const FieldData& field : layout.fields()) {
             JSValue value = field.isPrivate() || field.isAccessor() ? JSValue() : object.readInline(field);
             if (value && value.isCell() && isCompiledObject(value.asCell()))
-                runtime.didSeeMember(layout.shape, layout.indexOf(field), uncheckedDowncast<Object>(value.asCell())->shape());
-            else if (const RuntimeType& type = layouts.typeOf(field); type.numberOfCellTests && !type.acceptsEveryObject() && !runtime.shapeOfMember(layout.shape, layout.indexOf(field)))
-                isEveryShapeKnown = false;
+                instance.json.runtime->didSeeMember(layout.shape, layout.indexOf(field), uncheckedDowncast<Object>(value.asCell())->shape());
         }
     }
-    // A list of keys lasts as long as its text; a number lasts. The next object that is born alike may hold an object where this one holds none: finished here too, it says the shape.
-    if (extraProperties && order.kind() == JSONKeyOrder::Kind::Numbered && (isEveryShapeKnown || !runtime.mayFinishAnotherObjectUnremembered())) {
+    // A list of keys lasts as long as its text; a number lasts.
+    if (extraProperties && order.kind() == JSONKeyOrder::Kind::Numbered) {
         born.orderAndCount = initial->orderAndCount;
         born.structure = initial->structure;
-        runtime.finishedObjectFor(born.structureAtBirth, born.extraStructure) = born;
+        instance.json.runtime->finishedObjectFor(born.structureAtBirth, born.extraStructure) = born;
     }
     return true;
 }
@@ -1387,19 +1381,6 @@ void JSONRuntime::LearnedObject::forgetCells()
     structure = nullptr;
     if (plan)
         plan->clearAcceptedStructures();
-}
-
-uint32_t JSONRuntime::shapeOfMember(uint32_t shape, uint16_t field) const
-{
-    return m_shapesOfMembers.get(static_cast<uint64_t>(shape) << 16 | field);
-}
-
-bool JSONRuntime::mayFinishAnotherObjectUnremembered()
-{
-    if (m_numberOfObjectsFinishedUnremembered == maxObjectsFinishedUnrememberedBetweenCollections)
-        return false;
-    ++m_numberOfObjectsFinishedUnremembered;
-    return true;
 }
 
 bool JSONRuntime::mayLearnAnotherObject()
@@ -1669,9 +1650,7 @@ static ALWAYS_INLINE ParsedJSONValue parseExtraValue(Instance& instance, VM& vm,
         return { jsBoolean(true), start + 4 };
     else if (WTF::unalignedLoad<uint32_t>(start + 1) == ('a' | 'l' << 8 | 's' << 16 | 'e' << 24) && *start == 'f')
         return { jsBoolean(false), start + 5 };
-    else if (WTF::unalignedLoad<uint32_t>(start) == ('n' | 'u' << 8 | 'l' << 16 | 'l' << 24))
-        return { jsNull(), start + 4 };
-    if (shapeOfObject && *start == '{')
+    if (shapeOfObject)
         return parseLearnedObjectInside(instance, vm, shapeOfObject, start);
     return parseJSONValueAt(instance, vm, instance.globalObject, start);
 }
@@ -1793,14 +1772,8 @@ static bool learnObjectInside(Instance& instance, VM& vm, uint32_t shape, const 
     const uint8_t* firstName = skipWhitespace(brace + 1);
     if (!shape || depth == maxDepthOfLearnedObjects || *firstName != '"')
         return false;
-    JSONRuntime& runtime = *instance.json.runtime;
-    uint64_t firstWord = JSONRuntime::startOfName(firstName);
-    if (JSONRuntime::LearnedObject* inner = runtime.learnedObjectToReplace(shape, firstWord))
-        return learnObject(instance, vm, *inner, shape, firstName, depth + 1);
-    // Objects around this one fill both entries. If one of them begins alike, this one is expected to have its names; the parse that follows finds out.
-    JSONRuntime::LearnedObjects& table = *runtime.learnedObjects();
-    unsigned index = JSONRuntime::indexOfLearnedObject(shape, firstWord);
-    return table[index].isFor(shape, firstWord) || table[index ^ 1].isFor(shape, firstWord);
+    JSONRuntime::LearnedObject* inner = instance.json.runtime->learnedObjectToReplace(shape, JSONRuntime::startOfName(firstName));
+    return inner && learnObject(instance, vm, *inner, shape, firstName, depth + 1);
 }
 
 static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::LearnedObject& learned, uint32_t shape, const uint8_t* firstName, unsigned depth)
@@ -1861,9 +1834,9 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
             kindsOfFields.append(*value == '"' ? Learned::String : *value == 't' || *value == 'f' ? Learned::Boolean : tryParseSmallJSONInteger(value, integer) ? Learned::SmallInteger : Learned::OtherKind);
             if (fieldNames.contains(name) || fieldNames.size() == Learned::maxNumberOfFields)
                 return false;
-            if (!layouts.typeOf(*field).acceptsEveryObject()) {
-                member.shapeOfValue = instance.json.runtime->shapeOfMember(shape, layout.indexOf(*field));
-                if (*value == '[' || (*value == '{' && !learnObjectInside(instance, vm, member.shapeOfValue, value, depth)))
+            if ((*value == '{' || *value == '[') && !layouts.typeOf(*field).acceptsEveryObject()) {
+                member.shapeOfValue = *value == '{' ? instance.json.runtime->shapeOfMember(shape, layout.indexOf(*field)) : 0;
+                if (!learnObjectInside(instance, vm, member.shapeOfValue, value, depth))
                     return false;
             }
             positionExtraNames();
@@ -1891,8 +1864,7 @@ static NEVER_INLINE bool learnObject(Instance& instance, VM& vm, JSONRuntime::Le
         quote = skipWhitespace(end + 1);
     }
     positionExtraNames();
-    // Compiled code parses an object without undeclared members faster.
-    if (!numberOfRuns || (!depth && numberOfFieldsInFront > Learned::maxMembersParsedTwiceForEachReturnSaved * (numberOfRuns + 1)))
+    if (!depth && (!numberOfRuns || numberOfFieldsInFront > Learned::maxMembersParsedTwiceForEachReturnSaved * (numberOfRuns + 1)))
         return false;
 
     learned.plan = ObjectBuilder::tryCreatePlan(*instance.state, layout, fieldNames.span());
@@ -2122,16 +2094,13 @@ static NEVER_INLINE const uint8_t* learnAndParseObject(Instance& instance, VM& v
     }
     if (!runtime.mayLearnAnotherObject() || !learnObject(instance, vm, *seenOnce, shape, firstName, 0) || !seenOnce->shape)
         return nullptr;
-    const uint8_t* end = tryParseObjectAs(instance, vm, *seenOnce, firstName, result);
-    if (!end)
-        seenOnce->members.shrink(0);
-    return end;
+    return tryParseObjectAs(instance, vm, *seenOnce, firstName, result);
 }
 
 static NEVER_INLINE ParsedJSONValue parseLearnedObjectInside(Instance& instance, VM& vm, uint32_t shape, const uint8_t* brace)
 {
     JSONRuntime::LearnedObjects* table = instance.json.runtime->learnedObjects();
-    if (!table || !vm.isSafeToRecurse()) [[unlikely]]
+    if (*brace != '{' || !table || !vm.isSafeToRecurse()) [[unlikely]]
         return { };
     const uint8_t* firstName = skipWhitespace(brace + 1);
     uint64_t firstWord = JSONRuntime::startOfName(firstName);
