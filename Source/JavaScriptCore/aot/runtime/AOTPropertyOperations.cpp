@@ -282,8 +282,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByNameSloppy, size_t, (Instance* inst
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetSuperBase, EncodedJSValue, (Instance* instance, EncodedJSValue home, uint32_t homeKind))
 {
     constexpr Entry entry = Entry::operationAOTGetSuperBase;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSObject* homeObject = objectArgument(home, entry);
     if (static_cast<Typed::HomeObjectKind>(homeKind) == Typed::HomeObjectKind::ClassPrototype) {
         Closure* classObject = cellArgument<Closure>(homeObject, entry);
@@ -536,8 +535,7 @@ static const FieldData& listCreatedField(State& state, Object* object, uint32_t 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateField, void, (Instance* instance, JSCell* cell, uint32_t key))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidCreateField);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateField);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateField);
     const FieldData& field = namedField(instance, object, key);
     didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Add, identifierAt(instance, key).impl());
@@ -546,17 +544,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateField, void, (Instance* i
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryFinishBirth, void, (Instance* instance, JSCell* cell))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTTryFinishBirth);
     // A field that lives among the extra properties is looked up by name, which may make a property table. The object is in the middle of its birth.
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTTryFinishBirth);
     if (isCompiledObject(cell))
         uncheckedDowncast<Object>(cell)->tryFinishBirth();
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldAt, void, (Instance* instance, JSCell* cell, uint32_t offset))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidCreateFieldAt);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldAt);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldAt);
     vm.writeBarrier(object);
     listCreatedField(*instance->state, object, offset);
@@ -564,8 +560,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldAt, void, (Instance*
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldOutOfLineAt, void, (Instance* instance, JSCell* cell, uint32_t offset))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidCreateFieldOutOfLineAt);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldOutOfLineAt);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldOutOfLineAt);
     vm.writeBarrier(object);
     ensureGranules(vm, object, granuleBitOf(listCreatedField(*instance->state, object, offset | outOfLineSlotKey).slot.offset));
@@ -573,8 +568,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldOutOfLineAt, void, (
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldsAt, void, (Instance* instance, JSCell* cell, uint64_t offsets))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDidCreateFieldsAt);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTDidCreateFieldsAt);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTDidCreateFieldsAt);
     vm.writeBarrier(object);
     for (uint64_t rest = offsets; static_cast<uint32_t>(rest) & slotKeyMask; rest >>= bitsPerSlotKey)
@@ -583,15 +577,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDidCreateFieldsAt, void, (Instance
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureExtensionGranules, void, (Instance* instance, JSCell* cell, uint64_t granuleBits))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTEnsureExtensionGranules);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTEnsureExtensionGranules);
     ensureGranules(vm, cellArgument<Object>(cell, Entry::operationAOTEnsureExtensionGranules), granuleBits);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureExtensionGranulesWithoutCollecting, void, (Instance* instance, JSCell* cell, uint64_t granuleBits))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTEnsureExtensionGranulesWithoutCollecting);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTEnsureExtensionGranulesWithoutCollecting);
     ensureGranules(vm, cellArgument<Object>(cell, Entry::operationAOTEnsureExtensionGranulesWithoutCollecting), granuleBits);
 }
 
@@ -609,8 +601,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMaterializeDeferredClosure, JSCell
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetFieldOutsideSlot, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t key))
 {
     constexpr Entry entry = Entry::operationAOTGetFieldOutsideSlot;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSObject* extra = cellArgument<Object>(cell, entry)->extraProperties();
     JSValue value = extra ? extra->getDirect(vm, identifierAt(instance, key)) : JSValue();
     if (value && (value.isGetterSetter() || value.isCustomGetterSetter())) [[unlikely]]
@@ -620,8 +611,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetFieldOutsideSlot, EncodedJSValu
 
 static NEVER_INLINE size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Instance* instance, JSCell* cell, uint32_t key)
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTHasExtraProperty);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTHasExtraProperty);
     auto* object = cellArgument<Object>(cell, Entry::operationAOTHasExtraProperty);
     const Identifier& identifier = identifierAt(instance, key);
     const FieldData* field = object->fieldNamed(*instance->state, identifier);

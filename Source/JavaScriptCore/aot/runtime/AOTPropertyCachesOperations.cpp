@@ -354,12 +354,17 @@ static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, J
     if (!base.isCell())
         return false;
     PropertyCaches& caches = *instance->state->propertyCaches;
-    const FieldExit* exit = caches.findFieldExit(base.asCell()->structureID(), key);
-    if (!exit || caches.countsNames())
+    FieldExit* exit = caches.findFieldExit(base.asCell()->structureID(), key);
+    if (!exit)
         return false;
     auto* object = uncheckedDowncast<Object>(base.asCell());
     // A definition asks nothing of what is above the object.
-    return (exit->wasInSlot || mode == PutMode::Define || storeCreatesOwnField(caches.tables(), *object, key)) && object->tryRepeat(*instance->vm, *exit, value);
+    if (!exit->wasInSlot && mode != PutMode::Define) {
+        if (!storeCreatesOwnField(caches.tables(), *object, key))
+            return false;
+        exit->generationForStores = caches.tables().absenceFilterGenerationForStores();
+    }
+    return object->tryRepeat(*instance->vm, *exit, value);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPutByIdAndCache, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedValue, uint32_t key, SiteCache cache, uint32_t putMode))

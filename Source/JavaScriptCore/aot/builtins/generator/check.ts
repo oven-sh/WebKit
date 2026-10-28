@@ -622,17 +622,17 @@ function checkHandlerCall(
   if (times === "PerElement") report(problems, overload, "a handler is not called per element");
   if (callee.place !== "Member") return;
   if (!isCalledAfterReturn(times)) {
-    if (callee.path.at(-1) !== null) {
+    if (callee.path.length === 1 && callee.path[0] !== null) {
       report(
         problems,
         overload,
-        "a member under a name that is called before the call returns is written with b.calls",
+        "a member of the operand under a name that is called before the call returns is written with b.calls",
       );
     } else if (overload.flags.includes("RunsOnlyOperandCode")) {
       report(
         problems,
         overload,
-        "the effects of runsOnlyOperandCode follow no call of every own value before the call returns",
+        "the effects of runsOnlyOperandCode follow no call of every own value, or further down a path, before the call returns",
       );
     }
   }
@@ -700,6 +700,7 @@ function needsText(role: OperandRole): boolean {
     case "CopiesHolesToResult":
     case "WorkerEntryPath":
     case "DescribedWhenRefused":
+    case "ContentsOfContentsAreOnlyStored":
       return false;
   }
 }
@@ -774,7 +775,13 @@ function checkIteration(model: TableModel, problems: Problems): void {
 
 function checkPrototypeSources(model: TableModel, problems: Problems): void {
   for (const overload of model.overloads) {
-    const { type, prototypeSource, properties } = overload.result;
+    const { type, prototypeSource, properties, testedOperand, testedType } = overload.result;
+    if (testedOperand !== null && parameterAt(overload, testedOperand) === null) {
+      report(problems, overload, `answersWhetherInstance names ${describeOperand(testedOperand)}, which it does not have`);
+    }
+    if (testedType !== null && (testedType.parts.length === 0 || testedType.parts.some(({ part }) => part !== "Instance"))) {
+      report(problems, overload, "answersWhetherInstance takes instances of classes and nothing else");
+    }
     if (properties.length > 0 && type.freshness === "No") {
       report(problems, overload, "resultProperties needs a result that is a new object");
     }

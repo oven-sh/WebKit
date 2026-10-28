@@ -1,9 +1,10 @@
 # A generator that no loop is fused with, and that nobody looks at between its creation and its first step, is not started at its creation: the first step marks it as running and calls the body,
 # which then does not suspend at its start. Behind a failed test for an unmodified generator anything may look at it, so there it is started as at its creation.
+# A step that stands behind another step is never the first and stays as it is.
 # It stays as it is where the head of the body has an effect, where something reads the generator in front of the first step, and where a handler could see it after the body has thrown
 # FORM: Prepared
 # RUN: pass StartGeneratorsAtFirstStep
-# STATISTIC: GeneratorsStartedAtFirstStep = 3
+# STATISTIC: GeneratorsStartedAtFirstStep = 4
 
 module m0 path="main.js" displayPath="main.js"
 variable g0 name="stored" module=m0 declared={type=anything} initialization=Undefined
@@ -235,4 +236,21 @@ function f10 name="seenThroughACast" parameters=[{type=anything}] results=[{type
 # CHECK: [[started10]]() frequency=Unlikely:
 # CHECK-NEXT: = CallDirect v1, v0, v2 function=f8
 # CHECK-NEXT: Jump -> next b2()
+}
+
+function f11 name="stepsTwice" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewClosure function=f6
+    v2 = NewGenerator v1 function=f6 @100
+    v3 = CallDirect v1, v0, v2 function=f8 @100
+    v4 = Undefined
+    v5 = StepGenerator v2, v4 check=None @90
+    v6 = StepGenerator v2, v4 check=None @91
+    v7 = ResultAt v6 index=0
+    Return v7
+# CHECK: b0(v0: anything):
+# CHECK-NOT: IsGeneratorUnstarted
+# CHECK: MarkGeneratorRunning v2
+# CHECK-NEXT: = CallDirect v1, v0, v2 function=f8
+# CHECK-NOT: CallDirect
+# CHECK: = StepGenerator v2, v4 check=None
 }

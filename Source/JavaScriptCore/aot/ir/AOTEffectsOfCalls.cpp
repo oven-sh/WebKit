@@ -60,7 +60,7 @@ static bool namesEveryCallee(const Type& callee)
     return callee.isObject() && callee.hasOnlyKnownCallees() && !callee.layouts;
 }
 
-static bool mayThrowBeforeEntry(const Program& program, const Type& callee, BuiltinCallMode mode)
+bool mayThrowBeforeEntry(const Program& program, const Type& callee, BuiltinCallMode mode)
 {
     if (!namesEveryCallee(callee))
         return true;

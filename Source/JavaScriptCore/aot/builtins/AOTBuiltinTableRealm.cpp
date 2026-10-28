@@ -32,7 +32,6 @@
 #include "ObjectConstructor.h"
 #include "PropertyDescriptor.h"
 #include "SetIteratorPrototype.h"
-#include "ShadowRealmPrototype.h"
 #include "TopExceptionScope.h"
 #include <algorithm>
 #include <array>
@@ -231,9 +230,6 @@ static auto hiddenPrototypesOf(JSGlobalObject* realm)
         { BuiltinClasses::AsyncGeneratorFunction, realm->asyncGeneratorFunctionPrototype() },
         { BuiltinClasses::Generator, realm->generatorPrototype() },
         { BuiltinClasses::AsyncGenerator, realm->asyncGeneratorPrototype() },
-#if ENABLE(SHADOW_REALM)
-        { BuiltinClasses::ShadowRealm, realm->shadowRealmPrototype() },
-#endif
     });
 }
 

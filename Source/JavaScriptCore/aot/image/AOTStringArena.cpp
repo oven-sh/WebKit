@@ -92,10 +92,12 @@ StringRemap StringInterningPhase::finish(std::span<const unsigned> taskOrder)
     discard();
 
     StringRemap remap;
-    remap.m_finalIDs = Vector<Vector<StringID>>(ProvisionalStringID::maxStorages, [&](size_t number) {
-        const Storage* storage = m_storages.at(number);
-        return Vector<StringID>(FillWith { }, storage ? storage->strings.size() : 0, StringID());
-    });
+    if (!m_storages.isEmpty()) {
+        remap.m_finalIDs = Vector<Vector<StringID>>(ProvisionalStringID::maxStorages, [&](size_t number) {
+            const Storage* storage = m_storages.at(number);
+            return Vector<StringID>(FillWith { }, storage ? storage->strings.size() : 0, StringID());
+        });
+    }
     remap.m_tasksWithNewStrings.ensureSize(m_firstUses.size());
 
     for (unsigned task : taskOrder) {

@@ -276,6 +276,11 @@ size_t maxNumberOfUnionParts(const Type& type)
     return numberOfParts;
 }
 
+size_t maxNumberOfUnionPartsWithObjects(const Type& type)
+{
+    return type.classes.size() + !!type.layouts + !type.functions.isEmpty() + !type.builtins.isEmpty() + (type.anyObject || type.anyFunction);
+}
+
 bool isClosedUnion(const UnionParts& parts)
 {
     return std::ranges::none_of(parts, [](const UnionPart& part) {

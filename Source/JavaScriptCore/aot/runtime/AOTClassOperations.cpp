@@ -75,8 +75,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewClass, JSCell*, (Instance* instance, uin
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Instance* instance, JSCell* classObject))
 {
     constexpr Entry entry = Entry::operationAOTGetClassPrototype;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     validateFunctionIsNotInFrame(vm, classObject);
     JSValue prototype = cellArgument<Closure>(classObject, entry)->prototypeProperty(vm);
     if (!prototype || !prototype.isObject()) [[unlikely]]
@@ -87,8 +86,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetClassPrototype, JSCell*, (Insta
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBeginMemberGuards, void, (Instance* instance, uint32_t classIndex))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTBeginMemberGuards);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTBeginMemberGuards);
     ClassTable& classes = instance->state->objects->classes;
     classes.classPrototypeOfInstances(vm, classLayoutAt(classes, classIndex));
 }

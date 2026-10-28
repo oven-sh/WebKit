@@ -479,7 +479,11 @@ ResultNodeRef nodeOfKey(const DerivedFunctionKey& key)
 
 TypedResultForm typedResultFormOf(const Program& program, const Value& call)
 {
-    return call.opcode == Opcode::CallBuiltin ? program.builtins().at(call.overload()).result.typedResultForm : TypedResultForm::None;
+    if (call.opcode == Opcode::CallBuiltin)
+        return program.builtins().at(call.overload()).result.typedResultForm;
+    // The signature that the call is written against says that it answers a query, whoever the callee is.
+    bool answersQuery = call.opcode == Opcode::Call && call.expectedResult() && program.at(call.expectedResult()).flags.contains(ExpectedResultFlags::IsRowsOfQuery);
+    return answersQuery ? TypedResultForm::Rows : TypedResultForm::None;
 }
 
 ValueID typedResultSourceOf(const Program& program, const Value& call)

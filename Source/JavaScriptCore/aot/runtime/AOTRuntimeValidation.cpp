@@ -389,11 +389,13 @@ void compareOperandWithPhotograph(VM& vm, JSValue operand, uint32_t positionAndC
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPhotographOperand, void, (Instance* instance, EncodedJSValue operand, uint64_t writtenHeaps, uint32_t position))
 {
+    LeafOperationScope leaf(*instance->vm);
     photographOperand(*instance->vm, JSValue::decode(operand), AbstractHeaps::fromRaw(writtenHeaps), position);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCompareOperandWithPhotograph, void, (Instance* instance, EncodedJSValue operand, uint32_t positionAndCallee, uint32_t function, uint32_t valueIndex))
 {
+    LeafOperationScope leaf(*instance->vm);
     compareOperandWithPhotograph(*instance->vm, JSValue::decode(operand), positionAndCallee, FunctionID(function), Typed::ValueID(valueIndex));
 }
 

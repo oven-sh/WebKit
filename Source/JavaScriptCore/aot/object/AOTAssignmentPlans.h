@@ -102,6 +102,8 @@ struct AssignmentPlan {
         bool copiesBitsUntested { false };
         bool holdsCell { false };
         bool hasAbsent { false };
+        // The mark of the target's cell answers for the field, and whoever stores undefined or null there sets the mark. A run does not.
+        bool leavesUndefinedAndNullToOtherWay { false };
         uint8_t width { 0 };
         uint64_t absentBits { 0 };
     };

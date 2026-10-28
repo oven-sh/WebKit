@@ -111,7 +111,7 @@ struct alignas(64) FieldExit {
     uint32_t orderWordAfter;
     PropertyOffset offset;
     uint32_t name;
-    // Of the filters of absent names, when a store was seen to create the field: nothing above the object stopped it.
+    // Of the filters of absent names, when the run time last asked them whether a store creates the field, and they said so. None until it has asked: the field may have left by a definition.
     uint32_t generationForStores;
     uint32_t offsetOfSlot;
     uint16_t extraPropertiesCellSize;

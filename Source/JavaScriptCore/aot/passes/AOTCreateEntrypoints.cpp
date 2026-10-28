@@ -602,6 +602,8 @@ Function buildTableLookup(const DerivedFunctionKey& key, DerivedFunctionInputs& 
     call.setThisValueOperand(parameters.thisValue);
     call.setArgumentsOperands(parameters.arguments.span());
     call.setCalleeKey(selector.key);
+    if (const PropertyKey& key = inputs.program.at(selector.key); key.kind == PropertyKeyKind::Text)
+        call.setCalleeName(key.text);
     call.setIsNeverInlined(true);
     builder.emitReturn(builder.append(WTF::move(call)));
     return lookup;

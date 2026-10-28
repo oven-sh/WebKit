@@ -253,8 +253,11 @@ void readFieldAndReturn(StubAssembler& jit, const FieldReadRegisters& r, FieldRe
         RELEASE_ASSERT(traits.valueKind == SlotValueKind::SignedInteger && traits.width == sizeof(int32_t) && traits.hasAbsent);
         jit.load32(Address(r.field.address), r.value);
         Jump isMarker = jit.branch32(CCallHelpers::LessThan, r.value, TrustedImm32(minInlineInt32));
+        Label isNumber = jit.label();
         returnInt32();
         isMarker.link(&jit);
+        // A slot that is always filled has no markers.
+        jit.branch32(CCallHelpers::Equal, r.field.representation, TrustedImm32(static_cast<int32_t>(SlotRepresentation::Int32))).linkTo(isNumber, &jit);
         branchOnMarkers(traits);
         exits.cannot.append(jit.jump());
     };

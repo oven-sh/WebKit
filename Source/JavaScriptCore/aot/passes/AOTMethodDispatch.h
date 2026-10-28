@@ -25,6 +25,10 @@ Value makeObjectTest(Proof, ValueID object, const SlotStamp&);
 // One test for all the conditions, in the order in which addCondition keeps them.
 Value makeConditionsTest(TypeArena&, std::span<const MemberCondition>);
 bool testsCoverConditions(std::span<const Value> tests, std::span<const MemberCondition>);
+// The guards of a constructor function begin with the first object that it makes, and many a base makes none. The function about whose own members the test asks, if any.
+LayoutID constructorFunctionAskedAbout(const Program&, const Value& conditionsTest);
+// For the side where such a test has failed.
+void appendStartOfMemberGuards(IRBuilder&, const Program&, TypeArena&, LayoutID constructorFunction);
 
 struct AccessTests {
     Vector<Value, 4> tests;

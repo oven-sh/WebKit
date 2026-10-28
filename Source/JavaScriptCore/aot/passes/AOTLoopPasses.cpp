@@ -30,6 +30,7 @@
 #include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
+#include <wtf/CheckedArithmetic.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -414,8 +415,11 @@ static Vector<Tally, 2> findTallies(FunctionPassContext& context)
             });
             if (!isTally || starts.isEmpty() || !starts.isSubsetOf(Range::int32()) || *turns > UINT32_MAX)
                 continue;
-            // Each factor has at most 32 bits and a sign.
-            Range range { starts.minimum + change.least * *turns, starts.maximum + change.most * *turns };
+            CheckedInt64 least = CheckedInt64(change.least) * *turns + starts.minimum;
+            CheckedInt64 most = CheckedInt64(change.most) * *turns + starts.maximum;
+            if (least.hasOverflowed() || most.hasOverflowed())
+                continue;
+            Range range { least.value(), most.value() };
             if (range.isSubsetOf(Range::exact()))
                 tallies.append({ index, range, WTF::move(edgesOfNextTurns) });
         }
@@ -1041,7 +1045,7 @@ static std::optional<ShortLoop> planTurnsInFrontOf(FunctionPassContext& context,
 
 static std::optional<ShortLoop> findShortLoop(FunctionPassContext& context, const NaturalLoop& loop)
 {
-    if (!mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(loop.header())) || !isHotLoop(context, loop).predicted())
+    if (!mayBeHeaderOfShortLoop(context.program, context.function, context.function.at(loop.header())) || !isExpectedToRun(context, loop).predicted())
         return std::nullopt;
     std::optional<uint64_t> numberOfTurns = findNumberOfTurns(context, loop);
     if (!numberOfTurns || !*numberOfTurns || *numberOfTurns > context.build.limit(LimitID::MaxTurnsOfUnrolledLoop))
@@ -1163,7 +1167,7 @@ static PassOutcome takeFirstTurnsThatInitializeOutOfLoops(FunctionPassContext& c
         NaturalLoops& loops = context.analyses.naturalLoops();
         for (unsigned index = 0; index < loops.numLoops() && !found; ++index) {
             const NaturalLoop& loop = loops.loop(index);
-            if (!initializes(loop) || !isHotLoop(context, loop).predicted())
+            if (!initializes(loop) || !isExpectedToRun(context, loop).predicted())
                 continue;
             std::optional<ShortLoop> plan = planTurnsInFrontOf(context, loop, 1);
             if (!plan || plan->entries.isEmpty() || keepsNothingAtHandAnyway(context, *plan))

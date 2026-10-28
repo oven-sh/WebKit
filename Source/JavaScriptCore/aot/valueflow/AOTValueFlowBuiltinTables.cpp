@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinPristine.h"
+#include "AOTCallGraph.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTValueFlowBodies.h"
@@ -206,6 +207,17 @@ ValueFlowBuiltinTables::ValueFlowBuiltinTables(const BuiltinTable& builtins, uin
                 m_behaviorOfOperand.add(&info, behavior);
         }
     }
+    // The engine reads what a trap answers as it reads the list that Reflect.apply is handed and the descriptor that Reflect.defineProperty is handed.
+    auto behaviorOfThirdArgument = [&](BuiltinID builtin) {
+        for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {
+            if (auto parameter = std::ranges::find(overload.parameters, BuiltinOperand::argument(2), &BuiltinParameter::operand); parameter != overload.parameters.end())
+                return m_behaviorOfParameter.get(&*parameter);
+        }
+        return ValueFlowBehaviorID();
+    };
+    m_listOfKeysThatTrapAnswers = behaviorOfThirdArgument(Builtins::ReflectApply);
+    m_descriptorThatTrapAnswers = behaviorOfThirdArgument(Builtins::ReflectDefineProperty);
+    RELEASE_ASSERT(m_listOfKeysThatTrapAnswers && m_descriptorThatTrapAnswers);
 }
 
 static bool usesPutValueInto(const BuiltinTable& builtins, const BuiltinHostUses& uses, BuiltinID entry)
@@ -260,6 +272,63 @@ BuiltinID ValueFlowBuiltinTables::entryDescribing(ValueFlowObjectID closure) con
     return { };
 }
 
+// No realm holds a function that the files of the engine link by name. Unless a row says that native code calls it, it runs only where a statement calls it directly, on the operands of that statement.
+static void addLinkedFunctionsCalledOnlyBy(BitVector& code, const Program& program)
+{
+    const BuiltinTable& builtins = program.builtins();
+    BitVector isCalledByNativeCode;
+    for (const BuiltinCalledFunction& row : builtins.startupCalledFunctions())
+        isCalledByNativeCode.set(row.function.index());
+    for (RuntimeFunctionID function : builtins.functionsCalledWithStartupLoads())
+        isCalledByNativeCode.set(function.index());
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        if (builtins.canonicalID(BuiltinID(index)) != BuiltinID(index))
+            continue;
+        for (const BuiltinCalledFunction& row : builtins.calledFunctionsOf(BuiltinID(index)))
+            isCalledByNativeCode.set(row.function.index());
+    }
+    auto linkedFunctionAround = [&](const Function& function) {
+        RuntimeFunctionID id = function.enclosingRuntimeFunction;
+        bool isLinked = function.role == FunctionRole::Library && id && builtins.contains(id) && builtins.at(id).role == RuntimeFunctionRole::EngineBuiltin && builtins.at(id).implements.empty();
+        return isLinked && !isCalledByNativeCode.get(id.index()) ? id : RuntimeFunctionID();
+    };
+
+    struct Naming {
+        uint32_t function;
+        RuntimeFunctionID linked;
+        bool isDirectCall;
+    };
+    Vector<Naming> namings;
+    Vector<uint32_t> functionsOfLinkedCode;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        if (linkedFunctionAround(function))
+            functionsOfLinkedCode.append(index);
+        forEachFunctionReference(program, function, [&](FunctionID named, FunctionReferenceKind kind) {
+            RuntimeFunctionID linked = linkedFunctionAround(program.at(named));
+            if (linked && linked != function.enclosingRuntimeFunction)
+                namings.append({ index, linked, kind == FunctionReferenceKind::Call });
+        });
+    }
+
+    BitVector isCalled;
+    BitVector isNamedElsewhere;
+    for (bool hasGrown = true; hasGrown;) {
+        hasGrown = false;
+        isCalled.clearAll();
+        isNamedElsewhere.clearAll();
+        for (const Naming& naming : namings)
+            (naming.isDirectCall && code.quickGet(naming.function) ? isCalled : isNamedElsewhere).set(naming.linked.index());
+        for (uint32_t index : functionsOfLinkedCode) {
+            uint32_t linked = program.functions[index].enclosingRuntimeFunction.index();
+            if (code.quickGet(index) || !isCalled.get(linked) || isNamedElsewhere.get(linked))
+                continue;
+            code.quickSet(index);
+            hasGrown = true;
+        }
+    }
+}
+
 static BitVector findCodeThatRecordsDescribe(const Program& program)
 {
     enum class NamedFunctions : uint8_t { None, AllDescribed, SomeNotDescribed };
@@ -288,6 +357,7 @@ static BitVector findCodeThatRecordsDescribe(const Program& program)
         if (standsBehindDescribedBuiltins(program, FunctionID(index)) || (isNamedOnlyInItsFile && namedFunctionsOfModule[function.module.index()] == NamedFunctions::AllDescribed))
             code.quickSet(index);
     }
+    addLinkedFunctionsCalledOnlyBy(code, program);
     return code;
 }
 
@@ -296,6 +366,17 @@ void ValueFlowBuiltinTables::makeSets(const Program& program, const ValueFlowUni
     ValueSetMaker maker(sets);
     const BuiltinTable& builtins = program.builtins();
     m_codeThatRecordsDescribe = findCodeThatRecordsDescribe(program);
+    for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
+        if (!entry.function || !Typed::isEnteredByCallsAlone(program, entry.id))
+            continue;
+        for (BuiltinID implemented : builtins.at(entry.id).implements) {
+            bool doRecordsAnswer = std::ranges::any_of(builtins.overloadsOf(builtins.canonicalID(implemented)), [&](const BuiltinOverload& overload) {
+                return doRecordsDescribe(builtins, overload);
+            });
+            if (!doRecordsAnswer)
+                m_entriesDescribedByCodeAlone.set(implemented.index());
+        }
+    }
     Vector<ValueFlowObjectID, 8> describedClosures;
     for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
         BuiltinID entry(index);

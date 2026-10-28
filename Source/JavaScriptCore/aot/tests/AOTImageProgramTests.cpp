@@ -540,6 +540,21 @@ static void testCachesOfProgramLastAsLongAsCodeGenerationJob()
     AOT_TEST_CHECK(hasNeither());
 }
 
+static void testRunThatIsEndedLeavesProgramAsRead()
+{
+    ParsedProgram parsed(programUsingSymbolSpaces());
+    unsigned timesAsked = 0;
+    std::unique_ptr<Typed::PipelineOutput> pipeline = Typed::runPipeline(WTF::move(parsed.program), parsed.context, [](const Typed::PipelineOutput&) { }, std::nullopt, [&](const Typed::FlowReport& usesOfLibraryCode) {
+        ++timesAsked;
+        AOT_TEST_CHECK(!usesOfLibraryCode.builtinsUsed.isEmpty());
+        return false;
+    });
+    AOT_TEST_CHECK(timesAsked == 1);
+    AOT_TEST_CHECK(pipeline && pipeline->endedBehindFlowAnalysis && !pipeline->isComplete);
+    AOT_TEST_CHECK(!pipeline->usesOfLibraryCode.builtinsUsed.isEmpty());
+    AOT_TEST_CHECK(pipeline->program->form() == Typed::IRForm::AsRead);
+}
+
 static void testSymbolSpacesOfProgram()
 {
     using enum SymbolSpace;
@@ -719,6 +734,7 @@ std::span<const NativeTest> programInputTests()
         { "image/regexp-queue/none"_s, testNoRegExps },
         { "image/programs/symbol-spaces"_s, testSymbolSpacesOfProgram },
         { "image/programs/caches-last-as-long-as-code-generation-job"_s, testCachesOfProgramLastAsLongAsCodeGenerationJob },
+        { "image/programs/run-that-is-ended-leaves-program-as-read"_s, testRunThatIsEndedLeavesProgramAsRead },
         { "image/instances/second-realm-has-no-instance"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testSecondRealmHasNoInstance> },
         { "image/instances/realm-after-collected-realm"_s, runNativeTestWithLoadedProgram<programInputTests, programForOneInstance, testRealmAfterCollectedRealm> },
         { "image/instances/two-realms-have-instances"_s, runNativeTestWithLoadedProgram<programInputTests, programForManyInstances, testTwoRealmsHaveInstances> },

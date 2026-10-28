@@ -586,30 +586,46 @@ static void testUnrollLoopsPollsBetweenStretches()
     }
 }
 
-// A loop that walks nothing is not written out. It goes without its poll where its turns are few, and a copy of it that polls takes the others.
+// A loop that walks nothing is not written out. It goes without its poll where its turns are few, however far from zero they start, and a copy of it that polls takes the others.
+// Where the lower end is not below zero, an upper end within a stretch of zero says that the turns are few. An upper end beyond that is held against the lower end,
+// but for a lower end that is known to lie within a stretch of zero: whoever starts there and ends beyond has many turns or nearly so.
 static void testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut()
 {
     constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
+    constexpr int64_t greatest = std::numeric_limits<int64_t>::max();
     for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
         for (int64_t step : { 1, -2 }) {
-            CountedSum sum(step > 0 ? LessThan : GreaterThan, step, 3, policyThatPollsBetweenStretches(), Walks::Nothing);
-            PollState state;
-            appendPollOfShortTurns(sum.graph, sum.loop.body, state);
-            sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.get(sum.loop.body, sum.loop.index));
-            sum.finish(sum.loop.body, place);
+            for (int64_t first : { int64_t { 3 }, -3 * stretch, stretch + 1, 7 * stretch + 3, greatest - 7 * stretch }) {
+                for (bool boundIsNotBelowZero : { false, true }) {
+                    // A counter that falls from so near to zero needs no copy.
+                    if (step < 0 && boundIsNotBelowZero && first <= stretch * -step)
+                        continue;
+                    CountedSum sum(step > 0 ? LessThan : GreaterThan, step, first, policyThatPollsBetweenStretches(), Walks::Nothing);
+                    PollState state;
+                    appendPollOfShortTurns(sum.graph, sum.loop.body, state);
+                    sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.get(sum.loop.body, sum.loop.index));
+                    sum.finish(sum.loop.body, place);
+                    if (boundIsNotBelowZero)
+                        sum.proc.setKnownRange(sum.loop.bound, IntRange(0, greatest));
 
-            CHECK(unrollLoopsAndValidate(sum.proc));
-            CHECK_EQ(sum.proc.report().countOf(Counter::LoopsUnrolled), 0u);
-            CHECK_EQ(sum.proc.report().countOf(Counter::LoopPollsRemoved), 1u);
-            checkValueCountInEachLoop(sum.proc, isLoopPoll, "polls"_s, { 0, 1 });
-            auto code = compileProc(sum.proc);
-            for (int64_t turns : { int64_t { -5 }, int64_t { 0 }, int64_t { 1 }, int64_t { 9 }, stretch - 1, stretch, stretch + 1, 2 * stretch + 5 }) {
-                int64_t bound = 3 + turns * step;
-                int64_t numberOfTurns = sum.expected(bound, one);
-                state = { };
-                CHECK_EQ(run(*code, bound), sum.expected(bound, itself));
-                if (turns >= 0)
-                    CHECK_EQ(state.numberOfPolls, turns <= stretch ? 0 : numberOfTurns);
+                    CHECK(unrollLoopsAndValidate(sum.proc));
+                    CHECK_EQ(sum.proc.report().countOf(Counter::LoopsUnrolled), 0u);
+                    CHECK_EQ(sum.proc.report().countOf(Counter::LoopPollsRemoved), 1u);
+                    checkValueCountInEachLoop(sum.proc, isLoopPoll, "polls"_s, { 0, 1 });
+                    auto code = compileProc(sum.proc);
+                    for (int64_t turns : { int64_t { -5 }, int64_t { 0 }, int64_t { 1 }, int64_t { 9 }, stretch - 4, stretch - 3, stretch - 2, stretch - 1, stretch, stretch + 1, 2 * stretch + 5 }) {
+                        int64_t bound = first + turns * step;
+                        if (boundIsNotBelowZero && bound < 0)
+                            continue;
+                        int64_t numberOfTurns = sum.expected(bound, one);
+                        state = { };
+                        CHECK_EQ(run(*code, bound), sum.expected(bound, itself));
+                        bool startsNearZero = step > 0 && first >= 0 && first <= stretch * step;
+                        bool hasFewTurns = startsNearZero ? bound <= stretch * step : turns <= stretch;
+                        if (turns >= 0)
+                            CHECK_EQ(state.numberOfPolls, hasFewTurns ? 0 : numberOfTurns);
+                    }
+                }
             }
         }
     }

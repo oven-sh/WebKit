@@ -192,6 +192,8 @@ export interface DumpedResult {
   iteratedOperand: DumpedOperand | null;
   iterationKind: IterationKind | null;
   prototypeSource: DumpedOperand | null;
+  testedOperand: DumpedOperand | null;
+  testedType: DumpedType | null;
   properties: { name: string; type: DumpedType }[];
 }
 

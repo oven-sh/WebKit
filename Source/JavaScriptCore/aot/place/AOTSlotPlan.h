@@ -30,7 +30,6 @@ class CallGraph;
 class EnvironmentReuse;
 class FlowResults;
 class FrameAllocation;
-class Heat;
 class SlotAgreementMemo;
 
 using FieldIndex = uint32_t;
@@ -168,7 +167,6 @@ struct ClassCreationPlan {
 struct SlotPlanInputs {
     const FlowResults& flow;
     const CallGraph& callGraph;
-    const Heat& heat;
     const FrameAllocation& frameAllocation;
     const EnvironmentReuse& environmentReuse;
 };

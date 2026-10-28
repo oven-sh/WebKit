@@ -872,7 +872,7 @@ RuntimeCallEmitter::SlotsOfSites RuntimeCallEmitter::slotsOfSitesBehindStub(cons
 
 void RuntimeCallEmitter::stateWhichCallsChangeWhatOnlyGeneratedCodeReads()
 {
-    for (const B3::AbstractHeap* heap : { &m_heaps.AOTInstance_siteCaches, &m_heaps.AOTInstance_closureCells }) {
+    for (const B3::AbstractHeap* heap : { &m_heaps.AOTInstance_siteCaches, &m_heaps.AOTInstance_closureCells, &m_heaps.counters }) {
         if (!m_heaps.isNamedByMemoryAccess(*heap))
             continue;
         for (B3::PatchpointValue* patchpoint : m_callsThatMayChangeSlotsOfSites)

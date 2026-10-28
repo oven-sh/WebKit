@@ -1,5 +1,5 @@
 enum SlotRepresentation {
-    | engine JSValue Cell Cell32 OptionalCell32 Int32 Uint32 Int64 OptionalInt64 OptionalInt32 Double OptionalDouble Float Boolean OptionalBoolean Uint8 Int8
+    | engine JSValue Cell Cell32 OptionalCell32 Int32 OptionalInt32 Uint32 Int64 OptionalInt64 Double OptionalDouble Float Boolean OptionalBoolean Uint8 Int8
     Uint16 Int16 LiteralString LiteralString32 DeferredClosure
 }
 enum CellTestKind { | engine IsObject IsCallable CellTypeIs ShapeIn InheritsClassInfo IsPristine IsBuiltinCell IsClosureOf IsSymbol SharingModeIs IsNamespaceOf }

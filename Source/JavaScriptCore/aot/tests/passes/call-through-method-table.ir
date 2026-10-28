@@ -72,7 +72,7 @@ function f9 name="oneLayoutHasAField" parameters=[{type=L0|L1|L2}, {type=number}
 # CHECK-NEXT: = Call [[read]], [[record]], v1 calleeKey="scaled"
 # CHECK: function [[typedLookup]] {{*}}role=TableLookup {{*}}thisType={type=object} parameters=[{type=number}] results=[{type=anything}]
 # CHECK: = PropGet v0 key="scaled"
-# CHECK-NEXT: = Call {{*}}, v0, v1 calleeKey="scaled"
+# CHECK-NEXT: = Call {{*}}, v0, v1 calleeKey="scaled" calleeName="scaled"
 # CHECK: role=TableEntrypoint {{*}}thisType={type=object} parameters=[{type=number}] results=[{type=anything}]
 # CHECK-NEXT: b0(v0: object, v1: number):
 # CHECK-NEXT: [[this]]: L0 = AssumeType v0 provenType=L0

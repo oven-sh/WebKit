@@ -76,7 +76,7 @@ function f1 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=3 thi
 # CHECK: Int64 b@[[bits]] = BitwiseCast(b@[[value]], {{*}}:TypeTest)
 # CHECK: Int32 b@[[isNumber]] = LessThan(b@[[bits]], {{*}}:TypeTest)
 # CHECK: Branch(b@[[isNumber]], Terminal, {{*}}:TypeTest)
-# CHECK-NEXT: Successors: Then:#{{*}}, Else:Unlikely:#{{*}}
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#{{*}}
 # CHECK: Store(b@[[value]], b@{{*}}, ControlDependent|Writes:TypedArrayElements, {{*}}:PutTypedArrayElement)
 # CHECK-LABEL: end of function
 # The number is never boxed, compared with itself or replaced.
@@ -86,5 +86,5 @@ function f1 name="put" module=m0 flags=[IsChecked, HasExplicitName] length=3 thi
 # NONE-NOT: Double b@{{*}} = Phi(
 # NONE-LABEL: end of function
 # The arm for undefined calls, so its moves follow the calling convention.
-# X64: instructions: 16, patchpoints: 2
-# ARM64: instructions: 17, patchpoints: 2
+# X64: instructions: 10, patchpoints: 1, rare instructions: 8
+# ARM64: instructions: 13, patchpoints: 1, rare instructions: 8

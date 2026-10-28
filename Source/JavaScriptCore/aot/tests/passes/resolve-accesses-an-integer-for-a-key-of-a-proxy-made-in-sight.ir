@@ -41,7 +41,8 @@ function f1 name="get" module=m0 position=63 kind=Method flags=[HasExplicitName]
 # CHECK-LABEL: function f0
 # CHECK: [[target]]: L0 = FinishObject
 # CHECK: [[handler]]: L1 = FinishObject
-# CHECK: [[proxy]]: Proxy = CallBuiltin
+# CHECK: [[made]]: Proxy = CallBuiltin
+# CHECK: [[proxy]]: Proxy = AssumeType [[made]]
 # CHECK: = TypeTest {{*}} testedType=int|string|symbol
 # CHECK: ([[key]]: i32):
 # CHECK-NEXT: [[name]]: string|symbol = ToPropertyKey [[key]]

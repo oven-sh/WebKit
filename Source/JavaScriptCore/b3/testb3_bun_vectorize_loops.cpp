@@ -1213,6 +1213,139 @@ static void testVectorizeLoopsKeepsSignOfZeroSum()
     }
 }
 
+// found = start; for each element: if (element REL found) found = element. Written with a Select and with a branch.
+static void testVectorizeLoopsFindsLeastAndGreatestElement()
+{
+    const int32_t starts[] = { 0, 1, -5, 300, 70000, -70000, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() };
+    for (CPUFeatureSet features : featureSets()) {
+        for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+            const ElementKind& kind = elementKinds[kindIndex];
+            for (B3::Opcode relation : { GreaterThan, GreaterEqual, LessThan, LessEqual, Above, AboveEqual, Below, BelowEqual }) {
+                for (bool branches : { false, true }) {
+                    for (bool elementComesFirst : { true, false }) {
+                        LoopThatAddsUp loop { vectorPolicy(features), Int32 };
+                        Graph& graph = loop.graph;
+                        BasicBlock* body = loop.loop.body;
+                        Value* element = loop.element(kind);
+                        Value* found = graph.get(body, loop.total);
+                        // The element is taken where the relation holds for it, whichever side it is written on.
+                        Value* takesElement = elementComesFirst ? graph.make(body, relation, element, found) : graph.make(body, relation, found, element);
+                        BasicBlock* last = body;
+                        if (branches) {
+                            BasicBlock* taken = loop.proc.addBlock();
+                            BasicBlock* kept = loop.proc.addBlock();
+                            last = loop.proc.addBlock();
+                            graph.branch(body, takesElement, taken, kept);
+                            graph.set(taken, loop.total, element);
+                            graph.jump(taken, last);
+                            graph.jump(kept, last);
+                        } else
+                            graph.set(body, loop.total, graph.select(body, takesElement, element, found));
+                        loop.loop.endBody(last);
+                        CHECK(vectorizeLoopsAndValidate(loop.proc));
+                        auto code = compileForTarget(loop.proc);
+                        alignas(16) uint8_t elements[bytesOfBuffer];
+                        fillWithBytes(elements, kindIndex + 7);
+                        auto holds = [&](int32_t left, int32_t right) {
+                            switch (relation) {
+                            case GreaterThan:
+                                return left > right;
+                            case GreaterEqual:
+                                return left >= right;
+                            case LessThan:
+                                return left < right;
+                            case LessEqual:
+                                return left <= right;
+                            case Above:
+                                return static_cast<uint32_t>(left) > static_cast<uint32_t>(right);
+                            case AboveEqual:
+                                return static_cast<uint32_t>(left) >= static_cast<uint32_t>(right);
+                            case Below:
+                                return static_cast<uint32_t>(left) < static_cast<uint32_t>(right);
+                            default:
+                                return static_cast<uint32_t>(left) <= static_cast<uint32_t>(right);
+                            }
+                        };
+                        for (int64_t bound = 0; bound <= 70; ++bound) {
+                            for (int32_t start : starts) {
+                                const uint8_t* at = elements + 3 * kind.bytes;
+                                int32_t expected = start;
+                                for (int64_t index = 0; index < bound; ++index) {
+                                    int32_t value = static_cast<int32_t>(readElement(kind, at + index * kind.bytes));
+                                    if (elementComesFirst ? holds(value, expected) : holds(expected, value))
+                                        expected = value;
+                                }
+                                CHECK_EQ(static_cast<uint32_t>(invoke<int64_t>(*code, bound, at, static_cast<uint64_t>(static_cast<uint32_t>(start)))), static_cast<uint32_t>(expected));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// to[index] = from[index] > limit ? limit : from[index], written with a branch. What a way hands on is read in the turn, wherever the counter is tested.
+static void testVectorizeLoopsTakesBranchWhoseWaysOnlyChoose()
+{
+    for (CPUFeatureSet features : featureSets()) {
+        for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+            for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+                const ElementKind& kind = elementKinds[kindIndex];
+                for (int32_t limit : { 0, 100, -100 }) {
+                    LoopOverElements loop { vectorPolicy(features) };
+                    Graph& graph = loop.graph;
+                    BasicBlock* body = loop.loop.body;
+                    Variable* chosen = loop.proc.addVariable(Int32);
+                    Value* element = loop.element(loop.from(), kind, loop.index());
+                    BasicBlock* over = loop.proc.addBlock();
+                    BasicBlock* within = loop.proc.addBlock();
+                    BasicBlock* last = loop.proc.addBlock();
+                    graph.branch(body, graph.make(body, GreaterThan, element, graph.int32(body, limit)), over, within);
+                    graph.set(over, chosen, graph.int32(over, limit));
+                    graph.jump(over, last);
+                    graph.set(within, chosen, element);
+                    graph.jump(within, last);
+                    Value* index = graph.get(last, loop.loop.index);
+                    Value* distance = kind.bytes == 1 ? index : graph.make(last, Shl, index, graph.int32(last, WTF::fastLog2(kind.bytes)));
+                    last->appendNew<MemoryValue>(loop.proc, kind.store, Origin(), graph.get(last, chosen), graph.make(last, Add, loop.to(), distance), 0, firstHeap);
+                    loop.loop.endBody(last);
+                    if (place == TestPlace::Bottom)
+                        loop.loop.rotate();
+                    CHECK(vectorizeLoopsAndValidate(loop.proc));
+                    auto code = compileForTarget(loop.proc);
+                    for (int64_t bound = 0; bound <= 70; ++bound) {
+                        checkAgainstTurns(*code, bound, bound, 3 * kind.bytes, 1024 + 5 * kind.bytes, 0, [&](uint8_t* to, uint8_t* from, int64_t index) {
+                            int32_t value = static_cast<int32_t>(std::min<int64_t>(readElement(kind, from + index * kind.bytes), limit));
+                            memcpy(to + index * kind.bytes, &value, kind.bytes);
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A way that does more than choose stays a branch.
+static void testVectorizeLoopsSkipsBranchWhoseWayStores()
+{
+    const ElementKind& words = elementKinds[4];
+    LoopOverElements loop;
+    Graph& graph = loop.graph;
+    BasicBlock* body = loop.loop.body;
+    Value* element = loop.element(loop.from(), words, loop.index());
+    Value* address = loop.addressOf(loop.to(), words, loop.index());
+    BasicBlock* stores = loop.proc.addBlock();
+    BasicBlock* skips = loop.proc.addBlock();
+    BasicBlock* last = loop.proc.addBlock();
+    graph.branch(body, graph.make(body, GreaterThan, element, graph.int32(body, 0)), stores, skips);
+    stores->appendNew<MemoryValue>(loop.proc, Store, Origin(), element, address, 0, firstHeap);
+    graph.jump(stores, last);
+    graph.jump(skips, last);
+    loop.loop.endBody(last);
+    CHECK(!vectorizeLoopsAndValidate(loop.proc));
+}
+
 static void testVectorizeLoopsSkipsSumThatTurnLooksAt()
 {
     const ElementKind& words = elementKinds[4];
@@ -1735,6 +1868,9 @@ void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVectorizeLoopsAddsUpElementsOfEveryKind());
     RUN(testVectorizeLoopsAddsUpManyElements());
     RUN(testVectorizeLoopsKeepsSignOfZeroSum());
+    RUN(testVectorizeLoopsFindsLeastAndGreatestElement());
+    RUN(testVectorizeLoopsTakesBranchWhoseWaysOnlyChoose());
+    RUN(testVectorizeLoopsSkipsBranchWhoseWayStores());
     RUN(testVectorizeLoopsSkipsSumThatTurnLooksAt());
     RUN(testVectorizeLoopsSkipsLoopsWhoseTurnsAreNotAlike());
     RUN(testVectorizeLoopsSkipsLoopWithSecondWayOut());

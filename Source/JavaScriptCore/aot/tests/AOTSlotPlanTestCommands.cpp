@@ -122,7 +122,6 @@ static SlotUses collectSlotUsesFor(const SlotPlanViewContext& view)
     SlotPlanInputs inputs {
         .flow = *output.flow,
         .callGraph = view.placed.callGraph,
-        .heat = *output.heat,
         .frameAllocation = *output.frameAllocation,
         .environmentReuse = *output.environmentReuse,
     };

@@ -670,6 +670,8 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     cannot.append(branchIfBarrierIsNeeded(jit, object, scratch));
     cannot.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(frameCellState)));
     cannot.append(jit.branchTest8(CCallHelpers::Zero, memberOfExit(OBJECT_OFFSETOF(FieldExit, widthOfSlot))));
+    // A slot may keep undefined and null: RuntimeLayoutTable::slotAdmits() knows.
+    cannot.append(jit.branchIfOther(value, scratch));
     jit.load32(memberOfExit(OBJECT_OFFSETOF(FieldExit, offsetOfSlot)), offsetOfSlot);
     auto branchIfSlotIsWide = [&] {
         return jit.branchTest8(CCallHelpers::NonZero, memberOfExit(OBJECT_OFFSETOF(FieldExit, widthOfSlot)), TrustedImm32(sizeof(uint64_t)));
@@ -684,7 +686,7 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     isLoaded.link(&jit);
     Jump isInSlot = jit.branch64(CCallHelpers::NotEqual, scratch, memberOfExit(OBJECT_OFFSETOF(FieldExit, absentBits)));
     cannot.append(jit.branchTest8(CCallHelpers::NonZero, memberOfExit(OBJECT_OFFSETOF(FieldExit, wasInSlot))));
-    // A store that creates the field asks what is above the object. Nothing there has changed since the other store asked.
+    // A store that creates the field asks what is above the object. Nothing there has changed since the run time asked for a store to an object of this Structure.
     if (mode != PutMode::Define) {
         jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.absenceFilterGenerationForStores)), scratch);
         cannot.append(jit.branch32(CCallHelpers::NotEqual, memberOfExit(OBJECT_OFFSETOF(FieldExit, generationForStores)), scratch));

@@ -22,6 +22,7 @@
 #include <limits>
 #include <utility>
 #include <wtf/DataLog.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
@@ -120,11 +121,11 @@ static OpcodeEffectFacts computeEffectFactsOf(Opcode opcode, OptionalOperands op
 
 const OpcodeEffectFacts& effectFactsOf(Opcode opcode)
 {
-    static const std::array<OpcodeEffectFacts, numberOfOpcodes> factsOfOpcodes = [] {
-        std::array<OpcodeEffectFacts, numberOfOpcodes> result { };
+    static const std::array<OpcodeEffectFacts, numberOfOpcodes>& factsOfOpcodes = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<std::array<OpcodeEffectFacts, numberOfOpcodes>>();
         for (Opcode member : allMembersOf<Opcode>)
-            result[static_cast<unsigned>(member)] = computeEffectFactsOf(member);
-        return result;
+            (*result)[static_cast<unsigned>(member)] = computeEffectFactsOf(member);
+        return result.release();
     }();
     return factsOfOpcodes[static_cast<unsigned>(opcode)];
 }

@@ -77,13 +77,14 @@ struct ExactAllocationCounts {
 };
 
 // For an operation that allocates and that a stub calls without recording a frame: vm.topCallFrame is what an earlier operation left behind, and that frame is gone.
-// Such an operation allocates only while collections are put off.
+// The operation puts collections off while it runs.
 class LeafOperationScope {
     WTF_MAKE_NONCOPYABLE(LeafOperationScope);
 public:
     explicit LeafOperationScope(VM& vm)
         : m_vm(vm)
         , m_topCallFrame(vm.topCallFrame)
+        , m_deferGC(vm)
     {
         if (AllocationCounts::isEnabled()) [[unlikely]]
             vm.topCallFrame = nullptr;
@@ -98,6 +99,7 @@ public:
 private:
     VM& m_vm;
     CallFrame* m_topCallFrame;
+    DeferGCForAWhile m_deferGC;
 #if ASSERT_ENABLED
     AssertNoGC m_assertNoGC;
 #endif

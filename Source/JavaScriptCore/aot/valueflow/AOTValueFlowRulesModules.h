@@ -52,6 +52,9 @@ void applyEventsOfStore(const ValueFlowStatement&, ValueFlowRuleContext&, Climbi
 void appendModuleObjectsAnsweredBy(ValueFlowRuleContext&, BuiltinID canonicalEntry, Vector<ValueFlowObjectID, 32>&);
 void handChildrenToWhatReplacesTheirList(ValueFlowRuleContext&, ValueSetID children);
 bool isFoundByNameAlone(BuiltinID canonicalMember);
+bool isCalledWithoutStartupLoads(const BuiltinTable&, BuiltinID holder, BuiltinName);
+// Whether an entry in use among these is listed with one of the features, under a condition that may hold.
+bool usesFeatureAmong(ValueFlowRuleContext&, ClimbingSet entries, const BitVector& features);
 
 std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable&, BuiltinID, RefusedCode);
 
@@ -77,6 +80,7 @@ inline void letUnknownCodeWrite(ValueFlowRuleContext& context) { raiseHostFlag(c
 inline bool mayUnknownCodeWrite(ValueFlowRuleContext& context) { return isHostFlagRaised(context, ValueFlowHostNode::UnknownCodeWrites) || isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns); }
 inline void letWhateverHasEscapedBeCalled(ValueFlowRuleContext& context) { raiseHostFlag(context, ValueFlowHostNode::ValueNobodyKnowsIsCalled); }
 inline bool mayCallWhateverHasEscaped(ValueFlowRuleContext& context) { return isHostFlagRaised(context, ValueFlowHostNode::ValueNobodyKnowsIsCalled) || isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns); }
+void letSeenCodeCallEscapedFunctionsAmong(ValueFlowRuleContext&, ValueFlowNodeID exportsThatProgramHasTaken);
 void letAnythingHappenTo(ValueFlowRuleContext&, ClimbingSet objects);
 void letModulesBeLoadedByName(ValueFlowRuleContext&, ValueFlowHostNode answers);
 bool mayAnswerToName(const Program&, ModuleID);

@@ -275,6 +275,9 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, ErrorInstance::create(globalObject, structure, arguments.at(0), arguments.at(1), nullptr, TypeNothing, ErrorType::Error, true, asObject(newTarget)));
     }
+    // Compiled code takes what super() answers for an object. A function of the host may answer `new` with a primitive.
+    if constexpr (isParent)
+        RELEASE_AND_RETURN(scope, JSC::construct(globalObject, callee, constructData, arguments, newTarget));
     RELEASE_AND_RETURN(scope, constructAllowingPrimitiveResult(globalObject, callee, constructData, arguments, newTarget));
 }
 
@@ -478,13 +481,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSuperConstructList, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(constructValue<true>(globalObject, vm, JSValue::decode(parent), JSValue::decode(newTarget), arguments)));
 }
 
-static StringView nameOfCalleeAt(const CallSiteCache::Entry& callSite)
+// As Interpreter::executeConstruct().
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowBecauseParentMadeNoObject, EncodedJSValue, (Instance* instance))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowBecauseParentMadeNoObject);
+    throwTypeError(globalObject, scope, "The constructor did not return an object"_s);
+    OPERATION_RETURN(scope, encodedJSValue());
+}
+
+enum class CalleeAtSite : bool { Any, ReadFromReceiver };
+
+static StringView nameOfCalleeAt(const CallSiteCache::Entry& callSite, CalleeAtSite callee = CalleeAtSite::Any)
 {
     std::optional<FaultSite> site = Image::current()->faultSiteAt(static_cast<const uint8_t*>(callSite.address) - sizeOfNearCall);
     if (!site || site->kind != FaultSiteKind::NullCheck)
         return { };
     ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(site->throwSite[0]);
     if (static_cast<ThrowKind>(word.kind) != ThrowKind::NotAFunction)
+        return { };
+    if (callee == CalleeAtSite::ReadFromReceiver && !word.calleeIsReadFromReceiver)
         return { };
     return Image::current()->text().view(StringID(word.hasWideA ? site->throwSite[1] : word.narrowA()));
 }
@@ -499,6 +514,7 @@ static StringView nameOfCalleeAtCallSite(VM& vm)
 
 // `f.apply(receiver, list)` and `f.call(receiver)` name `f.apply` and `f.call` where `f` refuses the call, as bytecode does, which calls `f` at that place.
 // The built-in function is a function of the library. Its frame stands above the place unless it has left by its tail call, and entered in any other way it names nothing.
+// Where the compiler has taken `.call` out of the place, the name there is that of the function that was entered, not of its receiver.
 static StringView nameOfCalleeForwardedBy(auto& frames)
 {
     FunctionID function = frames->frame().function;
@@ -507,7 +523,7 @@ static StringView nameOfCalleeForwardedBy(auto& frames)
         return { };
     ASCIILiteral member = BuiltinID(*builtin) == Builtins::FunctionPrototypeApply ? ".apply"_s : BuiltinID(*builtin) == Builtins::FunctionPrototypeCall ? ".call"_s : ""_s;
     frames->advanceToCallerMachineFrame();
-    StringView name = frames->isAtEnd() ? StringView() : nameOfCalleeAt(frames->callSite());
+    StringView name = frames->isAtEnd() ? StringView() : nameOfCalleeAt(frames->callSite(), CalleeAtSite::ReadFromReceiver);
     return !member.isEmpty() && name.endsWith(member) ? name : StringView();
 }
 

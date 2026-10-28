@@ -1,0 +1,76 @@
+# The tests that were split off the head of a function (role EntryChecks) run at every turn of a loop around the call, wherever they stand.
+# Where every argument is expected to pass them, the caller takes them in: they are the same tests, and the call behind them is a call of the typed body, which the caller may take in next.
+# Outside a loop, and for an argument of which nothing is expected, the caller decides as it would have about the whole function.
+# FORM: Prepared optimizing
+# OPTIONS: heat=OnlyLoopsAreHot
+# RUN: pass InlineCalls VerifyProgram
+# LOSS: MaxInlineHeadBytes x1 f4
+
+module m0 path="/main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    Return
+}
+function f1 name="expectedToPassInALoop" module=m0 flags=[IsChecked] parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: anything ~ number):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2: number):
+    LoopHint
+    v4 = CallDirect v0 function=f4
+    v5 = Less v4, v2
+    Branch v5 -> taken b1(v4), notTaken b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f1 name="expectedToPassInALoop"
+# CHECK: LoopHint
+# CHECK: = TypeTest v0 testedType=number
+# CHECK-NOT: function=f4
+# CHECK: = CallDirect {{*}} function=f5
+function f2 name="expectedToPassOutsideALoop" module=m0 flags=[IsChecked] parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] {
+  b0(v0: anything ~ number):
+    v1 = CallDirect v0 function=f4
+    Return v1
+}
+# CHECK-LABEL: function f2 name="expectedToPassOutsideALoop"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0 function=f4
+function f3 name="nothingIsExpectedInALoop" module=m0 parameters=[{type=anything}] results=[{type=number}] {
+  b0(v0: anything):
+    v1 = Integer integer=0
+    Jump -> next b1(v1)
+  b1(v2: number):
+    LoopHint
+    v4 = CallDirect v0 function=f4
+    v5 = Less v4, v2
+    Branch v5 -> taken b1(v4), notTaken b2()
+  b2():
+    Return v2
+}
+# CHECK-LABEL: function f3 name="nothingIsExpectedInALoop"
+# CHECK-NOT: TypeTest
+# CHECK: = CallDirect v0 function=f4
+function f4 name="large" module=m0 role=EntryChecks flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] creator=EntryChecks{body=f5 fallback=f6} {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=number
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2: number):
+    v3 = CallDirect v2 function=f5
+    ReturnCall v3 requirement=Allowed
+  b2() frequency=Unlikely:
+    v4 = CallDirect v0 function=f6
+    ReturnCall v4 requirement=Allowed
+}
+function f5 name="large" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} {
+# REPEAT: i = 0..63
+    v%(i+1) = Mul v%(i), v0
+# END REPEAT
+    Return v64
+}
+function f6 name="large" module=m0 role=GenericVersion flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=number}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f4} creator=Version{provenVersion=f5} {
+  b0(v0: anything):
+    v1 = ToNumber v0
+    Return v1
+}

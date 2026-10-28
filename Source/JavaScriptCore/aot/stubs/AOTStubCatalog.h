@@ -16,9 +16,12 @@
 #include "CPUFeatureSet.h"
 #include "RegisterSet.h"
 #include <array>
+#include <atomic>
+#include <memory>
 #include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC { namespace AOT {
@@ -84,6 +87,7 @@ struct StubSummary {
     RegisterSet clobberedInline;
 };
 
+// What it says of a stub follows from the code of the stub and of the stubs that it refers to. That code is generated when the first question about the stub comes, from whichever thread.
 class StubCatalog {
     WTF_MAKE_NONCOPYABLE(StubCatalog);
 public:
@@ -112,20 +116,26 @@ private:
     };
     using IndexByKey = HashMap<uint64_t, unsigned>;
 
-    void generateNodes();
-    void checkDeclarations() const;
-    void computeAnswers();
+    void listBodies();
+    const Node& closedNodeAt(unsigned index) const;
+    void generateAndClose(unsigned index) const;
+    static void checkDeclarations(std::span<Node* const>);
     const Node* tryFindNode(StubKey body) const;
     const Node& nodeOf(StubKey body) const;
+    const Answer* tryFindOwnAnswer(StubKey) const;
     const Answer& answerFor(StubKey) const;
-    Answer createAnswer(StubKey) const;
 
     const StubOptions m_options;
     const StubPolicy m_policy;
-    Vector<Node> m_nodes;
+    // The constructor fills these four, and nothing changes them behind it.
+    Vector<StubKey> m_bodies;
     IndexByKey m_nodeOfBody;
-    Vector<Answer> m_answers;
-    IndexByKey m_answerOfKey;
+    IndexByKey m_nodeOfKeyWithoutImmediate;
+    Vector<Vector<StubKey, 2>> m_keysWithoutImmediateOfNode;
+    // A node is written under the lock and read by whoever has seen that it is closed.
+    mutable Lock m_lock;
+    mutable Vector<std::unique_ptr<Node>> m_nodes;
+    mutable Vector<std::atomic<bool>> m_isClosed;
 };
 
 } } // namespace JSC::AOT

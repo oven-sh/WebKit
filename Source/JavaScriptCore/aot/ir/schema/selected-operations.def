@@ -14,7 +14,7 @@ family SlotRun Selected..Placed ; accessClass = Slot
 operation PutSlots (object: Object/inspects, guard?: Guard/inspects, placedKeys: List<PlacedKey>, receivers: LayoutSet, values...: Declared/retains(object)) -> none ; AllocatesWithoutCollecting reads(ObjectFields, OrderWords) writes(ObjectFields, OrderWords, RuntimeState) by Access ; relies = Shape, NotFrozen ; guarded = object ; replaces = PutSlot, PutSlotOrAdd ; runsOwnerBarrier = true ; remembersOwner = true
 
 family ObjectCreation Selected..Placed
-operation DefineOwnProperty (object: Any/inspects+returns+definesName+runs(OwnKeys), computedKey: PropertyKey/inspects, value?: Any/retains(object), getter?: Any/retains(object), setter?: Any/retains(object), descriptorFlags: PropertyDescriptorFlags) -> natural(same(object)) ; DefinesProperty UsesRuntime ResolvesRopes reads(Elements, ArrayStorage) writes(MemberGuards, Elements, ArrayStorage) ; replaces = CallBuiltin, NewObject ; runtime = DefineOwnProperty
+operation DefineOwnProperty (object: Any/inspects+returns+definesName+runs(OwnKeys), computedKey: PropertyKey/inspects, value?: Any/retains(object), getter?: Any/retains(object), setter?: Any/retains(object), descriptorFlags: PropertyDescriptorFlags) -> natural(same(object)) ; DefinesProperty UsesRuntime ResolvesRopes reads(Elements, ArrayStorage) writes(MemberGuards, Elements, ArrayStorage) ; replaces = CallBuiltin, NewObject, SetLiteralPrototype ; runtime = DefineOwnProperty
 operation DefineAccessors (object: Object/inspects+definesName, keys: List<PropertyKey>, getterMask: UInt32, enumerableMask: UInt32, functions...: Callable/retains(object)) -> none ; DefinesProperty ; replaces = DefineGetter, DefineSetter ; runtime = DefineAccessors
 
 family SelectedOperator Selected..Placed

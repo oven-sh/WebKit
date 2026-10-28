@@ -54,11 +54,23 @@ static_assert(B3::AirLimits::maxBytesAboveFrameRecord / stackAlignmentBytes() <=
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionCodeGenerator);
 
+// A loop is seldom reached on every way through its function: the test in front of it alone halves what is estimated for it. So the answer is not rounded up to a whole depth of loops.
 static double leastFrequencyOfWarmCode(const CodeGenerationInputs& inputs, FunctionID id)
 {
-    for (double frequency = 1; frequency <= 1000; frequency *= frequencyConstants.iterationsPerLoop) {
-        if (!isCold(inputs.heat.classOf(inputs.program, id, frequency)).predicted())
-            return frequency;
+    auto isWarmAt = [&](double frequency) {
+        return !isCold(inputs.heat.classOf(inputs.program, id, frequency)).predicted();
+    };
+    for (double warm = 1; warm <= 1000; warm *= frequencyConstants.iterationsPerLoop) {
+        if (!isWarmAt(warm))
+            continue;
+        if (warm == 1)
+            return warm;
+        double cold = warm / frequencyConstants.iterationsPerLoop;
+        for (unsigned step = 0; step < 8; ++step) {
+            double middle = (cold + warm) / 2;
+            (isWarmAt(middle) ? warm : cold) = middle;
+        }
+        return warm;
     }
     return std::numeric_limits<double>::infinity();
 }

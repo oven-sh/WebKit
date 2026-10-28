@@ -76,8 +76,11 @@ public:
     static JSCell* decode(uintptr_t base, uint32_t index) { return std::bit_cast<JSCell*>(base + (static_cast<uintptr_t>(index) << shift)); }
 
     uintptr_t base() const { return m_base; }
+    uintptr_t start() const { return m_start; }
     size_t size() const { return m_size; }
-    bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_base < m_size; }
+    bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_start < m_size; }
+    // Large enough that no address in the image of the executable that fits in 32 bits is the index of a cell or its distance from the base.
+    JS_EXPORT_PRIVATE static size_t distanceOfStartFromBase();
 
     void* tryAllocateAligned(size_t alignment, size_t);
     // On the thread of the VM, where tryAllocateAligned() found no room and releaseLastReserve() has said that there is a reserve beside the range.
@@ -132,7 +135,7 @@ public:
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError();
-    // Where storage is among what the program is owed an error for, this error is that error.
+    // Where storage is among what the program is owed an error for, this error is that error. So it is for cells under a limit on address space.
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError(VM&);
 
     struct ReservationFailure {
@@ -169,6 +172,7 @@ private:
 
     ReservedRangeHeap* m_range { nullptr };
     uintptr_t m_base { 0 };
+    uintptr_t m_start { 0 };
     size_t m_size { 0 };
     bool m_sharesRange { false };
     bool m_isInFirstRange { false };

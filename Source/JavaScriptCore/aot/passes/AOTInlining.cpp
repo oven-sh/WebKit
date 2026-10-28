@@ -938,6 +938,17 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                 continue;
             for (ValueID id : function.at(block).values) {
                 const Value& access = function.at(id);
+                if (access.opcode == Opcode::ElemGet) {
+                    if (std::optional<uint32_t> key = entryParameterBehind(analyses.identityOf(access.propertyOperand()))) {
+                        size_t position = summary.keyParameters.findIf([&](const KeyParameter& other) { return other.entryParameter == *key; });
+                        if (position == notFound) {
+                            position = summary.keyParameters.size();
+                            summary.keyParameters.append({ *key, 0 });
+                        }
+                        ++summary.keyParameters[position].accesses;
+                    }
+                    continue;
+                }
                 bool isStore = isStoreByKey(access.opcode);
                 if (!isNamedAccess(access.opcode) && !isStore)
                     continue;
@@ -1133,6 +1144,8 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
             out.print(" spread(p", spread.entryParameter, " bytes=", spread.code.bytes, ")");
         for (const ReceiverParameter& receiver : summary.receiverParameters)
             out.print(" receiver(p", receiver.entryParameter, " accesses=", receiver.accessesByName, " stores=", receiver.stores, ")");
+        for (const KeyParameter& key : summary.keyParameters)
+            out.print(" key(p", key.entryParameter, " accesses=", key.accesses, ")");
         out.print("\n");
     }
 }
@@ -1738,7 +1751,9 @@ static bool namesOneFunction(const Program& program, const Type& type)
     return type.singleFunction() || singleBuiltinFunction(program, type);
 }
 
-static bool passesEveryEntryCheck(const Program& program, const Function& caller, const Value& call)
+enum class ArgumentTypes : uint8_t { Proven, Expected };
+
+static bool passesEveryEntryCheck(const Program& program, const Function& caller, const Value& call, ArgumentTypes argumentTypes = ArgumentTypes::Proven)
 {
     const Function& checks = program.at(call.function());
     auto& parameters = checks.at(entryBlock).parameters;
@@ -1749,7 +1764,10 @@ static bool passesEveryEntryCheck(const Program& program, const Function& caller
                 return true;
             size_t index = parameters.find(test.valueOperand());
             ValueID argument = index == notFound ? ValueID() : argumentAt(call, index);
-            return argument && program.typeOf(caller, argument).isSubsetOf(program.at(test.testedType()), program);
+            if (!argument)
+                return false;
+            const Type& type = argumentTypes == ArgumentTypes::Proven ? program.typeOf(caller, argument) : program.expectedOrTypeOf(caller, argument).predicted();
+            return type.isSubsetOf(program.at(test.testedType()), program);
         });
     });
 }
@@ -1965,6 +1983,19 @@ static uint64_t computeKnownReceiverBenefit(const FunctionPassContext& context, 
             bytes += bytesOfAccess * receiver.accessesByName;
         if (receiver.stores && definition.opcode == Opcode::NewObject && allocatesOwnLayout(program, definition))
             bytes += computeOwnAllocationBenefit(program, program.at(call.function()), receiver);
+    }
+    return bytes;
+}
+
+// A read under a name that is written at the call remembers where it found the name. A read under a key that arrives looks it up each time.
+static uint64_t computeKnownKeyBenefit(const FunctionPassContext& context, const Value& call, const InliningSummary& summary, Bets bets)
+{
+    uint64_t bytesOfAccess = bets == Bets::OnSpeed ? InlineModel::knownReceiverAccessBytes : InlineModel::slotInPlaceOfNameBytes;
+    uint64_t bytes = 0;
+    for (const KeyParameter& key : summary.keyParameters) {
+        ValueID argument = argumentAt(call, key.entryParameter);
+        if (argument && context.program.typeOf(context.function, argument).singleStringLiteral())
+            bytes += bytesOfAccess * key.accesses;
     }
     return bytes;
 }
@@ -2259,7 +2290,9 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool isEntryChecks = callee.role == FunctionRole::EntryChecks;
     bool callerIsEntrypoint = caller.role == FunctionRole::GenericEntrypoint || caller.role == FunctionRole::TableEntrypoint;
     bool leavesEntryChecksOutside = wouldCopySharedEntryChecksIntoEntrypoint(context, value, heat);
-    bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
+    // In a loop of the caller the tests run at every turn wherever they stand. Beside the call they are the same tests, and the typed body behind them can be copied in.
+    bool isExpectedToPassInLoop = isEntryChecks && !isCold(heat).predicted() && context.analyses.isInCycle(block) && passesEveryEntryCheck(program, caller, value, ArgumentTypes::Expected);
+    bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || isExpectedToPassInLoop || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
     bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
     if (canInlineWholeBody && (value.isAlwaysInlined() || isAlwaysWorthInlining)) {
         addBenefit(value.isAlwaysInlined() ? InlineBenefit::CallOverhead : InlineBenefit::Wrapper, cost);
@@ -2274,7 +2307,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         const auto& record = callee.creator.as<CreatorRecord::EntryChecks>();
         const InliningSummaries& inlining = context.inputs.inlining;
         cost = saturatingSum<uint32_t>(cost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
-        likelyCost = saturatingSum<uint32_t>(likelyCost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
+        likelyCost = std::numeric_limits<uint32_t>::max();
         verdict.costBytes = cost;
     }
 
@@ -2292,6 +2325,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         addBenefit(InlineBenefit::KnownCalleeArgument, bytes);
     if (uint64_t bytes = computeKnownReceiverBenefit(context, value, summary, bets))
         addBenefit(InlineBenefit::KnownReceiver, bytes);
+    if (uint64_t bytes = computeKnownKeyBenefit(context, value, summary, bets))
+        addBenefit(InlineBenefit::KnownKey, bytes);
 
     bool isTooDeep = false;
     if (canInlineWholeBody) {
@@ -2383,6 +2418,8 @@ static StatisticID statisticFor(InlineBenefit benefit)
         return StatisticID::InlineBenefitKnownCalleeArgument;
     case InlineBenefit::KnownReceiver:
         return StatisticID::InlineBenefitKnownReceiver;
+    case InlineBenefit::KnownKey:
+        return StatisticID::InlineBenefitKnownKey;
     case InlineBenefit::SunkAllocation:
         return StatisticID::InlineBenefitSunkAllocation;
     case InlineBenefit::Wrapper:

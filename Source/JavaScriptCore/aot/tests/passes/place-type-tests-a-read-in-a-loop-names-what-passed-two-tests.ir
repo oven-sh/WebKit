@@ -1,6 +1,6 @@
 # A value has passed two tests in front of a loop, and a read in the loop names what passed both: its layouts are those that both tests leave. Another read in the loop asks for the second test alone, which the
-# edge in front of the loop has proven already. The way back into the loop makes that test again, of the value as it was in front of both tests. What stands for the second test in the loop is then the join of
-# the two, with the layouts of the second test. The first read goes on naming the value that passed both.
+# edge in front of the loop has proven already. The way back into the loop makes that test again. What stands for the second test in the loop is then the join of the two, and every other use of the value
+# behind the join names the join, also the read by name in the copy of the loop and the test on the way back: so the join has the layouts that both tests leave. The first read goes on naming the value that passed both.
 # FORM: Prepared optimizing
 # OPTIONS: heat=NothingIsHottest
 # RUN: pass PlaceTypeTests
@@ -37,13 +37,13 @@ function f0 name="readsInALoopWhatPassedTwoTests" flags=[IsChecked] parameters=[
 # CHECK-LABEL: function f0 name="readsInALoopWhatPassedTwoTests"
 # CHECK: ([[passedBoth]]: L1):
 # CHECK: Jump -> next [[front]](
-# CHECK: [[front]]([[passedSecond]]: L1|L2):
+# CHECK: [[front]]([[passedSecond]]: L1):
 # CHECK: LoopHint
 # CHECK-NEXT: = GetSlot [[passedBoth]] key="width" receivers=[L0, L1]
 # CHECK: = GetSlot [[passedSecond]], {{*}} key="depth" receivers=[L1, L2]
 # CHECK: LoopHint
 # CHECK-NEXT: = GetSlot [[passedBoth]] key="width" receivers=[L0, L1]
-# CHECK-NEXT: = PropGet v0 key="depth"
-# CHECK: = TypeTest v0 testedType=L1|L2
-# CHECK: ([[passedAgain]]: L1|L2)
+# CHECK-NEXT: = PropGet [[passedSecond]] key="depth"
+# CHECK: = TypeTest [[passedSecond]] testedType=L1|L2
+# CHECK: ([[passedAgain]]: L1)
 # CHECK-NEXT: Jump -> next [[front]]([[passedAgain]])

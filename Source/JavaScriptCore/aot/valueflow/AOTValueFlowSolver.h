@@ -340,6 +340,17 @@ public:
         }
         return m_graph.valueOf(node);
     }
+    // The functions of the engine that came to the node before the unknown object covered them. Which they are hangs on the order of the rules: only the report reads this, for a place to name.
+    ValueSetID functionsOfEngineListedAt(ValueFlowNodeID node) const
+    {
+        if (size_t share = node.index() / nodesPerShareOfListed; share < m_functionsOfEngineListed.size()) {
+            const Vector<ValueFlowNodeSet>& listed = m_functionsOfEngineListed[share];
+            const ValueFlowNodeSet* found = std::ranges::lower_bound(listed, node, { }, &ValueFlowNodeSet::node);
+            if (found != listed.end() && found->node == node)
+                return found->set;
+        }
+        return ValueSets::nothing;
+    }
     // All that the set stands for: its members, and what they cover now that the solve has ended.
     ValueSetID withWhatMembersCover(ValueSetID, ValueSetMaker&) const;
     enum class GivenToNode : uint8_t { Nothing, UnknownObject, ValueNobodyKnows, WhatAnotherNodeOfBodyHolds };
@@ -353,6 +364,8 @@ public:
         return found == m_writtenUnderNamesOfReads.end() ? ValueSets::nothing : found->value;
     }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
+    bool lacksLibraryFunction(RuntimeFunctionID function) const { return m_libraryFunctionsLacked.get(function.index()); }
+    const BitVector& libraryFunctionsLacked() const LIFETIME_BOUND { return m_libraryFunctionsLacked; }
     OptionSet<BuiltinUse> usesOf(BuiltinID builtin) const { return builtin.index() < m_usesOfBuiltin.size() ? m_usesOfBuiltin[builtin.index()] : OptionSet<BuiltinUse>(); }
     OptionSet<ObjectMutation> marksOf(ValueFlowObjectID object) const { return m_marksOfObject[object.index()]; }
 
@@ -576,6 +589,7 @@ private:
 
     std::optional<ValueFlowNodeID> findNodeMadeBeforeThisTurn(const ValueFlowNodeKey&) const;
     std::optional<uint32_t> findOrMakeNodesWhereAskedFor(const ValueFlowNodeKey&, uint32_t hash, ValueFlowRoundLog&, ValueSetMaker&) const;
+    std::span<const ValueFlowOperand> guardsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstGuard, statement.guardCount); }
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement& statement) const LIFETIME_BOUND { return m_input.operands.subspan(statement.firstOperand, statement.operandCount); }
     bool isKnownWatcher(ValueFlowNodeID node, ValueSetID within, ValueFlowStatementID statement) const
     {
@@ -987,9 +1001,16 @@ private:
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_writtenUnderNamesOfReads;
+    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_seenBehindTheRounds;
+    ValueSetID seenBehindTheRoundsAt(ValueFlowNodeID node) const
+    {
+        auto found = m_seenBehindTheRounds.find(node.index());
+        return found == m_seenBehindTheRounds.end() ? ValueSets::nothing : found->value;
+    }
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;
+    Vector<Vector<ValueFlowNodeSet>> m_functionsOfEngineListed;
     bool m_haveLostObjectsEscaped { false };
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };
     ValueSetID m_objectsAlwaysFollowed { ValueSets::nothing };
@@ -1091,6 +1112,10 @@ private:
     Vector<OptionSet<ObjectMutation>> m_marksOfObject;
     Vector<OptionSet<BuiltinUse>> m_usesOfBuiltin;
     BitVector m_statementsWithMembersNotToldApart;
+    BitVector m_statementsThatAskProxiesByTheirTraps;
+    BitVector m_libraryFunctionsLacked;
+    ValueSetID followedProxiesThatMoreMayBeDoneTo();
+    bool wakeReadersOfNodesThatShowSomethingElse();
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;

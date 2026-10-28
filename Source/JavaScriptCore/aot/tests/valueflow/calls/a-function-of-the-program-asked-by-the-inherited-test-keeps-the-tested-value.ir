@@ -1,0 +1,41 @@
+# const has = Function.prototype[Symbol.hasInstance]   function A() {}   A.prototype.method = function () {}   has.call(A, new A())
+# The test that every function inherits walks up from the tested value. Only for a bound function does it hand the value on, to whatever answers for the target.
+# A function of the program is no bound function: the instance stays with the program, and nobody calls `method`.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# RUN(BOUND): valueflow-solve unreached
+# BOUND-NOT: unreached f4
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="method"
+    v4 = Construct v0
+    v5 = Builtin builtin=FunctionPrototypeSymbolHasInstance
+    v6 = Call v5, v0, v4
+    v7 = NewClosure function=f3
+    v8 = NewClosure function=f4
+    PropDefine v7, v8 key=@@hasInstance
+    v10 = Builtin builtin=FunctionPrototypeBind
+    v11 = Null
+    v12 = Call v10, v7, v11
+    v13 = Integer integer=1
+    v14 = Call v5, v12, v13
+    Return
+}
+function f1 name="A" flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f2 name="method" flags=[HasThis] results=[{type=anything}] {
+    Return
+}
+function f3 name="target" kind=Arrow results=[{type=anything}] {
+    Return
+}
+function f4 name="answer" flags=[HasThis] parameters=[{type=anything}] results=[{type=anything}] {
+    v2 = Boolean boolean=true
+    Return v2
+}

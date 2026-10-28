@@ -31,7 +31,7 @@ public:
         BasicBlock* pollingHeader = findPollingHeader(members, entries, isInCycle);
         if (pollingHeader && m_isLikely[pollingHeader])
             return pollingHeader;
-        // A loop that ends within the data it walks has no poll. Where only its rare copy polls, what enters the cycle still enters the loop.
+        // A loop that has few turns in front of it goes without its poll. Where only its rare copy polls, what enters the cycle still enters the loop.
         Entries preferred = findPreferredEntries(entries, isInCycle);
         if (preferred.likely)
             return preferred.likely;

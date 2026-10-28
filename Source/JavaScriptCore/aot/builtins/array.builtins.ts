@@ -167,6 +167,7 @@ export default b.declarations(
       isArray: {
         args: { value: b.any },
         returns: b.bool,
+        answersWhetherInstance: { value: b.instance("Array") },
         ...nativeEffects,
         uses: { value: b.inspected },
         length: 1,

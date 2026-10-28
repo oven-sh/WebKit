@@ -991,10 +991,15 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
     // A program pass that is given no summaries simplifies functions which the Optimize loop has left: their guards stand across calls that only the summaries call harmless.
     inputs.cannotJudgeGuards = context.inputs.effects.isEmpty() && m_build.isEnabled(PassID::ComputeEffectSummaries, FunctionID());
     inputs.otherFunctionsMayChange = true;
+    const uint32_t numberOfEdits = context.function.numberOfEdits();
+    const bool isAsVerified = run.verified && run.verified->numberOfEdits == numberOfEdits && run.verified->form == form && run.verified->cannotJudgeGuards == inputs.cannotJudgeGuards;
+    if (isAsVerified && run.verified->analyses == context.analyses.computed())
+        return;
+    const bool verifiesFunction = canVerify(form) && !descriptor.isVerifiedAfterNextPass;
     Vector<InternalError> errors;
-    if (canVerify(form) && !descriptor.isVerifiedAfterNextPass)
+    if (verifiesFunction && !isAsVerified)
         errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, inputs);
-    if (errors.isEmpty() && hasTypedValues(context.function)) {
+    if (errors.isEmpty() && !isAsVerified && hasTypedValues(context.function)) {
         // In an arena of its own: what is interned here must not reach the program, or the output would depend on this option.
         ScratchTypeArena types(context.program.types);
         if (std::optional<BrokenResultRule> broken = findBrokenResultRule(context.program, context.function, types, run.shapesWithMonotoneResult)) {
@@ -1002,8 +1007,11 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         }
     }
     if (errors.isEmpty()) {
+        run.verified = std::nullopt;
         if (!context.analyses.verifyCached())
             run.isStopped = true;
+        else if (verifiesFunction || isAsVerified)
+            run.verified = ScheduleRun::VerifiedState { numberOfEdits, form, inputs.cannotJudgeGuards, context.analyses.computed() };
         return;
     }
 
@@ -1141,6 +1149,8 @@ void PassRunner::runSteps(std::span<const ScheduleStep> steps, std::span<const S
 
 void PassRunner::addTotals(const ScheduleRun& run, size_t numberOfValuesAtStart) const
 {
+    if (!m_hasFunctionPassTotals.load(std::memory_order_relaxed))
+        m_hasFunctionPassTotals.store(true, std::memory_order_relaxed);
     if (run.numberOfSkippedRuns)
         m_build.statistics().count(StatisticID::FunctionPassRunsSkipped, run.numberOfSkippedRuns);
     if (m_build.options().logging.logsPhaseTimes) {
@@ -1200,6 +1210,9 @@ void PassRunner::addTotals(const ScheduleRun& run, size_t numberOfValuesAtStart)
 
 void PassRunner::flushFunctionPassTotals()
 {
+    // Most program passes run no schedule of function passes, and the counts are thousands of words.
+    if (!m_hasFunctionPassTotals.exchange(false, std::memory_order_relaxed) && !m_build.options().logging.logsPhaseTimes)
+        return;
     for (PassID id : allMembersOf<PassID>) {
         FunctionPassTotals& totals = m_functionPassTotals[static_cast<unsigned>(id)];
         uint64_t runs = 0;

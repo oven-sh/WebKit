@@ -35,10 +35,14 @@ void castArgumentsToParameters(IRBuilder&, BlockID jumpingBlock, bool validates)
 const Value* typeTestBranchedOn(const Function&, const Block&);
 bool holdsOnlyKnownFunctions(const Type&);
 
+// Nothing is left out of the type of a value that may be any function where a test for one function refuses it. Such a test may refuse a closure that is no longer as it was created.
+bool mayRefuseChangedClosures(const Type& typeOfTestedValue);
+
 struct BranchOnTypeTest {
     ValueID subject;
     TypeID testedType;
     BlockID block;
+    bool mayRefuseChangedClosures { false };
 
     auto test() const { return std::tuple { subject.index(), testedType.index() }; }
 };

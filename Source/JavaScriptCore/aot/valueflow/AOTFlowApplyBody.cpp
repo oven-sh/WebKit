@@ -1116,36 +1116,6 @@ void assumeTypesOfPositionsAtStores(const Program& program, FunctionID id, Funct
     assumeTypesOfPositionsAtStores(program, function, types, analyses, builder, build.validates() ? ValidatesClaims::Yes : ValidatesClaims::No);
 }
 
-bool assumeTypesOfPositionsAtStoresInCopy(IRBuilder& builder, Function& function, TypeArena& types, std::span<const BlockID> copiedBlocks)
-{
-    const Program& program = builder.context().program;
-    TypingContext typing { program, function, types };
-    const OpcodeSet& opcodesWithRequiredTypes = opcodesWithRequiredOperandTypes();
-    Vector<StoreBehindChecks, 8> found;
-    auto visit = [&](ProgramPoint point, ValueID user, ValueID stored, uint32_t operandIndex, TypeID required) {
-        if (stored && required && !typing.typeOf(stored).isSubsetOf(types.at(required), program))
-            found.append({ point, user, operandIndex, required });
-    };
-    for (BlockID block : copiedBlocks) {
-        const Block& contents = function.at(block);
-        uint32_t numberOfValues = contents.values.size();
-        for (uint32_t index = 0; index < numberOfValues; ++index) {
-            ValueID user = contents.values[index];
-            const Value& value = function.at(user);
-            if (!opcodesWithRequiredTypes.contains(value.opcode))
-                continue;
-            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
-                if (value.operandKind(operandIndex) == OperandKind::Declared && takesOnlyWhatFlowHolds(program, value, operandIndex))
-                    visit({ block, index }, user, operand, operandIndex, requiredTypeOfOperand(typing, value, operandIndex));
-            });
-        }
-        if (contents.terminator.kind == TerminatorKind::Return)
-            visit({ block, numberOfValues }, { }, contents.terminator.valueOperand(), OperandIndex::Return::value, requiredTypeOfOperand(typing, contents.terminator, OperandIndex::Return::value));
-    }
-    assumeClaimedTypes(function, builder, found.span(), builder.context().build.validates() ? ValidatesClaims::Yes : ValidatesClaims::No);
-    return !found.isEmpty();
-}
-
 // What is expected of a value only ever gets narrower, so the integers that were expected of a field or a variable which holds any number now would stay with every value that comes of it.
 static void forgetExpectationsBehindWidenedLocations(const FlowBodyApplication& body)
 {
@@ -1157,7 +1127,7 @@ static void forgetExpectationsBehindWidenedLocations(const FlowBodyApplication& 
     Vector<ValueID, 8> reads;
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& value = function.values[index];
-        if (hasVariables && value.opcode == Opcode::GetModuleVariable && body.widenedVariables->get(value.variable().index()) && value.expected().predicted()) {
+        if (hasVariables && value.opcode == Opcode::GetModuleVariable && body.widenedVariables->get(value.variable().index())) {
             reads.append(ValueID(index));
             continue;
         }

@@ -32,6 +32,7 @@ enum class InlineBenefit : uint8_t {
     KnownReceiver = 1 << 3,
     SunkAllocation = 1 << 4,
     Wrapper = 1 << 5,
+    KnownKey = 1 << 6,
 };
 
 struct InlineVerdict {

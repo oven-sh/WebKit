@@ -127,7 +127,7 @@ function f2 name="enter" module=m0 position=31 flags=[IsChecked, HasExplicitName
 }
 
 # The statements of the finally block exist once, for both ways into them. The way without an exception carries a completion kind of 0 and its result as a boxed value into that block,
-# branches on the kind behind it, and tests the boxed result for a number before it returns it.
+# branches on the kind behind it, and returns the boxed result as it is: whoever relies on its type tests it.
 # CHECK-LABEL: name="enter" role=Source
 # CHECK: Double b@[[result]] = Patchpoint(b@{{*}}:Register({{*}}Terminal|ExitsSideways{{*}}:CallDirect)
 # CHECK-NEXT: Successors: #[[next]], Rare:#[[handler]]
@@ -139,11 +139,10 @@ function f2 name="enter" module=m0 position=31 flags=[IsChecked, HasExplicitName
 # CHECK-NEXT: Branch(b@[[kind]], Terminal)
 # CHECK-NEXT: Successors: Then:Rare:#{{*}}, Else:#[[returns]]
 # CHECK-NEXT: BB#[[returns]]:
-# CHECK: Int64 b@[[numberBits]] = BitAnd(b@[[completion]], {{*}}:TypeTest)
-# CHECK-NEXT: Branch(b@[[numberBits]], Terminal, {{*}}:TypeTest)
+# CHECK-NOT: TypeTest
 # CHECK: Return(b@[[completion]], Terminal)
 # CHECK-LABEL: end of function
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 17, patchpoints: 3, rare instructions: 10
+# X64: instructions: 14, patchpoints: 2, rare instructions: 10
 # ARM64 boxes the number in line, where x86-64 calls a stub.
-# ARM64: instructions: 28, patchpoints: 3, rare instructions: 10
+# ARM64: instructions: 25, patchpoints: 2, rare instructions: 10

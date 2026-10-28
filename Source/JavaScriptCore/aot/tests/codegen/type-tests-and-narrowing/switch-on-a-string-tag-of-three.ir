@@ -150,7 +150,7 @@ function f1 name="size" module=m0 position=157 flags=[IsChecked, HasExplicitName
     Return v22
 }
 
-# The tag is loaded once and compared as a word with each of the three literals in turn: the characters are not looked at. The tag decides the layout: every field is a plain load with no shape test. A tag that is none of the three leaves the typed body.
+# The tag is loaded once and compared as a word with each of the three literals in turn: the characters are not looked at. The tag decides the layout: every field is a plain load with no shape test. For a tag that is none of the three the function answers undefined.
 # CHECK-LABEL: name="size" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[shape]] = ArgumentReg(
@@ -180,7 +180,7 @@ function f1 name="size" module=m0 position=157 flags=[IsChecked, HasExplicitName
 # CHECK-NEXT: Double b@{{*}} = Load(b@[[shape]], offset = {{*}}, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK: BB#[[none]]:
 # CHECK-NEXT: Predecessors: #[[notSquare]]
-# CHECK: Patchpoint({{*}}Terminal
+# CHECK: Return($10(b@{{*}}), Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="size" role=Source
 # NONE-NOT: AOTObject_shapeWord
@@ -189,6 +189,6 @@ function f1 name="size" module=m0 position=157 flags=[IsChecked, HasExplicitName
 # NONE-LABEL: end of function
 # Some of the patchpoints are calls, and the moves around a call follow the calling convention, so the counts leave Windows out.
 # X64-LABEL: name="size" role=Source
-# X64-NEXT: instructions: 13, patchpoints: 4
+# X64-NEXT: instructions: 14, patchpoints: 3
 # ARM64-LABEL: name="size" role=Source
-# ARM64-NEXT: instructions: 41, patchpoints: 4
+# ARM64-NEXT: instructions: 42, patchpoints: 3

@@ -289,6 +289,11 @@ void checkMovedLoadsAtRunTime(B3::Policy& policy, Typed::FunctionID function, co
             moved.bitsThatMayGetSet = std::numeric_limits<uint64_t>::max();
             return true;
         }
+        // Whoever finds the word that a getter of the host keeps its answer in empty calls the getter, which fills the word and is said to write nothing. A read from before says "empty", and the code calls again.
+        if (load.range() == heaps.rangeOf(heaps.hostObjectCachedValues)) {
+            moved.mayGetFilled = true;
+            return true;
+        }
         if (isIn(heaps.entire(Typed::AbstractHeap::MemberGuards)))
             return saysWhatCountsOfGuardByte(guardTests, moved);
         return saysWhatCountsOfUnchangingWord(heaps, load, moved);

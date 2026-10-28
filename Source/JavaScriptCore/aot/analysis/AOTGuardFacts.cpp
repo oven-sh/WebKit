@@ -897,7 +897,8 @@ static GuardFacts factsOfEdgeResult(FunctionAnalyses& analyses, BlockID from, co
 {
     const Function& function = analyses.function();
     RELEASE_ASSERT(result.kind == EdgeResultKind::Guard);
-    ValueID subject = result.subject ? analyses.identityOf(result.subject) : ValueID();
+    // One source is open at a time, whatever it was opened on.
+    ValueID subject = result.subject && result.proof != Proof::SourceOpen ? analyses.identityOf(result.subject) : ValueID();
     if (result.caseIndex) {
         const Terminator& terminator = function.at(from).terminator;
         Vector<MemoryLocation, 2> locations = declaredReadsOf(terminator, provesOf(terminator.kind));

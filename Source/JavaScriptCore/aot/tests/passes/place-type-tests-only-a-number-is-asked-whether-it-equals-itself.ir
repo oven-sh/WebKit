@@ -1,0 +1,25 @@
+# `x !== x`: only NaN differs from itself. A value of any type is asked whether it is a number: a number is compared with itself, and whatever else it is, the answer is true. Neither side is a copy of what follows
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+# OPTIONS: check=VerifyEachPass
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="isNotItself" parameters=[{type=anything}] results=[{type=boolean}] {
+    v1 = StrictEq v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f0 name="isNotItself"
+# CHECK: [[isNumber]]: boolean = TypeTest v0 testedType=number
+# CHECK-NEXT: Branch [[isNumber]] -> taken {{*}}(| 0), notTaken
+# CHECK: ([[narrowed]]: number):
+# CHECK-NEXT: = StrictEq [[narrowed]], [[narrowed]]
+# CHECK: : true = Boolean boolean=true
+
+function f1 name="numberIsNotItself" parameters=[{type=number}] results=[{type=boolean}] {
+    v1 = StrictEq v0, v0
+    Return v1
+}
+# CHECK-LABEL: function f1 name="numberIsNotItself"
+# CHECK-NOT: TypeTest
+# CHECK: = StrictEq v0, v0

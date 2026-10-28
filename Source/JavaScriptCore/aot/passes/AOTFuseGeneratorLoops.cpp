@@ -889,7 +889,7 @@ static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builde
     }
     auto isBehindFailedTest = [&](BlockID block) { return edgeToProtocol && analyses.dominates(*edgeToProtocol, block); };
 
-    Vector<ValueID, 2> firstSteps;
+    Vector<ValueID, 2> steps;
     for (const ObjectUse& objectUse : escape.usesOf(*object)) {
         const Use& use = objectUse.use;
         if (use.kind != Use::Kind::Operand || isBehindFailedTest(use.block))
@@ -902,7 +902,13 @@ static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builde
             return PassOutcome::Unchanged;
         if (!analyses.dominates(startAtCreation, useLists.pointOf(use.user)))
             return PassOutcome::Unchanged;
-        firstSteps.append(use.user);
+        steps.append(use.user);
+    }
+    // A step behind another step is never the first.
+    Vector<ValueID, 2> firstSteps;
+    for (ValueID step : steps) {
+        if (!steps.containsIf([&](ValueID other) { return other != step && analyses.dominates(other, useLists.pointOf(step)); }))
+            firstSteps.append(step);
     }
     if (firstSteps.isEmpty())
         return PassOutcome::Unchanged;
@@ -922,6 +928,12 @@ static PassOutcome startAtFirstStep(FunctionPassContext& pass, IRBuilder& builde
     Value start(function.at(startAtCreation));
     // One step outside of every loop is the first step whenever it runs.
     bool isKnownToBeFirst = firstSteps.size() == 1 && (!analyses.isInCycle(analyses.useLists().blockOf(firstSteps[0])) || pass.build.isSabotaged(Sabotage::StepsInCyclesAreFirstSteps));
+    // A step that may be the first takes what the body is started with. A frame that is saved in front of it would hold all of that though the generator has long started.
+    bool savesFrame = std::ranges::any_of(function.blocks, [&](const Block& block) {
+        return std::ranges::any_of(block.values, [&](ValueID id) { return maySuspend(function.at(id).opcode); });
+    });
+    if (!isKnownToBeFirst && savesFrame)
+        return PassOutcome::Unchanged;
 
     BitVector erased;
     erased.set(location.index);

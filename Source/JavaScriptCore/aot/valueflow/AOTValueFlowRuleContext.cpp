@@ -179,6 +179,15 @@ void ValueFlowRuleContext::end()
 FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.statementAt(m_statement).function; }
 std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement) const { return m_operandsInPlace.empty() ? m_solver.operandsOf(statement) : m_operandsInPlace; }
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
+
+bool ValueFlowRuleContext::canBeReached(const ValueFlowStatement& statement)
+{
+    for (const ValueFlowOperand& guard : m_solver.guardsOf(statement)) {
+        if (!meet(valueOf(guard), ValueSets::anything))
+            return false;
+    }
+    return true;
+}
 void ValueFlowRuleContext::makeInstanceOfOtherCalls(FunctionID function) { makeInstance(*instancedFunctions()->find(function), ValueFlowInstancedFunctions::markerOfOtherCalls()); }
 
 ValueFlowNodeID ValueFlowRuleContext::restArgumentEntered(FunctionID function, unsigned index)
@@ -280,6 +289,58 @@ ClimbingSet ValueFlowRuleContext::valueOf(ValueFlowNodeID named)
         return ClimbingSet(m_solver.withoutWhatOtherMembersCover(*constant, m_maker));
     m_log.nodesRead.append(node);
     return ClimbingSet(m_solver.valueForReadersOf(node, m_maker));
+}
+
+// A proxy comes to every place through the list of the followed ones, so whoever finds it in a value finds it listed.
+ClimbingSet ValueFlowRuleContext::proxiesAskedByTheirTrapsIn(const ValueFlowOperand& operand)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    ValueSetID followed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed));
+    if (followed == ValueSets::nothing)
+        return { };
+    ClimbingSet proxies = restrict(valueOf(operand), followed);
+    if (meet(proxies, ValueSets::anything) && !m_keyOfStatementOfThisTurn)
+        m_log.statementsThatAskProxiesByTheirTraps.append(m_statement);
+    return proxies;
+}
+
+ClimbingSet ValueFlowRuleContext::withoutProxiesThatWalksPass(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return values;
+    ValueSetID passed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesThatHandOnWhatComesFromBelow));
+    return passed == ValueSets::nothing ? values : restrict(values, ValueSets::complement(passed));
+}
+
+ClimbingSet ValueFlowRuleContext::proxiesThatWalksPassAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    return restrict(values, valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesThatHandOnWhatComesFromBelow)));
+}
+
+void ValueFlowRuleContext::noteThatStatementAsksProxiesOfConstructorByTheirTraps()
+{
+    if (m_solver.m_input.nodes && !m_keyOfStatementOfThisTurn && valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed)) != ValueSets::nothing)
+        m_log.statementsThatAskProxiesByTheirTraps.append(m_statement);
+}
+
+ClimbingSet ValueFlowRuleContext::followedProxiesAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    return restrict(values, valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed)));
+}
+
+void ValueFlowRuleContext::openProxiesAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return;
+    ValueSetID followed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed));
+    if (followed == ValueSets::nothing || !meet(values, followed))
+        return;
+    add(nodes().ofHost(ValueFlowHostNode::ProxiesThatAreOpen), restrict(values, followed));
 }
 
 bool ValueFlowRuleContext::holdsAnything(ValueFlowNodeID named)
@@ -619,7 +680,7 @@ ValueFlowNodeID ValueFlowRuleContext::written(ClimbingSet objects, ValueFlowName
             add(nodeFor(ValueFlowNodeKey::holdersOfLibraryExportsWrittenUnder(PropertyKeyID(name.payload))), restrict(objects, universe().objectsOfLibraryFoundByNameAlone()));
     }
     ValueFlowNodeID written = nodeFor(ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Written, objects.m_set, name));
-    if (name.kind == ValueFlowNameKind::Property && m_solver.m_input.nodes) {
+    if ((name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter) && m_solver.m_input.nodes) {
         for (BuiltinName called : program().builtins().namesOfHostMethodsCallingStartupLoads()) {
             if (program().keyOf(called).index() == name.payload)
                 connect(written, nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads));
@@ -814,6 +875,15 @@ void ValueFlowRuleContext::useAsAnswerOfUnknownObject(BuiltinID builtin, OptionS
 }
 
 void ValueFlowRuleContext::noteMembersNotToldApart() { m_log.statementsWithMembersNotToldApart.append(m_statement); }
+
+FunctionID ValueFlowRuleContext::libraryFunctionToEnter(RuntimeFunctionID id)
+{
+    if (const RuntimeFunctionEntry* entry = findRuntimeFunction(program(), id); entry && entry->function)
+        return entry->function;
+    if (id && !m_solver.lacksLibraryFunction(id))
+        m_log.libraryFunctionsLacked.append(id);
+    return { };
+}
 
 } } } // namespace JSC::AOT::Typed
 

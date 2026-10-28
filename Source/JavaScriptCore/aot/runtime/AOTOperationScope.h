@@ -112,10 +112,10 @@ private:
 #define AOT_OPERATION_FRAME_RECORD() AOT_FRAME_RECORD_OF_THIS_FUNCTION()
 #endif
 
-constexpr bool throwsWithoutCollecting(Entry entry)
+constexpr bool isDeclaredNotToCollect(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
-    return operation && Typed::declaredBoundOf(*operation).mayThrow && !Typed::declaredBoundOf(*operation).mayCollect;
+    return operation && !Typed::declaredBoundOf(*operation).mayCollect;
 }
 
 template<auto operation, typename Function = std::remove_pointer_t<decltype(operation)>>
@@ -150,12 +150,12 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
     AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, entry)
 
 #define AOT_OPERATION_BEGIN(instance, entry) \
-    static_assert(!JSC::AOT::throwsWithoutCollecting(entry), "an operation that throws and is declared not to collect begins with AOT_OPERATION_BEGIN_WITHOUT_COLLECTION"); \
+    static_assert(!JSC::AOT::isDeclaredNotToCollect(entry), "an operation that is declared not to collect begins with AOT_OPERATION_BEGIN_WITHOUT_COLLECTION"); \
     AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
 
-// An error is a new object. Collections are put off while the operation runs, and what takes the exception runs them.
+// The operation puts collections off while it runs. An error is a new object, and what takes the exception runs the collection.
 #define AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry) \
-    static_assert(JSC::AOT::throwsWithoutCollecting(entry)); \
+    static_assert(JSC::AOT::isDeclaredNotToCollect(entry)); \
     AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry); \
     DeferGCForAWhile deferGC(vm)
 

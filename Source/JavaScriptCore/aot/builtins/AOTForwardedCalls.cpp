@@ -151,6 +151,7 @@ static std::optional<ForwardedCallPlan> planForwardedCall(const Program& program
     plan.callee = call.operandAt(operands->callee);
     if (!plan.callee)
         return std::nullopt;
+    plan.calleeMayRefuse = constructs || !program.typeOf(function, plan.callee).isSubsetOf(program.at(TypeTable::function), program);
     if (operands->thisValue)
         plan.thisValue = call.operandAt(*operands->thisValue);
     if (operands->newTarget) {
@@ -207,7 +208,7 @@ void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
     else
         call.setArgumentsOperands(arguments.span());
     call.setAccessSite(accessSite);
-    if (calleeName)
+    if (calleeName && plan.calleeMayRefuse)
         call.setCalleeName(calleeName);
     call.type = TypeTable::anything;
 }

@@ -27,6 +27,7 @@
 
 #if ENABLE(WEBASSEMBLY) && ENABLE(CODE_GENERATION)
 
+#include "GPRInfo.h"
 #include "JITCompilation.h"
 #include "WasmFormat.h"
 
@@ -43,6 +44,10 @@ enum class BindingFailure {
 
 std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToWasm(const Wasm::ModuleInformation&, unsigned importIndex);
 void emitWasmToWasm(CCallHelpers&, const Wasm::ModuleInformation&, unsigned importIndex);
+
+// Code for an image finds the cage through the pointer table of the instance that runs it, so it asks while that instance is still at hand.
+void emitPrepareToCageMemoryBase(CCallHelpers&, GPRReg instanceThatRunsTheCode, GPRReg scratch);
+void emitCageMemoryBase(CCallHelpers&, GPRReg scratch);
 
 } } // namespace JSC::Wasm
 

@@ -664,7 +664,7 @@ inline Slot PackedSlot::unpack(StructureID structureID, uintptr_t cageBase, bool
 
 struct SiteCacheState {
     // A site that goes on missing behind every fill meets objects of many Structures, and no fill helps it.
-    static constexpr unsigned maxRefillCount = 6;
+    static constexpr unsigned maxRefillCount = 5;
     // A miss at the site of a run of stores costs a store for each name, so such a site does not wait as long.
     AOT_CLASS_THRESHOLD(unsigned, maxRefillCountOfRun, 3);
     static constexpr unsigned slotAddressShift = 3;
@@ -710,7 +710,7 @@ static_assert(sizeof(PackedSlot) == 8 && std::is_trivially_copyable_v<PackedSlot
 
 static_assert(sizeof(SiteCacheState) == 2);
 static_assert(sizeof(Slot) >> SiteCacheState::slotAddressShift == sizeof(SiteCacheState));
-static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) == 16383);
+static_assert(SiteCacheState::missesBeforeRefill(SiteCacheState::maxRefillCount) == 4095);
 
 static_assert(sizeof(CustomAccessorRecord) == 32);
 

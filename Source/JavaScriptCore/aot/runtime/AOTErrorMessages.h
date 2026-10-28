@@ -72,11 +72,7 @@ JSObject* createBuiltinsNotCompiledError(JSGlobalObject*, std::span<const String
 JSObject* createExternalModuleNotLoadedError(JSGlobalObject*, const String& path);
 // `code`: what Node.js gives the error of a load that finds nothing: MODULE_NOT_FOUND for require(), ERR_MODULE_NOT_FOUND for import(). Programs that try an optional package go by it.
 JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code);
-#if ENABLE(SHADOW_REALM)
-JSObject* createModuleInShadowRealmError(JSGlobalObject*, StringView path);
-#else
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
-#endif
 JSObject* createLoaderChangeRefusedError(JSGlobalObject*, LoaderChange, StringView changed);
 JSObject* createModuleMissingAtBuildError(JSGlobalObject*, const String& specifier, const String& importer, ASCIILiteral code);
 // `export { exportName } from "specifier"`, worded as the link of a module that is not compiled words it.

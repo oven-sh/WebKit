@@ -308,6 +308,7 @@ function declareClasses({ builder, sorted }: EntryContext): void {
         name: builder.internComponent(name),
         member: builder.internComponent(member),
       })),
+      namesReadToDescribeInstances: (columns.namesReadToDescribeInstances ?? []).map(text => builder.internComponent(text)),
       constructorOnlyReadsPrototypeOfNewTarget: columns.constructorOnlyReadsPrototypeOfNewTarget ?? false,
       slots: [],
       stateHeap: columns.stateHeap ?? null,

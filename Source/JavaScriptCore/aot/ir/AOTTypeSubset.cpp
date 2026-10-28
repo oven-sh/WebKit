@@ -91,6 +91,14 @@ bool mayContainAnyCallable(const BuiltinTable& builtins, const Type& type)
     });
 }
 
+// A proxy may be callable. It is the closure of no function.
+bool mayContainAnyClosure(const BuiltinTable& builtins, const Type& type)
+{
+    return type.anyFunction || std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+        return isFunctionClass(builtins, part.builtinClass) && builtins.at(part.builtinClass).type != ProxyObjectType;
+    });
+}
+
 static bool inheritsFromPrototypeOf(const BuiltinTable& builtins, BuiltinID object, BuiltinClassID builtinClass)
 {
     BuiltinID prototype = builtins.at(builtinClass).prototype;
@@ -354,8 +362,10 @@ static bool literalsOverlap(const Type& a, const Type& b, LiteralPart<T> part)
 
 static bool callablesOverlap(const BuiltinTable& builtins, const Type& a, const Type& b)
 {
-    return (hasCallableParts(a) && mayContainAnyCallable(builtins, b))
-        || (hasCallableParts(b) && mayContainAnyCallable(builtins, a))
+    return (a.anyFunction && mayContainAnyCallable(builtins, b))
+        || (b.anyFunction && mayContainAnyCallable(builtins, a))
+        || (!a.functions.isEmpty() && mayContainAnyClosure(builtins, b))
+        || (!b.functions.isEmpty() && mayContainAnyClosure(builtins, a))
         || a.functions.overlaps(b.functions);
 }
 

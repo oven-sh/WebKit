@@ -71,6 +71,7 @@
 #include "SIMDShuffle.h"
 #include "ScratchRegisterAllocator.h"
 #include "WasmBaselineData.h"
+#include "WasmBinding.h"
 #include "WasmBranchHints.h"
 #include "WasmByteLoopIdiom.h"
 #include "WasmCallProfile.h"
@@ -1518,8 +1519,9 @@ void OMGIRGenerator::reloadMemoryRegistersFromInstance(const MemoryInformation& 
         patchpoint->setGenerator([](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             GPRReg scratch = params.gpScratch(0);
+            emitPrepareToCageMemoryBase(jit, params[0].gpr(), scratch);
             jit.loadPairPtr(params[0].gpr(), CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-            jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, scratch);
+            emitCageMemoryBase(jit, scratch);
         });
     }
 }
@@ -2244,6 +2246,7 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
             AllowMacroScratchRegisterUsage allowScratch(jit);
             GPRReg calleeInstance = params[0].gpr();
             ASSERT(calleeInstance != GPRInfo::wasmBaseMemoryPointer);
+            emitPrepareToCageMemoryBase(jit, GPRInfo::wasmContextInstancePointer, params.gpScratch(0));
             jit.storeWasmContextInstance(calleeInstance);
             static_assert(GPRInfo::wasmBoundsCheckingSizeRegister != GPRInfo::wasmBaseMemoryPointer);
             // FIXME: We should support more than one memory size register
@@ -2251,7 +2254,7 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
             ASSERT(GPRInfo::wasmBoundsCheckingSizeRegister != calleeInstance);
             GPRReg scratch = params.gpScratch(0);
             jit.loadPairPtr(calleeInstance, CCallHelpers::TrustedImm32(JSWebAssemblyInstance::offsetOfCachedMemoryBaseSizePair(0)), GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister);
-            jit.cageConditionally(Gigacage::Primitive, GPRInfo::wasmBaseMemoryPointer, GPRInfo::wasmBoundsCheckingSizeRegister, scratch);
+            emitCageMemoryBase(jit, scratch);
         });
         doContextSwitch->setSuccessors(continuation);
         doContextSwitch->appendNew<Value>(m_proc, Jump, origin());

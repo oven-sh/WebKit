@@ -43,7 +43,7 @@ function f1 name="alpha" module=m0 position=30 kind=Getter flags=[HasThis, HasEx
 
 # CHECK-LABEL: function f0
 # CHECK: [[made]]: Proxy = CallBuiltin
-# CHECK-NEXT: [[proxy]]: Proxy = Upcast [[made]]
+# CHECK-NEXT: [[proxy]]: Proxy = AssumeType [[made]] provenType=Proxy
 # CHECK: [[filled]]: boolean = IsSlotFilled [[target]] key="alpha"
 # What has moved the getter out of its slot leaves the read as it was.
 # CHECK: frequency=Unlikely:

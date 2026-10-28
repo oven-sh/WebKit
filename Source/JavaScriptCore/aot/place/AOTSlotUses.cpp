@@ -360,7 +360,7 @@ public:
         , m_function(m_program.at(id))
         , m_thisParameter(thisParameterOf(m_function))
         , m_analyses({ inputs.context.build, m_program, &inputs.context.inputs.flow, nullptr, id }, m_function)
-        , m_weights(m_program, inputs.context.inputs.heat, id, m_analyses)
+        , m_weights(m_program, id, m_analyses)
     {
     }
 

@@ -826,6 +826,8 @@ static void testEveryKindOfMutation()
         "globalThis.sink = function () { Object.defineProperty(this.k, 'x', { writable: false }); };"_s,
         "globalThis.sink = function () { delete this.k.x; };"_s,
         "globalThis.sink = function () { this.k.x = 'text'; };"_s,
+        // Every allocation lists 5 for the field, which is its type.
+        "globalThis.sink = function () { this.k.unread = 6; };"_s,
         "globalThis.sink = function () { this.k.added = 1; };"_s,
         "globalThis.sink = function () { this.k[Symbol('s')] = 1; };"_s,
         "globalThis.sink = function () { this.k[0] = 1; };"_s,
@@ -835,7 +837,7 @@ static void testEveryKindOfMutation()
     })
         checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ImpossibleMutation, statements);
     // A store of a value of the field's type is found where the program reads the field again.
-    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ReadsDiffer, "globalThis.sink = function () { this.k.unread = 6; };"_s);
+    checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ReadsDiffer, "globalThis.sink = function () { this.k.x = 0.5; };"_s);
 }
 
 static void testContentsOfMap()
