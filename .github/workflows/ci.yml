@@ -338,8 +338,9 @@ jobs:
     steps: *build_steps
 
   # JavaScriptCore's own test suites (JSTests/, LayoutTests/js, the PerformanceTests collections), run by
-  # Tools/Scripts/run-javascriptcore-tests with the jsc shell that a tested lane ships in its tarball's bin/, on a
-  # runner of the architecture it was built for. Which lanes are tested, and why those, is in lanes.mjs.
+  # Tools/Scripts/run-javascriptcore-tests, and test262 (JSTests/test262), run by .github/scripts/test262.sh, with the
+  # jsc shell that a tested lane ships in its tarball's bin/, on a runner of the architecture it was built for. Which
+  # lanes are tested, and why those, is in lanes.mjs.
   #
   # `release` does not wait for this job, so a test failure never holds back or deletes a release: the run goes red,
   # the release is still published. --no-fail-fast below means every test runs and every failure is reported before
@@ -403,6 +404,8 @@ jobs:
           set -euo pipefail
           missing=()
           for tool in perl ruby python3 make jq; do command -v "$tool" >/dev/null || missing+=("$tool"); done
+          # PyYAML, for test262-runner (the `test262` step).
+          python3 -c 'import yaml' 2>/dev/null || missing+=(python3-yaml)
           if [ ${#missing[@]} -gt 0 ]; then
             sudo apt-get update
             sudo apt-get install -y "${missing[@]}"
@@ -421,8 +424,8 @@ jobs:
           cd "$RUNNER_TEMP"
           tar -xf jsc-shell.tar
           ls -la bun-webkit/bin
-      # testFFI, TestWTF and the JavaScriptCore tests each run whatever the others did, and any of them failing fails
-      # the job.
+      # testFFI, TestWTF, the JavaScriptCore tests and test262 each run whatever the others did, and any of them failing
+      # fails the job.
       - name: testFFI
         if: &have_jsc ${{ !cancelled() && steps.download.outcome == 'success' }}
         env: &test_env
@@ -524,6 +527,20 @@ jobs:
             esac
           done >> "$RUNNER_TEMP/jsc-failures.log" 2>&1
           exit "$status"
+      # All of test262, which is not among the suites of run-javascriptcore-tests. Two files in JSTests/test262 say what
+      # this fork's shell does with it: expectations-linux.yaml is the record of the runs that fail, and
+      # skipped-linux.txt is the list of the tests that config.yaml takes out of the run. The step fails unless this
+      # lane's shell gives exactly both: also for a run that is in the record and passes. The script says how, and what
+      # to do then.
+      - name: test262
+        if: *have_jsc
+        env: *test_env
+        # It takes 2 to 5 minutes. The runner ends a jsc that runs for 300 s, and the script names the ones that do.
+        timeout-minutes: 30
+        run: |
+          # This file is main's (a pull request is run by the merge), the tree is the branch's.
+          [ -f .github/scripts/test262.sh ] || { echo "::error::This branch predates .github/scripts/test262.sh, which runs test262. Merge main into it (or rebase it onto main)."; exit 1; }
+          bash .github/scripts/test262.sh "$RUNNER_TEMP/bun-webkit/bin/jsc" "$RUNNER_TEMP/test262" "test262/ in the artifact jsc-test-results-$LABEL"
       - name: Summary
         if: always()
         env:
@@ -553,6 +570,10 @@ jobs:
             ${{ runner.temp }}/jsc-results.json
             ${{ runner.temp }}/jsc-failures.log
             ${{ runner.temp }}/jsc-tests.log
+            ${{ runner.temp }}/test262/test262.log
+            ${{ runner.temp }}/test262/test262.diff
+            ${{ runner.temp }}/test262/expectations-linux.yaml
+            ${{ runner.temp }}/test262/skipped-linux.txt
           if-no-files-found: ignore
           retention-days: 14
 
