@@ -191,6 +191,9 @@ private:
     Vector<QueuedInsertion, 8> m_insertions;
 };
 
+// What is expected of a value lies inside its type and is not all of it. Nothing where no such part is left.
+TypeID partInside(const Program&, TypeArena&, TypeID narrower, TypeID);
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

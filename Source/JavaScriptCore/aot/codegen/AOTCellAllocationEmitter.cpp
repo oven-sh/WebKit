@@ -270,7 +270,7 @@ CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& conte
     birth->effects = B3::Effects::none();
     m_heaps.decoratePatchpointWrite(&m_heaps.frameSlots, birth);
     generator().records().hasBirthsOfFrameCells = true;
-    if (!generator().checksProofs())
+    if (!generator().validatesOrChecksProofs())
         return CellPointer(birth);
 
     // AOTCheckedFrameCells.h
@@ -305,7 +305,7 @@ Pointer CellAllocationEmitter::wordOfFrame()
 
 void CellAllocationEmitter::leaveFrameOfCheckedCells()
 {
-    if (!generator().checksProofs() || !keepsCellsInFrame())
+    if (!generator().validatesOrChecksProofs() || !keepsCellsInFrame())
         return;
     Operand arguments[] { wordOfFrame() };
     callWithoutSite(RuntimeOperation::LeaveFrameOfCheckedCells, arguments, Representation::Void, { });

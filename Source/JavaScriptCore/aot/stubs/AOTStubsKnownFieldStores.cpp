@@ -77,12 +77,15 @@ static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg s
     jit.urshift64(name, scratch);
     mayHaveName.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
     // What has happened to a name since the filter was made.
+    jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.changesUnderNamesOnChains)), scratch);
+    Jump hasSeenEveryChange = jit.branch32(CCallHelpers::Equal, Address(filter, OBJECT_OFFSETOF(AbsenceFilter, changesUnderNames)), scratch);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesChangedOnChains)), filter);
     jit.urshift32(name, TrustedImm32(6), scratch);
     jit.load64(BaseIndex(filter, scratch, CCallHelpers::TimesEight), scratch);
     jit.urshift64(name, scratch);
     mayHaveName.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
 
+    hasSeenEveryChange.link(&jit);
     isAbsent.link(&jit);
 }
 

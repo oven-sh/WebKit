@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBackgroundTask.h"
+#include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowGraph.h"
 #include "AOTValueFlowLog.h"
@@ -360,8 +361,9 @@ public:
     // The part of it that hangs on no order: the objects of the program written under the name of the read that the node has its value from.
     ValueSetID writtenUnderNameOfReadSeenAt(ValueFlowNodeID node) const
     {
-        auto found = m_writtenUnderNamesOfReads.find(node.index());
-        return found == m_writtenUnderNamesOfReads.end() ? ValueSets::nothing : found->value;
+        std::span<const ValueFlowNodeSet> all = m_writtenUnderNamesOfReads.span();
+        auto found = std::ranges::lower_bound(all, node.index(), { }, [](const ValueFlowNodeSet& entry) { return entry.node.index(); });
+        return found == all.end() || found->node != node ? ValueSets::nothing : found->set;
     }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
     bool lacksLibraryFunction(RuntimeFunctionID function) const { return m_libraryFunctionsLacked.get(function.index()); }
@@ -1000,7 +1002,8 @@ private:
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
-    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_writtenUnderNamesOfReads;
+    // In the order of the nodes.
+    ParallelArray<ValueFlowNodeSet> m_writtenUnderNamesOfReads;
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;

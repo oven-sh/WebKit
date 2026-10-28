@@ -891,6 +891,9 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
         [&] { mergeEach(&SiteLists::fieldAccesses); },
         [&] { mergeEach(&SiteLists::shapeTests); },
         [&] {
+            for (PlacedFunctionSites* function : functions)
+                sites.fieldCreationsAsWritten.appendVector(function->fieldCreations);
+            std::ranges::stable_sort(sites.fieldCreationsAsWritten, { }, &FieldCreationUse::layout);
             mergeEach(&SiteLists::allocations, &SiteLists::keyOrderTests, &SiteLists::fieldCreations, &SiteLists::guards);
             sites.guards.removeAllMatching([&](const GuardUse& guard) {
                 return speaksOfNameOrLengthMadeOnDemand(program, guard) || isLookedForAboveRecords(context, guard);

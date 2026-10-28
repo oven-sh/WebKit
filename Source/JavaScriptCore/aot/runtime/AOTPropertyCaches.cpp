@@ -940,8 +940,10 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
             zeroSpan(earlier->keyedValuePlaces());
     }
     m_hasInstance = true;
-    if (instance.globalObject)
+    if (instance.globalObject) {
+        m_objectsThatFiltersSpeakOf.add(instance.globalObject->objectPrototype());
         didChangeObjectPrototype(instance.globalObject->objectPrototype(), nullptr);
+    }
     publishWords(instance);
 }
 
@@ -987,6 +989,7 @@ void VMPropertyCaches::publishWords(Instance& instance) const
     words.customAccessors = m_customAccessors.records();
     words.absenceFilters = const_cast<AbsenceFilter*>(m_absenceFilters.data());
     words.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
+    words.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
     words.namesChangedOnChains = m_namesChangedOnChains.data();
     words.namesOfObjectPrototypes = m_namesOfObjectPrototypes.data();
     words.missesOfPairs = const_cast<uint8_t*>(m_missesOfPairs.data());
@@ -1047,18 +1050,39 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
         Object::ensureStructureForExtraPropertiesIfNeeded(m_vm, holder);
     AOT_THRESHOLD(unsigned, maxObjectsAbove, 8);
     AbsenceFilter& filter = m_absenceFilters[AbsenceFilter::indexFor(structure->id().bits())];
-    if (filter.structureID == structure->id().bits() && filter.generationForStores == m_absenceFilterGenerationForStores)
+    if (filter.structureID == structure->id().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.changesUnderNames == m_changesUnderNamesOnChains)
         return;
     const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
     if (!identifiers || structure->realm() != globalObject)
         return;
-    AbsenceFilter filled { structure->id().bits(), m_absenceFilterGenerationForStores, { }, 0 };
+    AbsenceFilter filled { structure->id().bits(), m_absenceFilterGenerationForStores, { }, m_changesUnderNamesOnChains, 0 };
     unsigned numberOfObjects = 0;
     for (JSObject* holder = object->getPrototypeDirect().getObject(); holder; holder = holder->getPrototypeDirect().getObject()) {
         if (++numberOfObjects > maxObjectsAbove || !addOwnNamesThatStopStores(m_vm, *identifiers, holder, filled))
             return;
+        m_objectsThatFiltersSpeakOf.add(holder);
     }
     filter = filled;
+}
+
+bool VMPropertyCaches::storeCreatesOwnField(const Object& object, uint32_t name) const
+{
+    if (!FieldTableEntry::hasColumn(name))
+        return false;
+    if (object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        return !mayBeNameOfObjectPrototype(name);
+    const AbsenceFilter& filter = absenceFilterFor(object.structureID());
+    return filter.structureID == object.structureID().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.letsStoresPass(name)
+        && (filter.changesUnderNames == m_changesUnderNamesOnChains || !wasChangedOnSomeChain(name));
+}
+
+bool VMPropertyCaches::fileFilterAndAskWhetherStoreCreatesOwnField(JSGlobalObject* globalObject, Object& object, uint32_t name)
+{
+    if (!FieldTableEntry::hasColumn(name))
+        return false;
+    if (!object.compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
+        fileAbsenceFilterForStores(globalObject, &object);
+    return storeCreatesOwnField(object, name);
 }
 
 static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
@@ -1085,19 +1109,32 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
     return isValidOffset(*offset) && (isField || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
 }
 
-void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
+void VMPropertyCaches::didChangeObjectThatFiltersSpeakOf(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
     const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
     if (uidOrNull && identifiers) {
         std::optional<uint32_t> number = identifiers->numberOf(uidOrNull);
-        if (number && FieldTableEntry::hasColumn(*number) && mayStopStores(changed, uidOrNull))
-            setBitOfName(m_namesChangedOnChains, *number);
+        if (!number || !FieldTableEntry::hasColumn(*number) || !mayStopStores(changed, uidOrNull))
+            return;
+        setBitOfName(m_namesChangedOnChains, *number);
+        if (!++m_changesUnderNamesOnChains) [[unlikely]]
+            m_absenceFilters.fill(AbsenceFilter { });
     } else if (!++m_absenceFilterGenerationForStores) [[unlikely]] {
         m_absenceFilters.fill(AbsenceFilter { });
         m_absenceFilterGenerationForStores = 1;
     }
     for (Instance* instance : m_vm.aotState().instances) {
         instance->propertyCaches.absenceFilterGenerationForStores = m_absenceFilterGenerationForStores;
+        instance->propertyCaches.changesUnderNamesOnChains = m_changesUnderNamesOnChains;
+    }
+}
+
+void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
+{
+    // Most objects that report a change are being filled, and no filter has been made from them yet.
+    if (!changed || m_objectsThatFiltersSpeakOf.mayContain(changed))
+        didChangeObjectThatFiltersSpeakOf(changed, uidOrNull);
+    for (Instance* instance : m_vm.aotState().instances) {
         if (std::exchange(instance->propertyCaches.placesSayAbsence, 0))
             zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());
     }

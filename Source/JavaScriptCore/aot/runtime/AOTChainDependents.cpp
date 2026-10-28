@@ -86,6 +86,7 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
         return;
     for (JSObject* object : chainObjects) {
         ASSERT(object->mayBePrototype());
+        m_objectsThatGotDependents.add(object);
         ObjectDependents& dependents = m_dependentsByObject.ensure(object, [] {
             return ObjectDependents();
         }).iterator->value;
@@ -106,7 +107,7 @@ void ChainDependents::addStateOfStructure(std::span<JSObject* const> chainObject
     add(chainObjects, { uid, structure->id().bits(), ChainDependentOwnerID { } });
 }
 
-void ChainDependents::didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
+void ChainDependents::dropDependentsOn(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
     ASSERT(changed);
     auto iterator = m_dependentsByObject.find(changed);

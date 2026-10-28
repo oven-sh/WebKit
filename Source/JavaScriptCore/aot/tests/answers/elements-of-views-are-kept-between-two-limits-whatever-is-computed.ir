@@ -1,0 +1,209 @@
+# function scaled(length: number): string { const pixels = new Uint8ClampedArray(length); for (let k = 0; k < length; k++) pixels[k] = k * 3; for (let k = 0; k < pixels.length; k++) pixels[k] = pixels[k]! * 300 - 40000; return pixels.join(); }
+# function limited(length: number): string { const shorts = new Int16Array(length); for (let k = 0; k < length; k++) shorts[k] = k * 2999; for (let k = 0; k < shorts.length; k++) shorts[k] = Math.max(-30000, Math.min(shorts[k]! * 70000, 30000)); return shorts.join(); }
+# for (const length of [0, 1, 7, 16, 33]) { report(scaled(length)); report(limited(length)); }
+# report("end");
+# What is computed from an element of a view may need more bits than the element has. It is held between the limits first and made narrow then, for every length of the view.
+# At the end the shell runs the same text itself: every answer is the same.
+# FORM: AsRead
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = report => { function scaled(length) { const pixels = new Uint8ClampedArray(length); for (let k = 0;k < length; k++) pixels[k] = k * 3; for (let k = 0;k < pixels.length; k++) pixels[k] = pixels[k] * 300 - 40000; return pixels.join(); } function limited(length) { const shorts = new Int16Array(length); for (let k = 0;k < length; k++) shorts[k] = k * 2999; for (let k = 0;k < shorts.length; k++) shorts[k] = Math.max(-30000, Math.min(shorts[k] * 70000, 30000)); return shorts.join(); } for (const length of [0, 1, 7, 16, 33]) { report(scaled(length)); report(limited(length)); } report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); }); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }; })();
+# CHECK: 11 of 11 of 11
+# CHECK-NEXT: exited with 0
+
+module m0 path="elements-of-views-are-kept-between-two-limits-whatever-is-computed.ts" displayPath="elements-of-views-are-kept-between-two-limits-whatever-is-computed.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=63 kind=Parameter
+typesite w1 module=m0 position=47 kind=Result
+typesite w2 module=m0 position=306 kind=Parameter
+typesite w3 module=m0 position=289 kind=Result
+typesite w4 module=m0 position=568 kind=Element
+typesite w5 module=m0 position=606 kind=CallResult
+typesite w6 module=m0 position=630 kind=CallResult
+typesite w7 module=m0 position=104 kind=CallResult
+typesite w8 module=m0 position=144 kind=Variable
+typesite w9 module=m0 position=196 kind=Variable
+typesite w10 module=m0 position=207 kind=PropertyRead
+typesite w11 module=m0 position=272 kind=CallResult
+typesite w12 module=m0 position=347 kind=CallResult
+typesite w13 module=m0 position=380 kind=Variable
+typesite w14 module=m0 position=435 kind=Variable
+typesite w15 module=m0 position=446 kind=PropertyRead
+typesite w16 module=m0 position=495 kind=CallResult
+typesite w17 module=m0 position=478 kind=CallResult
+typesite w18 module=m0 position=540 kind=CallResult
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=7}, Number{value=16}, Number{value=33}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = IteratorOpen v4
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v7 = IteratorResume v5
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b3(), notTaken b4()
+  b3():
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="report" [isFreeName]
+    v12 = String string="end"
+    v13 = Call v11, -, v12 calleeName="report"
+    v14 = Undefined
+    Return v14
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v15 = Convert v9 declared={type=number site=w4} illTypedCause=ContainerWriterUnseen
+    v16 = Builtin builtin=GlobalThis
+    v17 = PropGet v16 key="report" [isFreeName]
+    v18 = Call v1, -, v15 calleeName="scaled"
+    v19 = Convert v18 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]}
+    v20 = Call v17, -, v19 calleeName="report"
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="report" [isFreeName]
+    v23 = Call v3, -, v15 calleeName="limited"
+    v24 = Convert v23 declared={type=undefined|null|string site=w6 flags=[OmitsNull, OmitsUndefined]}
+    v25 = Call v22, -, v24 calleeName="report"
+    Jump -> next b2()
+  b6() role=IterationCleanup subject=v5:
+    v26 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v26
+}
+function f1 name="scaled" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=Uint8ClampedArray
+    v2 = Construct v1, -, v0 calleeName="Uint8ClampedArray"
+    v3 = Convert v2 declared={type=undefined|null|Uint8ClampedArray site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w8}
+    Jump -> next b2(v5)
+  b2(v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = Less v8, v0
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v13 = Integer integer=3
+    v14 = Mul v12, v13
+    ElemSet v3, v12, v14
+    Jump -> next b5()
+  b5():
+    v16 = Increment v12
+    v17 = Convert v16 declared={type=number site=w8}
+    Jump -> next b2(v17)
+  b6(v18, v19):
+    Jump -> next b7()
+  b7():
+    v20 = Integer
+    v21 = Convert v20 declared={type=number site=w9}
+    Jump -> next b8(v21)
+  b8(v22: number):
+    LoopHint
+    v24 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    v25 = PropGet v3 key="length"
+    v26 = Convert v25 declared={type=number site=w10} illTypedCause=Assertion
+    v27 = Less v24, v26
+    Branch v27 -> taken b9(| 0), notTaken b12(| 0)
+  b9(v28):
+    Jump -> next b10()
+  b10():
+    v29 = Convert v28 declared={type=i32 flags=[IsExpected]}
+    v30 = ElemGet v3, v29
+    v31 = Integer integer=300
+    v32 = Mul v30, v31
+    v33 = Integer integer=40000
+    v34 = Sub v32, v33
+    ElemSet v3, v29, v34
+    Jump -> next b11()
+  b11():
+    v36 = Increment v29
+    v37 = Convert v36 declared={type=number site=w9}
+    Jump -> next b8(v37)
+  b12(v38):
+    Jump -> next b13()
+  b13():
+    v39 = PropGet v3 key="join"
+    v40 = Call v39, v3 calleeKey="join" calleeName="pixels.join"
+    ReturnCall v40 casts=[{declared={type=undefined|null|string site=w11 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f2 name="limited" module=m0 position=289 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w2}] results=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=Int16Array
+    v2 = Construct v1, -, v0 calleeName="Int16Array"
+    v3 = Convert v2 declared={type=undefined|null|Int16Array site=w12 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w13}
+    Jump -> next b2(v5)
+  b2(v6: number):
+    LoopHint
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v9 = Less v8, v0
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v13 = Integer integer=2999
+    v14 = Mul v12, v13
+    ElemSet v3, v12, v14
+    Jump -> next b5()
+  b5():
+    v16 = Increment v12
+    v17 = Convert v16 declared={type=number site=w13}
+    Jump -> next b2(v17)
+  b6(v18, v19):
+    Jump -> next b7()
+  b7():
+    v20 = Integer
+    v21 = Convert v20 declared={type=number site=w14}
+    Jump -> next b8(v21)
+  b8(v22: number):
+    LoopHint
+    v24 = Convert v22 declared={type=i32 flags=[IsExpected]}
+    v25 = PropGet v3 key="length"
+    v26 = Convert v25 declared={type=number site=w15} illTypedCause=Assertion
+    v27 = Less v24, v26
+    Branch v27 -> taken b9(| 0), notTaken b12(| 0)
+  b9(v28):
+    Jump -> next b10()
+  b10():
+    v29 = Convert v28 declared={type=i32 flags=[IsExpected]}
+    v30 = Builtin builtin=Math
+    v31 = Builtin builtin=MathMax
+    v32 = Integer integer=-30000
+    v33 = Builtin builtin=Math
+    v34 = Builtin builtin=MathMin
+    v35 = ElemGet v3, v29
+    v36 = Integer integer=70000
+    v37 = Mul v35, v36
+    v38 = Integer integer=30000
+    v39 = Call v34, v33, v37, v38 calleeName="Math.min"
+    v40 = Convert v39 declared={type=number site=w16} illTypedCause=DeclarationWithoutBody
+    v41 = Call v31, v30, v32, v40 calleeName="Math.max"
+    v42 = Convert v41 declared={type=number site=w17} illTypedCause=DeclarationWithoutBody
+    ElemSet v3, v29, v42
+    Jump -> next b11()
+  b11():
+    v44 = Increment v29
+    v45 = Convert v44 declared={type=number site=w14}
+    Jump -> next b8(v45)
+  b12(v46):
+    Jump -> next b13()
+  b13():
+    v47 = PropGet v3 key="join"
+    v48 = Call v47, v3 calleeKey="join" calleeName="shorts.join"
+    ReturnCall v48 casts=[{declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}}]
+}

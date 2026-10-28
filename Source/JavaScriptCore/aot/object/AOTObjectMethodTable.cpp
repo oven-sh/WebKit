@@ -932,7 +932,7 @@ bool Object::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, 
     RELEASE_AND_RETURN(scope, putWithKnownField(cell, globalObject, name, value, slot, field));
 }
 
-bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field)
+bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot, const FieldData* field, bool chainLetsStoresPass)
 {
     ASSERT(!field || !field->isPrivate());
     Object* object = uncheckedDowncast<Object>(cell);
@@ -976,9 +976,15 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
             RELEASE_AND_RETURN(scope, putOutsideDataSlot(globalObject, object, name, { existing, attributes }, value, slot.isStrictMode()));
     }
     JSValue prototype = object->getPrototypeDirect();
-    if (prototype.isObject()) {
+    if (prototype.isObject() && (!chainLetsStoresPass || vm.aotState().validatesRuntime)) {
         ChainWalk walk = walkChain({ globalObject, object->structure(), object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, name.uid());
-        switch (storeThroughChain(walk)) {
+        StoreThroughChain answer = storeThroughChain(walk);
+        if (chainLetsStoresPass) {
+            // A walk that allocates nothing cannot always tell.
+            RELEASE_ASSERT(answer == StoreThroughChain::CreatesOwnProperty || answer == StoreThroughChain::Unknown);
+            answer = StoreThroughChain::CreatesOwnProperty;
+        }
+        switch (answer) {
         case StoreThroughChain::CreatesOwnProperty:
             break;
         case StoreThroughChain::CallsSetter:

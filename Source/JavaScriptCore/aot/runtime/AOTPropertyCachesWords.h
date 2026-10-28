@@ -131,7 +131,9 @@ struct AbsenceFilter {
     uint32_t structureID;
     uint32_t generationForStores;
     uint64_t namesThatStopStores[numberOfWordsForStores];
-    uint64_t unused;
+    // How many changes under a name had been reported when the filter was made. While there are no more, the filter says all there is to say about every name.
+    uint32_t changesUnderNames;
+    uint32_t unused;
 };
 
 struct NameOfText {
@@ -214,6 +216,7 @@ struct PropertyCacheWords {
     uint64_t hashedSlotOffsetMask;
     AbsenceFilter* absenceFilters;
     uint32_t absenceFilterGenerationForStores;
+    uint32_t changesUnderNamesOnChains;
     const uint64_t* namesOfObjectPrototypes;
     const uint64_t* namesChangedOnChains;
     uint8_t* missesOfPairs;

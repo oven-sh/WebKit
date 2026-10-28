@@ -15,6 +15,7 @@
 #include "AOTDiagnostics.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTExpandOwnKeysInternal.h"
 #include "AOTGenericCopy.h"
 #include "AOTHeat.h"
 #include "AOTNaturalLoops.h"
@@ -153,6 +154,20 @@ TestSiteReporter::TestSiteReporter(FunctionPassContext& context)
         return removedByOf(value.opcode) == PassID::ExpandIteration;
     };
     const Function& function = context.function;
+    // A list of names that ExpandOwnKeys writes out later in the same round is a literal then, and what reads a literal needs no test.
+    if (Vector<ValueID, 4> lists = findKeyListsToWriteOut(context); !lists.isEmpty()) {
+        for (BlockID block : analyses().cfg().reversePostOrder()) {
+            for (ValueID id : function.at(block).values) {
+                function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                    for (ValueID read : CastChain(function, operand)) {
+                        if (lists.contains(read))
+                            m_awaitsExpansion.set(id.index());
+                    }
+                });
+            }
+        }
+        m_context.hasUsesAwaitingExpansion = !m_awaitsExpansion.isEmpty();
+    }
     if (!function.values.containsIf(isUnexpanded))
         return;
 

@@ -179,6 +179,8 @@ struct SiteLists {
 };
 
 struct PlacedSites : SiteLists {
+    // What the stores may create, layout by layout, and for each layout in the sequence in which the bodies hold the stores.
+    Vector<FieldCreationUse> fieldCreationsAsWritten;
     // By function: how many stores that may add a field the functions in front of it have. One entry more than there are functions.
     Vector<uint32_t> firstStoreThatMayAdd;
     // By store that may add a field, the functions in their sequence.

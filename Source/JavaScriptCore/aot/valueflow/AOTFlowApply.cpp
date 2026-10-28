@@ -312,6 +312,7 @@ static void appendFlowFields(const Program& program, TypeArena& arena, std::span
         if (appended.isFilledByMakers)
             field.flags.add(FieldFlags::IsFilledByCreator);
         field.flow = appended.flow;
+        field.form = appended.formOfValue;
         if (appended.accessor.isAccessor())
             becomeAccessor(arena, field, appended.accessor);
         else if (!mustKeepTypes)

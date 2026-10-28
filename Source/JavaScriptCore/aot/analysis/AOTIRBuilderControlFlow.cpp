@@ -24,16 +24,6 @@ static bool hasContents(const Block& block)
         || block.handler || block.role != BlockRole::Ordinary || block.subject || block.frequency.predicted() != BlockFrequency::Normal;
 }
 
-static TypeID partInside(const Program& program, TypeArena& types, TypeID narrower, TypeID type)
-{
-    if (!narrower)
-        return { };
-    TypeID part = types.intersectionOf(narrower, type);
-    if (part == TypeTable::never || part == type || !types.at(part).isSubsetOf(types.at(type), program))
-        return { };
-    return part;
-}
-
 static ValueID appendExpectation(IRBuilder& builder, ValueID result, const DeclaredType& declared)
 {
     const Program& program = builder.context().program;

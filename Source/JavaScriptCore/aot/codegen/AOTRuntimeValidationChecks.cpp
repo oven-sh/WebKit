@@ -12,6 +12,7 @@
 #include "AOTBuiltinPristine.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTClosureTestEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
@@ -545,14 +546,28 @@ void RuntimeValidationEmitter::checkIsNotReleased(const OperationContext& contex
     failUnless(notEqual(freeCell, environment), ValidationFailureKind::ValueType, { }, context.valueID());
 }
 
-void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer)
+void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer, FrameCellsAsked asked)
 {
     if (!mayHoldPointer(operand))
         return;
     Condition escapes = isInStack(Pointer(operand.value));
     if (retainer && mayHoldPointer(*retainer))
         escapes = logicalAnd(escapes, logicalNot(isInStack(Pointer(retainer->value))));
-    failUnless(logicalNot(escapes), ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+    if (asked == FrameCellsAsked::All) {
+        failUnless(logicalNot(escapes), ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+        return;
+    }
+
+    // What lies in a frame and has such a type is a cell with a header.
+    LBasicBlock liesInFrame = newBlock();
+    LBasicBlock continuation = newBlock();
+    m_out.branch(escapes.value(), rareEdge(liesInFrame), normalEdge(continuation));
+    m_out.appendTo(liesInFrame);
+    Word32 type(m_out.load8ZeroExt32(m_out.address(m_heaps.JSCell_header, operand.value, JSCell::typeInfoTypeOffset())));
+    Condition isArray = equal(type, word32(ArrayType));
+    failUnless(asked == FrameCellsAsked::Arrays ? logicalNot(isArray) : isArray, ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 bool RuntimeValidationEmitter::isSuspensionPoint(ValueID id)
@@ -601,6 +616,9 @@ void RuntimeValidationEmitter::poisonFrameCells(ProgramPoint point)
             poisonFields(cell, layout, m_program.at(layout).isEnvironment() ? AbstractHeap::EnvironmentFields : AbstractHeap::ObjectFields);
             continue;
         }
+        // A tail call takes what it is lent along.
+        if (value.isLent())
+            continue;
         switch (value.closureForm()) {
         case ClosureForm::Full:
             storeField(cell, m_heaps.AOTClosure_entry, integer(-1));
@@ -651,7 +669,9 @@ Condition RuntimeValidationEmitter::isInStack(Pointer pointer)
 {
     Pointer top(m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), vm().value(), VM::topEntryFrameOffset())));
     Condition isAboveStackPointer = aboveOrEqual(pointer, stackPointer());
-    return logicalAnd(isAboveStackPointer, below(pointer, top));
+    // AOTCheckedFrameCells.h
+    Condition isInRangeOfFrameCells(m_out.equal(m_out.lShr(pointer.value(), m_out.constInt32(CheckedFrameCells::bitsOfOffsetInRange)), m_out.constInt64(CheckedFrameCells::startOfRange >> CheckedFrameCells::bitsOfOffsetInRange)));
+    return logicalOr(isInRangeOfFrameCells, logicalAnd(isAboveStackPointer, below(pointer, top)));
 }
 
 Pointer RuntimeValidationEmitter::stackPointer()

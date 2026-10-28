@@ -62,7 +62,9 @@ public:
     // A short form of a test answers as the whole test does.
     void checkTypeTestsAgree(Condition, CellPointer tested);
     void checkGuardIsAvailable(const OperationContext&, ValueID guard, uint32_t operandIndex);
-    void checkIsNotFrameCell(const OperationContext&, Operand, std::optional<Operand> retainer);
+    // What may be given an array of a frame and what may be given any other cell of a frame are two questions. The operand tells at run time which of them is asked.
+    enum class FrameCellsAsked : uint8_t { All, Arrays, AllButArrays };
+    void checkIsNotFrameCell(const OperationContext&, Operand, std::optional<Operand> retainer, FrameCellsAsked = FrameCellsAsked::All);
     void checkIsNotReleased(const OperationContext&, CellPointer environment, LayoutID);
     void poisonFrameCells(ProgramPoint);
     void poisonEnvironment(CellPointer, LayoutID);

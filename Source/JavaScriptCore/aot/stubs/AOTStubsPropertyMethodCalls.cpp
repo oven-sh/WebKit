@@ -99,7 +99,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
         return kind.slimClosureKind() == 1 && !FunctionKindData { }.slimClosureKind();
     }());
 
-    // A validating build allocates nothing in frames, and with wide references no slot defers a closure.
+    // A validating build makes the closure that it calls, and with wide references no slot defers a closure.
     if (jit.options().validates || jit.options().useWideReferences)
         return;
 

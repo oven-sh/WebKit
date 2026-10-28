@@ -148,10 +148,10 @@ private:
         if (value->opcode() == Phi) {
             if (!header->values().contains(value))
                 return std::nullopt;
-            for (Value* candidate : *latch) {
-                auto* upsilon = candidate->as<UpsilonValue>();
-                if (upsilon && upsilon->phi() == value && upsilon->child(0)->hasInt())
-                    return upsilon->child(0)->asInt();
+            for (unsigned index = latch->size(); index--;) {
+                auto* upsilon = latch->at(index)->as<UpsilonValue>();
+                if (upsilon && upsilon->phi() == value)
+                    return upsilon->child(0)->hasInt() ? std::optional<int64_t>(upsilon->child(0)->asInt()) : std::nullopt;
             }
             return std::nullopt;
         }

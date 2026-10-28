@@ -1074,11 +1074,28 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     };
     // A range is copied as one block.
     auto mayRejoinAt = [&](ProgramPoint point) { return !wanted.isAnyProofWantedAt(point) && !stretches.isInsideRange(point); };
-    plan.rejoinPoints = findRejoinPoints(analyses, mayCallUnknownCode, mayRejoinAt);
+
+    // The copies of a cold function of a very large program hold their stretches alone and come back nowhere: see TestPlacer::goesOnBehindStretch(). Of these points the placer then keeps the ones inside a block
+    // at which tests stand, to give those tests a block of their own, and looks at no other. So no other is looked for.
+    const Heat& heat = context.inputs.heat;
+    bool copiesHoldStretchesAlone = heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted();
+    BitVector blocksWithTests;
+    Vector<uint32_t> lastTestIn;
+    if (copiesHoldStretchesAlone) {
+        lastTestIn.fill(0, function.blocks.size());
+        for (const PlannedTest& test : plan.tests) {
+            if (test.position != PlannedTestPosition::BeforeUse || !test.point.index)
+                continue;
+            blocksWithTests.set(test.point.block.index());
+            lastTestIn[test.point.block.index()] = std::max(lastTestIn[test.point.block.index()], test.point.index);
+        }
+    }
+    if (!copiesHoldStretchesAlone || !blocksWithTests.isEmpty())
+        plan.rejoinPoints = findRejoinPoints(analyses, mayCallUnknownCode, mayRejoinAt, copiesHoldStretchesAlone ? &blocksWithTests : nullptr);
 
     // Code that is rarer than what leads to it is a slow path already: the generic version of the function, or the copy of an earlier run. The copy of this run goes on there and copies none of it.
     const CFG& cfg = analyses.cfg();
-    for (BlockID block : cfg.reversePostOrder()) {
+    for (BlockID block : copiesHoldStretchesAlone ? std::span<const BlockID> { } : cfg.reversePostOrder()) {
         if (function.at(block).isHandlerBlock())
             continue;
         Expected<BlockFrequency> frequency = function.at(block).frequency;
@@ -1099,14 +1116,19 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     plan.rejoinPoints.removeAllMatching(isSplitPoint);
 
     std::span<const StretchRange> ranges = stretches.ranges();
-    BitVector isBehindCopiedRange = findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
-    if (isBehindCopiedRange.isEmpty())
+    // A point behind the end of a range is one at which tests stand only if the block has tests that far behind.
+    auto hasTestsBehind = [&](const StretchRange& range) { return range.isCloned && lastTestIn[range.block.index()] >= range.end; };
+    bool looksBehindNoRange = copiesHoldStretchesAlone && std::ranges::none_of(ranges, hasTestsBehind);
+    if (looksBehindNoRange && std::ranges::none_of(ranges, &StretchRange::isCloned))
+        return;
+    BitVector isBehindCopiedRange = copiesHoldStretchesAlone ? BitVector() : findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
+    if (!copiesHoldStretchesAlone && isBehindCopiedRange.isEmpty())
         return;
     // How soon the copy comes back follows from expected types, and is shuffled with them.
     const RecordedOptions& options = context.build.recordedOptions();
     if (options.has(TestingSwitch::ShuffleExpectedTypes) && WTF::pairIntHash(options.layoutSeed, context.id.index()) % 2) [[unlikely]]
         return;
-    for (BlockID block : cfg.reversePostOrder()) {
+    for (BlockID block : copiesHoldStretchesAlone ? std::span<const BlockID> { } : cfg.reversePostOrder()) {
         if (isBehindCopiedRange.get(block.index()) && block != cfg.root() && !function.at(block).isHandlerBlock() && mayRejoinAt(ProgramPoint::atHeadOf(block)))
             plan.rejoinPointsWithoutTests.append(ProgramPoint::atHeadOf(block));
     }
@@ -1117,6 +1139,9 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         const TestSite& site = plan.sites.sites[use.site];
         (expectedTypeTellsResultOf(context, site) ? narrowedAsExpected : narrowedInUnknownWay).append(site.use);
     }
+    // The question above may give a type its number, and the numbers of types are in the order in which they were first asked for.
+    if (looksBehindNoRange)
+        return;
     Vector<ValueID> subjects = collectSubjectsKnownBeyondTheirTypes(context, plan);
     BitVector isKnownBetter = findValuesTypedCodeKnowsMoreAbout(analyses, context.types, { narrowedAsExpected.span(), narrowedInUnknownWay.span(), subjects.span() });
 
@@ -1142,7 +1167,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
             if (ranges[next].isCloned)
                 firstEnd = std::min(firstEnd, ranges[next].end);
         }
-        if (firstEnd == numberOfValues)
+        if (firstEnd == numberOfValues || (copiesHoldStretchesAlone && lastTestIn[block.index()] < firstEnd))
             continue;
         BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter, isLive);
         for (const StretchRange& range : ranges.subspan(first, next - first)) {
@@ -1981,7 +2006,7 @@ static Expected<LayoutList> findLayoutsStoredUnderNameOfSubject(FunctionPassCont
 }
 
 // Answers whether the subject is settled. One whose names have more declarations than a test is made for waits until the layouts of the other subjects are known.
-static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues)
+static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues, ExpectedValues& widenedValues)
 {
     Function& function = context.function;
     auto expectLayouts = [&](std::span<const NamedUse> uses, const Expected<LayoutList>& layouts) {
@@ -2000,6 +2025,26 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return !context.program.at(layout).flags.contains(LayoutFlags::IsNeverAllocated) && context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
         });
     });
+    // In code without types, what is expected of a value is read off the places that are seen to give it. An object that has left the sight of the program arrives where nobody sees it given:
+    // where the analysis has seen nothing arrive either, the layouts that hold the names and have left join what is expected.
+    // A name that built-ins answer too says little of who arrives, and a test takes only so many layouts.
+    bool isExpectedByTextAlone = isFollowed && !typeListsLayouts && !function.has(FunctionFlags::IsChecked) && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) { return !use.stamp && tellsLayoutsApart(context.program, use.key); });
+    if (isExpectedByTextAlone && !waitsForOtherSubjects) {
+        LayoutsToTest others = findLayoutsToTestFor(context, usesOfSubject, context.limit(LimitID::MaxDeclarationsPredictedFromNames), context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
+        if (!others.layouts.predicted().isEmpty() && !others.leavesOutDeclarations) {
+            Type arriving = Type::forLayouts(others.layouts.predicted().span(), context.types);
+            for (const NamedUse& use : usesOfSubject) {
+                TypeID expected = function.at(use.receiver).expected().predicted();
+                if (!expected || !context.types.at(expected).layouts || arriving.isSubsetOf(context.types.at(expected), context.program) || widenedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
+                    continue;
+                Type widened = context.types.at(expected).unionWith(arriving, context.types);
+                if (membersOf(context.program, widened).size() <= context.limit(LimitID::MaxDispatchCases))
+                    widenedValues.append({ use.receiver, ExpectedType(context.types.intern(widened)) });
+            }
+        }
+    }
+    if (isExpectedByTextAlone && waitsForOtherSubjects)
+        return false;
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
         return true;
 
@@ -2271,16 +2316,23 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     findUsesOnEveryPath(context, uses.mutableSpan());
 
     ExpectedValues expectedValues;
+    ExpectedValues widenedValues;
     Expected<LayoutList> layoutsMet;
     Vector<std::span<NamedUse>, 4> unsettledSubjects;
     for (std::span<NamedUse> usesOfSubject : uses.mutableSpan() | std::views::chunk_by([](const NamedUse& a, const NamedUse& b) { return a.subject == b.subject; })) {
-        if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues))
+        if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues, widenedValues))
             unsettledSubjects.constructAndAppend(usesOfSubject);
     }
     if (!unsettledSubjects.isEmpty())
         addLayoutsOfKnownReceivers(context, layoutsMet);
     for (std::span<NamedUse> usesOfSubject : unsettledSubjects)
-        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues);
+        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues, widenedValues);
+    for (auto [value, expected] : widenedValues) {
+        if (findUncheckedEntryParameter(context.function, value))
+            continue;
+        expectations.expect(value, expected.predicted());
+        expectations.didGuessFromNames(value);
+    }
     return expectValues(context, expectedValues, expectations);
 }
 

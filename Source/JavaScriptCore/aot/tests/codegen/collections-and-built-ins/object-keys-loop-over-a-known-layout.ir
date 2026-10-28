@@ -8,14 +8,12 @@
 # for (let turn = 0; turn < input; turn++) (globalThis as any).answer = sum({ x: +input, y: +input, z: +input });
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
-# RUN(LOOP): lower-to-b3 optimized loops f1
-# REQUIRES(LOOP): unsanitized-code
-# RUN(CALLS): lower-to-b3 optimized loops f1
-# REQUIRES(CALLS): unsanitized-code
-# RUN(X64): lower-to-air loops f1
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(LOOPS): lower-to-air loops f1
+# REQUIRES(LOOPS): unsanitized-code
+# RUN(X64): lower-to-air size f1
 # REQUIRES(X64): x86_64 not-windows unsanitized-code
-# RUN(ARM64): lower-to-air loops f1
-# REQUIRES(ARM64): arm64 not-windows unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -120,30 +118,19 @@ function f1 name="sum" module=m0 position=50 flags=[IsChecked, HasExplicitName] 
     Rethrow v19
 }
 
-# The loop over the names of a layout walks the list that Object.keys made. Each turn loads a name and asks one pure function which of the names of the layout it is.
-# LOOP-LABEL: steps by 1
-# LOOP-LABEL: steps by 1
-# LOOP: Int64 b@[[key]] = Load(b@{{*}}, ControlDependent|Reads:indexedContiguousProperties, {{*}}:GetArrayElement)
-# LOOP: Int64 b@[[which]] = Patchpoint(b@[[key]]:Register({{*}}), resultConstraints = Register({{*}}), pureFunction = {{*}}(children), ControlDependent, {{*}}:TypeTest)
-# The answer is compared with one name after the other, and each arm is one load of a double from its slot: no lookup by name.
-# LOOP-NEXT: Int32 b@[[isFirst]] = Equal(b@[[which]], ${{*}}, {{*}}:TypeTest)
-# LOOP-NEXT: Branch(b@[[isFirst]], Terminal, {{*}}:TypeTest)
-# LOOP: Double b@{{*}} = Load(b@[[point]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# LOOP: Double b@{{*}} = Add(b@{{*}}, b@{{*}}, {{*}}:Add)
-# LOOP: Int32 b@{{*}} = Equal(b@[[which]], ${{*}}, {{*}}:TypeTest)
-# LOOP: Double b@{{*}} = Load(b@[[point]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# LOOP: Double b@{{*}} = Load(b@[[point]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# LOOP-LABEL: end of loop
-# Nothing in this loop but its poll can throw or allocate, and the length of the list is not loaded again. Beside a call a poll costs little, so it stays in the turn.
-# CALLS-LABEL: steps by 1
-# CALLS-LABEL: steps by 1
-# CALLS-NOT: Reads:Butterfly_publicLength
-# CALLS-NOT: Reads:JSObject_butterfly
-# CALLS-COUNT-1: ExitsSideways
-# CALLS-NOT: ExitsSideways
-# CALLS-NOT: Reads:Butterfly_publicLength
-# CALLS-NOT: Reads:JSObject_butterfly
-# CALLS-LABEL: end of loop
-# The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 12, patchpoints: 3, {{*}} steps by 1
-# ARM64: loop #{{*}}, instructions: 12, patchpoints: 3, {{*}} steps by 1
+# The names of a proven layout are known, so the loop over Object.keys(point) is written out: no list is made, no name is compared, nothing is called, and each field is one load of a double from its slot.
+# CHECK-LABEL: name="sum" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[point]] = ArgumentReg(
+# CHECK-NOT: Patchpoint
+# CHECK: Double b@[[x]] = Load(b@[[point]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: Double b@[[y]] = Load(b@[[point]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK: Double b@[[z]] = Load(b@[[point]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Double b@[[total]] = Add(b@{{*}}, b@[[z]], {{*}}:Add)
+# CHECK-NEXT: Return(b@[[total]], Terminal)
+# CHECK-NOT: BB#
+# CHECK-LABEL: end of function
+# LOOPS-LABEL: name="sum" role=Source
+# LOOPS-NOT: loop #
+# LOOPS-LABEL: end of function
+# X64: instructions: 5, patchpoints: 0

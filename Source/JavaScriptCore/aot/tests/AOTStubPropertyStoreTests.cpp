@@ -1455,6 +1455,7 @@ class Chains {
     WTF_MAKE_NONCOPYABLE(Chains);
 public:
     static constexpr uint32_t generation = 7;
+    static constexpr uint32_t changesUnderNames = 3;
 
     explicit Chains(PropertyStores& stores)
         : m_stores(stores)
@@ -1462,6 +1463,7 @@ public:
         PropertyCacheWords& words = stores.runner.instance().propertyCaches;
         words.absenceFilters = m_filters.data();
         words.absenceFilterGenerationForStores = generation;
+        words.changesUnderNamesOnChains = changesUnderNames;
         words.namesOfObjectPrototypes = &namesOfObjectPrototypes;
         words.namesChangedOnChains = &namesChangedOnChains;
         letEveryStorePass();
@@ -1473,7 +1475,7 @@ public:
     }
 
     AbsenceFilter& filter() { return m_filters[AbsenceFilter::indexFor(PropertyStores::structureID)]; }
-    void letEveryStorePass() { filter() = { PropertyStores::structureID, generation, { }, 0 }; }
+    void letEveryStorePass() { filter() = { PropertyStores::structureID, generation, { }, changesUnderNames, 0 }; }
     void setFlags(uint8_t flags) { m_stores.structure.at<uint8_t>(CompiledStructure::offsetOfFlags()) = flags; }
 
     uint64_t namesOfObjectPrototypes { 0 };
@@ -1704,10 +1706,14 @@ static void testFieldsCreatedByTheirRecords()
         chains.filter().structureID = PropertyStores::structureID + (AbsenceFilter::numberOfFilters << StructureRowWords::granuleShift);
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);
         chains.filter().structureID = PropertyStores::structureID;
+        // A filter that was made behind every change has seen what became of the name.
         chains.namesChangedOnChains = uint64_t { 1 } << name;
+        AOT_TEST_CHECK(isCreatedInEveryShape());
+        chains.filter().changesUnderNames = Chains::changesUnderNames - 1;
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);
         chains.namesChangedOnChains = ~(uint64_t { 1 } << name);
         AOT_TEST_CHECK(isCreatedInEveryShape());
+        chains.filter().changesUnderNames = Chains::changesUnderNames;
 
         // The guard that compiled code has for the stores under the name holds once the run time has looked: one store in 16 goes there.
         uint8_t& storesToGuardedFields = stores.runner.instance().propertyCaches.storesToGuardedFields;

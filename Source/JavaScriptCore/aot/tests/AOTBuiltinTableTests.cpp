@@ -1104,22 +1104,35 @@ static void testHostUsesOfLibraryFunctions()
     auto drainMicrotasks = std::ranges::find(table().hostObjects(), call->arguments[2].nativeCell, &BuiltinHostObject::nativeCell);
     AOT_TEST_CHECK(drainMicrotasks != table().hostObjects().end() && drainMicrotasks->function && table().at(drainMicrotasks->function).kind == BuiltinKind::Function && table().at(drainMicrotasks->function).holder == Builtins::NativeFunctions);
 
-    // The stream is the first element of what getStdioWriteStream answers.
+    // What getLightStdioWriteStreams answers holds both streams. The cell of each property keeps its stream, and the member of `console` holds it too.
+    // Whoever prints a warning calls `write` of the second, with the stream as the receiver, and drops what that answers.
     for (BuiltinID stream : std::initializer_list<BuiltinID> { hostBuiltin("ProcessStdout"_s), hostBuiltin("ProcessStderr"_s) }) {
-        const BuiltinHostCall* creation = findCallOfOnlyFunction(stream, 2);
-        AOT_TEST_CHECK(creation && creation->arguments.size() == 4 && creation->result.list.size() == (stream == hostBuiltin("ProcessStdout"_s) ? 2 : 4));
+        const BuiltinHostCall* creation = findCallOfOnlyFunction(stream, 1);
+        AOT_TEST_CHECK(creation && creation->arguments.size() == 7 && creation->result.list.size() == 5);
+        std::span<const BuiltinHostUse> uses = creation->result.list;
+        for (size_t index : { 0, 2 }) {
+            BuiltinName holder = nameOf(index ? "stderr"_s : "stdout"_s);
+            AOT_TEST_CHECK(uses[index].use == BuiltinHostReadUse::Kept && uses[index].memberPath.size() == 1 && uses[index].memberPath[0] == holder);
+            AOT_TEST_CHECK(uses[index + 1].use == BuiltinHostReadUse::IsValueOf && uses[index + 1].builtin == hostBuiltin(index ? "Console_stderr"_s : "Console_stdout"_s));
+            AOT_TEST_CHECK(uses[index + 1].memberPath.size() == 1 && uses[index + 1].memberPath[0] == holder);
+        }
+        const BuiltinHostUse& write = uses[4];
+        AOT_TEST_CHECK(write.use == BuiltinHostReadUse::Called && write.memberPath.size() == 2 && write.memberPath[0] == nameOf("stderr"_s) && write.memberPath[1] == nameOf("write"_s));
+        AOT_TEST_CHECK(write.call->thisValue.nativeCell == uses[2].nativeCell && write.call->arguments.size() == 1 && write.call->result.areListed && write.call->result.list.empty());
+    }
+
+    // The stream is the first element of what getStdioWriteStream answers. That function hangs on the call of the function that the traps of the light stream call, once for each descriptor.
+    std::span<const BuiltinCalledFunction> makersOfWholeStreams = table().calledFunctionsOf(hostBuiltin("NativeFunctionsBunProcessCppProcess_functionNeedsWholeOutputStream"_s));
+    AOT_TEST_CHECK(makersOfWholeStreams.size() == 1 && makersOfWholeStreams[0].uses.areListed && makersOfWholeStreams[0].uses.list.size() == 2);
+    for (const BuiltinHostUse& use : makersOfWholeStreams[0].uses.list) {
+        AOT_TEST_CHECK(use.use == BuiltinHostReadUse::Called && use.memberPath.empty());
+        const BuiltinHostCall* creation = use.call;
+        AOT_TEST_CHECK(creation && creation->arguments.size() == 4);
         const BuiltinHostUse& first = creation->result.list[0];
-        AOT_TEST_CHECK(first.use == BuiltinHostReadUse::IsValueOf && first.builtin == stream && first.memberPath.size() == 1 && first.memberPath[0] == nameOf("0"_s));
+        AOT_TEST_CHECK(first.use == BuiltinHostReadUse::Kept && first.memberPath.size() == 1 && first.memberPath[0] == nameOf("0"_s));
         const BuiltinHostUse& last = creation->result.list.back();
         AOT_TEST_CHECK(last.use == BuiltinHostReadUse::Inspected && last.memberPath.size() == 1 && last.memberPath[0] == nameOf("1"_s));
     }
-
-    // Whoever prints a warning calls `write` of the stream, with the stream as the receiver, and drops what that answers.
-    std::span<const BuiltinHostUse> usesOfStandardError = findCallOfOnlyFunction(hostBuiltin("ProcessStderr"_s), 2)->result.list;
-    const BuiltinHostUse& write = usesOfStandardError[2];
-    AOT_TEST_CHECK(usesOfStandardError[1].use == BuiltinHostReadUse::Kept && write.use == BuiltinHostReadUse::Called);
-    AOT_TEST_CHECK(write.memberPath.size() == 2 && write.memberPath[0] == nameOf("0"_s) && write.memberPath[1] == nameOf("write"_s));
-    AOT_TEST_CHECK(write.call->thisValue.nativeCell == usesOfStandardError[1].nativeCell && write.call->arguments.size() == 1 && write.call->result.areListed && write.call->result.list.empty());
 
     // A row that says nothing leaves everything open.
     for (const BuiltinCalledFunction& called : table().calledFunctionsOf(hostBuiltin("BunBuild"_s)))

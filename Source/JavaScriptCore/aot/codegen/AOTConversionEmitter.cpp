@@ -731,7 +731,7 @@ NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
 {
     // A narrow reference reaches no cell that is kept in a frame. No other value has the upper half of the addresses of AOTCheckedFrameCells.h.
     auto checkLiesInNoFrame = [&](LValue bits) {
-        if (!generator().checksProofs())
+        if (!generator().validatesOrChecksProofs())
             return;
         LBasicBlock liesInFrame = newBlock();
         LBasicBlock continuation = newBlock();

@@ -208,7 +208,8 @@ public:
     void setPrototypeKeepingShape(VM&, JSValue prototype);
     void setPrototypeAtCreation(VM&, JSValue prototype);
 
-    static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*);
+    // The caller may know that no object above has an accessor or a property that cannot be written under the name.
+    static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*, bool chainLetsStoresPass = false);
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
     // False with a TypeError thrown, and the object as it was, where the layout keeps the field from what the caller asks for. A caller that looks at neither meets the error at its next check.
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);

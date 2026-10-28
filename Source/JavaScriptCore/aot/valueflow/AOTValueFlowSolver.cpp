@@ -4293,39 +4293,64 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             arriveAt(ValueFlowNodeID(read.result), written);
         };
         m_stepTimes.didFinish("behind the rounds: covered: the fields that reads read"_s);
+        // What is written under the name of a read goes on from the result of the read inside the body of the read alone: each body by itself, on all threads.
+        Vector<uint32_t> listOfZerosByNode = makeListOfZeros(numberOfNodes);
         {
-            Vector<uint32_t> toFollow;
-            auto isWrittenUnderNameOfRead = [&](ValueFlowNodeID to, ValueSetID come) {
-                if (!m_sets.contains(m_graph.valueOf(to), m_input.placeholders.unknown))
-                    return;
-                ValueSetID& seen = m_writtenUnderNamesOfReads.ensure(to.index(), [] { return ValueSets::nothing; }).iterator->value;
-                ValueSetID after = maker.unite(seen, maker.intersect(come, m_graph.maskOf(to)));
-                if (after == seen)
-                    return;
-                seen = after;
-                toFollow.append(to.index());
-            };
+            Vector<std::pair<uint32_t, ValueSetID>> namesThatTellSomething;
             for (auto& [key, written] : writtenUnderKey) {
-                if (!tellsSomething(written))
-                    continue;
-                forEachResultOfReadOffUnknownObjectUnder(key, [&](ValueFlowNodeID result) {
-                    isWrittenUnderNameOfRead(result, written);
-                });
+                if (tellsSomething(written))
+                    namesThatTellSomething.append({ key, written });
             }
-            while (!toFollow.isEmpty()) {
-                ValueFlowNodeID from(toFollow.takeLast());
-                ValueSetID come = m_writtenUnderNamesOfReads.find(from.index())->value;
-                FunctionID function = m_input.nodes->functionOf(from);
+            Vector<ValueFlowNodeSet> written = collectInParallel<ValueFlowNodeSet>(m_loops, namesThatTellSomething.size(), [&](unsigned index, Vector<ValueFlowNodeSet>& found) {
+                forEachResultOfReadOffUnknownObjectUnder(namesThatTellSomething[index].first, [&](ValueFlowNodeID result) {
+                    found.append({ result, namesThatTellSomething[index].second });
+                });
+            });
+            parallelSort(m_loops, written.mutableSpan(), [](const ValueFlowNodeSet& first, const ValueFlowNodeSet& second) {
+                return first.node.index() < second.node.index();
+            });
+            Vector<uint32_t> firstInBody = findIndicesInParallel(m_loops, written.size(), [&](unsigned index) {
+                return !index || m_input.nodes->functionOf(written[index - 1].node) != m_input.nodes->functionOf(written[index].node);
+            });
+            Vector<Vector<ValueFlowNodeSet>> writtenInBody(firstInBody.size());
+            forEachIndexInParallel(m_loops, firstInBody.size(), [&](unsigned body, unsigned worker) {
+                ValueSetMaker& makerOfWorker = *m_makers[worker];
+                Vector<uint32_t, 32> toFollow;
+                Vector<uint32_t, 32> nodes;
+                auto isWrittenUnderNameOfRead = [&](ValueFlowNodeID to, ValueSetID come) {
+                    if (!m_sets.contains(m_graph.valueOf(to), m_input.placeholders.unknown))
+                        return;
+                    ValueSetID seen(listOfZerosByNode[to.index()]);
+                    ValueSetID after = makerOfWorker.unite(seen, makerOfWorker.intersect(come, m_graph.maskOf(to)));
+                    if (after == seen)
+                        return;
+                    if (seen == ValueSets::nothing)
+                        nodes.append(to.index());
+                    listOfZerosByNode[to.index()] = after.index();
+                    toFollow.append(to.index());
+                };
+                for (uint32_t index = firstInBody[body]; index < (body + 1 < firstInBody.size() ? firstInBody[body + 1] : written.size()); ++index)
+                    isWrittenUnderNameOfRead(written[index].node, written[index].set);
+                FunctionID function = m_input.nodes->functionOf(written[firstInBody[body]].node);
                 bool isNodeOfBody = function && function.index() < m_input.program->functions.size();
                 uint32_t firstNodeOfBody = isNodeOfBody ? m_input.nodes->firstNodeOf(function) : 0;
                 uint32_t endOfNodesOfBody = isNodeOfBody ? m_input.nodes->endOfNodesOf(function) : 0;
-                m_graph.forEachSuccessor(from, [&](ValueFlowNodeID to) {
-                    if (to.index() >= firstNodeOfHost || to == m_input.escaped || to == m_input.lost)
-                        return;
-                    if (isNodeOfBody ? to.index() >= firstNodeOfBody && to.index() < endOfNodesOfBody : m_input.nodes->functionOf(to) == function)
-                        isWrittenUnderNameOfRead(to, come);
+                while (!toFollow.isEmpty()) {
+                    ValueFlowNodeID from(toFollow.takeLast());
+                    ValueSetID come(listOfZerosByNode[from.index()]);
+                    m_graph.forEachSuccessor(from, [&](ValueFlowNodeID to) {
+                        if (to.index() >= firstNodeOfHost || to == m_input.escaped || to == m_input.lost)
+                            return;
+                        if (isNodeOfBody ? to.index() >= firstNodeOfBody && to.index() < endOfNodesOfBody : m_input.nodes->functionOf(to) == function)
+                            isWrittenUnderNameOfRead(to, come);
+                    });
+                }
+                AOT::sort(nodes);
+                writtenInBody[body] = nodes.map([&](uint32_t node) {
+                    return ValueFlowNodeSet { ValueFlowNodeID(node), ValueSetID(std::exchange(listOfZerosByNode[node], 0u)) };
                 });
-            }
+            });
+            m_writtenUnderNamesOfReads = ParallelArray<ValueFlowNodeSet>::concatenationOf(m_loops, WTF::move(writtenInBody));
         }
         // Whether a call has handed its operands to a function hangs on which came first, the call or the escape of the function. So a call hands what its operands are seen to hold to every function that its callee is seen to be.
         AOT_THRESHOLD(size_t, mostCalleesOfOneCallFollowed, 512);
@@ -4450,6 +4475,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             uint32_t firstStep { 0 };
             uint32_t numberOfSteps { 0 };
             bool hasRun { false };
+            bool isFirst { false };
         };
         constexpr uint32_t callsPerShare = 1 << 8;
         uint32_t numberOfSharesOfCalls = (calls.size() + callsPerShare - 1) / callsPerShare;
@@ -4505,9 +4531,13 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             plan.numberOfSteps = steps.size() - plan.firstStep;
         };
         forEachIndexInParallel(m_loops, numberOfSharesOfCalls, [&](unsigned share, unsigned worker) {
-            for (uint32_t index = share * callsPerShare; index < std::min<uint32_t>(calls.size(), (share + 1) * callsPerShare); ++index)
+            for (uint32_t index = share * callsPerShare; index < std::min<uint32_t>(calls.size(), (share + 1) * callsPerShare); ++index) {
                 planCall(m_input.statements[calls[index]], plansOfCalls[index], share, stepsOfCallsInShare[share], *m_makers[worker]);
+                plansOfCalls[index].isFirst = true;
+            }
         });
+        // The functions that the first plan of a call enters stand among the uses of the nodes that answer. They count once that plan has run.
+        BitVector hasFirstPlanRun(calls.size());
         struct SeenAtOperand {
             ValueSetID value;
             uint64_t numberOfChangesSeen { UINT64_MAX };
@@ -4517,6 +4547,10 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             return stepsOfCallsInShare[plan.share].span().subspan(plan.firstStep, plan.numberOfSteps);
         };
         auto enterFunction = [&](uint32_t index, const Step& step) {
+            if (plansOfCalls[index].isFirst) {
+                hasFirstPlanRun.quickSet(index);
+                return;
+            }
             callsAnsweredAt.ensure(step.to, [] { return Vector<uint32_t, 2>(); }).iterator->value.append(calls[index]);
             answersCalls.quickSet(step.to);
         };
@@ -4558,8 +4592,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             if (plan.numberOfSteps)
                 runStepsOfCall(index, 0, std::exchange(plan.hasRun, true));
         };
-        // The stores, the calls and the reads that a node is an operand of, in that order, each kind in the order of its statements.
-        enum class Use : uint64_t { Store, Call, Read };
+        // The stores and the calls that a node is an operand of, the calls that it answers and the reads off it, in that order, each kind in the order of its statements.
+        enum class Use : uint64_t { Store, Call, Answer, Read };
         constexpr unsigned bitsOfIndexOfUse = 30;
         RELEASE_ASSERT(std::max({ stores.size(), calls.size(), reads.size() }) < 1u << bitsOfIndexOfUse);
         auto useOf = [](ValueFlowNodeID node, Use use, uint32_t index) {
@@ -4580,13 +4614,17 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                     if (operand.node)
                         found.append(useOf(operand.node, Use::Call, index));
                 }
+                for (const Step& step : stepsOf(plansOfCalls[index])) {
+                    if (step.kind == StepOfCall::EnterFunction && m_input.statements[calls[index]].result)
+                        found.append(useOf(ValueFlowNodeID(step.to), Use::Answer, index));
+                }
                 return;
             }
             index -= calls.size();
             found.append(useOf(ValueFlowNodeID(reads[index].object), Use::Read, index));
         });
         parallelSort(m_loops, uses.mutableSpan(), std::less<uint64_t> { });
-        Vector<uint32_t> placeBehindFirstUseOfNode = makeListOfZeros(numberOfNodes);
+        Vector<uint32_t> placeBehindFirstUseOfNode = WTF::move(listOfZerosByNode);
         constexpr uint32_t usesPerShare = 1 << 12;
         forEachIndexInParallel(m_loops, (uses.size() + usesPerShare - 1) / usesPerShare, [&](unsigned share) {
             for (uint32_t index = share * usesPerShare; index < std::min<uint32_t>(uses.size(), (share + 1) * usesPerShare); ++index) {
@@ -4620,6 +4658,10 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 runStore(*index);
             while (std::optional<uint32_t> index = takeUse(Use::Call))
                 runCall(*index);
+            while (std::optional<uint32_t> index = takeUse(Use::Answer)) {
+                if (hasFirstPlanRun.quickGet(*index))
+                    arriveAt(m_input.statements[calls[*index]].result, come);
+            }
             if (answersCalls.quickGet(from.index())) {
                 for (uint32_t index : callsAnsweredAt.find(from.index())->value) {
                     if (m_input.statements[index].result)
@@ -4773,6 +4815,10 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 if (findArrival(to, come, worker, step))
                     found.append(step);
             };
+            while (std::optional<uint32_t> index = takeUseAt(place, from, Use::Answer)) {
+                if (hasFirstPlanRun.quickGet(*index))
+                    findArrivalOf(m_input.statements[calls[*index]].result);
+            }
             uint32_t numberOfCallsAnswered = 0;
             if (answersCalls.quickGet(from.index())) {
                 const Vector<uint32_t, 2>& answered = std::as_const(callsAnsweredAt).find(from.index())->value;

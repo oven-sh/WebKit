@@ -24,7 +24,7 @@ namespace AOT {
 
 class Image;
 
-// For an image built with --aot-testing=CheckProofsAtRunTime. The compiler keeps a cell in the frame of a function where it has proven that nothing holds the cell once the function is left.
+// For an image built with --aot-testing=CheckProofsAtRunTime or --aot-validate. The compiler keeps a cell in the frame of a function where it has proven that nothing holds the cell once the function is left.
 // In such an image the frame keeps the slot, and the cell lies in a range of its own where no address is handed out again for a long time. When the frame is left the cell becomes unreadable,
 // so whoever still holds it stops at the next read or write, and the stop names the allocation.
 class CheckedFrameCells {

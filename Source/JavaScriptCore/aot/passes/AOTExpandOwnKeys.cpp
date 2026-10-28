@@ -704,14 +704,26 @@ static bool planAssign(FunctionPassContext& context, const UnchangedAllocations&
     return true;
 }
 
-// The built-in copies the list that the run time keeps for the order, which is the cheaper way to a list that lives on.
+// The built-in copies the list that the run time keeps for the order, which is the cheaper way to a list that lives on. A list that only rare code hands on is made there.
 static bool isListThatLivesOn(FunctionPassContext& context, const OwnKeyWalkSite& site)
 {
     if (site.walk != OwnKeyWalk::Keys)
         return false;
+    const Function& function = context.function;
+    // The list is new, dense and holds strings: a read at a position or of its length hands it to nobody, whether or not the read has been resolved yet.
+    auto readsAtPosition = [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (user.opcode == Opcode::CallBuiltin)
+            return context.program.builtins().at(user.overload()).builtin == Builtins::ArrayPrototypeLength;
+        return user.opcode == Opcode::ElemGet && use.operandIndex == OperandIndex::ElemGet::object && user.keyIsIntegral();
+    };
     const EscapeAnalysis& escape = context.analyses.escape();
     std::optional<ObjectID> list = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(site.value);
-    return !list || std::ranges::any_of(escape.usesOf(*list), &ObjectUse::isEscape);
+    return !list || std::ranges::any_of(escape.usesOf(*list), [&](const ObjectUse& use) {
+        return use.isEscape && !readsAtPosition(use.use) && function.at(use.use.block).frequency.predicted() != BlockFrequency::Rare;
+    });
 }
 
 // `{ ...source, ..`: the first thing that a new object without a property gets.
@@ -746,7 +758,7 @@ static bool walksOneProvenOrder(FunctionPassContext& context, const OwnKeyWalkPl
 }
 
 // The sites are listed last first: an expansion moves only the values after its point.
-static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
+static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context, std::optional<OwnKeyWalk> onlyWalk = std::nullopt)
 {
     const Function& function = context.function;
     Vector<OwnKeyWalkSite, 4> sites;
@@ -758,7 +770,7 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
             continue;
         for (uint32_t index = function.at(block).values.size(); index--;) {
             std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, { block, index });
-            if (!site)
+            if (!site || (onlyWalk && site->walk != *onlyWalk))
                 continue;
             Expected<HeatClass> heat = heatClassByOwnLoops(context, block);
             if (context.runsAtMostOnce(block) || isCold(heat).predicted()) {
@@ -802,6 +814,27 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
         walks.append(WTF::move(walk));
     }
     return walks;
+}
+
+static bool writesOutKeyListWithoutTests(const PlannedWalk& walk)
+{
+    return walk.site.walk == OwnKeyWalk::Keys && walk.walkedSources.size() == 1 && !walk.remainingSourcesCall && walksWithoutTests(walk.walkedSources[0].plan);
+}
+
+Vector<ValueID, 4> findKeyListsToWriteOut(FunctionPassContext& context)
+{
+    Vector<ValueID, 4> lists;
+    const Function& function = context.function;
+    bool listsKeys = function.values.containsIf([&](const Value& value) {
+        return value.opcode == Opcode::CallBuiltin && ownKeyWalkOf(context.program, value) == OwnKeyWalk::Keys;
+    });
+    if (!listsKeys)
+        return lists;
+    for (const PlannedWalk& walk : planOwnKeyWalks(context, OwnKeyWalk::Keys)) {
+        if (writesOutKeyListWithoutTests(walk))
+            lists.append(walk.site.value);
+    }
+    return lists;
 }
 
 // The list a walk makes is new, so an earlier pass may have named the call as the guard for what holds of a new array, and a value that was named as a guard has to stay one.
@@ -916,10 +949,17 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     auto appendArray = [&](TypeID contents, std::span<const ValueID> elements) {
         return builder.append(Emission::make<&Value::setContents, &Value::setElementsOperands>(Opcode::NewArray, { }, contents, elements));
     };
+    // A list that holds a string is born with storage for every value.
+    auto appendArrayOfCells = [&](TypeID contents, std::span<const ValueID> elements) {
+        Value list = Emission::make<&Value::setContents, &Value::setElementsOperands>(Opcode::NewArray, { }, contents, elements);
+        if (!elements.empty())
+            list.setArrayStorage(ArrayStorage::Contiguous);
+        return builder.append(WTF::move(list));
+    };
 
     switch (site.walk) {
     case OwnKeyWalk::Keys:
-        return appendArray(elementTypeOf(original.type), walkedFields.map<Values>(appendName).span());
+        return appendArrayOfCells(elementTypeOf(site.provenTypeOfList ? site.provenTypeOfList : original.type), walkedFields.map<Values>(appendName).span());
     case OwnKeyWalk::Values:
         return appendArray(elementTypeOf(site.provenTypeOfList ? site.provenTypeOfList : original.type), walkedFields.map<Values>(appendRead).span());
     case OwnKeyWalk::Entries: {
@@ -1031,7 +1071,45 @@ static void emitArms(Emission& emission, const OwnKeyWalkSite& site, const Walke
         builder.emitUnreachable();
 }
 
-static void expandWalk(Emission& emission, const PlannedWalk& walk)
+// One arm without a test: what the walk makes is the result itself, and whoever reads it sees in the same round what it is.
+static void nameResultsOfOnlyArm(FunctionPassContext& context, IRBuilder& builder, BlockID arm, BlockID continuation)
+{
+    Function& function = context.function;
+    const Terminator& jump = function.at(arm).terminator;
+    if (jump.kind != TerminatorKind::Jump || jump.targets[0].block != continuation)
+        return;
+    const auto& parameters = function.at(continuation).parameters;
+    RELEASE_ASSERT(parameters.size() == jump.targets[0].arguments.size());
+    ValueSubstitution substitution(function);
+    BitVector named;
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        substitution.replace(parameters[index], jump.targets[0].arguments[index]);
+        named.set(index);
+    }
+    substitution.apply(function, &context.analyses);
+    builder.removeParameters(continuation, named);
+
+    // Flow has proven that the storage of the list stays as it was born, and here stands how it is born.
+    for (ValueID id : function.at(continuation).values) {
+        const Value& assumed = function.at(id);
+        if (assumed.opcode != Opcode::AssumeType)
+            continue;
+        const Value& made = function.at(assumed.operand(0));
+        if (made.opcode != Opcode::NewArray || made.arrayStorage() == ArrayStorage::Other || assumed.type != assumed.provenType())
+            continue;
+        Type type = context.types.at(assumed.provenType());
+        if (type.classes.size() != 1 || !type.classes[0].provenPristine.contains(PristineAspects::Storage) || type.classes[0].arrayStorage != ArrayStorage::Other)
+            continue;
+        type.classes[0].arrayStorage = made.arrayStorage();
+        TypeID withStorage = context.types.intern(type);
+        ProofScope scope = Proven::asClaimedBy(assumed).scope();
+        Value& edited = function.edit(id);
+        edited.setProvenType(Proven::byFlow(withStorage, scope));
+        edited.type = withStorage;
+    }
+}
+
+static void expandWalk(FunctionPassContext& context, Emission& emission, const PlannedWalk& walk)
 {
     IRBuilder& builder = emission.builder();
     const OwnKeyWalkSite& site = walk.site;
@@ -1049,6 +1127,8 @@ static void expandWalk(Emission& emission, const PlannedWalk& walk)
     }
     if (walk.remainingSourcesCall)
         builder.endExpansion(expansion, appendOriginalOperation(builder, *walk.remainingSourcesCall));
+    else if (writesOutKeyListWithoutTests(walk))
+        nameResultsOfOnlyArm(context, builder, site.block, expansion.continuation);
 }
 
 static PassOutcome expandStringify(FunctionPassContext& context, Emission& emission, const OwnKeyWalkSite& site)
@@ -1873,7 +1953,7 @@ PassOutcome expandOwnKeys(FunctionPassContext& context)
         walks = planOwnKeyWalks(context);
     for (const PlannedWalk& walk : walks) {
         if (!walk.walkedSources.isEmpty())
-            expandWalk(emission, walk);
+            expandWalk(context, emission, walk);
         else if (expandStringify(context, emission, walk.site) == PassOutcome::Unchanged)
             continue;
         context.build.statistics().count(StatisticID::OwnKeyWalksExpanded, std::max<uint64_t>(walk.walkedSources.size(), 1));

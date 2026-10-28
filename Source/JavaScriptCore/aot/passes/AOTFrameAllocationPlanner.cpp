@@ -202,14 +202,6 @@ static bool isValueOfDeferringField(const Program& program, const Value& user, u
     });
 }
 
-// A validating build reads the header of every object and closure that a proof names, and a cell of a frame may have none. An array has its header wherever it lies.
-static bool staysOnHeapForValidation(const Program& program, const BuildContext& build, const Value& allocation)
-{
-    if (!build.validates() || arrayAllocationsWithStorage.contains(allocation.opcode))
-        return false;
-    return allocation.opcode != Opcode::NewObject || !program.at(allocation.layout()).isEnvironment();
-}
-
 // A conversion, a test against `prototype` and the like read members of the function, which makes it an object with properties.
 static bool treatsOperandAsObject(Opcode opcode, uint32_t operandIndex)
 {
@@ -411,7 +403,7 @@ void FramePlanner::collectCandidates()
                 m_plan.count(StatisticID::EmptyArgumentListsShared);
                 continue;
             }
-            if (value.storage() != AllocationStorage::Heap || staysOnHeapForValidation(m_program, m_build, value))
+            if (value.storage() != AllocationStorage::Heap)
                 continue;
             if (arrayAllocationsWithStorage.contains(value.opcode) && !canLieInFrame(m_program, m_build, value))
                 continue;

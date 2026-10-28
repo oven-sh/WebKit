@@ -246,10 +246,14 @@ public:
     void remove(StructureID, const CachedName&, SlotAccess);
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
+    // For a store under the name of a field that the object lacks. The filter is for all the names of a Structure: it answers for this store, and it lets the stubs create the fields behind this one.
+    bool fileFilterAndAskWhetherStoreCreatesOwnField(JSGlobalObject*, Object&, uint32_t identifierNumber);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
     void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
+    // As branchIfChainMayHaveName() of the stubs: no object above has an accessor or a property that cannot be written under the name, so a store creates the object's own field.
+    bool storeCreatesOwnField(const Object&, uint32_t identifierNumber) const;
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
     bool mayBeNameOfObjectPrototype(uint32_t identifierNumber) const { return m_namesOfObjectPrototypes[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     const AbsenceFilter& absenceFilterFor(StructureID id) const { return m_absenceFilters[AbsenceFilter::indexFor(id.bits())]; }
@@ -281,6 +285,8 @@ public:
 private:
     using BitPerName = std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64>;
 
+    void didChangeObjectThatFiltersSpeakOf(JSObject* changed, UniquedStringImpl* uidOrNull);
+
     // Pages of the VM: all zero, and none is touched before something is written to it or read from it.
     struct Tables {
         std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
@@ -298,6 +304,9 @@ private:
     Tables& m_tables;
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters>& m_absenceFilters { m_tables.absenceFilters };
     uint32_t m_absenceFilterGenerationForStores { 1 };
+    uint32_t m_changesUnderNamesOnChains { 0 };
+    // What a filter says, and what the names of the Object.prototypes say, it says of these.
+    ObjectsSeen m_objectsThatFiltersSpeakOf;
     BitPerName& m_namesChangedOnChains { m_tables.namesChangedOnChains };
     BitPerName& m_namesOfObjectPrototypes { m_tables.namesOfObjectPrototypes };
     std::array<uint8_t, MissesOfPairs::numberOfCounters>& m_missesOfPairs { m_tables.missesOfPairs };
@@ -338,7 +347,6 @@ public:
     void countNamed(ASCIILiteral what, UniquedStringImpl* name);
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
     void dumpNamedCounts(PrintStream&) const;
-    // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
     void remember(const FieldExit& exit) { placeOf(exit.structureBefore, exit.name) = exit; }
     void forgetFieldExits() { m_fieldExits.fill({ }); }
     FieldExit* findFieldExit(StructureID structureID, uint32_t name)
@@ -346,7 +354,6 @@ public:
         FieldExit& exit = placeOf(structureID, name);
         return exit.field && exit.structureBefore == structureID && exit.name == name ? &exit : nullptr;
     }
-    bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }
     void didAddProperty(Structure* before, Structure* after);
     const Slot* findByKey(Structure*, UniquedStringImpl*, SlotAccess);
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
@@ -401,7 +408,6 @@ private:
     JSCell* m_holderLookedAtByName { nullptr };
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     uint8_t* m_counterOfPairToFile { nullptr };
-    StructureID m_structureOfLastFieldCreatedOutsideStubs;
     FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldExit::numberOfPlaces]; }
     std::array<FieldExit, FieldExit::numberOfPlaces> m_fieldExits { };
     std::atomic<bool> m_shouldForgetMisses { false };

@@ -116,7 +116,8 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
         const FieldData* field = object->fieldNamed(*instance->state, identifier);
         if (field && object->hasExtraProperties() && !object->read(*field))
             object->ensureStructureForExtraProperties(vm);
-        Object::putWithKnownField(object, globalObject, identifier, value, slot, field);
+        bool chainLetsStoresPass = field && !object->isInSlot(*field) && vm.aotState().propertyCaches->fileFilterAndAskWhetherStoreCreatesOwnField(globalObject, *object, field->name);
+        Object::putWithKnownField(object, globalObject, identifier, value, slot, field, chainLetsStoresPass);
         RETURN_IF_EXCEPTION(scope, void());
         object->state().objects->classes.didStoreByName(vm, object->layout(), identifier.impl());
         return;

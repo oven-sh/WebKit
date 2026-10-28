@@ -154,7 +154,6 @@ static bool callsOutlinedBody(const Program& program, const Value& user)
     return user.opcode == Opcode::CallDirect && program.at(user.function()).role == FunctionRole::OutlinedBody;
 }
 
-// Of everything whose type an array fits, only arrays lie in frames in a validating build.
 static bool mayBeArray(const Type& type)
 {
     return type.anyObject || type.findClassPart(BuiltinClasses::Array);
@@ -162,24 +161,25 @@ static bool mayBeArray(const Type& type)
 
 void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex)
 {
-    // checkIsNoFrameArray() asks more of these.
-    if (callsOutlinedBody(m_program, user) || mayBeArray(typeOf(operand)))
+    if (callsOutlinedBody(m_program, user))
         return;
+    // checkIsNoFrameArray() asks more of an array.
+    FrameCellsAsked asked = mayBeArray(typeOf(operand)) ? FrameCellsAsked::AllButArrays : FrameCellsAsked::All;
     const OperandInfo& info = operandInfoOf(user.opcode, operandIndex);
     if (!info.uses.contains(OperandUse::Retains)) {
         if (effectRuleOf(user.opcode) == EffectRule::Access && mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
-            checkIsNotFrameCell(context, get(operand), std::nullopt);
+            checkIsNotFrameCell(context, get(operand), std::nullopt, asked);
         return;
     }
     switch (info.retainedIn) {
     case RetainedIn::UnknownMemory:
         if (mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
-            checkIsNotFrameCell(context, get(operand), std::nullopt);
+            checkIsNotFrameCell(context, get(operand), std::nullopt, asked);
         return;
     case RetainedIn::Operand: {
         ValueID retainer = user.operand(*info.retainingOperand);
         RELEASE_ASSERT(retainer);
-        checkIsNotFrameCell(context, get(operand), get(retainer));
+        checkIsNotFrameCell(context, get(operand), get(retainer), asked);
         return;
     }
     case RetainedIn::Result:
@@ -205,7 +205,7 @@ void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& cont
 void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex)
 {
     if (mayBeArray(typeOf(operand)) && !mayBeGivenFrameArray(m_program, &inputs().flow, m_function, user, operandIndex))
-        checkIsNotFrameCell(context, get(operand), std::nullopt);
+        checkIsNotFrameCell(context, get(operand), std::nullopt, FrameCellsAsked::Arrays);
 }
 
 void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t)

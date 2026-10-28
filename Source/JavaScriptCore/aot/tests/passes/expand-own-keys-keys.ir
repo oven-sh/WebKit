@@ -37,6 +37,6 @@ function f2 name="unchangedAllocation" parameters=[{type=number}, {type=string}]
 # CHECK: v2:{{*}}= NewObject -, v0, v1 layout=L0 fields=[0, 1]
 # CHECK-NEXT: [[xKey2]]: "x" = String string="x"
 # CHECK-NEXT: [[yKey2]]: "y" = String string="y"
-# CHECK-NEXT: [[keys2]]: Array<string> = NewArray [[xKey2]], [[yKey2]] contents=string
+# CHECK-NEXT: [[keys2]]: Array<string, Contiguous> = NewArray [[xKey2]], [[yKey2]] contents=string arrayStorage=Contiguous
 # CHECK-NOT: ObjectKeys
 }
