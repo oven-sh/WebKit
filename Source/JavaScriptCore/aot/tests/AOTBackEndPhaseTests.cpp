@@ -31,6 +31,7 @@
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
+#include "B3RegionCloner.h"
 #include "B3RotateLoops.h"
 #include "B3SlotBaseValue.h"
 #include "B3UnrollLoops.h"
@@ -971,6 +972,155 @@ static void testBoundReadTwiceIsHeldAgainstWhatStandsForIt()
     }
 }
 
+// What leaves a block that may be copied goes through a variable. A user in another block that names the value itself is seen.
+static void testNoOtherBlockNamesValueOfBlockThatMayBeCopied()
+{
+    B3::Procedure proc;
+    B3::Origin origin = originOf(otherOrigin);
+    B3::BasicBlock* root = proc.addBlock();
+    B3::BasicBlock* copied = proc.addBlock();
+    B3::BasicBlock* behind = proc.addBlock();
+    B3::Value* argument = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+    root->appendNew<B3::Value>(proc, B3::Jump, origin);
+    root->setSuccessors(B3::FrequentedBlock(copied));
+    B3::Value* sum = copied->appendNew<B3::Value>(proc, B3::Add, origin, argument, argument);
+    copied->appendNew<B3::Value>(proc, B3::Jump, origin);
+    copied->setSuccessors(B3::FrequentedBlock(behind));
+    B3::Value* product = behind->appendNew<B3::Value>(proc, B3::Mul, origin, sum, argument);
+    behind->appendNew<B3::Value>(proc, B3::Return, origin, product);
+    proc.resetReachability();
+    B3::validate(proc);
+
+    B3::RegionCloner cloner(proc);
+    cloner.addBlock(copied);
+    cloner.demoteEscapingValues();
+    B3::Value* read = product->child(0);
+    AOT_TEST_CHECK(read != sum && read->owner == behind);
+    AOT_TEST_CHECK(cloner.valuesStayInDeclaredBlocks());
+    product->child(0) = sum;
+    AOT_TEST_CHECK(!cloner.valuesStayInDeclaredBlocks());
+    product->child(0) = read;
+    AOT_TEST_CHECK(cloner.finish());
+    B3::fixSSA(proc);
+    B3::validate(proc);
+}
+
+// do { if (isFirstKind) sum += object->word; else object->otherWord = index; } while (++index < count), with the two words at one address and under two heaps.
+// The read leaves the loop. It is held against the word on the way that used it, and on the other way only where it stood in front of the branch.
+static void testLoadBehindBranchIsNotHeldAgainstTurnsThatGoOtherWay()
+{
+    for (bool standsInFrontOfBranch : { false, true }) {
+        B3::Policy policy;
+        policy.loops.hoistsOnlyFromLikelyPaths = true;
+        policy.knownProperties.trustsKnownDereferenceableBytes = true;
+        policy.validation.logsMovedLoads = true;
+        B3::Procedure proc(policy);
+        B3::Origin origin = originOf(otherOrigin);
+        B3::BasicBlock* root = proc.addBlock();
+        B3::BasicBlock* tests = proc.addBlock();
+        B3::BasicBlock* reads = proc.addBlock();
+        B3::BasicBlock* stores = proc.addBlock();
+        B3::BasicBlock* latch = proc.addBlock();
+        B3::BasicBlock* exit = proc.addBlock();
+        B3::Variable* index = proc.addVariable(B3::Int64);
+        B3::Variable* sum = proc.addVariable(B3::Int64);
+        auto get = [&](B3::BasicBlock* block, B3::Variable* variable) -> B3::Value* {
+            return block->appendNew<B3::VariableValue>(proc, B3::Get, origin, variable);
+        };
+        auto set = [&](B3::BasicBlock* block, B3::Variable* variable, B3::Value* value) {
+            block->appendNew<B3::VariableValue>(proc, B3::Set, origin, variable, value);
+        };
+        auto make = [&](B3::BasicBlock* block, B3::Opcode opcode, B3::Value* left, B3::Value* right) -> B3::Value* {
+            return block->appendNew<B3::Value>(proc, opcode, origin, left, right);
+        };
+        auto jump = [&](B3::BasicBlock* block, B3::BasicBlock* target) {
+            block->appendNew<B3::Value>(proc, B3::Jump, origin);
+            block->setSuccessors(B3::FrequentedBlock(target));
+        };
+        B3::Value* object = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+        B3::Value* isFirstKind = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR1);
+        B3::Value* count = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR2);
+        proc.setKnownDereferenceableBytes(object, 16);
+        set(root, index, root->appendNew<B3::Const64Value>(proc, origin, 0));
+        set(root, sum, root->appendNew<B3::Const64Value>(proc, origin, 0));
+        jump(root, tests);
+        B3::Value* word = (standsInFrontOfBranch ? tests : reads)->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int64, origin, object, 8, B3::HeapRange(1, 2));
+        tests->appendNew<B3::Value>(proc, B3::Branch, origin, isFirstKind);
+        tests->setSuccessors(B3::FrequentedBlock(reads), B3::FrequentedBlock(stores, B3::FrequencyClass::Rare));
+        set(reads, sum, make(reads, B3::Add, get(reads, sum), word));
+        jump(reads, latch);
+        stores->appendNew<B3::MemoryValue>(proc, B3::Store, origin, get(stores, index), object, 8, B3::HeapRange(2, 3));
+        jump(stores, latch);
+        set(latch, index, make(latch, B3::Add, get(latch, index), latch->appendNew<B3::Const64Value>(proc, origin, 1)));
+        latch->appendNew<B3::Value>(proc, B3::Branch, origin, make(latch, B3::LessThan, get(latch, index), count));
+        latch->setSuccessors(B3::FrequentedBlock(tests), B3::FrequentedBlock(exit));
+        exit->appendNew<B3::Value>(proc, B3::Return, origin, get(exit, sum));
+        proc.resetReachability();
+        B3::fixSSA(proc);
+        B3::validate(proc);
+
+        AOT_TEST_CHECK(B3::hoistLoopInvariantValues(proc));
+        AOT_TEST_CHECK(word->owner == root);
+        AOT_TEST_CHECK(proc.movedLoadLog().insertChecks(proc, nullptr));
+        B3::validate(proc);
+        auto numberOfChecksIn = [&](B3::BasicBlock* block) {
+            unsigned result = 0;
+            for (B3::Value* value : *block)
+                result += value->opcode() == B3::Patchpoint && value->numChildren() == 2 && value->child(0) == object && value->child(1) == word;
+            return result;
+        };
+        AOT_TEST_CHECK(numberOfChecksIn(standsInFrontOfBranch ? tests : reads) == 1);
+        AOT_TEST_CHECK(numberOfChecksIn(stores) == standsInFrontOfBranch);
+    }
+}
+
+// A phase has decided a comparison that stood in a block without a value that stays in place. A later phase puts a value that only leaves at the head of the block, in front of what was compared.
+// The check stands behind what it names. A value that writes keeps it in front, where there is nothing to compare yet.
+static void testDecidedComparisonIsCheckedBehindValueThatOnlyLeaves()
+{
+    for (bool writes : { false, true }) {
+        B3::Policy policy;
+        policy.validation.logsDecidedComparisons = true;
+        B3::Procedure proc(policy);
+        B3::Origin origin = originOf(otherOrigin);
+        B3::BasicBlock* root = proc.addBlock();
+        B3::BasicBlock* block = proc.addBlock();
+        B3::Value* argument = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+        B3::Value* bound = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR1);
+        B3::Value* one = root->appendNew<B3::Const64Value>(proc, origin, 1);
+        root->appendNew<B3::Value>(proc, B3::Jump, origin);
+        root->setSuccessors(B3::FrequentedBlock(block));
+        B3::Value* sum = block->appendNew<B3::Value>(proc, B3::Add, origin, argument, one);
+        B3::Value* comparison = block->appendNew<B3::Value>(proc, B3::Below, origin, sum, bound);
+        proc.movedLoadLog().addDecidedComparison(proc, comparison, block, block->size(), sum, bound, true);
+        block->appendNew<B3::Value>(proc, B3::Return, origin, sum);
+        proc.resetReachability();
+
+        auto* leaves = proc.add<B3::PatchpointValue>(B3::Void, origin);
+        leaves->effects = B3::Effects::none();
+        leaves->effects.exitsSideways = true;
+        leaves->effects.reads = B3::HeapRange::top();
+        if (writes)
+            leaves->effects.writes = B3::HeapRange::top();
+        leaves->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+        block->values().insert(0, leaves);
+        leaves->owner = block;
+        B3::validate(proc);
+
+        AOT_TEST_CHECK(proc.movedLoadLog().insertChecks(proc, nullptr, nullptr) == !writes);
+        B3::validate(proc);
+        unsigned numberOfChecks = 0;
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* value = block->at(index);
+            if (value == leaves || value->opcode() != B3::Patchpoint)
+                continue;
+            ++numberOfChecks;
+            AOT_TEST_CHECK(value->numChildren() == 2 && value->child(0) == sum && value->child(1) == bound && index + 1 == block->size() - 1);
+        }
+        AOT_TEST_CHECK(numberOfChecks == !writes);
+    }
+}
+
 // Two loops in a row are both copied. The second goes on from the counter of the first, up to a number that the first has counted.
 static void testLoopGoesOnFromCounterOfCopiedLoop()
 {
@@ -1670,6 +1820,9 @@ std::span<const NativeTest> backEndPhaseTests()
         { "merged-tests-of-bits-tell-the-log-of-the-word-read-again"_s, testMergedTestsOfBitsTellTheLogOfTheWordReadAgain },
         { "variable-read-again-in-loop-is-held-against-what-stands-for-it"_s, testVariableReadAgainInLoopIsHeldAgainstWhatStandsForIt },
         { "bound-read-twice-is-held-against-what-stands-for-it"_s, testBoundReadTwiceIsHeldAgainstWhatStandsForIt },
+        { "no-other-block-names-value-of-block-that-may-be-copied"_s, testNoOtherBlockNamesValueOfBlockThatMayBeCopied },
+        { "load-behind-branch-is-not-held-against-turns-that-go-other-way"_s, testLoadBehindBranchIsNotHeldAgainstTurnsThatGoOtherWay },
+        { "decided-comparison-is-checked-behind-value-that-only-leaves"_s, testDecidedComparisonIsCheckedBehindValueThatOnlyLeaves },
         { "loop-goes-on-from-counter-of-copied-loop"_s, testLoopGoesOnFromCounterOfCopiedLoop },
         { "merge-into-branch-with-two-likely-ways"_s, testMergeIntoBranchWithTwoLikelyWays },
         { "merge-keeps-likely-branch"_s, testMergeKeepsLikelyBranch },

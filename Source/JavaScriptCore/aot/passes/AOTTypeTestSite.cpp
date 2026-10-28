@@ -234,6 +234,25 @@ bool TestSiteReporter::takesAwaySitesInColdCode()
     return m_blockIsCold;
 }
 
+// A catch clause counts as rare because a throw leads to it. It is code of the program all the same, no arm of a failed test, and a program that throws to leave a loop runs it as often as the loop.
+bool TestSiteReporter::isWrittenInCatchClause(BlockID block)
+{
+    if (!m_blocksOfCatchClauses) {
+        const CFG& cfg = analyses().cfg();
+        m_blocksOfCatchClauses.emplace(function().blocks.size());
+        for (BlockID candidate : cfg.hasHandlers() ? cfg.reversePostOrder() : std::span<const BlockID> { }) {
+            if (function().at(candidate).frequency.predicted() != BlockFrequency::Normal)
+                continue;
+            auto comesOutOfClause = [&](Edge edge) {
+                return !edge.isHandlerEdge() && (m_blocksOfCatchClauses->quickGet(edge.from.index()) || cfg.reversePostOrderIndex(edge.from) >= cfg.reversePostOrderIndex(candidate));
+            };
+            if (function().at(candidate).role == BlockRole::CatchHandler || (candidate != entryBlock && std::ranges::all_of(cfg.incomingEdges(candidate), comesOutOfClause)))
+                m_blocksOfCatchClauses->quickSet(candidate.index());
+        }
+    }
+    return m_blocksOfCatchClauses->quickGet(block.index());
+}
+
 void TestSiteReporter::keepPlanOfUse(PlannedAccess&& planned)
 {
     if (m_plannedAccessOfValue.isEmpty())

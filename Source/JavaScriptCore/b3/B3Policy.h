@@ -55,6 +55,7 @@ struct ValidationPolicy {
     bool takesAccessesOfVectorTurnsToLieApart { false };
     bool takesLanesToHoldWholeValues { false };
     bool takesSumsOfNumbersToBeWhole { false };
+    bool comparesAllLanesWithSign { false };
     bool setsUpFrameBehindWrites { false };
 };
 

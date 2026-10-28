@@ -433,6 +433,27 @@ static void checkClosedHolders(RealmComparison& comparison)
     });
 }
 
+static void checkMethodsCallingStartupLoads(RealmComparison& comparison)
+{
+    VM& vm = comparison.vm();
+    auto& table = comparison.table;
+    forEachFoundObject(comparison, [&](BuiltinID holder, JSObject* object) {
+        if (table.at(holder).sameObjectAs)
+            return;
+        for (BuiltinName name : table.namesOfHostMethodsCallingStartupLoads()) {
+            if (table.findOwnMember(holder, name))
+                continue;
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+            bool hasMethod = object->methodTable()->getOwnPropertySlot(object, comparison.realm, table.identifierOf(vm, name), slot);
+            if (scope.exception()) [[unlikely]]
+                scope.clearException();
+            else if (hasMethod)
+                comparison.mismatches.append(makeString(table.textOf(holder), describeMemberStep(table.identifierOf(vm, name)), ": is not in the table"_s));
+        }
+    });
+}
+
 // Asks the table alone: a look at the object would add the member.
 static const HashTableValue* findRowOfStaticTable(JSObject* holder, UniquedStringImpl* key)
 {
@@ -605,6 +626,7 @@ Vector<String> BuiltinTable::mismatches(JSGlobalObject* realm) const
     checkInheritance(comparison);
     checkObjectIdentities(comparison);
     checkClosedHolders(comparison);
+    checkMethodsCallingStartupLoads(comparison);
     checkMembersAddedAtFirstRead(comparison);
     checkThatNothingSettlesLater(comparison);
     checkClasses(comparison);

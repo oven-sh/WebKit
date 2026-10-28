@@ -183,6 +183,22 @@ struct CastSimplification : Rewrite {
         return !typeOf(operand).isSubsetOf(program.at(expected), program);
     }
 
+    // What a list is expected to hold says how its elements are stored, also where the list itself is proven. A literal without elements is expected to hold nothing, which says nothing.
+    bool expectsContentsThatAreNotIn(const Value& cast, const Type& type)
+    {
+        TypeID expected = cast.expected().predicted();
+        if (!expected || !type.isSubsetOf(program.at(expected), program) || isUnchangedByCastTo(type, program.at(expected)))
+            return false;
+        return std::ranges::any_of(program.at(expected).classes, [](const ClassPart& part) {
+            return std::ranges::any_of(part.writtenContents, [](TypeID contents) { return contents != TypeTable::never; });
+        });
+    }
+
+    bool expectsOtherContentsThan(const Value& cast, ValueID operand)
+    {
+        return cast.expected().predicted() != at(operand).expected().predicted() && expectsContentsThatAreNotIn(cast, typeOf(operand));
+    }
+
     void eraseValue(BlockID block, uint32_t index)
     {
         if (erasedValues.isEmpty() || erasedValues.last().first != block)
@@ -229,6 +245,8 @@ struct CastSimplification : Rewrite {
             ValueID inner = substitution.resolve(at(narrowest).operand(0));
             if (expectsNarrowerTypeThan(at(narrowest), inner) || !isUnchangedByCastTo(typeOf(inner), typeOf(narrowest)))
                 break;
+            if (expectsOtherContentsThan(at(narrowest), inner) && expectsContentsThatAreNotIn(at(narrowest), typeOf(id)))
+                break;
             narrowest = inner;
         }
         unsigned changed = narrowest != operand;
@@ -255,7 +273,7 @@ struct CastSimplification : Rewrite {
         // A cast stands behind the checks in front of every operand, and what takes its place behind those in front of the first.
         bool standsBehindMoreChecksThanOperand = cast.opcode == Opcode::Check || cast.numberOfOperands() > 1;
 
-        if (!expectsNarrowerTypeThan(cast, operand) && typeOf(operand).hasLiteralStrings() == typeOf(id).hasLiteralStrings() && isUnchangedByCastTo(typeOf(operand), typeOf(id))) {
+        if (!expectsNarrowerTypeThan(cast, operand) && !expectsOtherContentsThan(cast, operand) && typeOf(operand).hasLiteralStrings() == typeOf(id).hasLiteralStrings() && isUnchangedByCastTo(typeOf(operand), typeOf(id))) {
             substitution.replace(id, operand);
             eraseValue(block, index);
         } else if (repeatableCasts.contains(cast.opcode))

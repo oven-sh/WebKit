@@ -26,6 +26,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTSchemaEnums.h"
 #include "AOTSort.h"
+#include "AOTSortedSet.h"
 #include "AOTStatistics.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
@@ -36,6 +37,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <compare>
 #include <cstdint>
 #include <initializer_list>
 #include <memory>
@@ -653,6 +655,62 @@ static void testSortOfIntegersAndIDs()
     });
 }
 
+struct CountedValue {
+    friend bool operator==(CountedValue a, CountedValue b)
+    {
+        ++numberOfComparisons;
+        return a.value == b.value;
+    }
+    friend std::strong_ordering operator<=>(CountedValue a, CountedValue b)
+    {
+        ++numberOfComparisons;
+        return a.value <=> b.value;
+    }
+
+    static inline size_t numberOfComparisons = 0;
+
+    uint32_t value { 0 };
+};
+
+static void testShortSortedListIsLookedForByHalving()
+{
+    WeakRandom random(1);
+    auto createList = [&](size_t size, uint32_t numberOfValues) {
+        Vector<uint32_t> values(size, [&](size_t) {
+            return random.getUint32(numberOfValues);
+        });
+        std::ranges::sort(values);
+        values.shrink(std::ranges::unique(values).begin() - values.begin());
+        return values;
+    };
+    for (size_t size : { 0, 1, 2, 3, 17, 40 }) {
+        for (size_t otherSize : { 0, 1, 2, 16, 33, 700 }) {
+            for (uint32_t numberOfValues : { 3, 50, 2000, 100000 }) {
+                Vector<uint32_t> list = createList(size, numberOfValues);
+                Vector<uint32_t> other = createList(otherSize, numberOfValues);
+                auto isInOther = [&](uint32_t value) { return other.contains(value); };
+                AOT_TEST_CHECK(sortedListsOverlap(list.span(), other.span()) == std::ranges::any_of(list, isInOther));
+                AOT_TEST_CHECK(sortedListsOverlap(other.span(), list.span()) == std::ranges::any_of(list, isInOther));
+                AOT_TEST_CHECK(sortedListIncludes(other.span(), list.span()) == std::ranges::all_of(list, isInOther));
+            }
+        }
+    }
+
+    constexpr uint32_t size = 1 << 16;
+    Vector<CountedValue> many(size, [](size_t index) {
+        return CountedValue { static_cast<uint32_t>(2 * index) };
+    });
+    for (uint32_t value : { 0u, 1u, size, size + 1, 2 * size }) {
+        std::array<CountedValue, 1> one { CountedValue { value } };
+        bool isAmongMany = !(value % 2) && value < 2 * size;
+        CountedValue::numberOfComparisons = 0;
+        AOT_TEST_CHECK(sortedListsOverlap(std::span<const CountedValue>(one), many.span()) == isAmongMany);
+        AOT_TEST_CHECK(sortedListsOverlap(many.span(), std::span<const CountedValue>(one)) == isAmongMany);
+        AOT_TEST_CHECK(sortedListIncludes(many.span(), std::span<const CountedValue>(one)) == isAmongMany);
+        AOT_TEST_CHECK(CountedValue::numberOfComparisons < 3 * 20);
+    }
+}
+
 static void testHeapSortBehindTooManyPartitions()
 {
     using Record = SortedRecord<2>;
@@ -1101,6 +1159,7 @@ std::span<const NativeTest> supportTests()
         { "sort/equal-elements"_s, testSortLeavesEqualElementsWhereTheStandardLibraryDoes },
         { "sort/integers-and-ids"_s, testSortOfIntegersAndIDs },
         { "sort/heap-sort-behind-too-many-partitions"_s, testHeapSortBehindTooManyPartitions },
+        { "sorted-lists/short-list-is-looked-for-by-halving"_s, testShortSortedListIsLookedForByHalving },
         { "vector/grows-as-that-of-wtf"_s, testVectorsGrowAsThoseOfWTF },
         { "enum-names/end-at-the-last-enumerator"_s, testNamesOfEnumeratorsEndAtTheLastOne },
     };

@@ -17,6 +17,7 @@
 #include <array>
 #include <wtf/BitVector.h>
 #include <wtf/CommaPrinter.h>
+#include <wtf/StdLibExtras.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -102,17 +103,17 @@ struct RowsWithoutPayload {
 
 const Effects* findDeclaredEffectsOfEveryValue(Opcode opcode)
 {
-    static const RowsWithoutPayload rows = [] {
-        RowsWithoutPayload result;
+    static const RowsWithoutPayload& rows = *[] {
+        auto result = makeUniqueWithoutFastMallocCheck<RowsWithoutPayload>();
         for (Opcode member : allMembersOf<Opcode>) {
             RowWithoutPayloadBuilder builder;
             forEachDeclaredEffect(member, builder);
             if (builder.namesPlaceByPayload())
                 continue;
-            result.effects[static_cast<unsigned>(member)] = withDeclaredKindOfThrow(member, builder.effects());
-            result.opcodes.add(member);
+            result->effects[static_cast<unsigned>(member)] = withDeclaredKindOfThrow(member, builder.effects());
+            result->opcodes.add(member);
         }
-        return result;
+        return result.release();
     }();
     return rows.opcodes.contains(opcode) ? &rows.effects[static_cast<unsigned>(opcode)] : nullptr;
 }

@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFlowReport.h"
 #include "AOTFlowResults.h"
 #include <wtf/ScopedLambda.h>
 
@@ -18,7 +19,8 @@ namespace Typed {
 
 using ListenerForSetsOutsideTypes = ScopedLambda<void(const String& place, const Type& held, const Type& declared)>;
 
-FlowResults analyzeValueFlow(Program&, TypeTable&, BuildContext&, const ListenerForSetsOutsideTypes* = nullptr);
+// `goesOn` is asked once, as soon as its lists are known. False: nobody reads the results, so they say nothing.
+FlowResults analyzeValueFlow(Program&, TypeTable&, BuildContext&, const ListenerForSetsOutsideTypes* = nullptr, const JudgeOfUsesOfLibraryCode* goesOn = nullptr);
 
 } } } // namespace JSC::AOT::Typed
 

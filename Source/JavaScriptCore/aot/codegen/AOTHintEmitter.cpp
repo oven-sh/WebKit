@@ -9,13 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTBarrierEmitter.h"
-#include "AOTBuiltinTypes.h"
 #include "AOTCodeRecords.h"
 #include "AOTCodeSites.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTFunctionAnalyses.h"
-#include "AOTGuardAvailability.h"
-#include "AOTInductionVariables.h"
 #include "AOTInstance.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubCatalog.h"

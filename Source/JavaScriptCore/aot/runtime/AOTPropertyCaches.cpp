@@ -2257,7 +2257,8 @@ bool SiteCaches::tryWrite(SiteCache site, const Slot& slot, unsigned mostRefills
     }
     if (site->get().kind == Slot::Kind::Constant)
         m_state.propertyCaches->watchedValues().stopWatchingConstant(site);
-    if (!site->get().isEmpty())
+    // A slot without a Structure fits no object: didFailToFill() put it there.
+    if (!site->get().isEmpty() && site->get().structureID)
         count(m_state.instance, RuntimeCounterID::SiteCacheRefills);
     site->set(m_writtenRegions, slot);
     m_wasWrittenSinceLastSweep = true;
@@ -2409,7 +2410,7 @@ size_t SiteCaches::removeDeadEntries(VM& vm, CollectionScope scope)
 StringKeyCache::StringKeyCache(State& state)
     : m_instance(state.instance)
     , m_cageBase(state.instance.vm->heap.cage().base())
-    , m_cageSize(state.instance.vm->heap.cage().size())
+    , m_cageSize(state.instance.vm->heap.cage().start() - state.instance.vm->heap.cage().base() + state.instance.vm->heap.cage().size())
     , m_maxCachedKeyLength(runtimeLimitValue(*state.instance.vm, LimitID::MaxCachedKeyLength))
 {
     state.caches->add(CacheKind::WeakByKey, "StringKeyCache"_s, *this);

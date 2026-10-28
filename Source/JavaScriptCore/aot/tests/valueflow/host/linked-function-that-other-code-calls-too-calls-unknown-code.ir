@@ -1,0 +1,41 @@
+# [[1]].flatMap(same), beside a function of the library that no record describes (runtimefunction 73) and that calls flatIntoArrayWithCallback (runtimefunction 41) too
+# Nothing says what a call of the other function does, so what it hands to the linked function may be any value, and the linked function calls it: code that nobody compiles may write.
+# Called by the code behind described built-ins alone: linked-function-that-only-the-code-behind-described-built-ins-calls-is-such-code-too.ir
+# LIBRARY: own
+# RUN: valueflow-why flag=h6
+# CHECK: flag=h6
+# CHECK-NOT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="ArrayPrototype.ts" displayPath="ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=41 function=f3 visibility=Private
+runtimefunction id=42 function=f1
+runtimefunction id=73 function=f4 visibility=Private
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0 contents=anything
+    v2 = NewArray v1 contents=anything
+    v3 = NewClosure function=f2
+    v4 = PropGet v2 key="flatMap"
+    v5 = Call v4, v2, v3 calleeKey="flatMap"
+    Return
+}
+function f1 name="flatMap" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=42 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = CallDirect v0, v1, v2 function=f3
+    Return v3
+}
+function f2 name="same" module=m0 kind=Arrow parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}
+function f3 name="flatIntoArrayWithCallback" module=m1 role=Library enclosingRuntimeFunction=41 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Integer integer=0
+    v4 = ElemGet v0, v3
+    v5 = Call v1, v2, v4, v3, v0
+    Return v5
+}
+function f4 name="performIteration" module=m1 role=Library enclosingRuntimeFunction=73 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = CallDirect v0, v1, v2 function=f3
+    Return v3
+}

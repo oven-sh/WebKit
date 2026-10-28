@@ -43,7 +43,7 @@ void returnIfFencedAndNotBlack(StubAssembler& jit, GPRReg owner)
 // Does what Heap::addToRememberedSet() does for a black owner while no collector runs concurrently. Falls through when the segment is full, which the operation handles.
 static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scratch)
 {
-#if CPU(X86_64) && !ASSERT_ENABLED
+#if CPU(X86_64)
     constexpr GPRReg top = CCallHelpers::s_scratchRegister;
     RELEASE_ASSERT(noOverlap(owner, scratch, top));
     JumpList leftToOperation;
@@ -54,6 +54,9 @@ static void returnIfMarkStackTakes(StubAssembler& jit, GPRReg owner, GPRReg scra
     leftToOperation.append(jit.branch64(CCallHelpers::AboveOrEqual, top, TrustedImm32(MutatorMarkStackLayout::segmentCapacity)));
     jit.addPtr(TrustedImm32(1), Address(scratch, MutatorMarkStackLayout::offsetOfTop()));
     jit.loadPtr(Address(scratch, MutatorMarkStackLayout::offsetOfHeadSegment()), scratch);
+#if ASSERT_ENABLED
+    jit.addPtr(TrustedImm32(1), Address(scratch, MutatorMarkStackLayout::offsetOfTopInSegment));
+#endif
     jit.storePtr(owner, BaseIndex(scratch, top, CCallHelpers::TimesEight, MutatorMarkStackLayout::offsetOfFirstCellInSegment));
     jit.store8(TrustedImm32(static_cast<int32_t>(CellState::PossiblyGrey)), Address(owner, JSCell::cellStateOffset()));
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(heap.barriersExecuted)), scratch);

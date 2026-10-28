@@ -140,8 +140,8 @@ inline constexpr OpcodeSet operatorsOnInt32 { Opcode::BitAnd, Opcode::BitOr, Opc
 
 inline constexpr OpcodeSet operatorsHoistedIntoPredecessors = relationalOperators | operatorsOnInt32;
 
-// The test of a parameter for truthiness that a block branches on, or the first operator of a block.
-inline constexpr OpcodeSet operationsHoistedIntoPredecessors = operatorsHoistedIntoPredecessors | OpcodeSet { Opcode::ToBoolean };
+// The test of a parameter for truthiness that a block branches on, or the first operator or guard of a block.
+inline constexpr OpcodeSet operationsHoistedIntoPredecessors = operatorsHoistedIntoPredecessors | OpcodeSet { Opcode::ToBoolean, Opcode::Expect };
 
 inline constexpr OpcodeSet objectCoercibleCheckOpcodes {
     Opcode::PropGet, Opcode::ElemGet, Opcode::PropSet, Opcode::ElemSet, Opcode::IteratorOpen, Opcode::RequireObjectCoercible

@@ -17,6 +17,7 @@
 #include "AirStackSlot.h"
 #include "B3AbstractHeapRepository.h"
 #include "B3BasicBlockInlines.h"
+#include "B3LoopUtilities.h"
 #include "B3MemoryValue.h"
 #include "B3NaturalLoops.h"
 #include "B3Procedure.h"
@@ -407,18 +408,24 @@ static void dumpAirSize(PrintStream& out, std::span<B3::Air::BasicBlock* const> 
 {
     unsigned numberOfInstructions = 0;
     unsigned numberOfPatchpoints = 0;
+    unsigned numberOfPolls = 0;
     unsigned numberOfRareInstructions = 0;
     for (B3::Air::BasicBlock* block : blocks) {
         if (!isLikely.quickGet(block->index())) {
             numberOfRareInstructions += block->size();
             continue;
         }
-        for (const B3::Air::Inst& inst : *block)
+        for (const B3::Air::Inst& inst : *block) {
             ++(inst.kind.opcode == B3::Air::Patch ? numberOfPatchpoints : numberOfInstructions);
+            numberOfPolls += inst.kind.opcode == B3::Air::Patch && inst.origin && B3::isLoopPoll(inst.origin);
+        }
     }
     out.print("instructions: ", numberOfInstructions, ", patchpoints: ", numberOfPatchpoints);
     if (numberOfRareInstructions)
         out.print(", rare instructions: ", numberOfRareInstructions);
+    // They are among the patchpoints.
+    if (numberOfPolls)
+        out.print(", polls: ", numberOfPolls);
 }
 
 static Vector<B3::Air::BasicBlock*> collectBlocks(B3::Air::Code& code)

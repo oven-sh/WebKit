@@ -140,6 +140,19 @@ RegionCloner::BlockMap RegionCloner::cloneBlocks(std::span<BasicBlock* const> bl
     return copies;
 }
 
+bool RegionCloner::valuesStayInDeclaredBlocks() const
+{
+    for (BasicBlock* block : m_proc) {
+        for (Value* value : *block) {
+            for (Value* child : value->children()) {
+                if (child->owner != block && m_declaredBlocks.contains(child->owner))
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool RegionCloner::finish()
 {
     RELEASE_ASSERT(m_step != Step::Finished);
@@ -148,6 +161,7 @@ bool RegionCloner::finish()
     if (!m_didChange)
         return false;
 
+    RELEASE_ASSERT(valuesStayInDeclaredBlocks());
     m_proc.resetReachability();
     m_proc.invalidateCFG();
     return true;

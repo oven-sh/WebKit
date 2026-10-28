@@ -492,15 +492,16 @@ static uint64_t bitsLostThrough(const Vector<uint64_t>& words, const HandedOnRef
     return bitsLostThrough(entry.callee.index() < words.size() ? words[entry.callee.index()] : 0, entry);
 }
 
-static void takeAwayWhatCalleesLose(const ParallelLoops& loops, Vector<uint64_t>& words, const Vector<BorrowingBody>& bodies)
+static void takeAwayWhatCalleesLose(BuildContext& build, Vector<uint64_t>& words, const Vector<BorrowingBody>& bodies)
 {
+    const ParallelLoops& loops = build.parallelLoops();
     unsigned numberOfFunctions = words.size();
-    Vector<uint32_t> worklist = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
+    Vector<uint32_t> callers = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) {
         return !bodies[index].handedOn.isEmpty();
     });
 
-    Vector<uint64_t> edges = collectInParallel<uint64_t>(loops, worklist.size(), [&](unsigned position, Vector<uint64_t>& found) {
-        uint32_t caller = worklist[position];
+    Vector<uint64_t> edges = collectInParallel<uint64_t>(loops, callers.size(), [&](unsigned position, Vector<uint64_t>& found) {
+        uint32_t caller = callers[position];
         FunctionID previous;
         for (const HandedOnReferences& entry : bodies[caller].handedOn) {
             if (entry.callee == previous || entry.callee.index() >= numberOfFunctions)
@@ -516,29 +517,44 @@ static void takeAwayWhatCalleesLose(const ParallelLoops& loops, Vector<uint64_t>
     for (unsigned index = 0; index < numberOfFunctions; ++index)
         firstCallerOf[index + 1] += firstCallerOf[index];
 
+    // A function is queued while its callers have not heard of what it lost.
+    Vector<uint32_t> worklist;
     Vector<uint8_t> isQueued(FillWith { }, numberOfFunctions, 0);
-    for (uint32_t index : worklist)
-        isQueued[index] = 1;
-    while (!worklist.isEmpty()) {
-        unsigned index = worklist.takeLast();
-        isQueued[index] = 0;
-
-        uint64_t lost = 0;
-        for (const HandedOnReferences& entry : bodies[index].handedOn)
-            lost |= bitsLostThrough(words, entry);
+    auto takeAway = [&](uint32_t index, uint64_t lost) {
         lost = withDependentBits(lost) & words[index];
         if (!lost)
-            continue;
-
+            return;
         words[index] &= ~lost;
-        for (uint32_t position = firstCallerOf[index]; position < firstCallerOf[index + 1]; ++position) {
+        if (isQueued[index] || firstCallerOf[index] == firstCallerOf[index + 1])
+            return;
+        worklist.append(index);
+        isQueued[index] = 1;
+    };
+
+    uint64_t numberOfEntriesRead = 0;
+    for (uint32_t caller : callers) {
+        uint64_t lost = 0;
+        for (const HandedOnReferences& entry : bodies[caller].handedOn)
+            lost |= bitsLostThrough(words, entry);
+        numberOfEntriesRead += bodies[caller].handedOn.size();
+        takeAway(caller, lost);
+    }
+    while (!worklist.isEmpty()) {
+        FunctionID callee(worklist.takeLast());
+        isQueued[callee.index()] = 0;
+        for (uint32_t position = firstCallerOf[callee.index()]; position < firstCallerOf[callee.index() + 1]; ++position) {
             uint32_t caller = static_cast<uint32_t>(edges[position]);
-            if (!words[caller] || isQueued[caller])
+            if (!words[caller])
                 continue;
-            worklist.append(caller);
-            isQueued[caller] = 1;
+            uint64_t lost = 0;
+            for (const HandedOnReferences& entry : std::ranges::equal_range(bodies[caller].handedOn, callee, { }, &HandedOnReferences::callee)) {
+                lost |= bitsLostThrough(words[callee.index()], entry);
+                ++numberOfEntriesRead;
+            }
+            takeAway(caller, lost);
         }
     }
+    build.statistics().count(StatisticID::HandedOnReferencesRead, numberOfEntriesRead);
 }
 
 static void explainLosses(const Program& program, BuildContext& build, const Vector<uint64_t>& words, const Vector<BorrowingBody>& bodies, const OpcodeSet& opcodesThatBorrowNothing)
@@ -648,7 +664,7 @@ BorrowedParameters computeBorrowedParameters(const Program& program, BuildContex
     });
 
     if (someBodySaysSomethingElse.load(std::memory_order_relaxed)) {
-        takeAwayWhatCalleesLose(loops, words, kept.m_bodies);
+        takeAwayWhatCalleesLose(build, words, kept.m_bodies);
         kept.m_wordsOfLatestTable = words;
         if (build.options().logging.dumpedPass == PassID::AllocateInFrames) [[unlikely]]
             explainLosses(program, build, words, kept.m_bodies, opcodesThatBorrowNothing);
@@ -656,7 +672,7 @@ BorrowedParameters computeBorrowedParameters(const Program& program, BuildContex
     }
     kept.m_wordsOfLatestTable.insertFill(numberOfKeptBodies, 0, numberOfFunctions - numberOfKeptBodies);
     if (checksKeptBodies) {
-        takeAwayWhatCalleesLose(loops, words, kept.m_bodies);
+        takeAwayWhatCalleesLose(build, words, kept.m_bodies);
         RELEASE_ASSERT(words == kept.m_wordsOfLatestTable);
     }
     words = kept.m_wordsOfLatestTable;

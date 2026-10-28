@@ -105,6 +105,7 @@ using UnionParts = Vector<UnionPart, 4>;
 
 UnionParts unionPartsOf(const Type&);
 size_t maxNumberOfUnionParts(const Type&);
+size_t maxNumberOfUnionPartsWithObjects(const Type&);
 bool isClosedUnion(const UnionParts&);
 inline bool isClosedUnion(const Type& type) { return !type.anyObject && !type.anyFunction && !type.environment && !type.opaque; }
 

@@ -2673,7 +2673,51 @@ static void passOwnCaptures(ProgramEditor& editor, const FlowResults& flow, Buil
     });
 }
 
-void readCapturesFromEnvironments(ProgramEditor& editor, const FlowResults& flow, BuildContext& build)
+// A function that calls a closure does to what stands in its place what the function of the closure does to its captures.
+static OperandSummary summaryInPlaceOfClosure(const EffectSummaries& summaries, const PlannedClosure& planned, OperandSummary summary)
+{
+    if (summary.uses == OperandUses::all() || !summary.uses.containsAny(callingUses))
+        return summary;
+    summary.uses.remove(callingUses);
+    for (uint32_t capture = 0; capture < planned.fields.size(); ++capture) {
+        OperandSummary ofCapture = summaries.of(planned.callee).operand(capture);
+        if (planned.fields[capture] != noField)
+            ofCapture.uses.add({ OperandUse::ReadsContents, OperandUse::AppliesToContents });
+        summary = joinOf(summary, { ofCapture.uses, RetainedIn::UnknownMemory, 0 });
+    }
+    return summary;
+}
+
+// What was found out about an entry parameter is looked up by its index, also for the functions that are derived from the function.
+static void describeWhatStandsForClosures(ProgramEditor& editor, FlowResults& flow, const EffectSummaries* summariesOfBodies, const ClosureParameterTable& closureParameters, const CaptureReadPlan& plan)
+{
+    if (closureParameters.parameters.isEmpty())
+        return;
+    const Program& program = editor.program();
+    Vector<OperandSummary> summaries = closureParameters.parameters.map([&](const ClosureParameter& parameter) {
+        if (!summariesOfBodies)
+            return OperandSummary();
+        return summaryInPlaceOfClosure(*summariesOfBodies, plan.closures[parameter.candidate], summariesOfBodies->of(parameter.function).operand(parameter.index));
+    });
+    for (size_t position = 0; position < summaries.size(); ++position)
+        flow.replaceEntryParameter(closureParameters.parameters[position].function, closureParameters.parameters[position].index, summaries[position]);
+
+    Vector<std::pair<FunctionID, uint32_t>> takenApartFromSource;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        const Derivation& derivation = program.functions[index].derivation;
+        if (!derivation.source)
+            continue;
+        for (uint32_t parameter = 0; parameter < derivation.parameterMap.size(); ++parameter) {
+            std::optional<uint32_t> original = derivation.parameterMap[parameter].original;
+            if (original && closureParameters.candidateOf(FunctionID(index), parameter) != closureParameters.candidateOf(derivation.source, *original))
+                takenApartFromSource.append({ FunctionID(index), parameter });
+        }
+    }
+    for (auto [function, parameter] : takenApartFromSource)
+        editor.at(function).derivation.parameterMap[parameter].original = std::nullopt;
+}
+
+void readCapturesFromEnvironments(ProgramEditor& editor, FlowResults& flow, const EffectSummaries* summariesOfBodies, BuildContext& build)
 {
     const Program& program = editor.program();
     CaptureCandidateTable candidates = findCandidates(program);
@@ -2732,6 +2776,7 @@ void readCapturesFromEnvironments(ProgramEditor& editor, const FlowResults& flow
         });
     }
     passOwnCaptures(editor, flow, build, plan);
+    describeWhatStandsForClosures(editor, flow, summariesOfBodies, closureParameters, plan);
 }
 
 namespace {

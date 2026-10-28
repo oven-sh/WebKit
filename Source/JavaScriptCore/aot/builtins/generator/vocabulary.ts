@@ -159,6 +159,7 @@ export const operandRoles = [
   "CopiesHolesToResult",
   "WorkerEntryPath",
   "DescribedWhenRefused",
+  "ContentsOfContentsAreOnlyStored",
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 
@@ -537,6 +538,8 @@ export interface SignatureColumns {
   writes?: readonly Heap[];
   runsOnlyOperandCode?: boolean;
   readsStateBeforeConversions?: boolean;
+  // The message of a refusal names the operand or the member that is refused and prints nothing of its value.
+  refusalsPrintNoValue?: boolean;
   // A faster form of the next overload for some of its operands. The next one is right for them too, so a call whose operands are not known well enough to tell takes that one.
   isSpecialCase?: boolean;
   // Nothing proves the result type: native code may hand back any value. Compiled code expects the type and tests the value where it arrives.
@@ -581,6 +584,10 @@ export const builtinMarks = [
   "IsReplacedBySetter",
   // It, or what it makes, runs the jobs that wait before a call returns: the reactions of promises, and the modules that an import() loads.
   "RunsWaitingJobs",
+  // It stands under a name of methods that are called with what the host loads at start-up. For this one the host loads nothing.
+  "IsCalledWithoutStartupLoads",
+  // Its instances have such a method, whether or not the table has their prototype object.
+  "InstancesHaveMethodCalledWithStartupLoads",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 
@@ -674,6 +681,8 @@ export interface ClassColumns {
   typesOfNamesDefinedOnNewInstances?: Readonly<Record<string, TypeSpec>>;
   /** Property to static member: native code calls the function the program stored under the member on the constructor to make the property. */
   namesMadeByStaticMembers?: Readonly<Record<string, string>>;
+  /** What native code looks up on an instance and the objects above it whenever it describes the instance. It calls nothing that it finds. */
+  namesReadToDescribeInstances?: readonly string[];
   /** The constructor reads `prototype` from new.target and nothing else, and it calls nothing that it finds on the new object, whatever code of its operands it runs. */
   constructorOnlyReadsPrototypeOfNewTarget?: boolean;
   instanceCppClass?: CppClassRef;

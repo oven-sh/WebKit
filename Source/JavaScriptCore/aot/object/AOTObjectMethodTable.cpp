@@ -79,7 +79,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     count(instance(), counterFor(reason));
     state.propertyCaches->countNamed(describeExit(reason, leaving.valueOrAccessor), name);
 
-    if (reason != SlotExitReason::StoreOfOtherType || leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot())
+    if (reason != SlotExitReason::StoreOfOtherType || leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || state.propertyCaches->countsNames())
         return;
     Structure* extraStructure = extra->structure();
     if (structure()->mayBePrototype() || extraStructure->isDictionary())
@@ -91,7 +91,6 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     exit.structureAfter = structureID();
     exit.extraPropertiesAfter = extraStructure->id();
     exit.orderWordAfter = orderWord();
-    exit.generationForStores = state.propertyCaches->tables().absenceFilterGenerationForStores();
     exit.extraPropertiesCellSize = JSFinalObject::allocationSize(extraStructure->inlineCapacity());
     exit.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
     SlotTraits traits = traitsOf(field.slot.representation());

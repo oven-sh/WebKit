@@ -14,6 +14,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTFunctionKinds.h"
+#include "AOTObjectCreationEmitter.h"
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyAccessMembers.h"
@@ -55,10 +56,21 @@ Boxed AccessEmitter::keyOperand(const OperationContext& context, PropertyKeyID k
 
 void AccessEmitter::defineAccessor(const ValueContext& value, uint32_t accessorFlags)
 {
+    LBasicBlock done = newBlock();
+    LBasicBlock leftToRunTime = newBlock();
+    PropertyKeyID constantKey = value->key();
+    ValueID definedFunction = value->functionOperand();
+    bool isMadeInLine = constantKey && emitter<ObjectCreationEmitter>().tryDefineAccessorsInSlots(value, in<CellPointer>(value->objectOperand()), singleElementSpan(constantKey), singleElementSpan(definedFunction),
+        !!(accessorFlags & accessorIsGetter), !!(accessorFlags & accessorIsEnumerable), done, leftToRunTime);
+    if (!isMadeInLine)
+        m_out.jump(leftToRunTime);
+    m_out.appendTo(leftToRunTime);
     Boxed object = boxCell(in<CellPointer>(value->objectOperand()));
     Boxed key = keyOperand(value, value->key(), value->computedKeyOperand());
     Boxed function = boxCell(in<CellPointer>(value->functionOperand()));
     callVoidOperation(value, RuntimeOperation::DefineAccessor, { object, key, function, word32(static_cast<int32_t>(accessorFlags)) });
+    m_out.jump(done);
+    m_out.appendTo(done);
 }
 
 void AccessEmitter::generateDefineGetter(const ValueContext& value)

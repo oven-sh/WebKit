@@ -1970,8 +1970,12 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
         resumeDeferredLoadsWithoutImporter(module);
         exception = scope.exception();
     }
-    if (!exception) [[likely]]
+    if (!exception) [[likely]] {
+        // The loader takes the names of a file when the file has run. A file that no module of the image imports has them itself.
+        if (data(module).kind == ModuleKind::CommonJs && !m_table.faceOfFile(module) && !didCaptureExports(module))
+            RELEASE_AND_RETURN(scope, captureExports(module));
         return;
+    }
     if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(module).value_or(module)))
         return;
     TRY_CLEAR_EXCEPTION(scope, void());
@@ -2095,6 +2099,62 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(realm, jsUndefined()));
+}
+
+JSPromise* Modules::evaluateMainModule(ModuleID entryPoint, JSPromise* evaluation)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!host().isImportOfMainModule || mainModuleWaitsForItsImport() || !host().isImportOfMainModule(realm, entryPoint))
+        return evaluation;
+
+    switch (evaluation->status()) {
+    case JSPromise::Status::Pending: {
+        JSPromise* capability = JSPromise::create(vm, realm->promiseStructure());
+        // The main module hears of a failure in the job of the failure, and the host of the failure of the main module.
+        evaluation->markAsHandled();
+        m_importOfMainModule = entryPoint;
+        m_evaluationOfImportOfMainModule.set(vm, evaluation);
+        m_capabilityOfMainModule.set(vm, capability);
+        return capability;
+    }
+    case JSPromise::Status::Fulfilled:
+        host().runMainModule(realm, entryPoint);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        return evaluation;
+    case JSPromise::Status::Rejected:
+        return evaluation;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void Modules::runMainModuleThatWaited()
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_evaluationOfImportOfMainModule->status() != JSPromise::Status::Fulfilled)
+        return;
+    JSPromise* capability = m_capabilityOfMainModule.get();
+    m_evaluationOfImportOfMainModule.clear();
+    m_capabilityOfMainModule.clear();
+    host().runMainModule(m_instance.globalObject, m_importOfMainModule);
+    if (scope.exception()) [[unlikely]] {
+        capability->rejectWithCaughtException(vm, scope);
+        return;
+    }
+    capability->fulfill(vm, jsUndefined());
+}
+
+void Modules::failMainModuleThatWaited()
+{
+    JSPromise* evaluation = m_evaluationOfImportOfMainModule.get();
+    if (evaluation->status() != JSPromise::Status::Rejected)
+        return;
+    JSPromise* capability = m_capabilityOfMainModule.get();
+    m_evaluationOfImportOfMainModule.clear();
+    m_capabilityOfMainModule.clear();
+    capability->reject(*m_instance.vm, evaluation->result());
 }
 
 // To evaluate such a module is to evaluate what stands in its place in the lists of its importers.
@@ -2697,6 +2757,9 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer)
         markNamespaceAsRequired(target);
     if (!m_showsWaysBetweenModuleObjects || !(isFileOfProgram(target) || targetData.kind == ModuleKind::Data))
         return;
+    // A file without a module object to hand out is shown neither as a child nor as a parent. Which file is the main one hangs on the calls that come before that is decided.
+    if (m_isMainCommonJSModuleDecided && (!mayHandOutModuleObject(target) || !mayHandOutModuleObject(referrer)))
+        return;
     // A require() is recorded in front of the evaluation and behind it. The module has its parent from the first record on. It is a child from the second on, which a call that throws does not reach.
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     uint64_t pair = (static_cast<uint64_t>(referrer.index()) + 1) << 32 | target.index();
@@ -2782,8 +2845,34 @@ bool Modules::wasRequestedByLoader(ModuleID file)
     return wasRequested;
 }
 
+void Modules::findDistanceOfFiles(FilesBeingRun& load)
+{
+    load.distanceOfFiles.fill(UINT32_MAX, m_table.size());
+    BitVector seen(m_table.size());
+    seen.quickSet(load.root.index());
+    Vector<ModuleID> importers { load.root };
+    size_t endOfLevel = 1;
+    uint32_t distance = 0;
+    for (size_t index = 0; index < importers.size(); ++index) {
+        if (index == endOfLevel) {
+            ++distance;
+            endOfLevel = importers.size();
+        }
+        for (const ModuleRequestData& request : m_table.requests(importers[index])) {
+            if (request.isHoisted || request.isRequire || request.isDeferred)
+                continue;
+            ModuleID target = request.targetModule();
+            if (isCommonJSFileOrFace(target)) {
+                uint32_t& nearest = load.distanceOfFiles[fileOf(target).index()];
+                nearest = std::min(nearest, distance);
+            } else if (isLoadedWithRequests(target) && !seen.quickSet(target.index()))
+                importers.append(target);
+        }
+    }
+}
+
 // The loader asks for everything that stands as far from the root before a file among it runs.
-bool Modules::hasReachedLevelOf(const FilesBeingRun& load, ModuleID file)
+bool Modules::hasReachedLevelOf(FilesBeingRun& load, ModuleID file)
 {
     auto fileBehind = [&](ModuleID fileOrFace) {
         return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace);
@@ -2800,30 +2889,10 @@ bool Modules::hasReachedLevelOf(const FilesBeingRun& load, ModuleID file)
         return false;
     running = fileBehind(*running);
 
-    BitVector seen(m_table.size());
-    seen.quickSet(load.root.index());
-    Vector<ModuleID> importers { load.root };
-    size_t endOfLevel = 1;
-    bool levelHoldsRunningFile = false;
-    for (size_t index = 0; index < importers.size(); ++index) {
-        if (index == endOfLevel) {
-            if (levelHoldsRunningFile)
-                return false;
-            endOfLevel = importers.size();
-        }
-        for (const ModuleRequestData& request : m_table.requests(importers[index])) {
-            if (request.isHoisted || request.isRequire || request.isDeferred)
-                continue;
-            ModuleID target = request.targetModule();
-            if (isCommonJSFileOrFace(target)) {
-                if (fileBehind(target) == file)
-                    return true;
-                levelHoldsRunningFile |= fileBehind(target) == *running;
-            } else if (isLoadedWithRequests(target) && !seen.quickSet(target.index()))
-                importers.append(target);
-        }
-    }
-    return false;
+    if (load.distanceOfFiles.isEmpty())
+        findDistanceOfFiles(load);
+    uint32_t distance = load.distanceOfFiles[file.index()];
+    return distance != UINT32_MAX && distance <= load.distanceOfFiles[running->index()];
 }
 
 JSObject* Modules::parentModuleObject(ModuleID module)

@@ -33,6 +33,7 @@ runtime NewArgumentList : JSCell* (EncodedJSValue callee, EncodedJSValue arrayLi
 runtime ConstructWithArray : EncodedJSValue (EncodedJSValue callee, EncodedJSValue newTarget, EncodedJSValue list) ; unknownCode
 runtime SuperConstruct : EncodedJSValue (EncodedJSValue parent, EncodedJSValue newTarget, uint32_t count, const EncodedJSValue* arguments) ; unknownCode
 runtime SuperConstructList : EncodedJSValue (EncodedJSValue parent, EncodedJSValue newTarget, JSCell* list) ; unknownCode
+runtime ThrowBecauseParentMadeNoObject : EncodedJSValue () ; reads(all) throws
 runtime ThrowUnlessCallable : void (EncodedJSValue callee) ; reads(all) throws
 runtime ThrowUnlessCallableNamed : void (EncodedJSValue callee, uint32_t name) ; reads(all) throws
 runtime ThrowUnlessForwardedCalleeIsCallable : void (EncodedJSValue callee, EncodedJSValue receiver) ; reads(all) throws

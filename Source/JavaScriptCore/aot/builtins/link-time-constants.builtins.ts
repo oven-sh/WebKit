@@ -151,6 +151,7 @@ export default b.declarations(
     isArray: {
       args: { value: b.any },
       returns: b.bool,
+      answersWhetherInstance: { value: b.instance("Array") },
       capability: "heap",
       throws: true,
       uses: { value: b.inspected },

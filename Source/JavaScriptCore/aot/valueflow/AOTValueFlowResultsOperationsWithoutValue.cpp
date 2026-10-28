@@ -40,7 +40,7 @@ public:
     {
         Vector<const ValueFlowStatement*, 4> suspects;
         for (const ValueFlowStatement& statement : statements()) {
-            if (isOperationWithoutValue(statement) && mayHaveToHoldValue(statement) && !hasOperandWithoutValue(statement) && mustHaveValue(statement))
+            if (isOperationWithoutValue(statement) && mayHaveToHoldValue(statement) && !hasOperandWithoutValue(statement) && !standsBehindTestThatNothingPasses(statement) && mustHaveValue(statement))
                 suspects.append(&statement);
         }
         if (suspects.isEmpty())
@@ -79,6 +79,13 @@ private:
         });
     }
 
+    bool standsBehindTestThatNothingPasses(const ValueFlowStatement& statement)
+    {
+        return std::ranges::any_of(m_inputs.bodies().guardsOf(statement), [&](const ValueFlowOperand& guard) {
+            return holdsNothing(guard);
+        });
+    }
+
     bool comesBack(FunctionID id, bool isConstruction) const
     {
         const Function& callee = m_inputs.program.at(id);
@@ -90,6 +97,9 @@ private:
             return false;
         const ValueFlowProgramNodes& nodes = m_inputs.bodies().nodes();
         const ValueFlowProgramNodes::ResultSummary* summary = isConstruction ? nullptr : nodes.resultSummaryOf(id);
+        // A constructor below another class has no object of its own: its construction answers the object that super() made, or never completes.
+        if (isConstruction && callee.kind == FunctionKind::DerivedConstructor)
+            return m_inputs.sets().meet(m_inputs.solver().possibleValuesOf(nodes.result(id, 0)), m_inputs.universe().objects());
         return !holdsNothing(summary ? summary->ownResult : nodes.result(id, 0));
     }
 

@@ -24,7 +24,7 @@ class ReservedRangeHeap {
     WTF_MAKE_NONCOPYABLE(ReservedRangeHeap);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ReservedRangeHeap);
 public:
-    enum class Placement : uint8_t { Anywhere, RandomWindow };
+    enum class Placement : uint8_t { Anywhere, RandomWindow, AtStart };
     enum class InitialAccess : uint8_t { ReadWrite, None };
 
     struct Request {
@@ -35,6 +35,11 @@ public:
         size_t initialSegmentSize { 0 };
         size_t alignment { 0 };
         size_t unusedPrefixSize { 0 };
+        // This much of the unused prefix, from the start of the range, is not reserved.
+        size_t unreservedPrefixSize { 0 };
+        // This much below the start of the range is reserved with it, without access. The alignment is that of its lower end.
+        size_t reservedSizeBelowStart { 0 };
+        uintptr_t start { 0 };
         size_t addressSpaceBudget { std::numeric_limits<size_t>::max() };
         OSAllocator::Usage usage { OSAllocator::UnknownUsage };
         Placement placement { Placement::Anywhere };
@@ -81,7 +86,7 @@ private:
     ~ReservedRangeHeap() = delete;
 
     static uintptr_t tryReserve(size_t, const Request&);
-    static void releaseReservation(uintptr_t start, size_t);
+    static void releaseReservation(uintptr_t start, size_t, const Request&);
     static std::optional<Backing> tryCreateBacking(uintptr_t start, size_t, const Request&);
 
     void* tryAllocateSlow(size_t alignment, size_t);

@@ -68,11 +68,18 @@ Boxed CallEmitter::thisOrUndefined(ValueID id)
     return id ? in<Boxed>(id) : undefined();
 }
 
+static bool readsCalleeFromReceiver(const ValueContext& call)
+{
+    if (PayloadWord::calleeKey(call->opcode))
+        return !!call->calleeKey();
+    return call->opcode == Opcode::CallMethod;
+}
+
 std::optional<ThrowSite> CallEmitter::siteThatNamesCallee(const ValueContext& value)
 {
     if (!value->calleeName())
         return std::nullopt;
-    return ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt };
+    return ThrowSite { ThrowKind::NotAFunction, value->calleeName().index(), std::nullopt, readsCalleeFromReceiver(value) };
 }
 
 Vector<Boxed, 8> CallEmitter::boxedOperands(std::span<const ValueID> ids)

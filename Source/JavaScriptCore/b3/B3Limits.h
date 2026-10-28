@@ -155,6 +155,7 @@ inline constexpr unsigned maxTermsOfAddressInVectorizedLoop = 3;
 inline constexpr unsigned maxCountersOfVectorizedLoop = 3;
 inline constexpr unsigned maxDistancesCheckedInFrontOfVectorizedLoop = 8;
 inline constexpr unsigned maxSumsOfVectorizedLoop = 2;
+inline constexpr unsigned maxChoicesPerTurnOfVectorizedLoop = 4;
 inline constexpr int64_t minTurnsPerStretchOfVectorizedLoop = 1 << 10;
 inline constexpr unsigned minCasesForBitTests = 4;
 inline constexpr unsigned maxCompareChainSize = 4;

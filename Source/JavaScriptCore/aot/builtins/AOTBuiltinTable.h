@@ -344,6 +344,9 @@ struct BuiltinResult {
     std::optional<BuiltinOperand> iteratedOperand { };
     IterationKind iterationKind { IterationKind::Values };
     std::optional<BuiltinOperand> prototypeSource { };
+    // It answers whether this operand was made as an instance of one of the classes of that type.
+    std::optional<BuiltinOperand> testedOperand { };
+    BuiltinTypeID testedType { };
     BuiltinRecordStretch<BuiltinResultProperty, BuiltinRecordPool::ResultProperties> properties { };
 };
 
@@ -547,6 +550,7 @@ struct BuiltinClass {
     std::span<const BuiltinName> namesDefinedOnNewInstances { };
     std::span<const BuiltinResultProperty> typesOfNamesDefinedOnNewInstances { };
     std::span<const BuiltinPropertyMaker> makersOfNamesDefinedOnNewInstances { };
+    std::span<const BuiltinName> namesReadToDescribeInstances { };
     bool constructorOnlyReadsPrototypeOfNewTarget { false };
     std::span<const BuiltinSlotID> slots { };
     std::optional<AbstractHeap> stateHeap { };
@@ -738,6 +742,8 @@ enum class BuiltinMark : uint8_t {
     IsNotEnumerable,
     IsReplacedBySetter,
     RunsWaitingJobs,
+    IsCalledWithoutStartupLoads,
+    InstancesHaveMethodCalledWithStartupLoads,
 };
 
 struct BuiltinMarkedEntry {

@@ -18,6 +18,7 @@
 #include "AOTFunctionNames.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTMembersLeftOut.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectWords.h"
 #include "AOTProgramStrings.h"
@@ -922,7 +923,7 @@ DeclaredAs declaredAs(JSCell* cell)
     if (!function)
         function = compiledBuiltinFunctionID(cell);
     if (!function)
-        return DeclaredAs::NotCompiled;
+        return standsInForFunction(cell) ? DeclaredAs::Function : DeclaredAs::NotCompiled;
     FunctionKindData kindData = functionKindData(*function);
     if (kindData.isConstructor)
         return FunctionDescription(*function).isNakedConstructor() ? DeclaredAs::Function : DeclaredAs::Class;

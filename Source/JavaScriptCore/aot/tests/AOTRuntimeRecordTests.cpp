@@ -592,9 +592,8 @@ static void testMissesBeforeRefill()
     AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(3) == 255);
     AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(4) == 1023);
     AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(5) == 4095);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(6) == 16383);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(7) == 16383);
-    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(200) == 16383);
+    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(6) == 4095);
+    AOT_TEST_CHECK(SiteCacheState::missesBeforeRefill(200) == 4095);
 }
 
 static void testInstanceLayoutOffsets()

@@ -504,6 +504,8 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& 
             continue;
         }
         JSValue value = source.read(store);
+        if (store.leavesUndefinedAndNullToOtherWay && value && value.isUndefinedOrNull())
+            return false;
         if (value && !isAccepted(store, value)) {
             // A kind of which the field takes some values: numbers in a range, the strings of a list.
             std::optional<AcceptedValue> accepted = m_state.objects->layouts.accept(*store.to, value);

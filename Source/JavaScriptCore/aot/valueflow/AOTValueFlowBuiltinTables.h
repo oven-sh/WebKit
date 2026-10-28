@@ -54,6 +54,8 @@ public:
     const ValueFlowBehavior& at(ValueFlowBehaviorID behavior) const LIFETIME_BOUND { return m_behaviors[behavior.index()]; }
     unsigned numberOfBehaviors() const { return m_behaviors.size(); }
     ValueFlowBehaviorID conversionToPrimitive() const { return m_conversionToPrimitive; }
+    ValueFlowBehaviorID listOfKeysThatTrapAnswers() const { return m_listOfKeysThatTrapAnswers; }
+    ValueFlowBehaviorID descriptorThatTrapAnswers() const { return m_descriptorThatTrapAnswers; }
     ValueFlowBehaviorID descriptionOfRefusedOperands() const { return m_descriptionOfRefusedOperands; }
     ValueFlowBehaviorID formatterOfMessages() const { return m_formatterOfMessages; }
 
@@ -66,6 +68,8 @@ public:
     ValueSetID closuresThatEntriesDescribe() const { return m_closuresThatEntriesDescribe; }
     BuiltinID entryDescribing(ValueFlowObjectID closure) const;
     bool isCodeThatRecordsDescribe(FunctionID function) const { return m_codeThatRecordsDescribe.get(function.index()); }
+    // What a call of the entry does to its operands the statements of its code say, as of any function of the program.
+    bool isDescribedByCodeAlone(BuiltinID entry) const { return m_entriesDescribedByCodeAlone.get(entry.index()); }
 
     const ValueFlowHeapTables& heap() const LIFETIME_BOUND { return *m_heap; }
 
@@ -84,11 +88,14 @@ private:
     ValueFlowBehaviorID m_conversionToPrimitive;
     ValueFlowBehaviorID m_descriptionOfRefusedOperands;
     std::array<BuiltinName, 1> m_namesReadFromRefusedOperands { BuiltinNames::constructor };
+    ValueFlowBehaviorID m_listOfKeysThatTrapAnswers;
+    ValueFlowBehaviorID m_descriptorThatTrapAnswers;
     ValueFlowBehaviorID m_formatterOfMessages;
     BitVector m_functionsWithTypedResults;
     Vector<BuiltinName> m_namesOfFunctionsWithTypedResults;
     BitVector m_entriesHoldingValueFromLibrary;
     BitVector m_codeThatRecordsDescribe;
+    BitVector m_entriesDescribedByCodeAlone;
     Vector<std::pair<ValueFlowObjectID, BuiltinID>> m_describedClosures;
     ValueSetID m_closuresThatEntriesDescribe;
     HeadLayoutsOfFamilies m_headLayoutsOfFamilies;

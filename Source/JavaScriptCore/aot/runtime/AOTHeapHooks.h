@@ -77,6 +77,10 @@ public:
 
     static constexpr size_t segmentCapacity = CapacityFromSize<Segment::blockSize>::value;
     static constexpr ptrdiff_t offsetOfFirstCellInSegment = sizeof(Segment);
+#if ASSERT_ENABLED
+    // The segment counts its cells too, and append() compares the two counts.
+    static constexpr ptrdiff_t offsetOfTopInSegment = OBJECT_OFFSETOF(Segment, m_top);
+#endif
     static ptrdiff_t offsetOfTop() { return OBJECT_OFFSETOF(MutatorMarkStackLayout, m_top); }
     // The list of segments begins with its head. initializeCollectorWords() checks that.
     static ptrdiff_t offsetOfHeadSegment() { return OBJECT_OFFSETOF(MutatorMarkStackLayout, m_segments); }

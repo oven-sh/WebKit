@@ -169,6 +169,25 @@ static bool hasEffectsOfDefinition(SelectionContext& context, ValueID call, cons
     return effectsOf(analyses.effectContext(), context.function(), definition).isSubsetOf(analyses.effectsOf(call));
 }
 
+// `__proto__: null` in the literal: nothing is looked for above it, so its own members are all that the built-in reads.
+static ValueID findNullPrototypeOfLiteral(SelectionContext& context, ValueID literal, ValueID finish)
+{
+    const Function& function = context.function();
+    std::span<const Use> uses = context.analyses().useLists().usesOf(literal);
+    if (uses.size() != 2)
+        return { };
+    ValueID link;
+    for (const Use& use : uses) {
+        if (use.kind != Use::Kind::Operand)
+            return { };
+        if (use.user != finish)
+            link = use.user;
+    }
+    if (!link || function.at(link).opcode != Opcode::SetLiteralPrototype || function.at(link).objectOperand() != literal)
+        return { };
+    return function.at(definitionThroughUpcasts(function, function.at(link).prototypeOperand())).opcode == Opcode::Null ? link : ValueID();
+}
+
 static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& context, ValueID id)
 {
     const Program& program = context.program();
@@ -190,13 +209,14 @@ static std::optional<DescriptorMatch> matchDescriptorCall(SelectionContext& cont
     if (finish.opcode != Opcode::FinishObject || context.singleUser(finishID) != id)
         return std::nullopt;
     ValueID literalID = finish.objectOperand();
-    if (context.singleUser(literalID) != finishID)
+    ValueID linkID = findNullPrototypeOfLiteral(context, literalID, finishID);
+    if (!linkID && context.singleUser(literalID) != finishID)
         return std::nullopt;
     std::optional<DescriptorLiteral> descriptor = readDescriptorLiteral(program, function, function.at(literalID));
     if (!descriptor)
         return std::nullopt;
 
-    DescriptorMatch match { .group = groupOf({ literalID, finishID, id }), .object = operands->object, .key = operands->key, .descriptor = *descriptor };
+    DescriptorMatch match { .group = linkID ? groupOf({ literalID, linkID, finishID, id }) : groupOf({ literalID, finishID, id }), .object = operands->object, .key = operands->key, .descriptor = *descriptor };
     if (!canCreateClosuresAtDefinition(context, match) || !hasEffectsOfDefinition(context, id, match))
         return std::nullopt;
     return match;

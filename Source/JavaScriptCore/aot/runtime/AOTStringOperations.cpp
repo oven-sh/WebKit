@@ -377,7 +377,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToLiteralString, EncodedJSValue, (
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLiteralStringToString, JSCell*, (Instance* instance, uint64_t word))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTLiteralStringToString);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTLiteralStringToString);
     ThrowsOwedOutOfMemoryErrorAtReturn owedError(instance, frameRecord);
     OPERATION_RETURN(scope, instance->state->strings->stringForLiteralStringWord(word));
 }

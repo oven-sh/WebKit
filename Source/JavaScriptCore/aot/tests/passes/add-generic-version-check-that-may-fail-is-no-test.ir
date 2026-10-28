@@ -1,10 +1,8 @@
-# Flow has seen an ordinary object arrive at the first check, one that the program only calls by the type. A test would fail in ordinary runs and send them into the generic version, where the second
-# parameter would lose its type too. So the first value goes on as one that has no type, without a test and without an expected type, and the second check alone gets a test and a generic version
+# Flow has seen an ordinary object arrive at the first check, one that the program only calls by the type. A test for the type would fail in ordinary runs.
+# So the first value goes on as one that has no type, without an expected type. Of the second the type is still expected
 # FORM: Prepared optimizing
 # RUN: pass AddGenericVersion
-# STATISTIC: GenericVersionsCreated = 1
-# STATISTIC: ExitsToGenericVersion = 1
-# STATISTIC: ChecksReplacedByGuards = 1
+# STATISTIC: ChecksReplacedByGuards = 2
 
 module m0 path="main.ts" displayPath="main.ts"
 layout L0 name="Rule" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
@@ -17,9 +15,8 @@ function f0 name="run" parameters=[{type=anything}, {type=anything}] results=[{t
     v5 = PropGet v3 key="value"
     v6 = Less v5, v4
     Return v6
-# CHECK-NOT: testedType=L0
+# CHECK-NOT: TypeTest
 # CHECK: v2: anything = Expect v0 expectedType=anything|absent
-# CHECK-NOT: testedType=L0
-# CHECK: = TypeTest v1 testedType=L1
-# CHECK-NOT: testedType=L0
+# CHECK-NEXT: v3: anything ~ L1 = Expect v1 expectedType=L1
+# CHECK-NOT: TypeTest
 }

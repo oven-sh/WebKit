@@ -277,14 +277,29 @@ FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, Build
     return records;
 }
 
-FlowReport buildFlowReport(const Program& program, const FlowResults& flow, const GradedSites& sites, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&& bodyRecords, BuildContext& build)
+FlowReport reportUsesOfLibraryCode(std::span<const Wire::UnseenCodeRecord> unseenCode, std::span<const Wire::UnseenCodeRecord> loadsOfMachineCode, std::span<const Wire::BuiltinUseRecord> builtinUses, std::span<const RuntimeFunctionID> libraryFunctionsLacked)
 {
     FlowReport report;
-    report.unseenCode = Vector<Wire::UnseenCodeRecord>(flow.unseenCode());
-    if (!flow.hasResults())
-        report.unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
-    report.unseenCode.append(flow.loadsOfMachineCode());
-    report.builtinsUsed = Vector<Wire::BuiltinUseRecord>(flow.builtinUses());
+    report.unseenCode = Vector<Wire::UnseenCodeRecord>(unseenCode);
+    report.unseenCode.append(loadsOfMachineCode);
+    report.builtinsUsed = Vector<Wire::BuiltinUseRecord>(builtinUses);
+    for (RuntimeFunctionID function : libraryFunctionsLacked)
+        report.libraryFunctionsLacked.append(Wire::LackedFunctionRecord { .function = function.index() });
+    return report;
+}
+
+FlowReport reportUsesOfLibraryCode(const FlowResults& flow)
+{
+    if (flow.hasResults())
+        return reportUsesOfLibraryCode(flow.unseenCode(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked());
+    Vector<Wire::UnseenCodeRecord> unseenCode(flow.unseenCode());
+    unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
+    return reportUsesOfLibraryCode(unseenCode.span(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked());
+}
+
+FlowReport buildFlowReport(const Program& program, const FlowResults& flow, const GradedSites& sites, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&& bodyRecords, BuildContext& build)
+{
+    FlowReport report = reportUsesOfLibraryCode(flow);
     report.featuresUsed = Vector<Wire::FeatureUseRecord>(flow.featureUses());
     countDirectCallsAsUses(program, bodyRecords.builtinsCalledDirectly.span(), report, build);
     appendLocaleUses(program, flow, report);

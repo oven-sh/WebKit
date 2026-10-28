@@ -330,8 +330,9 @@ static bool arrivesAsValueOfAnyType(TestSiteReporter& reporter, ValueID operand)
 static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub };
 
 // Of a sum of int32s a bitwise operator takes the low half. A sum with an integer of unknown size is a number, and to convert that costs more than the test.
-static bool makesSumForBitwiseOperators(TestSiteReporter& reporter, const OperatorSite& site, const Value& user, uint32_t operandIndex)
+static bool makesSumForBitwiseOperators(TestSiteReporter& reporter, const OperatorSite& site, ValueID id, uint32_t operandIndex)
 {
+    const Value& user = reporter.function().at(id);
     if (!sums.contains(user.opcode))
         return false;
     TestedTypePerOperand tested;
@@ -342,7 +343,7 @@ static bool makesSumForBitwiseOperators(TestSiteReporter& reporter, const Operat
         return false;
 
     const Function& function = reporter.function();
-    Vector<ValueID, maxNamesOfCounter> names { reporter.use() };
+    Vector<ValueID, maxNamesOfCounter> names { id };
     bool isTaken = false;
     for (size_t index = 0; index < names.size(); ++index) {
         for (const Use& use : reporter.analyses().useLists().usesOf(names[index])) {
@@ -373,14 +374,33 @@ static bool makesSumForBitwiseOperators(TestSiteReporter& reporter, const Operat
 }
 
 // Of an integer of which only its kind is known, few are beyond int32, and an operator on int32 needs no test of its result. So a test for int32 takes the place of the test for a number that the operand gets anyway. In a value of any type an int32 is found as fast as a number, and is taken out faster. In a number it takes three to six instructions more, which most operators do not save.
-static TypeID narrowTestOfIntegerOfUnknownSize(TestSiteReporter& reporter, const OperatorSite& site, const Value& user, uint32_t operandIndex, TypeID tested)
+static TypeID narrowTestOfIntegerOfUnknownSize(TestSiteReporter& reporter, const OperatorSite& site, ValueID id, uint32_t operandIndex, TypeID tested)
 {
+    const Value& user = reporter.function().at(id);
     ValueID operand = user.operand(operandIndex);
     if (!tested || !isExpectedToBeIntegerOfUnknownSize(reporter, operand))
         return tested;
-    if (!arrivesAsValueOfAnyType(reporter, operand) && !makesSumForBitwiseOperators(reporter, site, user, operandIndex))
+    if (!arrivesAsValueOfAnyType(reporter, operand) && !makesSumForBitwiseOperators(reporter, site, id, operandIndex))
         return tested;
     return operatorsThatTakeNullish.contains(user.opcode) ? admitExpectedNullish(reporter, operand, TypeTable::int32) : TypeTable::int32;
+}
+
+static TestedTypePerOperand testedTypesOfOperands(TestSiteReporter& reporter, const OperatorSite& site, ValueID id)
+{
+    const Value& value = reporter.function().at(id);
+    uint32_t numberOfOperands = value.numberOfOperands();
+    TestedTypePerOperand tested;
+    for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex)
+        tested[operandIndex] = narrowTestOfIntegerOfUnknownSize(reporter, site, id, operandIndex, testedTypeFor(reporter, site, value, value.operand(operandIndex)));
+    if (numberOfOperands == 2) {
+        for (uint32_t operandIndex : { leftOperand, rightOperand }) {
+            if (tested[operandIndex] && tested[operandIndex] != TypeTable::object)
+                continue;
+            if (TypeID number = testedTypeBesideNumber(reporter, value, value.operand(operandIndex), value.operand(1 - operandIndex)))
+                tested[operandIndex] = number;
+        }
+    }
+    return tested;
 }
 
 // What a function of the program does with an argument shows once the call is inlined.
@@ -442,6 +462,16 @@ static Expected<bool> isWantedAsInteger(TestSiteReporter& reporter, const Operat
                 isTested[use.operandIndex] = true;
                 if (isBetterForm(user.opcode, chooseOperatorForm(site, user), chooseFormUnderTests(reporter, site, user, tested, isTested)))
                     return true;
+                // `field + counter`: the operand beside the counter gets a test of its own once that makes a better form, which it does beside an integer alone.
+                uint32_t other = 1 - use.operandIndex;
+                if (user.numberOfOperands() == 2 && (tested[other] = testedTypesOfOperands(reporter, site, use.user)[other])) {
+                    isTested = { };
+                    isTested[other] = true;
+                    OperatorChoice besideNumber = chooseFormUnderTests(reporter, site, user, tested, isTested);
+                    isTested[use.operandIndex] = true;
+                    if (isBetterForm(user.opcode, besideNumber, chooseFormUnderTests(reporter, site, user, tested, isTested)))
+                        return true;
+                }
                 forEachValueNarrowedByBranchOn(function, reporter.analyses().useLists(), use.user, names[index], [&](ValueID narrowed) {
                     if (!names.contains(narrowed) && names.size() < maxNamesOfCounter)
                         names.append(narrowed);
@@ -521,17 +551,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
             return;
         }
 
-        TestedTypePerOperand tested;
-        for (uint32_t operandIndex = 0; operandIndex < numberOfOperands; ++operandIndex)
-            tested[operandIndex] = narrowTestOfIntegerOfUnknownSize(reporter, site, value, operandIndex, testedTypeFor(reporter, site, value, value.operand(operandIndex)));
-        if (numberOfOperands == 2) {
-            for (uint32_t operandIndex : { leftOperand, rightOperand }) {
-                if (tested[operandIndex] && tested[operandIndex] != TypeTable::object)
-                    continue;
-                if (TypeID number = testedTypeBesideNumber(reporter, value, value.operand(operandIndex), value.operand(1 - operandIndex)))
-                    tested[operandIndex] = number;
-            }
-        }
+        TestedTypePerOperand tested = testedTypesOfOperands(reporter, site, reporter.use());
         if (!tested[leftOperand] && !tested[rightOperand])
             return;
 

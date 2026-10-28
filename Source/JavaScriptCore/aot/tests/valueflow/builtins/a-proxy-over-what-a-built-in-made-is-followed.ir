@@ -1,0 +1,28 @@
+# new Proxy(Object.create(Object.prototype), { get(target, key) { return key }, set(target, key, value) { return true } }).a
+# Of what Object.create() made nothing says that it is a function. The proxy over it is followed like one over a literal: only what is done to it enters a trap.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Handler" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=ObjectCreate
+    v1 = Builtin builtin=ObjectPrototype
+    v2 = Call v0, -, v1
+    v3 = NewClosure function=f1
+    v4 = NewClosure function=f2
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    v6 = Builtin builtin=Proxy
+    v7 = Construct v6, -, v2, v5
+    v8 = PropGet v7 key="a"
+    Return v8
+}
+function f1 name="get" kind=Method parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f2 name="set" kind=Method parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    Return v3
+}

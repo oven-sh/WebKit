@@ -225,8 +225,6 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
     return layouts;
 }
 
-AOT_THRESHOLD(double, maxCreationsOfLayoutMadeSeldom, 1e9);
-
 static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const SlotUses& uses)
 {
     const Program& program = context.program;
@@ -237,14 +235,10 @@ static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const Slo
         LayoutID id(index);
         if (!context.isCompiledObject(id))
             continue;
-        SiteHeat creations = uses.layouts[index].creationHeat;
         Expected<bool> isMadeInLoop = uses.layouts[index].isMadeInLoop;
-        for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(id); ++field) {
-            const SlotRowUse& row = uses.rows[context.rows.rowOf(id, field)];
-            creations = greaterOf(creations, row.holderHeat);
-            isMadeInLoop |= row.hasHoldersMadeInLoop;
-        }
-        if ((creations < maxCreationsOfLayoutMadeSeldom).predicted() && !isMadeInLoop.predicted())
+        for (FieldIndex field = 0; field < context.rows.numberOfFieldsOf(id); ++field)
+            isMadeInLoop |= uses.rows[context.rows.rowOf(id, field)].hasHoldersMadeInLoop;
+        if (!isMadeInLoop.predicted())
             layouts.quickSet(index);
     }
     for (const TaggedFamily& family : program.taggedFamilies) {

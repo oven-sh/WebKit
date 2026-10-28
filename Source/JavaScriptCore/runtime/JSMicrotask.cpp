@@ -1548,6 +1548,15 @@ static void moduleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& vm, 
                 resultPromise->rejectWithCaughtException(vm, scope);
                 return;
             }
+#if ENABLE(AOT)
+            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(record)) {
+                evaluatePromise = compiled->evaluateMainModule(evaluatePromise);
+                if (scope.exception()) {
+                    resultPromise->rejectWithCaughtException(vm, scope);
+                    return;
+                }
+            }
+#endif
             // Chain: when evaluation completes, resolve resultPromise with record
             evaluatePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadReturnRecord, resultPromise, record);
         } else

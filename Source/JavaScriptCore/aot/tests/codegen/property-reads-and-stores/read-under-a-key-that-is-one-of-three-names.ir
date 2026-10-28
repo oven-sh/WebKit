@@ -118,6 +118,6 @@ function f1 name="pick" module=m0 position=50 flags=[IsChecked, HasExplicitName]
 # NONE-LABEL: end of function
 # The count takes in the moves around the calls on the unlikely paths, which follow the calling convention.
 # X64-LABEL: name="pick" role=Source
-# X64-NEXT: instructions: 29, patchpoints: 2
+# X64-NEXT: instructions: 26, patchpoints: 2
 # ARM64-LABEL: name="pick" role=Source
-# ARM64-NEXT: instructions: 28, patchpoints: 2
+# ARM64-NEXT: instructions: 32, patchpoints: 2

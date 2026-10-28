@@ -41,6 +41,7 @@ struct OperandBehavior {
     bool isDescribedWhenRefused { false };
     BuiltinTypeID accepted { };
     bool onlyBoxedPrimitivesAreConverted { false };
+    bool contentsOfContentsAreOnlyStored { false };
 
     bool saysTheSameFromTheSameLists(const OperandBehavior&) const;
 };

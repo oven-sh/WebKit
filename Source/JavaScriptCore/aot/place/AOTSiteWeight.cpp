@@ -14,16 +14,23 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-static double activationsThatCount(const Program& program, const Heat& heat, FunctionID id)
+static bool countsForNothing(const Function& function)
 {
-    const Function& function = program.at(id);
-    if (function.role == FunctionRole::GenericEntrypoint && function.derivation.parameter == allocatingConstructEntrypointParameter)
-        return 0;
-    return heat.estimatedActivationsOf(program, id).predicted();
+    return function.role == FunctionRole::GenericEntrypoint && function.derivation.parameter == allocatingConstructEntrypointParameter;
 }
 
 FunctionSiteWeights::FunctionSiteWeights(const Program& program, const Heat& heat, FunctionID function, FunctionAnalyses& analyses)
-    : m_activations(activationsThatCount(program, heat, function))
+    : FunctionSiteWeights(countsForNothing(program.at(function)) ? 0 : heat.estimatedActivationsOf(program, function).predicted(), analyses)
+{
+}
+
+FunctionSiteWeights::FunctionSiteWeights(const Program& program, FunctionID function, FunctionAnalyses& analyses)
+    : FunctionSiteWeights(countsForNothing(program.at(function)) ? 0 : 1, analyses)
+{
+}
+
+FunctionSiteWeights::FunctionSiteWeights(double activations, FunctionAnalyses& analyses)
+    : m_activations(activations)
     , m_isLeastInEveryBlock(quantizeHeat(m_activations, frequencyConstants.maxFrequency).isSamePredictionAs(minSiteWeight))
     , m_analyses(analyses)
 {

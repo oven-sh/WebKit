@@ -1025,7 +1025,20 @@ static void recordPlaces(const ValueFlowResultInputs& inputs, FlowResultTables& 
     recordPlacesOfUnseenCode(builtins, places, tables.wholeProgram.loadsOfMachineCode);
 }
 
-Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables, std::unique_ptr<LedgerPart>& ledgerOfBuiltinObjects)
+ValueFlowUsesOfLibraryCode findUsesOfLibraryCode(const ValueFlowResultInputs& inputs)
+{
+    ValueFlowUsesOfLibraryCode found;
+    found.unseenCode = collectUnseenCode(inputs, found.loadsOfMachineCode);
+    for (uint32_t index = 0; index < inputs.program.builtins().builtinCount(); ++index) {
+        if (OptionSet<BuiltinUse> uses = inputs.solver().usesOf(BuiltinID(index)); !uses.isEmpty())
+            found.builtinUses.append(BuiltinUseRecord { index, static_cast<BuiltinUse>(uses.toRaw()), noWitness });
+    }
+    for (size_t function : inputs.solver().libraryFunctionsLacked())
+        found.libraryFunctionsLacked.append(RuntimeFunctionID(static_cast<uint32_t>(function)));
+    return found;
+}
+
+Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultInputs& inputs, ValueFlowUsesOfLibraryCode&& usesOfLibraryCode, FlowResultTables& tables, std::unique_ptr<LedgerPart>& ledgerOfBuiltinObjects)
 {
     PhaseTimes times(inputs.build, PassID::AnalyzeFlow);
     ValueFlowHeapView heap(inputs);
@@ -1036,16 +1049,15 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
     Vector<ValueFlowWriteUnderNewName> writesUnderNewNames = computeBuiltinLocations(inputs, holders, heap, tables.builtins);
     times.didFinish("built-ins: locations"_s);
     BitVector builtinsWhoseCodeRuns = findBuiltinsWhoseCodeRuns(inputs);
-    tables.wholeProgram.unseenCode = collectUnseenCode(inputs, tables.wholeProgram.loadsOfMachineCode);
+    tables.wholeProgram.unseenCode = WTF::move(usesOfLibraryCode.unseenCode);
+    tables.wholeProgram.loadsOfMachineCode = WTF::move(usesOfLibraryCode.loadsOfMachineCode);
     tables.wholeProgram.findsFilesOfProgramByName = filesOfProgramAreLoadedByName(inputs.solution);
     warnAboutLoadsUnderComputedNames(inputs.program, inputs.build, tables.wholeProgram.unseenCode.span());
     tables.wholeProgram.instances = countProgramInstances(inputs);
     times.didFinish("built-ins: code that runs, unseen code, instances"_s);
-    tables.builtins.uses = { };
-    for (uint32_t index = 0; index < inputs.program.builtins().builtinCount(); ++index) {
-        if (OptionSet<BuiltinUse> uses = inputs.solver().usesOf(BuiltinID(index)); !uses.isEmpty())
-            tables.builtins.uses.append(BuiltinUseRecord { index, static_cast<BuiltinUse>(uses.toRaw()), noWitness });
-    }
+    tables.builtins.uses = WTF::move(usesOfLibraryCode.builtinUses);
+    tables.builtins.libraryFunctionsLacked = WTF::move(usesOfLibraryCode.libraryFunctionsLacked);
+    inputs.build.statistics().count(StatisticID::FlowLibraryFunctionsLacked, tables.builtins.libraryFunctionsLacked.size());
     times.didFinish("built-ins: uses"_s);
     tables.builtins.legacyRegExpStatics = findReadsOfLegacyRegExpStatics(inputs, holders);
     tables.builtins.featureUses = collectFeatureUses(inputs, holders, builtinsWhoseCodeRuns);

@@ -531,8 +531,6 @@ bool MovedLoadLog::insertChecks(Procedure& proc, RefPtr<DifferenceReport> report
             continue;
         if (place.index >= place.block->size())
             continue;
-        while (!staysInPlace(place.block->at(place.index)))
-            ++place.index;
 
         auto isThere = [&](Value* value) {
             Place made = places.get(value);
@@ -540,7 +538,21 @@ bool MovedLoadLog::insertChecks(Procedure& proc, RefPtr<DifferenceReport> report
                 return false;
             return made.block == place.block ? made.index < place.index : dominators.strictlyDominates(made.block, place.block);
         };
-        if (!isThere(entry.address) || !isThere(entry.givenToUsers) || (entry.store && !isThere(entry.store)) || entry.givenToUsers->type() != entry.load.type)
+        auto isAllThere = [&] {
+            return isThere(entry.address) && isThere(entry.givenToUsers) && (!entry.store || isThere(entry.store));
+        };
+        auto onlyLeaves = [](const Value* value) {
+            Effects effects = value->effects();
+            return !effects.terminal && !effects.writes && !effects.writesPinned && !effects.fence;
+        };
+        // In front of the next value that stays in place. A later phase may have put one that only leaves in front of what the check names: then behind that one.
+        for (;; ++place.index) {
+            while (!staysInPlace(place.block->at(place.index)))
+                ++place.index;
+            if (isAllThere() || !onlyLeaves(place.block->at(place.index)))
+                break;
+        }
+        if (!isAllThere() || entry.givenToUsers->type() != entry.load.type)
             continue;
         if (entry.answerOfComparison)
             checks.append({ place, createDecidedComparisonCheck(proc, entry.load.opcode, entry.load.origin, entry.address, entry.givenToUsers, *entry.answerOfComparison, reportForDecidedComparisons) });

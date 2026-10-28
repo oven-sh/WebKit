@@ -1744,8 +1744,13 @@ static void proveValuesOfOperations(const ValueFlowResultInputs& inputs, Functio
             conversionsTestedBeforeUse.append(statement.site);
     }
     auto aliveForComparisonsOnly = std::ranges::equal_range(inputs.bodies().valuesAliveForComparisonsOnly(), id, { }, &ValueFlowValueOfFunction::function);
+    // The step that finds no further name answers with the empty text, which flow leaves out: nobody reads it.
+    auto isNameOfEnumeration = [&](ValueID value) {
+        const Value& definition = function.at(value);
+        return definition.opcode == Opcode::ResultAt && definition.index() == static_cast<uint32_t>(ForInStepResult::Key) && function.at(definition.resultsOperand()).opcode == Opcode::ForInStep;
+    };
     auto prove = [&](ValueID value, NOESCAPE const Invocable<ValueSetID()> auto& findHeld) {
-        if (std::ranges::binary_search(aliveForComparisonsOnly, value, { }, &ValueFlowValueOfFunction::value))
+        if (std::ranges::binary_search(aliveForComparisonsOnly, value, { }, &ValueFlowValueOfFunction::value) || isNameOfEnumeration(value))
             return;
         if (isDecided.quickSet(value.index()) || mayComeFromUnseenCaller(value) || hasTypeOfNarrowedLocation(application, function.at(value)))
             return;

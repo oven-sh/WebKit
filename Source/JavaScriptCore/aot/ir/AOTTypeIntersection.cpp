@@ -229,7 +229,7 @@ static void intersectListedObjects(Type& result, const Type& a, const Type& b, T
 {
     const BuiltinTable& builtins = arena.builtins();
     result.anyFunction = a.anyFunction && b.anyFunction;
-    result.functions = intersectLists(a.functions, mayContainAnyCallable(builtins, b), b.functions, mayContainAnyCallable(builtins, a));
+    result.functions = intersectLists(a.functions, mayContainAnyClosure(builtins, b), b.functions, mayContainAnyClosure(builtins, a));
     if (result.anyFunction && declared == DeclaredParts::FromSecond)
         result.functions = b.functions;
     intersectBuiltins(result, a, b, arena.table());

@@ -598,7 +598,7 @@ static std::optional<OwnKeyWalkPlan> planSourceWalk(FunctionPassContext& context
         // The operation behind the arms takes the object as it is, so it is made there. A hot loop leaves for a copy of itself on that way. Other code goes on behind the arms, where an object that is made on one way is made on all.
         const NaturalLoop* loop = context.analyses.naturalLoops().innerMostLoopOf(site.block);
         std::optional<OwnKeyWalkPlan> plan = planWalkByLayouts(context, site);
-        if (plan && (!plan->needsOriginalCall || (loop && isHotLoop(context, *loop).predicted())))
+        if (plan && (!plan->needsOriginalCall || (loop && isHot(heatClassByOwnLoops(context, loop->header())).predicted())))
             return plan;
     }
     return planWalkByLayouts(context, site, emptyTarget);
@@ -750,7 +750,7 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context)
             std::optional<OwnKeyWalkSite> site = findSiteAt(context.program, function, { block, index });
             if (!site || context.runsAtMostOnce(block))
                 continue;
-            Expected<HeatClass> heat = heatClassOf(context, block);
+            Expected<HeatClass> heat = heatClassByOwnLoops(context, block);
             // The operation copies a record by its words. What the arms add to that, the layout of the copy and no call, is worth their bytes in hot code.
             if (!isCold(heat).predicted() && (site->walk != OwnKeyWalk::Copy || isHot(heat).predicted()) && !isListThatLivesOn(context, *site)) {
                 if (!isHot(heat).predicted() && fillsEmptyLiteral(function, *site))

@@ -230,6 +230,8 @@ inline constexpr ValueFlowCellName valueOfEntriesPair { ValueFlowNameKind::Hidde
 inline constexpr ValueFlowCellName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
 inline constexpr ValueFlowCellName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
 inline constexpr ValueFlowCellName describedObjectName { ValueFlowNameKind::HiddenSlot, 0xfffffffb };
+inline constexpr ValueFlowCellName proxyItselfName { ValueFlowNameKind::HiddenSlot, 0xfffffffa };
+inline constexpr ValueFlowCellName listedValuesOfProxyName { ValueFlowNameKind::HiddenSlot, 0xfffffff9 };
 
 inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
 inline constexpr ValueFlowName unknownKeyName = ValueFlowName::of(ValueFlowNameKind::UnknownKey);
@@ -329,6 +331,9 @@ struct ValueFlowStatement {
     uint32_t firstSite { UINT32_MAX };
     // Of a PropGet: what it reads is tested, or is the callee of a call on the object it was read from, and goes nowhere else.
     bool isOnlyCalledOnItsHolder { false };
+    // What the tests in front of its block let through. Where one of these holds nothing the statement never runs.
+    uint8_t guardCount { 0 };
+    uint32_t firstGuard { 0 };
 };
 
 enum class ValueFlowCallKind : uint8_t {

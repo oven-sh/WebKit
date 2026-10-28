@@ -13,19 +13,15 @@
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFunctionEditing.h"
-#include "AOTGenericCopy.h"
 #include "AOTGrouping.h"
-#include "AOTHeat.h"
 #include "AOTNarrowFieldTypes.h"
 #include "AOTOperatorForms.h"
 #include "AOTPredictedValues.h"
 #include "AOTProgramCaches.h"
 #include "AOTResolveCallsDirectCall.h"
-#include "AOTSSARepair.h"
 #include "AOTSimplifyBuiltinCallsInternal.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
-#include "AOTThreshold.h"
 #include <algorithm>
 #include <atomic>
 #include <limits>
@@ -68,13 +64,6 @@ static void forEachEdgeResultParameter(const Function& function, BlockID from, N
     }
 }
 
-static bool isAfterTailCall(const Function& function, ProgramPoint point)
-{
-    static_assert(notFound > std::numeric_limits<uint32_t>::max());
-    const Block& block = function.at(point.block);
-    return block.terminator.kind == TerminatorKind::ReturnCall && block.values.find(block.terminator.callOperand()) < point.index;
-}
-
 static bool isBefore(ProgramPoint a, ProgramPoint b)
 {
     return std::tie(a.block, a.index) < std::tie(b.block, b.index);
@@ -93,17 +82,6 @@ namespace {
 
 struct CheckSite {
     ValueID check;
-    ProgramPoint pointBehind;
-    bool isWorthExit { true };
-    bool hasExit { true };
-    BlockID block;
-    BlockID continuation;
-};
-
-struct GenericVersionCut {
-    ProgramPoint point;
-    BlockID blockBefore;
-    BlockID blockAfter;
 };
 
 struct GenericVersionBuilder {
@@ -116,7 +94,6 @@ struct GenericVersionBuilder {
     TypeID anyValue { anyValueType(types) };
     bool reportsMismatches { context.build.recordedOptions().policy() == MismatchPolicy::Report };
     Vector<CheckSite, 8> sites { };
-    Vector<GenericVersionCut, 16> cuts { };
 
     const Type& typeOf(ValueID value) const LIFETIME_BOUND { return program.typeOf(function, value); }
     TypePropagationInputs typingInputs() { return { program, context.id, function, analyses, types, context.build, &context.typingMemo }; }
@@ -147,62 +124,10 @@ struct GenericVersionBuilder {
             return changed || hasDroppedChecks ? PassOutcome::Changed : PassOutcome::Unchanged;
         }
 
-        // The first suspension of a generator stands once in its body.
-        bool isUnsplitGenerator = function.isUnsplitCoroutine() && function.has(FunctionFlags::IsGenerator);
-        for (CheckSite& site : sites)
-            site.isWorthExit = !standsBetweenMethodReadAndCall(site);
-        bool runsSeldom = isInColderPartOfProgram(context.inputs.heat, program, context.id).predicted();
-        if (runsSeldom || isUnsplitGenerator || function.role == FunctionRole::GenericVersion || keepsMoreAliveOverAwaitThanFrameMapHolds() || !tryCreateGenericVersion()) {
-            if (function.role != FunctionRole::GenericVersion) {
-                context.build.statistics().count(StatisticID::GenericVersionsNotCreated);
-                context.addDecline(Wire::DeclineKind::GenericVersionNotCreated, sites.first().check, { }, LimitID::None, static_cast<uint32_t>(sites.size()));
-            }
-            Vector<ValueID, 8> checks(sites.size(), [&](size_t index) { return sites[index].check; });
-            replaceChecksWithGuards(checks.span());
-            finishTyping();
-        }
+        Vector<ValueID, 8> checks(sites.size(), [&](size_t index) { return sites[index].check; });
+        replaceChecksWithGuards(checks.span());
+        finishTyping();
         return PassOutcome::Changed;
-    }
-
-    // A method is read before its arguments are evaluated. An exit between the two hands the method on to the generic version, and a call is resolved by its receiver only where nobody else uses the method.
-    // Only a method that is one of several functions of the program is told by its receiver. Any other call gains nothing, and the exit proves the argument to what is called.
-    bool standsBetweenMethodReadAndCall(const CheckSite& site)
-    {
-        auto [block, indexBehind] = site.pointBehind;
-        const BlockValues& values = function.at(block).values;
-        for (uint32_t index = indexBehind; index < values.size(); ++index) {
-            const Value& call = function.at(values[index]);
-            if (call.opcode != Opcode::Call || !call.calleeKey() || typeOf(call.calleeOperand()).functions.size() < 2)
-                continue;
-            ValueLocation read = analyses.useLists().locationOf(CastChain(function, call.calleeOperand()).last().valueInFrontOfFacts());
-            if (read.placement == ValuePlacement::InBlock && read.block == block && read.index < indexBehind)
-                return true;
-        }
-        return false;
-    }
-
-    // Such a function builds only where its allocations sink past the await, and a second version of what uses them stands in the way of that.
-    bool keepsMoreAliveOverAwaitThanFrameMapHolds()
-    {
-        uint64_t maxRoots = context.limit(LimitID::MaxFrameMapRoots);
-        if (!function.isUnsplitCoroutine() || function.values.size() <= maxRoots)
-            return false;
-        auto isAwait = [&](ValueID value) { return function.at(value).opcode == Opcode::Await; };
-        for (BlockID block : analyses.cfg().reversePostOrder()) {
-            const BlockValues& values = function.at(block).values;
-            if (std::ranges::none_of(values, isAwait))
-                continue;
-            Liveness::LocalCalc live(analyses.liveness(), block);
-            for (uint32_t index = values.size(); index--;) {
-                uint64_t numberOfLiveValues = 0;
-                if (isAwait(values[index]))
-                    live.forEachLive([&](ValueID) { ++numberOfLiveValues; });
-                if (numberOfLiveValues > maxRoots)
-                    return true;
-                live.execute(index);
-            }
-        }
-        return false;
     }
 
     // Follows the checked value through the casts that are named and the parameters that take it. False once one of its other uses is not accepted.
@@ -441,7 +366,7 @@ struct GenericVersionBuilder {
             const BlockValues& values = function.at(block).values;
             for (uint32_t index = 0; index < values.size(); ++index) {
                 if (function.at(values[index]).opcode == Opcode::Check)
-                    sites.append(CheckSite { .check = values[index], .pointBehind = { block, index + 1 } });
+                    sites.append(CheckSite { .check = values[index] });
             }
         }
     }
@@ -469,73 +394,6 @@ struct GenericVersionBuilder {
         return numberOfRemovedChecks;
     }
 
-    const GenericVersionCut* findCut(ProgramPoint point) const
-    {
-        auto found = std::ranges::lower_bound(cuts, point, isBefore, &GenericVersionCut::point);
-        return found != cuts.end() && found->point == point ? &*found : nullptr;
-    }
-
-    void splitBlocks(std::span<const ProgramPoint> rejoinPoints)
-    {
-        for (CheckSite& site : sites) {
-            site.hasExit = site.isWorthExit && !isAfterTailCall(function, site.pointBehind);
-            if (site.hasExit)
-                cuts.append(GenericVersionCut { site.pointBehind, { }, { } });
-        }
-        for (ProgramPoint point : rejoinPoints) {
-            if (point.index && !isAfterTailCall(function, point))
-                cuts.append(GenericVersionCut { point, { }, { } });
-        }
-        AOT::sort(cuts, isBefore, &GenericVersionCut::point);
-        removeRepeatedElements(cuts, [](const GenericVersionCut& a, const GenericVersionCut& b) { return a.point == b.point; });
-
-        Vector<uint32_t, 8> indexes;
-        for (size_t next = 0; next < cuts.size();) {
-            BlockID block = cuts[next].point.block;
-            indexes.shrink(0);
-            for (size_t index = next; index < cuts.size() && cuts[index].point.block == block; ++index)
-                indexes.append(cuts[index].point.index);
-            builder.setOrigin(function.at(function.at(block).values[indexes.first() - 1]).origin());
-            for (BlockID part : builder.splitBlock(block, indexes.span())) {
-                cuts[next].blockBefore = std::exchange(block, part);
-                cuts[next++].blockAfter = part;
-            }
-        }
-
-        for (CheckSite& site : sites) {
-            if (!site.hasExit)
-                continue;
-            const GenericVersionCut* cut = findCut(site.pointBehind);
-            RELEASE_ASSERT(cut);
-            site.block = cut->blockBefore;
-            site.continuation = cut->blockAfter;
-        }
-    }
-
-    // A block is cut wherever the copy might come back. Where it does not, the two parts are one block again: a pass that looks for an operation right behind another finds it.
-    void mergeBlocksCutForNothing()
-    {
-        const CFG& cfg = analyses.cfg();
-        bool hasMerged = false;
-        // From the last cut of a block to the first: what has been merged into a part goes on into the part in front of it.
-        for (size_t index = cuts.size(); index--;) {
-            const GenericVersionCut& cut = cuts[index];
-            const Block& blockBefore = function.at(cut.blockBefore);
-            const Block& after = function.at(cut.blockAfter);
-            if (blockBefore.terminator.kind != TerminatorKind::Jump || blockBefore.terminator.next().block != cut.blockAfter)
-                continue;
-            if (!after.parameters.isEmpty() || blockBefore.handler != after.handler || !blockBefore.frequency.isSamePredictionAs(after.frequency) || !cfg.singleIncomingEdge(cut.blockAfter))
-                continue;
-            Block& before = function.edit(cut.blockBefore, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
-            Block merged = std::exchange(function.edit(cut.blockAfter), Block { });
-            before.values.appendVector(merged.values);
-            before.terminator = WTF::move(merged.terminator);
-            hasMerged = true;
-        }
-        if (hasMerged)
-            analyses.didChangeControlFlow();
-    }
-
     // A cast was replaced by another cast of the same operand, or a payload changed. Use lists, identities and liveness depend only on operands and on which opcodes are casts.
     void didChangeCastsInPlace()
     {
@@ -551,72 +409,6 @@ struct GenericVersionBuilder {
             analyses.didChangeValues();
         else
             didChangeCastsInPlace();
-    }
-
-    // The copy runs with a value that has failed its check.
-    void forgetProofsInCopy(const GenericCopy& copy, const BitVector& isMadeFromCheckedValue)
-    {
-        BitVector copies(function.values.size());
-        for (size_t index : isMadeFromCheckedValue) {
-            if (ValueID id = copy.copyOf(ValueID(index)))
-                copies.quickSet(id.index());
-        }
-        didForgetProofs(forgetProofsOf(function, types, copies, copies, ExpectedTypes::Kept));
-
-        // A callee brings its own generic version along, so inlining here as well would double the code at each level of calls.
-        for (BlockID block : copy.copiedBlocks()) {
-            for (ValueID id : function.at(block).values) {
-                const Value& value = function.at(id);
-                if (value.opcode == Opcode::Call || (value.opcode == Opcode::CallDirect && !value.isAlwaysInlined()))
-                    function.edit(id, ValueEdit::Definition).setIsNeverInlined(true);
-            }
-        }
-        analyses.didChangeValues();
-    }
-
-    void lowerCheck(GenericCopy& copy, const CheckSite& site)
-    {
-        const Value& check = function.at(site.check);
-        ValueID operand = check.valueOperand();
-        TypeID castType = check.expectedType().predicted();
-        TypeSiteID typeSite = check.site();
-        builder.setOrigin(check.origin());
-        BlockID genericContinuation = copy.copyOf(site.continuation);
-        RELEASE_ASSERT(genericContinuation);
-        Block& block = function.edit(site.block, { BlockEdit::Values, BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments });
-        RELEASE_ASSERT(block.values.last() == site.check && block.terminator.next().block == site.continuation);
-        block.values.removeLast();
-        block.terminator = Terminator { };
-        builder.setHandler(reportsMismatches ? block.handler : std::nullopt);
-        analyses.didChangeControlFlow();
-
-        builder.moveToEndOf(site.block);
-        BlockID failedUnasked;
-        ValueID turnedAway;
-        if (builder.failsPredictions()) {
-            failedUnasked = builder.addBlock(function.at(genericContinuation).frequency);
-            turnedAway = builder.addParameter(failedUnasked, function.at(operand).type);
-            builder.emitFailureOfPredictions(Target { failedUnasked, { operand }, { } });
-        }
-        ValueID test = builder.appendTypeTest(operand, castType);
-        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, OperandIndex::TypeTest::value, function.at(site.block).frequency, function.at(genericContinuation).frequency);
-        becomeUpcast(function.edit(site.check, ValueEdit::Definition), branch.provenOnTaken, castType);
-        function.edit(branch.taken, BlockEdit::Values).values.append(site.check);
-        analyses.didChangeValues();
-        builder.emitJump(site.continuation);
-
-        builder.moveToEndOf(branch.notTaken);
-        if (reportsMismatches)
-            builder.append(makeMismatchReport(branch.provenOnNotTaken, ExpectedType(castType), typeSite));
-        if (failedUnasked) {
-            builder.emitJump(failedUnasked, { branch.provenOnNotTaken });
-            builder.moveToEndOf(failedUnasked);
-        } else
-            turnedAway = branch.provenOnNotTaken;
-        Value unexpected;
-        becomeExpect(unexpected, turnedAway, ExpectedType(anyValue));
-        copy.addDefinition(site.check, builder.append(WTF::move(unexpected)));
-        builder.emitJump(genericContinuation);
     }
 
     void replaceChecksWithGuards(std::span<const ValueID> checks, ExpectedTypes expectedTypes = ExpectedTypes::Kept)
@@ -638,165 +430,17 @@ struct GenericVersionBuilder {
         context.build.statistics().count(StatisticID::ChecksReplacedByGuards, checks.size());
     }
 
-    void finishTyping(std::span<const BlockID> copiedBlocks = { })
+    void finishTyping()
     {
         // Every check is a test by now or is gone.
         settleProofsBehindAnsweredChecks(function, analyses.cfg());
         typeAgain();
-        if (assumeTypesOfPositionsAtStoresInCopy(builder, function, types, copiedBlocks))
-            analyses.didChangeValues();
         // Whatever it stores behind an allocation, it puts a value in for.
         size_t numberOfValuesBefore = function.values.size();
         storeUnprovenInitialValues(program, context.id, function, types, context.build);
         if (function.values.size() != numberOfValuesBefore)
             analyses.didChangeValues();
         finishTypedValues(typingInputs());
-    }
-
-    // Each exit enters the copy at a block that takes every value that is live behind the check as a parameter. The parameters must not outgrow the function.
-    bool wouldAddTooManyParameters()
-    {
-        AOT_THRESHOLD(uint64_t, maxAddedParametersPerValue, 16);
-
-        if (sites.size() <= maxAddedParametersPerValue)
-            return false;
-        uint64_t maxAddedParameters = maxAddedParametersPerValue * function.values.size();
-        uint64_t numberOfAddedParameters = 0;
-        const Liveness& liveness = analyses.liveness();
-        for (size_t end = sites.size(); end;) {
-            BlockID block = sites[end - 1].pointBehind.block;
-            Liveness::LocalCalc live(liveness, block);
-            for (uint32_t index = function.at(block).values.size(); end && sites[end - 1].pointBehind.block == block; --end) {
-                const CheckSite& site = sites[end - 1];
-                while (index > site.pointBehind.index)
-                    live.execute(--index);
-                if (site.isWorthExit)
-                    numberOfAddedParameters += live.numberOfLiveValues();
-                if (numberOfAddedParameters > maxAddedParameters)
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    bool tryCreateGenericVersion()
-    {
-        if (wouldAddTooManyParameters()) {
-            context.gaveUp(LimitID::MaxGenericVersionJoinWork, sites.first().check);
-            return false;
-        }
-
-        uint64_t maxBlocks = context.limit(LimitID::MaxBlocksInGenericVersion);
-        // An access to a checked receiver runs unknown code in the copy alone: in the typed code it becomes a load.
-        bool comesBackBehindCalls = isLibraryCode(program, function);
-        Vector<ProgramPoint> rejoinPoints = findRejoinPoints(analyses, [&](ValueID value) {
-            if (!comesBackBehindCalls)
-                return false;
-            Opcode opcode = function.at(value).opcode;
-            EffectRule rule = effectRuleOf(opcode);
-            return (rule == EffectRule::Call || rule == EffectRule::Builtin || opcode == Opcode::Await) && analyses.mayCallUnknownCode(value);
-        }, [](ProgramPoint) { return true; });
-        // The check of what a call returns stands right behind the call. Behind the check the typed code has the checked type, and later what the callee proves. A join in front of it would keep the check for good.
-        for (ProgramPoint& point : rejoinPoints) {
-            const BlockValues& values = function.at(point.block).values;
-            auto isCastAt = [&](uint32_t index) {
-                Opcode opcode = function.at(values[index]).opcode;
-                return opcode == Opcode::Check || opcode == Opcode::Upcast || opcode == Opcode::AssumeType || makesFact(opcode);
-            };
-            while (point.index && point.index < values.size() && isCastAt(point.index))
-                ++point.index;
-        }
-        removeRepeatedElements(rejoinPoints);
-
-        auto savedBlocks = function.blocks;
-        size_t savedValueCount = function.values.size();
-        auto restoreBlocks = [&] {
-            function.replaceBlocks(WTF::move(savedBlocks));
-            function.editAllValues().shrink(savedValueCount);
-            analyses.didChangeControlFlow();
-            return false;
-        };
-        splitBlocks(rejoinPoints.span());
-        BitVector isAfterCheck(function.blocks.size());
-        Vector<BlockID, 16> worklist;
-        auto visit = [&](BlockID block) {
-            if (isAfterCheck.add(block.index()))
-                worklist.append(block);
-        };
-        for (const CheckSite& site : sites) {
-            if (site.hasExit)
-                visit(site.continuation);
-        }
-        while (!worklist.isEmpty())
-            function.at(worklist.takeLast()).forEachTarget([&](const Target& target) { visit(target.block); });
-        for (CheckSite& site : sites)
-            site.hasExit = site.hasExit && RegionCloner::canMergeAt(analyses, isAfterCheck, site.continuation);
-
-        Vector<ValueID, 8> checks;
-        Vector<ValueID, 8> checksWithExit;
-        Vector<ValueID, 8> checksWithoutExit;
-        GenericCopy copy(context, builder);
-        for (const CheckSite& site : sites) {
-            checks.append(site.check);
-            (site.hasExit ? checksWithExit : checksWithoutExit).append(site.check);
-            if (!site.hasExit)
-                continue;
-            copy.addStart(site.continuation);
-            copy.addEntry(site.continuation);
-            copy.addValueToBeNarrowed(site.check);
-        }
-        if (checksWithExit.isEmpty())
-            return restoreBlocks();
-        for (ProgramPoint point : rejoinPoints) {
-            if (!point.index)
-                copy.addRejoinBlock(point.block);
-            else if (const GenericVersionCut* cut = findCut(point))
-                copy.addRejoinBlock(cut->blockAfter);
-        }
-
-        switch (copy.plan(maxBlocks)) {
-        case GenericCopy::Extent::NotCopied:
-        case GenericCopy::Extent::OnlyCopiedBlocks:
-            if (function.blocks.size() > maxBlocks)
-                context.gaveUp(LimitID::MaxBlocksInGenericVersion, checks.first());
-            return restoreBlocks();
-        case GenericCopy::Extent::ToEndOfFunction:
-        case GenericCopy::Extent::ToWaysBack:
-            break;
-        }
-        // A value of the copy that is live where the copy comes back gets a parameter at each join, and SSARepair looks at every block for each such value.
-        uint64_t numberOfPlannedValues = 0;
-        for (BlockID block : copy.plannedBlocks())
-            numberOfPlannedValues += function.at(block).values.size();
-        if (numberOfPlannedValues * copy.plannedBlocks().size() > context.limit(LimitID::MaxGenericVersionJoinWork)) {
-            context.gaveUp(LimitID::MaxGenericVersionJoinWork, checks.first());
-            return restoreBlocks();
-        }
-
-        replaceChecksWithGuards(checksWithoutExit.span());
-        BitVector isMadeFromCheckedValue = valuesBehind(function, analyses.cfg(), checksWithExit.span());
-        copy.clone([](Expected<BlockFrequency> frequency) -> Expected<BlockFrequency> { return frequency.predicted() == BlockFrequency::Normal ? BlockFrequency::Unlikely : BlockFrequency::Rare; });
-        forgetProofsInCopy(copy, isMadeFromCheckedValue);
-        for (const CheckSite& site : sites) {
-            if (site.hasExit)
-                lowerCheck(copy, site);
-        }
-        builder.setHandler(std::nullopt);
-
-        copy.addWaysBack(checks.span(), GenericCopy::TypesTestedOnWayBack::Expected);
-        SSARepair repair(builder, analyses);
-        copy.addVariablesTo(repair);
-        repair.run();
-        analyses.didChangeControlFlow();
-        mergeBlocksCutForNothing();
-
-        Statistics& statistics = context.build.statistics();
-        statistics.count(StatisticID::GenericVersionsCreated);
-        statistics.count(StatisticID::ExitsToGenericVersion, checksWithExit.size());
-        statistics.count(StatisticID::WaysBackFromGenericVersion, copy.numberOfWaysBack());
-        statistics.count(StatisticID::BlocksInGenericVersions, copy.copiedBlocks().size());
-        finishTyping(copy.copiedBlocks());
-        return true;
     }
 };
 

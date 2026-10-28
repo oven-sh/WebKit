@@ -30,6 +30,7 @@
 #include "AOTIRBuilder.h"
 #include "AOTPass.h"
 #include "AOTPropertyAccess.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
 #include "AOTRegionCloner.h"
 #include "AOTResolveCallsDirectCall.h"
@@ -43,6 +44,7 @@
 #include "AOTStringArena.h"
 #include "AOTTypeTestSite.h"
 #include "AOTValueIdentity.h"
+#include "AOTVirtualObject.h"
 #include "IterationKind.h"
 #include "JSArrayIterator.h"
 #include "TypedArrayType.h"
@@ -487,8 +489,21 @@ static std::optional<IterationForm> formOfClass(const BuiltinTable& builtins, Bu
     return std::nullopt;
 }
 
+// Above an arguments object lies Object.prototype alone. A lookup that finds nothing there finds what the object itself holds, or nothing.
+static bool findsNothingAboveArguments(FunctionPassContext& pass, const Value& lookup)
+{
+    const Program& program = pass.program;
+    if (isNamedAccess(lookup.opcode)) {
+        BuiltinMemberAnswer above = findMemberFrom({ program, pass.inputs.flow }, Builtins::ObjectPrototype, keyOfNamedAccess(program, lookup));
+        return above.outcome == BuiltinMemberLookup::Outcome::Absent && above.proof == LocationProof::Constant;
+    }
+    const Type& key = program.typeOf(pass.function, lookup.propertyOperand());
+    return key.isInteger() && key.integers.minimum >= 0 && key.integers.maximum <= static_cast<int64_t>(MAX_ARRAY_INDEX) && program.builtins().closesIndexKeys(Builtins::ObjectPrototype);
+}
+
 // An arguments object holds its length and Array.prototype.values under @@iterator itself. It holds what it was made with where it stays in its function and the function only reads and walks it.
-static bool isArgumentsObjectAsCreated(FunctionPassContext& pass, ValueID value)
+// Answers the operation that made it.
+static ValueID findMakerOfUnchangedArguments(FunctionPassContext& pass, ValueID value)
 {
     constexpr OperandUses usesOfContents { OperandUse::Inspects, OperandUse::ReadsContents, OperandUse::RetainsContents };
 
@@ -496,30 +511,34 @@ static bool isArgumentsObjectAsCreated(FunctionPassContext& pass, ValueID value)
     const EscapeAnalysis& escape = pass.analyses.escape();
     std::optional<ObjectID> object = escape.gaveUp() ? std::nullopt : escape.singleObject(value);
     if (!object || escape.at(*object).state == EscapeState::Unknown)
-        return false;
+        return { };
     const Value& maker = function.at(escape.at(*object).definition);
     const ClassPart* madeClass = pass.program.at(maker.type).singleBuiltinClass();
     if (resultRuleOf(maker.opcode) != ResultRule::Allocation || !madeClass || madeClass->builtinClass != BuiltinClasses::Arguments)
-        return false;
+        return { };
 
-    // By what the schema says of the operand. A walk calls the method that the object was made with, and a read that runs no code hands the object to nobody.
+    // By what the schema says of the operand. A walk calls the method that the object was made with, and only the walk reads the state that holds the object. An operation that runs no code and keeps the object nowhere hands it to nobody.
     auto readsOrWalks = [&](const Use& use) {
         if (use.kind != Use::Kind::Operand)
             return false;
         const Value& user = function.at(use.user);
         OperandBehavior declared = declaredBehaviorOf(user.opcode, use.operandIndex);
-        if (declared.retainedIn == RetainedIn::Result)
+        if (declared.retainedIn == RetainedIn::Result && declared.protocols.contains(Protocol::Iterate))
             declared.uses.remove(OperandUse::Retains);
         if (!declared.uses.containsOnly(usesOfContents))
             return false;
+        Access access = elementAccessOf(user.opcode).value_or(accessOf(user.opcode));
+        if (receiverOf(user.opcode) == use.operandIndex && (access == Access::Read || access == Access::Has))
+            return findsNothingAboveArguments(pass, user);
         if (declared.protocols.isEmpty())
             return !pass.analyses.effectsOf(use.user).onAnyEdge().mayRunOtherCode();
         bool looksForAnotherMethodFirst = user.opcode == Opcode::IteratorOpen && user.iteratorKind() == IteratorKind::Async;
         return declared.protocols.containsOnly({ Protocol::Iterate }) && !looksForAnotherMethodFirst;
     };
-    return std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) {
+    bool isUnchanged = std::ranges::all_of(escape.usesOf(*object), [&](const ObjectUse& objectUse) {
         return readsOrWalks(objectUse.use) || (!objectUse.isEscape && objectUse.uses.containsOnly(usesOfContents));
     });
+    return isUnchanged ? escape.at(*object).definition : ValueID();
 }
 
 // Flow proves an instance pristine from what is done to the instance. What its prototypes hold under @@iterator has a proof of its own.
@@ -631,7 +650,7 @@ static Arms findClassArms(FunctionPassContext& pass, const PlannedValue& planned
     Arms arms;
     for (IterationArm& arm : collectCandidates(pass, planned)) {
         arm.namesAreProven = arm.form == IterationForm::String
-            || (arm.form == IterationForm::Arguments && isArgumentsObjectAsCreated(pass, planned.value))
+            || (arm.form == IterationForm::Arguments && findMakerOfUnchangedArguments(pass, planned.value))
             || pristineAspectsProvenBy(pass.program.typeOf(pass.function, planned.value).intersectWith(pass.types.at(arm.testedType), pass.types), arm.builtinClass).containsAll(planned.aspects);
         if (canServe(pass, planned, arm))
             arms.append(arm);
@@ -646,11 +665,19 @@ static IterationPlan planWithClassArms(FunctionPassContext& pass, ValueID value,
     const Program& program = pass.program;
     IterationPlan plan { .source = value };
     Type remaining = program.typeOf(pass.function, value);
+    // No code tells the instances of some classes from other objects. Their arms come last and take what the tests before them leave.
+    auto canBeTested = [&](const IterationArm& arm) {
+        const Type& tested = pass.types.at(arm.testedType);
+        return tested == tested.withoutClassProofs();
+    };
+    std::ranges::stable_partition(classArms, canBeTested);
     for (IterationArm& arm : classArms) {
         const Type& tested = pass.types.at(arm.testedType);
         if (!remaining.overlaps(tested, program))
             continue;
         arm.classIsProven = remaining.isSubsetOf(tested, program);
+        if (!arm.classIsProven && !canBeTested(arm))
+            continue;
         remaining = remaining.without(tested, pass.types);
         plan.arms.append(arm);
     }
@@ -2844,13 +2871,58 @@ struct SpreadSite {
     ProgramPoint point;
     IterationPlan plan;
     bool hasFailedStringTest;
+    ValueID makerOfArguments;
 };
 
 } // anonymous namespace
 
+// The list of the arguments behind the parameters can be appended at once where it still holds what the object copied from it.
+static ValueID findMakerOfArgumentsToTakeApart(FunctionPassContext& pass, ValueID iterable)
+{
+    if (!pass.program.typeOf(pass.function, iterable).findClassPart(BuiltinClasses::Arguments))
+        return { };
+    ValueID maker = findMakerOfUnchangedArguments(pass, iterable);
+    if (!maker)
+        return { };
+    DescribedObject described = describeVirtualObject(pass.analyses, maker);
+    if (described.support != VirtualObjectSupport::Supported || !described.description.restListStaysAsCreated)
+        return { };
+    const Type& list = pass.program.typeOf(pass.function, pass.function.at(maker).restOperand());
+    return pristineAspectsProvenBy(list, BuiltinClasses::Array).containsAll({ PristineAspects::Storage, PristineAspects::Names }) ? maker : ValueID();
+}
+
+// An arguments object as it was made holds the parameters that were passed and, behind them, the other arguments.
+static void appendPartsOfArguments(FunctionPassContext& pass, IRBuilder& builder, const SpreadSite& site)
+{
+    Function& function = pass.function;
+    Value spread = function.at(function.at(site.point.block).values[site.point.index]);
+    Value maker = function.at(site.makerOfArguments);
+    Expected<BlockFrequency> frequency = function.at(site.point.block).frequency;
+    ReplacedEffects replaced;
+    replaced.add(pass.analyses.effectContext(), function, spread);
+
+    builder.setOrigin(spread.origin());
+    IRBuilder::Expansion cut = builder.beginExpansion(site.point);
+    int64_t index = 0;
+    for (ValueID parameter : maker.parametersOperands()) {
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(builder.append(Opcode::Less, { builder.appendInteger(index++), maker.countOperand() }), frequency, frequency);
+        builder.moveToEndOf(blocks.notTaken);
+        builder.endExpansion(cut, std::span<const ValueID> { });
+        builder.moveToEndOf(blocks.taken);
+        builder.append(Opcode::AppendElement, { spread.arrayOperand(), parameter });
+    }
+    BlockID block = builder.currentBlock();
+    ValueID appendElements = builder.append(Opcode::AppendElements, { spread.arrayOperand(), maker.restOperand() });
+    checkReplacement(pass.analyses.effectContext(), function, { pass.id, block, appendElements }, function.at(appendElements), replaced, pass.build.diagnostics());
+    builder.endExpansion(cut, std::span<const ValueID> { });
+}
+
 static void expandSpread(FunctionPassContext& pass, IRBuilder& builder, const SpreadSite& site, Vector<SpreadLoop>& loops)
 {
-    const auto& [point, plan, hasFailedStringTest] = site;
+    if (site.makerOfArguments)
+        return appendPartsOfArguments(pass, builder, site);
+
+    const auto& [point, plan, hasFailedStringTest, makerOfArguments] = site;
     Function& function = pass.function;
     ValueID id = function.at(point.block).values[point.index];
     ReplacedEffects replaced;
@@ -2994,7 +3066,7 @@ static PassOutcome expandSpreads(FunctionPassContext& pass, IRBuilder& builder, 
         // An arm's class is proven relative to the tests in front of it, so the other arms go before that is decided.
         arms.removeAllMatching([](const IterationArm& arm) { return arm.form != IterationForm::Array; });
         bool hasFailedStringTest = pass.analyses.findEarlierTest(makeTypeTest(iterable, TypeTable::string), site.block) == EarlierTest::Failed;
-        sites.append({ ProgramPoint { site.block, site.index }, planWithClassArms(pass, iterable, WTF::move(arms)), hasFailedStringTest });
+        sites.append({ ProgramPoint { site.block, site.index }, planWithClassArms(pass, iterable, WTF::move(arms)), hasFailedStringTest, findMakerOfArgumentsToTakeApart(pass, iterable) });
     });
     if (sites.isEmpty())
         return PassOutcome::Unchanged;

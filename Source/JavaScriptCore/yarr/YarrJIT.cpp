@@ -6336,6 +6336,7 @@ class YarrGenerator final : public YarrJITInfo {
                             m_usesSIMD = true;
                             op.m_reentry = simdResult->backtrackTarget;
                             dataLogLnIf(Options::verboseRegExpCompilation(), "Using SIMD nibble table lookahead count:(", mapCount, "),range:[", beginIndex, ", ", endIndex, ")");
+                            dataLogLnIf(Options::verboseRegExpCompilation() && !beginIndex, "Searches for the first character of a match");
 
                             // Handle failure path - out of characters
                             // After scalar loop exhausts, we fall through here
@@ -10602,6 +10603,7 @@ class YarrGenerator final : public YarrJITInfo {
         unsigned claimed = beginOp.m_checkedOffset.value();
 
         JIT_COMMENT(m_jit, "start-position search");
+        dataLogLnIf(Options::verboseRegExpCompilation(), "Searches for the first character of a match");
         if (search.matchesAllNonASCII) {
             readCharacterRaw(claimed, m_regs.regT0);
             matched.append(m_jit.branch32(MacroAssembler::AboveOrEqual, m_regs.regT0, MacroAssembler::TrustedImm32(BoyerMooreBitmap::mapSize)));

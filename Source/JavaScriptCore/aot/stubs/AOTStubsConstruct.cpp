@@ -90,7 +90,7 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GP
     return overflowsStack;
 }
 
-static void callConstructorAndReturn(StubAssembler& jit, const HostCallFrame& frame, GPRReg function, GPRReg globalObject)
+static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax, const HostCallFrame& frame, GPRReg function, GPRReg globalObject)
 {
     emitHostCallFrame(jit, frame);
     const GPRReg globalObjectArgument = jit.reuseScratch(StubRegister::A0);
@@ -105,8 +105,26 @@ static void callConstructorAndReturn(StubAssembler& jit, const HostCallFrame& fr
     callNativeFunction(jit, CodeSpecializationKind::CodeForConstruct, function);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
     jit.loadPtr(Address(exception, VM::exceptionOffset()), exception);
+    // Compiled code takes what super() answers for an object. A native function may answer `new` with a primitive.
+    JumpList madeNoObject;
+    if (syntax == ConstructSyntax::SuperCall) {
+        // The empty value, which a function that throws answers with, has no tag bits.
+        static_assert(!JSValue::ValueEmpty);
+        madeNoObject.append(jit.branchTest64(CCallHelpers::Zero, GPRInfo::returnValueGPR));
+        madeNoObject.append(jit.branchIfNotCell(GPRInfo::returnValueGPR));
+        madeNoObject.append(jit.branchIfNotObject(GPRInfo::returnValueGPR));
+    }
     jit.emitFunctionEpilogue();
     jit.returnToCaller();
+    if (syntax == ConstructSyntax::NewExpression)
+        return;
+
+    madeNoObject.link(&jit);
+    jit.emitFunctionEpilogue();
+    Jump didNotThrow = jit.branchTestPtr(CCallHelpers::Zero, exception);
+    jit.returnToCaller();
+    didNotThrow.link(&jit);
+    jit.tailCallOperation(Entry::operationAOTThrowBecauseParentMadeNoObject, OperationCall::FirstArgument::Instance);
 }
 
 static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, Entry rawOperation)
@@ -126,7 +144,7 @@ static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, En
 
     jit.emitFunctionPrologue();
     JumpList overflowsStack = checkHostFrameCapacity(jit, count, scratch);
-    callConstructorAndReturn(jit, { callee, newTarget, count, values }, function, globalObject);
+    callConstructorAndReturn(jit, syntax, { callee, newTarget, count, values }, function, globalObject);
 
     overflowsStack.link(&jit);
     jit.emitFunctionEpilogue();

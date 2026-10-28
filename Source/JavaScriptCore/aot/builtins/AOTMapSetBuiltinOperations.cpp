@@ -189,13 +189,13 @@ static UGPRPair nextEntry(JSGlobalObject* globalObject, Collection* collection, 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMapNext, UGPRPair, (Instance* instance, JSCell* collection, EncodedJSValue table, uint32_t entry, EncodedJSValue* results))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTMapNext);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTMapNext);
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSMap>(collection, Entry::operationAOTMapNext), JSValue::decode(table), entry, results));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetNext, UGPRPair, (Instance* instance, JSCell* collection, EncodedJSValue table, uint32_t entry, EncodedJSValue* results))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetNext);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTSetNext);
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSSet>(collection, Entry::operationAOTSetNext), JSValue::decode(table), entry, results));
 }
 

@@ -421,6 +421,15 @@ static bool canPassRestArguments(const Program& program, const Function& callee)
     return rest.anyObject || rest.findClassPart(BuiltinClasses::Array);
 }
 
+// Flow lost sight of the closures of such a function, so it cannot tell whether a statement renames one. Once one is renamed, only a call by value records which closure runs.
+static bool recordsCalleeOnlyOnceRenamed(const Program& program, FunctionID callee)
+{
+    FunctionID source = callee;
+    while (FunctionID next = program.at(source).derivation.source)
+        source = next;
+    return program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed) && !program.at(source).has(FunctionCapabilities::RecordsCallee);
+}
+
 bool mayBeCalledDirectly(const Program& program, FunctionID id)
 {
     return !program.at(id).capabilities.contains(FunctionCapabilities::RecordsCallee) && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
@@ -2078,14 +2087,19 @@ struct CallResolver {
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
         // From the first name on that a function object gets where nobody sees, a frame is named by the function object that a call by value has recorded. Until then nobody can tell how a function was entered.
         bool calleeEscapes = false;
+        bool calleeMayHaveRenamedSibling = false;
         if (std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member); })) {
             context.planAsksAboutPlace = true;
             if (haveFunctionNamesChanged(site))
                 return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
             calleeEscapes = std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member) && callsOwnClosureThatEscapes(site, candidates.value, member); });
+            calleeMayHaveRenamedSibling = std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member) && flow.closuresMayBeNamedOutOfSight(member); });
         }
-        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return (calleeEscapes || !mayBeCalledDirectly(program, member)) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
+        bool needsTestOfNames = calleeEscapes || calleeMayHaveRenamedSibling;
+        auto isEnteredByValueOnceRenamed = [&](FunctionID member) { return (needsTestOfNames || !mayBeCalledDirectly(program, member)) && mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, member); };
         bool mayTestNames = std::ranges::any_of(candidates.listed().predicted(), isEnteredByValueOnceRenamed) && (calleeEscapes || paysToTestFunctionNames(site));
+        if (needsTestOfNames && !mayTestNames)
+            return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
         auto members = chooseDispatchedCallees(site, candidates, mayTestNames ? mayBeCalledDirectlyWhileFunctionNamesAreUnchanged : mayBeCalledDirectly);
         if (!members)
             return std::unexpected(members.error());
@@ -2216,14 +2230,7 @@ struct CallResolver {
         return false;
     }
 
-    // Flow lost sight of the closures of such a function, so it cannot tell whether a statement renames one. Once one is renamed, only a call by value records which closure runs.
-    bool recordsCalleeOnlyOnceRenamed(FunctionID callee)
-    {
-        FunctionID source = callee;
-        while (FunctionID next = program.at(source).derivation.source)
-            source = next;
-        return program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed) && !program.at(source).has(FunctionCapabilities::RecordsCallee);
-    }
+    bool recordsCalleeOnlyOnceRenamed(FunctionID callee) { return Typed::recordsCalleeOnlyOnceRenamed(program, callee); }
 
     bool haveFunctionNamesChanged(const CallSite& site) { return hasFailedEarlier(IRBuilder::make(Opcode::AreFunctionNamesUnchanged), site); }
 
@@ -2245,7 +2252,8 @@ struct CallResolver {
         FunctionID only = typeOf(closure).singleFunction();
         if (!only || typeOf(closure).mayBeUndefinedOrNull() || !mayBeCalledDirectlyOrThroughEntrypoint(program, only) || context.limit(LimitID::MaxDispatchCases) < 1 || isTailCall(function, site.position))
             return nullptr;
-        bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only);
+        // A frame without a record shows the name that was last given to a function object of the function, unless the call says that it enters the caller's own.
+        bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only) || (recordsCalleeOnlyOnceRenamed(only) && flow.closuresMayBeNamedOutOfSight(only));
         if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only))))
             return nullptr;
         if (recordsCalleeOnlyOnceRenamed(only) && (haveFunctionNamesChanged(site) || callsOwnClosureThatEscapes(site, closure, only)))
@@ -3275,7 +3283,10 @@ static bool canRecreateMethodClosure(const Program& program, const PropertyAcces
 static void reportClosureTest(TestSiteReporter& reporter, ValueID callee, FunctionID function)
 {
     bool isCall = reporter.useValue().opcode == Opcode::Call;
-    reporter.report({ makeClosureTest(callee, function) }, isCall ? effectsOfDirectCall(reporter.context(), function) : reporter.analyses().effectsOf(reporter.use()).normal);
+    Vector<Value, 2> tests { makeClosureTest(callee, function) };
+    if (isCall && recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function))
+        tests.append(IRBuilder::make(Opcode::AreFunctionNamesUnchanged));
+    reporter.report(tests.span(), isCall ? effectsOfDirectCall(reporter.context(), function) : reporter.analyses().effectsOf(reporter.use()).normal);
 }
 
 static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& site)
@@ -3323,6 +3334,8 @@ static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& s
         return false;
 
     refused.willReport();
+    if (recordsCalleeOnlyOnceRenamed(context.program, plan.member.method) && context.inputs.flow.closuresMayBeNamedOutOfSight(plan.member.method))
+        use->tests.tests.append(IRBuilder::make(Opcode::AreFunctionNamesUnchanged));
     reporter.report(use->tests.tests.span(), effectsOfDirectCall(context, plan.member.method));
     return reporter.didReport();
 }

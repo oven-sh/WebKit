@@ -46,12 +46,23 @@ inline ValueFlowCellName cellOfDroppedResults(const BuiltinTable& builtins)
 }
 
 ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext&, BuiltinName cell);
+// Whoever takes the member without naming it holds what the member answers out of a native cell as a value nobody knows.
+void openProxiesThatMemberAnswers(ValueFlowRuleContext&, BuiltinID member);
+// True where flow can list the own names of every object among the values: `held` gets them.
+bool listKeysAsObjectKeysDoes(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID held);
 
 void applyHostUses(BuiltinID onBehalfOf, const ValueFlowOperand& value, const BuiltinHostUses&, ValueFlowRuleContext&);
 void callFromHost(BuiltinID onBehalfOf, const ValueFlowOperand& callees, const BuiltinHostCall&, ValueFlowRuleContext&);
 
 bool doRecordsDescribe(const BuiltinTable&, const BuiltinOverload&);
+// True where every way to call the built-in does nothing to the operand but call it.
+bool onlyCallsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
+bool onlyListsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
+bool onlyPassesOperandOn(const BuiltinTable&, BuiltinID, BuiltinOperand);
+bool onlyAsksWhatStandsAbove(const BuiltinTable&, BuiltinID, BuiltinOperand, BuiltinCallMode);
+bool onlyLists(const ValueFlowBehavior&);
 bool standsBehindDescribedBuiltins(const Program&, FunctionID);
+bool isEnteredByCallsAlone(const Program&, RuntimeFunctionID);
 ValueFlowObjectID calleeOfDescribedCall(const ValueFlowUniverse&);
 bool isCodeThatRecordsDescribe(const ValueFlowUniverse&, FunctionID);
 
@@ -80,9 +91,14 @@ void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext
 void noteCallOfBuiltin(BuiltinID, ValueFlowCallKind, ValueFlowRuleContext&);
 void noteInstancesIn(ValueFlowRuleContext&, BuiltinTypeID);
 void connectEnumerableMembersOf(ClimbingSet hostObjects, ValueFlowNodeID to, ValueFlowRuleContext&);
+// The keys of objects that only the statements of the program have laid a name on: those that they were made with. What was added since is under AddedNames.
+enum class OwnKeys : uint8_t { EnumerableStrings, Strings, All };
+ClimbingSet objectsWithOwnKeysAmong(ValueFlowRuleContext&, ClimbingSet values);
+std::optional<ValueSetID> keysThatObjectsWereMadeWith(ValueFlowRuleContext&, ClimbingSet objects, OwnKeys);
 void carryOut(ValueFlowRuleContext&, ValueFlowNodeID values);
 void carryOut(ValueFlowRuleContext&, const ValueFlowOperand& values);
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext&, BuiltinName);
+bool mayProgramHaveStoredMethodThatHostLooksFor(ValueFlowRuleContext&);
 bool isCodeBehindDeclaredEntries(const Program&, FunctionID);
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowStatement& call, ValueFlowRuleContext&);
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);

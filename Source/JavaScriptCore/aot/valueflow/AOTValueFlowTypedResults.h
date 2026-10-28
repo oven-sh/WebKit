@@ -41,6 +41,7 @@ inline bool mayBeMissingInParsedText(const Program& program, const Field& field)
 
 void appendSitesOfTypedResults(const Program&, const ValueFlowBuiltinTables&, const Function&, const CFG&, Vector<ValueFlowSite>&);
 void allocateTypedResult(const BuiltinOverload&, const ValueFlowStatement& call, const ValueFlowBuiltinCall&, ValueFlowObjectID promise, ValueSetID plainData, ValueFlowRuleContext&);
+void allocateRowsOfQuery(const ValueFlowStatement& call, ValueFlowRuleContext&);
 
 } } } // namespace JSC::AOT::Typed
 

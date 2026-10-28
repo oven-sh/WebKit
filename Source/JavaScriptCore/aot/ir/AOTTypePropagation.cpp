@@ -406,6 +406,8 @@ void TypePropagation::enqueue(ValueID id)
 
 void TypePropagation::enqueueEdgeResultParameters(BlockID from)
 {
+    if (passesNothing(from))
+        return;
     const Function& function = m_inputs.function;
     const Terminator& terminator = function.at(from).terminator;
     for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
@@ -450,6 +452,8 @@ void TypePropagation::enqueueUsersOf(ValueID id)
             break;
         case Use::Kind::EdgeArgument:
         case Use::Kind::HandlerArgument: {
+            if (passesNothing(use.block))
+                break;
             const CompactList<ValueID>& parameters = function.at(targetOf(function, use.edge()).block).parameters;
             if (use.operandIndex < parameters.size())
                 enqueue(parameters[use.operandIndex]);
@@ -599,7 +603,7 @@ TypeID TypePropagation::computeParameter(const TypingContext& context, ValueID i
     bool skipsSeldomTakenEdges = context.level == TypeLevel::Expected && !isEveryEdgeSeldomTaken(function, incomingEdges);
     TypeID joined = TypeTable::never;
     for (Edge edge : incomingEdges) {
-        if (skipsSeldomTakenEdges && isSeldomTaken(function, edge))
+        if (passesNothing(edge.from) || (skipsSeldomTakenEdges && isSeldomTaken(function, edge)))
             continue;
         const Target& target = targetOf(function, edge);
         TypeID incoming = TypeTable::anything;

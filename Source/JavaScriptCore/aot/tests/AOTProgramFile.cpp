@@ -412,8 +412,10 @@ String standInLibraryText(unsigned libraryFunction)
 {
     StringBuilder text;
     text.append("function f"_s, libraryFunction, " name=\"library\" role=Library results=[{type=anything}] {\n  b0():\n    Return\n}\n"_s);
-    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions())
-        text.append("runtimefunction id="_s, function.id.index(), " function=f"_s, libraryFunction, '\n');
+    for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
+        if (function.platforms.contains(targetOfThisBuild().platform))
+            text.append("runtimefunction id="_s, function.id.index(), " function=f"_s, libraryFunction, '\n');
+    }
     return text.toString();
 }
 
@@ -458,7 +460,7 @@ String withStandInLibrary(const String& programText)
     Vector<uint32_t> standInIDs;
     for (const RuntimeFunctionData& function : BuiltinTable::singleton().runtimeFunctions()) {
         uint32_t id = function.id.index();
-        if (!ownLines.containsIf([&](const OwnLine& own) { return own.id == id; }))
+        if (function.platforms.contains(targetOfThisBuild().platform) && !ownLines.containsIf([&](const OwnLine& own) { return own.id == id; }))
             standInIDs.append(id);
     }
     std::ranges::sort(standInIDs);

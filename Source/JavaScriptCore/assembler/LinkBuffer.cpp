@@ -757,10 +757,28 @@ bool LinkBuffer::link(Label site, RelocationKind kind, Label target)
     return true;
 }
 
+// Each step of a link appends its sites in ascending order, so the list is a few ascending runs. No two sites have one offset.
+static void sortByOffset(Vector<LinkedSite>& sites)
+{
+    constexpr size_t maxRuns = 16;
+    Vector<size_t, maxRuns> runEnds;
+    for (size_t i = 1; i < sites.size() && runEnds.size() < maxRuns; ++i) {
+        if (sites[i].offset < sites[i - 1].offset)
+            runEnds.append(i);
+    }
+    if (runEnds.size() == maxRuns) {
+        std::ranges::sort(sites, { }, &LinkedSite::offset);
+        return;
+    }
+    runEnds.append(sites.size());
+    for (size_t run = 1; run < runEnds.size(); ++run)
+        std::ranges::inplace_merge(sites.begin(), sites.begin() + runEnds[run - 1], sites.begin() + runEnds[run], { }, &LinkedSite::offset);
+}
+
 NEVER_INLINE void LinkBuffer::finalizeRecords()
 {
     std::ranges::sort(m_records->externalLinks, { }, &ExternalLink::offset);
-    std::ranges::sort(m_records->linkedSites, { }, &LinkedSite::offset);
+    sortByOffset(m_records->linkedSites);
     const Vector<LinkedSite>& linkedSites = m_records->linkedSites;
     for (size_t i = 1; i < linkedSites.size(); ++i) {
         const LinkedSite& previous = linkedSites[i - 1];

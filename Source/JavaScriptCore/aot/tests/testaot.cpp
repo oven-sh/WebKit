@@ -9,6 +9,8 @@
 #include <wtf/MainThread.h>
 
 #if OS(WINDOWS)
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #endif
 
@@ -348,6 +350,12 @@ int main(int argc, char** argv)
 {
     using namespace JSC::AOT;
 
+#if OS(WINDOWS)
+    // A line ends the same way on every system.
+    _setmode(_fileno(stdout), _O_BINARY);
+    _setmode(_fileno(stderr), _O_BINARY);
+#endif
+
     JSC::Config::configureForTesting();
     // As Bun says where it runs compiled code: on macOS a process without the JIT that says nothing has no SharedArrayBuffer.
     JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
@@ -372,7 +380,6 @@ int main(int argc, char** argv)
             return exitCodeForInvalidCommandLine;
         if (JSC::Options::aotImagePath()) {
             JSC::Options::useSharedArrayBuffer() = true;
-            JSC::Options::useShadowRealm() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useExplicitResourceManagement() = true;
             for (const String& option : parsedCommandLine->jscOptions)

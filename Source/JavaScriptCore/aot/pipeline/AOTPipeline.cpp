@@ -141,7 +141,7 @@ constexpr InvalidatedAnalyses nothing = InvalidatedAnalyses::None;
 constexpr InvalidatedAnalyses values = InvalidatedAnalyses::Values;
 constexpr InvalidatedAnalyses everything = InvalidatedAnalyses::All;
 
-constexpr Results slotInputs { Flow, CallGraph, Heat, FrameAllocation, EnvironmentReuse };
+constexpr Results slotInputs { Flow, CallGraph, FrameAllocation, EnvironmentReuse };
 constexpr Results placementInputs { Flow, CallGraph, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, SlotPlan, RegExpRequests };
 constexpr Results codeGenerationInputs { Flow, EffectSummaries, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, RegExpRequests, StackChecks, Placement, SiteCaches };
 
@@ -200,7 +200,7 @@ constexpr std::array rows {
     verifiedAfterNextPass(functionPass(CheckInt32Promises, checkInt32Promises, Required, AsRead, { }, values)),
     verifiedAfterNextPass(functionPass(CheckRegExpLiterals, checkRegExpLiterals, Required, AsRead, { }, everything)),
 
-    functionPass(AddGenericVersion, addGenericVersion, Required, Prepared, { Flow, Heat, EffectSummaries }, everything),
+    functionPass(AddGenericVersion, addGenericVersion, Required, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(ResolveBuiltins, resolveBuiltins, Required, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(BindGlobalNames, bindGlobalNames, Optional, Prepared, { Flow }, values),
     derivingFunctions(readingOtherBodies(functionPass(CallThroughMethodTable, callThroughMethodTable, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything))),
@@ -210,7 +210,7 @@ constexpr std::array rows {
     functionPass(PlaceTypeTests, placeTypeTests, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     derivingFunctions(functionPass(ExpandIteration, expandIteration, Required, Prepared, { Flow, EffectSummaries }, everything)),
     functionPass(ExpandProvenIterations, expandProvenIterations, Optional, Prepared, { Flow, EffectSummaries }, everything),
-    derivingFunctions(functionPass(ExpandOwnKeys, expandOwnKeys, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything)),
+    derivingFunctions(functionPass(ExpandOwnKeys, expandOwnKeys, Optional, Prepared, { Flow, EffectSummaries }, everything)),
     derivingFunctions(readingOtherBodies(functionPass(SelectTypedResults, selectTypedResults, Required, Prepared, { Flow, Heat, EffectSummaries }, everything))),
     functionPass(RetypeValues, retypeValues, Required, Prepared, { }, nothing),
     derivingFunctions(readingOtherBodies(functionPass(InlineCalls, inlineCalls, Optional, Prepared, { Flow, CallGraph, Heat, InliningSummaries, EffectSummaries }, everything))),
@@ -1100,7 +1100,6 @@ static SlotPlanInputs createSlotPlanInputs(Pipeline& pipeline)
     return {
         .flow = flow,
         .callGraph = pipeline.analyses().callGraph(flow),
-        .heat = pipeline.analyses().heat(flow),
         .frameAllocation = *pipeline.output().frameAllocation,
         .environmentReuse = *pipeline.output().environmentReuse,
     };
@@ -1286,7 +1285,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         return m_runner.lastProgramPassOutcome();
     case PassID::AnalyzeFlow:
         *output.flow = read(id, [&] {
-            return analyzeValueFlow(m_program, m_program.types, m_build);
+            return analyzeValueFlow(m_program, m_program.types, m_build, nullptr, std::exchange(m_goesOnBehindFlowAnalysis, nullptr));
         });
         m_runner.setVerifierInputs({ .flow = &flow() });
         return m_runner.lastProgramPassOutcome();
@@ -1342,7 +1341,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, deferClosuresInFields, inputsFor(id).heat, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::ReadCapturesFromEnvironments:
-        edit(id, readCapturesFromEnvironments, flow(), m_build);
+        edit(id, readCapturesFromEnvironments, *output.flow, m_analyses.effectsAsLastComputed(), m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::RemoveUnreadFields:
         edit(id, removeUnreadFields, inputsFor(id), m_runner);
@@ -1592,6 +1591,8 @@ void Pipeline::runFlowStage()
     TimedStage stage(*this, Stage::AnalyzeFlow);
     stage.run(PassID::GuardTaintedPositions);
     stage.run(PassID::AnalyzeFlow);
+    if (m_output->endedBehindFlowAnalysis)
+        return;
     bool wasRunning = !m_runner.isStopped();
     stage.run(PassID::ApplyFlowResults);
     advanceTo(IRForm::Prepared, wasRunning);
@@ -1840,14 +1841,28 @@ void Pipeline::runPlacementAndRepresentationStagesTogether()
     stage.didFinish(nameOf(PassID::PlaceSiteCaches));
 }
 
-void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries)
+void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, NOESCAPE const JudgeOfUsesOfLibraryCode& goesOnBehindFlowAnalysis)
 {
     runReadStage();
     if (m_build.options().isVerifyOnly())
         return;
+    auto ask = [&](const FlowReport& usesOfLibraryCode) {
+        if (goesOnBehindFlowAnalysis(usesOfLibraryCode))
+            return true;
+        m_output->endedBehindFlowAnalysis = true;
+        m_output->usesOfLibraryCode = usesOfLibraryCode;
+        return false;
+    };
+    JudgeOfUsesOfLibraryCode goesOn(ask);
+    // A program that is only checked is checked to the end.
+    if (!m_build.options().isCheckOnly())
+        m_goesOnBehindFlowAnalysis = &goesOn;
     runFlowStage();
     // Nothing behind this refuses a program for what it says. The limits of what follows are about the executable.
-    if (m_build.options().isCheckOnly())
+    if (m_build.options().isCheckOnly() || m_output->endedBehindFlowAnalysis)
+        return;
+    // The pass did not run.
+    if (std::exchange(m_goesOnBehindFlowAnalysis, nullptr) && !goesOn(reportUsesOfLibraryCode(flow())))
         return;
     runOptimizeStage();
     runSlotStage();
@@ -1883,7 +1898,7 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
     m_output->isComplete = !m_runner.isStopped();
 }
 
-std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, const ExternalFunctionBodies* externalBodies, BuildContext& build, NOESCAPE const ScopedLambda<void()>& didReadProgram, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries)
+std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, const ExternalFunctionBodies* externalBodies, BuildContext& build, NOESCAPE const ScopedLambda<void()>& didReadProgram, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, NOESCAPE const JudgeOfUsesOfLibraryCode& goesOnBehindFlowAnalysis)
 {
     std::unique_ptr<Program> program;
     {
@@ -1896,10 +1911,10 @@ std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programByte
         build.diagnostics().finish(nullptr);
         return nullptr;
     }
-    return runPipeline(WTF::move(program), build, readBesideLastEffectSummaries);
+    return runPipeline(WTF::move(program), build, readBesideLastEffectSummaries, std::nullopt, goesOnBehindFlowAnalysis);
 }
 
-std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, BuildContext& build, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, std::optional<PassID> last)
+std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, BuildContext& build, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, std::optional<PassID> last, NOESCAPE const JudgeOfUsesOfLibraryCode& goesOnBehindFlowAnalysis)
 {
     build.resolveFunctionToDump(*program);
     PassRunner runner(build, last);
@@ -1907,7 +1922,7 @@ std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, Bu
     {
         Pipeline pipeline(*program, runner);
         pipeline.output().program = WTF::move(program);
-        pipeline.runAllStages(readBesideLastEffectSummaries);
+        pipeline.runAllStages(readBesideLastEffectSummaries, goesOnBehindFlowAnalysis);
         output = pipeline.takeOutput();
     }
     if (build.diagnostics().hasErrors()) {

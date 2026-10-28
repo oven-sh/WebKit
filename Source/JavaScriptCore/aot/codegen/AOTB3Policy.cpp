@@ -186,6 +186,7 @@ static B3::ValidationPolicy validationPolicyFor(const BuildContext& build)
     validation.takesAccessesOfVectorTurnsToLieApart = build.isSabotaged(Sabotage::VectorTurnsMeetNoOtherAccess);
     validation.takesLanesToHoldWholeValues = build.isSabotaged(Sabotage::LanesHoldWhateverIsComputed);
     validation.takesSumsOfNumbersToBeWhole = build.isSabotaged(Sabotage::SumsOfNumbersAreWhole);
+    validation.comparesAllLanesWithSign = build.isSabotaged(Sabotage::SignsOfComparedLanesDoNotMatter);
     validation.setsUpFrameBehindWrites = build.isSabotaged(Sabotage::FramesAlwaysFit);
     return validation;
 }

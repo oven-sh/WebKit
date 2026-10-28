@@ -331,9 +331,9 @@ public:
     // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
     void remember(const FieldExit& exit) { placeOf(exit.structureBefore, exit.name) = exit; }
     void forgetFieldExits() { m_fieldExits.fill({ }); }
-    const FieldExit* findFieldExit(StructureID structureID, uint32_t name)
+    FieldExit* findFieldExit(StructureID structureID, uint32_t name)
     {
-        const FieldExit& exit = placeOf(structureID, name);
+        FieldExit& exit = placeOf(structureID, name);
         return exit.field && exit.structureBefore == structureID && exit.name == name ? &exit : nullptr;
     }
     bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }

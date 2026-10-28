@@ -75,6 +75,7 @@ Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation represe
     word.registerNumber = registerNumber;
     word.hasWideA = hasWideA;
     word.hasB = !!site.b;
+    word.calleeIsReadFromReceiver = site.calleeIsReadFromReceiver;
     word.a = hasWideA ? 0 : std::min(site.a, ThrowSiteWord::narrowNone);
     Vector<uint32_t, 3> words { std::bit_cast<uint32_t>(word) };
     if (hasWideA)

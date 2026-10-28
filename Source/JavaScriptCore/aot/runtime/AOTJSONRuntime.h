@@ -142,6 +142,7 @@ public:
         AOT_CLASS_THRESHOLD(unsigned, maxNumberOfFields, 32);
         AOT_CLASS_THRESHOLD(unsigned, maxNumberOfExtraMembers, 64);
         AOT_CLASS_THRESHOLD(size_t, maxMembersParsedTwiceForEachReturnSaved, 3);
+        static constexpr uint32_t shapeOfNoObject = UINT32_MAX;
 
         enum Kind : uint8_t {
             SmallInteger = 1 << 0,
@@ -202,11 +203,13 @@ public:
     static unsigned indexOfLearnedObject(uint32_t shape, uint64_t firstWord) { return ((firstWord ^ shape) * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfLearnedObjects)); }
     LearnedObject* learnedObjectToReplace(uint32_t shape, uint64_t firstWord);
     bool mayLearnAnotherObject();
-    bool mayFinishAnotherObjectUnremembered();
     LearnedObject* learnedObjectFoundLast() const { return m_learnedObjectFoundLast; }
     void setLearnedObjectFoundLast(LearnedObject* learned) { m_learnedObjectFoundLast = learned; }
+    void forgetFinishedObjects() { m_finishedObjects.fill({ }); }
+    bool waitsForShapeOfMember() const { return m_waitsForShapeOfMember; }
+    void setWaitsForShapeOfMember(bool waits) { m_waitsForShapeOfMember = waits; }
     void didSeeMember(uint32_t shape, uint16_t field, uint32_t shapeOfValue) { m_shapesOfMembers.set(static_cast<uint64_t>(shape) << 16 | field, shapeOfValue); }
-    uint32_t shapeOfMember(uint32_t shape, uint16_t field) const;
+    uint32_t shapeOfMember(uint32_t shape, uint16_t field) const { return m_shapesOfMembers.get(static_cast<uint64_t>(shape) << 16 | field); }
     void didSeeExtraMembers(uint32_t shape);
     ALWAYS_INLINE bool remembersTextsOf(uint32_t shape) const { return m_timesNotFoundInARow[shape % numberOfJSONShapeBits] != maxTimesNotFoundInARow; }
     ALWAYS_INLINE void didFindTextOf(uint32_t shape) { m_timesNotFoundInARow[shape % numberOfJSONShapeBits] = 0; }
@@ -249,7 +252,6 @@ private:
     }
     using LearnedExtraMembersTable = std::array<LearnedExtraMembers, numberOfLearnedExtraMembers>;
     AOT_CLASS_THRESHOLD(unsigned, maxObjectsLearnedBetweenCollections, 64);
-    AOT_CLASS_THRESHOLD(unsigned, maxObjectsFinishedUnrememberedBetweenCollections, 16);
     AOT_CLASS_THRESHOLD(uint8_t, maxTimesNotFoundInARow, 255);
     AOT_CLASS_THRESHOLD(uint8_t, maxTimesRefusedInARow, 4);
     static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
@@ -278,8 +280,8 @@ private:
     std::unique_ptr<LearnedExtraMembersTable> m_learnedExtraMembers;
     std::unique_ptr<LearnedObjects> m_learnedObjects;
     unsigned m_numberOfObjectsLearned { 0 };
-    unsigned m_numberOfObjectsFinishedUnremembered { 0 };
     LearnedObject* m_learnedObjectFoundLast { nullptr };
+    bool m_waitsForShapeOfMember { false };
     UncheckedKeyHashMap<uint64_t, uint32_t> m_shapesOfMembers;
     std::array<uint8_t, numberOfJSONShapeBits> m_timesNotFoundInARow { };
     std::array<uint8_t, numberOfJSONShapeBits> m_timesRefusedInARow { };

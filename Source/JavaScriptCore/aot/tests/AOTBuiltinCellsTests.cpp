@@ -9,24 +9,20 @@
 
 #include "AOTBuiltinCells.h"
 #include "AOTBuiltinTableRealm.h"
-#include "AOTChildProcess.h"
 #include "AOTHostEntriesTestSupport.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTNativeTest.h"
 #include "AOTProgramTables.h"
-#include "AOTTemporaryFile.h"
 #include "AOTVector.h"
 #include "CustomGetterSetter.h"
 #include "JSCInlines.h"
 #include "JSCustomGetterFunction.h"
 #include "ObjectConstructor.h"
 #include "Options.h"
-#include "ShadowRealmPrototype.h"
 #include "VMInlines.h"
 #include "WeakInlines.h"
 #include <bit>
 #include <wtf/StackPointer.h>
-#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
@@ -269,91 +265,6 @@ static void checkFirstUseAtEndOfStack(LoadedProgram& program)
     AOT_TEST_CHECK(vm.softReservedZoneSize() == reservedZoneOfProgram);
 }
 
-#if ENABLE(SHADOW_REALM)
-static constexpr ASCIILiteral methodBehindHiddenNameTest = "builtin-cells/method-of-a-class-whose-global-name-is-hidden"_s;
-static constexpr ASCIILiteral prototypeBehindHiddenNameTest = "builtin-cells/prototype-of-a-class-whose-global-name-is-hidden"_s;
-
-static constexpr ASCIILiteral programThatReadsMethodOfShadowRealmText = R"IR(variable g0 name="method" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="/main.js" displayPath="main.js" body=f0 exports=[{name="method" variable=g0}]
-entry module=m0 hostReads=[{exportName="method"}]
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = Builtin builtin=ShadowRealmPrototype
-    v1 = PropGet v0 key="importValue"
-    PutModuleVariable v1 variable=g0
-    Return
-}
-)IR"_s;
-
-static constexpr ASCIILiteral programThatTakesShadowRealmText = R"IR(variable g0 name="call" module=m0 declared={type=anything} initialization=Undefined
-module m0 path="/main.js" displayPath="main.js" body=f0 exports=[{name="call" variable=g0}]
-entry module=m0 hostReads=[{exportName="call"}]
-function f0 name="main" kind=Module results=[{type=anything}] {
-    v0 = NewClosure function=f1
-    PutModuleVariable v0 variable=g0
-    Return
-}
-function f1 name="call" parameters=[{type=ShadowRealm}, {type=anything}] results=[{type=anything}] {
-    v2 = PropGet v0 key="importValue"
-    v3 = Call v2, v0, v1, v1 calleeKey="importValue"
-    Return v3
-}
-)IR"_s;
-
-static JSCell* cellOfObject(LoadedProgram& program, BuiltinID id)
-{
-    return cellsOf(program).cell(numberOf(program, BuiltinCellKey::object(id)));
-}
-
-static void checkMethodBehindHiddenName(LoadedProgram& program)
-{
-    JSGlobalObject* realm = program.realm();
-    AOT_TEST_CHECK(!realm->hasProperty(realm, program.vm().propertyNames->ShadowRealm));
-
-    JSValue method = realm->shadowRealmPrototype()->get(realm, Identifier::fromString(program.vm(), "importValue"_s));
-    AOT_TEST_CHECK(method.isCallable());
-    AOT_TEST_CHECK(JSValue(cellOfObject(program, Builtins::ShadowRealmPrototypeImportValue)) == method);
-    AOT_TEST_CHECK(cellsOf(program).hasLocked(Builtins::ShadowRealmPrototype));
-}
-
-static void checkPrototypeBehindHiddenName(LoadedProgram& program)
-{
-    JSGlobalObject* realm = program.realm();
-    AOT_TEST_CHECK(!realm->hasProperty(realm, program.vm().propertyNames->ShadowRealm));
-
-    JSCell* constructor = cellOfObject(program, Builtins::ShadowRealm);
-    AOT_TEST_CHECK(!constructor || JSValue(constructor) == realm->shadowRealmPrototype()->get(realm, program.vm().propertyNames->constructor));
-    AOT_TEST_CHECK(cellOfObject(program, Builtins::ShadowRealmPrototype) == realm->shadowRealmPrototype());
-}
-
-static void runWithoutGlobalShadowRealm(ASCIILiteral testName, ASCIILiteral text, LoadedProgramTest body)
-{
-    if (Options::aotImagePath()) {
-        runWithLoadedProgram(testName, text, body);
-        return;
-    }
-
-    TemporaryFile image(".image"_s, compileProgramText(text).span());
-    ChildProcessLauncher launcher(String(programPath()), { });
-    Vector<String> arguments { String(nativeSubcommandName), String(singleProcessFlag), String(testName), makeString("--aotImagePath="_s, image.path()), "--useShadowRealm=0"_s };
-    ChildProcessResult result = launcher.run(arguments.span());
-    if (!result.exitedWith(0)) {
-        dataLogLn(result.output);
-        dataLogLn("The process whose realms have no global ShadowRealm ", result.description());
-        failNativeTest(__FILE__, __LINE__, testName.characters());
-    }
-}
-
-static void testMethodBehindHiddenName()
-{
-    runWithoutGlobalShadowRealm(methodBehindHiddenNameTest, programThatReadsMethodOfShadowRealmText, checkMethodBehindHiddenName);
-}
-
-static void testPrototypeBehindHiddenName()
-{
-    runWithoutGlobalShadowRealm(prototypeBehindHiddenNameTest, programThatTakesShadowRealmText, checkPrototypeBehindHiddenName);
-}
-#endif
-
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<builtinCellsTests, programText, body>;
 
@@ -368,10 +279,6 @@ std::span<const NativeTest> builtinCellsTests()
         { "builtin-cells/built-in-outside-the-realm"_s, withProgram<checkBuiltinOutsideTheRealm> },
         { "builtin-cells/per-module-member"_s, withProgram<checkPerModuleMember> },
         { "builtin-cells/first-use-at-end-of-stack"_s, withProgram<checkFirstUseAtEndOfStack> },
-#if ENABLE(SHADOW_REALM)
-        { methodBehindHiddenNameTest, testMethodBehindHiddenName },
-        { prototypeBehindHiddenNameTest, testPrototypeBehindHiddenName },
-#endif
     };
     return tests;
 }

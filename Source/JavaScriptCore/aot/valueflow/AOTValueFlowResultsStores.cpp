@@ -768,17 +768,15 @@ static BitVector collectKeysDeclaredBy(const Program& program, std::span<const L
     return keys;
 }
 
-static bool fillsTypedResult(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, const Writer& writer, ValueSetID objects)
+// Whoever else the call may enter, only the parser makes these objects.
+static bool fillsTypedResult(const ValueFlowResultInputs& inputs, const Writer& writer, ValueSetID objects)
 {
     const ValueFlowStatement& statement = writer.statement;
     if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call || ValueSets::isComplement(objects))
         return false;
     ValueFlowObjectID object = inputs.sets().onlyMember(objects);
     const ValueFlowSite* site = object ? inputs.universe().siteOf(object) : nullptr;
-    if (!site || site->origin != ValueFlowSiteOrigin::TypedResult || !inputs.universe().isSiteObjectOf(statement, object))
-        return false;
-    ValueSetID callees = heap.possibleValuesOf(maker, inputs.bodies().operandsOf(statement)[0]);
-    return !ValueSets::isComplement(callees) && inputs.sets().onlyMember(callees);
+    return site && site->origin == ValueFlowSiteOrigin::TypedResult && inputs.universe().isSiteObjectOf(statement, object);
 }
 
 static bool storesIntoThisOfConstructor(const Program& program, const Writer& writer)
@@ -892,7 +890,7 @@ auto StoresByLayout::describeWrite(ValueSetMaker& maker, StoreUnderName& store, 
     ValueFlowNumbers numbers = holdsNumber ? *store.numbers : ValueFlowNumbers { };
     bool isCopyIntoLiteral = name.kind == ValueFlowNameKind::CopiedFrom && isOperation && statement.opcode == Opcode::CopyDataProperties;
     bool leavesOutKeys = isCopyIntoLiteral && !m_inputs.program.at(statement.function).at(statement.site).excludedKeys().empty();
-    bool fillsResult = fillsTypedResult(m_inputs, m_heap, maker, writer, key.set);
+    bool fillsResult = fillsTypedResult(m_inputs, writer, key.set);
     bool isNamedByOperation = !fillsResult && store.spellsKey;
     return {
         .set = key.set.index(),
@@ -1736,6 +1734,25 @@ bool StoresByLayout::mayGetAccessorUnder(LayoutID layout, PropertyKeyID key, Obj
     return mayGetOne;
 }
 
+// An allocation fills the slots that it lists, whatever flow holds for the values.
+bool StoresByLayout::hasAllocationListing(LayoutID layout, PropertyKeyID key) const
+{
+    const Program& program = m_inputs.program;
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    bool isListed = false;
+    m_inputs.sets().forEachMember(m_layoutsOfObjects.objectsWith(layout), [&](ValueFlowObjectID object) {
+        const ValueFlowSite* site = universe.siteOf(object);
+        if (isListed || !site || site->origin != ValueFlowSiteOrigin::Operation)
+            return;
+        const Value& allocation = program.at(universe.functionOf(object)).at(site->value);
+        if (allocation.opcode != Opcode::NewObject)
+            return;
+        const Vector<Field>& fields = program.at(allocation.layout()).fields;
+        isListed = std::ranges::any_of(allocation.fields(), [&](uint32_t field) { return fields[field].key == key; });
+    });
+    return isListed;
+}
+
 FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
 {
     const StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
@@ -1774,7 +1791,7 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
     std::optional<OptionSet<FieldForm>> form = AccessorForms::onlyFormIn(forms);
     if (!form)
         return { };
-    if (sets.meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers))
+    if (sets.meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers) || hasAllocationListing(layout, key))
         return { };
 
     FlowAccessorField accessor { *form, { }, { } };

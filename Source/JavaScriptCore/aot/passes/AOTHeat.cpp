@@ -842,37 +842,31 @@ Expected<HeatClass> heatClassOf(FunctionPassContext& context, BlockID block)
     return heatClassOf(context.inputs.heat, context.analyses, block);
 }
 
-// A loop runs as often as what it calls and as what was inlined into it. What counts as hot was settled while the cycle through a generic version still counted as a loop around the loop, so a loop may stand under a threshold that it set itself. The thresholds of a very large program are constants.
-static bool runsCodeOfHotFunction(FunctionPassContext& context, const NaturalLoop& loop)
+Expected<HeatClass> heatClassByOwnLoops(FunctionPassContext& context, BlockID block)
 {
-    const Heat& heat = context.inputs.heat;
-    if (heat.isOfVeryLargeProgram())
-        return false;
-    const Function& function = context.function;
-    for (unsigned index = 0; index < loop.size(); ++index) {
-        const Block& block = function.at(loop.at(index));
-        if (block.frequency.predicted() != BlockFrequency::Normal)
-            continue;
-        for (ValueID id : block.values) {
-            const Value& value = function.at(id);
-            if (value.opcode == Opcode::CallDirect && isHot(heat.of(context.program, value.function())).predicted())
-                return true;
-            if (!value.inlineFrame)
-                continue;
-            FunctionID callee = function.inlineFrames[value.inlineFrame].callee;
-            if (isHot(heat.of(context.program, callee)).predicted())
-                return true;
-            // The loop itself came out of a function, where it ran as often.
-            if (value.opcode == Opcode::LoopHint && loop.at(index) == loop.header() && isHot(heat.classOf(context.program, callee, frequencyConstants.iterationsPerLoop)).predicted())
-                return true;
-        }
+    switch (context.build.recordedOptions().heat()) {
+    case HeatOverride::EverythingIsHot:
+        return HeatClass::Hot;
+    case HeatOverride::EverythingIsCold:
+        return HeatClass::Cold;
+    case HeatOverride::Shuffled:
+        return static_cast<HeatClass>(static_cast<uint32_t>(HeatClass::RunsOnce) + drawForShuffledHeat(*seedOfShuffledHeat(context.build), context.id.index(), block.index(), 4));
+    case HeatOverride::None:
+    case HeatOverride::OnlyLoopsAreHot:
+    case HeatOverride::NothingIsHottest:
+        break;
     }
-    return false;
+    if (context.analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
+        return HeatClass::RunsOnce;
+    const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
+    if (frequencies.alwaysEndsInThrow(block))
+        return HeatClass::Cold;
+    return (frequencies.frequencyOf(block) > 1.0).predicted() ? HeatClass::Hot : HeatClass::Warm;
 }
 
-Expected<bool> isHotLoop(FunctionPassContext& context, const NaturalLoop& loop)
+Expected<bool> isExpectedToRun(FunctionPassContext& context, const NaturalLoop& loop)
 {
-    return context.analyses.blockFrequencies().classOf(loop.header()).predicted() == BlockFrequency::Normal && (isHot(heatClassOf(context, loop.header())).predicted() || runsCodeOfHotFunction(context, loop));
+    return context.analyses.blockFrequencies().classOf(loop.header()).predicted() == BlockFrequency::Normal && !isCold(heatClassOf(context, loop.header())).predicted();
 }
 
 static constexpr uint64_t outlinedBodyOverheadBytes = 48;
@@ -1362,6 +1356,27 @@ struct OutliningScan {
                 }
             }
         };
+        // Other code cannot reach an object that was stored into another one while that one is seen to be allocated in this function and to stay in it.
+        BitVector objectsWhoseHoldersAreBound;
+        auto bindHoldersOf = [&](const EscapeAnalysis& escape, ValueID pointer) {
+            if (escape.gaveUp())
+                return;
+            Vector<ObjectID, 8> worklist;
+            auto visit = [&](ObjectID object) {
+                if (!objectsWhoseHoldersAreBound.set(object.index()))
+                    worklist.append(object);
+            };
+            for (ObjectID object : escape.pointsTo(pointer).objects)
+                visit(object);
+            while (!worklist.isEmpty()) {
+                for (ObjectID holder : escape.containersOf(worklist.takeLast())) {
+                    if (isOpenContainer(escape.at(holder)))
+                        continue;
+                    bound.quickSet(escape.at(holder).definition.index());
+                    visit(holder);
+                }
+            }
+        };
 
         // What another rule wants in the function where it stands.
         for (BlockID block : cfg.reversePostOrder()) {
@@ -1386,6 +1401,7 @@ struct OutliningScan {
                     bound.quickSet(tested.index());
                 // The subject may be one of several allocations that meet in a block parameter, or that were read out of another one.
                 bindObjectsOf(analyses.escape(), tested);
+                bindHoldersOf(analyses.escape(), tested);
             }
         }
 
@@ -1442,9 +1458,10 @@ struct OutliningScan {
         if (value.isTailCall && callOpcodes.contains(value.opcode))
             return false;
         // Reflect.construct(..) is shown at one place where it constructs and at another where it calls. The call of a body does neither.
+        // The read of an update is shown at one place where it throws and at another where it calls. The call of a body always calls.
         if (value.isPartOfConstruction) {
             const ConstructionStart* construction = program.findConstructionReportedAt(program.sourceFunctionOf(function, value).module, value.position);
-            if (construction && construction->isWrittenAsCall)
+            if (construction && (construction->isWrittenAsCall || construction->isForCallers))
                 return false;
         }
         bool dependsOnInlineFrame = std::ranges::any_of(payloadFieldsOf(value.opcode), [&](const PayloadFieldInfo& field) {

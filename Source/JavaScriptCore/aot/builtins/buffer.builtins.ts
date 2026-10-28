@@ -205,6 +205,7 @@ export default b.declarations(
       isView: {
         args: { arg: b.any },
         returns: b.bool,
+        answersWhetherInstance: { arg: b.union(b.instance("TypedArray"), b.instance("DataView")) },
         capability: "heap",
         uses: { arg: b.inspected },
         implementation: b.hostCall,

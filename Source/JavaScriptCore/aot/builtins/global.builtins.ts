@@ -21,8 +21,6 @@ const stringCoding = (parameter: string, usesFeature: string, throws: boolean) =
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-const realmFeatures = ["ShadowRealm", "Interpreter", "BuiltinSourceText"];
-const wrappedValue = b.union(b.primitiveValue, b.callable);
 
 export default b.declarations(
   b.namespace(
@@ -85,50 +83,10 @@ export default b.declarations(
     },
   ]),
 
-  b.class("ShadowRealm", {
-    jsType: "ShadowRealmType",
-    usesFeature: realmFeatures,
-    nativeSymbols: ["callShadowRealm", "constructWithShadowRealmConstructor"],
-    prototypeTable: b.staticTable("runtime/ShadowRealmPrototype.cpp", "shadowRealmPrototypeTable"),
-    // ShadowRealmObject::finishCreation() puts the tag on each realm, besides the one on the prototype.
-    namesDefinedOnNewInstances: ["@@toStringTag"],
-    call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
-    construct: {
-      returns: b.instance("ShadowRealm").fresh,
-      capability: "js",
-      throws: true,
-      implementation: b.hostCall,
-    },
-    proto: {
-      evaluate: {
-        args: { sourceText: b.string },
-        returns: wrappedValue,
-        capability: "js",
-        throws: true,
-        uses: { this: b.inspected, sourceText: [b.evaluatedAsText] },
-        usesFeature: realmFeatures,
-        nativeSymbols: ["evalInRealm"],
-        marks: ["EvaluatesTextInGlobalScope"],
-        implementation: b.compiled("ShadowRealmPrototype", "evaluate"),
-      },
-      importValue: {
-        args: { specifier: b.string.loose, exportName: b.string },
-        returns: b.instance("Promise"),
-        capability: "js",
-        throws: true,
-        uses: { this: b.inspected },
-        usesFeature: realmFeatures,
-        nativeSymbols: ["importInRealm"],
-        implementation: b.compiled("ShadowRealmPrototype", "importValue"),
-      },
-    },
-  }),
-
-  // JSGlobalObject::init() asks an option before it puts each of these on the global object: useExplicitResourceManagement, useShadowRealm, useSharedArrayBuffer, useTemporal, useWasm.
+  // JSGlobalObject::init() asks an option before it puts each of these on the global object: useExplicitResourceManagement, useSharedArrayBuffer, useTemporal, useWasm.
   [
     "AsyncDisposableStack",
     "DisposableStack",
-    "ShadowRealm",
     "SharedArrayBuffer",
     "SuppressedError",
     "Temporal",

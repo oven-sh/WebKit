@@ -1,0 +1,50 @@
+# function pick(given: any) { const kind: string | null | undefined = given; if (kind === null) none(); else if (kind === undefined) missing(); else other(); }    pick("x");
+# A block that one edge leads to is entered only where the test on that edge can pass. Nothing that arrives in `kind` is null or undefined, so neither arm runs and what they call is not reached.
+# The third arm stands behind both tests, and something is left of `kind` behind each.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# CHECK: unreached f3
+# CHECK-NOT: unreached f4
+# RUN(VALUES): valueflow-why values=f1:v13
+# VALUES: Call
+# VALUES: behind test 0 {{*}}1 members:
+# VALUES: behind test 1 {{*}}1 members:
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = String string="x"
+    v2 = Call v0, -, v1
+    Return
+}
+function f1 name="pick" length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=undefined|null|string} illTypedCause=FromLooseType
+    v2 = TypeTest v1 testedType=null
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    v4 = NewClosure function=f2
+    v5 = Call v4
+    Return
+  b2(v6):
+    v7 = TypeTest v6 testedType=undefined
+    Branch v7 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v8):
+    v9 = NewClosure function=f3
+    v10 = Call v9
+    Return
+  b4(v11):
+    v12 = NewClosure function=f4
+    v13 = Call v12
+    Return
+}
+function f2 name="none" results=[{type=anything}] {
+    Return
+}
+function f3 name="missing" results=[{type=anything}] {
+    Return
+}
+function f4 name="other" results=[{type=anything}] {
+    Return
+}

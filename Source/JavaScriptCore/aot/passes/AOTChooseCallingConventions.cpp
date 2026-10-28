@@ -964,7 +964,16 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
     }))
         isCandidate.set(i);
 
+    BitVector isEntrance(count);
+    for (uint32_t i : findIndicesInParallel(loops, count, [&](unsigned i) {
+        const Function& function = program.functions[i];
+        return function.hasBody() && isEntranceThatLeavesByTailCallsAlone(function);
+    }))
+        isEntrance.set(i);
+
     // An entrance needs no frame but for a check of its own: the frame, the check, and a jump to the body where it would fall into it.
+    BitVector isEntranceInCycle(count);
+    uint64_t numberOfFunctionsBelowEntrancesVisited = 0;
     enum class VisitState : uint8_t { NotSeen, InProgress, Done };
     Vector<VisitState> state(FillWith { }, count, VisitState::NotSeen);
     Vector<uint16_t> height(FillWith { }, count, static_cast<uint16_t>(0));
@@ -994,11 +1003,13 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
                 ++inProgress.last().second;
                 uint32_t callee = callees[function][next];
                 if (state[callee] == VisitState::InProgress) {
-                    if (isEntranceThatLeavesByTailCallsAlone(program.functions[callee])) {
+                    if (!isEntrance.get(callee))
+                        isCandidate.clear(callee);
+                    else if (!isEntranceInCycle.quickSet(callee)) {
                         for (uint32_t entered : callees[callee])
                             isCandidate.clear(entered);
-                    } else
-                        isCandidate.clear(callee);
+                        numberOfFunctionsBelowEntrancesVisited += callees[callee].size();
+                    }
                 } else if (state[callee] == VisitState::NotSeen) {
                     state[callee] = VisitState::InProgress;
                     inProgress.append({ callee, 0 });
@@ -1011,7 +1022,7 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
                 if (isCandidate.get(callee))
                     below = std::max<unsigned>(below, state[callee] == VisitState::InProgress ? 1 : height[callee]);
             }
-            if (isCandidate.get(function) && below >= maxNested && isEntranceThatLeavesByTailCallsAlone(program.functions[function])) {
+            if (isCandidate.get(function) && below >= maxNested && isEntrance.get(function)) {
                 below = 0;
                 for (uint32_t callee : callees[function]) {
                     if (!isCandidate.get(callee))
@@ -1035,8 +1046,7 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
 
     // An entrance that lies in a cycle of calls has a check of its own.
     for (uint32_t i : findIndicesInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned i) {
-        const Function& function = program.functions[i];
-        return function.hasBody() && isEntranceThatLeavesByTailCallsAlone(function) && build.isEnabled(PassID::ElideStackChecks, FunctionID(i));
+        return isEntrance.get(i) && build.isEnabled(PassID::ElideStackChecks, FunctionID(i));
     })) {
         const Function& function = program.functions[i];
         if (isCandidate.get(i))
@@ -1065,7 +1075,7 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
         FunctionID id(i);
         auto& function = program.at(id);
         return function.hasBody()
-            && (function.creator.is<CreatorRecord::Entrypoint>() || isEntranceThatLeavesByTailCallsAlone(function))
+            && (function.creator.is<CreatorRecord::Entrypoint>() || isEntrance.get(i))
             && !isCandidate.get(i)
             && build.isEnabled(PassID::ElideStackChecks, id)
             && canDeferStackCheck(context, function, isCandidate);
@@ -1102,6 +1112,7 @@ StackChecks elideStackChecks(const Program& program, const CallGraph& callGraph,
         byFunction[i] = StackCheck::DeferredToCallee;
     build.statistics().count(StatisticID::StackChecksCoveredByCallers, isCandidate.bitCount());
     build.statistics().count(StatisticID::StackChecksDeferredToCallee, deferringEntrypoints.size());
+    build.statistics().count(StatisticID::FunctionsBelowEntrancesInCyclesVisited, numberOfFunctionsBelowEntrancesVisited);
     times.didFinish("elideStackChecks"_s);
     return StackChecks(WTF::move(byFunction));
 }
