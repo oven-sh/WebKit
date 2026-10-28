@@ -572,6 +572,11 @@ The shell has eleven functions for compiled code:
 
 The shell has no host: a program that calls a built-in of Bun's compiles, and the call throws when it runs.
 
+A count that only a run can tell (a cache, a table or a Structure that fills while the program runs) is an `.ir` file too: `run-in-shell --aotCountsPath=/dev/null`.
+The program reads free names (`rounds`, `report`), the statements define them, and `report` prints the answer and what was counted since the start or since a mark.
+Print a class (`seldom`, `nothing`), with a bound that follows from the program's own numbers, and no reading: where things lie in the tables follows from addresses.
+`runtime/property-caches/stores-that-replace-a-property-of-a-class-object.ir` is a model, and Bun's `test/aot/engine-tests/runtime` has the others.
+
 The run time refuses what the flow analysis did not see, in the shell too. With an image that admits no unknown JavaScript, `eval`,
 `Function` and the other function constructors throw an EvalError in every realm, also when the script of the shell calls them
 (that script itself runs). With an image that loads no module by name, `runCompiledEntryPoint` throws for a module that has no

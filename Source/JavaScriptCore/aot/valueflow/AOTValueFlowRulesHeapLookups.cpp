@@ -1109,8 +1109,9 @@ ClimbingSet HeapRule::publicModulesThatMayBe(const ValueFlowOperand& object)
 {
     // Beside the unknown object the value leaves out what has escaped. The node lists it.
     ClimbingSet objects = known(m_context.valueOf(object));
+    bool keepsOut = object.mask && (object.maskKind == ValueFlowMaskKind::Plain || object.maskKind == ValueFlowMaskKind::Checked);
     if (object.node)
-        objects = m_context.unite(objects, m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), object.node));
+        objects = m_context.unite(objects, m_context.valueWithin(ClimbingSet(keepsOut ? m_context.maker().intersect(m_universe.knownObjects(), object.mask) : m_universe.knownObjects()), object.node));
     if (ValueFlowNodeID sourcesOfCopies = readWhereWritten(objects, copiedFromName))
         objects = m_context.unite(objects, withSourcesOfCopies(m_context, known(m_context.valueOf(sourcesOfCopies))));
     return m_context.restrict(objects, m_tables.objectsOfPublicModules());

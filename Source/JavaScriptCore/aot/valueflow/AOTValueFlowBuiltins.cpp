@@ -3625,6 +3625,17 @@ static void forEachNameCalledIn(const ValueFlowBehavior& behavior, NOESCAPE cons
     }
 }
 
+static bool isPassedOnlyPrimitives(ValueFlowRuleContext& context, const ValueFlowBehavior& behavior, BuiltinName name)
+{
+    if (behavior.protocols.contains(Protocol::ToPrimitive) && (name == BuiltinNames::toPrimitiveSymbol || name == BuiltinNames::valueOf || name == BuiltinNames::toString))
+        return true;
+    if (behavior.protocols.contains(Protocol::ToJSON) && name == BuiltinNames::toJSON)
+        return true;
+    const BuiltinTable& builtins = context.program().builtins();
+    const BuiltinNamedMemberCall* record = builtins.callOfMemberNamed(name);
+    return record && passesOnlyPrimitives(builtins, *record);
+}
+
 static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -3670,8 +3681,9 @@ static void applyBuiltinsThatActOnEscapedReceivers(ValueFlowRuleContext& context
         auto find = [&](ClimbingSet receivers) {
             return context.restrict(membersToCall(context, receivers, name), acting);
         };
+        ValueSetID passed = isPassedOnlyPrimitives(context, behavior, name) ? universe.anyPrimitive() : unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult);
         forEachReceiverToldApart(context, context.valueWithin(ClimbingSet(universe.knownObjects()), hub), { }, [&](ClimbingSet receivers, const ValueFlowOperand& thisValue) {
-            callFromNativeCode(context, find(receivers), thisValue, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult), behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), find);
+            callFromNativeCode(context, find(receivers), thisValue, passed, behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), find);
         });
     });
 }

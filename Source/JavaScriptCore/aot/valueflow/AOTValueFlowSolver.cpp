@@ -16,6 +16,8 @@
 #include "AOTSystemResources.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowBodies.h"
+#include "AOTValueFlowBuiltinTables.h"
+#include "AOTValueFlowBuiltins.h"
 #include <algorithm>
 #include <tuple>
 #include <wtf/CPUTime.h>
@@ -1698,6 +1700,22 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     ValueSetID closures = m_input.universe->closures();
     // A rule that asks about all objects at once, whatever they are, has taken none of them out of a value.
     ValueSetID everyObjectThatBuiltinsMake = maker.intersect(m_input.universe->objectsThatMayBeAnything(), m_input.universe->knownObjects());
+    // Flow follows a value out of a cell that the table names, and out of the cell of a member whose reads are answered from it.
+    auto isReadBackOutOfBuiltins = [&](ValueFlowName name, ValueSetID holders) {
+        const BuiltinTable& builtins = m_input.program->builtins();
+        if (name.kind != ValueFlowNameKind::Slot || name.payload < builtins.slotCount())
+            return false;
+        if (name.payload < builtins.slotCount() + builtins.nameCount())
+            return true;
+        if (name.payload != cellOfValueFromLibrary(builtins).payload)
+            return false;
+        bool isReadBack = true;
+        m_sets.forEachMember(holders, [&](ValueFlowObjectID holder) {
+            BuiltinID entry = m_input.universe->builtinOf(holder);
+            isReadBack &= entry && m_input.universe->builtinTables().holdsValueFromLibrary(entry);
+        });
+        return isReadBack;
+    };
     for (const MadeNodes& made : m_madeNodes) {
         const ValueFlowNodeKey& key = made.key;
         switch (key.kind) {
@@ -1737,6 +1755,9 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             if (!isOfModel && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
                 note(key.set);
             if (shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink)
+                note(m_graph.valueOf(made.first));
+            // What is written into a built-in lies with native code.
+            if (key.kind == ValueFlowMadeNodeKind::Written && maker.meet(key.set, m_input.universe->builtinObjects()) && !isReadBackOutOfBuiltins(name, key.set))
                 note(m_graph.valueOf(made.first));
             break;
         }
