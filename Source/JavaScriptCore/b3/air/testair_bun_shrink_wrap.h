@@ -632,6 +632,13 @@ void testFrameIsSetUpAtEntry()
     leaf.checkRun({ .result = 1 });
 }
 
+static B3::Policy policyThatTestsFrames(unsigned smallestFrameTested = 0)
+{
+    B3::Policy policy = shrinkWrappingPolicy();
+    policy.air.frame.smallestFrameTestedAtSetup = smallestFrameTested;
+    return policy;
+}
+
 void testTerminalPatchSuccessorsKeepFrame()
 {
     for (bool runsWithoutFrame : { false, true }) {
@@ -916,6 +923,7 @@ void testFrameStateViolations()
     const Inst leaveFrame(LeaveFrame, nullptr);
     const Inst storeCallArgument(Move, nullptr, returnTmp(), Arg::callArg(0));
     const Inst loadIncomingArgument(Move, nullptr, Arg::addr(Tmp(GPRInfo::callFrameRegister), static_cast<int32_t>(sizeof(CallerFrameAndPC))), returnTmp());
+    const Inst storeOutsideFrame(Move, nullptr, returnTmp(), Arg::addr(argumentTmp(3)));
     const StraightLineCase cases[] = {
         { std::nullopt, { enterFrame, storeCallArgument, loadIncomingArgument, leaveFrame }, 0 },
         { Kind::FrameSetUpTwice, { enterFrame, enterFrame, leaveFrame }, 1 },
@@ -940,6 +948,92 @@ void testFrameStateViolations()
     appendJump(withFrame, merge);
     merge->append(Oops, nullptr);
     checkFrameStateViolation(graph.code, Kind::StatesDifferAtMerge, merge, 0);
+
+    struct WriteCase {
+        B3::Policy policy;
+        std::optional<Kind> kind;
+        Vector<Inst> insts;
+        unsigned instIndex;
+    };
+    const WriteCase writeCases[] = {
+        { shrinkWrappingPolicy(), std::nullopt, { storeOutsideFrame, enterFrame, leaveFrame }, 0 },
+        { policyThatTestsFrames(), Kind::WritesAheadOfFrame, { storeOutsideFrame, enterFrame, leaveFrame }, 1 },
+        { policyThatTestsFrames(), std::nullopt, { enterFrame, storeOutsideFrame, leaveFrame, storeOutsideFrame }, 0 },
+        { policyThatTestsFrames(), std::nullopt, { enterFrame, leaveFrame, storeOutsideFrame, enterFrame, leaveFrame }, 0 },
+    };
+    for (const WriteCase& testCase : writeCases) {
+        FrameGraph written(testCase.policy);
+        for (const Inst& inst : testCase.insts)
+            written.entry->appendInst(inst);
+        appendReturn(written.entry);
+        checkFrameStateViolation(written.code, testCase.kind, written.entry, testCase.instIndex);
+    }
+}
+
+void testNothingIsWrittenAheadOfTestedFrame()
+{
+    {
+        EarlyExitGraph graph(policyThatTestsFrames());
+        graph.prepareAndCheck({ .coverage = FrameCoverage::SomePaths, .sites = { 1, 1 }, .notSetUpAtHead = { graph.entry, graph.early } });
+        graph.checkRuns();
+    }
+
+    auto checkWriteInEntry = [](const B3::Policy& policy, bool coversEntry) {
+        FrameGraph graph(policy);
+        BasicBlock* early = graph.addReturn(1);
+        BasicBlock* caller = graph.addReturn(2, Calls::Yes);
+        graph.appendAddAndBranch(graph.entry, 4, graph.first, caller, early);
+        if (coversEntry) {
+            graph.prepareAndCheck({ .coverage = FrameCoverage::EveryPathNeedsFrame, .sites = { 1, 2 }, .setUpAtHead = { early, caller } });
+            CHECK(graph.entry->at(0).kind.opcode == EnterFrame);
+        } else
+            graph.prepareAndCheck({ .coverage = FrameCoverage::SomePaths, .sites = { 1, 1 }, .notSetUpAtHead = { graph.entry, early } });
+        graph.checkRun({ .first = 0, .result = 5 });
+        graph.checkRun({ .first = 1, .result = 6, .numberOfCalls = 1 });
+    };
+    checkWriteInEntry(shrinkWrappingPolicy(), false);
+    checkWriteInEntry(policyThatTestsFrames(), true);
+    checkWriteInEntry(policyThatTestsFrames(4096), false);
+
+    {
+        B3::Policy policy = policyThatTestsFrames();
+        policy.validation.setsUpFrameBehindWrites = true;
+        FrameGraph graph(policy);
+        BasicBlock* early = graph.addReturn(1);
+        BasicBlock* caller = graph.addReturn(2, Calls::Yes);
+        graph.appendAddAndBranch(graph.entry, 4, graph.first, caller, early);
+        graph.code.resetReachability();
+        if (!shouldValidateIRAtEachPhase(graph.proc)) {
+            placeFrame(graph.code, allocateStackByGraphColoring(graph.code));
+            checkFrameStateViolation(graph.code, FrameStateViolation::Kind::WritesAheadOfFrame, caller, 0);
+        }
+    }
+
+    // The write stands on a way that sets up no frame behind it.
+    {
+        FrameGraph graph(policyThatTestsFrames());
+        BasicBlock* early = graph.addReturn(1);
+        BasicBlock* caller = graph.addReturn(2, Calls::Yes);
+        appendBranchTest(graph.entry, graph.first, caller, early);
+        graph.prepareAndCheck({ .coverage = FrameCoverage::SomePaths, .sites = { 1, 1 }, .notSetUpAtHead = { graph.entry, early } });
+        graph.checkRun({ .first = 0, .result = 1 });
+        graph.checkRun({ .first = 1, .result = 2, .numberOfCalls = 1 });
+    }
+
+    // The frame begins in front of the first of two writes, not between them.
+    {
+        FrameGraph graph(policyThatTestsFrames());
+        BasicBlock* early = graph.addReturn(1);
+        BasicBlock* exit = graph.addReturn(8);
+        BasicBlock* caller = graph.addReturn(2, Calls::Yes);
+        BasicBlock* writer = graph.addBranch(4, graph.second, caller, exit);
+        appendBranchTest(graph.entry, graph.first, writer, early);
+        graph.prepareAndCheck({ .coverage = FrameCoverage::SomePaths, .sites = { 1, 2 }, .setUpAtHead = { caller, exit }, .notSetUpAtHead = { graph.entry, early } });
+        CHECK(writer->at(0).kind.opcode == EnterFrame);
+        graph.checkRun({ .first = 0, .result = 1 });
+        graph.checkRun({ .first = 1, .second = 0, .result = 12 });
+        graph.checkRun({ .first = 1, .second = 1, .result = 6, .numberOfCalls = 1 });
+    }
 }
 
 static B3::Policy frameSplittingPolicy(bool splitsAroundFrame = true)
@@ -1376,6 +1470,7 @@ void testLiveRangeSplitPutsShufflesOnBorder()
         RUN(testLargeFrameCoversEveryPath()); \
         RUN(testShrinkWrappingOff()); \
         RUN(testFrameIsSetUpAtEntry()); \
+        RUN(testNothingIsWrittenAheadOfTestedFrame()); \
         RUN(testTerminalPatchSuccessorsKeepFrame()); \
         RUN(testEntryBlockWithPredecessors()); \
         RUN(testCriticalEdgesAreSplit()); \

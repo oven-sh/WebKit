@@ -179,6 +179,7 @@ public:
     ValueSetID otherCallables() const { return m_otherCallables; }
     std::atomic<uint64_t>& rememberedBoundFunctionsBindingNoArgument() const { return m_boundFunctionsBindingNoArgument[0]; }
     ValueSetID arrays() const { return m_arrays; }
+    ValueSetID records() const { return m_records; }
     ValueSetID keys() const { return m_keys; }
     // A set that holds every string still lists these keys, so that collectWorkerEntries() can see where they arrive.
     ValueSetID embeddedFilePaths() const { return m_embeddedFilePaths; }
@@ -187,6 +188,7 @@ public:
     ValueSetID instancesOf(BuiltinClassID builtinClass) const { return m_objectsOfClass[builtinClass.index()]; }
     ValueSetID objectsWith(LayoutID layout) const { return m_objectsOfLayout[layout.index()]; }
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
+    ValueSetID objectsAllocatedAsIterators() const { return m_objectsAllocatedAsIterators; }
     ValueSetID objectsThatMayBeAnything() const { return m_objectsThatMayBeAnything; }
     ValueSetID unknownObjectAlone() const { return m_unknownObjectAlone; }
     ValueSetID untrackedObjectAlone() const { return m_untrackedObjectAlone; }
@@ -249,6 +251,7 @@ private:
     Vector<ValueSetID> m_objectsOfLayout;
     Vector<ValueSetID> m_objectsOfClass;
     Vector<ValueSetID> m_sureInstancesOfClass;
+    ValueSetID m_objectsAllocatedAsIterators;
     ValueSetID m_objectsThatMayBeAnything;
     ValueSetID m_objectsWithAnyLayout;
     ValueSetID m_objectsWithLayoutOfProgram;
@@ -299,6 +302,7 @@ private:
     ValueSetID m_objects;
     ValueSetID m_callables;
     ValueSetID m_arrays;
+    ValueSetID m_records;
     ValueSetID m_keys;
     ValueSetID m_unknownObjectAlone;
     ValueSetID m_untrackedObjectAlone;
@@ -444,7 +448,7 @@ private:
 };
 
 struct ValueFlowNodeName {
-    enum class Kind : uint8_t { None, OfBody, Escaped, Variable, Field, EntryParameter, Result, Thrown, OfHost };
+    enum class Kind : uint8_t { None, OfBody, Escaped, Variable, Field, EntryParameter, Result, Thrown, OfHost, Hub };
 
     Kind kind { Kind::None };
     uint32_t owner { 0 };
@@ -457,13 +461,17 @@ struct ValueFlowNodeName {
     static constexpr ValueFlowNodeName result(FunctionID function, uint32_t index) { return { Kind::Result, function.index(), index }; }
     static constexpr ValueFlowNodeName thrown(FunctionID function) { return { Kind::Thrown, function.index(), 0 }; }
     static constexpr ValueFlowNodeName ofHost(ValueFlowHostNode node) { return { Kind::OfHost, static_cast<uint32_t>(node), 0 }; }
-    static constexpr ValueFlowNodeName hub(ValueFlowBehaviorID behavior) { return { Kind::OfHost, numberOfValueFlowHostNodes + behavior.index(), 0 }; }
+    static constexpr ValueFlowNodeName hub(ValueFlowBehaviorID behavior) { return { Kind::Hub, behavior.index(), 0 }; }
     static constexpr ValueFlowNodeName escaped() { return { Kind::Escaped, 0, 0 }; }
 
     constexpr explicit operator bool() const { return kind != Kind::None; }
     friend constexpr bool operator==(const ValueFlowNodeName&, const ValueFlowNodeName&) = default;
     friend constexpr auto operator<=>(const ValueFlowNodeName&, const ValueFlowNodeName&) = default;
 };
+
+// The table of built-ins says how many behaviors there are. The host nodes are counted here, and their enumeration has 8 bits.
+static_assert(numberOfValueFlowHostNodes <= std::numeric_limits<std::underlying_type_t<ValueFlowHostNode>>::max());
+static_assert(ValueFlowNodeName::hub(ValueFlowBehaviorID(100000u)).owner == 100000 && ValueFlowNodeName::hub(ValueFlowBehaviorID(0u)) != ValueFlowNodeName::ofHost(static_cast<ValueFlowHostNode>(0)));
 
 enum class ValueFlowBodyNodeKind : uint8_t {
     EntryParameter,

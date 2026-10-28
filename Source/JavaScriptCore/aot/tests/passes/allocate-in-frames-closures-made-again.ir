@@ -1,4 +1,4 @@
-# A closure that a callee borrows on one path and that leaves on another lies in the frame, and a closure of the heap is made in front of the use that lets it out. That use is the last one: where something takes the closure afterwards, there would be two closures to tell apart, and the closure is made on the heap at once.
+# A closure that a callee borrows on one path and that leaves on another lies in the frame, and a closure of the heap is made in front of the use that lets it out. That use is the last one: where something takes the closure afterwards, there would be two closures to tell apart, and the closure is made on the heap at once. So it is where the callee may have called it before it leaves: what ran and what left are one function.
 # FORM: AsRead
 # RUN: pipeline AllocateInFrames
 # OPTIONS: check=VerifyEachPass only-passes=BuildCallGraph,EstimateHeat,ComputeEffectSummaries,AllocateInFrames heat=EverythingIsHot
@@ -81,10 +81,9 @@ function f4 name="borrowedAndThenStored" parameters=[{type=anything}, {type=bool
   b2():
     PutModuleVariable v2 variable=g0
     Return
-# CHECK: v2: f8 = NewClosure function=f8 {{*}}storage=Frame
-# CHECK: [[again4]]: f8 = NewClosure function=f8
+# CHECK: v2: f8 = NewClosure function=f8
 # CHECK-NOT: storage=
-# CHECK: PutModuleVariable [[again4]] variable=g0
+# CHECK: PutModuleVariable v2 variable=g0
 }
 
 function f5 name="storedAndThenBorrowed" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {

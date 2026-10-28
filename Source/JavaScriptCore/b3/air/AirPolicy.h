@@ -8,6 +8,7 @@
 #if ENABLE(B3_JIT)
 
 #include "RegisterSet.h"
+#include <limits>
 #include <optional>
 #include <wtf/PrintStream.h>
 
@@ -31,7 +32,7 @@ struct RegisterPolicy {
     AIR_POLICY_OF_CLIENT(bool, hintsTwoAddressOperands, false);
     AIR_POLICY_OF_CLIENT(bool, usesSecondPreferredRegister, false);
     AIR_POLICY_OF_CLIENT(bool, evictsHolderOfPreferredRegister, false);
-    // What a patchpoint runs keeps at most the lower 64 bits of a vector register that the patchpoint does not clobber.
+    // What a patchpoint runs keeps at most the lower 64 bits of a vector register that the patchpoint does not clobber. So no vector is held in a register across one.
     AIR_POLICY_OF_CLIENT(bool, patchpointsKeepOnlyLowerHalvesOfVectors, false);
 
     RegisterSet unsavedCalleeSaves;
@@ -60,6 +61,8 @@ struct FramePolicy {
     // With shrinkWraps: a function of which no path needs a frame has none, and a frame that some path needs is set up at the entry.
     AIR_POLICY_OF_CLIENT(bool, setsUpFrameAtEntry, false);
     AIR_POLICY_OF_CLIENT(unsigned, maxBytesAllocatedBeforeStackCheck, 0);
+    // A frame of at least this many bytes is tested against the end of the stack where it is set up, and one that does not fit is an error at the call in the caller. Nothing is written ahead of such a frame.
+    AIR_POLICY_OF_CLIENT(unsigned, smallestFrameTestedAtSetup, std::numeric_limits<unsigned>::max());
     RegisterSet registersClobberedByFrameSetup;
 
     AIR_POLICY_OF_CLIENT(bool, mayPlaceSlotsAboveFrameRecord, false);

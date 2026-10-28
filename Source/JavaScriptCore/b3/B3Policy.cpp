@@ -70,7 +70,10 @@ void Policy::disable(PolicySwitch policySwitch)
     CLEAR_FIELD_CASE(VersionLoops, loops.versions);
     CLEAR_FIELD_CASE(ClampLoopBounds, loops.clampsLoopBounds);
     CLEAR_FIELD_CASE(VectorizeLoops, loops.vectorizes);
-    CLEAR_FIELD_CASE(UnrollLoops, loops.unrolls);
+    case PolicySwitch::UnrollLoops:
+        loops.unrolls = false;
+        loops.pollsBetweenStretches = false;
+        break;
     CLEAR_FIELD_CASE(BitTests, switchLowering.usesBitTests);
     CLEAR_FIELD_CASE(KnownRanges, knownProperties.trustsKnownRanges);
     CLEAR_FIELD_CASE(KnownDereferenceableBytes, knownProperties.trustsKnownDereferenceableBytes);
@@ -244,7 +247,7 @@ static void dumpLoops(PrintStream& out, CommaPrinter& comma, const LoopPolicy& l
     PRINT_IF_SET(loops, foldsComparisonsWithBounds);
     PRINT_IF_SET(loops, versions);
     PRINT_IF_SET(loops, clampsLoopBounds);
-    PRINT_IF_SET(loops, omitsPollsFromLoopsThatEndWithinData);
+    PRINT_IF_SET(loops, pollsBetweenStretches);
     PRINT_IF_SET(loops, vectorizes);
     PRINT_IF_SET(loops, unrolls);
     PRINT_IF_DIFFERENT(loops, minFrequencyOfUnrolledLoop);
@@ -273,6 +276,7 @@ static void dumpValidation(PrintStream& out, CommaPrinter& comma, const Validati
         out.print(comma, "validation = "_s, validation.level);
     PRINT_IF_SET(validation, checksKnownPropertiesAtRunTime);
     PRINT_IF_SET(validation, logsMovedLoads);
+    PRINT_IF_SET(validation, logsDecidedComparisons);
     PRINT_IF_SET(validation, keepsOriginsOfAccessesThatTakeTraps);
 }
 

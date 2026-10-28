@@ -116,11 +116,12 @@ function f1 name="fill" module=m0 position=33 flags=[IsChecked, HasExplicitName]
 # CHECK-NEXT: Branch(b@[[isUnmarked]], Terminal, {{*}}:PutArrayElement)
 # CHECK-NEXT: Successors: Then:#[[next]], Else:Rare:#
 # CHECK-NEXT: BB#[[next]]:
-# CHECK-NOT: Patchpoint(
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # CHECK-LABEL: end of loop
+# A turn allocates, and the way round the allocator comes back into the loop: the loop polls on every turn.
 # POLLS-LABEL: steps by 1
+# POLLS-COUNT-1: isLoopPoll
 # POLLS-NOT: isLoopPoll
 # POLLS-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 15, patchpoints: 1
-# ARM64: loop #{{*}}, instructions: 16, patchpoints: 1
+# X64: loop #{{*}}, instructions: 15, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 16, patchpoints: 2

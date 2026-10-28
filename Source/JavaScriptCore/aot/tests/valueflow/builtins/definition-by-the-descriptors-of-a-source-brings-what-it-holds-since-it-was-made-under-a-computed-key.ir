@@ -1,0 +1,48 @@
+# pattern = /a/; bound = one.bind(); a = {}; b = {}; c = {}; Object.defineProperties(a, Object.getOwnPropertyDescriptors(pattern)), the same from bound to b and from {} to c, as the front end writes the pair
+# A regular expression has its lastIndex, and a bound function its name and its length, since they were made: no statement wrote them, and the table lists them above the object. The definition brings them.
+# So a read of `a[key]` or `b[key]` under a key nobody knows may answer a primitive beside undefined (primitive 0), and a read of `c[key]` answers none.
+# RUN: valueflow-solve calls primitives
+# CHECK: f0 v19 -> {{*}}primitive0 primitive{{*}}
+# CHECK: f0 v21 -> {{*}}primitive0 primitive{{*}}
+# CHECK-NOT: f0 v23 -> {{*}}primitive0 primitive{{*}}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="First"
+layout L1 name="Second"
+layout L2 name="Third"
+layout L3 name="Source"
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewRegExp pattern="a" regExpFlags=[]
+    v1 = NewClosure function=f1
+    v2 = PropGet v1 key="bind"
+    v3 = Call v2, v1 calleeKey="bind"
+    v4 = NewObject layout=L3 fields=[]
+    v5 = NewObject layout=L0 fields=[]
+    v6 = NewObject layout=L1 fields=[]
+    v7 = NewObject layout=L2 fields=[]
+    v8 = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
+    v9 = Builtin builtin=CompilerHelpersDefinePropertiesFrom
+    v10 = Call v8, -, v0
+    v11 = Call v9, -, v5, v10, v0
+    v12 = Call v8, -, v3
+    v13 = Call v9, -, v6, v12, v3
+    v14 = Call v8, -, v4
+    v15 = Call v9, -, v7, v14, v4
+    v16 = NewClosure function=f2
+    v17 = Call v16
+    v18 = ElemGet v5, v17
+    v19 = Call v18
+    v20 = ElemGet v6, v17
+    v21 = Call v20
+    v22 = ElemGet v7, v17
+    v23 = Call v22
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+    Return
+}
+function f2 name="name" results=[{type=string}] {
+    v0 = String string="some text that names no property of the program"
+    Return v0
+}

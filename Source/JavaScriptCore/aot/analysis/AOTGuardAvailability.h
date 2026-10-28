@@ -246,7 +246,9 @@ private:
     bool originImplies(const GuardOrigin&, const GuardOrigin& implied, ProofSet) const;
     bool isAsStrongAs(const GuardFact&, const GuardFact& other) const;
     bool tryWiden(GuardFact&, const GuardFacts& factsOnOtherWay) const;
-    bool implies(const GuardFact& fact, const GuardFact& implied) const { return fact.subject == implied.subject && fact.position == implied.position && isAsStrongAs(fact, implied); }
+    // One number written twice is one position: each block has constants of its own.
+    bool isSamePosition(ValueID, ValueID) const;
+    bool implies(const GuardFact& fact, const GuardFact& implied) const { return fact.subject == implied.subject && isSamePosition(fact.position, implied.position) && isAsStrongAs(fact, implied); }
     bool anyImplies(const GuardFacts&, const GuardFact& implied) const;
     bool hasEquivalentFact(const GuardFacts&, const GuardFact&) const;
 

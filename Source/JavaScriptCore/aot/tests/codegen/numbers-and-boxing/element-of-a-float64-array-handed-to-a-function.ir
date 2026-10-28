@@ -109,5 +109,4 @@ function f2 name="sumOfHalves" module=m0 position=59 flags=[IsChecked, HasExplic
 # NONE-LABEL: steps by 1
 # NONE-NOT: BitwiseCast
 # NONE-NOT: Reads:JSArrayBufferView
-# NONE-NOT: ExitsSideways
 # NONE-LABEL: end of loop

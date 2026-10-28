@@ -553,17 +553,28 @@ ValueFlowNodeID HeapRule::readWhatStaysBehindUnder(ValueFlowName name)
     return holdsAnything(found) ? m_context.readWhatWasWritten(found, name) : ValueFlowNodeID();
 }
 
-bool HeapRule::isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey& key)
+bool HeapRule::mayBeFoundThroughPlaceholder(BuiltinID member)
 {
     if (m_tables.letsInUnseenCode(member) || isFoundByNameAlone(m_builtins.canonicalID(member)))
         return false;
     if (BuiltinID holder = m_builtins.at(member).holder; holder && isNativeModuleThatNobodyNames(m_universe.objectOf(holder)))
         return false;
-    const Builtin& entry = m_builtins.at(member);
-    if (isMemberOfBun(member))
+    return !isMemberOfBun(member);
+}
+
+bool HeapRule::isHandedOutThroughPlaceholder(BuiltinID member, const HeapKey& key)
+{
+    if (!mayBeFoundThroughPlaceholder(member))
         return false;
+    const Builtin& entry = m_builtins.at(member);
     bool isFoundUnderOwnName = entry.kind != BuiltinKind::Constructor || (entry.holder && m_builtins.at(entry.holder).kind == BuiltinKind::Namespace);
     return (key.keyClass == HeapKeyClass::Name && isFoundUnderOwnName) || entry.origin != BuiltinOrigin::Host;
+}
+
+// A key nobody knows hands out no member of the host. Reading an accessor still calls its getter.
+bool HeapRule::runsGetterThroughPlaceholder(BuiltinID member, const HeapKey& key)
+{
+    return m_builtins.at(member).kind == BuiltinKind::Accessor && mayBeFoundThroughPlaceholder(member) && !isHandedOutThroughPlaceholder(member, key);
 }
 
 ClimbingSet HeapRule::objectsHeldFromCreation(ClimbingSet objects)
@@ -877,8 +888,12 @@ void HeapRule::readOwnPropertiesNobodyWrote(ClimbingSet holders, const HeapKey& 
         add(result, m_universe.strings());
 
     ClimbingSet others = m_context.restrict(known(holders), ValueSets::complement(m_tables.objectsWithoutPropertiesOfNativeCode()));
-    if (holdsAnything(others))
-        connect(m_context.lookup(others, key.keyClass == HeapKeyClass::Unknown ? everyOwnPropertyHeldName : foundName(key, HeapPropertyPart::Value)), result);
+    if (!holdsAnything(others))
+        return;
+    if (key.keyClass == HeapKeyClass::Unknown)
+        connect(m_context.lookup(others, key.namesEnumerableProperty ? everyEnumerableOwnPropertyHeldName : everyOwnPropertyHeldName), result);
+    else
+        connect(m_context.lookup(others, foundName(key, HeapPropertyPart::Value)), result);
 }
 
 // The source of a copy is on the chain without the objects above it, and the table lists there what a function, a list or an instance of a built-in class holds since it was made.
@@ -892,6 +907,25 @@ void HeapRule::readPropertiesNobodyWroteOnSourcesOfCopies(const HeapChain& chain
     ClimbingSet holders = m_context.restrict(withSourcesOfCopies(m_context, known(m_context.valueOf(sources))), m_tables.objectsMadeWithPropertiesListedAboveThem());
     if (holdsAnything(holders))
         readOwnPropertiesNobodyWrote(holders, key, result);
+}
+
+// The table lists what an instance of a built-in class holds since it was made on the prototype object of the class, and a lookup of own properties does not go up to it.
+void HeapRule::readOwnPropertiesListedAbove(ClimbingSet objects, ValueFlowNodeID result, Members& getters)
+{
+    ClimbingSet instances = m_context.restrict(objects, m_tables.objectsMadeWithPropertiesListedAboveThem());
+    if (!holdsAnything(instances))
+        return;
+    ClimbingSet above = m_context.valueOf(m_context.lookup(instances, prototypeLinkName));
+    m_context.forEachMember(m_context.restrict(above, m_tables.prototypeObjectsListingOwnPropertiesOfInstances()), [&](ValueFlowObjectID holder) {
+        for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
+            if (m_builtins.at(member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances))
+                readMember(member, m_universe.moduleOf(holder), result, getters);
+        }
+    });
+    if (m_context.meet(above, m_tables.prototypeObjectsOfClassesThatListNamesWithoutTypes()))
+        add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
+    if (m_context.meet(above, m_tables.prototypesAboveNativeElements()))
+        add(result, m_universe.anyPrimitive());
 }
 
 bool HeapRule::isMemberOfBunUsedByNameAlone(BuiltinID member) const
@@ -1417,6 +1451,8 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
     readPropertiesAtCreation(chain.objects, key, result);
     readPropertiesNobodyWroteOnSourcesOfCopies(chain, key, result);
     readMembers(chain.objects, chain.start, key, result, builtinGetters);
+    if (m_findsOwnPropertiesListedAbove)
+        readOwnPropertiesListedAbove(chain.objects, result, builtinGetters);
     if (key.namesEnumerableProperty && holdsAnything(m_context.markedAmong(chain.objects, { ObjectMutation::DeleteField, ObjectMutation::RedefineProperty, ObjectMutation::ChangePrototype })))
         readWhatNamesOfProgramMayHaveHidden(chain, result, builtinGetters);
     if (mayHoldUndeclaredProperty(chain.objects, key))
@@ -1500,6 +1536,19 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             handedOutAsUnknownObject.append(objectOfMember(member, module));
         });
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
+        // A read runs getters on the holders where a store runs setters. What they answer is among the values nobody knows.
+        // That names no member of the host: native code is there whoever reads it. A getter that is a function of the library is in the image only once it is read.
+        forEachMemberUnder(holdersOfAccessorsThatRunOnUnknownObject(key), key, [&](BuiltinID member, ModuleID) {
+            if (!runsGetterThroughPlaceholder(member, key))
+                return;
+            for (const BuiltinOverload& overload : m_builtins.overloadsOf(m_builtins.canonicalID(member))) {
+                if (overload.mode != BuiltinCallMode::Get)
+                    continue;
+                if (overload.libraryFunction())
+                    use(member, BuiltinUse::Read);
+                noteInstancesIn(m_context, overload.result.type);
+            }
+        });
     } else if (chain.holdsUnknownObject) {
         connect(m_context.lookup(unknownObjectAlone(), value), result);
         if (!m_context.isLookupForCall())
@@ -1743,8 +1792,9 @@ void HeapRule::runLookup()
 {
     ValueFlowName name = m_context.nameOfKey();
     m_keepsHoldersOfExportsItStartsFrom = name == everyPropertyOfListedHoldersOfExports;
-    m_answersNothingForNameThatIsLacking = name == everyOwnPropertyHeldName;
+    m_answersNothingForNameThatIsLacking = name == everyOwnPropertyHeldName || name == everyEnumerableOwnPropertyHeldName;
     m_findsOwnPropertiesAlone = name == everyOwnPropertyName || m_answersNothingForNameThatIsLacking;
+    m_findsOwnPropertiesListedAbove = name == everyOwnPropertyHeldName;
     switch (name.kind) {
     case ValueFlowNameKind::PrototypeLink:
         collectChain();
@@ -1759,9 +1809,13 @@ void HeapRule::runLookup()
     case ValueFlowNameKind::Property:
     case ValueFlowNameKind::Elements:
     case ValueFlowNameKind::EveryProperty:
-        if (name == everyOwnPropertyNobodyWroteName)
-            readOwnPropertiesNobodyWrote(m_context.setOfKey(), unknownHeapKey, m_statement.result);
-        else if (!splitLookupThroughPlaceholders())
+        if (name == everyOwnPropertyNobodyWroteName || name == everyOwnPropertyNewToNativeCodeName) {
+            ClimbingSet redefined = m_context.markedAmong(m_context.setOfKey(), ObjectMutation::RedefineProperty);
+            if (name == everyOwnPropertyNewToNativeCodeName)
+                redefined = m_context.restrict(redefined, m_tables.objectsWithoutPropertiesOfNativeCode());
+            readOwnPropertiesNobodyWrote(m_context.setOfKey(), enumeratedHeapKey, m_statement.result);
+            readOwnPropertiesNobodyWrote(redefined, unknownHeapKey, m_statement.result);
+        } else if (!splitLookupThroughPlaceholders())
             readThroughChain(m_context.setOfKey(), keyOfFoundName(name), { nullptr, m_context.setOfKey() }, m_statement.result);
         return;
     case ValueFlowNameKind::Setter:
@@ -1835,7 +1889,7 @@ ValueFlowNodeID enumerablePropertiesNobodyWrote(ValueFlowRuleContext& context, C
     ClimbingSet shown = context.markedAmong(objectsOfProgram, ObjectMutation::RedefineProperty);
     if (reader == MetBy::Program)
         shown = context.unite(shown, context.restrict(objectsOfProgram, ValueSets::complement(universe.builtinTables().heap().objectsWithoutPropertiesOfNativeCode())));
-    return context.lookup(shown, everyOwnPropertyNobodyWroteName);
+    return context.lookup(shown, reader == MetBy::Program ? everyOwnPropertyNobodyWroteName : everyOwnPropertyNewToNativeCodeName);
 }
 
 ClimbingSet objectsRightAbove(ValueFlowRuleContext& context, ClimbingSet knownObjects)

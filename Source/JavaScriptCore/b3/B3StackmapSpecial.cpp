@@ -30,7 +30,6 @@
 
 #include "AirCode.h"
 #include "AirGenerationContext.h"
-#include "B3LoopUtilities.h"
 #include "B3ValueInlines.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -62,12 +61,6 @@ RegisterSet StackmapSpecial::extraClobberedRegs(Inst& inst)
     StackmapValue* value = inst.origin->as<StackmapValue>();
     ASSERT(value);
 
-    if (code().policy().registers.patchpointsKeepOnlyLowerHalvesOfVectors && code().usesSIMD() && value->opcode() == Patchpoint && !onlyKeepsValuesAlive(value)) {
-        RegisterSet result = RegisterSet::allFPRs();
-        result.exclude(RegisterSet::allScalarRegisters());
-        result.merge(value->lateClobbered());
-        return result;
-    }
     return value->lateClobbered();
 }
 

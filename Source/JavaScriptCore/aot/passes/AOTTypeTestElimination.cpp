@@ -194,7 +194,7 @@ private:
         auto appendWhatEndsProofs = [&](uint32_t index, const Effects& effects) {
             if (effects.maySuspend)
                 m_items.append(Item { index, ItemKind::Suspension, 0 });
-            else if (effects.writes.containsAny(m_conditions.heapsDependedOn())) {
+            else if (effects.writes.containsAny(m_conditions.heapsDependedOn()) && !m_analyses.context().build.isSabotaged(Sabotage::RemovedTestsOutlastWrites)) {
                 m_items.append(Item { index, ItemKind::Ending, static_cast<uint32_t>(m_endings.size()) });
                 m_endings.append(Ending { });
             }

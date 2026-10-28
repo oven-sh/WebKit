@@ -20,6 +20,7 @@
 #include "AOTSort.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "AOTWrittenFunction.h"
 #include <algorithm>
 #include <ranges>
 #include <wtf/Noncopyable.h>
@@ -500,6 +501,18 @@ bool FramePlanner::isPassedOnByBranch(const Use& use) const
     return !findNarrowedParameters(m_function, m_analyses.useLists(), use).isEmpty();
 }
 
+static bool mayFollow(const Function& function, const CFG& cfg, const UseLists& useLists, ValueID definition, const Use& earlier, const Use& later)
+{
+    if (earlier.block == later.block && useLists.isBefore(earlier, later))
+        return true;
+    BlockID blockOfDefinition = useLists.blockOf(definition);
+    BitVector barrier(function.blocks.size());
+    barrier.quickSet(blockOfDefinition.index());
+    return std::ranges::any_of(cfg.successors(earlier.block), [&](BlockID successor) {
+        return successor != blockOfDefinition && cfg.blocksReachableFrom(successor, barrier).get(later.block.index());
+    });
+}
+
 // Whoever borrows the closure cannot tell it from another one afterwards.
 bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
 {
@@ -515,8 +528,11 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     if (!willHaveLongFormsInLine(blockOfDefinition))
         return false;
     std::span<const ObjectUse> knownUses = m_escape.usesOf(closure);
+    // A stack trace lists a call under the name of the function object that ran, and what leaves is another function object.
+    bool isListedUnderItsOwnName = m_program.at(writtenFunctionOf(m_program, m_function.at(definition).function())).has(FunctionCapabilities::RecordsCalleeOnceRenamed);
     bool isLent = false;
     bool isBorrowed = false;
+    Vector<Use, 2> usesThatRunIt;
     Vector<Use, 2> lastUses;
     Vector<Use, 1> madeAgainAt;
     for (const Use& use : uses) {
@@ -526,6 +542,8 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
         // A use that keeps the closure in a cell, gives it back or passes it on makes another way to it, which is not among the uses of the value.
         bool staysInFrame = use.kind == Use::Kind::Operand && known != knownUses.end() && (!known->isEscape || effectRuleOf(m_function.at(use.user).opcode) == EffectRule::Call) && !isPassedOnByBranch(use);
         if (staysInFrame && known->uses.containsOnly(usesOfBorrowedParameter) && checkUse(closure, *known) == AllocationHeapCause::None) {
+            if (isListedUnderItsOwnName && known->uses.containsAny({ OperandUse::Calls, OperandUse::CallsPerElement, OperandUse::CallsRepeatedly }))
+                usesThatRunIt.append(use);
             isBorrowed = true;
             continue;
         }
@@ -543,6 +561,12 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
     }
     if (!isLent && !isBorrowed)
         return false;
+    for (const Use& earlier : usesThatRunIt) {
+        for (const Use& later : lastUses) {
+            if (mayFollow(m_function, m_analyses.cfg(), useLists, definition, earlier, later))
+                return false;
+        }
+    }
     if (isLent && closureFormOf(m_program, *m_flow, m_function.at(definition).function()) != ClosureForm::Slim)
         return false;
     for (const Use& use : lastUses) {

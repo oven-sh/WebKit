@@ -450,7 +450,7 @@ void computeAccessResults(const ValueFlowResultInputs& inputs, TypeTable& types,
                 layouts.clear();
                 seesLists = false;
             }
-            std::ranges::sort(layouts);
+            AOT::sort(layouts);
             return layouts;
         };
         Vector<LayoutID, 4> layoutsOfHandlers = layoutsIn(handlers);

@@ -306,7 +306,7 @@ bool LoopInvariance::matchesValueBeforeLoop(Value* inside, Value* before, Invali
             if (!load || !load->isLoad() || load->offset() != before->as<MemoryValue>()->offset() || !m_executedValues.contains(before))
                 return false;
             Effects effects = load->effects();
-            if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(m_writes))
+            if (effects.readsMutability != Mutability::Immutable && effects.reads.overlaps(m_writes) && !m_proc.policy().validation.overlooksWritesToWhatLoopsReadAgain)
                 return false;
             walked.add(effects);
         }

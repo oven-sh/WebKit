@@ -390,6 +390,7 @@ void testPolicyDumpNamesEveryField()
     CHECK_POLICY_DUMP_NAMES(frame, emitsFrame, true);
     CHECK_POLICY_DUMP_NAMES(frame, shrinkWraps, true);
     CHECK_POLICY_DUMP_NAMES(frame, maxBytesAllocatedBeforeStackCheck, 4096);
+    CHECK_POLICY_DUMP_NAMES(frame, smallestFrameTestedAtSetup, 0);
     CHECK_POLICY_DUMP_NAMES(frame, registersClobberedByFrameSetup, calleeSaves);
     CHECK_POLICY_DUMP_NAMES(frame, mayPlaceSlotsAboveFrameRecord, true);
     CHECK_POLICY_DUMP_NAMES(frame, mayPushCalleeSaves, true);

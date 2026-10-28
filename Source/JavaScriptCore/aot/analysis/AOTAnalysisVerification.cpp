@@ -548,9 +548,8 @@ static bool checkLiveness(Comparison& comparison, const Function& function, cons
     return true;
 }
 
-static bool checkEffectFacts(Comparison& comparison, ValueID value, Opcode opcode, const Effects& fresh)
+static bool checkEffectFacts(Comparison& comparison, ValueID value, const OpcodeEffectFacts& facts, Opcode opcode, const Effects& fresh)
 {
-    const OpcodeEffectFacts& facts = effectFactsOf(opcode);
     return comparison.holds(EffectTraits(fresh).containsAll(facts.traits.atLeast) && facts.traits.atMost.containsAll(EffectTraits(fresh)), "the effects of {}, {}, lie outside the bounds on traits that are kept for its operation"_s, value, fresh)
         && comparison.holds(!facts.staysWithinDeclaredBound || fresh.isSubsetOf(declaredBoundOf(opcode)), "the effects of {}, {}, exceed the bound declared for its operation, which is said to stay within it"_s, value, fresh)
         && comparison.holds(!facts.mayExitSideways || fresh.mayExitSideways(), "the operation of {} is said to leave sideways wherever it stands, and by its effects, {}, this one does not"_s, value, fresh)
@@ -567,8 +566,9 @@ static bool checkEffects(Comparison& comparison, const EffectContext& context, c
         const Value& value = function.at(id);
         EffectsOnEdges fresh = effectsOf(context, function, value);
         return comparison.isSame(*kept, fresh, "the effects of {}"_s, id)
-            && checkEffectFacts(comparison, id, value.opcode, fresh.onAnyEdge())
-            && checkEffectFacts(comparison, id, value.opcode, fresh.normal);
+            && checkEffectFacts(comparison, id, effectFactsOf(value), value.opcode, fresh.onAnyEdge())
+            && checkEffectFacts(comparison, id, effectFactsOf(value), value.opcode, fresh.normal)
+            && checkEffectFacts(comparison, id, effectFactsOf(value.opcode), value.opcode, fresh.onAnyEdge());
     };
 
     for (uint32_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {

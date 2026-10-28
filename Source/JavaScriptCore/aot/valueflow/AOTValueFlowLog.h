@@ -108,6 +108,8 @@ struct ValueFlowNodeKey {
     ValueSetID set;
 };
 
+static_assert(static_cast<uint8_t>(ValueFlowNameKind::NamesOfMethods) < ValueFlowNodeKey::isForCall);
+
 inline ValueFlowCallGroup callGroupAt(ValueFlowNodeID first)
 {
     auto at = [&](unsigned offset) {

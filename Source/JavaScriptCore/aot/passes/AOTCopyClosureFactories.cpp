@@ -11,10 +11,12 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
+#include "AOTCirclesOfModuleLoads.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTRegionCloner.h"
 #include "AOTSchemaWalkers.h"
+#include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
@@ -388,6 +390,7 @@ struct Copier {
     UncheckedKeyHashMap<uint32_t, DataID> arraysInConstants;
     std::optional<BitVector> modulesThatRequireMayLoad;
     bool requiresByNameNobodyKnows { false };
+    std::optional<StronglyConnectedComponents> circlesOfLoads;
     UncheckedKeyHashMap<uint32_t, bool> variablesStoredOnEveryWayToEnd;
     unsigned numberOfValuesAsRead { 0 };
     unsigned numberOfValuesInCopiesOfFactories { 0 };
@@ -494,19 +497,11 @@ struct Copier {
         return requiresByNameNobodyKnows || modulesThatRequireMayLoad->quickGet(asked.index());
     }
 
-    bool comesBackTo(ModuleID from, ModuleID asked)
+    bool lieOnOneCircleOfLoads(ModuleID first, ModuleID second)
     {
-        BitVector visited(program.modules.size());
-        Vector<ModuleID, 16> pending { from };
-        while (!pending.isEmpty()) {
-            for (const ModuleRequest& request : program.at(pending.takeLast()).requests) {
-                if (request.target == asked)
-                    return true;
-                if (!visited.set(request.target.index()))
-                    pending.append(request.target);
-            }
-        }
-        return false;
+        if (!circlesOfLoads)
+            circlesOfLoads = computeCirclesOfModuleLoads(program, build.parallelLoops());
+        return circlesOfLoads->componentOf[first.index()] == circlesOfLoads->componentOf[second.index()];
     }
 
     // The loader runs the body of a file when every file that it imports by a statement has run to its end, unless the two lie on a cycle.
@@ -522,7 +517,7 @@ struct Copier {
         bool isImportedByStatement = std::ranges::any_of(program.at(importer).requests, [&](const ModuleRequest& request) {
             return request.target == exporter && request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation && request.completes;
         });
-        if (!isImportedByStatement || mayBeLoadedByRequire(importer) || comesBackTo(exporter, importer))
+        if (!isImportedByStatement || mayBeLoadedByRequire(importer) || lieOnOneCircleOfLoads(exporter, importer))
             return false;
         return variablesStoredOnEveryWayToEnd.ensure(variable.index() + 1, [&] {
             const Function& body = program.at(bodyID);
@@ -612,7 +607,7 @@ struct Copier {
             for (const Value& value : program.functions[index].values)
                 forEachReference(value, finder);
         });
-        std::ranges::sort(*classReferences);
+        AOT::sort(*classReferences);
         classReferences->shrink(std::ranges::unique(*classReferences).begin() - classReferences->begin());
     }
 
@@ -712,7 +707,7 @@ struct Copier {
             hasChanged |= std::exchange(member, copyOfClass(member)) != member;
         if (!hasChanged)
             return id;
-        std::ranges::sort(members);
+        AOT::sort(members);
         return types.intern(program.at(id).withMembers(WTF::move(members)));
     }
 
@@ -887,7 +882,7 @@ struct Copier {
             }
             if (!below.supertypes.contains(copy))
                 below.supertypes.append(copy);
-            std::ranges::sort(below.supertypes);
+            AOT::sort(below.supertypes);
         });
     }
 
@@ -923,7 +918,7 @@ struct Copier {
         layout.base = base;
         if (!layout.supertypes.contains(base))
             layout.supertypes.append(base);
-        std::ranges::sort(layout.supertypes);
+        AOT::sort(layout.supertypes);
         classesPutBelowOthers.append({ copy, base });
     }
 
@@ -969,7 +964,7 @@ struct Copier {
     {
         if (classesPutBelowOthers.isEmpty())
             return;
-        std::ranges::sort(classesPutBelowOthers, { }, [](const auto& entry) { return std::pair(entry.second, entry.first); });
+        AOT::sort(classesPutBelowOthers, { }, [](const auto& entry) { return std::pair(entry.second, entry.first); });
         ClassesBelow classesBelow { program, classesPutBelowOthers.span() };
         UncheckedKeyHashMap<uint32_t, Vector<LayoutID>> added;
         BitVector hasClassesAdded;
@@ -992,7 +987,7 @@ struct Copier {
             if (members.isEmpty())
                 continue;
             members.appendVector(set.written());
-            std::ranges::sort(members);
+            AOT::sort(members);
             members.shrink(std::ranges::unique(members).begin() - members.begin());
             if (members.size() != set.written().size())
                 table.layoutSets[index] = types.intern(set.withMembers(WTF::move(members)));

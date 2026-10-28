@@ -294,7 +294,20 @@ struct CastSimplification : Rewrite {
     // What the language asks of a value it asks in every version of the function. A type that is owed to a check answers in the typed version alone, so the test stays until the function has its generic version.
     bool isTestOfLanguageAnsweredOnCredit(const Value& cast, ValueID operand)
     {
-        return cast.opcode != Opcode::Check && repeatableCasts.contains(cast.opcode) && isBehindCheck(operand);
+        return cast.opcode != Opcode::Check && repeatableCasts.contains(cast.opcode) && isBehindCheck(operand) && !isAnsweredInFrontOfChecks(cast, operand);
+    }
+
+    // A cast hands on the value that it was given, so what that value is in front of every check it is in every version.
+    bool isAnsweredInFrontOfChecks(const Value& test, ValueID operand)
+    {
+        while (isBehindCheck(operand)) {
+            if (!isCast(at(operand).opcode))
+                return false;
+            operand = substitution.resolve(at(operand).operand(0));
+        }
+        Value sameTest = test;
+        sameTest.setOperand(0, operand);
+        return typeOf(operand).isSubsetOf(computeResultType(TypingContext { program, function, context.types }, sameTest), program);
     }
 
     bool isBehindCheck(ValueID value)

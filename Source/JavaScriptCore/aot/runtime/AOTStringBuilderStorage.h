@@ -119,6 +119,8 @@ public:
     Latin1Character* reserve(JSGlobalObject*, const Reservation&);
     Latin1Character* tryReserve(const Reservation&);
     void commit(const Latin1Character* cursor);
+    // Gives back the room that a Reservation left behind what was committed. Throws and returns false if the text is longer than a string can be.
+    bool checkLength(JSGlobalObject*);
     bool hasRoomAt(const Latin1Character* cursor, size_t size) const
     {
         ASSERT(m_characters <= cursor && cursor <= m_characters + m_limit);

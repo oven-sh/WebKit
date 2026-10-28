@@ -212,7 +212,7 @@ private:
     template<bool (EffectTraits::*question)() const, EffectTraits EffectTraitsOnEdges::*edge>
     bool answerFromTraits(ValueID id)
     {
-        const EffectTraitBounds& bounds = effectFactsOf(m_function.at(id).opcode).traits;
+        const EffectTraitBounds& bounds = effectFactsOf(m_function.at(id)).traits;
         bool answer = (bounds.atLeast.*question)();
         if (answer == (bounds.atMost.*question)())
             return answer;

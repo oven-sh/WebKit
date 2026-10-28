@@ -1120,7 +1120,7 @@ void VMPropertyCaches::set(Structure* structure, const CachedName& name, SlotAcc
         }
         m_front.remove(id, *column, access);
     }
-    // An access by value finds what this table holds. The cells in front are for accesses by name alone. A store that makes the field finds nothing there that the library keeps in a form of its own.
+    // Evaluated text reads by value what this table holds. The cells in front are for accesses by name alone. No store by value comes here under such a symbol: loadNameOfKeyCell().
     if (slot.kind != Slot::Kind::FieldCreation && isPreparedBeforeLookups(m_vm, name.uid))
         return;
     if (m_hashedTable.set(name.uid, access, slot) == HashedSlotTable::SetResult::Stored)
@@ -1229,6 +1229,8 @@ PropertyCaches::PropertyCaches(State& state)
 {
     state.caches->add(CacheKind::StrongRoots, "Structures of additions in an Eden collection"_s, *this);
     state.caches->addObserver("PropertyCaches"_s, *this);
+    state.caches->addClearedEachCollection("exits of fields"_s, asMutableByteSpan(std::span { m_fieldExits }));
+    state.instance.propertyCaches.fieldExits = m_fieldExits.data();
     if (Options::aotCountsPath())
         m_countedFilings = makeUnique<UncheckedKeyHashSet<uint64_t>>();
 }
@@ -1262,6 +1264,7 @@ void PropertyCaches::prepareHoldersBeforeLookupsUnder(Symbol* symbol, JSObject* 
 {
     Locker locker { m_state.caches->lock() };
     m_preparationsBeforeLookups.set(&symbol->uid(), PreparationBeforeLookups { symbol, function });
+    symbol->setPerCellBit(true);
 }
 
 template<typename Visitor>
@@ -2185,7 +2188,7 @@ size_t WatchedValues::removeDeadEntries(VM& vm, CollectionScope scope)
 }
 
 static_assert(!((1u << SiteCaches::regionShift) % sizeof(Slot)));
-static_assert(std::is_same_v<decltype(SiteCacheState::missesLeft), uint8_t>, "the stub's countSiteCacheMiss wraps from 0 to 255");
+static_assert(std::is_same_v<decltype(SiteCacheState::missesLeft), uint16_t>, "the stub's countSiteCacheMiss wraps from 0 to 65535");
 
 static std::span<uint8_t> allocateCards(State& state, size_t sizeOfSlots)
 {
@@ -2198,6 +2201,7 @@ SiteCaches::SiteCaches(State& state)
     , m_customAccessors(state.instance.vm->aotState().propertyCaches->customAccessors())
     , m_slots(state.instance.siteCaches())
     , m_states(state.tableArena.allocate<SiteCacheState>(SiteCacheState::numberOfStates))
+    , m_refillCounts(state.tableArena.allocate<uint8_t>(SiteCacheState::numberOfStates))
     , m_sitesThatMissed(state.tableArena.allocate<uint64_t>(numberOfMissWords(m_slots.size())))
     , m_ownerID(state.chainDependents->addOwner(*this))
     , m_writtenRegions(asByteSpan(m_slots), regionShift, allocateCards(state, m_slots.size_bytes()))
@@ -2215,28 +2219,37 @@ bool SiteCaches::didMissBefore(SiteCache site)
     return std::exchange(word, word | bit) & bit;
 }
 
-static void waitLongerForNextFill(SiteCacheState& state)
+void SiteCaches::waitLongerForNextFill(SiteCache site, unsigned mostRefillsThatCount)
 {
-    state.missesLeft = SiteCacheState::missesBeforeRefill(state.refillCount);
-    if (state.refillCount < SiteCacheState::maxRefillCount)
-        ++state.refillCount;
+    uint8_t& refillCount = refillCountOf(site);
+    stateOf(site).missesLeft = SiteCacheState::missesBeforeRefill(refillCount, mostRefillsThatCount);
+    if (refillCount < SiteCacheState::maxRefillCount)
+        ++refillCount;
 }
 
 void SiteCaches::didFailToFill(SiteCache site)
 {
+    // The misses of all empty sites are counted together, and one in a few asks. With a slot that fits no object the site counts its own, and asks more and more seldom.
+    if (site->get().isEmpty())
+        site->set(m_writtenRegions, Slot::createWithoutPayload(StructureID(), Slot::Kind::Uncacheable, 0));
+    waitLongerForNextFill(site);
+}
+
+void SiteCaches::didFailToFillWithRun(SiteCache site)
+{
     if (site->get().isEmpty())
         stateOf(site).missesLeft = SiteCacheState::missesBeforeRefill(0);
     else
-        waitLongerForNextFill(stateOf(site));
+        waitLongerForNextFill(site, SiteCacheState::maxRefillCountOfRun);
 }
 
 // Whoever asks on behalf of an empty site looks the name up each time, so it asks more and more seldom.
 void SiteCaches::didFindNothingToFill(SiteCache site)
 {
-    waitLongerForNextFill(stateOf(site));
+    waitLongerForNextFill(site);
 }
 
-bool SiteCaches::tryWrite(SiteCache site, const Slot& slot)
+bool SiteCaches::tryWrite(SiteCache site, const Slot& slot, unsigned mostRefillsThatCount)
 {
     if (!didMissBefore(site)) {
         stateOf(site).missesLeft = 0;
@@ -2248,7 +2261,7 @@ bool SiteCaches::tryWrite(SiteCache site, const Slot& slot)
         count(m_state.instance, RuntimeCounterID::SiteCacheRefills);
     site->set(m_writtenRegions, slot);
     m_wasWrittenSinceLastSweep = true;
-    waitLongerForNextFill(stateOf(site));
+    waitLongerForNextFill(site, mostRefillsThatCount);
     return true;
 }
 
@@ -2270,7 +2283,7 @@ void SiteCaches::fill(SiteCache site, const Slot& slot, const NamedFill& named)
 
 void SiteCaches::fill(SiteCache site, const Slot& slot, std::span<const ChainDependence> dependences)
 {
-    if (!tryWrite(site, slot))
+    if (!tryWrite(site, slot, SiteCacheState::maxRefillCountOfRun))
         return;
     for (const ChainDependence& dependence : dependences) {
         RELEASE_ASSERT(slot.has(Slot::dependsOnChain) || dependence.changeableObjects.empty());
@@ -2283,6 +2296,9 @@ void SiteCaches::clear(SiteCache site)
     if (site->get().kind == Slot::Kind::Constant)
         m_state.propertyCaches->watchedValues().stopWatchingConstant(site);
     site->clear();
+    // What it held holds no more: that says nothing about how many Structures it meets.
+    refillCountOf(site) = 0;
+    stateOf(site).missesLeft = 0;
 }
 
 void SiteCaches::dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl*)

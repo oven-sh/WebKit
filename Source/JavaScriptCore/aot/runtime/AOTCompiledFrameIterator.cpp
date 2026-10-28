@@ -337,9 +337,8 @@ CompiledFrameIterator::CompiledFrameIterator(VM& vm, const Cursor& cursor, bool 
     enterMachineFrame(findFunctionFrame(m_cursor, m_exit, m_runEnd));
 }
 
-FunctionID functionConstructedAt(const Image& image, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame)
+FunctionID findFunctionConstructedAt(const Image& image, const CallSiteCache::Entry& site, CallFrame* plainFunctionConstructFrame)
 {
-    ASSERT(site.site.isConstruct());
     if (plainFunctionConstructFrame)
         return functionOf(*std::bit_cast<JSCell**>(std::bit_cast<uintptr_t>(plainFunctionConstructFrame) + PlainFunctionConstructFrame::offsetOfCallee)).value_or(FunctionID());
     return image.constructedCalleeAt(site.code.index(), site.site.callSite).value_or(FunctionID());
@@ -856,6 +855,20 @@ static uint16_t countShownFrames(const Image& image, InlineFrameReader& reader, 
     }
 }
 
+OutermostVisibleFunction findOutermostVisibleFunction(const Image& image, InlineFrameReader& reader, const CallSiteCache::Entry& entry, bool calleeWasEntered)
+{
+    const CallSiteRecord& site = entry.site;
+    if (!site.isTailCall() && !site.inlineFrame && entry.innermostVisibility == TraceVisibility::Visible) [[likely]]
+        return OutermostVisibleFunction::Listed;
+    auto outermost = OutermostVisibleFunction::None;
+    for (LogicalFrame frame = innermostLogicalFrame(image, reader, { entry.code, site.callSite, site.inlineFrame, site.isTailDeleted(calleeWasEntered), site.calledBuiltin });; frame = callerOfInlinedFrame(image, reader, entry.code, frame)) {
+        if (FunctionDescription(frame.function).visibility() == TraceVisibility::Visible)
+            outermost = frame.isTailDeleted ? OutermostVisibleFunction::HiddenBehindTailCall : OutermostVisibleFunction::Listed;
+        if (!frame.hasCallerInMachineFrame())
+            return outermost;
+    }
+}
+
 static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameReader& reader, const CodeLocation& location, const void* returnAddress)
 {
     CallSiteCache::Entry entry;
@@ -877,6 +890,8 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     entry.innermostVisibility = innermostDescription.visibility();
     entry.innermostIsAsync = innermostDescription.isAsync();
     entry.callsOwnFunctionObject = image.callsOwnFunctionObjectAt(location.function, entry.site.callSite);
+    entry.namesConstructedCallee = image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
+    entry.outermostVisibleFunction = findOutermostVisibleFunction(image, reader, entry, true);
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());
     entry.shownFrameCountOnTop = std::min<uint16_t>(countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(false), false), CallSiteCache::Entry::tooManyFramesToCount);
     if (entry.site.isTailCall())

@@ -540,13 +540,17 @@ void planVariableArm(const PropertyAccessContext& context, const PropertyAccessQ
             plan.cause = UnprovenCause::PropertyAdded;
             return;
         }
+        // No run comes to an access that flow has found nobody makes, and the record of the variable goes on saying so.
+        if (variable.flow.reads == ReadState::NeverRead)
+            return;
         plan.form = AccessForm::Variable;
         plan.operation = Opcode::GetModuleVariable;
         return;
     case Access::Store:
     case Access::Define: {
         bool valueFits = query.stored && (variable.declared.isExpected() || query.stored->isSubsetOf(program.at(*variable.declared.established()), program));
-        if (!isStaticField || variable.flags.contains(VariableFlags::IsImmutable) || !valueFits)
+        bool isNeverStored = variable.flow.writers == WriterState::AllKnown && variable.flow.stores == StoreCount::Never;
+        if (!isStaticField || variable.flags.contains(VariableFlags::IsImmutable) || !valueFits || isNeverStored)
             return;
         plan.form = AccessForm::Variable;
         plan.operation = Opcode::PutModuleVariable;

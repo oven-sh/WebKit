@@ -99,13 +99,9 @@ static bool canFreezeInPlace(const InlineBuiltinSite& site)
     const Program& program = site.context.program();
     std::span<const LayoutID> members = membersOf(program, *object);
     // A module namespace object cannot be frozen: its exports stay writable, and the attempt throws.
-    // The run time asks an object that has a field under a symbol of the library to prepare itself before its fields close: PropertyCaches::prepareHoldersBeforeLookupsUnder().
     bool areOrdinaryObjects = std::ranges::all_of(members, [&](LayoutID member) {
         const Layout& layout = program.at(member);
-        bool isAskedFirst = std::ranges::any_of(layout.fields, [&](const auto& field) {
-            return field.key && isSymbolCreatedByLibrary(program, field.key);
-        });
-        return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance) && !isAskedFirst && !builtinBaseClassOf(program, member);
+        return (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Instance) && !hasFieldUnderSymbolCreatedByLibrary(program, layout) && !builtinBaseClassOf(program, member);
     });
     return !members.empty() && areOrdinaryObjects && !receiverStateOf(program, members).cannot(ObjectMutation::ChangeIntegrity);
 }

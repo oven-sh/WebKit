@@ -337,7 +337,7 @@ TypedPointer ClosureTestEmitter::closureCellOf(FunctionID genericEntrypoint)
     RELEASE_ASSERT(number);
     size_t cellSize = m_options.recorded.useWideReferences() ? sizeof(JSCell*) : sizeof(uint32_t);
     Pointer table = loadImmutablePointer(AOT_INSTANCE_OFFSET(closureCells));
-    return m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), table.value(), static_cast<ptrdiff_t>(number * cellSize));
+    return m_out.address(m_heaps.AOTInstance_closureCells, table.value(), static_cast<ptrdiff_t>(number * cellSize));
 }
 
 ptrdiff_t ClosureTestEmitter::offsetOfClosureHeader(FunctionKindData kind) const

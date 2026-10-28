@@ -34,7 +34,7 @@ struct PrologueCheck {
     friend constexpr bool operator==(const PrologueCheck&, const PrologueCheck&) = default;
 };
 
-#if CPU(X86_64) && OS(LINUX)
+#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
 static constexpr size_t sizeOfLoopPoll = 7;
 #else
 static constexpr size_t sizeOfLoopPoll = 0;

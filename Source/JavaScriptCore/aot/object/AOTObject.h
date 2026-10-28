@@ -195,6 +195,8 @@ public:
         unsigned attributes { 0 };
     };
     void moveFieldToExtraProperties(VM&, const FieldData&, LeavingProperty, SlotExitReason);
+    // False where the object is not in the state that the other object was in, or the slot takes the value.
+    bool tryRepeat(VM&, const FieldExit&, JSValue);
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
@@ -210,6 +212,8 @@ public:
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
     // False with a TypeError thrown, and the object as it was, where the layout keeps the field from what the caller asks for. A caller that looks at neither meets the error at its next check.
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
+    // The same, but a property that exists keeps its attributes.
+    bool storeDirectFromNativeCode(VM&, PropertyName, JSValue);
     bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);

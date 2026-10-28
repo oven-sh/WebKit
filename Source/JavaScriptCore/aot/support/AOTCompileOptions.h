@@ -105,7 +105,7 @@ struct RecordedOptions {
     uint8_t admittedCode { 0 };
     uint8_t sabotage { 0 };
     uint8_t imageForm { static_cast<uint8_t>(imageFormOfThisRuntime()) };
-    uint8_t unused { 0 };
+    uint8_t numberOfFlowSchedule { 0 };
     uint16_t predictionFailurePeriod { 0 };
     uint16_t predictionFailureSeed { 0 };
 
@@ -166,6 +166,7 @@ struct CompileOptions {
     bool validatesReferences { false };
     bool checksClaimsToBackEnd { false };
     bool checksMovedLoads { false };
+    bool checksDecidedComparisons { false };
     // Once the flow analysis is at rest every rule runs once more over the solved sets. Whatever that adds is an update that the solve has lost, and an error.
     bool checksFlowFixpoint { false };
     // More to begin with never proves more. The flow analysis is solved twice: as it is, and with more given to nodes that the layout seed draws. Whatever the first solve holds and the second lacks is an error.

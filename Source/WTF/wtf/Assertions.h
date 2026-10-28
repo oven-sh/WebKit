@@ -353,6 +353,9 @@ WTF_EXPORT_PRIVATE bool WTFIsDebuggerAttached(void);
     WTFBreakpointTrapUnderConstexprContext(); \
     __builtin_unreachable(); \
 } while (0)
+#elif !ENABLE(DEVELOPER_MODE) && OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+#define CRASH() WTFAbort()
+#define CRASH_UNDER_CONSTEXPR_CONTEXT() WTFBreakpointTrapUnderConstexprContext()
 #elif !ENABLE(DEVELOPER_MODE) && !OS(DARWIN)
 #ifdef __cplusplus
 #define CRASH() std::abort()
@@ -369,6 +372,13 @@ WTF_EXPORT_PRIVATE bool WTFIsDebuggerAttached(void);
 #endif // !defined(CRASH)
 
 WTF_EXPORT_PRIVATE NO_RETURN_DUE_TO_CRASH void LEGACY_NODELETE WTFCrash(void);
+
+#if OS(WINDOWS) && USE(BUN_JSC_ADDITIONS)
+// abort() puts the default action for SIGABRT back before it calls a handler, so of two threads that call it at the same moment the second ends the process
+// before the handler has said anything. The reporter is called in front of abort() and does not return.
+WTF_EXPORT_PRIVATE NO_RETURN_DUE_TO_CRASH void LEGACY_NODELETE WTFAbort(void);
+WTF_EXPORT_PRIVATE void WTFSetAbortReporter(void (*)(void));
+#endif
 
 #ifndef CRASH_WITH_SECURITY_IMPLICATION
 #define CRASH_WITH_SECURITY_IMPLICATION() WTFCrashWithSecurityImplication()

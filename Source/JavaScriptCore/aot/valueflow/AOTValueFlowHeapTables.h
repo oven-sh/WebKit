@@ -147,6 +147,9 @@ private:
     macro(ValueSetID, objectsThatTheirClassAnswersFor) \
     macro(ValueSetID, objectsMadeWithPropertiesListedAboveThem) \
     macro(ValueSetID, prototypeObjectsOfClassesThatListNoOwnNames) \
+    macro(ValueSetID, prototypeObjectsListingOwnPropertiesOfInstances) \
+    macro(ValueSetID, prototypeObjectsOfClassesThatListNamesWithoutTypes) \
+    macro(ValueSetID, prototypeObjectsOfClassesThatLayPropertiesOnInstances) \
     macro(ValueSetID, objectsHoldingOnlyWhatWasWritten) \
     macro(ValueFlowObjectID, undescribedNativeCode) \
     macro(ValueFlowObjectID, accessorOfPrototypeLink) \
@@ -192,6 +195,10 @@ public:
     bool hasGetEntry(BuiltinID member) const { return m_hasGetEntry.quickGet(member.index()); }
     bool hasSetEntry(BuiltinID member) const { return m_hasSetEntry.quickGet(member.index()); }
     bool letsInUnseenCode(BuiltinID member) const { return m_letsInUnseenCode.quickGet(member.index()); }
+    bool mayAnswerToName(ModuleID module) const { return m_mayAnswerToName.quickGet(module.index()); }
+    // Whether the path of a module that may answer to a name, or what stands in it behind a folder node_modules, begins with the text.
+    bool holdsModuleOfPackage(std::span<const uint8_t> package) const;
+    bool isNameOfLibraryModule(std::span<const uint8_t> name) const;
 
     std::span<const ValueFlowClassOfEntries> classesOfEntries() const LIFETIME_BOUND { return m_classesOfEntries.span(); }
     std::span<const ValueFlowClassOfEntries> classesOfHostWithEntries() const LIFETIME_BOUND { return m_classesOfHostWithEntries.span(); }
@@ -296,6 +303,16 @@ private:
     Vector<ValueFlowPropertyKeptForLife, 4> m_propertiesKeptForLife;
     Vector<ValueFlowMemberReplacedBySetter, 1> m_membersReplacedBySetters;
     BitVector m_symbolsUsedOnlyAsKeys;
+    struct RestOfPath {
+        StringID path;
+        uint32_t start { 0 };
+    };
+    std::span<const uint8_t> textOf(RestOfPath rest) const { return m_program.string(rest.path).subspan(rest.start); }
+    const RestOfPath* findFirstNotBefore(const Vector<RestOfPath>&, std::span<const uint8_t> text) const;
+    void listWherePackagesAreNamedInPaths();
+    BitVector m_mayAnswerToName;
+    Vector<RestOfPath> m_whereNamesOfPackagesBegin;
+    Vector<RestOfPath> m_namesOfLibraryModules;
     BitVector m_keysStoredUnderOnGlobalObject;
     BitVector m_functionsNamedAtOneOperation;
     ConstantsHoldingModules m_constantsHoldingModules;

@@ -11,7 +11,9 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTKnownClosures.h"
+#include "AOTValueFlowBuiltinTables.h"
 #include "AOTValueFlowBuiltins.h"
+#include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowResultsUnseenCode.h"
 #include "AOTValueFlowRules.h"
 #include "AOTValueFlowRulesHeap.h"
@@ -660,7 +662,7 @@ bool mayAnswerToName(const Program& program, ModuleID id)
     return !isWrittenByProgram(program, module) || module.kind == ModuleKind::External || module.kind == ModuleKind::Data || std::ranges::contains(program.entries, id, &Entry::module);
 }
 
-static bool isAskedOfHostByName(const Module& module)
+bool isAskedOfHostByName(const Module& module)
 {
     return module.kind == ModuleKind::RuntimeSource && !module.flags.contains(ModuleFlags::IsLoadedByImportOnly);
 }
@@ -668,9 +670,10 @@ static bool isAskedOfHostByName(const Module& module)
 static void forEachModuleLoadableByName(ValueFlowRuleContext& context, NOESCAPE const Invocable<void(ModuleID, bool isOfProgram)> auto& functor)
 {
     const Program& program = context.program();
+    const ValueFlowHeapTables& tables = context.universe().builtinTables().heap();
     for (uint32_t index = 0; index < program.modules.size(); ++index) {
         const Module& module = program.modules[index];
-        if (!mayAnswerToName(program, ModuleID(index)))
+        if (!tables.mayAnswerToName(ModuleID(index)))
             continue;
         bool isOfProgram = isWrittenByProgram(program, module);
         if (module.body ? !context.isReached(module.body) && !isAskedOfHostByName(module) : !isOfProgram && module.kind != ModuleKind::Runtime)
@@ -724,20 +727,6 @@ static void raiseEvent(ValueFlowRuleContext& context, BuiltinID builtin, UnseenC
     }
 }
 
-static bool isNameOfLibraryModule(const Program& program, std::span<const uint8_t> name)
-{
-    static constexpr std::array<uint8_t, 5> prefix { 'n', 'o', 'd', 'e', ':' };
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        const Module& module = program.modules[index];
-        if (!module.runtimeModule || !mayAnswerToName(program, ModuleID(index)) || (module.body && !isAskedOfHostByName(module)))
-            continue;
-        std::span<const uint8_t> path = program.string(module.path);
-        if (equalSpans(path, name) || (path.size() == prefix.size() + name.size() && spanHasPrefix(path, std::span(prefix)) && equalSpans(path.subspan(prefix.size()), name)))
-            return true;
-    }
-    return false;
-}
-
 // "left-pad/lib" and "@scope/left-pad/lib" name the packages "left-pad" and "@scope/left-pad". A path, a URL and a name that a package maps for itself name none.
 static std::span<const uint8_t> packageNamedBy(std::span<const uint8_t> name)
 {
@@ -752,31 +741,11 @@ static std::span<const uint8_t> packageNamedBy(std::span<const uint8_t> name)
     return name.first(length);
 }
 
-static bool liesInPackage(std::span<const uint8_t> path, std::span<const uint8_t> package)
-{
-    static constexpr std::array<uint8_t, 12> folder { 'n', 'o', 'd', 'e', '_', 'm', 'o', 'd', 'u', 'l', 'e', 's' };
-    for (size_t start = 0; start + folder.size() + 1 + package.size() <= path.size(); ++start) {
-        std::span<const uint8_t> rest = path.subspan(start);
-        uint8_t separator = rest[folder.size()];
-        if (spanHasPrefix(rest, std::span(folder)) && (separator == '/' || separator == '\\') && spanHasPrefix(rest.subspan(folder.size() + 1), package))
-            return true;
-    }
-    return false;
-}
-
 // Where code outside the image is refused, the name of a package loads a file of that package in the image or nothing, whatever file asks.
 static bool isNameOfPackageOutsideImage(ValueFlowRuleContext& context, std::span<const uint8_t> name)
 {
     std::span<const uint8_t> package = packageNamedBy(name);
-    if (package.empty() || !context.refusedCode().codeOutsideImage)
-        return false;
-    const Program& program = context.program();
-    for (uint32_t index = 0; index < program.modules.size(); ++index) {
-        std::span<const uint8_t> path = program.string(program.modules[index].path);
-        if (mayAnswerToName(program, ModuleID(index)) && (spanHasPrefix(path, package) || liesInPackage(path, package)))
-            return false;
-    }
-    return true;
+    return !package.empty() && context.refusedCode().codeOutsideImage && !context.universe().builtinTables().heap().holdsModuleOfPackage(package);
 }
 
 static bool passesOnlyNamesThatNoFileOfProgramAnswersTo(const ValueFlowStatement& call, ValueFlowRuleContext& context)
@@ -787,7 +756,7 @@ static bool passesOnlyNamesThatNoFileOfProgramAnswersTo(const ValueFlowStatement
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     auto isSuchName = [&](StringID text) {
-        return isNameOfLibraryModule(program, program.string(text)) || isNameOfPackageOutsideImage(context, program.string(text));
+        return universe.builtinTables().heap().isNameOfLibraryModule(program.string(text)) || isNameOfPackageOutsideImage(context, program.string(text));
     };
     // A text that is no key of the program is any string to the values.
     const Function& function = program.at(call.function);

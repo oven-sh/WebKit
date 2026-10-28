@@ -816,30 +816,9 @@ void findHoldersWithListedKeys(const ValueFlowResultInputs& inputs, const ValueF
         if (showsOrder)
             noteHolder(holder);
     });
-    // Code that nobody saw finds every object of the realm.
-    if (unseenCodeCanRun(inputs.solution)) {
+    // Code that nobody saw finds every object of the realm. Without such code an object that went out of sight is listed only where it comes back, and there it is an operand that nobody knows.
+    if (unseenCodeCanRun(inputs.solution))
         forEachHolderIn(inputs.universe().builtinObjects(), noteHolder);
-        return;
-    }
-    // Whoever holds an object that went out of sight may list its keys, and finds what hangs below it.
-    BitVector isOutOfSight(builtins.builtinCount());
-    auto noteOutOfSight = [&](BuiltinID holder) {
-        isOutOfSight.quickSet(holder.index());
-    };
-    forEachHolderIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), noteOutOfSight);
-    forEachHolderIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()), noteOutOfSight);
-    for (ValueFlowHostNode node : { ValueFlowHostNode::HeldByNativeCode, ValueFlowHostNode::ValuesCarriedOut })
-        forEachHolderIn(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(node)), noteOutOfSight);
-    if (isOutOfSight.isEmpty())
-        return;
-    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-        for (BuiltinID object(index); object; object = builtins.at(object).holder) {
-            if (!isOutOfSight.quickGet(builtins.canonicalID(object).index()))
-                continue;
-            noteHolder(builtins.canonicalID(BuiltinID(index)));
-            break;
-        }
-    }
 }
 
 ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowResultInputs& inputs, const ValueFlowHeapIndex& heapIndex)

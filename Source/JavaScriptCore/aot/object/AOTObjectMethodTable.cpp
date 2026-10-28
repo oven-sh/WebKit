@@ -62,6 +62,9 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     validateMutation(vm, *this, field, mutationOf(reason));
     RELEASE_ASSERT(field.canLeaveSlot());
     UniquedStringImpl* name = propertyNameOf(vm, *this, field);
+    JSObject* extraBefore = extraPropertiesIfMade(*this);
+    FieldExit exit { .field = &field, .structureBefore = structureID(), .extraPropertiesBefore = extraBefore ? extraBefore->structureID() : StructureID(), .orderWordBefore = orderWord(), .name = field.name, .wasInSlot = isInSlot(field) };
+    bool hadOtherCellInPlaceOfExtraProperties = !extraBefore && hasExtraProperties();
     JSObject* extra = ensureExtraProperties(vm);
     RELEASE_ASSERT(extra);
     State& state = this->state();
@@ -75,6 +78,64 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name);
     count(instance(), counterFor(reason));
     state.propertyCaches->countNamed(describeExit(reason, leaving.valueOrAccessor), name);
+
+    if (reason != SlotExitReason::StoreOfOtherType || leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot())
+        return;
+    Structure* extraStructure = extra->structure();
+    if (structure()->mayBePrototype() || extraStructure->isDictionary())
+        return;
+    unsigned attributes;
+    exit.offset = extraStructure->get(vm, name, attributes);
+    if (!isValidOffset(exit.offset) || !isInlineOffset(exit.offset) || attributes)
+        return;
+    exit.structureAfter = structureID();
+    exit.extraPropertiesAfter = extraStructure->id();
+    exit.orderWordAfter = orderWord();
+    exit.generationForStores = state.propertyCaches->tables().absenceFilterGenerationForStores();
+    exit.extraPropertiesCellSize = JSFinalObject::allocationSize(extraStructure->inlineCapacity());
+    exit.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
+    SlotTraits traits = traitsOf(field.slot.representation());
+    if (!field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
+        exit.absentBits = traits.absentBits;
+        exit.offsetOfSlot = field.slot.offset;
+        exit.widthOfSlot = traits.width;
+    }
+    state.propertyCaches->remember(exit);
+}
+
+bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
+{
+    const FieldData& field = *exit.field;
+    if (structureID() != exit.structureBefore || orderWord() != exit.orderWordBefore || isInFrame() || isInSlot(field) != exit.wasInSlot)
+        return false;
+    if (state().objects->layouts.slotAdmits(field, value))
+        return false;
+    JSObject* extra = extraPropertiesIfMade(*this);
+    if (exit.extraPropertiesBefore ? !extra || extra->structureID() != exit.extraPropertiesBefore : hasExtraProperties())
+        return false;
+    willLeaveStateOfBirth(vm, *this, field, ObjectMutation::StoreOfOtherType);
+    validateMutation(vm, *this, field, ObjectMutation::StoreOfOtherType);
+    // A collection forgets the exit, and then these pointers alone keep the Structures alive.
+    auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(exit.structureAfter.decode()));
+    Structure* extraStructureAfter = WTF::opaque(exit.extraPropertiesAfter.decode());
+    uint32_t orderWordAfter = exit.orderWordAfter;
+    PropertyOffset offset = exit.offset;
+    if (extra) {
+        extra->putDirectOffset(vm, offset, value);
+        extra->setStructure(vm, extraStructureAfter);
+        JSCell::setStructure(vm, structureAfter);
+    } else {
+        extra = constructEmptyObject(vm, extraStructureAfter);
+        extra->putDirectOffset(vm, offset, value);
+        setExtraProperties(vm, extra, structureAfter);
+    }
+    at<uint32_t>(offsetOfOrderWord) = orderWordAfter;
+    setPerCellBit(true);
+    clear(field);
+    count(instance(), counterFor(SlotExitReason::StoreOfOtherType));
+    ensureStillAliveHere(structureAfter);
+    ensureStillAliveHere(extraStructureAfter);
+    return true;
 }
 
 bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
@@ -268,9 +329,13 @@ JSValue Object::getDirectFromNativeCode(VM& vm, PropertyName name, unsigned* att
     return extra->getDirect(vm, name, attributes ? *attributes : ignored);
 }
 
-static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, PropertyName name, Object::LeavingProperty property)
+enum class CurrentAttributes : bool { AreReplaced, AreKept };
+
+static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, PropertyName name, Object::LeavingProperty property, CurrentAttributes currentAttributes)
 {
     FieldProperty current = findFieldProperty(vm, object, field);
+    if (current && currentAttributes == CurrentAttributes::AreKept)
+        property.attributes = current.attributes;
     bool fitsSlot = property.attributes == object.attributesOf(field);
     if (current && !current.isInSlot) {
         putProperty(vm, object.extraProperties(), name, property);
@@ -285,18 +350,31 @@ static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, Prope
     return true;
 }
 
+static bool putOwnProperty(VM& vm, Object& object, PropertyName name, Object::LeavingProperty property, CurrentAttributes currentAttributes)
+{
+    if (const FieldData* field = object.fieldNamed(object.state(), name))
+        return putFieldDirect(vm, object, *field, name, property, currentAttributes);
+    JSObject* extra = object.ensureExtraProperties(vm);
+    RELEASE_ASSERT(extra);
+    unsigned attributesOfCurrent = 0;
+    if (!extra->getDirect(vm, name, attributesOfCurrent))
+        object.willAddExtraProperty(vm, name);
+    else if (currentAttributes == CurrentAttributes::AreKept)
+        property.attributes = attributesOfCurrent;
+    putProperty(vm, extra, name, property);
+    object.didChangeExtraProperties(vm);
+    didChangeOwnProperties(vm, object, VM::StructureChainIntegrityEvent::Change, name.uid());
+    return true;
+}
+
 bool Object::putDirectFromNativeCode(VM& vm, PropertyName name, JSValue value, unsigned attributes)
 {
-    if (const FieldData* field = fieldNamed(state(), name))
-        return putFieldDirect(vm, *this, *field, name, { value, attributes });
-    JSObject* extra = ensureExtraProperties(vm);
-    RELEASE_ASSERT(extra);
-    if (!extra->getDirect(vm, name))
-        willAddExtraProperty(vm, name);
-    putProperty(vm, extra, name, { value, attributes });
-    didChangeExtraProperties(vm);
-    didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name.uid());
-    return true;
+    return putOwnProperty(vm, *this, name, { value, attributes }, CurrentAttributes::AreReplaced);
+}
+
+bool Object::storeDirectFromNativeCode(VM& vm, PropertyName name, JSValue value)
+{
+    return putOwnProperty(vm, *this, name, { value, 0 }, CurrentAttributes::AreKept);
 }
 
 bool Object::tryDefineAbsentGetterInSlot(VM& vm, JSGlobalObject* globalObject, UniquedStringImpl* name, JSObject* getter, unsigned attributes)
@@ -672,18 +750,18 @@ void Object::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, P
     const LayoutData& layout = object->layout();
     validateKeyListing(vm, *object);
     std::span<const FieldData> fields = layout.fields();
-    // No object has two keys of one name, so only a list that has the keys of another object is searched.
-    bool listsOnlyThisObject = names.canAddKnownUniqueForStructure();
-    auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
-        if (listsOnlyThisObject) [[likely]]
-            names.addUnchecked(name);
-        else
-            names.add(name);
-    };
     JSObject* extra = object->extraProperties();
     ASSERT(!extra || extra->type() == FinalObjectType);
     if (extra)
         extra->getOwnIndexedPropertyNames(globalObject, names, mode);
+    // The keys of one object are unique, so an empty list needs no lookups. add() does not find what addUnchecked() appended after it.
+    bool knownUnique = names.canAddKnownUniqueForStructure();
+    auto add = [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
+        if (knownUnique) [[likely]]
+            names.addUnchecked(name);
+        else
+            names.add(name);
+    };
     if (names.includeStringProperties() || names.includeSymbolProperties())
         forEachOwnKey(vm, state, *object, static_cast<KeysListed>(names.includeStringProperties() | names.includeSymbolProperties() << 1), mode, add);
     if (names.privateSymbolMode() != PrivateSymbolMode::Include) [[likely]]

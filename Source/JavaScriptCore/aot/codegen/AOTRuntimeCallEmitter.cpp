@@ -39,6 +39,7 @@ struct CallGenerator {
     ArgumentMoves moveArguments(CCallHelpers&, const B3::StackmapGenerationParams&) const;
     void emitCallInstruction(CCallHelpers&, StubKey, const ArgumentMoves&) const;
     void emitBranchOnFlags(CCallHelpers&, const B3::StackmapGenerationParams&) const;
+    void emitMark(CCallHelpers&) const;
 
     CodeRecords* records;
     StubKey key;
@@ -51,6 +52,7 @@ struct CallGenerator {
     OptionalIndex firstRead;
     std::optional<ThrowSite> throwSite;
     std::optional<OperationCall> preservingCall;
+    std::optional<MarkOfCallWithoutSite> mark;
 };
 
 struct ReturnTraits {
@@ -147,6 +149,23 @@ void CallGenerator::emitBranchOnFlags(CCallHelpers& jit, const B3::StackmapGener
     });
 }
 
+void CallGenerator::emitMark(CCallHelpers& jit) const
+{
+    for (uint32_t payload : { mark->value.index(), static_cast<uint32_t>(mark->callee) }) {
+        uint64_t word = MarkOfCallWithoutSite::wordFor(payload);
+#if CPU(X86_64)
+        jit.m_assembler.movq_i64r(static_cast<int64_t>(word), CCallHelpers::s_scratchRegister);
+#elif CPU(ARM64)
+        jit.m_assembler.movz<64>(ARM64Registers::zr, static_cast<uint16_t>(word));
+        jit.m_assembler.movk<64>(ARM64Registers::zr, static_cast<uint16_t>(word >> 16), 16);
+        jit.m_assembler.movk<64>(ARM64Registers::zr, static_cast<uint16_t>(word >> 32), 32);
+#else
+        UNUSED_PARAM(jit);
+        UNUSED_VARIABLE(word);
+#endif
+    }
+}
+
 void CallGenerator::generate(CCallHelpers& jit, const B3::StackmapGenerationParams& params) const
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -172,6 +191,8 @@ void CallGenerator::generate(CCallHelpers& jit, const B3::StackmapGenerationPara
             jit.move(receiver, signature.operands[0].gpr());
     }
     emitCallInstruction(jit, called, moves);
+    if (mark)
+        emitMark(jit);
     if (neverReturns)
         jit.breakpoint();
     else if (branchesOnFlags)
@@ -592,6 +613,8 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace;
+    if (m_options.recorded.isSabotaged(Sabotage::CallsThatThrowHaveNoSite) && returns && context && !effects.mayRunOtherCode() && !options.capturesStackTrace && !options.throwSite && !request.firstRead) [[unlikely]]
+        hasSite = false;
     RELEASE_ASSERT(context || (!hasSite && (!effects.mayCollect || options.followsThrow)));
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
     if (effects.mayCollect && context)
@@ -632,7 +655,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
-    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay, options.pureFunction ? SlotsOfSites::StayAsTheyAre : slotsOfSitesBehindStub(context, effects));
+    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay, options.pureFunction ? SlotsOfSites::StayAsTheyAre : slotsOfSitesBehindStub(context, effects, !request.entry && key.family() == StubFamily::ClosureOfTable));
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         patchpoint->effects.exitsSideways = false;
@@ -647,7 +670,10 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         site = { addSite(*context, options) };
     }
 
-    CallGenerator callGenerator { &m_records, key, signature, receiverIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, site, firstRead, options.throwSite, request.preservingCall };
+    std::optional<MarkOfCallWithoutSite> mark;
+    if (generator().validates() && !hasSite)
+        mark = MarkOfCallWithoutSite { context ? context->valueID() : ValueID(), CalledCode::encode(request.entry ? CalledCode::Kind::Operation : CalledCode::Kind::Stub, calleeNumber) };
+    CallGenerator callGenerator { &m_records, key, signature, receiverIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, site, firstRead, options.throwSite, request.preservingCall, mark };
     patchpoint->setGenerator([callGenerator = WTF::move(callGenerator)](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         callGenerator.generate(jit, params);
     });
@@ -668,7 +694,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         }
         return { };
     }
-    if (effects.mayThrow)
+    if (effects.mayThrow && site)
         emitter<ExceptionEmitter>().attachLandingPad(*context, patchpoint, *site, returns);
     if (neverReturns) {
         m_out.appendTo(newBlock());
@@ -837,18 +863,21 @@ bool RuntimeCallEmitter::mayConvertCells(const Effects& effects)
 }
 
 // A slot says what a lookup found. It changes where the operation that it belongs to finds no answer in it, where code of the program runs, and where something is written that a lookup may come by.
-RuntimeCallEmitter::SlotsOfSites RuntimeCallEmitter::slotsOfSitesBehindStub(const OperationContext* context, const Effects& effects) const
+// A collection empties the slot of a Structure that has died, and whatever makes a cell may make a Structure where that one lay: it would pass for the old one by its number.
+RuntimeCallEmitter::SlotsOfSites RuntimeCallEmitter::slotsOfSitesBehindStub(const OperationContext* context, const Effects& effects, bool makesClosureOfTable) const
 {
     bool hasSlotOfItsOwn = context && context->valueID() && siteCachesOf(m_function.at(context->valueID()).opcode);
-    return hasSlotOfItsOwn || !effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre;
+    return hasSlotOfItsOwn || makesClosureOfTable || effects.mayCollect || !effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre;
 }
 
-void RuntimeCallEmitter::stateWhichCallsChangeSlotsOfSites()
+void RuntimeCallEmitter::stateWhichCallsChangeWhatOnlyGeneratedCodeReads()
 {
-    if (!m_heaps.isNamedByMemoryAccess(m_heaps.AOTInstance_siteCaches))
-        return;
-    for (B3::PatchpointValue* patchpoint : m_callsThatMayChangeSlotsOfSites)
-        m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_siteCaches, patchpoint);
+    for (const B3::AbstractHeap* heap : { &m_heaps.AOTInstance_siteCaches, &m_heaps.AOTInstance_closureCells }) {
+        if (!m_heaps.isNamedByMemoryAccess(*heap))
+            continue;
+        for (B3::PatchpointValue* patchpoint : m_callsThatMayChangeSlotsOfSites)
+            m_heaps.decoratePatchpointWrite(heap, patchpoint);
+    }
 }
 
 void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions, SlotsOfSites slotsOfSites)
@@ -859,6 +888,8 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     patchpoint->effects = B3::Effects::none();
     patchpoint->effects.terminal = isTerminal;
     patchpoint->effects.controlDependent = true;
+    if (slotsOfSites == SlotsOfSites::MayChange && !m_options.recorded.isSabotaged(Sabotage::SlotsOfSitesStayAsTheyAre))
+        m_callsThatMayChangeSlotsOfSites.append(patchpoint);
     bool convertsCells = conversions == CellConversions::WhateverEffectsSay ? !build().recordedOptions().has(TestingSwitch::NoCallConvertsCells) : conversions == CellConversions::AsEffectsSay && mayConvertCells(effects);
     if (effects.isPure() && access == ArgumentBufferAccess::None && !accessesCollectorState && !convertsCells)
         return;
@@ -868,8 +899,6 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     B3HeapList writes;
     m_heaps.appendHeaps(effects.reads, reads);
     m_heaps.appendHeaps(effects.writes, writes);
-    if (slotsOfSites == SlotsOfSites::MayChange && !m_options.recorded.isSabotaged(Sabotage::SlotsOfSitesStayAsTheyAre))
-        m_callsThatMayChangeSlotsOfSites.append(patchpoint);
     if (convertsCells)
         m_heaps.appendHeapsOfConvertedCells(writes);
     if (effects.mayCollect)

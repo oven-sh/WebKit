@@ -17,12 +17,14 @@
 #include "AOTPropertyWalk.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeValidation.h"
+#include "AOTSort.h"
 #include "AOTState.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
 #include "DeferGC.h"
 #include "GCMemoryOperations.h"
 #include "JSCInlines.h"
+#include "ObjectConstructorInlines.h"
 #include <algorithm>
 #include <wtf/BitVector.h>
 
@@ -69,12 +71,30 @@ static bool tryMakeClosuresForCopyOfWords(VM& vm, Object& source, CopyOfWords co
     return true;
 }
 
+static bool hasPrivateNames(VM& vm, Structure* structure)
+{
+    if (structure->isQuickPropertyAccessAllowedForEnumeration())
+        return false;
+    bool found = false;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        found = PropertyName(entry.key()).isPrivateName();
+        return !found;
+    });
+    return found;
+}
+
+static Structure* structureBeforeIntegrityLevel(Structure* structure)
+{
+    TransitionKind kind = structure->transitionKind();
+    if (kind == TransitionKind::PreventExtensions || kind == TransitionKind::Seal || kind == TransitionKind::Freeze)
+        return structure->previousID();
+    return structure;
+}
+
 static JSObject* tryCopyPlainExtraProperties(VM& vm, JSObject* extra)
 {
-    Structure* structure = extra->structure();
-    if (extra->type() != FinalObjectType || structure->isDictionary() || hasIndexedProperties(structure->indexingType()) || extra->hasNonReifiedStaticProperties())
-        return nullptr;
-    if (structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties() || structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || !structure->canPerformFastPropertyEnumeration())
+    Structure* structure = structureBeforeIntegrityLevel(extra->structure());
+    if (!structure || !checkStructureForClone(structure, false) || extra->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon() || hasPrivateNames(vm, structure))
         return nullptr;
     Butterfly* butterfly = structure->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
     JSFinalObject* copy = JSFinalObject::createWithButterfly(vm, structure, butterfly);
@@ -836,7 +856,7 @@ void describeMovesForStub(MappedCopy& copy)
         if (!tryDescribeForStub(move))
             return;
     }
-    std::ranges::stable_sort(copy.moves.mutableSpan(), { }, &MappedCopy::Move::runOfStub);
+    AOT::stableSort(copy.moves.mutableSpan(), { }, &MappedCopy::Move::runOfStub);
     for (const MappedCopy::Move& move : copy.moves) {
         MappedCopy::Run& run = copy.runsOfStub[static_cast<size_t>(move.runOfStub)];
         run.end = &move + 1;
@@ -1144,12 +1164,6 @@ static bool isPutAmongExtraProperties(VM& vm, State& state, Object& target, Uniq
     return !isValidOffset(extra->structure()->get(vm, name, attributes)) || !attributes;
 }
 
-static unsigned attributesOfOwnProperty(VM& vm, Object& target, UniquedStringImpl* name)
-{
-    unsigned attributes = 0;
-    return target.getDirectFromNativeCode(vm, name, &attributes) ? attributes : 0;
-}
-
 enum class ExistingAttributes : bool { AreReset, AreKept };
 
 template<ExistingAttributes existingAttributes>
@@ -1164,8 +1178,8 @@ static bool putPropertiesInOrder(VM& vm, Object& target, std::span<UniquedString
         if (end - index < minNumberOfNamesPutTogether) {
             end = std::max(end, index + 1);
             for (; index < end; ++index) {
-                unsigned attributes = existingAttributes == ExistingAttributes::AreKept ? attributesOfOwnProperty(vm, target, names[index]) : 0;
-                if (!target.putDirectFromNativeCode(vm, names[index], JSValue::decode(values[index]), attributes))
+                JSValue value = JSValue::decode(values[index]);
+                if (!(existingAttributes == ExistingAttributes::AreKept ? target.storeDirectFromNativeCode(vm, names[index], value) : target.putDirectFromNativeCode(vm, names[index], value, 0)))
                     return false;
             }
             continue;

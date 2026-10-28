@@ -236,8 +236,11 @@ B3::PatchpointValue* CallEmitter::emitCall(const OperationContext& context, cons
         RELEASE_ASSERT_NOT_REACHED();
     });
     calls.finishCallPatchpoint(context, patchpoint, site, request);
-    if (options.hasLandingOfMisfit)
+    if (options.hasLandingOfMisfit) {
         m_landingOfLastCall = emitter<ExceptionEmitter>().attachLandingOfMisfit(patchpoint, site);
+        // Whoever comes to the landing has left there what it would have returned. No summary of a callee says so: only the landing reads it.
+        m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_misfit, patchpoint);
+    }
     if (stopsBeforeCall) {
         RuntimeValidationEmitter& validation = emitter<RuntimeValidationEmitter>();
         switch (target.kind) {

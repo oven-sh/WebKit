@@ -1,0 +1,44 @@
+# A variable that nothing stores to stays as it began: empty, or undefined. A read of it has a type that says so. A pass that takes the last store of a variable away leaves no read that counts on the store.
+# A module that cannot be linked fills nothing, and every load of it throws: the reads of its names stand behind such a load, where nothing comes.
+# FORM: Prepared
+# RUN: verify
+# DIAGNOSTIC: InvalidVariable 2
+
+module m0 path="main" displayPath="main" body=f0
+module m1 path="imports-what-is-not-there" displayPath="imports-what-is-not-there" body=f3
+modulefailure q0 importer=m1 specifier="not-there"
+entry module=m0
+variable g0 name="stored" module=m0 declared={type=number} flow={writers=AllKnown stores=AtMostOnce}
+variable g1 name="saidToBeEmpty" module=m0 declared={type=number|absent} flow={writers=AllKnown stores=Never}
+variable g2 name="saidToBeUndefined" module=m0 declared={type=undefined|number} initialization=Undefined flow={writers=AllKnown stores=Never}
+variable g3 name="bornFilled" module=m0 declared={type=number} flow={writers=AllKnown stores=Never initialization=SetAtCreation}
+variable g4 name="onlyExpectedToBeFilled" module=m0 declared={type=number flags=[IsExpected]} flow={writers=AllKnown stores=Never}
+variable g5 name="saidToBeFilled" module=m0 declared={type=number} flow={writers=AllKnown stores=Never initialization=StoredBeforeEveryRead}
+variable g6 name="saidNotToBeUndefined" module=m0 declared={type=number} initialization=Undefined flow={writers=AllKnown stores=Never}
+variable g7 name="ofModuleThatCannotBeLinked" module=m1 declared={type=number} flow={writers=AllKnown stores=Never}
+function f0 name="main" kind=Module results=[{type=number}] {
+    v0 = Double number=1.5
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    v3 = GetModuleVariable variable=g1
+    v4 = GetModuleVariable variable=g2
+    v5 = GetModuleVariable variable=g3
+    v6 = GetModuleVariable variable=g4
+    Return v2
+}
+function f1 name="readsWhatIsSaidToBeFilled" results=[{type=number}] {
+    v0 = GetModuleVariable variable=g5
+    Return v0
+}
+function f2 name="readsWhatIsSaidNotToBeUndefined" results=[{type=number}] {
+    v0 = GetModuleVariable variable=g6
+    Return v0
+}
+function f3 module=m1 kind=Module results=[{type=anything}] {
+    v0 = ThrowModuleFailure failure=q0
+    Unreachable
+}
+function f4 name="readsWhatModuleThatCannotBeLinkedWouldHaveFilled" results=[{type=number}] {
+    v0 = GetModuleVariable variable=g7
+    Return v0
+}

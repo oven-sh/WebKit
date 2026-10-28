@@ -18,20 +18,28 @@
 #include "AOTStackSlotPoisoning.h"
 #include "AOTVector.h"
 #include "AirCode.h"
+#include "AirInstInlines.h"
+#include "AirOptimizePairedLoadStore.h"
 #include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Const32Value.h"
 #include "B3Const64Value.h"
+#include "B3FixSSA.h"
 #include "B3Generate.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3IntRange.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
+#include "B3RotateLoops.h"
 #include "B3SlotBaseValue.h"
+#include "B3UnrollLoops.h"
 #include "B3UpsilonValue.h"
 #include "B3Validate.h"
 #include "B3ValueInlines.h"
+#include "B3Variable.h"
+#include "B3VariableValue.h"
+#include "B3VersionLoops.h"
 #include <limits>
 #include <optional>
 
@@ -827,6 +835,221 @@ static void testMergedTestsOfBitsTellTheLogOfTheWordReadAgain()
     }
 }
 
+// header: count = *pointer; index < count ? body : exit. body: sum += count * count + count; *other = count - 1; ++index. Once the loop is rotated the count is read ahead of the loop and at the end of each turn.
+static void testVariableReadAgainInLoopIsHeldAgainstWhatStandsForIt()
+{
+    for (bool overlooksWrites : { false, true }) {
+        B3::Policy policy;
+        policy.validation.logsDecidedComparisons = true;
+        policy.validation.overlooksWritesToWhatLoopsReadAgain = overlooksWrites;
+        B3::Procedure proc(policy);
+        B3::Origin origin = originOf(otherOrigin);
+        B3::BasicBlock* root = proc.addBlock();
+        B3::BasicBlock* header = proc.addBlock();
+        B3::BasicBlock* body = proc.addBlock();
+        B3::BasicBlock* exit = proc.addBlock();
+        B3::Variable* index = proc.addVariable(B3::Int64);
+        B3::Variable* sum = proc.addVariable(B3::Int64);
+        B3::Variable* count = proc.addVariable(B3::Int64);
+        auto get = [&](B3::BasicBlock* block, B3::Variable* variable) -> B3::Value* {
+            return block->appendNew<B3::VariableValue>(proc, B3::Get, origin, variable);
+        };
+        auto set = [&](B3::BasicBlock* block, B3::Variable* variable, B3::Value* value) {
+            block->appendNew<B3::VariableValue>(proc, B3::Set, origin, variable, value);
+        };
+        B3::Value* pointer = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+        B3::Value* other = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR1);
+        set(root, index, root->appendNew<B3::Const64Value>(proc, origin, 0));
+        set(root, sum, root->appendNew<B3::Const64Value>(proc, origin, 0));
+        root->appendNew<B3::Value>(proc, B3::Jump, origin);
+        root->setSuccessors(B3::FrequentedBlock(header));
+        set(header, count, header->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int64, origin, pointer));
+        header->appendNew<B3::Value>(proc, B3::Branch, origin, header->appendNew<B3::Value>(proc, B3::LessThan, origin, get(header, index), get(header, count)));
+        header->setSuccessors(B3::FrequentedBlock(body), B3::FrequentedBlock(exit));
+        B3::Value* current = get(body, count);
+        set(body, sum, body->appendNew<B3::Value>(proc, B3::Add, origin, get(body, sum), body->appendNew<B3::Value>(proc, B3::Add, origin, body->appendNew<B3::Value>(proc, B3::Mul, origin, current, current), current)));
+        body->appendNew<B3::MemoryValue>(proc, B3::Store, origin, body->appendNew<B3::Value>(proc, B3::Sub, origin, current, body->appendNew<B3::Const64Value>(proc, origin, 1)), other);
+        set(body, index, body->appendNew<B3::Value>(proc, B3::Add, origin, get(body, index), body->appendNew<B3::Const64Value>(proc, origin, 1)));
+        body->appendNew<B3::Value>(proc, B3::Jump, origin);
+        body->setSuccessors(B3::FrequentedBlock(header));
+        exit->appendNew<B3::Value>(proc, B3::Return, origin, get(exit, sum));
+        proc.resetReachability();
+        B3::fixSSA(proc);
+        AOT_TEST_CHECK(B3::rotateLoops(proc));
+        B3::fixSSA(proc);
+        B3::validate(proc);
+
+        Vector<B3::BasicBlock*> topTestedVersionHeaders;
+        bool isVersioned = B3::versionLoops(proc, topTestedVersionHeaders);
+        AOT_TEST_CHECK(isVersioned == overlooksWrites);
+        B3::fixSSA(proc);
+        B3::validate(proc);
+        AOT_TEST_CHECK(proc.movedLoadLog().insertChecks(proc, nullptr, nullptr) == overlooksWrites);
+        unsigned numberOfChecks = 0;
+        for (B3::Value* value : proc.values()) {
+            if (value->opcode() != B3::Patchpoint)
+                continue;
+            ++numberOfChecks;
+            AOT_TEST_CHECK(value->numChildren() == 2 && value->child(0)->opcode() == B3::Load && value->child(1)->opcode() == B3::Load && value->child(0) != value->child(1));
+        }
+        AOT_TEST_CHECK(numberOfChecks == overlooksWrites);
+    }
+}
+
+// bound = *pointer; [*pointer = stored;] limit = *pointer; for (index = 0; index < bound; ++index) { if (!(limit > index)) return; sum += index + words[index & 4]; }
+// Where the two reads give one value, the test against the limit repeats the test at the top and goes from the turns that are written out. The log is told that the second read stands for the first.
+static void testBoundReadTwiceIsHeldAgainstWhatStandsForIt()
+{
+    static const int32_t zeros[2] = { 0, 0 };
+    struct Case {
+        bool storesBetweenReads;
+        bool overlooksStore;
+    };
+    for (auto [storesBetweenReads, overlooksStore] : { Case { false, false }, Case { true, false }, Case { true, true } }) {
+        B3::Policy policy;
+        policy.loops.clampsLoopBounds = true;
+        policy.validation.logsMovedLoads = true;
+        policy.validation.overlooksWritesBetweenReadsOfBound = overlooksStore;
+        B3::Procedure proc(policy);
+        B3::Origin origin = originOf(otherOrigin);
+        B3::BasicBlock* root = proc.addBlock();
+        B3::BasicBlock* header = proc.addBlock();
+        B3::BasicBlock* body = proc.addBlock();
+        B3::BasicBlock* stays = proc.addBlock();
+        B3::BasicBlock* out = proc.addBlock();
+        B3::BasicBlock* exit = proc.addBlock();
+        B3::Variable* index = proc.addVariable(B3::Int64);
+        B3::Variable* sum = proc.addVariable(B3::Int64);
+        auto get = [&](B3::BasicBlock* block, B3::Variable* variable) -> B3::Value* {
+            return block->appendNew<B3::VariableValue>(proc, B3::Get, origin, variable);
+        };
+        auto set = [&](B3::BasicBlock* block, B3::Variable* variable, B3::Value* value) {
+            block->appendNew<B3::VariableValue>(proc, B3::Set, origin, variable, value);
+        };
+        auto make = [&](B3::BasicBlock* block, B3::Opcode opcode, B3::Value* left, B3::Value* right) -> B3::Value* {
+            return block->appendNew<B3::Value>(proc, opcode, origin, left, right);
+        };
+        auto constant = [&](B3::BasicBlock* block, int64_t value) -> B3::Value* {
+            return block->appendNew<B3::Const64Value>(proc, origin, value);
+        };
+        B3::Value* pointer = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+        B3::Value* stored = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR1);
+        B3::Value* bound = root->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int64, origin, pointer);
+        if (storesBetweenReads)
+            root->appendNew<B3::MemoryValue>(proc, B3::Store, origin, stored, pointer);
+        B3::Value* limit = root->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int64, origin, pointer);
+        set(root, index, constant(root, 0));
+        set(root, sum, constant(root, 0));
+        root->appendNew<B3::Value>(proc, B3::Jump, origin);
+        root->setSuccessors(B3::FrequentedBlock(header));
+        header->appendNew<B3::Value>(proc, B3::Branch, origin, make(header, B3::LessThan, get(header, index), bound));
+        header->setSuccessors(B3::FrequentedBlock(body), B3::FrequentedBlock(exit));
+        body->appendNew<B3::Value>(proc, B3::Branch, origin, make(body, B3::GreaterThan, limit, get(body, index)));
+        body->setSuccessors(B3::FrequentedBlock(stays), B3::FrequentedBlock(out, B3::FrequencyClass::Rare));
+        set(stays, sum, make(stays, B3::Add, get(stays, sum), get(stays, index)));
+        B3::Value* address = make(stays, B3::Add, constant(stays, reinterpret_cast<intptr_t>(zeros)), make(stays, B3::BitAnd, get(stays, index), constant(stays, 4)));
+        B3::Value* word = stays->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int32, origin, address);
+        set(stays, sum, make(stays, B3::Add, get(stays, sum), stays->appendNew<B3::Value>(proc, B3::ZExt32, origin, word)));
+        set(stays, index, make(stays, B3::Add, get(stays, index), constant(stays, 1)));
+        stays->appendNew<B3::Value>(proc, B3::Jump, origin);
+        stays->setSuccessors(B3::FrequentedBlock(header));
+        out->appendNew<B3::Value>(proc, B3::Return, origin, constant(out, -1));
+        exit->appendNew<B3::Value>(proc, B3::Return, origin, get(exit, sum));
+        proc.resetReachability();
+        B3::fixSSA(proc);
+        B3::validate(proc);
+
+        AOT_TEST_CHECK(B3::unrollLoops(proc));
+        B3::fixSSA(proc);
+        B3::validate(proc);
+        bool takesReadsForOne = !storesBetweenReads || overlooksStore;
+        AOT_TEST_CHECK(proc.movedLoadLog().insertChecks(proc, nullptr) == takesReadsForOne);
+        unsigned numberOfChecks = 0;
+        for (B3::Value* value : proc.values())
+            numberOfChecks += value->opcode() == B3::Patchpoint && value->numChildren() == 2 && value->child(0) == pointer && value->child(1) == bound;
+        AOT_TEST_CHECK(numberOfChecks == takesReadsForOne);
+    }
+}
+
+// Two loops in a row are both copied. The second goes on from the counter of the first, up to a number that the first has counted.
+static void testLoopGoesOnFromCounterOfCopiedLoop()
+{
+    static const int32_t zeros[2] = { 0, 0 };
+    for (bool writesOutTurns : { false, true }) {
+        B3::Policy policy;
+        policy.loops.pollsBetweenStretches = true;
+        B3::Procedure proc(policy);
+        B3::Origin origin = originOf(otherOrigin);
+        B3::BasicBlock* root = proc.addBlock();
+        B3::BasicBlock* exit = proc.addBlock();
+        B3::Variable* index = proc.addVariable(B3::Int64);
+        B3::Variable* turns = proc.addVariable(B3::Int64);
+        B3::Variable* sum = proc.addVariable(B3::Int64);
+        auto get = [&](B3::BasicBlock* block, B3::Variable* variable) -> B3::Value* {
+            return block->appendNew<B3::VariableValue>(proc, B3::Get, origin, variable);
+        };
+        auto set = [&](B3::BasicBlock* block, B3::Variable* variable, B3::Value* value) {
+            block->appendNew<B3::VariableValue>(proc, B3::Set, origin, variable, value);
+        };
+        auto make = [&](B3::BasicBlock* block, B3::Opcode opcode, B3::Value* left, B3::Value* right) -> B3::Value* {
+            return block->appendNew<B3::Value>(proc, opcode, origin, left, right);
+        };
+        auto constant = [&](B3::BasicBlock* block, int64_t value) -> B3::Value* {
+            return block->appendNew<B3::Const64Value>(proc, origin, value);
+        };
+        auto jump = [&](B3::BasicBlock* block, B3::BasicBlock* target) {
+            block->appendNew<B3::Value>(proc, B3::Jump, origin);
+            block->setSuccessors(B3::FrequentedBlock(target));
+        };
+        auto appendLoop = [&](B3::BasicBlock* preHeader, B3::BasicBlock* behind, NOESCAPE const Invocable<B3::Value*(B3::BasicBlock*)> auto& boundIn) {
+            B3::BasicBlock* header = proc.addBlock();
+            B3::BasicBlock* body = proc.addBlock();
+            jump(preHeader, header);
+            header->appendNew<B3::Value>(proc, B3::Branch, origin, make(header, B3::LessThan, get(header, index), boundIn(preHeader)));
+            header->setSuccessors(B3::FrequentedBlock(body), B3::FrequentedBlock(behind));
+            auto* poll = body->appendNew<B3::PatchpointValue>(proc, B3::Void, origin);
+            poll->isLoopPoll = true;
+            poll->turnsAreShort = true;
+            poll->effects = B3::Effects::none();
+            poll->effects.reads = B3::HeapRange::top();
+            poll->effects.writes = B3::HeapRange(1, 2);
+            poll->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
+            if (writesOutTurns) {
+                B3::Value* address = make(body, B3::Add, constant(body, reinterpret_cast<intptr_t>(zeros)), make(body, B3::BitAnd, get(body, index), constant(body, 4)));
+                B3::Value* word = body->appendNew<B3::MemoryValue>(proc, B3::Load, B3::Int32, origin, address);
+                set(body, sum, make(body, B3::Add, get(body, sum), body->appendNew<B3::Value>(proc, B3::ZExt32, origin, word)));
+            }
+            set(body, turns, make(body, B3::Add, get(body, turns), constant(body, 2)));
+            set(body, index, make(body, B3::Add, get(body, index), constant(body, 1)));
+            jump(body, header);
+        };
+        B3::Value* firstBound = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+        set(root, index, constant(root, 0));
+        set(root, turns, constant(root, 0));
+        set(root, sum, constant(root, 0));
+        B3::BasicBlock* between = proc.addBlock();
+        appendLoop(root, between, [&](B3::BasicBlock*) {
+            return firstBound;
+        });
+        appendLoop(between, exit, [&](B3::BasicBlock* preHeader) {
+            B3::Value* jumpOfPreHeader = preHeader->values().takeLast();
+            B3::Value* bound = get(preHeader, turns);
+            preHeader->append(jumpOfPreHeader);
+            return bound;
+        });
+        exit->appendNew<B3::Value>(proc, B3::Return, origin, make(exit, B3::Add, get(exit, sum), get(exit, turns)));
+        proc.resetReachability();
+        B3::fixSSA(proc);
+        B3::validate(proc);
+
+        AOT_TEST_CHECK(B3::unrollLoops(proc));
+        AOT_TEST_CHECK(proc.report().countOf(B3::Counter::LoopPollsRemoved) == 2);
+        AOT_TEST_CHECK(proc.report().countOf(B3::Counter::LoopsUnrolled) == (writesOutTurns ? 2u : 0u));
+        B3::fixSSA(proc);
+        B3::validate(proc);
+    }
+}
+
 static void testMergeIntoBranchWithTwoLikelyWays()
 {
     B3::Procedure proc;
@@ -1382,6 +1605,41 @@ static void testLoadIsNotFoldedAcrossWriteItStaysInFrontOf()
 #endif
 }
 
+#if CPU(ARM64)
+// first = base[0]; [other[1] = first;] second = base[1]; return first + second.
+static bool pairsLoads(bool storesBetween, bool overlooksWrites)
+{
+    using namespace B3::Air;
+    B3::Policy policy;
+    policy.air.peepholes.pairsMemoryAccesses = true;
+    policy.validation.overlooksWritesBetweenPairedLoads = overlooksWrites;
+    B3::Procedure proc(policy);
+    proc.setOptLevel(2);
+    Code& code = proc.code();
+    B3::Air::BasicBlock* root = code.addBlock();
+    Tmp base(GPRInfo::argumentGPR0);
+    Tmp first(GPRInfo::argumentGPR2);
+    Tmp second(GPRInfo::argumentGPR3);
+    root->append(Move, nullptr, Arg::addr(base, 0), first);
+    if (storesBetween)
+        root->append(Move, nullptr, first, Arg::addr(Tmp(GPRInfo::argumentGPR1), 8));
+    root->append(Move, nullptr, Arg::addr(base, 8), second);
+    root->append(Add64, nullptr, first, second, Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret64, nullptr, Tmp(GPRInfo::returnValueGPR));
+    optimizePairedLoadStore(code);
+    return std::ranges::any_of(*root, [](const Inst& inst) { return inst.kind.opcode == LoadPair64; });
+}
+#endif
+
+static void testLoadsAreNotPairedAcrossStoreThatMayLieOverThem()
+{
+#if CPU(ARM64)
+    AOT_TEST_CHECK(pairsLoads(false, false));
+    AOT_TEST_CHECK(!pairsLoads(true, false));
+    AOT_TEST_CHECK(pairsLoads(true, true));
+#endif
+}
+
 std::span<const NativeTest> backEndPhaseTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1410,6 +1668,9 @@ std::span<const NativeTest> backEndPhaseTests()
         { "merge-compares-signed-and-unsigned"_s, testMergeComparesSignedAndUnsigned },
         { "merge-test-of-bits-into-order-of-word"_s, testMergeTestOfBitsIntoOrderOfWord },
         { "merged-tests-of-bits-tell-the-log-of-the-word-read-again"_s, testMergedTestsOfBitsTellTheLogOfTheWordReadAgain },
+        { "variable-read-again-in-loop-is-held-against-what-stands-for-it"_s, testVariableReadAgainInLoopIsHeldAgainstWhatStandsForIt },
+        { "bound-read-twice-is-held-against-what-stands-for-it"_s, testBoundReadTwiceIsHeldAgainstWhatStandsForIt },
+        { "loop-goes-on-from-counter-of-copied-loop"_s, testLoopGoesOnFromCounterOfCopiedLoop },
         { "merge-into-branch-with-two-likely-ways"_s, testMergeIntoBranchWithTwoLikelyWays },
         { "merge-keeps-likely-branch"_s, testMergeKeepsLikelyBranch },
         { "merge-moves-no-load-in-front-of-test"_s, testMergeMovesNoLoadInFrontOfTest },
@@ -1418,6 +1679,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "update-integers-in-memory"_s, testUpdateIntegersInMemory },
         { "narrow-truncated-phis"_s, testNarrowTruncatedPhis },
         { "load-is-not-folded-across-write-it-stays-in-front-of"_s, testLoadIsNotFoldedAcrossWriteItStaysInFrontOf },
+        { "loads-are-not-paired-across-store-that-may-lie-over-them"_s, testLoadsAreNotPairedAcrossStoreThatMayLieOverThem },
     };
     return tests;
 }

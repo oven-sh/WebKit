@@ -11,8 +11,10 @@
 #include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTValueFlowResultsInternal.h"
 #include "AOTValueFlowRulesModules.h"
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -88,6 +90,7 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
     }
 
     Vector<Vector<UnseenCodeRecord>> recordsOfFunction(program.functions.size());
+    Vector<Vector<UnseenCodeRecord>> recordsOfCallsOfAnything(program.functions.size());
     forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index, unsigned worker) {
         FunctionID id(index);
         if (!solution.solver().isReached(id))
@@ -154,17 +157,28 @@ Vector<UnseenCodeRecord> unseenCodeRecordsOf(ValueFlowSolution& solution)
             if (!solution.sets().meet(callees, eventFunctions))
                 continue;
             bool isFiled = false;
+            bool mayCallAnything = solution.sets().contains(callees, ValueFlowUniverse::unknownObject());
             solution.sets().forEachMember(maker.intersect(callees, eventFunctions), [&](ValueFlowObjectID callee) {
                 BuiltinID builtin = builtins.canonicalID(universe.builtinOf(callee));
-                if (!std::exchange(isFiled, true))
-                    add(*eventOfCalling(builtins, builtin, solution.solver().input().refusedCode), builtin, statement.site);
+                if (std::exchange(isFiled, true))
+                    return;
+                add(*eventOfCalling(builtins, builtin, solution.solver().input().refusedCode), builtin, statement.site);
+                if (mayCallAnything)
+                    recordsOfCallsOfAnything[index].append(recordsOfFunction[index].takeLast());
             });
         }
     });
 
+    AOT_THRESHOLD(unsigned, mostRecordsOfCallsOfAnything, 8);
     Vector<UnseenCodeRecord> records;
-    for (Vector<UnseenCodeRecord>& recordsOfOne : recordsOfFunction)
-        records.appendVector(WTF::move(recordsOfOne));
+    HashMap<uint64_t, unsigned, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numberOfCallsOfAnything;
+    for (uint32_t index = 0; index < recordsOfFunction.size(); ++index) {
+        records.appendVector(WTF::move(recordsOfFunction[index]));
+        for (const UnseenCodeRecord& record : recordsOfCallsOfAnything[index]) {
+            if (numberOfCallsOfAnything.add(static_cast<uint64_t>(record.cause) << 32 | record.builtin, 0).iterator->value++ < mostRecordsOfCallsOfAnything)
+                records.append(record);
+        }
+    }
 
     BitVector isListed(builtins.builtinCount());
     for (const UnseenCodeRecord& record : records) {

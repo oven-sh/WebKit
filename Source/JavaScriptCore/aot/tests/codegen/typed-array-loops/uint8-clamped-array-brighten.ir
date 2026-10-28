@@ -123,23 +123,26 @@ function f1 name="turn" module=m0 position=43 flags=[IsChecked, HasExplicitName]
 # LOWERED-NEXT: Int64 b@[[address]] = Add(b@[[vector]], b@[[index]], [[read]]:GetTypedArrayElement)
 # LOWERED-NEXT: Int32 b@[[element]] = Load8Z(b@[[address]], ControlDependent|Reads:TypedArrayElements, [[read]]:GetTypedArrayElement)
 
-# Clamping to 0..255 is two Selects per element, not branches.
-# BODY-LABEL: steps by 8
-# BODY-COUNT-8: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
-# BODY-NOT: Int32 b@{{*}} = Load8Z(b@{{*}}Reads:TypedArrayElements
+# Bytes are computed in lanes of sixteen bits, eight to a vector. Making them narrow again keeps them within 0..255, so no Select is left.
+# BODY-LABEL: steps by 64
+# BODY-COUNT-8: Double b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
+# BODY-NOT: Reads:TypedArrayElements
 # BODY-LABEL: end of loop
-# STORES-LABEL: steps by 8
-# STORES-COUNT-8: = Store8(b@{{*}}Writes:TypedArrayElements
-# STORES-NOT: = Store8(b@{{*}}Writes:TypedArrayElements
+# STORES-LABEL: steps by 64
+# STORES-NOT: Select(
+# STORES: V128 b@[[narrow]] = VectorNarrow(b@[[sum]], b@[[sum]], i16x8, SignMode::Unsigned
+# STORES-NEXT: Double b@[[half]] = VectorExtractLane(b@[[narrow]], f64x2
+# STORES: = Store(b@[[half]], b@{{*}}Writes:TypedArrayElements
+# STORES-NOT: Select(
 # STORES-LABEL: end of loop
-# BRANCHES-LABEL: steps by 8
+# BRANCHES-LABEL: steps by 64
 # BRANCHES-NOT: Branch(
 # BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of loop
-# HOT-LABEL: steps by 8
+# HOT-LABEL: steps by 64
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
-# X64: instructions: 42, patchpoints: 16, {{*}} steps by 8
-# ARM64: instructions: 43, patchpoints: 16, {{*}} steps by 8
+# X64: instructions: 42, patchpoints: 16, {{*}} steps by 64
+# ARM64: instructions: 43, patchpoints: 16, {{*}} steps by 64

@@ -74,16 +74,12 @@ function f1 name="price" module=m0 position=50 flags=[IsChecked, HasExplicitName
 }
 
 # The object was made without the field. The layout has a slot for it all the same, so the store that adds the field is one store of the double: the shape does not change, nothing grows, nothing is called.
-# A slot that holds nothing holds a bit pattern that is no number, so the store tests that the double is a number first.
+# A slot that holds nothing holds the bits of a NaN with a payload, which no double has.
 # CHECK-LABEL: name="price" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Double b@[[amount]] = ArgumentReg(
-# CHECK-NEXT: Int32 b@[[isNumber]] = Equal(b@[[amount]], b@[[amount]],
-# CHECK-NEXT: Branch(b@[[isNumber]], Terminal,
-# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# CHECK: Double b@[[stored]] = Phi(
 # CHECK-NEXT: Int64 b@[[parcel]] = ArgumentReg(
-# CHECK-NEXT: Store(b@[[stored]], b@[[parcel]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK-NEXT: Store(b@[[amount]], b@[[parcel]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
 # CHECK-NEXT: Return(Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="price" role=Source
@@ -93,6 +89,6 @@ function f1 name="price" module=m0 position=50 flags=[IsChecked, HasExplicitName
 # NONE-NOT: Writes:OrderWords
 # NONE-LABEL: end of function
 # X64-LABEL: name="price" role=Source
-# X64-NEXT: instructions: 3, patchpoints: 0
+# X64-NEXT: instructions: 2, patchpoints: 0
 # ARM64-LABEL: name="price" role=Source
-# ARM64-NEXT: instructions: 3, patchpoints: 0
+# ARM64-NEXT: instructions: 2, patchpoints: 0

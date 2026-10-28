@@ -17,6 +17,7 @@
 #include "AOTProgramStrings.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTState.h"
+#include "AOTThreshold.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
 #include "JSCInlines.h"
@@ -288,6 +289,44 @@ Object* ClassTable::createInstanceOfClassBelow(VM& vm, size_t indexOfRecord)
     return createWithoutFields(vm, m_state.objects->layouts, structure, structure->layout());
 }
 
+static std::array<size_t, 2> placesOf(const InstanceOfClassBelow& record)
+{
+    uintptr_t prototype = std::bit_cast<uintptr_t>(record.prototype);
+    return { firstPlaceOfInstanceOfClassBelow(prototype), secondPlaceOfInstanceOfClassBelow(prototype) };
+}
+
+const InstanceOfClassBelow* ClassTable::findInstanceOfClassBelow(const JSObject* prototype, uint32_t allocation) const
+{
+    for (size_t place : placesOf({ const_cast<JSObject*>(prototype), 0, nullptr, allocation, 0 })) {
+        const InstanceOfClassBelow& record = m_instancesOfClassesBelow[place];
+        if (record.prototype == prototype && record.allocation == allocation)
+            return &record;
+    }
+    return nullptr;
+}
+
+// Where both places are taken, the record at the first one makes room: it moves to its other place, and so does the record that it finds there.
+void ClassTable::rememberInstanceOfClassBelow(InstanceOfClassBelow record)
+{
+    std::array<size_t, 2> places = placesOf(record);
+    for (size_t place : places) {
+        InstanceOfClassBelow& held = m_instancesOfClassesBelow[place];
+        if (!held.prototype || (held.prototype == record.prototype && held.allocation == record.allocation)) {
+            held = record;
+            return;
+        }
+    }
+    AOT_THRESHOLD(unsigned, maxNumberOfMoves, 8);
+    size_t place = places[0];
+    for (unsigned moves = 0; moves < maxNumberOfMoves; ++moves) {
+        std::swap(record, m_instancesOfClassesBelow[place]);
+        if (!record.prototype)
+            return;
+        auto [first, second] = placesOf(record);
+        place = place == first ? second : first;
+    }
+}
+
 // Each evaluation of a class has a prototype object of its own, and the record of the allocation names one of them.
 void ClassTable::rememberInstanceOfOtherEvaluation(VM& vm, const Object& instance, JSObject* prototype, uint32_t allocation)
 {
@@ -303,18 +342,19 @@ void ClassTable::rememberInstanceOfOtherEvaluation(VM& vm, const Object& instanc
         return;
     static_assert(JSCell::typeInfoFlagsOffset() == 6);
     uint64_t header = cellHeaderFor(instance.structure()) | (body.isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
-    m_instancesOfClassesBelow[indexOfInstanceOfClassBelow(prototype)] = { prototype, header, body.cell.span().data(), allocation, static_cast<uint32_t>(body.cell.size() / 2) };
+    rememberInstanceOfClassBelow({ prototype, header, body.cell.span().data(), allocation, static_cast<uint32_t>(body.cell.size() / 2) });
 }
 
 // The prototype object of another class never leaves the object with the allocated shape: what the program does to that object is recorded for the other class.
 JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject* prototype, bool holdsNoField, std::optional<uint32_t> allocation)
 {
     const LayoutData& allocatedLayout = allocated->layout();
-    InstanceOfClassBelow& recent = m_instancesOfClassesBelow[indexOfInstanceOfClassBelow(prototype)];
     // Where the keys are never enumerated, the order word lists nothing whatever the slots hold: only who allocated the object knows.
     bool listsNoField = holdsNoField || (!allocatedLayout.keysAreNeverEnumerated && allocated->orderWord() == orderWordOf(0, 0));
-    if (recent.prototype == prototype && allocation == recent.allocation && listsNoField)
-        return createInstanceOfClassBelow(vm, indexOfInstanceOfClassBelow(prototype));
+    if (listsNoField && allocation) {
+        if (const InstanceOfClassBelow* remembered = findInstanceOfClassBelow(prototype, *allocation))
+            return createInstanceOfClassBelow(vm, remembered - m_instancesOfClassesBelow.data());
+    }
     const LayoutData& allocatedClass = classOfInstances(allocatedLayout);
     const LayoutData* requested = isDefinedByClass(allocatedClass) ? classWithPrototype(prototype) : nullptr;
     if (!requested || requested->index == allocatedClass.index) {
@@ -332,7 +372,7 @@ JSObject* ClassTable::instanceWithPrototype(VM& vm, Object* allocated, JSObject*
             const RuntimeLayoutTable::BodyAtBirth& body = *m_state.objects->layouts.bodyAtBirthIfKnown(*requested);
             static_assert(JSCell::typeInfoFlagsOffset() == 6);
             uint64_t header = cellHeaderFor(instance->structure()) | (body.isBornUnfinished ? static_cast<uint64_t>(TypeInfoPerCellBit) << 48 : 0);
-            recent = { prototype, header, body.cell.span().data(), *allocation, static_cast<uint32_t>(body.cell.size() / 2) };
+            rememberInstanceOfClassBelow({ prototype, header, body.cell.span().data(), *allocation, static_cast<uint32_t>(body.cell.size() / 2) });
         }
         return instance;
     }

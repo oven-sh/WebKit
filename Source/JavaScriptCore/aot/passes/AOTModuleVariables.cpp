@@ -34,7 +34,6 @@
 #include "AOTPredictedValues.h"
 #include "AOTProgramCaches.h"
 #include "AOTSlotPlan.h"
-#include "AOTStronglyConnectedComponents.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTWholeLiterals.h"
@@ -582,6 +581,8 @@ static void changeVariables(ProgramEditor& editor, DefinitionPlan& plan)
                 variable.initialization = VariableInitialization::Function;
                 variable.function = deferral.function;
                 variable.flow.stores = StoreCount::Never;
+                if (id == deferral.variableReadInBody && variable.flow.reads == ReadState::NeverRead)
+                    variable.flow.reads = ReadState::OnlyWhereDefined;
                 break;
             case Deferral::Kind::RegExp:
                 variable.declared.changeType(Proven::byPosition(editor.types().intern(program.at(variable.declared.written()).withPrimitives(Primitive::Absent))));
@@ -758,30 +759,10 @@ struct VariableFacts {
 struct InitializerScanContext {
     AnalysisContext analysisContextOf(FunctionID id) const { return { runner.build(), program, &inputs.flow, &inputs.effects, id }; }
 
-    // Whether the body of the one module has run to its end when the body of the other begins: the other imports it, directly or not, and no circle of imports holds both.
-    bool hasRunBefore(ModuleID finished, ModuleID beginning, BitVector& importedByBeginning) const
-    {
-        if (circlesOfImports.componentOf[finished.index()] == circlesOfImports.componentOf[beginning.index()])
-            return false;
-        if (importedByBeginning.isEmpty()) {
-            importedByBeginning.ensureSize(program.modules.size());
-            Vector<ModuleID, 32> worklist { beginning };
-            importedByBeginning.quickSet(beginning.index());
-            while (!worklist.isEmpty()) {
-                for (const ModuleRequest& request : program.at(worklist.takeLast()).requests) {
-                    if (request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Evaluation && !importedByBeginning.quickSet(request.target.index()))
-                        worklist.append(request.target);
-                }
-            }
-        }
-        return importedByBeginning.quickGet(finished.index());
-    }
-
     const Program& program;
     const OptimizationInputs& inputs;
     const PassRunner& runner;
     const VariableFacts& variables;
-    const StronglyConnectedComponents& circlesOfImports;
     // By function: the module that has it as its body. One file may hold the bodies of several modules, and all that is written in a file names the record of the file.
     const Vector<ModuleID>& moduleWithBody;
 };
@@ -1781,7 +1762,6 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     // Items that take what a variable holds without looking into it: they read the variable.
     Vector<std::pair<uint32_t, ValueID>> readings;
     Vector<uint32_t> itemsUsedByCodeThatStays;
-    BitVector modulesImported;
     auto find = [&](uint32_t item) {
         while (parents[item] != item) {
             parents[item] = parents[parents[item]];
@@ -1884,7 +1864,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
         bool areSetInFrontOfItem = std::ranges::all_of(code.variablesTakenToBeSet, [&](VariableID variable) {
             ModuleID module = program.at(variable).module;
             if (module != (evaluated ? evaluated : function.module))
-                return evaluated && context.hasRunBefore(module, evaluated, modulesImported);
+                return evaluated && context.inputs.flow.completesBefore(module, evaluated);
             // The store of this body stands in front of the item.
             auto store = firstStoreTo.find(variable.index());
             return store != firstStoreTo.end() && store->value < index;
@@ -2296,23 +2276,7 @@ void deferInitializers(ProgramEditor& editor, const OptimizationInputs& inputs, 
     times.didFinish("collectVariableFacts"_s);
     if (std::ranges::all_of(variables.emptiness, [](Emptiness emptiness) { return emptiness == Emptiness::None; }))
         return;
-    // A module that requires its importer while its own body runs closes a circle too.
-    using ModulePair = std::pair<ModuleID, ModuleID>;
-    Vector<ModulePair> requiredModules = collectInParallel<ModulePair>(loops, program.functions.size(), [&](unsigned index, Vector<ModulePair>& found) {
-        forEachValueListedOrNot(program, FunctionID(index), { Opcode::RequireModule, Opcode::EvaluateModule }, [&](ValueID, const Value& value) {
-            if (value.opcode == Opcode::RequireModule && program.functions[index].module)
-                found.append({ program.functions[index].module, value.module() });
-            if (value.opcode == Opcode::EvaluateModule)
-                found.append({ value.referrer(), value.module() });
-        });
-    });
-    Vector<Vector<ModuleID>> modulesReachedFrom(program.modules.size(), [&](size_t index) {
-        return program.modules[index].requests.map([](const ModuleRequest& request) { return request.target; });
-    });
-    for (auto [from, to] : requiredModules)
-        modulesReachedFrom[from.index()].append(to);
-    StronglyConnectedComponents circlesOfImports = computeStronglyConnectedComponents(program.modules.size(), [&](unsigned index) -> const Vector<ModuleID>& { return modulesReachedFrom[index]; });
-    InitializerScanContext context { program, inputs, runner, variables, circlesOfImports, moduleWithBody };
+    InitializerScanContext context { program, inputs, runner, variables, moduleWithBody };
 
     InitializerPlan plan { variables.emptiness };
     Vector<uint32_t> bodies = findIndicesInParallel(loops, program.functions.size(), [&](unsigned index) {

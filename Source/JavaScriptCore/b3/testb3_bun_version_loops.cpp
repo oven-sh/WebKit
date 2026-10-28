@@ -723,6 +723,63 @@ static void testVersionLoopsStoreInExcursionToResolvedHeaderPhi()
     }
 }
 
+// The count is read ahead of the loop and again at the end of each turn, and each turn stores under another address into the heap that it is read from.
+// Told to overlook that store, the fast version lets the first read stand for all of them. What each turn reads is held against it.
+static void testVersionLoopsTellsLogWhatStandsForVariableReadAgain()
+{
+    constexpr int64_t reported = -7;
+    for (bool overlooksWrites : { false, true }) {
+        Policy policy = remarkPolicy();
+        policy.validation.logsDecidedComparisons = true;
+        policy.validation.overlooksWritesToWhatLoopsReadAgain = overlooksWrites;
+        Procedure proc(policy);
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* header = proc.addBlock();
+        BasicBlock* body = proc.addBlock();
+        BasicBlock* exit = proc.addBlock();
+        Variable* index = proc.addVariable(Int64);
+        Variable* sum = proc.addVariable(Int64);
+        Variable* count = proc.addVariable(Int64);
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(proc, root);
+        Value* pointer = arguments[1];
+        Value* other = arguments[2];
+        graph.set(root, index, graph.int64(root, 0));
+        graph.set(root, sum, graph.int64(root, 0));
+        graph.jump(root, header);
+        graph.set(header, count, graph.load(header, Int64, pointer, 0, firstHeap));
+        graph.branch(header, graph.make(header, LessThan, graph.get(header, index), graph.get(header, count)), body, exit);
+        Value* current = graph.get(body, count);
+        graph.increase(body, sum, graph.make(body, Add, graph.make(body, Mul, current, current), current));
+        graph.store(body, graph.make(body, Sub, current, graph.int64(body, 1)), other, 0, firstHeap);
+        graph.increase(body, index, 1);
+        graph.jump(body, header);
+        graph.ret(exit, graph.get(exit, sum));
+        proc.resetReachability();
+        fixSSA(proc);
+        validate(proc);
+        CHECK(rotateLoops(proc));
+        fixSSA(proc);
+        validate(proc);
+
+        CHECK_EQ(versionLoopsAndValidate(proc), overlooksWrites);
+        bool isChecked = proc.movedLoadLog().insertChecks(proc, nullptr, createSharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg, GPRReg)>([](CCallHelpers& jit, const MovedLoad&, GPRReg, GPRReg) {
+            jit.move(CCallHelpers::TrustedImm64(reported), GPRInfo::returnValueGPR);
+            jit.emitFunctionEpilogue();
+            jit.ret();
+        }));
+        CHECK_EQ(isChecked, overlooksWrites);
+        auto code = compileProc(proc, 1);
+        int64_t memory[2] = { 10, 0 };
+        CHECK_EQ(run(*code, 0, memory, std::bit_cast<int64_t>(&memory[1])), 1100);
+        CHECK_EQ(memory[1], 9);
+        int64_t expected = 0;
+        for (int64_t i = 0, left = 10; i < left; ++i, --left)
+            expected += left * left + left;
+        CHECK_EQ(run(*code, 0, memory, std::bit_cast<int64_t>(&memory[0])), overlooksWrites ? reported : expected);
+    }
+}
+
 static void testVersionLoopsKeepsTerminalPatchpointReadingLoopWrites()
 {
     Procedure proc(remarkPolicy());
@@ -875,6 +932,7 @@ void addBunLoopVersioningTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVersionLoopsUnswitchesInvariantBranch());
     RUN(testVersionLoopsKeepsVariantBranch());
     RUN(testVersionLoopsStoreInExcursionToResolvedHeaderPhi());
+    RUN(testVersionLoopsTellsLogWhatStandsForVariableReadAgain());
     RUN(testVersionLoopsKeepsTerminalPatchpointReadingLoopWrites());
     RUN(testVersionLoopsTestsSlotBeforeReadingThroughIt());
 }

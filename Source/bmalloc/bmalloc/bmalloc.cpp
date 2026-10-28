@@ -404,6 +404,14 @@ void keepAddressSpaceBallast(size_t size, size_t addressSpaceLeft, size_t addres
 #endif
     s_numberOfBallastPiecesWanted.store(wanted, std::memory_order_relaxed);
     size_t numberOfPieces = s_numberOfBallastPieces.load(std::memory_order_relaxed);
+    while (numberOfPieces > wanted) {
+        if (void* piece = s_ballastPieces[--numberOfPieces])
+            munmap(piece, sizeOfBallastPiece);
+#if BUSE(EXTERNAL_MIMALLOC)
+        else
+            mi_release_piece_kept_aside();
+#endif
+    }
     while (numberOfPieces < wanted) {
         if (addressSpaceLeft < addressSpaceToLeaveFree + sizeOfBallastPiece)
             break;

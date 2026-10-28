@@ -817,7 +817,7 @@ aotOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch, metadata
 
         loadVariable(get, m_index, t2)
         addq 1, t2
-        loadi JSPropertyNameEnumerator::m_endStructurePropertyIndex[t1], t3
+        loadi JSPropertyNameEnumerator::m_endOwnPropertyIndex[t1], t3
         biaeq t2, t3, .last
 
         storeVariable(get, m_index, t2, t3)

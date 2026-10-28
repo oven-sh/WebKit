@@ -81,7 +81,7 @@ void Program::collectConstructionStarts()
         function.constructionStarts = { };
     }
     for (Vector<ConstructionStart>& starts : m_constructionStartsOfModules) {
-        std::ranges::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
+        AOT::sort(starts, { }, [](const ConstructionStart& start) { return std::pair { start.reported, start.isForCallers }; });
         // A site is looked up by where it is reported. Of two starts with one such place the construction's stays.
         auto repeated = std::ranges::unique(starts, { }, &ConstructionStart::reported);
         starts.shrink(starts.size() - repeated.size());
@@ -688,6 +688,26 @@ ModuleID commonJsModuleCapturedBy(const Program& program, const Module& face)
         return { };
     const Module& file = program.at(first.target);
     return file.kind == ModuleKind::CommonJs && file.exportsVariable ? first.target : ModuleID();
+}
+
+Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
+{
+    Vector<ModuleID, 2> forms;
+    auto visitFormsOf = [&](ModuleID file) {
+        std::span<const uint8_t> path = program.string(program.at(file).path);
+        for (uint32_t index = 0; index < program.modules.size(); ++index) {
+            const Module& module = program.modules[index];
+            std::span<const uint8_t> pathOfForm = program.string(module.path);
+            if (module.kind == ModuleKind::Data && pathOfForm.size() > path.size() && pathOfForm[path.size()] == '?' && spanHasPrefix(pathOfForm, path))
+                forms.append(ModuleID(index));
+        }
+    };
+    visitFormsOf(named);
+    // What ES modules import in place of a CommonJS file requires the file first.
+    const Module& module = program.at(named);
+    if (module.kind == ModuleKind::SourceText && !module.requests.isEmpty() && module.requests[0].kind == ModuleRequestKind::Require)
+        visitFormsOf(module.requests[0].target);
+    return forms;
 }
 
 BuiltinID functionOfHostThatRequireCallsFor(const Module& module)

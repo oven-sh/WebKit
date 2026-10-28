@@ -1,0 +1,39 @@
+# An allocation that is handed a prototype may make the first instance whose prototype is not that of its class, and the guards of the class speak of every instance.
+# So a test of those guards in front of the allocation says nothing behind it. An allocation that is handed none leaves the test standing
+# FORM: Prepared
+# RUN: pass EliminateGuards
+# STATISTIC: GuardsEliminated = 1
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Widget" constructor=f0 flow={baseState=None}
+function f0 name="Widget" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}]
+
+function f1 name="givenPrototype" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="draw"}]
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v2 = NewObject v0 layout=L0
+    v3 = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="draw"}]
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    Return v2
+  b3():
+    Return v0
+# CHECK-COUNT-2: = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="draw"}]
+}
+
+function f2 name="prototypeOfClass" parameters=[{type=object}] results=[{type=anything}] {
+    v1 = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="draw"}]
+    Branch v1 -> taken b1(), notTaken b3()
+  b1():
+    v2 = NewObject layout=L0
+    v3 = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="draw"}]
+    Branch v3 -> taken b2(), notTaken b3()
+  b2():
+    Return v2
+  b3():
+    Return v0
+# CHECK: v1: boolean = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="draw"}]
+# CHECK-NOT: AreMembersUnchanged
+# CHECK: Jump -> next b2()
+}

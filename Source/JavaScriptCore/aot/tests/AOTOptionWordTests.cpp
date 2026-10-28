@@ -285,6 +285,11 @@ static constexpr OptionWordCase optionWordCases[] = {
         options.testing = Wire::TestingSwitch::FailPredictions;
         options.bisection.predictionFailure = { .period = 100, .seed = 3 };
     } },
+    { "testing=DelayFlowRules"_s, [](WireOptions& options) { options.testing = Wire::TestingSwitch::DelayFlowRules; } },
+    { "testing=delay-flow-rules:17"_s, [](WireOptions& options) {
+        options.testing = Wire::TestingSwitch::DelayFlowRules;
+        options.bisection.flowSchedule.number = 17;
+    } },
     { "sabotage=NoCallCollects"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::NoCallCollects; } },
     { "sabotage=fields-never-change"_s, [](WireOptions& options) { options.sabotage = Wire::Sabotage::FieldsNeverChange; } },
     { "count-branches"_s, [](WireOptions& options) { options.instrumentation = Wire::Instrumentation::CountBranches; } },
@@ -646,6 +651,12 @@ static constexpr InvalidMemberCase invalidMemberCases[] = {
         wire.testing = Wire::TestingSwitch::FailPredictions;
         wire.bisection.predictionFailure = { .period = 1, .seed = UINT16_MAX + 1 };
     } },
+    { offsetof(WireOptions, bisection.flowSchedule.number), [](WireOptions& wire) { wire.bisection.flowSchedule.number = 1; } },
+    { offsetof(WireOptions, bisection.flowSchedule.reserved), [](WireOptions& wire) { wire.bisection.flowSchedule.reserved = 1; } },
+    { offsetof(WireOptions, bisection.flowSchedule.number), [](WireOptions& wire) {
+        wire.testing = Wire::TestingSwitch::DelayFlowRules;
+        wire.bisection.flowSchedule.number = UINT8_MAX + 1;
+    }, [](CompileOptions& options) { options.recorded.testing = static_cast<uint16_t>(Wire::TestingSwitch::DelayFlowRules); } },
     { offsetof(WireOptions, threadCount), [](WireOptions& wire) { wire.threadCount = 0; }, [](CompileOptions& options) { options.threadCount = 1; } },
     { offsetof(WireOptions, target.architecture), [](WireOptions& wire) { wire.target.architecture = otherArchitecture; }, [](CompileOptions& options) {
         options.recorded.architecture = static_cast<uint8_t>(otherArchitecture);
@@ -856,6 +867,7 @@ static void testInstrumentationAndTestingSwitchesAreRecorded()
     AOT_TEST_CHECK(!readWords({ }).recorded.has(Wire::TestingSwitch::FailPredictions) && !readWords({ }).recorded.predictionFailurePeriod && !readWords({ }).recorded.predictionFailureSeed);
     RecordedOptions failing = readWords({ "testing=FailPredictions:7:3"_s }).recorded;
     AOT_TEST_CHECK(failing.has(Wire::TestingSwitch::FailPredictions) && failing.predictionFailurePeriod == 7 && failing.predictionFailureSeed == 3);
+    AOT_TEST_CHECK(!readWords({ "testing=DelayFlowRules"_s }).recorded.numberOfFlowSchedule && readWords({ "testing=DelayFlowRules:200"_s }).recorded.numberOfFlowSchedule == 200);
 }
 
 std::span<const NativeTest> optionWordTests()

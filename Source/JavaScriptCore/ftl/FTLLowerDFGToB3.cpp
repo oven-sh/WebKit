@@ -25064,11 +25064,6 @@ IGNORE_CLANG_WARNINGS_END
             unsure(concatRopeBlock), unsure(isSubstringBlock));
 
         m_out.appendTo(isSubstringBlock, substringBlock);
-        m_out.branch(
-            m_out.testIsZeroPtr(fiber0, m_out.constIntPtr(JSRopeString::is8BitInPointer)),
-            unsure(concatRopeBlock), unsure(substringBlock));
-
-        m_out.appendTo(substringBlock, concatRopeBlock);
         LValue packedLengthAndBaseLower = m_out.load64(string, m_heaps.JSRopeString_fiber1);
         LValue packedBaseUpperAndOffset = m_out.load64(string, m_heaps.JSRopeString_fiber2);
         LValue substringBase = m_out.bitOr(
@@ -25076,6 +25071,14 @@ IGNORE_CLANG_WARNINGS_END
             m_out.shl(m_out.bitAnd(packedBaseUpperAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
         LValue substringOffset = m_out.lShr(packedBaseUpperAndOffset, m_out.constInt32(16));
         LValue baseImpl = m_out.loadPtr(substringBase, m_heaps.JSString_value);
+        // The rope's cached is8Bit bit can go stale: atomizing the base may swap in an equal 16-bit StringImpl.
+        m_out.branch(
+            m_out.testIsZero32(
+                m_out.load32(baseImpl, m_heaps.StringImpl_hashAndFlags),
+                m_out.constInt32(StringImpl::flagIs8Bit())),
+            unsure(concatRopeBlock), unsure(substringBlock));
+
+        m_out.appendTo(substringBlock, concatRopeBlock);
         ValueFromBlock substringBuffer = m_out.anchor(
             m_out.add(m_out.loadPtr(baseImpl, m_heaps.StringImpl_data), substringOffset));
         ValueFromBlock substringLength = m_out.anchor(m_out.load32NonNegative(string, m_heaps.JSRopeString_length));

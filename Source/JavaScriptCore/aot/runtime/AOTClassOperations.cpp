@@ -525,9 +525,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewClassToken, JSCell*, (Instance*
 JSC_DEFINE_JIT_OPERATION(operationAOTPrivateGet, EncodedJSValue, (Instance* instance, EncodedJSValue object, JSCell* token, uint32_t field))
 {
     constexpr Entry entry = Entry::operationAOTPrivateGet;
-    AOT_OPERATION_BEGIN(instance, entry);
     // A lookup may make the property table of a Structure, which ends in a place where the collector may stop this thread. Compiled code counts on no collection here.
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSCellButterfly* classToken = cellArgument<JSCellButterfly>(token, entry);
     JSObject* base = JSValue::decode(object).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -547,8 +546,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateGet, EncodedJSValue, (Instance* inst
 JSC_DEFINE_JIT_OPERATION(operationAOTPrivateHas, EncodedJSValue, (Instance* instance, EncodedJSValue object, JSCell* token, uint32_t field))
 {
     constexpr Entry entry = Entry::operationAOTPrivateHas;
-    AOT_OPERATION_BEGIN(instance, entry);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry);
     JSCellButterfly* classToken = cellArgument<JSCellButterfly>(token, entry);
     JSValue base = JSValue::decode(object);
     if (!base.isObject()) {

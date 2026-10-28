@@ -125,6 +125,16 @@ bool GuardAvailability::haveSameOrigin(const GuardOrigin& a, const GuardOrigin& 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool GuardAvailability::isSamePosition(ValueID a, ValueID b) const
+{
+    if (a == b)
+        return true;
+    if (!a || !b)
+        return false;
+    std::optional<int64_t> constant = integerConstantThroughCasts(m_analyses.program(), m_function, a);
+    return constant && constant == integerConstantThroughCasts(m_analyses.program(), m_function, b);
+}
+
 bool GuardAvailability::areSameFact(const GuardFact& a, const GuardFact& b) const
 {
     auto hasOriginsOf = [&](const GuardFact& fact, const GuardFact& other) {
@@ -134,7 +144,7 @@ bool GuardAvailability::areSameFact(const GuardFact& a, const GuardFact& b) cons
             });
         });
     };
-    return a.proofs == b.proofs && a.subject == b.subject && a.position == b.position && a.dependsOn == b.dependsOn && hasOriginsOf(a, b) && hasOriginsOf(b, a);
+    return a.proofs == b.proofs && a.subject == b.subject && isSamePosition(a.position, b.position) && a.dependsOn == b.dependsOn && hasOriginsOf(a, b) && hasOriginsOf(b, a);
 }
 
 static bool testImplies(const Value& test, const Value& impliedTest)
@@ -375,7 +385,7 @@ bool GuardAvailability::tryWiden(GuardFact& fact, const GuardFacts& factsOnOther
     const GuardFact* partner = nullptr;
     ProofSet proofs;
     for (const GuardFact& candidate : factsOnOtherWay.facts) {
-        if (candidate.subject != fact.subject || candidate.position != fact.position)
+        if (candidate.subject != fact.subject || !isSamePosition(candidate.position, fact.position))
             continue;
         ProofSet united;
         for (Proof proof : allMembersOf<Proof>) {

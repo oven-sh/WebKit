@@ -123,25 +123,32 @@ function f1 name="turn" module=m0 position=35 flags=[IsChecked, HasExplicitName]
 # LOWERED-NEXT: Int64 b@[[address]] = Add(b@[[vector]], b@[[offset]], [[read]]:GetTypedArrayElement)
 # LOWERED-NEXT: Int32 b@[[element]] = Load(b@[[address]], ControlDependent|Reads:TypedArrayElements, [[read]]:GetTypedArrayElement)
 
-# Two counters that move toward each other. The bounds checks of both are decided in front of the loop.
-# BODY-LABEL: steps by
-# BODY-COUNT-2: Int32 b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
-# BODY-NOT: Int32 b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
+# Two counters that move toward each other. The bounds checks of both are decided in front of the loop. A turn takes four elements from each end and stores each four in the opposite order at the other.
+# BODY-LABEL: steps by 4
+# BODY-COUNT-2: V128 b@{{*}} = Load(b@{{*}}Reads:TypedArrayElements
+# BODY-NOT: Reads:TypedArrayElements
 # BODY-LABEL: end of loop
-# STORES-LABEL: steps by
-# STORES-COUNT-2: = Store(b@{{*}}Writes:TypedArrayElements
-# STORES-NOT: = Store(b@{{*}}Writes:TypedArrayElements
+# STORES-LABEL: steps by 4
+# STORES: V128 b@[[fromAbove]] = VectorSwizzle(
+# STORES: = Store(b@[[fromAbove]], b@{{*}}Writes:TypedArrayElements
+# STORES: V128 b@[[fromBelow]] = VectorSwizzle(
+# STORES: = Store(b@[[fromBelow]], b@{{*}}Writes:TypedArrayElements
+# STORES-NOT: Writes:TypedArrayElements
 # STORES-LABEL: end of loop
-# BRANCHES-LABEL: steps by
+# BRANCHES-LABEL: steps by 4
 # BRANCHES-NOT: Branch(
 # BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of loop
-# HOT-LABEL: steps by
+# HOT-LABEL: steps by 4
 # HOT-NOT: isLoopPoll
 # HOT-NOT: Reads:JSArrayBufferView
 # HOT-LABEL: end of loop
 # X64-NOT: loop #
+# X64: loop #{{*}}, instructions: 9, patchpoints: 4, {{*}} steps by 4
 # X64: loop #{{*}}, instructions: 7, patchpoints: 4
+# X64: loop #{{*}}, instructions: 27, patchpoints: 16, {{*}} steps by 16
 # ARM64-NOT: loop #
+# ARM64: loop #{{*}}, instructions: 11, patchpoints: 4, {{*}} steps by -4
 # ARM64: loop #{{*}}, instructions: 7, patchpoints: 4
+# ARM64: loop #{{*}}, instructions: 30, patchpoints: 16, {{*}} steps by 16

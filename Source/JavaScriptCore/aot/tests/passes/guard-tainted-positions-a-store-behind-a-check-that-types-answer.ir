@@ -1,0 +1,62 @@
+# function recurse(x: number): number { return 1 + recurse(x) }
+# function keep(x: number) { let kept = 0; (() => kept = recurse(x + 1))(); return kept }  [1].forEach(keep)
+# recurse never answers, so in flow `kept` holds integers alone. Array.prototype.forEach calls keep, so the check of x stays, and what is made of x is typed behind it.
+# The check of what recurse answers is answered by the types of all that arrives at its result. The store behind it takes a number by then, and has the type of the variable by the word of flow, in every version of the body
+# FORM: AsRead
+# OPTIONS: check=VerifyEachPass
+# RUN: pipeline ApplyFlowResults
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=10 kind=Parameter
+typesite w1 module=m0 position=20 kind=Result
+typesite w2 module=m0 position=30 kind=Parameter
+typesite w3 module=m0 position=40 kind=Variable
+typesite w4 module=m0 position=50 kind=CallResult
+typesite w5 module=m0 position=60 kind=CallResult
+layout L0 kind=Environment fields=[{key=@"binding.0" declared={type=number|absent site=w3}}]
+variable g0 name="recurse" module=m0 declared={type=anything} initialization=Function function=f1
+variable g1 name="keep" module=m0 declared={type=anything} initialization=Function function=f2
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewArray v0
+    v2 = PropGet v1 key="forEach"
+    v3 = GetModuleVariable variable=g1
+    v4 = Call v2, v1, v3
+    Return v4
+}
+function f1 name="recurse" flags=[IsChecked] parameters=[{type=number site=w0}] results=[{type=number site=w1}] {
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0
+    v3 = Convert v2 declared={type=number site=w4}
+    v4 = Integer integer=1
+    v5 = Add v4, v3
+    v6 = Convert v5 declared={type=number site=w1}
+    Return v6
+}
+function f2 name="keep" flags=[IsChecked] parameters=[{type=number site=w2}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w3}
+    PutEnvironmentField v1, v3 layout=L0
+    v5 = NewClosure v1, v0 function=f3
+    v6 = Call v5, -
+    v7 = GetEnvironmentField v1 layout=L0
+    v8 = CheckInitialized v7 name="kept"
+    Return v8
+}
+function f3 name="store" kind=Arrow flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}, {type=number site=w2}] results=[{type=anything}] {
+  b0(v0: env L0, v1: number):
+    v2 = GetModuleVariable variable=g0
+    v3 = Integer integer=1
+    v4 = Add v1, v3
+    v5 = Call v2, -, v4
+    v6 = Convert v5 declared={type=number site=w5}
+    PutEnvironmentField v0, v6 layout=L0
+    Return v6
+# CHECK: = Check {{*}} expectedType=number
+# CHECK: [[answer]]: number = AssumeType v5 provenType=number
+# CHECK-NEXT: [[behindChecks]]: int = AssumeType [[answer]] provenType=int [isBehindChecks]
+# CHECK-NEXT: [[stored]]: int = AssumeType [[behindChecks]] provenType=int
+# CHECK-NEXT: PutEnvironmentField v0, [[stored]] layout=L0
+}

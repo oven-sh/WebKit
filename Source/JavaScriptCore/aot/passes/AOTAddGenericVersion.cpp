@@ -1663,20 +1663,22 @@ struct PositionsProvenByTypes {
         }
     }
 
-    void applyTo(Function& function, const Body& body, std::atomic<uint64_t>& numberOfChecks) const
+    bool applyTo(Function& function, const Body& body, std::atomic<uint64_t>& numberOfChecks) const
     {
+        bool hasAnsweredCheck = false;
         for (const TestedCheck& tested : body.checks) {
             if (!passes(tested))
                 continue;
             Value& check = function.edit(tested.check);
             check.becomeAssumeType(check.valueOperand(), Proven::byEveryArrival(check.expectedType()));
             numberOfChecks.fetch_add(1, std::memory_order_relaxed);
+            hasAnsweredCheck = true;
         }
         settleProofsBehindAnsweredChecks(function);
         if (!body.variablesNamed.isEmpty())
             stopListingStartsThatNobodyReads(function);
         if (!isAssumed({ Position::Kind::Result, body.function.index(), 0 }))
-            return;
+            return hasAnsweredCheck;
         for (BlockID block : body.tailCallsProvenByCallees) {
             Terminator& terminator = function.edit(block, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator;
             Vector<TailCast, 4> casts;
@@ -1685,6 +1687,7 @@ struct PositionsProvenByTypes {
             casts.append(TailCast { DeclaredType(Proven::byEveryArrival(function.result().expected())), CastResolution::Assume });
             terminator.setCasts(casts.span());
         }
+        return hasAnsweredCheck;
     }
 
     DeclaredType& edit(Position position) { return *const_cast<DeclaredType*>(findDeclaredType(program, position)); }
@@ -1721,11 +1724,16 @@ struct PositionsProvenByTypes {
         std::atomic<uint64_t> numberOfChecks { 0 };
         ProgramEditor editor(program);
         editFunctionsInParallel(editor, build, BehindEdit::Nothing, changed.span(), [&](unsigned, FunctionID id, Function& function, TaskArenas& arenas) {
-            if (const Body* body = bodyOfFunction[id.index()])
-                applyTo(function, *body, numberOfChecks);
-            AnalysisContext context { build, program, nullptr, nullptr, id };
-            FunctionAnalyses analyses(context, function);
-            typeValuesFromNever(TypePropagationInputs { program, id, function, analyses, arenas.types, build });
+            const Body* body = bodyOfFunction[id.index()];
+            bool hasAnsweredCheck = body && applyTo(function, *body, numberOfChecks);
+            {
+                AnalysisContext context { build, program, nullptr, nullptr, id };
+                FunctionAnalyses analyses(context, function);
+                typeValuesFromNever(TypePropagationInputs { program, id, function, analyses, arenas.types, build });
+            }
+            // What a store took may have rested on a check of that very value.
+            if (hasAnsweredCheck)
+                assumeTypesOfPositionsAtStores(program, id, function, arenas.types, build);
         });
         build.statistics().count(StatisticID::PositionsProvenByTypes, assumed.size());
         build.statistics().count(StatisticID::ChecksProvenByTypes, numberOfChecks.load(std::memory_order_relaxed));

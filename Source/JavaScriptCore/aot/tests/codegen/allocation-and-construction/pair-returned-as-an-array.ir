@@ -15,7 +15,9 @@
 # REQUIRES(NONE): unsanitized-code
 # RUN(CALLS): generate-code calls
 # RUN(X64): lower-to-air size f2
-# REQUIRES(X64): x86_64 unsanitized-code
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(WINDOWSX64): lower-to-air size f2
+# REQUIRES(WINDOWSX64): x86_64 unsanitized-code windows
 # RUN(ARM64): lower-to-air size f2
 # REQUIRES(ARM64): arm64 unsanitized-code
 
@@ -134,4 +136,5 @@ function f2 name="span" module=m0 position=95 flags=[IsChecked, HasExplicitName]
 # CALLS-NOT: function
 # CALLS: f{{*}}: size=
 # X64: instructions: 8, patchpoints: 0
+# WINDOWSX64: instructions: 9, patchpoints: 0
 # ARM64: instructions: 8, patchpoints: 0

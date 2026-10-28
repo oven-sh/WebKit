@@ -13,9 +13,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-class Function;
 class PredictedValues;
 struct DeclaredType;
+struct Function;
 struct Value;
 
 // What an annotation or a guess says of a value. Only a test makes it true.

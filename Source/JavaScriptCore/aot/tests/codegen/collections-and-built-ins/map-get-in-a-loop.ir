@@ -171,7 +171,8 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
 # LOOP-LABEL: end of loop
 # The stub is the only call of the loop.
 # CALLS-LABEL: loop #
-# CALLS-COUNT-1: ExitsSideways
+# The stub may write the length, which is read again on every turn: nothing counts the turns ahead of the loop, so the loop polls on each of them.
+# CALLS-COUNT-2: ExitsSideways
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of loop
 # Map.prototype.get cannot be replaced and nothing of the same name hides it on the object: the function does not read it by name, make its function object, or test the object or the function.
@@ -182,5 +183,5 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=2 t
 # WHOLE-NOT: :IsPristine
 # WHOLE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: loop #{{*}}, instructions: 23, patchpoints: 2
-# ARM64: loop #{{*}}, instructions: 20, patchpoints: 3
+# X64: loop #{{*}}, instructions: 23, patchpoints: 3
+# ARM64: loop #{{*}}, instructions: 20, patchpoints: 4
