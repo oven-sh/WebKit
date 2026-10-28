@@ -1042,6 +1042,9 @@ public:
     std::span<const uint8_t> textOf(BuiltinName) const;
     JS_EXPORT_PRIVATE String textOf(BuiltinID) const;
     JS_EXPORT_PRIVATE Identifier identifierOf(VM&, BuiltinName) const;
+    // What the engine calls a function that it makes under the name: `[Symbol.iterator]` under a well-known symbol, `[key]` under a registered one.
+    // It makes no key. A collection names frames at its end, on a thread without an atom table.
+    JS_EXPORT_PRIVATE String functionNameOf(BuiltinName) const;
     std::optional<double> numberOf(BuiltinID) const;
     std::optional<StringView> stringOf(BuiltinID) const;
     BuiltinName nameOfString(BuiltinID stringConstant) const { return nameOfString(stringConstant, targetOfThisBuild()); }

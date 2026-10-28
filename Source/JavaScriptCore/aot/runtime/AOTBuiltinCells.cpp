@@ -306,8 +306,7 @@ static JSFunction* makeFunctionOfMissingHost(JSGlobalObject* realm, const Builti
     });
     if (!hasFunctionOfCompiler)
         return nullptr;
-    VM& vm = realm->vm();
-    return JSFunction::create(vm, realm, 0, table.identifierOf(vm, table.at(key.builtin()).name).string(), exitForFunctionOfMissingHost, ImplementationVisibility::Public);
+    return JSFunction::create(realm->vm(), realm, 0, table.functionNameOf(table.at(key.builtin()).name), exitForFunctionOfMissingHost, ImplementationVisibility::Public);
 }
 
 JSCell* BuiltinCells::cell(uint32_t number)
