@@ -721,11 +721,13 @@ void HeapRule::readExportsOfListedHolders(const ValueFlowOperand& object, Climbi
 
 void HeapRule::letExportsThatHaveEscapedBeCalled(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
 {
-    if (key.keyClass == HeapKeyClass::Index || !isInProgramCode() || !mayCallWhateverHasEscaped(m_context))
+    if (key.keyClass == HeapKeyClass::Index || !isInProgramCode())
         return;
-    ClimbingSet holdersOfExports = m_context.unite(m_context.restrict(receivers, m_universe.holdersOfLibraryExports()), holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers));
-    if (holdsAnything(holdersOfExports))
-        letSeenCodeCallEscapedFunctionsAmong(m_context, m_context.lookup(holdersOfExports, key.keyClass == HeapKeyClass::Name ? nameOfLookupForValue(key) : everyPropertyOfListedHoldersOfExports));
+    ClimbingSet holdersOfExports = m_context.restrict(receivers, m_universe.holdersOfLibraryExports());
+    if (key.keyClass == HeapKeyClass::Unknown)
+        holdersOfExports = m_context.unite(holdersOfExports, holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers));
+    if (holdsAnything(holdersOfExports) && mayCallWhateverHasEscaped(m_context))
+        letSeenCodeCallEscapedFunctionsAmong(m_context, key.keyClass == HeapKeyClass::Name ? m_context.lookup(holdersOfExports, nameOfLookupForValue(key), useOfLookupUnder(key)) : m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports));
 }
 
 ValueFlowNodeID HeapRule::exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object)

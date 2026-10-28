@@ -352,7 +352,7 @@ export class DependencyClosure {
   }
 
   dependenciesOfAnyHostObject(): RuntimeDependencies {
-    return this.#reachableFrom({ ...nothingHandedOut, undescribedValue: "" });
+    return this.#reachableFrom({ ...nothingHandedOut, objects: this.#hostClassObjectsInEveryExecutable });
   }
 
   undescribedResults(): UndescribedResult[] {
@@ -447,13 +447,10 @@ export class DependencyClosure {
     const visited = new Set<ModelBuiltin>();
     const reached: ModelBuiltin[] = [];
     const workList: ModelBuiltin[] = [];
-    let hasHostClasses = false;
     const featuresAdded = new Set<FeatureName>();
     const addHandedOut = ({ objects, undescribedValue, features }: HandedOutValues): void => {
       workList.push(...objects);
       if (undescribedValue === null) return;
-      if (!hasHostClasses) workList.push(...this.#hostClassObjectsInEveryExecutable);
-      hasHostClasses = true;
       for (const feature of features) {
         if (featuresAdded.has(feature)) continue;
         featuresAdded.add(feature);

@@ -42,6 +42,10 @@ struct ValueFlowMembersUnderKey {
     ValueSetID instancesThatKeepProperty;
     ValueSetID prototypeObjectsOfEntries;
     ValueSetID membersOfEngineAndLibrary;
+    // Under a name of methods that are called with what the host loads at start-up: the entries that are listed with a feature of a class of the host that may have such a method.
+    ValueSetID entriesWithFeaturesOfHostClasses { ValueSets::nothing };
+    // And the entries that are marked as classes whose instances have such a method.
+    ValueSetID hostClassesWithSuchMethod { ValueSets::nothing };
 };
 
 struct ValueFlowPropertyKeptForLife {
@@ -180,6 +184,8 @@ public:
     ValueSetID openTo(Actor actor) const { return m_openTo[indexOf(actor)]; }
 
     const ValueFlowMembersUnderKey& under(PropertyKeyID key) const LIFETIME_BOUND { return m_membersUnderKey[holdersUnder(key).record]; }
+    // Filled when the record of such a name is made.
+    const BitVector& featuresGuardingHostClassesWithMethodsCallingStartupLoads() const LIFETIME_BOUND { return m_featuresGuardingHostClassesWithMethodsCallingStartupLoads; }
     ValueSetID objectsDeclaringField(PropertyKeyID key) const { return m_objectsDeclaringField[key.index()]; }
     ValueSetID holdersThatAnswerUnder(PropertyKeyID key) const { return holdersUnder(key).thatAnswer; }
     ValueSetID holdersThatMayLoseMemberUnder(PropertyKeyID key) const { return holdersUnder(key).thatMayLoseMember; }
@@ -255,6 +261,8 @@ private:
     void describeKey(PropertyKeyID) const;
     uint32_t findOrAddRecordOf(PropertyKeyID) const;
     ValueFlowMembersUnderKey describeMembersUnder(PropertyKeyID, BuiltinName, bool isPrivateName) const;
+    ValueSetID findEntriesWithFeaturesOfHostClasses(ValueSetID prototypeObjects, BuiltinName) const;
+    mutable BitVector m_featuresGuardingHostClassesWithMethodsCallingStartupLoads;
     ValueSetID findLockedHolders(const MembersUnderKey&, BuiltinName, bool isPrivateName) const;
     const ValueFlowMembersOfHolder& describeMembersOf(BuiltinID holder) const LIFETIME_BOUND;
     std::span<const ValueFlowObjectID> objectsOf(BuiltinID canonicalHolder) const LIFETIME_BOUND;

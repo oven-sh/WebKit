@@ -327,6 +327,19 @@ static bool mayHold(ValueFlowRuleContext& context, BuiltinID builtin, const Buil
     return !condition->hasProperty || holdsSomething(ValueFlowCellName { ValueFlowNameKind::Slot, builtins.slotCount() + condition->hasProperty.index() });
 }
 
+bool usesFeatureAmong(ValueFlowRuleContext& context, ClimbingSet entries, const BitVector& features)
+{
+    const BuiltinTable& builtins = context.program().builtins();
+    bool uses = false;
+    context.forEachMember(context.valueWithin(entries, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), [&](ValueFlowObjectID entry) {
+        BuiltinID builtin = builtins.canonicalID(context.universe().builtinOf(entry));
+        uses = uses || std::ranges::any_of(builtins.featureUsesOf(builtin), [&](const BuiltinFeatureUse& line) {
+            return features.get(static_cast<size_t>(line.feature)) && mayHold(context, builtin, line.condition);
+        });
+    });
+    return uses;
+}
+
 static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModuleLoad& load)
 {
     const Program& program = context.program();
@@ -929,6 +942,12 @@ static void letModulesImportMembersOf(ValueFlowRuleContext& context, BuiltinID h
         bool isCallable = kind == BuiltinKind::Constructor || kind == BuiltinKind::Function || kind == BuiltinKind::Method;
         context.useAsAnswerOfUnknownObject(member, isCallable ? OptionSet<BuiltinUse> { BuiltinUse::Read, BuiltinUse::Called } : OptionSet<BuiltinUse> { BuiltinUse::Read });
     }
+}
+
+bool isCalledWithoutStartupLoads(const BuiltinTable& builtins, BuiltinID holder, BuiltinName name)
+{
+    BuiltinID method = holder ? builtins.findOwnMember(builtins.canonicalID(holder), name) : BuiltinID();
+    return method && builtins.has(BuiltinMark::IsCalledWithoutStartupLoads, builtins.canonicalID(method));
 }
 
 bool isFoundByNameAlone(BuiltinID member)

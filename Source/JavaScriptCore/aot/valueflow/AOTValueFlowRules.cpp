@@ -31,6 +31,8 @@ ValueSetID unknownValue(ValueFlowRuleContext& context, ValueFlowUnknownSource so
     if (source == ValueFlowUnknownSource::UndescribedNativeResult) {
         if (BuiltinID prototype = context.program().builtins().at(BuiltinClasses::Buffer).prototype)
             context.add(context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins), context.maker().of(context.universe().objectOf(prototype)));
+        // It may be an instance of any class of the host: nobody knows the prototype object above it.
+        context.add(context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances), context.universe().unknownObjectAlone());
     }
     return unknownValueFrom(context, source);
 }

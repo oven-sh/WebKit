@@ -3857,7 +3857,22 @@ bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName na
     const ValueFlowHeapTables& heap = universe.builtinTables().heap();
     const ValueFlowMembersUnderKey& members = heap.under(context.program().keyOf(name));
     ClimbingSet prototypes(context.maker().unite(members.prototypeObjects, context.maker().intersect(members.holdersOfUndeclaredProperties, heap.prototypeObjectsOfHost())));
-    if (context.holdsAnyOf(prototypes, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)) || context.holdsAnyOf(prototypes, ValueFlowProgramNodes::escaped()))
+    // An instance that a row names is made where an entry of its class is in use.
+    ValueFlowNodeID usedBuiltins = context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins);
+    if (context.holdsAnyOf(ClimbingSet(members.hostClassesWithSuchMethod), usedBuiltins))
+        return true;
+    // What native code answers without a description may be one too. Native code that may make one is listed with the feature that guards the class, whether or not a row says what it answers.
+    if (context.holdsAnyOf(ClimbingSet(universe.unknownObjectAlone()), context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances))) {
+        ClimbingSet entriesWithFeatures(members.entriesWithFeaturesOfHostClasses);
+        const BitVector& features = heap.featuresGuardingHostClassesWithMethodsCallingStartupLoads();
+        if (features.isEmpty() ? context.holdsAnyOf(entriesWithFeatures, usedBuiltins) : usesFeatureAmong(context, entriesWithFeatures, features))
+            return true;
+    }
+    bool isInUse = false;
+    context.forEachMember(context.unite(context.valueWithin(prototypes, context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins)), context.valueWithin(prototypes, ValueFlowProgramNodes::escaped())), [&](ValueFlowObjectID prototype) {
+        isInUse |= !isCalledWithoutStartupLoads(context.program().builtins(), universe.builtinOf(prototype), name);
+    });
+    if (isInUse)
         return true;
     // An instance of the host that has escaped is called like the object nobody knows. A method of its class that the table does not list answers whatever native code makes.
     ValueSetID withMethodsNotListed = context.maker().intersect(heap.holdersOfUndeclaredPropertiesUnderAnyKey(), heap.prototypeObjectsOfHost());
@@ -3955,8 +3970,13 @@ static void callMembersOfReceivers(ValueFlowRuleContext& context, ValueFlowNodeI
                 call(name, Passes::ValuesNobodyDescribes, result);
             if (!isCalledWithFunctionsOfStartupModules(context, name) || (record && passesOnlyPrimitives(context.program().builtins(), *record)))
                 continue;
-            callsSomething |= context.meet(members, context.maker().intersect(universe.callables(), ValueSets::complement(universe.placeholdersAlone())))
+            ClimbingSet known = context.restrict(members, context.maker().intersect(universe.callables(), ValueSets::complement(universe.placeholdersAlone())));
+            callsSomething |= context.meet(known, ValueSets::complement(universe.builtinFunctions()))
                 || (context.meet(members, universe.placeholdersAlone()) && mayBeFoundOnObjectNobodyKnows(context, name));
+            context.forEachMember(context.restrict(known, universe.builtinFunctions()), [&](ValueFlowObjectID function) {
+                const BuiltinTable& builtins = context.program().builtins();
+                callsSomething |= !builtins.has(BuiltinMark::IsCalledWithoutStartupLoads, builtins.canonicalID(universe.builtinOf(function)));
+            });
         }
         if (callsSomething)
             letHostChooseOperands(context);

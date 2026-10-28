@@ -402,7 +402,7 @@ private:
     };
 
     // One way leads through a turn, and one branch on it leaves the loop. A branch on a constant is a jump, so the blocks of the loop that are not on that way are never entered.
-    // Where the two ways of a branch meet again, if neither does anything but hand values to the Phis there.
+    // Where the two ways of a branch meet again, if neither does anything but hand values to the Phis there and hold alive what does not change from turn to turn.
     static BasicBlock* readChoices(Plan& plan, BasicBlock* block)
     {
         BasicBlock* ways[2] = { block->successorBlock(0), block->successorBlock(1) };
@@ -426,6 +426,8 @@ private:
                 return nullptr;
             for (Value* value : *way) {
                 if (value == way->last() || value->isConstant())
+                    continue;
+                if (runsNoCode(value) && canCloneForLoop(value) && std::ranges::all_of(value->children(), [&](Value* child) { return plan.isInvariant(child); }))
                     continue;
                 auto* upsilon = value->as<UpsilonValue>();
                 Choice* choice = upsilon ? const_cast<Choice*>(plan.choiceFor(upsilon->phi())) : nullptr;
@@ -1445,6 +1447,8 @@ private:
                 planOfBlock.fill(0, m_proc.size());
             for (BasicBlock* block : plan.blocks)
                 planOfBlock[block->index()] = index + 1;
+            for (BasicBlock* block : plan.waysOfChoices)
+                planOfBlock[block->index()] = index + 1;
             for (BasicBlock* block : plan.blocksNeverEntered)
                 planOfBlock[block->index()] = index + 1;
         }
@@ -1693,6 +1697,12 @@ private:
                     if (plan.hasWideLanes())
                         copy->vector = appendVector(turn, VectorExtendLow, origin, lane, copy->vector, nullptr, 0, memory->opcode() == Load8Z || memory->opcode() == Load16Z ? SIMDSignMode::Unsigned : SIMDSignMode::Signed);
                 }
+            }
+        }
+        for (BasicBlock* way : plan.waysOfChoices) {
+            for (Value* value : *way) {
+                if (runsNoCode(value))
+                    appendCopy(turn, value);
             }
         }
         for (Sum& sum : plan.sums()) {

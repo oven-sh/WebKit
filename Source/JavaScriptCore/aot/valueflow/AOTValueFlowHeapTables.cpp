@@ -268,8 +268,59 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
                 instancesThatKeepProperty = instances;
         }
     }
+    ValueSetID entriesWithFeaturesOfHostClasses = ValueSets::nothing;
+    ValueSetID hostClassesWithSuchMethod = ValueSets::nothing;
+    if (!isPrivateName && std::ranges::contains(builtins.namesOfHostMethodsCallingStartupLoads(), name)) {
+        entriesWithFeaturesOfHostClasses = findEntriesWithFeaturesOfHostClasses(m_maker.intersect(m_maker.unite(holders, undeclared), m_prototypeObjectsOfHost), name);
+        Objects classes;
+        for (auto [mark, entry] : builtins.marked(BuiltinMark::InstancesHaveMethodCalledWithStartupLoads))
+            classes.append(objectOf(entry));
+        hostClassesWithSuchMethod = m_maker.of(classes.span());
+    }
     return { holders, m_maker.intersect(holders, m_prototypeObjects), undeclared, m_maker.unite(m_lockedObjects, findLockedHolders(membersUnderKey, name, isPrivateName)), m_maker.intersect(holders, m_maker.of(holdersOfEvaluators.span())),
-        instancesThatKeepProperty, m_maker.intersect(holders, m_prototypeObjectsOfEntries), m_maker.of(membersOfEngineAndLibrary.span()) };
+        instancesThatKeepProperty, m_maker.intersect(holders, m_prototypeObjectsOfEntries), m_maker.of(membersOfEngineAndLibrary.span()), entriesWithFeaturesOfHostClasses, hostClassesWithSuchMethod };
+}
+
+// Whatever makes an instance of a class is listed with the feature that guards the class. A class that no feature guards is there in every executable, and so is whatever makes its instances.
+ValueSetID ValueFlowHeapTables::findEntriesWithFeaturesOfHostClasses(ValueSetID prototypeObjects, BuiltinName name) const
+{
+    const BuiltinTable& builtins = m_program.builtins();
+    BitVector features;
+    for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+        const BuiltinClass& builtinClass = builtins.at(BuiltinClassID(index));
+        if (!builtinClass.prototype || !m_maker.sets().contains(prototypeObjects, objectOf(builtinClass.prototype)) || isCalledWithoutStartupLoads(builtins, builtinClass.prototype, name))
+            continue;
+        bool hasFeature = false;
+        for (BuiltinID entry : { builtinClass.prototype, builtinClass.constructor }) {
+            if (!entry)
+                continue;
+            for (const BuiltinFeatureUse& line : builtins.featureUsesOf(builtins.canonicalID(entry))) {
+                if (!line.isGuard)
+                    continue;
+                features.set(static_cast<size_t>(line.feature));
+                hasFeature = true;
+            }
+        }
+        if (!hasFeature)
+            return m_builtinObjects;
+    }
+    for (auto [mark, entry] : builtins.marked(BuiltinMark::InstancesHaveMethodCalledWithStartupLoads)) {
+        std::span<const BuiltinFeatureUse> lines = builtins.featureUsesOf(builtins.canonicalID(entry));
+        auto guard = std::ranges::find_if(lines, &BuiltinFeatureUse::isGuard);
+        if (guard == lines.end())
+            return m_builtinObjects;
+        features.set(static_cast<size_t>(guard->feature));
+    }
+    m_featuresGuardingHostClassesWithMethodsCallingStartupLoads.merge(features);
+    Objects entries;
+    for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+        bool needsOne = std::ranges::any_of(builtins.featureUsesOf(builtins.canonicalID(BuiltinID(index))), [&](const BuiltinFeatureUse& line) {
+            return features.get(static_cast<size_t>(line.feature));
+        });
+        if (needsOne)
+            entries.append(objectOf(BuiltinID(index)));
+    }
+    return m_maker.of(entries.span());
 }
 
 ValueSetID ValueFlowHeapTables::findLockedHolders(const MembersUnderKey& membersUnderKey, BuiltinName name, bool isPrivateName) const

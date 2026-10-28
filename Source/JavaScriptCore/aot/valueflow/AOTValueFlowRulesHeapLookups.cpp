@@ -1520,7 +1520,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         bool findsMethodOfHost = chain.holdsUnknownObject && mayBeFoundOnObjectNobodyKnows(m_context, name);
         m_context.forEachMember(m_context.restrict(chain.objects, m_context.maker().unite(m_tables.under(key.name).holders, holdersOfUndeclaredPropertiesUnder(key))), [&](ValueFlowObjectID holder) {
             BuiltinID builtin = m_universe.builtinOf(holder);
-            findsMethodOfHost |= builtin && m_builtins.at(builtin).origin == BuiltinOrigin::Host;
+            findsMethodOfHost |= builtin && m_builtins.at(builtin).origin == BuiltinOrigin::Host && !isCalledWithoutStartupLoads(m_builtins, builtin, name);
         });
         if (findsMethodOfHost)
             letHostChooseOperands(m_context);

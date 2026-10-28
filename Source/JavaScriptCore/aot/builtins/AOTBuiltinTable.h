@@ -742,6 +742,8 @@ enum class BuiltinMark : uint8_t {
     IsNotEnumerable,
     IsReplacedBySetter,
     RunsWaitingJobs,
+    IsCalledWithoutStartupLoads,
+    InstancesHaveMethodCalledWithStartupLoads,
 };
 
 struct BuiltinMarkedEntry {

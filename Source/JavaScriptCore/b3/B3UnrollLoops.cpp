@@ -876,14 +876,26 @@ private:
         };
         counter = inBlock(counter);
         bound = inBlock(bound);
-        // Where the lower end is not below zero, the upper end is no nearer to zero than to it.
-        Signedness signedness = isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed;
-        Value* distance = rises ? bound : counter;
-        if (intervalFor(m_proc, rises ? counter : bound, signedness).min < 0)
-            distance = block->appendNew<Value>(m_proc, Sub, origin, distance, rises ? counter : bound);
-        Value* greatest = block->appendIntConstant(m_proc, origin, distance->type(), Limits::maxTurnsWithoutPoll * (rises ? plan.step : -plan.step));
-        block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, BelowEqual, origin, distance, greatest));
-        block->setSuccessors(FrequentedBlock(plan.header), FrequentedBlock(headerOfCopy, FrequencyClass::Rare));
+        Value* upperEnd = rises ? bound : counter;
+        Value* lowerEnd = rises ? counter : bound;
+        int64_t greatest = Limits::maxTurnsWithoutPoll * (rises ? plan.step : -plan.step);
+        auto appendTest = [&](Value* distance, BasicBlock* otherwise) {
+            block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, BelowEqual, origin, distance, block->appendIntConstant(m_proc, origin, distance->type(), greatest)));
+            block->setSuccessors(FrequentedBlock(plan.header), FrequentedBlock(otherwise, FrequencyClass::Rare));
+        };
+        // Where the lower end is not below zero, the upper end is no nearer to zero than to it: most loops are told by their upper end alone, without a subtraction.
+        // A few turns far from zero are still a few turns: where the lower end may lie that far out, whoever ends there is asked how far apart the two ends lie.
+        IntegerInterval lowest = intervalFor(m_proc, lowerEnd, isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed);
+        if (lowest.min >= 0 && lowest.min <= greatest) {
+            if (lowest.max <= greatest) {
+                appendTest(upperEnd, headerOfCopy);
+                return;
+            }
+            BasicBlock* endsFarFromZero = m_proc.addBlock();
+            appendTest(upperEnd, endsFarFromZero);
+            block = endsFarFromZero;
+        }
+        appendTest(block->appendNew<Value>(m_proc, Sub, origin, upperEnd, lowerEnd), headerOfCopy);
     }
 
     void leavePollToCopy(RegionCloner& cloner, const Plan& plan)
@@ -1381,6 +1393,12 @@ private:
         return bound.min >= room && bound.max <= greatest + room;
     }
 
+    bool lowerEndMayLieFartherThanStretch(const Plan& plan, const Bounds& bounds)
+    {
+        Signedness signedness = isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed;
+        return intervalFor(m_proc, plan.step > 0 ? plan.start : bounds.bound, signedness).max > lengthOfStretch(plan, bounds.bound->type());
+    }
+
     void appendFarBoundOfStretch(const Plan& plan, const Stretch& stretch, const Bounds& bounds, BasicBlock* block, Variable* beginning, BoundLiesBeyond farBoundLiesBeyond, BasicBlock* successor)
     {
         Origin origin = plan.test->last()->origin();
@@ -1425,6 +1443,16 @@ private:
             BasicBlock* liesFarther = m_proc.addBlock();
             first->setSuccessors(FrequentedBlock(liesFarther, FrequencyClass::Rare), FrequentedBlock(begins));
             first = liesFarther;
+            // A few turns far from zero are one stretch as well, which ends at the far bound. The bound lies beyond the far bound by the room, and is at hand.
+            if (lowerEndMayLieFartherThanStretch(plan, bounds)) {
+                Value* counter = rises ? liesFarther->appendNew<VariableValue>(m_proc, Get, origin, variableOfCounter(plan)) : upperEnd;
+                Value* distance = liesFarther->appendNew<Value>(m_proc, Sub, origin, rises ? bounds.bound : counter, rises ? counter : bounds.bound);
+                int64_t room = roomForTurnsBehindFirst(plan);
+                Value* farthestWithRoom = liesFarther->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type) + (rises ? room : -room));
+                liesFarther->appendNew<Value>(m_proc, Branch, origin, liesFarther->appendNew<Value>(m_proc, Above, origin, distance, farthestWithRoom));
+                first = m_proc.addBlock();
+                liesFarther->setSuccessors(FrequentedBlock(first, FrequencyClass::Rare), FrequentedBlock(begins));
+            }
         }
         // A test at the bottom is reached only where there is room for the turns that are written out. A test at the top asks that by itself.
         appendFarBoundOfStretch(plan, stretch, bounds, first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, begins);

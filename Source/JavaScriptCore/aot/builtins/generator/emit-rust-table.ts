@@ -463,6 +463,14 @@ function emitRemovableCalls(model: TableModel): string {
   ].join("");
 }
 
+function emitFunctionsForAnyHostObject(model: TableModel): string {
+  const { calls, implementedBy } = new DependencyClosure(model).dependenciesOfAnyHostObject();
+  return emitSlice(
+    "pub static FUNCTIONS_FOR_ANY_HOST_OBJECT: &[RuntimeFunction]",
+    formatFunctions(calls.union(implementedBy)),
+  );
+}
+
 export function emitRustTable(model: TableModel): string {
   return [
     fileHeader,
@@ -479,6 +487,7 @@ export function emitRustTable(model: TableModel): string {
         model.functions.filter(({ implements: implemented }) => implemented.some(({ kind }) => kind === "Accessor")),
       ),
     ),
+    emitFunctionsForAnyHostObject(model),
     emitSlice("static HOST_READS: &[HostRead]", model.hostReads.map(formatHostRead)),
     emitRemovableCalls(model),
   ].join("");

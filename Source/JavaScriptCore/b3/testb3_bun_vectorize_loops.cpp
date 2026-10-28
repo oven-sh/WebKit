@@ -1285,37 +1285,41 @@ static void testVectorizeLoopsFindsLeastAndGreatestElement()
     }
 }
 
-// to[index] = from[index] > limit ? limit : from[index], written with a branch.
+// to[index] = from[index] > limit ? limit : from[index], written with a branch. What a way hands on is read in the turn, wherever the counter is tested.
 static void testVectorizeLoopsTakesBranchWhoseWaysOnlyChoose()
 {
     for (CPUFeatureSet features : featureSets()) {
-        for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
-            const ElementKind& kind = elementKinds[kindIndex];
-            for (int32_t limit : { 0, 100, -100 }) {
-                LoopOverElements loop { vectorPolicy(features) };
-                Graph& graph = loop.graph;
-                BasicBlock* body = loop.loop.body;
-                Variable* chosen = loop.proc.addVariable(Int32);
-                Value* element = loop.element(loop.from(), kind, loop.index());
-                BasicBlock* over = loop.proc.addBlock();
-                BasicBlock* within = loop.proc.addBlock();
-                BasicBlock* last = loop.proc.addBlock();
-                graph.branch(body, graph.make(body, GreaterThan, element, graph.int32(body, limit)), over, within);
-                graph.set(over, chosen, graph.int32(over, limit));
-                graph.jump(over, last);
-                graph.set(within, chosen, element);
-                graph.jump(within, last);
-                Value* index = graph.get(last, loop.loop.index);
-                Value* distance = kind.bytes == 1 ? index : graph.make(last, Shl, index, graph.int32(last, WTF::fastLog2(kind.bytes)));
-                last->appendNew<MemoryValue>(loop.proc, kind.store, Origin(), graph.get(last, chosen), graph.make(last, Add, loop.to(), distance), 0, firstHeap);
-                loop.loop.endBody(last);
-                CHECK(vectorizeLoopsAndValidate(loop.proc));
-                auto code = compileForTarget(loop.proc);
-                for (int64_t bound = 0; bound <= 70; ++bound) {
-                    checkAgainstTurns(*code, bound, bound, 3 * kind.bytes, 1024 + 5 * kind.bytes, 0, [&](uint8_t* to, uint8_t* from, int64_t index) {
-                        int32_t value = static_cast<int32_t>(std::min<int64_t>(readElement(kind, from + index * kind.bytes), limit));
-                        memcpy(to + index * kind.bytes, &value, kind.bytes);
-                    });
+        for (TestPlace place : { TestPlace::Top, TestPlace::Bottom }) {
+            for (unsigned kindIndex = 0; kindIndex < 5; ++kindIndex) {
+                const ElementKind& kind = elementKinds[kindIndex];
+                for (int32_t limit : { 0, 100, -100 }) {
+                    LoopOverElements loop { vectorPolicy(features) };
+                    Graph& graph = loop.graph;
+                    BasicBlock* body = loop.loop.body;
+                    Variable* chosen = loop.proc.addVariable(Int32);
+                    Value* element = loop.element(loop.from(), kind, loop.index());
+                    BasicBlock* over = loop.proc.addBlock();
+                    BasicBlock* within = loop.proc.addBlock();
+                    BasicBlock* last = loop.proc.addBlock();
+                    graph.branch(body, graph.make(body, GreaterThan, element, graph.int32(body, limit)), over, within);
+                    graph.set(over, chosen, graph.int32(over, limit));
+                    graph.jump(over, last);
+                    graph.set(within, chosen, element);
+                    graph.jump(within, last);
+                    Value* index = graph.get(last, loop.loop.index);
+                    Value* distance = kind.bytes == 1 ? index : graph.make(last, Shl, index, graph.int32(last, WTF::fastLog2(kind.bytes)));
+                    last->appendNew<MemoryValue>(loop.proc, kind.store, Origin(), graph.get(last, chosen), graph.make(last, Add, loop.to(), distance), 0, firstHeap);
+                    loop.loop.endBody(last);
+                    if (place == TestPlace::Bottom)
+                        loop.loop.rotate();
+                    CHECK(vectorizeLoopsAndValidate(loop.proc));
+                    auto code = compileForTarget(loop.proc);
+                    for (int64_t bound = 0; bound <= 70; ++bound) {
+                        checkAgainstTurns(*code, bound, bound, 3 * kind.bytes, 1024 + 5 * kind.bytes, 0, [&](uint8_t* to, uint8_t* from, int64_t index) {
+                            int32_t value = static_cast<int32_t>(std::min<int64_t>(readElement(kind, from + index * kind.bytes), limit));
+                            memcpy(to + index * kind.bytes, &value, kind.bytes);
+                        });
+                    }
                 }
             }
         }

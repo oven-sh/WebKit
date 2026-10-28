@@ -52,6 +52,9 @@ void applyEventsOfStore(const ValueFlowStatement&, ValueFlowRuleContext&, Climbi
 void appendModuleObjectsAnsweredBy(ValueFlowRuleContext&, BuiltinID canonicalEntry, Vector<ValueFlowObjectID, 32>&);
 void handChildrenToWhatReplacesTheirList(ValueFlowRuleContext&, ValueSetID children);
 bool isFoundByNameAlone(BuiltinID canonicalMember);
+bool isCalledWithoutStartupLoads(const BuiltinTable&, BuiltinID holder, BuiltinName);
+// Whether an entry in use among these is listed with one of the features, under a condition that may hold.
+bool usesFeatureAmong(ValueFlowRuleContext&, ClimbingSet entries, const BitVector& features);
 
 std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable&, BuiltinID, RefusedCode);
 

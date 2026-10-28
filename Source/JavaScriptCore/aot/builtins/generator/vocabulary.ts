@@ -582,6 +582,10 @@ export const builtinMarks = [
   "IsReplacedBySetter",
   // It, or what it makes, runs the jobs that wait before a call returns: the reactions of promises, and the modules that an import() loads.
   "RunsWaitingJobs",
+  // It stands under a name of methods that are called with what the host loads at start-up. For this one the host loads nothing.
+  "IsCalledWithoutStartupLoads",
+  // Its instances have such a method, whether or not the table has their prototype object.
+  "InstancesHaveMethodCalledWithStartupLoads",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

@@ -1338,7 +1338,7 @@ private:
 
             parts.shrink(0);
             parts.append(tested == BuiltinClasses::Promise ? inEveryClassButNoBuiltinObject : inEveryClass);
-            if (hasCallableInstances)
+            if (hasCallableInstances && tested != BuiltinClasses::BoundFunction)
                 parts.append(universe.m_closures);
             for (uint32_t other = 0; other < builtins.classCount(); ++other) {
                 if (allocatedAs[other] != ValueSets::nothing && mayBeInstanceOf(BuiltinClassID(other), tested))
