@@ -69,10 +69,7 @@ static const BuiltinsByName& builtinsByFunctionName()
             const Builtin& builtin = table.at(id);
             if (!builtin.overloadCount || !builtin.name)
                 continue;
-            String text = String::fromUTF8(table.textOf(builtin.name));
-            if (table.isSymbolName(builtin.name))
-                text = makeString("[Symbol."_s, text, ']');
-            index->add(text, Vector<BuiltinID, 1>()).iterator->value.append(id);
+            index->add(table.functionNameOf(builtin.name), Vector<BuiltinID, 1>()).iterator->value.append(id);
         }
     });
     return index.get();

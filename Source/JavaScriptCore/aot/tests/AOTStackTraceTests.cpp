@@ -48,6 +48,12 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     PropSet v1, v14 key="reads"
     v16 = NewClosure function=f9
     PropSet v1, v16 key="recurseAndRead"
+    v18 = NewClosure function=f10
+    PropSet v1, v18 key="larger"
+    v20 = NewClosure function=f11
+    PropSet v1, v20 key="matches"
+    v22 = NewClosure function=f12
+    PropSet v1, v22 key="classed"
     Return
 }
 function f1 name="recurse" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -116,6 +122,21 @@ function f9 name="recurseAndRead" parameters=[{type=anything}, {type=anything}] 
     v7 = Sub v2, v6
     v8 = CallDirect v7, v1 function=f9 @110
     Return v8
+}
+function f10 name="larger" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=MathMax
+    v2 = Integer integer=2
+    v3 = Call v1, -, v0, v2 @120
+    Return v3
+}
+function f11 name="matches" parameters=[{type=anything}, {type=RegExp}] results=[{type=anything}] {
+    v2 = Builtin builtin=RegExpPrototypeSymbolMatch
+    v3 = Call v2, v1, v0 @130
+    Return v3
+}
+function f12 name="classed" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = ToString v0 calledBuiltin=PrivateGlobalsToClass @140
+    Return v1
 }
 )IR"_s;
 
@@ -189,7 +210,7 @@ static String runInShell(ASCIILiteral referencesWord, ASCIILiteral statements)
     Vector<String> arguments {
         makeString("--aotImagePath="_s, image.path()),
         String("-e"_s),
-        makeString(scriptStart, "runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
+        makeString(scriptStart, "const entry = "_s, output->entryModuleIDs[0], "; runCompiledEntryPoint(entry).then(async () => {"_s, statements, "}).catch(error => print(\"the script threw \" + error));"_s),
     };
     String shell = shellPath();
     ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
@@ -315,6 +336,119 @@ reads < thrower < asyncInner < async asyncOuter < async driver
 )"_s);
 }
 
+// A built-in whose step compiled code runs is listed under the name of its function object, as the built-in that the interpreter calls is.
+static void testBuiltInUnderSymbol()
+{
+    checkShellOutput(R"js(
+    let thrower = { toString() { throw new Error("thrown"); } };
+    print(driver(function run() { return registry.matches(thrower, /a/); }));
+    print(driver(function run() { return RegExp.prototype[Symbol.match].call(/a/, thrower); }));
+)js"_s, R"(Error: toString < [Symbol.match] < matches < run < driver
+Error: toString < [Symbol.match] < run < driver
+)"_s);
+}
+
+// A collection that finds a function of a stack dead writes the stack out at its end, where the thread has no atom table.
+// The frames that Error.captureStackTrace keeps are written out there too, and no hook of a host is asked for them.
+static void testCollectionWritesOutCalledBuiltIns()
+{
+    checkShellOutput(R"js(
+    let pattern = /a/;
+    let steps = [];
+    function thrown(call) {
+        let step = function step() { throw new Error("thrown"); };
+        steps.push(new WeakRef(step));
+        try {
+            call({ valueOf: step, toString: step }, pattern);
+        } catch (error) {
+            return error;
+        }
+    }
+    function captured(call) {
+        let error = new Error("captured");
+        let step = function step() { Error.captureStackTrace(error); return "1"; };
+        steps.push(new WeakRef(step));
+        call({ valueOf: step, toString: step }, pattern);
+        return error;
+    }
+    function driver(make, call) { return make(call); }
+    let kept = [];
+    for (let make of [thrown, captured]) {
+        for (let call of [registry.larger, registry.matches, registry.classed]) {
+            let expected = names(driver(make, call).stack);
+            print(expected);
+            for (let i = 0; i < 5; ++i)
+                kept.push({ error: driver(make, call), expected });
+        }
+    }
+    releaseWeakRefs();
+    fullGC();
+    let dead = 0;
+    for (let step of steps)
+        dead += step.deref() === undefined;
+    print("a step died: " + (dead > 0));
+    for (let { error, expected } of kept) {
+        if (names(error.stack) !== expected)
+            print("after the collection: " + names(error.stack));
+    }
+)js"_s, R"(step < max < larger < thrown < driver
+step < [Symbol.match] < matches < thrown < driver
+step < toClass < classed < thrown < driver
+step < max < larger < captured < driver
+step < [Symbol.match] < matches < captured < driver
+step < toClass < classed < captured < driver
+a step died: true
+)"_s);
+}
+
+// An error outlives the realm whose compiled code is on its stack. Only a shell that runs one image in several realms gets there.
+// The collection in which the realm dies writes the stack out, and names the frames of the built-ins in it without a look into a realm.
+static void testCollectionWritesOutStackOfDeadRealm()
+{
+    checkShellOutput(R"js(
+    // Every function of the stacks stays alive: the errors, and what throws them, are of this realm.
+    let step = function step() { throw new Error("thrown"); };
+    function driver(call) {
+        try {
+            call({ valueOf: step, toString: step }, /a/);
+        } catch (error) {
+            return error;
+        }
+    }
+    let kept = [];
+    async function keepErrorsOfAnotherRealm() {
+        let realm = createGlobalObject();
+        realm.registry = { };
+        await realm.runCompiledEntryPoint(entry);
+        for (let name of ["larger", "matches", "classed"])
+            kept.push({ error: driver(realm.registry[name]), expected: names(driver(realm.registry[name]).stack) });
+        return new WeakRef(realm);
+    }
+    let realms = [await keepErrorsOfAnotherRealm(), await keepErrorsOfAnotherRealm(), await keepErrorsOfAnotherRealm()];
+    // In a job of its own: the jobs that ran the code of the other realms have left the stack by then.
+    setTimeout(() => {
+        releaseWeakRefs();
+        fullGC();
+        let dead = 0;
+        for (let realm of realms)
+            dead += realm.deref() === undefined;
+        print("a realm died: " + (dead > 0));
+        for (let { error, expected } of kept)
+            print(names(error.stack) === expected ? expected : "after the collection: " + names(error.stack));
+    }, 0);
+)js"_s, R"(a realm died: true
+step < max < larger < driver
+step < [Symbol.match] < matches < driver
+step < toClass < classed < driver
+step < max < larger < driver
+step < [Symbol.match] < matches < driver
+step < toClass < classed < driver
+step < max < larger < driver
+step < [Symbol.match] < matches < driver
+step < toClass < classed < driver
+)"_s);
+}
+
 static void testSizeOfTrace()
 {
     AOT_TEST_CHECK(ReturnAddressTrace::numberOfFlagWords(0) == 0);
@@ -362,6 +496,9 @@ std::span<const NativeTest> stackTraceTests()
         { "stack-traces/capture-below-interpreted-function-under-compiled-frames"_s, testCaptureBelowInterpretedFunctionUnderCompiledFrames },
         { "stack-traces/trace-that-leaves-and-enters-compiled-code"_s, testTraceThatLeavesAndEntersCompiledCode },
         { "stack-traces/async-frames-below"_s, testAsyncFramesBelow },
+        { "stack-traces/built-in-under-symbol"_s, testBuiltInUnderSymbol },
+        { "stack-traces/collection-writes-out-called-built-ins"_s, testCollectionWritesOutCalledBuiltIns },
+        { "stack-traces/collection-writes-out-stack-of-dead-realm"_s, testCollectionWritesOutStackOfDeadRealm },
         { "stack-traces/size-of-trace"_s, testSizeOfTrace },
     };
     return tests;

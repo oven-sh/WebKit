@@ -9,10 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTAsyncResumption.h"
-#include "AOTBuiltinIDs.h"
 #include "AOTBuiltinTable.h"
 #include "AOTBuiltinTableBindings.h"
-#include "AOTBuiltinTableRealm.h"
 #include "AOTCallSiteTable.h"
 #include "AOTClosure.h"
 #include "AOTCompiledCallee.h"
@@ -88,19 +86,15 @@ static bool isWrittenInJavaScript(BuiltinID builtin)
     });
 }
 
-static String nameOfBuiltin(VM& vm, BuiltinID builtin)
+// A collection names the frames of an error at its end, where the thread has no atom table.
+// So the frame of a built-in has its name from the host's row or from the table: no key is made for it, and no realm is asked.
+// A host that names a function object otherwise than the table writes that name in its row.
+static String nameOfBuiltin(BuiltinID builtin)
 {
     if (auto function = BuiltinBindings::nativeFunctionOf(builtin); function && !function->name.isNull())
         return function->name;
     const BuiltinTable& table = BuiltinTable::singleton();
-    const Builtin& entry = table.at(builtin);
-    // The host names a function that it keeps under a private name as it likes.
-    if (entry.holder == Builtins::PrivateGlobals) {
-        auto found = findInRealm(vm.aotState().instances.first()->globalObject, BuiltinCellKey::object(builtin));
-        if (auto* function = found ? dynamicDowncast<JSFunction>(*found) : nullptr)
-            return function->nameWithoutGC(vm);
-    }
-    return table.identifierOf(vm, entry.name).string();
+    return table.functionNameOf(table.at(builtin).name);
 }
 
 FunctionDescription::FunctionDescription(FunctionID function)
@@ -123,21 +117,21 @@ bool FunctionDescription::isOfCalledBuiltin() const
 String FunctionDescription::name(VM& vm) const
 {
     if (isOfCalledBuiltin())
-        return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
+        return nameOfBuiltin(builtinOfFunctionInFrames(m_function));
     return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::AsWritten);
 }
 
 String FunctionDescription::nameInFrames(VM& vm, JSCell* callee, bool calleeLiesInFrame) const
 {
     if (isOfCalledBuiltin())
-        return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
+        return nameOfBuiltin(builtinOfFunctionInFrames(m_function));
     return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::InFrames, callee ? asObject(callee) : nullptr, calleeLiesInFrame);
 }
 
 String FunctionDescription::calculatedDisplayName(VM& vm, JSCell* callee, bool calleeLiesInFrame) const
 {
     if (isOfCalledBuiltin())
-        return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
+        return nameOfBuiltin(builtinOfFunctionInFrames(m_function));
     return Image::current()->isObfuscated() ? emptyString() : functionName(vm, *this, NameForm::CalculatedDisplayName, callee ? asObject(callee) : nullptr, calleeLiesInFrame);
 }
 

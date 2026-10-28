@@ -25,6 +25,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Threading.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/SymbolImpl.h>
 #include <wtf/text/SymbolRegistry.h>
@@ -260,6 +261,29 @@ static void testNamesOfKeys()
 
     AOT_TEST_CHECK(!table().nameOf(*vm, SymbolImpl::create(*String("iterator"_s).impl()).ptr()));
     AOT_TEST_CHECK(!table().nameOf(*vm, protect(vm->symbolRegistry())->symbolForKey("registered by the program"_s).ptr()));
+    // The lock holder has the last reference, and gives it up while it holds the lock.
+    vm = nullptr;
+}
+
+// functionNameOf() gives the name that the engine gives a function under the key of identifierOf(), and asks no atom table for it.
+static void testFunctionNamesFollowKeys()
+{
+    RefPtr<VM> vm = VM::create();
+    JSLockHolder locker(*vm);
+    Vector<String> functionNames;
+    // The end of a collection, which names the frames of an error, has no atom table either.
+    auto* atoms = Thread::currentSingleton().setCurrentAtomStringTable(nullptr);
+    forEachID<BuiltinName>(table().nameCount(), [&](BuiltinName name) {
+        functionNames.append(table().functionNameOf(name));
+    });
+    Thread::currentSingleton().setCurrentAtomStringTable(atoms);
+
+    forEachID<BuiltinName>(table().nameCount(), [&](BuiltinName name) {
+        Identifier key = table().identifierOf(*vm, name);
+        AOT_TEST_CHECK(functionNames[name.index()] == (key.isSymbol() ? makeString('[', key.string(), ']') : key.string()));
+    });
+    AOT_TEST_CHECK(table().functionNameOf(BuiltinNames::push) == "push"_s);
+    AOT_TEST_CHECK(table().functionNameOf(table().nameOf(WellKnownSymbol::Iterator)) == "[Symbol.iterator]"_s);
     // The lock holder has the last reference, and gives it up while it holds the lock.
     vm = nullptr;
 }
@@ -1244,6 +1268,7 @@ std::span<const NativeTest> builtinTableTests()
         { "builtin-table/names-are-three-runs"_s, testNamesAreThreeRuns },
         { "builtin-table/symbol-names"_s, testSymbolNames },
         { "builtin-table/names-of-keys"_s, testNamesOfKeys },
+        { "builtin-table/function-names-follow-keys"_s, testFunctionNamesFollowKeys },
         { "builtin-table/tokens-round-trip"_s, testTokensRoundTrip },
         { "builtin-table/unknown-tokens"_s, testUnknownTokens },
         { "builtin-table/overloads-are-one-run-in-mode-order"_s, testOverloadsAreOneRunInModeOrder },
