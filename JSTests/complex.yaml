@@ -112,6 +112,34 @@
           runComplexTest [], [], "TZ=Etc/Unknown", "--useDollarVM=1", "--useTemporal=1"
       end
 
+- path: complex/bun-stack-bounds-unreadable-stack-limit.js
+  cmd: |
+      # Bun: the fork's own test. A seccomp filter makes prlimit64() fail, which is what getrlimit() calls, so jsc cannot read its stack limit.
+      # The ruby that starts jsc installs the filter. The numbers of prlimit64, seccomp and prctl, and the AUDIT_ARCH of the architecture:
+      numbers = { "x86_64" => [302, 317, 157, 0xc000003e], "arm64" => [261, 277, 167, 0xc00000b7] }[$architecture]
+      installFilter = [
+          'require "fiddle"',
+          'prlimit64, seccomp, prctl, arch, errno = ARGV.shift(5).map { |argument| Integer(argument) }',
+          'instruction = ->(code, jt, jf, k) { [code, jt, jf, k].pack("SCCL") }',
+          # Another architecture: allow. prlimit64: fail with errno. Any other call: allow.
+          'filter = Fiddle::Pointer[instruction[0x20, 0, 0, 4] + instruction[0x15, 1, 0, arch] + instruction[6, 0, 0, 0x7fff0000] + instruction[0x20, 0, 0, 0] + instruction[0x15, 0, 1, prlimit64] + instruction[6, 0, 0, 0x50000 | errno] + instruction[6, 0, 0, 0x7fff0000]]',
+          'program = Fiddle::Pointer[[7, filter.to_i].pack("Sx6Q")]',
+          'syscall = Fiddle::Function.new(Fiddle.dlopen(nil)["syscall"], [Fiddle::TYPE_LONG] * 6, Fiddle::TYPE_LONG)',
+          # PR_SET_NO_NEW_PRIVS, then SECCOMP_SET_MODE_FILTER.
+          'exit 77 unless syscall.call(prctl, 38, 1, 0, 0, 0) == 0 && syscall.call(seccomp, 1, 0, program.to_i, 0, 0) == 0',
+          'exec(*ARGV)',
+      ].join("\n")
+      underFilter = ->(errno) { [RbConfig.ruby, "-e", installFilter] + numbers.map(&:to_s) + [errno.to_s] }
+      # Not under ASan, whose own start reads the limit and aborts. Not where the filter cannot be installed: no fiddle, or a sandbox that forbids it.
+      if ($hostOS == "linux" && numbers && !$asan && system(*underFilter[1], "true", :err => File::NULL))
+          underStackLimit = ["sh", "-c", "ulimit -S -s 8192; exec \"$0\" \"$@\""]
+          [["eperm", 1], ["enosys", 38]].each { |name, errno|
+              addRunCommand("complex-" + name, underStackLimit + underFilter[errno] + vmCommand + BASE_OPTIONS + $testSpecificRequiredOptions + [$benchmark.to_s], noisyOutputHandler, simpleErrorHandler)
+          }
+      else
+          skip
+      end
+
 - path: complex/for-in-clobberize.js
   cmd: runComplexTest [], [], nil, "--destroy-vm"
 
