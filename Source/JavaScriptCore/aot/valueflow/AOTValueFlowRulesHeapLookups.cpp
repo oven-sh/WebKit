@@ -575,6 +575,26 @@ bool HeapRule::runsGetterThroughPlaceholder(BuiltinID member, const HeapKey& key
     return m_builtins.at(member).kind == BuiltinKind::Accessor && mayBeFoundThroughPlaceholder(member) && !isHandedOutThroughPlaceholder(member, key);
 }
 
+// A read runs getters on the holders where a store runs setters. What they answer is among the values nobody knows.
+// That names no member of the host: native code is there whoever reads it. A getter that is a function of the library, or calls one, is in the image only once it is read.
+void HeapRule::runGettersFoundThroughUnknownObject(const HeapKey& key)
+{
+    forEachMemberUnder(holdersFoundThroughUnknownObject(key), key, [&](BuiltinID member, ModuleID) {
+        if (!runsGetterThroughPlaceholder(member, key))
+            return;
+        openProxiesThatMemberAnswers(m_context, member);
+        BuiltinID canonical = m_builtins.canonicalID(member);
+        bool callsLibrary = !m_builtins.calledFunctionsOf(canonical).empty() || !m_builtins.moduleLoadsOf(canonical).empty();
+        for (const BuiltinOverload& overload : m_builtins.overloadsOf(canonical)) {
+            if (overload.mode != BuiltinCallMode::Get)
+                continue;
+            if (callsLibrary || overload.libraryFunction())
+                use(member, BuiltinUse::Read);
+            noteInstancesIn(m_context, overload.result.type);
+        }
+    });
+}
+
 ClimbingSet HeapRule::objectsHeldFromCreation(ClimbingSet objects)
 {
     Members held;
@@ -1563,20 +1583,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
             handedOutAsUnknownObject.append(objectOfMember(member, module));
         });
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
-        // A read runs getters on the holders where a store runs setters. What they answer is among the values nobody knows.
-        // That names no member of the host: native code is there whoever reads it. A getter that is a function of the library is in the image only once it is read.
-        forEachMemberUnder(holdersFoundThroughUnknownObject(key), key, [&](BuiltinID member, ModuleID) {
-            if (!runsGetterThroughPlaceholder(member, key))
-                return;
-            openProxiesThatMemberAnswers(m_context, member);
-            for (const BuiltinOverload& overload : m_builtins.overloadsOf(m_builtins.canonicalID(member))) {
-                if (overload.mode != BuiltinCallMode::Get)
-                    continue;
-                if (overload.libraryFunction())
-                    use(member, BuiltinUse::Read);
-                noteInstancesIn(m_context, overload.result.type);
-            }
-        });
+        runGettersFoundThroughUnknownObject(key);
     } else if (chain.holdsUnknownObject) {
         connect(m_context.lookup(unknownObjectAlone(), value), result);
         if (!m_context.isLookupForCall())
@@ -1834,7 +1841,10 @@ void HeapRule::runLookup()
         noteUseOfMembers(keyOfFoundName(name), BuiltinUse::Written);
         return;
     case ValueFlowNameKind::EveryMemberRead:
-        noteUseOfMembers(unknownHeapKey, BuiltinUse::Read);
+        if (name == everyGetterRunByWalkName)
+            runGettersFoundThroughUnknownObject(unknownHeapKey);
+        else
+            noteUseOfMembers(unknownHeapKey, BuiltinUse::Read);
         return;
     case ValueFlowNameKind::Property:
     case ValueFlowNameKind::Elements:
@@ -1926,6 +1936,11 @@ ValueFlowNodeID enumerablePropertiesNobodyWrote(ValueFlowRuleContext& context, C
     if (reader == MetBy::Program)
         shown = context.unite(shown, context.restrict(objectsOfProgram, ValueSets::complement(universe.builtinTables().heap().objectsWithoutPropertiesOfNativeCode())));
     return context.lookup(shown, reader == MetBy::Program ? everyOwnPropertyNobodyWroteName : everyOwnPropertyNewToNativeCodeName);
+}
+
+void runGettersOnObjectsNobodyKnows(ValueFlowRuleContext& context)
+{
+    context.lookup(ClimbingSet(context.universe().unknownObjectAlone()), everyGetterRunByWalkName);
 }
 
 ClimbingSet objectsRightAbove(ValueFlowRuleContext& context, ClimbingSet knownObjects)

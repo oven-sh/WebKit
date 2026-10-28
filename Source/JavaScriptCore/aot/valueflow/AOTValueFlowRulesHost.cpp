@@ -654,6 +654,15 @@ bool isInSeenCode(ValueFlowRuleContext& context, FunctionID id)
         && context.holdsAnyOf(only(context, context.universe().namespaceOf(function.module)), context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode));
 }
 
+// No node lists what has escaped beside a value nobody knows. Where such a value is called, it may be a function that the program has taken off a module of the library.
+void letSeenCodeCallEscapedFunctionsAmong(ValueFlowRuleContext& context, ValueFlowNodeID exportsThatProgramHasTaken)
+{
+    if (!mayCallWhateverHasEscaped(context))
+        return;
+    ClimbingSet functions = context.valueWithin(ClimbingSet(context.universe().closures()), exportsThatProgramHasTaken);
+    context.add(context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), context.valueWithin(functions, ValueFlowProgramNodes::escaped()));
+}
+
 void noteRequest(ValueFlowRuleContext& context, FunctionID requester, ModuleID module)
 {
     if (isInSeenCode(context, requester))

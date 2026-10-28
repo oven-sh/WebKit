@@ -748,6 +748,7 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name });
         connect(context, ownPropertyOf(context, values, key), variable);
         listOwnPropertiesNobodyWrote(context, values, key, variable);
+        letSeenCodeCallEscapedFunctionsAmong(context, variable);
     }
 }
 

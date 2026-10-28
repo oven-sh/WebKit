@@ -62,13 +62,16 @@ struct StubCatalog::Node {
     bool mergeReference(const StubReference&, const Node& target);
 
     template<typename FindNode>
-    static void closeOverReferences(std::span<Node>, const FindNode&);
+    static void closeOverReferences(std::span<Node* const>, const FindNode&);
+
+    Answer createAnswer(StubKey) const;
 
     StubRecording recording;
     RegisterSet clobbered;
     RegisterSet clobberedInline;
     Typed::Effects effects;
     bool leavesStubs;
+    Vector<std::pair<StubKey, Answer>, 2> answers;
 };
 
 StubCatalog::Node::Node(StubRecording&& generated)
@@ -146,14 +149,14 @@ bool StubCatalog::Node::mergeReference(const StubReference& reference, const Nod
 }
 
 template<typename FindNode>
-void StubCatalog::Node::closeOverReferences(std::span<Node> nodes, const FindNode& findNode)
+void StubCatalog::Node::closeOverReferences(std::span<Node* const> nodes, const FindNode& findNode)
 {
     bool changed;
     do {
         changed = false;
-        for (Node& node : nodes) {
-            for (const StubReference& reference : node.recording.references)
-                changed |= node.mergeReference(reference, findNode(bodyOf(reference.target)));
+        for (Node* node : nodes) {
+            for (const StubReference& reference : node->recording.references)
+                changed |= node->mergeReference(reference, findNode(bodyOf(reference.target)));
         }
     } while (changed);
 }
@@ -162,30 +165,26 @@ StubCatalog::StubCatalog(const StubOptions& options, StubPolicy&& policy)
     : m_options(options)
     , m_policy(WTF::move(policy))
 {
-    generateNodes();
-    Node::closeOverReferences(m_nodes.mutableSpan(), [&](StubKey body) -> const Node& {
-        return nodeOf(body);
-    });
-    checkDeclarations();
-    computeAnswers();
+    listBodies();
 }
 
 StubCatalog::~StubCatalog() = default;
 
-void StubCatalog::generateNodes()
+void StubCatalog::listBodies()
 {
-    StubAssembler jit(m_options, *this);
-    Vector<StubKey> worklist;
     auto ensureNode = [&](StubKey body) {
-        if (!m_nodeOfBody.add(body.bits(), m_nodes.size()).isNewEntry)
-            return;
-        m_nodes.constructAndAppend(jit.generate(body));
-        for (const StubReference& reference : m_nodes.last().recording.references)
-            worklist.append(bodyOf(reference.target));
+        auto result = m_nodeOfBody.add(body.bits(), m_bodies.size());
+        if (result.isNewEntry) {
+            m_bodies.append(body);
+            m_keysWithoutImmediateOfNode.constructAndAppend();
+        }
+        return result.iterator->value;
     };
 
     forEachKeyWithoutImmediate([&](StubKey key) {
-        ensureNode(bodyOf(key));
+        unsigned node = ensureNode(bodyOf(key));
+        m_nodeOfKeyWithoutImmediate.add(key.bits(), node);
+        m_keysWithoutImmediateOfNode[node].append(key);
         if (descriptorOf(key.family()).binding != ImmediateBinding::OperationOffset)
             return;
         for (const OperationPrelude& prelude : operationPreludes()) {
@@ -201,11 +200,61 @@ void StubCatalog::generateNodes()
                 ensureNode(bodyOf(key.withImmediate(offsetInRuntimeTable(entryOf(operation)))));
         }
     });
-    while (!worklist.isEmpty())
-        ensureNode(worklist.takeLast());
+    m_nodes.grow(m_bodies.size());
+    m_isClosed = Vector<std::atomic<bool>>(m_bodies.size());
+    for (std::atomic<bool>& isClosed : m_isClosed)
+        isClosed.store(false, std::memory_order_relaxed);
 }
 
-void StubCatalog::checkDeclarations() const
+const StubCatalog::Node& StubCatalog::closedNodeAt(unsigned index) const
+{
+    if (!m_isClosed[index].load(std::memory_order_acquire)) [[unlikely]]
+        generateAndClose(index);
+    return *m_nodes[index];
+}
+
+// Every stub that a stub refers to is listed. What a closed node says is final: all that it reaches is closed with it.
+NEVER_INLINE void StubCatalog::generateAndClose(unsigned first) const
+{
+    Locker locker { m_lock };
+    if (m_isClosed[first].load(std::memory_order_relaxed))
+        return;
+    StubAssembler jit(m_options, *this);
+    Vector<unsigned, 32> added;
+    Vector<Node*, 32> addedNodes;
+    Vector<unsigned, 32> worklist { first };
+    while (!worklist.isEmpty()) {
+        unsigned index = worklist.takeLast();
+        if (m_nodes[index])
+            continue;
+        m_nodes[index] = makeUniqueWithoutFastMallocCheck<Node>(jit.generate(m_bodies[index]));
+        added.append(index);
+        addedNodes.append(m_nodes[index].get());
+        for (const StubReference& reference : m_nodes[index]->recording.references)
+            worklist.append(findIndex(m_nodeOfBody, bodyOf(reference.target)));
+    }
+    Node::closeOverReferences(addedNodes.span(), [&](StubKey body) -> const Node& {
+        return *m_nodes[findIndex(m_nodeOfBody, body)];
+    });
+    checkDeclarations(addedNodes.span());
+    for (unsigned index : added) {
+        Node& node = *m_nodes[index];
+        for (StubKey key : m_keysWithoutImmediateOfNode[index])
+            node.answers.append({ key, node.createAnswer(key) });
+        if (!node.recording.body.immediate())
+            continue;
+        for (StubKey entry : node.recording.entries) {
+            if (!entry.immediate())
+                continue;
+            RELEASE_ASSERT(bodyOf(entry) == node.recording.body);
+            node.answers.append({ entry, node.createAnswer(entry) });
+        }
+    }
+    for (unsigned index : added)
+        m_isClosed[index].store(true, std::memory_order_release);
+}
+
+void StubCatalog::checkDeclarations(std::span<Node* const> nodes)
 {
     bool allDeclarationsHold = true;
     auto reportFalseDeclaration = [&](StubKey body, const auto&... description) {
@@ -216,7 +265,8 @@ void StubCatalog::checkDeclarations() const
         allDeclarationsHold = false;
     };
 
-    for (const Node& node : m_nodes) {
+    for (const Node* added : nodes) {
+        const Node& node = *added;
         StubKey body = node.recording.body;
         const StubDescriptor& descriptor = descriptorOf(body.family());
 
@@ -255,39 +305,38 @@ void StubCatalog::checkDeclarations() const
         CRASH();
 }
 
-StubCatalog::Answer StubCatalog::createAnswer(StubKey key) const
+StubCatalog::Answer StubCatalog::Node::createAnswer(StubKey key) const
 {
-    const Node& node = nodeOf(bodyOf(key));
-    Answer answer { { signatureOf(key), node.clobbered, node.clobberedInline }, node.effects, node.leavesStubs };
+    Answer answer { { signatureOf(key), clobbered, clobberedInline }, effects, leavesStubs };
     addClobbersOfEveryCall(answer.summary.clobbered, answer.summary.signature);
     addClobbersOfEveryCall(answer.summary.clobberedInline, answer.summary.signature);
     return answer;
 }
 
-void StubCatalog::computeAnswers()
+// The answer for the key itself: every key without an immediate has one, and the entries of the bodies that are listed with theirs.
+const StubCatalog::Answer* StubCatalog::tryFindOwnAnswer(StubKey key) const
 {
-    auto addAnswer = [&](StubKey key) {
-        m_answerOfKey.add(key.bits(), m_answers.size());
-        m_answers.append(createAnswer(key));
-    };
-
-    forEachKeyWithoutImmediate(addAnswer);
-    for (const Node& node : m_nodes) {
-        if (!node.recording.body.immediate())
-            continue;
-        for (StubKey entry : node.recording.entries)
-            addAnswer(entry);
+    const IndexByKey& nodeOfKey = key.immediate() ? m_nodeOfBody : m_nodeOfKeyWithoutImmediate;
+    auto iterator = nodeOfKey.find((key.immediate() ? bodyOf(key) : key).bits());
+    if (iterator == nodeOfKey.end())
+        return nullptr;
+    for (auto& [answeredKey, answer] : closedNodeAt(iterator->value).answers) {
+        if (answeredKey == key)
+            return &answer;
     }
+    return nullptr;
 }
 
 const StubCatalog::Answer& StubCatalog::answerFor(StubKey key) const
 {
     RELEASE_ASSERT(exists(key));
-    if (auto iterator = m_answerOfKey.find(key.bits()); iterator != m_answerOfKey.end())
-        return m_answers[iterator->value];
+    if (const Answer* answer = tryFindOwnAnswer(key))
+        return *answer;
 
     RELEASE_ASSERT(key.immediate());
-    return m_answers[findIndex(m_answerOfKey, key.withoutImmediate())];
+    const Answer* answer = tryFindOwnAnswer(key.withoutImmediate());
+    RELEASE_ASSERT(answer);
+    return *answer;
 }
 
 const StubSummary& StubCatalog::summaryOf(StubKey key) const
@@ -301,8 +350,8 @@ Typed::Effects StubCatalog::effectsOf(StubKey key) const
     if (!isOperationCallHead(key))
         return answerFor(key).effects;
 
-    if (auto iterator = m_answerOfKey.find(key.bits()); iterator != m_answerOfKey.end())
-        return m_answers[iterator->value].effects;
+    if (const Answer* answer = tryFindOwnAnswer(key))
+        return answer->effects;
 
     Typed::Effects effects = descriptorOf(key.family()).ownEffects.toEffects();
     effects.merge(AOT::effectsOf(entryAtOffset(*key.immediate())));
@@ -348,12 +397,12 @@ const StubCatalog::Node* StubCatalog::tryFindNode(StubKey body) const
     auto iterator = m_nodeOfBody.find(body.bits());
     if (iterator == m_nodeOfBody.end())
         return nullptr;
-    return &m_nodes[iterator->value];
+    return &closedNodeAt(iterator->value);
 }
 
 const StubCatalog::Node& StubCatalog::nodeOf(StubKey body) const
 {
-    return m_nodes[findIndex(m_nodeOfBody, body)];
+    return closedNodeAt(findIndex(m_nodeOfBody, body));
 }
 
 const StubRecording& StubCatalog::recordingOf(StubKey body) const
@@ -374,14 +423,14 @@ StubRecording StubCatalog::dryRun(StubKey body) const
 
 RegisterSet StubCatalog::closedClobbersOf(const StubRecording& recording) const
 {
-    Vector<Node> nodes;
+    Vector<std::unique_ptr<Node>> nodes;
     IndexByKey nodeOfBody;
     Vector<StubKey> worklist;
     auto addNode = [&](StubRecording&& added) {
         nodeOfBody.add(added.body.bits(), nodes.size());
         for (const StubReference& reference : added.references)
             worklist.append(bodyOf(reference.target));
-        nodes.constructAndAppend(WTF::move(added));
+        nodes.append(makeUniqueWithoutFastMallocCheck<Node>(WTF::move(added)));
     };
 
     addNode(StubRecording(recording));
@@ -390,12 +439,15 @@ RegisterSet StubCatalog::closedClobbersOf(const StubRecording& recording) const
         if (!hasRecordingOf(body) && !nodeOfBody.contains(body.bits()))
             addNode(dryRun(body));
     }
-    Node::closeOverReferences(nodes.mutableSpan(), [&](StubKey body) -> const Node& {
+    Vector<Node*> ownNodes = nodes.map([](const std::unique_ptr<Node>& node) {
+        return node.get();
+    });
+    Node::closeOverReferences(ownNodes.span(), [&](StubKey body) -> const Node& {
         if (const Node* node = tryFindNode(body))
             return *node;
-        return nodes[findIndex(nodeOfBody, body)];
+        return *nodes[findIndex(nodeOfBody, body)];
     });
-    return nodes.first().clobbered;
+    return nodes.first()->clobbered;
 }
 
 } } // namespace JSC::AOT

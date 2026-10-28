@@ -96,6 +96,7 @@ public:
     void readOwnPropertiesNobodyWrote(ClimbingSet holders, const HeapKey&, ValueFlowNodeID result);
     void readPropertiesNobodyWroteOnSourcesOfCopies(const HeapChain&, const HeapKey&, ValueFlowNodeID result);
     void readOwnPropertiesNobodyWrote(ClimbingSet holders, std::optional<PropertyKeyID> key, ValueFlowNodeID result) { readOwnPropertiesNobodyWrote(holders, key ? keyNamed(*key) : unknownHeapKey, result); }
+    void runGettersFoundThroughUnknownObject(const HeapKey&);
     ClimbingSet prototypesOf(ClimbingSet start, ValueSetID atCreation = { });
     ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object);
     ValueFlowNodeID exportsOfHoldersIn(const ValueFlowOperand& object);
@@ -296,6 +297,7 @@ private:
     ClimbingSet holdersOfExportsListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) && isInProgramCode() ? m_context.valueWithin(ClimbingSet(m_universe.holdersOfLibraryExports()), object.node) : ClimbingSet(); }
     ClimbingSet instancesBelowLibraryClassesListedBesideUnknownObjectInProgram(const ValueFlowOperand& object, ClimbingSet receivers) { return object.node && mayBeUnknownObject(receivers) && isInProgramCode() ? m_context.valueWithin(ClimbingSet(m_universe.instancesBelowLibraryClasses()), object.node) : ClimbingSet(); }
     void readExportsOfListedHolders(const ValueFlowOperand& object, ClimbingSet receivers);
+    void letExportsThatHaveEscapedBeCalled(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
     ValueFlowNodeID valueOfDescriptorsInAnswer();
     bool m_keepsHoldersOfExportsItStartsFrom { false };
     bool m_findsOwnPropertiesAlone { false };

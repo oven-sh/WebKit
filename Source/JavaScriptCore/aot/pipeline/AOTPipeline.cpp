@@ -200,7 +200,7 @@ constexpr std::array rows {
     verifiedAfterNextPass(functionPass(CheckInt32Promises, checkInt32Promises, Required, AsRead, { }, values)),
     verifiedAfterNextPass(functionPass(CheckRegExpLiterals, checkRegExpLiterals, Required, AsRead, { }, everything)),
 
-    functionPass(AddGenericVersion, addGenericVersion, Required, Prepared, { Flow, Heat, EffectSummaries }, everything),
+    functionPass(AddGenericVersion, addGenericVersion, Required, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(ResolveBuiltins, resolveBuiltins, Required, Prepared, { Flow, EffectSummaries }, everything),
     functionPass(BindGlobalNames, bindGlobalNames, Optional, Prepared, { Flow }, values),
     derivingFunctions(readingOtherBodies(functionPass(CallThroughMethodTable, callThroughMethodTable, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything))),

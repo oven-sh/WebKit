@@ -310,19 +310,24 @@ static bool makeRoomWithBallast(size_t size, size_t attempt)
     BallastStateOfThread& state = ballastStateOfThisThread();
     if (!state.numberOfRequests)
         return false;
-    uint8_t timesLetGoOfPiece = s_timesLetGoOfBallastPiece.load(std::memory_order_acquire);
-    bool hasLookedSinceLastPiece = attempt && std::exchange(state.timesLetGoOfPieceBeforeLook, timesLetGoOfPiece) == timesLetGoOfPiece;
+    auto willLook = [&](uint8_t timesLetGoOfPiece) {
+        state.timesLetGoOfPieceBeforeLook = timesLetGoOfPiece;
+        return true;
+    };
     // Some of what the last piece left may still be free, and was refused to a request that did not say that it may not fail.
     if (!attempt && s_lacksPiecesOfBallast.load(std::memory_order_relaxed))
-        return true;
+        return willLook(s_timesLetGoOfBallastPiece.load(std::memory_order_acquire));
     // Nothing is let go of for a request that all the pieces together could not hold.
     if (size > (attempt + s_numberOfBallastPieces.load(std::memory_order_relaxed)) * sizeOfBallastPiece)
         return false;
-    // Another thread may have let go of the last piece behind this request's look.
-    if (!tryReleasePieceOfAddressSpaceBallast(RoomFor::Malloc))
-        return !hasLookedSinceLastPiece;
-    state.hasUsedBallast = true;
-    return true;
+    bool hasLetGoOfPiece = tryReleasePieceOfAddressSpaceBallast(RoomFor::Malloc);
+    // Read behind the lock: another thread may have let go of the last piece since this request looked, or while it waited.
+    uint8_t timesLetGoOfPiece = s_timesLetGoOfBallastPiece.load(std::memory_order_acquire);
+    if (hasLetGoOfPiece) {
+        state.hasUsedBallast = true;
+        return willLook(timesLetGoOfPiece);
+    }
+    return (!attempt || timesLetGoOfPiece != state.timesLetGoOfPieceBeforeLook) && willLook(timesLetGoOfPiece);
 }
 
 static bool mayTakeAddressSpace(size_t size)

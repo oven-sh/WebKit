@@ -284,6 +284,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         }
     }
     readEvaluators(object, key);
+    letExportsThatHaveEscapedBeCalled(object, receivers, key);
     handOutPrototypeObjectsAtCreation(receivers, key, m_statement.result);
     mayThrow();
 }
@@ -716,6 +717,15 @@ void HeapRule::readExportsOfListedHolders(const ValueFlowOperand& object, Climbi
     }
     if (holdsAnything(holdersOfExports))
         connect(m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports), m_statement.result);
+}
+
+void HeapRule::letExportsThatHaveEscapedBeCalled(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey& key)
+{
+    if (key.keyClass == HeapKeyClass::Index || !isInProgramCode() || !mayCallWhateverHasEscaped(m_context))
+        return;
+    ClimbingSet holdersOfExports = m_context.unite(m_context.restrict(receivers, m_universe.holdersOfLibraryExports()), holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers));
+    if (holdsAnything(holdersOfExports))
+        letSeenCodeCallEscapedFunctionsAmong(m_context, m_context.lookup(holdersOfExports, key.keyClass == HeapKeyClass::Name ? nameOfLookupForValue(key) : everyPropertyOfListedHoldersOfExports));
 }
 
 ValueFlowNodeID HeapRule::exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object)

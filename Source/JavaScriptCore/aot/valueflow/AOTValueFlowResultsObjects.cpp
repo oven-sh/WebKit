@@ -427,7 +427,7 @@ struct FunctionsWhoseClosuresMayBeRenamed {
     BitVector all;
     // Of those: no statement is seen to rename a closure of the function. A displayName that is written through an object nobody follows may.
     BitVector onlyWhereNobodySees;
-    // In neither: no statement is seen to name a closure of the function, and its closures go where nobody follows them.
+    // In neither: no statement is seen to rename a closure of the function, and its closures go where nobody follows them.
     BitVector outOfSight;
     // Of those: a statement of the program defines `name` on an object nobody follows.
     BitVector namedOutOfSight;
@@ -498,7 +498,7 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
             functions.quickSet(index);
         else if ((escapedClosuresMayBeRenamed && inputs.hasEscaped(closure)) || (lostClosuresMayBeRenamed && inputs.isLost(closure)))
             onlyWhereNobodySees.quickSet(index);
-        else if ((inputs.hasEscaped(closure) || inputs.isLost(closure)) && !isWrittenUnderAnyKeyThat(writtenOnThisFunction, [&](PropertyKeyID key) { return keys.contains(key); })) {
+        else if (inputs.hasEscaped(closure) || inputs.isLost(closure)) {
             outOfSight.quickSet(index);
             if ((escapedClosuresMayBeNamed && inputs.hasEscaped(closure)) || (lostClosuresMayBeNamed && inputs.isLost(closure)))
                 namedOutOfSight.quickSet(index);

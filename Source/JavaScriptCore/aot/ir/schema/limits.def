@@ -76,7 +76,6 @@ enum LimitID (stage: Stage, protects: Protects, degradesTo: DegradesTo, valueOnA
     MaxGuardEliminationRounds(Optimize, CompileTime, NotOptimized, 8, 8, 0, "guard elimination passes")
     MaxClonedBytesPerStretch(Optimize, CodeSize, GenericPath, 512, 512, 0, "code size of one fast path")
     MaxBlocksInGenericVersion(Optimize, CodeSize, GenericPath, 16384, 16384, 0, "blocks in a function's slow-path copy")
-    MaxGenericVersionJoinWork(Optimize, CompileTime, GenericPath, 67108864, 67108864, 0, "work to join a function's slow-path copy with its fast path")
     MaxBlocksCopiedBehindStretches(Optimize, CodeSize, GenericPath, 128, 128, 0, "blocks copied for slow paths per guard placement pass")
     MaxBytesOfSeparatedLoop(Optimize, CodeSize, GenericPath, 4096, 4096, 0, "code size of a loop that gets a separate slow-path copy")
     MaxSeparatedLoopsPerFunction(Optimize, CodeSize, GenericPath, 8, 8, 0, "loops per function that get a separate slow-path copy")

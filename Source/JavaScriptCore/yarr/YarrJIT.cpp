@@ -6336,6 +6336,7 @@ class YarrGenerator final : public YarrJITInfo {
                             m_usesSIMD = true;
                             op.m_reentry = simdResult->backtrackTarget;
                             dataLogLnIf(Options::verboseRegExpCompilation(), "Using SIMD nibble table lookahead count:(", mapCount, "),range:[", beginIndex, ", ", endIndex, ")");
+                            dataLogLnIf(Options::verboseRegExpCompilation() && !beginIndex, "Searches for the first character of a match");
 
                             // Handle failure path - out of characters
                             // After scalar loop exhausts, we fall through here

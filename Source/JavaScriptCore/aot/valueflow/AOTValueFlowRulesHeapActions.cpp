@@ -40,8 +40,10 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     add(m_context.written(known(targets), copiedFromName), m_context.unite(known(sources), findListedBun(source, sources)));
     if (holdsNamedBun(source))
         add(m_context.written(known(targets), copiedFromName), only(ValueFlowUniverse::markOfNamedBun()));
-    if (mayBeUnknownObject(sources))
+    if (mayBeUnknownObject(sources)) {
         add(m_context.nodes().ofHost(ValueFlowHostNode::CopiesOfObjectsNobodyKnows), known(targets));
+        runGettersOnObjectsNobodyKnows(m_context);
+    }
     notePrototypeObjectsThatWriteMayReach(target, targets, unknownHeapKey);
     noteClosuresThatMayBeRenamed(target, unknownHeapKey, targets);
     connect(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), elementsName), m_context.written(known(targets), elementsName));

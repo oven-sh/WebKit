@@ -645,6 +645,8 @@ private:
     {
         if (name == everyPropertyName || name == everyGetterName || name == everySetter)
             objects = withSourcesOfCopies(objects);
+        if (name == everyPropertyName && mayBeUnknownObject(objects))
+            runGettersOnObjectsNobodyKnows(m_context);
         bool answersByName = mayBeUntrackedObject(objects);
         functor(m_context.readWhatWasWritten(answersByName ? m_context.unite(known(objects), m_context.valueWithin(ClimbingSet(m_universe.knownObjects()), lost())) : known(objects), name));
         if (answersByName || m_context.holdsAnyOf(objects, escaped()))
@@ -1755,12 +1757,27 @@ private:
                 functor(heldPrototypeObjectsOfLibraryClasses(m_context));
             bool mayBeEndOfChain = m_context.meet(objects, m_universe.placeholdersAlone());
             bool mayBeNamespace = false;
+            // Of what the host makes for each module the table lists on the object itself what stands on an object of the host right above it. Whoever holds that one reads those members, with any receiver.
+            Vector<ValueFlowObjectID, 4> objectsOfModules;
             m_context.forEachMember(known(objects), [&](ValueFlowObjectID object) {
                 ValueFlowObjectKind kind = m_universe.kindOf(object);
-                if (kind == ValueFlowObjectKind::Builtin || kind == ValueFlowObjectKind::ModuleBuiltin)
+                if (kind == ValueFlowObjectKind::Builtin || kind == ValueFlowObjectKind::ModuleBuiltin) {
                     mayBeEndOfChain |= m_builtins.at(m_universe.builtinOf(object)).prototypeLink != BuiltinPrototypeLink::Builtin;
+                    if (m_builtins.at(m_universe.builtinOf(object)).scope == BuiltinScope::Module && m_builtins.at(m_universe.builtinOf(object)).origin == BuiltinOrigin::Host)
+                        objectsOfModules.append(object);
+                }
                 mayBeNamespace |= kind == ValueFlowObjectKind::Namespace;
             });
+            if (!objectsOfModules.isEmpty()) {
+                for (ValueFlowObjectID object : objectsOfModules) {
+                    for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(object))) {
+                        if (!m_builtins.letsInUnseenCode(m_builtins.canonicalID(member)))
+                            m_context.use(member, BuiltinUse::Read);
+                    }
+                }
+                m_context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(m_context.maker().of(objectsOfModules.span())));
+                constant = m_context.maker().unite(constant, unknownObjectSet(m_context, ValueFlowUnknownSource::ObjectWithoutLayout));
+            }
             if (mayBeNamespace)
                 constant = m_context.maker().unite(constant, unknownObjectSet(m_context, ValueFlowUnknownSource::ObjectWithoutLayout));
             if (mayBeEndOfChain)
@@ -4071,6 +4088,8 @@ void runBehavior(const ValueFlowStatement& statement, ValueFlowRuleContext& cont
         return;
     callLibraryMethodsOfUnknownReceiver(context, hub, behavior);
     applyBuiltinsThatActOnEscapedReceivers(context, hub, behavior);
+    if (behavior.protocols.contains(Protocol::OwnValues))
+        runGettersOnObjectsNobodyKnows(context);
     if (!behavior.protocols.contains(Protocol::CallsNamed))
         return;
     const BuiltinTable& builtins = context.program().builtins();

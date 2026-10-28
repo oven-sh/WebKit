@@ -77,6 +77,7 @@ inline void letUnknownCodeWrite(ValueFlowRuleContext& context) { raiseHostFlag(c
 inline bool mayUnknownCodeWrite(ValueFlowRuleContext& context) { return isHostFlagRaised(context, ValueFlowHostNode::UnknownCodeWrites) || isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns); }
 inline void letWhateverHasEscapedBeCalled(ValueFlowRuleContext& context) { raiseHostFlag(context, ValueFlowHostNode::ValueNobodyKnowsIsCalled); }
 inline bool mayCallWhateverHasEscaped(ValueFlowRuleContext& context) { return isHostFlagRaised(context, ValueFlowHostNode::ValueNobodyKnowsIsCalled) || isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns); }
+void letSeenCodeCallEscapedFunctionsAmong(ValueFlowRuleContext&, ValueFlowNodeID exportsThatProgramHasTaken);
 void letAnythingHappenTo(ValueFlowRuleContext&, ClimbingSet objects);
 void letModulesBeLoadedByName(ValueFlowRuleContext&, ValueFlowHostNode answers);
 bool mayAnswerToName(const Program&, ModuleID);

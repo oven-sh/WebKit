@@ -31,7 +31,6 @@ enum DeclineKind (| engine reason: Type) {
     ArrayChainNotFused(ArrayChainDeclineReason) StringBuilderNotCreated(StringBuilderDeclineReason) StringBuildersNotJoined(none)
     AllocationNotSunk(AllocationEscapeReason) TypedResultNotSelected(TypedResultDeclineReason) IterationNotExpandedByClass(none)
     LoopNotVersioned(LoopDeclineReason) LoopBoundNotClamped(LoopDeclineReason) StretchNotGuarded(none) ResultNodeInterpreted(InterpretedCause)
-    GenericVersionNotCreated(none)
 }
 enum TypedResultDeclineReason {
     None NoTarget TargetIsNotModeledByFlow TargetHasNoTypedPart PromiseIsNotAwaitedAtOnce HostHasNoBytesForm RowsHaveSeveralLayouts AnotherSourceIsOpen
