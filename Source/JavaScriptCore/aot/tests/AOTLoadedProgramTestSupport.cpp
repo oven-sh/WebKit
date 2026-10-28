@@ -106,7 +106,7 @@ static std::optional<ImageFile> fileToMapCodeFrom(const String& path)
     AOT_TEST_CHECK(descriptor >= 0);
     return ImageFile { descriptor, 0 };
 #elif OS(WINDOWS)
-    HANDLE file = CreateFileA(path.utf8().data(), GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file = CreateFileA(byteCast<char>(path.utf8().data()), GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     AOT_TEST_CHECK(file != INVALID_HANDLE_VALUE);
     return ImageFile { reinterpret_cast<intptr_t>(file), 0 };
 #else
