@@ -37,10 +37,10 @@ function f3 name="implementedInJavaScript" parameters=[{type=Array<number, prist
     Return
 }
 # CHECK-LABEL: function f3
-# CHECK-NEXT: v2 CallBuiltin: writes(ModuleVariables/1)
+# CHECK-NEXT: v2 CallBuiltin: writes(ModuleVariables/1) throwsForLackOfStack
 # CHECK-NEXT: v3 CallBuiltin: {{*}}callsUnknownCode
 # ONLY-LABEL: function f3
-# ONLY-NOT: v2 CallBuiltin:{{*}}throws
+# ONLY: v2 CallBuiltin: writes(ModuleVariables/1) throwsForLackOfStack
 function f4 name="otherOverloads" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=number}, {type=object}] results=[{type=undefined}] {
     v3 = CallBuiltin v0, v1, v1 overload=ArrayPrototypeSlice/0
     v4 = CallBuiltin v0, v1, v1 overload=ArrayPrototypeSlice/0 builtinCallForm=AnyReceiver

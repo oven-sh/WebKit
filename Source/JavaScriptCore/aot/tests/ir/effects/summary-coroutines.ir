@@ -53,7 +53,7 @@ function f6 name="storesWithoutAwait" results=[{type=undefined}] {
     Return
 }
 # CHECK-NOT: suspends
-# CHECK: f6 return: reads(AllocatorState) writes(AllocatorState) collects throw: none
+# CHECK: f6 return: reads(AllocatorState) writes(AllocatorState) throwsForLackOfStack collects throw: throwsForLackOfStack collects
 # CHECK-NOT: suspends
 # CHECK-LABEL: function f3
 # CHECK: v3 AwaitBySavingFrame: unknownCode suspends

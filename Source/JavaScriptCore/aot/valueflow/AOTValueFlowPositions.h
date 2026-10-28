@@ -138,6 +138,8 @@ private:
     Type typeOfMembers(ValueSetID);
     Type typeOf(ValueSetID);
     Type withinLimits(Type&&);
+    TypeID withTextsWithinLimit(TypeID);
+    bool keepTextsOfContentsWithinLimit(ClassParts&);
     ValueFlowObjectID findStranger(ValueSetID, const Type& family);
     std::optional<Type> familyBehindDictionaries(const Type& family);
     template<typename KindOfType> ValueFlowPositionResult decide(KindOfType family, ValueSetID, DeadZone, const ValueFlowNumbers*, ValueFlowNodeID = { });

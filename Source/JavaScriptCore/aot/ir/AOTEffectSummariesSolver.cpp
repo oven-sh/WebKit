@@ -886,7 +886,7 @@ CompactEffects EffectSummarizer::compactSolvedEffectsOf(uint32_t node)
 
 void EffectSummarizer::assemble(EffectSummaries& summaries, FunctionID id)
 {
-    constexpr uint8_t flagsOfBothEdges = CompactEffects::MayThrow | CompactEffects::MayThrowByRule | CompactEffects::MayCollect | CompactEffects::MayBeTerminated;
+    constexpr uint8_t flagsOfBothEdges = CompactEffects::MayThrow | CompactEffects::MayThrowBeyondLackOfStack | CompactEffects::MayThrowByRule | CompactEffects::MayCollect | CompactEffects::MayBeTerminated;
     InternedLocationMasks& masks = m_kept.m_masks;
     auto restrictedToPerObjectHeaps = [&](uint32_t masksOfNode) {
         return m_masksOfPerObjectHeaps.get(masksOfNode, [&] {

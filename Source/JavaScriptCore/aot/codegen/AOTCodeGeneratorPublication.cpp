@@ -184,7 +184,7 @@ bool CodeGenerator::hasTypeOnlyBehindTest(ValueID parameter)
 
 static bool isPinnedByEffects(const Effects& effects)
 {
-    return effects.mayExitSideways() || effects.mayCollect || !effects.writes.isEmpty();
+    return effects.mayThrowBeyondLackOfStack() || effects.mayBeTerminated || effects.mayRunOtherCode() || effects.mayCollect || !effects.writes.isEmpty();
 }
 
 static bool isCallOrPhi(B3::Opcode opcode)
@@ -350,9 +350,30 @@ static std::optional<int64_t> constantStepOf(const InductionStep& step, Represen
     return amount.value();
 }
 
+// Once the other ways into such a cycle are gone, an edge that enters the loop today is one of its back edges, and it hands the counter on as it is.
+static bool isOnCycleWithSeveralEntries(FunctionAnalyses& analyses, const LoopInduction& induction)
+{
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const NaturalLoop& loop = loops.loop(induction.loopIndex);
+    auto enters = [&](Edge edge) {
+        return !loops.belongsTo(edge.from, loop);
+    };
+    if (std::ranges::count_if(analyses.cfg().incomingEdges(induction.header), enters) <= 1)
+        return false;
+
+    const BlockCycles::Forest& forest = analyses.blockCycles().forest();
+    for (unsigned cycle = forest.innermost(induction.header); cycle != BlockCycles::Forest::none; cycle = forest[cycle].parent) {
+        if (!forest[cycle].isReducible())
+            return true;
+    }
+    return false;
+}
+
 void CodeGenerator::publishInductionVariables()
 {
     for (const LoopInduction& loop : analyses().inductionVariables().loops()) {
+        if (loop.variables.isEmpty() || isOnCycleWithSeveralEntries(analyses(), loop))
+            continue;
         for (const InductionVariable& counter : loop.variables) {
             if (counter.steppedValues.size() != 1)
                 continue;

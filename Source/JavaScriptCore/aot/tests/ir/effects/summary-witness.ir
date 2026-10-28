@@ -39,5 +39,5 @@ function f6 name="besideTheChain" parameters=[{type=number}] results=[{type=numb
 # CHECK-NEXT: f3 return: {{*}}callsUnknownCode{{*}} unknown code from f5 v3
 # CHECK-NEXT: f4 return: {{*}}callsUnknownCode{{*}} unknown code from f5 v3
 # CHECK-NEXT: f5 return: {{*}}callsUnknownCode{{*}} unknown code from f5 v3
-# CHECK-NEXT: f6 return: none throw: none
+# CHECK-NEXT: f6 return: throwsForLackOfStack throw: throwsForLackOfStack
 # CHECK-NOT: unknown code from

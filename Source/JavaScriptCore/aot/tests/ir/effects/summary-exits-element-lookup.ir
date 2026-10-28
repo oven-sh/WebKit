@@ -21,10 +21,10 @@ function f2 name="readAtIndex" parameters=[{type=Array<number, pristine[Storage,
     v3 = GetArrayElement v0, v1 level=Proven [keyIsIntegral]
     Return
 }
-# CHECK-NEXT: f2 return: reads({{*}}) writes(ModuleVariables/1) throw: none
+# CHECK-NEXT: f2 return: reads({{*}}) writes(ModuleVariables/1) throwsForLackOfStack throw: reads(Elements/1, ArrayStorage) writes(ModuleVariables/1) throwsForLackOfStack
 function f3 name="testAtIndex" parameters=[{type=Array<number, pristine[Storage, Names]>}, {type=int[0, 10]}] results=[{type=undefined}] {
     PutModuleVariable v1 variable=g0
     v3 = HasArrayElement v0, v1 level=Proven [keyIsIntegral]
     Return
 }
-# CHECK-NEXT: f3 return: reads({{*}}) writes(ModuleVariables/1) throw: none
+# CHECK-NEXT: f3 return: reads({{*}}) writes(ModuleVariables/1) throwsForLackOfStack throw: reads(Elements/1, ArrayStorage) writes(ModuleVariables/1) throwsForLackOfStack

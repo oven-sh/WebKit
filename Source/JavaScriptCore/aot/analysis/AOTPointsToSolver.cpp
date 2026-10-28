@@ -243,7 +243,8 @@ private:
     void record(SolvedUse&, const ArrivedObjects&);
     void solveEdgeUse(const ArrivedObjects&, const Use&);
     void solveTerminatorOperand(const ArrivedObjects&, const Use&);
-    void solveTerminatorOperandUse(SolvedUse&, const ArrivedObjects&, TerminatorKind, OperandUse);
+    void solveTerminatorOperandUse(SolvedUse&, const ArrivedObjects&, TerminatorKind, const OperandSummary&, OperandUse);
+    void solveOperandRetainedByTerminator(SolvedUse&, const ArrivedObjects&, TerminatorKind, const OperandSummary&);
     void addToDeclaredResults(SolvedUse&, const ArrivedObjects&);
     void solveOperand(const ArrivedObjects&, ValueID usedValue, const Use&);
     void solveOperandWith(const ArrivedObjects&, const Use&, const OperandSummary&);
@@ -1038,14 +1039,15 @@ void PointsToSolver::solveEdgeUse(const ArrivedObjects& arrived, const Use& use)
 void PointsToSolver::solveTerminatorOperand(const ArrivedObjects& arrived, const Use& use)
 {
     const Terminator& terminator = m_function.at(use.block).terminator;
-    OperandUses uses = ask(AnswerFromTypes::Question::SummaryOfTerminatorOperand, use.block.index(), use.operandIndex).summary.uses;
+    OperandSummary summary = ask(AnswerFromTypes::Question::SummaryOfTerminatorOperand, use.block.index(), use.operandIndex).summary;
+    OperandUses uses = summary.uses;
     SolvedUse solved { .use = use, .uses = uses, .isContentsStore = uses.contains(OperandUse::WritesContents) };
     for (OperandUse operandUse : uses & declaredOperandUses)
-        solveTerminatorOperandUse(solved, arrived, terminator.kind, operandUse);
+        solveTerminatorOperandUse(solved, arrived, terminator.kind, summary, operandUse);
     record(solved, arrived);
 }
 
-void PointsToSolver::solveTerminatorOperandUse(SolvedUse& solved, const ArrivedObjects& arrived, TerminatorKind kind, OperandUse use)
+void PointsToSolver::solveTerminatorOperandUse(SolvedUse& solved, const ArrivedObjects& arrived, TerminatorKind kind, const OperandSummary& summary, OperandUse use)
 {
     switch (use) {
     case OperandUse::Inspects:
@@ -1067,6 +1069,8 @@ void PointsToSolver::solveTerminatorOperandUse(SolvedUse& solved, const ArrivedO
             addToDeclaredResults(solved, arrived);
         return;
     case OperandUse::Retains:
+        solveOperandRetainedByTerminator(solved, arrived, kind, summary);
+        return;
     case OperandUse::BecomesPrototype:
         solved.reasons.add(reasonForRetainingTerminator(kind));
         return;
@@ -1090,6 +1094,26 @@ void PointsToSolver::solveTerminatorOperandUse(SolvedUse& solved, const ArrivedO
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What the operation in a block keeps in its result, the same operation at the end of a block keeps in the object that its edge makes.
+void PointsToSolver::solveOperandRetainedByTerminator(SolvedUse& solved, const ArrivedObjects& arrived, TerminatorKind kind, const OperandSummary& summary)
+{
+    if (summary.retainedIn == RetainedIn::Result && makesObjectOnEdge(solved.use.block)) {
+        forEachEdgeResult(m_function, solved.use.block, [&](const EdgeResult& result, ValueID parameter) {
+            if (result.kind == EdgeResultKind::DeclaredResult)
+                solved.retainedBy = parameter;
+        });
+    }
+    if (!solved.retainedBy) {
+        solved.reasons.add(reasonForRetainingTerminator(kind));
+        return;
+    }
+    // Another edge may pass another object to the parameter, which keeps what its own maker gave it.
+    forEachObjectIn(objectsOf(solved.retainedBy).span(), [&](ObjectID container) {
+        if (m_results.objects[container.index()].definition == solved.retainedBy)
+            addContents(container, std::nullopt, arrived.words);
+    });
 }
 
 void PointsToSolver::addToDeclaredResults(SolvedUse& solved, const ArrivedObjects& arrived)

@@ -76,6 +76,25 @@ static bool hasNumberParameter(const Program& program, const Function& function)
     return false;
 }
 
+static bool hasIntegerBeyondInt32(const Program& program, const Function& function)
+{
+    for (const Block& block : function.blocks) {
+        for (ValueID id : block.values) {
+            if (isNumberBeyondInt32(program.typeOf(function, id)) && program.typeOf(function, id).isInteger())
+                return true;
+        }
+    }
+    return false;
+}
+
+// An int32 counter whose step may leave int32 is tested behind every step. What stays under an int32 bound is still an int32 one step on.
+static bool stepsBeyondInt32(FunctionPassContext& context, const InductionVariable& variable)
+{
+    return context.program.typeOf(context.function, variable.parameter).isInt32() && std::ranges::any_of(variable.steppedValues, [&](ValueID stepped) {
+        return isNumberBeyondInt32(context.program.typeOf(context.function, stepped));
+    });
+}
+
 // A staying edge into a shared block is split before it is used.
 static bool dominatesEveryStep(FunctionAnalyses& analyses, Edge edge, const InductionVariable& variable)
 {
@@ -87,7 +106,7 @@ static bool dominatesEveryStep(FunctionAnalyses& analyses, Edge edge, const Indu
 
 static bool mayBecomeIntegerCounter(FunctionPassContext& context, const InductionVariable& variable, BitVector& parametersOverStepLimit)
 {
-    if (!isNumberBeyondInt32(context.program.typeOf(context.function, variable.parameter)) || !variable.start)
+    if (!variable.start || (!isNumberBeyondInt32(context.program.typeOf(context.function, variable.parameter)) && !stepsBeyondInt32(context, variable)))
         return false;
     // What another loop hands over, in a join in front of this one or as it has counted it up, is an integer if that loop's counter becomes one.
     const Type& start = context.program.typeOf(context.function, variable.start);
@@ -452,7 +471,7 @@ static Vector<ValueID, 4> boundTallies(FunctionPassContext& context, IRBuilder& 
 
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
-    if (!context.analyses.cfg().hasCycle() || !hasNumberParameter(context.program, context.function))
+    if (!context.analyses.cfg().hasCycle() || (!hasNumberParameter(context.program, context.function) && !hasIntegerBeyondInt32(context.program, context.function)))
         return PassOutcome::Unchanged;
 
     PassOutcome outcome = PassOutcome::Unchanged;
@@ -935,7 +954,7 @@ static bool eraseLoopHints(IRBuilder& builder, const Function& function, BlockID
     BitVector hints;
     std::span<const ValueID> values = function.at(block).values.span();
     for (size_t index = 0; index < values.size(); ++index) {
-        if (function.at(values[index]).opcode == Opcode::LoopHint)
+        if (function.at(values[index]).opcode == Opcode::LoopHint && !function.at(values[index]).leavesHandler())
             hints.set(index);
     }
     if (hints.isEmpty())

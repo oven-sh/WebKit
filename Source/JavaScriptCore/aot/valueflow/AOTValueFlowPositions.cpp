@@ -296,6 +296,38 @@ bool ValueFlowPositions::turnsAwayEveryObject(ValueSetID set, const Type& type)
     return !ValueSets::isComplement(arriving) && !m_inputs.sets().meet(maker().intersect(arriving, universe.knownObjects()), universe.maskOf(maker(), m_inputs.program, type));
 }
 
+// The contents of many instances are united one instance at a time. A list of texts that has passed the limit would be written down once more at every step, one text longer.
+bool ValueFlowPositions::keepTextsOfContentsWithinLimit(ClassParts& parts)
+{
+    bool hasChanged = false;
+    for (ClassPart& part : parts) {
+        for (TypeID& contents : part.writtenContents) {
+            TypeID within = withTextsWithinLimit(contents);
+            hasChanged |= within != contents;
+            contents = within;
+        }
+    }
+    return hasChanged;
+}
+
+TypeID ValueFlowPositions::withTextsWithinLimit(TypeID id)
+{
+    if (!id)
+        return id;
+    const Type& type = m_types.at(id);
+    bool widensTexts = type.stringLiterals.size() > m_inputs.build.limit(LimitID::MaxLiteralsInType);
+    if (!widensTexts && type.classes.isEmpty())
+        return id;
+    Type within = type;
+    bool hasChanged = keepTextsOfContentsWithinLimit(within.classes);
+    if (widensTexts)
+        within.primitives |= Primitive::String;
+    if (!widensTexts && !hasChanged)
+        return id;
+    within.canonicalize();
+    return m_types.intern(WTF::move(within));
+}
+
 bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member, BuiltinClassID builtinClass)
 {
     Type instance = Type::builtinClass(builtinClass);
@@ -321,6 +353,7 @@ bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member
     if (listed && *listed == part && (!isRegExp || type.regExpLiteralSet == instance.regExpLiteralSet))
         return false;
     Type united = type.unionWith(instance, m_types);
+    keepTextsOfContentsWithinLimit(united.classes);
     bool saysSomethingElse = united.classes != type.classes || united.regExpLiteralSet != type.regExpLiteralSet;
     type = WTF::move(united);
     return saysSomethingElse;

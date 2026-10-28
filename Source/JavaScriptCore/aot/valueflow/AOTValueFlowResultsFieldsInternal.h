@@ -315,11 +315,14 @@ struct StoredUnderKey {
     bool isNamedByOperation : 1 { false };
     bool isStoredByConstructor : 1 { false };
     bool mayBeOtherThanIntegers : 1 { false };
+    // Some store hands over what a read of a field delivers, and the numbers of that field are not added yet: StoresIntoObjects::readsOfFields.
+    bool waitsForNumbersOfFields : 1 { false };
     uint8_t accessorForms { 0 };
     OptionSet<Actor> writers;
     Range integers { Range::empty() };
 
-    ValueFlowNumbers numbers() const { return { mayBeOtherThanIntegers, integers }; }
+    ValueFlowNumbers numbers() const { return waitsForNumbersOfFields ? ValueFlowNumbers::any() : numbersAddedSoFar(); }
+    ValueFlowNumbers numbersAddedSoFar() const { return { mayBeOtherThanIntegers, integers }; }
 
     void uniteNumbers(const ValueFlowNumbers& other)
     {
@@ -408,8 +411,16 @@ struct AccessorForms {
 
 inline constexpr uint64_t noCopyLeavingOutKeys = UINT64_MAX;
 
+// `target.port = source.port`: what is stored under one key is what the objects hold under another.
+struct ReadOfFields {
+    uint32_t storedUnder;
+    uint32_t key;
+    ValueSetID objects;
+};
+
 struct StoresIntoObjects {
     StoresUnderKeys underKey;
+    Vector<ReadOfFields> readsOfFields;
     ValueSetID underUnknownKey { ValueSets::nothing };
     ValueFlowNumbers numbersUnderUnknownKey;
     bool isStoredUnderIndex { false };
@@ -542,9 +553,13 @@ private:
         OptionSet<Actor> writers;
         ValueSetID value;
         ValueFlowNumbers numbers;
+        // The numbers are those that these objects hold under the key, and `numbers` holds none.
+        ValueSetID objectsRead;
+        uint32_t keyRead;
 
         ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail), payload }; }
-        auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData, copyLeavingOutKeys }; }
+        ValueFlowNumbers numbersWhereNoReadIsFollowed() const { return objectsRead == ValueSets::nothing ? numbers : ValueFlowNumbers::any(); }
+        auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData, copyLeavingOutKeys, objectsRead.index(), keyRead }; }
         uint32_t hashOfGroup() const
         {
             uint64_t hash = (static_cast<uint64_t>(payload) << 32 | set) * 0x9e3779b97f4a7c15ull;
@@ -563,6 +578,8 @@ private:
         uint8_t accessorForms { 0 };
         uint32_t familyDeclaredForReceiver { UINT32_MAX };
         std::optional<ValueFlowNumbers> numbers;
+        ValueSetID objectsRead { ValueSets::nothing };
+        uint32_t keyRead { 0 };
     };
 
     struct NameStoredThroughDeclaredReceiver {
@@ -626,7 +643,11 @@ private:
         Vector<LayoutID, 4> layouts;
     };
     std::optional<CopiedObjects> objectsCopiedOnto(ValueSetMaker&, LayoutID) const;
+    std::optional<CopiedObjects> withLayoutsIfFollowed(ValueSetMaker&, ValueSetID objects) const;
     void followCopiedProperties();
+    std::optional<ReadOfFields> readOfFieldsStoredBy(ValueSetMaker&, const Writer&, ValueFlowName) const;
+    std::optional<CopiedObjects> objectsReadUnder(ValueSetMaker&, ValueSetID objects, PropertyKeyID) const;
+    void followReadsOfFields();
     void forEachSourceOf(LayoutID, ObjectsOfLayout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
 
     const ValueFlowResultInputs& m_inputs;

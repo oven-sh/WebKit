@@ -1,0 +1,67 @@
+# What a two-way inline call keeps in its result is held by the object that its done edge makes, as the call on the miss side holds it in its own. It leaves where the result leaves, and not before
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass
+# RUN: analyses escape
+# RUN(GUARDS): guards points
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}]
+
+function f0 name="target" parameters=[{type=anything}] results=[{type=undefined}] {
+    Return
+}
+
+function f1 name="theResultStaysLocal" parameters=[{type=f0}, {type=anything}, {type=object}] results=[{type=anything}] {
+    v3 = NewObject layout=L0
+    PutSlot v3, v3, v1 key="x" receivers=[L0] level=Proven
+    v5 = Null
+    TryCallInline v0, v5, v3 inlineBuiltin=FunctionBind overload=FunctionPrototypeBind/0 -> done b1(), miss b4()
+  b1(v6):
+    v7 = IsSlotFilled v3 key="x" receivers=[L0] level=Expected
+    TestAndBranch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    PropSet v2, v1 key="other"
+    v10 = GetSlot v3, v8 key="x" receivers=[L0] level=Expected
+    Return v10
+  b3():
+    Return
+  b4() frequency=Rare:
+    v11 = CallBuiltin v0, v5, v3 overload=FunctionPrototypeBind/0
+    Jump -> next b1(v11)
+}
+# CHECK-LABEL: function f1
+# CHECK: o3 definition: v3
+# CHECK: o3 state: DoesNotEscape
+# CHECK: o4 definition: v6
+# CHECK: o4 contents: [o0 o3]
+# CHECK: o5 definition: v11
+# CHECK: o5 contents: [o0 o3]
+# GUARDS-LABEL: function f1
+# GUARDS: b2:0 available: [v8]
+# GUARDS-NEXT: b2:1 available: [v8]
+
+function f2 name="theResultIsStored" parameters=[{type=f0}, {type=anything}, {type=object}] results=[{type=anything}] {
+    v3 = NewObject layout=L0
+    PutSlot v3, v3, v1 key="x" receivers=[L0] level=Proven
+    v5 = Null
+    TryCallInline v0, v5, v3 inlineBuiltin=FunctionBind overload=FunctionPrototypeBind/0 -> done b1(), miss b4()
+  b1(v6):
+    v7 = IsSlotFilled v3 key="x" receivers=[L0] level=Expected
+    TestAndBranch v7 -> taken b2(| 0), notTaken b3()
+  b2(v8):
+    PropSet v2, v6 key="bound"
+    v10 = GetSlotOrUndefined v3 key="x" receivers=[L0] level=Proven
+    Return v10
+  b3():
+    Return
+  b4() frequency=Rare:
+    v11 = CallBuiltin v0, v5, v3 overload=FunctionPrototypeBind/0
+    Jump -> next b1(v11)
+}
+# CHECK-LABEL: function f2
+# CHECK: o3 definition: v3
+# CHECK: o3 state: Escapes
+# CHECK: o4 contents: [o0 o3]
+# GUARDS-LABEL: function f2
+# GUARDS: b2:0 available: [v8]
+# GUARDS-NEXT: b2:1 available: []

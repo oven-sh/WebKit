@@ -914,6 +914,21 @@ static ValueID emitWalk(Emission& emission, const OwnKeyWalkSite& site, const Va
     case OwnKeyWalk::Assign:
     case OwnKeyWalk::Spread: {
         Values values = walkedFields.map<Values>(appendRead);
+        // A read by layout knows what any object of the layout holds. What flow has proven of the fields of the target it has proven of this copy too.
+        std::span<const LayoutID> layoutsOfTarget = membersOf(program, emission.typeOf(site.target));
+        if (!isAssign && emission.typeOf(site.target).hasOnlyLayouts() && layoutsOfTarget.size() == 1 && program.at(layoutsOfTarget[0]).flow.impossibleMutations.contains(ObjectMutation::StoreOfOtherType)) {
+            const Layout& layoutOfTarget = program.at(layoutsOfTarget[0]);
+            for (size_t index = 0; index < values.size(); ++index) {
+                std::optional<uint32_t> field = layoutOfTarget.findField(fields[walkedFields[index]].key);
+                std::optional<ProvenInEveryVersion> established = field ? layoutOfTarget.fields[*field].declared.established() : std::nullopt;
+                if (!established)
+                    continue;
+                TypeID read = builder.function().at(values[index]).type;
+                TypeID held = emission.inputs().types.intersectionOf(read, *established);
+                if (held != read && held != TypeTable::never)
+                    values[index] = builder.append(makeAssumeType(values[index], Proven::byFlowOfPosition(held)));
+            }
+        }
         for (size_t index = 0; index < values.size(); ++index) {
             Value store = IRBuilder::make(isAssign ? Opcode::PropSet : Opcode::PropDefine, { site.target, values[index] });
             store.setKey(fields[walkedFields[index]].key);

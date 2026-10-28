@@ -280,6 +280,62 @@ static void testSlotsAboveFrameRecord()
     AOT_TEST_CHECK(std::bit_cast<uintptr_t>(stackPointerOfCaller(record, bytesAboveReturnAddressOf(above))) == 0x1000 + sizeof(CallerFrameAndPC) + 32);
 }
 
+// The stack of a thread that is stopped in native code: function 2 has called function 1, which has called the native code.
+static SUPPRESS_ASAN void testSampleInNativeCode()
+{
+    TestBuild build(4);
+    TestImage image = build.build(bodies(plainBody(1, 32), plainBody(2, 48), plainBody(3, 64)));
+    const Image& loaded = *image.image;
+    const StackBounds& bounds = Thread::currentSingleton().stack();
+    auto returnAddressIn = [&](uint32_t function) {
+        return const_cast<uint8_t*>(image.address(function, sizeof(uint32_t) + sizeOfNearCall));
+    };
+    void* nativeCode = reinterpret_cast<void*>(&testSampleInNativeCode);
+
+    alignas(16) std::array<void*, 48> stack { };
+    constexpr size_t recordOfCaller = 32;
+    constexpr size_t recordOfOuter = recordOfCaller + 2 + 48 / sizeof(void*);
+    constexpr size_t endOfNativeFrame = recordOfCaller - 32 / sizeof(void*);
+    stack[recordOfOuter] = &stack[recordOfOuter + 4];
+    stack[recordOfOuter + 1] = nativeCode;
+    stack[recordOfCaller] = &stack[recordOfOuter];
+    stack[recordOfCaller + 1] = returnAddressIn(2);
+    auto isTop = [&](const SampledRegisters& registers, size_t record, const void* pc) {
+        std::optional<SampledTop> top = findSampledTop(loaded, registers, nullptr, bounds);
+        return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[record]) && top->pc == pc && !top->callerPCOfFramelessTop && !top->framePointer;
+    };
+
+    SampledRegisters withoutFrameRecord { &stack[recordOfCaller], nativeCode, nullptr, &stack[endOfNativeFrame - 8] };
+    AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
+    if constexpr (isX86_64()) {
+        // A word that a frame of another size has left behind.
+        stack[endOfNativeFrame - 6] = returnAddressIn(3);
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
+        // A place in the function that no call returns to.
+        stack[endOfNativeFrame - 1] = const_cast<uint8_t*>(image.address(1, sizeof(uint32_t)));
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
+        stack[endOfNativeFrame - 1] = returnAddressIn(1);
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
+    }
+
+    if constexpr (isARM64()) {
+        auto check = [&](void* returnAddress) {
+            SampledRegisters inLeaf { &stack[recordOfCaller], nativeCode, returnAddress, &stack[endOfNativeFrame] };
+            AOT_TEST_CHECK(isTop(inLeaf, recordOfCaller, returnAddressIn(1)));
+            stack[endOfNativeFrame - 2] = &stack[recordOfCaller];
+            stack[endOfNativeFrame - 1] = returnAddress;
+            SampledRegisters withFrameRecord { &stack[endOfNativeFrame - 2], nativeCode, returnAddress, &stack[endOfNativeFrame - 8] };
+            AOT_TEST_CHECK(isTop(withFrameRecord, recordOfCaller, returnAddressIn(1)));
+            withFrameRecord.linkRegister = nativeCode;
+            AOT_TEST_CHECK(isTop(withFrameRecord, recordOfCaller, returnAddressIn(1)));
+        };
+        check(returnAddressIn(1));
+#if !OS(DARWIN)
+        check(std::bit_cast<void*>(std::bit_cast<uintptr_t>(returnAddressIn(1)) | 0x2cULL << 48));
+#endif
+    }
+}
+
 static CompiledCode bodyWithFrameMap(uint32_t function, const Vector<uint32_t>& frameMapWords)
 {
     CodeSketch sketch = sketchWithSite(function, 16);
@@ -638,6 +694,7 @@ std::span<const NativeTest> imageFunctionTableTests()
         { "image/functions/records"_s, testRecords },
         { "image/functions/many-frame-shapes"_s, testManyFrameShapes },
         { "image/functions/slots-above-frame-record"_s, testSlotsAboveFrameRecord },
+        { "image/functions/sample-in-native-code"_s, testSampleInNativeCode },
         { "image/functions/frame-maps"_s, testFrameMaps },
         { "image/functions/has-frame-at-return-offsets"_s, testHasFrameAtReturnOffsets },
         { "image/functions/frame-ranges-name-no-epilogue"_s, testFrameRangesNameNoEpilogue },

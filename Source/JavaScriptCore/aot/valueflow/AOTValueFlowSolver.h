@@ -1116,6 +1116,7 @@ private:
     BitVector m_libraryFunctionsLacked;
     ValueSetID followedProxiesThatMoreMayBeDoneTo();
     bool wakeReadersOfNodesThatShowSomethingElse();
+    Vector<ValueSetID> m_allButCoveredWhenReadersWereLastWoken;
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;

@@ -752,6 +752,9 @@ StubCallResult RuntimeCallEmitter::callStubForTwoReads(const OperationContext& c
 B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationContext& context, const CallPatchpointRequest& request)
 {
     Effects effects = effectsOfCall(context, request.effects);
+    // Where no handler of the function takes it, a frame that finds no room ends the function: none of its code runs behind that call.
+    if (!effects.mayThrowBeyondLackOfStack() && !emitter<ExceptionEmitter>().unwindsWithinFunction(context))
+        effects.mayThrow = false;
     if (effects.mayCollect)
         emitter<BarrierEmitter>().validateBeforeCollection(context);
 

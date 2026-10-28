@@ -3953,7 +3953,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 if (!resultsOfReadsUnderKey.contains(keyOnSide))
                     continue;
                 ValueSetID written = maker.intersect(m_graph.valueOf(ValueFlowNodeID(index)), followed);
-                if (written == ValueSets::nothing)
+                if (written == ValueSets::nothing || m_sets.contains(m_graph.valueOf(ValueFlowNodeID(index)), m_input.placeholders.unknown))
                     continue;
                 Vector<LayoutID, 8> layouts;
                 m_sets.forEachMember(key->set, [&](ValueFlowObjectID receiver) {
@@ -3979,14 +3979,16 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             });
             return kinds.size() <= mostKindsToldByName;
         };
+        HashMap<uint64_t, Vector<uint32_t, 2>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> readsOfField;
         auto readFields = [&](uint32_t keyOnSide, uint32_t result, std::span<const LayoutID> layouts) {
             ValueSetID written = ValueSets::nothing;
             for (LayoutID layout : layouts) {
-                if (auto found = writtenIntoField.find(static_cast<uint64_t>(keyOnSide) << 32 | layout.index()); found != writtenIntoField.end())
+                uint64_t field = static_cast<uint64_t>(keyOnSide) << 32 | layout.index();
+                if (Vector<uint32_t, 2>& reads = readsOfField.ensure(field, [] { return Vector<uint32_t, 2>(); }).iterator->value; !reads.contains(result))
+                    reads.append(result);
+                if (auto found = writtenIntoField.find(field); found != writtenIntoField.end())
                     written = maker.unite(written, found->value);
             }
-            if (written == ValueSets::nothing || !tellsSomething(written))
-                return;
             arriveAt(ValueFlowNodeID(result), written);
         };
         auto appendLayoutsInSightAt = [&](ValueFlowNodeID object, Vector<LayoutID, 8>& layouts) {
@@ -4011,12 +4013,6 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             Vector<LayoutID, 8> layouts;
             appendLayoutsInSightAt(ValueFlowNodeID(read.object), layouts);
             readFields(read.keyOnSide, read.result, layouts.span());
-        }
-        for (auto& [key, written] : writtenUnderKey) {
-            if (!tellsSomething(written))
-                continue;
-            for (uint32_t result : resultsOfReadsUnderKey.get(key))
-                arriveAt(ValueFlowNodeID(result), written);
         }
         {
             Vector<uint32_t> toFollow;
@@ -4064,6 +4060,76 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             value = maker.intersect(value, followed);
             return operand.maskKind == ValueFlowMaskKind::Plain ? maker.intersect(value, operand.mask) : value;
         };
+        struct Store {
+            uint32_t key;
+            uint32_t statement;
+        };
+        HashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> storesWithOperand;
+        Vector<Store> stores = collectInParallel<Store>(m_loops, m_input.statements.size(), [&](unsigned index, Vector<Store>& found) {
+            const ValueFlowStatement& statement = m_input.statements[index];
+            if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::PropSet && statement.opcode != Opcode::ElemSet) || !isReached(statement.function) || !operandsOf(statement)[0].node)
+                return;
+            PropertyKeyID key;
+            if (statement.opcode == Opcode::PropSet)
+                key = m_input.program->at(statement.function).at(statement.site).key();
+            else {
+                const ValueFlowOperand& computed = operandsOf(statement)[1];
+                ValueSetID keys = computed.node ? m_graph.valueOf(computed.node) : computed.constant ? computed.constant : ValueSets::nothing;
+                if (!ValueSets::isComplement(keys) && m_sets.size(keys) == 1) {
+                    m_sets.forEachMember(keys, [&](ValueFlowObjectID only) {
+                        key = m_input.universe->keyOf(only);
+                    });
+                }
+            }
+            if (key && (resultsOfReadsUnderKey.contains(key.index() * 2) || resultsOfReadsUnderKey.contains(key.index() * 2 + 1)))
+                found.append({ key.index(), index });
+        });
+        auto runStore = [&](uint32_t index) {
+            const ValueFlowStatement& statement = m_input.statements[stores[index].statement];
+            std::span<const ValueFlowOperand> operands = operandsOf(statement);
+            ValueSetID written = seenAt(operands[operands.size() - 1]);
+            if (written == ValueSets::nothing || written == many)
+                return;
+            const Function& function = m_input.program->at(statement.function);
+            Vector<LayoutID, 8> receivers;
+            receivers.append(membersOf(*m_input.program, m_input.program->expectedOrTypeOf(function, function.at(statement.site).objectOperand()).predicted()));
+            appendLayoutsInSightAt(operands[0].node, receivers);
+            if (ValueSetID seen = seenBehindTheRoundsAt(operands[0].node); seen != many) {
+                m_sets.forEachMember(seen, [&](ValueFlowObjectID receiver) {
+                    if (LayoutID layout = m_input.universe->layoutOf(receiver); layout && !receivers.contains(layout))
+                        receivers.append(layout);
+                });
+            }
+            Vector<LayoutID, 8> layouts;
+            for (LayoutID receiver : receivers) {
+                for (LayoutID layout = receiver; layout && !layouts.contains(layout); layout = m_input.program->at(layout).base)
+                    layouts.append(layout);
+            }
+            for (uint32_t side = 0; side < 2; ++side) {
+                uint32_t keyOnSide = stores[index].key * 2 + side;
+                if (!resultsOfReadsUnderKey.contains(keyOnSide))
+                    continue;
+                for (LayoutID layout : layouts) {
+                    uint64_t field = static_cast<uint64_t>(keyOnSide) << 32 | layout.index();
+                    ValueSetID& all = writtenIntoField.ensure(field, [] { return ValueSets::nothing; }).iterator->value;
+                    ValueSetID after = maker.unite(all, written);
+                    if (after == all)
+                        continue;
+                    all = after;
+                    if (auto reads = readsOfField.find(field); reads != readsOfField.end()) {
+                        for (uint32_t result : Vector<uint32_t, 2>(reads->value))
+                            arriveAt(ValueFlowNodeID(result), after);
+                    }
+                }
+            }
+        };
+        for (uint32_t index = 0; index < stores.size(); ++index) {
+            std::span<const ValueFlowOperand> operands = operandsOf(m_input.statements[stores[index].statement]);
+            for (ValueFlowNodeID node : { operands[0].node, operands[operands.size() - 1].node }) {
+                if (node)
+                    storesWithOperand.ensure(node.index(), [] { return Vector<uint32_t, 2>(); }).iterator->value.append(index);
+            }
+        }
         auto runCall = [&](uint32_t index) {
             const ValueFlowStatement& statement = m_input.statements[index];
             std::span<const ValueFlowOperand> operands = operandsOf(statement);
@@ -4141,8 +4207,14 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             arriveAt(node, come);
         }
         // The nodes are visited in waves, each in the order of their numbers: in which order the links of a node stand says nothing.
+        for (uint32_t index = 0; index < stores.size(); ++index)
+            runStore(index);
         auto visit = [&](ValueFlowNodeID from) {
             ValueSetID come = seenBehindTheRoundsAt(from);
+            if (auto found = storesWithOperand.find(from.index()); found != storesWithOperand.end()) {
+                for (uint32_t index : found->value)
+                    runStore(index);
+            }
             if (auto found = callsWithOperand.find(from.index()); found != callsWithOperand.end()) {
                 for (uint32_t index : Vector<uint32_t, 2>(found->value))
                     runCall(index);
@@ -4170,14 +4242,28 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             });
         };
         Vector<uint32_t> wave;
-        while (!toVisit.isEmpty()) {
-            wave.shrink(0);
-            std::swap(wave, toVisit);
-            AOT::sort(wave);
-            removeRepeatedElements(wave);
-            for (uint32_t node : wave)
-                visit(ValueFlowNodeID(node));
+        auto visitUntilAtRest = [&] {
+            while (!toVisit.isEmpty()) {
+                wave.shrink(0);
+                std::swap(wave, toVisit);
+                AOT::sort(wave);
+                removeRepeatedElements(wave);
+                for (uint32_t node : wave)
+                    visit(ValueFlowNodeID(node));
+            }
+        };
+        visitUntilAtRest();
+        Vector<std::pair<uint32_t, ValueSetID>> toldByName;
+        for (auto& [key, written] : writtenUnderKey) {
+            if (tellsSomething(written))
+                toldByName.append({ key, written });
         }
+        AOT::sort(toldByName, { }, [](const auto& entry) { return entry.first; });
+        for (auto [key, written] : toldByName) {
+            for (uint32_t result : resultsOfReadsUnderKey.get(key))
+                arriveAt(ValueFlowNodeID(result), written);
+        }
+        visitUntilAtRest();
     }
     m_seenBehindTheRounds.removeIf([](auto& entry) {
         return entry.value == ValueSets::anything;
@@ -4356,20 +4442,39 @@ ValueSetID ValueFlowSolver::familyObjectsOf(ValueSetID mask, ValueSetMaker& make
 // A node shows less once more of what it holds is covered, and it does not move for that. Its readers run again before the analysis rests.
 bool ValueFlowSolver::wakeReadersOfNodesThatShowSomethingElse()
 {
-    ValueSetMaker& maker = *m_makers[0];
+    // Only what has been covered since the last time takes something out of a view.
+    ValueSetID coveredSince = ValueSets::nothing;
+    while (m_allButCoveredWhenReadersWereLastWoken.size() < m_coverings.size())
+        m_allButCoveredWhenReadersWereLastWoken.append(ValueSets::anything);
+    for (size_t index = 0; index < m_coverings.size(); ++index) {
+        coveredSince = m_makers[0]->unite(coveredSince, m_makers[0]->intersect(ValueSets::complement(m_coverings[index].allButCovered), m_allButCoveredWhenReadersWereLastWoken[index]));
+        m_allButCoveredWhenReadersWereLastWoken[index] = m_coverings[index].allButCovered;
+    }
+    if (coveredSince == ValueSets::nothing)
+        return false;
+    constexpr uint32_t nodesPerShare = 1 << 14;
+    uint32_t numberOfNodes = m_firstReaderOfNode.size();
+    Vector<Vector<uint32_t>> showingSomethingElse((numberOfNodes + nodesPerShare - 1) / nodesPerShare);
+    forEachIndexInParallel(m_loops, showingSomethingElse.size(), [&](unsigned share, unsigned worker) {
+        ValueSetMaker& maker = *m_makers[worker];
+        for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
+            if (m_firstReaderOfNode[index] == noSolverIndex || !maker.meet(m_seenByReadersOfNode[index], coveredSince))
+                continue;
+            ValueSetID value = withoutWhatOtherMembersCover(ValueFlowNodeID(index), maker);
+            if (value == m_seenByReadersOfNode[index])
+                continue;
+            m_seenByReadersOfNode[index] = value;
+            showingSomethingElse[share].append(index);
+        }
+    });
     bool hasWoken = false;
-    for (uint32_t index = 0; index < m_firstReaderOfNode.size(); ++index) {
-        if (m_firstReaderOfNode[index] == noSolverIndex)
-            continue;
-        ValueFlowNodeID node(index);
-        ValueSetID value = withoutWhatOtherMembersCover(node, maker);
-        if (value == m_seenByReadersOfNode[index])
-            continue;
-        m_seenByReadersOfNode[index] = value;
-        const Vector<Reader>& readers = m_readerShards[readerShardOf(node)].readers;
-        for (uint32_t reader = m_firstReaderOfNode[index]; reader != noSolverIndex; reader = readers[reader].next)
-            makeDue(readers[reader].statement);
-        hasWoken = true;
+    for (const Vector<uint32_t>& nodes : showingSomethingElse) {
+        for (uint32_t index : nodes) {
+            const Vector<Reader>& readers = m_readerShards[readerShardOf(ValueFlowNodeID(index))].readers;
+            for (uint32_t reader = m_firstReaderOfNode[index]; reader != noSolverIndex; reader = readers[reader].next)
+                makeDue(readers[reader].statement);
+            hasWoken = true;
+        }
     }
     return hasWoken;
 }
@@ -4903,7 +5008,7 @@ void ValueFlowSolver::report()
     build.statistics().count(hitsOf(LimitID::MaxValueFlowSetMembers), m_counters.nodesSaturated);
     build.statistics().count(StatisticID::LayoutsOutsideFamily, m_counters.nodesHoldingObjectsOutsideFamily);
 
-    if (!build.validates())
+    if (!build.validates() || m_counters.isPastEdgeBudget)
         return;
     for (const ObjectOutsideFamily& entry : m_objectsOutsideFamilies.span().first(std::min<size_t>(m_objectsOutsideFamilies.size(), mostNodesReportedOutsideFamily))) {
         Subject subject = subjectOf(entry.node);

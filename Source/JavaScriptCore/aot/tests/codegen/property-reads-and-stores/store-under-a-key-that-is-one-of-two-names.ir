@@ -110,27 +110,25 @@ function f1 name="place" module=m0 position=39 flags=[IsChecked, HasExplicitName
 }
 
 # The key is "x" or "y" and the layout is known, so the store is a comparison of the key and one store of the double on either side. No property is looked up by name.
+# The key is compared as it arrives: whoever hands it over hands over the number of its text.
 # CHECK-LABEL: name="place" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[key]] = ArgumentReg(
-# CHECK: Int32 b@[[isLong]] = AboveEqual(b@[[key]],
-# CHECK-NEXT: Branch(b@[[isLong]], Terminal,
-# CHECK: Int64 b@[[short]] = Phi(
-# CHECK: Int32 b@[[isX]] = Equal(b@[[short]],
+# CHECK: Int32 b@[[isX]] = Equal(b@[[key]],
 # CHECK: Branch(b@[[isX]], Terminal,
 # CHECK: Store(b@[[at]], b@[[point]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
 # CHECK: Store(b@[[at]], b@[[point]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
 # CHECK-LABEL: end of function
 # BRANCHES-LABEL: name="place" role=Source
-# BRANCHES-COUNT-2: Branch(
+# BRANCHES-COUNT-1: Branch(
 # BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of function
 # NONE-LABEL: name="place" role=Source
 # NONE-NOT: ExitsSideways
 # NONE-NOT: NamedProperties
+# NONE-NOT: Patchpoint
 # NONE-LABEL: end of function
-# The count takes in the moves around the call on the unlikely path, which follow the calling convention.
 # X64-LABEL: name="place" role=Source
-# X64-NEXT: instructions: 14, patchpoints: 1
+# X64-NEXT: instructions: 6, patchpoints: 0
 # ARM64-LABEL: name="place" role=Source
-# ARM64-NEXT: instructions: 15, patchpoints: 1
+# ARM64-NEXT: instructions: 6, patchpoints: 0

@@ -40,9 +40,9 @@ function f4 name="caller" module=m0 parameters=[{type=object}, {type=stringbuild
 # CHECK-NOT: unknown code from
 # CHECK: f1 return: reads(all) writes(ObjectFields, ShapeWords, {{*}}ArrayStorage, {{*}} unknown code from f1
 # CHECK: f2 return: reads({{*}}ParserState{{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-# CHECK: f3 return: {{*}} writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
+# CHECK: f3 return: {{*}} writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) throwsForLackOfStack collects
 # CHECK-LABEL: function f4
 # CHECK-NEXT: v3 CallDirect: reads({{*}}) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 # CHECK-NEXT: v4 CallDirect: reads(all) writes(ObjectFields, ShapeWords, {{*}}ArrayStorage,
 # CHECK-NEXT: v5 CallDirect: reads({{*}}) writes(StringStorage, AllocatorState, RuntimeState) throws collects
-# CHECK-NEXT: v6 CallDirect: {{*}} writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
+# CHECK-NEXT: v6 CallDirect: {{*}} writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) throwsForLackOfStack collects

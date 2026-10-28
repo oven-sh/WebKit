@@ -39,7 +39,7 @@ void Effects::dump(PrintStream& out) const
     if (!writes.isEmpty())
         out.print(separator, "writes("_s, writes, ")"_s);
     if (mayThrow)
-        out.print(separator, mayThrowByRule() ? "throws"_s : "throwsForLackOfMemory"_s);
+        out.print(separator, mayThrowByRule() ? "throws"_s : mayThrowBeyondLackOfStack() ? "throwsForLackOfMemory"_s : "throwsForLackOfStack"_s);
     if (mayCollect)
         out.print(separator, "collects"_s);
     if (mayCallUnknownCode)

@@ -116,7 +116,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::HoistTestsIntoPredecessors, { .opcodes = operationsHoistedIntoPredecessors }, { { .traits = BodyTrait::BlockParameters } } },
     { PassID::TestNarrowerTypesFirst, { .opcodes = { Opcode::TypeTest, Opcode::StrictEq } } },
     { PassID::ThreadJumps, { .opcodes = { Opcode::TypeTest }, .traits = BodyTrait::BlockParameters } },
-    { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
+    { PassID::RemoveRedundantHandlers, { .opcodes = { Opcode::LoopHint }, .traits = BodyTrait::Handlers } },
     { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },
     { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject } | simplifiedIntrinsics | constantListUserOpcodes } } },
     { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin } | int32ConvertingOperations } } },
@@ -362,18 +362,22 @@ void PassRunner::prepare(ScheduleRun& run) const
         run.notes.emplace();
 }
 
-static constexpr PassSet optionalPassesOfGenericVersions {
+static constexpr PassSet optionalPassesOfCompactFunctions {
     PassID::BindGlobalNames, PassID::SimplifyBuiltinCalls, PassID::CallThroughMethodTable, PassID::ResolveCalls, PassID::ResolveAccesses, PassID::SimplifyCasts, PassID::FoldConstants, PassID::SimplifyControlFlow,
     PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks, PassID::ResolveAwaitedCalls,
 };
 
-static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfGenericVersions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
+static constexpr PassSet optionalPassesOfGenericVersions = optionalPassesOfCompactFunctions | PassSet { PassID::InsertObjectCoercibleChecks, PassID::EliminateRedundantReads };
+
+static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfCompactFunctions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
 
 // An async function waits between its steps, so what it costs is seldom its own code.
 static const PassSet* optionalPassesOfShortScheduleFor(const Function& function, bool hasNoWarmCode, bool isCompact)
 {
-    if (function.role == FunctionRole::GenericVersion || isCompact)
+    if (function.role == FunctionRole::GenericVersion)
         return &optionalPassesOfGenericVersions;
+    if (isCompact)
+        return &optionalPassesOfCompactFunctions;
     if (hasNoWarmCode && function.has(FunctionFlags::IsAsync))
         return &optionalPassesOfColdAsyncFunctions;
     return nullptr;

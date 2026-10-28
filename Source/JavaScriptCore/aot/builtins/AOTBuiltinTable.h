@@ -652,6 +652,8 @@ struct BuiltinHostObject {
     std::span<const BuiltinHostObjectField> fields { };
     std::span<const BuiltinHostObjectInternalField> internalFields { };
     bool keepsStringsOfStoredValues { false };
+    // Under each of these the object has an accessor whose two halves are native code.
+    std::span<const BuiltinName> nativeAccessors { };
 };
 
 struct BuiltinNamedMemberCall {

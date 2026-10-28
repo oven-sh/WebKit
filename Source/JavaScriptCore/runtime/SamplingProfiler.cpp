@@ -512,6 +512,10 @@ static void* linkRegisterOf(const PlatformRegisters& registers)
     return MachineContext::linkRegister(registers).untaggedPtr();
 #elif OS(LINUX) && CPU(ARM64)
     return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.machineContext.regs[30]));
+#elif OS(WINDOWS) && CPU(ARM64)
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.Lr));
+#elif OS(FREEBSD) && CPU(ARM64)
+    return reinterpret_cast<void*>(static_cast<uintptr_t>(registers.machineContext.mc_gpregs.gp_lr));
 #else
     UNUSED_PARAM(registers);
     return nullptr;

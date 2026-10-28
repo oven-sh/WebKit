@@ -3,8 +3,8 @@
 # FORM: AsRead
 # RUN: flow
 # CHECK: function f3 result 0 type=Array<undefined|int, proven
-# CHECK: function f4 parameter 0 type=undefined|int|string proven
-# CHECK: function f5 parameter 0 type=undefined|int|string proven
+# CHECK: function f4 parameter 0 type=undefined|int|"cd" proven
+# CHECK: function f5 parameter 0 type=undefined|int|"cd" proven
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

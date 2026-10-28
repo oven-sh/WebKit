@@ -191,9 +191,10 @@ bool isLegalOperatorForm(Opcode opcode, OperatorForm form)
     case OperatorForm::Number:
     case OperatorForm::NumberByOperation:
     case OperatorForm::NullableString:
-    case OperatorForm::MayBeString:
     case OperatorForm::MayBeStringOrNumber:
         return opcode == Opcode::ToString;
+    case OperatorForm::MayBeString:
+        return opcode == Opcode::ToString || opcode == Opcode::Add;
     case OperatorForm::NullableNumber:
         return operatorsOnNullableNumber.contains(opcode);
     }

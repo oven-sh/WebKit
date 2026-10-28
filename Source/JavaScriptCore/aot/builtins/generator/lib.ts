@@ -1491,6 +1491,8 @@ export interface HostObjectOptions {
   otherNames?: PlaceLike | readonly PlaceLike[];
   /** Of whatever is stored or defined under any key the object keeps a string, which code that the stored value names may make. */
   keepsStringsOfStoredValues?: boolean;
+  /** The names under which native code lays an accessor of its own. Whoever asks for the description of one gets two functions of native code. */
+  nativeAccessors?: readonly string[];
   /** By the index of an internal field: what native code does with what code of the library stores there. */
   internalFields?: Readonly<Record<number, readonly HostUseSpec[]>>;
 }
@@ -1514,6 +1516,7 @@ export const hostObject = (cell: string, options: HostObjectOptions): Declaratio
         uses,
       })),
       keepsStringsOfStoredValues: options.keepsStringsOfStoredValues ?? false,
+      nativeAccessors: options.nativeAccessors ?? [],
     },
   ];
 };
@@ -1544,6 +1547,7 @@ export function hostFunction(
       fields: [],
       internalFields: [],
       keepsStringsOfStoredValues: false,
+      nativeAccessors: [],
     },
   ];
 }

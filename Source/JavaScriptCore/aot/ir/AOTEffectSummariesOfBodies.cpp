@@ -21,6 +21,7 @@
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <numeric>
 #include <utility>
 
@@ -158,16 +159,6 @@ static uint64_t sortKeyOf(const SummaryNode& node)
     return static_cast<uint64_t>(static_cast<uint32_t>(node.function.index() + 1)) << 32 | static_cast<uint64_t>(node.part) << 30 | node.parameter;
 }
 
-static void removeRepeatedDependencies(Vector<SummaryDependency>& dependencies)
-{
-    AOT::sort(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {
-        return std::pair(sortKeyOf(a.source), sortKeyOf(a.target)) < std::pair(sortKeyOf(b.source), sortKeyOf(b.target));
-    });
-    removeRepeatedElements(dependencies, [](const SummaryDependency& a, const SummaryDependency& b) {
-        return a.source == b.source && a.target == b.target;
-    });
-}
-
 static std::optional<uint32_t> mappedEntryParameter(const Function& callee, const Value& call, uint32_t operandIndex)
 {
     if (Value::opcodesWithCallees.contains(call.opcode))
@@ -220,6 +211,8 @@ public:
         , m_function(analyses.function())
         , m_exits(computeExitReachability(m_function))
         , m_maySuspend(maySuspend(analyses))
+        , m_wordsInRow((firstBitOfParameters + m_function.numberOfEntryParameters() + bitsInWord - 1) / bitsInWord)
+        , m_parametersInMemoryAsTargets(FillWith { }, m_wordsInRow, uint64_t { 0 })
     {
     }
 
@@ -229,11 +222,13 @@ public:
         m_summary.parameters.reserveInitialCapacity(numberOfParameters);
         for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter) {
             m_summary.parameters.append(ParameterSummary { summarizeEntryParameter(m_analyses, parameter), OperandMemory::none() });
-            if (mayBeReadOutOfMemory(parameter))
+            if (mayBeReadOutOfMemory(parameter)) {
                 m_parametersInMemory.append(parameter);
+                setBitOfParameter(m_parametersInMemoryAsTargets.mutableSpan(), parameter);
+            }
         }
         if (m_function.isUnsplitCoroutine())
-            addDependency(SummaryNode::onThrow(m_id), SummaryNode::onReturn(m_id));
+            addDependencyToExitBits(SummaryNode::onThrow(m_id), bitOfReturn);
         for (unsigned index = 0; index < m_function.blocks.size(); ++index) {
             BlockID block(index);
             if (const std::optional<Target>& handler = m_function.at(block).handler)
@@ -244,12 +239,13 @@ public:
         }
         handOverToExits();
         if (m_function.role == FunctionRole::CoroutineBody && m_function.creator.as<CreatorRecord::Coroutine>().kind == CoroutineKind::AsyncFunction) {
-            if (m_summary.onReturn.mayThrow || m_summary.onThrow.mayThrow || !m_summary.dependencies.isEmpty())
+            if (m_summary.onReturn.mayThrow || m_summary.onThrow.mayThrow || !m_sources.isEmpty())
                 m_summary.onReturn.merge(declaredBoundOf(Opcode::RejectPromise));
-            addDependency(SummaryNode::onThrow(m_id), SummaryNode::onReturn(m_id));
+            addDependencyToExitBits(SummaryNode::onThrow(m_id), bitOfReturn);
         }
-        removeRepeatedDependencies(m_summary.dependencies);
-        moveToExactBuffer(m_summary.dependencies);
+        // A frame that finds no room on the stack is a RangeError at the call.
+        m_summary.onReturn.mayThrow |= ThrowEffect::onlyForLackOfStack();
+        listDependencies();
         return WTF::move(m_summary);
     }
 
@@ -300,44 +296,98 @@ private:
             m_summary.parameters[parameter].memory.merge(memory);
     }
 
-    void addDependency(SummaryNode source, SummaryNode target)
+    // Every target is a node of the function itself, so what a source flows into is a row of bits: on return, on throw, then the entry parameters.
+    static constexpr uint32_t bitsInWord = 64;
+    static constexpr uint64_t bitOfReturn = 1;
+    static constexpr uint64_t bitOfThrow = 2;
+    static constexpr uint32_t firstBitOfParameters = 2;
+
+    static void setBitOfParameter(std::span<uint64_t> row, uint32_t entryParameter)
     {
-        SummaryDependency dependency { source, target };
-        uint64_t mixed = (sortKeyOf(source) * 0x9e3779b97f4a7c15ull ^ sortKeyOf(target)) * 0xff51afd7ed558ccdull;
-        uint32_t hash = static_cast<uint32_t>(mixed >> 32);
-        bool isKnown = !!m_indexOfDependencies.find(hash, [&](uint32_t position) {
-            return m_summary.dependencies[position] == dependency;
-        });
-        if (isKnown)
-            return;
-        m_indexOfDependencies.add(hash, m_summary.dependencies.size());
-        m_summary.dependencies.append(dependency);
+        uint32_t bit = firstBitOfParameters + entryParameter;
+        row[bit / bitsInWord] |= uint64_t { 1 } << bit % bitsInWord;
     }
 
-    void addDependencyToExitsOf(BlockID block, SummaryNode source)
+    std::span<uint64_t> targetsOf(SummaryNode source)
+    {
+        if (m_sources.isEmpty() || m_sources[m_positionOfLatestSource] != source) {
+            uint32_t hash = static_cast<uint32_t>(sortKeyOf(source) * 0x9e3779b97f4a7c15ull >> 32);
+            std::optional<uint32_t> position = m_indexOfSources.find(hash, [&](uint32_t candidate) {
+                return m_sources[candidate] == source;
+            });
+            if (!position) {
+                position = m_sources.size();
+                m_indexOfSources.add(hash, *position);
+                m_sources.append(source);
+                m_targets.grow(m_targets.size() + m_wordsInRow);
+                zeroSpan(m_targets.mutableSpan().last(m_wordsInRow));
+            }
+            m_positionOfLatestSource = *position;
+        }
+        return m_targets.mutableSpan().subspan(size_t { m_positionOfLatestSource } * m_wordsInRow, m_wordsInRow);
+    }
+
+    void addDependencyToExitBits(SummaryNode source, uint64_t exitBits)
+    {
+        targetsOf(source)[0] |= exitBits;
+    }
+
+    void addDependencyToParameter(SummaryNode source, uint32_t entryParameter)
+    {
+        setBitOfParameter(targetsOf(source), entryParameter);
+    }
+
+    uint64_t exitBitsOf(BlockID block) const
     {
         bool reachesThrow = m_exits.reachesThrow.get(block.index());
-        if (m_exits.reachesReturn.get(block.index()) || !reachesThrow)
-            addDependency(source, SummaryNode::onReturn(m_id));
-        if (reachesThrow)
-            addDependency(source, SummaryNode::onThrow(m_id));
+        return (m_exits.reachesReturn.get(block.index()) || !reachesThrow ? bitOfReturn : 0) | (reachesThrow ? bitOfThrow : 0);
     }
 
     void addDependencyToParametersInMemory(SummaryNode source)
     {
-        for (uint32_t parameter : m_parametersInMemory)
-            addDependency(source, SummaryNode::parameterOf(m_id, parameter));
+        if (!m_parametersInMemory.isEmpty())
+            addDependencyToParametersInMemoryAnd(source, 0);
+    }
+
+    void addDependencyToParametersInMemoryAnd(SummaryNode source, uint64_t exitBits)
+    {
+        std::span<uint64_t> row = targetsOf(source);
+        for (uint32_t word = 0; word < m_wordsInRow; ++word)
+            row[word] |= m_parametersInMemoryAsTargets[word];
+        row[0] |= exitBits;
     }
 
     void addDependencyToExits(BlockID block, SummaryNode normalSource, SummaryNode handlerSource)
     {
-        addDependencyToParametersInMemory(normalSource);
-        addDependencyToParametersInMemory(handlerSource);
-        addDependencyToExitsOf(block, normalSource);
-        if (const std::optional<Target>& target = m_function.at(block).handler)
-            addDependencyToExitsOf(target->block, handlerSource);
-        else
-            addDependency(handlerSource, SummaryNode::onThrow(m_id));
+        const std::optional<Target>& handler = m_function.at(block).handler;
+        addDependencyToParametersInMemoryAnd(normalSource, exitBitsOf(block));
+        addDependencyToParametersInMemoryAnd(handlerSource, handler ? exitBitsOf(handler->block) : bitOfThrow);
+    }
+
+    // In the order of the sources, and of each in the order of its targets.
+    void listDependencies()
+    {
+        Vector<uint32_t, 32> positions(m_sources.size(), [](size_t position) {
+            return static_cast<uint32_t>(position);
+        });
+        AOT::sort(positions, std::ranges::less { }, [&](uint32_t position) {
+            return sortKeyOf(m_sources[position]);
+        });
+        size_t numberOfDependencies = 0;
+        for (uint64_t word : m_targets)
+            numberOfDependencies += std::popcount(word);
+        m_summary.dependencies.reserveInitialCapacity(numberOfDependencies);
+        for (uint32_t position : positions) {
+            SummaryNode source = m_sources[position];
+            std::span<const uint64_t> row = m_targets.span().subspan(size_t { position } * m_wordsInRow, m_wordsInRow);
+            for (uint32_t index = 0; index < m_wordsInRow; ++index) {
+                for (uint64_t word = row[index]; word; word &= word - 1) {
+                    uint32_t bit = index * bitsInWord + std::countr_zero(word);
+                    SummaryNode target = bit >= firstBitOfParameters ? SummaryNode::parameterOf(m_id, bit - firstBitOfParameters) : bit ? SummaryNode::onThrow(m_id) : SummaryNode::onReturn(m_id);
+                    m_summary.dependencies.append(SummaryDependency { source, target });
+                }
+            }
+        }
     }
 
     uint32_t exitsOf(BlockID block) const
@@ -410,7 +460,7 @@ private:
                 addDependencyToParametersInMemory(calleeParameter);
                 return;
             case BaseObject::Kind::EntryParameter:
-                addDependency(calleeParameter, SummaryNode::parameterOf(m_id, object.entryParameter));
+                addDependencyToParameter(calleeParameter, object.entryParameter);
                 return;
             case BaseObject::Kind::Untracked:
                 addDependencyToExits(block, calleeParameter, calleeParameter);
@@ -439,16 +489,15 @@ private:
         OperandMemory memory { own.reads.restrictedTo(perObjectHeaps), own.writes.restrictedTo(perObjectHeaps) };
         entry.forEachOperand([&](ValueID operand, uint32_t) {
             forEachEntryParameterOf(operand, [&](uint32_t entryParameter) {
-                SummaryNode target = SummaryNode::parameterOf(m_id, entryParameter);
                 m_summary.parameters[entryParameter].memory.merge(memory);
                 if (!isFirstToRunAt(placeOfParameter(entryParameter), description))
                     return;
                 if (description.callsUnknownCode)
-                    addDependency(SummaryNode::unknownCode(), target);
+                    addDependencyToParameter(SummaryNode::unknownCode(), entryParameter);
                 for (FunctionID id : description.functions) {
                     uint32_t numberOfParameters = m_context.program.at(id).numberOfEntryParameters();
                     for (uint32_t parameter = 0; parameter < numberOfParameters; ++parameter)
-                        addDependency(SummaryNode::parameterOf(id, parameter), target);
+                        addDependencyToParameter(SummaryNode::parameterOf(id, parameter), entryParameter);
                 }
             });
         });
@@ -457,8 +506,8 @@ private:
     void addArgumentWithoutParameter(ValueID argument, FunctionID callee)
     {
         forEachEntryParameterOf(argument, [&](uint32_t entryParameter) {
-            addDependency(SummaryNode::onReturn(callee), SummaryNode::parameterOf(m_id, entryParameter));
-            addDependency(SummaryNode::onThrow(callee), SummaryNode::parameterOf(m_id, entryParameter));
+            addDependencyToParameter(SummaryNode::onReturn(callee), entryParameter);
+            addDependencyToParameter(SummaryNode::onThrow(callee), entryParameter);
         });
     }
 
@@ -611,7 +660,12 @@ private:
     Vector<uint32_t, 4> m_parametersInMemory;
     std::array<Effects, 4> m_gatheredForExits { Effects::none(), Effects::none(), Effects::none(), Effects::none() };
     Effects m_gatheredForThrowAlone { Effects::none() };
-    HashedIndex m_indexOfDependencies;
+    const uint32_t m_wordsInRow;
+    Vector<uint64_t, 1> m_parametersInMemoryAsTargets;
+    Vector<SummaryNode, 32> m_sources;
+    Vector<uint64_t, 32> m_targets;
+    uint32_t m_positionOfLatestSource { 0 };
+    HashedIndex m_indexOfSources;
     Vector<CodeRunAtPlace> m_codeRunAtPlaces;
     HashedIndex m_indexOfCodeRunAtPlaces;
 };

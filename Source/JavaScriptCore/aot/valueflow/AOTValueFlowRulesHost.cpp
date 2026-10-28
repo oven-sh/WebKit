@@ -113,6 +113,12 @@ void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, Nat
         else if (callee.entryParameterKind(index) != EntryParameter::Capture)
             passFromNativeCode(context, function, callee, index, caller, unknown);
     }
+    if (callee.kind == FunctionKind::Plain && callee.constructedClass && callee.constructorForm() != ConstructorForm::NotConstructor && callee.thisParameterIndex()) {
+        ClimbingSet instance = only(context, universe.instanceOf(callee.constructedClass));
+        context.connect(context.lookup(only(context, universe.closureOf(function)), ValueFlowName::property(context.program().keyOf(BuiltinNames::prototype))), context.written(instance, prototypeLinkName));
+        context.add(nodes.entryParameter(function, *callee.thisParameterIndex()), instance);
+        context.add(escaped, instance);
+    }
     if (const auto* summary = nodes.resultSummaryOf(function))
         handOutOfFunction(context, callee, summary->ownResult);
     else {

@@ -1461,23 +1461,36 @@ static bool collectReadsRelyingOn(FunctionPassContext& context, ValueID testID, 
     return joinsTheseAlone && !found.reads.isEmpty();
 }
 
-// A validating build asks again each test that the proof stands for, and names the proof in no operand.
-static void collectTestsRepeatedForValidation(FunctionPassContext& context, const Value& test, ReadsBehindStorageTest& found)
+// A validating build asks again each test that the proof stands for, and names the proof in no operand. Answers whether it is known of each such test which proof it asks again.
+static bool collectTestsRepeatedForValidation(FunctionPassContext& context, const Value& test, ReadsBehindStorageTest& found)
 {
     if (!context.build.validates())
-        return;
+        return true;
     const Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
     ValueID array = analyses.identityOf(test.arrayOperand());
+    bool isKnownOfEach = true;
     findReadsKeptForValidation(function).forEachSetBit([&](size_t index) {
         ValueID id(index);
         const Value& kept = function.at(id);
         if (kept.opcode != Opcode::HasArrayStorage || kept.arrayStorage() != test.arrayStorage() || analyses.identityOf(kept.arrayOperand()) != array || analyses.useLists().useCount(id) != 1)
             return;
         ValueLocation location = analyses.useLists().locationOf(id);
-        if (analyses.dominators().dominates(found.passed, location.block) && analyses.guards().stateAt(found.guard, ProgramPoint { location.block, location.index }) == GuardState::Available)
+        if (!analyses.dominators().dominates(found.passed, location.block))
+            return;
+        switch (analyses.guards().stateAt(found.guard, ProgramPoint { location.block, location.index })) {
+        case GuardState::Available:
             found.repeatedTests.append(id);
+            return;
+        case GuardState::Unavailable:
+            return;
+        case GuardState::Unknown:
+            isKnownOfEach = false;
+            return;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     });
+    return isKnownOfEach;
 }
 
 // An element that is no number leaves where an absent one does: nothing has happened since that test. Answers the test.
@@ -1655,7 +1668,8 @@ static BlockID addReadsOfOtherStorage(FunctionPassContext& context, IRBuilder& b
     found.guard = function.at(found.passed).parameters.last();
     if (!collectReadsRelyingOn(context, function.at(tested).terminator.conditionOperand(), found))
         return { };
-    collectTestsRepeatedForValidation(context, test, found);
+    if (!collectTestsRepeatedForValidation(context, test, found))
+        return { };
     Vector<ValueID, 8> testsInFrontOfReads;
     // Double storage is asked for where numbers are expected.
     auto fitsOtherStorage = [&](ValueID read) {

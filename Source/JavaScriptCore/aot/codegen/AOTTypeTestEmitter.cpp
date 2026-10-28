@@ -305,18 +305,9 @@ void TypeTestEmitter::test(Operand operand, const TypeTestPlan& plan, B3::Freque
         });
         return;
     case Representation::LiteralString:
+        // Whatever makes a word makes the number of a text that has one, so a word that is a cell equals no text with a number.
         testWithMarkers(operand, plan, failure, [&] {
-            ConversionEmitter& conversions = emitter<ConversionEmitter>();
-            LiteralStringWord word = operand.as<LiteralStringWord>();
-            LBasicBlock isLiteral = newBlock();
-            LBasicBlock isStringCell = newBlock();
-            Join<LiteralStringWord> literal(m_out);
-            m_out.branch(conversions.isStringCell(word).value(), unlikelyEdge(isStringCell), normalEdge(isLiteral));
-            m_out.appendTo(isLiteral);
-            literal.add(word);
-            m_out.appendTo(isStringCell);
-            literal.add(conversions.toLiteralString(CellPointer(word.value())));
-            leaveUnless(isOneOfLiteralStringWords(literal.finish(), plan), failure);
+            leaveUnless(isOneOfLiteralStringWords(operand.as<LiteralStringWord>(), plan), failure);
         });
         return;
     case Representation::Boolean:

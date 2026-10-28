@@ -104,10 +104,13 @@ function f2 name="safe" module=m0 position=16 flags=[IsChecked, HasExplicitName]
 # CHECK-NOT: Branch(
 # CHECK-NOT: Patchpoint
 # CHECK: Double b@[[sum]] = Add(b@[[checked]], 
-# CHECK-NEXT: Return(b@[[sum]], Terminal)
+# CHECK-NEXT: Void b@{{*}} = Patchpoint({{*}}Terminal|ExitsSideways{{*}}:LoopHint)
+# CHECK-NEXT: Successors: #[[left]], Rare:#[[handler]]
+# CHECK-NEXT: BB#[[left]]:
+# CHECK: Return(b@[[sum]], Terminal)
 # CHECK-NEXT: BB#[[handler]]:
 # CHECK-LABEL: end of function
-# Beside the call: set up the frame, add, leave the frame, return. The handler's instructions all count as rare.
+# Beside the call and the poll that leaves the handler: set up the frame, add, leave the frame, return. The handler's instructions all count as rare.
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 4, patchpoints: 1, rare instructions: 6
-# ARM64: instructions: 5, patchpoints: 1, rare instructions: 5
+# X64: instructions: 4, patchpoints: 2, rare instructions: 6
+# ARM64: instructions: 5, patchpoints: 2, rare instructions: 5

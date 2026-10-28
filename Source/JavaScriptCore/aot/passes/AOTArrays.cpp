@@ -17,6 +17,7 @@
 #include "AOTDerivedFunctions.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTEffectsDescription.h"
 #include "AOTEffectsOfAccesses.h"
 #include "AOTEffectsOfRules.h"
 #include "AOTFunctionAnalyses.h"
@@ -559,6 +560,26 @@ static bool mayStop(const Effects& effects)
     return effects.mayThrow || !effects.alwaysCompletes();
 }
 
+// A frame that finds no room is the same error whichever call meets it, and a call that is left out meets none.
+static bool mayStopBeyondLackOfStack(const Effects& effects)
+{
+    return effects.mayThrowBeyondLackOfStack() || !effects.alwaysCompletes();
+}
+
+// Every call of such a function out of one loop needs the same room: the first call finds it or none does.
+static bool entersNoFurtherFrame(const Program& program, FunctionID id)
+{
+    const Function& function = program.at(id);
+    auto runsNoCode = [](const EffectDescription& description) {
+        return description.functions.isEmpty() && description.slowPathFunctions.isEmpty() && !description.callsUnknownCode;
+    };
+    return function.hasBody() && std::ranges::all_of(function.blocks, [&](const Block& block) {
+        return runsNoCode(describeCodeRunBy(program, function, block.terminator)) && std::ranges::all_of(block.values, [&](ValueID value) {
+            return runsNoCode(describeCodeRunBy(program, function, function.at(value)));
+        });
+    });
+}
+
 static bool mayAccessSameMemory(const Effects& a, const Effects& b)
 {
     LocationMasks orderedWritesOfA = a.writes.restrictedTo(orderedHeaps);
@@ -605,11 +626,13 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
 
     EffectContext effectContext { program, context.inputs.effects };
     Vector<Effects, ChainShape::maxNumberOfLinks + 2> effects;
+    Vector<bool, ChainShape::maxNumberOfLinks + 2> mayStopBehindFirstCall;
     for (const ChainCallback& callback : chain.callbacks) {
         CalleeList callees = callback.callee ? CalleeList::none() : CalleeList::unknown();
         if (callback.callee)
             callees.add(callback.callee);
         effects.append(effectsOfCallees(effectContext, callees, BuiltinCallMode::Call).onAnyEdge());
+        mayStopBehindFirstCall.append(mayStopBeyondLackOfStack(effects.last()) || (mayStop(effects.last()) && !(callback.callee && entersNoFurtherFrame(program, callback.callee))));
     }
     if (chain.shape.end == ChainEndKind::Join) {
         const ClassPart* part = program.typeOf(context.function, last->receiver).findClassPart(BuiltinClasses::Array);
@@ -629,14 +652,16 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         for (size_t later = earlier + 1; later < effects.size(); ++later) {
             const Effects& a = effects[earlier];
             const Effects& b = effects[later];
-            if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (mayStop(a) && (canBeObserved(b) || mayStop(b))))
+            bool earlierStopsAmongLaterCalls = earlier < mayStopBehindFirstCall.size() ? mayStopBehindFirstCall[earlier] : mayStop(a);
+            bool stopsDiffer = (mayStopBeyondLackOfStack(a) && mayStop(b)) || (earlierStopsAmongLaterCalls && mayStopBeyondLackOfStack(b));
+            if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (earlierStopsAmongLaterCalls && canBeObserved(b)) || stopsDiffer)
                 return ArrayChainDeclineReason::CallbacksInterfere;
             if (mayStop(b) && canBeObserved(a))
                 return ArrayChainDeclineReason::SkippedCallIsObservable;
         }
     }
     bool skipsCallThatShows = last->method->stopsEarly && std::ranges::any_of(effects.span().first(chain.shape.numberOfLinks()), [](const Effects& step) {
-        return canBeObserved(step) || mayStop(step);
+        return canBeObserved(step) || mayStopBeyondLackOfStack(step);
     });
     if (skipsCallThatShows)
         return ArrayChainDeclineReason::SkippedCallIsObservable;

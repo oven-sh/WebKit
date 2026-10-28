@@ -3,7 +3,7 @@
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls disable=b3:UnrollLoops
 # RUN(X64): generate-code
 # REQUIRES(X64): x86_64 faulting-loop-polls
-# X64: f1: size={{*}} handlers=1{{*}} polls=2
+# X64: f1: size={{*}} handlers=1{{*}} polls=3
 # X64: f2: size={{*}} handlers=0{{*}} polls=2
 
 module m0 path="main.js" displayPath="main.js" body=f0

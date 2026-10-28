@@ -137,6 +137,7 @@ function f1 name="areaOf" module=m0 position=147 flags=[IsChecked, HasExplicitNa
 }
 
 # A field whose type is a union of string literals holds a small number for each literal. The switch loads the field once and compares that word with one constant per case: no string is read.
+# The switch names every literal, so what is neither of the first two is the third.
 # CHECK-LABEL: name="areaOf" role=Source
 # CHECK: Int64 b@[[kind]] = Load(b@[[shape]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK: Int32 b@[[isCircle]] = Equal(b@[[kind]], $18(
@@ -145,8 +146,7 @@ function f1 name="areaOf" module=m0 position=147 flags=[IsChecked, HasExplicitNa
 # CHECK: Int32 b@[[isSquare]] = Equal(b@[[kind]], $22(
 # CHECK: Branch(b@[[isSquare]], Terminal)
 # CHECK: Double b@{{*}} = Load(b@[[shape]], offset = 24, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
-# CHECK: Int32 b@[[isRectangle]] = Equal(b@[[kind]], $26(
-# CHECK: Branch(b@[[isRectangle]], Terminal)
+# CHECK-NOT: Equal(b@[[kind]]
 # CHECK: Double b@{{*}} = Load(b@[[shape]], offset = 32, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
 # CHECK-LABEL: end of function
 # Inside a case the fields of that member of the union are read without a test of the shape.

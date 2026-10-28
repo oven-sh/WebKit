@@ -78,7 +78,9 @@ public:
             });
         case OperatorForm::MayBeString:
         case OperatorForm::MayBeStringOrNumber:
-            return convertPossibleString(context, operand.as<Boxed>(), type, form);
+            return convertPossibleString(context, operand.as<Boxed>(), type, form, [&] {
+                return callToString(context, operand.as<Boxed>());
+            });
         case OperatorForm::Unselected:
         case OperatorForm::Integers:
         case OperatorForm::CheckedIntegers:
@@ -121,6 +123,43 @@ public:
         return convert(context, operand, type, form);
     }
 
+    CellPointer convertPossibleString(const OperationContext& context, Boxed boxed, const Type& type, OperatorForm form, NOESCAPE const Invocable<CellPointer()> auto& convertOther)
+    {
+        bool everyCellIsString = !type.hasObjects() && !(type.primitives & (Primitive::AnySymbol | Primitive::BigInt));
+        bool convertsIntegers = form == OperatorForm::MayBeStringOrNumber;
+        auto edgeToOther = [&](LBasicBlock block) {
+            return context.shape() == CodeShape::Compact ? normalEdge(block) : unlikelyEdge(block);
+        };
+        LBasicBlock cellCase = newBlock();
+        LBasicBlock stringCase = newBlock();
+        LBasicBlock notCellCase = newBlock();
+        LBasicBlock otherCase = newBlock();
+        Join<CellPointer> join(m_out);
+        branch(isCell(boxed), { normalEdge(cellCase), convertsIntegers ? normalEdge(notCellCase) : edgeToOther(notCellCase) });
+
+        m_out.appendTo(cellCase);
+        if (everyCellIsString)
+            m_out.jump(stringCase);
+        else
+            branch(hasCellType(unboxCell(boxed), StringType), { normalEdge(stringCase), edgeToOther(otherCase) });
+
+        m_out.appendTo(stringCase);
+        join.add(unboxCell(boxed));
+
+        m_out.appendTo(notCellCase);
+        if (convertsIntegers) {
+            LBasicBlock int32Case = newBlock();
+            branch(isInt32(boxed), { normalEdge(int32Case), edgeToOther(otherCase) });
+            m_out.appendTo(int32Case);
+            join.add(emitter<StringEmitter>().integerToString(context, unboxInt32(boxed)));
+        } else
+            m_out.jump(otherCase);
+
+        m_out.appendTo(otherCase);
+        join.add(convertOther());
+        return join.finish();
+    }
+
 private:
     CellPointer callToString(const OperationContext& context, Boxed boxed, const CallOptions& options = { })
     {
@@ -139,39 +178,6 @@ private:
         }, [&] {
             return emitter<StringEmitter>().numberToString(context, value);
         });
-    }
-
-    CellPointer convertPossibleString(const OperationContext& context, Boxed boxed, const Type& type, OperatorForm form)
-    {
-        bool everyCellIsString = !type.hasObjects() && !(type.primitives & (Primitive::AnySymbol | Primitive::BigInt));
-        LBasicBlock cellCase = newBlock();
-        LBasicBlock stringCase = newBlock();
-        LBasicBlock notCellCase = newBlock();
-        LBasicBlock otherCase = newBlock();
-        Join<CellPointer> join(m_out);
-        branch(isCell(boxed), { normalEdge(cellCase), normalEdge(notCellCase) });
-
-        m_out.appendTo(cellCase);
-        if (everyCellIsString)
-            m_out.jump(stringCase);
-        else
-            branch(hasCellType(unboxCell(boxed), StringType), { normalEdge(stringCase), normalEdge(otherCase) });
-
-        m_out.appendTo(stringCase);
-        join.add(unboxCell(boxed));
-
-        m_out.appendTo(notCellCase);
-        if (form == OperatorForm::MayBeStringOrNumber) {
-            LBasicBlock int32Case = newBlock();
-            branch(isInt32(boxed), { normalEdge(int32Case), normalEdge(otherCase) });
-            m_out.appendTo(int32Case);
-            join.add(emitter<StringEmitter>().integerToString(context, unboxInt32(boxed)));
-        } else
-            m_out.jump(otherCase);
-
-        m_out.appendTo(otherCase);
-        join.add(callToString(context, boxed));
-        return join.finish();
     }
 };
 
@@ -312,6 +318,14 @@ Operand OperatorEmitter::addStrings(const ValueContext& value)
             return arithmeticOnBoxedOperands(value, ArithmeticOperator::Add, x, y);
         });
     }
+    case OperatorForm::MayBeString: {
+        Boxed x = in<Boxed>(left);
+        Boxed y = in<Boxed>(right);
+        bool emptyTextIsOnLeft = typeOf(left).singleStringLiteral() == m_program.strings.emptyString();
+        return toStrings.convertPossibleString(value, emptyTextIsOnLeft ? y : x, typeOf(emptyTextIsOnLeft ? right : left), OperatorForm::MayBeString, [&] {
+            return unboxCell(arithmeticOnBoxedOperands(value, ArithmeticOperator::Add, x, y));
+        });
+    }
     case OperatorForm::NullableStringAndPrimitive: {
         if (!resultIsBoxed)
             break;
@@ -342,7 +356,6 @@ Operand OperatorEmitter::addStrings(const ValueContext& value)
     case OperatorForm::NumberByOperation:
     case OperatorForm::NullableString:
     case OperatorForm::NullableNumber:
-    case OperatorForm::MayBeString:
     case OperatorForm::MayBeStringOrNumber:
         break;
     }

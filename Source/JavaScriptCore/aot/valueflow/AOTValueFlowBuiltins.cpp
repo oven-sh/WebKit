@@ -393,6 +393,12 @@ public:
             if (!record.internalFields.empty())
                 m_context.add(m_context.written(self, cellOfValueFromLibrary(m_builtins)), undescribedValue());
         }
+        for (BuiltinName name : record.nativeAccessors) {
+            PropertyKeyID key = m_program.keyOf(name);
+            ClimbingSet half = only(m_context, m_tables.heap().undescribedNativeCode());
+            m_context.add(m_context.written(self, ValueFlowName::getter(m_program, key)), half);
+            m_context.add(m_context.written(self, ValueFlowName::setter(m_program, key)), half);
+        }
         if (record.internalFields.empty())
             return;
         ValueFlowName internalFields = ValueFlowName::of(ValueFlowNameKind::InternalFields);
@@ -4034,13 +4040,13 @@ static bool maySymbolNobodyKnowsBeOneThatHostLooksFor(ValueFlowRuleContext& cont
 static bool mayLieUnderSymbolNobodyKnows(ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
-    if (context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredUnderSymbolsNobodyKnows)), universe.callables()))
+    if (context.holdsAnyOf(ClimbingSet(universe.callables()), context.nodes().ofHost(ValueFlowHostNode::StoredUnderSymbolsNobodyKnows)))
         return true;
-    ClimbingSet storedByLibrary = context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredByLibraryUnderSymbolsNobodyKnows));
-    ValueSetID closuresOfProgram = universe.builtinTables().heap().closuresWrittenInProgram();
-    if (context.meet(storedByLibrary, closuresOfProgram))
+    ValueFlowNodeID storedByLibrary = context.nodes().ofHost(ValueFlowHostNode::StoredByLibraryUnderSymbolsNobodyKnows);
+    ClimbingSet closuresOfProgram(universe.builtinTables().heap().closuresWrittenInProgram());
+    if (context.holdsAnyOf(closuresOfProgram, storedByLibrary))
         return true;
-    return context.meet(storedByLibrary, universe.placeholdersAlone()) && context.holdsAnyOf(ClimbingSet(closuresOfProgram), ValueFlowProgramNodes::escaped());
+    return context.holdsAnyOf(ClimbingSet(universe.placeholdersAlone()), storedByLibrary) && context.holdsAnyOf(closuresOfProgram, ValueFlowProgramNodes::escaped());
 }
 
 bool mayProgramHaveStoredMethodThatHostLooksFor(ValueFlowRuleContext& context)
@@ -4048,21 +4054,21 @@ bool mayProgramHaveStoredMethodThatHostLooksFor(ValueFlowRuleContext& context)
     const ValueFlowUniverse& universe = context.universe();
     ValueSetID closuresOfLibrary = context.maker().intersect(universe.closures(), ValueSets::complement(universe.builtinTables().heap().closuresWrittenInProgram()));
     ValueSetID notOfProgram = context.maker().unite(context.maker().unite(closuresOfLibrary, universe.builtinFunctions()), universe.placeholdersAlone());
-    ValueSetID functionsOfProgram = context.maker().intersect(universe.callables(), ValueSets::complement(notOfProgram));
-    if (context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads)), functionsOfProgram))
+    ClimbingSet functionsOfProgram(context.maker().intersect(universe.callables(), ValueSets::complement(notOfProgram)));
+    if (context.holdsAnyOf(functionsOfProgram, context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads)))
         return true;
     if (!maySymbolNobodyKnowsBeOneThatHostLooksFor(context))
         return false;
-    return context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredUnderSymbolsNobodyKnows)), functionsOfProgram)
-        || context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredByLibraryUnderSymbolsNobodyKnows)), functionsOfProgram);
+    return context.holdsAnyOf(functionsOfProgram, context.nodes().ofHost(ValueFlowHostNode::StoredUnderSymbolsNobodyKnows))
+        || context.holdsAnyOf(functionsOfProgram, context.nodes().ofHost(ValueFlowHostNode::StoredByLibraryUnderSymbolsNobodyKnows));
 }
 
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName name)
 {
     const ValueFlowUniverse& universe = context.universe();
-    if (context.meet(context.valueOf(context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads)), universe.callables()))
+    if (context.holdsAnyOf(ClimbingSet(universe.callables()), context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads)))
         return true;
-    if (mayLieUnderSymbolNobodyKnows(context) && maySymbolNobodyKnowsBeOneThatHostLooksFor(context))
+    if (maySymbolNobodyKnowsBeOneThatHostLooksFor(context) && mayLieUnderSymbolNobodyKnows(context))
         return true;
     const ValueFlowHeapTables& heap = universe.builtinTables().heap();
     const ValueFlowMembersUnderKey& members = heap.under(context.program().keyOf(name));

@@ -137,11 +137,15 @@ function f2 name="total" module=m0 position=16 flags=[IsChecked, HasExplicitName
     Return v31
 }
 
-# A try block in the body of a loop adds nothing to a turn that does not throw. The call ends its block, the handler lies behind a rare edge, and the other edge goes on to the addition and the step.
+# A try block in the body of a loop adds one poll to a turn that does not throw: the callee may have allocated, and the block polls before it leaves the handler.
+# The call ends its block, the handler lies behind a rare edge, and the other edge goes on to the poll, the addition and the step.
 # CHECK-LABEL: steps by 1
 # CHECK: Double b@[[checked]] = Patchpoint(b@{{*}}:Register({{*}}Terminal|ExitsSideways{{*}}:CallDirect)
-# CHECK-NEXT: Successors: #[[next]], Rare:#{{*}}
+# CHECK-NEXT: Successors: #[[next]], Rare:#[[handler]]
 # CHECK-NEXT: BB#[[next]]:
+# CHECK-NOT: Branch(
+# CHECK: Void b@{{*}} = Patchpoint({{*}}Terminal|ExitsSideways{{*}}:LoopHint)
+# CHECK-NEXT: Successors: #{{*}}, Rare:#[[handler]]
 # CHECK-NOT: Branch(
 # CHECK-NOT: Patchpoint
 # CHECK: Double b@{{*}} = Add(b@{{*}}, b@{{*}}, {{*}}:Add)
@@ -150,5 +154,5 @@ function f2 name="total" module=m0 position=16 flags=[IsChecked, HasExplicitName
 # CHECK: Int64 b@{{*}} = Add(b@{{*}}, $1(b@{{*}}), {{*}}:Increment)
 # CHECK-LABEL: end of loop
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: loop #{{*}}, instructions: 16, patchpoints: 3, rare instructions: 52
+# X64: loop #{{*}}, instructions: 16, patchpoints: 4, rare instructions: 53
 # ARM64: loop #{{*}}, instructions: 15, patchpoints: 3, rare instructions: 53

@@ -1,11 +1,11 @@
-# A call that neither throws nor completes keeps its handler here: RemoveRedundantHandlers takes it, and the catch block goes with it
+# A call that never completes keeps its handler and the catch block, also behind RemoveRedundantHandlers: the frame of its callee may find no room
 # FORM: Prepared
 # RUN: pass SimplifyControlFlow
 # RUN(BOTH): pass RemoveRedundantHandlers SimplifyControlFlow
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="calleeCannotThrow" results=[{type=anything}] {
+function f0 name="calleeThrowsNothingByRule" results=[{type=anything}] {
   b0() handler=b1():
     v0 = CallDirect function=f2
     Unreachable
@@ -14,10 +14,10 @@ function f0 name="calleeCannotThrow" results=[{type=anything}] {
     Return v1
 # CHECK: b0() handler=b1():
 # CHECK: = CatchValue
-# BOTH: b0():
+# BOTH: b0() handler=b1():
 # BOTH-NEXT: = CallDirect
 # BOTH-NEXT: Unreachable
-# BOTH-NOT: CatchValue
+# BOTH: = CatchValue
 }
 
 function f1 name="calleeThrows" results=[{type=anything}] {

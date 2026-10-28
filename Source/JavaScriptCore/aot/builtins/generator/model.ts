@@ -480,6 +480,7 @@ export interface ModelHostObject {
   fields: readonly ModelHostObjectField[];
   internalFields: readonly ModelHostObjectInternalField[];
   keepsStringsOfStoredValues: boolean;
+  nativeAccessors: readonly ModelName[];
   source: Source;
 }
 

@@ -221,7 +221,7 @@ static Origin visibleOriginOf(const Program& program, const Function& function, 
         const InlineFrame& frame = function.inlineFrames[origin.inlineFrame];
         if (!frame.callee || !program.at(frame.callee).isHiddenInStackTraces())
             break;
-        origin = { frame.callPosition, frame.parent };
+        origin = { frame.callPosition, frame.parent, frame.isTailCall, frame.callIsPartOfConstruction };
     }
     return origin;
 }
@@ -485,7 +485,7 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
     }
 
     RegionCloner cloner(builder, body);
-    uint32_t firstFrame = appendInlineFrames(function, InlineFrame { .callee = candidate.body.body, .callPosition = originOfBody.position, .parent = originOfBody.inlineFrame, .module = body.module }, body);
+    uint32_t firstFrame = appendInlineFrames(function, InlineFrame { .callee = candidate.body.body, .callPosition = originOfBody.position, .parent = originOfBody.inlineFrame, .isTailCall = originOfBody.isTailCall, .module = body.module }, body);
     builder.setOrigin(origin);
     builder.moveToEndOf(start);
     const auto& parameters = body.at(entryBlock).parameters;

@@ -86,32 +86,6 @@ static bool isOperationReturnSite(const CodeLocation& location)
     return location.kind == CodeKind::Function || (location.kind == CodeKind::Stub && !entersCallee(location.stubFrameKind));
 }
 
-#if defined(BUN_HARDENED)
-
-static bool isInCodeOfEngine(const void* address)
-{
-    struct Segments {
-        std::array<std::pair<uintptr_t, uintptr_t>, 4> startAndSize { };
-    };
-    static const Segments segments = [] {
-        Segments result;
-        // The program itself comes first.
-        dl_iterate_phdr([](dl_phdr_info* info, size_t, void* data) {
-            size_t count = 0;
-            auto& found = static_cast<Segments*>(data)->startAndSize;
-            for (const auto& header : std::span { info->dlpi_phdr, info->dlpi_phnum }) {
-                if (header.p_type == PT_LOAD && (header.p_flags & PF_X) && count < found.size())
-                    found[count++] = { info->dlpi_addr + header.p_vaddr, header.p_memsz };
-            }
-            return 1;
-        }, &result);
-        return result;
-    }();
-    return std::ranges::any_of(segments.startAndSize, [&](auto segment) {
-        return std::bit_cast<uintptr_t>(address) - segment.first < segment.second;
-    });
-}
-
 static bool callEndsAt(std::span<const uint8_t> code, const void* address)
 {
     size_t offset = static_cast<const uint8_t*>(address) - code.data();
@@ -136,6 +110,32 @@ static bool callEndsAt(std::span<const uint8_t> code, const void* address)
 #else
 #error "Not implemented on this CPU"
 #endif
+}
+
+#if defined(BUN_HARDENED)
+
+static bool isInCodeOfEngine(const void* address)
+{
+    struct Segments {
+        std::array<std::pair<uintptr_t, uintptr_t>, 4> startAndSize { };
+    };
+    static const Segments segments = [] {
+        Segments result;
+        // The program itself comes first.
+        dl_iterate_phdr([](dl_phdr_info* info, size_t, void* data) {
+            size_t count = 0;
+            auto& found = static_cast<Segments*>(data)->startAndSize;
+            for (const auto& header : std::span { info->dlpi_phdr, info->dlpi_phnum }) {
+                if (header.p_type == PT_LOAD && (header.p_flags & PF_X) && count < found.size())
+                    found[count++] = { info->dlpi_addr + header.p_vaddr, header.p_memsz };
+            }
+            return 1;
+        }, &result);
+        return result;
+    }();
+    return std::ranges::any_of(segments.startAndSize, [&](auto segment) {
+        return std::bit_cast<uintptr_t>(address) - segment.first < segment.second;
+    });
 }
 
 // The fault handler enters a stub as if the instruction that faulted had called it.
@@ -805,25 +805,74 @@ static SUPPRESS_ASAN SampledTop findTopInCompiledCode(const Image& image, const 
     return result;
 }
 
+// Native code may sign the return addresses that it holds.
+static ALWAYS_INLINE const void* removeSignature(const void* returnAddress)
+{
+#if CPU(ARM64) && !OS(DARWIN)
+    return std::bit_cast<const void*>(std::bit_cast<uintptr_t>(returnAddress) & ((1ULL << OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH)) - 1));
+#else
+    return removeCodePtrTag(returnAddress);
+#endif
+}
+
+// Whether the frame at a return site, or the first one above it that has a record, has its record there. stackPointer is what the register holds at the site.
+static SUPPRESS_ASAN bool hasFrameRecordAt(const Image& image, CodeLocation site, const void* stackPointer, const CallFrame* frameRecord)
+{
+    while (true) {
+        bool isFunction = site.kind == CodeKind::Function;
+        ImageFrame frame = isFunction ? image.frameAtReturnOffset(site.function, site.offset) : frameAtStubReturnSite(site.stubFrameKind);
+        if (frame.hasFrameRecord())
+            return std::bit_cast<uintptr_t>(stackPointer) + frame.frameSizeInBytes() - frame.bytesAboveFrameRecord() == std::bit_cast<uintptr_t>(frameRecord);
+        CallFrame* callFrame = frameAtReturnSite(frame, stackPointer, nullptr);
+        if (callFrame >= frameRecord)
+            return false;
+        stackPointer = stackPointerOfCaller(callFrame, isFunction ? bytesAboveReturnAddressOf(frame) : bytesAboveReturnAddressOf(site.stubFrameKind));
+        const void* returnAddress = removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(callFrame)->returnPC);
+        site = image.locate(returnAddress);
+        if (!site.runsCompiledCode() || !callEndsAt(image.code(), returnAddress))
+            return false;
+    }
+}
+
+// Native code need not keep frame records. The first record above code that keeps none is the one of the compiled function that called it, or of a caller of that function.
+// Only where a call pushes its return address: the frame of the caller ends right above that word, so the size of the frame says whether the record is its own.
+static SUPPRESS_ASAN std::optional<SampledTop> findCallerOfCodeWithoutFrameRecord(const Image& image, const SuspendedThreadStack& stack, const void* stackPointer, CallFrame* frameRecord)
+{
+    if (!isX86_64() || !stack.contains(stackPointer))
+        return std::nullopt;
+    for (auto* word = static_cast<void* const*>(stackPointer); std::bit_cast<uintptr_t>(word) < std::bit_cast<uintptr_t>(frameRecord); ++word) {
+        CodeLocation site = image.locate(*word);
+        if (site.kind == CodeKind::Function && callEndsAt(image.code(), *word) && hasFrameRecordAt(image, site, word + 1, frameRecord))
+            return sampledTopAtReturnSite(image, site, *word, word + 1, frameRecord);
+    }
+    return std::nullopt;
+}
+
 static SUPPRESS_ASAN std::optional<SampledTop> findTopBelowNativeCode(const Image& image, const SampledRegisters& registers, CallFrame* topCallFrame, const SuspendedThreadStack& stack)
 {
     auto* frame = static_cast<CallFrame*>(registers.framePointer);
-    if (registers.linkRegister && stack.contains(frame)
-        && removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(frame)->returnPC) != registers.linkRegister
-        && image.locate(registers.linkRegister).runsCompiledCode())
-        return SampledTop { frame, registers.linkRegister, nullptr };
+    const void* linkRegister = removeSignature(registers.linkRegister);
+    if (linkRegister && stack.contains(frame)
+        && removeSignature(reinterpret_cast<const CallerFrameAndPC*>(frame)->returnPC) != linkRegister
+        && image.locate(linkRegister).runsCompiledCode())
+        return SampledTop { frame, linkRegister, nullptr };
     const void* pc = registers.pc;
+    const void* endOfFrameBelow = registers.stackPointer;
     while (stack.contains(frame)) {
         auto* record = reinterpret_cast<const CallerFrameAndPC*>(frame);
-        const void* returnAddress = removeCodePtrTag(record->returnPC);
+        const void* returnAddress = removeSignature(record->returnPC);
         CodeLocation returnSite = image.locate(returnAddress);
         if (frame == topCallFrame && !isOperationReturnSite(returnSite))
             return SampledTop { topCallFrame, pc, nullptr };
-        if (returnSite.runsCompiledCode())
+        if (returnSite.runsCompiledCode()) {
+            if (auto caller = findCallerOfCodeWithoutFrameRecord(image, stack, endOfFrameBelow, frame))
+                return caller;
             return sampledTopAtReturnSite(image, returnSite, returnAddress, stackPointerOfCaller(frame), record->callerFrame);
+        }
         if (record->callerFrame <= frame)
             break;
         pc = returnAddress;
+        endOfFrameBelow = stackPointerOfCaller(frame);
         frame = record->callerFrame;
     }
     return std::nullopt;

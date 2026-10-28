@@ -512,10 +512,21 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
     case Opcode::ToNumeric:
         return left.isNumber() ? left : KnownValue();
     case Opcode::GetStringLength: {
-        if (left.kind() != KnownValue::Kind::String)
-            return { };
         Vector<char16_t> buffer;
-        return KnownValue::integer(program.strings.viewOf(left.asString(), buffer).length());
+        if (left.kind() == KnownValue::Kind::String)
+            return KnownValue::integer(program.strings.viewOf(left.asString(), buffer).length());
+        // Texts of one length have that length, whichever of them it is.
+        const Type& type = program.typeOf(function, value.operand(0));
+        if (!type.hasLiteralStrings() || !type.hasOnlyPrimitives(Primitive::LiteralString))
+            return { };
+        std::optional<unsigned> length;
+        for (StringID literal : type.stringLiterals) {
+            unsigned lengthOfLiteral = program.strings.viewOf(literal, buffer).length();
+            if (length && *length != lengthOfLiteral)
+                return { };
+            length = lengthOfLiteral;
+        }
+        return length ? KnownValue::integer(*length) : KnownValue();
     }
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -2197,6 +2208,22 @@ struct ControlFlowSimplifier {
     }
 
     template<typename Case>
+    static std::optional<uint64_t> numberOfValuesOf(const Type& subject)
+    {
+        if (subject.isNever())
+            return std::nullopt;
+        if constexpr (std::is_same_v<Case, int64_t>) {
+            if (!subject.isInteger())
+                return std::nullopt;
+            return static_cast<uint64_t>(subject.integers.maximum - subject.integers.minimum) + 1;
+        } else {
+            if (!subject.hasOnlyPrimitives(Primitive::LiteralString))
+                return std::nullopt;
+            return subject.stringLiterals.size();
+        }
+    }
+
+    template<typename Case>
     bool simplifyCases(BlockID block, const Terminator& terminator, const auto& cases)
     {
         ValueID subject = terminator.subjectOperand();
@@ -2224,34 +2251,41 @@ struct ControlFlowSimplifier {
             decideTerminator(builder, block, static_cast<uint32_t>(cases.size()));
             return true;
         }
-        // A subject that by its type is one of the listed integers leaves nothing for the rest. The way that most cases take is asked for no more: whatever the other cases let pass goes there.
+        // A subject that by its type is one of the listed integers or strings leaves nothing for the rest. The way that most cases take is asked for no more: whatever the other cases let pass goes there.
         // Where several of many integers go one way, the bits of a window or the rows of a table tell them apart, and those want each of them listed.
         std::optional<uint32_t> caseThatTakesRest;
-        if constexpr (std::is_same_v<Case, int64_t>) {
-            if (!sharesWayOfRest && subjectType.isInteger() && numberOfListedSubjects == static_cast<uint64_t>(subjectType.integers.maximum - subjectType.integers.minimum) + 1) {
-                size_t greatestNumberOfCases = 0;
-                for (uint32_t index : remainingIndexes) {
-                    size_t numberOfCases = std::ranges::count_if(remainingIndexes, [&](uint32_t other) { return terminator.targets[other] == terminator.targets[index]; });
-                    if (numberOfCases >= greatestNumberOfCases) {
-                        greatestNumberOfCases = numberOfCases;
-                        caseThatTakesRest = index;
-                    }
+        if (!sharesWayOfRest && numberOfListedSubjects == numberOfValuesOf<Case>(subjectType)) {
+            size_t greatestNumberOfCases = 0;
+            for (uint32_t index : remainingIndexes) {
+                size_t numberOfCases = std::ranges::count_if(remainingIndexes, [&](uint32_t other) { return terminator.targets[other] == terminator.targets[index]; });
+                if (numberOfCases >= greatestNumberOfCases) {
+                    greatestNumberOfCases = numberOfCases;
+                    caseThatTakesRest = index;
                 }
-                if (hasEdgeResults(function, Edge { block, *caseThatTakesRest }) || (greatestNumberOfCases > 1 && numberOfListedSubjects >= SwitchWindow::minCases))
-                    caseThatTakesRest = std::nullopt;
             }
+            bool isToldApartByWindow = std::is_same_v<Case, int64_t> && greatestNumberOfCases > 1 && numberOfListedSubjects >= SwitchWindow::minCases;
+            if (isToldApartByWindow || !canDecide(Edge { block, *caseThatTakesRest }))
+                caseThatTakesRest = std::nullopt;
         }
+        bool restIsNarrowed = caseThatTakesRest && hasEdgeResults(function, Edge { block, *caseThatTakesRest });
         if (caseThatTakesRest) {
             remainingIndexes.removeAllMatching([&](uint32_t index) { return terminator.targets[index] == terminator.targets[*caseThatTakesRest]; });
             if (remainingIndexes.isEmpty()) {
                 decideTerminator(builder, block, *caseThatTakesRest);
+                castArgumentsToParameters(builder, block, context.build.validates());
+                builder.applyInsertions();
                 return true;
             }
         } else if (remainingIndexes.size() == cases.size())
             return false;
 
+        Arguments argumentsOfRest;
+        if (restIsNarrowed)
+            argumentsOfRest = argumentsWithoutTest(function, Edge { block, *caseThatTakesRest });
         Terminator& edited = function.edit(block, terminatorAndEdges).terminator;
-        if (caseThatTakesRest)
+        if (restIsNarrowed)
+            edited.otherwise() = Target { edited.targets[*caseThatTakesRest].block, WTF::move(argumentsOfRest), { } };
+        else if (caseThatTakesRest)
             edited.otherwise() = WTF::move(edited.targets[*caseThatTakesRest]);
         Vector<Case, 8> remainingCases;
         Vector<Target, 2> remainingTargets;
@@ -2265,7 +2299,29 @@ struct ControlFlowSimplifier {
         else
             edited.setStrings(remainingCases.span());
         edited.targets = WTF::move(remainingTargets);
+        if (restIsNarrowed)
+            narrowArgumentsOfRest(block);
         return true;
+    }
+
+    // The way of the rest narrows nothing by itself: a block on it passes the subject on as the case narrowed it.
+    void narrowArgumentsOfRest(BlockID block)
+    {
+        BlockID stub = builder.addBlock(function.at(function.at(block).terminator.otherwise().block).frequency);
+        Terminator& terminator = function.edit(block, terminatorAndEdges).terminator;
+        Target rest = std::exchange(terminator.otherwise(), Target { stub, { }, { } });
+        Origin previousOrigin = builder.origin();
+        BlockID previousBlock = builder.currentBlock();
+
+        builder.setOrigin(terminator.origin());
+        builder.moveToEndOf(stub);
+        builder.emitJump(rest.block, WTF::move(rest.arguments));
+        castArgumentsToParameters(builder, stub, context.build.validates());
+        builder.applyInsertions();
+
+        builder.setOrigin(previousOrigin);
+        if (previousBlock)
+            builder.moveToEndOf(previousBlock);
     }
 
     void bypassHandlers()
@@ -3245,9 +3301,13 @@ PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)
 
 // RemoveRedundantHandlers.
 
+// What allocates may leave an error to the poll that leaves the handler, which finds by the handler of the block that the handler covers it.
 static void removeUnusedHandler(Rewrite& rewrite, BlockID id, const Block& block)
 {
-    if (std::ranges::any_of(block.values, [&](ValueID value) { return rewrite.analyses.mayThrow(value); }) || rewrite.analyses.effectsOfTerminator(id).mayThrow())
+    auto needsHandler = [](const EffectsOnEdges& effects) {
+        return effects.mayThrow() || effects.onAnyEdge().mayCollect;
+    };
+    if (std::ranges::any_of(block.values, [&](ValueID value) { return needsHandler(rewrite.analyses.effectsOf(value)); }) || needsHandler(rewrite.analyses.effectsOfTerminator(id)))
         return;
     rewrite.later([&rewrite, id] { rewrite.builder().removeHandler(id); });
 }
@@ -3302,11 +3362,142 @@ static constexpr Rule redundantHandlerRules[] {
     { TerminatorKindSet { TerminatorKind::Throw, TerminatorKind::Rethrow }, skipRethrowingHandler },
 };
 
+// An operation that finds no room for what it allocates goes on with what is kept aside, and the error is thrown at the next poll. What a handler covers polls before it leaves the handler,
+// so the handler that covers the operation takes the error. Only a way on which something may have allocated since the last poll has such a poll.
+static PassOutcome pollWhereHandlersAreLeft(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    std::span<const BlockID> blocks = analyses.cfg().reversePostOrder();
+    auto isPollOfThisPass = [&](ValueID id) {
+        return function.at(id).opcode == Opcode::LoopHint && function.at(id).leavesHandler();
+    };
+    // What hands over the result of an async function belongs to the Return behind it: the function has ended by then.
+    auto valuesInFrontOfEnd = [&](const Block& block) {
+        std::span<const ValueID> values = block.values.span();
+        bool endsWithResult = !values.empty() && function.at(values.back()).opcode == Opcode::ReturnAsyncResult;
+        return values.first(values.size() - endsWithResult);
+    };
+    // A block that can neither throw nor allocate has lost its handler. It lies inside what the handler covers if every way in and every way out does.
+    Vector<BlockID> handlerAround(function.blocks.size());
+    for (BlockID id : blocks) {
+        if (const std::optional<Target>& handler = function.at(id).handler)
+            handlerAround[id.index()] = handler->block;
+    }
+    auto findHandlerAround = [&](BlockID id) {
+        const Block& block = function.at(id);
+        BlockID found;
+        auto isUnder = [&](BlockID neighbor) {
+            BlockID handler = handlerAround[neighbor.index()];
+            if (!found)
+                found = handler;
+            return handler && handler == found;
+        };
+        bool isInside = !block.isHandlerBlock() && !block.terminator.targets.isEmpty() && id != entryBlock
+            && std::ranges::all_of(block.terminator.targets, [&](const Target& target) { return isUnder(target.block); })
+            && std::ranges::all_of(analyses.cfg().incomingEdges(id), [&](Edge edge) { return !edge.isHandlerEdge() && isUnder(edge.from); });
+        return isInside ? found : BlockID();
+    };
+    for (bool hasChanged = true; std::exchange(hasChanged, false);) {
+        for (BlockID id : blocks) {
+            if (function.at(id).handler || handlerAround[id.index()])
+                continue;
+            if (BlockID handler = findHandlerAround(id)) {
+                handlerAround[id.index()] = handler;
+                hasChanged = true;
+            }
+        }
+    }
+    auto staysUnderHandler = [&](BlockID from, const Target& target) {
+        return handlerAround[target.block.index()] == handlerAround[from.index()];
+    };
+
+    BitVector mayOweAtHead(function.blocks.size());
+    BitVector mayOweAtTerminator(function.blocks.size());
+    for (bool hasChanged = true; std::exchange(hasChanged, false);) {
+        for (BlockID id : blocks) {
+            const Block& block = function.at(id);
+            if (!handlerAround[id.index()])
+                continue;
+            bool mayOwe = mayOweAtHead.quickGet(id.index());
+            for (ValueID value : valuesInFrontOfEnd(block)) {
+                if (isPollOfThisPass(value))
+                    continue;
+                mayOwe = function.at(value).opcode != Opcode::LoopHint && (mayOwe || analyses.effectsOf(value).onAnyEdge().mayCollect);
+            }
+            mayOweAtTerminator.quickSet(id.index(), mayOwe);
+            if (!mayOwe && !analyses.effectsOfTerminator(id).onAnyEdge().mayCollect)
+                continue;
+            for (const Target& target : block.terminator.targets) {
+                if (staysUnderHandler(id, target))
+                    hasChanged |= !mayOweAtHead.quickSet(target.block.index());
+            }
+        }
+    }
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    Vector<Edge, 4> edgesToSplit;
+    bool hasChanged = false;
+    for (BlockID id : blocks) {
+        const Block& block = function.at(id);
+        const Terminator& terminator = block.terminator;
+        // What a call at the end finds owed it throws at its entry, which the handler covers.
+        bool returns = terminator.kind == TerminatorKind::Return;
+        bool leavesOnEveryEdge = block.handler && (returns || (!terminator.targets.isEmpty() && std::ranges::none_of(terminator.targets, [&](const Target& target) { return staysUnderHandler(id, target); })));
+        bool terminatorMayOwe = block.handler && analyses.effectsOfTerminator(id).onAnyEdge().mayCollect;
+        bool pollsAtEnd = leavesOnEveryEdge && !terminatorMayOwe && mayOweAtTerminator.quickGet(id.index());
+
+        uint32_t end = valuesInFrontOfEnd(block).size();
+        BitVector erased(block.values.size());
+        for (uint32_t index = 0; index < block.values.size(); ++index) {
+            if (isPollOfThisPass(block.values[index]) && !(pollsAtEnd && index + 1 == end))
+                erased.quickSet(index);
+        }
+        bool hasPollAtEnd = end && isPollOfThisPass(block.values[end - 1]) && !erased.quickGet(end - 1);
+        if (pollsAtEnd && !hasPollAtEnd) {
+            Value poll = IRBuilder::make(Opcode::LoopHint);
+            poll.setLeavesHandler(true);
+            builder.setOrigin(terminator.origin());
+            builder.insertBefore({ id, end }, WTF::move(poll));
+            hasChanged = true;
+        }
+        if (block.handler && !pollsAtEnd && !returns && (terminatorMayOwe || mayOweAtTerminator.quickGet(id.index()))) {
+            for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
+                if (!staysUnderHandler(id, terminator.targets[targetIndex]))
+                    edgesToSplit.append({ id, targetIndex });
+            }
+        }
+        if (!erased.isEmpty()) {
+            builder.applyInsertions();
+            builder.eraseValues(id, erased);
+            hasChanged = true;
+        }
+    }
+    builder.applyInsertions();
+    for (Edge edge : edgesToSplit) {
+        Target handler = *function.at(edge.from).handler;
+        builder.setOrigin(function.at(edge.from).terminator.origin());
+        BlockID added = builder.splitEdge(edge);
+        builder.coverWithHandler(singleElementSpan(added), handler);
+        Value poll = IRBuilder::make(Opcode::LoopHint);
+        poll.setLeavesHandler(true);
+        builder.insertBefore(ProgramPoint::atHeadOf(added), WTF::move(poll));
+        builder.applyInsertions();
+        hasChanged = true;
+    }
+    return hasChanged ? PassOutcome::Changed : PassOutcome::Unchanged;
+}
+
 PassOutcome removeRedundantHandlers(FunctionPassContext& context)
 {
-    if (!context.analyses.cfg().hasHandlers() || runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
-        return PassOutcome::Unchanged;
+    // Another pass may have taken the last handler away, and the polls that left it stand there yet.
+    if (!context.analyses.cfg().hasHandlers())
+        return context.analyses.opcodesOfValues().contains(Opcode::LoopHint) ? pollWhereHandlersAreLeft(context) : PassOutcome::Unchanged;
+    PassOutcome outcome = pollWhereHandlersAreLeft(context);
+    if (runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
+        return outcome;
     Rewrite(context).builder().emptyUnreachableBlocks();
+    pollWhereHandlersAreLeft(context);
     return PassOutcome::Changed;
 }
 

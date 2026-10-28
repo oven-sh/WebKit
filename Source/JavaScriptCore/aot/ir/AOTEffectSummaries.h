@@ -86,6 +86,7 @@ public:
         MayCallUnknownCode = 1 << 3,
         MaySuspend = 1 << 4,
         MayBeTerminated = 1 << 5,
+        MayThrowBeyondLackOfStack = 1 << 6,
     };
 
     constexpr uint32_t reads() const { return m_bits & idMask; }

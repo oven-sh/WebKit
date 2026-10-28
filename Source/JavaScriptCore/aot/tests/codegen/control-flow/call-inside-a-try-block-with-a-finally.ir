@@ -143,6 +143,6 @@ function f2 name="enter" module=m0 position=31 flags=[IsChecked, HasExplicitName
 # CHECK: Return(b@[[completion]], Terminal)
 # CHECK-LABEL: end of function
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 14, patchpoints: 2, rare instructions: 10
+# X64: instructions: 14, patchpoints: 3, rare instructions: 10
 # ARM64 boxes the number in line, where x86-64 calls a stub.
-# ARM64: instructions: 25, patchpoints: 2, rare instructions: 10
+# ARM64: instructions: 25, patchpoints: 3, rare instructions: 10

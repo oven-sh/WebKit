@@ -1043,6 +1043,8 @@ static void testHostUsesNameWhatIsThere()
             AOT_TEST_CHECK((!field.name || table().contains(field.name)) && field.value.kind != BuiltinPlaceKind::None);
             checkHostValue(field.value, writtenCells);
         }
+        for (BuiltinName name : object.nativeAccessors)
+            AOT_TEST_CHECK(table().contains(name) && !std::ranges::contains(object.fields, name, &BuiltinHostObjectField::name));
         // What keeps a string of whatever is stored holds strings from the start, under whatever name.
         if (object.keepsStringsOfStoredValues) {
             AOT_TEST_CHECK(!object.function && !object.fields.empty());

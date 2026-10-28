@@ -329,6 +329,7 @@ static Representation resultOfOperator(const RepresentationInputs& inputs, const
     case OperatorForm::BigInts:
     case OperatorForm::Strings:
     case OperatorForm::StringAndPrimitive:
+    case OperatorForm::MayBeString:
         return Representation::Cell;
     case OperatorForm::NullableStrings:
     case OperatorForm::NullableStringAndPrimitive:
@@ -343,7 +344,6 @@ static Representation resultOfOperator(const RepresentationInputs& inputs, const
     case OperatorForm::Number:
     case OperatorForm::NumberByOperation:
     case OperatorForm::NullableString:
-    case OperatorForm::MayBeString:
     case OperatorForm::MayBeStringOrNumber:
     case OperatorForm::Unselected:
         break;
