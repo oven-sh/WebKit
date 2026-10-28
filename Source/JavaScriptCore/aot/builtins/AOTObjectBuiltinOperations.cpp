@@ -19,6 +19,7 @@
 #include "AOTOperationScope.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTPropertyListCache.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTState.h"
 #include "AOTVector.h"
@@ -97,14 +98,53 @@ static void cacheKeyListByStructure(VM& vm, Object* compiled)
     unsafeMakeSpan(compiled->instance().objects.keyLists, numberOfKeyLists)[indexOfKeyList(structureWord, compiled->orderWord())] = { compiled->orderWord(), structureWord, list };
 }
 
+// The keys go from the table of the extra properties into the list, with no list of names in between.
+static JSArray* tryListKeysAsCreated(JSGlobalObject* globalObject, Object& compiled, JSObject* extra, OwnKeysKind kind)
+{
+    VM& vm = globalObject->vm();
+    if (kind == OwnKeysKind::Symbols || hasIndexedProperties(extra->indexingType()))
+        return nullptr;
+    validateKeyListing(vm, compiled);
+    State& state = compiled.state();
+    Object::KeyOrderStorage storage;
+    size_t maxNumberOfKeys = compiled.keyOrder(state, storage).size() + extra->structure()->propertyTableInOrderOfAddition(vm)->size();
+    if (maxNumberOfKeys >= MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH)
+        return nullptr;
+    JSArray* list = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), static_cast<unsigned>(maxNumberOfKeys));
+    if (!list)
+        return nullptr;
+    auto elements = list->butterfly()->contiguous();
+    unsigned numberOfKeys = 0;
+    KeysListed listed = kind == OwnKeysKind::All ? KeysListed::StringsAndSymbols : KeysListed::Strings;
+    forEachOwnKey(vm, state, compiled, listed, kind == OwnKeysKind::Keys ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include, [&](UniquedStringImpl* name) ALWAYS_INLINE_LAMBDA {
+        JSCell* key = name->isSymbol() ? static_cast<JSCell*>(Symbol::create(vm, static_cast<SymbolImpl&>(*name))) : jsOwnedString(vm, String(name));
+        elements.at(list, numberOfKeys++).set(vm, list, key);
+    });
+    list->butterfly()->setPublicLength(numberOfKeys);
+    return list;
+}
+
 static JSArray* tryListOwnKeys(JSGlobalObject* globalObject, Object& compiled, OwnKeysKind kind)
 {
     VM& vm = globalObject->vm();
-    if (compiled.hasExtraProperties()) {
-        if (kind != OwnKeysKind::Keys)
-            return nullptr;
-        cacheKeyListByStructure(vm, &compiled);
-        return compiled.tryCreateKeysArrayWithExtraProperties(globalObject);
+    if (JSObject* extra = compiled.extraProperties()) {
+        if (kind == OwnKeysKind::Keys) {
+            cacheKeyListByStructure(vm, &compiled);
+            if (JSArray* list = compiled.tryCreateKeysArrayWithExtraProperties(globalObject))
+                return list;
+        } else if (kind != OwnKeysKind::Symbols) {
+            bool listsSymbols = kind == OwnKeysKind::All;
+            JSCellButterfly* keys = PropertyWalk::tryGetCachedOwnKeys(vm, &compiled, listsSymbols ? PropertyWalk::Filter::StringsAndSymbols : PropertyWalk::Filter::Strings);
+            if (!keys)
+                keys = findKeptOwnKeys(compiled, listsSymbols);
+            if (keys)
+                return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+            JSArray* list = tryListKeysAsCreated(globalObject, compiled, extra, kind);
+            if (list)
+                didListOwnKeys(vm, compiled, listsSymbols, list);
+            return list;
+        }
+        return tryListKeysAsCreated(globalObject, compiled, extra, kind);
     }
     JSCellButterfly* keys = compiled.keys(vm, kind == OwnKeysKind::Symbols ? KeyListKind::Symbols : kind == OwnKeysKind::All ? KeyListKind::StringsAndSymbols : KeyListKind::Strings);
     if (!keys)

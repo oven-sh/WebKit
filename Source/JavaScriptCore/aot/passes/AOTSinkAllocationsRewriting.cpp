@@ -10,6 +10,7 @@
 
 #include "AOTDecidedBranches.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTTypeArena.h"
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
@@ -242,14 +243,15 @@ void AllocationSinking::rewrite(IRBuilder& builder, const FreshResultShape* shap
     for (auto [read, replacement] : tables.replacedReads)
         replaceReadWithValue(m_program, builder.function(), substitution, read, replacement);
     substitution.apply(builder.function(), &m_analyses);
+    nameFactsWhereUnspecifiedValuesAreUsed(builder, m_analyses);
 }
 
 ValueID AllocationSinking::sameValueThroughTests(ValueID id)
 {
     if (m_tables)
-        return id.index() < m_tables->identityOfValue.size() ? m_tables->identityOfValue[id.index()] : sameObjectThroughCasts(m_function, id);
+        return id.index() < m_tables->identityOfValue.size() ? m_tables->identityOfValue[id.index()] : sameObjectThroughCasts(m_function, id).valueInFrontOfFacts();
     const ValueIdentities& identities = m_analyses.identities();
-    return id.index() < identities.numberOfValues() ? identities.identityOf(id) : sameObjectThroughCasts(m_function, id);
+    return id.index() < identities.numberOfValues() ? identities.identityOf(id) : sameObjectThroughCasts(m_function, id).valueInFrontOfFacts();
 }
 
 void AllocationSinking::forEachHeadValue(const SinkingState& head, NOESCAPE const ScopedLambda<void(const HeadValue&)>& functor) const

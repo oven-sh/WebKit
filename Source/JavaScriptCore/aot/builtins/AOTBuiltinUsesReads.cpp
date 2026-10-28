@@ -180,6 +180,22 @@ static PristineRequirement testThatFindsMember(const BuiltinUseInputs& inputs, c
     return names;
 }
 
+static PristineRequirement testThatInstancesOfClassAbovePassToo(const BuiltinTable& table, const PristineRequirement& names, BuiltinID member)
+{
+    BuiltinClassID above = table.at(names.builtinClass).parent;
+    if (!above || names.aspects != PristineAspects::Names || pristineTestOf(table, names.builtinClass) != PristineTest::InstanceStructure)
+        return names;
+    if (classBelowWithTestedStructure(table, above) != names.builtinClass || aspectThatFindsMember(table, above, member) != PristineAspects::NamesKeptBelow)
+        return names;
+    return { above, PristineAspects::NamesKeptBelow };
+}
+
+static bool mayBeInstanceOf(const BuiltinUseInputs& inputs, ValueID value, BuiltinClassID builtinClass)
+{
+    FunctionAnalyses* analyses = inputs.analyses ? inputs.analyses : inputs.identities;
+    return analyses && inputs.program.typeOf(inputs.function, analyses->identityOf(value)).findClassPart(builtinClass);
+}
+
 static bool isClosureChangedByProgram(const BuiltinUseInputs& inputs, const MemberSite& site)
 {
     if (site.start.builtinClass != BuiltinClasses::Function)
@@ -204,7 +220,13 @@ static void addReceiverRequirements(const BuiltinUseInputs& inputs, const Member
     bool isInherited = site.start.kind == BuiltinReceiverKind::Instance && !table.at(site.answer.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
     if (isInherited && !isClosureAsCreated(inputs, site)) {
         PristineRequirement names = testThatFindsMember(inputs, site);
-        if (pristineProofOf(inputs.pristine(), site.receiver, names, point) != PristineProof::Proven) {
+        bool isProven = pristineProofOf(inputs.pristine(), site.receiver, names, point) == PristineProof::Proven;
+        if (PristineRequirement wider = testThatInstancesOfClassAbovePassToo(table, names, site.answer.member); !isProven && wider != names) {
+            isProven = pristineProofOf(inputs.pristine(), site.receiver, wider, point) == PristineProof::Proven;
+            if (mayBeInstanceOf(inputs, site.receiver, wider.builtinClass))
+                names = wider;
+        }
+        if (!isProven) {
             if (pristineTestOf(table, names.builtinClass) == PristineTest::NeverPasses || isClosureChangedByProgram(inputs, site)) {
                 isPossible = false;
                 return;
@@ -261,7 +283,7 @@ static bool isComputedOnceByHost(const Builtin& member)
 {
     return member.kind == BuiltinKind::DataProperty
         && member.scope == BuiltinScope::Realm
-        && member.mutability == BuiltinMutability::ConstantUnlessWritten
+        && member.mutability != BuiltinMutability::ChangesOnItsOwn
         && member.flags.contains(BuiltinFlag::IsLazilyCreated)
         && !member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
 }
@@ -476,18 +498,25 @@ static BuiltinOverloadID findOverload(const BuiltinTable& table, BuiltinID membe
     return { };
 }
 
-static BuiltinUsePlan planHostValueRead(const BuiltinUseInputs& inputs, const MemberSite& site)
+static BuiltinUsePlan planHostValueRead(const BuiltinUseInputs& inputs, const MemberSite& site, ValueID use)
 {
     const Program& program = inputs.program;
     if (program.mayBeTrimmed(site.answer.member))
         return { };
     BuiltinUsePlan plan;
+    plan.member = site.answer.member;
+    plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, builtinMemberNameOf(program, site.key).name);
+    // Nobody takes the value. What is left of the read is that the holder may add the member.
+    if (inputs.analyses && !inputs.useLists().useCount(use)) {
+        plan.kind = BuiltinUseKind::Constant;
+        plan.location = site.answer.location;
+        plan.constant = IRBuilder::make(Opcode::Undefined);
+        return plan;
+    }
     plan.call.overload = findOverload(program.builtins(), site.answer.member, BuiltinCallMode::Get);
     if (!plan.call.overload)
         return { };
     plan.kind = BuiltinUseKind::HostValue;
-    plan.member = site.answer.member;
-    plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, builtinMemberNameOf(program, site.key).name);
     return plan;
 }
 
@@ -520,7 +549,7 @@ static BuiltinUsePlan planFoundMemberAccess(const BuiltinUseInputs& inputs, cons
         return { };
 
     bool readsHostValue = isRead && isComputedOnceByHost(member);
-    BuiltinUsePlan plan = readsHostValue ? planHostValueRead(inputs, site) : planMemberAccess(inputs, use, site.answer.member, mode, point);
+    BuiltinUsePlan plan = readsHostValue ? planHostValueRead(inputs, site, use) : planMemberAccess(inputs, use, site.answer.member, mode, point);
     if (!plan)
         return { };
 
@@ -542,10 +571,13 @@ static BuiltinUsePlan planConstantRead(const BuiltinUseInputs& inputs, const Mem
     BuiltinUsePlan plan;
     plan.kind = BuiltinUseKind::Constant;
     plan.member = site.answer.member;
-    plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, builtinMemberNameOf(program, site.key).name);
+    plan.location = site.answer.location;
+    BuiltinMemberName name = builtinMemberNameOf(program, site.key);
+    plan.nullishCheck = nullishCheckFor(program, NullishAccess::Read, name.name);
+    plan.readsPrivateAlias = name.isPrivateAlias;
     if (BuiltinName symbol = table.nameOfSymbol(plan.member))
         plan.key = program.keyOf(symbol);
-    else if (std::optional<Value> constant = tryMakeBuiltinConstant(program, plan.member); !constant || (constant->opcode != Opcode::Builtin && firstReadChangesListedKeys(table, inputs.flow, plan.member)))
+    else if (!tryMakeBuiltinConstant(program, plan.member))
         return { };
 
     bool isPossible = addLocationRequirement(inputs, site, location, plan);

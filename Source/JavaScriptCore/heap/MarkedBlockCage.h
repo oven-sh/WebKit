@@ -12,17 +12,38 @@
 #include <limits>
 #include <wtf/Assertions.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/OptionSet.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
+#if USE(MIMALLOC)
+#include <bmalloc/bmalloc.h>
+#endif
+
 namespace JSC {
 
 class HeapCell;
 class JSCell;
+class JSGlobalObject;
 class ReservedRangeHeap;
+class ThrowScope;
 class VM;
+
+// An allocation that may not fail and has found no room. It lives until the allocation has what it asked for.
+class RequestInExhaustedCage {
+    WTF_MAKE_NONCOPYABLE(RequestInExhaustedCage);
+public:
+    RequestInExhaustedCage() = default;
+
+private:
+    friend class Heap;
+#if USE(MIMALLOC)
+    bmalloc::api::RequestWithBallast m_requestWithBallast;
+    bool m_hasAskedWithBallast { false };
+#endif
+};
 
 class MarkedBlockCage {
     WTF_MAKE_NONCOPYABLE(MarkedBlockCage);
@@ -31,6 +52,8 @@ public:
     [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> initialize();
     // Where every VM shares a range that takes address space as it fills: makes sure that it has room for the cells that this many VMs make when they are created.
     JS_EXPORT_PRIVATE static bool tryEnsureRoomForNewVMs(unsigned count);
+    // On the thread of the VM, before the first statement of the program runs. The next VMs are given room for as much as this one has taken.
+    JS_EXPORT_PRIVATE void willRunProgram();
     [[nodiscard]] JS_EXPORT_PRIVATE static std::expected<void, Error> require();
 
     MarkedBlockCage();
@@ -72,7 +95,7 @@ public:
 
     void keepReserveOnceHalfFull();
     bool releaseReserve();
-    // The last of the reserve of this VM. A VM that has none uses the one that is kept for all VMs of its range.
+    // The last of the reserve of this VM. From here on the VM also takes from the reserve that is kept for all VMs of its range.
     bool releaseLastReserve();
     // The range was full where no collection may run. The collection runs where collections are allowed again. If it makes room for all of the reserve that releaseReserve() gave out, no error is owed any more.
     void didFindNoRoomWhereNothingCollects() { m_owesCollection = true; }
@@ -103,11 +126,14 @@ public:
     };
     bool allocationsAreInfallible() const { return m_allocationsAreInfallible; }
 
-    enum class ExhaustedHeap : bool { Cells, Structures };
+    // Storage: what arrays and objects keep outside their cells. It comes from malloc.
+    enum class ExhaustedHeap : uint8_t { Cells = 1 << 0, Structures = 1 << 1, Storage = 1 << 2 };
     // Called on the thread of the VM, on the slow path of an allocation, each time there is no room for the request and a full collection is tried next.
     // Without it a heap that stays almost full of live objects runs a full collection for every few objects the program allocates, and the program barely moves.
     JS_EXPORT_PRIVATE void didFindNoRoom(VM&, ExhaustedHeap);
     JS_EXPORT_PRIVATE void didCreateOutOfMemoryError();
+    // Where storage is among what the program is owed an error for, this error is that error.
+    JS_EXPORT_PRIVATE void didCreateOutOfMemoryError(VM&);
 
     struct ReservationFailure {
         size_t sizeWithinBudget { 0 };
@@ -116,7 +142,8 @@ public:
     JS_EXPORT_PRIVATE static ReservationFailure reservationFailure();
 
     static void logExhaustion(ExhaustedHeap);
-    void setExhaustedHeap(ExhaustedHeap exhaustedHeap) { m_exhaustedHeap = exhaustedHeap; }
+    // One error may be owed for several heaps.
+    void addExhaustedHeap(ExhaustedHeap exhaustedHeap) { m_exhaustedHeaps.add(exhaustedHeap); }
     JS_EXPORT_PRIVATE String describeExhaustedLimit() const;
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
@@ -124,12 +151,19 @@ public:
     // Called on the thread of the VM, inside an allocation, when the error that is owed has found no place to be thrown and the last of the reserve is given out, or full collections keep freeing next to nothing.
     // A host that can end this thread alone asks for its termination here.
     static void willUseLastReserve(VM&);
+    // Called on the thread of the VM when a request of that thread to malloc that may not fail has used the ballast (bmalloc::api::keepAddressSpaceBallast()).
+    JS_EXPORT_PRIVATE static void didUseAddressSpaceBallast(VM&);
+    // Called on the thread of the VM while pieces of the ballast are missing, ahead of work whose requests to malloc may not fail. Throws if there is no room to keep them again, unless the thread is exempt.
+    JS_EXPORT_PRIVATE static bool throwErrorForMissingAddressSpaceBallast(VM&, JSGlobalObject*, ThrowScope&);
     using LastReserveHandler = void (*)(VM&);
     JS_EXPORT_PRIVATE static void setLastReserveHandler(LastReserveHandler);
 
 private:
     void didAllocate(const void*, size_t);
-    bool tryKeepReleasedReserveAgain();
+    bool hasHeapThatReleasedReserve() const;
+    bool tryKeepReleasedReservesAgain();
+    bool tryKeepOwnReleasedReserveAgain();
+    bool tryKeepBallastAgain();
     bool releaseOwnLastReserve();
     bool tryUseSharedReserve();
 
@@ -139,6 +173,7 @@ private:
     bool m_sharesRange { false };
     bool m_isInFirstRange { false };
     bool m_usesSharedReserve { false };
+    bool m_owesSharedReserve { false };
     bool m_hasReleasedReserve { false };
     bool m_shouldKeepLargeCellReserve { true };
     bool m_owesCollection { false };
@@ -148,7 +183,7 @@ private:
     void* m_stackPointerAtError { nullptr };
     size_t m_numberOfChunksReleased { 0 };
     std::atomic<size_t> m_numberOfBlocksTaken { 0 };
-    ExhaustedHeap m_exhaustedHeap { ExhaustedHeap::Cells };
+    OptionSet<ExhaustedHeap> m_exhaustedHeaps;
     unsigned m_numberOfBarrenCollections { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;

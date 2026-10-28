@@ -37,7 +37,8 @@ function f1 name="makesPoint" parameters=[{type=anything}, {type=number}] result
 # CHECK-NOT: = Construct
 # CHECK: [[point]]: L0 = NewObject layout=L0
 # CHECK-NOT: CallDirect
-# CHECK: [[this]]: L0 = AssumeType [[point]] provenType=L0 @0:1
+# CHECK: [[entered]]: fact = Entered function=[[pointVersion]]
+# CHECK: [[this]]: L0 = AssumeType [[point]], [[entered]] provenType=L0 @0:1
 # CHECK-NEXT: PropSet [[this]], v1 key="x" {{*}}@0:1
 # CHECK-NOT: CallDirect
 function f2 name="makesLarge" parameters=[{type=anything}, {type=number}] results=[{type=anything}] {

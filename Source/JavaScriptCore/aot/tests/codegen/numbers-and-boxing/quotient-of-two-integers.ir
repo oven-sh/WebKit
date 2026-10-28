@@ -1,0 +1,69 @@
+# function quotient(a: number, b: number): number { return (a / b) | 0; }
+# declare const input: any;
+# (globalThis as any).answer = quotient(input | 0, input | 0);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 f1
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=18 kind=Parameter function=f1
+typesite w1 module=m0 position=29 kind=Parameter function=f1
+typesite w2 module=m0 kind=Result
+typesite w3 module=m0 position=127 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=i32 flags=[IsExpected]}
+    v9 = Integer
+    v10 = BitOr v8, v9
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v14 = Integer
+    v15 = BitOr v13, v14
+    v16 = Call v1, -, v10, v15 calleeName="quotient"
+    v17 = Convert v16 declared={type=number site=w3}
+    PropSet v5, v17 key="answer"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="quotient" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w0}, {type=number site=w1}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Div v0, v1
+    v3 = Integer
+    v4 = BitOr v2, v3
+    v5 = Convert v4 declared={type=number site=w2}
+    Return v5
+}
+
+# (a / b) | 0 of two 32-bit integers is a division of integers that answers 0 for a divisor of 0 and wraps for -2147483648 / -1, as the truncated quotient of the doubles does.
+# CHECK-LABEL: name="quotient" role=Source
+# CHECK: Int32 b@[[quotient]] = Div<Chill>(b@{{*}}, b@{{*}}, ControlDependent, {{*}}:DivideIntegers)
+# CHECK-LABEL: end of function
+# No double is made or divided, and nothing is called.
+# NONE-LABEL: name="quotient" role=Source
+# NONE-NOT: IToD
+# NONE-NOT: Double
+# NONE-NOT: Patchpoint(
+# NONE-LABEL: end of function
+# The division instruction of ARM64 answers so by itself. x86-64 sends the divisors 0 and -1 to rare arms by one test.
+# X64: instructions: 7, patchpoints: 0, rare instructions: 6
+# ARM64: instructions: 2, patchpoints: 0

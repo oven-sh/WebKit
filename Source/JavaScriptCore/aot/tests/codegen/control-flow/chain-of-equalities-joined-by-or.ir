@@ -1,0 +1,103 @@
+# function isSpace(code: number): boolean {
+#   return code === 32 || code === 9 || code === 10 || code === 13;
+# }
+# declare const input: any;
+# (globalThis as any).answer = isSpace(input | 0);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=165 kind=CallResult
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="globalThis" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=i32 flags=[IsExpected]}
+    v9 = Integer
+    v10 = BitOr v8, v9
+    v11 = Call v1, -, v10 calleeName="isSpace"
+    v12 = Convert v11 declared={type=boolean site=w2}
+    PropSet v5, v12 key="answer"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="isSpace" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = Integer integer=32
+    v2 = StrictEq v0, v1
+    v3 = ToBoolean v2
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v4):
+    Jump -> next b5(v4)
+  b3(v5):
+    Jump -> next b4()
+  b4():
+    v6 = Integer integer=9
+    v7 = StrictEq v0, v6
+    Jump -> next b5(v7)
+  b5(v8):
+    v9 = ToBoolean v8
+    Branch v9 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v10):
+    Jump -> next b9(v10)
+  b7(v11):
+    Jump -> next b8()
+  b8():
+    v12 = Integer integer=10
+    v13 = StrictEq v0, v12
+    Jump -> next b9(v13)
+  b9(v14):
+    v15 = ToBoolean v14
+    Branch v15 -> taken b10(| 0), notTaken b11(| 0)
+  b10(v16):
+    Jump -> next b13(v16)
+  b11(v17):
+    Jump -> next b12()
+  b12():
+    v18 = Integer integer=13
+    v19 = StrictEq v0, v18
+    Jump -> next b13(v19)
+  b13(v20):
+    v21 = Convert v20 declared={type=boolean site=w1}
+    Return v21
+}
+
+# Each equality but the last is a branch to the one block that answers true, and the last equality is the answer itself. No boolean is made and tested again.
+# The four constants lie within 64 values of each other, and they are still tested one by one.
+# CHECK-LABEL: name="isSpace" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK: Int32 b@[[first]] = Equal(b@[[code]], $9(
+# CHECK-NEXT: Branch(b@[[first]], Terminal
+# CHECK-NEXT: Successors: Then:#[[yes]], Else:#
+# CHECK: Int32 b@[[second]] = Equal(b@[[code]], $10(
+# CHECK-NEXT: Branch(b@[[second]], Terminal
+# CHECK-NEXT: Successors: Then:#[[yes]], Else:#
+# CHECK: Int32 b@[[third]] = Equal(b@[[code]], $32(
+# CHECK-NEXT: Branch(b@[[third]], Terminal
+# CHECK-NEXT: Successors: Then:#[[yes]], Else:#
+# CHECK-NOT: Branch(
+# CHECK: Int32 b@[[fourth]] = Equal(b@[[code]], $13(
+# CHECK-NEXT: Upsilon(b@[[fourth]], 
+# CHECK-NOT: Branch(
+# CHECK-LABEL: end of function
+# X64: instructions: 8, patchpoints: 0
+# ARM64: instructions: 8, patchpoints: 0

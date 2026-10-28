@@ -67,7 +67,8 @@ Boxed HashTableBuiltinEmitter::normalizedNumber(const OperationContext& context,
     auto anyNumber = [&] {
         // Every NaN is one key.
         Boxed boxedKey = conversions.boxNumber(ImpureNumber(key.value()));
-        return select(equal(key, number(0)), boxInt32(word32(0)), boxedKey);
+        Condition isZero = equal(key, 0);
+        return select(isZero, boxInt32(word32(0)), boxedKey);
     };
     if (context.shape() != CodeShape::Fast)
         return anyNumber();
@@ -115,7 +116,8 @@ Word32 HashTableBuiltinEmitter::hashOfBits(Boxed key)
 {
     LValue a = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets)).value());
     LValue b = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets) + sizeof(uint64_t)).value());
-    return Word32(m_out.castToInt32(m_out.bitXor(m_out.mul(a, b), m_out.uMulHigh(a, b))));
+    LValue lowerHalf = m_out.mul(a, b);
+    return Word32(m_out.castToInt32(m_out.bitXor(lowerHalf, m_out.uMulHigh(a, b))));
 }
 
 Integer HashTableBuiltinEmitter::sizeOf(CellPointer table, HashTableOwner owner)

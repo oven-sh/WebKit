@@ -1,0 +1,69 @@
+# An object leaves the function, or comes to where another way has taken its mark off, and some field of birth has been stored on no path while nobody else has seen the object:
+# the run time is not asked to look, it would find the object unfinished. Once somebody else has seen the object it may hold the field, and the run time looks.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass FinishBirths
+# STATISTIC: BirthsFinished = 1
+# STATISTIC: BirthsLeftToRunTime = 2
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" fields=[{key="x" declared={type=anything} flow={occupancy=FilledAtBirth}}, {key="y" declared={type=anything} flow={occupancy=FilledAtBirth}}, {key="late" declared={type=anything}}]
+
+function f0 name="leavesWithoutOne" parameters=[{type=anything}] results=[{type=L0}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+# CHECK-LABEL: name="leavesWithoutOne"
+# CHECK-NOT: FinishBirth
+
+function f1 name="leavesWithoutAny" parameters=[{type=anything}] results=[{type=L0}] {
+    v1 = NewObject layout=L0
+    PutSlotOrAdd v1, v1, v0 key="late" receivers=[L0] level=Proven
+    Return v1
+}
+# CHECK-LABEL: name="leavesWithoutAny"
+# CHECK-NOT: FinishBirth
+
+function f2 name="somebodyHasSeenIt" parameters=[{type=anything}] results=[{type=L0}] {
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Call v0, -, v1
+    Return v1
+}
+# CHECK-LABEL: name="somebodyHasSeenIt"
+# CHECK: NewObject
+# CHECK-NEXT: = Call v0, -, v1
+# CHECK-NEXT: TryFinishBirth v1
+# CHECK-NEXT: Return v1
+
+function f3 name="oneWayStoresTheLast" parameters=[{type=anything}, {type=boolean}] results=[{type=L0}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PutSlotOrAdd v2, v2, v0 key="y" receivers=[L0] level=Proven
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return v2
+}
+# CHECK-LABEL: name="oneWayStoresTheLast"
+# CHECK: PutSlotOrAdd v2, v2, v0 key="y"
+# CHECK-NEXT: FinishBirth v2
+# CHECK-NOT: FinishBirth
+
+function f4 name="oneWayStoresTheLastByName" parameters=[{type=anything}, {type=boolean}] results=[{type=L0}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    Branch v1 -> taken b1(), notTaken b2()
+  b1():
+    PropSet v2, v0 key="y" mode=Strict
+    Jump -> next b3()
+  b2():
+    Jump -> next b3()
+  b3():
+    Return v2
+}
+# CHECK-LABEL: name="oneWayStoresTheLastByName"
+# CHECK: PropSet v2, v0 key="y"
+# CHECK-NEXT: TryFinishBirth v2
+# CHECK-NOT: FinishBirth

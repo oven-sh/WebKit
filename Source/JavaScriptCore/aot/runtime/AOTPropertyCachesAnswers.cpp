@@ -80,9 +80,9 @@ static PropertyCaches* cachesWithPreparationBeforeLookupsUnder(VM& vm, UniquedSt
     return nullptr;
 }
 
-bool isPreparedBeforeLookups(VM& vm, UniquedStringImpl* uid)
+bool isPreparedBeforeLookupsSlow(VM& vm, UniquedStringImpl* symbol)
 {
-    return cachesWithPreparationBeforeLookupsUnder(vm, uid);
+    return cachesWithPreparationBeforeLookupsUnder(vm, symbol);
 }
 
 void prepareForLookup(JSGlobalObject* globalObject, JSObject* compiledObject, UniquedStringImpl* uid)
@@ -98,19 +98,18 @@ void prepareForLookup(JSGlobalObject* globalObject, JSObject* compiledObject, Un
     caches->setIsPreparingHolder(false);
 }
 
-LookByName::LookByName(VM& vm, JSValue holder, UniquedStringImpl* uid)
+void LookByName::begin(VM& vm, JSValue holder, UniquedStringImpl* symbol)
 {
     if (!holder.isCell())
         return;
-    m_caches = cachesWithPreparationBeforeLookupsUnder(vm, uid);
+    m_caches = cachesWithPreparationBeforeLookupsUnder(vm, symbol);
     if (m_caches)
         m_previous = m_caches->exchangeHolderLookedAtByName(holder.asCell());
 }
 
-LookByName::~LookByName()
+void LookByName::end()
 {
-    if (m_caches)
-        m_caches->exchangeHolderLookedAtByName(m_previous);
+    m_caches->exchangeHolderLookedAtByName(m_previous);
 }
 
 void prepareForWalk(JSGlobalObject* globalObject, JSObject* object)
@@ -154,7 +153,13 @@ bool flattenOnce(VM& vm, JSObject* object)
         return true;
     if (structure->hasBeenFlattenedBefore() || structure->typeInfo().prohibitsPropertyCaching() || structure->isCompiledStructure())
         return false;
+    bool hasGivenNamesUp = structure->isUncacheableDictionary();
     structure->flattenDictionaryStructure(vm, object);
+    if (vm.aotState().hasObjectsBeingFilled) {
+        Instance* instance = Instance::of(structure->realm());
+        if (instance && instance->state->firstAdditions && instance->state->firstAdditions->forget(object) && !hasGivenNamesUp)
+            didFinishFilling(structure);
+    }
     return true;
 }
 
@@ -460,8 +465,10 @@ PropertyAnswer classifyRead(const ReadQuery& query)
     if ((structure->typeInfo().prohibitsPropertyCaching() && !structure->isCompiledStructure()) || isProxyType(type) || structure->needImpurePropertyWatchpoint())
         return PropertyAnswer::uncacheable(access);
     if (structure->isDictionary()) {
+        // Nothing of a cacheable dictionary moves when it is made flat: what the look found is where it was found.
+        bool staysInPlace = !structure->isUncacheableDictionary();
         bool didFlatten = mayAllocate && flattenOnce(vm, receiver);
-        if (didFlatten || structure->isUncacheableDictionary() || !slot.isCacheableValue() || slot.slotBase() != receiver)
+        if (!(didFlatten && staysInPlace) && (didFlatten || structure->isUncacheableDictionary() || !slot.isCacheableValue() || slot.slotBase() != receiver))
             return PropertyAnswer::uncacheable(access, didFlatten);
     } else if (slot.isTaintedByOpaqueObject() && !isModuleNamespace(receiver)) {
         ChainWalk walk = walkChain({ query.globalObject, structure, receiver, query.mode }, uid);
@@ -821,7 +828,7 @@ static PropertyAnswer classifyExtraPropertyAddition(const StoreQuery& query, Obj
         storageChange = OutOfLineStorageChange::Unsupported;
     else if (before->hasExtraProperties() && !isInlineOffset(lookup.offset))
         storageChange = outOfLineStorageChange(extraPropertiesBefore, extraPropertiesAfter, lookup.offset);
-    if (before->mayBePrototype() || storageChange == OutOfLineStorageChange::Unsupported)
+    if (before->mayBePrototype() || before->hasKeyOrderOfOneObject() || storageChange == OutOfLineStorageChange::Unsupported)
         return PropertyAnswer::uncacheable(access);
     PropertyAnswer answer = PropertyAnswer::own(PropertyAnswerKind::ExtraPropertyAddition, access, lookup.offset);
     answer.newStructure = object.structure();

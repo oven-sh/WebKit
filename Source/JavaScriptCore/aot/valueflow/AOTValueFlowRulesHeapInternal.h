@@ -194,10 +194,13 @@ private:
         return storedThroughUntrackedObjectInto(objects, name) || isStoredThroughUnknownObject;
     }
     void forEachNodeHolding(ClimbingSet objects, ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
+    void noteName(ValueFlowHostNode, const HeapKey&);
+    ValueFlowRuleContext::LookupUse useOfLookupUnder(const HeapKey& key) const { return m_statement.isOnlyCalledOnItsHolder && key.keyClass == HeapKeyClass::Name ? ValueFlowRuleContext::LookupUse::OnlyCalledOnReceiver : ValueFlowRuleContext::LookupUse::Any; }
     void forEachNodeReadByName(ValueFlowName, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto&);
     void letPrototypeObjectsOfLanguageEscape() { add(ValueFlowProgramNodes::escaped(), m_tables.prototypeObjectsOfLanguage()); }
     void appendPrototypeAtCreation(ValueFlowObjectID, Members&) const;
     ValueSetID prototypesAtCreationOf(ClimbingSet);
+    ValueSetID findPrototypesAtCreationOf(ClimbingSet);
 
     ValueFlowObjectID objectOfMember(BuiltinID member, ModuleID) const;
     BuiltinID memberUnder(BuiltinID holder, PropertyKeyID) const;
@@ -228,6 +231,7 @@ private:
     ClimbingSet letMembersOfHeldPrototypeObjectsEscape(PropertyKeyID, std::initializer_list<ValueFlowName>);
     void readThroughChain(ClimbingSet start, const HeapKey&, const HeapReceiver&, ValueFlowNodeID result);
     void letNativeCodeRead(ClimbingSet entries, const ValueFlowNameReadByNativeCode&);
+    void letConstructorEscapeWithPrototypeObject(BuiltinID member, ModuleID);
     void readMember(BuiltinID member, ModuleID, ValueFlowNodeID result, Members& getters);
     void readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey&, ValueFlowNodeID result, Members& getters);
     void readEvaluators(const ValueFlowOperand& object, const HeapKey&);
@@ -382,13 +386,23 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
     }
 
     bool namesIndex = m_context.meet(keys, m_tables.numberKinds());
+    AOT_THRESHOLD(uint32_t, mostNamesOfOneKeyToldApart, 32);
+    bool countsNamesOfProgramTogether = m_context.holdsMoreMembersThan(m_context.restrict(keys, m_universe.keys()), mostNamesOfOneKeyToldApart);
+    bool hasNameOfProgram = false;
     m_context.forEachMember(m_context.restrict(keys, m_universe.keys()), [&](ValueFlowObjectID constant) {
         HeapKey key = keyNamed(m_universe.keyOf(constant));
-        if (key.keyClass == HeapKeyClass::Index)
+        if (key.keyClass == HeapKeyClass::Index) {
             namesIndex = true;
-        else
-            functor(key);
+            return;
+        }
+        if (countsNamesOfProgramTogether && m_tables.under(key.name).holders == ValueSets::nothing) {
+            hasNameOfProgram = true;
+            key.receivers = HeapKeyReceivers::BuiltinObjects;
+        }
+        functor(key);
     });
+    if (hasNameOfProgram)
+        functor(HeapKey { HeapKeyClass::Unknown, { }, false, HeapKeyReceivers::AllButBuiltinObjects });
     if (namesIndex)
         functor(indexHeapKey);
 }

@@ -361,6 +361,35 @@ static Expected<bool> readsMemberUnderSymbolOfProgram(FunctionPassContext& conte
     return false;
 }
 
+// A test buys a fast path and costs a copy of what stands behind it.
+static bool paysToTestIn(HeatClass heatClass, bool isCompactFunction, bool paysInColdCode)
+{
+    return heatClass != HeatClass::RunsOnce && (heatClass != HeatClass::Cold || (!isCompactFunction && paysInColdCode));
+}
+
+static bool getsNoTests(const Heat& heat, FunctionAnalyses& analyses)
+{
+    const AnalysisContext& context = analyses.context();
+    const Function& function = analyses.function();
+    // No block runs more often than the function is entered unless it is in a cycle.
+    if (heat.of(context.program, context.id).predicted() == HeatClass::RunsOnce && !analyses.cfg().hasCycle())
+        return true;
+    // Where a test at the entrance has failed. A test in here would guess again what has just proved wrong, and cost a copy.
+    if (function.runsOnlyBehindFailedTest())
+        return true;
+    // The method table calls a selector's lookup only for a receiver that does not match the class definitions, so a guess here would fail.
+    // A guessed direct call would also be one more caller of the method, which keeps the table from naming the method itself.
+    return function.role == FunctionRole::TableLookup;
+}
+
+bool mayPlaceTestsOfAccessesByName(const Heat& heat, FunctionAnalyses& analyses, BlockID block)
+{
+    const AnalysisContext& context = analyses.context();
+    if (!context.build.recordedOptions().usesExpectedTypes() || getsNoTests(heat, analyses))
+        return false;
+    return paysToTestIn(heatClassOf(heat, analyses, block).predicted(), heat.isCompact(context.program, context.id).predicted(), true);
+}
+
 static TestSites collectTestSites(FunctionPassContext& context)
 {
     if (!context.build.recordedOptions().usesExpectedTypes())
@@ -381,7 +410,6 @@ static TestSites collectTestSites(FunctionPassContext& context)
     TestSites sites = reporter.takeSites();
     for (const TestSite& site : sites.sites)
         RELEASE_ASSERT(testSiteOpcodes.contains(context.function.at(site.use).opcode));
-    // A test buys a fast path and costs a copy of what stands behind it.
     BitVector receiversThatMayHaveNoLayout = findReceiversAskedOnlyForNamesDefinedWithoutLayout(context, sites);
     sites.sites.removeAllMatching([&](const TestSite& site) {
         if (ValueID receiver = receiversThatMayHaveNoLayout.isEmpty() ? ValueID() : findReceiverWithGuessedLayout(context, sites, site); receiver && receiversThatMayHaveNoLayout.quickGet(receiver.index()))
@@ -393,10 +421,9 @@ static TestSites collectTestSites(FunctionPassContext& context)
         // Tests that say nothing of the member pass for the objects that lack it alone, and whoever reads a name expects an object that has it.
         if (holdsMemberUnderSymbolOfProgram(context.program, sites.testsOf(site)) ? !paysToTestMembersUnderSymbolsOfProgram(context, site.point.block) : readsMemberUnderSymbolOfProgram(context, use).predicted())
             return true;
-        Expected<HeatClass> heatClass = heatClassOf(context, site.point.block);
         // What a test buys in cold code, against the copy that it costs. The general form of these is one call.
         bool paysInColdCode = site.rule != TestSiteRuleID::ElementAccess && site.rule != TestSiteRuleID::Operator;
-        return heatClass.predicted() == HeatClass::RunsOnce || (heatClass.predicted() == HeatClass::Cold && (isCompactFunction || !paysInColdCode));
+        return !paysToTestIn(heatClassOf(context, site.point.block).predicted(), isCompactFunction, paysInColdCode);
     });
     const CFG& cfg = context.analyses.cfg();
     AOT::sort(sites.sites, { }, [&](const TestSite& site) { return std::pair { cfg.reversePostOrderIndex(site.point.block), site.point.index }; });
@@ -630,7 +657,7 @@ static Vector<HoistedTest> findHoistedTests(FunctionPassContext& context, const 
             }
             // Inside the loop the test stands behind whatever decides that the value is there, the switch on the kind of an iteration for one. In front of the loop it would read through whatever the register holds.
             ValueID outside = findDefinitionOutside(test.operand(operandIndex), loop);
-            if (!outside || mayBeUnspecified(analyses, outside) || !canReplaceOperand(context, test, operandIndex, outside, isNarrowedByEarlierTest))
+            if (!outside || context.program.typeOf(context.function, outside).mayBeUnspecified() || !canReplaceOperand(context, test, operandIndex, outside, isNarrowedByEarlierTest))
                 return std::nullopt;
             operands.append(outside);
         }
@@ -994,7 +1021,8 @@ static Vector<ValueID> collectSubjectsKnownBeyondTheirTypes(FunctionPassContext&
     return subjects;
 }
 
-static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, BlockID block, uint32_t firstIndex, const BitVector& isKnownBetter, NOESCAPE const Invocable<const Liveness&()> auto& livenessOfValuesKnownBetter)
+// `isLive` is empty before and behind.
+static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, BlockID block, uint32_t firstIndex, const BitVector& isKnownBetter, NOESCAPE const Invocable<const Liveness&()> auto& livenessOfValuesKnownBetter, BitVector& isLive)
 {
     const Block& contents = function.at(block);
     const BlockValues& values = contents.values;
@@ -1006,10 +1034,13 @@ static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, B
     }
 
     const Liveness& liveness = livenessOfValuesKnownBetter();
-    Vector<ValueID, 8> live;
+    size_t numberOfLiveValues = 0;
+    Vector<ValueID, 8> valuesThatWereLive;
     auto use = [&](ValueID value) {
-        if (value && isKnownBetter.get(value.index()))
-            live.appendIfNotContains(value);
+        if (!value || !isKnownBetter.get(value.index()) || isLive.set(value.index()))
+            return;
+        ++numberOfLiveValues;
+        valuesThatWereLive.append(value);
     };
     contents.forEachChildOutsideValues(use);
     contents.forEachTarget([&](const Target& target) {
@@ -1017,11 +1048,14 @@ static BitVector findPointsWhereNothingIsKnownBetter(const Function& function, B
             use(value);
     });
     for (uint32_t index = values.size(); index-- > std::max(firstIndex, 1u);) {
-        live.removeFirst(values[index]);
+        if (isLive.clear(values[index].index()))
+            --numberOfLiveValues;
         function.at(values[index]).forEachOperand([&](ValueID operand, uint32_t) { use(operand); });
-        if (live.isEmpty())
+        if (!numberOfLiveValues)
             points.quickSet(index);
     }
+    for (ValueID value : valuesThatWereLive)
+        isLive.clear(value.index());
     return points;
 }
 
@@ -1099,6 +1133,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         return *ownLiveness;
     };
 
+    BitVector isLive;
     for (size_t first = 0, next = 0; first < ranges.size(); first = next) {
         BlockID block = ranges[first].block;
         uint32_t numberOfValues = function.at(block).values.size();
@@ -1109,7 +1144,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         }
         if (firstEnd == numberOfValues)
             continue;
-        BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter);
+        BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter, isLive);
         for (const StretchRange& range : ranges.subspan(first, next - first)) {
             for (uint32_t index = range.end; range.isCloned && index < numberOfValues; ++index) {
                 if (!points.quickGet(index) || !mayRejoinAt({ block, index }))
@@ -1686,6 +1721,26 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     return { LayoutList(kept.span()), kept.size() < layouts.size() };
 }
 
+// Whoever gets hold of an object may store to it. Where flow knows every writer of a field, no object with that field has reached code that flow does not see, and none comes out of it.
+static LayoutList withoutLayoutsThatStayInSight(const Program& program, std::span<const NamedUse> uses, const LayoutList& layouts)
+{
+    LayoutList layoutsSeenToArrive;
+    for (const NamedUse& use : uses) {
+        if (use.stamp)
+            layoutsSeenToArrive.unite(LayoutList(program.at(use.stamp).seen().predicted()));
+    }
+    LayoutList kept;
+    for (LayoutID layout : layouts) {
+        bool staysInSight = std::ranges::any_of(uses, [&](const NamedUse& use) {
+            std::optional<FieldReference> field = findField(program, layout, use.key, BaseChain::Predicted);
+            return field && fieldAt(program, *field).flow.location.writers == WriterState::AllKnown;
+        });
+        if (!staysInSight || layoutsSeenToArrive.contains(layout))
+            kept.add(layout);
+    }
+    return kept;
+}
+
 // The object is expected to have every name that the uses that count ask it for.
 static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::span<const NamedUse> uses, CountedUses countedUses, size_t maxLayouts)
 {
@@ -1706,6 +1761,8 @@ static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::spa
         if (std::ranges::all_of(names, isCommon))
             return LayoutList();
         LayoutList layouts = allocatedLayoutsWith(program, names.span(), maxLayouts);
+        if (layouts.size() <= maxLayouts)
+            layouts = withoutLayoutsThatStayInSight(program, uses, layouts);
         if (!layouts.isEmpty())
             return layouts;
     }
@@ -1721,7 +1778,7 @@ static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::spa
                 layoutsWithAnyName.add(layout);
         }
     }
-    return layoutsWithAnyName;
+    return withoutLayoutsThatStayInSight(program, uses, layoutsWithAnyName);
 }
 
 static Expected<bool> resolvesSomeUse(FunctionPassContext& context, std::span<const NamedUse> uses, const Expected<LayoutList>& layouts)
@@ -1914,10 +1971,12 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
         layoutsMet = WTF::move(met);
     };
     bool isFollowed = std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) { return isExpectedToFindMember(context.program, function, use).predicted(); });
-    // In a checked function what is expected of a value is what the checker says of it. Where that lists layouts the names have nothing to add: a name that none of them holds is found above them.
+    // In a checked function what is expected of a value is what the checker says of it. Where that lists layouts that something makes the names have nothing to add: a name that none of them holds is found above them.
     bool typeListsLayouts = function.has(FunctionFlags::IsChecked) && std::ranges::any_of(usesOfSubject, [&](const NamedUse& use) {
         TypeID expected = function.at(use.receiver).expected().predicted();
-        return expected && context.types.at(expected).layouts;
+        return expected && std::ranges::any_of(membersOf(context.program, context.types.at(expected)), [&](LayoutID layout) {
+            return !context.program.at(layout).flags.contains(LayoutFlags::IsNeverAllocated) && context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
+        });
     });
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
         return true;
@@ -3018,7 +3077,7 @@ struct TestPlacer {
                 return;
             }
             if (std::optional<TypeID> castType = findTypeOfOperand(test, *prerequisite.narrowedOperand, proof))
-                proof = emit(makeAssumeType(proof, Proven::byRulesWithoutChecks(*castType)));
+                proof = emit(makeAssumeType(proof, emit(IRBuilder::make(Opcode::Specified)), Proven::behindFact(*castType)));
             test.setOperand(*prerequisite.narrowedOperand, proof);
         });
 
@@ -3219,7 +3278,7 @@ struct TestPlacer {
     {
         if (context.build.validates())
             builder.insertBefore(point, makeValidateType(value, castType));
-        return builder.insertBefore(point, makeAssumeType(value, Proven::byRulesWithoutChecks(castType)));
+        return builder.insertBefore(point, makeAssumeType(value, builder.insertBefore(point, IRBuilder::make(Opcode::Specified)), Proven::behindFact(castType)));
     }
 
     void rewriteUse(const PlannedUse& planned, uint32_t useIndex, ProgramPoint point)
@@ -3754,15 +3813,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
     auto placesTestsBehindRounds = [&] { return heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted(); };
     if (context.isBehindRounds ? !hasUsesLeftByLastRound && !placesTestsBehindRounds() : context.isInRounds && placesTestsBehindRounds())
         return PassOutcome::Unchanged;
-    // No block runs more often than the function is entered unless it is in a cycle.
-    if (heat.of(context.program, context.id).predicted() == HeatClass::RunsOnce && !context.analyses.cfg().hasCycle())
-        return PassOutcome::Unchanged;
-    // Where a test at the entrance has failed. A test in here would guess again what has just proved wrong, and cost a copy.
-    if (context.function.runsOnlyBehindFailedTest())
-        return PassOutcome::Unchanged;
-    // The method table calls a selector's lookup only for a receiver that does not match the class definitions, so a guess here would fail.
-    // A guessed direct call would also be one more caller of the method, which keeps the table from naming the method itself.
-    if (context.function.role == FunctionRole::TableLookup)
+    if (getsNoTests(heat, context.analyses))
         return PassOutcome::Unchanged;
 
     PassOutcome marked = markArmsThatAreSeldomTaken(context);

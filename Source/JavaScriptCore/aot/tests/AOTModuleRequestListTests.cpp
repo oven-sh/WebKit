@@ -98,7 +98,7 @@ private:
         data.exportRule = exportRule;
         data.flags = wireFlags.toRaw();
         data.body = optionalNumber24(body == Body::Present ? static_cast<uint32_t>(m_nodes.size()) : UINT32_MAX);
-        data.referrerOrRuntimeModule = optionalNumber24(UINT32_MAX);
+        data.referrerRuntimeModuleOrLoadGroup = optionalNumber24(UINT32_MAX);
         m_nodes.append(Node { data, { }, 0 });
         return m_nodes.size() - 1;
     }

@@ -50,7 +50,7 @@ Pointer ArrayBufferViewBuiltinEmitter::vectorOf(CellPointer view)
 Pointer ArrayBufferViewBuiltinEmitter::findTypedArrayElement(CellPointer view, Integer index, LBasicBlock otherwise, LBasicBlock outside)
 {
     Condition isFixed = hasFixedLength(view);
-    Condition isInside = below(index, select(isFixed, lengthOf(view), integer(0)));
+    Condition isInside = below(index, select(isFixed, lengthOf(view), 0));
     if (otherwise == outside) {
         branchUnless(isInside, otherwise);
         return vectorOf(view);
@@ -82,7 +82,7 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArrayByteLength(const InlineCal
     RELEASE_ASSERT(isTypedView(type));
     CellPointer view = cellOperand(call.receiver());
     missUnless(call, hasFixedLength(view));
-    finish(call, Integer(m_out.shl(lengthOf(view).value(), m_out.constInt32(logElementSize(type)))), bufferSizeRange);
+    finish(call, Integer(m_out.shl(lengthOf(view).value(), logElementSize(type))), bufferSizeRange);
 }
 
 void ArrayBufferViewBuiltinEmitter::generateTypedArrayByteOffset(const InlineCall& call)

@@ -29,6 +29,7 @@
 #include "config.h"
 #include "ContentSearchUtilities.h"
 
+#include "AOTRemovableFeature.h"
 #include "InspectorProtocolObjects.h"
 #include "RegularExpression.h"
 #include "Yarr.h"
@@ -153,6 +154,7 @@ bool searcherMatchesText(const Searcher& searcher, const String& text)
 
 RegularExpression createRegularExpressionForString(const String& string, SearchType type, SearchCaseSensitive caseSensitive)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, createRegularExpressionForString);
     String pattern;
     switch (type) {
     case SearchType::Regex:
@@ -205,6 +207,7 @@ Ref<JSON::ArrayOf<Protocol::GenericTypes::SearchMatch>> searchInTextByLines(cons
 
 static String findMagicComment(const String& content, ASCIILiteral patternString)
 {
+    JSC_REMOVABLE_DEFINITION(Inspector, findMagicComment);
     if (content.isEmpty())
         return String();
 

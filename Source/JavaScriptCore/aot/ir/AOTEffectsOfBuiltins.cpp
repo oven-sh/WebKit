@@ -343,6 +343,12 @@ void describeBuiltinCall(const Program& program, const Function& function, const
     describeTypedResult(program, call.overload, value.expectedResult(), description);
 }
 
+static bool isArraySearchForNonString(const Program& program, InlineBuiltin builtin, std::span<const TypeID> arguments)
+{
+    bool isArraySearch = builtin == InlineBuiltin::ArrayIndexOf || builtin == InlineBuiltin::ArrayIncludes;
+    return isArraySearch && !arguments.empty() && !(program.at(arguments[0]).primitives & Primitive::AnyString);
+}
+
 static void describeInline(const Program& program, const Function& function, const BuiltinCall& call, InlineBuiltin builtin, EffectDescription& description)
 {
     BuiltinOperandTypes types = provenOperandTypesOf(function, call);
@@ -354,6 +360,8 @@ static void describeInline(const Program& program, const Function& function, con
 
     const BuiltinOverload& overload = program.builtins().at(call.overload);
     Effects bound = declaredBoundOf(builtin);
+    if (isArraySearchForNonString(program, builtin, types.arguments.span()))
+        bound = declaredBoundOf(InlineBuiltin::ArrayAt);
     if (bound.mayThrow && overload.onlyPropagatesErrors())
         bound.mayThrow = ThrowEffect::onlyForLackOfMemory();
     describeBound(bound, description);

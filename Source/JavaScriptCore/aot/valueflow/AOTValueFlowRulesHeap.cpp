@@ -87,6 +87,11 @@ ValueFlowOperand HeapRule::receiversUnder(const ValueFlowOperand& object, const 
 void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
 {
     ClimbingSet receivers = m_context.valueOf(object);
+    if (!m_statement.isOnlyCalledOnItsHolder) {
+        noteName(ValueFlowHostNode::NamesOfReadsThatHandTheirValueOn, key);
+        if (mayBeUnknownObject(receivers))
+            noteName(ValueFlowHostNode::NamesReadOffValuesNobodyKnows, key);
+    }
     // Beside a placeholder the receivers that it covers are listed for a while only: each list is looked up as it comes.
     bool areReceiversListedForGood = !m_context.meet(receivers, m_universe.placeholdersAlone());
     ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
@@ -112,7 +117,7 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (areReceiversListedForGood && tellsApartStartsThatFindNothing(start, key))
             readFromStartsThatMayFindSomething(start, key);
         else
-            connect(m_context.lookup(start, name), m_statement.result);
+            connect(m_context.lookup(start, name, useOfLookupUnder(key)), m_statement.result);
     });
     if (key.keyClass == HeapKeyClass::Unknown) {
         // A key nobody knows may be a symbol that the program has found by listing the keys.
@@ -124,6 +129,8 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (holdsNamedOrLoadedBun(object))
             add(m_statement.result, only(ValueFlowUniverse::markOfLoadedBun()));
     }
+    if (key.keyClass == HeapKeyClass::Name && key.name == m_program.keyOf(BuiltinNames::__proto__) && mayBeUnknownObject(receivers) && isInProgramCode())
+        connect(heldPrototypeObjectsOfLibraryClasses(m_context), m_statement.result);
     if (key.keyClass == HeapKeyClass::Name && mayBeUnknownObject(receivers) && m_context.sets().contains(m_tables.under(key.name).holders, m_universe.objectOf(Builtins::Bun))) {
         // A read that a built-in makes for its caller, such as Reflect.get(), has no site.
         BuiltinID named = m_statement.function && m_statement.site ? entryNamedByOperations(m_program, m_program.at(m_statement.function), m_statement.site) : BuiltinID();
@@ -240,12 +247,13 @@ void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOpe
     if (mayBeUntracked)
         connect(value, m_context.written(untrackedObjectAlone(), name));
     bool writesIntoRealm = mayBeUntracked && hasBeenLost(ClimbingSet(m_tables.objectsOfRealm()));
-    m_context.forEachMember(m_context.restrict(objects, m_universe.builtinObjects()), [&](ValueFlowObjectID object) {
+    ValueFlowObjectID globalObject = m_universe.objectOf(Builtins::GlobalThis);
+    auto noteWriteTo = [&](ValueFlowObjectID object) {
         if (m_universe.kindOf(object) != ValueFlowObjectKind::Builtin)
             return;
         const ValueFlowNamesReadByNativeCode* listed = m_tables.namesReadByNativeCodeOn(object);
         if (!listed) {
-            bool isSeenByStatementsAlone = object == m_universe.objectOf(Builtins::GlobalThis) && namesProperty && namesObjectOfAccess()
+            bool isSeenByStatementsAlone = object == globalObject && namesProperty && namesObjectOfAccess()
                 && isNameThatTableDoesNotListOnGlobalObject({ HeapKeyClass::Name, PropertyKeyID(name.payload) }) && holdsGlobalObjectOnlyWhatStatementsHaveStored();
             writesIntoRealm |= !isSeenByStatementsAlone;
             return;
@@ -257,7 +265,20 @@ void HeapRule::write(ClimbingSet objects, ValueFlowName name, const ValueFlowOpe
         }
         const ValueFlowNameReadByNativeCode* read = namesProperty ? listed->find(PropertyKeyID(name.payload)) : nullptr;
         writesIntoRealm |= !namesProperty || (read && (name.kind != ValueFlowNameKind::Property || !read->isOnlyInspected));
-    });
+    };
+    // Retired nodes list built-in objects by the hundred. But for a prototype link, and for what the global object is asked, a written object says only whether the write goes into the realm: one that does says it for all.
+    ClimbingSet builtinObjects = m_context.restrict(objects, m_universe.builtinObjects());
+    if (name.kind == ValueFlowNameKind::PrototypeLink)
+        m_context.forEachMember(builtinObjects, noteWriteTo);
+    else {
+        if (m_context.contains(builtinObjects, globalObject))
+            noteWriteTo(globalObject);
+        m_context.anyMember(builtinObjects, [&](ValueFlowObjectID object) {
+            if (!writesIntoRealm && object != globalObject)
+                noteWriteTo(object);
+            return writesIntoRealm;
+        });
+    }
     if (writesIntoRealm)
         connect(value, ValueFlowProgramNodes::escaped());
     if (!mayBeUnknownObject(objects))
@@ -889,7 +910,8 @@ void HeapRule::runOperation()
             if (layout && m_program.at(layout).kind == LayoutKind::Record)
                 records.append(object);
         });
-        add(m_statement.result, m_context.maker().of(records.span()));
+        if (!records.isEmpty() && isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
+            add(m_statement.result, m_context.maker().of(records.span()));
         add(m_statement.result, m_context.restrict(known(sources), m_universe.objectsThatMayBeAnything()));
         if (mayBeUnknownObject(sources))
             add(m_statement.result, unknownObjectAlone());

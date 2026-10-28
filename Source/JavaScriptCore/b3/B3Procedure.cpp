@@ -170,6 +170,7 @@ Value* Procedure::clone(Value* value)
     m_opcodesEverAdded.set(value->opcode());
     clone->m_index = UINT_MAX;
     clone->owner = nullptr;
+    m_knownInductions.didAddValue();
     Value* result = m_values.add(WTF::move(clone));
     m_knownProperties.copy(value, result);
     m_movedLoadLog.didClone(value, result);
@@ -301,6 +302,7 @@ void Procedure::resetReachability()
         }
     }
     
+    MovedLoadLog::UnreachableCodeIsDeleted unreachableCodeIsDeleted(m_movedLoadLog);
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get())) {
             for (Value* value : *block)
@@ -779,6 +781,7 @@ RegisterAtOffsetList Procedure::calleeSaveRegisterAtOffsetList() const
 Value* Procedure::addValueImpl(Value* value)
 {
     m_opcodesEverAdded.set(value->opcode());
+    m_knownInductions.didAddValue();
     return m_values.add(SparseCollection<Value>::Pointer(value));
 }
 

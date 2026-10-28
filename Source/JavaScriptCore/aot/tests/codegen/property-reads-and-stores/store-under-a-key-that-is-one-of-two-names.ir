@@ -1,0 +1,136 @@
+# type Point = { x: number; y: number };
+# function place(point: Point, axis: "x" | "y", at: number): void {
+#   point[axis] = at;
+# }
+# declare const input: any;
+# const point: Point = { x: +input, y: +input };
+# for (let i = 0; i < input; i++) place(point, i & 1 ? "x" : "y", +input);
+# (globalThis as any).answer = point.x + point.y;
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(BRANCHES): lower-to-b3 optimized f1
+# REQUIRES(BRANCHES): unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=159 kind=Variable
+typesite w1 module=m0 position=54 kind=Parameter function=f1
+typesite w2 module=m0 position=68 kind=Parameter function=f1
+typesite w3 module=m0 position=85 kind=Parameter function=f1
+typesite w4 module=m0 position=209 kind=Variable
+layout L0 name="Point" module=m0 position=5 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = ToNumber v4
+    v6 = Convert v5 declared={type=number}
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    v10 = ToNumber v9
+    v11 = Convert v10 declared={type=number}
+    v12 = NewObject -, v6, v11 layout=L0 fields=[0, 1]
+    v13 = FinishObject v12
+    v14 = Convert v13 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v15 = Integer
+    v16 = Convert v15 declared={type=number site=w4}
+    Jump -> next b2(v16)
+  b2(v17: number):
+    LoopHint
+    v19 = Convert v17 declared={type=i32 flags=[IsExpected]}
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="input" [isFreeName]
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = Less v19, v22
+    Branch v23 -> taken b3(| 0), notTaken b11(| 0)
+  b3(v24):
+    Jump -> next b4()
+  b4():
+    v25 = Convert v24 declared={type=i32 flags=[IsExpected]}
+    v26 = Integer integer=1
+    v27 = BitAnd v25, v26
+    v28 = ToBoolean v27
+    Branch v28 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v29):
+    Jump -> next b6()
+  b6():
+    v30 = String string="x"
+    Jump -> next b9(v30)
+  b7(v31):
+    Jump -> next b8()
+  b8():
+    v32 = String string="y"
+    Jump -> next b9(v32)
+  b9(v33):
+    v34 = Builtin builtin=GlobalThis
+    v35 = PropGet v34 key="input" [isFreeName]
+    v36 = Convert v35 declared={type=number flags=[IsExpected]}
+    v37 = ToNumber v36
+    v38 = Call v1, -, v14, v33, v37 calleeName="place"
+    Jump -> next b10()
+  b10():
+    v39 = Increment v25
+    v40 = Convert v39 declared={type=number site=w4}
+    Jump -> next b2(v40)
+  b11(v41):
+    Jump -> next b12()
+  b12():
+    v42 = Builtin builtin=GlobalThis
+    v43 = PropGet v42 key="globalThis" [isFreeName]
+    v44 = Convert v43 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v45 = Convert v44 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v46 = PropGet v14 key="x"
+    v47 = PropGet v14 key="y"
+    v48 = Add v46, v47
+    PropSet v45, v48 key="answer"
+    v50 = Undefined
+    Return v50
+}
+function f1 name="place" module=m0 position=39 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|"x"|"y" site=w2 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w3}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|"x"|"y", v2: number):
+    Jump -> next b1()
+  b1():
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}
+
+# The key is "x" or "y" and the layout is known, so the store is a comparison of the key and one store of the double on either side. No property is looked up by name.
+# CHECK-LABEL: name="place" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[key]] = ArgumentReg(
+# CHECK: Int32 b@[[isLong]] = AboveEqual(b@[[key]],
+# CHECK-NEXT: Branch(b@[[isLong]], Terminal,
+# CHECK: Int64 b@[[short]] = Phi(
+# CHECK: Int32 b@[[isX]] = Equal(b@[[short]],
+# CHECK: Branch(b@[[isX]], Terminal,
+# CHECK: Store(b@[[at]], b@[[point]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK: Store(b@[[at]], b@[[point]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK-LABEL: end of function
+# BRANCHES-LABEL: name="place" role=Source
+# BRANCHES-COUNT-2: Branch(
+# BRANCHES-NOT: Branch(
+# BRANCHES-LABEL: end of function
+# NONE-LABEL: name="place" role=Source
+# NONE-NOT: ExitsSideways
+# NONE-NOT: NamedProperties
+# NONE-LABEL: end of function
+# The count takes in the moves around the call on the unlikely path, which follow the calling convention.
+# X64-LABEL: name="place" role=Source
+# X64-NEXT: instructions: 14, patchpoints: 1
+# ARM64-LABEL: name="place" role=Source
+# ARM64-NEXT: instructions: 15, patchpoints: 1

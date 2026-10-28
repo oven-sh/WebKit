@@ -157,8 +157,11 @@ const printAnswers = (kind, answers) => {
 let numberOfObjects = 0;
 // An object of a Structure that nothing has been asked about.
 const fresh = (prototype = Object.prototype) => {
+    const name = "own" + numberOfObjects++;
+    // The first object that is given a name keeps it in a table of its own. The next one has a Structure for it, and for what it is given behind it.
+    Object.create(prototype)[name] = 0;
     const object = Object.create(prototype);
-    object["own" + numberOfObjects++] = 0;
+    object[name] = 0;
     return object;
 };
 const withManyNames = (object, howMany) => {

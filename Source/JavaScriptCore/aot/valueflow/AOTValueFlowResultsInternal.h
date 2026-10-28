@@ -13,6 +13,7 @@
 #include "AOTLayout.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include "AOTTypeTable.h"
 #include "AOTValueFlowAnalysis.h"
 #include "AOTValueFlowLog.h"
@@ -212,13 +213,6 @@ struct ValueFlowResultInputs {
 
     ValueSetID possibleValuesOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const { return throughMaskOf(maker, operand, operand.node ? solver().possibleValuesOf(operand.node) : ValueSets::nothing); }
     ValueSetID seenValuesOf(ValueSetMaker& maker, const ValueFlowOperand& operand) const { return throughMaskOf(maker, operand, operand.node ? solver().seenValuesOf(operand.node) : ValueSets::nothing); }
-    bool isSeenAt(ValueSetMaker& maker, const ValueFlowOperand& operand, ValueFlowObjectID object) const { return sets().contains(seenValuesOf(maker, operand), object); }
-
-    ValueSetID seenBuiltinObjectsAt(ValueSetMaker& maker, const ValueFlowOperand& operand) const
-    {
-        ValueSetID seen = seenValuesOf(maker, operand);
-        return ValueSets::isComplement(seen) ? ValueSets::nothing : maker.intersect(seen, universe().builtinObjects());
-    }
 
     ValueSetID throughMaskOf(ValueSetMaker& maker, const ValueFlowOperand& operand, ValueSetID valuesOfNode) const
     {
@@ -419,7 +413,6 @@ private:
 };
 
 Witness witnessOfAllocation(const ValueFlowResultInputs&, ValueFlowObjectID);
-bool isDataFromOutside(const ValueFlowResultInputs&, ValueFlowObjectID);
 Witness witnessOfStatement(const Program&, const ValueFlowStatement&);
 
 struct ValueFlowStampedCalls {
@@ -577,7 +570,16 @@ public:
         bool isIndexed { false };
         ValueSetID writtenThroughUnknownObject { ValueSets::nothing };
         ValueSetID writtenThroughUntrackedObject { ValueSets::nothing };
-        Vector<uint32_t> nodesOfManyMembers;
+        AOT_CLASS_THRESHOLD(size_t, nodesInGroup, 8);
+        struct WrittenThroughManyMembers {
+            ValueSetID objects;
+            ValueSetID value;
+        };
+        // What the index by member leaves out, each value once, by the number of members.
+        Vector<WrittenThroughManyMembers> writtenThroughManyMembers;
+        // The members of each `nodesInGroup` of them together, and of all.
+        Vector<ValueSetID> membersOfGroupsOfNodes;
+        ValueSetID membersOfNodesOfManyMembers { ValueSets::nothing };
         Vector<NodeOfMember> nodesOfMembers;
     };
 
@@ -632,6 +634,7 @@ public:
     std::span<const ValueFlowNodeID> firstNodesOfCallGroups() const LIFETIME_BOUND { return m_firstNodesOfCallGroups.span(); }
     std::span<const ValueFlowNodeID> nodesOfMarks() const LIFETIME_BOUND { return m_nodesOfMarks.span(); }
     ValueFlowAnswersAboutSets& prototypesOfSets() const LIFETIME_BOUND { return m_prototypesOfSets; }
+    ValueFlowAnswersAboutSets& prototypesOfBlocks() const LIFETIME_BOUND { return m_prototypesOfBlocks; }
     ValueFlowAnswersAboutSets& chainsOfSets() const LIFETIME_BOUND { return m_chainsOfSets; }
     ValueFlowAnswersAboutSets& writtenUnderNames() const LIFETIME_BOUND { return m_writtenUnderNames; }
 
@@ -653,6 +656,7 @@ private:
     Vector<ValueFlowNodeID> m_firstNodesOfCallGroups;
     Vector<ValueFlowNodeID> m_nodesOfMarks;
     mutable ValueFlowAnswersAboutSets m_prototypesOfSets;
+    mutable ValueFlowAnswersAboutSets m_prototypesOfBlocks;
     mutable ValueFlowAnswersAboutSets m_chainsOfSets;
     mutable ValueFlowAnswersAboutSets m_writtenUnderNames;
 };

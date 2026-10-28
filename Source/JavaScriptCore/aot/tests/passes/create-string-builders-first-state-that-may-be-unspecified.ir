@@ -16,7 +16,7 @@ function f0 name="firstStateMayBeUnspecified" parameters=[{type=string}, {type=n
   b2() handler=b3(v3, v6):
     v7 = CallDirect function=f2
     Return v6
-  b3(v8: int[1, 2], v9: string) role=CatchHandler:
+  b3(v8: int[1, 2], v9: string|unspecified) role=CatchHandler:
     v10 = CatchValue
     v11 = AssumeType v9 provenType=string
     Jump -> next b4(v11, v2)
@@ -27,16 +27,20 @@ function f0 name="firstStateMayBeUnspecified" parameters=[{type=string}, {type=n
   b5():
     Switch v8 cases=[1] -> case b6(), otherwise b7(v12)
   b6():
-    v16 = Add v12, v0
-    Jump -> next b7(v16)
-  b7(v17):
-    v18 = Add v13, v3
-    Jump -> next b4(v17, v18)
+    v16 = Specified
+    v17 = AssumeType v12, v16 provenType=string
+    v18 = Add v17, v0
+    Jump -> next b7(v18)
+  b7(v19):
+    v20 = Add v13, v3
+    Jump -> next b4(v19, v20)
   b8():
     Switch v8 cases=[1] -> case b9(), otherwise b10()
   b9():
-    v19 = Add v12, v0
-    Return v19
+    v21 = Specified
+    v22 = AssumeType v12, v21 provenType=string
+    v23 = Add v22, v0
+    Return v23
   b10():
     Return v0
 }

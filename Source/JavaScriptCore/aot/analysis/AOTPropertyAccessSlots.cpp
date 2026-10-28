@@ -140,10 +140,11 @@ static void requireFilledSlot(const FieldArmState& state, PropertyAccessPlan& pl
         plan.requiredProofs.add(Proof::SlotFilled);
 }
 
-static void requireFilledSlotForStore(const FieldArmState& state, PropertyAccessPlan& plan)
+// `o.n += v` has read the slot behind a test for a number, and the store shares that test. Any other store asks whether the property lies in the slot: `undefined` does, as a field that is declared without a value has it.
+static void requireFilledSlotForStore(const PropertyAccessQuery& query, const FieldArmState& state, PropertyAccessPlan& plan)
 {
     plan.requiredProofs.add(Proof::SlotFilled);
-    plan.testsDeclaredType = state.holdsRawNumberOrBoolean;
+    plan.testsDeclaredType = state.holdsRawNumberOrBoolean && query.storesWhatWasMadeOfField;
 }
 
 static void requireStoresAllowed(const PropertyAccessQuery& query, const FieldArmState& state, PropertyAccessPlan& plan)
@@ -441,7 +442,7 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
         return;
     }
     if (query.isPrivate || (query.isListedByAllocation && !query.usesOnlyPlansWithoutTests)) {
-        requireFilledSlotForStore(state, plan);
+        requireFilledSlotForStore(query, state, plan);
         return;
     }
 
@@ -458,7 +459,7 @@ static void planFieldStore(const PropertyAccessContext& context, const PropertyA
         plan.operation = PropertyAccessPlan().operation;
         return;
     }
-    requireFilledSlotForStore(state, plan);
+    requireFilledSlotForStore(query, state, plan);
 }
 
 static void planFieldDefinition(const PropertyAccessContext& context, const PropertyAccessQuery& query, const FieldArmState& state, PropertyAccessPlan& plan)

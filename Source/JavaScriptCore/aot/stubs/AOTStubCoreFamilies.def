@@ -55,6 +55,7 @@ v(ToBoolean, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Ma
 v(ValueIsTruthy, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), ValueIsTruthy)
 v(ValueIsCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, ValueIsCallable)
 v(ThrowUnlessCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThrowUnlessCallable)
+v(ThrowUnlessForwardedCalleeIsCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThrowUnlessForwardedCalleeIsCallable)
 
 // AOTStubsGlobalBindings.cpp
 v(GetGlobalBinding, CalledByCode, (ScriptsAndGlobalObject, GlobalObject), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, GetGlobalBinding)

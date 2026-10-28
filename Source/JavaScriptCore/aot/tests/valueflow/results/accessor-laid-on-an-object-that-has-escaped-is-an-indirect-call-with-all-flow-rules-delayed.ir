@@ -2,7 +2,6 @@
 # Both objects are in hands nobody knows, and so are their getters: whoever holds them enters them. On `table` the program lays nothing but the getter, so that is what a read under a name finds there:
 # the read lists it as an indirect call. On `cache` the program also lays values under keys nobody knows, and a read under a name is expected to find one of those: it lists nothing.
 # accessor-laid-on-an-object-that-has-escaped-is-an-indirect-call.ir with another order of the rules: the answer is the same.
-# TODO: nobody: with both delays the read of table.member is not listed as an indirect call of its getter: the order of the rules changes the answer, as it did with DelayOtherFlowRules alone
 # OPTIONS: testing=DelayFlowRules,DelayOtherFlowRules
 # RUN: valueflow-results
 # CHECK: function f1 cause=ReachesNativeCode

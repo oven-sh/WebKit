@@ -58,7 +58,7 @@ static constexpr ASCIILiteral jobsFlag = "--jobs"_s;
 
 static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, optionFlag, onlyDiagnosticFlag };
 static constexpr ASCIILiteral nativeFlags[] { previousNativeTestFlag, singleProcessFlag, nativeTestPartFlag };
-static constexpr ASCIILiteral printFlags[] { "--until"_s, "--function"_s, "--wire"_s };
+static constexpr ASCIILiteral printFlags[] { "--until"_s, "--function"_s, "--wire"_s, "--command"_s };
 static constexpr ASCIILiteral compileFlags[] { "--output"_s };
 static constexpr ASCIILiteral fuzzReaderFlags[] { "--seed"_s, "--count"_s };
 
@@ -67,7 +67,7 @@ static constexpr SubcommandEntry subcommandEntries[] {
     { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
     { nativeSubcommandName, Subcommand::Native, nativeFlags, "[<filter>] [--after=<name>] [--part=<i>/<n>] [--single-process]"_s },
     { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics"_s },
-    { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] { option word }"_s },
+    { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command=\"<command> { argument }\"] { option word }"_s },
     { "compile"_s, Subcommand::Compile, compileFlags, "<program> --output=<image> { option word }"_s },
     { "write-out"_s, Subcommand::WriteOut, { }, "<file>"_s },
     { "fuzz-reader"_s, Subcommand::FuzzReader, fuzzReaderFlags, "[--seed=<n>] [--count=<n>] [<program>..]"_s },

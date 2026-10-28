@@ -600,6 +600,7 @@ static B3::CompilationReport reportWithRemarks()
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopVersioned, B3::GaveUpReason::None, originOf(7), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopNotVersioned, B3::GaveUpReason::SeveralEntries, originOf(8), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopRotated, B3::GaveUpReason::None, originOf(10), std::nullopt });
+    report.remarks.append(B3::Remark { B3::RemarkKind::LoopUnrolled, B3::GaveUpReason::None, originOf(11), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::RangeChecksRemoved, B3::GaveUpReason::None, originOf(12), std::nullopt });
     report.remarks.append(B3::Remark { B3::RemarkKind::LoopBoundNotClamped, B3::GaveUpReason::BoundNotInvariant, originOf(13), std::nullopt });
     return report;
@@ -713,18 +714,24 @@ static void testBackEndReportStatistics()
     B3::CompilationReport raw;
     raw.counters[static_cast<size_t>(B3::Counter::LoopsVersioned)] = 4;
     raw.counters[static_cast<size_t>(B3::Counter::LoopsRotated)] = 5;
+    raw.counters[static_cast<size_t>(B3::Counter::LoopsUnrolled)] = 6;
     raw.counters[static_cast<size_t>(B3::Counter::RangeChecksRemoved)] = 7;
     raw.counters[static_cast<size_t>(B3::Counter::LoopBoundsClamped)] = 8;
     raw.counters[static_cast<size_t>(B3::Counter::KnownInductionsUsed)] = 9;
     raw.counters[static_cast<size_t>(B3::Counter::TrapsFoldedIntoAccesses)] = 10;
+    raw.counters[static_cast<size_t>(B3::Counter::LoopPollsRemoved)] = 11;
+    raw.counters[static_cast<size_t>(B3::Counter::SumsKeptAsIntegers)] = 12;
     AOT_TEST_CHECK(!program.report(build, program.functionAsRead(), raw));
 
     expected.count(StatisticID::LoopsVersioned, 4);
     expected.count(StatisticID::LoopsRotated, 5);
+    expected.count(StatisticID::LoopsUnrolled, 6);
     expected.count(StatisticID::RangeChecksRemoved, 7);
     expected.count(StatisticID::LoopBoundsClamped, 8);
     expected.count(StatisticID::KnownInductionsUsed, 9);
     expected.count(StatisticID::NullChecksFoldedIntoAccesses, 10);
+    expected.count(StatisticID::LoopPollsRemoved, 11);
+    expected.count(StatisticID::SumsKeptAsIntegers, 12);
     AOT_TEST_CHECK(build.statistics().values() == expected.values());
     AOT_TEST_CHECK(build.takeLosses(&program.program()).isEmpty());
 }

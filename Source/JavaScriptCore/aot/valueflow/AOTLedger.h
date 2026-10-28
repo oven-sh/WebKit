@@ -158,6 +158,59 @@ inline OptionSet<Actor> actorsOpenOn(const ValueFlowResultInputs& inputs, ValueS
     return open;
 }
 
+// What the last step of mayFindNameIn() asks of the members of a set: the same for every name but one.
+struct KindsOfMembers {
+    ValueSetID objects;
+    bool mayHoldMoreUnderEveryKey { false };
+    bool holdsPrototypeObject { false };
+};
+
+inline KindsOfMembers findKindsOfMembersOf(const ValueFlowResultInputs& inputs, ValueSetID objects)
+{
+    const ValueFlowUniverse& universe = inputs.universe();
+    KindsOfMembers kinds { objects };
+    inputs.sets().forEachMember(objects, [&](ValueFlowObjectID object) {
+        ValueFlowObjectKind kind = universe.kindOf(object);
+        if (kind == ValueFlowObjectKind::Site || kind == ValueFlowObjectKind::Instance) {
+            LayoutID layout = universe.layoutOf(object);
+            kinds.mayHoldMoreUnderEveryKey |= !layout || !hasObjectsThatCodeAlters(inputs.program.at(layout).kind) || inputs.classOf(object);
+        } else if (kind == ValueFlowObjectKind::Prototype)
+            kinds.holdsPrototypeObject = true;
+        else
+            kinds.mayHoldMoreUnderEveryKey |= kind != ValueFlowObjectKind::Builtin && kind != ValueFlowObjectKind::ModuleBuiltin;
+    });
+    return kinds;
+}
+
+// Whether one of the objects may have a property of its own under the key.
+bool mayFindNameIn(const ValueFlowResultInputs& inputs, const ValueFlowHeapView& heap, ValueSetMaker& maker, ValueSetID objects, PropertyKeyID key, NOESCAPE const Invocable<KindsOfMembers(ValueSetID)> auto& kindsOfMembersOf)
+{
+    const Program& program = inputs.program;
+    const ValueFlowUniverse& universe = inputs.universe();
+    if (ValueSets::isComplement(objects) || inputs.sets().meet(objects, universe.placeholdersAlone()))
+        return true;
+    const ValueFlowMembersUnderKey& members = universe.builtinTables().heap().under(key);
+    if (inputs.sets().meet(objects, members.holders) || inputs.sets().meet(objects, members.holdersOfUndeclaredProperties))
+        return true;
+    for (ValueFlowName name : { ValueFlowName::property(program, key), ValueFlowName::getter(program, key), ValueFlowName::setter(program, key), unknownKeyName, ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey), ValueFlowName::of(ValueFlowNameKind::SetterUnderUnknownKey), copiedFromName }) {
+        if (heap.writtenUnder(maker, objects, name) != ValueSets::nothing)
+            return true;
+    }
+    KindsOfMembers kinds = kindsOfMembersOf(objects);
+    return kinds.mayHoldMoreUnderEveryKey || (kinds.holdsPrototypeObject && key == universe.builtinTables().heap().constructorKey());
+}
+
+// Who has not accounted for the names on those of the objects that the program makes. For its own objects the table answers name by name.
+inline OptionSet<Actor> actorsOpenOnNamesOfObjectsOfProgramAmong(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, ValueSetID objects)
+{
+    ValueSetID objectsOfProgram = maker.intersect(objects, ValueSets::complement(inputs.universe().builtinObjects()));
+    OptionSet<Actor> open = actorsOpenOn(inputs, objectsOfProgram);
+    // No row lists every name that its built-in puts on what it is handed.
+    if (inputs.sets().anyMember(objectsOfProgram, [&](ValueFlowObjectID object) { return markedMutationsOf(inputs, object).contains(ObjectMutation::ReachNativeCode); }))
+        open.add(Actor::NativeCode);
+    return open & actorsThatCanWrite(PlaceKind::Property);
+}
+
 // One part for each kind of place, each filled in a file of its own. A part answers nothing for a place that is not its own.
 class LedgerPart {
 public:

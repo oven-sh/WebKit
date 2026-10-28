@@ -129,7 +129,7 @@ Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const Fie
         Word32 distance = word32(0);
         for (const Member& member : members) {
             if (member.distance)
-                distance = select(below(add(shapeWord, word32(static_cast<int32_t>(member.shapes.end() - 1))), word32(static_cast<int32_t>(member.shapes.count))), word32(static_cast<int32_t>(member.distance)), distance);
+                distance = select(below(add(shapeWord, static_cast<int32_t>(member.shapes.end() - 1)), static_cast<int32_t>(member.shapes.count)), static_cast<int32_t>(member.distance), distance);
         }
         return distance;
     }
@@ -147,7 +147,8 @@ Word32 SlotAccessEmitter::distanceBehindLowestOffset(CellPointer cell, const Fie
         uint32_t constant = known != m_offsetTables.end() ? known->constant : m_out.addConstantData(asBytes(entries.span()));
         if (known == m_offsetTables.end())
             m_offsetTables.append({ access.key, access.membersWithField, constant });
-        return m_out.address(m_heaps.AOTImage_tables, offsetBy(Pointer(m_out.relocatable(RelocationSpace::Constants, constant)), zeroExtended(index), std::countr_zero(sizeof(Entry))).value());
+        Pointer table(m_out.relocatable(RelocationSpace::Constants, constant));
+        return m_out.address(m_heaps.AOTImage_tables, offsetBy(table, zeroExtended(index), std::countr_zero(sizeof(Entry))).value());
     };
     if (greatestDistance <= std::numeric_limits<uint8_t>::max())
         return Word32(m_out.load8ZeroExt32(entryOfTableOf(uint8_t())));
@@ -260,7 +261,8 @@ std::optional<CellPointer> SlotAccessEmitter::loadHalfOfAccessorInSlot(const Val
         return std::nullopt;
     }
     MemoryLocation location = MemoryLocation::objectField(access.key, access.receivers);
-    Operand held = emitter<SlotEmitter>().loadSlot(in<CellPointer>(value->objectOperand()), access.slot, location, extensionWordOf(access), Type::object());
+    CellPointer object = in<CellPointer>(value->objectOperand());
+    Operand held = emitter<SlotEmitter>().loadSlot(object, access.slot, location, extensionWordOf(access), Type::object());
     CellPointer accessor = held.is<CellPointer>() ? held.as<CellPointer>()
         : held.is<NarrowReference>() ? emitter<ConversionEmitter>().decode(held.as<NarrowReference>(), Type::object(), Representation::Cell).as<CellPointer>()
         : unboxCell(held.as<Boxed>());
@@ -390,15 +392,18 @@ void SlotAccessEmitter::writeSlot(const ValueContext& value, CellPointer cell, c
     MemoryLocation location = MemoryLocation::objectField(access.key, access.receivers);
     // The next read of the slot makes the closure.
     if (access.slot.representation == SlotRepresentation::DeferredClosure && isDeferredClosure(m_function, stored)) {
-        m_out.store32(m_out.constInt32(uncreatedDeferredClosure), slots.addressOf(cell, access.slot, location));
+        LValue uncreated = m_out.constInt32(uncreatedDeferredClosure);
+        m_out.store32(uncreated, slots.addressOf(cell, access.slot, location));
         return;
     }
     Operand operand = get(stored);
     const Type& storedType = typeOf(stored);
     if (access.slot.representation == SlotRepresentation::DeferredClosure)
         m_out.store32(operand.as<NarrowReference>().value(), slots.addressOf(cell, access.slot, location));
-    else
-        slots.storeSlot(baseOfSlot(cell, access), access.slot, location, operand, extensionWordOf(access), storedType);
+    else {
+        CellPointer base = baseOfSlot(cell, access);
+        slots.storeSlot(base, access.slot, location, operand, extensionWordOf(access), storedType);
+    }
     barrierAfterStore(value, cell, operand, storedType);
 }
 
@@ -451,8 +456,10 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     MemoryLocation location = MemoryLocation::objectField(access.key, access.receivers);
     bool needsStorage = needsStorageFor(access.slot, typeOf(stored));
     markCellIfMarkerReplacesRawValue(cell, access, stored);
-    if (access.slot.isOutOfLine() && needsStorage)
-        slots.ensureExtensionHolds(value, cell, access.extensionWord, granuleBitOf(access.slot.offset), granuleBitsOfStoresBehind(value, access), emitter<BarrierEmitter>().barrierOfExtension(value));
+    if (access.slot.isOutOfLine() && needsStorage) {
+        uint64_t granuleBitsBehind = granuleBitsOfStoresBehind(value, access);
+        slots.ensureExtensionHolds(value, cell, access.extensionWord, granuleBitOf(access.slot.offset), granuleBitsBehind, emitter<BarrierEmitter>().barrierOfExtension(value));
+    }
 
     std::optional<StateOfNewObject> newObject = stateOfNewObjectBefore(value, value->objectOperand());
     auto store = [&] {
@@ -749,7 +756,7 @@ std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPoi
     std::span<const LayoutID> members = m_program.at(receivers).completeMembers();
     if (members.size() > 1) {
         if (std::optional<KeyOrderContinuation> common = findContinuationOfEveryMember(m_program, m_placement, receivers, createdKeys))
-            return KeyOrderStep { equal(emitter<ShapeTestEmitter>().orderWordOf(cell), word32(static_cast<int32_t>(common->orderWordBefore))), word32(static_cast<int32_t>(common->orderWordAfter)) };
+            return KeyOrderStep { equal(emitter<ShapeTestEmitter>().orderWordOf(cell), static_cast<int32_t>(common->orderWordBefore)), word32(static_cast<int32_t>(common->orderWordAfter)) };
     }
 
     Vector<Candidate, maxCandidates> candidates;
@@ -821,7 +828,7 @@ std::optional<RememberedKeyOrderStep> SlotAccessEmitter::testRememberedKeyOrderS
         offsetOfEntry += indexOfKeyOrderStepCache(number, static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(members[0]))) << 32) * sizeof(KeyOrderStepCache);
     else {
         static_assert(sizeof(KeyOrderStepCache) == 1 << 4);
-        LValue scaledIndex = m_out.add(m_out.lShr(remembered.orderAndShapeWordsBefore.value(), m_out.constInt32(keyOrderStepCacheShift - 4)), m_out.constInt64(static_cast<int64_t>(number) << 4));
+        LValue scaledIndex = m_out.add(m_out.lShr(remembered.orderAndShapeWordsBefore.value(), keyOrderStepCacheShift - 4), static_cast<int64_t>(number) << 4);
         entry = m_out.add(entry, m_out.bitAnd(scaledIndex, m_out.constInt64((numberOfKeyOrderStepCaches - 1) << 4)));
     }
     auto entryField = [&](ptrdiff_t offset) { return m_out.address(heap, entry, offsetOfEntry + offset); };
@@ -864,7 +871,8 @@ bool SlotAccessEmitter::didCreateField(const ValueContext& value, CellPointer ce
             callVoidOperation(value, RuntimeOperation::DidCreateField, { cell, identifierNumber(access.key) });
             return false;
         }
-        return listOneKey(m_out.add(m_out.constInt64(slotKey), zeroExtended(distanceBehindLowestOffset(cell, access)).value()));
+        LValue lowestKey = m_out.constInt64(slotKey);
+        return listOneKey(m_out.add(lowestKey, zeroExtended(distanceBehindLowestOffset(cell, access)).value()));
     }
     if (slotKey == noSlotKey) {
         callVoidOperation(value, RuntimeOperation::DidCreateField, { cell, identifierNumber(access.key) });

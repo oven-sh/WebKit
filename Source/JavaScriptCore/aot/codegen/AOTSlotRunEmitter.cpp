@@ -107,8 +107,10 @@ void SlotRunEmitter::generatePutSlots(const ValueContext& value)
 
     CellPointer cell = in<CellPointer>(value->objectOperand());
     SlotEmitter& slots = emitter<SlotEmitter>();
-    if (auto entry = std::ranges::find_if(run.entries, &Entry::needsGranule); entry != run.entries.end())
-        slots.ensureExtensionHolds(value, cell, entry->access->extensionWord, granuleBits, granuleBits | slotAccess.granuleBitsOfStoresBehind(value, *entry->access), emitter<BarrierEmitter>().barrierOfExtension(value));
+    if (auto entry = std::ranges::find_if(run.entries, &Entry::needsGranule); entry != run.entries.end()) {
+        uint64_t granuleBitsBehind = slotAccess.granuleBitsOfStoresBehind(value, *entry->access);
+        slots.ensureExtensionHolds(value, cell, entry->access->extensionWord, granuleBits, granuleBits | granuleBitsBehind, emitter<BarrierEmitter>().barrierOfExtension(value));
+    }
 
     // The keys are listed first, while the slots still say which fields are missing. No code of the program runs before the stores.
     std::optional<StateOfNewObject> newObject = slotAccess.stateOfNewObjectBefore(value, value->objectOperand());

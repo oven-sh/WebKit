@@ -1,0 +1,81 @@
+# function on(it): boolean { return it.on }
+# function count(given) { const size = given >>> 0; let kept = 0, index = 0; outer: for (;;) { for (; index < size; index = (index + 1) >>> 0) { if (!has) continue; if (!on(undefined)) continue; kept = (kept + 1) >>> 0; if (!fits) { index = (index + 1) >>> 0; continue outer } } return kept } }
+# `on` is only ever handed undefined, so its body ends behind the read, and it declares that it answers with a boolean. Copied into `count` it leaves the rest of that arm without a way in:
+# the block that takes the answer, the addition behind it, and the two edges that bring the sum back to the heads of the loops.
+# InlineCalls types what it has put in. The blocks that are reached no longer have no parameters, and neither have the blocks right behind them; the heads of the loops stand further on.
+# They have lost an edge all the same and are typed when the values that changed are typed: `kept` is 0 from then on, as it is where every value is typed from nothing.
+# RUN: pipeline SinkAllocations
+# OPTIONS: check=VerifyEachPass
+
+typesite w0 module=m0 position=1 kind=Result
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="size" [isFreeName]
+    v3 = Call v0, -, v2
+    Return v3
+}
+function f1 name="count" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer
+    v2 = URShift v0, v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = NewClosure function=f2
+    Jump -> next b1(v1, v1)
+  b1(v5, v6):
+    LoopHint
+    Jump -> next b2(v5, v6)
+  b2(v8, v9):
+    LoopHint
+    v11 = Less v9, v2
+    Branch v11 -> taken b3(), notTaken b10()
+  b3():
+    v12 = PropGet v3 key="has" [isFreeName]
+    v13 = ToBoolean v12
+    Branch v13 -> taken b4(), notTaken b8()
+  b4():
+    v14 = Undefined
+    v15 = Call v4, -, v14
+    v16 = ToBoolean v15
+    Branch v16 -> taken b5(), notTaken b7()
+  b5():
+    v17 = Integer integer=1
+    v18 = Add v8, v17
+    v19 = Integer
+    v20 = URShift v18, v19
+    v21 = PropGet v3 key="fits" [isFreeName]
+    v22 = ToBoolean v21
+    Branch v22 -> taken b6(), notTaken b11()
+  b6():
+    Jump -> next b9(v20)
+  b7():
+    Jump -> next b9(v8)
+  b8():
+    Jump -> next b9(v8)
+  b9(v23):
+    v24 = Integer integer=1
+    v25 = Add v9, v24
+    v26 = Integer
+    v27 = URShift v25, v26
+    Jump -> next b2(v23, v27)
+  b10():
+    Return v8
+  b11():
+    v28 = Integer integer=1
+    v29 = Add v9, v28
+    v30 = Integer
+    v31 = URShift v29, v30
+    Jump -> next b1(v20, v31)
+# CHECK: [[zero]]: 0 = Integer
+# CHECK-NOT: = Add [[zero]]
+# CHECK: Return [[zero]]
+}
+function f2 name="on" flags=[IsChecked] parameters=[{type=anything}] results=[{type=boolean site=w0}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="on"
+    v2 = Convert v1 declared={type=boolean site=w0}
+    Return v2
+}

@@ -15,10 +15,14 @@
 #include "AOTRegionCloner.h"
 #include "AOTRewrite.h"
 #include "AOTSSARepair.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
+#include <array>
 #include <optional>
+#include <span>
 #include <tuple>
 #include <utility>
+#include <wtf/HashMap.h>
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
 
@@ -137,8 +141,13 @@ struct EdgeThreader : Rewrite {
 
     bool chooseMergePoints(NOESCAPE const Invocable<bool(const CFG&, BlockID)> auto& isWanted)
     {
+        return chooseMergePointsAmong(analyses.cfg().reversePostOrder(), isWanted);
+    }
+
+    bool chooseMergePointsAmong(std::span<const BlockID> blocks, NOESCAPE const Invocable<bool(const CFG&, BlockID)> auto& isWanted)
+    {
         const CFG& cfg = analyses.cfg();
-        for (BlockID block : cfg.reversePostOrder()) {
+        for (BlockID block : blocks) {
             if (cfg.incomingEdges(block).size() >= 2 && isWanted(cfg, block))
                 candidates.append(block);
         }
@@ -182,30 +191,35 @@ struct EdgeThreader : Rewrite {
     {
         if (!repair)
             repair.emplace(builder(), analyses);
-        size_t first = std::ranges::find(variablesByBlock, block, &std::pair<BlockID, SSARepair::Variable>::first) - variablesByBlock.begin();
+        size_t first = firstVariableOfBlock.ensure(block.index(), [&] { return variables.size(); }).iterator->value;
         for (unsigned index = 0; index < originals.size(); ++index) {
-            if (first + index == variablesByBlock.size())
-                variablesByBlock.append({ block, repair->addVariable(originals[index]) });
-            repair->addDefinition(variablesByBlock[first + index].second, copies[index]);
+            if (first + index == variables.size())
+                variables.append(repair->addVariable(originals[index]));
+            repair->addDefinition(variables[first + index], copies[index]);
         }
     }
 
-    BlockID copyBlock(BlockID original)
+    // The copy of the first block.
+    BlockID copyBlocks(std::span<const BlockID> originals)
     {
         RegionCloner cloner(builder(), function);
-        cloner.cloneBlocks(singleElementSpan(original), [](ValueID, Value&) { });
+        cloner.cloneBlocks(originals, [](ValueID, Value&) { });
 
-        Arguments definitions = at(original).parameters;
-        for (ValueID value : at(original).values) {
-            if (resultRuleOf(at(value).opcode) != ResultRule::None)
-                definitions.append(value);
+        for (BlockID original : originals) {
+            Arguments definitions = at(original).parameters;
+            for (ValueID value : at(original).values) {
+                if (resultRuleOf(at(value).opcode) != ResultRule::None)
+                    definitions.append(value);
+            }
+            Arguments copies;
+            for (ValueID definition : definitions)
+                copies.append(cloner.cloneOf(definition));
+            addDefinitions(original, definitions, copies);
         }
-        Arguments copies;
-        for (ValueID definition : definitions)
-            copies.append(cloner.cloneOf(definition));
-        addDefinitions(original, definitions, copies);
-        return cloner.cloneOf(original);
+        return cloner.cloneOf(originals[0]);
     }
+
+    BlockID copyBlock(BlockID original) { return copyBlocks(singleElementSpan(original)); }
 
     PassOutcome finish()
     {
@@ -453,10 +467,15 @@ struct EdgeThreader : Rewrite {
         IndexMap<ValueID, BlockID> definingCandidate(function.values.size());
         IndexMap<BlockID, IndexSet<BlockID>> usersOutsideBlock(function.blocks.size());
         IndexSet<BlockID> computesValuesForOthers;
+        IndexMap<BlockID, uint32_t> orderOfBlock(function.blocks.size());
+        for (uint32_t order = 0; BlockID block : analyses.cfg().reversePostOrder())
+            orderOfBlock[block] = order++;
+        IndexMap<ValueID, uint32_t> orderBehindLastUser(function.values.size());
         auto addUserOutsideBlock = [&](BlockID candidate, ValueID definition, BlockID user) {
             if (user == candidate)
                 return;
             usersOutsideBlock[candidate].add(user);
+            orderBehindLastUser[definition] = std::max(orderBehindLastUser[definition], orderOfBlock[user] + 1);
             if (!at(candidate).parameters.contains(definition))
                 computesValuesForOthers.add(candidate);
         };
@@ -479,6 +498,9 @@ struct EdgeThreader : Rewrite {
         }, [&](BlockID block) {
             numbersInSubtree[block].second = number;
         });
+        IndexMap<BlockID, BlockID> dominatorOfCandidate(function.blocks.size());
+        for (BlockID candidate : candidates)
+            dominatorOfCandidate[candidate] = analyses.dominators().idom(candidate);
         // A block made since the tree was numbered counts as dominated.
         auto wasDominatedBy = [&](BlockID candidate, BlockID block) {
             if (block.index() >= numbersInSubtree.size())
@@ -525,6 +547,8 @@ struct EdgeThreader : Rewrite {
         };
 
         Vector<DecidedEdge, 4> skippingEdges;
+        IndexSet<BlockID> skippedBlocks;
+        IndexSet<BlockID> blocksToSkip;
         for (BlockID candidate : candidates) {
             const Block& mergePoint = at(candidate);
             const Terminator& terminator = mergePoint.terminator;
@@ -540,8 +564,10 @@ struct EdgeThreader : Rewrite {
                 std::optional<UsersBelow>& usersBelow = usersBelowTargets[*targetIndex];
                 if (!usersBelow)
                     usersBelow = findUsersBelow(chosenEdge);
-                if (*usersBelow == UsersBelow::Some)
+                if (*usersBelow == UsersBelow::Some) {
                     skippingEdges.append({ edge, *targetIndex });
+                    blocksToSkip.add(candidate);
+                }
                 std::optional<Target> target = *usersBelow == UsersBelow::None ? createThreadedTarget(mergePoint, chosenEdge, incomingArguments) : std::nullopt;
                 if (!target)
                     continue;
@@ -550,6 +576,34 @@ struct EdgeThreader : Rewrite {
                         addUserOutsideBlock(definingBlock, argument, edge.from);
                 }
                 redirect(edge, WTF::move(*target));
+                skippedBlocks.add(candidate);
+            }
+        }
+
+        // A block that edges skip no longer dominates what lies below it: every join there merges its parameters again, down to the next block that no edge skips. Such a block ends a row of skipped ones.
+        IndexSet<BlockID> blocksThatEndRows;
+        if (!skippingEdges.isEmpty() && !hasHandlers) {
+            IndexMap<BlockID, Vector<uint32_t>> valuesMergedAgainBelow(function.blocks.size());
+            for (BlockID candidate : candidates) {
+                Vector<uint32_t> mergedAgain;
+                for (uint32_t orderBehindLastUserOfValue : valuesMergedAgainBelow[dominatorOfCandidate[candidate]]) {
+                    if (orderBehindLastUserOfValue > orderOfBlock[candidate])
+                        mergedAgain.append(orderBehindLastUserOfValue);
+                }
+                if (blocksToSkip.contains(candidate) && !computesValuesForOthers.contains(candidate)) {
+                    size_t numberFromAbove = mergedAgain.size();
+                    for (ValueID parameter : at(candidate).parameters) {
+                        if (orderBehindLastUser[parameter])
+                            mergedAgain.append(orderBehindLastUser[parameter]);
+                    }
+                    if (context.exceeds(LimitID::MaxValuesMergedAgainBelowThreadedJumps, mergedAgain.size(), valueTestedBy(at(candidate).terminator))) {
+                        blocksThatEndRows.add(candidate);
+                        mergedAgain.shrink(numberFromAbove);
+                    } else
+                        skippedBlocks.add(candidate);
+                }
+                if (skippedBlocks.contains(candidate))
+                    valuesMergedAgainBelow[candidate] = WTF::move(mergedAgain);
             }
         }
 
@@ -558,7 +612,7 @@ struct EdgeThreader : Rewrite {
             BlockID mergePoint = targetOf(function, edge).block;
             Edge chosenEdge { mergePoint, targetIndex };
             // An edge that skips the block has a value for each of its parameters. What the block computes exists only behind it.
-            if (!isCandidate.contains(mergePoint) || hasHandlers || computesValuesForOthers.contains(mergePoint))
+            if (!isCandidate.contains(mergePoint) || hasHandlers || computesValuesForOthers.contains(mergePoint) || blocksThatEndRows.contains(mergePoint))
                 continue;
             Arguments incomingArguments = targetOf(function, edge).arguments;
             if (!createThreadedTarget(at(mergePoint), chosenEdge, incomingArguments))
@@ -569,8 +623,9 @@ struct EdgeThreader : Rewrite {
             builder().setOrigin(at(mergePoint).terminator.origin());
             BlockID skippingBlock = builder().addBlock(at(edge.from).frequency);
             Arguments parameters;
+            // No edge leads to the block yet.
             for (ValueID argument : incomingArguments)
-                parameters.append(builder().addParameter(skippingBlock, at(argument).type));
+                parameters.append(builder().addParameter(skippingBlock, at(argument).type, 0));
             Target next = substituteParameters(at(mergePoint), target, argumentsOfChosenEdge, parameters);
             builder().moveToEndOf(skippingBlock);
             builder().emitJump(next.block, WTF::move(next.arguments));
@@ -585,6 +640,8 @@ struct EdgeThreader : Rewrite {
     {
         bool hasCandidates = chooseMergePoints([&](const CFG& cfg, BlockID id) {
             const Block& block = at(id);
+            if (leadsToOneBlock(block.terminator))
+                joinsThatLeadToOneBlock.append(id);
             if (isLoopHeader(cfg, id) || block.terminator.kind != TerminatorKind::Branch || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency.predicted() != BlockFrequency::Normal)
                 return false;
             ValueID condition = block.terminator.conditionOperand();
@@ -612,6 +669,91 @@ struct EdgeThreader : Rewrite {
         for (BlockID candidate : candidates)
             decidedEdges.append(incomingEdges[candidate].span().first(incomingEdges[candidate].size() - 1));
         return giveCopiesTo(decidedEdges.span());
+    }
+
+    static bool leadsToOneBlock(const Terminator& choice)
+    {
+        if (choice.kind != TerminatorKind::Branch && choice.kind != TerminatorKind::Switch)
+            return false;
+        return std::ranges::all_of(choice.targets, [&](const Target& target) { return target.block == choice.targets[0].block; });
+    }
+
+    // The test of what a join takes, where it ends the one block that every edge of the join leads to and no other edge does.
+    const Value* findTestBelowJoin(const CFG& cfg, BlockID id) const
+    {
+        const Block& join = at(id);
+        const Terminator& choice = join.terminator;
+        if (!leadsToOneBlock(choice) || join.isHandlerBlock() || join.frequency.predicted() != BlockFrequency::Normal)
+            return nullptr;
+        BlockID below = choice.targets[0].block;
+        for (uint32_t targetIndex = 0; targetIndex < choice.targets.size(); ++targetIndex) {
+            if (hasEdgeResults(function, Edge { id, targetIndex }))
+                return nullptr;
+        }
+        const Block& testing = at(below);
+        if (below == id || cfg.incomingEdges(below).size() != choice.targets.size() || testing.isHandlerBlock() || testing.terminator.kind != TerminatorKind::Branch)
+            return nullptr;
+        if (hasEdgeTo(testing.terminator, below) || hasEdgeTo(testing.terminator, id))
+            return nullptr;
+        ValueID condition = testing.terminator.conditionOperand();
+        const Value& test = at(condition);
+        bool testsParameter = test.opcode == Opcode::TypeTest && testing.values.contains(condition) && join.parameters.contains(sameObjectBehindFacts(function, test.valueOperand()));
+        return testsParameter ? &test : nullptr;
+    }
+
+    // A second choice may stand between the join and the test: `shapes[i].scaled(factors[j])` finds the argument before it asks which method the shape has, and a list that is never made is read by a choice among its elements.
+    // The edges whose values pass the test share one copy of the two blocks, the others keep the blocks, and the test folds in both. The walk of copySmallJoins() has noted the joins.
+    PassOutcome copyJoinsAboveTests()
+    {
+        if (joinsThatLeadToOneBlock.isEmpty())
+            return PassOutcome::Unchanged;
+        auto answerFor = [&](const Value& test, Edge edge) {
+            const Block& join = at(targetOf(function, edge).block);
+            const Type& passed = typeOf(substituteParameter(join, sameObjectBehindFacts(function, test.valueOperand()), targetOf(function, edge).arguments));
+            return evaluateTypeTest(program, passed, context.types.at(test.testedType()));
+        };
+        bool hasCandidates = chooseMergePointsAmong(joinsThatLeadToOneBlock.span(), [&](const CFG& cfg, BlockID id) {
+            const Value* test = findTestBelowJoin(cfg, id);
+            if (!test || isLoopHeader(cfg, id))
+                return false;
+            bool somePass = false;
+            bool someFail = false;
+            for (Edge edge : cfg.incomingEdges(id)) {
+                KnownBoolean answer = canRedirect(edge) ? answerFor(*test, edge) : KnownBoolean::Unknown;
+                if (answer == KnownBoolean::Unknown)
+                    return false;
+                (answer == KnownBoolean::True ? somePass : someFail) = true;
+            }
+            std::array<BlockID, 2> blocks { id, at(id).terminator.targets[0].block };
+            if (!somePass || !someFail || RegionCloner::checkCanDuplicate(analyses, blocks, singleElementSpan(id)) != CloneCheck::CanClone)
+                return false;
+            return !context.exceeds(LimitID::MaxThreadedBlockValues, at(blocks[0]).values.size() + at(blocks[1]).values.size(), at(blocks[1]).terminator.conditionOperand());
+        });
+        if (!hasCandidates)
+            return PassOutcome::Unchanged;
+
+        // A copy adds edges to what lies below it. Whoever stands there waits for the next run.
+        IndexSet<BlockID> changedBlocks;
+        for (BlockID candidate : candidates) {
+            std::array<BlockID, 2> blocks { candidate, at(candidate).terminator.targets[0].block };
+            const Terminator& branch = at(blocks[1]).terminator;
+            std::array<BlockID, 4> touchedBlocks { blocks[0], blocks[1], branch.taken().block, branch.notTaken().block };
+            if (std::ranges::any_of(touchedBlocks, [&](BlockID block) { return changedBlocks.contains(block); }))
+                continue;
+            for (BlockID block : touchedBlocks)
+                changedBlocks.add(block);
+
+            const Value& test = at(branch.conditionOperand());
+            Vector<Edge, 4> passingEdges;
+            for (Edge edge : incomingEdges[candidate]) {
+                if (answerFor(test, edge) == KnownBoolean::True)
+                    passingEdges.append(edge);
+            }
+            BlockID copy = copyBlocks(blocks);
+            for (Edge edge : passingEdges)
+                redirect(edge, Target { copy, Arguments(targetOf(function, edge).arguments), { } });
+        }
+        return finish();
     }
 
     // Two ways part at a test of a value for a type, come together again, and the same test of the same value follows: `f(f(x))` where f may be one of the functions that its type lists or any other.
@@ -697,10 +839,12 @@ struct EdgeThreader : Rewrite {
     }
 
     Vector<BlockID> candidates;
+    Vector<BlockID, 4> joinsThatLeadToOneBlock;
     IndexSet<BlockID> isCandidate;
     IndexMap<BlockID, Vector<Edge, 2>> incomingEdges;
     std::optional<SSARepair> repair;
-    Vector<std::pair<BlockID, SSARepair::Variable>, 8> variablesByBlock;
+    Vector<SSARepair::Variable, 8> variables;
+    UncheckedKeyHashMap<uint32_t, size_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> firstVariableOfBlock;
     PassOutcome outcome { PassOutcome::Unchanged };
 };
 
@@ -710,7 +854,10 @@ PassOutcome threadJumps(FunctionPassContext& context)
 {
     PassOutcome outcome = EdgeThreader(context).threadBranchesOnParameters();
     outcome |= EdgeThreader(context).threadDecidedBranches();
-    outcome |= EdgeThreader(context).copySmallJoins();
+    EdgeThreader joinCopier(context);
+    PassOutcome copiedSmallJoins = joinCopier.copySmallJoins();
+    // A phase that has chosen no merge point has kept nothing but what it noted for the next one. Where it has copied a block, that is out of date, and the pass runs again.
+    outcome |= copiedSmallJoins == PassOutcome::Unchanged ? joinCopier.copyJoinsAboveTests() : copiedSmallJoins;
     if (hasTwoFunctionTestsForOneType(context))
         outcome |= EdgeThreader(context).copyRepeatedTests();
     if (outcome == PassOutcome::Changed)

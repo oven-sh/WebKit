@@ -119,7 +119,8 @@ function f13 name="class-evaluated-more-than-once" parameters=[{type=f4}] result
 # CHECK-NEXT: b0(v0: f4):
 # CHECK-NEXT: [[prototype]]: object = GetConstructPrototype v0 layout=L4
 # CHECK-NEXT: [[scoped]]: object ~ L4 = NewObject [[prototype]] layout=L4
-# CHECK-NEXT: [[scopedThis]]: L4 = AssumeType [[scoped]] provenType=L4
+# CHECK-NEXT: [[here122]]: fact = Specified
+# CHECK-NEXT: [[scopedThis]]: L4 = AssumeType [[scoped]], [[here122]] provenType=L4
 # CHECK-NEXT: = CallDirect [[scopedThis]], v0 function=[[scopedVersion]] [isConstruction, calleeIsPredicted]
 # CHECK-NOT: = Construct
 }

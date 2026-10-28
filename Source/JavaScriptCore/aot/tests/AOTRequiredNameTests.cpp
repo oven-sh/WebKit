@@ -29,10 +29,14 @@ module m3 path="/found.ts" displayPath="found.ts" body=f3 requests=[{target=m4 c
 module m4 path="/barrel.js" displayPath="barrel.js" body=f4 requests=[{target=m5 isDynamicStarExport=true completes=true}, {target=m6 isDynamicStarExport=true completes=true}]
 module m5 path="/one.js" displayPath="one.js" body=f5 exports=[{name="shared" variable=g0}, {name="single" variable=g1}]
 module m6 path="/two.js" displayPath="two.js" body=f6 exports=[{name="shared" variable=g2}]
+module m7 path="/exports-absent.js" displayPath="exports-absent.js" body=f7 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="absent" exportName="renamed" specifier="./barrel"}, {module=m4 name="alsoAbsent"}]
+module m8 path="/exports-ambiguous.js" displayPath="exports-ambiguous.js" body=f8 requests=[{target=m4 completes=true}] requiredNames=[{module=m4 name="single"}, {module=m4 name="shared" exportName="shared" specifier="./barrel.js"}]
 entry module=m0
 entry module=m1
 entry module=m2
 entry module=m3
+entry module=m7
+entry module=m8
 
 function f0 name="absentAllowed" kind=Module results=[{type=anything}] {
     Return
@@ -55,12 +59,20 @@ function f5 name="one" module=m5 kind=Module results=[{type=anything}] {
 function f6 name="two" module=m6 kind=Module results=[{type=anything}] {
     Return
 }
+function f7 name="exportsAbsent" module=m7 kind=Module results=[{type=anything}] {
+    Return
+}
+function f8 name="exportsAmbiguous" module=m8 kind=Module results=[{type=anything}] {
+    Return
+}
 )IR"_s;
 
 static constexpr ModuleID absentAllowedModule { 0u };
 static constexpr ModuleID absentRequiredModule { 1u };
 static constexpr ModuleID ambiguousModule { 2u };
 static constexpr ModuleID foundModule { 3u };
+static constexpr ModuleID exportsAbsentModule { 7u };
+static constexpr ModuleID exportsAmbiguousModule { 8u };
 
 static void checkModuleLinks(LoadedProgram& program, ModuleID module)
 {
@@ -104,6 +116,16 @@ static void checkAmbiguousNameThatMayBeAbsentFailsLink(LoadedProgram& program)
     checkLinkThrowsSyntaxError(program, ambiguousModule, "Export named 'shared' cannot be resolved due to ambiguous multiple bindings in module '/barrel.js'."_s);
 }
 
+static void checkAbsentNameOfExportStatementFailsLink(LoadedProgram& program)
+{
+    checkLinkThrowsSyntaxError(program, exportsAbsentModule, "export 'renamed' not found in './barrel'"_s);
+}
+
+static void checkAmbiguousNameOfExportStatementFailsLink(LoadedProgram& program)
+{
+    checkLinkThrowsSyntaxError(program, exportsAmbiguousModule, "Cannot export 'shared' multiple times in './barrel.js'"_s);
+}
+
 static void checkFoundNameLinks(LoadedProgram& program)
 {
     checkModuleLinks(program, foundModule);
@@ -118,6 +140,8 @@ std::span<const NativeTest> requiredNameTests()
         { "required-names/absent-name-that-may-be-absent-links"_s, withBarrel<checkAbsentNameThatMayBeAbsentLinks> },
         { "required-names/absent-name-fails-link"_s, withBarrel<checkAbsentNameFailsLink> },
         { "required-names/ambiguous-name-that-may-be-absent-fails-link"_s, withBarrel<checkAmbiguousNameThatMayBeAbsentFailsLink> },
+        { "required-names/absent-name-of-export-statement-fails-link"_s, withBarrel<checkAbsentNameOfExportStatementFailsLink> },
+        { "required-names/ambiguous-name-of-export-statement-fails-link"_s, withBarrel<checkAmbiguousNameOfExportStatementFailsLink> },
         { "required-names/found-name-links"_s, withBarrel<checkFoundNameLinks> },
     };
     return tests;

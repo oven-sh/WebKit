@@ -115,7 +115,8 @@ public:
 
     CellPointer concatenate(const OperationContext&, std::span<const CellPointer>);
     CellPointer concatenate(const OperationContext& context, std::initializer_list<CellPointer> strings) { return concatenate(context, std::span<const CellPointer>(strings.begin(), strings.size())); }
-    CellPointer concatenateValues(const OperationContext&, std::span<const Boxed> primitives, bool isLikelyKey);
+    enum class KeyUse : uint8_t { AnyKey, NameOfProperty };
+    CellPointer concatenateKey(const OperationContext&, std::span<const Boxed> primitives, KeyUse);
     CellPointer integerToString(const OperationContext& context, Word32 value) { return integerToString(context, signExtended(value)); }
     CellPointer integerToString(const OperationContext&, Integer);
     CellPointer numberToString(const OperationContext&, Number);

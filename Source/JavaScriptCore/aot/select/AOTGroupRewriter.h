@@ -48,6 +48,7 @@ private:
 
     ValueSubstitution& substitution();
     void rebuildBlockValues();
+    void eraseOperandsLeftUnused();
     void updateClaims();
     void applyInsertions();
 
@@ -60,6 +61,7 @@ private:
     Vector<GroupState> m_groups;
     BitVector m_isErasedFromBlock;
     ResultsByAnchor m_resultsAfter;
+    Vector<ValueID> m_formerOperands;
     Vector<ValueID> m_unclaimedValues;
     Vector<ValueID> m_slowPathValues;
     uint32_t m_firstNewValue { 0 };

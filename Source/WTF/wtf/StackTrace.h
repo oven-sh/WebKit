@@ -115,6 +115,9 @@ public:
     };
 
     WTF_EXPORT_PRIVATE static std::optional<DemangleEntry> demangle(void*);
+#if HAVE(BACKTRACE_SYMBOLS)
+    WTF_EXPORT_PRIVATE static void freeSymbols(char**);
+#endif
 
     void forEach(NOESCAPE const std::invocable<int, void*, const char*> auto& functor) const
     {
@@ -154,13 +157,7 @@ public:
             free(symbols[i]);
         free(symbols);
 #elif HAVE(BACKTRACE_SYMBOLS)
-        // TODO(@190n) get this to play nice with AddressSanitizer
-        // in asan builds of bun, for some reason backtrace_symbols() calls the plain malloc() function
-        // instead of asan's instrumented version of malloc(), which means that asan doesn't know
-        // that the return value of backtrace_symbols() is okay to free
-#if !(USE(BUN_JSC_ADDITIONS) && ASAN_ENABLED)
-        free(symbols);
-#endif
+        freeSymbols(symbols);
 #endif
     }
 private:

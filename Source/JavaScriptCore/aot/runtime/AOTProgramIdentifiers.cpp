@@ -262,9 +262,10 @@ std::optional<uint32_t> ProgramIdentifiers::numberOfText(const Image& image, Str
 
 AtomStringImpl* ProgramIdentifiers::findAtom(StringView characters, unsigned hash)
 {
-    if (characters.isEmpty())
+    const Image* imageOfThread = Image::current();
+    if (characters.isEmpty() || !imageOfThread)
         return nullptr;
-    const Image& image = *Image::current();
+    const Image& image = *imageOfThread;
     std::optional<uint32_t> number = numberOfText(image, characters, hash);
     if (!number)
         return nullptr;

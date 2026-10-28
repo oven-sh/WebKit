@@ -17,11 +17,13 @@ function f0 name="inspected" parameters=[{type=boolean}, {type=L0}] results=[{ty
   b2():
     v3 = Unspecified valueType=null|L0
     Jump -> next b3(v3)
-  b3(v4: null|L0):
-    v5 = TypeTest v4 testedType=L0
-    Return v5
+  b3(v4: null|unspecified|L0):
+    v5 = Specified
+    v6 = AssumeType v4, v5 provenType=null|L0
+    v7 = TypeTest v6 testedType=L0
+    Return v7
 }
-function f1 name="handedOn" parameters=[{type=boolean}, {type=L0}] results=[{type=null|L0}] {
+function f1 name="handedOn" parameters=[{type=boolean}, {type=L0}] results=[{type=null|unspecified|L0}] {
     Branch v0 -> taken b1(), notTaken b2()
   b1():
     v2 = Upcast v1 castType=null|L0
@@ -29,7 +31,7 @@ function f1 name="handedOn" parameters=[{type=boolean}, {type=L0}] results=[{typ
   b2():
     v3 = Unspecified valueType=null|L0
     Jump -> next b3(v3)
-  b3(v4: null|L0):
+  b3(v4: null|unspecified|L0):
     Return v4
 }
 function f2 name="makes" results=[{type=L0}] {

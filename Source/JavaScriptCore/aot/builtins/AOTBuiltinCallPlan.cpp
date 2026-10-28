@@ -669,6 +669,8 @@ void becomeBuiltinCall(Value& value, BuiltinOverloadID overload, BuiltinCallForm
         value.setAccessSite(stamps.accessSite);
     if (stamps.allocationSite)
         value.setAllocationSite(stamps.allocationSite);
+    if (stamps.calleeName)
+        value.setCalleeName(stamps.calleeName);
 }
 
 Value makeBuiltinCall(BuiltinOverloadID overload, BuiltinCallForm form, const BuiltinCallOperands& operands, const BuiltinCallStamps& stamps)

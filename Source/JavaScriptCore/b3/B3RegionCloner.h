@@ -8,7 +8,9 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlock.h"
+#include "B3MovedLoadCheck.h"
 #include "B3Value.h"
+#include <optional>
 #include <span>
 #include <wtf/HashMap.h>
 #include <wtf/IndexSet.h>
@@ -61,6 +63,7 @@ private:
     bool m_didChange { false };
     IndexSet<BasicBlock*> m_sources;
     IndexSet<BasicBlock*> m_declaredBlocks;
+    std::optional<MovedLoadLog::OriginalsKeepTheirMeaning> m_originalsKeepTheirMeaning;
 };
 
 } } // namespace JSC::B3

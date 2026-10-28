@@ -103,7 +103,8 @@ void RuntimeIntrinsicEmitter::generatePutInternalField(const ValueContext& value
     ValueID stored = value->valueOperand();
     Boxed boxedValue = boxedOperand(value, stored);
     m_out.store64(boxedValue.value(), internalField(value.value()));
-    barrierAfterStore(value, cellOperand(value->objectOperand()), get(stored), typeOf(stored));
+    CellPointer object = cellOperand(value->objectOperand());
+    barrierAfterStore(value, object, get(stored), typeOf(stored));
     defineAs(value, get(stored), typeOf(stored));
 }
 

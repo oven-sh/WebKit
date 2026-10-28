@@ -97,9 +97,9 @@ function f1 name="tagged" module=m1 kind=Module results=[{type=anything}] {
 # CHECK: [[step]]: undefined = MapNext
 # CHECK: [[key]]: undefined|L0 = ResultAt [[step]] index=2
 # CHECK: [[value]]: undefined|L1 = ResultAt [[step]] index=3
-# CHECK: [[keyOfEntry]]: L0 = AssumeType [[key]] provenType=L0
-# CHECK: [[valueOfEntry]]: L1 = AssumeType [[value]] provenType=L1
-# CHECK: Array = NewArray [[keyOfEntry]], [[valueOfEntry]] contents=anything
+# CHECK: [[keyOfEntry]]: L0 = AssumeType [[key]], [[here100]] provenType=L0
+# CHECK: [[valueOfEntry]]: L1 = AssumeType [[value]], [[here101]] provenType=L1
+# CHECK: Array<L0|L1> = NewArray [[keyOfEntry]], [[valueOfEntry]] contents=L0|L1
 # TYPE-LABEL: function f3 name="main"
 # TYPE: = AssumeType {{*}} provenType=Array<L0|L1, proven, pristine[Storage, Names, Dense]>
 # The loop is expanded in front of the optimizer, so at this point the reads of `x` and `y` have their own tests of L0|L1. None is a test of the pair.

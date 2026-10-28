@@ -150,6 +150,8 @@ public:
     bool isNotExtensible() const { return orderWord() & orderWordIsNotExtensible; }
     bool hasExtraProperties() const { return orderWord() & orderWordHasExtraProperties; }
     bool hasOutOfLineKeyOrder() const { return isOrderStoredOutOfLine(orderWord()); }
+    // Keys come to a dictionary and go without another Structure, so an order that objects share cannot count them. Such an order names the last extra key in front of a field: it changes only when that key goes.
+    bool hasKeyOrderOfItsOwn() const { return hasOutOfLineKeyOrder() && compiledStructure().hasKeyOrderOfOneObject(); }
     void setOrderAndCount(uint32_t orderAndCount) { at<uint32_t>(offsetOfOrderWord) = (orderWord() & ~orderAndCountMask) | orderAndCount; }
     unsigned attributesOfPublicFields() const
     {
@@ -210,6 +212,7 @@ public:
     bool putDirectFromNativeCode(VM&, PropertyName, JSValue, unsigned attributes);
     bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
+    bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     // The keys are strings, each followed by its function. Bit i of `getters` says that function i is a getter. True if all of them now lie in slots. Otherwise the object is as it was.
     bool tryDefineAccessorsOfLiteral(VM&, JSGlobalObject*, std::span<const EncodedJSValue> keysAndFunctions, uint32_t getters, uint32_t enumerable);
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -244,6 +247,9 @@ public:
         IsKnownNotToBeField = 1,
         IsDefinition = 2,
         NamesExtraPropertiesStructure = 4,
+        IsKnownToBeAbsent = 8,
+        // The name is no index, no private name and not "__proto__", and the program does not spell it: it names no field and no member of a class.
+        IsMadeAtRunTime = 16,
     };
     struct ExtraPropertyStoreResult {
         ExtraPropertyStore kind { ExtraPropertyStore::NotHandled };
@@ -252,7 +258,7 @@ public:
     ExtraPropertyStoreResult tryStoreExtraProperty(VM&, PropertyName, JSValue, OptionSet<ExtraPropertyStoreFlag>);
     // False for the first object that gets this property after the extra properties it has. Most such objects stay the only one.
     bool repeatsExtraPropertyStore(VM&, PropertyName) const;
-    void willAddExtraProperty(VM&, PropertyName);
+    void willAddExtraProperty(VM&, PropertyName, bool isSpelledByProgram = true);
 
     using KeyOrderStorage = Vector<uint16_t, 16>;
     std::span<const uint16_t> keyOrder(State&, KeyOrderStorage&) const;
@@ -290,12 +296,18 @@ public:
     std::optional<InitialKeyOrder> initialKeyOrder(VM&, std::span<const uint16_t> keys, JSObject* extraProperties);
     void setInitialKeyOrder(VM&, InitialKeyOrder, JSObject* extraProperties);
     Vector<UniquedStringImpl*, 16> extraKeyNames() const;
-    // For removeExtraKeyFromOrder(): a number that is below the count of exactly those entries of the key order that count the key. Nothing: no entry counts it.
-    std::optional<uint32_t> extraKeyOrdinal(PropertyName) const;
+    struct PlaceOfExtraKey {
+        // A number that is below the count of exactly those entries of the key order that count the key.
+        std::optional<uint32_t> ordinal;
+        // Which of the keys that the order names it is, and the extra key in front of it.
+        std::optional<uint32_t> indexAmongNamedKeys;
+        UniquedStringImpl* extraKeyInFront { nullptr };
+        bool orderCountsExtraKeys { false };
+    };
+    PlaceOfExtraKey placeOfExtraKey(PropertyName);
     bool keyOrderCountsExtraKeys() const;
-    void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
-    // The key that extraKeyOrdinal() was last asked for is gone from the extra properties, and from the key order if that counted it.
-    void didRemoveExtraKey(State&);
+    // The key that placeOfExtraKey() was last asked for is gone from the extra properties.
+    void didRemoveExtraKey(VM&, State&, const PlaceOfExtraKey&);
     void forgetPlacesOfPositionedKeys(State&);
 
     bool tryCopyFieldsOf(VM&, const Object& source);
@@ -334,6 +346,10 @@ private:
     static Object* createCopyOfWords(VM&, const Object& source, Structure*);
     static Object* tryCreateCopyOfFieldsAndExtraProperties(VM&, const Object& source);
     std::optional<std::span<const FieldAsProperty>> fieldsInKeyOrderSlow() const;
+    void removeExtraKeyFromOrder(VM&, State&, uint32_t ordinal);
+    void didRemoveCountedExtraKey(State&);
+    void nameExtraKeysInOrder(VM&, State&);
+    bool tryListFieldBehindNamedKey(State&, const FieldData&);
 };
 static_assert(sizeof(Object) == offsetOfOrderWord);
 
@@ -370,6 +386,13 @@ ALWAYS_INLINE Object* compiledObjectOrNull(JSValue value)
     if (!value || !value.isCell() || !isCompiledObject(value.asCell()))
         return nullptr;
     return uncheckedDowncast<Object>(value.asCell());
+}
+
+ALWAYS_INLINE Object* compiledObjectOrNull(const JSCell* cell)
+{
+    if (!cell || !isCompiledObject(cell))
+        return nullptr;
+    return uncheckedDowncast<Object>(const_cast<JSCell*>(cell));
 }
 
 inline Extension* Object::extension() const

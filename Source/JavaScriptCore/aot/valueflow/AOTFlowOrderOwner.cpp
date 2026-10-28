@@ -12,6 +12,7 @@
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
+#include "AOTValueIdentity.h"
 #include <algorithm>
 #include <memory>
 #include <wtf/HashMap.h>
@@ -172,7 +173,7 @@ public:
                     return;
                 }
                 if (function.module != m_owner.module)
-                    lower(reader, m_index.moduleOrder.completesBefore(m_owner.module, function.module) ? exit : unknownScopeEntry);
+                    lower(reader, m_index.moduleOrder.completesBefore(m_owner.module, function.module) && !m_index.functionsThatFilesOfCyclesMayEnter.quickGet(reader.index()) ? exit : unknownScopeEntry);
             };
             for (VariableID variable : m_owner.variables) {
                 for (const FlowScopeLocationAccess& read : operationsOn(m_index.reads, variable.index()))
@@ -803,6 +804,61 @@ private:
         return result;
     }
 
+    // Where the first of the functions that capture an environment of the layout may be entered.
+    FlowScopeEntry entryOfFirstCapturer(LayoutID layout)
+    {
+        const Program& program = m_index.program();
+        auto captures = [&](FunctionID function) {
+            return std::ranges::any_of(program.at(function).captures, [&](const DeclaredType& capture) {
+                return program.at(capture.written()).environment == layout;
+            });
+        };
+        Vector<FunctionID> capturers;
+        for (FunctionID function : m_entriesByUse.keys()) {
+            if (captures(function))
+                capturers.append(function);
+        }
+        AOT::sort(capturers);
+        FlowScopeEntry entry = neverScopeEntry;
+        for (FunctionID function : capturers)
+            entry = meet(entry, entryByUseOf(function));
+        for (auto& frame : m_frames) {
+            if (frame->caller && captures(frame->function))
+                entry = meet(entry, entryAt(*frame->caller, frame->call));
+        }
+        return entry;
+    }
+
+    // Every store puts a new closure there that captures the environment it is stored in, and no other environment of that layout.
+    bool holdsClosureOverOwnEnvironment(FlowScopeLocation location, LayoutID layout)
+    {
+        const Program& program = m_index.program();
+        auto stores = operationsOn(m_index.stores, location);
+        return !stores.empty() && std::ranges::all_of(stores, [&](const FlowScopeLocationAccess& access) {
+            const Function& function = program.at(access.function);
+            const Value& store = function.at(access.value);
+            if (store.opcode != Opcode::PutEnvironmentField)
+                return false;
+            const Value& closure = function.at(sameObjectThroughCasts(function, store.valueOperand()));
+            if (closure.opcode != Opcode::NewClosure)
+                return false;
+            auto declared = program.at(closure.function()).captures;
+            auto captured = closure.variadicOperands();
+            if (declared.size() != captured.size())
+                return false;
+            RootThroughCasts environment = sameObjectThroughCasts(function, store.environmentOperand());
+            unsigned numberOfCaptures = 0;
+            for (size_t index = 0; index < declared.size(); ++index) {
+                if (program.at(declared[index].written()).environment != layout)
+                    continue;
+                if (sameObjectThroughCasts(function, captured[index]) != environment)
+                    return false;
+                ++numberOfCaptures;
+            }
+            return numberOfCaptures == 1;
+        });
+    }
+
     StoreCount storeCountOf(FlowScopeLocation location, bool isSetAtCreation, NOESCAPE const Invocable<bool(const FlowScopeLocationAccess&)> auto& canRunTwice)
     {
         auto stores = operationsOn(m_index.stores, location);
@@ -897,6 +953,14 @@ private:
             }
             bool startsAbsent = m_index.program().at(fields[field].declared.written()).primitives & Primitive::Absent;
             orders[location] = { initializationOf(location, isSetAtCreation, startsAbsent), storeCountOf(location, isSetAtCreation, canRunTwicePerInstance) };
+        }
+        FlowScopeEntry firstCapturer = entryOfFirstCapturer(layout);
+        for (uint32_t field = 0; field < numberOfFields; ++field) {
+            FlowScopeLocation location = *m_index.numbering.locationOf(layout, field);
+            if (m_index.opaqueLocations.get(location))
+                continue;
+            orders[location].isStoredBeforeCapturersRun = orders[location].initialization == InitializationState::StoredBeforeEveryRead && anyPrecedes(initializingStoresOf(location), firstCapturer);
+            orders[location].holdsClosureOverOwnEnvironment = !allocationsListing[field] && holdsClosureOverOwnEnvironment(location, layout);
         }
     }
 

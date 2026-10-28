@@ -33,6 +33,8 @@ public:
     };
     ParsedName parseNameAndColon(const uint8_t* quote);
 
+    static JSObject* createObjectWithStructure(VM&, Structure*, EncodedJSValue* values, unsigned count);
+
     class LearnedNames;
 
 private:

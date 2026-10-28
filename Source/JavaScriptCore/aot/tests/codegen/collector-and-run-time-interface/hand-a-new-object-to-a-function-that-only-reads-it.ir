@@ -1,0 +1,115 @@
+# type Entry = { weight: number };
+# type Pair = { left: Entry; right: Entry };
+# function heavier(pair: Pair): Entry {
+#   return pair.left.weight > pair.right.weight ? pair.left : pair.right;
+# }
+# function pick(left: Entry, right: Entry): Entry {
+#   return heavier({ left, right });
+# }
+# declare const input: any;
+# const light: Entry = { weight: +input };
+# (globalThis as any).answer = [pick(light, { weight: 1.5 }), pick({ weight: 2.5 }, light)];
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized f2
+# REQUIRES: unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=93 kind=Parameter function=f1
+typesite w1 module=m0 position=76 kind=Result
+typesite w2 module=m0 position=307 kind=Variable
+typesite w3 module=m0 position=202 kind=Parameter function=f2
+typesite w4 module=m0 position=215 kind=Parameter function=f2
+typesite w5 module=m0 position=188 kind=Result
+typesite w6 module=m0 position=372 kind=CallResult
+typesite w7 module=m0 position=402 kind=CallResult
+typesite w8 module=m0 position=247 kind=CallResult
+layout L0 name="Pair" module=m0 position=38 fields=[{key="left" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="right" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 name="Entry" module=m0 position=5 fields=[{key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L1 members=[{key="weight" value=Number{value=1.5}}]} module=m0
+data d1 root=Object{layout=L1 members=[{key="weight" value=Number{value=2.5}}]} module=m0
+variable g0 name="heavier" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = ToNumber v4
+    v6 = Convert v5 declared={type=number}
+    v7 = NewObject -, v6 layout=L1 fields=[0]
+    v8 = FinishObject v7
+    v9 = Convert v8 declared={type=undefined|null|L1 site=w2 flags=[OmitsNull, OmitsUndefined]}
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="globalThis" [isFreeName]
+    v12 = Convert v11 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v14 = Data data=d0
+    v15 = Call v1, -, v9, v14 calleeName="pick"
+    v16 = Convert v15 declared={type=undefined|null|L1 site=w6 flags=[OmitsNull, OmitsUndefined]}
+    v17 = Data data=d1
+    v18 = Call v1, -, v17, v9 calleeName="pick"
+    v19 = Convert v18 declared={type=undefined|null|L1 site=w7 flags=[OmitsNull, OmitsUndefined]}
+    v20 = NewArray v16, v19 contents=anything
+    PropSet v13, v20 key="answer"
+    v22 = Undefined
+    Return v22
+}
+function f1 name="heavier" module=m0 position=76 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = PropGet v0 key="left"
+    v2 = PropGet v1 key="weight"
+    v3 = PropGet v0 key="right"
+    v4 = PropGet v3 key="weight"
+    v5 = Greater v2, v4
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = PropGet v0 key="left"
+    Jump -> next b4(v6)
+  b3():
+    v7 = PropGet v0 key="right"
+    Jump -> next b4(v7)
+  b4(v8):
+    v9 = Convert v8 declared={type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    Return v9
+}
+function f2 name="pick" module=m0 position=188 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L1 site=w3 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L1 site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L1 site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1, v1: undefined|null|L1):
+    Jump -> next b1()
+  b1():
+    v2 = GetModuleVariable variable=g0
+    v3 = Convert v0 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v4 = Convert v1 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v5 = NewObject -, v3, v4 layout=L0 fields=[0, 1]
+    v6 = FinishObject v5
+    v7 = Call v2, -, v6 calleeName="heavier"
+    ReturnCall v7 casts=[{declared={type=undefined|null|L1 site=w8 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L1 site=w5 flags=[OmitsNull, OmitsUndefined]}}]
+}
+
+# The callee reads the pair and keeps no reference to it, so the pair lies in the frame of the caller: the likely path calls no allocator, and the stores need neither a barrier nor a fence.
+# Its state byte says that it is no cell of the heap. Both references are stored in front of the call, so whoever walks the frame during the call finds them.
+# CHECK-LABEL: name="pick" role=Source
+# CHECK-NOT: Patchpoint(
+# CHECK: Int64 b@[[pair]] = SlotBase(stack0, {{*}}:NewObject)
+# CHECK-NOT: Patchpoint(
+# CHECK-NOT: Fence(
+# CHECK: Store8($255(b@{{*}}), b@[[pair]], offset = 7, ControlDependent|Writes:collectorState, {{*}}:NewObject)
+# CHECK-NOT: Patchpoint(
+# CHECK-NOT: Fence(
+# CHECK-NOT: Reads:collectorState
+# CHECK: Store(b@[[left]], b@[[pair]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK-NOT: Patchpoint(
+# CHECK-NOT: Fence(
+# CHECK-NOT: Reads:collectorState
+# CHECK: Store(b@[[right]], b@[[pair]], offset = 24, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK-NEXT: Int64 b@[[heavier]] = Patchpoint(b@[[pair]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:CallDirect)
+# CHECK-NEXT: Return(b@[[heavier]], Terminal)
+# CHECK: Stack slots:
+# CHECK-NEXT: stack0: byteSize = 32, 
+# CHECK-LABEL: end of function

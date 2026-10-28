@@ -1,0 +1,34 @@
+# The closure of a function that is declared in a scope is stored in the environment that it captures: whoever reads it off an environment knows which environment it captures. Not so a field that also gets a closure
+# from elsewhere, or a closure over another environment of the same layout
+# RUN: valueflow-apply
+# CHECK: layout L0 {{*}}{key="declared" {{*}}holdsClosureOverOwnEnvironment=true}{{*}}{key="given" declared=
+# CHECK-NOT: holdsClosureOverOwnEnvironment
+# CHECK: function f0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key="declared" declared={type=anything|absent}}, {key="given" declared={type=anything|absent}}, {key="ofTheOther" declared={type=anything|absent}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Undefined
+    v1 = CallDirect v0 function=f1
+    v2 = CallDirect v1 function=f1
+    Return v2
+}
+function f1 name="owner" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = NewObject layout=L0
+    v2 = NewObject layout=L0
+    v3 = NewClosure v1 function=f2
+    PutEnvironmentField v1, v3 layout=L0
+    PutEnvironmentField v1, v0 layout=L0 field=1
+    v6 = NewClosure v2 function=f2
+    PutEnvironmentField v1, v6 layout=L0 field=2
+    Return v3
+}
+function f2 name="declared" captures=[{type=env L0 flags=[IsFromCompiler]}] results=[{type=anything}] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = GetEnvironmentField v0 layout=L0 field=1
+    v3 = GetEnvironmentField v0 layout=L0 field=2
+    v4 = NewArray v1, v2, v3 contents=anything holes=[]
+    Return v4
+}

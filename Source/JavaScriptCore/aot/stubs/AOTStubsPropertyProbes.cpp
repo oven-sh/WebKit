@@ -1280,9 +1280,12 @@ void loadValueBySlot(StubAssembler& jit, const CachedSlot& slot, GPRReg receiver
     jit.load64(BaseIndex(storage, wordIndex, CCallHelpers::TimesEight), result);
 }
 
-void returnPresenceBySlot(StubAssembler& jit, PresenceQuestion question, const ProbedSlot& slot, GPRReg receiver, JumpList& isUnknown, KindOfProbedSlot whereKindIs)
+void returnPresenceBySlot(StubAssembler& jit, PresenceQuestion question, const ProbedSlot& slot, GPRReg receiver, Label asksReceiver, JumpList& isUnknown, KindOfProbedSlot whereKindIs)
 {
-    constexpr uint32_t presentKinds = kindsWithPresence(SlotPresence::Present);
+    constexpr auto bitOf = [](Slot::Kind kind) { return 1u << static_cast<unsigned>(kind); };
+    const bool asksIn = question == PresenceQuestion::In;
+    // A slot that leaves the answer to an object above says that the receiver itself has no such property.
+    const uint32_t presentKinds = kindsWithPresence(SlotPresence::Present) | bitOf(asksIn ? Slot::Kind::FieldOrInherited : Slot::Kind::InheritedField);
     constexpr uint32_t absentKinds = kindsWithPresence(SlotPresence::Absent);
     const GPRReg kind = jit.reuseScratch(StubRegister::T10);
     const GPRReg result = jit.result();
@@ -1304,6 +1307,12 @@ void returnPresenceBySlot(StubAssembler& jit, PresenceQuestion question, const P
     };
 #endif
     Jump isAbsent = branchTestKinds(CCallHelpers::NonZero, absentKinds);
+    if (asksIn) {
+        Jump holderIsNotAsked = branchTestKinds(CCallHelpers::Zero, bitOf(Slot::Kind::InheritedField));
+        CachedSlot(slot.form, Slot::Kind::InheritedField, slot.header, slot.payload).loadHolder(jit, receiver);
+        jit.jump().linkTo(asksReceiver, &jit);
+        holderIsNotAsked.link(&jit);
+    }
     isUnknown.append(branchTestKinds(CCallHelpers::Zero, presentKinds));
     switch (question) {
     case PresenceQuestion::In:

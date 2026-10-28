@@ -8,11 +8,11 @@ module m0 path="main.js" displayPath="main.js"
 # CHECK-NOT: LoopHint
 # CHECK: [[flat]]: flatstring = FlattenString v5
 # CHECK-NOT: FlattenString
-# CHECK: LoopHint
+# CHECK: ([[position]]: int|whole,
+# CHECK-NEXT: LoopHint
 # CHECK-NOT: FlattenString
-# CHECK: v10: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
-# CHECK-NEXT: v11: string = AssumeType v0 provenType=string
-# CHECK-NEXT: v12: number = StringRangeCodeUnitOrNaN [[flat]], -, -, v6
+# CHECK: number = StringRangeCodeUnitOrNaN [[flat]], -, -, [[position]]
+# CHECK-NEXT: number = StringRangeCodeUnitOrNaN [[flat]], -, -, [[position]]
 # CHECK-NOT: FlattenString
 function f0 name="casts-inside-and-outside-loop" parameters=[{type=undefined|string}, {type=number}] results=[{type=anything}] {
     v2 = Undefined

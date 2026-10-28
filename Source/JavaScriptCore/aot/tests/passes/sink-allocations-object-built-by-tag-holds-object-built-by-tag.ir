@@ -48,6 +48,8 @@ function f1 name="twoLevels" parameters=[{type=int}, {type=boolean}, {type=boole
 # CHECK: b7():
 # CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasOuter1]](), otherwise [[noOuter1]]()
 # CHECK: [[hasOuter1]]():
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled1]] provenType=anything
 # CHECK-NEXT: [[restOfOuter1]]: Array = NewArray {{*}} contents=anything
 # CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasInner1]](), otherwise [[noInner1]]()
 # CHECK: [[noOuter1]]():
@@ -55,7 +57,10 @@ function f1 name="twoLevels" parameters=[{type=int}, {type=boolean}, {type=boole
 # CHECK: [[afterInner1]]([[head1]]: undefined|L0):
 # CHECK-NEXT: {{*}}: L0 = NewObject -, [[restOfOuter1]], [[head1]] layout=L0 fields=[0, 1]
 # CHECK: [[hasInner1]]():
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled2]] provenType=anything
 # CHECK-NEXT: [[restOfInner1]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, {{*}} provenType=anything
 # CHECK-NEXT: [[inner1]]: L0 = NewObject -, [[restOfInner1]], {{*}} layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next [[afterInner1]]([[inner1]])
 # CHECK: [[noInner1]]():
@@ -109,18 +114,25 @@ function f2 name="threeLevels" parameters=[{type=int}, {type=boolean}, {type=boo
 # CHECK: b10():
 # CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasOuter2]](), otherwise {{*}}()
 # CHECK: [[hasOuter2]]():
+# CHECK-NEXT: [[filled3]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled3]] provenType=anything
 # CHECK-NEXT: [[restOfOuter2]]: Array = NewArray {{*}} contents=anything
 # CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasMiddle2]](), otherwise {{*}}()
 # CHECK: [[afterMiddle2]]([[headOfOuter2]]: undefined|L0):
 # CHECK-NEXT: {{*}}: L0 = NewObject -, [[restOfOuter2]], [[headOfOuter2]] layout=L0 fields=[0, 1]
 # CHECK: [[hasMiddle2]]():
+# CHECK-NEXT: [[filled4]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled4]] provenType=anything
 # CHECK-NEXT: [[restOfMiddle2]]: Array = NewArray {{*}} contents=anything
 # CHECK-NEXT: Switch {{*}} cases=[1] -> case [[hasInner2]](), otherwise {{*}}()
 # CHECK: [[afterInner2]]([[headOfMiddle2]]: undefined|L0):
 # CHECK-NEXT: [[middle2]]: L0 = NewObject -, [[restOfMiddle2]], [[headOfMiddle2]] layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next [[afterMiddle2]]([[middle2]])
 # CHECK: [[hasInner2]]():
+# CHECK-NEXT: [[filled5]]: fact = Specified
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, [[filled5]] provenType=anything
 # CHECK-NEXT: [[restOfInner2]]: Array = NewArray {{*}} contents=anything
+# CHECK-NEXT: {{*}}: anything = AssumeType {{*}}, {{*}} provenType=anything
 # CHECK-NEXT: [[inner2]]: L0 = NewObject -, [[restOfInner2]], {{*}} layout=L0 fields=[0, 1]
 # CHECK-NEXT: Jump -> next [[afterInner2]]([[inner2]])
 }

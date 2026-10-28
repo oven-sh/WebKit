@@ -1,8 +1,8 @@
-# The object of a construction is a literal with a prototype operand: the read of the prototype stays, the object goes or sinks
+# The object of a construction is a literal with a prototype operand: the read of the prototype stays, the object goes or sinks, but not past what asks or may change what the run time knows of its class
 # FORM: Prepared
 # RUN: pass SinkAllocations
 # STATISTIC: AllocationsRemoved = 1
-# STATISTIC: AllocationsSunk = 4
+# STATISTIC: AllocationsSunk = 3
 # STATISTIC: StoresFoldedIntoAllocations = 3
 
 module m0 path="main.js" displayPath="main.js"
@@ -59,7 +59,7 @@ function f2 name="newTargetStaysAllocated" parameters=[{type=anything}, {type=bo
 # CHECK-NEXT: = NewObject v3, v0 layout=L0 fields=[0]
 }
 
-function f3 name="sunkPastCall" parameters=[{type=f4}, {type=anything}, {type=boolean}] results=[{type=anything}] {
+function f3 name="builtInFrontOfCall" parameters=[{type=f4}, {type=anything}, {type=boolean}] results=[{type=anything}] {
     v3 = GetConstructPrototype v0 layout=L0
     v4 = NewObject v3 layout=L0
     v5 = Call v1
@@ -71,10 +71,10 @@ function f3 name="sunkPastCall" parameters=[{type=f4}, {type=anything}, {type=bo
     Return v5
 # CHECK: b0(
 # CHECK-NEXT: v3:{{*}}= GetConstructPrototype v0 layout=L0
+# CHECK-NEXT: [[cell3]]:{{*}}= NewObject v3 layout=L0
 # CHECK-NEXT: = Call v1
 # CHECK-NEXT: Branch
 # CHECK: b1():
-# CHECK-NEXT: [[cell3]]:{{*}}= NewObject v3 layout=L0
 # CHECK-NEXT: = Call v1, -, [[cell3]]
 }
 
@@ -126,4 +126,40 @@ function f8 name="wouldOnlyMove" parameters=[{type=f4}, {type=anything}] results
 # CHECK-NEXT: v3:{{*}}= NewObject v2 layout=L0
 # CHECK-NEXT: = ToBoolean v1
 # CHECK-NEXT: = Call v1, -, v3, v4
+}
+
+function f9 name="builtInFrontOfTestOfGuards" parameters=[{type=f4}, {type=anything}] results=[{type=anything}] {
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = AreMembersUnchanged conditions=[{kind=MemberNotHidden layout=L0 key="describe"}]
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    Return v1
+  b2():
+    v5 = PropGet v3 key="describe" receivers=[L0]
+    Return v5
+# CHECK: b0(
+# CHECK-NEXT: v2:{{*}}= GetConstructPrototype v0 layout=L0
+# CHECK-NEXT: [[cell9]]:{{*}}= NewObject v2 layout=L0
+# CHECK-NEXT: = AreMembersUnchanged
+# CHECK-NEXT: Branch
+# CHECK: b2():
+# CHECK-NEXT: = PropGet [[cell9]] key="describe"
+}
+
+function f10 name="builtInFrontOfStoreToPrototypeProperty" parameters=[{type=f4}, {type=object}, {type=boolean}] results=[{type=anything}] {
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0
+    PropSet v0, v1 key="prototype" mode=Strict
+    Branch v2 -> taken b1(), notTaken b2()
+  b1():
+    Return v4
+  b2():
+    Return v1
+# CHECK: b0(
+# CHECK-NEXT: v3:{{*}}= GetConstructPrototype v0 layout=L0
+# CHECK-NEXT: [[cell10]]:{{*}}= NewObject v3 layout=L0
+# CHECK-NEXT: PropSet v0, v1 key="prototype"
+# CHECK: b1():
+# CHECK-NEXT: Return [[cell10]]
 }

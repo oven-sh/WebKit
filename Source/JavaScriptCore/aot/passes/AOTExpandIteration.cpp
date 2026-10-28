@@ -36,6 +36,7 @@
 #include "AOTResultRulesInternal.h"
 #include "AOTRuleSupport.h"
 #include "AOTSSARepair.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTSort.h"
 #include "AOTSplitStringWalk.h"
 #include "AOTSplitUnions.h"
@@ -272,6 +273,12 @@ struct IterationExpansion {
     ValueID appendIncrement(ValueID integer, int64_t amount) { return builder.append(Opcode::Add, { integer, builder.appendInteger(amount) }); }
     ValueID appendIsEqualToInteger(ValueID value, auto constant) { return builder.append(Opcode::StrictEq, { value, builder.appendInteger(static_cast<int64_t>(constant)) }); }
     ValueID appendBuiltin(BuiltinID id) { return builder.append(makeWith(Opcode::Builtin, { }, &Value::setBuiltin, id)); }
+    // The protocol reads the method here. An arm that needs no method still leaves what the read does to the holder.
+    void appendFirstReadOf(BuiltinID method)
+    {
+        if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), *builder.context().flow, method))
+            builder.append(WTF::move(*initialization));
+    }
     ValueID appendPropGet(ValueID object, auto name) { return builder.append(makeWith(Opcode::PropGet, { object }, &Value::setKey, keyOf(name))); }
     ValueID appendLength(ValueID object) { return builder.append(Opcode::ToLength, { appendPropGet(object, BuiltinNames::length) }); }
     ValueID appendElement(const ArmState& state, ValueID index)
@@ -302,7 +309,7 @@ struct IterationExpansion {
     ValueID appendPair(ValueID first, ValueID second)
     {
         Value pair(Opcode::NewArray);
-        pair.setContents(TypeTable::anything);
+        pair.setContents(builder.types().unionOf(builder.function().at(first).type, builder.function().at(second).type));
         pair.setElementsOperands(std::array { first, second });
         return builder.append(WTF::move(pair));
     }
@@ -379,7 +386,7 @@ static Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
     const UseLists& useLists = pass.analyses.useLists();
     BlockID blockOfOpen = useLists.blockOf(open);
 
-    Vector<BlockID> region;
+    Vector<BlockID> region { };
     BitVector isLiveAtHead(pass.function.blocks.size());
     Vector<BlockID, 16> worklist;
     for (const Use& use : useLists.usesOf(open))
@@ -388,6 +395,37 @@ static Vector<BlockID> findLiveRegion(FunctionPassContext& pass, ValueID open)
         BlockID block = worklist.takeLast();
         if (block == blockOfOpen || !cfg.isReachable(block) || isLiveAtHead.quickSet(block.index()))
             continue;
+        region.append(block);
+        worklist.append(cfg.predecessors(block));
+    }
+    AOT::sort(region, { }, [&](BlockID block) { return cfg.reversePostOrderIndex(block); });
+    return region;
+}
+
+// The live region of an iteration that has no block in common with those asked about before it in this round. The walk ends at the first block that another one has looked at.
+static std::optional<Vector<BlockID>> takeLiveRegion(FunctionPassContext& pass, ValueID open, uint32_t taker, Vector<uint32_t>& takerOfBlock)
+{
+    constexpr uint32_t nobody = 0;
+    RELEASE_ASSERT(taker != nobody);
+    const CFG& cfg = pass.analyses.cfg();
+    const UseLists& useLists = pass.analyses.useLists();
+    BlockID blockOfOpen = useLists.blockOf(open);
+    if (std::exchange(takerOfBlock[blockOfOpen.index()], taker) != nobody)
+        return std::nullopt;
+
+    Vector<BlockID> region { };
+    Vector<BlockID, 16> worklist;
+    for (const Use& use : useLists.usesOf(open))
+        worklist.append(use.block);
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        if (!cfg.isReachable(block))
+            continue;
+        uint32_t formerTaker = std::exchange(takerOfBlock[block.index()], taker);
+        if (formerTaker == taker)
+            continue;
+        if (formerTaker != nobody)
+            return std::nullopt;
         region.append(block);
         worklist.append(cfg.predecessors(block));
     }
@@ -986,7 +1024,8 @@ static void emitOwnEntriesStep(IterationExpansion& expansion, const ArmState& st
     ValueID key = expansion.appendElement(state, index);
     ValueID value = expansion.appendElement(state, expansion.appendIncrement(index, 1));
     expansion.define(*state.position, expansion.appendIncrement(index, 2));
-    expansion.finishStep(expansion.builder.appendBoolean(false), expansion.appendPair(key, value));
+    ValueID isDone = expansion.builder.appendBoolean(false);
+    expansion.finishStep(isDone, expansion.appendPair(key, value));
     expansion.finishStepAsDoneIn(branch.notTaken);
 }
 
@@ -1366,6 +1405,8 @@ static ValueID appendStepGenerator(IterationExpansion& expansion, const ArmState
 
 static void emitGeneratorStep(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
 {
+    if (request.mode != ResumeMode::Next)
+        expansion.appendFirstReadOf(request.mode == ResumeMode::Throw ? Builtins::GeneratorPrototypeThrow : Builtins::GeneratorPrototypeReturn);
     ValueID step = appendStepGenerator(expansion, state, request.mode, request.sent ? request.sent : expansion.builder.appendUndefined());
     ValueID value = expansion.appendResultAt(step, StepGeneratorResult::Value);
     ValueID status = expansion.appendResultAt(step, StepGeneratorResult::Status);
@@ -1400,6 +1441,7 @@ static void emitGeneratorClose(IterationExpansion& expansion, const ArmState& st
         builder.moveToEndOf(attempt);
     }
 
+    expansion.appendFirstReadOf(Builtins::GeneratorPrototypeReturn);
     ValueID step = appendStepGenerator(expansion, state, ResumeMode::Return, builder.appendUndefined());
     IRBuilder::BranchBlocks blocks = expansion.branchOnNotStepped(expansion.appendResultAt(step, StepGeneratorResult::Status));
     emitProtocolClose(expansion, protocolStateOf(expansion, state), IteratorKind::Sync, completion);
@@ -2025,7 +2067,7 @@ struct ArmDispatcher {
     Function& function { pass.function };
     FunctionAnalyses& analyses { pass.analyses };
     IterationExpansion expansion { &pass, pass.program, pass.function, pass.types, builder, &repair, iteration.origin };
-    Vector<BlockID> region { findLiveRegion(pass, iteration.open) };
+    Vector<BlockID> region { };
     ValueLocation open { analyses.useLists().locationOf(iteration.open) };
     BlockID head { open.block };
     BlockID tail { function.at(head).terminator.next().block };
@@ -2206,6 +2248,8 @@ struct ArmDispatcher {
             state.position = expansion.addVariable(builder.appendInteger(0));
             break;
         case IterationForm::Generator:
+            expansion.appendFirstReadOf(Builtins::GeneratorPrototypeNext);
+            break;
         case IterationForm::AsyncGenerator:
             break;
         case IterationForm::Protocol:
@@ -2664,14 +2708,14 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
 
     // From the last iteration to the first, so that an iteration is asked after the ones nested in it.
     ArmDispatchers dispatchers;
-    BitVector takenBlocks(pass.function.blocks.size());
+    Vector<uint32_t> takerOfBlock(FillWith { }, pass.function.blocks.size(), 0u);
+    uint32_t taker = 0;
     for (const Iteration& iteration : iterations | std::views::reverse) {
-        auto dispatcher = makeUniqueWithoutFastMallocCheck<ArmDispatcher>(pass, builder, repair, iteration);
-        bool sharesBlock = takenBlocks.quickSet(dispatcher->head.index());
-        for (BlockID block : dispatcher->region)
-            sharesBlock |= takenBlocks.quickSet(block.index());
-        if (!sharesBlock)
-            dispatchers.append(WTF::move(dispatcher));
+        std::optional<Vector<BlockID>> region = takeLiveRegion(pass, iteration.open, ++taker, takerOfBlock);
+        if (!region)
+            continue;
+        dispatchers.append(makeUniqueWithoutFastMallocCheck<ArmDispatcher>(pass, builder, repair, iteration));
+        dispatchers.last()->region = WTF::move(*region);
     }
     auto forEachDispatcher = [&](auto step, auto&... arguments) {
         for (const std::unique_ptr<ArmDispatcher>& dispatcher : dispatchers)
@@ -2704,6 +2748,7 @@ static bool expandRoundOfIterations(FunctionPassContext& pass, IRBuilder& builde
     builder.setHandler(std::nullopt);
     repair.run();
     builder.emptyUnreachableBlocks();
+    nameFactsWhereUnspecifiedValuesAreUsed(builder, pass.analyses);
     return true;
 }
 

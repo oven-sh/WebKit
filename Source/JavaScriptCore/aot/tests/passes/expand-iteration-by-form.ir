@@ -36,7 +36,7 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
     Rethrow v10
   b7():
     Return v1
-# CHECK: b1([[index0]]: int[0, 9007199254740991]):
+# CHECK: b1([[index0]]: int[0, 9007199254740991]|unspecified):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Switch [[form0]] cases=[0] -> case [[arrayStep0]](), otherwise [[protocolStep0]]()
 # CHECK: b3() handler=b6():
@@ -50,34 +50,48 @@ function f0 name="smallLoop" parameters=[{type=undefined|null|Array<number>}, {t
 # CHECK-NEXT: [[opened0]]: object = ResultAt [[open0]]
 # CHECK-NEXT: [[method0]]: anything = ResultAt [[open0]] index=1
 # CHECK-NEXT: [[isProtocolForm0]]: 1 = Integer integer=1
-# CHECK-NEXT: [[noArray0]]: Array<number> = Unspecified valueType=Array<number>
-# CHECK-NEXT: [[noIndex0]]: int[0, 9007199254740991] = Unspecified valueType=int[0, 9007199254740991]
+# CHECK-NEXT: [[noArray0]]: unspecified|Array<number> = Unspecified valueType=Array<number>
+# CHECK-NEXT: [[noIndex0]]: int[0, 9007199254740991]|unspecified = Unspecified valueType=int[0, 9007199254740991]
 # CHECK-NEXT: Jump -> next [[join0]]([[isProtocolForm0]], [[noArray0]], [[opened0]], [[method0]], [[noIndex0]])
 # CHECK: ([[first0]]: int[0, 9007199254740991]):
 # CHECK-NEXT: [[isArrayForm0]]: 0 = Integer
-# CHECK-NEXT: [[noIterator0]]: object = Unspecified valueType=object
-# CHECK-NEXT: [[noNext0]]: anything = Unspecified valueType=anything
+# CHECK-NEXT: [[noIterator0]]: object|unspecified = Unspecified valueType=object
+# CHECK-NEXT: [[noNext0]]: anything|unspecified = Unspecified valueType=anything
 # CHECK-NEXT: Jump -> next [[join0]]([[isArrayForm0]], [[subject0]], [[noIterator0]], [[noNext0]], [[first0]])
-# CHECK: [[join0]]([[form0]]: int[0, 1], [[array0]]: Array<number>, [[iterator0]]: object, [[next0]]: anything, {{*}}: int[0, 9007199254740991]):
+# CHECK: [[join0]]([[form0]]: int[0, 1], [[array0]]: unspecified|Array<number>, [[iterator0]]: object|unspecified, [[next0]]: anything|unspecified, {{*}}: int[0, 9007199254740991]|unspecified):
 # CHECK: [[arrayLanding0]]():
 # CHECK-NEXT: Jump
+# Each arm of a switch on the form begins with the fact that the values of its form are there.
 # CHECK: [[protocolLanding0]]() frequency=Unlikely:
-# CHECK-NEXT: = CallDirect [[iterator0]] function=f6 [isNeverInlined]
+# CHECK-NEXT: [[isProtocolAtLanding0]]: fact = Specified
+# CHECK-NEXT: [[iteratorAtLanding0]]: object = AssumeType [[iterator0]], [[isProtocolAtLanding0]] provenType=object
+# CHECK-NEXT: = CallDirect [[iteratorAtLanding0]] function=f6 [isNeverInlined]
 # CHECK: [[arrayClose0]]():
 # CHECK-NEXT: Jump
 # CHECK: [[protocolClose0]]() frequency=Unlikely:
-# CHECK-NEXT: = CallDirect [[iterator0]] function=f5 [isNeverInlined]
+# CHECK-NEXT: [[isProtocolAtClose0]]: fact = Specified
+# CHECK-NEXT: [[iteratorAtClose0]]: object = AssumeType [[iterator0]], [[isProtocolAtClose0]] provenType=object
+# CHECK-NEXT: = CallDirect [[iteratorAtClose0]] function=f5 [isNeverInlined]
 # CHECK: [[arrayStep0]]():
-# CHECK-NEXT: = PropGet [[array0]] key="length"
+# CHECK-NEXT: [[isArrayAtStep0]]: fact = Specified
+# CHECK-NEXT: [[arrayAtStep0]]: Array<number> = AssumeType [[array0]], [[isArrayAtStep0]] provenType=Array<number>
+# CHECK-NEXT: = PropGet [[arrayAtStep0]] key="length"
+# CHECK: = AssumeType [[index0]], [[isArrayAtStep0]] provenType=int[0, 9007199254740991]
 # CHECK: [[protocolStep0]]() frequency=Unlikely:
-# CHECK-NEXT: = Call [[next0]], [[iterator0]]
-# CHECK: = ElemGet [[array0]], {{*}} [keyIsIntegral]
+# CHECK-NEXT: [[isProtocolAtStep0]]: fact = Specified
+# CHECK-NEXT: [[nextAtStep0]]: anything = AssumeType [[next0]], [[isProtocolAtStep0]] provenType=anything
+# CHECK-NEXT: [[iteratorAtStep0]]: object = AssumeType [[iterator0]], [[isProtocolAtStep0]] provenType=object
+# CHECK-NEXT: = Call [[nextAtStep0]], [[iteratorAtStep0]]
+# CHECK: = ElemGet [[arrayAtStep0]], {{*}} [keyIsIntegral]
 # On the edge of the array form next is a value nobody reads, so selection resolves no call target from it in front of the loop, where both forms pass.
-# SELECTED: ({{*}}: int[0, 1], {{*}}: Array<number>, [[selectedIterator0]]: object, [[selectedNext0]]: anything,
+# SELECTED: ({{*}}: int[0, 1], {{*}}: unspecified|Array<number>, [[selectedIterator0]]: object|unspecified, [[selectedNext0]]: anything|unspecified,
 # SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
 # SELECTED: = ResolveCallTarget v1 argumentCount=1
 # SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
-# SELECTED: = Call [[selectedNext0]], [[selectedIterator0]]
+# SELECTED: [[selectedNextAtStep0]]: anything = AssumeType [[selectedNext0]],
+# SELECTED-NEXT: [[selectedIteratorAtStep0]]: object = AssumeType [[selectedIterator0]],
+# SELECTED-NOT: ResolveCallTarget
+# SELECTED: = Call [[selectedNextAtStep0]], [[selectedIteratorAtStep0]]
 # SELECTED-NOT: ResolveCallTarget [[selectedNext0]]
 # ABSENT-NOT: role=IterationCleanup
 # ABSENT-NOT: subject=
@@ -155,7 +169,7 @@ function f3 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{typ
     v11 = ReturnAsyncResult v1, v10
     Return v11
 # The form, the array, the iterator and the index are values like any other across the suspension.
-# CHECK: b1([[index3]]: int[0, 9007199254740991]):
+# CHECK: b1([[index3]]: int[0, 9007199254740991]|unspecified):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Switch [[form3]] cases=[0] -> case [[arrayStep3]](), otherwise [[protocolStep3]]()
 # CHECK: b3() handler=b4():
@@ -164,12 +178,17 @@ function f3 name="coroutine" role=CoroutineBody flags=[IsAsync] parameters=[{typ
 # CHECK: b4() role=CleanupHandler:
 # CHECK-NEXT: v8: exception = CatchException
 # CHECK-NEXT: Switch [[form3]] cases=[0] -> case
-# CHECK: [[join3]]([[form3]]: int[0, 1], [[array3]]: Array<number>, [[iterator3]]: object, [[next3]]: anything, {{*}}: int[0, 9007199254740991]):
-# CHECK: (v5: boolean, v6: anything, [[carried3]]: int[0, 9007199254740991]):
+# CHECK: [[join3]]([[form3]]: int[0, 1], [[array3]]: unspecified|Array<number>, [[iterator3]]: object|unspecified, [[next3]]: anything|unspecified, {{*}}: int[0, 9007199254740991]|unspecified):
+# CHECK: (v5: boolean, v6: anything, [[carried3]]: int[0, 9007199254740991]|unspecified):
 # CHECK: [[arrayStep3]]():
-# CHECK-NEXT: = PropGet [[array3]] key="length"
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[array3There]]: Array<number> = AssumeType [[array3]], [[filled1]] provenType=Array<number>
+# CHECK-NEXT: = PropGet [[array3There]] key="length"
 # CHECK: [[protocolStep3]]() frequency=Unlikely:
-# CHECK-NEXT: = Call [[next3]], [[iterator3]]
+# CHECK-NEXT: [[filled2]]: fact = Specified
+# CHECK-NEXT: [[next3There]]: anything = AssumeType [[next3]], [[filled2]] provenType=anything
+# CHECK-NEXT: [[iterator3There]]: object = AssumeType [[iterator3]], [[filled2]] provenType=object
+# CHECK-NEXT: = Call [[next3There]], [[iterator3There]]
 # ABSENT-COUNT-1: AwaitBySavingFrame
 # ABSENT-NOT: AwaitBySavingFrame
 }

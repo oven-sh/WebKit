@@ -642,12 +642,15 @@ struct TailWithTwoPredecessors {
 using BunTestTasks = Deque<RefPtr<SharedTask<void()>>>;
 
 void addBunLoopTests(const TestConfig*, BunTestTasks&);
+void addBunLoopUnrollingTests(const TestConfig*, BunTestTasks&);
+void addBunLoopVectorizingTests(const TestConfig*, BunTestTasks&);
 void addBunCountedLoopTests(const TestConfig*, BunTestTasks&);
 void addBunComparisonFoldingTests(const TestConfig*, BunTestTasks&);
 void addBunLoopPhaseTests(const TestConfig*, BunTestTasks&);
 void addBunLoopVersioningTests(const TestConfig*, BunTestTasks&);
 void addBunLoopPlanTests(const TestConfig*, BunTestTasks&);
 void addBunCountedLoopVersioningTests(const TestConfig*, BunTestTasks&);
+void addBunStridedRangeCheckTests(const TestConfig*, BunTestTasks&);
 void addBunPlacementTests(const TestConfig*, BunTestTasks&);
 void addBunHoistingTests(const TestConfig*, BunTestTasks&);
 void addBunNumberingTests(const TestConfig*, BunTestTasks&);

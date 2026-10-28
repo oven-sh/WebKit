@@ -59,6 +59,10 @@ public:
                 unsigned cost = 0;
                 if (!analyze(head, 0, cost, region))
                     break;
+                // A branch that mostly goes one way costs little, and what its unlikely side computes is seldom computed. Without the branch it is computed every time.
+                bool hasUnlikelySide = head->taken().frequency() != head->notTaken().frequency();
+                if (hasUnlikelySide && cost + numberOfSelects(region) > Limits::maxValuesInPlaceOfBranchWithUnlikelySide)
+                    break;
                 convert(head, region);
                 changed = true;
             }
@@ -77,7 +81,18 @@ private:
         BasicBlock* join { nullptr };
         std::array<BasicBlock*, 2> arms { };
         std::array<std::unique_ptr<Region>, 2> nested;
+        unsigned numberOfSelects { 0 };
     };
+
+    static unsigned numberOfSelects(const Region& region)
+    {
+        unsigned result = region.numberOfSelects;
+        for (auto& nested : region.nested) {
+            if (nested)
+                result += numberOfSelects(*nested);
+        }
+        return result;
+    }
 
     bool dependsOnValueLoadedInLoop(NaturalLoops& loops, const NaturalLoop& loop, Value* condition)
     {
@@ -247,6 +262,7 @@ private:
                 return false;
             }
         }
+        region.numberOfSelects = numberOfSelects;
         return true;
     }
 

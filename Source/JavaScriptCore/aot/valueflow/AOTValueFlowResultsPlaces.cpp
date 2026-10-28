@@ -476,11 +476,13 @@ ValueFlowNamedBuiltins::ValueFlowNamedBuiltins(const ValueFlowResultInputs& inpu
         BitVector& spelledHere = spelledByWorker[worker];
         spelledHere.ensureSize(builtins.builtinCount());
         for (size_t position = task * literalsPerTask; position < std::min<size_t>(literalList.size(), (task + 1) * literalsPerTask); ++position) {
-            forEachWord(program.string(StringID(literalList[position])), [&](std::span<const uint8_t> word) {
+            std::span<const uint8_t> text = program.string(StringID(literalList[position]));
+            forEachWord(text, [&](std::span<const uint8_t> word) {
                 if (!wordFilter.quickGet(wordFilterIndex(word)))
                     return;
+                bool isKeyInList = position >= numberOfWholeLiterals && word.size() == text.size();
                 for (const SpelledBuiltin& spelled : spelledBuiltins) {
-                    if ((position < numberOfWholeLiterals || spelled.isMethod) && std::ranges::equal(spelled.text, word))
+                    if ((!isKeyInList || spelled.isMethod) && std::ranges::equal(spelled.text, word))
                         spelledHere.quickSet(spelled.builtin.index());
                 }
             });

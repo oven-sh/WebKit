@@ -425,12 +425,37 @@ static String describe(JSGlobalObject* globalObject, JSValue value)
     return description;
 }
 
+JSObject* createUpdateOfNullishError(JSGlobalObject* globalObject)
+{
+    return createTypeError(globalObject, "Cannot access property of undefined or null"_s);
+}
+
+static JSObject* createNotAnObjectErrorQuoting(const String& source, JSGlobalObject* globalObject, JSValue base)
+{
+    if (readOnTopTestsObjectOfUpdate(globalObject->vm()))
+        return createUpdateOfNullishError(globalObject);
+    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+}
+
+// `o.name`, `o.#name`. Any other key stands in brackets: `o["two words"]`.
+static bool isWrittenBehindDot(StringView member)
+{
+    if (member.isEmpty() || isASCIIDigit(member[0]))
+        return false;
+    for (unsigned index = 0; index < member.length(); ++index) {
+        char16_t character = member[index];
+        if (isASCII(character) && !isASCIIAlphanumeric(character) && character != '_' && character != '$' && (character != '#' || index))
+            return false;
+    }
+    return true;
+}
+
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, StringView member)
 {
     String source;
     if (String description = describe(globalObject, base); !member.isNull() && !description.isNull())
-        source = tryMakeString(description, '.', member);
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+        source = isWrittenBehindDot(member) ? tryMakeString(description, '.', member) : tryMakeString(description, "[\""_s, member, "\"]"_s);
+    return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
 JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
@@ -447,13 +472,13 @@ JSObject* createNotAnObjectError(JSGlobalObject* globalObject, JSValue base, JSV
         if (!description.isNull() && !descriptionOfKey.isNull())
             source = tryMakeString(description, '[', descriptionOfKey, ']');
     }
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+    return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
-JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier& member)
+JSObject* createSuperBaseNotAnObjectError(JSGlobalObject* globalObject, JSValue base, const Identifier* member)
 {
-    String source = member.isSymbol() || member.isPrivateName() ? String() : tryMakeString("super."_s, StringView(member.impl()));
-    return createQuoting(source, JSC::createNotAnObjectError, globalObject, base);
+    String source = !member || member->isSymbol() || member->isPrivateName() ? String() : tryMakeString("super."_s, StringView(member->impl()));
+    return createNotAnObjectErrorQuoting(source, globalObject, base);
 }
 
 JSObject* createNotAFunctionError(JSGlobalObject* globalObject, JSValue callee, StringView name)
@@ -573,6 +598,16 @@ JSObject* createLoaderChangeRefusedError(JSGlobalObject* globalObject, LoaderCha
 JSObject* createModuleMissingAtBuildError(JSGlobalObject* globalObject, const String& specifier, const String& importer, ASCIILiteral code)
 {
     return createErrorWithCode(globalObject, makeString("Cannot find module '"_s, specifier, "' from '"_s, importer, "'"_s), code);
+}
+
+JSObject* createExportStatementFindsNothingError(JSGlobalObject* globalObject, const String& exportName, const String& specifier)
+{
+    return createSyntaxError(globalObject, makeString("export '"_s, exportName, "' not found in '"_s, specifier, "'"_s));
+}
+
+JSObject* createExportStatementFindsSeveralError(JSGlobalObject* globalObject, const String& exportName, const String& specifier)
+{
+    return createSyntaxError(globalObject, makeString("Cannot export '"_s, exportName, "' multiple times in '"_s, specifier, "'"_s));
 }
 
 JSObject* createSuperCallInDirectEvalError(JSGlobalObject* globalObject)

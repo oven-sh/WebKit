@@ -55,6 +55,7 @@ public:
     void* tryAllocate(size_t);
     void* tryReallocate(void*, size_t);
     void free(void*);
+    size_t sizeOf(const void*);
     void releaseFreeMemory();
 
     struct Pieces {

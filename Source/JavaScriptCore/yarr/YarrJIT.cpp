@@ -42,6 +42,9 @@
 #include "YarrCodeAddressing.h"
 #endif
 #include "YarrDisassembler.h"
+#if defined(YARR_FOR_IMAGE)
+#include "YarrFlatProgram.h"
+#endif
 #include "YarrJITRegisters.h"
 #include "YarrMatchingContextHolder.h"
 #if defined(YARR_FOR_IMAGE)
@@ -2792,6 +2795,15 @@ class YarrGenerator final : public YarrJITInfo {
         return m_callFrameSizeInBytes && m_callFrameSizeInBytes <= maxFrameSizeWithoutStackCheck && !m_containsNestedSubpatterns;
     }
 
+    void generateTurnsOfLongSubject()
+    {
+        if (!m_handsLongSearchesOver)
+            return;
+        m_subjectIsLong.link(&m_jit);
+        m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
+        m_jit.jump().linkTo(m_hasTurnsOfSubject, &m_jit);
+    }
+
 #endif
     void generateJITFailReturn()
     {
@@ -2814,7 +2826,7 @@ class YarrGenerator final : public YarrJITInfo {
 #if !defined(YARR_FOR_IMAGE)
             m_jit.move(MacroAssembler::TrustedImmPtr((void*)static_cast<size_t>(JSRegExpResult::ErrorNoMatch)), m_regs.returnRegister);
 #else
-            moveBodyResult(static_cast<size_t>(JSRegExpResult::ErrorNoMatch));
+            moveBodyResult(static_cast<size_t>(m_handsLongSearchesOver ? JSRegExpResult::JITCodeFailure : JSRegExpResult::ErrorNoMatch));
 #endif
         }
 
@@ -12096,6 +12108,19 @@ public:
 #else
             ASSERT(GPRInfo::argumentGPR4 == m_regs.matchingContext);
 #endif
+#if defined(YARR_FOR_IMAGE)
+            // A search that goes back again and again over the same places takes this code a time that grows with a power of the length, or doubles with each unit. A flat program that keeps a
+            // table of the searches that have failed takes a time in proportion to the length, and gives the match up where the JIT does. So this code stops after a number of turns that an
+            // ordinary search does not come near, nine a unit and 65,537, and whoever called it makes the match again as for a pattern made at run time. However long the subject is, it makes no
+            // more than matchLimit: see generateTurnsOfLongSubject(). The count is a word of 32 bits, which the sum fits up to that length.
+            m_handsLongSearchesOver = hasFlatProgramsThatRememberFailedSearches(m_patternString, m_pattern.m_flags);
+            if (m_handsLongSearchesOver) {
+                static_assert(static_cast<uint64_t>(greatestLengthWithFewerTurnsThanMatchLimit) * 9 + turnsBeforeHandingOver <= matchLimit);
+                m_subjectIsLong = m_jit.branch32(MacroAssembler::Above, m_regs.length, MacroAssembler::TrustedImm32(greatestLengthWithFewerTurnsThanMatchLimit));
+                m_jit.getEffectiveAddress(MacroAssembler::BaseIndex(m_regs.length, m_regs.length, MacroAssembler::TimesEight, turnsBeforeHandingOver), m_regs.remainingMatchCount);
+                m_hasTurnsOfSubject = m_jit.label();
+            } else
+#endif
             m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
 
             // Initialize freelist to null - contexts will be allocated from stack
@@ -12177,6 +12202,9 @@ public:
         m_codeSize = MacroAssembler::differenceBetween(startOfMainCode, m_jit.label());
 #endif
         generateJITFailReturn();
+#if defined(YARR_FOR_IMAGE)
+        generateTurnsOfLongSubject();
+#endif
 
         if (m_disassembler)
             m_disassembler->setEndOfCode(m_jit.label());
@@ -12602,6 +12630,11 @@ private:
     bool m_didUseFrame { false };
     RequiredTexts m_requiredTexts;
     unsigned m_requiredTextFrameLocation { 0 };
+    static constexpr int32_t turnsBeforeHandingOver = 65537;
+    static constexpr int32_t greatestLengthWithFewerTurnsThanMatchLimit = (matchLimit - turnsBeforeHandingOver) / 9;
+    bool m_handsLongSearchesOver { false };
+    MacroAssembler::Jump m_subjectIsLong;
+    MacroAssembler::Label m_hasTurnsOfSubject;
     Vector<std::unique_ptr<CachedClassTable>> m_classTables;
     unsigned m_classTableLimitHits { 0 };
     UncheckedKeyHashMap<const PatternTerm*, size_t> m_lookaheadEndOps;

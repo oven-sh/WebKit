@@ -146,6 +146,18 @@ Type typeOfNumbersIn(ArrayStorage);
 
 KnownBoolean evaluateTest(const ShapeContext&, const VirtualShape&, const Value& test, uint32_t operandIndex);
 bool hasEveryFieldOfBirthStored(const ShapeContext&, const VirtualShape&);
+
+// The run time learns of a class, and of the prototypes of its objects, as the objects are made, and the member guards of the class say what it has learned.
+// So an object is made in front of whatever may end those guards, and one that is handed its prototype also in front of whatever reads them.
+struct GuardsOrderedWithCreation {
+    // Of MemoryLocation::memberGuards().
+    uint64_t mask { 0 };
+    bool includesReads { false };
+};
+GuardsOrderedWithCreation guardsOrderedWithCreation(const ShapeContext&, const VirtualShape&);
+bool creationMayBeOrderedWithGuards(const VirtualObjectContext&, const VirtualObjectDescription&);
+
+// Whether the function above may name one for a shape of this description.
 KnownBoolean evaluateTestOfTwoShapes(const ShapeContext&, const VirtualShape& left, const VirtualShape& right, bool areSameObject, const Value& test);
 CastOutcome evaluateCast(const ShapeContext&, const VirtualShape&, const Value& cast);
 std::optional<uint32_t> findShapeCase(const ShapeContext&, const VirtualShape&, const Terminator& switchOnShape);

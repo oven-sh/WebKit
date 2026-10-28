@@ -108,7 +108,8 @@ void MathBuiltinEmitter::extremumOfArray(const InlineCall& call, Extremum kind)
 {
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
     ArrayElements storage = elements.elementsOf(cellOperand(call.argument(0)));
-    finish(call, extremumOfElements(kind, storage.array, storage.butterfly, elements.publicLength(storage), missBlockOf(call)));
+    Integer length = elements.publicLength(storage);
+    finish(call, extremumOfElements(kind, storage.array, storage.butterfly, length, missBlockOf(call)));
 }
 
 void MathBuiltinEmitter::round(const InlineCall& call, Rounding rounding)
@@ -126,7 +127,8 @@ void MathBuiltinEmitter::round(const InlineCall& call, Rounding rounding)
         return;
     case Rounding::Round: {
         Number ceiling = ceil(x);
-        finish(call, select(greaterThan(sub(ceiling, number(0.5)), x), sub(ceiling, number(1)), ceiling));
+        Condition isNearerToFloor = greaterThan(sub(ceiling, 0.5), x);
+        finish(call, select(isNearerToFloor, sub(ceiling, 1), ceiling));
         return;
     }
     }
@@ -201,7 +203,7 @@ void MathBuiltinEmitter::generateMathSign(const InlineCall& call)
     }
     Integer x = integerOperand(argument);
     Integer isNegative(m_out.aShr(x.value(), m_out.constInt32(63)));
-    Integer isPositive(m_out.lShr(neg(x).value(), m_out.constInt32(63)));
+    Integer isPositive(m_out.lShr(neg(x).value(), 63));
     finish(call, bitOr(isNegative, isPositive), Range { -1, 1 });
 }
 
@@ -252,8 +254,8 @@ void MathBuiltinEmitter::generateMathRandom(const InlineCall& call)
     x = m_out.bitXor(x, m_out.lShr(x, m_out.constInt32(17)));
     x = m_out.bitXor(x, m_out.bitXor(y, m_out.lShr(y, m_out.constInt32(26))));
     m_out.store64(x, highAddress);
-    LValue bits = m_out.bitAnd(m_out.add(x, y), m_out.constInt64((1ULL << 53) - 1));
-    finish(call, mul(Number(m_out.intToDouble(bits)), number(1.0 / (1ULL << 53))));
+    LValue bits = m_out.bitAnd(m_out.add(x, y), (1ULL << 53) - 1);
+    finish(call, mul(Number(m_out.intToDouble(bits)), 1.0 / (1ULL << 53)));
 }
 
 void MathBuiltinEmitter::generateMathPow(const InlineCall& call)

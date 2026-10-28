@@ -18,7 +18,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 Condition MathBuiltinEmitter::isFinite(Number x)
 {
-    return equal(sub(x, x), number(0));
+    return equal(sub(x, x), 0);
 }
 
 Condition MathBuiltinEmitter::testNumber(Number x, NumberTest test)
@@ -29,9 +29,11 @@ Condition MathBuiltinEmitter::testNumber(Number x, NumberTest test)
     case NumberTest::IsFinite:
         return isFinite(x);
     case NumberTest::IsInteger:
-        return equal(sub(x, trunc(x)), number(0));
-    case NumberTest::IsSafeInteger:
-        return logicalAnd(equal(trunc(x), x), lessThanOrEqual(abs(x), number(maxSafeInteger())));
+        return equal(sub(x, trunc(x)), 0);
+    case NumberTest::IsSafeInteger: {
+        Condition isWhole = equal(trunc(x), x);
+        return logicalAnd(isWhole, lessThanOrEqual(abs(x), maxSafeInteger()));
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -110,7 +112,9 @@ void MathBuiltinEmitter::generateCallNumberConstructor(const InlineCall& call)
         return either<Number>(isNumber(operand), [&] {
             return numberToDouble(operand);
         }, [&] {
-            return select(is(JSValue::ValueUndefined), number(PNaN), select(is(JSValue::ValueTrue), number(1), number(0)));
+            Condition isUndefined = is(JSValue::ValueUndefined);
+            Number notANumber = number(PNaN);
+            return select(isUndefined, notANumber, select<Number>(is(JSValue::ValueTrue), 1, 0));
         });
     }, [&] {
         CellPointer cell = unboxCell(operand);
@@ -142,7 +146,7 @@ void MathBuiltinEmitter::generateNumberToString(const InlineCall& call)
     ValueID argument = call.argument(0);
     Integer wideRadix = integerOperand(argument);
     if (!typeOf(argument).integers.isSubsetOf({ 2, 36 }))
-        missUnless(call, below(sub(wideRadix, integer(2)), integer(35)));
+        missUnless(call, below(sub(wideRadix, 2), 35));
     Word32 radix = low32(wideRadix);
     if (hasInt32Receiver) {
         finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::Int32ToStringWithRadix, { int32Operand(receiver), radix }));

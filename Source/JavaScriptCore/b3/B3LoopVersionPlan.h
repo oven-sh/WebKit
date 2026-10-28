@@ -68,6 +68,7 @@ private:
     BasicBlock* findFirstIterationSlowPath(const NaturalLoop&, BasicBlock*, BasicBlock* likelySuccessor);
     std::optional<int64_t> valueOnFirstIteration(const NaturalLoop&, Value*, uint64_t timeToLive);
     bool isNeverNegative(Value*);
+    static bool hoistsEnough(const Attempt&);
     std::optional<GaveUp> checkHoistThresholds(const Attempt&) const;
     void findCountedLoop(Attempt&);
     bool canRewriteLoopTest(const Attempt&) const;

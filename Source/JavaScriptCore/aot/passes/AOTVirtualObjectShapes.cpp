@@ -346,7 +346,8 @@ static KnownBoolean hasLayoutIn(const Program& program, const VirtualObjectDescr
 
 FieldContents contentsOf(const ShapeContext& context, const VirtualObjectDescription& description, uint32_t field)
 {
-    return { typeOfField(context.objects, description, context.family.fieldAt(field)), context.family.mayHoldUndefinedOrNull(field) };
+    const VirtualField& virtualField = context.family.fieldAt(field);
+    return { typeOfField(context.objects, description, virtualField), context.family.mayHoldUndefinedOrNull(field) && holdsUndefinedAndNullToo(context.objects, description, virtualField) };
 }
 
 bool isWithin(const Program& program, FieldContents contents, TypeID bound)
@@ -371,6 +372,25 @@ static bool rejectsNullishValues(const Value& test)
     return test.opcode == Opcode::IsSlotFilled && test.holdsDeclaredType();
 }
 
+static bool staysInSlot(const Program& program, const VirtualObjectDescription& description, const VirtualField& field)
+{
+    std::optional<uint32_t> layoutField = layoutFieldOf(program, description, field);
+    return layoutField && staysInSlot(program, { description.layout, *layoutField });
+}
+
+static bool hasUnprovenFieldThatMayLeaveSlot(const ShapeContext& context, const VirtualShape& shape)
+{
+    if (!hasUnprovenField(context.family, shape))
+        return false;
+    const VirtualObjectDescription& description = context.family.descriptionOf(shape);
+    for (size_t index : shape.stored) {
+        const VirtualField& field = context.family.fieldAt(static_cast<uint32_t>(index));
+        if (field.kind == VirtualFieldKind::UnprovenNamed && !staysInSlot(context.objects.program, description, field))
+            return true;
+    }
+    return false;
+}
+
 static KnownBoolean evaluateFieldTest(const ShapeContext& context, const VirtualShape& shape, const Value& test)
 {
     const VirtualObjectDescription& description = context.family.descriptionOf(shape);
@@ -393,11 +413,15 @@ static KnownBoolean evaluateFieldTest(const ShapeContext& context, const Virtual
             return KnownBoolean::Unknown;
         return KnownBoolean::True;
     }
-    // The property is there. Whether its value lies in the slot nobody knows, and the way that looks for it by name finds it wherever it lies.
     if (field && hasStoredCounterpart(context.family, shape, *field)) {
         if (access.whenPresent != PresentField::IsOwnData)
             return KnownBoolean::Unknown;
-        return knownBoolean(test.opcode != Opcode::IsSlotFilled);
+        if (test.opcode != Opcode::IsSlotFilled)
+            return KnownBoolean::True;
+        // A failed test of the declared type is followed by a lookup by name. A failed test of a field that may leave its slot says nothing without HasNoFieldOutsideSlot.
+        if (rejectsNullishValues(test))
+            return KnownBoolean::False;
+        return knownBoolean(staysInSlot(context.objects.program, description, access.field));
     }
     return access.whenAbsent == AbsentField::FindsNothing ? KnownBoolean::False : KnownBoolean::Unknown;
 }
@@ -429,6 +453,39 @@ static KnownBoolean evaluatePrototypeTest(const ShapeContext& context, const Vir
         return KnownBoolean::Unknown;
     std::optional<uint32_t> prototype = context.family.findField(VirtualField::part(VirtualFieldKind::Prototype));
     return prototype && hasStored(shape, *prototype) ? KnownBoolean::Unknown : KnownBoolean::True;
+}
+
+static bool takesPrototypeOfConstructorFunction(const Program& program, LayoutID declared)
+{
+    const Layout& layout = program.at(declared);
+    return layout.has(LayoutFlags::IsConstructorFunction) && layout.classFlow.prototypeProperty != MemberMutability::Fixed;
+}
+
+bool creationMayBeOrderedWithGuards(const VirtualObjectContext& objects, const VirtualObjectDescription& description)
+{
+    const Value& allocation = objects.function.at(description.allocation);
+    if (allocation.opcode != Opcode::NewObject)
+        return false;
+    return allocation.prototypeOperand() || takesPrototypeOfConstructorFunction(objects.program, declaredLayoutOf(objects.program, allocation.layout()));
+}
+
+GuardsOrderedWithCreation guardsOrderedWithCreation(const ShapeContext& context, const VirtualShape& shape)
+{
+    if (shape.kind != VirtualShapeKind::Fields)
+        return { };
+    const Program& program = context.objects.program;
+    const VirtualObjectDescription& description = context.family.descriptionOf(shape);
+    if (!isLayoutObject(description)) {
+        // The prototype decides which class the object belongs to.
+        bool isGivenPrototype = description.kind == VirtualObjectKind::Opaque && creationMayBeOrderedWithGuards(context.objects, description);
+        return isGivenPrototype ? GuardsOrderedWithCreation { LocationMasks::entireHeap, true } : GuardsOrderedWithCreation { };
+    }
+    LayoutID declared = declaredLayoutOf(program, description.layout);
+    if (evaluatePrototypeTest(context, shape) != KnownBoolean::True)
+        return { maskOf(program, MemoryLocation::memberGuards(declared)), true };
+    if (takesPrototypeOfConstructorFunction(program, declared))
+        return { maskOf(program, MemoryLocation::memberGuards(declared)), false };
+    return { };
 }
 
 static bool isSubjectOperand(Opcode opcode, uint32_t operandIndex)
@@ -617,6 +674,8 @@ static KnownBoolean evaluateBirthTest(const ShapeContext& context, const Virtual
             continue;
         PropertyKeyID key = layout.fields[index].key;
         std::optional<uint32_t> field = key ? context.family.findField(VirtualField::named(key)) : std::nullopt;
+        if (field && !hasStored(shape, *field) && hasStoredCounterpart(context.family, shape, *field))
+            field = context.family.findCounterpart(*field);
         if (!field || !hasStored(shape, *field))
             return KnownBoolean::Unknown;
         if (holdsRawValueFromBirth(program, { description.layout, index }) && mayBeUndefinedOrNull(program, contentsOf(context, description, *field)))
@@ -657,14 +716,14 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
         return evaluateBoundsTest(context, shape, test);
     case Opcode::HasNoExtraProperties:
     case Opcode::HasNoFieldOutsideSlot:
-        if (hasUnprovenField(context.family, shape))
+        if (hasUnprovenFieldThatMayLeaveSlot(context, shape))
             return KnownBoolean::False;
         [[fallthrough]];
     case Opcode::IsNotFrozen:
     case Opcode::BelongsToInstance:
         return isLayoutObject(description) ? KnownBoolean::True : KnownBoolean::Unknown;
     case Opcode::HasBirthFieldsFilled:
-        if (hasUnprovenField(context.family, shape))
+        if (hasUnprovenFieldThatMayLeaveSlot(context, shape))
             return KnownBoolean::False;
         return evaluateBirthTest(context, shape);
     case Opcode::HasLayoutPrototype:
@@ -672,8 +731,8 @@ static KnownBoolean evaluateTestOfFields(const ShapeContext& context, const Virt
     case Opcode::IsPristine:
         return isArray(description) && test.builtinClass() == BuiltinClasses::Array ? KnownBoolean::True : KnownBoolean::Unknown;
     case Opcode::HasKeyOrder:
-        if (hasUnprovenField(context.family, shape))
-            return KnownBoolean::False;
+        if (hasUnprovenFieldThatMayLeaveSlot(context, shape))
+            return KnownBoolean::Unknown;
         return evaluateKeyOrderTest(context, shape, test);
     case Opcode::IsClosureOf:
         return knownBoolean(description.kind == VirtualObjectKind::Closure && description.function == test.function());

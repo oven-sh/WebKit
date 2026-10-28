@@ -1026,15 +1026,16 @@ void generateInById(StubAssembler& jit)
     JumpList isNotInFront;
     JumpList miss;
     JumpList isNotInFieldTable;
+    miss.append(jit.branchIfNotCell(R0));
+    Label asksCell = jit.label();
     auto emitPresenceBySlot = [&](const ProbedSlot& probed, JumpList& isUnknown) {
         Jump isNotField = branchUnlessSlotNamesField(jit, probed, T10);
         returnFieldPresence(jit, CachedSlot(probed.form, Slot::Kind::Field, probed.header, probed.payload), { R0, T10, structureID, structureID, T14 }, miss);
 
         isNotField.link(&jit);
-        returnPresenceBySlot(jit, question, probed, R0, isUnknown);
+        returnPresenceBySlot(jit, question, probed, R0, asksCell, isUnknown);
     };
 
-    miss.append(jit.branchIfNotCell(R0));
     auto emitReturnFalse = [&] {
         jit.move(TrustedImm32(0), R0);
         jit.returnToCaller();

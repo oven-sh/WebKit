@@ -263,12 +263,21 @@ static bool tryStoreCopiedProperties(VM& vm, JSObject* target, CopiedProperties&
     return true;
 }
 
+static bool tryCopyDataProperties(VM&, JSObject* target, JSObject* source);
+
+static NEVER_INLINE bool tryCopyDataPropertiesOfDictionary(VM& vm, JSObject* target, JSObject* source)
+{
+    return flattenOnce(vm, source) && tryCopyDataProperties(vm, target, source);
+}
+
 static bool tryCopyDataProperties(VM& vm, JSObject* target, JSObject* source)
 {
     Structure* sourceStructure = source->structure();
     if (!takesPlainPropertiesDirectly(target->structure()))
         return false;
-    if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
+    if (sourceStructure->isDictionary()) [[unlikely]]
+        return tryCopyDataPropertiesOfDictionary(vm, target, source);
+    if (!sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
         return false;
     if (sourceStructure->hasNonReifiedStaticProperties())
         return false;
@@ -318,10 +327,17 @@ static ASCIILiteral copyDataPropertiesByAnyWay(Instance* instance, JSGlobalObjec
     constexpr ASCIILiteral threw = "threw"_s;
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(hasOwnPropertiesToCopy(source));
-    JSObject* from = source.isObject() ? asObject(source) : source.toObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, threw);
-    prepareForWalk(globalObject, from);
-    RETURN_IF_EXCEPTION(scope, threw);
+    JSObject* from;
+    if (source.isObject()) [[likely]]
+        from = asObject(source);
+    else {
+        from = source.toObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, threw);
+    }
+    if (isCompiledObject(from) && uncheckedDowncast<Object>(from)->layout().hasFieldsWithSymbolKeys) [[unlikely]] {
+        prepareForWalk(globalObject, from);
+        RETURN_IF_EXCEPTION(scope, threw);
+    }
     Object* record = compiledObjectOrNull(target);
     if (record) {
         Object* other = excluded.isEmpty() ? compiledObjectOrNull(from) : nullptr;
@@ -488,7 +504,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instan
 
 static JSObject* tryCopyWithoutNames(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
 {
-    bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && source->structure()->canPerformFastPropertyEnumerationCommon();
+    bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && (!source->structure()->isDictionary() || flattenOnce(vm, source)) && source->structure()->canPerformFastPropertyEnumerationCommon();
     if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr) {
         if (copy->structureID() == source->structureID() && !source->butterfly()) {
             ClonedStructure& cloned = instance->allocation.clonedStructures[AllocationWords::placeOfClonedStructure(copy->structureID().bits())];

@@ -1,0 +1,180 @@
+# function known(prices: Map<string, number>, names: string[]): number {
+#   let count = 0;
+#   for (let k = 0; k < names.length; k++) if (prices.has(names[k]!)) count++;
+#   return count;
+# }
+# declare const input: any;
+# const prices = new Map<string, number>();
+# prices.set(String(input), +input);
+# const names: string[] = [];
+# names.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = known(prices, names);
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN(LOOP): lower-to-b3 optimized loops f1
+# REQUIRES(LOOP): unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized loops f1
+# REQUIRES(CALLS): unsanitized-code
+# RUN(WHOLE): lower-to-b3 optimized f1
+# REQUIRES(WHOLE): unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code not-windows
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=292 kind=Variable
+typesite w1 module=m0 position=15 kind=Parameter function=f1
+typesite w2 module=m0 position=44 kind=Parameter function=f1
+typesite w3 module=m0 kind=Result
+typesite w4 module=m0 position=224 kind=CallResult
+typesite w5 module=m0 position=262 kind=CallResult
+typesite w6 module=m0 position=251 kind=CallResult
+typesite w7 module=m0 position=325 kind=CallResult
+typesite w8 module=m0 position=314 kind=CallResult
+typesite w9 module=m0 position=350 kind=Variable
+typesite w10 module=m0 position=411 kind=CallResult
+typesite w11 module=m0 position=77 kind=Variable
+typesite w12 module=m0 position=99 kind=Variable
+typesite w13 module=m0 position=110 kind=PropertyRead
+typesite w14 module=m0 position=144 kind=Element
+typesite w15 module=m0 position=133 kind=CallResult
+data d0 root=Array{contents=undefined|null|string} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=Map
+    v3 = Construct v2 calleeName="Map"
+    v4 = Convert v3 declared={type=undefined|null|Map<undefined|null|string, number> site=w4 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v5 = PropGet v4 key="set"
+    v6 = Builtin builtin=String
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="input" [isFreeName]
+    v9 = Call v6, -, v8 calleeName="String"
+    v10 = Convert v9 declared={type=undefined|null|string site=w5 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="input" [isFreeName]
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = ToNumber v13
+    v15 = Call v5, v4, v10, v14 calleeKey="set" calleeName="prices.set"
+    v16 = Convert v15 declared={type=undefined|null|Map<undefined|null|string, number> site=w6 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v17 = Data data=d0
+    v18 = Convert v17 declared={type=undefined|null|Array<undefined|null|string> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v19 = PropGet v18 key="push"
+    v20 = Builtin builtin=String
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="input" [isFreeName]
+    v23 = Call v20, -, v22 calleeName="String"
+    v24 = Convert v23 declared={type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v25 = Call v19, v18, v24 calleeKey="push" calleeName="names.push"
+    v26 = Convert v25 declared={type=number site=w8} illTypedCause=DeclarationWithoutBody
+    v27 = Integer
+    v28 = Convert v27 declared={type=number site=w9}
+    Jump -> next b2(v28)
+  b2(v29: number):
+    LoopHint
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="input" [isFreeName]
+    v33 = Convert v32 declared={type=number flags=[IsExpected]}
+    v34 = Less v29, v33
+    Branch v34 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v35):
+    Jump -> next b4()
+  b4():
+    v36 = Builtin builtin=GlobalThis
+    v37 = PropGet v36 key="globalThis" [isFreeName]
+    v38 = Convert v37 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v39 = Convert v38 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v40 = Call v1, -, v4, v18 calleeName="known"
+    v41 = Convert v40 declared={type=number site=w10}
+    PropSet v39, v41 key="answer"
+    Jump -> next b5()
+  b5():
+    v43 = Increment v35
+    v44 = Convert v43 declared={type=number site=w9}
+    Jump -> next b2(v44)
+  b6(v45):
+    Jump -> next b7()
+  b7():
+    v46 = Undefined
+    Return v46
+}
+function f1 name="known" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<undefined|null|string> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Map<undefined|null|string, number>, v1: undefined|null|Array<undefined|null|string>):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w11}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w12}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Convert v7 declared={type=i32 flags=[IsExpected]}
+    v10 = PropGet v1 key="length"
+    v11 = Convert v10 declared={type=number site=w13} illTypedCause=Assertion
+    v12 = Less v9, v11
+    Branch v12 -> taken b3(| 0), notTaken b10(| 0)
+  b3(v13):
+    Jump -> next b4()
+  b4():
+    v14 = PropGet v0 key="has"
+    v15 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    v16 = ElemGet v1, v15
+    v17 = Convert v16 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v18 = Call v14, v0, v17 calleeKey="has" calleeName="prices.has"
+    v19 = Convert v18 declared={type=boolean site=w15} illTypedCause=DeclarationWithoutBody
+    v20 = ToBoolean v19
+    Branch v20 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v21):
+    Jump -> next b6()
+  b6():
+    v22 = Increment v6
+    v23 = Convert v22 declared={type=number site=w11}
+    Jump -> next b8(v23)
+  b7(v24):
+    Jump -> next b8(v6)
+  b8(v25: number):
+    Jump -> next b9()
+  b9():
+    v26 = Increment v15
+    v27 = Convert v26 declared={type=number site=w12}
+    Jump -> next b2(v25, v27)
+  b10(v28):
+    Jump -> next b11()
+  b11():
+    v29 = Convert v6 declared={type=number site=w3}
+    Return v29
+}
+
+# Each turn loads the key from the list and calls one stub with the map and the key in registers. The answer is a boolean in the lowest bit: one mask, one branch.
+# LOOP-LABEL: loop #
+# LOOP: Int64 b@[[key]] = Load(b@{{*}}, ControlDependent|Reads:indexedContiguousProperties, {{*}}:GetArrayElement)
+# LOOP: Int64 b@[[found]] = Patchpoint(b@{{*}}:Register({{*}}), b@[[key]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallInline)
+# LOOP-NEXT: Int32 b@[[low]] = Trunc(b@[[found]], {{*}}:CallInline)
+# LOOP: Int32 b@[[bit]] = BitAnd(b@[[low]], $1(b@{{*}}), {{*}}:CallInline)
+# LOOP-NEXT: Branch(b@[[bit]], Terminal)
+# The stub is declared to write the storage of arrays, so the storage and the length of the list are loaded again behind it, once.
+# LOOP: Int64 b@[[again]] = Load(b@{{*}}, offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}})
+# LOOP-NEXT: Int32 b@{{*}} = Load(b@[[again]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}})
+# LOOP-NOT: Reads:JSObject_butterfly
+# LOOP-LABEL: end of loop
+# The stub is the only call of the loop.
+# CALLS-LABEL: loop #
+# CALLS-COUNT-1: ExitsSideways
+# CALLS-NOT: ExitsSideways
+# CALLS-LABEL: end of loop
+# Map.prototype.has cannot be replaced and nothing of the same name hides it on the object: the function does not read it by name, make its function object, or test the object or the function.
+# WHOLE-LABEL: name="known" role=Source
+# WHOLE-NOT: :PropGet
+# WHOLE-NOT: :CallBuiltin
+# WHOLE-NOT: :Call)
+# WHOLE-NOT: :IsPristine
+# WHOLE-LABEL: end of function
+# The counts hold a call, whose moves follow the calling convention: not for Windows.
+# X64: loop #{{*}}, instructions: 11, patchpoints: 2
+# ARM64: loop #{{*}}, instructions: 10, patchpoints: 2

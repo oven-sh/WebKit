@@ -278,10 +278,10 @@ private:
             out.print(" +", node.index() - m_nodes.firstNodeOf(subject.function));
     }
 
-    // Where a callee may be anything, the call makes an object nobody knows and not the object of its site. An object of the program that no node of the wider solve holds is one of those that the unknown object stands for there.
+    // Where a callee may be anything, the call makes an object nobody knows and not the object of its site. The object of such a site that no node of the wider solve holds is one of those that the unknown object stands for there.
     void findObjectsNeverMadeGivenMore()
     {
-        m_neverMadeGivenMore = objectsOfProgramThatNoNodeHolds(m_givenMore, m_universe, m_makers.of(0));
+        m_neverMadeGivenMore = objectsThatTheirOwnSitesNoLongerMake(m_givenMore, m_solution.bodies(), m_makers.of(0));
     }
 
     ValueSetID allThatStandsFor(ValueSetID givenMore, ValueSetMaker& maker) const

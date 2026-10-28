@@ -85,11 +85,11 @@ static void collectNamesAsked(const Program& program, const Function& function, 
             }
             if (access.opcode == Opcode::PropSet && access.key()) {
                 // `const context = Object.create(prototype); context.request = request;`
-                LayoutID allocated = allocatedInBlock.get(sameObjectThroughCasts(function, access.objectOperand()).index() + 1);
+                LayoutID allocated = allocatedInBlock.get(sameObjectThroughCasts(function, access.objectOperand()).valueInFrontOfFacts().index() + 1);
                 std::optional<FieldReference> filled = allocated ? findField(program, allocated, access.key(), BaseChain::Proven) : std::nullopt;
                 if (filled && fieldAt(program, *filled).flags.contains(FieldFlags::IsAddedLate))
                     found.append({ *filled, { }, { }, { }, true });
-                ValueID stored = sameObjectThroughCasts(function, access.operand(OperandIndex::PropSet::value));
+                ValueID stored = sameObjectThroughCasts(function, access.operand(OperandIndex::PropSet::value)).valueInFrontOfFacts();
                 ReceiverCandidates candidates = receiverCandidates(program, function, stored);
                 const LayoutList& layoutsStored = candidates.isProven() ? candidates.proven : candidates.expected.predicted();
                 bool tellsNothing = program.typeOf(function, stored) == Type::anything() && !function.at(stored).expected().predicted();
@@ -124,7 +124,7 @@ static void collectNamesAsked(const Program& program, const Function& function, 
             const Value& access = function.at(id);
             if (access.opcode != Opcode::PropGet || !access.key())
                 continue;
-            auto read = fieldsRead.find(sameObjectThroughCasts(function, access.objectOperand()).index() + 1);
+            auto read = fieldsRead.find(sameObjectThroughCasts(function, access.objectOperand()).valueInFrontOfFacts().index() + 1);
             if (read == fieldsRead.end())
                 continue;
             for (FieldReference field : read->value)

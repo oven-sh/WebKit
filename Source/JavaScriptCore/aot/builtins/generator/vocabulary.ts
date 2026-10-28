@@ -593,6 +593,10 @@ export interface EntryColumns {
   privateAlias?: boolean;
   defaultExport?: boolean;
   constructable?: boolean;
+  /** A row of a static table that its holder takes among its own properties when the name is first looked for, behind those it has by then. */
+  addedAtFirstRead?: boolean;
+  /** Such a row without DontEnum: who goes over the enumerable properties of the holder comes by it. */
+  addedAsEnumerable?: boolean;
   hasSetter?: boolean;
   length?: number;
   nativeSymbols?: readonly string[];

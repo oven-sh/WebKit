@@ -11,8 +11,11 @@
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
 #include "AOTObjectModel.h"
+#include "AOTOperationCallScope.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTSchemaRuntimeOperations.h"
+#include "AOTStringBuilderStorage.h"
 #include "JSCInlines.h"
 #include "JSONObject.h"
 #include "ObjectConstructor.h"
@@ -368,6 +371,70 @@ static void checkInlineWalkMatchesTheWalkByCallbacks(LoadedProgram& program)
     AOT_TEST_CHECK(visited == 2 && result == PropertyWalk::Result::Stopped);
 }
 
+static void checkLongTextsTakeTheirOwnLengthInABuilder(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    constexpr unsigned length = 1 << 20;
+    constexpr unsigned lengthOfTheRest = 1024;
+    String longText { Vector<Latin1Character>(FillWith { }, length, static_cast<Latin1Character>('t')).span() };
+    auto append = [&](StringBuilderStorage* builder, Object* item) {
+        OperationCallScope scope(vm);
+        auto appended = operationAOTStringBuilderAppendJSON(&program.instance(), builder, JSValue::encode(item), JSValue::encode(jsNumber(0)), JSValue::encode(jsUndefined()));
+        AOT_TEST_CHECK(!appended.exception && appended.value);
+    };
+    auto limitOf = [](StringBuilderStorage* builder) {
+        return *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(builder) + StringBuilderStorage::offsetOfLimit());
+    };
+    auto bufferOf = [](StringBuilderStorage* builder) {
+        return *reinterpret_cast<Latin1Character**>(reinterpret_cast<uint8_t*>(builder) + StringBuilderStorage::offsetOfCharacters());
+    };
+    auto createExtended = [&](JSValue payload, JSValue added) {
+        Object* item = createItem(program, payload);
+        put(program, item, "added"_s, added);
+        AOT_TEST_CHECK(item->hasExtraProperties());
+        return item;
+    };
+    Object* shortItem = createExtended(jsNull(), jsNumber(1));
+    String shortText = "{\"id\":7,\"title\":\"Product 7\",\"payload\":null,\"inStock\":false,\"added\":1}"_s;
+    checkStringify(program, shortItem, Path::Fast, shortText);
+
+    struct Case {
+        JSValue payload;
+        JSValue added;
+        unsigned longTexts;
+        bool hasEscape;
+    };
+    const Case cases[] = {
+        { jsString(vm, longText), jsNumber(1), 1, false },
+        { jsNull(), jsString(vm, longText), 1, false },
+        { jsString(vm, longText), jsString(vm, longText), 2, false },
+        { jsString(vm, makeString(longText, '"')), jsNumber(1), 1, true },
+        { jsString(vm, makeString('\n', longText)), jsString(vm, longText), 2, true },
+        { jsString(vm, longText), jsString(vm, makeString(longText, '\\')), 2, true },
+        { jsNontrivialString(vm, "a\nb"_s), jsNontrivialString(vm, "\"c\""_s), 0, true },
+    };
+    for (const Case& oneCase : cases) {
+        Object* item = createExtended(oneCase.payload, oneCase.added);
+        String expected = JSONStringify(program.realm(), item, 0);
+        AOT_TEST_CHECK(expected.length() >= oneCase.longTexts * length && expected.length() < oneCase.longTexts * length + lengthOfTheRest);
+
+        StringBuilderStorage* builder = StringBuilderStorage::acquire(program.instance());
+        append(builder, item);
+        AOT_TEST_CHECK(builder->length() == expected.length());
+        if (!oneCase.hasEscape) {
+            AOT_TEST_CHECK(limitOf(builder) < expected.length() + expected.length() / 8 + lengthOfTheRest);
+            Latin1Character* buffer = bufferOf(builder);
+            for (unsigned i = 0; i < 100; ++i)
+                append(builder, shortItem);
+            AOT_TEST_CHECK(bufferOf(builder) == buffer);
+        }
+        JSString* written = builder->finish(program.realm(), program.instance(), StringBuilderStorage::StringUse::Unknown);
+        AOT_TEST_CHECK(written);
+        String text = written->value(program.realm()).data;
+        AOT_TEST_CHECK(text.startsWith(expected) && (oneCase.hasEscape ? text.length() == expected.length() : text.length() == expected.length() + 100 * shortText.length() && text.endsWith(shortText)));
+    }
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<listedFieldsTests, programText, body>;
 
@@ -383,6 +450,7 @@ std::span<const NativeTest> listedFieldsTests()
         { "listed-fields/stringify-to-json-of-the-object"_s, withProgram<checkToJSONOfTheObjectItself> },
         { "listed-fields/stringify-cycles-and-depth"_s, withProgram<checkCyclesAndDepth> },
         { "listed-fields/inline-walk-matches-walk-by-callbacks"_s, withProgram<checkInlineWalkMatchesTheWalkByCallbacks> },
+        { "listed-fields/long-texts-take-their-own-length-in-a-builder"_s, withProgram<checkLongTextsTakeTheirOwnLengthInABuilder> },
     };
     return tests;
 }

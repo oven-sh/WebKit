@@ -142,7 +142,9 @@ private:
 };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
-bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*);
+// NotSpelledByProgram: the name is no index either. No class declares a member under such a name.
+enum class StoredName : bool { MayBeSpelledByProgram, IsNotSpelledByProgram };
+bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, StoredName = StoredName::MayBeSpelledByProgram);
 bool storeCreatesOwnProperty(JSGlobalObject*, Structure* receiverStructure, JSObject* receiverOrNull, UniquedStringImpl*, const ChainDependent&);
 
 PropertyWalk::Presence presenceForStructure(VM&, Structure*, UniquedStringImpl*);

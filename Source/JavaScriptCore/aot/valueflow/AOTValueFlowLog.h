@@ -63,6 +63,8 @@ struct ValueFlowNodeKey {
     static ValueFlowNodeKey constant(ValueSetID set) { return { ValueFlowMadeNodeKind::Constant, 0, 0, set }; }
     static ValueFlowNodeKey constant(ValueSetID set, ValueFlowUnknownSource source) { return { ValueFlowMadeNodeKind::Constant, static_cast<uint8_t>(static_cast<uint8_t>(source) + 1), 0, set }; }
     static ValueFlowNodeKey named(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowName name) { return { kind, static_cast<uint8_t>(name.kind), name.payload, set }; }
+    // What it answers is only called on the object that it was asked of.
+    static ValueFlowNodeKey lookupForCall(ValueSetID set, ValueFlowName name) { return { ValueFlowMadeNodeKind::Lookup, static_cast<uint8_t>(static_cast<uint8_t>(name.kind) | isForCall), name.payload, set }; }
     static ValueFlowNodeKey underKind(ValueFlowMadeNodeKind kind, ValueSetID set, ValueFlowNameKind nameKind) { return { kind, static_cast<uint8_t>(nameKind), 0, set }; }
     static ValueFlowNodeKey callGroup(ValueSetID callees, ValueFlowCallKind kind, ValueFlowObjectID marker = { }) { return { ValueFlowMadeNodeKind::CallGroup, static_cast<uint8_t>(kind), marker ? marker.index() + 1 : 0, callees }; }
     static ValueFlowNodeKey instance(ValueFlowNodeID node, ValueSetID markerAlone) { return { ValueFlowMadeNodeKind::Instance, 0, node.index(), markerAlone }; }
@@ -76,7 +78,8 @@ struct ValueFlowNodeKey {
     static ValueFlowNodeKey objectsWithRareWrite(ValueFlowRareWrite write) { return { ValueFlowMadeNodeKind::Marked, 0, (1u << 16) + 2 + static_cast<uint32_t>(write), { } }; }
     static ValueFlowNodeKey holdersOfLibraryExportsWrittenUnder(PropertyKeyID key) { return { ValueFlowMadeNodeKind::Marked, 1, key.index(), { } }; }
 
-    ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail), payload }; }
+    ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail & ~isForCall), payload }; }
+    bool isLookupForCall() const { return kind == ValueFlowMadeNodeKind::Lookup && (detail & isForCall); }
     ValueFlowCallKind callKind() const { return static_cast<ValueFlowCallKind>(detail); }
     ValueFlowObjectID markerOfCallGroup() const { return payload ? ValueFlowObjectID(payload - 1) : ValueFlowObjectID(); }
     bool isInstanceOfNode() const { return kind == ValueFlowMadeNodeKind::Instance && !detail; }
@@ -97,6 +100,7 @@ struct ValueFlowNodeKey {
     friend bool operator==(const ValueFlowNodeKey&, const ValueFlowNodeKey&) = default;
 
     static constexpr unsigned numberOfNodesOfCallGroup = 6 + numberOfGroupedArguments;
+    static constexpr uint8_t isForCall = 0x80;
 
     ValueFlowMadeNodeKind kind { ValueFlowMadeNodeKind::Constant };
     uint8_t detail { 0 };

@@ -1,0 +1,152 @@
+# function counter(start: number) {
+#   let count = start;
+#   return { read: () => count, add: (step: number) => { count += step; } };
+# }
+# declare const input: any;
+# const first = counter(+input);
+# const second = counter(+input);
+# first.add(+input);
+# second.add(+input);
+# (globalThis as any).answer = [first, second, first.read() + second.read()];
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:SplitFreshResults
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(NONE): lower-to-b3 optimized f1
+# REQUIRES(NONE): unsanitized-code
+# RUN(CALLS): generate-code calls
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 unsanitized-code not-windows
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=17 kind=Parameter function=f1
+typesite w1 module=m0 kind=Result
+typesite w2 module=m0 position=172 kind=CallResult
+typesite w3 module=m0 position=204 kind=CallResult
+typesite w4 module=m0 position=305 kind=CallResult
+typesite w5 module=m0 position=320 kind=CallResult
+typesite w6 module=m0 position=40 kind=Variable
+typesite w7 module=m0 position=72 kind=Result
+typesite w8 module=m0 position=91 kind=Parameter function=f3
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent site=w6}}] ownFieldCount=1
+layout L1 module=m0 position=64 fields=[{key="add" declared={type=undefined|null|function|f3 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="read" declared={type=undefined|null|function|f2 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=number flags=[IsExpected]}
+    v5 = ToNumber v4
+    v6 = Call v1, -, v5 calleeName="counter"
+    v7 = Convert v6 declared={type=undefined|null|L1 site=w2 flags=[OmitsNull, OmitsUndefined]}
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="input" [isFreeName]
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    v11 = ToNumber v10
+    v12 = Call v1, -, v11 calleeName="counter"
+    v13 = Convert v12 declared={type=undefined|null|L1 site=w3 flags=[OmitsNull, OmitsUndefined]}
+    v14 = PropGet v7 key="add"
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="input" [isFreeName]
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = ToNumber v17
+    v19 = Call v14, v7, v18 calleeKey="add" calleeName="first.add"
+    v20 = PropGet v13 key="add"
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="input" [isFreeName]
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = ToNumber v23
+    v25 = Call v20, v13, v24 calleeKey="add" calleeName="second.add"
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="globalThis" [isFreeName]
+    v28 = Convert v27 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v29 = Convert v28 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v30 = PropGet v7 key="read"
+    v31 = Call v30, v7 calleeKey="read" calleeName="first.read"
+    v32 = Convert v31 declared={type=number site=w4}
+    v33 = PropGet v13 key="read"
+    v34 = Call v33, v13 calleeKey="read" calleeName="second.read"
+    v35 = Convert v34 declared={type=number site=w5}
+    v36 = Add v32, v35
+    v37 = NewArray v7, v13, v36 contents=anything
+    PropSet v29, v37 key="answer"
+    v39 = Undefined
+    Return v39
+}
+function f1 name="counter" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    Jump -> next b1()
+  b1():
+    v1 = NewObject layout=L0
+    v2 = Convert v0 declared={type=number site=w6}
+    PutEnvironmentField v1, v2 layout=L0
+    v4 = NewClosure v1 function=f2
+    v5 = Convert v4 declared={type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined]}
+    v6 = NewClosure v1 function=f3
+    v7 = Convert v6 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}
+    v8 = NewObject -, v5, v7 layout=L1 fields=[1, 0]
+    v9 = FinishObject v8
+    v10 = Convert v9 declared={type=undefined|null|L1 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    Return v10
+}
+function f2 name="read" module=m0 position=72 kind=Arrow flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number site=w7}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0):
+    Jump -> next b1()
+  b1():
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="count"
+    v3 = Convert v2 declared={type=number site=w7}
+    Return v3
+}
+function f3 name="add" module=m0 position=90 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number site=w8}] results=[{type=anything}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = GetEnvironmentField v0 layout=L0
+    v3 = CheckInitialized v2 name="count"
+    v4 = Add v3, v1
+    v5 = Convert v4 declared={type=number site=w6}
+    v6 = GetEnvironmentField v0 layout=L0
+    v7 = CheckInitialized v6 name="count"
+    PutEnvironmentField v0, v5 layout=L0
+    v9 = Undefined
+    Return v9
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+
+# Both closures capture the one environment that holds the variable. Four allocations: the environment, two closures, the object that holds them.
+# CHECK-LABEL: name="counter" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK: Int64 b@[[environment]] = Patchpoint($1(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
+# CHECK-NEXT: Double b@[[start]] = ArgumentReg(
+# CHECK-NEXT: Store(b@[[start]], b@[[environment]], offset = 8, ControlDependent|Writes:EnvironmentFields{{*}}:NewObject)
+# CHECK: Int64 b@[[read]] = Patchpoint(${{*}}(b@{{*}}):Register({{*}}), b@[[environment]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewClosure)
+# CHECK: Int64 b@[[add]] = Patchpoint(${{*}}(b@{{*}}):Register({{*}}), b@[[environment]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewClosure)
+# CHECK: Int64 b@[[pair]] = Patchpoint($2(b@{{*}}):Register({{*}}), resultConstraints = Register({{*}}), {{*}}:NewObject)
+# CHECK-NEXT: Store(b@[[read]], b@[[pair]], offset = {{*}}, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK-NEXT: Store(b@[[add]], b@[[pair]], offset = {{*}}, ControlDependent|Writes:ObjectFields{{*}}:NewObject)
+# CHECK: Return(b@[[pair]], Terminal)
+# CHECK-LABEL: end of function
+# No store has a write barrier, and nothing is kept in the frame across the allocations.
+# NONE-LABEL: name="counter" role=Source
+# NONE-NOT: Reads:JSCell
+# NONE-NOT: SlotBase(
+# NONE-COUNT-4: Patchpoint(
+# NONE-NOT: Patchpoint(
+# NONE-LABEL: end of function
+# CALLS: f1: size=
+# CALLS-NEXT: stub AllocateCell.Header.n1 x1
+# CALLS-NEXT: stub AllocateCell.HeaderAndWords.n2 x1
+# CALLS-NEXT: stub NewSlimClosure.Plain.n1 x2
+# CALLS-NOT: stub
+# CALLS-NOT: operation
+# CALLS: f{{*}}: size=
+# X64: instructions: 17, patchpoints: 4
+# ARM64: instructions: 18, patchpoints: 4, rare instructions: 4

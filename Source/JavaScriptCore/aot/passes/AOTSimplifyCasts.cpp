@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTFieldValueNarrowing.h"
 #include "AOTFlowApply.h"
 #include "AOTObservableOperations.h"
 #include "AOTPredictedValues.h"
@@ -141,6 +142,9 @@ struct CastSimplification : Rewrite {
                     Value castOnEdge = cast;
                     castOnEdge.setOperand(0, argument);
                     castOnEdge.setExpected({ });
+                    // Where the ways that meet here bring a fact each, the cast on an edge names the one that its own way brings.
+                    if (size_t factIndex = cast.opcode == Opcode::AssumeType && cast.factOperand() ? at(candidate.block).parameters.find(cast.factOperand()) : notFound; factIndex != notFound)
+                        castOnEdge.setFactOperand(targetOf(function, edge).arguments[factIndex]);
                     // A check that nothing on its edge passes has the whole type that it asks for.
                     joinSaysLessThanCast |= !context.types.at(resultTypeOf(program, function, castOnEdge, context.types, &context.typingMemo)).isSubsetOf(context.types.at(cast.type), program);
                     passed = builder().insertBefore(pointBeforeTerminatorOf(function, edge.from), WTF::move(castOnEdge));
@@ -235,11 +239,16 @@ struct CastSimplification : Rewrite {
             noteCastThatStays(id);
             return changed;
         }
+        if (narrowsHolderToNothing({ program, function, context.types }, cast)) {
+            noteCastThatStays(id);
+            return changed;
+        }
         if (saysMoreThanTypeOnCredit(cast, operand)) {
             claimsKeptBehindChecks.append(id);
             return changed;
         }
         if (isTestOfLanguageAnsweredOnCredit(cast, operand)) {
+            claimsKeptBehindChecks.append(id);
             noteCastThatStays(id);
             return changed;
         }
@@ -325,7 +334,7 @@ struct CastSimplification : Rewrite {
             return 1ull << 63 | access.variable().index();
         if (access.opcode != Opcode::GetEnvironmentField && access.opcode != Opcode::PutEnvironmentField)
             return 0;
-        ValueID environment = analyses.sameObjectThroughCasts(substitution.resolve(access.environmentOperand()));
+        ValueID environment = analyses.sameObjectThroughCasts(substitution.resolve(access.environmentOperand())).valueInFrontOfFacts();
         return access.field() < 1u << 24 ? 1ull << 62 | static_cast<uint64_t>(environment.index()) << 24 | access.field() : 0;
     }
 
@@ -342,7 +351,7 @@ struct CastSimplification : Rewrite {
     unsigned repointOperand(ValueID id, uint32_t operandIndex, const Vector<ValueID>& narrowestCast)
     {
         ValueID current = at(id).operand(operandIndex);
-        ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).index()];
+        ValueID cast = narrowestCast[analyses.sameObjectThroughCasts(current).valueInFrontOfFacts().index()];
         if (!cast || typeOf(cast) == typeOf(current) || !isUnchangedByCastTo(typeOf(cast), typeOf(current)))
             return 0;
         if (!program.expectedOrTypeOf(function, cast).predicted().isSubsetOf(program.expectedOrTypeOf(function, current).predicted(), program))
@@ -386,7 +395,7 @@ struct CastSimplification : Rewrite {
         auto addDominatingCast = [&](ValueID id) {
             passed.add(keyOf(id), id);
             addedCasts.append(id);
-            ValueID object = analyses.sameObjectThroughCasts(id);
+            ValueID object = analyses.sameObjectThroughCasts(id).valueInFrontOfFacts();
             ValueID before = narrowestCast[object.index()];
             if (before && typeOf(before).isSubsetOf(typeOf(id), program))
                 return;

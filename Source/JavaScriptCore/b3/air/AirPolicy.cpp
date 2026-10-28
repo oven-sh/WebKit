@@ -61,6 +61,7 @@ void Policy::dump(PrintStream& out) const
     AIR_POLICY_PRINT_IF_SET(registers, hintsTwoAddressOperands);
     AIR_POLICY_PRINT_IF_SET(registers, usesSecondPreferredRegister);
     AIR_POLICY_PRINT_IF_SET(registers, evictsHolderOfPreferredRegister);
+    AIR_POLICY_PRINT_IF_SET(registers, patchpointsKeepOnlyLowerHalvesOfVectors);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(registers, unsavedCalleeSaves);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(registers, savedByCallee);
     AIR_POLICY_PRINT_IF_NOT_EMPTY(registers, calleeSavesClobberedAtSuspensions);

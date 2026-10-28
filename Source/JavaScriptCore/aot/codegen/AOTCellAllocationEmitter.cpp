@@ -123,7 +123,7 @@ Pointer CellAllocationEmitter::allocatorForSize(Pointer subspace, Integer size, 
 {
     static_assert(!(MarkedSpace::sizeStep & (MarkedSpace::sizeStep - 1)), "MarkedSpace::sizeStep must be a power of two.");
     constexpr unsigned stepShift = getLSBSet(MarkedSpace::sizeStep);
-    LValue sizeClassIndex = m_out.lShr(m_out.add(size.value(), m_out.constIntPtr(MarkedSpace::sizeStep - 1)), m_out.constInt32(stepShift));
+    LValue sizeClassIndex = m_out.lShr(m_out.add(size.value(), MarkedSpace::sizeStep - 1), stepShift);
     branchUnless(Condition(m_out.belowOrEqual(sizeClassIndex, m_out.constIntPtr(MarkedSpace::largeCutoff >> stepShift))), isTooLarge);
     Pointer allocator(m_out.loadPtr(m_out.baseIndex(m_heaps.CompleteSubspace_allocatorForSizeStep, subspace.value(), sizeClassIndex)));
     branchUnless(Condition(m_out.notNull(allocator.value())), hasNoAllocator);
@@ -222,7 +222,8 @@ CellPointer CellAllocationEmitter::allocate(const OperationContext& context, All
     CellInitialization form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWords : CellInitialization::Header;
     if (zeroedBy == ZeroedBy::Stub)
         form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWordsAndZeros : CellInitialization::HeaderAndZeros;
-    CellPointer cell(callStub(context, allocateCell(form, knownCellSizeFor(allocation.size)), { m_out.constInt64(id.index()) }).first);
+    LValue numberOfAllocation = m_out.constInt64(id.index());
+    CellPointer cell(callStub(context, allocateCell(form, knownCellSizeFor(allocation.size)), { numberOfAllocation }).first);
     if (zeroedBy == ZeroedBy::CodeInLine) {
         CodeGenerator::InitializationScope scope(generator());
         zeroBody(cell, id);
@@ -232,7 +233,8 @@ CellPointer CellAllocationEmitter::allocate(const OperationContext& context, All
 
 CellPointer CellAllocationEmitter::allocateZeroedByNumber(const OperationContext& context, Word32 numberOfAllocation)
 {
-    return CellPointer(callStub(context, allocateCell(CellInitialization::HeaderAndWordsAndZeros), { zeroExtended(numberOfAllocation).value() }).first);
+    Integer wideNumber = zeroExtended(numberOfAllocation);
+    return CellPointer(callStub(context, allocateCell(CellInitialization::HeaderAndWordsAndZeros), { wideNumber.value() }).first);
 }
 
 std::pair<CellPointer, Condition> CellAllocationEmitter::allocateInstance(const OperationContext& context, AllocationID id, CellPointer prototype)
@@ -291,9 +293,10 @@ CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, s
     unsigned vectorLength = std::max<unsigned>(length, BASE_CONTIGUOUS_VECTOR_LEN) | 1;
     LBasicBlock slowPath = newBlock();
     Join<CellPointer> join(m_out);
+    Word32 publicLength = word32(static_cast<int32_t>(length));
     auto [array, butterfly] = isInFrame
-        ? allocateArrayInFrame(word32(static_cast<int32_t>(length)), length, slowPath)
-        : allocateArray(context, word32(static_cast<int32_t>(length)), word32(static_cast<int32_t>(vectorLength)), ArrayWithContiguous, slowPath);
+        ? allocateArrayInFrame(publicLength, length, slowPath)
+        : allocateArray(context, publicLength, word32(static_cast<int32_t>(vectorLength)), ArrayWithContiguous, slowPath);
     {
         CodeGenerator::InitializationScope scope(generator());
         for (unsigned i = 0; i < length; ++i)
@@ -311,7 +314,7 @@ CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, s
 void CellAllocationEmitter::copyFromBuffer(Word32 count, Pointer buffer, Pointer butterfly, LBasicBlock copyLoop, LBasicBlock copyElement, LBasicBlock copied)
 {
     CodeGenerator::InitializationScope scope(generator());
-    LValue end = m_out.shl(zeroExtended(count).value(), m_out.constInt32(3));
+    LValue end = m_out.shl(zeroExtended(count).value(), 3);
     ValueFromBlock start = m_out.anchor(m_out.intPtrZero);
     m_out.jump(copyLoop);
 
@@ -341,7 +344,7 @@ CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& co
     join.add(array);
 
     m_out.appendTo(slowPath);
-    Word32 countOrCapacityOfEmptyArray = select(isZero(count), word32(1 << capacityShiftInArrayLiteralCount), count);
+    Word32 countOrCapacityOfEmptyArray = select(isZero(count), 1 << capacityShiftInArrayLiteralCount, count);
     join.add(callOperation<CellPointer>(context, RuntimeOperation::NewArray, { countOrCapacityOfEmptyArray, buffer }, { .isOnRarePath = true }));
     return join.finish();
 }

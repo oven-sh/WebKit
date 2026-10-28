@@ -49,7 +49,7 @@ static SelectionGroup claimRecordedMember(SelectionContext& context, ValueID id)
 {
     const Function& function = context.function();
     const UseLists& useLists = context.analyses().useLists();
-    ValueID closure = sameObjectThroughCasts(function, function.at(id).functionOperand());
+    ValueID closure = sameObjectThroughCasts(function, function.at(id).functionOperand()).valueInFrontOfFacts();
     RELEASE_ASSERT(function.at(closure).capturesOperands().size() <= 1);
 
     if (context.singleUser(closure) == id && useLists.blockOf(closure) == useLists.blockOf(id)) {

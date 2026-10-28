@@ -181,6 +181,7 @@ bool isAlwaysArray(const Type& type)
 void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
 {
     AccessSiteID accessSite = call.accessSite();
+    StringID calleeName = call.calleeName();
     Vector<ValueID, 8> arguments(call.argumentsOperands().subspan(plan.firstForwardedArgument));
 
     if (plan.constructs) {
@@ -196,6 +197,8 @@ void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
     else
         call.setArgumentsOperands(arguments.span());
     call.setAccessSite(accessSite);
+    if (calleeName)
+        call.setCalleeName(calleeName);
     call.type = TypeTable::anything;
 }
 

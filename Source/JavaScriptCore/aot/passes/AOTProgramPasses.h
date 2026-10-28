@@ -153,6 +153,8 @@ void removeEntryParameters(Function&, const BitVector& removedEntryParameters);
 
 void removeUnusedResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
 
+void proveResults(ProgramEditor&, const OptimizationInputs&, const PassRunner&);
+
 // The operations that ResolveCalls looks at.
 inline constexpr OpcodeSet callSiteOpcodes {
     Opcode::Call,

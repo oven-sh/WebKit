@@ -264,6 +264,24 @@ static void findSoleCallSites(FlowScopeIndex& index, const BitVector& functionsE
     }
 }
 
+static void findFunctionsThatFilesOfCyclesMayEnter(FlowScopeIndex& index)
+{
+    const Program& program = index.program();
+    index.functionsThatFilesOfCyclesMayEnter = BitVector(program.functions.size());
+    BitVector& functions = index.functionsThatFilesOfCyclesMayEnter;
+    Vector<uint32_t> worklist;
+    for (size_t module : index.moduleOrder.modulesInCycles) {
+        if (FunctionID body = program.modules[module].body; body && !functions.quickSet(body.index()))
+            worklist.append(body.index());
+    }
+    while (!worklist.isEmpty()) {
+        for (const FlowScopeCall& call : index.calls.callsBy(FunctionID(worklist.takeLast()))) {
+            if (!functions.quickSet(call.callee.index()))
+                worklist.append(call.callee.index());
+        }
+    }
+}
+
 static void collectCalls(FlowScopeIndex& index)
 {
     const FlowOrderInputs& inputs = index.inputs;
@@ -443,6 +461,7 @@ FlowScopeIndex createScopeIndex(const FlowOrderInputs& inputs, const FlowModuleO
     findVariableOwners(index);
     findSoleCallSites(index, functionsEnteredFromOutside);
     collectCalls(index);
+    findFunctionsThatFilesOfCyclesMayEnter(index);
     findEnvironmentOwners(index);
     createOwners(index);
     return index;

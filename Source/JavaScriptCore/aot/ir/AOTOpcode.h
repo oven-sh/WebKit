@@ -102,6 +102,9 @@ constexpr bool isLegalIn(TerminatorKind kind, IRForm form) { return formsOf(kind
 constexpr bool provesForever(Proof proof) { return proof != Proof::None && lastsOf(proof) == ProofLifetime::Forever; }
 constexpr bool provesForStretch(Proof proof) { return lastsOf(proof) == ProofLifetime::Stretch; }
 
+// A fact is made where it begins to hold, and makes no code. Whoever names it stays behind it.
+constexpr bool makesFact(Opcode opcode) { return opcode == Opcode::Entered || opcode == Opcode::Specified; }
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

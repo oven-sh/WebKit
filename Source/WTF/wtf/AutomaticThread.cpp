@@ -182,7 +182,18 @@ void AutomaticThread::join()
         m_isRunningCondition.wait(*m_lock);
 }
 
+#if ENABLE(AOT)
+bool AutomaticThread::tryEnsureUnderlyingThread(const AbstractLocker& locker)
+{
+    if (!m_hasUnderlyingThread)
+        start(locker, FailedCreation::IsReported);
+    return m_hasUnderlyingThread;
+}
+
+void AutomaticThread::start(const AbstractLocker&, FailedCreation failedCreation)
+#else
 void AutomaticThread::start(const AbstractLocker&)
+#endif
 {
     RELEASE_ASSERT(m_isRunning);
     
@@ -313,7 +324,7 @@ void AutomaticThread::start(const AbstractLocker&)
 #if ENABLE(AOT)
         };
 
-    if (Thread::survivesFailedCreation() && isOptional()) {
+    if (Thread::survivesFailedCreation() && (failedCreation == FailedCreation::IsReported || isOptional())) {
         if (RefPtr thread = Thread::tryCreate(name(), WTF::move(entryPoint), m_threadType, m_qos, Thread::defaultSchedulingPolicy, stackSpec))
             thread->detach();
         else

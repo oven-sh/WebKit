@@ -96,7 +96,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, usePrelinkedModuleInfo, true, Normal, "If true, module records the embedder creates from a pre-resolved module graph (PrelinkedModuleGraph) keep their entries in the graph: requested modules are wired by index, import/export resolution, GetImportedModule, InitializeEnvironment and GetModuleNamespace read the graph's tables, and the by-name entry maps are only built on demand. If false such records copy their entries out of the graph and behave like ModuleAnalyzer's."_s) \
     v(Bool, validatePrelinkedModuleInfo, false, Normal, "Cross-check every pre-resolved import/export binding of a PrelinkedModuleGraph against the specification's ResolveExport and crash on a mismatch."_s)
 #define FOR_EACH_JSC_STATIC_CODE_OPTION(v) \
-    v(Bool, disallowNonStaticCode, false, Normal, "Only code whose SourceProvider was made with SourceProvenance::Static runs: anything else throws an EvalError."_s)
+    v(Bool, disallowNonStaticCode, false, Normal, "Only code whose SourceProvider was made with SourceProvenance::Static runs: anything else throws an EvalError."_s) \
+    v(Bool, disallowNonStaticCodeOnlyBesideCompiledCode, false, Normal, "disallowNonStaticCode holds in a VM that runs a program compiled ahead of time and in no other."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)

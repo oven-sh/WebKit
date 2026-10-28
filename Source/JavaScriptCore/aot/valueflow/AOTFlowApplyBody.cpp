@@ -67,6 +67,13 @@ Value makeAssumeType(ValueID operand, ProvenType proven)
     return value;
 }
 
+Value makeAssumeType(ValueID operand, ValueID fact, ProvenInEveryVersion proven)
+{
+    Value value = makeAssumeType(operand, proven);
+    value.setFactOperand(fact);
+    return value;
+}
+
 Value makeValidateType(ValueID operand, TypeID validatedType)
 {
     Value value = IRBuilder::make(Opcode::ValidateType, { operand });
@@ -202,6 +209,58 @@ static void insertBehindDefinitions(const FlowCastInsertion& insertion, const Ve
         ValueID inserted = insertion.builder.insertBefore(redirection.point, makeValue(*redirection.entry));
         for (const Use& use : redirectedUses.subspan(redirection.firstUse, redirection.numberOfUses))
             replaceUse(function, use, inserted);
+    }
+}
+
+bool leavesOutOnlyInstancesOfBuiltinClasses(const Type& expected, const Type& held, TypeArena& types)
+{
+    if (held.anyObject || held.anyFunction)
+        return false;
+    Type leftOut = held.withOnlyObjects().without(expected, types);
+    return leftOut.hasOnlyClassObjects() && !leftOut.classes.isEmpty();
+}
+
+static void expectWhatArrives(const FlowCastInsertion& insertion, std::span<const FlowValueProof> proofs)
+{
+    const Program& program = insertion.body.program;
+    Function& function = insertion.body.function;
+    TypeArena& types = insertion.body.types;
+    const UseLists& useLists = insertion.analyses.useLists();
+    Vector<ValueID, 8> worklist;
+    for (const FlowValueProof& proof : proofs) {
+        const Type& arriving = types.at(proof.type);
+        if (!arriving.hasObjects() || arriving.anyObject || arriving.anyFunction)
+            continue;
+        if (TypeID expected = function.at(proof.value).expected().predicted(); expected && leavesOutOnlyInstancesOfBuiltinClasses(types.at(expected), arriving, types))
+            worklist.append(proof.value);
+        for (const Use& use : useLists.usesOf(proof.value)) {
+            if (use.kind != Use::Kind::Operand || function.at(use.user).opcode != Opcode::Upcast)
+                continue;
+            TypeID guess = function.at(use.user).expected().predicted();
+            if (!guess || guess == function.at(proof.value).expected().predicted())
+                continue;
+            const Type& guessed = types.at(guess);
+            if (guessed.layouts && !(arriving.primitives & ~guessed.primitives) && !arriving.isSubsetOf(guessed, program))
+                worklist.append(use.user);
+        }
+    }
+
+    BitVector isReached;
+    auto reach = [&](ValueID id) {
+        if (function.at(id).expected().predicted() && !isReached.set(id.index()))
+            worklist.append(id);
+    };
+    for (ValueID id : worklist)
+        isReached.set(id.index());
+    while (!worklist.isEmpty()) {
+        ValueID id = worklist.takeLast();
+        function.edit(id).setExpected({ });
+        for (const Use& use : useLists.usesOf(id)) {
+            if (use.isEdgeUse())
+                reach(function.at(targetOf(function, use.edge()).block).parameters[use.operandIndex]);
+            else if (use.kind == Use::Kind::Operand && isCast(function.at(use.user).opcode))
+                reach(use.user);
+        }
     }
 }
 
@@ -825,18 +884,24 @@ static uint64_t countChecks(const Function& function)
     return numberOfChecks;
 }
 
-// The front end writes the read of a locked member as a constant.
-static void initializeMembersOfListedHolders(const BuiltinTable& builtins, const FlowResults& results, const Function& function, FunctionAnalyses& analyses, IRBuilder& builder)
+// The front end writes the read of a locked member as a constant. Where it names the object itself, the program reads nothing. From here on one constant is like the other.
+static void initializeMembersOfListedHolders(const BuiltinTable& builtins, const FlowResults& results, Function& function, FunctionAnalyses& analyses, IRBuilder& builder)
 {
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& constant = function.values[index];
-        if (constant.opcode != Opcode::Builtin || !firstReadChangesListedKeys(builtins, results, constant.builtin()))
+        if (constant.opcode != Opcode::Builtin)
+            continue;
+        if (constant.isNotReadFromHolder()) {
+            function.edit(ValueID(index), ValueEdit::Definition).setIsNotReadFromHolder(false);
+            continue;
+        }
+        if (!firstReadChangesListedKeys(builtins, results, constant.builtin()))
             continue;
         const UseLists& useLists = analyses.useLists();
         if (useLists.locationOf(ValueID(index)).placement != ValuePlacement::InBlock)
             continue;
         builder.setOrigin(constant.origin());
-        builder.insertBefore(useLists.pointAfter(ValueID(index)), *tryMakeInitializeBuiltin(builtins, results, constant));
+        builder.insertBefore(useLists.pointAfter(ValueID(index)), *tryMakeInitializeBuiltin(builtins, results, constant.builtin()));
     }
 }
 
@@ -1085,6 +1150,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
     defineListedMembers(body.function, builder, listedMembers.span());
 
     FlowCastInsertion insertion { body, analyses, builder };
+    expectWhatArrives(insertion, update.proofs.span());
     insertBehindDefinitions(insertion, update.proofs, &FlowValueProof::value, [](const FlowValueProof& proof) {
         return proof.type == TypeTable::never;
     }, [&](const FlowValueProof& proof) {

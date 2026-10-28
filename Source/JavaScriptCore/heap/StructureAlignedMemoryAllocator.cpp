@@ -207,6 +207,33 @@ public:
         return !reserve.isEmpty();
     }
 
+    bool tryKeepReleasedReserveAgain()
+    {
+        {
+            Locker locker(m_reserveLock);
+            if (!m_hasReleasedReserve)
+                return false;
+        }
+        Vector<void*, reserveBlockCount> reserve;
+        while (reserve.size() < reserveBlockCount) {
+            void* block = tryMallocStructureBlockWithoutReserve();
+            if (!block)
+                break;
+            reserve.append(block);
+        }
+        if (reserve.size() == reserveBlockCount) {
+            Locker locker(m_reserveLock);
+            if (m_hasReleasedReserve) {
+                m_reserve = WTF::move(reserve);
+                m_hasReleasedReserve = false;
+                return true;
+            }
+        }
+        for (void* block : reserve)
+            freeStructureBlock(block);
+        return false;
+    }
+
     void didThrowOutOfMemoryError()
     {
         Locker locker(m_reserveLock);
@@ -361,6 +388,11 @@ bool StructureAlignedMemoryAllocator::releaseReserve()
     return s_structureMemoryManager->releaseReserve();
 }
 
+bool StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain()
+{
+    return s_structureMemoryManager->tryKeepReleasedReserveAgain();
+}
+
 void StructureAlignedMemoryAllocator::didThrowOutOfMemoryError()
 {
     s_structureMemoryManager->didThrowOutOfMemoryError();
@@ -419,6 +451,11 @@ size_t StructureMemoryManager::computePreferredStructureHeapReservationSize()
 #else // not CPU(ADDRESS64)
 
 bool StructureAlignedMemoryAllocator::releaseReserve()
+{
+    return false;
+}
+
+bool StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain()
 {
     return false;
 }

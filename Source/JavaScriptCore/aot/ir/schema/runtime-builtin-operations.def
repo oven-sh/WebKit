@@ -20,6 +20,7 @@ runtime ByteLengthOfAnyValue : EncodedJSValue (EncodedJSValue value, EncodedJSVa
 runtime ArrayFromTypedArray : JSCell* (JSCell* view, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime ArrayIndexOfDouble : size_t (JSCell* array, double searched) ; reads(all)
 runtime ArrayIndexOfInt32 : size_t (JSCell* array, EncodedJSValue searched) ; reads(all)
+runtime ArrayIndexOfString : size_t (JSCell* array, JSCell* searched, uint64_t start) ; RuntimeCreatesString
 runtime NewArrayWithIndexingType : JSCell* (uint32_t count, const EncodedJSValue* values, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayFromDoubles : JSCell* (uint32_t countAndNumberMask, double, double, double, double) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayIterator : JSCell* (JSCell* array, uint32_t kind) ; RuntimeAllocates
@@ -83,6 +84,7 @@ runtime CompareStringImpls : int64_t (void* first, void* second) ; none ; leaf p
 runtime StringImplEqualsImageString : size_t (void* impl, uint32_t string) ; none ; leaf preserveMost
 runtime CharactersEqualImageString : size_t (const Latin1Character* characters, uint32_t length, uint32_t string) ; none ; leaf preserveMost
 runtime HashStringImpl : size_t (void* impl) ; none ; leaf preserveMost
+runtime FindKeptStringOfTwoCharacters : size_t (void* vm, uint32_t units) ; none ; leaf preserveMost
 
 runtime FindLongSeparators8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t* positions, uint32_t wanted) ; reads(all) writes(RuntimeState)
 runtime FindLongSeparators16 : size_t (const char16_t* characters, uint32_t length, uint32_t text, uint32_t* positions, uint32_t wanted) ; reads(all) writes(RuntimeState)

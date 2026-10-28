@@ -1026,7 +1026,7 @@ std::optional<ObjectID> FramePlanner::findHolder(const Use& use) const
             return std::nullopt;
         if (user.opcode == Opcode::PutEnvironmentField && mayLeakStoredValue(m_flow, FieldReference { user.layout(), user.field() }))
             return std::nullopt;
-        std::optional<ObjectID> holder = m_escape.objectDefinedBy(m_analyses.sameObjectThroughCasts(user.operand(summary.retainingOperand)));
+        std::optional<ObjectID> holder = m_escape.objectDefinedBy(m_analyses.sameObjectThroughCasts(user.operand(summary.retainingOperand)).valueInFrontOfFacts());
         std::optional<CellPlace> place = placeStoredTo(user, use.operandIndex);
         if (!holder || !place || !cellHasPlace(m_program, definitionOf(*holder), *place))
             return std::nullopt;

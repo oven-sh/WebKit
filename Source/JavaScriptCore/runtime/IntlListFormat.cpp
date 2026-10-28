@@ -27,6 +27,7 @@
 #include "config.h"
 #include "IntlListFormat.h"
 
+#include "AOTRemovableFeature.h"
 #include "IntlObjectInlines.h"
 #include "IntlPartObject.h"
 #include "IteratorOperations.h"
@@ -47,6 +48,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 const ClassInfo IntlListFormat::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlListFormat) };
+
+NEVER_INLINE void IntlListFormat::destroy(JSCell* cell)
+{
+    JSC_REMOVABLE_DEFINITION(IntlOther, &IntlListFormat::destroy);
+    static_cast<IntlListFormat*>(cell)->IntlListFormat::~IntlListFormat();
+}
 
 // We do not use ICUDeleter<ulistfmt_close> because we do not want to include ulistformatter.h in IntlListFormat.h.
 // ulistformatter.h needs to be included with #undef U_HIDE_DRAFT_API, and we would like to minimize this effect in IntlListFormat.cpp.

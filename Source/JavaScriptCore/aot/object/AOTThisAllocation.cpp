@@ -15,6 +15,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramStrings.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTState.h"
 #include "FunctionRareData.h"
 #include "InternalFunction.h"
@@ -181,7 +182,7 @@ JSObject* ClassTable::prototypeForInstancesOf(VM& vm, JSObject* compiledCallee)
 void ClassTable::rememberPlaceOfPrototypeProperty(VM& vm, Closure* function, JSObject* prototype)
 {
     Structure* structure = function->structure();
-    if (structure->isDictionary() || vm.aotState().validatesRuntime)
+    if (!flattenOnce(vm, function) || vm.aotState().validatesRuntime)
         return;
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, vm.propertyNames->prototype, attributes);

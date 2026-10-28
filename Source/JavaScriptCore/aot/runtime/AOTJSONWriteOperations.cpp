@@ -109,10 +109,10 @@ static ALWAYS_INLINE size_t roomForQuotedString(size_t maxLength)
 
 static ALWAYS_INLINE size_t roomForEscapedString(size_t length)
 {
-    return roomForQuotedString(length * maxEscapedCharacterLength);
+    return maxLengthOfEscapedJSONString(length) + maxStringBuilderReservation;
 }
 
-static NEVER_INLINE Latin1Character* appendQuotedAndEscaped(Latin1Character* cursor, std::span<const Latin1Character> characters)
+NEVER_INLINE Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* cursor, std::span<const Latin1Character> characters)
 {
     *cursor++ = '"';
     std::span<Latin1Character> output { cursor, characters.size() * maxEscapedCharacterLength };
@@ -126,15 +126,24 @@ static NEVER_INLINE Latin1Character* tryAppendEscapedAtCursor(const StringBuilde
 {
     if (!builder.hasRoomAt(cursor, roomForEscapedString(characters.size())))
         return nullptr;
-    return appendQuotedAndEscaped(cursor, characters);
+    return appendQuotedAndEscapedJSONString(cursor, characters);
 }
 
 static NEVER_INLINE Latin1Character* appendQuotedWithEscapes(JSGlobalObject* globalObject, StringBuilderStorage& builder, std::span<const Latin1Character> characters)
 {
-    Latin1Character* cursor = builder.reserve(globalObject, roomForEscapedString(characters.size()));
+    size_t minLength = characters.size() + numberOfQuotes;
+    Latin1Character* cursor = builder.reserve(globalObject, { .length = minLength, .maxLengthOfRest = roomForEscapedString(characters.size()) - minLength });
     if (!cursor)
         return nullptr;
-    return appendQuotedAndEscaped(cursor, characters);
+    return appendQuotedAndEscapedJSONString(cursor, characters);
+}
+
+Latin1Character* appendEscapedJSONString(JSGlobalObject* globalObject, StringBuilderStorage& builder, Latin1Character* cursor, std::span<const Latin1Character> characters)
+{
+    if (Latin1Character* end = tryAppendEscapedAtCursor(builder, cursor, characters))
+        return end;
+    builder.commit(cursor);
+    return appendQuotedWithEscapes(globalObject, builder, characters);
 }
 
 static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObject, StringBuilderStorage& builder, std::span<const char16_t> characters)
@@ -157,7 +166,7 @@ static NEVER_INLINE Latin1Character* appendQuoted16Bit(JSGlobalObject* globalObj
 
     builder.append(globalObject, std::span<const char16_t> { quoted.first(length) });
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, builder.reserve(globalObject, maxStringBuilderReservation));
+    RELEASE_AND_RETURN(scope, builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = maxStringBuilderReservation }));
 }
 
 // A failed attempt may have written past the cursor. Those bytes are not text until a cursor past them is committed.
@@ -192,15 +201,12 @@ static Latin1Character* appendQuotedJSONString(JSGlobalObject* globalObject, Str
     auto characters = string.span8();
     if (!builder.hasRoomAt(cursor, roomForQuotedString(characters.size()))) [[unlikely]] {
         builder.commit(cursor);
-        cursor = builder.reserve(globalObject, roomForQuotedString(characters.size()));
+        cursor = builder.reserve(globalObject, { .length = characters.size() + numberOfQuotes, .maxLengthOfRest = maxStringBuilderReservation, .roomForMore = roomBehindJSONText(characters.size()) });
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     if (Latin1Character* end = tryAppendQuotedWithoutEscapes(builder, cursor, string)) [[likely]]
         return end;
-    if (Latin1Character* end = tryAppendEscapedAtCursor(builder, cursor, characters))
-        return end;
-    builder.commit(cursor);
-    RELEASE_AND_RETURN(scope, appendQuotedWithEscapes(globalObject, builder, characters));
+    RELEASE_AND_RETURN(scope, appendEscapedJSONString(globalObject, builder, cursor, characters));
 }
 
 static ALWAYS_INLINE Latin1Character* appendPrimitive(Latin1Character* cursor, JSValue value)
@@ -244,7 +250,7 @@ static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBui
     }
 
     builder.commit(cursor);
-    cursor = builder.reserve(globalObject, jsonNumberBytes + maxStringBuilderReservation);
+    cursor = builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = jsonNumberBytes + maxStringBuilderReservation });
     RETURN_IF_EXCEPTION(scope, { });
 
     if (value.isUndefined() || (cell && cell->isSymbol())) {
@@ -342,7 +348,7 @@ static NEVER_INLINE JSString* quoteStringWithEscapes(VM& vm, std::span<const Lat
     Vector<Latin1Character, 1024> text;
     if (!text.tryGrow(roomForEscapedString(characters.size()))) [[unlikely]]
         return nullptr;
-    Latin1Character* end = appendQuotedAndEscaped(text.mutableSpan().data(), characters);
+    Latin1Character* end = appendQuotedAndEscapedJSONString(text.mutableSpan().data(), characters);
     return jsNontrivialString(vm, String { std::span<const Latin1Character> { text.span().data(), end } });
 }
 

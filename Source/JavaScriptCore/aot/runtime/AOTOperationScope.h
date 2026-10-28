@@ -14,6 +14,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
 #include "DeferGC.h"
+#include "DeferTermination.h"
 #include "FrameTracers.h"
 #include "FreeList.h"
 #include "JSCInlines.h"
@@ -156,6 +157,7 @@ ALWAYS_INLINE void leaveCellsForRopes(Instance* instance)
     if (!allocator || !std::bit_cast<FreeList*>(static_cast<char*>(allocator) + LocalAllocator::offsetOfFreeList())->allocationWillFail()) [[likely]]
         return;
     VM& vm = *instance->vm;
+    DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSString* character = vm.smallStrings.singleCharacterString('a');
     jsString(instance->globalObject, character, character);

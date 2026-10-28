@@ -48,22 +48,6 @@ public:
     void clearAcceptedStructures() const { m_acceptedStructureIDs.fill(0); }
     const LayoutData& layout() const { return m_layout; }
 
-private:
-    friend class ObjectBuilder;
-    friend class Interpreter::ObjectLiteralPlans;
-
-    struct PlannedField {
-        bool isExtraProperty() const { return !field; }
-
-        const FieldData* field { nullptr };
-        bool acceptsEveryInt32 { false };
-        bool acceptsEveryNumber { false };
-        bool acceptsBooleans { false };
-        unsigned extraPropertyIndex { 0 };
-    };
-
-    static constexpr size_t maxFastPathWords = 32;
-
     enum AcceptedValues : uint8_t {
         AcceptsInt32 = 1 << 0,
         AcceptsDouble = 1 << 1,
@@ -80,6 +64,23 @@ private:
         SlotRepresentation representation;
         uint8_t acceptedValues;
     };
+    std::span<const FastField> fastFields() const LIFETIME_BOUND { return m_fastFields.span(); }
+
+private:
+    friend class ObjectBuilder;
+    friend class Interpreter::ObjectLiteralPlans;
+
+    struct PlannedField {
+        bool isExtraProperty() const { return !field; }
+
+        const FieldData* field { nullptr };
+        bool acceptsEveryInt32 { false };
+        bool acceptsEveryNumber { false };
+        bool acceptsBooleans { false };
+        unsigned extraPropertyIndex { 0 };
+    };
+
+    static constexpr size_t maxFastPathWords = 32;
 
     struct InitialWord {
         uint32_t offset;

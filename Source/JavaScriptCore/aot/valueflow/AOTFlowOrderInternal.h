@@ -102,6 +102,8 @@ struct FlowScopeIndex {
     BitVector syntheticVariables;
     BitVector functionsEnteredWithoutMention;
     BitVector modulesOfFunctionsEnteredWithoutMention;
+    // A file of a cycle runs before files that another file of the cycle asks for, and may call their functions through that file.
+    BitVector functionsThatFilesOfCyclesMayEnter;
     Vector<FunctionID> locationOwners;
     Vector<FunctionID> environmentOwners;
     FlowScopeCalls calls;

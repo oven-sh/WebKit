@@ -26,14 +26,16 @@ function f0 name="checked-in-every-iteration" parameters=[{type=undefined|string
 # CHECK: LoopHint
 # CHECK-NOT: FlattenString
 # CHECK: = RequireObjectCoercible v0
-# CHECK-NEXT: : number = StringRangeCodeUnitOrNaN [[flat0]], -, -,
+# CHECK-NEXT: [[filled1]]: fact = Specified
+# CHECK-NEXT: [[flatThere0]]: flatstring = AssumeType [[flat0]], [[filled1]] provenType=flatstring
+# CHECK-NEXT: : number = StringRangeCodeUnitOrNaN [[flatThere0]], -, -,
 # CHECK: [[stringArm0]]([[string0]]: string):
 # CHECK-NEXT: [[flattened0]]: flatstring = FlattenString [[string0]]
 # CHECK-NEXT: Jump -> next [[join0]]([[flattened0]])
 # CHECK: [[otherArm0]]({{*}}: undefined) frequency=Unlikely:
-# CHECK-NEXT: [[nothing0]]: flatstring = Unspecified valueType=flatstring
+# CHECK-NEXT: [[nothing0]]: unspecified|flatstring = Unspecified valueType=flatstring
 # CHECK-NEXT: Jump -> next [[join0]]([[nothing0]])
-# CHECK: [[join0]]([[flat0]]: flatstring):
+# CHECK: [[join0]]([[flat0]]: unspecified|flatstring):
 # CHECK-NEXT: Jump -> next
 }
 
@@ -60,9 +62,10 @@ function f1 name="tested-in-every-iteration" parameters=[{type=undefined|string}
 # CHECK-NOT: LoopHint
 # CHECK: = TypeTest v0 testedType=string
 # CHECK: LoopHint
-# CHECK: : number = StringRangeCodeUnitOrNaN [[flat1]], -, -,
+# CHECK: [[flatThere1]]: flatstring = AssumeType [[flat1]], [[filled2]] provenType=flatstring
+# CHECK-NEXT: : number = StringRangeCodeUnitOrNaN [[flatThere1]], -, -,
 # CHECK-COUNT-1: = FlattenString
-# CHECK: ([[flat1]]: flatstring):
+# CHECK: ([[flat1]]: unspecified|flatstring):
 }
 
 function f2 name="value-varies" parameters=[{type=undefined|string}, {type=undefined|string}, {type=number}] results=[{type=anything}] {

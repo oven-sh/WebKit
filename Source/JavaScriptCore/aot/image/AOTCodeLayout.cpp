@@ -301,7 +301,29 @@ static std::array<Vector<size_t>, 2> collectSizesAndAlignedOffsets(const LinkedF
     return result;
 }
 
-static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<const size_t> alignedOffsets, const BitVector& fallsIntoNext, size_t sharedCodeSize, unsigned codeGranuleShift, BuildContext& context)
+namespace {
+
+struct SmallLoops {
+    Vector<RangeInUnit> ranges;
+    Vector<uint32_t> firstRangeByBody;
+};
+
+} // anonymous namespace
+
+static SmallLoops collectSmallLoops(const LinkedFunctions& functions)
+{
+    SmallLoops loops;
+    loops.firstRangeByBody.reserveInitialCapacity(functions.size() + 1);
+    for (size_t position = 0; position < functions.size(); ++position) {
+        loops.firstRangeByBody.append(safeCast<uint32_t>(loops.ranges.size()));
+        for (const CodeRange& loop : functions[position].body.smallLoops)
+            loops.ranges.append({ loop.begin, loop.end });
+    }
+    loops.firstRangeByBody.append(safeCast<uint32_t>(loops.ranges.size()));
+    return loops;
+}
+
+static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<const size_t> alignedOffsets, const SmallLoops& smallLoops, const BitVector& fallsIntoNext, size_t sharedCodeSize, unsigned codeGranuleShift, BuildContext& context)
 {
     static_assert(!((1 << minCodeGranuleShift) % imageFunctionAlignment) && !(sizeof(uint32_t) % imageFunctionAlignment));
     const size_t numberOfBodies = unitSizes.size();
@@ -321,6 +343,7 @@ static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<co
     size_t codeSizeBound = sharedCodeSize + imageStubsAlignment + granuleSize + shiftOfFirstBody;
     for (size_t size : unitSizes)
         codeSizeBound += WTF::roundUpToMultipleOf<imageFunctionAlignment>(size) + imageFunctionAlignment;
+    codeSizeBound += smallLoops.ranges.size() * sizeOfInstructionCacheLine;
     bool oneCopyReachesAllCode = static_cast<int64_t>(codeSizeBound) <= reach;
 
     const CopyableUnit sharedCode { sharedCodeSize, imageStubsAlignment };
@@ -340,6 +363,9 @@ static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<co
         .start = oneCopyReachesAllCode && sharedCodeSize ? 0 : granuleSize,
         .shiftOfFirstUnit = shiftOfFirstBody,
         .policy = oneCopyReachesAllCode ? CopyPolicy::BeforeUser : CopyPolicy::AfterUsers,
+        .rangesKeptInLine = smallLoops.ranges.span(),
+        .firstRangeByUnit = smallLoops.firstRangeByBody.span(),
+        .lineSize = sizeOfInstructionCacheLine,
     });
     // The run time enters stubs of every image, even of one without bodies.
     if (placement.copies.isEmpty()) {
@@ -353,7 +379,7 @@ static UnitPlacement placeBodies(std::span<const size_t> unitSizes, std::span<co
 unsigned countSharedCodeCopies(const LinkedFunctions& functions, BuildContext& context)
 {
     auto [sizes, alignedOffsets] = collectSizesAndAlignedOffsets(functions, context);
-    return placeBodies(sizes.span(), alignedOffsets.span(), BitVector(functions.size()), 0, maxCodeGranuleShift, context).copies.size();
+    return placeBodies(sizes.span(), alignedOffsets.span(), collectSmallLoops(functions), BitVector(functions.size()), 0, maxCodeGranuleShift, context).copies.size();
 }
 
 // Nothing for a relocation that names nothing, which the linker reports.
@@ -540,6 +566,7 @@ CodeLayout layOutCode(const CodeLayoutInputs& inputs, BuildContext& context)
     const uint64_t codeSizeLimit = std::min<uint64_t>(context.limit(LimitID::CodeBytes), std::numeric_limits<uint32_t>::max());
     const int64_t functionReach = callReach(LimitID::FunctionCallReach, context);
     const auto [bodySizes, alignedOffsets] = collectSizesAndAlignedOffsets(inputs.functions, context);
+    const SmallLoops smallLoops = collectSmallLoops(inputs.functions);
 
     CodeLayout layout;
     layout.codeGranuleShift = inputs.codeGranuleShift;
@@ -556,7 +583,7 @@ CodeLayout layOutCode(const CodeLayoutInputs& inputs, BuildContext& context)
             unitSizes[position] = size + outlinedCode.ownBodiesSize(position);
         });
         size_t sharedCodeSize = inputs.sharedCode.veneersOffset + layout.sharedCodeVeneers.size() * inputs.templates.sizeOfVeneer();
-        placement = placeBodies(unitSizes.span(), alignedOffsets.span(), layout.fallsIntoNext, sharedCodeSize, inputs.codeGranuleShift, context);
+        placement = placeBodies(unitSizes.span(), alignedOffsets.span(), smallLoops, layout.fallsIntoNext, sharedCodeSize, inputs.codeGranuleShift, context);
         layOutWhatFollowsFunctions(inputs, layout, placement.end, codeSizeLimit);
         if (layout.codeSize > codeSizeLimit) {
             context.reportLimitExceeded(LimitID::CodeBytes, layout.codeSize);

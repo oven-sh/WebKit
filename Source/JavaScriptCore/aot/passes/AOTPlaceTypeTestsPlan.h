@@ -18,6 +18,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+class FunctionAnalyses;
+class Heat;
+
 // The operations that the rules report as sites: accesses by name and by key, element accesses whose position is not tested yet, calls and what they rest on, operators, tests of a type.
 inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesWithForm | namedAccesses | OpcodeSet {
     Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas,
@@ -28,6 +31,8 @@ inline constexpr OpcodeSet testSiteOpcodes = builtinUseOpcodes | Value::opcodesW
 
 // PlaceTypeTests has nothing to do in a function without any of these. The two others are the question for an element, whose arm for a hole it marks, and the test of a slot, behind which it reads an option that was left out.
 inline constexpr OpcodeSet opcodesPlaceTypeTestsLooksFor = testSiteOpcodes | OpcodeSet { Opcode::HasArrayElement, Opcode::IsSlotFilled };
+
+bool mayPlaceTestsOfAccessesByName(const Heat&, FunctionAnalyses&, BlockID);
 
 enum class PlannedTestPosition : uint8_t { BeforeUse, OnEdge };
 

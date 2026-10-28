@@ -124,7 +124,11 @@ public:
     }
 
     CompactEffects compress(const Effects&);
-    CompactEffects compress(const OperandMemory& memory) { return CompactEffects(intern(memory.reads), intern(memory.writes)); }
+    CompactEffects compress(const OperandMemory& memory)
+    {
+        ID reads = intern(memory.reads);
+        return CompactEffects(reads, intern(memory.writes));
+    }
     Effects expand(CompactEffects) const;
     OperandMemory expandMemory(CompactEffects effects) const { return { at(effects.reads()), at(effects.writes()) }; }
     void mergeInto(Effects&, CompactEffects) const;

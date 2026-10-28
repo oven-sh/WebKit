@@ -1,0 +1,400 @@
+# declare const input: any;
+# let limit = input | 0, a = 1, b = 2, c = 3, d = 4, e = 5, f = 6;
+# function checked(text: string): string {
+#   if (limit > 1000000) {
+#     a = ((b + 3) ^ c) | 0; b = ((c + 5) ^ d) | 0; c = ((d + 7) ^ e) | 0; d = ((e + 9) ^ f) | 0; e = ((f + 11) ^ a) | 0; f = ((a + 13) ^ b) | 0;
+#     a = ((c + 15) ^ e) | 0; b = ((d + 17) ^ f) | 0; c = ((e + 19) ^ a) | 0; d = ((f + 21) ^ b) | 0; e = ((a + 23) ^ c) | 0; f = ((b + 25) ^ d) | 0;
+#   }
+#   return text;
+# }
+# function checkFourTimes(text: string): string {
+#   text = checked(text);
+#   text = checked(text);
+#   text = checked(text);
+#   text = checked(text);
+#   return text;
+# }
+# function repeat(turns: number, text: string): number {
+#   let sum = 0;
+#   for (let turn = 0; turn < turns; ++turn) sum = (sum + checkFourTimes(text).length) | 0;
+#   return sum;
+# }
+# (globalThis as any).answer = repeat(input | 0, String(input)) + a + b + c + d + e + f;
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f2
+# REQUIRES: unsanitized-code
+# RUN(HEAT): pipeline EstimateHeat
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=108 kind=Parameter function=f1
+typesite w1 module=m0 position=91 kind=Result
+typesite w2 module=m0 position=494 kind=Parameter function=f2
+typesite w3 module=m0 position=470 kind=Result
+typesite w4 module=m0 position=30 kind=Variable
+typesite w5 module=m0 position=49 kind=Variable
+typesite w6 module=m0 position=56 kind=Variable
+typesite w7 module=m0 position=63 kind=Variable
+typesite w8 module=m0 position=70 kind=Variable
+typesite w9 module=m0 position=77 kind=Variable
+typesite w10 module=m0 position=84 kind=Variable
+typesite w11 module=m0 position=647 kind=Parameter function=f3
+typesite w12 module=m0 position=662 kind=Parameter function=f3
+typesite w13 module=m0 position=631 kind=Result
+typesite w14 module=m0 position=854 kind=CallResult
+typesite w15 module=m0 position=836 kind=CallResult
+typesite w16 module=m0 position=527 kind=CallResult
+typesite w17 module=m0 position=551 kind=CallResult
+typesite w18 module=m0 position=575 kind=CallResult
+typesite w19 module=m0 position=599 kind=CallResult
+typesite w20 module=m0 position=692 kind=Variable
+typesite w21 module=m0 position=712 kind=Variable
+typesite w22 module=m0 position=757 kind=CallResult
+variable g0 name="checked" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="checkFourTimes" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="limit" module=m0 declared={type=number|absent site=w4} flags=[IsImmutable]
+variable g3 name="a" module=m0 declared={type=number|absent site=w5}
+variable g4 name="b" module=m0 declared={type=number|absent site=w6}
+variable g5 name="c" module=m0 declared={type=number|absent site=w7}
+variable g6 name="d" module=m0 declared={type=number|absent site=w8}
+variable g7 name="e" module=m0 declared={type=number|absent site=w9}
+variable g8 name="f" module=m0 declared={type=number|absent site=w10}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    v5 = Integer
+    v6 = BitOr v4, v5
+    v7 = Convert v6 declared={type=number site=w4}
+    PutModuleVariable v7 variable=g2
+    v9 = Integer integer=1
+    v10 = Convert v9 declared={type=number site=w5}
+    PutModuleVariable v10 variable=g3
+    v12 = Integer integer=2
+    v13 = Convert v12 declared={type=number site=w6}
+    PutModuleVariable v13 variable=g4
+    v15 = Integer integer=3
+    v16 = Convert v15 declared={type=number site=w7}
+    PutModuleVariable v16 variable=g5
+    v18 = Integer integer=4
+    v19 = Convert v18 declared={type=number site=w8}
+    PutModuleVariable v19 variable=g6
+    v21 = Integer integer=5
+    v22 = Convert v21 declared={type=number site=w9}
+    PutModuleVariable v22 variable=g7
+    v24 = Integer integer=6
+    v25 = Convert v24 declared={type=number site=w10}
+    PutModuleVariable v25 variable=g8
+    v27 = Builtin builtin=GlobalThis
+    v28 = PropGet v27 key="globalThis" [isFreeName]
+    v29 = Convert v28 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v30 = Convert v29 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="input" [isFreeName]
+    v33 = Convert v32 declared={type=i32 flags=[IsExpected]}
+    v34 = Integer
+    v35 = BitOr v33, v34
+    v36 = Builtin builtin=String
+    v37 = Builtin builtin=GlobalThis
+    v38 = PropGet v37 key="input" [isFreeName]
+    v39 = Call v36, -, v38 calleeName="String"
+    v40 = Convert v39 declared={type=undefined|null|string site=w14 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v41 = Call v1, -, v35, v40 calleeName="repeat"
+    v42 = Convert v41 declared={type=number site=w15}
+    v43 = GetModuleVariable variable=g3
+    v44 = CheckInitialized v43 name="a"
+    v45 = Convert v44 declared={type=i32 flags=[IsExpected]}
+    v46 = Add v42, v45
+    v47 = GetModuleVariable variable=g4
+    v48 = CheckInitialized v47 name="b"
+    v49 = Convert v48 declared={type=i32 flags=[IsExpected]}
+    v50 = Add v46, v49
+    v51 = GetModuleVariable variable=g5
+    v52 = CheckInitialized v51 name="c"
+    v53 = Convert v52 declared={type=i32 flags=[IsExpected]}
+    v54 = Add v50, v53
+    v55 = GetModuleVariable variable=g6
+    v56 = CheckInitialized v55 name="d"
+    v57 = Convert v56 declared={type=i32 flags=[IsExpected]}
+    v58 = Add v54, v57
+    v59 = GetModuleVariable variable=g7
+    v60 = CheckInitialized v59 name="e"
+    v61 = Convert v60 declared={type=i32 flags=[IsExpected]}
+    v62 = Add v58, v61
+    v63 = GetModuleVariable variable=g8
+    v64 = CheckInitialized v63 name="f"
+    v65 = Convert v64 declared={type=i32 flags=[IsExpected]}
+    v66 = Add v62, v65
+    PropSet v30, v66 key="answer"
+    v68 = Undefined
+    Return v68
+}
+function f1 name="checked" module=m0 position=91 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="limit"
+    v3 = Integer integer=1000000
+    v4 = Greater v2, v3
+    Branch v4 -> taken b2(), notTaken b3()
+  b2():
+    v5 = GetModuleVariable variable=g3
+    v6 = CheckInitialized v5 name="a"
+    v7 = GetModuleVariable variable=g4
+    v8 = CheckInitialized v7 name="b"
+    v9 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v10 = Integer integer=3
+    v11 = Add v9, v10
+    v12 = GetModuleVariable variable=g5
+    v13 = CheckInitialized v12 name="c"
+    v14 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    v15 = BitXor v11, v14
+    v16 = Integer
+    v17 = BitOr v15, v16
+    v18 = Convert v17 declared={type=number site=w5}
+    PutModuleVariable v18 variable=g3
+    v20 = GetModuleVariable variable=g4
+    v21 = CheckInitialized v20 name="b"
+    v22 = GetModuleVariable variable=g5
+    v23 = CheckInitialized v22 name="c"
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]}
+    v25 = Integer integer=5
+    v26 = Add v24, v25
+    v27 = GetModuleVariable variable=g6
+    v28 = CheckInitialized v27 name="d"
+    v29 = Convert v28 declared={type=i32 flags=[IsExpected]}
+    v30 = BitXor v26, v29
+    v31 = Integer
+    v32 = BitOr v30, v31
+    v33 = Convert v32 declared={type=number site=w6}
+    PutModuleVariable v33 variable=g4
+    v35 = GetModuleVariable variable=g5
+    v36 = CheckInitialized v35 name="c"
+    v37 = GetModuleVariable variable=g6
+    v38 = CheckInitialized v37 name="d"
+    v39 = Convert v38 declared={type=i32 flags=[IsExpected]}
+    v40 = Integer integer=7
+    v41 = Add v39, v40
+    v42 = GetModuleVariable variable=g7
+    v43 = CheckInitialized v42 name="e"
+    v44 = Convert v43 declared={type=i32 flags=[IsExpected]}
+    v45 = BitXor v41, v44
+    v46 = Integer
+    v47 = BitOr v45, v46
+    v48 = Convert v47 declared={type=number site=w7}
+    PutModuleVariable v48 variable=g5
+    v50 = GetModuleVariable variable=g6
+    v51 = CheckInitialized v50 name="d"
+    v52 = GetModuleVariable variable=g7
+    v53 = CheckInitialized v52 name="e"
+    v54 = Convert v53 declared={type=i32 flags=[IsExpected]}
+    v55 = Integer integer=9
+    v56 = Add v54, v55
+    v57 = GetModuleVariable variable=g8
+    v58 = CheckInitialized v57 name="f"
+    v59 = Convert v58 declared={type=i32 flags=[IsExpected]}
+    v60 = BitXor v56, v59
+    v61 = Integer
+    v62 = BitOr v60, v61
+    v63 = Convert v62 declared={type=number site=w8}
+    PutModuleVariable v63 variable=g6
+    v65 = GetModuleVariable variable=g7
+    v66 = CheckInitialized v65 name="e"
+    v67 = GetModuleVariable variable=g8
+    v68 = CheckInitialized v67 name="f"
+    v69 = Convert v68 declared={type=i32 flags=[IsExpected]}
+    v70 = Integer integer=11
+    v71 = Add v69, v70
+    v72 = GetModuleVariable variable=g3
+    v73 = CheckInitialized v72 name="a"
+    v74 = Convert v73 declared={type=i32 flags=[IsExpected]}
+    v75 = BitXor v71, v74
+    v76 = Integer
+    v77 = BitOr v75, v76
+    v78 = Convert v77 declared={type=number site=w9}
+    PutModuleVariable v78 variable=g7
+    v80 = GetModuleVariable variable=g8
+    v81 = CheckInitialized v80 name="f"
+    v82 = GetModuleVariable variable=g3
+    v83 = CheckInitialized v82 name="a"
+    v84 = Convert v83 declared={type=i32 flags=[IsExpected]}
+    v85 = Integer integer=13
+    v86 = Add v84, v85
+    v87 = GetModuleVariable variable=g4
+    v88 = CheckInitialized v87 name="b"
+    v89 = Convert v88 declared={type=i32 flags=[IsExpected]}
+    v90 = BitXor v86, v89
+    v91 = Integer
+    v92 = BitOr v90, v91
+    v93 = Convert v92 declared={type=number site=w10}
+    PutModuleVariable v93 variable=g8
+    v95 = GetModuleVariable variable=g3
+    v96 = CheckInitialized v95 name="a"
+    v97 = GetModuleVariable variable=g5
+    v98 = CheckInitialized v97 name="c"
+    v99 = Convert v98 declared={type=i32 flags=[IsExpected]}
+    v100 = Integer integer=15
+    v101 = Add v99, v100
+    v102 = GetModuleVariable variable=g7
+    v103 = CheckInitialized v102 name="e"
+    v104 = Convert v103 declared={type=i32 flags=[IsExpected]}
+    v105 = BitXor v101, v104
+    v106 = Integer
+    v107 = BitOr v105, v106
+    v108 = Convert v107 declared={type=number site=w5}
+    PutModuleVariable v108 variable=g3
+    v110 = GetModuleVariable variable=g4
+    v111 = CheckInitialized v110 name="b"
+    v112 = GetModuleVariable variable=g6
+    v113 = CheckInitialized v112 name="d"
+    v114 = Convert v113 declared={type=i32 flags=[IsExpected]}
+    v115 = Integer integer=17
+    v116 = Add v114, v115
+    v117 = GetModuleVariable variable=g8
+    v118 = CheckInitialized v117 name="f"
+    v119 = Convert v118 declared={type=i32 flags=[IsExpected]}
+    v120 = BitXor v116, v119
+    v121 = Integer
+    v122 = BitOr v120, v121
+    v123 = Convert v122 declared={type=number site=w6}
+    PutModuleVariable v123 variable=g4
+    v125 = GetModuleVariable variable=g5
+    v126 = CheckInitialized v125 name="c"
+    v127 = GetModuleVariable variable=g7
+    v128 = CheckInitialized v127 name="e"
+    v129 = Convert v128 declared={type=i32 flags=[IsExpected]}
+    v130 = Integer integer=19
+    v131 = Add v129, v130
+    v132 = GetModuleVariable variable=g3
+    v133 = CheckInitialized v132 name="a"
+    v134 = Convert v133 declared={type=i32 flags=[IsExpected]}
+    v135 = BitXor v131, v134
+    v136 = Integer
+    v137 = BitOr v135, v136
+    v138 = Convert v137 declared={type=number site=w7}
+    PutModuleVariable v138 variable=g5
+    v140 = GetModuleVariable variable=g6
+    v141 = CheckInitialized v140 name="d"
+    v142 = GetModuleVariable variable=g8
+    v143 = CheckInitialized v142 name="f"
+    v144 = Convert v143 declared={type=i32 flags=[IsExpected]}
+    v145 = Integer integer=21
+    v146 = Add v144, v145
+    v147 = GetModuleVariable variable=g4
+    v148 = CheckInitialized v147 name="b"
+    v149 = Convert v148 declared={type=i32 flags=[IsExpected]}
+    v150 = BitXor v146, v149
+    v151 = Integer
+    v152 = BitOr v150, v151
+    v153 = Convert v152 declared={type=number site=w8}
+    PutModuleVariable v153 variable=g6
+    v155 = GetModuleVariable variable=g7
+    v156 = CheckInitialized v155 name="e"
+    v157 = GetModuleVariable variable=g3
+    v158 = CheckInitialized v157 name="a"
+    v159 = Convert v158 declared={type=i32 flags=[IsExpected]}
+    v160 = Integer integer=23
+    v161 = Add v159, v160
+    v162 = GetModuleVariable variable=g5
+    v163 = CheckInitialized v162 name="c"
+    v164 = Convert v163 declared={type=i32 flags=[IsExpected]}
+    v165 = BitXor v161, v164
+    v166 = Integer
+    v167 = BitOr v165, v166
+    v168 = Convert v167 declared={type=number site=w9}
+    PutModuleVariable v168 variable=g7
+    v170 = GetModuleVariable variable=g8
+    v171 = CheckInitialized v170 name="f"
+    v172 = GetModuleVariable variable=g4
+    v173 = CheckInitialized v172 name="b"
+    v174 = Convert v173 declared={type=i32 flags=[IsExpected]}
+    v175 = Integer integer=25
+    v176 = Add v174, v175
+    v177 = GetModuleVariable variable=g6
+    v178 = CheckInitialized v177 name="d"
+    v179 = Convert v178 declared={type=i32 flags=[IsExpected]}
+    v180 = BitXor v176, v179
+    v181 = Integer
+    v182 = BitOr v180, v181
+    v183 = Convert v182 declared={type=number site=w10}
+    PutModuleVariable v183 variable=g8
+    Jump -> next b3()
+  b3():
+    v185 = Convert v0 declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}
+    Return v185
+}
+function f2 name="checkFourTimes" module=m0 position=470 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = Call v1, -, v0 calleeName="checked"
+    v3 = Convert v2 declared={type=undefined|null|string site=w16 flags=[OmitsNull, OmitsUndefined]}
+    v4 = GetModuleVariable variable=g0
+    v5 = Call v4, -, v3 calleeName="checked"
+    v6 = Convert v5 declared={type=undefined|null|string site=w17 flags=[OmitsNull, OmitsUndefined]}
+    v7 = GetModuleVariable variable=g0
+    v8 = Call v7, -, v6 calleeName="checked"
+    v9 = Convert v8 declared={type=undefined|null|string site=w18 flags=[OmitsNull, OmitsUndefined]}
+    v10 = GetModuleVariable variable=g0
+    v11 = Call v10, -, v9 calleeName="checked"
+    v12 = Convert v11 declared={type=undefined|null|string site=w19 flags=[OmitsNull, OmitsUndefined]}
+    Return v12
+}
+function f3 name="repeat" module=m0 position=631 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w11}, {type=undefined|null|string site=w12 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w20}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w21}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Less v7, v0
+    Branch v9 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v10, v11):
+    Jump -> next b4()
+  b4():
+    v12 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v13 = GetModuleVariable variable=g1
+    v14 = Call v13, -, v1 calleeName="checkFourTimes"
+    v15 = Convert v14 declared={type=undefined|null|string site=w22 flags=[OmitsNull, OmitsUndefined]}
+    v16 = PropGet v15 key="length"
+    v17 = Add v12, v16
+    v18 = Integer
+    v19 = BitOr v17, v18
+    v20 = Convert v19 declared={type=number site=w20}
+    Jump -> next b5()
+  b5():
+    v21 = Increment v10
+    v22 = Convert v21 declared={type=number site=w21}
+    Jump -> next b2(v20, v22)
+  b6(v23, v24):
+    Jump -> next b7()
+  b7():
+    v25 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v26 = Convert v25 declared={type=number site=w13}
+    Return v26
+}
+
+# The function that the loop calls is warm beside the function that it enters four times.
+# HEAT: f1 Hot
+# HEAT: f2 Warm
+# HEAT: f3 RunsOnce
+# One test of the variable, and the text is returned. The four calls stand where the test fails.
+# CHECK-LABEL: name="checkFourTimes" role=Source
+# CHECK-NOT: Patchpoint
+# CHECK: Successors: {{*}}Unlikely:#[[calls]]
+# CHECK-NOT: Patchpoint
+# CHECK: Return(
+# CHECK: BB#[[calls]]:
+# CHECK-COUNT-4: = Patchpoint(
+# CHECK-LABEL: end of function

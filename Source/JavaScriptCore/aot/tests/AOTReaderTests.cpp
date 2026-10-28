@@ -368,7 +368,7 @@ void testFormParameter()
     expectAccepted("fixture in the second form"_s, readBytesInForm(fixture.bytes.span(), IRForm::Prepared));
     expectRejected("opcode of an earlier form"_s, readBytesInForm(fixture.bytes.span(), IRForm::Selected), Kind::OpcodeNotInForm);
 
-    Vector<uint8_t> withLaterOpcode = damagedCopy(fixture, fixture.offsetOfHeadAt(f7, 1011), static_cast<uint32_t>(Opcode::Unspecified));
+    Vector<uint8_t> withLaterOpcode = damagedCopy(fixture, fixture.offsetOfHeadAt(f7, 1014), static_cast<uint32_t>(Opcode::Unspecified));
     expectRejected("opcode of a later form"_s, readBytesInForm(withLaterOpcode.span(), IRForm::AsRead), Kind::EngineOnlyOnWire);
     expectAccepted("opcode of the form read"_s, readBytesInForm(withLaterOpcode.span(), IRForm::Prepared));
 

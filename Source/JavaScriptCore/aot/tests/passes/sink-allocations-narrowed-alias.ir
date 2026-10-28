@@ -26,7 +26,7 @@ function f0 name="bothEdgesPassTheObject" parameters=[{type=anything}, {type=boo
     v8 = PropGet v7 key="list" receivers=[L0]
     Return v8
 # CHECK-NOT: NewObject
-# CHECK: b3([[tag0]]: i32, [[list0]]: anything):
+# CHECK: b3([[tag0]]: i32, [[list0]]: anything|unspecified):
 # CHECK-NOT: TypeTest
 # CHECK: = BitAnd [[tag0]], 
 # CHECK: Branch {{*}} -> taken b4(), notTaken b5()
@@ -34,7 +34,7 @@ function f0 name="bothEdgesPassTheObject" parameters=[{type=anything}, {type=boo
 # CHECK-NEXT: [[null0]]: null = Null
 # CHECK-NEXT: Return [[null0]]
 # CHECK: b5():
-# CHECK-NEXT: v8: anything = Upcast [[list0]] castType=anything
+# CHECK-NEXT: v8: anything|unspecified = Upcast [[list0]] castType=anything
 }
 
 function f1 name="chainOfThree" parameters=[{type=anything}] results=[{type=anything}] {

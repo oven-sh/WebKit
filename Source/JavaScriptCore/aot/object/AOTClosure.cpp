@@ -653,7 +653,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
 
 bool Closure::hasOrdinaryDefineOwnProperty(VM& vm, PropertyName name) const
 {
-    return !classData() && !kind().isBound() && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name);
+    return !classData() && !kind().isBound() && !refusesOwnProperty(vm, name) && ReifiedSlimClosure::hasOrdinaryDefineOwnProperty(vm, name);
 }
 
 bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)

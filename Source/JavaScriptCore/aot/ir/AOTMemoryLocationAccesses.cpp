@@ -215,9 +215,27 @@ bool liesInCopyOfPredictedCallee(const Function& function, uint32_t inlineFrame)
     return false;
 }
 
+const LocationFlow* flowOfVariableReadBy(const Program& program, const Value& value)
+{
+    if (value.opcode == Opcode::GetModuleVariable)
+        return &program.at(value.variable()).flow;
+    if (value.opcode != Opcode::GetEnvironmentField || value.field() >= program.at(value.layout()).fields.size())
+        return nullptr;
+    // No cast takes an environment or a word of the engine's own, so a field that holds one is read as it is declared.
+    if (!program.at(program.at(value.layout()).fields[value.field()].declared.written()).isJavaScriptValue())
+        return nullptr;
+    return &flowOf(program, { value.layout(), value.field() }).location;
+}
+
 bool holdsDeclaredTypeOnlyBehindEntry(const Program& program, const Function& function, const Value& read)
 {
-    return read.opcode == Opcode::GetModuleVariable && holdsDeclaredTypeOnlyBehindEntry(program.at(read.variable()).flow, liesInCopyOfPredictedCallee(function, read.inlineFrame));
+    const LocationFlow* flow = flowOfVariableReadBy(program, read);
+    return flow && holdsDeclaredTypeOnlyBehindEntry(*flow, liesInCopyOfPredictedCallee(function, read.inlineFrame));
+}
+
+bool namesFactOrGivesWordThatMayBeAnything(const Value& read)
+{
+    return read.mayPrecedeItsStore() || (read.opcode == Opcode::GetModuleVariable && read.factOperand());
 }
 
 LocationStability stabilityOf(const Program& program, const Value& access, const MemoryAccess& memoryAccess)

@@ -186,7 +186,7 @@ static std::optional<ForwardingPlan> planForwarding(const CodeGenerationWorker& 
     std::span<const ValueID> valuesBeforeCall = block.values.span().first(block.values.size() - 1);
     for (ValueID value : valuesBeforeCall) {
         Opcode opcode = function.at(value).opcode;
-        if (opcode != Opcode::GetCapture && opcode != Opcode::AssumeType && !isCastThatProvesNothing(opcode))
+        if (opcode != Opcode::GetCapture && opcode != Opcode::AssumeType && !makesFact(opcode) && !isCastThatProvesNothing(opcode))
             return std::nullopt;
     }
     if (!generatesOnlyWhatTheProgramAsksFor(worker, inputs, id))

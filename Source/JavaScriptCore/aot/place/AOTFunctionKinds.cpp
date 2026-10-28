@@ -428,7 +428,7 @@ static bool isNamedByOwner(const Function& function)
     bool hasExplicitName = function.has(FunctionFlags::HasExplicitName);
     // The engine goes by the text. An `await` is written in the function, and the build has found that the function never reaches it.
     if (function.role == FunctionRole::AsyncWorker)
-        return !hasExplicitName && function.hasWrittenAwait;
+        return !hasExplicitName && function.syntax.contains(FunctionSyntax::HasWrittenAwait);
     if (function.role != FunctionRole::CoroutineBody)
         return false;
     switch (kindOfCoroutine(function)) {
@@ -513,7 +513,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.implementsBuiltin = builtin.has_value();
     record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, builtin && !isCompilerFunction(program.builtins(), source)));
     record.builtinKindBits = static_cast<uint32_t>(builtinKindOf(program.builtins(), source, builtin));
-    record.codeTypeBits = static_cast<uint32_t>(source.kind == FunctionKind::Module ? ModuleCode : FunctionCode);
+    record.codeTypeBits = static_cast<uint32_t>(source.kind == FunctionKind::Module ? ModuleCode : source.syntax.contains(FunctionSyntax::IsEvaluatedScript) ? EvalCode : FunctionCode);
     record.rejectsOnThrow = rejectsOnThrow(program, function);
     record.isStrict = !source.has(FunctionFlags::IsSloppy);
     record.isConstructor = source.kind == FunctionKind::BaseConstructor || source.kind == FunctionKind::DerivedConstructor;

@@ -44,6 +44,7 @@ struct GuardFact {
     ValueID subject;
     Vector<MemoryLocation, 2> dependsOn;
     Vector<GuardOrigin, 1> origins;
+    ValueID position;
 
     bool proves(Proof proof) const { return proofs.contains(proof); }
     const GuardOrigin* singleOrigin() const LIFETIME_BOUND { return origins.size() == 1 ? &origins.first() : nullptr; }
@@ -235,7 +236,7 @@ private:
     void collectGuards();
     void computeFacts();
     GuardFacts factsAfterEdge(const GuardFacts& factsBeforeEdge, Edge) const;
-    std::optional<ValueID> subjectBeforeEdge(ValueID subjectAfterEdge, Edge) const;
+    std::optional<ValueID> valueBeforeEdge(ValueID valueAfterEdge, Edge) const;
     bool leavesUnspecified(Edge, ValueID subjectAfterEdge) const;
     GuardFacts meetFactsAfterEdges(std::span<const Edge>, std::span<const GuardFacts> factsAfterEdges) const;
     GuardFacts meetFacts(const GuardFacts&, const GuardFacts&) const;
@@ -245,7 +246,7 @@ private:
     bool originImplies(const GuardOrigin&, const GuardOrigin& implied, ProofSet) const;
     bool isAsStrongAs(const GuardFact&, const GuardFact& other) const;
     bool tryWiden(GuardFact&, const GuardFacts& factsOnOtherWay) const;
-    bool implies(const GuardFact& fact, const GuardFact& implied) const { return fact.subject == implied.subject && isAsStrongAs(fact, implied); }
+    bool implies(const GuardFact& fact, const GuardFact& implied) const { return fact.subject == implied.subject && fact.position == implied.position && isAsStrongAs(fact, implied); }
     bool anyImplies(const GuardFacts&, const GuardFact& implied) const;
     bool hasEquivalentFact(const GuardFacts&, const GuardFact&) const;
 
@@ -279,7 +280,7 @@ private:
     enum class KillsOfSolve : bool { No, Yes };
     bool isProvenOnEdge(Edge, const EdgeResult&, const Component&, KillsOfSolve) const;
     bool isAvailableBeforeEdge(const BitVector& available, Edge, ValueID guard, const GuardFact& factAfterEdge) const;
-    bool isAvailableIn(const BitVector& available, ValueID guard, const GuardFact&, ValueID subject) const;
+    bool isAvailableIn(const BitVector& available, ValueID guard, const GuardFact&, ValueID subject, ValueID position) const;
     bool ends(const Kill& kill, uint32_t killClass) const { return m_solution.killSets[kill.killSet].killClasses.get(killClass); }
     std::span<const Kill> killsIn(BlockID block) const LIFETIME_BOUND { return m_solution.killsOfBlock[block.index()].span(); }
     std::span<const Kill> killsAt(ProgramPoint point) const LIFETIME_BOUND { return std::span<const Kill>(std::ranges::equal_range(killsIn(point.block), point.index, { }, &Kill::index)); }

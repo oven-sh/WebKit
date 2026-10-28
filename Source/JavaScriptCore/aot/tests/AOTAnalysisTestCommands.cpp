@@ -239,7 +239,7 @@ static void repairVariables(Session& session, const Vector<Vector<ValueID>>& var
     if (cloner)
         cloner->addVariablesTo(repair, session.analyses);
     if (askedAboutFirst)
-        mayBeUnspecified(session.analyses, askedAboutFirst);
+        session.analyses.willFollowValuesThroughParameters();
     repair.run();
 }
 

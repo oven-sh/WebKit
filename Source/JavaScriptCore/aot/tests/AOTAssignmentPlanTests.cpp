@@ -485,6 +485,8 @@ static void testCopiesTwoObjectsAtOnce(LoadedProgram& program)
         return object;
     };
 
+    // The first object that is given a name keeps it in a table of its own. The next one makes the Structure that those behind it share.
+    createOrdinary();
     // The first pair of a kind is copied one behind the other.
     AOT_TEST_CHECK(!tryCopyTwoObjects(vm, state, realm, createOrdinary(), createPair(program, { 1, 0 })));
     Structure* structure = nullptr;
@@ -703,7 +705,7 @@ static void testCopiesWithoutFrameOverwriteFieldsThatTheTargetLists(LoadedProgra
 static void testIntegersMoveIntoSlotsThatMayHoldNone()
 {
     MappedCopy::Move move { };
-    move.kind = moveKindFor(SlotRepresentation::Int32, SlotRepresentation::OptionalInt32, false);
+    move.kind = moveKindFor(SlotRepresentation::Int32, SlotRepresentation::OptionalInt32, SlotFit::Always);
     AOT_TEST_CHECK(move.kind == MappedCopy::MoveKind::Int32AsOptionalInt32);
     auto moves = [&](int32_t integer) {
         uint64_t stored = 0;

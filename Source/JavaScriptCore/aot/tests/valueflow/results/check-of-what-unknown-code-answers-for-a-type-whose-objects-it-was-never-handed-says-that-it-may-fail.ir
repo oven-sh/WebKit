@@ -1,0 +1,50 @@
+# interface Kept { limit: number }   interface HandedOut { bound: number }   const kept: Kept = { limit }   readsKept(kept)   unknown({ bound } as HandedOut)
+# function readsKept(rule: Kept) { rule.limit }   function readsAnswer(rule: Kept) { rule.limit }   function readsHandedOut(rule: HandedOut) { rule.bound }   readsAnswer(unknown())   readsHandedOut(unknown())
+# RUN: valueflow-apply
+# CHECK-LABEL: function f1 name="readsKept"
+# CHECK-NOT: cause=MayFail
+# CHECK-LABEL: function f2 name="readsAnswer"
+# CHECK: = Check v0 expectedType=undefined|null|L0 cause=MayFail
+# CHECK-LABEL: function f3 name="readsHandedOut"
+# CHECK-NOT: cause=MayFail
+# CHECK: = Check v0 expectedType=undefined|null|L1
+# CHECK-NOT: cause=MayFail
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 name="Kept" fields=[{key="limit" declared={type=number} flags=[IsRequired]}]
+layout L1 name="HandedOut" fields=[{key="bound" declared={type=number} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="unknown" [isFreeName]
+    v2 = NewObject layout=L0
+    v3 = NewClosure function=f1
+    v4 = Call v3, -, v2
+    v5 = NewObject layout=L1
+    v6 = Call v1, -, v5
+    v7 = NewClosure function=f2
+    v8 = Call v1
+    v9 = Call v7, -, v8
+    v10 = NewClosure function=f3
+    v11 = Call v1
+    v12 = Call v10, -, v11
+    Return
+}
+function f1 name="readsKept" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="limit"
+    Return v2
+}
+function f2 name="readsAnswer" module=m0 parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=undefined|null|L0
+    v2 = PropGet v1 key="limit"
+    Return v2
+}
+function f3 name="readsHandedOut" module=m0 parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Check v0 expectedType=undefined|null|L1
+    v2 = PropGet v1 key="bound"
+    Return v2
+}

@@ -111,7 +111,7 @@ Word32 AccessEmitter::findPrototypeTransition(CellPointer object, Boxed prototyp
     LBasicBlock isKnown = newBlock();
     const B3::AbstractHeap& heap = m_heaps.collectorState;
     Word32 before = loadStructureID(object);
-    Word32 hash = shiftRightUnsigned(bitXor(before, low32(prototype)), word32(prototypeTransitionHashShift));
+    Word32 hash = shiftRightUnsigned(bitXor(before, low32(prototype)), prototypeTransitionHashShift);
     Integer index = zeroExtended(bitAnd(hash, word32(numberOfPrototypeTransitions - 1)));
     LValue transition = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.prototypeTransitions)), index, 4).value();
     Condition hasPrototype = equal(Boxed(m_out.load64(m_out.address(heap, transition, OBJECT_OFFSETOF(PrototypeTransition, prototype)))), prototype);
@@ -270,7 +270,8 @@ std::optional<CellPointer> AccessEmitter::tryAllocateCopyOfFields(const ValueCon
 
     m_out.appendTo(hasShape);
     Word32 orderWord = loadField<Word32>(source, m_heaps.AOTObject_orderWord);
-    Condition hasOnlyFields = logicalAnd(hasNoBits(orderWord, ~orderAndCountMask), notEqual(bitAnd(orderWord, word32(orderWordOrderMask)), word32(orderStoredOutOfLine)));
+    Condition hasNoOtherBits = hasNoBits(orderWord, ~orderAndCountMask);
+    Condition hasOnlyFields = logicalAnd(hasNoOtherBits, notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
     branch(hasOnlyFields, { normalEdge(copies), rareEdge(fills) });
 
     m_out.appendTo(copies);
@@ -315,14 +316,15 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     const B3::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
     ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
     auto hasOrderedShape = [&](CellPointer cell) {
-        return equal(shapeTests.shapeWordOf(cell), word32(static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first))));
+        return equal(shapeTests.shapeWordOf(cell), static_cast<int32_t>(AOT::shapeWordOf(shapesOfLayout.first)));
     };
     auto refuse = [&] {
         return boolean(false);
     };
     defineTest(value, either<Condition>(hasOrderedShape(source), [&] {
         Word32 orderWord = loadField<Word32>(source, m_heaps.AOTObject_orderWord);
-        Condition hasOnlyFields = logicalAnd(hasNoBits(orderWord, ~orderAndCountMask), notEqual(bitAnd(orderWord, word32(orderWordOrderMask)), word32(orderStoredOutOfLine)));
+        Condition hasNoOtherBits = hasNoBits(orderWord, ~orderAndCountMask);
+        Condition hasOnlyFields = logicalAnd(hasNoOtherBits, notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
         if (const PlacedSlot& extensionWord = m_placement.slots().extensionWord(layout); extensionWord.hasStorage()) {
             TypedPointer address = m_out.address(fields, source.value(), extensionWord.offset);
             bool isNarrow = traitsOf(extensionWord.representation).isNarrowReference;
@@ -340,7 +342,7 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
             for (uint32_t offset = offsetOfFirstField; offset < planned.size; offset += sizeof(uint64_t))
                 m_out.store64(m_out.load64(m_out.address(fields, source.value(), offset)), m_out.address(fields, target.value(), offset));
             bool targetMayBeUnordered = shapesOfLayout.count > 1;
-            storeField(target, m_heaps.AOTObject_orderWord, targetMayBeUnordered ? select(hasOrderedShape(target), orderWord, word32(unorderedOrderWord)) : orderWord);
+            storeField(target, m_heaps.AOTObject_orderWord, targetMayBeUnordered ? select(hasOrderedShape(target), orderWord, unorderedOrderWord) : orderWord);
             if (mayCopyCell)
                 emitter<BarrierEmitter>().barrier(value, target);
             return boolean(true);

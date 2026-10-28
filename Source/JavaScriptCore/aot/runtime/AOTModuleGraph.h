@@ -29,6 +29,9 @@ JS_EXPORT_PRIVATE void computeModuleFlags(std::span<ModuleData> modulesAndEndRec
 JS_EXPORT_PRIVATE ContractedModuleRequests contractModuleRequests(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, const BitVector& modulesNamedByRequire, uint32_t maxContractedRequests);
 JS_EXPORT_PRIVATE Vector<LinkPlanStepData> planLinkOfEntryPoint(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, ModuleID entryPoint);
 
+// By node: the node that every way from the root to it passes last. The root has the highest number and is its own answer; a node that the root does not reach has none.
+Vector<uint32_t> computeImmediateDominators(const Vector<Vector<uint32_t, 4>>& successors, uint32_t root);
+
 // An import() of a module that the build knows.
 struct ModuleImportSite {
     uint32_t importer;
@@ -45,6 +48,9 @@ struct LinkPlansOfRoots {
 
 // What a walk of all the requests does while no module is linked.
 JS_EXPORT_PRIVATE LinkPlansOfRoots planLinksOfRoots(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, std::span<const ModuleImportSite>, std::optional<ModuleID> plannedEntryPoint);
+
+// Sorts the ES modules of the program into the groups of ModuleTable::headOfLoadGroup() and answers the lists of ModuleTable::groupsLoadedWith(). The sites are every import() and every require() that asks the run time for a module.
+JS_EXPORT_PRIVATE Vector<uint32_t> groupModulesLoadedTogether(std::span<ModuleData> modulesAndEndRecord, std::span<const ModuleRequestData> requests, std::span<const ModuleImportSite> sitesThatAskRunTime);
 
 } } // namespace JSC::AOT
 

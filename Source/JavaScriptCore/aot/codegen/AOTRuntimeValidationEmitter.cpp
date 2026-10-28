@@ -213,7 +213,7 @@ Pointer RuntimeValidationEmitter::addressOfObjectOrOfCode(Operand operand)
 
 Integer RuntimeValidationEmitter::headerAt(Pointer address)
 {
-    return bitAnd(Integer(m_out.load64(m_out.address(m_heaps.JSCell_header, address.value(), 0))), integer(static_cast<int64_t>(bitsOfHeaderThatOnlyTheProgramChanges)));
+    return bitAnd(Integer(m_out.load64(m_out.address(m_heaps.JSCell_header, address.value(), 0))), static_cast<int64_t>(bitsOfHeaderThatOnlyTheProgramChanges));
 }
 
 Integer RuntimeValidationEmitter::wordBehindHeaderAt(Pointer address)
@@ -254,7 +254,8 @@ void RuntimeValidationEmitter::checkCellsWereNotConverted(const OperandCells& be
     forgetsLoads->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 
     for (const OperandCell& cell : beforeCall) {
-        Condition isAsBefore = logicalAnd(equal(headerAt(cell.address), cell.header), equal(wordBehindHeaderAt(cell.address), cell.wordBehindHeader));
+        Condition hasSameHeader = equal(headerAt(cell.address), cell.header);
+        Condition isAsBefore = logicalAnd(hasSameHeader, equal(wordBehindHeaderAt(cell.address), cell.wordBehindHeader));
         failUnless(isAsBefore, ValidationFailureKind::OperationConvertedCell, get(cell.operand), cell.operation);
     }
 }
@@ -318,7 +319,8 @@ Integer RuntimeValidationEmitter::countStopsForCollector()
 
 void RuntimeValidationEmitter::checkCollectorDidNotStop(const OperationContext& context, Integer stopsBeforeCall, CalledCode::Kind kind, uint32_t callee)
 {
-    failUnless(equal(countStopsForCollector(), stopsBeforeCall), ValidationFailureKind::CallCollected, boxedConstant(jsNumber(CalledCode::encode(kind, callee))), context.valueID());
+    Condition didNotStop = equal(countStopsForCollector(), stopsBeforeCall);
+    failUnless(didNotStop, ValidationFailureKind::CallCollected, boxedConstant(jsNumber(CalledCode::encode(kind, callee))), context.valueID());
 }
 
 void RuntimeValidationEmitter::noteFailedGuard(Opcode opcode, uint32_t ordinal)

@@ -102,6 +102,122 @@ static void testSwitchOnSmallValuesBecomesBitTestWithoutSubtraction()
     checkBitTestTargetLimit(2);
 }
 
+static Policy valueTablePolicy()
+{
+    return policyWith([&](Policy& policy) {
+        policy.switchLowering.usesValueTables = true;
+    });
+}
+
+enum class ArmOfSwitch : uint8_t { Returns, JoinsWithConstant, JoinsWithSum };
+
+static void buildSwitchThatChoosesNumbers(Procedure& proc, int64_t firstCase, const Vector<int64_t>& numbers, int64_t otherwiseNumber, ArmOfSwitch form, bool lastArmCalls = false, std::optional<int64_t> maskOfSubject = std::nullopt)
+{
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root);
+    Value* subject = arguments[0];
+    Value* addend = arguments[1];
+    if (maskOfSubject)
+        subject = graph.make(root, BitAnd, subject, graph.int64(root, *maskOfSubject));
+    Value* phi = graph.phi(join, Int64);
+    graph.ret(join, phi);
+    auto addArm = [&](int64_t number, bool calls) {
+        BasicBlock* arm = proc.addBlock();
+        if (calls)
+            graph.callLikePatchpoint(arm);
+        Value* constant = graph.int64(arm, number);
+        switch (form) {
+        case ArmOfSwitch::Returns:
+            graph.ret(arm, constant);
+            return arm;
+        case ArmOfSwitch::JoinsWithConstant:
+            graph.upsilon(arm, constant, phi);
+            break;
+        case ArmOfSwitch::JoinsWithSum:
+            graph.upsilon(arm, number ? graph.make(arm, Add, addend, constant) : addend, phi);
+            break;
+        }
+        arm->appendNew<Value>(proc, Jump, Origin());
+        arm->setSuccessors(FrequentedBlock(join));
+        return arm;
+    };
+    SwitchValue* switchValue = root->appendNew<SwitchValue>(proc, Origin(), subject);
+    switchValue->setFallThrough(FrequentedBlock(addArm(otherwiseNumber, false)));
+    for (size_t i = 0; i < numbers.size(); ++i)
+        switchValue->appendCase(SwitchCase(firstCase + static_cast<int64_t>(i), FrequentedBlock(addArm(numbers[i], lastArmCalls && i + 1 == numbers.size()))));
+}
+
+static void testSwitchWhoseArmsChooseNumbersLoadsFromTable()
+{
+    struct Case {
+        int64_t firstCase;
+        Vector<int64_t> numbers;
+        int64_t otherwise;
+        B3::Opcode load;
+    };
+    const Case cases[] {
+        { 0, { 3, 1, 4, 1, 5, 9, 2, 6 }, 250, Load8Z },
+        { 10, { 300, 65535, 256, 0, 4096, 77, 12345, 1 }, 65000, Load16Z },
+        { -3, { -1, 2147483647, -2147483647 - 1, 70000, -70000, 0, 255, -256 }, -7, Load },
+        { 5, { 1, 2, 3, 4, 5, 6, 7, static_cast<int64_t>(1) << 40 }, -1, Load },
+    };
+    for (const Case& testCase : cases) {
+        for (ArmOfSwitch form : { ArmOfSwitch::Returns, ArmOfSwitch::JoinsWithConstant, ArmOfSwitch::JoinsWithSum }) {
+            {
+                Procedure proc(valueTablePolicy());
+                buildSwitchThatChoosesNumbers(proc, testCase.firstCase, testCase.numbers, testCase.otherwise, form);
+                proc.resetReachability();
+                CHECK(lowerMacros(proc));
+                proc.resetReachability();
+                CHECK_EQ(numberOfValues(proc, Switch), 0u);
+                CHECK_EQ(numberOfValues(proc, Patchpoint), 0u);
+                CHECK_EQ(numberOfValues(proc, testCase.load), 1u);
+            }
+            for (bool usesTable : { true, false }) {
+                Procedure proc(usesTable ? valueTablePolicy() : Policy());
+                buildSwitchThatChoosesNumbers(proc, testCase.firstCase, testCase.numbers, testCase.otherwise, form);
+                auto code = compileProc(proc);
+                int64_t size = static_cast<int64_t>(testCase.numbers.size());
+                auto check = [&](int64_t value) {
+                    uint64_t index = static_cast<uint64_t>(value) - static_cast<uint64_t>(testCase.firstCase);
+                    int64_t chosen = index < static_cast<uint64_t>(size) ? testCase.numbers[index] : testCase.otherwise;
+                    CHECK_EQ((invoke<int64_t>(*code, value, static_cast<int64_t>(1000))), form == ArmOfSwitch::JoinsWithSum ? 1000 + chosen : chosen);
+                };
+                for (int64_t value = testCase.firstCase - 4; value < testCase.firstCase + size + 4; ++value)
+                    check(value);
+                for (int64_t value : { std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max(), testCase.firstCase + (static_cast<int64_t>(1) << 32) })
+                    check(value);
+            }
+        }
+    }
+    const Vector<int64_t> sevenNumbers { 3, 1, 4, 1, 5, 9, 2 };
+    for (int64_t mask : { 7, 15 }) {
+        {
+            Procedure proc(valueTablePolicy());
+            buildSwitchThatChoosesNumbers(proc, 0, sevenNumbers, 250, ArmOfSwitch::JoinsWithConstant, false, mask);
+            proc.resetReachability();
+            CHECK(lowerMacros(proc));
+            CHECK_EQ(numberOfValues(proc, Load8Z), 1u);
+            CHECK_EQ(numberOfValues(proc, Select), mask == 7 ? 0u : 1u);
+        }
+        Procedure proc(valueTablePolicy());
+        buildSwitchThatChoosesNumbers(proc, 0, sevenNumbers, 250, ArmOfSwitch::JoinsWithConstant, false, mask);
+        auto code = compileProc(proc);
+        for (int64_t value = -20; value <= 40; ++value) {
+            uint64_t index = static_cast<uint64_t>(value & mask);
+            CHECK_EQ((invoke<int64_t>(*code, value, static_cast<int64_t>(0))), index < sevenNumbers.size() ? sevenNumbers[index] : 250);
+        }
+    }
+
+    Procedure proc(valueTablePolicy());
+    buildSwitchThatChoosesNumbers(proc, 0, { 3, 1, 4, 1, 5, 9, 2, 6 }, 250, ArmOfSwitch::JoinsWithConstant, true);
+    proc.resetReachability();
+    CHECK(lowerMacros(proc));
+    CHECK_EQ(numberOfValues(proc, Load8Z), 0u);
+}
+
 template<typename Functor>
 static void buildChainOfEqualityTests(Graph& graph, unsigned degree, const Functor& sourceAndCaseValue)
 {
@@ -575,6 +691,7 @@ void addBunControlFlowTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSwitchOnSmallValuesBecomesBitTestWithoutSubtraction());
     RUN(testInferSwitchesManyCases());
     RUN(testInferSwitchesStopsAtRareEdge());
+    RUN(testSwitchWhoseArmsChooseNumbersLoadsFromTable());
     RUN(testInferSwitchesIgnoresTestOfOtherValue());
     RUN(testSplitBranchConditionsOfAnd());
     RUN(testSplitBranchConditionsOfOr());

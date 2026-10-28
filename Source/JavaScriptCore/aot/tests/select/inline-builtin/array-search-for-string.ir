@@ -1,0 +1,30 @@
+# indexOf() and includes() with one string argument become an inline call with no slow path, in hot and in cold code. With a fromIndex, or with an argument that may not be a string in cold code, they stay a call
+# FORM: Prepared
+# OPTIONS: heat=EverythingIsCold
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="indexOfString" parameters=[{type=Array<anything, pristine[Storage]>}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Return v2
+# CHECK-NOT: CallBuiltin
+# CHECK: v2:{{*}}= CallInline v0, v1 inlineBuiltin=ArrayIndexOf overload=ArrayPrototypeIndexOf/1
+}
+function f1 name="includesString" parameters=[{type=Array<string, proven, Contiguous, pristine[Storage, Dense]>}, {type=string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIncludes/1
+    Return v2
+# CHECK-NOT: CallBuiltin
+# CHECK: v2:{{*}}= CallInline v0, v1 inlineBuiltin=ArrayIncludes overload=ArrayPrototypeIncludes/1
+}
+function f2 name="indexOfStringFromAnIndex" parameters=[{type=Array<anything, pristine[Storage]>}, {type=string}, {type=number}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
+    Return v3
+# CHECK-NOT: CallInline
+# CHECK: v3:{{*}}= CallBuiltin v0, v1, v2 overload=ArrayPrototypeIndexOf/1
+}
+function f3 name="indexOfStringOrNothing" parameters=[{type=Array<anything, pristine[Storage]>}, {type=undefined|string}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+    Return v2
+# CHECK-NOT: CallInline
+# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=ArrayPrototypeIndexOf/1
+}

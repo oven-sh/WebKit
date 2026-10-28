@@ -1,0 +1,42 @@
+# FORM: Prepared
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 kind=Instance name="Point" constructor=f0 fields=[{key="a" declared={type=anything}}]
+function f0 name="Point" flags=[HasThis] thisType={type=L0} results=[{type=undefined}] {
+    Return
+}
+function f1 name="method" flags=[HasThis] thisType={type=anything} results=[{type=undefined}] {
+    Return
+}
+
+function f2 name="finds-a-function" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    v2 = AssumeType v1 provenType=undefined|f1
+    Return v2
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="method"
+}
+
+function f3 name="finds-a-function-behind-a-jump" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    Jump -> next b1(v1)
+  b1(v2: anything):
+    v3 = AssumeType v2 provenType=undefined|f1
+    Return v3
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: = PropGet v0 key="method"
+}
+
+function f4 name="finds-a-number" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    v2 = AssumeType v1 provenType=undefined|number
+    Return v2
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="method"}
+}
+
+function f5 name="nothing-is-known-of-what-it-finds" parameters=[{type=L0}] results=[{type=anything}] {
+    v1 = PropGet v0 key="method"
+    Return v1
+# CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="method"}
+}

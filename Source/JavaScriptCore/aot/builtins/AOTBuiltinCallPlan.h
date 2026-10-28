@@ -87,6 +87,8 @@ struct BuiltinCallStamps {
     ExpectedResultID expectedResult;
     AccessSiteID accessSite;
     AllocationSiteID allocationSite;
+    // What was called, as written. Kept where the built-in function calls its receiver, which may refuse.
+    StringID calleeName { };
 };
 
 struct NullishCheck {

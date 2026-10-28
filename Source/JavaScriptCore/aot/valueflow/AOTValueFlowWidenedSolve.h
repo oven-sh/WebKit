@@ -20,8 +20,8 @@ void reportWhatIsFoundOnlyFromLess(ValueFlowSolution&, std::span<const UnseenCod
 using ReporterOfWhatIsFoundOnlyFromLess = void (*)(ValueFlowSolution&, std::span<const UnseenCodeRecord>, BuildContext&);
 void reportWhatIsFoundOnlyFromLessBy(ReporterOfWhatIsFoundOnlyFromLess);
 
-// Where a callee may be anything, the call makes an object nobody knows and not the object of its site. An object of the program that no node of the solve holds is one of those that the unknown object stands for there.
-ValueSetID objectsOfProgramThatNoNodeHolds(const ValueFlowSolver&, const ValueFlowUniverse&, ValueSetMaker&);
+// Where a callee may be anything, the call makes an object nobody knows and not the object of its site. The object of such a site that no node of the solve holds is one of those that the unknown object stands for there.
+ValueSetID objectsThatTheirOwnSitesNoLongerMake(const ValueFlowSolver&, const ValueFlowBodies&, ValueSetMaker&);
 
 } } } // namespace JSC::AOT::Typed
 

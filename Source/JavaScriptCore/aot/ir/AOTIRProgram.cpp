@@ -644,6 +644,13 @@ bool isBundlerHelperModule(const Program&, const Module& module)
     return module.flags.contains(ModuleFlags::IsBundlerHelper);
 }
 
+bool answersToPath(const Program& program, const Module& module)
+{
+    if (!isFoundByPathOf(module.kind))
+        return false;
+    return module.kind != ModuleKind::Runtime || !program.builtins().at(module.runtimeModule).flags.containsAny({ RuntimeModuleFlag::HasSource, RuntimeModuleFlag::HasOpenNamespace });
+}
+
 bool isBundlerHelperNamedByProgram(const Program& program, ModuleID id)
 {
     if (!isBundlerHelperModule(program, program.at(id)))

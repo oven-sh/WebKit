@@ -1,0 +1,131 @@
+# What a comparison leaves of its operand on the edge that is taken lies inside the type of the operand. A built-in object that can be no instance of the operand's class leaves nothing. One that may be an instance leaves the operand as it was
+# FORM: Prepared
+# RUN: print
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="arrayWithConstructor" parameters=[{type=Array<number>}, {type=builtin(WeakMap)}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Unreachable
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="arrayWithConstructor"
+# CHECK: v2: false = StrictEq v0, v1
+# CHECK: b1(v3: never):
+# CHECK: b2(v4: Array<number>):
+function f1 name="arrayWithMethod" parameters=[{type=Array<number>}, {type=builtin(MathMax)}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Unreachable
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="arrayWithMethod"
+# CHECK: b1(v3: never):
+function f2 name="arrayWithNamespaceBelowObjectPrototype" parameters=[{type=Array<number>}, {type=builtin(Math)}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Unreachable
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="arrayWithNamespaceBelowObjectPrototype"
+# CHECK: b1(v3: never):
+function f3 name="arrayWithPrototypeOfAnotherClass" parameters=[{type=Array<number>}, {type=builtin(ErrorPrototype)}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Unreachable
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="arrayWithPrototypeOfAnotherClass"
+# CHECK: b1(v3: never):
+function f4 name="arrayWithItsOwnPrototype" parameters=[{type=Array<number>}, {type=builtin(ArrayPrototype)}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="arrayWithItsOwnPrototype"
+# CHECK: v2: boolean = StrictEq v0, v1
+# CHECK: b1(v3: Array<number>):
+# CHECK: b2(v4: Array<number>):
+function f5 name="arrayWithObjectWhosePrototypeNobodyKnows" parameters=[{type=Array<number>}, {type=builtin(Console)}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="arrayWithObjectWhosePrototypeNobodyKnows"
+# CHECK: b1(v3: Array<number>):
+function f6 name="anythingWithConstructor" parameters=[{type=anything}, {type=builtin(WeakMap)}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="anythingWithConstructor"
+# CHECK: b1(v3: builtin(WeakMap)):
+function f7 name="functionWithConstructor" parameters=[{type=function}, {type=builtin(WeakMap)}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="functionWithConstructor"
+# CHECK: b1(v3: builtin(WeakMap)):
+function f8 name="constructorWithArray" parameters=[{type=builtin(WeakMap)}, {type=Array<number>}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Unreachable
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="constructorWithArray"
+# CHECK: b1(v3: never):
+function f9 name="prototypeWithArray" parameters=[{type=builtin(ArrayPrototype)}, {type=Array<number>}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="prototypeWithArray"
+# CHECK: b1(v3: builtin(ArrayPrototype)):
+function f10 name="instancesOfTwoClassesThatNoTestTellsApart" parameters=[{type=Boolean}, {type=Number}] results=[{type=undefined}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Return
+  b2(v4):
+    Return
+}
+# CHECK-LABEL: name="instancesOfTwoClassesThatNoTestTellsApart"
+# CHECK: b1(v3: Boolean):
+function f11 name="joinBehindTheComparison" parameters=[{type=Array<number>}, {type=builtin(Console)}] results=[{type=anything}] {
+    v2 = StrictEq v0, v1
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v3):
+    Jump -> next b3(v3)
+  b2(v4):
+    Jump -> next b3(v4)
+  b3(v5):
+    Return v5
+}
+# CHECK-LABEL: name="joinBehindTheComparison"
+# CHECK: b3(v5: Array<number>):

@@ -120,7 +120,8 @@ struct OperationThatWent {
 };
 
 // Between two passes the operations that may throw or run code, on a way from the entry, only go with a reason. One walk over each body.
-Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext&, const Function& before, const Function& after, const ReasonsForOperationsThatWent&);
+// An operation that went because the types of its operands say that it does neither is told to whoever has listened for longer.
+Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContext&, const Function& before, const Function& after, ReasonsForOperationsThatWent&);
 String describe(const OperationThatWent&);
 
 } } } // namespace JSC::AOT::Typed

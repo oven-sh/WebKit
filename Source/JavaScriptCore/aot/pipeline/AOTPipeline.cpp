@@ -169,6 +169,7 @@ constexpr std::array rows {
     programPass(ReadCapturesFromEnvironments, Optional, { Prepared, Prepared }, { Flow }, { }, resultsAboutBodies),
     takingAway(programPass(RemoveUnreadFields, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedResults, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
+    addingOnly({ }, programPass(ProveResults, Optional, { Prepared, Prepared }, simplifyInputs, { }, resultsAboutBodies)),
     addingOnly({ }, programPass(RemoveUnusedParameters, Optional, { Prepared, Prepared }, simplifyInputs | CallGraph, { }, resultsAboutBodies)),
     programPass(RemoveUnreachableFunctions, Optional, { Prepared, Selected }, { CallGraph }, { }, { }),
     programPass(SplitBehindEntryChecks, Optional, { Prepared, Prepared }, { Flow, CallGraph, Heat }, { }, resultsAboutBodies | Results { Heat }),
@@ -185,7 +186,7 @@ constexpr std::array rows {
     programPass(NumberLiteralStrings, Required, { Prepared, Placed }, { }, { LiteralStrings }, { }),
     addingOnly({ Opcode::Data, Opcode::NewSetFromData, Opcode::NewMapFromData }, programPass(EmbedConstantCollections, Optional, { Prepared, Prepared }, { Flow }, { ConstantCollections }, { })),
     countingOwnChanges(programPass(CollectRegExpLiterals, Required, { Selected, Selected }, { Flow }, { RegExpRequests }, { })),
-    programPass(OutlineColdOperations, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries }, { }, resultsAboutBodies),
+    programPass(OutlineColdOperations, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries, CallingConventions }, { }, resultsAboutBodies),
     programPass(InlineHeads, Optional, { Selected, Selected }, { Flow, Heat, EffectSummaries }, { }, resultsAboutBodies),
     programPass(ElideStackChecks, Optional, { Selected, Selected }, { CallGraph }, { StackChecks }, { }),
     programPass(PlanSlots, Required, { Prepared, Selected }, slotInputs, { SlotPlan }, { }),
@@ -780,12 +781,15 @@ static_assert(scheduleAt(FunctionSchedule::Simplify).inputs == simplifyInputs);
 static_assert(scheduleAt(FunctionSchedule::Optimize).inputs.contains(CallGraph));
 static_assert(canRunSimplify(RemoveUnreadFields));
 static_assert(canRunSimplify(RemoveUnusedResults));
+static_assert(canRunSimplify(ProveResults));
 static_assert(canRunSimplify(RemoveUnusedParameters));
 static_assert(canRunSimplify(SplitFreshResults));
 static_assert(canRunSimplify(SplitCoroutines));
 static_assert(canRunSimplify(ChooseCallingConventions));
 static_assert(canRunFunctionPass(RemoveUnreadFields, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(RemoveUnusedResults, RemoveDeadCountedLoops));
+static_assert(canRunFunctionPass(ProveResults, RemoveDeadCountedLoops));
+static_assert(canRunFunctionPass(ProveResults, SimplifyControlFlow));
 static_assert(canRunFunctionPass(RemoveUnusedParameters, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(SplitFreshResults, RemoveDeadCountedLoops));
 static_assert(canRunFunctionPass(ChooseCallingConventions, RemoveDeadCountedLoops));
@@ -1346,6 +1350,9 @@ PassOutcome Pipeline::runProgramPass(PassID id)
     case PassID::RemoveUnusedResults:
         edit(id, removeUnusedResults, inputsFor(id), m_runner);
         return m_runner.lastProgramPassOutcome();
+    case PassID::ProveResults:
+        edit(id, proveResults, inputsFor(id), m_runner);
+        return m_runner.lastProgramPassOutcome();
     case PassID::RemoveUnusedParameters:
         edit(id, removeUnusedParameters, inputsFor(id), m_runner);
         didAddFunctions();
@@ -1618,11 +1625,14 @@ void Pipeline::runOptimizeStage()
     stage.run(PassID::PromoteAggregateParameters);
     stage.run(PassID::SplitFreshResults);
     stage.run(PassID::SplitCoroutines);
+    // A file whose stores all go has nothing to run, and a function that nobody reads needs no way in.
+    stage.run(PassID::RemoveUnreadExports);
     stage.run(PassID::CallModules);
     m_analyses.estimateHeatFor(HeatFor::Everything);
     stage.run(PassID::CreateEntrypoints);
     stage.run(FunctionSchedule::Resolve);
     stage.run(FunctionSchedule::Optimize);
+    stage.run(PassID::ProveResults);
     stage.run(PassID::ReadCapturesFromEnvironments);
     stage.run(PassID::RemoveUnreadFields);
     stage.run(PassID::RemoveUnusedResults);

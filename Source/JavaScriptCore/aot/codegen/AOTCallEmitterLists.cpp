@@ -39,8 +39,7 @@ void CallEmitter::generateCallList(const ValueContext& value)
         return;
     }
 
-    if (!typeOf(value->calleeOperand()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        requireCallableBeforeTailCall(value, callee, siteThatNamesCallee(value));
+    requireCallableBeforeTailCall(value, callee, thisValue);
     tailCallByConvention(value, call);
 }
 

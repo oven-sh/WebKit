@@ -454,7 +454,7 @@ static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& r
     jit.move(TrustedImm32(JSValue::ValueUndefined), piece);
     tookNoPart.append(jit.branch32(CCallHelpers::LessThan, start, TrustedImm32(0)));
     tookNoPart.append(jit.branchSub32(CCallHelpers::Signed, start, length));
-    AssemblyHelpers::FreeListRefill pieceRefill = makeSubstringOfFlatString(jit, { .string = string, .start = start, .length = length, .result = piece, .firstScratch = allocator, .secondScratch = array }, fails);
+    AssemblyHelpers::FreeListRefill pieceRefill = makeSubstringOfFlatString(jit, { .string = string, .start = start, .length = length, .result = piece, .firstScratch = allocator, .secondScratch = array, .alsoKept = RegisterSet(butterfly, offsets, index) }, fails);
     tookNoPart.link(&jit);
     jit.store64(piece, BaseIndex(butterfly, index, CCallHelpers::TimesEight));
     jit.add32(TrustedImm32(1), index);

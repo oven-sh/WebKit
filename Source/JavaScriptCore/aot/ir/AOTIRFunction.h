@@ -141,6 +141,7 @@ struct Function : FunctionRecord {
     void releaseBody();
 
     const Value& at(ValueID id) const { ASSERT(id.index() < values.size()); return values.span().data()[id.index()]; }
+    const Value& at(RootThroughCasts root) const { return at(root.valueInFrontOfFacts()); }
     const Block& at(BlockID id) const { ASSERT(id.index() < blocks.size()); return blocks.span().data()[id.index()]; }
 
     Value& edit(ValueID id, OptionSet<ValueEdit> edits = anyValueEdit)
@@ -258,6 +259,8 @@ struct Function : FunctionRecord {
 
     Wire::SourceLocation locationOf(ValueID) const;
     Wire::SourceLocation locationOf(Origin) const;
+    // Adds a frame for a built-in function whose call is expanded into its steps, and returns the origin of those steps. A stack trace lists the function between what the steps call and the caller.
+    Origin enterFrameOfBuiltin(FunctionID self, Origin call, BuiltinID);
     std::optional<uint32_t> writtenPositionOf(ValueID) const;
     Wire::SourceLocation writtenLocationOf(ValueID) const;
     Wire::SourceLocation declarationLocation() const;

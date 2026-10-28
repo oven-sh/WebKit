@@ -1,0 +1,121 @@
+# type Entry = { follower: Entry | null; weight: number };
+# function pointAtLast(owner: Entry, entry: Entry | null): void {
+#   while (entry !== null) {
+#     owner.follower = entry;
+#     entry = entry.follower;
+#   }
+# }
+# declare const input: any;
+# const owner: Entry = { follower: null, weight: 0.5 };
+# const last: Entry = { follower: null, weight: +input };
+# pointAtLast(owner, { follower: last, weight: 1.5 });
+# pointAtLast(owner, input ? last : null);
+# (globalThis as any).answer = owner.follower!.weight;
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
+# RUN: lower-to-b3 optimized loops f1
+# REQUIRES: unsanitized-code
+# RUN(X64): lower-to-air loops f1
+# REQUIRES(X64): x86_64 unsanitized-code faulting-loop-polls
+# RUN(ARM64): lower-to-air loops f1
+# REQUIRES(ARM64): arm64 unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=242 kind=Variable
+typesite w1 module=m0 position=296 kind=Variable
+typesite w2 module=m0 position=78 kind=Parameter function=f1
+typesite w3 module=m0 position=92 kind=Parameter function=f1
+typesite w4 module=m0 position=152 kind=Field
+layout L0 name="Entry" module=m0 position=5 fields=[{key="follower" declared={type=undefined|null|L0 flags=[OmitsUndefined]} flags=[IsRequired]}, {key="weight" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Object{layout=L0 members=[{key="follower" value=Null}, {key="weight" value=Number{value=0.5}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v4 = Null
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsUndefined]}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = ToNumber v8
+    v10 = Convert v9 declared={type=number}
+    v11 = NewObject -, v5, v10 layout=L0 fields=[0, 1]
+    v12 = FinishObject v11
+    v13 = Convert v12 declared={type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}
+    v14 = Double number=1.5
+    v15 = Convert v14 declared={type=number}
+    v16 = NewObject -, v13, v15 layout=L0 fields=[0, 1]
+    v17 = FinishObject v16
+    v18 = Call v1, -, v3, v17 calleeName="pointAtLast"
+    v19 = Builtin builtin=GlobalThis
+    v20 = PropGet v19 key="input" [isFreeName]
+    v21 = ToBoolean v20
+    Branch v21 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v22):
+    Jump -> next b3()
+  b3():
+    Jump -> next b6(v13)
+  b4(v23):
+    Jump -> next b5()
+  b5():
+    v24 = Null
+    Jump -> next b6(v24)
+  b6(v25):
+    v26 = Call v1, -, v3, v25 calleeName="pointAtLast"
+    v27 = Builtin builtin=GlobalThis
+    v28 = PropGet v27 key="globalThis" [isFreeName]
+    v29 = Convert v28 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v30 = Convert v29 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v31 = PropGet v3 key="follower"
+    v32 = PropGet v31 key="weight"
+    PropSet v30, v32 key="answer"
+    v34 = Undefined
+    Return v34
+}
+function f1 name="pointAtLast" module=m0 position=57 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w2 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w3 flags=[OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    Jump -> next b2(v1)
+  b2(v2: undefined|null|L0):
+    LoopHint
+    v4 = TypeTest v2 testedType=null
+    Branch v4 -> taken b3(| 0), notTaken b5(| 0)
+  b3(v5):
+    Jump -> next b4()
+  b4():
+    v6 = Undefined
+    Return v6
+  b5(v7):
+    Jump -> next b6()
+  b6():
+    v8 = Convert v7 declared={type=undefined|null|L0 site=w4 flags=[OmitsUndefined]}
+    PropSet v0, v8 key="follower"
+    v10 = PropGet v7 key="follower"
+    v11 = Convert v10 declared={type=undefined|null|L0 site=w3 flags=[OmitsUndefined]}
+    Jump -> next b2(v11)
+}
+
+# The poll of the loop may collect and mark the owner, so every turn tests the state byte again. A turn has the store, the barrier in line, the load of the follower, the poll and the test for the end.
+# CHECK-LABEL: loop #
+# CHECK: Int64 b@[[entry]] = Phi(
+# CHECK-NEXT: Store(b@[[entry]], b@[[owner]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK-NEXT: Int32 b@[[threshold]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:collectorState, {{*}}:PutSlot)
+# CHECK-NEXT: Int32 b@[[state]] = Load8Z(b@[[owner]], offset = 7, ControlDependent|Reads:collectorState, {{*}}:PutSlot)
+# CHECK-NEXT: Int32 b@[[isUnmarked]] = Below(b@[[threshold]], b@[[state]], {{*}}:PutSlot)
+# CHECK-NEXT: Branch(b@[[isUnmarked]], Terminal, {{*}}:PutSlot)
+# CHECK-NEXT: Successors: Then:#[[rest]], Else:Rare:#[[remember]]
+# CHECK-NEXT: BB#[[rest]]:
+# CHECK: Int64 b@[[next]] = Load(b@[[entry]], offset = 16, ControlDependent|Reads:ObjectFields{{*}}:GetSlot)
+# CHECK-NEXT: Patchpoint({{*}}isLoopPoll
+# CHECK-NOT: Reads:collectorState
+# CHECK: BB#[[remember]]:
+# CHECK: Patchpoint(b@[[owner]]:{{*}}, resultConstraints = WarmAny, ControlDependent|Writes:collectorState|Reads:{collectorState, argumentBuffer}, {{*}}:PutSlot)
+# CHECK-LABEL: end of loop
+# X64: loop #{{*}}, instructions: 5, patchpoints: 1
+# ARM64: loop #{{*}}, instructions: 6, patchpoints: 1

@@ -53,9 +53,13 @@ using CellLookup = std::expected<JSCell*, BuiltinLookupFailure>;
 static bool hasValueCell(const BuiltinTable& table, BuiltinID id)
 {
     const Builtin& member = table.at(id);
+    if (member.scope != BuiltinScope::Realm)
+        return false;
+    // Its holder adds it when the program first reads it. Compiled code may have the object, or know the value, long before.
+    if (member.isAddedAtFirstRead)
+        return true;
     return member.kind == BuiltinKind::DataProperty
-        && member.scope == BuiltinScope::Realm
-        && member.mutability == BuiltinMutability::ConstantUnlessWritten
+        && member.mutability != BuiltinMutability::ChangesOnItsOwn
         && member.flags.contains(BuiltinFlag::IsLazilyCreated)
         && !member.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
 }

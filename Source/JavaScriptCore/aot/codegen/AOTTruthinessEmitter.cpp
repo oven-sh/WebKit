@@ -53,7 +53,8 @@ Condition TruthinessEmitter::isTruthy(const OperationContext& context, Operand o
         Integer integerOrMarker = conversions.withoutMarkers(operand).as<Integer>();
         if (type.integers.isSubsetOf({ -static_cast<int64_t>(UINT32_MAX), UINT32_MAX }))
             return isNotZero(low32(integerOrMarker));
-        return logicalNot(logicalOr(conversions.isMarker(operand), isZero(integerOrMarker)));
+        Condition isMarker = conversions.isMarker(operand);
+        return logicalNot(logicalOr(isMarker, isZero(integerOrMarker)));
     }
     case Representation::Cell:
         return isTruthyCell(operand.as<CellPointer>(), type);
@@ -194,7 +195,7 @@ Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxe
         if (!(type.primitives & Primitive::True))
             return isCell(value);
         static_assert(JSValue::ValueTrue & 1 && !(JSValue::ValueFalse & 1) && !(JSValue::ValueNull & 1) && !(JSValue::ValueUndefined & 1));
-        return Condition(m_out.notEqual(m_out.bitAnd(value.value(), m_out.constInt64(3)), m_out.constInt64(JSValue::OtherTag)));
+        return Condition(m_out.notEqual(m_out.bitAnd(value.value(), 3), JSValue::OtherTag));
     }
     return either<Condition>(isCell(value), [&] {
         return isTruthyCell(unboxCell(value), type);

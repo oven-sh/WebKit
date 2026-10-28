@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstring>
 #include <expected>
 #include <optional>
 #include <span>
@@ -26,7 +27,10 @@
 #include <wtf/BumpPointerAllocator.h>
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
+#include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -709,6 +713,42 @@ static void testLoader()
     AOT_TEST_CHECK(atomCodeBlock.failureReason() && !atomCodeBlock.has8BitCode() && !atomCodeBlock.has16BitCode());
 }
 
+// The code of such a pattern makes nine turns a unit of the subject and 65,537, and no more than Yarr::matchLimit, and then gives the match to whoever called it. The turns of this pattern double with each x,
+// and pass matchLimit at the 27th. It reads nothing behind the c, so only the first page of the subject is there.
+static void testLongSubjectAllowsMatchLimitTurns()
+{
+    Yarr::YarrCodeBlock codeBlock(nullptr);
+    jitCompileThroughImage("^(x+)+y"_s, { }, codeBlock);
+    AOT_TEST_CHECK(!codeBlock.failureReason() && codeBlock.has8BitCode());
+
+    constexpr size_t greatestLength = 954429895;
+    size_t reservedSize = WTF::roundUpToMultipleOf(pageSize(), greatestLength);
+    void* reserved = OSAllocator::tryReserveUncommitted(reservedSize);
+    AOT_TEST_CHECK(reserved);
+    OSAllocator::commit(reserved, pageSize(), true, false);
+    auto* characters = static_cast<Latin1Character*>(reserved);
+
+    Matcher matcher;
+    std::array<int, 4> output { };
+    auto answerAt = [&](unsigned numberOfX, size_t length) {
+        memset(characters, 'x', numberOfX);
+        characters[numberOfX] = 'c';
+        return matcher.match(codeBlock, output, StringView(std::span<const Latin1Character> { characters, length })).start;
+    };
+    constexpr size_t noMatch = WTF::notFound;
+    constexpr size_t givenToCaller = static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure);
+    // 65,537 and nine times 40 turns lie between those of 15 and of 17 x.
+    AOT_TEST_CHECK(answerAt(15, 40) == noMatch);
+    AOT_TEST_CHECK(answerAt(17, 40) == givenToCaller);
+    // The sum is 4,294,967,291 at the first of these lengths, four more than 32 bits hold at the second, and twice what they hold at the third.
+    for (size_t length : { size_t { 477211306 }, size_t { 477211307 }, greatestLength }) {
+        AOT_TEST_CHECK(answerAt(26, length) == noMatch);
+        AOT_TEST_CHECK(answerAt(27, length) == givenToCaller);
+    }
+    OSAllocator::decommit(reserved, pageSize());
+    OSAllocator::releaseDecommitted(reserved, reservedSize, 0);
+}
+
 template<typename Emit>
 static std::expected<std::unique_ptr<RegExpCode>, Yarr::JITFailureReason> emitForImage(const Emit& emit)
 {
@@ -778,6 +818,7 @@ std::span<const NativeTest> regExpImageTests()
         { "regexp-image/private-copies-fit-bound"_s, testPrivateCopiesFitBound },
         { "regexp-image/reference-out-of-reach-gets-copy"_s, testReferenceOutOfReachGetsCopy },
         { "regexp-image/loader"_s, testLoader },
+        { "regexp-image/long-subject-allows-match-limit-turns"_s, testLongSubjectAllowsMatchLimitTurns },
         { "regexp-image/equal-tables-are-one-symbol"_s, testEqualTablesAreOneSymbol },
         { "regexp-image/pointer-immediate-declines"_s, testPointerImmediateDeclines },
     };

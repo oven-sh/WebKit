@@ -28,6 +28,8 @@ struct OwnKeyWalkSite {
     BlockID block;
     uint32_t index { 0 };
     ValueID value;
+    // What flow says of the list that the walk makes, where it says something.
+    TypeID provenTypeOfList;
     ValueID source;
     ValueID target;
     uint32_t sourceArgument { 0 };

@@ -32,6 +32,7 @@ public:
     bool run()
     {
         NaturalLoops& loops = m_proc.naturalLoops();
+        m_edgesBack.resize(loops.numLoops());
         for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
             if (!m_allowedHeaders || m_allowedHeaders->contains(loops.loop(loopIndex).header()))
                 considerLoop(loops, loops.loop(loopIndex));
@@ -53,13 +54,21 @@ public:
     }
 
 private:
+    struct EdgesBack {
+        BasicBlock* top { nullptr };
+        Vector<BasicBlock*, 2> likely;
+        Vector<BasicBlock*, 2> unlikelyWithoutPoll;
+        bool hasLikelyWithoutPoll { false };
+    };
+
     struct Rotation {
         unsigned depth { 0 };
         Vector<BasicBlock*, 4> testBlocks;
         Vector<BasicBlock*, 2> latches;
         BasicBlock* body { nullptr };
         std::optional<InductionRecord> induction;
-        bool keepsBackEdgeToGuard { false };
+        Vector<const EdgesBack*, 2> cyclesThroughGuardWithoutPoll;
+        bool guardKeepsPoll { false };
     };
 
     bool leadsBackToHeaderOnly(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* start, BasicBlock* body)
@@ -128,15 +137,23 @@ private:
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
     {
         Rotation rotation;
-        IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
-        for (BasicBlock* predecessor : loop.header()->predecessors()) {
-            if (likelyBlocks.contains(predecessor) && hasLikelyEdgeTo(predecessor, loop.header()))
-                rotation.latches.append(predecessor);
-            else if (loops.belongsTo(predecessor, loop))
-                rotation.keepsBackEdgeToGuard = true;
-        }
+        const EdgesBack& edgesBack = edgesBackOf(loops, loop);
+        rotation.latches = edgesBack.likely;
         if (rotation.latches.isEmpty())
             return;
+        // A cycle that leads through the guard and has no poll of its own polls on its unlikely edges back, so what enters from outside does not. Where a likely edge back has none, the guard polls.
+        if (!edgesBack.unlikelyWithoutPoll.isEmpty())
+            rotation.cyclesThroughGuardWithoutPoll.append(&edgesBack);
+        for (const NaturalLoop* outer = loops.innerMostOuterLoop(loop); outer && !hasPoll(outer->header()); outer = loops.innerMostOuterLoop(*outer)) {
+            const EdgesBack& edgesBackOfOuter = edgesBackOf(loops, *outer);
+            if (edgesBackOfOuter.hasLikelyWithoutPoll) {
+                rotation.guardKeepsPoll = true;
+                break;
+            }
+            if (edgesBackOfOuter.unlikelyWithoutPoll.isEmpty())
+                break;
+            rotation.cyclesThroughGuardWithoutPoll.append(&edgesBackOfOuter);
+        }
         if (m_allowedHeaders) {
             for (BasicBlock* latch : rotation.latches) {
                 if (isBottomTested(loops, loop, latch))
@@ -201,8 +218,11 @@ private:
             transferInduction(rotation, copies);
         for (BasicBlock* latch : rotation.latches)
             latch->replaceSuccessor(rotation.testBlocks[0], copies.get(rotation.testBlocks[0]));
-        if (!rotation.keepsBackEdgeToGuard)
+        if (!rotation.guardKeepsPoll) {
+            for (const EdgesBack* edgesBack : rotation.cyclesThroughGuardWithoutPoll)
+                pollOnWayBack(*edgesBack, rotation.testBlocks.span());
             removePolls(rotation.testBlocks.span());
+        }
 
         BasicBlock* preHeader = m_proc.addBlock();
         preHeader->appendNew<Value>(m_proc, Jump, rotation.body->at(0)->origin());
@@ -210,6 +230,58 @@ private:
         rotation.testBlocks.last()->replaceSuccessor(rotation.body, preHeader);
 
         m_proc.addRemark({ RemarkKind::LoopRotated, GaveUpReason::None, rotation.testBlocks[0]->at(0)->origin(), std::nullopt });
+    }
+
+    static bool hasPoll(BasicBlock* block)
+    {
+        for (Value* value : *block) {
+            if (isLoopPoll(value))
+                return true;
+        }
+        return false;
+    }
+
+    const EdgesBack& edgesBackOf(NaturalLoops& loops, const NaturalLoop& loop)
+    {
+        std::optional<EdgesBack>& result = m_edgesBack[loop.index()];
+        if (result)
+            return *result;
+        result.emplace();
+        result->top = loop.header();
+        IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
+        for (BasicBlock* predecessor : loop.header()->predecessors()) {
+            if (likelyBlocks.contains(predecessor) && hasLikelyEdgeTo(predecessor, loop.header())) {
+                result->likely.append(predecessor);
+                result->hasLikelyWithoutPoll |= !hasPoll(predecessor);
+            } else if (loops.belongsTo(predecessor, loop) && !hasPoll(predecessor))
+                result->unlikelyWithoutPoll.append(predecessor);
+        }
+        return *result;
+    }
+
+    void pollOnWayBack(const EdgesBack& edgesBack, std::span<BasicBlock* const> guard)
+    {
+        if (m_topsWithPollOnWayBack.contains(edgesBack.top))
+            return;
+        BasicBlock* wayBack = nullptr;
+        for (BasicBlock* block : guard) {
+            for (Value* value : *block) {
+                if (!isLoopPoll(value))
+                    continue;
+                if (!wayBack)
+                    wayBack = m_proc.addBlock();
+                auto* poll = m_proc.clone(value)->as<PatchpointValue>();
+                poll->likelyTurnsEndWithinData = false;
+                wayBack->append(poll);
+            }
+        }
+        if (!wayBack)
+            return;
+        m_topsWithPollOnWayBack.add(edgesBack.top);
+        wayBack->appendNew<Value>(m_proc, Jump, wayBack->at(0)->origin());
+        wayBack->setSuccessors(FrequentedBlock(edgesBack.top));
+        for (BasicBlock* from : edgesBack.unlikelyWithoutPoll)
+            from->replaceSuccessor(edgesBack.top, wayBack);
     }
 
     static void removePolls(std::span<BasicBlock* const> blocks)
@@ -253,6 +325,8 @@ private:
     Procedure& m_proc;
     const Vector<BasicBlock*>* m_allowedHeaders;
     Vector<Rotation> m_rotations;
+    Vector<std::optional<EdgesBack>> m_edgesBack;
+    IndexSet<BasicBlock*> m_topsWithPollOnWayBack;
 };
 
 } // anonymous namespace

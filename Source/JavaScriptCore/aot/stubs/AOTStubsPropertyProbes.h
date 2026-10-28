@@ -277,7 +277,8 @@ void linkToSlotCannot(StubAssembler&, JumpList&, SlotHandlerTable, SlotFinisher,
 void loadValueBySlot(StubAssembler&, const CachedSlot&, GPRReg receiver, GPRReg storage, GPRReg wordIndex, GPRReg result);
 void loadInheritedValueBySlot(StubAssembler&, const CachedSlot&, GPRReg storage, GPRReg wordIndex, GPRReg result);
 enum class KindOfProbedSlot : uint8_t { IsInHeader, IsInT10 };
-void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, JumpList& isUnknown, KindOfProbedSlot = KindOfProbedSlot::IsInHeader);
+// `in` of a receiver whose slot leaves the answer to an object above it is `in` of that object: it becomes the receiver, and the stub goes on at asksReceiver.
+void returnPresenceBySlot(StubAssembler&, PresenceQuestion, const ProbedSlot&, GPRReg receiver, Label asksReceiver, JumpList& isUnknown, KindOfProbedSlot = KindOfProbedSlot::IsInHeader);
 
 void loadStaticsBase(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics);
 void markStaticsCard(StubAssembler&, GPRReg staticsBase, GPRReg roundedSizeOfStatics, GPRReg offsetInStatics);

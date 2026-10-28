@@ -13,6 +13,7 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinTable.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCodeShapes.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTDecidedBranches.h"
@@ -892,6 +893,8 @@ struct OutliningSite {
     ValueID root { };
     // Whether the operations that a stack trace can show stand for a call in tail position: all of them do or none does.
     std::optional<bool> isTailCall { };
+    // Whether those operations have a second place, which a stack trace shows for some of their frames: all of them have it or none has.
+    std::optional<bool> isPartOfConstruction { };
     // The built-in function that those operations run steps of, if all of them run steps of the same one or of none. The call of the body names it.
     std::optional<BuiltinID> calledBuiltin { };
     bool rootIsUsed { false };
@@ -1648,9 +1651,11 @@ struct OutliningScan {
             return false;
         if (!analyses.mayThrow(id) && !analyses.mayCallUnknownCode(id))
             return true;
-        if (!site.isTailCall)
+        if (!site.isTailCall) {
             site.isTailCall = site.root ? origin.isTailCall : !!value.isTailCall;
-        return value.position == origin.position && value.isTailCall == *site.isTailCall;
+            site.isPartOfConstruction = site.root ? origin.isPartOfConstruction : !!value.isPartOfConstruction;
+        }
+        return value.position == origin.position && value.isTailCall == *site.isTailCall && value.isPartOfConstruction == *site.isPartOfConstruction;
     }
 
     std::optional<BuiltinID> findCalledBuiltin(const OutliningSite& site)
@@ -1868,7 +1873,7 @@ struct OutliningScan {
             result = function.at(site.exitBlock).parameters[*site.exitArgument];
         if (result)
             site.resultType = function.at(result).type;
-        if (!program.at(site.resultType).isJavaScriptValue() || (result && unspecifiedValues.mayContain(result)))
+        if (!program.at(site.resultType).isJavaScriptValue() || program.at(site.resultType).mayBeUnspecified())
             return false;
         NamedGuards namedGuards = findNamedGuards(site);
         if (namedGuards == NamedGuards::SomeDefinedOutside)
@@ -1887,7 +1892,7 @@ struct OutliningScan {
         // No use of an Unspecified value is reached, and an operand or the result of the call of the shared function would be one.
         for (ValueID liveIn : form.liveIns) {
             const Value& value = function.at(liveIn);
-            if (!program.at(value.type).isJavaScriptValue() || isFramePointer(liveIn) || branchesOf(value.opcode) == Branches::Only || isDeferredClosure(function, liveIn) || unspecifiedValues.mayContain(liveIn) || program.at(value.type).mayBeUnspecified())
+            if (!program.at(value.type).isJavaScriptValue() || isFramePointer(liveIn) || branchesOf(value.opcode) == Branches::Only || isDeferredClosure(function, liveIn) || program.at(value.type).mayBeUnspecified())
                 return false;
         }
         if (mayEndGuardInUse(site, form.liveIns.span(), namedGuards))
@@ -2076,7 +2081,6 @@ struct OutliningScan {
     const CFG& cfg { analyses.cfg() };
     const UseLists& useLists { analyses.useLists() };
     Subject subject = analyses.subject();
-    UnspecifiedValues unspecifiedValues { analyses };
     // Found when somebody asks.
     std::optional<FramePointers> framePointers { };
     std::optional<BitVector> guards { };
@@ -2331,7 +2335,29 @@ static bool isDefinedInSite(const Function& function, const OutliningSite& site,
     });
 }
 
-static void buildOutlinedBody(const AnalysisContext& context, const Function& source, const OutliningSite& site, Function& body, TypeArena& types)
+static bool canLeaveByItsLastCall(const AnalysisContext& context, const CallingConventions* conventions, const Function& source, const OutliningSite& site)
+{
+    const Program& program = context.program;
+    std::span<const ValueID> values = entryValuesOf(source, site);
+    const Value& root = source.at(site.root);
+    if (!conventions || site.isRegion() || !site.rootIsUsed || values.back() != site.root || root.opcode != Opcode::CallDirect || !program.at(root.function()).hasBody())
+        return false;
+    bool onlyPreparesArguments = std::ranges::all_of(values.first(values.size() - 1), [&](ValueID id) {
+        const Value& value = source.at(id);
+        return isRematerializable(value) || value.opcode == Opcode::GetCapture || isCastThatProvesNothing(value.opcode);
+    });
+    if (!onlyPreparesArguments)
+        return false;
+    ArgumentLocations own = conventions->locationsOf(program, context.id);
+    ArgumentLocations callee = conventions->locationsOf(program, root.function());
+    if (callee.convention != EntryConvention::Direct || conventions->stackWordsReservedByCallersOf(program, root.function(), callee) || own.numberOfStackWords())
+        return false;
+    return std::ranges::equal(callee.results, own.results, [](const ArgumentLocation& returned, const ArgumentLocation& expected) {
+        return returned.kind != ArgumentLocation::Kind::None && returned.kind == expected.kind && returned.reg == expected.reg && haveSameRegisterRepresentation(returned.representation, expected.representation);
+    });
+}
+
+static void buildOutlinedBody(const AnalysisContext& context, const CallingConventions* conventions, const Function& source, const OutliningSite& site, Function& body, TypeArena& types)
 {
     IRBuilder builder(context, body, types);
     RELEASE_ASSERT(!body.hasBody());
@@ -2443,6 +2469,12 @@ static void buildOutlinedBody(const AnalysisContext& context, const Function& so
     if (!site.isRegion()) {
         for (ValueID id : entryValuesOf(source, site))
             copyValue(id);
+        if (canLeaveByItsLastCall(context, conventions, source, site)) {
+            Terminator terminator = IRBuilder::makeTerminator(TerminatorKind::ReturnCall, { copyOf(valueCopies, site.root) });
+            terminator.setRequirement(TailCallRequirement::Allowed);
+            builder.emitTerminator(WTF::move(terminator));
+            return;
+        }
         builder.emitReturn(site.rootIsUsed ? std::optional(copyOf(valueCopies, site.root)) : std::nullopt);
         return;
     }
@@ -2487,6 +2519,7 @@ static void replaceRegion(IRBuilder& builder, const OutliningSite& site, Functio
 
     Origin origin = function.at(site.entryBlock).terminator.origin();
     origin.isTailCall = site.isTailCall.value_or(origin.isTailCall);
+    origin.isPartOfConstruction = site.isPartOfConstruction.value_or(origin.isPartOfConstruction);
     builder.setOrigin(origin);
     builder.splitBlock({ site.entryBlock, site.firstIndex });
     ProgramPoint point { site.entryBlock, site.firstIndex };
@@ -2576,7 +2609,7 @@ void outlineColdOperations(ProgramEditor& editor, const OptimizationInputs& inpu
     // A function that comes early holds the first site of most groups, so the bodies are a loop of their own, over the functions as they are before a site is replaced.
     editFunctionsInParallel(editor, build, bodies.span(), [&](unsigned index, FunctionID id, Function& body, TaskArenas& arenas) {
         const OutliningSite& site = sites[groups[index].first()];
-        buildOutlinedBody(contextOf(id), program.at(site.function), site, body, arenas.types);
+        buildOutlinedBody(contextOf(id), inputs.callingConventions, program.at(site.function), site, body, arenas.types);
         readIfFinal(id, arenas);
     });
     times.didFinish("buildBodiesInParallel"_s);

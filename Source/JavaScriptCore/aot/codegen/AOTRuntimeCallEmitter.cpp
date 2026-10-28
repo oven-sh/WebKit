@@ -632,7 +632,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     Effects effectsSinceThrow = effects;
     effectsSinceThrow.mayCollect |= options.followsThrow;
-    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay);
+    applyEffects(patchpoint, effectsSinceThrow, request.argumentBufferAccess, options.accessesCollectorState, options.runsCodeOfHost ? CellConversions::WhateverEffectsSay : options.convertsNoCells ? CellConversions::None : CellConversions::AsEffectsSay, options.pureFunction ? SlotsOfSites::StayAsTheyAre : slotsOfSitesBehindStub(context, effects));
     if (options.pureFunction) {
         RELEASE_ASSERT(!effects.mayExitSideways() && !effects.mayCollect && request.argumentBufferAccess == ArgumentBufferAccess::None && !options.accessesCollectorState);
         patchpoint->effects.exitsSideways = false;
@@ -732,7 +732,7 @@ B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationCon
     B3::PatchpointValue* patchpoint = request.holdsUniqueRecord ? m_out.patchpointWithUniqueRecord(request.resultType) : m_out.patchpoint(request.resultType);
     patchpoint->clobberEarly(request.earlyClobbered);
     patchpoint->clobberLate(request.lateClobbered);
-    applyEffects(patchpoint, effects, request.argumentBufferAccess);
+    applyEffects(patchpoint, effects, request.argumentBufferAccess, false, CellConversions::AsEffectsSay, request.callsStub ? slotsOfSitesBehindStub(&context, effects) : SlotsOfSites::MayChange);
     patchpoint->setRunsWithoutFrame(request.runsWithoutFrame);
     patchpoint->effects.terminal = request.neverReturns;
     return patchpoint;
@@ -771,6 +771,12 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     BuiltinID calledBuiltin = options.calledBuiltin;
     if (!calledBuiltin && value && Value::opcodesWithCalledBuiltin.contains(value->opcode))
         calledBuiltin = value->calledBuiltin();
+    // Steps of a built-in function that were expanded into its caller record the caller's site and name the function.
+    if (BuiltinID builtinOfFrame = origin.inlineFrame ? m_function.inlineFrames[origin.inlineFrame].calledBuiltin : BuiltinID()) {
+        const auto& frame = m_function.inlineFrames[origin.inlineFrame];
+        calledBuiltin = builtinOfFrame;
+        origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isTailCall = frame.isTailCall, .isPartOfConstruction = frame.callIsPartOfConstruction };
+    }
     // No stack trace lists a function that only built-in code can name.
     if (calledBuiltin && BuiltinBindings::linkTimeConstantOf(calledBuiltin))
         calledBuiltin = { };
@@ -779,7 +785,7 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));
     std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });
     RELEASE_ASSERT(kind);
-    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin, .callsOwnFunctionObject = options.callsOwnFunctionObject };
+    return { .origin = origin, .kind = *kind, .calledBuiltin = calledBuiltin, .constructedCallee = options.constructedCallee, .callsOwnFunctionObject = options.callsOwnFunctionObject };
 }
 
 uint32_t RuntimeCallEmitter::addSite(const OperationContext& context, const CallOptions& options)
@@ -830,7 +836,22 @@ bool RuntimeCallEmitter::mayConvertCells(const Effects& effects)
     return AOTHeaps::mayConvertCells(effects) && !build().recordedOptions().has(TestingSwitch::NoCallConvertsCells);
 }
 
-void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions)
+// A slot says what a lookup found. It changes where the operation that it belongs to finds no answer in it, where code of the program runs, and where something is written that a lookup may come by.
+RuntimeCallEmitter::SlotsOfSites RuntimeCallEmitter::slotsOfSitesBehindStub(const OperationContext* context, const Effects& effects) const
+{
+    bool hasSlotOfItsOwn = context && context->valueID() && siteCachesOf(m_function.at(context->valueID()).opcode);
+    return hasSlotOfItsOwn || !effects.writes.containsOnly(heapsWhoseWritesNobodySees) ? SlotsOfSites::MayChange : SlotsOfSites::StayAsTheyAre;
+}
+
+void RuntimeCallEmitter::stateWhichCallsChangeSlotsOfSites()
+{
+    if (!m_heaps.isNamedByMemoryAccess(m_heaps.AOTInstance_siteCaches))
+        return;
+    for (B3::PatchpointValue* patchpoint : m_callsThatMayChangeSlotsOfSites)
+        m_heaps.decoratePatchpointWrite(&m_heaps.AOTInstance_siteCaches, patchpoint);
+}
+
+void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Effects& effects, ArgumentBufferAccess access, bool accessesCollectorState, CellConversions conversions, SlotsOfSites slotsOfSites)
 {
     RELEASE_ASSERT(!generator().isInitializingCell() || (!effects.mayCollect && !effects.mayThrow));
 
@@ -847,6 +868,8 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     B3HeapList writes;
     m_heaps.appendHeaps(effects.reads, reads);
     m_heaps.appendHeaps(effects.writes, writes);
+    if (slotsOfSites == SlotsOfSites::MayChange && !m_options.recorded.isSabotaged(Sabotage::SlotsOfSitesStayAsTheyAre))
+        m_callsThatMayChangeSlotsOfSites.append(patchpoint);
     if (convertsCells)
         m_heaps.appendHeapsOfConvertedCells(writes);
     if (effects.mayCollect)

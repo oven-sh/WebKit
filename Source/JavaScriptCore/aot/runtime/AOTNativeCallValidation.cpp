@@ -24,6 +24,8 @@
 #include "InternalFunction.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
+#include "JSCustomGetterFunction.h"
+#include "JSCustomSetterFunction.h"
 #include "JSFunctionWithFields.h"
 #include "NativeExecutable.h"
 #include "NullGetterFunction.h"
@@ -112,6 +114,20 @@ static BuiltinID findConstructorOfHostClass(const BuiltinTable& table, JSGlobalO
             return constructor;
     }
     return { };
+}
+
+// Whoever asks for the description of an accessor of native code gets new function objects for its halves.
+static bool isSameHalfOfNativeAccessor(JSCell* found, JSObject* callee)
+{
+    if (auto* getter = dynamicDowncast<JSCustomGetterFunction>(callee)) {
+        auto* other = dynamicDowncast<JSCustomGetterFunction>(found);
+        return other && other->getter() == getter->getter() && other->propertyName() == getter->propertyName();
+    }
+    if (auto* setter = dynamicDowncast<JSCustomSetterFunction>(callee)) {
+        auto* other = dynamicDowncast<JSCustomSetterFunction>(found);
+        return other && other->setter() == setter->setter() && other->propertyName() == setter->propertyName();
+    }
+    return false;
 }
 
 static BuiltinCallMode modeOf(BuiltinCellKey::Kind kind, CodeSpecializationKind specialization)
@@ -258,6 +274,11 @@ static NativeCallDeclaration findDeclaration(const NativeCall& call, const Nativ
     Kind kind = name.startsWith("get "_s) ? Kind::Getter : name.startsWith("set "_s) ? Kind::Setter : Kind::Object;
     if (kind != Kind::Object)
         name = name.substring(4);
+    // The native code of such a half has the name of the property.
+    else if (call.callee->inherits<JSCustomGetterFunction>())
+        kind = Kind::Getter;
+    else if (call.callee->inherits<JSCustomSetterFunction>())
+        kind = Kind::Setter;
     BuiltinCallMode mode = modeOf(kind, call.kind);
     if (name.isEmpty()) {
         // Function.prototype is the one function of the realm that has no name.
@@ -282,7 +303,8 @@ static NativeCallDeclaration findDeclaration(const NativeCall& call, const Nativ
         BuiltinCellKey key = kind == Kind::Object ? BuiltinCellKey::object(candidate) : kind == Kind::Getter ? BuiltinCellKey::getter(candidate) : BuiltinCellKey::setter(candidate);
         // Compiled code has no cell for the function of an accessor that it never calls by itself. A generic read or store calls it all the same.
         bool canBeFound = mayBeInRealm(candidate) && (kind == Kind::Object ? key.hasCell(table) : table.at(candidate).kind == BuiltinKind::Accessor);
-        if (canBeFound && findInRealm(call.realm, key) == call.callee) {
+        auto found = canBeFound ? findInRealm(call.realm, key) : makeUnexpected(BuiltinLookupFailure::IsMissing);
+        if (found && (*found == call.callee || isSameHalfOfNativeAccessor(*found, call.callee))) {
             declare(CalleeInRealm, candidate, mode);
             return declaration;
         }
@@ -839,6 +861,31 @@ private:
         return uses;
     }
 
+    // A class of the host may give its objects a [[Set]], a [[Delete]] or a [[DefineOwnProperty]] of its own, and a property may have a setter of native code. To an entry that stores, deletes or defines by key they are what
+    // the traps of a proxy and the setters of the program are: the passes take the call for one that runs code nobody knows, and flow goes by what the table says of the object or of the accessor, as it does for a statement.
+    // Neither has a function object, so no call of it is checked, and none counts as code that ran. What it does to the properties of its own object is its own doing.
+    bool isDoneByNativeCodeOfObject(const Operand& operand, const OperandDifference& difference, OperandUses uses) const
+    {
+        constexpr OperandUses usesStoring { OperandUse::StoresByKey, OperandUse::AssignsFrom };
+        constexpr OperandUses usesDefining { OperandUse::DefinesName, OperandUse::TakesDescriptor };
+        if (difference.change != OperandChange::PropertyAdded && difference.change != OperandChange::PropertyRemoved && difference.change != OperandChange::PropertyStored && difference.change != OperandChange::AttributesChanged)
+            return false;
+        // The classes of the engine have types of their own, and what their methods do is the language's.
+        if (operand.object->type() == ObjectType) {
+            const MethodTable* methods = operand.object->methodTable();
+            if (uses.containsAny(usesStoring) && methods->put != JSObject::put)
+                return true;
+            MethodTable::DeletePropertyFunctionPtr ordinaryDelete = JSObject::deleteProperty;
+            if (uses.contains(OperandUse::DeletesByKey) && methods->deleteProperty != ordinaryDelete)
+                return true;
+            if (uses.containsAny(usesDefining) && methods->defineOwnProperty != JSObject::defineOwnProperty)
+                return true;
+        }
+        return difference.key && uses.containsAny(usesStoring) && operand.before.properties.containsIf([&](const CapturedProperty& property) {
+            return property.key == difference.key && property.attributes & PropertyAttribute::CustomAccessorOrValue;
+        });
+    }
+
     void checkChanges(bool didRunCode)
     {
         AbstractHeaps declared = declaredWrites();
@@ -861,7 +908,7 @@ private:
 
                 if (m_expectation.isKnown && !heaps.isEmpty() && !m_expectation.writes.containsAny(heaps))
                     fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the call writes "_s, describeMembers(m_expectation.writes), ", not "_s, describeMembers(heaps)));
-                if (didRunCode)
+                if (didRunCode || isDoneByNativeCodeOfObject(operand, difference, uses))
                     continue;
                 OperandUses declaring = rowOf(change).uses;
                 if (!declaring.isEmpty() && isTakenForUnknownFunction()) {
@@ -884,25 +931,60 @@ private:
         }
     }
 
-    // What an operand holds may be another operand, or the operand itself, and a copy of its properties hands that on under its key.
-    bool isAmongRetainedContents(JSObject* arrived, const OperandDifference& difference) const
+    // The value that the object itself has where the other object changed. Empty where it has none.
+    JSValue ownValueAt(JSObject* object, const OperandDifference& difference) const
+    {
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+        if (!difference.key) {
+            if (!object->methodTable()->getOwnPropertySlotByIndex(object, m_call.realm, *difference.index, slot) || !slot.isValue())
+                return { };
+            return slot.getValue(m_call.realm, static_cast<uint64_t>(*difference.index));
+        }
+        PropertyName key(difference.key.get());
+        if (!object->methodTable()->getOwnPropertySlot(object, m_call.realm, key, slot) || !slot.isValue())
+            return { };
+        return slot.getValue(m_call.realm, key);
+    }
+
+    // A definition reads `value`, `get` and `set` as a statement would: the description has them, or an object above it.
+    bool describes(const BuiltinParameter& parameter, JSValue description, JSObject* described) const
+    {
+        if (!description || !description.isObject())
+            return false;
+        return std::ranges::any_of(parameter.namedMembers, [&](BuiltinName name) {
+            Identifier key = m_table.identifierOf(m_vm, name);
+            PropertySlot slot(description, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
+            return asObject(description)->getPropertySlot(m_call.realm, key, slot) && slot.isValue() && slot.getValue(m_call.realm, key) == JSValue(described);
+        });
+    }
+
+    // The description is an operand, or what a map of descriptions has under the key.
+    bool isDescribedFor(JSObject* holder, JSObject* arrived, const OperandDifference& difference) const
+    {
+        return std::ranges::any_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
+            return std::ranges::any_of(overload->flow.propertyActions, [&](const BuiltinPropertyAction& action) {
+                bool takesMap = action.kind == BuiltinPropertyActionKind::TakesDescriptorMap;
+                if ((!takesMap && action.kind != BuiltinPropertyActionKind::TakesDescriptor) || action.value.kind != BuiltinPlaceKind::Operand || !isAt(action.object, holder))
+                    return false;
+                BuiltinOperand position = *action.value.operand;
+                const BuiltinParameter* parameter = m_table.parameterFor(*overload, position);
+                JSValue operand = position.isReceiver() ? m_call.thisValue : m_call.arguments.at(position.argumentIndex());
+                if (!parameter || !parameter->uses.contains(OperandUse::RetainsContents) || !operand.isObject())
+                    return false;
+                return describes(*parameter, takesMap ? ownValueAt(asObject(operand), difference) : operand, arrived);
+            });
+        });
+    }
+
+    // What an operand holds may be another operand, or the operand itself. A copy of its properties hands that on under its key, and a definition hands on what the description holds.
+    bool isAmongRetainedContents(JSObject* holder, JSObject* arrived, const OperandDifference& difference) const
     {
         if (!difference.key && !difference.index)
             return false;
-        return std::ranges::any_of(m_operands, [&](const Operand& source) {
-            if (!usesOf(source.object).contains(OperandUse::RetainsContents))
-                return false;
-            PropertySlot slot(source.object, PropertySlot::InternalMethodType::VMInquiry, &m_vm);
-            if (!difference.key) {
-                if (!source.object->methodTable()->getOwnPropertySlotByIndex(source.object, m_call.realm, *difference.index, slot) || !slot.isValue())
-                    return false;
-                return slot.getValue(m_call.realm, static_cast<uint64_t>(*difference.index)) == JSValue(arrived);
-            }
-            PropertyName key(difference.key.get());
-            if (!source.object->methodTable()->getOwnPropertySlot(source.object, m_call.realm, key, slot) || !slot.isValue())
-                return false;
-            return slot.getValue(m_call.realm, key) == JSValue(arrived);
+        bool isCopied = std::ranges::any_of(m_operands, [&](const Operand& source) {
+            return usesOf(source.object).contains(OperandUse::RetainsContents) && ownValueAt(source.object, difference) == JSValue(arrived);
         });
+        return isCopied || isDescribedFor(holder, arrived, difference);
     }
 
     // An operand that another operand holds after the call is retained.
@@ -913,7 +995,7 @@ private:
             if (JSValue::encode(operand.object) != difference.arrived || operand.object == holder.object)
                 continue;
             OperandUses uses = usesOf(operand.object);
-            if (!uses.contains(OperandUse::Retains) && !isAmongRetainedContents(operand.object, difference))
+            if (!uses.contains(OperandUse::Retains) && !isAmongRetainedContents(holder.object, operand.object, difference))
                 fail(ValidationFailureKind::NativeCallKeptOperand, operand.object, makeString(describe(operand.position), ": "_s, describe(holder.position), " holds it, uses "_s, describeMembers(uses)));
         }
     }

@@ -13,12 +13,14 @@ function f0 name="goodTestBehindTheBitOfTheTag" parameters=[{type=boolean}, {typ
     v3 = Integer integer=1
     v4 = Unspecified valueType=null|L0
     Jump -> next b3(v3, v4)
-  b3(v5: int[1, 2], v6: null|L0):
+  b3(v5: int[1, 2], v6: null|unspecified|L0):
     v7 = CallDirect v5 function=f2
     Branch v7 -> taken b4(), notTaken b5()
   b4():
-    v8 = TypeTest v6 testedType=L0
-    Return v8
+    v8 = Specified
+    v9 = AssumeType v6, v8 provenType=null|L0
+    v10 = TypeTest v9 testedType=L0
+    Return v10
   b5():
     Return
 }
@@ -31,7 +33,7 @@ function f1 name="badTestWhereTheBitOfTheTagIsNotSet" parameters=[{type=boolean}
     v3 = Integer integer=1
     v4 = Unspecified valueType=null|L0
     Jump -> next b3(v3, v4)
-  b3(v5: int[1, 2], v6: null|L0):
+  b3(v5: int[1, 2], v6: null|unspecified|L0):
     v7 = CallDirect v5 function=f2
     Branch v7 -> taken b5(), notTaken b4()
   b4():

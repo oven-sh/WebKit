@@ -873,6 +873,57 @@ static void testCycleForestPrefersLikelyEntryAsHeader()
     }
 }
 
+static void testCycleForestPrefersLikelyEntryToBlockThatPollsRarely()
+{
+    Procedure proc(policyWith([](Policy& policy) {
+        policy.optimization.estimatesFrequencies = true;
+    }));
+    Graph graph { proc };
+    PollState state;
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* rareCopy = proc.addBlock();
+    BasicBlock* loop = proc.addBlock();
+    BasicBlock* latch = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t, int64_t>(proc, root).eager();
+    graph.branch(root, arguments[0], FrequentedBlock(loop), rarely(rareCopy));
+    appendPoll(graph, rareCopy, state);
+    graph.jump(rareCopy, loop);
+    graph.branch(loop, arguments[1], FrequentedBlock(latch), rarely(rareCopy));
+    graph.branch(latch, arguments[0], loop, exit);
+    graph.ret(exit, arguments[0]);
+    proc.resetReachability();
+
+    CycleForest forest(proc);
+    CHECK(forest[forest.innermost(rareCopy)].header() == loop);
+    estimateFrequencies(proc);
+    CHECK(loop->frequency() > 1);
+    CHECK(rareCopy->frequency() < 0.1);
+}
+
+static void testCycleForestEntryBehindRareBlockIsNotLikely()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* rare = proc.addBlock();
+    BasicBlock* enteredRarely = proc.addBlock();
+    BasicBlock* enteredOften = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Value* condition = cCallArgumentValues<int64_t>(proc, root)[0];
+    graph.branch(root, condition, FrequentedBlock(enteredOften), rarely(rare));
+    graph.jump(rare, enteredRarely);
+    graph.jump(enteredRarely, enteredOften);
+    graph.branch(enteredOften, condition, rarely(enteredRarely), FrequentedBlock(exit));
+    graph.ret(exit, condition);
+    proc.resetReachability();
+
+    CycleForest forest(proc);
+    CHECK_EQ(forest.size(), 1u);
+    CHECK_EQ(forest[0].entries.size(), 2u);
+    CHECK(forest[0].header() == enteredOften);
+}
+
 static bool isNear(double frequency, double expected) { return std::abs(frequency - expected) < expected / 1000; }
 static void appendOops(Graph& graph, BasicBlock* block) { block->appendNew<Value>(graph.proc, Oops, Origin()); }
 
@@ -1305,6 +1356,8 @@ void addBunPlacementTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testCycleForestIrreducibleCycle());
     RUN(testCycleForestPrefersPollingEntryAsHeader());
     RUN(testCycleForestPrefersLikelyEntryAsHeader());
+    RUN(testCycleForestPrefersLikelyEntryToBlockThatPollsRarely());
+    RUN(testCycleForestEntryBehindRareBlockIsNotLikely());
     RUN(testEstimateFrequenciesTreatsReturningPathAsUnlikely());
     RUN(testEstimateFrequenciesPropagatesWeightsBackward());
     RUN(testEstimateFrequenciesMarksRareEdgesInLoops());

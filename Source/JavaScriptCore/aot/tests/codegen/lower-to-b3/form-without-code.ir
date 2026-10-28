@@ -1,0 +1,9 @@
+# FORM: Prepared
+# RUN: lower-to-b3
+# CHECK: error: lower-to-b3 starts from AsRead, Selected or Placed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="nothing" results=[{type=number}] {
+    v0 = Integer
+    Return v0
+}

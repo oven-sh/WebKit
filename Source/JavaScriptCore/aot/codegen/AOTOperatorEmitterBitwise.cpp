@@ -43,15 +43,17 @@ static BitwiseTraits traitsOfOperator(BitwiseOperator op)
 
 // The conversion of a number has a branch to a call for what lies beyond int64, and B3 shares the arithmetic of two conversions but not their branches.
 template<typename Functor>
-Word32 OperatorEmitter::int32ConvertedOnce(const ValueContext& user, ValueID number, const Functor& convert)
+Word32 OperatorEmitter::int32ConvertedOnce(const ValueContext& user, ValueID number, bool needsLowestBitsAlone, const Functor& convert)
 {
     Vector<Int32OfNumber, 1>& converted = m_int32OfNumbers.add(number.index(), Vector<Int32OfNumber, 1>()).iterator->value;
     for (const Int32OfNumber& earlier : converted) {
+        if (earlier.hasLowestBitsAlone && !needsLowestBitsAlone)
+            continue;
         if (earlier.block == user.block() || generator().analyses().dominators().terminatorDominates(earlier.block, user.block()))
             return earlier.word;
     }
     Word32 word = convert();
-    converted.append({ user.block(), word });
+    converted.append({ user.block(), word, needsLowestBitsAlone });
     return word;
 }
 
@@ -64,7 +66,14 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         Word32 word = bitwiseOnWords(op, x, y);
         return isUnsigned ? Operand(zeroExtended(word)) : Operand(word);
     };
-    auto numberToInt32 = [&](ValueID id) {
+    // What is combined by `&` with an integer that has its lowest bits alone gives no other bit of its own to the result.
+    auto hasLowestBitsAlone = [&](ValueID id) {
+        const Type& type = typeOf(id);
+        return op == BitwiseOperator::And && type.isInteger() && type.integers.minimum >= 0 && type.integers.maximum < (int64_t { 1 } << ConversionEmitter::numberOfLowestBits);
+    };
+    auto numberToInt32 = [&](ValueID id, ValueID other) {
+        bool needsLowestBitsAlone = hasLowestBitsAlone(other);
+        ConversionEmitter::BitsOfInt32 bits = needsLowestBitsAlone ? ConversionEmitter::BitsOfInt32::Lowest : ConversionEmitter::BitsOfInt32::All;
         switch (representationOf(id)) {
         case Representation::Int32:
             return in<Word32>(id);
@@ -77,14 +86,15 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         case Representation::DoubleWithPayload:
         case Representation::ImpureDouble:
         case Representation::OptionalDouble:
-            return int32ConvertedOnce(value, id, [&] {
-                return emitter<ConversionEmitter>().toInt32(asNumericOperand(id));
+            return int32ConvertedOnce(value, id, needsLowestBitsAlone, [&] {
+                return emitter<ConversionEmitter>().toInt32(asNumericOperand(id), bits);
             });
         case Representation::JSValue: {
             if (!typeOf(id).isNumber())
                 break;
             Boxed boxed = in<Boxed>(id);
-            return int32ConvertedOnce(value, id, [&] {
+            // The way of an int32 is the likely one, and it is shortest where the other way holds a call.
+            return int32ConvertedOnce(value, id, false, [&] {
                 return either<Word32>(isInt32(boxed), [&] {
                     return unboxInt32(boxed);
                 }, [&] {
@@ -112,8 +122,8 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         return onWords(x, y);
     }
     case OperatorForm::Numbers: {
-        Word32 x = numberToInt32(left);
-        Word32 y = numberToInt32(right);
+        Word32 x = numberToInt32(left, right);
+        Word32 y = numberToInt32(right, left);
         return onWords(x, y);
     }
     case OperatorForm::BigInts:

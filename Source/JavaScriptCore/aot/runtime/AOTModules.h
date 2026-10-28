@@ -28,6 +28,7 @@ namespace JSC {
 
 class JSCellButterfly;
 class JSModuleLoader;
+class ModuleLoadingContext;
 class ScriptFetchParameters;
 class ThrowScope;
 
@@ -50,7 +51,8 @@ enum class ModuleStatus : uint8_t {
 static_assert(static_cast<uint8_t>(ModuleStatus::Evaluated) == static_cast<uint8_t>(CyclicModuleRecord::Status::Evaluated));
 
 enum class SynchronousEvaluationReason : uint8_t { Require, DeferredNamespace };
-enum class JobsOfImportedFiles : uint8_t { StayQueued, WaitForLoader };
+// While require() loads a graph the jobs of the program wait for its return in any case, and the steps of the loader are in a queue of their own.
+enum class JobsOfImportedFiles : uint8_t { StayQueued, WaitForLoader, StepsOfLoaderWaitForLoader };
 enum class ErrorOfImportedFile : uint8_t { IsThrown, IsLeftToLoader };
 
 struct LinkContext {
@@ -65,6 +67,7 @@ struct LinkContext {
     macro(JSObject*, deferredNamespaceObject) \
     macro(JSObject*, importMeta) \
     macro(JSObject*, requirer) \
+    macro(JSObject*, objectMadeByRequire) \
     macro(JSValue, requireFunction) \
     macro(JSValue, requiredValue) \
     macro(JSObject*, exportsWhileRequired) \
@@ -124,12 +127,14 @@ public:
     JSString* resolve(ModuleID, ResolvedSpecifierForm);
     const SourceOrigin& sourceOrigin(ModuleID);
     void throwFailure(ModuleFailureID, bool isForRequire);
-    void throwExportNotFound(ModuleID exporter, uint32_t nameIdentifier);
-    void throwExportAmbiguous(ModuleID exporter, uint32_t nameIdentifier);
+    void throwExportNotFound(const RequiredNameData&);
+    void throwExportAmbiguous(const RequiredNameData&);
     void didRequestFromHost(ModuleID module) { m_firstModuleRequestedByHost = m_firstModuleRequestedByHost.value_or(module); }
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
     // `bun run` loads the entry point as the one import of the module bun:main: the graph is loaded one step of the loader behind the entry point. Says so once.
     bool takeStepOfMainModule(ModuleID module) { return m_firstModuleRequestedByHost == module && !std::exchange(m_didTakeStepOfMainModule, true); }
+    // An import() that loads the entry point ahead of the program loads it as any other module, and bun:main finds it loaded.
+    void willBeLoadedByImport(ModuleID module) { m_didTakeStepOfMainModule |= m_firstModuleRequestedByHost == module; }
     // Ahead of that step bun:main waits for one promise and whoever else asks for the entry point for another. Says so once.
     bool takeLoadPromiseBelowMainModule(ModuleID module) { return m_firstModuleRequestedByHost == module && !m_didTakeStepOfMainModule && !std::exchange(m_didTakeLoadPromiseBelowMainModule, true); }
     bool refusesCodeOutsideImage() const { return !m_admitsCodeOutsideImage; }
@@ -137,8 +142,8 @@ public:
     bool isTextNamedByProgram(StringView url) const;
     bool refusesLoadsByName() const { return !m_loadsModulesByName && !m_isAskingHost && !m_runsUncompiledCode; }
     bool isAskingHost() const { return m_isAskingHost; }
-    // A name that the build did not follow finds an entry point and no other file of the image.
-    bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && data(module).kind != ModuleKind::Data && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath(); }
+    // A name that the build did not follow finds an entry point and no other file of the image with code.
+    bool refusesRequestFromHost(ModuleID module) const { return !m_admitsInspector && !m_isAskingHost && !data(module).isEntryPoint() && (data(module).kind != ModuleKind::Data || !m_findsDataFilesByName) && m_table.hasFilePath(module) && !data(module).isLibraryCodeWithFilePath(); }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);
     template<typename Visitor> void visitRoots(Visitor&);
@@ -159,8 +164,9 @@ public:
     // Says whether the start that asks goes on to run the module.
     bool beginModuleInRecord(ModuleID);
     // Says whether a file ran.
-    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown);
+    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr);
     void queueJobsThatWaitForLoader();
+    void handGraphsToLoader();
     void didLoadGraph(ModuleID root);
     void didFailToLoadGraph(ModuleID root);
     void evaluateFilesOfLevel(ModuleID moduleOnWay, bool runsWhenLoaded);
@@ -173,12 +179,14 @@ public:
     // The loader can load a file of the program as it loads code that is not compiled.
     bool isFileOfProgram(ModuleID module) const { return !data(module).isOfLibrary() && (data(module).kind == ModuleKind::SourceText || data(module).kind == ModuleKind::CommonJs); }
     bool isLoadedWithRequests(ModuleID module) const { return isFileOfProgram(module) && data(module).kind == ModuleKind::SourceText; }
-    bool isImportedByLoader(ModuleID module) const { return isFileOfProgram(m_table.fileBehindFace(module).value_or(module)); }
+    // `bun run` takes the loader's whole round for a data file too.
+    bool isImportedByLoader(ModuleID module) const { return isFileOfProgram(m_table.fileBehindFace(module).value_or(module)) || (data(module).kind == ModuleKind::Data && !data(module).isOfLibrary()); }
     bool isBuiltinModuleOfLoader(ModuleID) const;
     bool isBuiltinModuleNewToLoader(ModuleID) const;
     bool needsLoaderForRequire(ModuleID);
     bool canTellHowGraphIsLoaded(ModuleID root);
-    void appendRequestsForLoader(ModuleID, ModuleRecord*);
+    void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
+    ModuleGraphLoadingState* loadThatWaitsFor(ModuleID requester, const Identifier& key, ModuleGraphLoadingState* loadOfRequester, unsigned& jobsUntilLoadHearsOfFailure);
     ModuleRecord* appendRequestsOfUncompiledCode(ModuleID, ModuleRecord*);
     void collectKeysOfUncompiledCode(ModuleID, OrderedHashSet<UniquedStringImpl*>& keys);
     bool comesToCodeThatDoesNotLoad(ModuleID root);
@@ -191,20 +199,29 @@ public:
     void didStartLoad(JSPromise*, ModuleID root);
     ModuleRecord* recordOfCommonJSFile(ModuleID);
     void noteLoadOfFile(ModuleID fileOrFace);
+    bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
+    bool importsFileBeingEvaluated(ModuleID root) const;
+    std::optional<ModuleID> fileToWaitFor(const Identifier& key);
+    JSPromise* deferRequest(ModuleID file, ModuleLoadingContext*, bool useImportMap);
+    bool hasDeferredLoads() const { return !m_deferredRequests.isEmpty() || !m_deferredImports.isEmpty(); }
+    void didRequestModule(const Identifier& key, JSCell* payload);
+    void didSettleLoad(const ModuleGraphLoadingState&);
+    void didFailToMakeModule(const Identifier& key);
     bool isNotLoaded(ModuleID);
     // Of an ES module of the program that has neither a record nor a status.
     bool isNotLoadedWithoutStatus(ModuleID, const ModuleData&);
     // An ES module of the program whose status stands in the table and says that it is linked, at the least.
     bool isLoadedModuleWithoutRecord(ModuleID) const;
     bool wasLoadedWithEarlierGraph(ModuleID);
-    bool wasLoadedWithGraph(ModuleID);
+    bool wasLoadedWithGraph(ModuleID) const;
     bool setIsAskingHost(bool isAskingHost) { return std::exchange(m_isAskingHost, isAskingHost); }
     bool wasImportedWhileItRan(ModuleID file) const;
     void dropErrorOfFile(ModuleID fileOrFace);
     void evaluateCommonJSForLoader(ModuleID file);
     JSValue execute(ModuleID);
 
-    JSValue require(ModuleID);
+    // A whole require(): who required whom is recorded here, whoever asks. Without a referrer it is the evaluation and its answer alone: for the host's own loads, and for a site with operations around it that record.
+    JSValue require(ModuleID, ModuleID referrer = { });
     void evaluateCommonJS(ModuleID);
     JSValue commonJSExports(ModuleID) const;
     JSValue exportsSeenByLoader(ModuleID);
@@ -218,7 +235,9 @@ public:
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
 
     JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined());
-    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    // The host hands what it gets to import() in code that is not compiled, which gives the program a promise of its own.
+    enum class ImportCaller : bool { CompiledCode, Host };
+    JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
@@ -276,6 +295,7 @@ private:
         bool wasLoadedWhileItRan { false };
         bool isAnsweredWithNamespace { false };
         bool bindsEarlierCapture { false };
+        bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
         Vector<ModuleID> requiredModules;
@@ -310,13 +330,18 @@ private:
     JSObject* createTableOfExports();
     JSModuleLoader* loader() const;
 
-    bool loadRuntimeModules(const ModuleLinkWalk&);
+    enum class NativeModuleLoading : bool { Eager, Deferred };
+    bool loadRuntimeModules(const ModuleLinkWalk&, NativeModuleLoading = NativeModuleLoading::Eager);
     void link(const ModuleLinkWalk&);
     void captureSyntheticExports(const ModuleLinkWalk&, VisitedModuleRecords&);
     void finishLink(const ModuleLinkWalk&, LinkContext&);
     void didLinkEntryPoint();
     bool didCaptureExports(ModuleID) const;
     void captureExports(ModuleID);
+    bool isNativeModule(ModuleID) const;
+    JSObject* generateNativeModuleExports(ModuleID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
+    JSValue requireNativeModule(ModuleID);
+    void generateNativeModuleForLoader(ModuleID);
     void bindLatestCapture(ModuleID);
     void captureExportsBehindEvaluation(ModuleID);
     void captureExportsOfFilesBeingEvaluated(ModuleID root);
@@ -334,7 +359,8 @@ private:
     Vector<DynamicExport> collectDynamicExports(ModuleID);
 
     void evaluateWithOwnStack(ModuleID root);
-    void holdJobsBehind(size_t numberOfJobs, ModuleID file);
+    size_t numberOfJobsThatWouldWait(JobsOfImportedFiles) const;
+    void holdJobsBehind(size_t numberOfJobs, ModuleID file, JobsOfImportedFiles = JobsOfImportedFiles::WaitForLoader);
     struct LevelOfLoad;
     struct PlanOfLoad;
     bool planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay = nullptr);
@@ -346,7 +372,8 @@ private:
     void layWayOfLoad(PlanOfLoad&, LevelOfLoad* above);
     void layWayOfLoadAgain(LevelOfLoad&);
     void countStepsOfLevel(PlanOfLoad&, size_t depth);
-    uint32_t countStepsOfWholeGraph(const PlanOfLoad&, uint32_t firstPlaceFound);
+    uint32_t countStepsOfWholeGraph(const PlanOfLoad&, std::span<uint32_t> firstRequestOfPlace, std::span<uint32_t> allRequestedPlaces);
+    uint32_t takeMarkOfSearch();
     void takeUpWaysOfLoads();
     void markModulesOfPlan(const PlanOfLoad&);
     JSValue callBody(ModuleID);
@@ -358,12 +385,19 @@ private:
     void recordEvaluationIfNothingIsLeftToRun(ModuleID);
     bool isPassedOverByEvaluationInProgress(ModuleID) const;
 
-    std::optional<ModuleID> mainCommonJSModule() const;
+    std::optional<ModuleID> mainCommonJSModule();
+    void decideMainCommonJSModule(std::optional<ModuleID>);
+    std::optional<ModuleID> firstFileThatLoaderFindsBelow(ModuleID root);
+    void lookForMainCommonJSModule();
+    void noteLoadOfGraph(ModuleID root);
+    JSObject* moduleObjectMadeByRequire(ModuleID);
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
+    JSValue answerRequire(ModuleID);
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
+    std::optional<ModuleID> findByName(const Identifier& key);
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*);
     bool loaderOnlyHandsOverNamespace(ModuleID) const;
     JSPromise* askLoaderForImport(ModuleID, std::optional<int64_t> referrerAsyncOrder);
@@ -401,8 +435,40 @@ private:
     Structure* m_namespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     // The pairs of a requiring and a required module that recordRequire() has seen.
-    enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain };
+    enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
     UncheckedKeyHashMap<uint64_t, RecordedRequire> m_recordedRequires;
+    std::optional<ModuleID> m_mainCommonJSModule;
+    bool m_isMainCommonJSModuleDecided { false };
+    bool m_didSearchBelowEntryPoint { false };
+    // While no file has the id "." and no require() of a file has returned.
+    Vector<ModuleID, 4> m_modulesFirstRequiredByCallsInProgress;
+    // The first CommonJS file below each root that import() was called for in that time.
+    Vector<ModuleID, 2> m_firstFilesOfLoads;
+    BitVector m_modulesSearchedForFirstFile;
+    // `bun run` makes the module object of a file for whoever asks for the file first, and only a require() leaves a parent in it.
+    BitVector m_filesRequestedByLoader;
+    struct FilesBeingRun {
+        ModuleID root;
+        // Without one, the start of the root calls them.
+        std::optional<ModuleID> fileOrFace;
+        FilesBeingRun* outer;
+        // The loader of `bun run` has asked for every file of the root by now, in jobs that stand in front of whatever the files queue.
+        bool isAheadOfJobsOfLoader { false };
+        // In which the loader asks the root for its requests. Without one, the jobs of an import() are counted.
+        ModuleGraphLoadingState* load { nullptr };
+        size_t numberOfJobsInFrontOfFile { 0 };
+        // The loader has gone through the graph as far as the step in which this file runs.
+        std::optional<ModuleID> fileHandedToLoader { };
+    };
+    void handGraphToLoader(FilesBeingRun&);
+    static void runJobsThatAreDue(VM&, MicrotaskQueue&);
+    void runStepsOfLoaderInFrontOf(ModuleID file);
+    void finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error);
+    std::optional<ModuleID> m_fileBeingHandedToLoader;
+    FilesBeingRun* m_innermostFilesBeingRun { nullptr };
+    void noteRequestByLoader(ModuleID fileOrFace);
+    bool wasRequestedByLoader(ModuleID file);
+    bool hasReachedLevelOf(const FilesBeingRun&, ModuleID file);
     BitVector m_modulesWithMarkOfRequire;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
@@ -412,7 +478,9 @@ private:
     bool m_admitsCodeOutsideImage;
     bool m_runsUncompiledCode { false };
     const bool m_admitsInspector;
+    const bool m_showsWaysBetweenModuleObjects;
     bool m_loadsModulesByName;
+    const bool m_findsDataFilesByName;
     bool m_isAskingHost { false };
     bool m_isWalkingRequests { false };
     struct LoadInFlight {
@@ -426,8 +494,9 @@ private:
     Vector<LoadInFlight, 2> m_loadsInFlight;
     Vector<ModuleID, 4> m_modulesWhoseRecordsLoaderHolds;
     BitVector m_modulesBelowWalkedRoots;
-    // `bun run` loads a graph level by level, and the steps of one level follow each other with no other job between them. So the loader need only go down one way to the lowest level:
-    // when it comes to the module of a level on that way, the files of the level that stand in front of the module run. It comes to the first file behind the module too, and those behind that one run with it.
+    // `bun run` loads a graph level by level, and the steps of one level follow each other with no other job between them. The steps for an ES module run no code of the program, so of the ES modules
+    // the loader need only go down one way to the lowest level. With the module of a level on that way it asks for every CommonJS file of the level that is left to run, in their order:
+    // while a file runs the loader has it in its hands as under `bun run`, for whatever the file or another graph asks of the loader, and a file that throws fails alone.
     // What lay below the root and was not loaded when the loader came to the root. A require() may load a part of it before the loader comes there: what is left stands on the level where it stood.
     struct PlanOfLoad : RefCounted<PlanOfLoad> {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlanOfLoad);
@@ -463,7 +532,8 @@ private:
         bool asksAcrossLevels { false };
         // Nothing of it was loaded since.
         bool isWhole { true };
-        Strong<Unknown> firstErrorOnWayTakenUp;
+        // Of the root.
+        Strong<JSCell> load;
 
         std::span<Found> level(size_t depth) { return found.mutableSpan().subspan(levels[depth].first, (depth + 1 == levels.size() ? found.size() : levels[depth + 1].first) - levels[depth].first); }
     };
@@ -477,6 +547,7 @@ private:
         uint32_t jobsRun { 0 };
         // Known from the job in which the loader would ask the root for its requests.
         uint32_t jobOfEvaluation { 0 };
+        uint32_t jobOfNextNativeModule { 0 };
         RefPtr<PlanOfLoad> plan { };
         // The loader has the graph in its hands.
         RefPtr<MicrotaskQueue> jobsOfLoader { };
@@ -485,6 +556,7 @@ private:
         bool isLoaded { false };
     };
     void decideHowCountedImportGoesOn(CountedImport&);
+    uint32_t findJobOfNextNativeModule(PlanOfLoad&, uint32_t currentJob) const;
     void forgetCountedImport(const CountedImport&);
     Vector<CountedImport, 2> m_countedImports;
     // Out of the list while their own jobs run.
@@ -505,33 +577,74 @@ private:
     struct LevelOfLoad {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(LevelOfLoad);
 
+        struct FileOfNextLevel {
+            ModuleID module;
+            // The load of any other importer is not in the hands of the loader: the load of the root waits for the file.
+            bool isImportedByModuleOnWay;
+        };
         std::optional<ModuleID> next;
-        std::optional<ModuleID> firstFileInFrontOfNext;
-        std::optional<ModuleID> firstFileBehindNext;
-        Vector<ModuleID, 4> files;
-        Strong<Unknown> firstError;
+        Vector<FileOfNextLevel, 4> filesInFrontOfNext;
+        Vector<FileOfNextLevel, 4> filesBehindNext;
+        // Of this level, with no code of the program to run.
+        Vector<ModuleID, 4> filesWithoutCode;
         RefPtr<PlanOfLoad> plan;
         uint32_t depth { 0 };
+        // Of the module on the way, in the plan.
+        uint32_t place { 0 };
         bool isAskedFor { false };
     };
     UncheckedKeyHashMap<ModuleID, std::unique_ptr<LevelOfLoad>> m_levelsOfLoads;
+    // From where a module on a way lists its requests to where the loader asks for them, in the same step.
+    struct FileAskedForOnBehalfOfRoot {
+        ModuleID requester;
+        Identifier key;
+        RefPtr<PlanOfLoad> plan;
+        uint32_t depth;
+    };
+    Vector<FileAskedForOnBehalfOfRoot, 4> m_filesAskedForOnBehalfOfRoot;
     Vector<uint32_t> m_placesSeenByPlans;
     uint32_t m_firstPlaceOfNextPlan { 1 };
     // Their imported files ran without the loader. The set is filled from the list when it is asked.
     Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
     BitVector m_filesLoadedWithoutLoader;
-    // A bit for each module, from the first walk on.
-    Vector<uint64_t> m_modulesLoadedWithGraphs;
-    bool isKnownToBeLoadedWithGraph(ModuleID module) const { return !m_modulesLoadedWithGraphs.isEmpty() && (m_modulesLoadedWithGraphs[module.index() / 64] >> (module.index() % 64) & 1); }
-    // Their evaluation has begun, and nobody has asked since what lies below them.
-    Vector<ModuleID, 4> m_rootsOfLoadedGraphs;
-    bool m_firstEntryPointIsLoaded { false };
+    void noteModulesLoadedWith(ModuleID root);
+    // A bit for each module, read for the heads of groups.
+    Vector<uint64_t> m_loadedGroups;
+    // The groups are those of a program in which the build has seen whoever names a module. Code from outside the image names what it likes: what is loaded from then on has a bit of its own.
+    bool m_buildHasSeenWhoNamesModules;
+    BitVector m_modulesLoadedBesideGroups;
     // A file ran before the loader came to it and queued jobs. They are queued where the loader comes to the file, as under `bun run`.
     std::optional<ModuleID> m_fileWhoseJobsWaitForLoader;
     std::optional<ModuleID> m_rootWhoseFilesRun;
+    struct DeferredRequest {
+        ModuleID file;
+        Strong<JSCell> context;
+        Strong<JSPromise> promise;
+        bool useImportMap;
+        Strong<JSCell> importerLoad { };
+    };
+    Vector<DeferredRequest> m_deferredRequests;
+    struct DeferredImport {
+        ModuleID file;
+        Strong<JSPromise> promise;
+    };
+    Vector<DeferredImport> m_deferredImports;
+    ModuleID fileOf(ModuleID fileOrFace) const { return m_table.fileBehindFace(fileOrFace).value_or(fileOrFace); }
+    void forEachFileEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
+    void forEachFileOrFaceEvaluatedByLoader(const Invocable<void(ModuleID)> auto&) const;
+    bool isEvaluatedByLoader(ModuleID file) const;
+    bool hasDeferredLoads(ModuleID fileOrFace) const;
+    void resumeDeferredRequests(ModuleID file);
+    void resumeDeferredImports(ModuleID file, uint8_t jobsUntilLoaded);
+    void resumeDeferredLoadsWithoutImporter(ModuleID fileOrFace);
+    void resumeDeferredLoadsOfFinishedFiles();
+    bool hasKey(ModuleID file, const Identifier& key);
+    std::optional<ModuleID> fileWithDeferredLoads(const Identifier& key);
     // The loader goes through its graph, and comes to files that have run.
     std::optional<ModuleID> m_rootWhoseFilesRanAhead;
     RefPtr<MicrotaskQueue> m_jobsThatWaitForLoader;
+    // The queue that evaluateSynchronously() has opened for the files that run ahead. The collector finds it from the VM.
+    VM::SynchronousModuleQueue* m_stepsThatWaitForLoader { nullptr };
     bool m_isStartingRuntimeModule { false };
     // The link of the entry point that the image has a plan for stores no status.
     bool m_entryPointIsLinked { false };
@@ -608,9 +721,16 @@ ALWAYS_INLINE bool Modules::isNotLoadedWithoutStatus(ModuleID module, const Modu
         return false;
     if (moduleData.needsLink())
         return true;
-    if (m_firstEntryPointIsLoaded && moduleData.isLoadedWithFirstEntryPoint())
-        return false;
     return !wasLoadedWithGraph(module);
+}
+
+// Of an ES module of the program. A graph is loaded before a module of it begins, and nothing is stored when a module that needs no link is loaded, nor when one with nothing to run is passed over.
+ALWAYS_INLINE bool Modules::wasLoadedWithGraph(ModuleID module) const
+{
+    uint32_t head = m_table.headOfLoadGroup(module).index();
+    if (m_loadedGroups[head / 64] >> (head % 64) & 1)
+        return true;
+    return !m_buildHasSeenWhoNamesModules && m_modulesLoadedBesideGroups.get(module.index());
 }
 
 ALWAYS_INLINE ModuleRecord* Modules::recordIfExists(ModuleID module) const

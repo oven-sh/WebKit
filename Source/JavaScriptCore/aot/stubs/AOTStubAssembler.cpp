@@ -624,9 +624,24 @@ CCallHelpers::Address StubAssembler::limitOfCallsByValue()
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(callsByValue.limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
 }
 
+static constexpr CCallHelpers::Address softStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfSoftStackLimit() };
+static constexpr CCallHelpers::Address trapAwareSoftStackLimitWord { instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit() };
+
 void StubAssembler::checkStackBeforeEntering()
 {
-    pollIfBelow(Address(instanceGPR, AOT_INSTANCE_OFFSET(stackMirror) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit()), pollBeforeEntering(PollBeforeEnteringForm::Plain));
+    pollIfBelow(trapAwareSoftStackLimitWord, pollBeforeEntering(PollBeforeEnteringForm::Plain));
+}
+
+void StubAssembler::checkStackBeforeEntering(GPRReg endOfFrame)
+{
+    Jump mayNotFit = branchPtr(Below, endOfFrame, trapAwareSoftStackLimitWord);
+    Label afterCheck = label();
+    addOutOfLinePart([mayNotFit, afterCheck, endOfFrame](StubAssembler& jit) {
+        mayNotFit.link(&jit);
+        jit.linkToStub(jit.branchPtr(Below, endOfFrame, softStackLimitWord), throwStackOverflow());
+        jit.pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+        jit.jump().linkTo(afterCheck, &jit);
+    });
 }
 
 void StubAssembler::checkStackBeforeEnteringCallee()
@@ -640,16 +655,34 @@ void StubAssembler::pollIfBelow(Address limit, StubKey poll)
     Label afterCheck = label();
     addOutOfLinePart([doesNotFit, afterCheck, poll](StubAssembler& jit) {
         doesNotFit.link(&jit);
-#if CPU(ARM64)
-        jit.move(linkRegister, ARM64Registers::x16);
-#endif
-        // sp is as at the entry of this stub: on x86-64 not aligned for a call, which PollBeforeEntering expects.
-        jit.emitStubCall(poll);
-#if CPU(X86_64)
-        jit.bindReturnLabel(StubFrameKind::AtStubEntry);
-#endif
+        jit.pollAtStubEntry(poll);
         jit.jump().linkTo(afterCheck, &jit);
     });
+}
+
+// sp is as at the entry of this stub: on x86-64 not aligned for a call, which PollBeforeEntering expects.
+void StubAssembler::pollAtStubEntry(StubKey poll)
+{
+#if CPU(ARM64)
+    move(linkRegister, ARM64Registers::x16);
+#endif
+    emitStubCall(poll);
+#if CPU(X86_64)
+    bindReturnLabel(StubFrameKind::AtStubEntry);
+#endif
+}
+
+void StubAssembler::pollBeforeCall(Label returnSite)
+{
+#if CPU(ARM64)
+    loadLabelAddress(returnSite, ARM64Registers::x16);
+    emitStubCall(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+#else
+    loadLabelAddress(returnSite, s_scratchRegister);
+    push(s_scratchRegister);
+    pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+    addPtr(TrustedImm32(sizeof(void*)), stackPointerRegister);
+#endif
 }
 
 CCallHelpers::Label StubAssembler::labelOf(StubKey entry) const

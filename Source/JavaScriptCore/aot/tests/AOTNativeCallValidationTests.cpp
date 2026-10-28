@@ -13,6 +13,7 @@
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"
 #include "AOTVector.h"
+#include "CustomGetterSetter.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
 #include "JSMapInlines.h"
@@ -38,7 +39,65 @@ JSC_DEFINE_HOST_FUNCTION(functionOutsideTable, (JSGlobalObject*, CallFrame*))
     return JSValue::encode(jsUndefined());
 }
 
+static JSC_DECLARE_CUSTOM_GETTER(getterOfNativeCode);
+static JSC_DECLARE_CUSTOM_SETTER(setterOfNativeCode);
+
+JSC_DEFINE_CUSTOM_GETTER(getterOfNativeCode, (JSGlobalObject*, EncodedJSValue, PropertyName))
+{
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterOfNativeCode, (JSGlobalObject*, EncodedJSValue, EncodedJSValue, PropertyName))
+{
+    return true;
+}
+
 namespace {
+
+// As a class of the host may be: it stores, deletes and defines in its own way.
+class ObjectWithOwnMethods final : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesPut;
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.cellSpace();
+    }
+
+    DECLARE_INFO;
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    static ObjectWithOwnMethods* create(VM& vm, JSGlobalObject* globalObject)
+    {
+        auto* object = new (NotNull, allocateCell<ObjectWithOwnMethods>(vm)) ObjectWithOwnMethods(vm, createStructure(vm, globalObject, globalObject->objectPrototype()));
+        object->finishCreation(vm);
+        return object;
+    }
+
+    static bool put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
+    {
+        return Base::put(cell, globalObject, name, value, slot);
+    }
+
+    static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
+    {
+        return Base::deleteProperty(cell, globalObject, name, slot);
+    }
+
+private:
+    ObjectWithOwnMethods(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
+const ClassInfo ObjectWithOwnMethods::s_info = { "ObjectWithOwnMethods"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ObjectWithOwnMethods) };
 
 // Stands for a native function: the scope sees the callee and the operands, and the body does to them what the function would.
 class SimulatedCall {
@@ -321,6 +380,58 @@ static void testChangesMadeByCodeThatRanAreAccepted()
     AOT_TEST_CHECK(realms.vm().didEnterVM);
 }
 
+static JSObject* objectWithAccessorOfNativeCode(Realms& realms, const Identifier& name)
+{
+    VM& vm = realms.vm();
+    JSObject* object = realms.object(realms.plain(), "({ a: 1 })"_s);
+    object->putDirectCustomAccessor(vm, name, CustomGetterSetter::create(vm, getterOfNativeCode, setterOfNativeCode), static_cast<unsigned>(PropertyAttribute::CustomAccessor));
+    return object;
+}
+
+// The setter puts a data property in the place of its accessor.
+static void testSetterOfNativeCodeMayDefineItsPropertyAnew()
+{
+    Realms realms(RuntimeValidation::On);
+    VM& vm = realms.vm();
+    JSGlobalObject* realm = realms.plain();
+    Identifier name = Identifier::fromString(vm, "kept"_s);
+
+    JSObject* assigned = objectWithAccessorOfNativeCode(realms, name);
+    SimulatedCall(realms, "Object.assign"_s).run({ assigned, realms.object(realm, "({ kept: 1 })"_s) }, [&] {
+        assigned->putDirect(vm, name, jsNumber(1), 0);
+        return assigned;
+    });
+
+    JSObject* stored = objectWithAccessorOfNativeCode(realms, name);
+    SimulatedCall(realms, "Reflect.set"_s).run({ stored, jsNontrivialString(vm, "kept"_s), jsNumber(1) }, [&] {
+        stored->putDirect(vm, name, jsNumber(1), 0);
+        return jsBoolean(true);
+    });
+}
+
+// It keeps what belongs to a property under another name, which goes with the property.
+static void testObjectOfHostStoresAndDeletesInItsOwnWay()
+{
+    Realms realms(RuntimeValidation::On);
+    VM& vm = realms.vm();
+    JSGlobalObject* realm = realms.plain();
+    Identifier name = Identifier::fromString(vm, "kept"_s);
+    Identifier other = Identifier::fromString(vm, "other"_s);
+
+    JSObject* object = ObjectWithOwnMethods::create(vm, realm);
+    object->putDirect(vm, name, jsNumber(1), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    SimulatedCall(realms, "Reflect.set"_s).run({ object, jsNontrivialString(vm, "kept"_s), jsNumber(2) }, [&] {
+        object->putDirect(vm, name, jsNumber(2), 0);
+        object->putDirect(vm, other, jsNumber(2), 0);
+        return jsBoolean(true);
+    });
+    SimulatedCall(realms, "Reflect.deleteProperty"_s).run({ object, jsNontrivialString(vm, "kept"_s) }, [&] {
+        JSCell::deleteProperty(object, realm, name);
+        JSCell::deleteProperty(object, realm, other);
+        return jsBoolean(true);
+    });
+}
+
 static void testOperandThatAnotherOperandHoldsUnderAnIndexMayArriveThere()
 {
     Realms realms(RuntimeValidation::On);
@@ -333,6 +444,43 @@ static void testOperandThatAnotherOperandHoldsUnderAnIndexMayArriveThere()
         return target;
     });
     AOT_TEST_CHECK(target->getIndexQuickly(0) == element);
+}
+
+static void testOperandThatADescriptionHoldsMayArriveWhereItIsDefined()
+{
+    Realms realms(RuntimeValidation::On);
+    JSGlobalObject* realm = realms.plain();
+    VM& vm = realms.vm();
+    Identifier name = Identifier::fromString(vm, "held"_s);
+    enum class Answer : bool { Target, True };
+    auto defineByDescription = [&](ASCIILiteral callee, Answer answer, JSValue thisValue, JSObject* description, JSObject* described) {
+        JSObject* target = realms.object(realm, "({ })"_s);
+        SimulatedCall(realms, callee).on(thisValue).run({ target, jsNontrivialString(vm, "held"_s), description }, [&] {
+            target->putDirect(vm, name, described);
+            return answer == Answer::Target ? JSValue(target) : jsBoolean(true);
+        });
+    };
+    auto defineByMap = [&](JSValue thisValue, JSObject* map, JSObject* described) {
+        JSObject* target = realms.object(realm, "({ })"_s);
+        SimulatedCall(realms, "Object.defineProperties"_s).on(thisValue).run({ target, map }, [&] {
+            target->putDirect(vm, name, described);
+            return target;
+        });
+    };
+
+    // Compiled code calls a function that does not look at `this` with the object that holds the function.
+    JSObject* holder = realms.object(realm, "Object"_s);
+    defineByMap(holder, realms.object(realm, "({ held: { value: Object } })"_s), holder);
+    defineByMap(holder, realms.object(realm, "({ held: Object.create({ value: Object }) })"_s), holder);
+    defineByDescription("Object.defineProperty"_s, Answer::Target, holder, realms.object(realm, "({ value: Object })"_s), holder);
+    defineByDescription("Object.defineProperty"_s, Answer::Target, holder, realms.object(realm, "Object.create({ value: Object })"_s), holder);
+    JSObject* reflect = realms.object(realm, "Reflect"_s);
+    defineByDescription("Reflect.defineProperty"_s, Answer::True, reflect, realms.object(realm, "({ value: Reflect })"_s), reflect);
+
+    JSObject* description = realms.object(realm, "(() => { const description = { }; description.value = description; return description; })()"_s);
+    defineByDescription("Object.defineProperty"_s, Answer::Target, jsUndefined(), description, description);
+    JSObject* map = realms.object(realm, "(() => { const map = { held: { } }; map.held.value = map; return map; })()"_s);
+    defineByMap(jsUndefined(), map, map);
 }
 
 static void testBuiltinThatTheCallNamesIsAccepted()
@@ -414,6 +562,37 @@ static void storeUnderKeyThatNoActionCovers(Realms& realms)
     });
 }
 
+static void redefineDataPropertyFromEntryThatStores(Realms& realms)
+{
+    JSObject* target = realms.object(realms.plain(), "({ a: 1 })"_s);
+    SimulatedCall(realms, "Object.assign"_s).run({ target, realms.object(realms.plain(), "({ a: 2 })"_s) }, [&] {
+        target->putDirect(realms.vm(), Identifier::fromString(realms.vm(), "a"_s), jsNumber(2), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        return target;
+    });
+}
+
+static void redefineAccessorOfNativeCodeFromEntryThatInspects(Realms& realms)
+{
+    Identifier name = Identifier::fromString(realms.vm(), "kept"_s);
+    JSObject* object = objectWithAccessorOfNativeCode(realms, name);
+    SimulatedCall(realms, "Object.isFrozen"_s).run({ object }, [&] {
+        object->putDirect(realms.vm(), name, jsNumber(1), 0);
+        return jsBoolean(false);
+    });
+}
+
+static void deleteAnotherPropertyOfOrdinaryObject(Realms& realms)
+{
+    VM& vm = realms.vm();
+    Identifier name = Identifier::fromString(vm, "kept"_s);
+    JSObject* object = realms.object(realms.plain(), "({ kept: 1, other: 2 })"_s);
+    SimulatedCall(realms, "Reflect.deleteProperty"_s).run({ object, jsNontrivialString(vm, "kept"_s) }, [&] {
+        JSCell::deleteProperty(object, realms.plain(), name);
+        JSCell::deleteProperty(object, realms.plain(), Identifier::fromString(vm, "other"_s));
+        return jsBoolean(true);
+    });
+}
+
 static void runCodeFromEntryWithoutCode(Realms& realms)
 {
     SimulatedCall(realms, "Math.abs"_s).run({ jsNumber(1) }, [&] {
@@ -482,6 +661,41 @@ static void keepOperandThatIsOnlyInspected(Realms& realms)
     JSObject* source = realms.object(realms.plain(), "({ a: 2 })"_s);
     SimulatedCall(realms, "Object.assign"_s).run({ target, source }, [&] {
         target->putDirect(realms.vm(), Identifier::fromString(realms.vm(), "a"_s), source);
+        return target;
+    });
+}
+
+static void defineHeld(Realms& realms, JSObject* target, JSValue value)
+{
+    target->putDirect(realms.vm(), Identifier::fromString(realms.vm(), "held"_s), value);
+}
+
+static void keepReceiverThatTheDescriptionDoesNotHold(Realms& realms)
+{
+    JSObject* target = realms.object(realms.plain(), "({ })"_s);
+    JSObject* holder = realms.object(realms.plain(), "Object"_s);
+    SimulatedCall(realms, "Object.defineProperty"_s).on(holder).run({ target, jsNontrivialString(realms.vm(), "held"_s), realms.object(realms.plain(), "({ value: 1, other: Object })"_s) }, [&] {
+        defineHeld(realms, target, holder);
+        return target;
+    });
+}
+
+static void keepReceiverThatIsDescribedUnderAnotherKey(Realms& realms)
+{
+    JSObject* target = realms.object(realms.plain(), "({ })"_s);
+    JSObject* holder = realms.object(realms.plain(), "Object"_s);
+    SimulatedCall(realms, "Object.defineProperties"_s).on(holder).run({ target, realms.object(realms.plain(), "({ held: { value: 1 }, other: { value: Object } })"_s) }, [&] {
+        defineHeld(realms, target, holder);
+        return target;
+    });
+}
+
+static void keepMapOfDescriptions(Realms& realms)
+{
+    JSObject* target = realms.object(realms.plain(), "({ })"_s);
+    JSObject* map = realms.object(realms.plain(), "({ held: { value: 1 } })"_s);
+    SimulatedCall(realms, "Object.defineProperties"_s).run({ target, map }, [&] {
+        defineHeld(realms, target, map);
         return target;
     });
 }
@@ -614,6 +828,9 @@ static void changeTableInOperationThatOnlyReads(Realms& realms)
     });
 }
 
+static constexpr ASCIILiteral redefineDataPropertyFromEntryThatStoresTest = "native-call-validation/entry-that-stores-changes-the-attributes-of-a-data-property"_s;
+static constexpr ASCIILiteral redefineAccessorOfNativeCodeFromEntryThatInspectsTest = "native-call-validation/entry-that-inspects-replaces-an-accessor-of-native-code"_s;
+static constexpr ASCIILiteral deleteAnotherPropertyOfOrdinaryObjectTest = "native-call-validation/entry-that-deletes-by-key-deletes-another-property-of-an-ordinary-object"_s;
 static constexpr ASCIILiteral growArrayInOperationThatWritesNoArrayStorageTest = "native-call-validation/operation-changes-array-storage-that-it-does-not-list"_s;
 static constexpr ASCIILiteral changeOperandThatTheOperationOnlyReadsTest = "native-call-validation/operation-changes-an-operand-that-it-only-reads"_s;
 static constexpr ASCIILiteral changeTableInOperationThatOnlyReadsTest = "native-call-validation/operation-that-only-reads-changes-a-table"_s;
@@ -625,6 +842,9 @@ static constexpr ASCIILiteral collectInCallThatDoesNotCollectTest = "native-call
 static constexpr ASCIILiteral collectFromEntryThatDoesNotAllocateTest = "native-call-validation/entry-that-does-not-allocate-collects"_s;
 static constexpr ASCIILiteral returnOperandThatIsOnlyInspectedTest = "native-call-validation/inspected-operand-is-returned"_s;
 static constexpr ASCIILiteral keepOperandThatIsOnlyInspectedTest = "native-call-validation/inspected-operand-is-stored-in-another"_s;
+static constexpr ASCIILiteral keepReceiverThatTheDescriptionDoesNotHoldTest = "native-call-validation/receiver-that-the-description-does-not-hold-is-defined"_s;
+static constexpr ASCIILiteral keepReceiverThatIsDescribedUnderAnotherKeyTest = "native-call-validation/receiver-that-is-described-under-another-key-is-defined"_s;
+static constexpr ASCIILiteral keepMapOfDescriptionsTest = "native-call-validation/map-of-descriptions-is-defined-in-the-place-of-a-value"_s;
 
 std::span<const NativeTest> nativeCallValidationTests()
 {
@@ -640,6 +860,9 @@ std::span<const NativeTest> nativeCallValidationTests()
         { "native-call-validation/proxy-that-an-entry-uses-by-a-protocol-throws-by-itself"_s, testProxyThatAnEntryUsesByProtocolThrowsByItself },
         { "native-call-validation/property-of-an-array-under-a-number-that-is-no-index-is-an-element"_s, testPropertyOfAnArrayUnderANumberThatIsNoIndexIsAnElement },
         { "native-call-validation/operand-that-another-operand-holds-under-an-index-may-arrive-there"_s, testOperandThatAnotherOperandHoldsUnderAnIndexMayArriveThere },
+        { "native-call-validation/operand-that-a-description-holds-may-arrive-where-it-is-defined"_s, testOperandThatADescriptionHoldsMayArriveWhereItIsDefined },
+        { "native-call-validation/setter-of-native-code-may-define-its-property-anew"_s, testSetterOfNativeCodeMayDefineItsPropertyAnew },
+        { "native-call-validation/object-of-the-host-stores-and-deletes-in-its-own-way"_s, testObjectOfHostStoresAndDeletesInItsOwnWay },
         { "native-call-validation/built-in-that-the-call-names-is-accepted"_s, testBuiltinThatTheCallNamesIsAccepted },
         { "native-call-validation/no-proof-rests-on-native-code-where-unseen-code-runs"_s, testNoProofRestsOnNativeCodeWhereUnseenCodeRuns },
         { "native-call-validation/nothing-is-checked-without-validation"_s, testNothingIsCheckedWithoutValidation },
@@ -647,6 +870,9 @@ std::span<const NativeTest> nativeCallValidationTests()
         { freezeFromBuiltinThatTheCallDoesNotNameTest, testMismatchCrashes<freezeFromBuiltinThatTheCallDoesNotNameTest, NativeCallChangedOperand, freezeFromBuiltinThatTheCallDoesNotName> },
         { freezeFromEntryThatInspectsTest, testMismatchCrashes<freezeFromEntryThatInspectsTest, NativeCallChangedOperand, freezeFromEntryThatInspects> },
         { storeUnderKeyThatNoActionCoversTest, testMismatchCrashes<storeUnderKeyThatNoActionCoversTest, NativeCallChangedOperand, storeUnderKeyThatNoActionCovers> },
+        { redefineDataPropertyFromEntryThatStoresTest, testMismatchCrashes<redefineDataPropertyFromEntryThatStoresTest, NativeCallChangedOperand, redefineDataPropertyFromEntryThatStores> },
+        { redefineAccessorOfNativeCodeFromEntryThatInspectsTest, testMismatchCrashes<redefineAccessorOfNativeCodeFromEntryThatInspectsTest, NativeCallChangedOperand, redefineAccessorOfNativeCodeFromEntryThatInspects> },
+        { deleteAnotherPropertyOfOrdinaryObjectTest, testMismatchCrashes<deleteAnotherPropertyOfOrdinaryObjectTest, NativeCallChangedOperand, deleteAnotherPropertyOfOrdinaryObject> },
         { runCodeFromEntryWithoutCodeTest, testMismatchCrashes<runCodeFromEntryWithoutCodeTest, NativeCallRanCode, runCodeFromEntryWithoutCode> },
         { writeHeapThatTheCallDoesNotWriteTest, testMismatchCrashes<writeHeapThatTheCallDoesNotWriteTest, NativeCallWroteHeap, writeHeapThatTheCallDoesNotWrite> },
         { throwFromCallThatDoesNotThrowTest, testMismatchCrashes<throwFromCallThatDoesNotThrowTest, NativeCallThrew, throwFromCallThatDoesNotThrow> },
@@ -656,6 +882,9 @@ std::span<const NativeTest> nativeCallValidationTests()
         { collectFromEntryThatDoesNotAllocateTest, testMismatchCrashes<collectFromEntryThatDoesNotAllocateTest, NativeCallCollected, collectFromEntryThatDoesNotAllocate> },
         { returnOperandThatIsOnlyInspectedTest, testMismatchCrashes<returnOperandThatIsOnlyInspectedTest, NativeCallKeptOperand, returnOperandThatIsOnlyInspected> },
         { keepOperandThatIsOnlyInspectedTest, testMismatchCrashes<keepOperandThatIsOnlyInspectedTest, NativeCallKeptOperand, keepOperandThatIsOnlyInspected> },
+        { keepReceiverThatTheDescriptionDoesNotHoldTest, testMismatchCrashes<keepReceiverThatTheDescriptionDoesNotHoldTest, NativeCallKeptOperand, keepReceiverThatTheDescriptionDoesNotHold> },
+        { keepReceiverThatIsDescribedUnderAnotherKeyTest, testMismatchCrashes<keepReceiverThatIsDescribedUnderAnotherKeyTest, NativeCallKeptOperand, keepReceiverThatIsDescribedUnderAnotherKey> },
+        { keepMapOfDescriptionsTest, testMismatchCrashes<keepMapOfDescriptionsTest, NativeCallKeptOperand, keepMapOfDescriptions> },
         { "native-call-validation/operation-may-write-what-it-lists"_s, testOperationMayWriteWhatItLists },
         { growArrayInOperationThatWritesNoArrayStorageTest, testMismatchCrashes<growArrayInOperationThatWritesNoArrayStorageTest, OperationWroteHeap, growArrayInOperationThatWritesNoArrayStorage> },
         { changeOperandThatTheOperationOnlyReadsTest, testMismatchCrashes<changeOperandThatTheOperationOnlyReadsTest, OperationWroteHeap, changeOperandThatTheOperationOnlyReads> },

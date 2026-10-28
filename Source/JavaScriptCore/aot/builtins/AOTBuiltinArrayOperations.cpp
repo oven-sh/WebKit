@@ -21,6 +21,7 @@
 #include "JSArrayInlines.h"
 #include "JSArrayIterator.h"
 #include "JSCInlines.h"
+#include "JSStringInlines.h"
 #include "JSStringJoiner.h"
 #include <algorithm>
 #include <bit>
@@ -271,6 +272,33 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTArrayIndexOfInt32, size_t, (Instan
     auto* data = std::bit_cast<const uint64_t*>(butterfly.contiguous().data());
     const uint64_t* found = WTF::find64(data, searched, butterfly.publicLength());
     return found ? found - data : static_cast<size_t>(-1);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTArrayIndexOfString, size_t, (Instance* instance, JSCell* cell, JSCell* searched, uint64_t start))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTArrayIndexOfString);
+    JSArray* array = cellArgument<JSArray>(cell, Entry::operationAOTArrayIndexOfString);
+    JSString* searchString = cellArgument<JSString>(searched, Entry::operationAOTArrayIndexOfString);
+    constexpr size_t notFound = static_cast<size_t>(-1);
+    const WriteBarrier<Unknown>* elements = hasContiguous(array->indexingType()) ? array->butterfly()->contiguous().data() : nullptr;
+    if (!elements && !hasAnyArrayStorage(array->indexingType()))
+        OPERATION_RETURN(scope, notFound);
+    unsigned searchLength = searchString->length();
+    for (uint64_t index = start, length = array->length(); index < length; ++index) {
+        JSValue element = elements ? elements[index].get() : array->getDirectIndex(globalObject, static_cast<unsigned>(index));
+        if (!element || !element.isString())
+            continue;
+        JSString* string = asString(element);
+        if (string == searchString)
+            OPERATION_RETURN(scope, index);
+        if (string->length() != searchLength)
+            continue;
+        bool isEqual = string->equalInline(globalObject, searchString);
+        OPERATION_RETURN_IF_EXCEPTION(scope, notFound);
+        if (isEqual)
+            OPERATION_RETURN(scope, index);
+    }
+    OPERATION_RETURN(scope, notFound);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySearchOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedReceiver, EncodedJSValue encodedSearched, EncodedJSValue encodedFromIndex, uint32_t answersIndex))

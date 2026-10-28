@@ -17,6 +17,7 @@
 #include "B3ConstDoubleValue.h"
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
+#include "B3Policy.h"
 #include "B3Procedure.h"
 #include "B3RelocatableValue.h"
 #include "B3SwitchValue.h"
@@ -112,6 +113,8 @@ public:
             switchValue->appendCase(B3::SwitchCase(switchCase.caseValue, switchCase.target));
     }
 
+    unsigned minCasesForJumpTable() const { return m_proc.policy().switchLowering.minCasesForJumpTable; }
+
     void appendSuccessor(B3::FrequentedBlock target) { m_block->appendSuccessor(target); }
 
     void retVoid()
@@ -131,6 +134,60 @@ public:
     LValue constDouble(double value) { return constantAtHead<B3::ConstDoubleValue>(m_doublesAtHead, std::bit_cast<int64_t>(value), value); }
     template<typename T>
     LValue constIntPtr(T value) { return constInt64(static_cast<intptr_t>(value)); }
+
+    // An operand that is written as a number becomes a constant once the operand before it has been appended.
+    template<typename T> static constexpr bool isImmediate = std::is_integral_v<T> || std::is_enum_v<T>;
+    LValue constantOfTypeOf(LValue value, int64_t constant) { return value->type() == B3::Int32 ? constInt32(static_cast<int32_t>(constant)) : constInt64(constant); }
+    using FTL::Output::add;
+    template<typename T> requires isImmediate<T> LValue add(LValue left, T right) { return add(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::sub;
+    template<typename T> requires isImmediate<T> LValue sub(LValue left, T right) { return sub(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::mul;
+    template<typename T> requires isImmediate<T> LValue mul(LValue left, T right) { return mul(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::bitAnd;
+    template<typename T> requires isImmediate<T> LValue bitAnd(LValue left, T right) { return bitAnd(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::bitOr;
+    template<typename T> requires isImmediate<T> LValue bitOr(LValue left, T right) { return bitOr(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::bitXor;
+    template<typename T> requires isImmediate<T> LValue bitXor(LValue left, T right) { return bitXor(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::equal;
+    template<typename T> requires isImmediate<T> LValue equal(LValue left, T right) { return equal(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::notEqual;
+    template<typename T> requires isImmediate<T> LValue notEqual(LValue left, T right) { return notEqual(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::above;
+    template<typename T> requires isImmediate<T> LValue above(LValue left, T right) { return above(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::aboveOrEqual;
+    template<typename T> requires isImmediate<T> LValue aboveOrEqual(LValue left, T right) { return aboveOrEqual(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::below;
+    template<typename T> requires isImmediate<T> LValue below(LValue left, T right) { return below(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::belowOrEqual;
+    template<typename T> requires isImmediate<T> LValue belowOrEqual(LValue left, T right) { return belowOrEqual(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::greaterThan;
+    template<typename T> requires isImmediate<T> LValue greaterThan(LValue left, T right) { return greaterThan(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::greaterThanOrEqual;
+    template<typename T> requires isImmediate<T> LValue greaterThanOrEqual(LValue left, T right) { return greaterThanOrEqual(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::lessThan;
+    template<typename T> requires isImmediate<T> LValue lessThan(LValue left, T right) { return lessThan(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::lessThanOrEqual;
+    template<typename T> requires isImmediate<T> LValue lessThanOrEqual(LValue left, T right) { return lessThanOrEqual(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::testIsZero32;
+    template<typename T> requires isImmediate<T> LValue testIsZero32(LValue left, T right) { return testIsZero32(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::testNonZero32;
+    template<typename T> requires isImmediate<T> LValue testNonZero32(LValue left, T right) { return testNonZero32(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::testIsZero64;
+    template<typename T> requires isImmediate<T> LValue testIsZero64(LValue left, T right) { return testIsZero64(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::testNonZero64;
+    template<typename T> requires isImmediate<T> LValue testNonZero64(LValue left, T right) { return testNonZero64(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::testIsZeroPtr;
+    template<typename T> requires isImmediate<T> LValue testIsZeroPtr(LValue left, T right) { return testIsZeroPtr(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::testNonZeroPtr;
+    template<typename T> requires isImmediate<T> LValue testNonZeroPtr(LValue left, T right) { return testNonZeroPtr(left, constantOfTypeOf(left, static_cast<int64_t>(right))); }
+    using FTL::Output::shl;
+    template<typename T> requires isImmediate<T> LValue shl(LValue value, T amount) { return shl(value, constInt32(static_cast<int32_t>(amount))); }
+    using FTL::Output::aShr;
+    template<typename T> requires isImmediate<T> LValue aShr(LValue value, T amount) { return aShr(value, constInt32(static_cast<int32_t>(amount))); }
+    using FTL::Output::lShr;
+    template<typename T> requires isImmediate<T> LValue lShr(LValue value, T amount) { return lShr(value, constInt32(static_cast<int32_t>(amount))); }
 
     LValue valueOf(TypedPointer pointer) { return pointer.offset() ? FTL::Output::add(pointer.base(), constIntPtr(pointer.offset())) : pointer.base(); }
     TypedPointer address(const B3::AbstractHeap& heap, LValue base, ptrdiff_t offset = 0) { return TypedPointer(heap, base, offset); }

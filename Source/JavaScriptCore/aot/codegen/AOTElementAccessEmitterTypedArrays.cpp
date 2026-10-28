@@ -79,8 +79,14 @@ Operand ElementAccessEmitter::loadTypedArrayElement(const TypedArrayElements& el
 
 Word32 ElementAccessEmitter::clampedToUint8(Integer value)
 {
-    Integer nonNegative = select(lessThan(value, integer(0)), integer(0), value);
-    return low32(select(greaterThan(nonNegative, integer(UINT8_MAX)), integer(UINT8_MAX), nonNegative));
+    Integer nonNegative = select(lessThan(value, 0), 0, value);
+    return low32(select(greaterThan(nonNegative, UINT8_MAX), UINT8_MAX, nonNegative));
+}
+
+Word32 ElementAccessEmitter::clampedToUint8(Word32 value)
+{
+    Word32 nonNegative = select(lessThan(value, 0), 0, value);
+    return select(greaterThan(nonNegative, UINT8_MAX), UINT8_MAX, nonNegative);
 }
 
 void ElementAccessEmitter::storeTypedArrayElement(const TypedArrayElements& elements, Integer index, TypedArrayType type, Operand stored)
@@ -94,7 +100,7 @@ void ElementAccessEmitter::storeTypedArrayElement(const TypedArrayElements& elem
             bits = stored.is<Integer>() ? low32(stored.as<Integer>()) : stored.as<Word32>();
         stored = slot == SlotRepresentation::Uint32 ? Operand(zeroExtended(bits)) : Operand(bits);
     } else if (isClamped(type))
-        stored = clampedToUint8(stored.is<Word32>() ? signExtended(stored.as<Word32>()) : stored.as<Integer>());
+        stored = stored.is<Word32>() ? clampedToUint8(stored.as<Word32>()) : clampedToUint8(stored.as<Integer>());
 
     TypedPointer element(m_heaps.TypedArrayProperties, offsetBy(elements.vector, index, logElementSize(type)).value());
     emitter<SlotEmitter>().store(element, slot, stored);
@@ -112,7 +118,7 @@ void ElementAccessEmitter::generateHasFixedBytes(const ValueContext& value)
     CellPointer view = in<CellPointer>(value->viewOperand());
     Condition hasFixedLength = hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask);
     Condition hasMemory = isNotZero(Integer(loadField<Pointer>(view, m_heaps.JSArrayBufferView_vector).value()));
-    Condition isShort = belowOrEqual(loadField<Integer>(view, m_heaps.JSArrayBufferView_length), integer(std::numeric_limits<int32_t>::max()));
+    Condition isShort = belowOrEqual(loadField<Integer>(view, m_heaps.JSArrayBufferView_length), std::numeric_limits<int32_t>::max());
     defineTest(value, logicalAnd(logicalAnd(hasFixedLength, hasMemory), isShort));
 }
 

@@ -275,7 +275,7 @@ bool GenericCopy::hasValueAtHead(BlockID block, const BitVector& values, Answers
     auto isAmongValues = [&](ValueID value) {
         return values.get(value.index());
     };
-    bool answer = std::ranges::any_of(m_function.at(block).parameters, isAmongValues) || std::ranges::any_of(m_analyses.liveness().liveAtHead(block), isAmongValues);
+    bool answer = std::ranges::any_of(m_function.at(block).parameters, isAmongValues) || m_analyses.liveness().isAnyLiveAtHead(block, values, answers.aboutLiveValues);
     answers.isKnown.set(block.index());
     answers.answer.set(block.index(), answer);
     return answer;
@@ -480,7 +480,6 @@ void GenericCopy::recordTestedRejoins()
     if (m_testedRejoinBlocks.isEmpty())
         return;
     const Liveness& liveness = m_analyses.liveness();
-    UnspecifiedValues unspecifiedValues(m_analyses);
     for (BlockID block : m_testedRejoinBlocks) {
         if (!canLeaveCopyAt(block) || mergesAllocationThatSinksWithItsCopyAt(block))
             continue;
@@ -498,11 +497,11 @@ void GenericCopy::recordTestedRejoins()
                 rejoin.narrowedLiveValues.append(value);
         }
         for (ValueID parameter : m_function.at(block).parameters) {
-            if (unspecifiedValues.mayContain(parameter))
+            if (m_analyses.program().typeOf(m_function, parameter).mayBeUnspecified())
                 rejoin.valuesThatMayBeUnspecified.append(parameter);
         }
         for (ValueID value : rejoin.narrowedLiveValues) {
-            if (unspecifiedValues.mayContain(value))
+            if (m_analyses.program().typeOf(m_function, value).mayBeUnspecified())
                 rejoin.valuesThatMayBeUnspecified.append(value);
         }
         m_testedRejoins.append(WTF::move(rejoin));

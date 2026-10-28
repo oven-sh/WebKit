@@ -1,0 +1,25 @@
+# Number.prototype.toFixed.call(undefined, { valueOf })  idle = function () {}
+# No overload of toFixed accepts undefined as its receiver, so the call throws. A native function may convert its arguments before it checks the receiver: `valueOf` counts as called.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Converted" fields=[{key="valueOf" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=NumberPrototypeToFixed
+    v1 = Undefined
+    v2 = NewClosure function=f1
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = Call v0, v1, v3
+    v5 = NewClosure function=f2
+    Return
+}
+function f1 name="valueOf" kind=Method results=[{type=anything}] {
+    v0 = Integer integer=7
+    Throw v0
+}
+function f2 name="idle" kind=Arrow results=[{type=anything}] {
+    Return
+}

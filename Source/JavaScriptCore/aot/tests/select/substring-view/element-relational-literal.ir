@@ -43,14 +43,14 @@ function f2 name="character-range" parameters=[{type=string}, {type=int}] result
   b2():
     Return v4
 # CHECK-NOT: StringPrototypeAt
-# CHECK: v2: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
+# CHECK: [[unit2]]: int[-1, 65535] = StringRangeCodeUnitOrMinusOne v0,
 # CHECK-NOT: = StringRangeCodeUnitOr
 # CHECK: [[low2]]: 48 = Integer integer=48
-# CHECK-NEXT: v4: boolean = GreaterEq v2, [[low2]]
+# CHECK-NEXT: : boolean = GreaterEq [[unit2]], [[low2]]
 # CHECK-NOT: = StringRangeCodeUnitOr
 # CHECK: [[high2]]: 57 = Integer integer=57
-# CHECK-NEXT: [[unsigned2]]: int[0, 4294967295] = ToUint32 v2
-# CHECK-NEXT: v6: boolean = LessEq [[unsigned2]], [[high2]]
+# CHECK-NEXT: [[unsigned2]]: int[0, 4294967295] = ToUint32 [[unit2]]
+# CHECK-NEXT: : boolean = LessEq [[unsigned2]], [[high2]]
 }
 
 function f3 name="longer-literal" parameters=[{type=string}, {type=int}] results=[{type=boolean}] {

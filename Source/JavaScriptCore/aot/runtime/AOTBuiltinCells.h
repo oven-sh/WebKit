@@ -64,7 +64,10 @@ public:
     // The exports of a built-in module tell of nothing.
     void fillCellsUnderModules();
     void didLoadModule(RuntimeModuleID, JSObject* exports);
+    void didLoadNativeModule(RuntimeModuleID, JSObject* exports);
     void didCreateMember(JSObject* holder, UniquedStringImpl* key, JSObject* member);
+    // What compiled code was handed before the program read the member. The holder adds this very object. Null if there is none.
+    JSObject* takeMemberMadeAhead(JSObject* holder, UniquedStringImpl* key);
     void fillCellsOfEngine();
 
     // The program may replace a step of the path to a locked object, such as the global `Response`, so a cell is looked for in the object that was locked when the realm created it.
@@ -92,7 +95,8 @@ public:
 private:
     std::optional<uint32_t> numberOf(BuiltinCellKey) const;
     JSObject* findKnownObject(BuiltinID) const;
-    std::expected<JSCell*, BuiltinLookupFailure> find(BuiltinCellKey) const;
+    std::expected<JSCell*, BuiltinLookupFailure> find(BuiltinCellKey);
+    std::expected<JSCell*, BuiltinLookupFailure> findInKnownHolder(BuiltinCellKey, JSObject* holder);
     void fillAndKeepAlive(uint32_t number, JSCell*);
     enum class AwaitedOrigin : bool { Host, Any };
     bool awaitCreation(uint32_t number, AwaitedOrigin = AwaitedOrigin::Host);
@@ -111,6 +115,12 @@ private:
         uint32_t number;
     };
     Vector<AwaitedMember, 4> m_awaitedMembers;
+    struct MemberMadeAhead {
+        JSObject* holder;
+        Identifier key;
+        JSObject* member;
+    };
+    Vector<MemberMadeAhead> m_membersMadeAhead;
     struct CellAwaitingModule {
         uint32_t root;
         uint32_t number;

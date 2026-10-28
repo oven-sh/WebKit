@@ -90,6 +90,8 @@ void MemoryNumbering::beginWalk(Dominators& dominators)
     m_statesAtTails.shrink(0);
     m_statesAtTails.append(MemoryState { });
     recordLoopWrites();
+    if (m_proc.policy().validation.overlooksWritesOnUnlikelyPaths) [[unlikely]]
+        findBlocksOnLikelyPaths();
 }
 
 void MemoryNumbering::enterBlock(BasicBlock* block)
@@ -345,8 +347,23 @@ bool MemoryNumbering::mergeSameEpochStates(BasicBlock* block, MemoryState& merge
     return true;
 }
 
+void MemoryNumbering::findBlocksOnLikelyPaths()
+{
+    m_blocksOnLikelyPaths = { };
+    Vector<BasicBlock*, 16> worklist { m_proc.at(0) };
+    m_blocksOnLikelyPaths.add(m_proc.at(0));
+    while (!worklist.isEmpty()) {
+        for (const FrequentedBlock& successor : worklist.takeLast()->successors()) {
+            if (successor.frequency() == FrequencyClass::Normal && m_blocksOnLikelyPaths.add(successor.block()))
+                worklist.append(successor.block());
+        }
+    }
+}
+
 void MemoryNumbering::didWriteMemory(const HeapSet& writes, Origin origin)
 {
+    if (m_proc.policy().validation.overlooksWritesOnUnlikelyPaths && !m_blocksOnLikelyPaths.contains(m_block)) [[unlikely]]
+        return;
     m_memoryState.id = ++m_lastMemoryStateID;
     m_memoryState.owner = m_block;
     for (const HeapRange& range : writes.ranges()) {

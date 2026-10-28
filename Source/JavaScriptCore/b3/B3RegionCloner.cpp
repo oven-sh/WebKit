@@ -33,6 +33,7 @@ void RegionCloner::demoteEscapingValues(PhiTreatment treatment, ValueOwners owne
     RELEASE_ASSERT(m_step == Step::Declaring);
     m_step = Step::Copying;
     m_phiTreatment = treatment;
+    m_originalsKeepTheirMeaning.emplace(m_proc.movedLoadLog());
     if (m_declaredBlocks.isEmpty())
         return;
 
@@ -60,11 +61,11 @@ void RegionCloner::demoteEscapingValues(PhiTreatment treatment, ValueOwners owne
             }
         }
     }
-    if (valuesToDemote.isEmpty())
-        return;
-
-    demoteValues(m_proc, valuesToDemote);
-    m_didChange = true;
+    if (!valuesToDemote.isEmpty()) {
+        demoteValues(m_proc, valuesToDemote);
+        m_didChange = true;
+    }
+    m_proc.movedLoadLog().willCopy(m_proc, m_declaredBlocks);
 }
 
 Value* RegionCloner::appendClone(Value* original, BasicBlock* destination, ValueMap& map)
@@ -113,10 +114,12 @@ RegionCloner::BlockMap RegionCloner::cloneBlocks(std::span<BasicBlock* const> bl
     RELEASE_ASSERT(m_step == Step::Copying);
     RELEASE_ASSERT(m_phiTreatment == PhiTreatment::Demote);
 
+    MovedLoadLog::RegionCopy regionCopy(m_proc.movedLoadLog());
     BlockMap copies;
     for (BasicBlock* block : blocks) {
         auto result = copies.add(block, m_proc.addBlock());
         RELEASE_ASSERT(result.isNewEntry);
+        m_proc.movedLoadLog().didCopy(block, result.iterator->value);
     }
     for (BasicBlock* block : blocks) {
         BasicBlock* copy = copies.get(block);
@@ -136,6 +139,7 @@ bool RegionCloner::finish()
 {
     RELEASE_ASSERT(m_step != Step::Finished);
     m_step = Step::Finished;
+    m_originalsKeepTheirMeaning.reset();
     if (!m_didChange)
         return false;
 

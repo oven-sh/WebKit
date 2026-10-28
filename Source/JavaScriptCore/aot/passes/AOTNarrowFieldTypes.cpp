@@ -720,8 +720,9 @@ static Vector<FunctionID> findAffectedFunctionsLargestFirst(const Program& progr
 {
     const ParallelLoops& loops = build.parallelLoops();
     // Most functions that name the key of a narrowed field name it on other objects.
+    const bool narrowsNoField = narrowedKeys.isEmpty();
     auto hasAccessTypedOtherwise = [&](FunctionID id) {
-        if (narrowedKeys.isEmpty())
+        if (narrowsNoField)
             return false;
         std::optional<ScratchTypeArena> types;
         return anyListedValue(program, id, Value::opcodesWithKey, [&](ValueID, const Value& value) {

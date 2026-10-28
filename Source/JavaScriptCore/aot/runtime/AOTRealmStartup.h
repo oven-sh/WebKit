@@ -44,6 +44,8 @@ JS_EXPORT_PRIVATE void hostDidCreateRealm(JSGlobalObject*);
 // Start-up locks the built-in objects that are there.
 void didCreateClass(JSGlobalObject*, const LazyClassStructure&, Structure*, JSObject* prototype, JSObject* constructorOrNull);
 void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue);
+// The holder is about to create the member. Compiled code may hold the object already: then the holder adds that one. Null otherwise.
+JSObject* takeStaticPropertyMadeAhead(JSObject* holder, UniquedStringImpl* key);
 // Whether the holder has not created the member yet and didCreateStaticProperty() will be told when it does.
 bool reportsCreationOfMember(JSObject* holder, UniquedStringImpl* key);
 // For a Structure of instances that a host does not keep in a LazyClassStructure.

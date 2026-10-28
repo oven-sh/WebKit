@@ -363,12 +363,17 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
             encodePositions(positions[position], sites, callSites[position].span().data(), position % PositionIndex::functionsBetween ? OwnPosition::of(functions[position - 1].sites) : OwnPosition { });
             numberOfPositions.exchangeAdd(sites.positions.size(), std::memory_order_relaxed);
         }
+        Vector<std::pair<uint32_t, uint32_t>> constructedCallees(sites.constructedCallees.size(), [&](size_t index) {
+            const ConstructedCallee& row = sites.constructedCallees[index];
+            return std::pair { row.site, functions[position].body.callees[row.callee].index() };
+        });
         SideTableInputs inputs {
             .frameRanges = frameRanges.span(),
             .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
             .handlers = handlers.span(),
             .callsOfOwnFunctionObjects = sites.callsOfOwnFunctionObjects.span(),
+            .constructedCallees = constructedCallees.span(),
             .callSites = callSites[position].span(),
         };
         SideTableParts::append(streams[position], inputs);
@@ -428,9 +433,11 @@ OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline)
 {
     const Typed::FlowResults& flow = *pipeline.flow;
     if (!flow.hasResults())
-        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText };
+        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
 
     OptionSet<ImageFlag> flags;
+    if (flow.findsFilesOfProgramByName())
+        flags.add(ImageFlag::FindsDataFilesByName);
     for (const auto& record : flow.unseenCode()) {
         if (Typed::admitsUnknownJavaScript(record.cause))
             flags.add(ImageFlag::AdmitsUnknownJavaScript);
@@ -926,7 +933,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     removeFinalJumps(result.functions, result.layout.fallsIntoNext, finalJumps.span(), context);
     times.didFinish("remove final jumps"_s);
 
-    Vector<Vector<uint8_t>> callSites = encodeCallSites(functions, context);
+    Vector<Vector<uint8_t>> callSites = encodeCallSites(functions, reinterpret_cast<const ProgramTables*>(inputs.programTables.span().data())->numberOfFunctions(), context);
     times.didFinish("encode call sites"_s);
     if (diagnostics.hasErrors())
         return result;

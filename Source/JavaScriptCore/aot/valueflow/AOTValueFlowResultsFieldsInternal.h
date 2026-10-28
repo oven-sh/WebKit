@@ -426,6 +426,29 @@ struct StoresIntoObjects {
     OptionSet<Actor> writersUnderNamesNobodyLists;
 
     bool getsNameNobodyLists() const { return underUnknownKey != ValueSets::nothing || isStoredUnderIndex || getsAccessorUnderUnknownKey || getsCopiedProperties; }
+
+    // Every member but `underKey`.
+    void uniteWhatLiesOutsideKeys(ValueSetMaker& maker, const StoresIntoObjects& other)
+    {
+        underUnknownKey = maker.unite(underUnknownKey, other.underUnknownKey);
+        numbersUnderUnknownKey.unite(other.numbersUnderUnknownKey);
+        isStoredUnderIndex |= other.isStoredUnderIndex;
+        getsAccessorUnderUnknownKey |= other.getsAccessorUnderUnknownKey;
+        getsCopiedProperties |= other.getsCopiedProperties;
+        getsCopyWithoutComputedKey |= other.getsCopyWithoutComputedKey;
+        if (other.keysLeftOutOfEveryCopy && !keysLeftOutOfEveryCopy)
+            keysLeftOutOfEveryCopy = other.keysLeftOutOfEveryCopy;
+        else if (other.keysLeftOutOfEveryCopy) {
+            keysLeftOutOfEveryCopy->removeAllMatching([&](PropertyKeyID key) {
+                return !other.keysLeftOutOfEveryCopy->contains(key);
+            });
+        }
+        valueFromOperationsUnderUnknownKey = maker.unite(valueFromOperationsUnderUnknownKey, other.valueFromOperationsUnderUnknownKey);
+        isGivenValueByOperationUnderUnknownKey |= other.isGivenValueByOperationUnderUnknownKey;
+        gettersUnderUnknownKey = maker.unite(gettersUnderUnknownKey, other.gettersUnderUnknownKey);
+        formsOfAccessorsUnderUnknownKey |= other.formsOfAccessorsUnderUnknownKey;
+        writersUnderNamesNobodyLists.add(other.writersUnderNamesNobodyLists);
+    }
 };
 
 struct Writer {
@@ -601,7 +624,7 @@ private:
         ValueSetID objects;
         Vector<LayoutID, 4> layouts;
     };
-    std::optional<CopiedObjects> objectsCopiedOnto(LayoutID);
+    std::optional<CopiedObjects> objectsCopiedOnto(ValueSetMaker&, LayoutID) const;
     void followCopiedProperties();
     void forEachSourceOf(LayoutID, ObjectsOfLayout, NOESCAPE const Invocable<void(const StoresIntoObjects&)> auto&) const;
 
@@ -684,8 +707,6 @@ private:
         PartsByNumber calledUnderKey;
         PartsByNumber accessedUnderKey;
         PartsByNumber receiversOfReads;
-        FunctionID functionThatHandsOn;
-        ValueSetID builtinObjectsHandedOn { ValueSets::nothing };
     };
 
     struct Noter {
@@ -694,18 +715,9 @@ private:
     };
 
     bool isFullyKnown(ValueSetID objects) const;
-    struct WrittenOperands {
-        FunctionID function;
-        std::span<const ValueID> values;
-        std::span<const ValueFlowOperand> operands;
-    };
-
-    BuiltinID builtinWrittenAs(const Function&, ValueID) const;
-    ValueSetID builtinObjectsHandedOnBy(Noter, FunctionID) const;
-    ValueSetID builtinObjectsWrittenAt(Noter, const WrittenOperands&) const;
-    void noteShownKeys(Noter, ValueSetID objects, ShownKeys, const WrittenOperands&, bool goesOnToPrototypes = false) const;
+    void noteShownKeys(Noter, ValueSetID objects, ShownKeys, bool goesOnToPrototypes = false) const;
     void noteShownKeys(Noter, const ValueFlowBuiltinApplication&, BuiltinOperand, ShownKeys) const;
-    ValueSetID followKnownPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
+    ValueSetID followPrototypeLinks(ValueSetMaker&, ValueSetID objects) const;
     Noter noterOf(ValueSetMakers& makers, unsigned worker) { return { m_notes[worker], makers.of(worker) }; }
     void noteReads(ValueSetMakers&);
     void noteRead(Noter, const ValueFlowNodeKey&, Reader, ValueSetID startOfLookup);
