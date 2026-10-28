@@ -1112,9 +1112,6 @@ struct MovableCode {
     bool isCoroutine(FunctionID id) const { return program.at(id).hasAny({ FunctionFlags::IsAsync, FunctionFlags::IsGenerator }); }
     bool isObjectDefineProperty(const BuiltinCall& call) const { return program.builtins().at(call.overload).builtin == Builtins::ObjectDefineProperty; }
     bool isOtherNameOfFirstOperand(const Function& function, const Value& value) const { return namesItsFirstOperand(value.opcode) || (value.opcode == Opcode::ToObject && typeOf(function, value.operand(0)).isObject()); }
-    // A function is made with some of these and finds the others above it. No store under one of them is like a store under another name.
-    static constexpr ASCIILiteral namesWithRulesOnFunctions[] = { "prototype"_s, "name"_s, "length"_s, "caller"_s, "arguments"_s, "__proto__"_s };
-    bool hasRulesOnFunctions(auto name) const { return std::ranges::any_of(namesWithRulesOnFunctions, [&](ASCIILiteral text) { return isText(name, text); }); }
     static bool hasOnlyFunctions(const Type& type) { return type.isObject() && !type.anyObject && !type.anyFunction && !type.layouts && type.builtins.isEmpty() && type.classes.isEmpty() && !type.functions.isEmpty(); }
     static bool hasOnlyPristineArrays(const Type& type) { return hasOnlyArrays(type, { PristineAspects::Storage, PristineAspects::Names }); }
 
@@ -1546,6 +1543,25 @@ struct MovableCode {
         return answer;
     }
 
+    // What Object.defineProperty makes of a property may refuse a store.
+    bool isDefinedByDescriptor(FunctionAnalyses& analyses, ValueID object) const
+    {
+        const Function& function = analyses.function();
+        Vector<ValueID, 4> names { allocationOf(function, object) };
+        for (size_t index = 0; index < names.size(); ++index) {
+            for (const Use& use : analyses.useLists().usesOf(names[index])) {
+                if (use.kind != Use::Kind::Operand)
+                    continue;
+                const Value& user = function.at(use.user);
+                if (isOtherNameOfFirstOperand(function, user) && user.operand(0) == names[index])
+                    names.append(use.user);
+                else if (user.opcode == Opcode::CallBuiltin && isObjectDefineProperty(builtinCallOf(program, user)))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     // A store to an object that the initializer has made and that no accessor, no lock and no other prototype stands in the way of.
     bool storeMayMove(FunctionAnalyses& analyses, const Knowledge& known, const Value& value)
     {
@@ -1558,15 +1574,16 @@ struct MovableCode {
 
         const Type& type = typeOf(function, object);
         if (hasOnlyFunctions(type)) {
+            static constexpr ASCIILiteral namesWithRules[] = { "prototype"_s, "name"_s, "length"_s, "caller"_s, "arguments"_s, "__proto__"_s };
             bool setsName = hasName && !defines;
             bool isRefusedAbove = setsName && (program.at(value.key()).kind == PropertyKeyKind::WellKnownSymbol
                 || (isText(value.key(), "constructor"_s) && std::ranges::any_of(type.functions, [&](FunctionID id) { return isCoroutine(id); })));
-            if (isRefusedAbove)
+            if (isRefusedAbove || isDefinedByDescriptor(analyses, object))
                 return false;
             if (setsName && isText(value.key(), "prototype"_s) && std::ranges::all_of(type.functions, [&](FunctionID id) { return program.at(id).kind == FunctionKind::Plain && !isCoroutine(id); }))
                 return true;
             return hasName && (defines || std::ranges::none_of(type.functions, [&](FunctionID id) { return isClassConstructorFunction(program.at(id)); }))
-                && !hasRulesOnFunctions(value.key());
+                && std::ranges::none_of(namesWithRules, [&](ASCIILiteral name) { return isText(value.key(), name); });
         }
         // No index of a pristine array is an accessor, and nobody can add one to the prototypes above it.
         // All that was done to an array since the initializer made it has passed these rules, and none of them lets an index become an accessor or the prototype change.
@@ -1631,10 +1648,7 @@ struct MovableCode {
                 break;
         }
         std::optional<DescriptorLiteral> described = readDescriptorLiteral(program, function, function.at(descriptor));
-        if (!described || described->isAccessor() || described->closureEnvironment)
-            return false;
-        // What is not writable refuses a store, which may stand in any body that the function comes to. No store to a function moves under a symbol or under a name with rules.
-        return described->flags.contains(PropertyDescriptorFlags::IsWritable) || isWellKnownSymbol || hasRulesOnFunctions(key.string());
+        return described && !described->isAccessor() && !described->closureEnvironment;
     }
 
     bool mayMoveByEffects(FunctionAnalyses& analyses, const Knowledge& known, ValueID id)
