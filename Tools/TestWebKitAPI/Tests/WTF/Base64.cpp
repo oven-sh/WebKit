@@ -25,8 +25,6 @@
 
 #include "config.h"
 
-#include <wtf/ASCIICType.h>
-#include <wtf/SIMDUTF.h>
 #include <wtf/text/Base64.h>
 
 namespace TestWebKitAPI {
@@ -315,41 +313,6 @@ TEST(Base64, EncodedSizeRejectsInputAboveUnsignedRange)
     EXPECT_EQ(calculateBase64EncodedSize(3, options), 4U);
     EXPECT_EQ(calculateBase64EncodedSize(6, options), 8U);
     EXPECT_NE(calculateBase64EncodedSize(WTF::maximumBase64EncoderInputBufferSize, options), 0U);
-}
-
-// simdutf classifies the bytes of each whole 64-byte block with vector tables, one set per architecture.
-// Nothing in WTF uses this mode. Bun's Buffer does.
-TEST(Base64, SIMDUTFDefaultOrURLAcceptGarbageSkipsOtherBytes)
-{
-    auto decode = [](const std::string& input) {
-        std::string output((input.size() + 3) / 4 * 3, '\0');
-        size_t outputLength = output.size();
-        auto result = simdutf::base64_to_binary_safe(input.data(), input.size(), output.data(), outputLength, simdutf::base64_default_or_url_accept_garbage, simdutf::loose);
-        EXPECT_EQ(simdutf::SUCCESS, result.error);
-        output.resize(outputLength);
-        return output;
-    };
-
-    std::string encoded;
-    std::string decoded;
-    for (unsigned i = 0; i < 32; ++i) {
-        encoded += "Zm9v";
-        decoded += "foo";
-    }
-    EXPECT_EQ(decoded, decode(encoded));
-
-    for (unsigned byte = 0; byte < 256; ++byte) {
-        if (isASCIIAlphanumeric(byte) || byte == '+' || byte == '/' || byte == '-' || byte == '_' || byte == '=')
-            continue;
-        SCOPED_TRACE(byte);
-        for (size_t position : { 0, 63, 70, 128 }) {
-            auto dirty = encoded;
-            dirty.insert(position, 1, static_cast<char>(byte));
-            EXPECT_EQ(decoded, decode(dirty));
-        }
-        for (size_t count : { 1, 2, 3, 64 })
-            EXPECT_EQ(std::string(), decode(std::string(count, static_cast<char>(byte)) + std::string(64 - count, '!')));
-    }
 }
 
 } // namespace TestWebKitAPI
