@@ -386,11 +386,9 @@ static JSArrayBuffer* arrayBufferCopyAndDetach(JSGlobalObject* globalObject, JSA
     size_t copyLength = std::min<size_t>(newByteLength, arrayBuffer->impl()->byteLength());
     memcpy(newBuffer->data(), arrayBuffer->impl()->data(), copyLength);
 
-    ArrayBufferContents dummyContents;
-    if (!arrayBuffer->impl()->transferTo(vm, dummyContents)) [[unlikely]] {
-        throwVMRangeError(globalObject, scope, "ArrayBuffer transfer failed"_s);
-        return nullptr;
-    }
+    // The new buffer has the bytes. A pinned buffer stays attached, and transferTo() would copy its contents for nothing.
+    if (arrayBuffer->impl()->isDetachable())
+        arrayBuffer->impl()->detach(vm);
 
     return JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(newBuffer));
 }
