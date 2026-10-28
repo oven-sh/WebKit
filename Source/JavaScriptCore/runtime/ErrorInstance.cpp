@@ -64,6 +64,7 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
 #endif // ENABLE(WEBASSEMBLY)
 #if USE(BUN_JSC_ADDITIONS)
     , m_stackStringIsFramesOnly(false)
+    , m_hasParseLocation(false)
 #endif
 {
 }
@@ -374,6 +375,7 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     m_hasErrorInfo = !m_stackString.isNull();
 #if USE(BUN_JSC_ADDITIONS)
     m_stackStringIsFramesOnly = false;
+    m_hasParseLocation = false;
 #endif
 }
 
@@ -524,6 +526,10 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
                 stackString = Interpreter::stackTraceAsString(vm, *m_stackTrace.get());
         }
         m_hasErrorInfo = true;
+#if USE(BUN_JSC_ADDITIONS)
+        // The line and the sourceURL are the first frame's from here on.
+        m_hasParseLocation = false;
+#endif
 
         {
             Locker locker { cellLock() };
@@ -577,6 +583,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         JSValue stack;
         if (!m_stackPropertyProvidedByCapturedStackTrace)
             stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
+        // The line and the sourceURL are now what the hook reports, and they move into the properties below.
+        m_hasParseLocation = false;
 
         {
             Locker locker { cellLock() };
