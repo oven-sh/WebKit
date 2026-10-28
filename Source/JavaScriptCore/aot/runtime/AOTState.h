@@ -46,8 +46,10 @@ struct BuiltinFamilyState;
 struct ObjectModel;
 
 // Zeroed pages for what lives as long as a VM or the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
+// A table that is reserved at its greatest size and filled as it goes asks for Commit::OnTouch: on Linux its pages count against what the system will commit only once they are written (MAP_NORESERVE). Elsewhere the two are the same.
+enum class Commit : uint8_t { Now, OnTouch };
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
-void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
+void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages, Commit = Commit::Now);
 void releaseGuardedPages(void* pages, size_t bytes);
 
 class ZeroedPages {

@@ -90,13 +90,10 @@ struct PagesOfPlanes {
 };
 static_assert(!(RowDisplacementTable::numberOfColumns % 64) && !(RowDisplacementTable::initialNumberOfBases % 64));
 
+// A table is reserved at its greatest size, and a program touches the part that it fills. On Linux the pages are kept from huge pages, and the system counts them only as they are written.
 static void* tryReservePagesOfTable(size_t size)
 {
-    void* result = tryReserveGuardedPages(size);
-#if OS(LINUX)
-    while (result && madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
-#endif
-    return result;
+    return tryReserveGuardedPages(size, OSAllocator::FastMallocPages, Commit::OnTouch);
 }
 
 static void* reservePagesOfTable(size_t size)

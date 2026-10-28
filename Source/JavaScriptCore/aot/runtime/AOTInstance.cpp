@@ -1097,9 +1097,21 @@ extern "C" __attribute__((used, retain)) const char JSC__AOT__mapsGuardedPages[]
 static constexpr unsigned guardPagesOnEachEnd = 0;
 #endif
 
+// Only Linux has a reservation that the system does not count until a page is written: a 256 MB table of which a program touches a few pages must not be refused on a machine with less memory than that.
+static void* tryReservePages(size_t bytes, OSAllocator::Usage usage, void* address, Commit commit)
+{
+#if OS(LINUX)
+    if (commit == Commit::OnTouch)
+        return OSAllocator::tryReserveUncommitted(bytes, usage, address, true, false, false, guardPagesOnEachEnd);
+#else
+    UNUSED_PARAM(commit);
+#endif
+    return OSAllocator::tryReserveAndCommit(bytes, usage, address, true, false, false, guardPagesOnEachEnd);
+}
+
 #if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX) && CPU(ADDRESS64)
 // What the system places by itself shares one random base: an address of one mapping gives away the others, the C library's among them.
-static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Usage usage)
+static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Usage usage, Commit commit)
 {
     static constexpr uintptr_t lowestRandomAddress = 64 * GB;
     static constexpr uintptr_t highestRandomAddress = 124 * 1024 * GB;
@@ -1111,7 +1123,7 @@ static void* tryReserveGuardedPagesAtRandomAddress(size_t bytes, OSAllocator::Us
     uintptr_t numberOfSlots = (highestRandomAddress - lowestRandomAddress - bytes) / pageSize();
     for (unsigned draw = 0; draw < maxDraws; ++draw) {
         void* requestedAddress = std::bit_cast<void*>(lowestRandomAddress + cryptographicallyRandomNumber<uint64_t>() % numberOfSlots * pageSize());
-        void* pages = OSAllocator::tryReserveAndCommit(bytes, usage, requestedAddress, true, false, false, guardPagesOnEachEnd);
+        void* pages = tryReservePages(bytes, usage, requestedAddress, commit);
         if (!pages)
             return nullptr;
         if (pages == requestedAddress)
@@ -1227,8 +1239,11 @@ static void* tryReservePagesForTables(const Image& image, unsigned numberOfThrea
     if (addressSpaceLeft() < size + sizeToLeaveFree)
         return nullptr;
     void* pages = OSAllocator::tryReserveAndCommit(size, OSAllocator::FastMallocPages);
-    if (pages)
-        *static_cast<size_t*>(pages) = size;
+    if (!pages)
+        return nullptr;
+    // The tables that take from these pages are mostly untouched, and one that is served by the system by itself is kept from huge pages the same way.
+    while (madvise(pages, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+    *static_cast<size_t*>(pages) = size;
     return pages;
 }
 
@@ -1319,15 +1334,15 @@ void didStartThread(VM*) { }
 static void* tryTakePagesOfThread(size_t) { return nullptr; }
 #endif
 
-void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
+void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage usage, Commit commit)
 {
     if (void* pages = tryTakePagesOfThread(bytes))
         return pages;
 #if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX) && CPU(ADDRESS64)
-    if (void* pages = tryReserveGuardedPagesAtRandomAddress(bytes, usage))
+    if (void* pages = tryReserveGuardedPagesAtRandomAddress(bytes, usage, commit))
         return pages;
 #endif
-    return OSAllocator::tryReserveAndCommit(bytes, usage, nullptr, true, false, false, guardPagesOnEachEnd);
+    return tryReservePages(bytes, usage, nullptr, commit);
 }
 
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage usage)

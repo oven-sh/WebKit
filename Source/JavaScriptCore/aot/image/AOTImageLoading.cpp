@@ -72,6 +72,11 @@ static bool tryReserveLowPages()
         if (mapped == MAP_FAILED || zeroPageWasRelocated) {
             if (!zeroPageWasRelocated && errno != outOfRangeError && errno != EPERM && errno != EACCES && errno != ENOMEM)
                 return false;
+#if OS(LINUX)
+            // Below vm.mmap_min_addr the kernel refuses the address before it looks for a mapping there, which would be EEXIST. So the page is not mapped, and stays so: the refusal holds for everything this process does. A sandbox may refuse mincore as well (seccomp on AWS Lambda gives EPERM), so it is not asked.
+            if (!zeroPageWasRelocated && errno == EPERM)
+                continue;
+#endif
             if (mincore(std::bit_cast<void*>(page), pageBytes, &isResident) != -1 || errno != ENOMEM)
                 return false;
             continue;
