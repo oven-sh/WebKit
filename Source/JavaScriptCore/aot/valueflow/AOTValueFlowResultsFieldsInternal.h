@@ -321,6 +321,8 @@ struct StoredUnderKey {
     // Some store hands over what a read of a field delivers, and the numbers of that field are not added yet: StoresIntoObjects::readsOfFields.
     bool waitsForNumbersOfFields : 1 { false };
     uint8_t accessorForms { 0 };
+    // The forms in which calls that take a descriptor lay a value down under the key: ValueForms.
+    uint8_t formsOfDefinedValues { 0 };
     OptionSet<Actor> writers;
     Range integers { Range::empty() };
 
@@ -406,6 +408,41 @@ struct AccessorForms {
                 if (!isConfigurable)
                     form.add(FieldForm::IsNotConfigurable);
                 return form;
+            }
+        }
+        return std::nullopt;
+    }
+};
+
+// `Object.defineProperty(object, "name", { value, enumerable: false })`
+struct ValueForms {
+    static constexpr uint8_t unknown = 0xff;
+
+    static constexpr uint8_t of(bool isWritable, bool isEnumerable, bool isConfigurable) { return 1 << ((isWritable ? 0 : 4) + (isEnumerable ? 0 : 2) + (isConfigurable ? 0 : 1)); }
+
+    // `made.name ?? (made.name = { })` beside a definition: the definition is taken for what creates the property.
+    static std::optional<OptionSet<FieldForm>> formToPlanFor(uint8_t forms)
+    {
+        constexpr uint8_t plain = of(true, true, true);
+        return onlyFormIn(forms == plain ? forms : forms & ~plain);
+    }
+
+    static std::optional<OptionSet<FieldForm>> onlyFormIn(uint8_t forms)
+    {
+        for (bool isWritable : { true, false }) {
+            for (bool isEnumerable : { true, false }) {
+                for (bool isConfigurable : { true, false }) {
+                    if (forms != of(isWritable, isEnumerable, isConfigurable))
+                        continue;
+                    OptionSet<FieldForm> form;
+                    if (!isWritable)
+                        form.add(FieldForm::IsReadOnly);
+                    if (!isEnumerable)
+                        form.add(FieldForm::IsNotEnumerable);
+                    if (!isConfigurable)
+                        form.add(FieldForm::IsNotConfigurable);
+                    return form;
+                }
             }
         }
         return std::nullopt;
@@ -505,6 +542,11 @@ public:
     FlowAccessorField accessorDefinedUnder(LayoutID layout, PropertyKeyID key) const { return accessorDefinedUnder(m_heap.maker(), layout, key); }
     FlowAccessorField accessorDefinedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysOfAccessorsDefinedIn(ValueSetMaker&, LayoutID) const;
+    // ValueForms: the forms in which the objects are seen to get a value under the key. A store, a literal and a class field create the plain form.
+    uint8_t formsOfValuesGivenUnder(LayoutID, PropertyKeyID) const;
+    Vector<PropertyKeyID> keysOfValuesDefinedIn(LayoutID) const;
+    // ValueForms: the forms in which the call lays a value down, if it is one of `Object.defineProperty(object, key, descriptor)`.
+    uint8_t formsOfValueDefinedByCall(ValueSetMaker&, const ValueFlowStatement&) const;
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
     void setReceiversOfReads(ListsOfSetsByNumber&&);
     void noteKeyBroughtByCopies(LayoutID target, PropertyKeyID, ValueSetID value);
@@ -557,6 +599,7 @@ private:
         bool leavesOutComputedKey;
         uint64_t copyLeavingOutKeys;
         uint8_t accessorForms;
+        uint8_t formsOfDefinedValues;
         OptionSet<Actor> writers;
         ValueSetID value;
         ValueFlowNumbers numbers;
@@ -583,6 +626,7 @@ private:
         bool isIntoThisOfConstructor { false };
         bool definesValue { false };
         uint8_t accessorForms { 0 };
+        uint8_t formsOfDefinedValues { 0 };
         uint32_t familyDeclaredForReceiver { UINT32_MAX };
         std::optional<ValueFlowNumbers> numbers;
         ValueSetID objectsRead { ValueSets::nothing };

@@ -2772,6 +2772,12 @@ private:
                 break;
             }
 
+            // Only NaN differs from itself.
+            if (m_reducesWithRanges && m_value->child(0) == m_value->child(1) && boundOfMagnitude(m_value->child(0))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::True));
+                break;
+            }
+
             // Two distinct freshly-allocated wasm-GC references, or a fresh reference and
             // null, are never the same object.
             if (areDistinctWasmGCReferences(m_value->child(0), m_value->child(1))) {
@@ -2792,6 +2798,11 @@ private:
 
             if (tryFoldSignComparison())
                 break;
+
+            if (m_reducesWithRanges && m_value->child(0) == m_value->child(1) && boundOfMagnitude(m_value->child(0))) {
+                replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), TriState::False));
+                break;
+            }
 
             if (m_value->child(0)->returnsBool()) {
                 // Turn this: NotEqual(bool, 0)
@@ -4618,6 +4629,37 @@ private:
     void replaceWithNew(Arguments... arguments)
     {
         replaceWithNewValue(m_proc.add<ValueType>(arguments...));
+    }
+
+    // What the magnitude of a double does not pass, where the double is made from integers and finite constants by sums, differences and products.
+    // Far below the largest double each of these is exact or rounded to a neighbor: the result is finite, so it is no NaN.
+    std::optional<double> boundOfMagnitude(Value* value, unsigned depth = 0)
+    {
+        constexpr unsigned maxDepth = 6;
+        constexpr double largestBound = 0x1p1000;
+        if (value->type() != Double || depth > maxDepth)
+            return std::nullopt;
+        switch (value->opcode()) {
+        case ConstDouble:
+            return std::abs(value->asDouble()) <= largestBound ? std::optional(std::abs(value->asDouble())) : std::nullopt;
+        case IToD:
+            return value->child(0)->type() == Int32 ? 0x1p31 : 0x1p63;
+        case Neg:
+        case Abs:
+            return boundOfMagnitude(value->child(0), depth + 1);
+        case Add:
+        case Sub:
+        case Mul: {
+            std::optional<double> left = boundOfMagnitude(value->child(0), depth + 1);
+            std::optional<double> right = left ? boundOfMagnitude(value->child(1), depth + 1) : std::nullopt;
+            if (!right)
+                return std::nullopt;
+            double bound = value->opcode() == Mul ? *left * *right : *left + *right;
+            return bound <= largestBound ? std::optional(bound) : std::nullopt;
+        }
+        default:
+            return std::nullopt;
+        }
     }
 
     bool tryFoldSignComparison()

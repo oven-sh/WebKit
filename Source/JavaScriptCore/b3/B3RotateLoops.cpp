@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3BasicBlockInlines.h"
+#include "B3InsertionSetInlines.h"
 #include "B3LoopUtilities.h"
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
@@ -42,6 +43,10 @@ public:
             return false;
 
         std::ranges::stable_sort(m_rotations, { }, &Rotation::depth);
+        for (auto& rotation : m_rotations) {
+            m_didJoinWaysBack |= rotation.latches.size() > 1;
+            stepCountersOnce(rotation);
+        }
         RegionCloner cloner(m_proc);
         for (auto& rotation : m_rotations) {
             for (BasicBlock* block : rotation.testBlocks)
@@ -53,6 +58,8 @@ public:
             rotate(cloner, rotation);
         return cloner.finish();
     }
+
+    bool didJoinWaysBack() const { return m_didJoinWaysBack; }
 
 private:
     struct EdgesBack {
@@ -121,13 +128,30 @@ private:
         return false;
     }
 
-    static bool hasLikelyEdgeTo(BasicBlock* from, BasicBlock* to)
+    static bool hasEdgeThatIsNotRareTo(BasicBlock* from, BasicBlock* to)
     {
         for (const FrequentedBlock& successor : from->successors()) {
-            if (successor.block() == to && isLikelySuccessor(from, successor))
+            if (successor.block() == to && !successor.isRare())
                 return true;
         }
         return false;
+    }
+
+    static IndexSet<BasicBlock*> findBlocksNotBehindRareEdges(NaturalLoops& loops, const NaturalLoop& loop)
+    {
+        IndexSet<BasicBlock*> result;
+        Vector<BasicBlock*, 16> worklist { loop.header() };
+        result.add(loop.header());
+        while (!worklist.isEmpty()) {
+            BasicBlock* block = worklist.takeLast();
+            for (const FrequentedBlock& successor : block->successors()) {
+                if (successor.isRare() || !loops.belongsTo(successor.block(), loop))
+                    continue;
+                if (result.add(successor.block()))
+                    worklist.append(successor.block());
+            }
+        }
+        return result;
     }
 
     std::optional<InductionRecord> findInduction(BasicBlock* header) const
@@ -306,6 +330,47 @@ private:
         }
     }
 
+    // `i++; continue;` and the `i++` at the end of the turn are two sums. Where every way back hands the header the same sum of what the header had and a constant, the sum is made once, at the top of the body:
+    // the one test at the bottom then compares a sum and not a join of sums, which is how a counted loop is known.
+    void stepCountersOnce(const Rotation& rotation)
+    {
+        if (rotation.latches.size() < 2)
+            return;
+        BasicBlock* header = rotation.testBlocks[0];
+        InsertionSet insertionSet(m_proc);
+        size_t index = 0;
+        while (index < rotation.body->size() && rotation.body->at(index)->opcode() == Phi)
+            ++index;
+        for (Value* phi : *header) {
+            if (phi->opcode() != Phi || !phi->type().isInt())
+                continue;
+            Vector<Value*, 2> sums;
+            std::optional<int64_t> addend;
+            bool isOneSum = true;
+            for (BasicBlock* latch : rotation.latches) {
+                Value* handed = nullptr;
+                for (Value* value : *latch) {
+                    auto* upsilon = value->as<UpsilonValue>();
+                    if (upsilon && upsilon->phi() == phi)
+                        handed = upsilon->child(0)->foldIdentity();
+                }
+                if (!handed || handed->opcode() != Add || handed->child(0)->foldIdentity() != phi || !handed->child(1)->hasInt() || (addend && *addend != handed->child(1)->asInt())) {
+                    isOneSum = false;
+                    break;
+                }
+                addend = handed->child(1)->asInt();
+                if (!sums.contains(handed))
+                    sums.append(handed);
+            }
+            if (!isOneSum || sums.size() < 2)
+                continue;
+            Value* sum = insertionSet.insert<Value>(index, Add, sums[0]->origin(), phi, insertionSet.insertIntConstant(index, sums[0]->origin(), phi->type(), *addend));
+            for (Value* old : sums)
+                old->replaceWithIdentity(sum);
+        }
+        insertionSet.execute(rotation.body);
+    }
+
     void rotate(RegionCloner& cloner, const Rotation& rotation)
     {
         RegionCloner::BlockMap copies = cloner.cloneBlocks(rotation.testBlocks.span());
@@ -359,9 +424,10 @@ private:
             return *result;
         result.emplace();
         result->top = loop.header();
-        IndexSet<BasicBlock*> likelyBlocks = findLikelyBlocks(loops, loop);
+        // An arm that is merely the less likely one, as the arm of a `continue`, is taken every few turns: it is tested at its end as the likely way is, and stays in the loop. A rare one goes round by the guard.
+        IndexSet<BasicBlock*> blocksOfTurns = findBlocksNotBehindRareEdges(loops, loop);
         for (BasicBlock* predecessor : loop.header()->predecessors()) {
-            if (likelyBlocks.contains(predecessor) && hasLikelyEdgeTo(predecessor, loop.header())) {
+            if (blocksOfTurns.contains(predecessor) && hasEdgeThatIsNotRareTo(predecessor, loop.header())) {
                 result->likely.append(predecessor);
                 result->hasLikelyWithoutPoll |= !pollsOnWayTo(loops, loop, predecessor);
             } else if (loops.belongsTo(predecessor, loop) && !hasPoll(predecessor))
@@ -432,6 +498,7 @@ private:
     }
 
     Procedure& m_proc;
+    bool m_didJoinWaysBack { false };
     const Vector<BasicBlock*>* m_allowedHeaders;
     Vector<Rotation> m_rotations;
     Vector<std::optional<EdgesBack>> m_edgesBack;
@@ -440,11 +507,14 @@ private:
 
 } // anonymous namespace
 
-bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders)
+bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* allowedHeaders, bool* didJoinWaysBack)
 {
     PhaseScope phaseScope(proc, "rotateLoops"_s);
     RotateLoops rotateLoops(proc, allowedHeaders);
-    return rotateLoops.run();
+    bool changed = rotateLoops.run();
+    if (didJoinWaysBack)
+        *didJoinWaysBack = rotateLoops.didJoinWaysBack();
+    return changed;
 }
 
 } } // namespace JSC::B3

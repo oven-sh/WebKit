@@ -1,0 +1,315 @@
+# function Throws() { "use strict"; throw new Error("thrown"); }
+# const arrow = () => 1;
+# function last(callee) { "use strict"; return Reflect.construct(callee, []); }
+# function lastWithOperands(callee) { "use strict"; return Reflect.construct(callee, [1, 2]); }
+# function lastForAnother(callee) { "use strict"; return Reflect.construct(Throws, [], callee); }
+# function lastWithoutList(callee) { "use strict"; return Reflect.construct(callee, 1); }
+# function kept(callee) { "use strict"; return [Reflect.construct(callee, [])]; }
+# function Constructed(callee) { "use strict"; return Reflect.construct(callee, []); }
+# function constructs(callee) { "use strict"; return [new Constructed(callee)]; }
+# function names(error) { "use strict"; const lines = error.stack.split("\n"); let text = ""; for (let index = 0; index < lines.length && lines[index].split("@")[0] !== "attempt"; index += 1) text += lines[index].split("@")[0] + " "; return text; }
+# function attempt(way, callee) { "use strict"; try { way(callee); return "nothing"; } catch (error) { return names(error); } }
+# report(attempt(last, Throws));
+# report(attempt(last, arrow));
+# report(attempt(last, 1));
+# report(attempt(lastWithOperands, Throws));
+# report(attempt(lastWithOperands, arrow));
+# report(attempt(lastForAnother, Throws));
+# report(attempt(lastForAnother, arrow));
+# report(attempt(lastWithoutList, Throws));
+# report(attempt(lastWithoutList, arrow));
+# report(attempt(kept, Throws));
+# report(attempt(kept, arrow));
+# report(attempt(constructs, Throws));
+# report(attempt(constructs, arrow));
+# report("end");
+# Reflect.construct(..) is the last thing that a function does. Where it constructs, the function stays on the stack. Where it refuses an operand, it is a call in tail position
+# At the end the shell runs the same text itself: every answer is the same.
+# FORM: AsRead
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { function Throws() { "use strict"; throw new Error("thrown"); } const arrow = () => 1; function last(callee) { "use strict"; return Reflect.construct(callee, []); } function lastWithOperands(callee) { "use strict"; return Reflect.construct(callee, [1, 2]); } function lastForAnother(callee) { "use strict"; return Reflect.construct(Throws, [], callee); } function lastWithoutList(callee) { "use strict"; return Reflect.construct(callee, 1); } function kept(callee) { "use strict"; return [Reflect.construct(callee, [])]; } function Constructed(callee) { "use strict"; return Reflect.construct(callee, []); } function constructs(callee) { "use strict"; return [new Constructed(callee)]; } function names(error) { "use strict"; const lines = error.stack.split("\n"); let text = ""; for (let index = 0; index < lines.length && lines[index].split("@")[0] !== "attempt"; index += 1) text += lines[index].split("@")[0] + " "; return text; } function attempt(way, callee) { "use strict"; try { way(callee); return "nothing"; } catch (error) { return names(error); } } report(attempt(last, Throws)); report(attempt(last, arrow)); report(attempt(last, 1)); report(attempt(lastWithOperands, Throws)); report(attempt(lastWithOperands, arrow)); report(attempt(lastForAnother, Throws)); report(attempt(lastForAnother, arrow)); report(attempt(lastWithoutList, Throws)); report(attempt(lastWithoutList, arrow)); report(attempt(kept, Throws)); report(attempt(kept, arrow)); report(attempt(constructs, Throws)); report(attempt(constructs, arrow)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 14 of 14 of 14
+# CHECK-NEXT: exited with 0
+
+module m0 path="reflect-construct-written-last.js" displayPath="reflect-construct-written-last.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=number elements=[Number{value=1}, Number{value=2}]} module=m0
+data d3 root=Array{contents=anything} module=m0
+data d4 root=Array{contents=anything} module=m0
+variable g0 name="Throws" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="Constructed" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="names" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f5 @0
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f6 @0
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f7 @0
+    v7 = Convert v6 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f8 @0
+    v9 = Convert v8 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f9 @0
+    v11 = Convert v10 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure function=f10 @0
+    v13 = Convert v12 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = NewClosure function=f11 @77
+    v15 = Convert v14 declared={type=undefined|null|function|f11 flags=[IsExpected]} @77
+    v16 = Builtin builtin=GlobalThis @1060
+    v17 = PropGet v16 key="report" [isFreeName] @1060
+    v18 = GetModuleVariable variable=g0 @1087 @1081
+    v19 = Call v13, -, v1, v18 calleeName="attempt" @1067
+    v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]} @1067
+    v21 = Call v17, -, v20 calleeName="report" @1060
+    v22 = Builtin builtin=GlobalThis @1091
+    v23 = PropGet v22 key="report" [isFreeName] @1091
+    v24 = Call v13, -, v1, v15 calleeName="attempt" @1098
+    v25 = Convert v24 declared={type=undefined|null|string flags=[IsExpected]} @1098
+    v26 = Call v23, -, v25 calleeName="report" @1091
+    v27 = Builtin builtin=GlobalThis @1121
+    v28 = PropGet v27 key="report" [isFreeName] @1121
+    v29 = Integer integer=1 @1142
+    v30 = Call v13, -, v1, v29 calleeName="attempt" @1128
+    v31 = Convert v30 declared={type=undefined|null|string flags=[IsExpected]} @1128
+    v32 = Call v28, -, v31 calleeName="report" @1121
+    v33 = Builtin builtin=GlobalThis @1147
+    v34 = PropGet v33 key="report" [isFreeName] @1147
+    v35 = GetModuleVariable variable=g0 @1186 @1180
+    v36 = Call v13, -, v3, v35 calleeName="attempt" @1154
+    v37 = Convert v36 declared={type=undefined|null|string flags=[IsExpected]} @1154
+    v38 = Call v34, -, v37 calleeName="report" @1147
+    v39 = Builtin builtin=GlobalThis @1190
+    v40 = PropGet v39 key="report" [isFreeName] @1190
+    v41 = Call v13, -, v3, v15 calleeName="attempt" @1197
+    v42 = Convert v41 declared={type=undefined|null|string flags=[IsExpected]} @1197
+    v43 = Call v40, -, v42 calleeName="report" @1190
+    v44 = Builtin builtin=GlobalThis @1232
+    v45 = PropGet v44 key="report" [isFreeName] @1232
+    v46 = GetModuleVariable variable=g0 @1269 @1263
+    v47 = Call v13, -, v5, v46 calleeName="attempt" @1239
+    v48 = Convert v47 declared={type=undefined|null|string flags=[IsExpected]} @1239
+    v49 = Call v45, -, v48 calleeName="report" @1232
+    v50 = Builtin builtin=GlobalThis @1273
+    v51 = PropGet v50 key="report" [isFreeName] @1273
+    v52 = Call v13, -, v5, v15 calleeName="attempt" @1280
+    v53 = Convert v52 declared={type=undefined|null|string flags=[IsExpected]} @1280
+    v54 = Call v51, -, v53 calleeName="report" @1273
+    v55 = Builtin builtin=GlobalThis @1313
+    v56 = PropGet v55 key="report" [isFreeName] @1313
+    v57 = GetModuleVariable variable=g0 @1351 @1345
+    v58 = Call v13, -, v7, v57 calleeName="attempt" @1320
+    v59 = Convert v58 declared={type=undefined|null|string flags=[IsExpected]} @1320
+    v60 = Call v56, -, v59 calleeName="report" @1313
+    v61 = Builtin builtin=GlobalThis @1355
+    v62 = PropGet v61 key="report" [isFreeName] @1355
+    v63 = Call v13, -, v7, v15 calleeName="attempt" @1362
+    v64 = Convert v63 declared={type=undefined|null|string flags=[IsExpected]} @1362
+    v65 = Call v62, -, v64 calleeName="report" @1355
+    v66 = Builtin builtin=GlobalThis @1396
+    v67 = PropGet v66 key="report" [isFreeName] @1396
+    v68 = GetModuleVariable variable=g0 @1423 @1417
+    v69 = Call v13, -, v9, v68 calleeName="attempt" @1403
+    v70 = Convert v69 declared={type=undefined|null|string flags=[IsExpected]} @1403
+    v71 = Call v67, -, v70 calleeName="report" @1396
+    v72 = Builtin builtin=GlobalThis @1427
+    v73 = PropGet v72 key="report" [isFreeName] @1427
+    v74 = Call v13, -, v9, v15 calleeName="attempt" @1434
+    v75 = Convert v74 declared={type=undefined|null|string flags=[IsExpected]} @1434
+    v76 = Call v73, -, v75 calleeName="report" @1427
+    v77 = Builtin builtin=GlobalThis @1457
+    v78 = PropGet v77 key="report" [isFreeName] @1457
+    v79 = GetModuleVariable variable=g0 @1490 @1484
+    v80 = Call v13, -, v11, v79 calleeName="attempt" @1464
+    v81 = Convert v80 declared={type=undefined|null|string flags=[IsExpected]} @1464
+    v82 = Call v78, -, v81 calleeName="report" @1457
+    v83 = Builtin builtin=GlobalThis @1494
+    v84 = PropGet v83 key="report" [isFreeName] @1494
+    v85 = Call v13, -, v11, v15 calleeName="attempt" @1501
+    v86 = Convert v85 declared={type=undefined|null|string flags=[IsExpected]} @1501
+    v87 = Call v84, -, v86 calleeName="report" @1494
+    v88 = Builtin builtin=GlobalThis @1530
+    v89 = PropGet v88 key="report" [isFreeName] @1530
+    v90 = String string="end" @1537
+    v91 = Call v89, -, v90 calleeName="report" @1530
+    v92 = Undefined @1530
+    Return v92 @1530
+}
+function f1 name="Throws" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = Builtin builtin=GlobalThis @44
+    v1 = PropGet v0 key="Error" [isFreeName] @44
+    v2 = Convert v1 declared={type=builtin(Error) flags=[IsExpected]} @44
+    v3 = String string="thrown" @50
+    v4 = Construct v2, -, v3 calleeName="Error" @44
+    v5 = Convert v4 declared={type=undefined|null|Error flags=[IsExpected]} @40
+    Throw v5 @58
+}
+function f2 name="Constructed" module=m0 position=522 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @522
+  b1():
+    v1 = Builtin builtin=Reflect @574
+    v2 = Builtin builtin=ReflectConstruct @574
+    v3 = Data data=d0 @600
+    v4 = Convert v3 declared={type=undefined|null|Array<never> flags=[IsExpected]} @600
+    v5 = Call v2, v1, v0, v4 calleeName="Reflect.construct" [isDoneInPlace] @582 constructs
+    ReturnCall v5 @582
+}
+function f3 name="names" module=m0 position=687 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    Jump -> next b1() @687
+  b1():
+    v1 = PropGet v0 key="stack" @739
+    v2 = PropGet v1 key="split" @745
+    v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]} @739
+    v4 = String string="\n" @757
+    v5 = Call v3, v1, v4 calleeKey="split" calleeName="error.stack.split" @751
+    v6 = Convert v5 declared={type=undefined|null|string|Array flags=[IsExpected]} @739
+    v7 = String string="" @775
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @775
+    v9 = Integer @796
+    v10 = Convert v9 declared={type=i32 flags=[IsExpected]} @796
+    Jump -> next b2(v8, v10) @788
+  b2(v11, v12):
+    LoopHint @788
+    v14 = PropGet v6 key="length" @807
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @807
+    v16 = Less v12, v15 @799
+    Branch v16 -> taken b3(| 0), notTaken b7(| 0) @799
+  b3(v17):
+    Jump -> next b4() @799
+  b4():
+    v18 = ElemGet v6, v17 @823
+    v19 = PropGet v18 key="split" @829
+    v20 = Convert v19 declared={type=undefined|null|function flags=[IsExpected]} @823
+    v21 = String string="@" @842
+    v22 = Call v20, v18, v21 calleeKey="split" calleeName="lines[index].split" @836
+    v23 = Convert v22 declared={type=undefined|null|string|Array flags=[IsExpected]} @823
+    v24 = Integer @823
+    v25 = ElemGet v23, v24 @845
+    v26 = String string="attempt" @854
+    v27 = StrictEq v25, v26 @799
+    Branch v27 -> taken b8(), notTaken b5() @799
+  b5():
+    v28 = ElemGet v6, v17 @885
+    v29 = PropGet v28 key="split" @891
+    v30 = Convert v29 declared={type=undefined|null|function flags=[IsExpected]} @885
+    v31 = String string="@" @904
+    v32 = Call v30, v28, v31 calleeKey="split" calleeName="lines[index].split" @898
+    v33 = Convert v32 declared={type=undefined|null|string|Array flags=[IsExpected]} @885
+    v34 = Integer @885
+    v35 = ElemGet v33, v34 @907
+    v36 = String string=" " @914
+    v37 = Add v35, v36 @907
+    v38 = Add v11, v37 @907
+    v39 = Convert v38 declared={type=undefined|null|string flags=[IsExpected]} @877
+    Jump -> next b6() @877
+  b6():
+    v40 = Integer integer=1 @874
+    v41 = Add v17, v40 @907
+    v42 = Convert v41 declared={type=i32 flags=[IsExpected]} @865
+    Jump -> next b2(v39, v42) @865
+  b7(v43):
+    Jump -> next b8() @799
+  b8():
+    v44 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]} @926
+    Return v44 @926
+}
+function f4 name="last" module=m0 position=86 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @86
+  b1():
+    v1 = Builtin builtin=Reflect @131
+    v2 = Builtin builtin=ReflectConstruct @131
+    v3 = Data data=d1 @157
+    v4 = Convert v3 declared={type=undefined|null|Array<never> flags=[IsExpected]} @157
+    v5 = Call v2, v1, v0, v4 calleeName="Reflect.construct" [isDoneInPlace] @139 constructs
+    ReturnCall v5 @139
+}
+function f5 name="lastWithOperands" module=m0 position=164 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @164
+  b1():
+    v1 = Builtin builtin=Reflect @221
+    v2 = Builtin builtin=ReflectConstruct @221
+    v3 = Data data=d2 @247
+    v4 = Convert v3 declared={type=undefined|null|Array<number> flags=[IsExpected]} @247
+    v5 = Call v2, v1, v0, v4 calleeName="Reflect.construct" [isDoneInPlace] @229 constructs
+    ReturnCall v5 @229
+}
+function f6 name="lastForAnother" module=m0 position=258 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @258
+  b1():
+    v1 = Builtin builtin=Reflect @313
+    v2 = Builtin builtin=ReflectConstruct @313
+    v3 = GetModuleVariable variable=g0 @331
+    v4 = Data data=d3 @339
+    v5 = Convert v4 declared={type=undefined|null|Array<never> flags=[IsExpected]} @339
+    v6 = Call v2, v1, v3, v5, v0 calleeName="Reflect.construct" [isDoneInPlace] @321 constructs
+    ReturnCall v6 @321
+}
+function f7 name="lastWithoutList" module=m0 position=354 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @354
+  b1():
+    v1 = Builtin builtin=Reflect @410
+    v2 = Builtin builtin=ReflectConstruct @410
+    v3 = Integer integer=1 @436
+    v4 = Call v2, v1, v0, v3 calleeName="Reflect.construct" [isDoneInPlace] @418 constructs
+    ReturnCall v4 @418
+}
+function f8 name="kept" module=m0 position=442 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @442
+  b1():
+    v1 = Builtin builtin=Reflect @488
+    v2 = Builtin builtin=ReflectConstruct @488
+    v3 = Data data=d4 @514
+    v4 = Convert v3 declared={type=undefined|null|Array<never> flags=[IsExpected]} @514
+    v5 = Call v2, v1, v0, v4 calleeName="Reflect.construct" [isDoneInPlace] @496 constructs
+    v6 = NewArray v5 contents=anything @487
+    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]} @487
+    Return v7 @487
+}
+function f9 name="constructs" module=m0 position=607 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|Array flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1() @607
+  b1():
+    v1 = GetModuleVariable variable=g1 @663
+    v2 = Construct v1, -, v0 calleeName="Constructed" @663 constructs
+    v3 = NewArray v2 contents=anything @658
+    v4 = Convert v3 declared={type=undefined|null|Array flags=[IsExpected]} @658
+    Return v4 @658
+}
+function f10 name="attempt" module=m0 position=934 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|number|function|f1|f11 flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: undefined|null|number|function|f1|f11):
+    Jump -> next b1() @934
+  b1():
+    Jump -> next b2() @980
+  b2() handler=b3():
+    v2 = Call v0, -, v1 calleeName="way" @986
+    v3 = String string="nothing" @1006
+    v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]} @1006
+    Return v4 @1006
+  b3() role=CatchHandler:
+    v5 = CatchValue @1033
+    v6 = GetModuleVariable variable=g2 @1042
+    v7 = Call v6, -, v5 calleeName="names" @1042
+    ReturnCall v7 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}] @1042
+}
+function f11 name="arrow" module=m0 position=77 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @77
+  b1():
+    v0 = Integer integer=1 @83
+    v1 = Convert v0 declared={type=number flags=[IsExpected]} @83
+    Return v1 @83
+}

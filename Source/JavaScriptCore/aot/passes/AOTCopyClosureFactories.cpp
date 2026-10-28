@@ -22,6 +22,8 @@
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
 #include "AOTVector.h"
+#include <algorithm>
+#include <atomic>
 #include <ranges>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -491,12 +493,15 @@ struct Copier {
                         modulesThatRequireMayLoad->quickSet(request.target.index());
                 }
             }
-            for (const Function& function : program.functions) {
-                if (!isCodeOfProgram(function) || requiresByNameNobodyKnows)
-                    continue;
-                for (const Value& value : function.values)
-                    requiresByNameNobodyKnows |= value.opcode == Opcode::RequireDynamic;
-            }
+            std::atomic<bool> isFound { false };
+            forEachIndexInParallel(build.parallelLoops(), program.functions.size(), [&](unsigned index) {
+                const Function& function = program.functions[index];
+                if (!isCodeOfProgram(function) || isFound.load(std::memory_order_relaxed))
+                    return;
+                if (std::ranges::any_of(function.values, [](const Value& value) { return value.opcode == Opcode::RequireDynamic; }))
+                    isFound.store(true, std::memory_order_relaxed);
+            });
+            requiresByNameNobodyKnows = isFound.load(std::memory_order_relaxed);
         }
         return requiresByNameNobodyKnows || modulesThatRequireMayLoad->quickGet(asked.index());
     }

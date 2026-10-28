@@ -774,6 +774,7 @@ static void emitReturnFromOperationBelowSpilledArguments(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     emitDropSpilledArgumentRegisters(jit);
     Jump threw = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 
     threw.link(&jit);

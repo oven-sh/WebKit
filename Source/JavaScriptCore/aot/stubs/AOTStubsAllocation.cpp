@@ -320,6 +320,7 @@ void generateAllocateInstanceOutOfLine(StubAssembler& jit)
         jit.callOperation(Entry::operationAOTSetConstructPrototype, jit.reuseScratch(StubRegister::Operation));
         isMade.link(&jit);
     });
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 }
 
@@ -344,7 +345,7 @@ void generateCopyObject(StubAssembler& jit)
 #endif
 
     // The loop moves two chunks at a time, from the last field down. With an odd number of chunks it also copies the source's header and words.
-    auto initializeCopyAndReturn = [&] {
+    auto initializeCopyAndReturn = [&](bool hasCalledOperation) {
         for (unsigned offset = copyChunkBytes; offset <= copiedFieldBytes; offset += copyChunkBytes)
             copyChunk(jit, Address(source, offset), Address(cell, offset), firstScratch, secondScratch);
         if (!copiedFieldBytes) {
@@ -371,13 +372,15 @@ void generateCopyObject(StubAssembler& jit)
         jit.and64(TrustedImm64(static_cast<int64_t>(orderCountAndShapeMask)), words);
         jit.storePair64(header, words, cell, TrustedImm32(0));
         fenceAfterAllocation(jit);
+        if (hasCalledOperation)
+            jit.pollBeforeReturningFromNativeCode();
         jit.returnToCaller();
     };
 
     JumpList slowPath;
     const AssemblyHelpers::FreeListRefill refill = allocateAtSite(jit, site, slowPath);
     jit.load64(Address(site.record, AllocationSiteRecord::offsetOfHeader()), header);
-    initializeCopyAndReturn();
+    initializeCopyAndReturn(false);
 
     emitLateRefill(jit, refill, slowPath);
     slowPath.link(&jit);
@@ -392,7 +395,7 @@ void generateCopyObject(StubAssembler& jit)
         jit.callOperation(Entry::operationAOTAllocateSlow, jit.reuseScratch(StubRegister::Operation));
     });
     jit.load64(Address(cell), header);
-    initializeCopyAndReturn();
+    initializeCopyAndReturn(true);
 }
 
 StubSignature signatureOfAllocateExtension(StubKey)

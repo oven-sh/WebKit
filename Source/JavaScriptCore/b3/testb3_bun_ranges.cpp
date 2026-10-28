@@ -481,6 +481,92 @@ static void testSumOfIntegersBehindDoublesIsAddedInIntegers()
     }
 }
 
+enum class MadeFrom : uint8_t { IntegerTimesHalf, SumOfProducts, IntegerTimesInfinity, IntegerOverInteger, Argument, ManyLargeFactors };
+
+static void checkNumberComparedWithItself(MadeFrom madeFrom, bool isNeverNaN, bool reducesWithRanges)
+{
+    for (B3::Opcode comparison : { Equal, NotEqual }) {
+        Procedure proc(rangeReductionPolicy(reducesWithRanges));
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int32_t, int64_t, double>(proc, root);
+        auto constant = [&](double number) -> Value* { return root->appendNew<ConstDoubleValue>(proc, Origin(), number); };
+        Value* narrow = graph.make(root, IToD, arguments[0]);
+        Value* wide = graph.make(root, IToD, arguments[1]);
+        Value* number = nullptr;
+        switch (madeFrom) {
+        case MadeFrom::IntegerTimesHalf:
+            number = graph.make(root, Mul, narrow, constant(0.5));
+            break;
+        case MadeFrom::SumOfProducts:
+            number = graph.make(root, Sub, graph.make(root, Add, graph.make(root, Mul, narrow, wide), constant(-1e300)), graph.make(root, Neg, graph.make(root, Abs, wide)));
+            break;
+        case MadeFrom::IntegerTimesInfinity:
+            number = graph.make(root, Mul, narrow, constant(std::numeric_limits<double>::infinity()));
+            break;
+        case MadeFrom::IntegerOverInteger:
+            number = graph.make(root, Div, narrow, wide);
+            break;
+        case MadeFrom::Argument:
+            number = graph.make(root, Add, arguments[2], narrow);
+            break;
+        case MadeFrom::ManyLargeFactors:
+            number = graph.make(root, Mul, graph.make(root, Mul, constant(1e300), constant(1e300)), graph.make(root, Sub, narrow, narrow));
+            break;
+        }
+        graph.ret(root, graph.make(root, comparison, number, number));
+
+        reduceStrengthOnce(proc);
+        CHECK_EQ(numberOfValues(proc, comparison), isNeverNaN && reducesWithRanges ? 0u : 1u);
+
+        auto code = compileProc(proc);
+        for (int32_t first : { std::numeric_limits<int32_t>::min(), 0, 3, std::numeric_limits<int32_t>::max() }) {
+            for (int64_t second : { std::numeric_limits<int64_t>::min(), static_cast<int64_t>(0), static_cast<int64_t>(5), std::numeric_limits<int64_t>::max() }) {
+                for (double third : { 0.5, std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity() }) {
+                    double a = first;
+                    double b = static_cast<double>(second);
+                    double expected = 0;
+                    switch (madeFrom) {
+                    case MadeFrom::IntegerTimesHalf:
+                        expected = a * 0.5;
+                        break;
+                    case MadeFrom::SumOfProducts:
+                        expected = a * b + -1e300 - -std::abs(b);
+                        break;
+                    case MadeFrom::IntegerTimesInfinity:
+                        expected = a * std::numeric_limits<double>::infinity();
+                        break;
+                    case MadeFrom::IntegerOverInteger:
+                        expected = a / b;
+                        break;
+                    case MadeFrom::Argument:
+                        expected = third + a;
+                        break;
+                    case MadeFrom::ManyLargeFactors:
+                        expected = std::numeric_limits<double>::infinity() * (a - a);
+                        break;
+                    }
+                    bool isNaN = expected != expected;
+                    CHECK(!isNaN || !isNeverNaN);
+                    CHECK_EQ(invoke<int32_t>(*code, first, second, third), static_cast<int32_t>(comparison == Equal ? !isNaN : isNaN));
+                }
+            }
+        }
+    }
+}
+
+static void testNumberMadeFromIntegersEqualsItself()
+{
+    for (bool reducesWithRanges : { true, false }) {
+        checkNumberComparedWithItself(MadeFrom::IntegerTimesHalf, true, reducesWithRanges);
+        checkNumberComparedWithItself(MadeFrom::SumOfProducts, true, reducesWithRanges);
+        checkNumberComparedWithItself(MadeFrom::IntegerTimesInfinity, false, reducesWithRanges);
+        checkNumberComparedWithItself(MadeFrom::IntegerOverInteger, false, reducesWithRanges);
+        checkNumberComparedWithItself(MadeFrom::Argument, false, reducesWithRanges);
+        checkNumberComparedWithItself(MadeFrom::ManyLargeFactors, false, reducesWithRanges);
+    }
+}
+
 static void checkSignExtension(IntRange range, bool becomesZeroExtension, bool reducesWithRanges)
 {
     Procedure proc(rangeReductionPolicy(reducesWithRanges));
@@ -723,6 +809,7 @@ void addBunRangeTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testVariableShiftRanges());
     RUN(testTruncOfVariableShiftLeftAndBack());
     RUN(testReduceStrengthKnowsNarrowLoadRange());
+    RUN(testNumberMadeFromIntegersEqualsItself());
 }
 
 #endif // ENABLE(B3_JIT)

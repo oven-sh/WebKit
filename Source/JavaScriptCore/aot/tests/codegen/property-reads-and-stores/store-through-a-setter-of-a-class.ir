@@ -136,4 +136,4 @@ function f4 module=m0 position=85 kind=Initializer flags=[HasThis, IsChecked, Is
 # X64-LABEL: name="warm" role=Source
 # X64-NEXT: instructions: 3, patchpoints: 1
 # ARM64-LABEL: name="warm" role=Source
-# ARM64-NEXT: instructions: {{*}}, patchpoints: 1
+# ARM64-NEXT: instructions: 4, patchpoints: 1

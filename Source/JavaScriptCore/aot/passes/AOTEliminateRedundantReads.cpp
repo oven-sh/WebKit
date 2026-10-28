@@ -1453,7 +1453,9 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
 
 namespace {
 
-constexpr AbstractHeapSet carriedHeaps = heapsOfVariables;
+constexpr AbstractHeapSet carriedHeaps = heapsOfVariables | AbstractHeapSet { AbstractHeap::ObjectFields };
+// What these ask of an object stays as it is until something writes what they read.
+constexpr OpcodeSet testsOfObjectsMovedAheadOfLoops { Opcode::HasBirthFieldsFilled };
 AOT_THRESHOLD(unsigned, maxCarriedVariablesPerLoop, 8);
 AOT_THRESHOLD(unsigned, maxRoundsPerStep, 4);
 
@@ -1588,6 +1590,19 @@ struct VariableCarrier : LoopEditor {
     // In every loop that no path has to leave for it: the variables that the first turn reads before the loop can end. What is read ahead of an inner loop is a read of the loop around it.
     PassOutcome run()
     {
+        bool movedTestsOfObjects = false;
+        if (m_analyses.opcodesOfValues().intersects(testsOfObjectsMovedAheadOfLoops)) {
+            for (BlockID header : headersFromInnermost()) {
+                const NaturalLoop* loop = m_analyses.naturalLoops().headerOf(header);
+                if (loop && isHeaderOfLoopOfProgram(header) && moveLeadingTestsAheadOf(*loop, LeadingTests::OfObjects))
+                    movedTestsOfObjects = true;
+            }
+            // What the accesses of the loop name is what was proven ahead of it, not a parameter that is handed nothing else. Nothing is remembered by number from here on.
+            if (movedTestsOfObjects) {
+                removeTrivialParameters(m_context);
+                retype();
+            }
+        }
         BitVector isHeaderOfChangedLoop;
         for (BlockID header : headersFromInnermost()) {
             BitVector leaves;
@@ -1595,7 +1610,7 @@ struct VariableCarrier : LoopEditor {
                 isHeaderOfChangedLoop.set(header.index());
         }
         if (isHeaderOfChangedLoop.isEmpty())
-            return PassOutcome::Unchanged;
+            return movedTestsOfObjects ? PassOutcome::Changed : PassOutcome::Unchanged;
 
         for (unsigned round = 0; round < maxRoundsPerStep && retype(); ++round) {
             bool moved = false;
@@ -1629,6 +1644,19 @@ struct VariableCarrier : LoopEditor {
         });
     }
 
+    // A slot of an object is a variable where what the access relies on stands ahead of the loop.
+    bool isCarriedAccess(const NaturalLoop& loop, const MemoryAccess& access, const Value& value)
+    {
+        if (access.location.heap() != AbstractHeap::ObjectFields)
+            return true;
+        if (value.opcode != Opcode::GetSlot && value.opcode != Opcode::PutSlot)
+            return false;
+        ValueID guard = value.guardOperand();
+        if (!guard)
+            return value.level() == KnowledgeLevel::Proven;
+        return !m_analyses.naturalLoops().belongsTo(m_analyses.useLists().locationOf(guard).block, loop);
+    }
+
     // Two environments of one layout may be one object: a store through another one counts as a write by something else.
     void findVariables(const NaturalLoop& loop, const BitVector& leaves)
     {
@@ -1652,7 +1680,7 @@ struct VariableCarrier : LoopEditor {
             for (uint32_t index = 0; index < values.size(); ++index) {
                 ValueID id = values[index];
                 MemoryAccess access = memoryAccessOf(m_function, m_function.at(id));
-                if (stays && access && carriedHeaps.contains(access.location.heap()) && !access.location.isEntireHeap()) {
+                if (stays && access && carriedHeaps.contains(access.location.heap()) && !access.location.isEntireHeap() && isCarriedAccess(loop, access, m_function.at(id))) {
                     // A cast that names a fact says from where on the word may be looked at: what stands in front of it is another base.
                     ValueID base = access.base ? sameObjectBehindFacts(m_function, access.base) : ValueID();
                     accesses.append(VariableAccess { access.location, base, id, access.stored, { block, index } });
@@ -1812,8 +1840,12 @@ struct VariableCarrier : LoopEditor {
                 storesCanLeave = leaves.isEmpty() && nothingLooksAtVariablesIn(loop);
             return *storesCanLeave;
         };
+        // A slot that the loop only reads is read ahead of it by others. An integer in a slot is added to in place, in one instruction with its test.
+        auto gainsNothingInRegister = [&](const CarriedVariable& variable) {
+            return variable.location.heap() == AbstractHeap::ObjectFields && (variable.stores.isEmpty() || typeOf(variable.reads.first()).isInteger());
+        };
         m_variables.removeAllMatching([&](const CarriedVariable& variable) {
-            if (variable.isReadThroughCastInLoop || !isWorthReadingAhead(variable) || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
+            if (variable.isReadThroughCastInLoop || gainsNothingInRegister(variable) || !isWorthReadingAhead(variable) || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
                 return true;
             return variable.stores.isEmpty() && !variable.isWrittenOnLeavingPath && !isReadBy(variable, Opcode::TypeTest) && !isReadBy(variable, Opcode::GetCapture);
         });
@@ -2065,10 +2097,34 @@ struct VariableCarrier : LoopEditor {
     struct LeadingTest {
         BlockID block;
         std::optional<size_t> parameterOfHeader;
+        // The block only computes and decides whether the loop goes on. It is asked ahead of the loop as well, and again in the first turn with the same answer.
+        bool staysInLoop { false };
     };
+    enum class LeadingTests : uint8_t { OfTypes, OfObjects };
+
+    bool nothingWritesWhatIsReadBy(const NaturalLoop& loop, ValueID test)
+    {
+        LocationMasks reads = m_analyses.effectsOf(test).onAnyEdge().reads;
+        auto leavesItAlone = [&](const Effects& effects) {
+            return !effects.mayRunOtherCode() && !effects.writes.overlaps(reads);
+        };
+        for (unsigned position = 0; position < loop.size(); ++position) {
+            BlockID block = loop.at(position);
+            if (!leavesItAlone(m_analyses.effectsOfTerminator(block).onAnyEdge()))
+                return false;
+            for (ValueID value : m_function.at(block).values) {
+                Effects effects = m_analyses.effectsOf(value).onAnyEdge();
+                // A store to a slot leaves the field in its slot. Whatever else stores to a field may hand it what the slot does not hold.
+                bool mayTakeFieldOutOfSlot = m_function.at(value).opcode != Opcode::PutSlot && !effects.writes.restrictedTo({ AbstractHeap::ObjectFields }).isEmpty();
+                if (mayTakeFieldOutOfSlot || !leavesItAlone(effects))
+                    return false;
+            }
+        }
+        return true;
+    }
 
     // A test of what an earlier one of these tests has proven tests the same value.
-    Vector<LeadingTest, 4> findLeadingTests(const NaturalLoop& loop)
+    Vector<LeadingTest, 4> findLeadingTests(const NaturalLoop& loop, LeadingTests wanted)
     {
         const CFG& cfg = m_analyses.cfg();
         const NaturalLoops& loops = m_analyses.naturalLoops();
@@ -2100,12 +2156,40 @@ struct VariableCarrier : LoopEditor {
                 Opcode opcode = m_function.at(value).opcode;
                 return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value);
             });
-            if (test.opcode != Opcode::TypeTest || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
+            if (wanted == LeadingTests::OfObjects && !testsOfObjectsMovedAheadOfLoops.contains(test.opcode)) {
+                bool onlyComputes = std::ranges::all_of(block.values, [&](ValueID value) {
+                    return m_function.at(value).opcode == Opcode::LoopHint || m_analyses.effectsOf(value).onAnyEdge().isPure();
+                });
+                const Target& first = block.terminator.targets[0];
+                const Target& second = block.terminator.targets[1];
+                if (!onlyComputes || loops.belongsTo(first.block, loop) == loops.belongsTo(second.block, loop))
+                    break;
+                BlockID next = loops.belongsTo(first.block, loop) ? first.block : second.block;
+                if (next == loop.header() || !cfg.singleIncomingEdge(next))
+                    break;
+                tests.append({ id, std::nullopt, true });
+                proven.append(ValueID());
+                id = next;
+                continue;
+            }
+            if (test.opcode != (wanted == LeadingTests::OfTypes ? Opcode::TypeTest : test.opcode) || !holdsNothingElse || useLists.useCount(block.values.last()) != 1)
                 break;
             const Target& taken = block.terminator.targets[0];
             const Target& notTaken = block.terminator.targets[1];
             if (!loops.belongsTo(taken.block, loop) || taken.block == loop.header() || !cfg.singleIncomingEdge(taken.block) || loops.belongsTo(notTaken.block, loop))
                 break;
+            if (wanted == LeadingTests::OfObjects) {
+                bool asksWhatStandsAhead = true;
+                test.forEachOperand([&](ValueID operand, uint32_t) {
+                    asksWhatStandsAhead &= !loops.belongsTo(useLists.locationOf(operand).block, loop);
+                });
+                if (!asksWhatStandsAhead || taken.proofs.isEmpty() || !nothingWritesWhatIsReadBy(loop, block.values.last()))
+                    break;
+                tests.append({ id, std::nullopt });
+                proven.append(m_function.at(taken.block).parameters.last());
+                id = taken.block;
+                continue;
+            }
 
             ValueID tested = test.valueOperand();
             if (isCastBehindFact(tested))
@@ -2123,16 +2207,18 @@ struct VariableCarrier : LoopEditor {
             proven.append(taken.proofs.isEmpty() ? ValueID() : m_function.at(taken.block).parameters.last());
             id = taken.block;
         }
+        while (!tests.isEmpty() && tests.last().staysInLoop)
+            tests.removeLast();
         return tests;
     }
 
-    bool moveLeadingTestsAheadOf(const NaturalLoop& loop)
+    bool moveLeadingTestsAheadOf(const NaturalLoop& loop, LeadingTests wanted = LeadingTests::OfTypes)
     {
         BlockID header = loop.header();
         std::optional<Edge> entry = m_analyses.naturalLoops().findSingleEntry(loop);
         if (!entry || hasEdgeResults(m_function, *entry))
             return false;
-        Vector<LeadingTest, 4> tests = findLeadingTests(loop);
+        Vector<LeadingTest, 4> tests = findLeadingTests(loop, wanted);
         if (tests.isEmpty())
             return false;
         Vector<BlockID, 4> region;
@@ -2150,7 +2236,7 @@ struct VariableCarrier : LoopEditor {
         Vector<ValueID, 4> provenAheadOfLoop;
         for (size_t position = 0; position < tests.size(); ++position) {
             const Target& taken = m_function.at(tests[position].block).terminator.targets[0];
-            if (taken.proofs.isEmpty())
+            if (taken.proofs.isEmpty() || tests[position].staysInLoop)
                 provenAheadOfLoop.append(ValueID());
             else if (position + 1 == tests.size())
                 provenAheadOfLoop.append(m_function.at(landing).parameters.last());
@@ -2170,6 +2256,8 @@ struct VariableCarrier : LoopEditor {
 
         for (size_t position = 0; position < tests.size(); ++position) {
             BlockID block = tests[position].block;
+            if (tests[position].staysInLoop)
+                continue;
             if (tests[position].parameterOfHeader || !provenAheadOfLoop[position]) {
                 builder.convertBranchToJump(block, 0);
                 continue;

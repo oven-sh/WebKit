@@ -20,6 +20,7 @@
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
+#include "AOTTypeRelations.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -491,7 +492,7 @@ void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops
                 return;
             BuiltinID constructor = builtins.canonicalID(named);
             BuiltinClassID instanceClass = builtins.at(constructor).instanceClass;
-            if (instanceClass && !builtins.at(instanceClass).hasClosureInstances && builtins.at(instanceClass).constructor && builtins.canonicalID(builtins.at(instanceClass).constructor) == constructor)
+            if (instanceClass && !builtins.at(instanceClass).hasClosureInstances && !isFunctionClass(builtins, instanceClass) && !builtins.at(instanceClass).isPrimitiveWrapper && builtins.at(instanceClass).constructor && builtins.canonicalID(builtins.at(instanceClass).constructor) == constructor)
                 found.append({ definition.layout(), instanceClass });
         });
     });

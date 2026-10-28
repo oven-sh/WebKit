@@ -125,5 +125,5 @@ function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CALLS-NOT: ExitsSideways
 # CALLS-LABEL: end of function
 # The counts of the whole function hold calls, whose moves follow the calling convention: not for Windows.
-# X64SIZE: instructions: 16, patchpoints: 0, rare instructions: 5
-# ARM64SIZE: instructions: 16, patchpoints: 0, rare instructions: 5
+# X64SIZE: instructions: 14, patchpoints: 0, rare instructions: 5
+# ARM64SIZE: instructions: 14, patchpoints: 0, rare instructions: 5

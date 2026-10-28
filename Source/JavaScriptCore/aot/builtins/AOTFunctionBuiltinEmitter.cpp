@@ -116,7 +116,7 @@ void FunctionBuiltinEmitter::generateReflectApply(const InlineCall& call)
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { boxCell(function), thisValue, boxCell(list) }));
 }
 
-// Bytecode constructs in place too, so the stack has no frame of Reflect.construct. The host function throws what the arguments do not allow.
+// Bytecode constructs in place too, so the stack has no frame of Reflect.construct, and a construction is no tail call. The host function throws what the arguments do not allow: that call stands where it is written.
 void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments() == 2 || call.numberOfArguments() == 3);
@@ -128,7 +128,9 @@ void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
     Boxed target = constructorOrMiss(call.argument(0));
     Boxed list = boxCell(objectOrMiss(call, call.argument(1)));
     Boxed newTarget = call.numberOfArguments() == 3 ? constructorOrMiss(call.argument(2)) : target;
-    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }, { .constructs = true }));
+    Origin origin = call.context().origin();
+    origin.isTailCall = false;
+    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }, { .origin = origin, .constructs = true }));
 }
 
 void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)

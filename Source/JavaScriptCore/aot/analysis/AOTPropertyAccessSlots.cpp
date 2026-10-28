@@ -201,9 +201,11 @@ static std::optional<TestsOfEmptySlot> computeTestsThatNothingIsInherited(const 
         MemberAnswer inherited = findMemberOnPrototypes(context, { MemberStart::Instance, layout, key, access, false });
         if (inherited.kind != MemberKind::Absent)
             return std::nullopt;
-        // A read has the test of the slot to fall back on. A store that creates the field has only the guards, which hold for the objects of the first closure while it is the only one.
-        bool failsForEver = access != Access::Store && std::ranges::any_of(inherited.conditions, [&](const MemberCondition& condition) {
-            return guardsAreNeverSet(context.program, context.program.at(condition.layout));
+        // A read has the test of the slot to fall back on. A store that creates the field has only the guards: those of a function that is made once hold for all its objects,
+        // those of a function that may be made again hold for the objects of the first closure while it is the only one, which is no reason for a second copy of the store.
+        bool failsForEver = std::ranges::any_of(inherited.conditions, [&](const MemberCondition& condition) {
+            const Layout& guarded = context.program.at(condition.layout);
+            return guardsAreNeverSet(context.program, guarded) && (access != Access::Store || guarded.classFlow.evaluations != ExecutionCount::AtMostOnce);
         });
         if (failsForEver)
             return std::nullopt;

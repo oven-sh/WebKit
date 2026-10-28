@@ -1183,7 +1183,16 @@ bool ObjectInterpreter::fitsType(VirtualObjectID object, TypeID type) const
 {
     const ObjectState* state = stateOf(object);
     RELEASE_ASSERT(state);
-    return isAssumedWithin(program(), *state, type) || fitsTypeWithoutCasts(object, type);
+    if (isAssumedWithin(program(), *state, type) || fitsTypeWithoutCasts(object, type))
+        return true;
+    // What was assumed of a result that may be absent holds, without null and undefined, of one that is there.
+    const VirtualFamily& family = m_sinking.familyOf(object);
+    bool isThere = std::ranges::all_of(state->variants, [&](const ObjectVariant& variant) {
+        return family.at(variant.shape).kind == VirtualShapeKind::Fields;
+    });
+    return isThere && state->assumedTypes.containsIf([&](TypeID assumedType) {
+        return program().at(assumedType).withoutNullish().isSubsetOf(program().at(type), program());
+    });
 }
 
 bool ObjectInterpreter::fitsTypeWithoutCasts(VirtualObjectID object, TypeID type) const

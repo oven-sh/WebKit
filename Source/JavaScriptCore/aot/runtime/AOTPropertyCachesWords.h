@@ -172,6 +172,15 @@ struct KeyedValuePlace {
     // The low bits of a StructureID are zero. What a place says beside the absence bit holds until an object of some chain changes: PropertyCacheWords::placesSayAbsence.
     static constexpr uint32_t absenceBit = 1;
     static constexpr uint32_t fieldBit = 2;
+    static constexpr uint32_t extraPropertyBits = absenceBit | fieldBit;
+
+    // Of a compiled object whose Structure names the Structure of what it has beside its fields.
+    struct ExtraProperty {
+        // Where the cell has the reference to the object that holds the property.
+        uint16_t hiddenWordOffset;
+        // Slot::wordIndexFor() in that object.
+        int16_t wordIndex;
+    };
 
     JSCell* key;
     uint32_t structureID;
@@ -180,6 +189,8 @@ struct KeyedValuePlace {
         int32_t wordIndex;
         // Beside the field bit: SlotData::bits() of a field that lies in the cell.
         uint32_t slotData;
+        // Beside both bits.
+        ExtraProperty extraProperty;
     };
 };
 

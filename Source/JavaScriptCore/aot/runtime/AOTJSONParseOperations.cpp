@@ -2200,7 +2200,7 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectInlineAs(Instance& instance, V
     };
     for (;;) {
         if (!member->standsAt(quote)) [[unlikely]] {
-            if (!switchToAlternateForm(quote))
+            if (!switchToAlternateForm(quote) || member == end)
                 return fail(quote);
         }
         const uint8_t* start = skipWhitespace(quote + member->textLength);
@@ -2213,7 +2213,7 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectInlineAs(Instance& instance, V
         if (*quote != ',')
             break;
         if (member == end) [[unlikely]] {
-            if (!switchToAlternateForm(skipWhitespace(quote + 1)))
+            if (!switchToAlternateForm(skipWhitespace(quote + 1)) || member == end)
                 return fail(quote);
         }
         quote = skipWhitespace(quote + 1);

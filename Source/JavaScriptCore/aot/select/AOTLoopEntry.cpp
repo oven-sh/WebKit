@@ -84,6 +84,15 @@ bool canEmitOnLoopEntry(SelectionContext& context, BlockID header)
     return entry && findHandlerOnEntry(context, *entry, header);
 }
 
+bool entersLoopUnderNewHandlerEdge(SelectionContext& context, BlockID header)
+{
+    const Function& function = context.function();
+    const NaturalLoops& loops = context.analyses().naturalLoops();
+    const NaturalLoop* loop = loops.headerOf(header);
+    std::optional<Edge> entry = loop ? loops.findSingleEntry(*loop) : std::nullopt;
+    return entry && function.at(header).handler && function.at(entry->from).handler != function.at(header).handler;
+}
+
 static BlockID ensurePreheader(IRBuilder& builder, Edge entry, const std::optional<Target>& handler)
 {
     Function& function = builder.function();

@@ -297,7 +297,8 @@ static void branchUnlessPlaceSaysAbsent(StubAssembler& jit, const KeyedProbeRegi
 }
 
 // The place is of the key. Goes on where it says in which slot of the cell the objects of the Structure have their field, with the address and the representation of that slot.
-static FieldAddressRegisters findFieldByPlace(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& doesNotSay)
+// At doesNotSay the registers are as they were. At isNotInCell the register of the place is overwritten.
+static FieldAddressRegisters findFieldByPlace(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& doesNotSay, JumpList& isNotInCell)
 {
     const FieldAddressRegisters field {
         .object = registers.base,
@@ -309,7 +310,7 @@ static FieldAddressRegisters findFieldByPlace(StubAssembler& jit, const KeyedPro
     jit.add32(TrustedImm32(KeyedValuePlace::fieldBit), registers.structureID, registers.header);
     doesNotSay.append(jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), registers.header));
     jit.load32(inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, slotData)), field.slotData);
-    computeFieldAddress(jit, field, false, doesNotSay);
+    computeFieldAddress(jit, field, false, isNotInCell);
     return field;
 }
 
@@ -359,6 +360,46 @@ static void returnOwnValueAt(StubAssembler& jit, GPRReg base, GPRReg wordIndex)
     jit.loadPtr(Address(base, JSObject::butterflyOffset()), base);
     jit.load64(BaseIndex(base, wordIndex, CCallHelpers::TimesEight), base);
     jit.returnToCaller();
+}
+
+// The place is of the key. Returns the value where the place says where the objects of the Structure have it beside their fields. Where it goes on, the base, the key, the StructureID and the place are as they were.
+static void returnExtraPropertyByPlace(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& hasNoExtraProperties)
+{
+    const GPRReg hiddenWordOffset = registers.uid;
+    const GPRReg wordIndex = registers.header;
+    const GPRReg extraProperties = registers.payload;
+    constexpr ptrdiff_t offsetOfExtraProperty = OBJECT_OFFSETOF(KeyedValuePlace, extraProperty);
+    jit.add32(TrustedImm32(KeyedValuePlace::extraPropertyBits), registers.structureID, registers.header);
+    Jump doesNotSay = jit.branch32(CCallHelpers::NotEqual, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)), registers.header);
+    jit.load16(inKeyedValuePlace(registers.entry, SlotAccess::Read, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, hiddenWordOffset)), hiddenWordOffset);
+    loadExtraProperties(jit, registers.base, hiddenWordOffset, extraProperties, hasNoExtraProperties);
+    jit.load16SignedExtendTo32(inKeyedValuePlace(registers.entry, SlotAccess::Read, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, wordIndex)), wordIndex);
+    jit.signExtend32ToPtr(wordIndex, wordIndex);
+    jit.move(extraProperties, registers.base);
+    returnOwnValueAt(jit, registers.base, wordIndex);
+    doesNotSay.link(&jit);
+}
+
+// A slot of the hashed table names a property that a compiled object has beside its fields. The Structure of the object names the Structure of the object that holds those, so where the property lies holds for as long as the Structure lives.
+static void rememberExtraPropertyOfKey(StubAssembler& jit, const KeyedProbeRegisters& registers, const ProbedSlot& slot)
+{
+    const CachedSlot extraProperty(slot.form, Slot::Kind::ExtraProperty, slot.header, slot.payload);
+    const GPRReg scratch = registers.structureID;
+    constexpr ptrdiff_t offsetOfExtraProperty = OBJECT_OFFSETOF(KeyedValuePlace, extraProperty);
+    locateKeyedValuePlace(jit, SlotAccess::Read, registers.key, registers.structureID, registers.entry);
+    extraProperty.loadSecondPayloadWord(jit, scratch);
+    jit.add32(TrustedImm32(-INT16_MIN), scratch);
+    Jump isTooFar = jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(UINT16_MAX));
+    jit.add32(TrustedImm32(INT16_MIN), scratch);
+    jit.store16(scratch, inKeyedValuePlace(registers.entry, SlotAccess::Read, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, wordIndex)));
+    extraProperty.loadHiddenWordOffset(jit, scratch);
+    jit.store16(scratch, inKeyedValuePlace(registers.entry, SlotAccess::Read, offsetOfExtraProperty + OBJECT_OFFSETOF(KeyedValuePlace::ExtraProperty, hiddenWordOffset)));
+    jit.storePtr(registers.key, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, key)));
+    jit.load32(Address(registers.base, JSCell::structureIDOffset()), scratch);
+    jit.add32(TrustedImm32(KeyedValuePlace::extraPropertyBits), scratch);
+    jit.store32(scratch, inKeyedValuePlace(registers.entry, SlotAccess::Read, OBJECT_OFFSETOF(KeyedValuePlace, structureID)));
+    isTooFar.link(&jit);
+    jit.load32(Address(registers.base, JSCell::structureIDOffset()), registers.structureID);
 }
 
 static void storeOwnValueAtAndReturn(StubAssembler& jit, GPRReg base, GPRReg wordIndex, GPRReg storage, GPRReg value)
@@ -531,7 +572,7 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
     Label readFieldByPlace = jit.label();
     FieldReadExits fieldIsNotRead;
     readFieldAndReturn(jit, {
-        .field = findFieldByPlace(jit, registers, placeIsOfNoField),
+        .field = findFieldByPlace(jit, registers, placeIsOfNoField, hasNoPlace),
         .value = registers.uid,
         .result = base,
         .number = jit.allocateScratch(FPRInfo::fpRegT2),
@@ -539,9 +580,13 @@ static KeyedValueRead returnValueOfKey(StubAssembler& jit, const KeyedProbeRegis
     }, fieldIsNotRead);
 
     placeIsOfNoField.link(&jit);
-    branchUnlessPlaceSaysAbsent(jit, registers, header, hasNoPlace);
+    JumpList placeDoesNotSayAbsent;
+    branchUnlessPlaceSaysAbsent(jit, registers, header, placeDoesNotSayAbsent);
     jit.move(TrustedImm64(JSValue::ValueUndefined), base);
     jit.returnToCaller();
+
+    placeDoesNotSayAbsent.link(&jit);
+    returnExtraPropertyByPlace(jit, registers, hasNoPlace);
 
     hasNoPlace.link(&jit);
     if (emptyFieldSlot) {
@@ -585,6 +630,9 @@ void generateGetByValCached(StubAssembler& jit)
     Jump isNotField = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Field);
     rememberFieldOfKey(jit, registers, slot);
     isNotField.link(&jit);
+    Jump isNotExtraProperty = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::ExtraProperty);
+    rememberExtraPropertyOfKey(jit, registers, slot);
+    isNotExtraProperty.link(&jit);
     jumpToSlotHandlerOfKind(jit, SlotHandlerTable::ReadByVal, header, registers.uid);
 
     answerFromObjectsAndReturn(jit, ObjectLookupQuestion::Read, registers, isInNoTable, miss);
@@ -896,7 +944,7 @@ void generateInByValCached(StubAssembler& jit)
     jit.returnToCaller();
 
     placeIsOfNoValue.link(&jit);
-    branchOnFieldPresence(jit, findFieldByPlace(jit, registers, placeIsOfNoField), registers.uid, isPresent, hasNoPlace);
+    branchOnFieldPresence(jit, findFieldByPlace(jit, registers, placeIsOfNoField, hasNoPlace), registers.uid, isPresent, hasNoPlace);
     isPresent.linkTo(returnTrue, &jit);
 
     placeIsOfNoField.link(&jit);

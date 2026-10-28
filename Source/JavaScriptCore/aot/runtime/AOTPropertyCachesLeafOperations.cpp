@@ -525,6 +525,18 @@ static JSString* textOfFunctionForKey(VM& vm, JSCell* key)
     return CompiledCallee::sourceTextIfMade(vm, asObject(key));
 }
 
+// Only a text that begins with a digit spells an index.
+static bool mayBeginWithDigit(const JSString* string)
+{
+    JSRopeString::LeafIterator pieces(string);
+    while (!pieces.isAtEnd()) {
+        StringView piece = pieces.next();
+        if (!piece.isEmpty())
+            return isASCIIDigit(piece[0]);
+    }
+    return true;
+}
+
 KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, KeyAtomization atomization)
 {
     if (key->isSymbol()) {
@@ -550,7 +562,7 @@ KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, Ke
             text = atomizes ? string->toAtomString(globalObject).data : string->toExistingAtomString(globalObject).data;
         }
         if (!text)
-            return { isRope && string->length() <= maxIndexLength ? KeyNameKind::NotAName : KeyNameKind::HasNoAtom };
+            return { isRope && string->length() <= maxIndexLength && mayBeginWithDigit(string) ? KeyNameKind::NotAName : KeyNameKind::HasNoAtom };
     }
     if (std::optional<uint32_t> index = parseIndex(*text))
         return { KeyNameKind::Index, nullptr, *index };
@@ -701,10 +713,18 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
     return nullptr;
 }
 
+// The fields of a compiled object have names that the program spells, which are atoms wherever they are looked for, and what it has beside them lies in an ordinary object.
+static bool findsOnlyNamesThatAreAtoms(JSObject* object)
+{
+    if (Object* compiled = compiledObjectOrNull(object))
+        return !hasPendingStars(*compiled) && !compiled->structure()->typeInfo().overridesGetPrototype();
+    return hasOrdinaryLookups(object);
+}
+
 bool hasOnlyOrdinaryLookupsOnChain(JSObject* base)
 {
     for (JSObject* object = base; object; object = object->getPrototypeDirect().getObject()) {
-        if (!hasOrdinaryLookups(object))
+        if (!findsOnlyNamesThatAreAtoms(object))
             return false;
     }
     return true;

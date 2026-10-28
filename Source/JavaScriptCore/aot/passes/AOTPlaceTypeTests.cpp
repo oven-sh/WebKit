@@ -2007,7 +2007,7 @@ static Expected<LayoutList> findLayoutsStoredUnderNameOfSubject(FunctionPassCont
 }
 
 // Answers whether the subject is settled. One whose names have more declarations than a test is made for waits until the layouts of the other subjects are known.
-static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues)
+static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues, ExpectedValues& widenedValues)
 {
     Function& function = context.function;
     auto expectLayouts = [&](std::span<const NamedUse> uses, const Expected<LayoutList>& layouts) {
@@ -2026,6 +2026,26 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return !context.program.at(layout).flags.contains(LayoutFlags::IsNeverAllocated) && context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
         });
     });
+    // In code without types, what is expected of a value is read off the places that are seen to give it. An object that has left the sight of the program arrives where nobody sees it given:
+    // where the analysis has seen nothing arrive either, the layouts that hold the names and have left join what is expected.
+    // A name that built-ins answer too says little of who arrives, and a test takes only so many layouts.
+    bool isExpectedByTextAlone = isFollowed && !typeListsLayouts && !function.has(FunctionFlags::IsChecked) && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) { return !use.stamp && tellsLayoutsApart(context.program, use.key); });
+    if (isExpectedByTextAlone && !waitsForOtherSubjects) {
+        LayoutsToTest others = findLayoutsToTestFor(context, usesOfSubject, context.limit(LimitID::MaxDeclarationsPredictedFromNames), context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
+        if (!others.layouts.predicted().isEmpty() && !others.leavesOutDeclarations) {
+            Type arriving = Type::forLayouts(others.layouts.predicted().span(), context.types);
+            for (const NamedUse& use : usesOfSubject) {
+                TypeID expected = function.at(use.receiver).expected().predicted();
+                if (!expected || !context.types.at(expected).layouts || arriving.isSubsetOf(context.types.at(expected), context.program) || widenedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
+                    continue;
+                Type widened = context.types.at(expected).unionWith(arriving, context.types);
+                if (membersOf(context.program, widened).size() <= context.limit(LimitID::MaxDispatchCases))
+                    widenedValues.append({ use.receiver, ExpectedType(context.types.intern(widened)) });
+            }
+        }
+    }
+    if (isExpectedByTextAlone && waitsForOtherSubjects)
+        return false;
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
         return true;
 
@@ -2297,16 +2317,23 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     findUsesOnEveryPath(context, uses.mutableSpan());
 
     ExpectedValues expectedValues;
+    ExpectedValues widenedValues;
     Expected<LayoutList> layoutsMet;
     Vector<std::span<NamedUse>, 4> unsettledSubjects;
     for (std::span<NamedUse> usesOfSubject : uses.mutableSpan() | std::views::chunk_by([](const NamedUse& a, const NamedUse& b) { return a.subject == b.subject; })) {
-        if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues))
+        if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues, widenedValues))
             unsettledSubjects.constructAndAppend(usesOfSubject);
     }
     if (!unsettledSubjects.isEmpty())
         addLayoutsOfKnownReceivers(context, layoutsMet);
     for (std::span<NamedUse> usesOfSubject : unsettledSubjects)
-        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues);
+        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues, widenedValues);
+    for (auto [value, expected] : widenedValues) {
+        if (findUncheckedEntryParameter(context.function, value))
+            continue;
+        expectations.expect(value, expected.predicted());
+        expectations.didGuessFromNames(value);
+    }
     return expectValues(context, expectedValues, expectations);
 }
 

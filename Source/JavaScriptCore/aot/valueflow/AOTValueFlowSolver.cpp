@@ -1546,27 +1546,44 @@ void ValueFlowSolver::makeNodesOf(std::span<KeyToMake> keys)
         takeWhatWasMade(makers.span(), keys);
         wishes = WTF::move(makers[0]->wishes);
     } else {
+        // The keys of each maker in their order, first of the makers of keys that may bring others, then of the rest: counted and then written by share, on all threads.
         constexpr size_t keysPerShare = 256;
-        Vector<uint8_t> makerOfKey(keys.size());
-        static_assert(numberOfNodeMakers <= 128);
-        forEachIndexInParallel(m_loops, (keys.size() + keysPerShare - 1) / keysPerShare, [&](unsigned share) {
-            for (size_t index = share * keysPerShare; index < std::min(keys.size(), (share + 1) * keysPerShare); ++index)
-                makerOfKey[index] = NodeMaker::makerOf(m_sets, keys[index]) | (NodeMaker::mayBringOthers(m_sets, keys[index].key) ? 128 : 0);
-        });
-        for (bool bringOthers : { true, false }) {
-            Vector<std::unique_ptr<NodeMaker>> makers(numberOfNodeMakers, [&](size_t) {
-                return makeUnique<NodeMaker>(*this);
-            });
-            size_t taken = 0;
-            for (uint32_t index = 0; index < keys.size(); ++index) {
-                if (!!(makerOfKey[index] & 128) != bringOthers)
-                    continue;
-                makers[makerOfKey[index] & 127]->keys.append(index);
-                ++taken;
+        constexpr unsigned numberOfLists = 2 * numberOfNodeMakers;
+        size_t numberOfShares = (keys.size() + keysPerShare - 1) / keysPerShare;
+        Vector<uint8_t> listOfKey(keys.size());
+        static_assert(numberOfLists <= 256);
+        Vector<std::array<uint32_t, numberOfLists>> placeInListsOfShare(numberOfShares);
+        forEachIndexInParallel(m_loops, numberOfShares, [&](unsigned share) {
+            std::array<uint32_t, numberOfLists>& numberInLists = placeInListsOfShare[share];
+            numberInLists.fill(0);
+            for (size_t index = share * keysPerShare; index < std::min(keys.size(), (share + 1) * keysPerShare); ++index) {
+                listOfKey[index] = NodeMaker::makerOf(m_sets, keys[index]) + (NodeMaker::mayBringOthers(m_sets, keys[index].key) ? 0 : numberOfNodeMakers);
+                ++numberInLists[listOfKey[index]];
             }
-            m_stepTimes.didFinish("rules: made: keys dealt to the makers (one thread)"_s);
-            if (!taken)
+        });
+        Vector<Vector<uint32_t>> keysInList(numberOfLists);
+        forEachIndexInParallel(m_loops, numberOfLists, [&](unsigned list) {
+            uint32_t number = 0;
+            for (std::array<uint32_t, numberOfLists>& placeInLists : placeInListsOfShare)
+                number += std::exchange(placeInLists[list], number);
+            keysInList[list].grow(number);
+        });
+        forEachIndexInParallel(m_loops, numberOfShares, [&](unsigned share) {
+            std::array<uint32_t, numberOfLists>& placeInLists = placeInListsOfShare[share];
+            for (size_t index = share * keysPerShare; index < std::min(keys.size(), (share + 1) * keysPerShare); ++index)
+                keysInList[listOfKey[index]][placeInLists[listOfKey[index]]++] = static_cast<uint32_t>(index);
+        });
+        m_stepTimes.didFinish("rules: made: keys dealt to the makers"_s);
+        for (bool bringOthers : { true, false }) {
+            std::span<Vector<uint32_t>> keysOfMakers = keysInList.mutableSpan().subspan(bringOthers ? 0 : numberOfNodeMakers, numberOfNodeMakers);
+            if (std::ranges::all_of(keysOfMakers, &Vector<uint32_t>::isEmpty))
                 continue;
+            Vector<std::unique_ptr<NodeMaker>> makers(numberOfNodeMakers, [&](size_t index) {
+                auto maker = makeUnique<NodeMaker>(*this);
+                maker->keys = WTF::move(keysOfMakers[index]);
+                return maker;
+            });
+            m_stepTimes.didFinish("rules: made: makers made (one thread)"_s);
             forEachIndexInParallel(m_loops, makers.size(), [&](unsigned index, unsigned worker) {
                 makers[index]->run(keys, *m_makers[worker], !bringOthers);
             });
@@ -4035,7 +4052,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         // What stores, calls and visits do is found on all threads from what is seen at that moment, and then done on one thread, one after the other in their order.
         // A step is done as it was found where what it hangs on is still seen as it was. Else it is found again on the spot.
         constexpr uint32_t noNode = UINT32_MAX;
-        enum class Found : uint8_t { Visit, Store, CallWithOldPlan, Call, EnterFunction, HandOn, Arrival, AnswersHandedOn, Read };
+        enum class Found : uint8_t { Visit, Store, FieldWritten, CallWithOldPlan, Call, EnterFunction, HandOn, Arrival, AnswersHandedOn, Read };
         struct FoundStep {
             Found kind;
             uint32_t index { 0 };
@@ -4045,6 +4062,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             ValueSetID come { };
             ValueSetID seenBefore { };
             ValueSetID seenAfter { };
+            uint32_t numberOfFields { 0 };
         };
         auto isSeenAsBefore = [&](const FoundStep& step) {
             return step.input == noNode || seenBehindTheRounds[step.input] == step.seenAtInput.index();
@@ -4198,6 +4216,22 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             });
             return kinds.size() <= mostKindsToldByName;
         };
+        // In the order of the names.
+        Vector<std::pair<uint32_t, ValueSetID>> toldByName;
+        {
+            Vector<std::pair<uint32_t, ValueSetID>> writtenUnderNames;
+            writtenUnderNames.reserveInitialCapacity(writtenUnderKey.size());
+            for (auto& [key, written] : writtenUnderKey)
+                writtenUnderNames.append({ key, written });
+            parallelSort(m_loops, writtenUnderNames.mutableSpan(), [](const auto& first, const auto& second) {
+                return first.first < second.first;
+            });
+            toldByName = findIndicesInParallel(m_loops, writtenUnderNames.size(), [&](unsigned index) {
+                return tellsSomething(writtenUnderNames[index].second);
+            }).map([&](uint32_t index) {
+                return writtenUnderNames[index];
+            });
+        }
         struct GroupOfField {
             uint64_t field;
             uint32_t group;
@@ -4296,14 +4330,9 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         // What is written under the name of a read goes on from the result of the read inside the body of the read alone: each body by itself, on all threads.
         Vector<uint32_t> listOfZerosByNode = makeListOfZeros(numberOfNodes);
         {
-            Vector<std::pair<uint32_t, ValueSetID>> namesThatTellSomething;
-            for (auto& [key, written] : writtenUnderKey) {
-                if (tellsSomething(written))
-                    namesThatTellSomething.append({ key, written });
-            }
-            Vector<ValueFlowNodeSet> written = collectInParallel<ValueFlowNodeSet>(m_loops, namesThatTellSomething.size(), [&](unsigned index, Vector<ValueFlowNodeSet>& found) {
-                forEachResultOfReadOffUnknownObjectUnder(namesThatTellSomething[index].first, [&](ValueFlowNodeID result) {
-                    found.append({ result, namesThatTellSomething[index].second });
+            Vector<ValueFlowNodeSet> written = collectInParallel<ValueFlowNodeSet>(m_loops, toldByName.size(), [&](unsigned index, Vector<ValueFlowNodeSet>& found) {
+                forEachResultOfReadOffUnknownObjectUnder(toldByName[index].first, [&](ValueFlowNodeID result) {
+                    found.append({ result, toldByName[index].second });
                 });
             });
             parallelSort(m_loops, written.mutableSpan(), [](const ValueFlowNodeSet& first, const ValueFlowNodeSet& second) {
@@ -4426,6 +4455,24 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             }
         });
         LayoutsWithoutRepeats layoutsWrittenTo;
+        auto listLayoutsWrittenTo = [&](const Store& store, ValueSetID receiversSeen, LayoutsWithoutRepeats& layouts) {
+            layouts.begin(numberOfLayouts);
+            for (LayoutID layout : layoutsOfStoresInShare[store.share].span().subspan(store.firstLayout, store.numberOfLayouts))
+                layouts.add(layout);
+            if (receiversSeen != many) {
+                m_sets.forEachMember(receiversSeen, [&](ValueFlowObjectID receiver) {
+                    addWithLayoutsAbove(m_input.universe->layoutOf(receiver), layouts);
+                });
+            }
+        };
+        auto writeIntoField = [&](uint64_t key, ValueSetID written) {
+            Field& field = fields.ensure(key, [] { return Field(); }).iterator->value;
+            ValueSetID after = maker.unite(field.written, written);
+            if (after == field.written)
+                return;
+            field.written = after;
+            arriveAtReadsOfField(key, field);
+        };
         auto write = [&](uint32_t index, ValueSetID written, ValueSetID receiversSeen) {
             Store& store = stores[index];
             // The fields hold what was written into them the last time.
@@ -4433,26 +4480,12 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 return;
             store.writtenLast = written;
             store.receiversSeenLast = receiversSeen;
-            layoutsWrittenTo.begin(numberOfLayouts);
-            for (LayoutID layout : layoutsOfStoresInShare[store.share].span().subspan(store.firstLayout, store.numberOfLayouts))
-                layoutsWrittenTo.add(layout);
-            if (receiversSeen != many) {
-                m_sets.forEachMember(receiversSeen, [&](ValueFlowObjectID receiver) {
-                    addWithLayoutsAbove(m_input.universe->layoutOf(receiver), layoutsWrittenTo);
-                });
-            }
+            listLayoutsWrittenTo(store, receiversSeen, layoutsWrittenTo);
             for (uint32_t side = 0; side < 2; ++side) {
                 if (!store.isReadOnSide[side])
                     continue;
-                for (LayoutID layout : layoutsWrittenTo.list) {
-                    uint64_t key = fieldOf(store.key * 2 + side, layout);
-                    Field& field = fields.ensure(key, [] { return Field(); }).iterator->value;
-                    ValueSetID after = maker.unite(field.written, written);
-                    if (after == field.written)
-                        continue;
-                    field.written = after;
-                    arriveAtReadsOfField(key, field);
-                }
+                for (LayoutID layout : layoutsWrittenTo.list)
+                    writeIntoField(fieldOf(store.key * 2 + side, layout), written);
             }
         };
         auto runStore = [&](uint32_t index) {
@@ -4696,16 +4729,40 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             step.to = operands[0].node.index();
             step.seenBefore = seenBehindTheRoundsAt(operands[0].node);
             step.come = written;
+            size_t head = found.size();
             found.append(step);
+            // The fields that the store writes into, in the order in which it writes into them.
+            const Store& store = stores[index];
+            if (written == ValueSets::nothing || written == many || (written == store.writtenLast && step.seenBefore == store.receiversSeenLast))
+                return;
+            LayoutsWithoutRepeats& layouts = layoutsOfWorker[worker];
+            listLayoutsWrittenTo(store, step.seenBefore, layouts);
+            for (uint32_t side = 0; side < 2; ++side) {
+                if (!store.isReadOnSide[side])
+                    continue;
+                for (LayoutID layout : layouts.list)
+                    found.append({ Found::FieldWritten, store.key * 2 + side, layout.index() });
+            }
+            found[head].numberOfFields = found.size() - head - 1;
         };
-        auto doStore = [&](const FoundStep& step) {
+        auto doStore = [&](std::span<const FoundStep> found, size_t head) {
+            const FoundStep& step = found[head];
             if (!isSeenAsBefore(step))
                 runStore(step.index);
             else if (step.come != ValueSets::nothing && step.come != many) {
-                if (seenBehindTheRounds[step.to] == step.seenBefore.index())
-                    write(step.index, step.come, step.seenBefore);
-                else
+                if (seenBehindTheRounds[step.to] != step.seenBefore.index())
                     runStore(step.index);
+                else if (!step.numberOfFields)
+                    write(step.index, step.come, step.seenBefore);
+                else {
+                    Store& store = stores[step.index];
+                    if (step.come == store.writtenLast && step.seenBefore == store.receiversSeenLast)
+                        return;
+                    store.writtenLast = step.come;
+                    store.receiversSeenLast = step.seenBefore;
+                    for (const FoundStep& field : found.subspan(head + 1, step.numberOfFields))
+                        writeIntoField(fieldOf(field.index, LayoutID(field.input)), step.come);
+                }
             }
         };
         auto findCall = [&](uint32_t index, unsigned worker, Vector<FoundStep>& found) {
@@ -4863,7 +4920,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                     }
                     break;
                 case Found::Store:
-                    doStore(step);
+                    doStore(found, place);
+                    place += step.numberOfFields;
                     break;
                 case Found::CallWithOldPlan:
                     runCall(step.index);
@@ -4886,6 +4944,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 case Found::Read:
                     readFields(step.index, std::array { LayoutID(step.input) });
                     break;
+                case Found::FieldWritten:
                 case Found::EnterFunction:
                 case Found::HandOn:
                     RELEASE_ASSERT_NOT_REACHED();
@@ -5048,12 +5107,6 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             }
         };
         visitUntilAtRest();
-        Vector<std::pair<uint32_t, ValueSetID>> toldByName;
-        for (auto& [key, written] : writtenUnderKey) {
-            if (tellsSomething(written))
-                toldByName.append({ key, written });
-        }
-        AOT::sort(toldByName, { }, [](const auto& entry) { return entry.first; });
         for (auto [key, written] : toldByName) {
             forEachResultOfReadOffUnknownObjectUnder(key, [&](ValueFlowNodeID result) {
                 arriveAt(result, written);

@@ -9,6 +9,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3EliminateDeadCode.h"
+#include "B3EliminateRedundantPhiCycles.h"
 #include "B3LoopUtilities.h"
 #include "B3UnrollLoops.h"
 
@@ -288,8 +289,10 @@ static void checkLoopWithSidePath(TestPlace place, bool isRare, SidePath sidePat
     loop.endBody(last);
     if (counterHasRoom)
         proc.setKnownRange(loop.counter(), IntRange(0, 1 << 20));
-    if (place == TestPlace::Bottom)
+    if (place == TestPlace::Bottom) {
         loop.rotate();
+        eliminateRedundantPhiCycles(proc);
+    }
 
     CHECK(unrollLoopsAndValidate(proc));
     auto code = compileProc(proc);

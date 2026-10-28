@@ -142,7 +142,7 @@ static void testRotateLoopsSkipsRareBackEdge()
     checkSumsIntegersBelowBound(proc);
 }
 
-static void testRotateLoopsKeepsUnlikelyBackEdge()
+static void testRotateLoopsTestsUnlikelyBackEdgeAtTheBottom()
 {
     Procedure proc;
     Graph graph { proc };
@@ -173,15 +173,15 @@ static void testRotateLoopsKeepsUnlikelyBackEdge()
     CHECK(bottomTest != header);
     CHECK(bottomTest->last()->opcode() == Branch);
     CHECK(bottomTest->successorBlock(0) == body);
-    CHECK(body->successor(0) == unlikely(header));
+    CHECK(body->successor(0) == unlikely(bottomTest));
     fixSSA(proc);
     validate(proc);
 
     B3::NaturalLoops& loops = proc.naturalLoops();
-    CHECK_EQ(loops.numLoops(), 2u);
-    CHECK(loops.headerOf(header));
+    CHECK_EQ(loops.numLoops(), 1u);
+    CHECK(!loops.headerOf(header));
     CHECK(loops.headerOf(body));
-    CHECK(!loops.belongsTo(header, *loops.headerOf(body)));
+    CHECK(loops.belongsTo(bottomTest, *loops.headerOf(body)));
     auto code = compileProc(proc);
     for (int64_t argument : { -1, 0, 1, 2, 5, 10 }) {
         int64_t numberOfEvenIntegers = argument > 0 ? argument / 2 : 0;
@@ -245,7 +245,7 @@ static unsigned numberOfPollsIn(BasicBlock* block)
 
 static void testRotateLoopsMovesPollInHeaderToBottomTest()
 {
-    for (bool hasUnlikelyBackEdge : { false, true }) {
+    for (bool hasRareBackEdge : { false, true }) {
         Procedure proc(remarkPolicy());
         Graph graph { proc };
         PollState state;
@@ -261,8 +261,8 @@ static void testRotateLoopsMovesPollInHeaderToBottomTest()
         appendPoll(graph, header, state);
         graph.branch(header, graph.make(header, LessThan, graph.get(header, index), bound), body, exit);
         graph.increase(body, index, 1);
-        if (hasUnlikelyBackEdge)
-            graph.branch(body, graph.make(body, Equal, graph.get(body, index), graph.int64(body, 2)), unlikely(header), FrequentedBlock(latch));
+        if (hasRareBackEdge)
+            graph.branch(body, graph.make(body, Equal, graph.get(body, index), graph.int64(body, 2)), rarely(header), FrequentedBlock(latch));
         else
             graph.jump(body, latch);
         graph.jump(latch, header);
@@ -273,8 +273,8 @@ static void testRotateLoopsMovesPollInHeaderToBottomTest()
         CHECK(rotateLoops(proc));
         fixSSA(proc);
         validate(proc);
-        CHECK_EQ(numberOfValues(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
-        CHECK_EQ(valueCountInLoops(proc, Patchpoint), hasUnlikelyBackEdge ? 2u : 1u);
+        CHECK_EQ(numberOfValues(proc, Patchpoint), hasRareBackEdge ? 2u : 1u);
+        CHECK_EQ(valueCountInLoops(proc, Patchpoint), hasRareBackEdge ? 2u : 1u);
         CHECK_EQ(numberOfPollsIn(header), 0u);
         CHECK_EQ(compileAndRun<int64_t>(proc, static_cast<int64_t>(5)), 5);
         CHECK_EQ(state.numberOfPolls, 5);
@@ -713,7 +713,7 @@ void addBunLoopTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testRotateLoopsSkipsLargeTest());
     RUN(testRotateLoopsSkipsUncloneableTest());
     RUN(testRotateLoopsSkipsRareBackEdge());
-    RUN(testRotateLoopsKeepsUnlikelyBackEdge());
+    RUN(testRotateLoopsTestsUnlikelyBackEdgeAtTheBottom());
     RUN(testRotateLoopsHonorsHeaderFilter());
     RUN(testRotateLoopsNestedLoops());
     RUN(testRotateLoopsMovesPollInHeaderToBottomTest());

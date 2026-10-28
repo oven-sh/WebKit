@@ -429,7 +429,7 @@ static bool hasManyCallers(const Program& program, const FlowResults& flow, cons
     return callers >= HeatModel::callersOfFunctionThatRunsOften;
 }
 
-// The callers of a function are seen at the entry that the engine has put in front of it, which tests or unpacks a parameter, packs a result or binds arguments.
+// The callers of a function are seen at the entry that the engine has put in front of it, which tests or unpacks a parameter, packs a result, binds arguments or starts an async function or a generator.
 static void followEntriesMadeByEngine(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, Vector<uint8_t>& runsOften)
 {
     Vector<uint32_t> worklist;
@@ -444,7 +444,7 @@ static void followEntriesMadeByEngine(const Program& program, const FlowResults&
             FunctionID callee = graph.functionOf(callees[index]);
             if (!callee || runsOften[callee.index()] || graph.multiplierOf(entry, index) < HeatModel::minWeightOfNearlyCertainCall)
                 continue;
-            if (flow.runsAtMostOnce(program, callee) || program.at(callee).has(FunctionFlags::IsAsync))
+            if (flow.runsAtMostOnce(program, callee))
                 continue;
             runsOften[callee.index()] = 1;
             if (leadsToBody(program.at(callee)))

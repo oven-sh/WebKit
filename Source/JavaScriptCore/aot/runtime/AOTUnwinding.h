@@ -94,6 +94,7 @@ bool beginsInTopCompiledFrame(VM&, const ReturnAddressTrace&);
 inline constexpr ptrdiff_t offsetOfDivertedReturnInLoopPollPage = 8;
 void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance&, CallerFrameAndPC* frameRecordOfOperation);
 
+// Only what the operation itself comes to owe: it has allocated, so its caller counts on a collection here. What was owed before waits for a place that may collect.
 class ThrowsOwedOutOfMemoryErrorAtReturn {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(ThrowsOwedOutOfMemoryErrorAtReturn);
@@ -101,18 +102,20 @@ public:
     ALWAYS_INLINE ThrowsOwedOutOfMemoryErrorAtReturn(Instance* instance, CallerFrameAndPC* frameRecordOfOperation)
         : m_instance(*instance)
         , m_frameRecordOfOperation(frameRecordOfOperation)
+        , m_wasOwed(instance->vm->traps().needsOutOfMemoryError())
     {
     }
 
     ALWAYS_INLINE ~ThrowsOwedOutOfMemoryErrorAtReturn()
     {
-        if (m_instance.vm->traps().needsOutOfMemoryError()) [[unlikely]]
+        if (m_instance.vm->traps().needsOutOfMemoryError() && !m_wasOwed) [[unlikely]]
             throwOwedOutOfMemoryErrorAtReturnOfOperation(m_instance, m_frameRecordOfOperation);
     }
 
 private:
     Instance& m_instance;
     CallerFrameAndPC* m_frameRecordOfOperation;
+    bool m_wasOwed;
 };
 
 } // namespace AOT

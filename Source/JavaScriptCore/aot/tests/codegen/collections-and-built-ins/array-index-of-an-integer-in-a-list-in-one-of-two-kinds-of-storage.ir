@@ -165,5 +165,5 @@ function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CALLS-NOT: :PropGet
 # CALLS-LABEL: end of function
 # The counts of the whole function hold calls, whose moves follow the calling convention: not for Windows.
-# X64SIZE: instructions: 32, patchpoints: 0, rare instructions: 28
-# ARM64SIZE: instructions: 33, patchpoints: 0, rare instructions: 25
+# X64SIZE: instructions: 31, patchpoints: 0, rare instructions: 29
+# ARM64SIZE: instructions: 32, patchpoints: 0, rare instructions: 26

@@ -634,6 +634,7 @@ static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuilt
     InlineBuiltin::MathImul, InlineBuiltin::MathClz32, InlineBuiltin::MathSign, InlineBuiltin::IsNaN, InlineBuiltin::IsFinite,
     InlineBuiltin::NumberIsNaN, InlineBuiltin::NumberIsFinite, InlineBuiltin::NumberIsInteger, InlineBuiltin::NumberIsSafeInteger,
 };
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatHandOutElement { InlineBuiltin::ArrayAt, InlineBuiltin::ArrayPop, InlineBuiltin::ArrayShift };
 static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatMoveBytes { InlineBuiltin::DataViewGet, InlineBuiltin::DataViewSet, InlineBuiltin::BufferAccess };
 
 static std::optional<InlineBuiltin> inlineBuiltinOf(const Value& value)
@@ -654,6 +655,14 @@ static bool computesWithNumbers(const Value& value)
 static bool computesWithNumbers(const Terminator&)
 {
     return false;
+}
+
+// A text lies in a list as a string. To hold it as the number of its literal it has to be looked up among the literals, which costs more than whoever compares it saves: it stays the word that was loaded, as what an element read gives.
+template<typename Operation>
+static Representation withoutLookUpOfElement(const Operation& operation, Representation byType)
+{
+    std::optional<InlineBuiltin> builtin = byType == Representation::LiteralString ? inlineBuiltinOf(operation) : std::nullopt;
+    return builtin && builtinsThatHandOutElement.contains(*builtin) ? Representation::JSValue : byType;
 }
 
 bool readsDoubleOutOfBytes(const Value& value)
@@ -909,7 +918,7 @@ Representation resultRepresentationOf(const RepresentationInputs& inputs, const 
         return Representation::JSValue;
 
     ResultRepresentationRules rules { inputs, std::nullopt };
-    return inFormOfDouble(formOfDoubleMadeBy(inputs, value), applyResultRule(rules, value, 0, ResultSide::Unproven));
+    return withoutLookUpOfElement(value, inFormOfDouble(formOfDoubleMadeBy(inputs, value), applyResultRule(rules, value, 0, ResultSide::Unproven)));
 }
 
 Representation resultRepresentationOf(const RepresentationInputs& inputs, const Value& producer, uint32_t resultIndex)
@@ -932,7 +941,7 @@ Representation edgeResultRepresentationOf(const RepresentationInputs& inputs, Ed
     case EdgeResultKind::DeclaredResult: {
         ScratchTypeArena types(inputs.program.types);
         Representation representation = defaultRepresentationOf(computeTypeOnEdge({ inputs.program, inputs.function, types.arena() }, position));
-        return representation == Representation::Double ? formOfDoubleMadeBy(inputs, inputs.function.at(position.from).terminator) : representation;
+        return representation == Representation::Double ? formOfDoubleMadeBy(inputs, inputs.function.at(position.from).terminator) : withoutLookUpOfElement(inputs.function.at(position.from).terminator, representation);
     }
     }
     RELEASE_ASSERT_NOT_REACHED();

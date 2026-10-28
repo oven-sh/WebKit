@@ -318,12 +318,15 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
 }
 
 // The flat string of a loop is defined on the only entry of the header, so it reaches all that the header dominates, the code behind the loop included.
+// Where the entry gets a block of its own under the handler of the header, the handler has one more way in, from in front of the header: what lies behind the handler is reached without the flat string.
 static bool reaches(SelectionContext& context, const Pair& pair, ProgramPoint point)
 {
     FunctionAnalyses& analyses = context.analyses();
     if (pair.firstReader)
         return analyses.dominates(pair.firstReader, point);
-    return pair.header != point.block && analyses.dominators().dominates(pair.header, point.block);
+    if (pair.header == point.block || !analyses.dominators().dominates(pair.header, point.block))
+        return false;
+    return !entersLoopUnderNewHandlerEdge(context, pair.header) || analyses.naturalLoops().belongsTo(point.block, *analyses.naturalLoops().headerOf(pair.header));
 }
 
 // A string that was flattened stays flat: a place that the flattening of the same string dominates takes that flat string.

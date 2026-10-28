@@ -407,6 +407,9 @@ static TraceVisibility visibilityOf(const Function& function, bool implementsBui
         // What the front end hides is a function of its own that no trace lists, unless it is a built-in that programs can call. What its role hides is a part of a function that traces list.
         if (function.has(FunctionFlags::IsHiddenInStackTraces) && !implementsBuiltin)
             return TraceVisibility::Hidden;
+        // The record of the tests at the head of a function says what holds of the function whose id they took.
+        if (capabilitiesOf(function.role).contains(FunctionCapabilities::IsHiddenInStackTraces))
+            return TraceVisibility::VisibleOnlyOnTop;
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
     }
     RELEASE_ASSERT_NOT_REACHED();
