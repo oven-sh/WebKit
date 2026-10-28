@@ -15,15 +15,14 @@
 // `build` and `image` take --dry-run, which prints the docker command instead of running it.
 //
 // A lane is built by `docker buildx build` of its platform's Dockerfile. The Dockerfile's `base` stage is the
-// toolchain (compilers, SDKs, sysroots) and takes no lane setting; the stages on top build ICU and WebKit from the
-// build arguments below. Every lane is cross-compiled from the same kind of machine, linux x86_64. To add, drop, change
+// toolchain (compilers, SDKs, sysroots) and ICU's data, and takes no lane setting; the stages on top build ICU's
+// libraries and WebKit from the build arguments below. Every lane is cross-compiled from the same kind of machine, linux x86_64. To add, drop, change
 // or test a lane, change `platforms` and nothing else.
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -32,8 +31,8 @@ const REGISTRY = `ghcr.io/${(process.env.GITHUB_REPOSITORY_OWNER ?? "oven-sh").t
 
 // Every lane builds on this, in a linux/amd64 container: whatever it is for is a --target and a sysroot to clang.
 const BUILDER = "linux-x64-gh";
-// A toolchain image is built on a standard runner: it is mostly downloading and unpacking, and those are never
-// waited for.
+// A toolchain image is built on a standard runner: it is mostly downloading and unpacking, besides a few minutes of
+// compiling what makes ICU's data, and those are never waited for.
 const IMAGE_BUILDER = "ubuntu-latest";
 // The macOS and Windows lanes are not tested. The `test` job can run them (`tested: { arm64: { on: "macos-15", variants:
 // ["lto"], quick: true } }`, "windows-2025", "windows-11-arm": GitHub's standard runners, 3 or 4 cores, hence quick), and
@@ -64,8 +63,22 @@ const HARDENING =
   " -DBUN_REFUSES_EXECUTE_ONLY_START=1";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
+// It is a commit of the branch bun-release-<version> of oven-sh/icu, by the tarball GitHub makes of it.
+// data_sha256 is of the data that commit's bun/data/icu-data.ts makes, which is the same on every platform.
+// (release_sha256 is of unicode-org's tarball of that version, for build-icu.ps1.)
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
-const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
+const ICU = {
+  ICU_VERSION: icu.version,
+  ICU_COMMIT: icu.commit,
+  ICU_SHA256: icu.sha256,
+  ICU_DATA_SHA256: icu.data_sha256,
+  // For the libraries, not for ICU's tools: genrb builds collators from rules. These leave out what nothing that
+  // JavaScriptCore and Bun call can reach but virtual functions keep linked. NO_SERVICE also leaves out a few functions
+  // of the C API. The headers that ship say the same (icu/headers.sh), so those are not declared.
+  ICU_CPPFLAGS: ["LEGACY_CONVERSION", "SERVICE", "FILTERED_BREAK_ITERATION", "PARSING", "UNIT_CONVERSION"].map(what => `-DUCONFIG_NO_${what}=1`).join(" "),
+};
+// What a `base` stage that builds ICU's data copies in.
+const ICU_IMAGE_INPUTS = ["icu/host.sh"];
 
 // The code generation floor. There is one per architecture: WebKit used to ship a haswell x64 build next to a nehalem
 // "baseline" one, which meant every x64 consumer had to pick, and a consumer that picked wrong either raised its CPU
@@ -156,6 +169,7 @@ const platforms = [
     fuzzed: { amd64: FUZZING, arm64: ["assertions-aot", "assertions-coverage-aot", "asan-aot"] },
     bunTests: arch => (arch === "arm64" ? ["lto"] : ["lto", "asan"]),
     image: () => "linux-glibc",
+    imageInputs: ICU_IMAGE_INPUTS,
     args: (arch, v) => ({
       ...ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
@@ -186,6 +200,7 @@ const platforms = [
     buildType: v => (v.buildType === "Release" ? "MinSizeRel" : v.buildType),
     bunTests: () => ["lto"],
     image: () => "linux-musl",
+    imageInputs: ICU_IMAGE_INPUTS,
     args: arch => ({
       ...ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
@@ -230,6 +245,7 @@ const platforms = [
     lto: LTO_WINDOWS,
     bunTests: arch => [arch === "arm64" ? "release" : "lto"],
     image: () => "windows",
+    imageInputs: ICU_IMAGE_INPUTS,
     args: (arch, v) => ({
       ...ICU,
       WIN_ARCH: arch === "arm64" ? "arm64" : "x64",
@@ -247,6 +263,7 @@ const platforms = [
     packageOS: "freebsd",
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
     image: arch => `freebsd-${arch}`,
+    imageInputs: ICU_IMAGE_INPUTS,
     args: arch => ({
       ...ICU,
       FREEBSD_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
@@ -261,6 +278,7 @@ const platforms = [
     packageOS: "android",
     lanes: { arm64: NO_ASAN, amd64: NO_ASAN },
     image: () => "android",
+    imageInputs: ICU_IMAGE_INPUTS,
     args: arch => ({
       ...ICU,
       ANDROID_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
@@ -362,14 +380,10 @@ const lanes = platforms.flatMap(platform =>
 );
 
 // `build --fail-if-slow`, which CI passes. Some runners are five times slower than the rest, from the first step to the
-// last. A lane on one of them fails within minutes instead of holding up the release, and "Re-run failed jobs" builds it
-// on another runner.
-//   compressSeconds  icu/compress-data.ts does the same work in every lane that runs it. It takes 67 to 115 seconds, and
-//                    over 440 on a slow runner.
-//   minutes(lane)    the whole docker build: twice the longest that the lane takes (19 minutes; 36 with musl, LTO and
-//                    the compiler). It has to stay under the job's timeout-minutes.
+// last. A lane on one of them fails instead of holding up the release, and "Re-run failed jobs" builds it on another
+// runner. The limit is on the whole docker build: twice the longest that the lane takes (19 minutes; 36 with musl, LTO
+// and the compiler). It has to stay under the job's timeout-minutes.
 const SLOW = {
-  compressSeconds: 240,
   minutes: lane => (lane.dockerfile === "Dockerfile.musl" && lane.build_args.LTO_FLAG && lane.aot ? 75 : 40),
 };
 
@@ -404,9 +418,8 @@ function docker(lane, rest, dryRun, failIfSlow = false) {
   process.exit(status ?? 1);
 }
 
-// --progress=plain goes to stderr: every line is passed on, and the two lines of icu/compress-data.ts are timed.
 function dockerUnlessSlow(lane, argv) {
-  const child = spawn("docker", argv, { cwd: root, stdio: ["inherit", "inherit", "pipe"] });
+  const child = spawn("docker", argv, { cwd: root, stdio: "inherit" });
   let gaveUp = false;
   const giveUp = what => {
     if (gaveUp) return;
@@ -416,12 +429,6 @@ function dockerUnlessSlow(lane, argv) {
     setTimeout(() => process.exit(1), 15_000);
   };
   setTimeout(giveUp, SLOW.minutes(lane) * 60_000, `the build has taken ${SLOW.minutes(lane)} minutes`);
-  let compress;
-  createInterface({ input: child.stderr }).on("line", line => {
-    console.error(line);
-    if (line.includes("[icu-compress] round-trip OK")) compress = setTimeout(giveUp, SLOW.compressSeconds * 1000, `icu/compress-data.ts has taken ${SLOW.compressSeconds} seconds`);
-    else if (/\[icu-compress\] \d+ items/.test(line)) clearTimeout(compress);
-  });
   child.on("error", error => { throw error; });
   child.on("exit", () => gaveUp && process.exit(1));
   child.on("close", status => process.exit(status ?? 1));
