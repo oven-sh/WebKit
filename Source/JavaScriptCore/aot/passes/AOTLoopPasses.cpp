@@ -940,31 +940,18 @@ static bool eraseLoopHints(IRBuilder& builder, const Function& function, BlockID
     return true;
 }
 
-static bool comesBackPastNoOtherMark(FunctionPassContext&, BlockID start);
-
-// What is left of a loop whose way back has been folded away turns no more. Inside a wider loop it is passed once in each turn of that loop, which has a mark of its own.
+// What is left of a loop whose way back has been folded away turns no more.
 static bool removeHintsOutsideCycles(FunctionPassContext& context)
 {
-    const Function& function = context.function;
-    auto hasLoopHint = [&](BlockID block) {
-        return function.at(block).values.containsIf([&](ValueID id) { return function.at(id).opcode == Opcode::LoopHint; });
-    };
     Vector<BlockID, 8> outsideCycles;
-    Vector<BlockID, 8> insideWiderLoops;
     for (BlockID block : context.analyses.cfg().reversePostOrder()) {
         if (!context.analyses.isInCycle(block))
             outsideCycles.append(block);
-        else if (hasLoopHint(block) && !context.analyses.naturalLoops().headerOf(block))
-            insideWiderLoops.append(block);
     }
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
     bool changed = false;
     for (BlockID block : outsideCycles)
-        changed |= eraseLoopHints(builder, function, block);
-    for (BlockID block : insideWiderLoops) {
-        if (!comesBackPastNoOtherMark(context, block))
-            changed |= eraseLoopHints(builder, function, block);
-    }
+        changed |= eraseLoopHints(builder, context.function, block);
     return changed;
 }
 
