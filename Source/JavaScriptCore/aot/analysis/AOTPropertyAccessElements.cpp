@@ -335,7 +335,8 @@ static ArrayStorage expectedArrayStorageOf(const Program& program, const Element
 static ElementAccessPlan planArrayAccess(const Program& program, const ElementAccessQuery& query, NumberKey key, const ElementReceiver& receiver, ElementAccessPlan plan)
 {
     const ClassPart& part = *receiver.part;
-    if (receiver.isNeverPristine && query.access != Access::Read)
+    bool storesAtIndexBelowArray = query.access == Access::Store && key.isArrayIndex && hasOnlyObjectsOfClassesBelowArray(program, query.receiver);
+    if (receiver.isNeverPristine && query.access != Access::Read && !storesAtIndexBelowArray)
         return planByKey(query);
     plan.receiverIsNeverPristine = receiver.isNeverPristine;
     plan.requiredAspects = PristineAspects::Storage;
@@ -345,6 +346,8 @@ static ElementAccessPlan planArrayAccess(const Program& program, const ElementAc
         plan.requiredAspects = plan.requiredAspects - part.provenPristine;
 
     ArrayStorage expected = expectedArrayStorageOf(program, query, part);
+    if (receiver.isNeverPristine && expected == ArrayStorage::Other && query.stored && !query.stored->isAnything())
+        expected = query.stored->isNumber() ? ArrayStorage::Double : arrayStorageHolding(*query.stored);
     if (hasArrayStorageForm(expected)) {
         bool isProven = !receiver.isExpected && part.contentsAreProven && part.arrayStorage == expected;
         plan.arrayStorage = expected;

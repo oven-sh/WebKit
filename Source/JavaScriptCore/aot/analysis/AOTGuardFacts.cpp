@@ -544,6 +544,8 @@ ProofSet proofsNeededFromGuard(const Program& program, const Function& function,
             continue;
         if (proof == Proof::Pristine && readsPresentElement(user))
             continue;
+        if (proof == Proof::Pristine && user.opcode == Opcode::PutArrayElement && namesArrayStorage(user) && subject && program.typeOf(function, subject).hasOnlyLayouts())
+            continue;
         if (subject && isProvenByType(program, user, proof, program.typeOf(function, subject)))
             continue;
         needed.add(proof);

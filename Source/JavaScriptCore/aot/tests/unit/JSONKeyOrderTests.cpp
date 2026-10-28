@@ -399,6 +399,34 @@ static void testListMembersAmongExtraMembers(LoadedProgram& program)
     }
 }
 
+static void testMalformedTextBetweenTwoForms(LoadedProgram& program)
+{
+    Row row(program);
+    StringBuilder members;
+    for (unsigned i = 0; i < numberOfRowFields; ++i)
+        members.append(",\"k"_s, i, "\":"_s, i);
+    String shorter = makeString("{\"x\":1"_s, members.toString());
+    String longer = makeString(shorter, ",\"y\":2"_s);
+    auto parsesWhole = [&](const String& text) {
+        return !!row.stringifyAfterParsingWhole(text);
+    };
+    auto learnBothForms = [&] {
+        for (unsigned i = 0; i < 2 * timesParsed; ++i) {
+            parsesWhole(makeString(shorter, '}'));
+            parsesWhole(makeString(longer, '}'));
+        }
+        AOT_TEST_CHECK(parsesWhole(makeString(shorter, '}')) && parsesWhole(makeString(longer, '}')));
+    };
+    for (const String& start : { shorter, longer }) {
+        for (ASCIILiteral end : { ",}"_s, " , }"_s, ","_s, ",,"_s, ",,}"_s, ",]"_s, ",\"y\"}"_s, ",\"y\":}"_s, ",\"y\":2,}"_s, ""_s, "]"_s, "}}"_s }) {
+            learnBothForms();
+            String text = makeString(start, end);
+            bool isValidPrefix = end == "}}"_s;
+            AOT_TEST_CHECK(parsesWhole(text) == isValidPrefix);
+        }
+    }
+}
+
 static void testDeclaredNameAmongExtraMembers(LoadedProgram& program)
 {
     Row row(program);
@@ -520,6 +548,7 @@ std::span<const NativeTest> jsonKeyOrderTests()
         { "json-parser/key-orders/unknown-order"_s, withRowProgram<testUnknownOrder> },
         { "json-parser/key-orders/extra-members"_s, withRowProgram<testExtraMembers> },
         { "json-parser/key-orders/list-members-among-extra-members"_s, withRowWithListsProgram<testListMembersAmongExtraMembers> },
+        { "json-parser/key-orders/malformed-text-between-two-forms"_s, withRowProgram<testMalformedTextBetweenTwoForms> },
         { "json-parser/key-orders/declared-name-among-extra-members"_s, withRowProgram<testDeclaredNameAmongExtraMembers> },
         { "json-parser/key-orders/full-order-table"_s, withRowProgram<testFullOrderTable> },
         { "json-parser/key-orders/keys-never-enumerated"_s, withRowProgram<testKeysNeverEnumerated> },

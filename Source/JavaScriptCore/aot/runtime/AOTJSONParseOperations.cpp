@@ -2145,7 +2145,9 @@ static bool membersParseIdentically(const JSONRuntime::LearnedObject::Member& fi
     return !parsed.isObject() || (first.shapeOfValue == second.shapeOfValue && first.listStorageKinds == second.listStorageKinds);
 }
 
-static NEVER_INLINE JSONRuntime::LearnedObject* findAlternateForm(JSONRuntime& runtime, JSONRuntime::LearnedObject& learned, size_t numberOfMembersParsed, const EncodedJSValue* values, const uint8_t* cursor)
+enum class ExpectedToken : uint8_t { Name, ClosingBrace };
+
+static NEVER_INLINE JSONRuntime::LearnedObject* findAlternateForm(JSONRuntime& runtime, JSONRuntime::LearnedObject& learned, size_t numberOfMembersParsed, const EncodedJSValue* values, ExpectedToken expected, const uint8_t* cursor)
 {
     JSONRuntime::LearnedObjects& table = *runtime.learnedObjects();
     JSONRuntime::LearnedObject& other = table[(&learned - table.data()) ^ 1];
@@ -2155,7 +2157,7 @@ static NEVER_INLINE JSONRuntime::LearnedObject* findAlternateForm(JSONRuntime& r
         if (!membersParseIdentically(learned.members[index], other.members[index], JSValue::decode(values[learned.members[index].indexOfValue])))
             return nullptr;
     }
-    bool continues = *cursor == '}' ? other.members.size() == numberOfMembersParsed : other.members.size() > numberOfMembersParsed && other.members[numberOfMembersParsed].standsAt(cursor);
+    bool continues = expected == ExpectedToken::ClosingBrace ? other.members.size() == numberOfMembersParsed : other.members.size() > numberOfMembersParsed && other.members[numberOfMembersParsed].standsAt(cursor);
     return continues ? &other : nullptr;
 }
 
@@ -2182,9 +2184,9 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectInlineAs(Instance& instance, V
     CompiledStructure* structure = learned->structure;
     Learned::Member* member = learned->members.begin();
     Learned::Member* end = learned->members.end();
-    auto switchToAlternateForm = [&](const uint8_t* cursor) ALWAYS_INLINE_LAMBDA {
+    auto switchToAlternateForm = [&](ExpectedToken expected, const uint8_t* cursor) ALWAYS_INLINE_LAMBDA {
         size_t numberOfMembersParsed = member - learned->members.begin();
-        Learned* other = findAlternateForm(*instance.json.runtime, *learned, numberOfMembersParsed, values, cursor);
+        Learned* other = findAlternateForm(*instance.json.runtime, *learned, numberOfMembersParsed, values, expected, cursor);
         if (!other)
             return false;
         member = other->members.begin() + numberOfMembersParsed;
@@ -2200,9 +2202,10 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectInlineAs(Instance& instance, V
     };
     for (;;) {
         if (!member->standsAt(quote)) [[unlikely]] {
-            if (!switchToAlternateForm(quote) || member == end)
+            if (!switchToAlternateForm(ExpectedToken::Name, quote))
                 return fail(quote);
         }
+        ASSERT(member < end);
         const uint8_t* start = skipWhitespace(quote + member->textLength);
         ParsedJSONValue parsed = parseExtraValue(instance, vm, start, learned, member);
         if (!parsed.end) [[unlikely]]
@@ -2213,13 +2216,13 @@ static ALWAYS_INLINE const uint8_t* tryParseObjectInlineAs(Instance& instance, V
         if (*quote != ',')
             break;
         if (member == end) [[unlikely]] {
-            if (!switchToAlternateForm(skipWhitespace(quote + 1)) || member == end)
+            if (!switchToAlternateForm(ExpectedToken::Name, skipWhitespace(quote + 1)))
                 return fail(quote);
         }
         quote = skipWhitespace(quote + 1);
     }
     if (*quote != '}' || member != end) [[unlikely]] {
-        if (*quote != '}' || !switchToAlternateForm(quote))
+        if (*quote != '}' || !switchToAlternateForm(ExpectedToken::ClosingBrace, quote))
             return fail(quote);
     }
 

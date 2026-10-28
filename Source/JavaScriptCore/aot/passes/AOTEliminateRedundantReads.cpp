@@ -68,6 +68,15 @@ static constexpr OpcodeSet opcodesOfAccesses = [] {
     return result;
 }();
 
+static constexpr OpcodeSet opcodesThatMaySuspend = [] {
+    OpcodeSet result;
+    for (Opcode opcode : allMembersOf<Opcode>) {
+        if (maySuspend(opcode))
+            result.add(opcode);
+    }
+    return result;
+}();
+
 namespace {
 
 struct IndexRange {
@@ -196,6 +205,8 @@ struct RedundantReadElimination {
     // A read that was replaced by a value looks no more and defines no more: whatever its bit would reach, the bit of that value reaches, it comes first, and its type is as narrow.
     BitVector m_isReplacedByValue { };
     BitVector m_isReplacedByUndefined { };
+    // A new read of the location tells as much as the value that the bit stands for. Empty where nothing suspends.
+    BitVector m_isAsWellReadAgain { };
     Vector<uint32_t> m_bitsReplacedByValue { };
     // By the bit of a read of the class that is solved in parts: the value found for each edge into its block so far.
     UncheckedKeyHashMap<uint32_t, Vector<ValueID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesOnEdges { };
@@ -419,6 +430,26 @@ struct RedundantReadElimination {
         }
     }
 
+    void findBitsAsWellReadAgain()
+    {
+        if (!m_analyses.opcodesOfValues().intersects(opcodesThatMaySuspend))
+            return;
+        m_isAsWellReadAgain.ensureSize(m_bits.size());
+        for (const AccessClass& accessClass : m_classes) {
+            const Type* typeOfRead = nullptr;
+            for (uint32_t bit = accessClass.bits.first; bit < accessClass.bits.end; ++bit) {
+                const Access& access = accessOf(bit);
+                if (access.isRead() && (!typeOfRead || !typeOf(access.id).isSubsetOf(*typeOfRead, m_program)))
+                    typeOfRead = &typeOf(access.id);
+            }
+            for (uint32_t bit = accessClass.bits.first; bit < accessClass.bits.end; ++bit) {
+                const Access& access = accessOf(bit);
+                if (!access.isAbsent && typeOfRead->isSubsetOf(typeOf(access.valueAfter()), m_program))
+                    m_isAsWellReadAgain.quickSet(bit);
+            }
+        }
+    }
+
     IndexRange bitsOfClassesAt(bool isFixed, const MemoryLocation& location) const
     {
         auto found = std::ranges::equal_range(m_classes, std::pair { !isFixed, location }, { }, [](const AccessClass& accessClass) {
@@ -632,10 +663,22 @@ struct RedundantReadElimination {
         }
     }
 
+    // What is remembered over a suspension lies in the frame, which is written out and read back. To read the location again costs less, unless more is known of the value than a read tells.
+    void appendClearsOfSuspension(std::span<const Word> row, ActionList& actions)
+    {
+        for (size_t bit = findBit(row, 0); bit < m_group.size(); bit = findBit(row, bit + 1)) {
+            uint32_t bitInAll = m_group.first + static_cast<uint32_t>(bit);
+            if (m_isAsWellReadAgain.quickGet(bitInAll))
+                appendClear(actions, { bitInAll, bitInAll + 1 });
+        }
+    }
+
     void appendClearsOfEffects(ProgramPoint point, std::span<const Word> row, ActionList& actions)
     {
         ValueID id = m_function.at(point.block).values[point.index];
         const Value& value = m_function.at(id);
+        if (maySuspend(value.opcode))
+            appendClearsOfSuspension(row, actions);
         if (!m_opcodesThatMayWrite.contains(value.opcode)) {
             if (m_checksScreens) [[unlikely]]
                 RELEASE_ASSERT(!m_analyses.effectsOf(id).onAnyEdge().writes.containsAny(accessedHeapSet));
@@ -1206,6 +1249,7 @@ struct RedundantReadElimination {
         assignBits();
         if (m_classes.isEmpty())
             return PassOutcome::Unchanged;
+        findBitsAsWellReadAgain();
         prepareToSolve();
 
         m_isReplacedByValue.ensureSize(m_bits.size());

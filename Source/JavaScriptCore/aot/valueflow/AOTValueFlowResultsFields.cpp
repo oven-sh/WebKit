@@ -1654,8 +1654,10 @@ struct FieldResults {
         // A store under a name into what a read under a name has answered names a field of the layouts that are written under the name of the read, where that name tells a few layouts from all others.
         AOT_THRESHOLD(size_t, mostLayoutsToldByName, 4);
         AOT_THRESHOLD(size_t, mostLayoutsFollowedToStore, 16);
+        AOT_THRESHOLD(size_t, mostLayoutsFollowedToStoreIntoGivenObject, 2);
         KeysByLayout keysNamedBehindReads(numberOfLayouts);
         KeysByLayout keysNamedWhereObjectsWereFollowedTo(numberOfLayouts);
+        KeysByLayout keysNamedWhereGivenObjectsWereFollowedTo(numberOfLayouts);
         KeysByLayout keysNamedByMakersOutsideAlone(numberOfLayouts);
         KeysByLayout keysGivenToInstancesSeen(numberOfLayouts);
         for (uint32_t index = 0; index < program.functions.size(); ++index) {
@@ -1691,13 +1693,13 @@ struct FieldResults {
                 // `const node = createNode(kind); node.left = left;`: whoever has an object made and fills it on is one of its makers, though nobody knows which function made it. The store names a field of the layouts that were followed to it.
                 const Function& function = program.functions[index];
                 Opcode maker = function.at(sameObjectThroughCasts(function, function.at(statement.site).objectOperand())).opcode;
-                if (maker != Opcode::Call && maker != Opcode::Construct)
-                    continue;
+                // `function route(request) { request.parsedUrl = ..; }`: whoever is given an object fills it on as well. What was followed to a parameter is not all that arrives there, so fewer layouts are believed.
+                bool isMadeHere = maker == Opcode::Call || maker == Opcode::Construct;
                 if (ValueSetID seen = inputs.solver().seenValuesOf(receiver); seen != inputs.solver().possibleValuesOf(receiver))
-                    nameFieldOfLayoutsIn(seen, mostLayoutsFollowedToStore, true, keysNamedWhereObjectsWereFollowedTo);
+                    nameFieldOfLayoutsIn(seen, isMadeHere ? mostLayoutsFollowedToStore : mostLayoutsFollowedToStoreIntoGivenObject, true, isMadeHere ? keysNamedWhereObjectsWereFollowedTo : keysNamedWhereGivenObjectsWereFollowedTo);
             }
         }
-        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedWhereObjectsWereFollowedTo, &keysGivenToInstancesSeen }) {
+        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedWhereObjectsWereFollowedTo, &keysNamedWhereGivenObjectsWereFollowedTo, &keysGivenToInstancesSeen }) {
             for (Vector<PropertyKeyID>& keys : *keysNamed) {
                 AOT::sort(keys);
                 keys.shrink(std::unique(keys.begin(), keys.end()) - keys.begin());
@@ -1721,6 +1723,10 @@ struct FieldResults {
                 return std::ranges::binary_search(keysByLayout[index], key);
             });
             uniteSortedKeys(keysByLayout[index], keysNamedWhereObjectsWereFollowedTo[index]);
+            // A literal says what it has. What Object.create() made inherits from an object that anybody may have given accessors. Of a class that is evaluated again and again nobody knows which evaluation made what is given.
+            if (program.layouts[index].kind != LayoutKind::Instance || program.layouts[index].has(LayoutFlags::IsOfCreatedObject) || application.layouts[index].classFlow.evaluations != ExecutionCount::AtMostOnce)
+                keysNamedWhereGivenObjectsWereFollowedTo[index].clear();
+            uniteSortedKeys(keysByLayout[index], keysNamedWhereGivenObjectsWereFollowedTo[index]);
             uniteSortedKeys(keysByLayout[index], accessors);
             if (isBornEmptyAndFilledByNameAlone(LayoutID(index))) {
                 uniteSortedKeys(keysByLayout[index], stores.keysOfValuesDefinedIn(LayoutID(index)));
@@ -1765,7 +1771,7 @@ struct FieldResults {
                     return haveCommonMember(program.at(family).completeMembers(), declarers->value.span());
                 })));
                 // Whoever stores a name that no type declares has got past the types.
-                isOutsideFamilies = isOutsideFamilies && !std::ranges::binary_search(keysNamedWhereObjectsWereFollowedTo[id.index()], key);
+                isOutsideFamilies = isOutsideFamilies && !std::ranges::binary_search(keysNamedWhereObjectsWereFollowedTo[id.index()], key) && !std::ranges::binary_search(keysNamedWhereGivenObjectsWereFollowedTo[id.index()], key);
                 if (isOutsideFamilies || std::ranges::binary_search(keysDeclaredBelow[id.index()], key) || !canNameField(key) || keysOfFields.contains(key))
                     return true;
                 if (stores.accessorDefinedUnder(maker, id, key).isAccessor())

@@ -1,0 +1,51 @@
+# In the library: type Listener = (request: Request) => void   function listen(listener: Listener) { unknown(listener, new Request()) }
+# In the program: function listener(request) { const context = {}; context.request = request; read(context) }   function read(context) { context.request.url }   listen(listener)
+# The requests that have gone out of sight are seen to come to the listener. It stores what it is given in an object that it has made itself, so they are seen to lie in that field,
+# and whoever reads the field is seen to get them. Nothing is proven of what is read.
+# RUN: valueflow-apply
+# CHECK: function f2 name="listener" {{*}}parameters=[{type=L0 flags=[IsExpected]}]
+# CHECK: function f3 name="read"
+# CHECK: = PropGet v1 key="url" {{*}}receivers=[L0, ..]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=0 function=f1
+runtimefunction id=1 function=f4
+layout L0 kind=Instance name="Request" constructor=f4 fields=[{key="url" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 kind=Record name="Context" fields=[{key="request" declared={type=anything}}]
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = Call v0, -, v1
+    Return
+}
+function f1 name="listen" role=Library enclosingRuntimeFunction=0 thisType={type=anything} parameters=[{type=undefined|null|f5 flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewClosure function=f4
+    v2 = Construct v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="unknown" [isFreeName]
+    v5 = Call v4, -, v0, v2
+    Return
+}
+function f2 name="listener" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L1
+    PropSet v1, v0 key="request" mode=Strict
+    v3 = NewClosure function=f3
+    v4 = Call v3, -, v1
+    Return v4
+}
+function f3 name="read" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="request"
+    v2 = PropGet v1 key="url"
+    Return v2
+}
+function f4 name="Request" role=Library flags=[HasThis] enclosingRuntimeFunction=1 thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="/"
+    PropSet v0, v1 key="url" mode=Strict
+    Return
+}
+function f5 role=Signature thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[IsExpected]}] results=[{type=anything}]

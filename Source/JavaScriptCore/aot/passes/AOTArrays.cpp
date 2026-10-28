@@ -1663,7 +1663,7 @@ static ArrayStorage arrayStorageExpectedOfRead(const TestSiteReporter& reporter)
         const Value& value = function.at(followed[index]);
         for (TypeID type : { value.type, value.expected().predicted() }) {
             if (ArrayStorage expected = storageHolding(type); expected != ArrayStorage::Other)
-                return expected;
+                return expected == ArrayStorage::Int32 ? ArrayStorage::Double : expected;
         }
         for (const Use& use : reporter.analyses().useLists().usesOf(followed[index])) {
             ValueID next;
@@ -1708,8 +1708,11 @@ void reportElementAccessTests(TestSiteReporter& reporter)
                 plan.testsInBounds = arrays.isComparedWithLength(use.objectOperand(), use.propertyOperand(), reporter.point().block);
         }
         bool expectsPresentElement = expectPresentElement(reporter, use, plan);
-        if (plan.receiverIsNeverPristine && !plan.testsPresence)
+        bool storesIntoTestedStorage = plan.operation == Opcode::PutArrayElement && plan.testsArrayStorage;
+        if (plan.receiverIsNeverPristine && !plan.testsPresence && !storesIntoTestedStorage)
             return;
+        if (plan.receiverIsNeverPristine && storesIntoTestedStorage)
+            plan.requiredAspects = { };
         bool hasGuardedForm = plan.isCharacterReadAfterTests() || (plan.isResolved() && !plan.needsNoTest() && (plan.form != ElementAccessForm::Array || plan.arrayStorage == ArrayStorage::Other || hasArrayStorageForm(plan.arrayStorage)));
         std::optional<ElementAccessTests> tests = hasGuardedForm ? createTests(reporter, arrays, use, plan) : std::nullopt;
         if (!tests)
@@ -1781,7 +1784,7 @@ void rewriteTestedElementAccess(TestSiteRewriter& rewriter)
         plan.isPresent = false;
     }
     // The plan is made again here and knows nothing of what was expected of the position when the tests were reported.
-    if (plan.isPresent)
+    if (plan.isPresent || (plan.receiverIsNeverPristine && plan.operation == Opcode::PutArrayElement && hasArrayStorageForm(plan.arrayStorage)))
         plan.requiredAspects = { };
     // A comparison with the length also puts the test of the bounds, so the test alone does not say what was expected of a hole.
     plan.readsHoleAsNaN = false;

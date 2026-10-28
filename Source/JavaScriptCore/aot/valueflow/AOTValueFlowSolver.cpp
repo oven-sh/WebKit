@@ -4412,7 +4412,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         };
         Vector<Store> stores = collectInParallel<Store>(m_loops, m_input.statements.size(), [&](unsigned index, Vector<Store>& found) {
             const ValueFlowStatement& statement = m_input.statements[index];
-            if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::PropSet && statement.opcode != Opcode::ElemSet) || !isReached(statement.function) || !operandsOf(statement)[0].node)
+            if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::PropSet && statement.opcode != Opcode::ElemSet) || !isReached(statement.function) || (!operandsOf(statement)[0].node && !operandsOf(statement)[0].constant))
                 return;
             PropertyKeyID key;
             if (statement.opcode == Opcode::PropSet)
@@ -4445,7 +4445,10 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                     for (LayoutID layout : m_input.program->types.at(expected).completeMembers())
                         addWithLayoutsAbove(layout, layouts);
                 }
-                m_sets.forEachMember(receiversInSightAt(operandsOf(statement)[0].node, *m_makers[worker]), [&](ValueFlowObjectID receiver) {
+                // `const context = Object.create(prototype); context.response = response;`: the receiver is what the function has made.
+                const ValueFlowOperand& object = operandsOf(statement)[0];
+                ValueSetID receivers = object.node ? receiversInSightAt(object.node, *m_makers[worker]) : ValueSets::isComplement(object.constant) || m_sets.size(object.constant) > mostReceiversOfOneWriteFollowed ? ValueSets::nothing : object.constant;
+                m_sets.forEachMember(receivers, [&](ValueFlowObjectID receiver) {
                     addWithLayoutsAbove(m_input.universe->layoutOf(receiver), layouts);
                 });
                 store.share = share;
@@ -4490,7 +4493,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         };
         auto runStore = [&](uint32_t index) {
             std::span<const ValueFlowOperand> operands = operandsOf(m_input.statements[stores[index].statement]);
-            write(index, seenAt(operands[operands.size() - 1]), seenBehindTheRoundsAt(operands[0].node));
+            write(index, seenAt(operands[operands.size() - 1]), operands[0].node ? seenBehindTheRoundsAt(operands[0].node) : ValueSets::nothing);
         };
         HashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callsAnsweredAt;
         BitVector answersCalls(numberOfNodes);
@@ -4726,8 +4729,11 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 step.input = value.node.index();
                 step.seenAtInput = seenBehindTheRoundsAt(value.node);
             }
-            step.to = operands[0].node.index();
-            step.seenBefore = seenBehindTheRoundsAt(operands[0].node);
+            if (operands[0].node) {
+                step.to = operands[0].node.index();
+                step.seenBefore = seenBehindTheRoundsAt(operands[0].node);
+            } else
+                step.seenBefore = ValueSets::nothing;
             step.come = written;
             size_t head = found.size();
             found.append(step);
@@ -4750,7 +4756,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             if (!isSeenAsBefore(step))
                 runStore(step.index);
             else if (step.come != ValueSets::nothing && step.come != many) {
-                if (seenBehindTheRounds[step.to] != step.seenBefore.index())
+                if (step.to != noNode && seenBehindTheRounds[step.to] != step.seenBefore.index())
                     runStore(step.index);
                 else if (!step.numberOfFields)
                     write(step.index, step.come, step.seenBefore);
