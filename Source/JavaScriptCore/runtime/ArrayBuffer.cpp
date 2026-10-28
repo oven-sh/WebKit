@@ -148,7 +148,8 @@ static RefPtr<BufferMemoryHandle> tryAllocateResizableMemory(VM* vm, size_t size
 #endif
     constexpr bool readable = false;
     constexpr bool writable = false;
-    OSAllocator::protect(slowMemory + initialBytes, maximumBytes - initialBytes, readable, writable);
+    // Every access checks the length, so these pages are only a guard. mprotect() fails in a process that is at its limit of mappings.
+    OSAllocator::tryProtect(slowMemory + initialBytes, maximumBytes - initialBytes, readable, writable);
     return adoptRef(*new BufferMemoryHandle(slowMemory, initialBytes, maximumBytes, PageCount::fromBytes(initialBytes), PageCount::fromBytes(maximumBytes), MemorySharingMode::Shared, MemoryMode::BoundsChecking));
 }
 
@@ -624,7 +625,8 @@ std::expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByt
             dataLogLnIf(ArrayBufferInternal::verbose, "Marking memory's ", RawPointer(memory), " as none in range [", RawPointer(startAddress), ", ", RawPointer(startAddress + bytesToSubtract), ")");
             constexpr bool readable = false;
             constexpr bool writable = false;
-            OSAllocator::protect(startAddress, bytesToSubtract, readable, writable);
+            // A guard that the buffer can do without, as in tryAllocateResizableMemory().
+            OSAllocator::tryProtect(startAddress, bytesToSubtract, readable, writable);
         }
         memoryHandle->updateSize(desiredSize);
     }

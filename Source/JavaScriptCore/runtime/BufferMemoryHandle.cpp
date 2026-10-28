@@ -177,12 +177,7 @@ bool BufferMemoryManager::tryMakeReadableAndWritable(void* address, size_t bytes
 {
     constexpr bool readable = true;
     constexpr bool writable = true;
-#if OS(WINDOWS)
     return OSAllocator::tryProtect(address, bytes, readable, writable);
-#else
-    OSAllocator::protect(address, bytes, readable, writable);
-    return true;
-#endif
 }
 
 bool BufferMemoryManager::isInGrowableOrFastMemory(void* address)
