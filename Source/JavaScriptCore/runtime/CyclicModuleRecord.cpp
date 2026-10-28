@@ -634,6 +634,21 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
 #endif
     // 9. If result is an abrupt completion, then
     if (Exception* exception = scope.exception()) {
+#if USE(BUN_JSC_ADDITIONS)
+        // The embedder can withdraw a termination (VM::cancelTermination) and run script again, so the value of the
+        // termination must not become the error of these modules. Like V8, record null. A termination cannot reject
+        // the capability that this call made, so the module does not keep it: the next Evaluate() makes a rejected one.
+        if (vm.isTerminationException(exception)) [[unlikely]] {
+            for (AbstractModuleRecord* abstractRecord : stack) {
+                auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(abstractRecord);
+                ASSERT(cyclic->status() == Status::Evaluating);
+                cyclic->setStatus(Status::Evaluated);
+                cyclic->setEvaluationError(vm, jsNull());
+            }
+            module->m_topLevelCapability.clear();
+            RELEASE_AND_RETURN(scope, nullptr);
+        }
+#endif
         JSModuleLoader::attachErrorInfo(globalObject, exception, module, moduleKey(), moduleType(), JSModuleLoader::ModuleFailure::Kind::Evaluation);
         // 9.a. For each Cyclic Module Record m of stack, do
         for (AbstractModuleRecord* abstractRecord : stack) {
