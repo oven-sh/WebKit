@@ -303,6 +303,9 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
             errorInstance->setSourceURL(sourceURL);
         }
 
+        // Before the host is asked: this is how its formatter knows that the fields hold the parser's position.
+        errorInstance->setHasParseLocation();
+
         if (hostComputes) {
             // The host's formatter can run user code (Error.prepareStackTrace), so it can throw. The caller made this
             // error to throw it, or to hand it to someone who does, and expects no exception from here: what the
