@@ -631,6 +631,46 @@ static void testLeafOperationsAnswerByName(LoadedProgram& program)
     AOT_TEST_CHECK(put(index, jsNumber(1)) == LeafAnswer::TakeSlowPath);
 }
 
+// Misses of several pairs are counted together, so the first miss of a pair may be the one that is to be filed.
+static void testFirstAdditionThatIsDueForFilingFilesNothing(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    Instance* instance = &program.instance();
+    HashedSlotTable& table = program.state().propertyCaches->tables().hashedTable();
+    Identifier heldName = Identifier::fromString(vm, "9j"_s);
+    Structure* structure = constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), heldName, jsNumber(7))->structure();
+    auto check = [&](const Identifier& addedName, const auto& put) {
+        auto addToNextObject = [&] {
+            // What an object is given right behind the name that made its Structure makes Structures too. Here another object has come in between.
+            constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), Identifier::fromString(vm, "8i"_s), jsNumber(0));
+            JSObject* object = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
+            object->putDirect(vm, heldName, jsNumber(7));
+            AOT_TEST_CHECK(object->structure() == structure);
+            put(object);
+            AOT_TEST_CHECK(object->getDirect(vm, addedName) == jsNumber(9));
+            return object;
+        };
+        instance->propertyCaches.missIsDueForFiling = 1;
+        AOT_TEST_CHECK(addToNextObject()->structure()->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
+        Structure* made = addToNextObject()->structure();
+        AOT_TEST_CHECK(!made->isDictionary() && !table.find(structure->id(), addedName.impl(), SlotAccess::Store));
+        const Slot* addition = nullptr;
+        for (unsigned turn = 0; turn < 3 && !addition; ++turn) {
+            AOT_TEST_CHECK(addToNextObject()->structure() == made);
+            addition = table.find(structure->id(), addedName.impl(), SlotAccess::Store);
+        }
+        AOT_TEST_CHECK(addition && addition->kind == Slot::Kind::Transition && addition->transition.newStructureID == made->id());
+    };
+    Identifier addedByName = Identifier::fromString(vm, "1k"_s);
+    check(addedByName, [&](JSObject* object) {
+        putAndCache({ instance, addedByName, std::nullopt, nullptr }, object, jsNumber(9), PutMode::Strict);
+    });
+    Identifier addedByKey = Identifier::fromString(vm, "2l"_s);
+    check(addedByKey, [&](JSObject* object) {
+        operationAOTPutByValAndCache(instance, JSValue::encode(object), JSValue::encode(jsString(vm, addedByKey.string())), JSValue::encode(jsNumber(9)));
+    });
+}
+
 static void testLeafStoreMakesStructureOnlyOutOfBlockAtHand(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1551,6 +1591,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },
         { "property-lookup/leaf-operations-answer-by-name"_s, withProgram<testLeafOperationsAnswerByName> },
         { "property-lookup/leaf-operations-put-collections-off"_s, withProgram<testLeafOperationsPutCollectionsOff> },
+        { "property-lookup/first-addition-that-is-due-for-filing-files-nothing"_s, withProgram<testFirstAdditionThatIsDueForFilingFilesNothing> },
         { "property-lookup/leaf-store-makes-a-structure-only-out-of-the-block-at-hand"_s, withProgram<testLeafStoreMakesStructureOnlyOutOfBlockAtHand> },
         { "property-lookup/leaf-operations-answer-by-index"_s, withProgram<testLeafOperationsAnswerByIndex> },
         { "property-lookup/named-change-drops-only-that-name"_s, withProgram<testNamedChangeDropsOnlyThatName> },

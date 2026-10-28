@@ -282,6 +282,25 @@ void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID merge
         candidate.mergeBlock = mergeBlock;
 }
 
+// Where a way on which an object and a closure over it are cells meets a way on which they are not, cells in the fields that tie the two would have the object built where the closure is made, in front of every store that follows.
+// Built in front of the first branch behind that place, the two meet nothing. Where they still do, the fields hold cells.
+bool AllocationSinking::buildCycleBeforeBranches(const SinkingState& state, VirtualObjectID holder, VirtualObjectID held)
+{
+    Candidate& holding = at(holder);
+    Candidate& heldCandidate = at(held);
+    if (holding.isJoin || heldCandidate.isJoin)
+        return false;
+    if (holding.isBuiltBeforeBranchesOnceCyclic && heldCandidate.isBuiltBeforeBranchesOnceCyclic)
+        return false;
+    bool isKnownCycle = holding.willBeBuiltBeforeBranchesOnceCyclic && heldCandidate.willBeBuiltBeforeBranchesOnceCyclic;
+    if (!isKnownCycle && !state.canReach(held, holder))
+        return false;
+    holding.willBeBuiltBeforeBranchesOnceCyclic = true;
+    heldCandidate.willBeBuiltBeforeBranchesOnceCyclic = true;
+    m_mustSolveAgain = true;
+    return true;
+}
+
 PassOutcome sinkAllocations(FunctionPassContext& context)
 {
     AOT_THRESHOLD(unsigned, maxEdgeSplittingRounds, 3);
@@ -524,7 +543,8 @@ bool AllocationSinking::buildBeforeBranchesInsteadOfAbandoning()
     for (Candidate& candidate : m_candidates) {
         if (candidate.isAbandoned || candidate.isJoin || candidate.isBuiltBeforeBranches)
             continue;
-        if (candidate.numberOfBuilds < 2 || candidate.numberOfFoldedStores <= candidate.numberOfRepeatedStores)
+        // Each build repeats its stores, and there will be one.
+        if (candidate.numberOfBuilds < 2 || candidate.numberOfFoldedStores * candidate.numberOfBuilds <= candidate.numberOfRepeatedStores)
             continue;
         if (!exceedsMaxBuilds(candidate, maxNumberOfBuilds) && paysToSink(candidate))
             continue;
@@ -698,6 +718,8 @@ static void resetAnalysis(AllocationSinking& sinking)
         if (candidate.abandonedBy == LimitID::None && !candidate.isLeftOut)
             candidate.isAbandoned = false;
         candidate.isBuiltBeforeBranches = false;
+        candidate.isBuiltBeforeBranchesOnceCyclic = false;
+        candidate.willBeBuiltBeforeBranchesOnceCyclic = false;
     }
     sinking.decisions() = SinkingDecisions { };
 }

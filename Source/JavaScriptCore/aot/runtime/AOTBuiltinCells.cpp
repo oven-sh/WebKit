@@ -746,9 +746,9 @@ void refuseEvaluationUnlessAdmitted(JSGlobalObject* realm)
     CRASH();
 }
 
-static void lockObject(VM& vm, BuiltinID id, JSObject* object, JSObject::StructureTransitionMode mode = JSObject::StructureTransitionMode::WithTransition)
+static void lockObject(VM& vm, BuiltinID id, JSObject* object)
 {
-    if (!object->makePropertiesImmutable(vm, mode)) [[unlikely]]
+    if (!object->makePropertiesImmutable(vm)) [[unlikely]]
         crashOnBuiltinHolder(id, "cannot be made immutable"_s);
 }
 
@@ -858,19 +858,18 @@ namespace {
 // Locks a built-in object that the realm has created, and what hangs on it and is there already.
 class BuiltinLocker {
 public:
-    explicit BuiltinLocker(Instance& instance, JSObject::StructureTransitionMode mode = JSObject::StructureTransitionMode::WithTransition)
-        : BuiltinLocker(instance, instance.state->builtinCells->builtinsToLock(), nullptr, mode)
+    explicit BuiltinLocker(Instance& instance)
+        : BuiltinLocker(instance, instance.state->builtinCells->builtinsToLock(), nullptr)
     {
     }
 
-    BuiltinLocker(Instance& instance, const BitVector& builtinsToLock, BitVector* lockedWithoutCells, JSObject::StructureTransitionMode mode)
+    BuiltinLocker(Instance& instance, const BitVector& builtinsToLock, BitVector* lockedWithoutCells)
         : m_vm(*instance.vm)
         , m_realm(instance.globalObject)
         , m_tables(instance.tables())
         , m_cells(instance.state ? instance.state->builtinCells.get() : nullptr)
         , m_builtinsToLock(builtinsToLock)
         , m_lockedWithoutCells(lockedWithoutCells)
-        , m_mode(mode)
     {
         ASSERT(m_cells || m_lockedWithoutCells);
     }
@@ -927,7 +926,7 @@ private:
     void makeImmutable(const BuiltinTable& table, BuiltinID id, JSObject* object)
     {
         if (table.at(id).flags.contains(BuiltinFlag::IsLockedObject)) {
-            lockObject(m_vm, id, object, m_mode);
+            lockObject(m_vm, id, object);
             if (m_cells)
                 m_cells->didLockEveryPropertyOf(object);
             return;
@@ -938,7 +937,7 @@ private:
         // A holder may only lie on the path to what is locked.
         if (!hasFixedNames && !tellsOfWrites)
             return;
-        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells).get(), m_mode)) [[likely]]
+        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells).get())) [[likely]]
             return;
         if (hasFixedNames)
             crashOnBuiltinHolder(id, "cannot be made immutable"_s);
@@ -951,7 +950,6 @@ private:
     BuiltinCells* m_cells;
     const BitVector& m_builtinsToLock;
     BitVector* m_lockedWithoutCells;
-    JSObject::StructureTransitionMode m_mode;
 };
 
 } // anonymous namespace
@@ -1014,14 +1012,14 @@ static void lockBuiltins(Instance& instance)
     BuiltinsToLock toLock = findBuiltinsToLock(BuiltinTable::singleton(), instance.tables());
     if (!instance.state) {
         BitVector locked;
-        BuiltinLocker locker(instance, toLock.builtins, &locked, JSObject::StructureTransitionMode::WithoutTransition);
+        BuiltinLocker locker(instance, toLock.builtins, &locked);
         lockExistingBuiltins(locker, realm);
         lockHoldersOfProgram(locker, realm, instance.tables(), toLock.holdersThatTellOfWrites);
         return;
     }
     BuiltinCells& cells = *instance.state->builtinCells;
     cells.setBuiltinsToLock(WTF::move(toLock.builtins), WTF::move(toLock.holdersThatTellOfWrites));
-    BuiltinLocker locker(instance, JSObject::StructureTransitionMode::WithoutTransition);
+    BuiltinLocker locker(instance);
     lockExistingBuiltins(locker, realm);
     lockHoldersOfProgram(locker, realm, instance.tables(), cells.holdersThatTellOfWrites());
 }

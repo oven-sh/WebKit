@@ -112,11 +112,13 @@ bool hoistCopiesOfWaysBack(Code& code)
     if (jumpsToAncestor.isEmpty())
         return false;
 
+    // What is live is asked once. Copies that have gone ahead of a test change it at the head of one block alone, the one they came from, and only the other side of the same test asks about that block.
     RegLiveness liveness(code);
+    BitVector hasTakenCopies(code.size());
     bool changed = false;
     for (const WayBack& candidate : candidates) {
         auto [latch, block, exit] = candidate;
-        if (!jumpsToAncestor.quickGet(block->index()))
+        if (!jumpsToAncestor.quickGet(block->index()) || hasTakenCopies.quickGet(latch->index()))
             continue;
         const RegisterSet& liveOnWayOut = liveness.liveAtHead(exit);
         bool isOverwrittenValueRead = false;
@@ -135,6 +137,7 @@ bool hoistCopiesOfWaysBack(Code& code)
         latch->insts().append(WTF::move(branch));
         block->insts().shrink(0);
         block->insts().append(WTF::move(jump));
+        hasTakenCopies.quickSet(latch->index());
         changed = true;
     }
     return changed;

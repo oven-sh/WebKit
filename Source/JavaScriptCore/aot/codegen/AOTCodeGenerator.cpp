@@ -11,6 +11,7 @@
 #include "AOTBlockFrequencies.h"
 #include "AOTBranchCounterNumbers.h"
 #include "AOTCastEmitter.h"
+#include "AOTCellAllocationEmitter.h"
 #include "AOTCodeRecords.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
@@ -325,8 +326,11 @@ void CodeGenerator::generate(const ValueContext& context)
     convertOperandsOf(context, context.value());
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateOperands(context);
-    else if (m_checksProofs)
+    else if (m_checksProofs) {
         emitter<RuntimeValidationEmitter>().checkSlotAccessWithoutGuard(context);
+        if (maySuspend(context.opcode()) && analyses().maySuspend(context.id()))
+            emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
+    }
 
     auto begin = m_heaps.markDecorations();
     size_t numberOfEnclosingExemptions = m_exemptStores.size();

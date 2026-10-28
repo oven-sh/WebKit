@@ -3011,13 +3011,13 @@ JSCellButterfly* JSObject::tryCreateCopyOnWriteButterfly(VM& vm, JSObject* objec
     return result;
 }
 
-bool JSObject::makePropertiesImmutable(VM& vm, StructureTransitionMode mode)
+bool JSObject::makePropertiesImmutable(VM& vm)
 {
     if (structure()->hasImmutableProperties())
         return true;
     // `globalThis` may be the proxy in front of the global object: act on the object behind it.
     if (type() == GlobalProxyType)
-        return uncheckedDowncast<JSGlobalProxy>(this)->target()->makePropertiesImmutable(vm, mode);
+        return uncheckedDowncast<JSGlobalProxy>(this)->target()->makePropertiesImmutable(vm);
     if (!canMakePropertiesImmutable(this))
         return false;
     // The global object keeps top-level `var` and function declarations in its symbol table, and compiled code writes those slots
@@ -3066,10 +3066,6 @@ bool JSObject::makePropertiesImmutable(VM& vm, StructureTransitionMode mode)
     }
     StructureID oldStructureID = structureID();
     Structure* oldStructure = oldStructureID.decode();
-    if (mode == StructureTransitionMode::WithoutTransition && oldStructure->isPinnedPropertyTable() && !hasIndexedProperties(indexingType())) {
-        oldStructure->makePropertiesImmutableWithoutTransition();
-        return true;
-    }
     // Deferred, so adaptive watchpoints on this object see the new structure and re-install instead of firing their sets.
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
     Structure* newStructure = Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred);
@@ -3082,13 +3078,13 @@ bool JSObject::makePropertiesImmutable(VM& vm, StructureTransitionMode mode)
     return true;
 }
 
-bool JSObject::makePropertiesImmutable(VM& vm, ImmutablePropertyNames& requestedNames, StructureTransitionMode mode)
+bool JSObject::makePropertiesImmutable(VM& vm, ImmutablePropertyNames& requestedNames)
 {
     Structure* oldStructure = structure();
     if (oldStructure->hasImmutableProperties())
         return true;
     if (type() == GlobalProxyType)
-        return uncheckedDowncast<JSGlobalProxy>(this)->target()->makePropertiesImmutable(vm, requestedNames, mode);
+        return uncheckedDowncast<JSGlobalProxy>(this)->target()->makePropertiesImmutable(vm, requestedNames);
     if (oldStructure->isCompiledStructure() || !canMakePropertiesImmutable(this))
         return false;
     if (requestedNames.isEmpty())
@@ -3118,11 +3114,6 @@ bool JSObject::makePropertiesImmutable(VM& vm, ImmutablePropertyNames& requested
         }
         if (changed)
             global->varReadOnlyWatchpointSet().fireAll(vm, "Some of the global object's properties were made immutable");
-    }
-
-    if (mode == StructureTransitionMode::WithoutTransition && oldStructure->isPinnedPropertyTable()) {
-        oldStructure->makeListedPropertiesImmutableWithoutTransition(vm, names.get());
-        return true;
     }
 
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);

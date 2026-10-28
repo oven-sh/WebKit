@@ -1174,12 +1174,54 @@ static bool removeHintsOutsideCycles(FunctionPassContext& context)
     return changed;
 }
 
+// Every way round a loop leads through its header. Where the header polls, another poll in the same turn adds nothing.
+static bool removeSecondHintsOfTurns(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.cfg().hasCycle())
+        return false;
+    auto isHintOfLoop = [&](ValueID id) {
+        return function.at(id).opcode == Opcode::LoopHint;
+    };
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const BlockCycles& cycles = analyses.blockCycles();
+    Vector<std::pair<BlockID, BitVector>, 2> secondHints;
+    for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
+        const NaturalLoop& loop = loops.loop(loopIndex);
+        BlockID header = loop.header();
+        std::optional<unsigned> cycle = cycles.innermostCycleOf(header);
+        size_t hintOfHeader = function.at(header).values.findIf(isHintOfLoop);
+        if (hintOfHeader == notFound || !cycle || !cycles.forest()[*cycle].isReducible())
+            continue;
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            BlockID block = loop.at(index);
+            if (cycles.innermostCycleOf(block) != cycle || function.at(block).handler != function.at(header).handler)
+                continue;
+            BitVector hints;
+            std::span<const ValueID> values = function.at(block).values.span();
+            for (size_t position = block == header ? hintOfHeader + 1 : 0; position < values.size(); ++position) {
+                if (isHintOfLoop(values[position]) && !function.at(values[position]).replacesTailCalls())
+                    hints.set(position);
+            }
+            if (!hints.isEmpty())
+                secondHints.append({ block, WTF::move(hints) });
+        }
+    }
+    IRBuilder builder(analyses.context(), context.function, context.types, &analyses);
+    for (auto& [block, hints] : secondHints)
+        builder.eraseValues(block, hints);
+    return !secondHints.isEmpty();
+}
+
 PassOutcome removeDeadCountedLoops(FunctionPassContext& context)
 {
     PassOutcome outcome = PassOutcome::Unchanged;
     while (removeOutermostDeadLoops(context))
         outcome = PassOutcome::Changed;
     if (removeHintsOutsideCycles(context))
+        outcome = PassOutcome::Changed;
+    if (removeSecondHintsOfTurns(context))
         outcome = PassOutcome::Changed;
     // The builder makes every edit and tells the analyses, and the search that found no more loops came behind the last one.
     if (outcome == PassOutcome::Changed)

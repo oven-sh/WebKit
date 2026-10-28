@@ -127,7 +127,7 @@ CellPointer ConstantEmitter::newSlimClosure(const ValueContext& value, const New
     if (value.shape() != CodeShape::Fast || request.storage != AllocationStorage::Frame)
         return callClosureStub(value, request, requestWord, SlimClosure::allocationSize(count));
 
-    CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(SlimClosure::allocationSize(count));
+    CellPointer cell = emitter<CellAllocationEmitter>().allocateInFrame(value, SlimClosure::allocationSize(count));
     CodeGenerator::InitializationScope scope(generator());
     emitter<CellAllocationEmitter>().storeHeader(cell, loadImmutable64(AOT_INSTANCE_OFFSET(slimClosureHeaders) + request.kind.slimClosureKind() * sizeof(uint64_t)));
     storeCaptures(cell, request, m_heaps.AOTSlimClosure_captures);
@@ -160,7 +160,7 @@ CellPointer ConstantEmitter::callClosureStub(const ValueContext& value, const Ne
         }
         return CellPointer(callStub(value, newClosure(count), operands.span()).first);
     case AllocationStorage::Frame:
-        operands.append(emitter<CellAllocationEmitter>().allocateInFrame(cellSize).value());
+        operands.append(emitter<CellAllocationEmitter>().allocateInFrame(value, cellSize).value());
         return CellPointer(callStub(value, initializeClosure(count), operands.span()).first);
     case AllocationStorage::FrameUntilMaterialized:
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);
@@ -181,7 +181,7 @@ CellPointer ConstantEmitter::newFullClosure(const ValueContext& value, const New
         isOnHeap = true;
         break;
     case AllocationStorage::Frame:
-        cell = cellAllocation.allocateInFrame(Closure::allocationSize(request.captures.size()));
+        cell = cellAllocation.allocateInFrame(value, Closure::allocationSize(request.captures.size()));
         break;
     case AllocationStorage::FrameUntilMaterialized:
         return failWithoutCell(value, InternalErrorKind::OpcodeWithoutCode);

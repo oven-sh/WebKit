@@ -3527,6 +3527,7 @@ static bool handOnWhatComparisonsWithTextsDoNotNarrow(FunctionPassContext& conte
             Target& edited = function.edit(id, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator.targets[targetIndex];
             edited.arguments.appendVector(handedOn);
             edited.proofs.clear();
+            context.analyses.didChangeBlock(id);
             changed = true;
         }
     }

@@ -30,7 +30,7 @@ static bool mayBeStringCell(const LiteralStringTable& literals, LiteralStringWor
     if (type.primitives & Primitive::String)
         return true;
     return std::ranges::any_of(type.stringLiterals, [&](StringID literal) {
-        return !literals.indexOf(literal) && !literals.isLeftOut(literal);
+        return !literals.indexOf(literal);
     });
 }
 

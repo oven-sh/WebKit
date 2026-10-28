@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTCodeSites.h"
 #include "AOTFaultHandler.h"
 #include "AOTImage.h"
@@ -474,6 +475,10 @@ static bool handleDivertedReturn(PlatformRegisters& registers)
 
 bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
 {
+    if (CheckedFrameCells::isInRange(faultingAddress) && CheckedFrameCells::isInUse()) [[unlikely]] {
+        CheckedFrameCells::report(faultingAddress);
+        return false;
+    }
     auto instructionPointer = MachineContext::instructionPointer(registers);
     if (!instructionPointer)
         return false;

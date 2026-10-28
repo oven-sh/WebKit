@@ -1681,10 +1681,22 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     if (asked == ValueSets::nothing)
         return ValueSets::nothing;
 
-    ValueSetID found = ValueSets::nothing;
+    // Every node, every record of made nodes and every statement is looked at, each by itself: on all threads.
+    Vector<ValueSetID> foundByWorker(FillWith { }, m_makers.size(), ValueSets::nothing);
+    auto noteFor = [&](unsigned worker, ValueSetID held) {
+        ValueSetMaker& makerOfWorker = *m_makers[worker];
+        if (held != ValueSets::nothing && makerOfWorker.meet(held, asked))
+            foundByWorker[worker] = makerOfWorker.unite(foundByWorker[worker], makerOfWorker.intersect(held, asked));
+    };
     auto note = [&](ValueSetID held) {
-        if (held != ValueSets::nothing && maker.meet(held, asked))
-            found = maker.unite(found, maker.intersect(held, asked));
+        noteFor(0, held);
+    };
+    // A share begins at a word of a list of bits.
+    constexpr uint32_t indicesPerShare = 1 << 12;
+    auto forEachShare = [&](uint32_t count, NOESCAPE const Invocable<void(uint32_t first, uint32_t end, unsigned share, unsigned worker)> auto& functor) {
+        forEachIndexInParallel(m_loops, (count + indicesPerShare - 1) / indicesPerShare, [&](unsigned share, unsigned worker) {
+            functor(share * indicesPerShare, std::min(count, (share + 1) * indicesPerShare), share, worker);
+        });
     };
 
     // A lookup of a name asks a proxy by its trap.
@@ -1704,14 +1716,19 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
 
     BitVector holdsProxy(m_input.numberOfNodes);
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> heldByInstancesOfNode;
-    for (uint32_t index = 0; index < nodes.ofHost(static_cast<ValueFlowHostNode>(0)).index(); ++index) {
-        if (ValueSetID held = m_graph.valueOf(ValueFlowNodeID(index)); held != ValueSets::nothing && maker.meet(held, asked))
-            holdsProxy.quickSet(index);
-    }
+    forEachShare(nodes.ofHost(static_cast<ValueFlowHostNode>(0)).index(), [&](uint32_t first, uint32_t end, unsigned, unsigned worker) {
+        for (uint32_t index = first; index < end; ++index) {
+            if (ValueSetID held = m_graph.valueOf(ValueFlowNodeID(index)); held != ValueSets::nothing && m_makers[worker]->meet(held, asked))
+                holdsProxy.quickSet(index);
+        }
+    });
 
     ValueSetID closures = m_input.universe->closures();
     ValueSetID stopWalks = maker.unite(ValueSets::complement(m_graph.valueOf(listOfThoseThatWalksPass)), m_graph.valueOf(listOfThoseWithTrapsForWalks));
     Vector<const MadeNodes*> links;
+    uint32_t numberOfSharesOfMadeNodes = (m_madeNodes.size() + indicesPerShare - 1) / indicesPerShare;
+    Vector<Vector<const MadeNodes*>> linksInShare(numberOfSharesOfMadeNodes);
+    Vector<Vector<const MadeNodes*>> instancesThatHoldProxyInShare(numberOfSharesOfMadeNodes);
     // The table says how a data property of a built-in is read. Nothing is called, and the receiver goes nowhere.
     auto readsOnlyDataOfTable = [&](const ValueFlowNodeKey& group) {
         if (group.callKind() != ValueFlowCallKind::Get || ValueSets::isComplement(group.set))
@@ -1753,69 +1770,84 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
         return isReadBack;
     };
     BitVector readsProxy(m_madeNodes.size());
-    bool someReadHoldsProxy = false;
-    for (const MadeNodes& made : m_madeNodes) {
-        const ValueFlowNodeKey& key = made.key;
-        switch (key.kind) {
-        case ValueFlowMadeNodeKind::Constant:
-        case ValueFlowMadeNodeKind::Masked:
-            break;
-        case ValueFlowMadeNodeKind::Instance:
-            if (key.isInstanceOfNode() && key.nodeOfInstance().index() < m_input.numberOfNodes && maker.meet(m_graph.valueOf(made.first), asked)) {
-                holdsProxy.quickSet(key.nodeOfInstance().index());
-                ValueSetID& held = heldByInstancesOfNode.add(key.nodeOfInstance().index(), ValueSets::nothing).iterator->value;
-                held = maker.unite(held, m_graph.valueOf(made.first));
-            }
-            break;
-        case ValueFlowMadeNodeKind::Hub:
-            note(m_graph.valueOf(made.first));
-            break;
-        case ValueFlowMadeNodeKind::Marked:
-            // The model writes the link from a proxy to its target.
-            if (key != ValueFlowNodeKey::objectsWithRareWrite(ValueFlowRareWrite::PrototypeLink))
-                note(m_graph.valueOf(made.first));
-            break;
-        case ValueFlowMadeNodeKind::CallGroup:
-            // Whoever calls a proxy asks it by its trap.
-            if (!maker.meet(key.set, ValueSets::complement(closures)) || readsOnlyDataOfTable(key))
+    std::atomic<bool> someReadHoldsProxy { false };
+    forEachShare(m_madeNodes.size(), [&](uint32_t firstOfShare, uint32_t endOfShare, unsigned share, unsigned worker) {
+        ValueSetMaker& maker = *m_makers[worker];
+        auto note = [&](ValueSetID held) {
+            noteFor(worker, held);
+        };
+        bool holdsRead = false;
+        for (const MadeNodes& made : m_madeNodes.span().subspan(firstOfShare, endOfShare - firstOfShare)) {
+            const ValueFlowNodeKey& key = made.key;
+            switch (key.kind) {
+            case ValueFlowMadeNodeKind::Constant:
+            case ValueFlowMadeNodeKind::Masked:
                 break;
-            for (unsigned offset = 0; offset < key.numberOfNodes(); ++offset) {
-                ValueFlowNodeID node(made.first.index() + offset);
-                if (node != callGroupAt(made.first).result && node != callGroupAt(made.first).thrown && !isOnlyListedByCalleesOf(key, callGroupAt(made.first), node))
-                    note(m_graph.valueOf(node));
-            }
-            break;
-        case ValueFlowMadeNodeKind::Read:
-        case ValueFlowMadeNodeKind::Written:
-        case ValueFlowMadeNodeKind::Lookup:
-        case ValueFlowMadeNodeKind::WrittenUnderKind:
-        case ValueFlowMadeNodeKind::ReadUnderKind: {
-            // Somebody has asked the heap about the proxy itself, or the proxy stands above an object.
-            ValueFlowName name = key.name();
-            bool isUnderKind = key.kind == ValueFlowMadeNodeKind::WrittenUnderKind || key.kind == ValueFlowMadeNodeKind::ReadUnderKind;
-            bool isOfModel = name.kind == ValueFlowNameKind::AllocatedAs || (name.kind == ValueFlowNameKind::HiddenSlot && (isUnderKind || name.payload == proxyItselfName.payload || name.payload == listedValuesOfProxyName.payload)) || (name.kind == ValueFlowNameKind::Slot && (isUnderKind || name.payload == BuiltinSlots::ProxyHandler.index() || name.payload == BuiltinSlots::ProxyTarget.index()));
-            // A walk that comes to a proxy goes on at its target, unless the handler may have a trap for what the walk is for.
-            bool isLink = shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink;
-            isOfModel |= isLink && key.kind == ValueFlowMadeNodeKind::Written;
-            // A lookup of a name asks a proxy that it starts at by its trap.
-            bool asksWhereItStarts = key.kind == ValueFlowMadeNodeKind::Lookup && (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Elements || name == everyPropertyName);
-            if (!isOfModel && !asksWhereItStarts && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
-                note(isLink ? maker.intersect(key.set, stopWalks) : key.set);
-            // What a bound function was bound over is read to be called or to be tested against, and either asks a proxy by its trap.
-            bool readsTargetOfBoundFunction = name.kind == ValueFlowNameKind::HiddenSlot && name.payload == BuiltinSlots::BoundFunctionTarget.index();
-            if (!isOfModel && !readsTargetOfBoundFunction && key.kind != ValueFlowMadeNodeKind::Written && key.kind != ValueFlowMadeNodeKind::WrittenUnderKind && maker.meet(isLink ? maker.intersect(m_graph.valueOf(made.first), stopWalks) : m_graph.valueOf(made.first), asked))
-                readsProxy.set(&made - m_madeNodes.span().data());
-                someReadHoldsProxy = true;
-            if (isLink) {
-                note(maker.intersect(m_graph.valueOf(made.first), stopWalks));
-                if (key.kind == ValueFlowMadeNodeKind::Written)
-                    links.append(&made);
-            }
-            // What is written into a built-in lies with native code.
-            if (key.kind == ValueFlowMadeNodeKind::Written && maker.meet(key.set, m_input.universe->builtinObjects()) && !isReadBackOutOfBuiltins(name, key.set))
+            case ValueFlowMadeNodeKind::Instance:
+                if (key.isInstanceOfNode() && key.nodeOfInstance().index() < m_input.numberOfNodes && maker.meet(m_graph.valueOf(made.first), asked))
+                    instancesThatHoldProxyInShare[share].append(&made);
+                break;
+            case ValueFlowMadeNodeKind::Hub:
                 note(m_graph.valueOf(made.first));
-            break;
+                break;
+            case ValueFlowMadeNodeKind::Marked:
+                // The model writes the link from a proxy to its target.
+                if (key != ValueFlowNodeKey::objectsWithRareWrite(ValueFlowRareWrite::PrototypeLink))
+                    note(m_graph.valueOf(made.first));
+                break;
+            case ValueFlowMadeNodeKind::CallGroup:
+                // Whoever calls a proxy asks it by its trap.
+                if (!maker.meet(key.set, ValueSets::complement(closures)) || readsOnlyDataOfTable(key))
+                    break;
+                for (unsigned offset = 0; offset < key.numberOfNodes(); ++offset) {
+                    ValueFlowNodeID node(made.first.index() + offset);
+                    if (node != callGroupAt(made.first).result && node != callGroupAt(made.first).thrown && !isOnlyListedByCalleesOf(key, callGroupAt(made.first), node))
+                        note(m_graph.valueOf(node));
+                }
+                break;
+            case ValueFlowMadeNodeKind::Read:
+            case ValueFlowMadeNodeKind::Written:
+            case ValueFlowMadeNodeKind::Lookup:
+            case ValueFlowMadeNodeKind::WrittenUnderKind:
+            case ValueFlowMadeNodeKind::ReadUnderKind: {
+                // Somebody has asked the heap about the proxy itself, or the proxy stands above an object.
+                ValueFlowName name = key.name();
+                bool isUnderKind = key.kind == ValueFlowMadeNodeKind::WrittenUnderKind || key.kind == ValueFlowMadeNodeKind::ReadUnderKind;
+                bool isOfModel = name.kind == ValueFlowNameKind::AllocatedAs || (name.kind == ValueFlowNameKind::HiddenSlot && (isUnderKind || name.payload == proxyItselfName.payload || name.payload == listedValuesOfProxyName.payload)) || (name.kind == ValueFlowNameKind::Slot && (isUnderKind || name.payload == BuiltinSlots::ProxyHandler.index() || name.payload == BuiltinSlots::ProxyTarget.index()));
+                // A walk that comes to a proxy goes on at its target, unless the handler may have a trap for what the walk is for.
+                bool isLink = shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink;
+                isOfModel |= isLink && key.kind == ValueFlowMadeNodeKind::Written;
+                // A lookup of a name asks a proxy that it starts at by its trap.
+                bool asksWhereItStarts = key.kind == ValueFlowMadeNodeKind::Lookup && (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Elements || name == everyPropertyName);
+                if (!isOfModel && !asksWhereItStarts && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
+                    note(isLink ? maker.intersect(key.set, stopWalks) : key.set);
+                // What a bound function was bound over is read to be called or to be tested against, and either asks a proxy by its trap.
+                bool readsTargetOfBoundFunction = name.kind == ValueFlowNameKind::HiddenSlot && name.payload == BuiltinSlots::BoundFunctionTarget.index();
+                if (!isOfModel && !readsTargetOfBoundFunction && key.kind != ValueFlowMadeNodeKind::Written && key.kind != ValueFlowMadeNodeKind::WrittenUnderKind && maker.meet(isLink ? maker.intersect(m_graph.valueOf(made.first), stopWalks) : m_graph.valueOf(made.first), asked)) {
+                    readsProxy.quickSet(&made - m_madeNodes.span().data());
+                    holdsRead = true;
+                }
+                if (isLink) {
+                    note(maker.intersect(m_graph.valueOf(made.first), stopWalks));
+                    if (key.kind == ValueFlowMadeNodeKind::Written)
+                        linksInShare[share].append(&made);
+                }
+                // What is written into a built-in lies with native code.
+                if (key.kind == ValueFlowMadeNodeKind::Written && maker.meet(key.set, m_input.universe->builtinObjects()) && !isReadBackOutOfBuiltins(name, key.set))
+                    note(m_graph.valueOf(made.first));
+                break;
+            }
+            }
         }
+        if (holdsRead)
+            someReadHoldsProxy.store(true, std::memory_order_relaxed);
+    });
+    for (uint32_t share = 0; share < numberOfSharesOfMadeNodes; ++share) {
+        links.appendVector(linksInShare[share]);
+        for (const MadeNodes* made : instancesThatHoldProxyInShare[share]) {
+            holdsProxy.quickSet(made->key.nodeOfInstance().index());
+            ValueSetID& held = heldByInstancesOfNode.add(made->key.nodeOfInstance().index(), ValueSets::nothing).iterator->value;
+            held = maker.unite(held, m_graph.valueOf(made->first));
         }
     }
 
@@ -1893,75 +1925,82 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
         }
         return isDescribed;
     };
-    for (uint32_t index = 0; index < m_input.statements.size(); ++index) {
-        const ValueFlowStatement& statement = m_input.statements[index];
-        bool isOperation = statement.kind == ValueFlowStatementKind::Operation;
-        std::span<const ValueFlowOperand> operands = operandsOf(statement);
-        bool holdsSome = false;
-        for (const ValueFlowOperand& operand : operands)
-            holdsSome |= operand.node && operand.node.index() < m_input.numberOfNodes && holdsProxy.quickGet(operand.node.index());
-        auto forEachProxyReadByStatement = [&](NOESCAPE const Invocable<void(ValueSetID)> auto& functor) {
-            for (uint32_t use = isOperation && index < m_firstUseOfStatement.size() ? m_firstUseOfStatement[index] : UINT32_MAX; use != UINT32_MAX; use = m_uses[use].next) {
-                if (readsProxy.quickGet(m_uses[use].madeNodes))
-                    functor(m_graph.valueOf(m_madeNodes[m_uses[use].madeNodes].first));
-            }
+    bool looksForReads = someReadHoldsProxy.load(std::memory_order_relaxed);
+    forEachShare(m_input.statements.size(), [&](uint32_t firstOfShare, uint32_t endOfShare, unsigned, unsigned worker) {
+        ValueSetMaker& maker = *m_makers[worker];
+        auto note = [&](ValueSetID held) {
+            noteFor(worker, held);
         };
-        bool hasReadSome = false;
-        bool callsSomething = false;
-        for (unsigned position = 0; someReadHoldsProxy && isOperation && !callsSomething && position < operands.size(); ++position)
-            callsSomething = operandUsesOf(statement.opcode, position).contains(OperandUse::Calls);
-        if (callsSomething && index < m_firstUseOfStatement.size()) {
-            for (uint32_t use = m_firstUseOfStatement[index]; use != UINT32_MAX && !hasReadSome; use = m_uses[use].next)
-                hasReadSome = readsProxy.quickGet(m_uses[use].madeNodes);
-        }
-        if (!holdsSome && !hasReadSome)
-            continue;
-        bool callsOnlyFunctionsOfProgram = true;
-        for (unsigned position = 0; isOperation && position < operands.size(); ++position) {
-            if (!operandUsesOf(statement.opcode, position).contains(OperandUse::Calls))
-                continue;
-            const ValueFlowOperand& callee = operands[position];
-            callsOnlyFunctionsOfProgram &= !callee.constant || !maker.meet(callee.constant, objectsThatAreNoClosures);
-            callsOnlyFunctionsOfProgram &= !callee.node || !maker.meet(m_graph.valueOf(callee.node), objectsThatAreNoClosures);
-        }
-        // What calls something that is no function of the program hands it whatever it has read out of a list or an object by itself.
-        bool isTestAgainstConstructor = isOperation && statement.opcode == Opcode::InstanceOf && m_statementsThatAskProxiesByTheirTraps.get(index);
-        if (hasReadSome && !callsOnlyFunctionsOfProgram && !isTestAgainstConstructor)
-            forEachProxyReadByStatement(note);
-        for (unsigned position = 0; position < operands.size(); ++position) {
-            const ValueFlowOperand& operand = operands[position];
-            if (!operand.node || operand.node.index() >= m_input.numberOfNodes || !holdsProxy.quickGet(operand.node.index()))
-                continue;
-            unsigned positionAskedByTraps = isTestAgainstConstructor ? 1 : isOperation && statement.opcode == Opcode::CopyDataProperties ? OperandIndex::CopyDataProperties::source : isOperation && statement.opcode == Opcode::ForInStep ? OperandIndex::ForInStep::object : 0;
-            if (position == positionAskedByTraps && m_statementsThatAskProxiesByTheirTraps.get(index))
-                continue;
-            if (isOperation && callsOnlyFunctionsOfProgram && usesThatHandOn.containsAll(operandUsesOf(statement.opcode, position)))
-                continue;
-            if (isOperation && statement.opcode == Opcode::Call && position == 1) {
-                bool isAskedByTraps = true;
-                ValueSetID callees = maker.unite(operands[0].constant ? operands[0].constant : ValueSets::nothing, operands[0].node ? m_graph.valueOf(operands[0].node) : ValueSets::nothing);
-                m_sets.forEachMember(maker.intersect(callees, m_input.universe->callables()), [&](ValueFlowObjectID callee) {
-                    BuiltinID builtin = m_sets.contains(m_input.universe->builtinFunctions(), callee) ? m_input.program->builtins().canonicalID(m_input.universe->builtinOf(callee)) : BuiltinID();
-                    isAskedByTraps &= m_sets.contains(closures, callee) || builtin == Builtins::FunctionPrototypeBind || builtin == Builtins::FunctionPrototypeSymbolHasInstance || (builtin && onlyCallsOperand(m_input.program->builtins(), builtin, BuiltinOperand::receiver()));
-                });
-                if (isAskedByTraps)
-                    continue;
+        for (uint32_t index = firstOfShare; index < endOfShare; ++index) {
+            const ValueFlowStatement& statement = m_input.statements[index];
+            bool isOperation = statement.kind == ValueFlowStatementKind::Operation;
+            std::span<const ValueFlowOperand> operands = operandsOf(statement);
+            bool holdsSome = false;
+            for (const ValueFlowOperand& operand : operands)
+                holdsSome |= operand.node && operand.node.index() < m_input.numberOfNodes && holdsProxy.quickGet(operand.node.index());
+            auto forEachProxyReadByStatement = [&](NOESCAPE const Invocable<void(ValueSetID)> auto& functor) {
+                for (uint32_t use = isOperation && index < m_firstUseOfStatement.size() ? m_firstUseOfStatement[index] : UINT32_MAX; use != UINT32_MAX; use = m_uses[use].next) {
+                    if (readsProxy.quickGet(m_uses[use].madeNodes))
+                        functor(m_graph.valueOf(m_madeNodes[m_uses[use].madeNodes].first));
+                }
+            };
+            bool hasReadSome = false;
+            bool callsSomething = false;
+            for (unsigned position = 0; looksForReads && isOperation && !callsSomething && position < operands.size(); ++position)
+                callsSomething = operandUsesOf(statement.opcode, position).contains(OperandUse::Calls);
+            if (callsSomething && index < m_firstUseOfStatement.size()) {
+                for (uint32_t use = m_firstUseOfStatement[index]; use != UINT32_MAX && !hasReadSome; use = m_uses[use].next)
+                    hasReadSome = readsProxy.quickGet(m_uses[use].madeNodes);
             }
-            if (isOperation && statement.opcode == Opcode::Call && position >= 2) {
-                bool isOnlyLinkedAbove = true;
-                ValueSetID callees = maker.unite(operands[0].constant ? operands[0].constant : ValueSets::nothing, operands[0].node ? m_graph.valueOf(operands[0].node) : ValueSets::nothing);
-                m_sets.forEachMember(maker.intersect(callees, m_input.universe->callables()), [&](ValueFlowObjectID callee) {
-                    isOnlyLinkedAbove &= m_sets.contains(closures, callee) || onlyLinksArgumentAbove(callee, position - 2);
-                });
-                if (isOnlyLinkedAbove)
+            if (!holdsSome && !hasReadSome)
+                continue;
+            bool callsOnlyFunctionsOfProgram = true;
+            for (unsigned position = 0; isOperation && position < operands.size(); ++position) {
+                if (!operandUsesOf(statement.opcode, position).contains(OperandUse::Calls))
                     continue;
+                const ValueFlowOperand& callee = operands[position];
+                callsOnlyFunctionsOfProgram &= !callee.constant || !maker.meet(callee.constant, objectsThatAreNoClosures);
+                callsOnlyFunctionsOfProgram &= !callee.node || !maker.meet(m_graph.valueOf(callee.node), objectsThatAreNoClosures);
             }
-            note(m_graph.valueOf(operand.node));
-            if (auto held = heldByInstancesOfNode.find(operand.node.index()); held != heldByInstancesOfNode.end())
-                note(held->value);
+            // What calls something that is no function of the program hands it whatever it has read out of a list or an object by itself.
+            bool isTestAgainstConstructor = isOperation && statement.opcode == Opcode::InstanceOf && m_statementsThatAskProxiesByTheirTraps.get(index);
+            if (hasReadSome && !callsOnlyFunctionsOfProgram && !isTestAgainstConstructor)
+                forEachProxyReadByStatement(note);
+            for (unsigned position = 0; position < operands.size(); ++position) {
+                const ValueFlowOperand& operand = operands[position];
+                if (!operand.node || operand.node.index() >= m_input.numberOfNodes || !holdsProxy.quickGet(operand.node.index()))
+                    continue;
+                unsigned positionAskedByTraps = isTestAgainstConstructor ? 1 : isOperation && statement.opcode == Opcode::CopyDataProperties ? OperandIndex::CopyDataProperties::source : isOperation && statement.opcode == Opcode::ForInStep ? OperandIndex::ForInStep::object : 0;
+                if (position == positionAskedByTraps && m_statementsThatAskProxiesByTheirTraps.get(index))
+                    continue;
+                if (isOperation && callsOnlyFunctionsOfProgram && usesThatHandOn.containsAll(operandUsesOf(statement.opcode, position)))
+                    continue;
+                if (isOperation && statement.opcode == Opcode::Call && position == 1) {
+                    bool isAskedByTraps = true;
+                    ValueSetID callees = maker.unite(operands[0].constant ? operands[0].constant : ValueSets::nothing, operands[0].node ? m_graph.valueOf(operands[0].node) : ValueSets::nothing);
+                    m_sets.forEachMember(maker.intersect(callees, m_input.universe->callables()), [&](ValueFlowObjectID callee) {
+                        BuiltinID builtin = m_sets.contains(m_input.universe->builtinFunctions(), callee) ? m_input.program->builtins().canonicalID(m_input.universe->builtinOf(callee)) : BuiltinID();
+                        isAskedByTraps &= m_sets.contains(closures, callee) || builtin == Builtins::FunctionPrototypeBind || builtin == Builtins::FunctionPrototypeSymbolHasInstance || (builtin && onlyCallsOperand(m_input.program->builtins(), builtin, BuiltinOperand::receiver()));
+                    });
+                    if (isAskedByTraps)
+                        continue;
+                }
+                if (isOperation && statement.opcode == Opcode::Call && position >= 2) {
+                    bool isOnlyLinkedAbove = true;
+                    ValueSetID callees = maker.unite(operands[0].constant ? operands[0].constant : ValueSets::nothing, operands[0].node ? m_graph.valueOf(operands[0].node) : ValueSets::nothing);
+                    m_sets.forEachMember(maker.intersect(callees, m_input.universe->callables()), [&](ValueFlowObjectID callee) {
+                        isOnlyLinkedAbove &= m_sets.contains(closures, callee) || onlyLinksArgumentAbove(callee, position - 2);
+                    });
+                    if (isOnlyLinkedAbove)
+                        continue;
+                }
+                note(m_graph.valueOf(operand.node));
+                if (auto held = heldByInstancesOfNode.find(operand.node.index()); held != heldByInstancesOfNode.end())
+                    note(held->value);
+            }
         }
-    }
-    return found;
+    });
+    return maker.uniteAll(foundByWorker.span());
 }
 
 void ValueFlowSolver::runStatementsMadeBy(Thread& thread)
@@ -4681,14 +4720,31 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             }
             found[head].to = found.size() - head - 1;
         };
-        auto doCall = [&](std::span<const FoundStep> found) {
-            uint32_t index = found[0].index;
-            if (!isSeenAsBefore(found[0])) {
+        // The steps stand one behind the other, what is seen at their nodes does not.
+        auto fetchWhatIsSeenFor = [&](std::span<const FoundStep> found, size_t place) {
+            constexpr size_t stepsAhead = 16;
+            if (place + stepsAhead >= found.size())
+                return;
+            const FoundStep& step = found[place + stepsAhead];
+            if (step.kind == Found::Visit)
+                __builtin_prefetch(&seenBehindTheRounds[step.index]);
+            else if (step.kind == Found::Store || step.kind == Found::Call || step.kind == Found::HandOn || step.kind == Found::Arrival) {
+                if (step.input != noNode)
+                    __builtin_prefetch(&seenBehindTheRounds[step.input]);
+                if (step.kind != Found::Call && step.to != noNode)
+                    __builtin_prefetch(&seenBehindTheRounds[step.to]);
+            }
+        };
+        auto doCall = [&](std::span<const FoundStep> found, size_t head) {
+            uint32_t index = found[head].index;
+            if (!isSeenAsBefore(found[head])) {
                 runCall(index);
                 return;
             }
-            bool hasRun = found[0].come == ValueSets::anything || std::exchange(plansOfCalls[index].hasRun, true);
-            for (const FoundStep& step : found.subspan(1)) {
+            bool hasRun = found[head].come == ValueSets::anything || std::exchange(plansOfCalls[index].hasRun, true);
+            for (size_t place = head + 1; place <= head + found[head].to; ++place) {
+                const FoundStep& step = found[place];
+                fetchWhatIsSeenFor(found, place);
                 if (step.kind == Found::EnterFunction) {
                     if (!hasRun)
                         enterFunction(index, stepsOf(plansOfCalls[index])[step.index]);
@@ -4750,6 +4806,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             ValueSetID come;
             for (size_t place = 0; place < found.size(); ++place) {
                 const FoundStep& step = found[place];
+                fetchWhatIsSeenFor(found, place);
                 switch (step.kind) {
                 case Found::Visit:
                     from = ValueFlowNodeID(step.index);
@@ -4766,7 +4823,7 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                     runCall(step.index);
                     break;
                 case Found::Call:
-                    doCall(found.subspan(place, 1 + step.to));
+                    doCall(found, place);
                     place += step.to;
                     break;
                 case Found::Arrival:

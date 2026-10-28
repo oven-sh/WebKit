@@ -349,6 +349,7 @@ struct Copier {
     BitVector makers;
     // The constants of modules that somebody hands to Object.create.
     BitVector constantsHandedToObjectCreate;
+    bool isAnyConstantHandedToObjectCreate { false };
     // The bodies of the modules of the program, and what they call at one place outside loops.
     Vector<FunctionID> callersThatRunOnce;
     BitVector isCallerThatRunsOnce;
@@ -433,8 +434,10 @@ struct Copier {
                     return;
                 }
                 const Value& definition = function.at(handed);
-                if (definition.opcode == Opcode::GetModuleVariable && isConstantOfModule(definition.variable()))
+                if (definition.opcode == Opcode::GetModuleVariable && isConstantOfModule(definition.variable())) {
                     constantsHandedToObjectCreate.set(definition.variable().index());
+                    isAnyConstantHandedToObjectCreate = true;
+                }
             });
         }
         if (creators.isEmpty())
@@ -1082,7 +1085,7 @@ struct Copier {
                     resultsHandedToObjectCreate.set(definitionBehindDeadZoneChecks(caller, value.valueOperand()).index());
             });
         };
-        if (!depth && !constantsHandedToObjectCreate.isEmpty())
+        if (!depth && isAnyConstantHandedToObjectCreate)
             findStores();
         // `class A extends Mixin(Other(B)) { .. }`   `const Stamped = Mixin(Plain);`   A class that is only handed on, `list.push(Mixin(B))`, is one of many wherever it arrives: a copy of its own buys it little.
         std::optional<BitVector> classesWithName;

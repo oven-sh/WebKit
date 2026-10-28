@@ -205,8 +205,7 @@ static bool isValueOfDeferringField(const Program& program, const Value& user, u
 // A validating build reads the header of every object and closure that a proof names, and a cell of a frame may have none. An array has its header wherever it lies.
 static bool staysOnHeapForValidation(const Program& program, const BuildContext& build, const Value& allocation)
 {
-    bool readsHeaders = build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
-    if (!readsHeaders || arrayAllocationsWithStorage.contains(allocation.opcode))
+    if (!build.validates() || arrayAllocationsWithStorage.contains(allocation.opcode))
         return false;
     return allocation.opcode != Opcode::NewObject || !program.at(allocation.layout()).isEnvironment();
 }
@@ -335,10 +334,38 @@ bool FramePlanner::mayGiveFrameCell(ValueID value) const
     return false;
 }
 
+static bool saysThatCellMayOutliveFrame(AllocationHeapCause cause)
+{
+    switch (cause) {
+    case AllocationHeapCause::Escapes:
+    case AllocationHeapCause::SeveralLiveInstances:
+    case AllocationHeapCause::HasUntrackedAlias:
+    case AllocationHeapCause::LiveAcrossSuspension:
+    case AllocationHeapCause::LiveAtReturnCall:
+    case AllocationHeapCause::HeldByHeapCell:
+    case AllocationHeapCause::HeldAcrossIterations:
+    case AllocationHeapCause::SeenByNativeCode:
+        return true;
+    case AllocationHeapCause::None:
+    case AllocationHeapCause::NotTracked:
+    case AllocationHeapCause::HasNoFrameForm:
+    case AllocationHeapCause::ChangedByUse:
+    case AllocationHeapCause::ClosureIsNotOnlyCalled:
+    case AllocationHeapCause::LayoutDefersClosures:
+    case AllocationHeapCause::FieldsCreatedLater:
+    case AllocationHeapCause::ExceedsLimit:
+    case AllocationHeapCause::MaterializationDoesNotPay:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 void FramePlanner::moveToHeap(ObjectID object, AllocationHeapCause cause, std::optional<Use> use, LimitID limit)
 {
     FrameDecision& decision = m_decisions[object.index()];
     if (decision.storage == AllocationStorage::Heap)
+        return;
+    if (m_build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames) && saysThatCellMayOutliveFrame(cause) && !isArray(object))
         return;
     decision.storage = AllocationStorage::Heap;
     decision.isLent = false;

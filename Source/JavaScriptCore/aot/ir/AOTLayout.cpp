@@ -19,6 +19,7 @@
 #include "AOTPropertyAccessCache.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTThreads.h"
+#include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <optional>
@@ -366,6 +367,111 @@ static bool asksForStructureFirst(const BuiltinTable& builtins, BuiltinClassID b
         || builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Error);
 }
 
+// No test tells the objects of such a class from other instances of the built-in class, and a test for its layout passes for none of them.
+// Where the program expects an object of the class, an instance of the built-in class is expected: that test its objects pass.
+static void expectInstancesOfBuiltinClasses(Program& program, const ParallelLoops& loops, std::span<const BuiltinClassID> classWithoutBrandAbove)
+{
+    TypeArena types(program.types);
+    unsigned numberOfTypes = program.types.size();
+    Vector<TypeID> typeInPlaceOf(numberOfTypes);
+    BitVector isDecided(numberOfTypes);
+    // The contents of a list of such objects are changed with it. A type never holds itself.
+    auto decide = [&](auto& decide, TypeID id) -> TypeID {
+        if (id.index() >= numberOfTypes)
+            return { };
+        if (isDecided.quickGet(id.index()))
+            return typeInPlaceOf[id.index()];
+        isDecided.quickSet(id.index());
+        Type inPlace = program.at(id);
+        bool changes = false;
+        for (ClassPart& part : inPlace.classes) {
+            for (TypeID& contents : part.writtenContents) {
+                if (TypeID other = contents ? decide(decide, contents) : TypeID()) {
+                    contents = other;
+                    changes = true;
+                }
+            }
+        }
+        if (inPlace.layouts) {
+            Vector<LayoutID> kept;
+            Vector<BuiltinClassID, 2> classes;
+            for (LayoutID member : membersOf(program, inPlace)) {
+                if (BuiltinClassID builtinClass = classWithoutBrandAbove[member.index()])
+                    classes.append(builtinClass);
+                else
+                    kept.append(member);
+            }
+            if (!classes.isEmpty()) {
+                inPlace.layouts = kept.isEmpty() ? LayoutSetID() : types.intern(LayoutSet::complete(WTF::move(kept)));
+                for (BuiltinClassID builtinClass : classes)
+                    inPlace = inPlace.unionWith(Type::builtinClass(builtinClass), types);
+                changes = true;
+            }
+        }
+        if (!changes)
+            return { };
+        inPlace.canonicalize();
+        typeInPlaceOf[id.index()] = types.intern(WTF::move(inPlace));
+        return typeInPlaceOf[id.index()];
+    };
+    for (unsigned index = 0; index < numberOfTypes; ++index)
+        decide(decide, TypeID(index));
+    auto inPlaceOf = [&](TypeID type) {
+        return type && type.index() < typeInPlaceOf.size() ? typeInPlaceOf[type.index()] : TypeID();
+    };
+    auto change = [&](DeclaredType& declared) {
+        TypeID inPlace = inPlaceOf(declared.written());
+        if (inPlace)
+            declared.changeType(Proven::byConversion(ExpectedType(inPlace)));
+        return !!inPlace;
+    };
+    forEachIndexInParallel(loops, program.functions.size(), [&](unsigned index) {
+        Function& function = program.functions[index];
+        for (DeclaredType& declared : function.parameters)
+            change(declared);
+        for (DeclaredType& declared : function.results)
+            change(declared);
+        change(function.thisType);
+        for (DeclaredType& declared : function.captures)
+            change(declared);
+        for (Value& value : function.editAllValues()) {
+            if (TypeID inPlace = inPlaceOf(value.type))
+                value.type = inPlace;
+            if (Value::opcodesWithDeclared.contains(value.opcode)) {
+                DeclaredType declared = value.declared();
+                if (change(declared))
+                    value.setDeclared(declared);
+            }
+            if (TypeID inPlace = Value::opcodesWithCastType.contains(value.opcode) ? inPlaceOf(value.castType()) : TypeID())
+                value.setCastType(inPlace);
+            if (TypeID inPlace = Value::opcodesWithExpectedType.contains(value.opcode) ? inPlaceOf(value.expectedType().predicted()) : TypeID())
+                value.setExpectedType(ExpectedType(inPlace));
+            if (TypeID inPlace = Value::opcodesWithTestedType.contains(value.opcode) ? inPlaceOf(value.testedType()) : TypeID())
+                value.setTestedType(inPlace);
+            if (TypeID inPlace = Value::opcodesWithContents.contains(value.opcode) ? inPlaceOf(value.contents()) : TypeID())
+                value.setContents(inPlace);
+        }
+        for (Block& block : function.editAllBlocks()) {
+            if (block.terminator.kind != TerminatorKind::ReturnCall)
+                continue;
+            Vector<TailCast, 4> casts;
+            bool changes = false;
+            for (TailCast cast : block.terminator.casts()) {
+                changes |= change(cast.declared);
+                casts.append(cast);
+            }
+            if (changes)
+                block.terminator.setCasts(casts.span());
+        }
+    });
+    for (Layout& layout : program.layouts) {
+        for (Field& field : layout.fields)
+            change(field.declared);
+    }
+    for (Variable& variable : program.variables)
+        change(variable.declared);
+}
+
 void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops& loops)
 {
     const BuiltinTable& builtins = program.builtins();
@@ -385,22 +491,34 @@ void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops
                 return;
             BuiltinID constructor = builtins.canonicalID(named);
             BuiltinClassID instanceClass = builtins.at(constructor).instanceClass;
-            if (instanceClass && asksForStructureFirst(builtins, instanceClass) && builtins.at(instanceClass).constructor && builtins.canonicalID(builtins.at(instanceClass).constructor) == constructor)
+            if (instanceClass && !builtins.at(instanceClass).hasClosureInstances && builtins.at(instanceClass).constructor && builtins.canonicalID(builtins.at(instanceClass).constructor) == constructor)
                 found.append({ definition.layout(), instanceClass });
         });
     });
     if (written.isEmpty())
         return;
-    for (auto [layout, builtinClass] : written)
-        program.at(layout).writtenBuiltinBase = builtinClass;
-    for (Layout& layout : program.layouts) {
+    Vector<BuiltinClassID> classWithoutBrandAbove(program.layouts.size());
+    bool hasClassWithoutBrand = false;
+    for (auto [layout, builtinClass] : written) {
+        // Of an array the compiler expects that it is as the constructor of Array makes its own, which an object of a class below never is.
+        if (builtinClass == BuiltinClasses::Array)
+            continue;
+        bool givesBrand = asksForStructureFirst(builtins, builtinClass);
+        (givesBrand ? program.at(layout).writtenBuiltinBase : classWithoutBrandAbove[layout.index()]) = builtinClass;
+        hasClassWithoutBrand |= !givesBrand;
+    }
+    for (unsigned index = 0; index < program.layouts.size(); ++index) {
+        Layout& layout = program.layouts[index];
         if (!layout.base || layout.writtenBuiltinBase)
             continue;
         LayoutID highest = layout.base;
         for (size_t steps = 0; program.at(highest).base && steps < program.layouts.size(); ++steps)
             highest = program.at(highest).base;
         layout.writtenBuiltinBase = program.at(highest).writtenBuiltinBase;
+        classWithoutBrandAbove[index] = classWithoutBrandAbove[highest.index()];
     }
+    if (hasClassWithoutBrand)
+        expectInstancesOfBuiltinClasses(program, loops, classWithoutBrandAbove.span());
 }
 
 bool isBornWithProperties(const Program& program, LayoutID id, BuiltinClassID builtinBase)

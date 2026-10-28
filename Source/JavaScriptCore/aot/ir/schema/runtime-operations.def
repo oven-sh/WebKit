@@ -181,6 +181,9 @@ runtime PhotographOperand : void (EncodedJSValue operand, uint64_t writtenHeaps,
 runtime CompareOperandWithPhotograph : void (EncodedJSValue operand, uint32_t positionAndCallee, uint32_t function, uint32_t valueIndex) ; reads(all) writes(ValidationState)
 runtime NoteFailedGuard : void (uint32_t function, uint32_t opcode, uint32_t ordinal) ; reads(ValidationState) writes(ValidationState)
 runtime CountStopsForCollector : uint64_t () ; reads(ValidationState) writes(ValidationState)
+runtime MakeCheckedFrameCell : void* (void* slot, void* wordOfFrame, uint64_t sizeAndFunction, uint64_t valueAndModule, uint64_t lineAndColumn) ; reads(all) writes(ValidationState)
+runtime LeaveFrameOfCheckedCells : void (void* wordOfFrame) ; reads(all) writes(ValidationState)
+runtime ReportEscapedFrameCell : void (void* cell) ; reads(all) writes(ExternalState)
 runtime ContentsHaveType : size_t (JSCell* container, uint32_t contentsSlot, uint32_t type) ; reads(all)
 runtime ValidateLookup : size_t (JSCell* receiver, uint32_t key, JSCell* expected) ; RuntimeCreatesConstant
 runtime PollSlow : void () ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects

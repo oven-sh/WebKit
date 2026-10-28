@@ -49,8 +49,6 @@ void PatchpointValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
         out.print(comma, "turnsAreShort"_s);
     if (isLoopPoll)
         out.print(comma, "isLoopPoll"_s);
-    if (throwsWhatIsOwed)
-        out.print(comma, "throwsWhatIsOwed"_s);
     if (pureFunction) {
         out.print(comma, "pureFunction = 0x"_s, hex(pureFunction->id, Lowercase));
         if (pureFunction->dependsOnChildren)

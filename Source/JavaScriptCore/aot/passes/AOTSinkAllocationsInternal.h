@@ -270,6 +270,9 @@ struct Candidate {
     bool diesVirtual { false };
     bool diesOutsideJoins { false };
     bool isBuiltBeforeBranches { false };
+    // The same, from where the object holds what refers to it. The solver asks for it in one round and follows it from the next one on.
+    bool isBuiltBeforeBranchesOnceCyclic { false };
+    bool willBeBuiltBeforeBranchesOnceCyclic { false };
     bool wasFruitlessBefore { false };
     // Abandoned before the families were made: no field of it is known, so nothing may take it up again.
     bool isLeftOut { false };
@@ -569,6 +572,7 @@ public:
     void addEdgeNeedingCode(Edge);
     void didEnterJoin(VirtualObjectID join, VirtualObjectID source) { m_entriesIntoJoins.append(EntryIntoJoin { join, source }); }
     void didBuildAfterMerge(VirtualObjectID, BlockID mergeBlock);
+    bool buildCycleBeforeBranches(const SinkingState&, VirtualObjectID holder, VirtualObjectID held);
     bool mayBeListOfNumbers(VirtualObjectID) const;
     void didTestListThatMayNotFit(ValueID literal) { m_testedListsThatMayNotFit.appendIfNotContains(literal); }
 

@@ -479,7 +479,7 @@ private:
         return answer;
     }
 
-    // What its holder names in a field of its own, stored once, lives as long as the holder: an environment wherever the store stands, anything else where the holder is an environment whose field stays and is filled in front of the closure,
+    // What its holder names in a field of its own, stored once, lives as long as the holder: an environment wherever the store stands, anything else where the holder is an environment whose field stays and is filled in front of the place where the holder is given the closure,
     // or behind it in the same block where every operation in between completes: until the store runs, the function holds what it is about to store.
     bool isHeldBy(ValueID holder, ValueID held, ValueID closure)
     {
@@ -512,11 +512,25 @@ private:
             return false;
         if (found->value == holder || m_program.typeOf(m_function, held).environment)
             return true;
+        ValueID given = operationThatGives(holder, closure);
         ValueLocation store = useLists().locationOf(found->value);
-        ValueLocation made = useLists().locationOf(closure);
+        ValueLocation made = useLists().locationOf(given);
         if (store.placement != ValuePlacement::InBlock || made.placement != ValuePlacement::InBlock || store.block != made.block)
             return false;
-        return store.index < made.index || numberOfExitsInFrontOf(found->value) == numberOfExitsInFrontOf(closure);
+        return store.index < made.index || numberOfExitsInFrontOf(found->value) == numberOfExitsInFrontOf(given);
+    }
+
+    // Until its holder is given it, a closure that goes nowhere else is in the hands of the function alone, which holds what it is about to store as well.
+    ValueID operationThatGives(ValueID holder, ValueID closure)
+    {
+        std::span<const Use> uses = useLists().usesOf(closure);
+        if (uses.size() != 1 || uses[0].kind != Use::Kind::Operand)
+            return closure;
+        const Value& user = m_function.at(uses[0].user);
+        if (user.opcode == Opcode::NewObject)
+            return uses[0].user == holder ? holder : closure;
+        bool isStoreToHolder = user.opcode == Opcode::PutEnvironmentField && uses[0].operandIndex == OperandIndex::PutEnvironmentField::value && user.operand(OperandIndex::PutEnvironmentField::environment) == holder;
+        return isStoreToHolder ? uses[0].user : closure;
     }
 
     // How many of the operations that stand in front of a value in its block may leave the block.

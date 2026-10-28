@@ -653,17 +653,16 @@ static void testUnrollLoopsDropsPollOfLoopWhoseTurnsAreKnownToBeFew()
     }
 }
 
-// A poll that has more to do than to poll, a loop whose turns may be long, and a policy that says nothing: the loop polls as it always did.
+// A loop whose turns may be long, and a policy that says nothing: the loop polls as it always did.
 static void testUnrollLoopsKeepsPollThatMustRunOnEveryTurn()
 {
-    enum class Reason : uint8_t { ThrowsWhatIsOwed, TurnsMayBeLong, Policy };
-    for (Reason reason : { Reason::ThrowsWhatIsOwed, Reason::TurnsMayBeLong, Reason::Policy }) {
+    enum class Reason : uint8_t { TurnsMayBeLong, Policy };
+    for (Reason reason : { Reason::TurnsMayBeLong, Reason::Policy }) {
         for (Walks walks : { Walks::Nothing, Walks::Data }) {
             CountedSum sum(LessThan, 1, 0, reason == Reason::Policy ? loopPolicy() : policyThatPollsBetweenStretches(), walks);
             PollState state;
             PatchpointValue* poll = appendPoll(sum.graph, sum.loop.body, state);
             poll->turnsAreShort = reason != Reason::TurnsMayBeLong;
-            poll->throwsWhatIsOwed = reason == Reason::ThrowsWhatIsOwed;
             sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.get(sum.loop.body, sum.loop.index));
             sum.finish(sum.loop.body, TestPlace::Bottom);
 

@@ -308,8 +308,6 @@ public:
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* makeListedPropertiesImmutableTransition(VM&, Structure*, ImmutablePropertyNames&, DeferredStructureTransitionWatchpointFire* = nullptr);
-    void makePropertiesImmutableWithoutTransition();
-    void makeListedPropertiesImmutableWithoutTransition(VM&, ImmutablePropertyNames&);
     static Structure* addPropertyRunTransitionToExistingStructure(Structure*, const PropertyRun&);
     JS_EXPORT_PRIVATE static Structure* addPropertyRunTransition(VM&, Structure*, const PropertyRun&, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* base, std::span<UniquedStringImpl* const> names, unsigned attributes = 0, DeferredStructureTransitionWatchpointFire* = nullptr);

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedFrameCells.h"
 #include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTEmptyPages.h"
@@ -100,23 +101,34 @@ void initializeCollectorWords(VM& vm, Instance& instance)
 
 void validateFunctionCellIsNotInFrame(VM& vm, const JSCell* cell)
 {
-    if (!Thread::currentSingleton().stack().contains(const_cast<JSCell*>(cell))) [[likely]]
+    if (!Thread::currentSingleton().stack().contains(const_cast<JSCell*>(cell)) && !CheckedFrameCells::isInRange(cell)) [[likely]]
         return;
     crashOnValidationFailure(vm, { ValidationFailureKind::FunctionCellInFrameGotProperties, functionOf(cell).value_or(FunctionID()), { }, cell });
 }
 
 namespace HeapHooks {
 
+template<typename Visitor>
+static ALWAYS_INLINE void visitCheckedFrameCells(VM& vm, Visitor& visitor)
+{
+    if (!CheckedFrameCells::isInUse()) [[likely]]
+        return;
+    if (CheckedFrameCells* cells = CheckedFrameCells::find(vm))
+        cells->visitLiveCells(visitor);
+}
+
 void visitCalleesOfFrames(VM& vm, SlotVisitor& visitor, uint64_t phase)
 {
     if (auto& tables = vm.aotState().functionTables)
         tables->visitRecordedCallees(vm, visitor, phase);
+    visitCheckedFrameCells(vm, visitor);
 }
 
 void visitCalleesOfFrames(VM& vm, AbstractSlotVisitor& visitor, uint64_t phase)
 {
     if (auto& tables = vm.aotState().functionTables)
         tables->visitRecordedCallees(vm, visitor, phase);
+    visitCheckedFrameCells(vm, visitor);
 }
 
 void finalize(VM& vm, CollectionScope scope, uint64_t phase)

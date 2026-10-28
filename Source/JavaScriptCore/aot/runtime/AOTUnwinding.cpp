@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCallSiteTable.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTGenerator.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
@@ -104,11 +105,20 @@ static void copyStubSavedRegisters(VMEntryRecord& record, const int8_t* bufferSl
     }
 }
 
+static ALWAYS_INLINE void didLeaveFramesOfCheckedCellsBelow(Instance& instance, const void* address)
+{
+    if (!CheckedFrameCells::isInUse()) [[likely]]
+        return;
+    if (CheckedFrameCells* cells = CheckedFrameCells::find(*instance.vm))
+        cells->didLeaveFramesBelow(address);
+}
+
 static ALWAYS_INLINE void finishAtHandler(CompiledUnwindResult& result, Instance& instance, const CompiledHandler& handler, unsigned frameSize)
 {
     char* stackPointer = reinterpret_cast<char*>(handler.callFrame) - frameSize;
     // A parse is one call of the program, so a handler of the frame that opened a source lies behind that parse.
     instance.json.didLeaveFramesUpTo(handler.callFrame);
+    didLeaveFramesOfCheckedCellsBelow(instance, stackPointer);
     instance.runtime.exceptions.stackPointerOfHandler = stackPointer;
     result.status = CompiledUnwindStatus::FoundHandler;
     result.handler = handler;
@@ -123,6 +133,8 @@ static void finishInRejectingStub(CompiledUnwindResult& result, Instance& instan
         return addressOfStubInCurrentImage(rejectInFrame(liesBelowSpilledArguments));
     });
     finishAtHandler(result, instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
+    // The stub reads nothing that the function has kept in the frame.
+    didLeaveFramesOfCheckedCellsBelow(instance, callFrame);
 }
 
 static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entryFrame)
@@ -155,8 +167,10 @@ static void finishAtEndOfRun(CompiledUnwindResult& result, Instance* instance, C
         if (leftFrame)
             instance->coroutines.frameThatMayContinue = nullptr;
     }
-    if (leftFrame)
+    if (leftFrame) {
         instance->json.didLeaveFramesUpTo(leftFrame);
+        didLeaveFramesOfCheckedCellsBelow(*instance, leftFrame);
+    }
 
     result.hasLeftRun = true;
     result.status = result.exit.crossedEntryFrame ? CompiledUnwindStatus::ReachedEntryFrame : CompiledUnwindStatus::LeftCompiledCode;

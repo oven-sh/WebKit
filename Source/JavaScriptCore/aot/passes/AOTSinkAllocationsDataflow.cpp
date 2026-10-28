@@ -291,7 +291,7 @@ static void holdCellsInFamilyOf(AllocationSinking& sinking, VirtualObjectID obje
     }
 }
 
-static void mergeHeldObjects(AllocationSinking& sinking, VirtualObjectID object, ObjectState& target, const ObjectState& source)
+static void mergeHeldObjects(AllocationSinking& sinking, const SinkingState& into, const SinkingState& from, VirtualObjectID object, ObjectState& target, const ObjectState& source)
 {
     if (target.heldObjects.isEmpty() && source.heldObjects.isEmpty())
         return;
@@ -325,13 +325,17 @@ static void mergeHeldObjects(AllocationSinking& sinking, VirtualObjectID object,
             target.hold(field, objectInSource);
             continue;
         }
-        holdCellsInFamilyOf(sinking, object, field);
+        bool isBuiltBeforeTheWaysPart = objectInTarget && objectInSource ? false
+            : objectInTarget ? sinking.buildCycleBeforeBranches(into, object, objectInTarget)
+            : sinking.buildCycleBeforeBranches(from, object, objectInSource);
+        if (!isBuiltBeforeTheWaysPart)
+            holdCellsInFamilyOf(sinking, object, field);
         if (objectInTarget)
             target.release(field);
     }
 }
 
-static bool mergeObject(AllocationSinking& sinking, SinkingState& into, VirtualObjectID object, ObjectState& target, const ObjectState& source)
+static bool mergeObject(AllocationSinking& sinking, SinkingState& into, const SinkingState& from, VirtualObjectID object, ObjectState& target, const ObjectState& source)
 {
     bool becomesCell = into.isAtHead && willSolveAgainWithCell(sinking, into.block, object);
     if (!becomesCell && target.variants.size() == 1 && target == source)
@@ -353,7 +357,7 @@ static bool mergeObject(AllocationSinking& sinking, SinkingState& into, VirtualO
         else
             target.fieldsValidInCell = source.fieldsValidInCell;
     }
-    mergeHeldObjects(sinking, object, target, source);
+    mergeHeldObjects(sinking, into, from, object, target, source);
     for (const ObjectVariant& variant : source.variants)
         target.addVariant(variant);
 
@@ -380,7 +384,7 @@ static bool mergeObjects(AllocationSinking& sinking, SinkingState& into, const S
         for (; index < into.objects.size() && into.objects[index].object < source.object; ++index)
             markAsMissingOnSomeWay(into.objects[index].state);
         if (index < into.objects.size() && into.objects[index].object == source.object) {
-            changed |= mergeObject(sinking, into, source.object, into.objects[index].state, source.state);
+            changed |= mergeObject(sinking, into, from, source.object, into.objects[index].state, source.state);
             ++index;
             continue;
         }
@@ -641,6 +645,8 @@ void AllocationSinking::solve()
 {
     for (uint64_t round = 1;; ++round) {
         m_mustSolveAgain = false;
+        for (Candidate& candidate : m_candidates)
+            candidate.isBuiltBeforeBranchesOnceCyclic = candidate.willBeBuiltBeforeBranchesOnceCyclic;
         findWhetherObjectsAreBuiltBeforeBranches();
         m_decisions.forgetNewDecisions();
         for (VirtualFamily& family : m_families)

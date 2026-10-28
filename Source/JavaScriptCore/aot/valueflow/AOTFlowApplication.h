@@ -65,6 +65,7 @@ struct FlowLayoutUpdate {
     bool objectsAreDictionaries { false };
     bool objectsArePrototypesOfCreatedObjects { false };
     bool isHandedToObjectCreateAlone { false };
+    bool createsFieldsOnlyInLiterals { false };
 };
 
 struct FlowVariableUpdate {

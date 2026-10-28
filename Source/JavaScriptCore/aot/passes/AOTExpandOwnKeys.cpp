@@ -128,7 +128,7 @@ ExpectedKeyOrders expectedKeyOrdersOf(const Program& program, LayoutID id, KeyOr
 
     // The orders of a base are those of objects allocated as the base, so they are no proof about what its constructor does for a subclass.
     bool coversEveryObject = isComplete && !numberOfOrdersLeftOut && !orders.isEmpty()
-        && layout.flow.baseState == BaseState::None && layout.flow.fieldCreation == FieldCreation::OnlyAtConstruction;
+        && layout.flow.baseState == BaseState::None && layout.flow.fieldCreation != FieldCreation::Unknown;
     return { id, WTF::move(orders), coversEveryObject, static_cast<uint32_t>(saturateToUInt32(numberOfOrdersLeftOut)) };
 }
 

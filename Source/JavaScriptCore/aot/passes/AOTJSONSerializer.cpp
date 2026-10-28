@@ -1217,6 +1217,13 @@ struct JSONTextWriter final : Emission {
         return builder().emitBranchWithProof(builder().append(Opcode::Less, { next, length }));
     }
 
+    bool objectsAmongElementsGoToHost(ArrayStorage storage, TypeID elementType) const
+    {
+        SetForScope planOnlyToAsk(m_reportsLimits, false);
+        Type read = typeOfElementRead(storage);
+        return read.hasObjects() && planType(read, &program().at(elementType)).kind == ValueKind::Generic;
+    }
+
     void appendArray(ValueID array, const ValuePlan& plan, const Position& position)
     {
         MergePoint done = createMergePoint();
@@ -1242,6 +1249,11 @@ struct JSONTextWriter final : Emission {
                 continue;
             IRBuilder::ProvenBranch hasStorage = builder().emitBranchWithProof(builder().append(makeArrayStorageTest(array, form.kind)));
             ValueID guards[] { pristine, hasStorage.provenOnTaken };
+            // Each object among elements that nothing is known of is a call of the host. A list that begins with one goes there whole, in one call.
+            if (!listed.number && objectsAmongElementsGoToHost(form.kind, plan.element)) {
+                Value first = make<&Value::setArrayStorage, &Value::setKeyIsIntegral>(Opcode::GetArrayElement, { array, builder().appendInteger(0), builder().appendAllGuards(guards) }, form.kind, true);
+                emitJumpIf(builder().appendTypeTest(builder().append(WTF::move(first)), TypeTable::object), generic);
+            }
             m_cursor = start;
             appendKeyOf(position);
             appendToken(JSONToken::OpenArray);

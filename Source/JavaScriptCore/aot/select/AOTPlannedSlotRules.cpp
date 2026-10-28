@@ -360,7 +360,9 @@ static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgree
             follower = { };
         if (!follower && context.tryClaim(SelectionRuleID::PlannedSlots, group) != ClaimResult::Claimed)
             continue;
-        bool findsOffsetsByShape = canFindOffsetByShape(opcode, agreement) && (!follower || canFindOffsetByShape(function.at(follower).opcode, agreement));
+        // In cold code each place keeps an arm of its own.
+        bool findsOffsetsByShape = !isCold(heatClassOf(context.pass(), context.analyses().useLists().blockOf(id))).predicted()
+            && canFindOffsetByShape(opcode, agreement) && (!follower || canFindOffsetByShape(function.at(follower).opcode, agreement));
         const Vector<LayoutSetID, 4>& arms = armsOfAgreements[findsOffsetsByShape].ensure(&agreement, [&] {
             return createArms(context, agreement, findsOffsetsByShape);
         }).iterator->value;

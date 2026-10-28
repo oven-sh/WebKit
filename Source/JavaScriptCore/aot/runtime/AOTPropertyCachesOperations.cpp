@@ -58,6 +58,12 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
     ensureStillAliveHere(structureBefore);
 }
 
+// The first object that is given a name becomes a dictionary while it is filled, and the next one gets a Structure. What the first one did does not come again, so it says nothing of the Structure that it came with.
+static bool beganOrEndedAsDictionary(Structure* before, Structure* after)
+{
+    return after != before && (before->isDictionary() || after->isDictionary());
+}
+
 static void fileStore(Instance* instance, JSObject* base, Structure* structureBefore, const CachedName& name, const PutPropertySlot& slot, PutMode mode, SiteCache site = nullptr)
 {
     instance->state->propertyCaches->cache({ structureBefore, name, accessFor(mode), site }, classifyStore({ instance->globalObject, base, structureBefore, name.uid, slot, mode }));
@@ -320,6 +326,10 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     if (!cell->isObject())
         return;
     bool isAddition = slot.type() == PutPropertySlot::NewProperty;
+    if (beganOrEndedAsDictionary(structureBefore, cell->structure())) {
+        access.caches().didFileNothing();
+        return;
+    }
     if (!shouldFile || (isAddition && !repeatsAddition)) {
         if (isAddition)
             access.caches().didAddProperty(structureBefore, cell->structure());
@@ -718,7 +728,9 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
         base.put(globalObject, *name, value, slot);
     RETURN_IF_EXCEPTION(scope, void());
     bool isAddition = slot.type() == PutPropertySlot::NewProperty;
-    if (shouldFile && (!isAddition || repeatsAddition))
+    if (beganOrEndedAsDictionary(structureBefore, object->structure()))
+        caches.didFileNothing();
+    else if (shouldFile && (!isAddition || repeatsAddition))
         fileStore(instance, object, structureBefore, cachedName, slot, mode);
     else if (isAddition)
         caches.didAddProperty(structureBefore, object->structure());

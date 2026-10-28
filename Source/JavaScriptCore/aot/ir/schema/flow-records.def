@@ -8,7 +8,7 @@ enum PrototypeNameState { | engine Unknown AbsentOnPrototypes }
 enum ExecutionCount { | engine Unknown AtMostOnce }
 enum AllocationState { | engine Unknown NeverAllocated }
 enum KeyEnumeration { | engine Unknown NeverEnumerated }
-enum FieldCreation { | engine Unknown OnlyAtConstruction }
+enum FieldCreation { | engine Unknown OnlyAtConstruction OnlyBeforeObjectIsFinished }
 enum MemberMutability { | engine Unknown Fixed }
 enum BaseState { | engine Unknown None Layout BuiltinClass }
 enum FrameLocality { | engine Unknown FrameLocal }

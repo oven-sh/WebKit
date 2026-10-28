@@ -50,6 +50,7 @@ struct StubOptions {
     // So it may rest on a guess that the program meets no proxy.
     Typed::Expected<bool> callsTrapsOfProxies { true };
     bool validates { false };
+    bool checksProofs { false };
     bool countsAllocations { false };
     bool isPositionIndependent { imageFormOfThisRuntime() == ImageForm::PositionIndependent };
     uint32_t layoutSeed { 0 };

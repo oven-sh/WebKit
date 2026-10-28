@@ -159,6 +159,7 @@ enum Sabotage {
     ChangedClosuresFailEveryTest
     KeysOfStarsAreHeldAsStrings
     CallsGiveNoArrayOtherStorage
+    CellsThatAreKeptLieInFrames
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

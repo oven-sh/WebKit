@@ -8,6 +8,7 @@
 #define RUN_BUN_PASS_TESTS() do { \
         RUN(testHoistCommonMoves()); \
         RUN(testHoistCopiesOfWayBack()); \
+        RUN(testHoistCopiesOfOneWayBackPerLatch()); \
         RUN(testTerminalResultsOnEdge()); \
         RUN(testMovesBeforePatch()); \
         RUN(testForwardRegisterCopies()); \
@@ -395,6 +396,53 @@ void testHoistCopiesOfWayBack()
         auto compilation = compile(proc);
         CHECK(invokeInt64(*compilation, 3, 10, 5) == (testCase == Case::DestinationIsReadOnWayOut ? 65 : 45));
         CHECK(invokeInt64(*compilation, 1, 10, 5) == (testCase == Case::DestinationIsReadOnWayOut ? 20 : 10));
+    }
+}
+
+// The test at the bottom of an inner loop leads back to the inner loop on one side and to the outer loop on the other, and both ways write one register.
+// sum = 0; while (--turns) { left = 2; do { sum += carried; carried = --left ? step : sum; } while (left); }
+void testHoistCopiesOfOneWayBackPerLatch()
+{
+    auto [turns, carried, left, step, sum, ret] = PassRegisters { };
+    for (bool secondWayReadsWhatFirstWrites : { false, true }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        BasicBlock* outer = code.addBlock(10);
+        BasicBlock* inner = code.addBlock(10);
+        BasicBlock* backToInner = code.addBlock(9);
+        BasicBlock* backToOuter = code.addBlock(9);
+        BasicBlock* exit = code.addBlock();
+
+        appendChecked(root, Move, Arg::imm(0), sum);
+        appendJump(root, outer);
+        appendChecked(outer, Add64, Arg::imm(-1), turns);
+        appendChecked(outer, Move, Arg::imm(2), left);
+        appendBranchTest(outer, turns, inner, exit);
+        appendChecked(inner, Add64, carried, sum);
+        appendChecked(inner, Add64, Arg::imm(-1), left);
+        appendBranchTest(inner, left, backToInner, backToOuter);
+        appendChecked(backToInner, Move, step, carried);
+        appendJump(backToInner, inner);
+        if (secondWayReadsWhatFirstWrites)
+            appendChecked(backToOuter, Move, carried, step);
+        else
+            appendChecked(backToOuter, Move, sum, carried);
+        appendJump(backToOuter, outer);
+        appendChecked(exit, Move, sum, ret);
+        appendReturn(exit);
+
+        unsigned branchIndex = inner->size() - 1;
+        if (secondWayReadsWhatFirstWrites)
+            checkPassLeavesCodeUnchanged(code, hoistCommonMoves);
+        else {
+            checkPassChangesCode(code, hoistCommonMoves);
+            CHECK(inner->size() == branchIndex + 2);
+            CHECK(backToInner->size() + backToOuter->size() == 3);
+        }
+        auto compilation = compile(proc);
+        CHECK(invokeInt64(*compilation, 3, 10, 0, 5) == (secondWayReadsWhatFirstWrites ? 25 : 35));
     }
 }
 

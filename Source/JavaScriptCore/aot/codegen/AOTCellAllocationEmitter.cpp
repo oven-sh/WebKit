@@ -260,7 +260,7 @@ CellPointer CellAllocationEmitter::allocateObjectCopy(const OperationContext& co
 }
 
 // Readers take this value as they take the result of an allocation, so they stay behind it. dissolveBirthsOfFrameCells() puts the slot's address in its place.
-CellPointer CellAllocationEmitter::allocateInFrame(size_t size, const PlannedLayout* layout)
+CellPointer CellAllocationEmitter::allocateInFrame(const OperationContext& context, size_t size, const PlannedLayout* layout)
 {
     B3::SlotBaseValue* slot = m_out.lockedStackSlot(size);
     slot->slot()->setIsDeadAtSuspensions(true);
@@ -270,7 +270,45 @@ CellPointer CellAllocationEmitter::allocateInFrame(size_t size, const PlannedLay
     birth->effects = B3::Effects::none();
     m_heaps.decoratePatchpointWrite(&m_heaps.frameSlots, birth);
     generator().records().hasBirthsOfFrameCells = true;
-    return CellPointer(birth);
+    if (!generator().checksProofs())
+        return CellPointer(birth);
+
+    // AOTCheckedFrameCells.h
+    auto pair = [&](uint32_t low, uint32_t high) {
+        return integer(static_cast<int64_t>(low | static_cast<uint64_t>(high) << 32));
+    };
+    Wire::SourceLocation location = context.valueID() ? m_function.locationOf(context.valueID()) : noSourceLocation;
+    ModuleID module(location.module);
+    LineColumn lineColumn = module ? m_program.lineColumnFor(module, location.position) : LineColumn { };
+    return CellPointer(callWithoutSite<Pointer>(RuntimeOperation::MakeCheckedFrameCell, { Pointer(birth), wordOfFrame(), pair(static_cast<uint32_t>(size), m_id.index()), pair(context.valueID().index(), module.index()), pair(lineColumn.line, lineColumn.column) }).value());
+}
+
+bool CellAllocationEmitter::keepsCellsInFrame()
+{
+    if (!m_keepsCellsInFrame) {
+        m_keepsCellsInFrame = std::ranges::any_of(m_function.values, [](const Value& value) {
+            return Value::opcodesWithStorage.contains(value.opcode) && value.storage() != AllocationStorage::Heap;
+        });
+    }
+    return *m_keepsCellsInFrame;
+}
+
+// The frames of a thread lie one below the other, so the address of one word in each tells which of two was entered first.
+Pointer CellAllocationEmitter::wordOfFrame()
+{
+    if (!m_wordOfFrame) {
+        m_wordOfFrame = m_proc.addStackSlot(sizeof(uint64_t));
+        m_wordOfFrame->setIsDeadAtSuspensions(true);
+    }
+    return Pointer(m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), m_wordOfFrame));
+}
+
+void CellAllocationEmitter::leaveFrameOfCheckedCells()
+{
+    if (!generator().checksProofs() || !keepsCellsInFrame())
+        return;
+    Operand arguments[] { wordOfFrame() };
+    callWithoutSite(RuntimeOperation::LeaveFrameOfCheckedCells, arguments, Representation::Void, { });
 }
 
 std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const OperationContext& context, Word32 length, Word32 vectorLength, IndexingType indexingType, LBasicBlock slowPath)
@@ -291,7 +329,7 @@ CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, s
         for (Boxed element : elements)
             operands.append(element.value());
         if (isInFrame)
-            operands.append(allocateInFrame(sizeOfFrameArray(length)).value());
+            operands.append(allocateInFrame(context, sizeOfFrameArray(length)).value());
         return CellPointer(callStub(context, isInFrame ? frameArrayLiteral(length) : arrayLiteral(length), operands.span()).first);
     }
     if (!isInFrame && context.shape() != CodeShape::Fast)
@@ -302,7 +340,7 @@ CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, s
     Join<CellPointer> join(m_out);
     Word32 publicLength = word32(static_cast<int32_t>(length));
     auto [array, butterfly] = isInFrame
-        ? allocateArrayInFrame(publicLength, length, slowPath)
+        ? allocateArrayInFrame(context, publicLength, length, slowPath)
         : allocateArray(context, publicLength, word32(static_cast<int32_t>(vectorLength)), ArrayWithContiguous, slowPath);
     {
         CodeGenerator::InitializationScope scope(generator());
@@ -356,11 +394,11 @@ CellPointer CellAllocationEmitter::newArrayFromBuffer(const OperationContext& co
     return join.finish();
 }
 
-std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArrayInFrame(Word32 length, unsigned capacity, LBasicBlock isOnHeap)
+std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArrayInFrame(const OperationContext& context, Word32 length, unsigned capacity, LBasicBlock isOnHeap)
 {
     Integer header = loadMutable64(AOT_INSTANCE_OFFSET(allocation.frameArrayHeader));
     branchUnless(isNotZero(header), isOnHeap);
-    CellPointer array = allocateInFrame(sizeOfFrameArray(capacity));
+    CellPointer array = allocateInFrame(context, sizeOfFrameArray(capacity));
     Pointer butterfly = offsetBy(asPointer(array), sizeOfFrameArray(0));
 
     CodeGenerator::InitializationScope scope(generator());
@@ -379,7 +417,7 @@ CellPointer CellAllocationEmitter::newArrayInFrameFromBuffer(const OperationCont
     LBasicBlock copied = newBlock();
     Join<CellPointer> join(m_out);
     branchUnless(belowOrEqual(count, word32(static_cast<int32_t>(capacity))), isOnHeap);
-    auto [array, butterfly] = allocateArrayInFrame(count, capacity, isOnHeap);
+    auto [array, butterfly] = allocateArrayInFrame(context, count, capacity, isOnHeap);
     copyFromBuffer(count, buffer, butterfly, copyLoop, copyElement, copied);
     join.add(array);
 

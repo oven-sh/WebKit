@@ -9,6 +9,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellAllocationEmitter.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTClosureTestEmitter.h"
 #include "AOTCodeSites.h"
@@ -142,6 +143,7 @@ void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget
     }
 
     didEmitTailCall();
+    emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
     if (fitsInIncomingArea) {
         if (m_records.frame.needsStackCheckForTailCalls && pollsWithoutFrame(inputs(), m_id, target))
             emitter<HintEmitter>().pollWhereNoFrameIsSetUp(context);
@@ -202,6 +204,7 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
 
 void CallEmitter::returnMisfit(Boxed value)
 {
+    emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
     PlacedArguments placed;
     placed.inRegisters.append(B3::ConstrainedValue(value.value(), B3::ValueRep::reg(GPRInfo::returnValueGPR)));
     jumpAfterFrameTeardown(CallTarget::stub(AOT::returnMisfit(), std::nullopt), placed);
@@ -410,6 +413,7 @@ void CallEmitter::returnValues(const TerminatorContext&, std::span<const Operand
     RELEASE_ASSERT(operands.size() == results.size());
     for (size_t i = 0; i < results.size(); ++i)
         RELEASE_ASSERT(operands[i].representation == results[i].representation);
+    emitter<CellAllocationEmitter>().leaveFrameOfCheckedCells();
 
     if (!spillsArgumentRegisters && results.size() <= 1) {
         if (results.empty() || results[0].kind == ArgumentLocation::Kind::None) {

@@ -17,5 +17,5 @@ enum ValidationFailureKind (disable: Text) {
     RemovedFieldNamed("") ReceiverShape("") CallChangedKeptRegister("") UnwindingChangedKeptRegister("") ArrayElementsNotOrdinary("flow:PristineInstances") KeysListed("")
     LegacyRegExpStaticRead("") GuardNoLongerHolds("") BindingReadBeforeStore("") SlotEmpty("") LookupDiffers("") HeapSlotType("") MaskCutKnownValue("")
     FamilyNotClosed("") FunctionCellInFrameGotProperties("") OperationConvertedCell("") OperationWroteHeap("") UnspecifiedValueInspected("") CallCollected("")
-    CallThrew("")
+    CallThrew("") EscapedFrameCell("")
 }

@@ -17,6 +17,7 @@
 #include "AOTCallSiteCache.h"
 #include "AOTCellFormat.h"
 #include "AOTChainDependents.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTCompactTable.h"
 #include "AOTCompileOptions.h"
 #include "AOTCoroutineTable.h"
@@ -1066,6 +1067,8 @@ void VMState::releaseImage(VM& vm)
     pages->willReleaseEverything();
     Instance::destroyAll(vm);
     RELEASE_ASSERT(instances.isEmpty() && instancesToDestroy.isEmpty());
+    if (CheckedFrameCells::isInUse()) [[unlikely]]
+        CheckedFrameCells::willDestroy(vm);
 
     regExpLiterals = nullptr;
     regExpMatchOutput = nullptr;

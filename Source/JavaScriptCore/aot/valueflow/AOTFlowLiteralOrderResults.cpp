@@ -60,6 +60,7 @@ struct LiteralCreation {
     Vector<CopiedObjects, 1> copies;
     LiteralKeyOrders orders;
     bool hasOrdersLeftOut { false };
+    bool hasOrderNobodyKnows { false };
 };
 
 } // anonymous namespace
@@ -332,8 +333,10 @@ struct LiteralOrderSolver {
         const Vector<Field>& fields = program.at(allocation.layout()).fields;
         KeyOrder keysAtAllocation;
         for (uint32_t field : allocation.fields()) {
-            if (!fields[field].key)
+            if (!fields[field].key) {
+                creation.hasOrderNobodyKnows = true;
                 return false;
+            }
             keysAtAllocation.append(fields[field].key);
         }
 
@@ -362,6 +365,7 @@ struct LiteralOrderSolver {
         for (const LiteralPiece& piece : literal.pieces) {
             switch (piece.kind) {
             case PieceKind::DefinesUnknownProperty:
+                creation.hasOrderNobodyKnows = true;
                 return false;
             case PieceKind::DefinesKey:
                 for (size_t index = 0; index < orders.size(); ++index)
@@ -420,6 +424,17 @@ struct LiteralOrderSolver {
         }
     }
 
+    // The definitions of a literal run one after the other, each once, so a literal without a copy has one order: that of its text.
+    bool listsOrderOfEveryObject(LayoutID id) const
+    {
+        if (!layouts[id.index()].createsFieldsOnlyInLiterals || hasOrdersUnread.get(id.index()))
+            return false;
+        return std::ranges::all_of(creationsOfLayout[id.index()], [&](uint32_t index) {
+            const LiteralCreation& creation = creations[index];
+            return creation.copies.isEmpty() && !creation.hasOrdersLeftOut && !creation.hasOrderNobodyKnows;
+        });
+    }
+
     Vector<KeyOrder> sortedOrdersOf(LayoutID id) const
     {
         Vector<const KeyOrder*> listedOrders;
@@ -461,8 +476,11 @@ void computeLiteralKeyOrders(const ValueFlowResultInputs& inputs, ValueFlowHeapV
     LiteralOrderSolver solver { inputs, heap, WTF::move(kindsOfKeys), tables.application->layouts };
     solver.collectCreations();
     solver.solve();
-    for (uint32_t index = 0; index < solver.layouts.size(); ++index)
+    for (uint32_t index = 0; index < solver.layouts.size(); ++index) {
         solver.layouts[index].literalKeyOrders = solver.sortedOrdersOf(LayoutID(index));
+        if (solver.listsOrderOfEveryObject(LayoutID(index)))
+            solver.layouts[index].flow.fieldCreation = FieldCreation::OnlyBeforeObjectIsFinished;
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

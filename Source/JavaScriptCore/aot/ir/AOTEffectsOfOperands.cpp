@@ -204,9 +204,6 @@ Vector<BuiltinName> namesReadFromOperands(const BuiltinTable& table)
         for (const BuiltinParameter& parameter : overload.parameters)
             addNamesOfParameter(parameter);
     }
-
-    AOT::sort(names, { }, &BuiltinName::index);
-    removeRepeatedElements(names);
     return names;
 }
 

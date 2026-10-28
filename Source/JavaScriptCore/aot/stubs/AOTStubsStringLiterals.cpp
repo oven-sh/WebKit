@@ -332,8 +332,10 @@ void generateToLiteralString(StubAssembler& jit)
     JumpList returnsOperand;
     JumpList isNotCached;
 
-    returnsOperand.append(jit.branchIfNotCell(value));
-    returnsOperand.append(jit.branchTest64(CCallHelpers::Zero, value));
+    if (jit.key() == toLiteralString(ComparedOperand::Value)) {
+        returnsOperand.append(jit.branchIfNotCell(value));
+        returnsOperand.append(jit.branchTest64(CCallHelpers::Zero, value));
+    }
     findLiteralStringWord(jit, { .string = value, .impl = impl, .entry = word, .tables = tables, .maxLength = result }, isEmpty, returnsOperand, isNotCached);
     returnResult(jit, word);
 

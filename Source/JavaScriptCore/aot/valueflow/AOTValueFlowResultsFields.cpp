@@ -10,7 +10,6 @@
 
 #include "AOTBuiltinMembers.h"
 #include "AOTClaimsOfFields.h"
-#include "AOTPropertyAccessInternal.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowTypedResults.h"
@@ -1827,26 +1826,6 @@ struct FieldResults {
         return layouts;
     }
 
-    bool assignmentsMeetAccessorOfClass(LayoutID id, PropertyKeyID key) const
-    {
-        if (program.at(id).kind != LayoutKind::Instance || program.at(key).kind != PropertyKeyKind::Text || possibleMutationsOf(id).contains(ObjectMutation::ChangePrototype))
-            return false;
-        LayoutID current = declaredLayoutOf(program, id);
-        for (size_t steps = 0; current && steps < numberOfLayouts; ++steps) {
-            const LayoutFlow& flow = application.layouts[current.index()].flow;
-            const ClassFlow& classFlow = application.layouts[current.index()].classFlow;
-            if (program.at(current).kind != LayoutKind::Instance || !program.at(current).constructor || !classFlow.prototypeNamesAreComplete)
-                return false;
-            DeclaredMember member = findDeclaredMember(classFlow, ClassSide::Prototype, key);
-            if (member.isDeclared() || member.mutability != MemberMutability::Fixed)
-                return member.isAccessor() && member.mutability == MemberMutability::Fixed;
-            if (classFlow.prototypeLink != MemberMutability::Fixed || flow.baseState != BaseState::Layout)
-                return false;
-            current = flow.base;
-        }
-        return false;
-    }
-
     void computeAddedKeys(const KeysByLayout& appendedKeys) const
     {
         BitVector isConstructedByNativeCode = findLayoutsConstructedByNativeCode();
@@ -1869,9 +1848,6 @@ struct FieldResults {
                 };
                 addedKeys = stores.keysStoredIntoKnownObjects(id);
                 addedKeys.removeAllMatching(isField);
-                addedKeys.removeAllMatching([&](PropertyKeyID key) {
-                    return stores.isOnlyAssignedByStatements(id, key) && assignmentsMeetAccessorOfClass(id, key);
-                });
                 // Each evaluation of a class makes its own private names, and a field holds the name of one evaluation. Only a class with a parent defines its names on an object that it did not make.
                 Vector<PropertyKeyID> privateNamesMadeAgain;
                 for (const Field& field : program.layouts[index].fields) {
@@ -1902,9 +1878,14 @@ struct FieldResults {
 
     bool createsOwnFieldsAtConstruction(const BitVector& layoutsOfObjectsWithoutListedOrder, LayoutID id) const
     {
+        return !isBornWithCopies.get(id.index()) && createsOwnFieldsBeforeObjectsAreFinished(layoutsOfObjectsWithoutListedOrder, id);
+    }
+
+    bool createsOwnFieldsBeforeObjectsAreFinished(const BitVector& layoutsOfObjectsWithoutListedOrder, LayoutID id) const
+    {
         const Layout& layout = program.at(id);
         bool hasListedOrders = layout.kind == LayoutKind::Record ? !layoutsOfObjectsWithoutListedOrder.quickGet(id.index()) : layout.kind == LayoutKind::Instance && constructions.createsFieldsOnlyInListedOrders(id);
-        if (!hasListedOrders || possibleMutationsOf(id).contains(ObjectMutation::AddProperty) || !application.layouts[id.index()].appendedFields.isEmpty() || isBornWithCopies.get(id.index()))
+        if (!hasListedOrders || possibleMutationsOf(id).contains(ObjectMutation::AddProperty) || !application.layouts[id.index()].appendedFields.isEmpty())
             return false;
         for (uint32_t index = 0; index < layout.fields.size(); ++index) {
             const Field& field = layout.fields[index];
@@ -1939,6 +1920,10 @@ struct FieldResults {
             });
             if (isCreatedAtConstruction)
                 application.layouts[index].flow.fieldCreation = FieldCreation::OnlyAtConstruction;
+            // `{ port, host: name() }`: the allocation lists nothing and the definitions behind it create the fields, each before anybody else sees the object.
+            LayoutID id(index);
+            application.layouts[index].createsFieldsOnlyInLiterals = program.layouts[index].kind == LayoutKind::Record && hasObjects(id) && isBornWithCopies.get(index) && application.layouts[index].flow.baseState == BaseState::None
+                && build.isEnabled(FlowResultKind::ConstructorFieldOrders, index) && actorsOpenOnObjectsWith(id).isEmpty() && createsOwnFieldsBeforeObjectsAreFinished(layoutsOfObjectsWithoutListedOrder, id);
         });
     }
 

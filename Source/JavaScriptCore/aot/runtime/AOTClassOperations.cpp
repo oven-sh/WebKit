@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinCells.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTClassTable.h"
 #include "AOTClassToken.h"
 #include "AOTClosure.h"
@@ -48,7 +49,7 @@ static const LayoutData& classLayoutAt(const ClassTable& classes, uint32_t class
 // What these operations make on demand stays on the heap and names the function: the prototype object as its constructor, the remembered allocation as its owner.
 static ALWAYS_INLINE void validateFunctionIsNotInFrame(VM& vm, const JSCell* functionCell)
 {
-    if (validatesRuntime(vm)) [[unlikely]]
+    if (validatesRuntime(vm) || CheckedFrameCells::isInUse()) [[unlikely]]
         validateFunctionCellIsNotInFrame(vm, functionCell);
 }
 

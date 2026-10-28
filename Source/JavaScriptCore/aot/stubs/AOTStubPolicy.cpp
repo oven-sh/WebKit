@@ -34,6 +34,7 @@ StubOptions StubOptions::from(const RecordedOptions& recorded, const Typed::Prog
         .hasOneInstance = flow.programInstances() == Typed::ProgramInstances::AtMostOne,
         .callsTrapsOfProxies = flow.mayRunUnseenCode() || !flow.loadsOfMachineCode().empty() || !flow.usesOf(Builtins::Proxy).isEmpty() || !flow.usesOf(Builtins::ProxyRevocable).isEmpty(),
         .validates = recorded.validates,
+        .checksProofs = !recorded.validates && recorded.has(TestingSwitch::CheckProofsAtRunTime),
         .countsAllocations = recorded.countsBranches,
         .isPositionIndependent = recorded.form() == ImageForm::PositionIndependent,
         .layoutSeed = recorded.layoutSeed,

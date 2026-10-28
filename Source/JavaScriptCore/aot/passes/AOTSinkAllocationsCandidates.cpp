@@ -1778,7 +1778,9 @@ const BitVector& AllocationSinking::loadableFieldsOf(VirtualObjectID object)
 
 void AllocationSinking::findWhetherObjectsAreBuiltBeforeBranches()
 {
-    m_buildsSomeObjectBeforeBranches = std::ranges::any_of(m_candidates, &Candidate::isBuiltBeforeBranches);
+    m_buildsSomeObjectBeforeBranches = std::ranges::any_of(m_candidates, [](const Candidate& candidate) {
+        return candidate.isBuiltBeforeBranches || candidate.isBuiltBeforeBranchesOnceCyclic;
+    });
 }
 
 Vector<DescribedObject> AllocationSinking::collectAllocations()

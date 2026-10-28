@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinModules.h"
 #include "AOTBuiltinTableRealm.h"
+#include "AOTCheckedFrameCells.h"
 #include "AOTClosure.h"
 #include "AOTClosureTable.h"
 #include "AOTCompiledCallee.h"
@@ -351,7 +352,7 @@ void FunctionTables::recordCalleeOfCallByValue(VM& vm, const void* stackPointer,
     std::optional<FunctionID> function = functionOf(closure);
     if (!function || !recordsCalleesOf(*function))
         return;
-    if (Thread::currentSingleton().stack().contains(closure))
+    if (Thread::currentSingleton().stack().contains(closure) || CheckedFrameCells::isInRange(closure))
         closure = std::bit_cast<JSObject*>(static_cast<uintptr_t>(sourceFunctionOf(*function).index()) << numberOfMarks | markOfClosureInFrame);
     recordCallee(vm, stackPointer, closure);
 }

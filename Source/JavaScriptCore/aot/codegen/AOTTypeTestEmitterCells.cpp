@@ -360,8 +360,10 @@ Condition TypeTestEmitter::isOneOfLiteralStringWords(LiteralStringWord word, con
     }
     for (StringID literal : plan.stringLiterals) {
         if (inputs().literalStrings.indexOf(literal)) {
-            if (!usesSwitch)
-                result = logicalOr(result, equal(word, conversions.literalStringConstant(literal)));
+            if (!usesSwitch) {
+                std::optional<NarrowReference> narrow = narrowWordBehind(word);
+                result = logicalOr(result, narrow ? equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(literalStringWord(inputs().literalStrings.numberOf(literal)))))) : equal(word, conversions.literalStringConstant(literal)));
+            }
             continue;
         }
         if (inputs().literalStrings.isLeftOut(literal))

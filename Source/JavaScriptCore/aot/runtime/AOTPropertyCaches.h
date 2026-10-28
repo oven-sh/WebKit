@@ -281,17 +281,27 @@ public:
 private:
     using BitPerName = std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64>;
 
+    // Pages of the VM: all zero, and none is touched before something is written to it or read from it.
+    struct Tables {
+        std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
+        BitPerName namesChangedOnChains;
+        BitPerName namesOfObjectPrototypes;
+        std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
+        std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
+    };
+
     VM& m_vm;
     CustomAccessorTable m_customAccessors;
     RowDisplacementTable m_front;
     HashedSlotTable m_hashedTable;
     UncheckedKeyHashMap<UniquedStringImpl*, uint16_t, WTF::PtrHash<UniquedStringImpl*>> m_columnsByNameAddress;
-    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> m_absenceFilters { };
+    Tables& m_tables;
+    std::array<AbsenceFilter, AbsenceFilter::numberOfFilters>& m_absenceFilters { m_tables.absenceFilters };
     uint32_t m_absenceFilterGenerationForStores { 1 };
-    BitPerName m_namesChangedOnChains { };
-    BitPerName m_namesOfObjectPrototypes { };
-    std::array<uint8_t, MissesOfPairs::numberOfCounters> m_missesOfPairs { };
-    std::array<NameOfText, NameOfText::numberOfEntries> m_namesOfTexts { };
+    BitPerName& m_namesChangedOnChains { m_tables.namesChangedOnChains };
+    BitPerName& m_namesOfObjectPrototypes { m_tables.namesOfObjectPrototypes };
+    std::array<uint8_t, MissesOfPairs::numberOfCounters>& m_missesOfPairs { m_tables.missesOfPairs };
+    std::array<NameOfText, NameOfText::numberOfEntries>& m_namesOfTexts { m_tables.namesOfTexts };
     Vector<JSObject*, 2> m_objectsWithUnreportedChange;
     bool m_hasInstance { false };
     bool m_isSharedByInstances { false };

@@ -186,7 +186,7 @@ function f1 name="hasOnly" module=m0 flags=[IsChecked, HasExplicitName] length=4
 # CALLS-LABEL: f1: size=
 # CALLS-NOT: AreEqual
 # CALLS-NOT: LiteralStringToString
-# CALLS: stub ToLiteralString x1
+# CALLS: stub ToLiteralString.OfString x1
 # CALLS-NOT: AreEqual
 # CALLS-NOT: LiteralStringToString
 # CALLS: f{{*}}: size=

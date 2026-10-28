@@ -134,7 +134,7 @@ static void emitEncodeForNarrowColumn(StubAssembler& jit, GPRReg value, GPRReg w
     isCell.link(&jit);
     if (doesNotFit)
         doesNotFit->append(jit.branchTest64(CCallHelpers::NonZero, word, TrustedImm32(MarkedBlock::atomSize - 1)));
-    encodeCell32(jit, word, word);
+    encodeCellOfProgram(jit, word, word);
     isEncoded.link(&jit);
 }
 
@@ -663,7 +663,7 @@ void generateGrowCompactTable(StubAssembler& jit)
     hasIndex.link(&jit);
     jit.getEffectiveAddress(BaseIndex(from, count, CCallHelpers::TimesFour), end);
     emitCopyWords(jit, from, to, end, scratch);
-    encodeCell32(jit, key, scratch);
+    encodeCellOfProgram(jit, key, scratch);
     jit.zeroExtend32ToWord(scratch, scratch);
     jit.store64(scratch, Address(to));
     fillRestOfColumn(CCallHelpers::TimesFour);

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCheckedFrameCells.h"
 #include "AOTClassTable.h"
 #include "AOTClosureTable.h"
 #include "AOTCompiledCall.h"
@@ -58,7 +59,7 @@ const ClassInfo ReifiedSlimClosure::s_info = { "Function"_s, &Base::s_info, null
 
 static ALWAYS_INLINE void validateIsNotInFrame(VM& vm, const JSCell* closure)
 {
-    if (validatesRuntime(vm)) [[unlikely]]
+    if (validatesRuntime(vm) || CheckedFrameCells::isInUse()) [[unlikely]]
         validateFunctionCellIsNotInFrame(vm, closure);
 }
 

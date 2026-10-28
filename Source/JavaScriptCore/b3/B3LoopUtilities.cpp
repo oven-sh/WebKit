@@ -18,8 +18,7 @@ bool canPollBetweenStretches(const Procedure& proc, const Value* value)
 {
     if (!proc.policy().loops.pollsBetweenStretches || !isLoopPoll(value))
         return false;
-    auto* poll = value->as<PatchpointValue>();
-    return poll->turnsAreShort && !poll->throwsWhatIsOwed;
+    return value->as<PatchpointValue>()->turnsAreShort;
 }
 
 Value* appendBoundOfStretch(Procedure& proc, BasicBlock* block, Origin origin, const StretchOfTurns& stretch)

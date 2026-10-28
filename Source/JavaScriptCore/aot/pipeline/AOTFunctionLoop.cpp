@@ -319,7 +319,7 @@ void FunctionQueue::processEach(std::span<const QueuedFunction> functions, std::
         m_speculativeFunctions.append(SpeculativeFunction { function.id, { } });
     }
     AOT::sort(m_speculativeFunctions, { }, &SpeculativeFunction::id);
-    AOT::sort(first, isProcessedLater);
+    parallelSort(m_loops, first.mutableSpan(), isProcessedLater);
 
     ParallelRegionScope parallelRegion;
     m_numberOfSpareThreads.store(m_loops.width() - 1, std::memory_order_relaxed);

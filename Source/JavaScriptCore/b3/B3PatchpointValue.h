@@ -69,8 +69,6 @@ public:
     Effects effects;
 
     bool isLoopPoll { false };
-    // A loop poll that also throws an error which an earlier operation of the loop could not throw by itself. It stays in every version of its loop.
-    bool throwsWhatIsOwed { false };
     // Of a loop poll: nothing on the likely paths of the loop runs other code of the program or goes on for long, so many turns may pass between two polls.
     bool turnsAreShort { false };
     // It generates no code and has no result. It stands where its children must still be alive.

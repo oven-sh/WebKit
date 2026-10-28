@@ -872,6 +872,7 @@ VMPropertyCaches::VMPropertyCaches(VM& vm)
     , m_customAccessors(vm, *vm.aotState().caches)
     , m_front(vm, *vm.aotState().caches, m_customAccessors)
     , m_hashedTable(vm, *vm.aotState().caches, m_customAccessors)
+    , m_tables(*static_cast<Tables*>(vm.aotState().pages->allocate(sizeof(Tables))))
 {
     vm.aotState().caches->add(CacheKind::WeakByKey, "absence filters"_s, *this);
 }
@@ -897,6 +898,7 @@ VMPropertyCaches::~VMPropertyCaches()
         if (entry.uid)
             entry.uid->deref();
     }
+    m_vm.aotState().pages->release(&m_tables, sizeof(Tables));
 }
 
 void VMPropertyCaches::rememberNameOfText(UniquedStringImpl* uid)
@@ -968,7 +970,8 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
 
 size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image& image)
 {
-    return sizeOfRecords(safeCast<uint32_t>(runtimeLimitValue(&image, LimitID::CustomAccessorRecords)))
+    return roundUpToMultipleOf(pageSize(), sizeof(Tables))
+        + sizeOfRecords(safeCast<uint32_t>(runtimeLimitValue(&image, LimitID::CustomAccessorRecords)))
         + RowDisplacementTable::sizeOfPagesAtStart(runtimeLimitValue(&image, LimitID::LookupTableBases))
         + sizeOfReservation(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(&image, LimitID::HashedTableEntries), HashedSlotTable::initialNumberOfEntries, maxAddressableEntries))));
 }

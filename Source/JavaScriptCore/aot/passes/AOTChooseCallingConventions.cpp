@@ -457,6 +457,11 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     uint64_t numberOfBoxedResults = 0;
     auto isEnabledFor = [&](FunctionID id) { return build.isEnabled(PassID::ChooseCallingConventions, findFunctionAsRead(&program, id)); };
     auto locationsOf = [&](FunctionID id) { return computeArgumentLocations(program, program.at(id), tables.conventions[id.index()], tables.registers); };
+    auto locationOfOnlyResult = [&](FunctionID id) {
+        const Function& function = program.at(id);
+        RELEASE_ASSERT(function.results.size() == 1);
+        return singleResultLocation(program, function, tables.conventions[id.index()], entryConventionOf(function));
+    };
     auto returnsNothing = [&](FunctionID id) { return results[id.index()].kind == ArgumentLocation::Kind::None; };
     auto resultOf = [&](FunctionID id) { return results[id.index()].representation; };
 
@@ -531,7 +536,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
     auto box = [&](FunctionID id) {
         if (std::exchange(tables.conventions[id.index()].resultIsBoxed, true))
             return;
-        results[id.index()] = locationsOf(id).results[0];
+        results[id.index()] = locationOfOnlyResult(id);
         ++numberOfBoxedResults;
     };
 
@@ -657,7 +662,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         if (!isEnabledFor(id) && canBoxResult(program.functions[index]))
             tables.conventions[index].resultIsBoxed = true;
         if (recordFactsOf(program, id).numberOfResults == 1)
-            results[index] = locationsOf(id).results[0];
+            results[index] = locationOfOnlyResult(id);
     });
     boxMixedClasses();
     boxTailCallees();

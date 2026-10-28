@@ -1707,9 +1707,17 @@ void ObjectInterpreter::buildBeforeBranch(const Terminator& terminator)
     if (numberOfLiveTargets < 2)
         return;
 
+    auto holdsWhatRefersToIt = [&](const ObjectEntry& entry) {
+        return std::ranges::any_of(entry.state.heldObjects, [&](const HeldObject& held) {
+            return m_state.canReach(held.object, entry.object);
+        });
+    };
     Vector<VirtualObjectID, 4> objects;
     for (const ObjectEntry& entry : m_state.objects) {
-        if (!entry.state.isCell() && m_sinking.at(entry.object).isBuiltBeforeBranches)
+        if (entry.state.isCell())
+            continue;
+        const Candidate& candidate = m_sinking.at(entry.object);
+        if (candidate.isBuiltBeforeBranches || (candidate.isBuiltBeforeBranchesOnceCyclic && holdsWhatRefersToIt(entry)))
             objects.append(entry.object);
     }
     for (VirtualObjectID object : objects)
