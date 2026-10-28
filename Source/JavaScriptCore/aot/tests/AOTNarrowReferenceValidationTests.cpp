@@ -490,6 +490,25 @@ static void testCompressedPointer()
     checkFindsNothing(bare);
 }
 
+// A store of a reference is handed on to a load of it behind a safepoint. The guards put the pointer in the place of the sum, and what chooses between it and the word is a pointer as before.
+static void testCompressedPointerDecodedBehindSafepoint()
+{
+    Graph graph;
+    B3::Value* pointer = graph.loadThrough(graph.object);
+    B3::Value* reference = graph.compress(pointer);
+    graph.store(reference, 40);
+    graph.safepoint();
+    B3::Value* namesCell = graph.binary(B3::Above, reference, graph.int32(10));
+    B3::Value* decoded = graph.block->appendNew<B3::Value>(graph.proc, B3::Select, Graph::originOf(otherOrigin), namesCell, graph.decode(reference), graph.unary(B3::ZExt32, reference));
+    graph.safepoint();
+    graph.keepAlive(decoded);
+    graph.finish();
+
+    checkFindsOne(graph);
+    AOT_TEST_CHECK(graph.insertGuards() == 1);
+    checkFindsNothing(graph);
+}
+
 // What is emitted has no dead code, so a use by a dead value keeps no pointer alive and displaces no reference.
 static void testPointerHeldOnlyByDeadCode()
 {
@@ -851,6 +870,7 @@ std::span<const NativeTest> narrowReferenceValidationTests()
         { "narrow-reference-safepoint-in-inner-loop-and-use-in-outer-loop"_s, testSafepointInInnerLoopAndUseInOuterLoop },
         { "narrow-reference-cycle-with-two-entries"_s, testCycleWithTwoEntries },
         { "narrow-reference-compressed-pointer"_s, testCompressedPointer },
+        { "narrow-reference-compressed-pointer-decoded-behind-safepoint"_s, testCompressedPointerDecodedBehindSafepoint },
         { "narrow-reference-pointer-held-only-by-dead-code"_s, testPointerHeldOnlyByDeadCode },
         { "narrow-reference-displaced-only-by-dead-code"_s, testReferenceDisplacedOnlyByDeadCode },
         { "narrow-reference-in-argument-register"_s, testReferenceInArgumentRegister },

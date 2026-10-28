@@ -370,7 +370,7 @@ void RuntimeValidationEmitter::generateValidateSameValue(const ValueContext& val
         return;
     // A view of a buffer that can be resized has a Structure of its own, which start-up does not mark: the test says no of a view that is pristine.
     const Value& keptOperation = m_function.at(kept);
-    if (keptOperation.opcode == Opcode::IsPristine && m_builtins.typedArrayTypeOf(keptOperation.builtinClass()) != NotTypedArray)
+    if (keptOperation.opcode == Opcode::IsPristine && isTypedArrayTypeIncludingDataView(m_builtins.at(keptOperation.builtinClass()).type))
         return;
     // The test for storage that a store may write says no while another thread holds the lock of the cell. Code relies on its yes alone.
     if (keptOperation.opcode == Opcode::HasArrayStorage && keptOperation.isWritable() && hasArrayStorageForm(keptOperation.arrayStorage()) && get(replacement).is<Condition>()) {

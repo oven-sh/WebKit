@@ -745,6 +745,11 @@ private:
                 m_uses.placesThatMake.append({ constructed, m_weights.heatOf(block) });
             });
         }
+        // A call by value runs the functions that were seen to arrive as its callee as often as a call by name runs its own.
+        if (CalleeSetID callees = opcode == Opcode::Construct || opcode == Opcode::Call ? value.callees() : CalleeSetID()) {
+            for (FunctionID callee : m_program.at(callees).seen().predicted().functions)
+                (m_weights.isInLoop(block).predicted() ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(callee);
+        }
         if (Value::opcodesWithData.contains(opcode))
             scanData(block, value);
         if (opcode == Opcode::GetModuleVariable && m_inputs.zeroEncodingCandidates.quickGet(value.variable().index()))

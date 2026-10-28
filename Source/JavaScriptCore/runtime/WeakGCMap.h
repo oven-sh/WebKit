@@ -63,6 +63,12 @@ public:
         return result;
     }
 
+    // Grows while there is still room for an eighth as many keys as there are buckets. Returns false if there is no memory for that: what room there is stays.
+    bool tryGrowAheadOfNeed()
+    {
+        return m_map.tryReserveCapacityForAdd(std::max(m_map.capacity() / 8, 1u));
+    }
+
     template<typename Functor>
     ValueArg* ensureValue(const KeyType& key, NOESCAPE const Functor& functor)
     {

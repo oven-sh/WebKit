@@ -1975,7 +1975,8 @@ void StoresByLayout::setReceiversOfReads(ListsOfSetsByNumber&& receivers)
     BitVector asks(numberOfLayouts);
     Vector<ValueSetID> objectsOfLayoutsThatAsk;
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
-        if (!getsAccessorsUnderKeysNobodyKnows(LayoutID(index)))
+        bool isLiteralFilledByCopies = m_inputs.program.layouts[index].fields.isEmpty() && getsCopiedProperties(LayoutID(index));
+        if (!getsAccessorsUnderKeysNobodyKnows(LayoutID(index)) && !isLiteralFilledByCopies)
             continue;
         asks.quickSet(index);
         objectsOfLayoutsThatAsk.append(m_layoutsOfObjects.objectsWith(LayoutID(index)));

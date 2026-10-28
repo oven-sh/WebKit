@@ -571,7 +571,8 @@ void AccessRewriter::rewrite(const ElementAccessSite& site, const AccessOperands
 }
 
 // `{ __proto__: null, first: f(), second() { } }`, and `const made = { }; made.first = f(); made.second = g();`.
-static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder& builder, BlockID block, uint32_t allocationIndex)
+// `numberOfStores`: no more stores than that name the object or what finishes it.
+static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder& builder, BlockID block, uint32_t allocationIndex, uint32_t numberOfStores)
 {
     const Program& program = context.program;
     Function& function = context.function;
@@ -595,7 +596,8 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
     std::optional<uint32_t> lastListedStore;
 
     static_assert(OperandIndex::PropDefine::object == OperandIndex::PropSet::object && OperandIndex::PropDefine::object == OperandIndex::SetLiteralPrototype::object && OperandIndex::PropDefine::object == OperandIndex::FinishObject::object);
-    for (uint32_t index = allocationIndex + 1; index < values.size(); ++index) {
+    // Behind the last store nothing is listed: one of thousands of literals in the list that holds them all is named next at the end of the block.
+    for (uint32_t index = allocationIndex + 1; index < values.size() && numberOfStores; ++index) {
         const Value& user = function.at(values[index]);
         unsigned numberOfUses = 0;
         bool isReceiver = false;
@@ -625,6 +627,7 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
         static_assert(accessesToResolve.contains(Opcode::PropDefine) && accessesToResolve.contains(Opcode::PropSet));
         if (!storesListedAtAllocations.contains(user.opcode))
             break;
+        --numberOfStores;
         std::optional<uint32_t> field = layout.findField(user.key());
         if (!field || writtenNames.contains(user.key()))
             break;
@@ -701,10 +704,12 @@ static bool listFirstStoresAtAllocations(FunctionPassContext& context, IRBuilder
     // Only a store in the block of the allocation is listed, and its receiver is the allocation or what finishes it.
     Vector<BlockID, 8> blocksWithStoreIntoNewObject;
     BitVector isStoredInto;
+    Vector<uint32_t> numberOfStoresInto(FillWith { }, function.values.size(), 0u);
     auto addAllocationsBehind = [&](auto& self, ValueID receiver) -> bool {
         const Value& value = function.at(receiver);
         if (value.opcode == Opcode::NewObject) {
             isStoredInto.set(receiver.index());
+            ++numberOfStoresInto[receiver.index()];
             return true;
         }
         if (value.opcode != Opcode::FinishObject)
@@ -730,7 +735,7 @@ static bool listFirstStoresAtAllocations(FunctionPassContext& context, IRBuilder
             ValueID id = function.at(block).values[index];
             const Value& value = function.at(id);
             if (value.opcode == Opcode::NewObject && isStoredInto.get(id.index()) && value.fields().size() == value.numberOfVariadicOperands())
-                didChange |= listFirstStoresAtAllocation(context, builder, block, index);
+                didChange |= listFirstStoresAtAllocation(context, builder, block, index, numberOfStoresInto[id.index()]);
         }
     }
     return didChange;
@@ -815,8 +820,11 @@ static bool isWorthArms(FunctionPassContext& context, BlockID block)
 // An object that this function has made is expected to have the prototype it was made with: where nothing stands between, the test costs no code.
 static bool leavesTestOfPrototypeToStore(FunctionPassContext& context, const Value& access, const PropertyAccessQuery& query, const PropertyAccessPlan& plan)
 {
-    return access.opcode == Opcode::PropSet && plan.form == AccessForm::Slot && plan.stores() && plan.storedValueFits && plan.requiredProofs.contains(Proof::PrototypeLinkUnchanged)
-        && context.inputs.flow.seesOnlyFinishedObjects(query.site) && context.function.at(context.analyses.identityOf(access.objectOperand())).opcode != Opcode::NewObject;
+    if (access.opcode != Opcode::PropSet || plan.form != AccessForm::Slot || !plan.stores() || !plan.storedValueFits || !plan.requiredProofs.contains(Proof::PrototypeLinkUnchanged) || !context.inputs.flow.seesOnlyFinishedObjects(query.site))
+        return false;
+    // So is an object that this function has had made.
+    Opcode maker = context.function.at(context.analyses.identityOf(access.objectOperand())).opcode;
+    return maker != Opcode::NewObject && maker != Opcode::Call && maker != Opcode::CallDirect && maker != Opcode::Construct;
 }
 
 static bool testsPrototypeOfStoreWhereItStands(FunctionPassContext& context, const ValueSite& site, const PropertyAccessQuery& query, const PropertyAccessPlan& plan)

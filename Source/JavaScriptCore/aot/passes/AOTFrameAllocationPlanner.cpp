@@ -994,6 +994,9 @@ void FramePlanner::checkReturnCalls()
                     continue;
                 if (isCandidate(object) && m_decisions[object.index()].madeAgainAt.contains(use))
                     continue;
+                // Whoever borrows a closure gives nothing of it back, and whoever does not is handed the closure of the heap. So what comes out of the call that it was lent to is never the cell in the frame.
+                if (isCandidate(object) && isLent(object) && sameObjectThroughCasts(m_function, operand) != allocationOf(object))
+                    continue;
                 if (isCandidate(object) && calleesEndTheirTailCalls())
                     keepsFrame |= mayBeInFrame(object);
                 else

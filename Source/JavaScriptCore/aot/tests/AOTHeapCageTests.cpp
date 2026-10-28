@@ -40,6 +40,7 @@
 #include <cstring>
 #include <optional>
 #include <wtf/DataLog.h>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
@@ -701,6 +702,75 @@ static void checkCellInFullRangeGrowsIntoSharedReserve()
     void* largest = cage.tryAllocate(MB);
     AOT_TEST_CHECK(largest);
     cage.free(largest);
+}
+
+struct MallocThatRefusesOnRequest : FastMalloc {
+    static void* tryMalloc(size_t size) { return s_refuses ? nullptr : FastMalloc::tryMalloc(size); }
+    static void* tryZeroedMalloc(size_t size) { return s_refuses ? nullptr : FastMalloc::tryZeroedMalloc(size); }
+    static inline bool s_refuses { false };
+};
+
+// A table that was asked to make room for one more key does not grow when the key is added. Where it gets no memory it says so and holds what it held.
+static void checkTableThatFindsNoMemoryToGrowStaysAsItWas()
+{
+    using Map = HashMap<unsigned, unsigned, DefaultHash<unsigned>, HashTraits<unsigned>, HashTraits<unsigned>, WTF::HashTableTraits, WTF::ShouldValidateKey::Yes, MallocThatRefusesOnRequest>;
+    Map map;
+    auto holdsKeysUpTo = [&](unsigned last) {
+        if (map.size() != last)
+            return false;
+        for (unsigned key = 1; key <= last; ++key) {
+            if (map.get(key) != key + 1)
+                return false;
+        }
+        return !map.contains(last + 1);
+    };
+
+    unsigned key = 0;
+    while (key < 5000) {
+        AOT_TEST_CHECK(map.tryReserveCapacityForAdd());
+        unsigned capacity = map.capacity();
+        ++key;
+        map.add(key, key + 1);
+        AOT_TEST_CHECK(map.capacity() == capacity);
+    }
+    AOT_TEST_CHECK(holdsKeysUpTo(key));
+
+    MallocThatRefusesOnRequest::s_refuses = true;
+    unsigned capacity = map.capacity();
+    while (map.tryReserveCapacityForAdd()) {
+        ++key;
+        map.add(key, key + 1);
+        AOT_TEST_CHECK(map.capacity() == capacity);
+    }
+    AOT_TEST_CHECK(key > 5000 && key < capacity);
+    AOT_TEST_CHECK(map.capacity() == capacity);
+    AOT_TEST_CHECK(holdsKeysUpTo(key));
+
+    // Keys that were removed leave buckets that a table of the same size does without: that takes memory too.
+    for (unsigned removed = key; removed > key - 100; --removed)
+        map.remove(removed);
+    key -= 100;
+    AOT_TEST_CHECK(!map.tryReserveCapacityForAdd());
+    AOT_TEST_CHECK(holdsKeysUpTo(key));
+
+    MallocThatRefusesOnRequest::s_refuses = false;
+    AOT_TEST_CHECK(map.tryReserveCapacityForAdd());
+    AOT_TEST_CHECK(map.capacity() == 2 * capacity);
+    AOT_TEST_CHECK(holdsKeysUpTo(key));
+
+    Map empty;
+    MallocThatRefusesOnRequest::s_refuses = true;
+    AOT_TEST_CHECK(!empty.tryReserveCapacityForAdd());
+    AOT_TEST_CHECK(!empty.capacity());
+    MallocThatRefusesOnRequest::s_refuses = false;
+    AOT_TEST_CHECK(empty.tryReserveCapacityForAdd());
+    AOT_TEST_CHECK(empty.capacity());
+
+    AOT_TEST_CHECK(empty.tryReserveCapacityForAdd(3000));
+    capacity = empty.capacity();
+    for (key = 1; key <= 3000; ++key)
+        empty.add(key, key);
+    AOT_TEST_CHECK(empty.capacity() == capacity);
 }
 
 #if USE(MIMALLOC)
@@ -1715,6 +1785,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/no-address-in-the-image-names-a-cell-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkNoAddressInImageNamesCell> },
         { "heap-cage/cage/error-of-another-request-settles-cells-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkErrorOfAnotherRequestAndErrorOwedForCells<true>> },
 #if USE(MIMALLOC)
+        { "heap-cage/tables/a-table-that-finds-no-memory-to-grow-stays-as-it-was"_s, checkTableThatFindsNoMemoryToGrowStaysAsItWas },
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
         { "heap-cage/ballast/requests-that-may-not-fail-look-in-what-the-last-piece-left"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailLookInWhatLastPieceLeft> },
         { "heap-cage/ballast/it-grows-with-the-vms"_s, runInProcessWithSharedRange<checkBallastGrowsWithVMs> },

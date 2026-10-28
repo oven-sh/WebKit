@@ -568,8 +568,6 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
         return integerRepresentationOf(type);
     if (opcode == Opcode::GetMyArgumentByVal)
         return unboxedNumberOrJSValue(type);
-    if (opcode == Opcode::GetStringLength && defaultRepresentationOf(type) == Representation::LiteralString && type.stringLiterals.size() <= maxLiteralsToldApartByLength)
-        return Representation::Unchosen;
     if (isNewArrayElement(user, operandIndex))
         return wantedByNewArrayElement(inputs, operand);
     if (opcode == Opcode::Strcat && !user.isLikelyKey())

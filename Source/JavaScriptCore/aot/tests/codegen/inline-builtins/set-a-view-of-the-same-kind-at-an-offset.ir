@@ -93,7 +93,7 @@ function f1 name="write" module=m0 flags=[IsChecked, HasExplicitName] length=3 t
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Unlikely:#
 # Up to sixteen bytes go through a stub that keeps every register but two. More go through a call that moves bytes, throws nothing and collects nothing.
 # CHECK: Int32 b@{{*}} = BelowEqual(b@[[count]], $16(b@
-# CHECK: Void b@{{*}} = Patchpoint(b@[[to]]:Register({{*}}), b@[[from]]:Register({{*}}), b@[[count]]:Register({{*}}), runsWithoutFrame, resultConstraints = WarmAny, ControlDependent|Writes:{{*}}TypedArrayElements}|Reads:{{*}}TypedArrayElements}
+# CHECK: Void b@{{*}} = Patchpoint(b@[[to]]:Register({{*}}), b@[[from]]:Register({{*}}), b@[[count]]:Register({{*}}), {{*}}resultConstraints = WarmAny, ControlDependent|Writes:{{*}}TypedArrayElements}|Reads:{{*}}TypedArrayElements}
 # CHECK: Void b@{{*}} = Patchpoint(b@[[to]]:Register({{*}}), b@[[from]]:Register({{*}}), b@[[count]]:Register({{*}}), resultConstraints = WarmAny, ControlDependent|Writes:{{*}}TypedArrayElements}|Reads:TypedArrayElements)
 # CHECK-LABEL: end of function
 # X64: instructions: 25, patchpoints: 5, rare instructions: 17

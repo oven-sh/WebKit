@@ -1558,6 +1558,7 @@ struct VariableCarrier : LoopEditor {
         Vector<VariableAccess, 2> stores { };
         Vector<BlockID, 2> blocksOfOtherWrites { };
         Expected<bool> isReadInEveryTurn { false };
+        Expected<bool> isReadInEveryWholeTurn { false };
         bool isWrittenOnLeavingPath { false };
         // Whoever gets to the end of the block ahead of the loop has read the variable or is about to, whichever way the tests turn out.
         bool isReadWheneverLoopIsEntered { false };
@@ -1682,10 +1683,15 @@ struct VariableCarrier : LoopEditor {
             return;
         // The read ahead of the loop stands for the read of the first turn, so the first turn has to get as far: a loop may well end at its first test.
         BitVector runsInFirstTurn(m_function.blocks.size());
+        // The same where the loop does not end at one of its own tests. A loop that ends at once has read the variable for nothing, which costs a load.
+        BitVector runsInFirstWholeTurn(m_function.blocks.size());
+        bool mayHaveEnded = false;
         // A path that is seldom taken does not count above. That a variable has been stored may hang on the very test that such a path begins with.
         std::optional<ProgramPoint> firstWayOut;
         BitVector beginsBeforeAnyWayOut(m_function.blocks.size());
-        for (BlockID block = loop.header(); m_firstTurnRunsHere && !runsInFirstTurn.set(block.index());) {
+        for (BlockID block = loop.header(); m_firstTurnRunsHere && !runsInFirstWholeTurn.set(block.index());) {
+            if (!mayHaveEnded)
+                runsInFirstTurn.set(block.index());
             const BlockValues& values = m_function.at(block).values;
             if (!firstWayOut)
                 beginsBeforeAnyWayOut.set(block.index());
@@ -1694,19 +1700,19 @@ struct VariableCarrier : LoopEditor {
                     firstWayOut = ProgramPoint { block, index };
             }
             BlockID next;
-            bool mayEndHere = false;
+            bool forks = false;
             for (const Target& target : m_function.at(block).terminator.targets) {
                 if (m_stays.get(target.block.index())) {
-                    mayEndHere |= !!next;
+                    forks |= !!next;
                     next = target.block;
                     continue;
                 }
                 if (!firstWayOut)
                     firstWayOut = pointBeforeTerminatorOf(m_function, block);
                 if (!loops.belongsTo(target.block, loop))
-                    mayEndHere |= (m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency).predicted();
+                    mayHaveEnded |= (m_function.at(target.block).frequency <= m_function.at(loop.header()).frequency).predicted();
             }
-            if (mayEndHere || !next)
+            if (forks || !next)
                 break;
             block = next;
         }
@@ -1739,6 +1745,7 @@ struct VariableCarrier : LoopEditor {
             if (ValueID namedBase = memoryAccessOf(m_function, m_function.at(access.id)).base)
                 variable->isReadThroughCastInLoop |= loops.belongsTo(useLists.locationOf(namedBase).block, loop);
             variable->isReadInEveryTurn = variable->isReadInEveryTurn.predicted() || ((!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span()));
+            variable->isReadInEveryWholeTurn = variable->isReadInEveryWholeTurn.predicted() || (runsInFirstWholeTurn.get(access.point.block.index()) && dominatesAll(access.point.block, latches.span()));
             variable->isReadWheneverLoopIsEntered |= isReachedWheneverLoopIsEntered(access);
         }
 
@@ -1794,8 +1801,19 @@ struct VariableCarrier : LoopEditor {
             });
         };
         // HoistLoopInvariantReads moves a read that is all there is to a variable.
+        // A variable that goes around in a register and is still stored in every turn has gained little, and a text that is stored is a text that is made. So behind a test that may end the loop it is carried only where its stores leave the loop as well.
+        std::optional<bool> storesCanLeave;
+        auto isWorthReadingAhead = [&](const CarriedVariable& variable) {
+            if (variable.isReadInEveryTurn.predicted())
+                return true;
+            if (!variable.isReadInEveryWholeTurn.predicted() || variable.stores.isEmpty() || !variable.blocksOfOtherWrites.isEmpty() || variable.isWrittenOnLeavingPath)
+                return false;
+            if (!storesCanLeave)
+                storesCanLeave = leaves.isEmpty() && nothingLooksAtVariablesIn(loop);
+            return *storesCanLeave;
+        };
         m_variables.removeAllMatching([&](const CarriedVariable& variable) {
-            if (variable.isReadThroughCastInLoop || !variable.isReadInEveryTurn.predicted() || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
+            if (variable.isReadThroughCastInLoop || !isWorthReadingAhead(variable) || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
                 return true;
             return variable.stores.isEmpty() && !variable.isWrittenOnLeavingPath && !isReadBy(variable, Opcode::TypeTest) && !isReadBy(variable, Opcode::GetCapture);
         });
@@ -2188,6 +2206,36 @@ struct VariableCarrier : LoopEditor {
         return changed;
     }
 
+    // What throws for lack of memory alone is not held to what the variables hold.
+    Effects effectsOnDelayedStores(ValueID value)
+    {
+        Effects effects = m_analyses.effectsOf(value).onAnyEdge();
+        if (opcodesThrowingOnlyForLackOfMemory.contains(m_function.at(value).opcode) && !effects.mayThrowByRule())
+            effects.mayThrow = false;
+        return effects;
+    }
+
+    bool letsStoresWait(const Effects& effects) const
+    {
+        return (!effects.mayThrow && !effects.mayRunOtherCode()) || m_context.build.isSabotaged(Sabotage::DelayedStoresPassWhatMayThrow);
+    }
+
+    // Nothing leaves the loop but by its edges, and nothing in it runs code.
+    bool nothingLooksAtVariablesIn(const NaturalLoop& loop)
+    {
+        for (unsigned position = 0; position < loop.size(); ++position) {
+            BlockID id = loop.at(position);
+            const Block& block = m_function.at(id);
+            if (block.handler || block.isHandlerBlock() || !letsStoresWait(m_analyses.effectsOfTerminator(id).onAnyEdge()))
+                return false;
+            for (ValueID value : block.values) {
+                if (!letsStoresWait(effectsOnDelayedStores(value)))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     // At the head of a turn the parameter is what the variable should hold, behind a store it is what was stored.
     bool delayStoresIn(const NaturalLoop& loop, std::span<const VariableOfLoop> variables)
     {
@@ -2211,7 +2259,7 @@ struct VariableCarrier : LoopEditor {
             if (block.handler || block.isHandlerBlock())
                 return false;
             auto look = [&](Effects effects) {
-                if ((effects.mayThrow || effects.mayRunOtherCode()) && !m_context.build.isSabotaged(Sabotage::DelayedStoresPassWhatMayThrow))
+                if (!letsStoresWait(effects))
                     return false;
                 for (DelayedVariable& candidate : delayed)
                     candidate.isSeenByOthers |= effects.reads.overlaps(m_program, candidate.variable.location) || effects.writes.overlaps(m_program, candidate.variable.location);
@@ -2232,10 +2280,7 @@ struct VariableCarrier : LoopEditor {
                     stored->stores.append({ id, index });
                     continue;
                 }
-                Effects effects = m_analyses.effectsOf(value).onAnyEdge();
-                if (opcodesThrowingOnlyForLackOfMemory.contains(m_function.at(value).opcode) && !effects.mayThrowByRule())
-                    effects.mayThrow = false;
-                if (!look(effects))
+                if (!look(effectsOnDelayedStores(value)))
                     return false;
             }
             if (!look(m_analyses.effectsOfTerminator(id).onAnyEdge()))

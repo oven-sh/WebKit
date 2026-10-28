@@ -297,6 +297,22 @@ private:
         return isShift(word, B3::ZShr) && pointerSource(word->child(0)) == sourceOfLow32Bits(pointer);
     }
 
+    // The pointer where the word names a cell, and the word where it is one of the constants: what is left of a decoding once the pointer that the word was made from has taken the place of the sum.
+    // An encoding chooses between the same two, and asks the pointer.
+    static bool decodesWordBesideItsPointer(B3::Value* select)
+    {
+        B3::Value* condition = select->child(0);
+        if (condition->numChildren() != 2 || !condition->child(1)->isConstant())
+            return false;
+        B3::Value* asked = sourceOfLow32Bits(condition->child(0));
+        for (unsigned i = 1; i <= 2; ++i) {
+            B3::Value* word = select->child(3 - i);
+            if (isEncodingOf(word, select->child(i)) && asked == sourceOfLow32Bits(word))
+                return true;
+        }
+        return false;
+    }
+
     static B3::Value* wordOf(B3::Value* value, bool* isDisplaced = nullptr)
     {
         for (;;) {
@@ -314,6 +330,8 @@ private:
                 value = value->child(0);
                 continue;
             case B3::Select: {
+                if (decodesWordBesideItsPointer(value))
+                    return value;
                 B3::Value* first = value->child(1);
                 B3::Value* second = value->child(2);
                 if (first->isConstant() || isEncodingOf(second, first))

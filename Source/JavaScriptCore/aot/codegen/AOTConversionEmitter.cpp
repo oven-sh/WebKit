@@ -911,7 +911,7 @@ LiteralStringWord ConversionEmitter::toLiteralString(Operand operand, const Type
         CallOptions options { .pureFunction = pureFunction(PureOperation::ToLiteralString, 0, true) };
         // The stub takes every cell for a string.
         if (type.hasOnlyPrimitives(Primitive::AnyString | markerPrimitives))
-            return LiteralStringWord(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::toLiteralString(type.isAnyString() ? ComparedOperand::String : ComparedOperand::Value), singleElementSpan(operand.value), options).first);
+            return LiteralStringWord(emitter<RuntimeCallEmitter>().callStubWithoutSite(AOT::toLiteralString(), singleElementSpan(operand.value), options).first);
         return LiteralStringWord(callWithoutSite<Boxed>(RuntimeOperation::ToLiteralString, { Boxed(operand.value) }, options).value());
     }
     case Representation::LiteralString:

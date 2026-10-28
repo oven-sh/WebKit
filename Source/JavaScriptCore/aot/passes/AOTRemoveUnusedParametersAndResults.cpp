@@ -14,8 +14,10 @@
 #include "AOTChooseCallingConventions.h"
 #include "AOTEffectSummaries.h"
 #include "AOTFunctionAnalyses.h"
+#include "AOTFlowApply.h"
 #include "AOTFunctionEditing.h"
 #include "AOTIRBuilder.h"
+#include "AOTMethodTableEntrypoints.h"
 #include "AOTParameterUses.h"
 #include "AOTPassRunner.h"
 #include "AOTResolveCallsDirectCall.h"
@@ -665,6 +667,27 @@ struct DirectTailCall {
     FunctionID caller;
 };
 
+// A call through the method table enters the lookup of its selector or one of the entrypoints: they return in one place.
+struct TableFunctions {
+    struct Lookup {
+        FunctionID function;
+        // What flow says at every call under the selector about the result. Whatever the lookup finds and calls, it returns to one of those calls.
+        ReturnedNumbers claimedAtCalls;
+        Vector<FunctionID, 4> entrypoints;
+    };
+
+    Lookup* find(FunctionID lookup)
+    {
+        auto found = std::ranges::lower_bound(lookups, lookup, { }, &Lookup::function);
+        return found != lookups.end() && found->function == lookup ? &*found : nullptr;
+    }
+    const Lookup* find(FunctionID lookup) const { return const_cast<TableFunctions*>(this)->find(lookup); }
+
+    Vector<Lookup> lookups;
+    // By the index of an entrypoint.
+    Vector<FunctionID> lookupOfEntrypoint;
+};
+
 } // anonymous namespace
 
 static Representation representationOfResult(const Program& program, const Function& function)
@@ -672,14 +695,65 @@ static Representation representationOfResult(const Program& program, const Funct
     return entryConventionOf(function) == EntryConvention::Direct ? declaredRepresentationOf(program, function.result()) : Representation::JSValue;
 }
 
+static bool isTableFunction(const Function& function)
+{
+    return function.role == FunctionRole::TableEntrypoint || function.role == FunctionRole::TableLookup;
+}
+
+static TableFunctions collectTableFunctions(const Program& program, BuildContext& build)
+{
+    const ParallelLoops& loops = build.parallelLoops();
+    unsigned count = program.functions.size();
+    using Claim = std::pair<FunctionID, ReturnedNumbers>;
+    Vector<Claim> claims = collectInParallel<Claim>(loops, count, [&](unsigned caller, Vector<Claim>& found) {
+        const Function& function = program.functions[caller];
+        forEachListedValue(program, FunctionID(caller), { Opcode::CallTable }, [&](BlockID block, uint32_t index, ValueID id, const Value& call) {
+            const BlockValues& values = function.at(block).values;
+            const Value* next = index + 1 < values.size() ? &function.at(values[index + 1]) : nullptr;
+            ReturnedNumbers claimed;
+            if (next && next->opcode == Opcode::AssumeType && next->valueOperand() == id && !next->factOperand())
+                claimed.add(program.at(next->provenType()));
+            else
+                claimed.hasOtherValues = true;
+            found.append({ call.function(), claimed });
+        });
+    });
+    TableFunctions tables;
+    if (claims.isEmpty())
+        return tables;
+
+    AOT::sort(claims, [](const Claim& a, const Claim& b) { return a.first < b.first; });
+    for (const Claim& claim : claims) {
+        if (tables.lookups.isEmpty() || tables.lookups.last().function != claim.first)
+            tables.lookups.append({ claim.first, { }, { } });
+        tables.lookups.last().claimedAtCalls.add(claim.second);
+    }
+    struct Selected {
+        MethodSelector selector;
+        FunctionID function;
+    };
+    Vector<Selected> lookupsBySelector = tables.lookups.map([&](const TableFunctions::Lookup& lookup) { return Selected { selectorOfTableFunction(program.at(lookup.function)), lookup.function }; });
+    AOT::sort(lookupsBySelector, [](const Selected& a, const Selected& b) { return a.selector < b.selector; });
+    tables.lookupOfEntrypoint.grow(count);
+    for (uint32_t index : findIndicesInParallel(loops, count, [&](unsigned index) { return program.functions[index].hasBody() && program.functions[index].role == FunctionRole::TableEntrypoint; })) {
+        MethodSelector selector = selectorOfTableFunction(program.functions[index]);
+        auto found = std::ranges::lower_bound(lookupsBySelector, selector, { }, &Selected::selector);
+        if (found == lookupsBySelector.end() || found->selector != selector)
+            continue;
+        tables.lookupOfEntrypoint[index] = found->function;
+        tables.find(found->function)->entrypoints.append(FunctionID(index));
+    }
+    return tables;
+}
+
 // Whoever calls it reads where the result lies from its record.
-static bool mayReturnInAnotherRegister(const Program& program, const Function& function)
+static bool mayReturnInAnotherRegister(const Program& program, const Function& function, const TableFunctions* tables = nullptr)
 {
     if (!function.hasBody() || function.isModuleBody() || function.results.size() != 1 || function.isUnsplitCoroutine() || !function.hasOrdinaryFrame() || function.mayBeCalledByHost())
         return false;
     if (entryConventionOf(function) != EntryConvention::Direct || !program.at(function.result().written()).isJavaScriptValue())
         return false;
-    if (function.role == FunctionRole::TableEntrypoint || function.role == FunctionRole::TableLookup || function.role == FunctionRole::StubBody)
+    if (function.role == FunctionRole::StubBody || (isTableFunction(function) && !tables))
         return false;
     Representation representation = representationOfResult(program, function);
     return representation == Representation::JSValue || isDoubleOrMarker(representation) || isInt64OrMarker(representation);
@@ -708,15 +782,30 @@ static ReturnsOfFunction collectReturnsOf(const Program& program, FunctionID id)
 
 // A result lies where its type puts it, and its type is what the function returns: numbers that are all integers come back as an integer, a number or undefined comes back in a floating-point register.
 // A function that hands on the result of another returns what that one does. A tail call that is a jump stays one: its two ends move together or not at all.
-static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const Program& program, BuildContext& build, std::span<const FunctionID> functions)
+static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const Program& program, BuildContext& build, std::span<const FunctionID> functions, const TableFunctions* tables)
 {
     const ParallelLoops& loops = build.parallelLoops();
     unsigned count = program.functions.size();
     Vector<ReturnsOfFunction> returns = collectInParallel<ReturnsOfFunction>(loops, functions.size(), [&](unsigned index, Vector<ReturnsOfFunction>& found) {
         FunctionID id = functions[index];
-        if (!mayReturnInAnotherRegister(program, program.at(id)) || !build.isEnabled(PassID::ProveResults, findFunctionAsRead(&program, id)))
+        const Function& function = program.at(id);
+        if (!mayReturnInAnotherRegister(program, function, tables) || !build.isEnabled(PassID::ProveResults, findFunctionAsRead(&program, id)))
             return;
-        ReturnsOfFunction returnsOfFunction = collectReturnsOf(program, id);
+        ReturnsOfFunction returnsOfFunction { .function = id };
+        if (function.role == FunctionRole::TableLookup) {
+            const TableFunctions::Lookup* lookup = tables->find(id);
+            if (!lookup)
+                return;
+            returnsOfFunction.values = lookup->claimedAtCalls;
+            returnsOfFunction.handedOn.appendVector(lookup->entrypoints);
+        } else
+            returnsOfFunction = collectReturnsOf(program, id);
+        if (function.role == FunctionRole::TableEntrypoint) {
+            FunctionID lookup = tables->lookupOfEntrypoint[id.index()];
+            if (!lookup)
+                return;
+            returnsOfFunction.handedOn.append(lookup);
+        }
         if (!returnsOfFunction.values.hasOtherValues)
             found.append(WTF::move(returnsOfFunction));
     });
@@ -731,7 +820,8 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
         const Function& function = program.functions[caller];
         forEachBlockEndingWith(program, FunctionID(caller), { TerminatorKind::ReturnCall }, [&](BlockID block) {
             const Value& call = function.at(function.at(block).terminator.callOperand());
-            if (call.opcode == Opcode::CallDirect && call.function().index() != caller && (indexOf[call.function().index()] || indexOf[caller]))
+            // An entrypoint of the table whose method returns an integer where others return a fraction calls it and converts.
+            if (call.opcode == Opcode::CallDirect && call.function().index() != caller && function.role != FunctionRole::TableEntrypoint && (indexOf[call.function().index()] || indexOf[caller]))
                 found.append({ call.function(), FunctionID(caller) });
         });
     });
@@ -803,6 +893,43 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
     return narrowed;
 }
 
+// The program says what the function returns. A way out with something else is the one that the program takes for impossible: what falls out of a switch over every member of an enum.
+static void expectReturnsOfWrittenType(const Program& program, Function& function)
+{
+    const Type& written = program.at(function.result().expected().predicted());
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        const Block& block = function.blocks[index];
+        if (block.terminator.kind != TerminatorKind::Return || block.frequency.predicted() == BlockFrequency::Rare || BlockID(index) == entryBlock)
+            continue;
+        ValueID returned = block.terminator.valueOperand();
+        if (!(returned ? program.typeOf(function, returned) : program.at(TypeTable::undefined)).overlaps(written, program))
+            function.edit(BlockID(index), BlockEdit::Rest).frequency = BlockFrequency::Rare;
+    }
+}
+
+// Every call that enters the lookup is told by flow what comes back, so that holds of what the lookup returns.
+static void assumeTypeOfReturnedValues(const AnalysisContext& context, Function& function, TypeArena& types, TypeID type)
+{
+    IRBuilder builder(context, function, types);
+    for (uint32_t index = function.blocks.size(); index--;) {
+        if (function.blocks[index].terminator.kind == TerminatorKind::ReturnCall)
+            builder.demoteReturnCall(BlockID(index));
+    }
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        BlockID block(index);
+        if (function.at(block).terminator.kind != TerminatorKind::Return)
+            continue;
+        ValueID returned = function.at(block).terminator.valueOperand();
+        RELEASE_ASSERT(returned);
+        builder.setOrigin(function.at(block).terminator.origin());
+        if (context.build.validates())
+            builder.insertBefore(pointBeforeTerminatorOf(function, block), makeValidateType(returned, type));
+        ValueID assumed = builder.insertBefore(pointBeforeTerminatorOf(function, block), makeAssumeType(returned, Proven::byFlow(type, ProofScope::EveryVersion)));
+        function.edit(block, BlockEdit::Terminator).terminator.setValueOperand(assumed);
+    }
+    builder.applyInsertions();
+}
+
 // The arm that made a result uncertain may be gone: a test in front of it was decided. Whoever calls the function then has nothing left to test, and its own result may be certain in turn.
 void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
@@ -817,8 +944,10 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
                 found.append(id);
         });
     };
+    TableFunctions tableFunctions = collectTableFunctions(program, build);
+    const TableFunctions* tables = tableFunctions.lookups.isEmpty() ? nullptr : &tableFunctions;
     auto isCandidateFunction = [&](const Function& function) {
-        return hasResultThatMayBeProven(program, function) || mayReturnInAnotherRegister(program, function);
+        return hasResultThatMayBeProven(program, function) || mayReturnInAnotherRegister(program, function, tables);
     };
     // Establishes what is found and answers whose results have another type now.
     uint64_t numberOfProvenResults = 0;
@@ -827,10 +956,15 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
         editFunctionsInParallel(editor, build, changed.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
             function.results[0].establish(Proven::byEveryArrival(function.results[0].expected()));
         });
-        Vector<std::pair<FunctionID, ReturnedNumbers>> narrowed = findResultsToNarrow(program, build, functions);
+        Vector<std::pair<FunctionID, ReturnedNumbers>> narrowed = findResultsToNarrow(program, build, functions, std::exchange(tables, nullptr));
         Vector<FunctionID> narrowedFunctions = narrowed.map([](auto& entry) { return entry.first; });
-        editFunctionsInParallel(editor, build, narrowedFunctions.span(), [&](unsigned index, FunctionID, Function& function, TaskArenas& arenas) {
-            function.results[0].establish(Proven::byEveryArrival(ExpectedType(arenas.types.intern(narrowed[index].second.type()))));
+        editFunctionsInParallel(editor, build, narrowedFunctions.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
+            TypeID type = arenas.types.intern(narrowed[index].second.type());
+            if (function.results[0].isExpected() && function.results[0].site)
+                expectReturnsOfWrittenType(program, function);
+            function.results[0].establish(Proven::byEveryArrival(ExpectedType(type)));
+            if (function.role == FunctionRole::TableLookup)
+                assumeTypeOfReturnedValues(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, function, arenas.types, type);
         });
         for (FunctionID id : narrowedFunctions) {
             if (!changed.contains(id))
@@ -860,6 +994,7 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
                 found.append({ callee, caller });
         };
         forEachDirectCall(program, caller, [&](BlockID, ValueID, FunctionID callee) { append(callee); });
+        forEachListedValue(program, caller, { Opcode::CallTable }, [&](BlockID, uint32_t, ValueID, const Value& call) { append(call.function()); });
         forEachListedValue(program, caller, { Opcode::Call }, [&](BlockID, uint32_t, ValueID, const Value& call) {
             append(onlyCalleeOf(program, program.typeOf(function, call.operand(OperandIndex::Call::callee))));
         });

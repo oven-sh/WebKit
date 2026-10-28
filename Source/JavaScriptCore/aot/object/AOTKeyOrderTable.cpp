@@ -443,6 +443,7 @@ KeyOrderTable::KeyOrderTable(State& state)
     instance.objects.keyOrderTransitionMask = initialTransitionTableSize - 1;
     instance.objects.keyOrderRuns = static_cast<KeyOrderRun*>(state.pages.allocate(numberOfKeyOrderRuns * sizeof(KeyOrderRun)));
     instance.objects.enumerators = state.tableArena.allocate<EnumeratorCacheEntry>(numberOfCachedEnumerators);
+    instance.objects.keyOrderEntries = static_cast<KeyOrderEntriesCacheEntry*>(state.pages.allocate(numberOfCachedKeyOrderEntries * sizeof(KeyOrderEntriesCacheEntry)));
     state.caches->add(CacheKind::StrongRoots, "key lists"_s, *this);
     state.caches->addClearedEachCollection("published enumerators"_s, asWritableBytes(std::span { instance.objects.enumerators, numberOfCachedEnumerators }));
     state.caches->addClearedEachCollection("places of positioned keys"_s, asWritableBytes(std::span { m_placesOfPositionedKeys }));
@@ -456,6 +457,25 @@ std::span<const uint16_t> KeyOrderTable::entriesInOrder(const LayoutData& layout
     if (order < layout.numberOfOrders)
         return m_tables.keyOrder(layout, order).entries();
     return m_storage->entriesOf(layout, m_storage->ordersOf(layout), order);
+}
+
+const uint16_t* KeyOrderTable::publishEntriesOfFields(const LayoutData& layout, uint32_t orderWord)
+{
+    static constexpr uint16_t entriesOfNoKey[1] { };
+    auto findEntries = [&]() -> const uint16_t* {
+        if (orderWord & (orderWordHasFieldOutsideSlot | orderWordHasExtraProperties) || isOrderStoredOutOfLine(orderWord) || layout.keysAreNeverEnumerated)
+            return nullptr;
+        std::span<const uint16_t> entries = entriesInOrder(layout, orderOf(orderWord)).first(countOf(orderWord));
+        for (uint16_t index : entries) {
+            if (index >= layout.numberOfFields)
+                return nullptr;
+        }
+        return entries.empty() ? entriesOfNoKey : entries.data();
+    };
+    const uint16_t* entries = findEntries();
+    uint32_t shapeWord = shapeWordOf(layout.shape);
+    m_state.instance.objects.keyOrderEntries[indexOfKeyOrderEntries(shapeWord, orderWord)] = { orderWord, shapeWord, entries };
+    return entries;
 }
 
 std::optional<std::span<const FieldAsProperty>> KeyOrderTable::propertiesInOrder(VM& vm, const LayoutData& layout, uint32_t orderWord, Object::SymbolKeys symbolKeys)

@@ -134,6 +134,7 @@ public:
     bool isEmpty() const;
 
     void reserveInitialCapacity(unsigned keyCount) { m_impl.reserveInitialCapacity(keyCount); }
+    bool tryReserveCapacityForAdd(unsigned numberOfKeys = 1) { return m_impl.tryReserveCapacityForAdd(numberOfKeys); }
 
     // iterators iterate over pairs of keys and values
     iterator begin() LIFETIME_BOUND;

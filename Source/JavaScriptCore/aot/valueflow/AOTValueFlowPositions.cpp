@@ -848,6 +848,10 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, Valu
             followed = maker().unite(followed, m_inputs.solver().closuresFollowedToConstruction(calleeOfConstruction->node));
         if (m_inputs.sets().size(followed) <= m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
             listed = maker().unite(listed, maker().intersect(arriving, followed));
+        // A class that has gone out of sight and was followed to the construction is one of those that it enters.
+        AOT_THRESHOLD(size_t, mostClassesFollowedToConstruction, 4);
+        if (ValueSetID classes = maker().intersect(arriving, universe.constructorsWithLayouts()); m_inputs.sets().size(classes) <= mostClassesFollowedToConstruction)
+            listed = maker().unite(listed, classes);
     }
 
     Vector<FunctionID> functions;

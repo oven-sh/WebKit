@@ -547,10 +547,10 @@ bool MarkedBlockCage::releaseReserve()
 
 bool MarkedBlockCage::hasHeapThatReleasedReserve() const
 {
-    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Storage });
+    return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Storage, ExhaustedHeap::Tables });
 }
 
-bool MarkedBlockCage::tryKeepReleasedReservesAgain()
+bool MarkedBlockCage::tryKeepReleasedReservesAgain(VM& vm)
 {
     if (!hasHeapThatReleasedReserve())
         return false;
@@ -563,6 +563,11 @@ bool MarkedBlockCage::tryKeepReleasedReservesAgain()
         if (!tryKeepBallastAgain())
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Storage);
+    }
+    if (m_exhaustedHeaps.contains(ExhaustedHeap::Tables)) {
+        if (!vm.symbolImplToSymbolMap.tryGrowAheadOfNeed())
+            return false;
+        m_exhaustedHeaps.remove(ExhaustedHeap::Tables);
     }
     if (m_hasReleasedReserve && !tryKeepOwnReleasedReserveAgain())
         return false;
@@ -608,7 +613,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
     vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
-    if (!tryKeepReleasedReservesAgain())
+    if (!tryKeepReleasedReservesAgain(vm))
         return false;
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
@@ -626,7 +631,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     if (!vm.traps().needsOutOfMemoryError())
         return false;
     if (hasHeapThatReleasedReserve()) {
-        if (!tryKeepReleasedReservesAgain())
+        if (!tryKeepReleasedReservesAgain(vm))
             return false;
     } else {
         // How much the program can allocate now says whether this collection was barren too.
@@ -774,7 +779,7 @@ void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
     // A range that grows takes its room from where storage takes it.
-    if (!m_exhaustedHeaps.contains(ExhaustedHeap::Storage) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
+    if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Storage, ExhaustedHeap::Tables }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
     didThrowOutOfMemoryError();
     vm.traps().setNeedsOutOfMemoryError(false);
@@ -858,6 +863,18 @@ void MarkedBlockCage::didUseAddressSpaceBallast(VM& vm)
         willUseLastReserve(vm);
     MarkedBlockCage& cage = vm.heap.cage();
     cage.addExhaustedHeap(ExhaustedHeap::Storage);
+    cage.didFindNoRoomWhereNothingCollects();
+    vm.traps().setNeedsOutOfMemoryError(true);
+}
+
+void MarkedBlockCage::willAddSymbol(VM& vm)
+{
+    if (!s_isGrowable || vm.symbolImplToSymbolMap.tryGrowAheadOfNeed()) [[likely]]
+        return;
+    if (vm.traps().needsOutOfMemoryError())
+        return;
+    MarkedBlockCage& cage = vm.heap.cage();
+    cage.addExhaustedHeap(ExhaustedHeap::Tables);
     cage.didFindNoRoomWhereNothingCollects();
     vm.traps().setNeedsOutOfMemoryError(true);
 }

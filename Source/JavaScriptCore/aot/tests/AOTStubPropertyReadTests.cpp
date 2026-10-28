@@ -819,6 +819,12 @@ static void testTypedArrayLengths()
     }
     for (TypedArrayMode mode : { GrowableSharedWastefulTypedArray, GrowableSharedAutoLengthWastefulTypedArray, ResizableNonSharedWastefulTypedArray, ResizableNonSharedAutoLengthWastefulTypedArray })
         AOT_TEST_CHECK(isLeftToOperation(mode, 7));
+
+    reads.file(Slot::createWithoutPayload(std::bit_cast<StructureID>(PropertyReads::structureID), Slot::Kind::TypedArrayLength, Slot::readsByteOffset));
+    view.at<uint64_t>(JSArrayBufferView::offsetOfByteOffset()) = 24;
+    StubRun run = readLength(WastefulTypedArray, 7);
+    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(24)));
+    AOT_TEST_CHECK(isLeftToOperation(ResizableNonSharedWastefulTypedArray, 7));
 }
 
 namespace {

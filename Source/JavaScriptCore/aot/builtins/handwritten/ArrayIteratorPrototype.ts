@@ -1,3 +1,4 @@
+$visibility = "Private";
 export function next() {
     "use strict";
 

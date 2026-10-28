@@ -1,0 +1,49 @@
+# function write(meta) { meta.sign = "again"; return JSON.stringify(meta) }
+# report(write({ sign: "own" }));  report(write(Object.defineProperty({}, "sign", { get() { return "one" }, set(value) { }, enumerable: true })))
+# The member of the second object is an accessor: its slot holds a function, and what is written is what the getter answers.
+# FORM: AsRead
+# RUN: run-in-shell globalThis.report = text => { print(text); };
+# CHECK: {"sign":"again"}
+# CHECK-NEXT: {"sign":"one"}
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Plain" fields=[{key="sign" declared={type=anything}}]
+layout L1 name="Defined"
+layout L2 name="Descriptor" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}, {key="enumerable" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="report" [isFreeName]
+    v3 = String string="own"
+    v4 = NewObject -, v3 layout=L0 fields=[0]
+    v5 = Call v0, -, v4
+    v6 = Call v2, -, v5
+    v7 = NewObject layout=L1
+    v8 = FinishObject v7
+    v9 = String string="sign"
+    v10 = NewClosure function=f2
+    v11 = NewClosure function=f3
+    v12 = Boolean boolean=true
+    v13 = NewObject -, v10, v11, v12 layout=L2 fields=[0, 1, 2]
+    v14 = Builtin builtin=ObjectDefineProperty
+    v15 = Call v14, -, v8, v9, v13
+    v16 = Call v0, -, v15
+    v17 = Call v2, -, v16
+    Return
+}
+function f1 name="write" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = String string="again"
+    PropSet v0, v1 key="sign" mode=Strict
+    v3 = Builtin builtin=JSONStringify
+    v4 = Call v3, -, v0
+    Return v4
+}
+function f2 name="get" kind=Method results=[{type=anything}] {
+    v0 = String string="one"
+    Return v0
+}
+function f3 name="set" kind=Method parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

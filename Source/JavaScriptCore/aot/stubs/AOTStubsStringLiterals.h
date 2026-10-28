@@ -32,14 +32,14 @@ constexpr StubKey equalsLiteralOfLength(ComparedOperand operand, unsigned length
 // ToNumber of the literal is NaN, so no number, boolean or BigInt is loosely equal to it. The stub does not test that.
 constexpr StubKey looseEqualsLiteral() { return StubKey(StubFamily::LooseEqualsLiteral); }
 constexpr StubKey literalStringToString() { return StubKey(StubFamily::LiteralStringToString); }
-// The operand is a string cell or, unless the caller knows better, no cell. The stub does not test the type of a cell.
-constexpr StubKey toLiteralString(ComparedOperand operand) { return StubKey(StubFamily::ToLiteralString).withForm(operand == ComparedOperand::String); }
+// The operand is a string cell or no cell. The stub does not test the type of a cell.
+constexpr StubKey toLiteralString() { return StubKey(StubFamily::ToLiteralString); }
 constexpr StubKey shortStringOfValue() { return StubKey(StubFamily::ShortStringOfValue); }
 
 static_assert(bodyOf(equalsLiteral(ComparedOperand::Value)) == equalsLiteral(ComparedOperand::String));
 static_assert(bodyOf(equalsLiteralOfLength(ComparedOperand::Value, 1)) == equalsLiteralOfLength(ComparedOperand::String, 1));
 static_assert(exists(equalsLiteralOfLength(ComparedOperand::String, 0)) && exists(equalsLiteralOfLength(ComparedOperand::String, 8)) && !exists(equalsLiteralOfLength(ComparedOperand::String, 9)));
-static_assert(exists(looseEqualsLiteral()) && exists(literalStringToString()) && exists(toLiteralString(ComparedOperand::Value)) && exists(toLiteralString(ComparedOperand::String)) && exists(shortStringOfValue()));
+static_assert(exists(looseEqualsLiteral()) && exists(literalStringToString()) && exists(toLiteralString()) && exists(shortStringOfValue()));
 
 } } // namespace JSC::AOT
 

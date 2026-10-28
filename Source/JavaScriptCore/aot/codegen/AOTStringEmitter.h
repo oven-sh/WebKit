@@ -83,7 +83,6 @@ public:
     String textOf(StringID) const;
 
     Word32 lengthOf(ValueID string);
-    Word32 lengthOf(LiteralStringWord, const Type&);
     Word32 lengthOf(CellPointer string);
     CharacterView viewOf(const OperationContext&, ValueID string);
     CharacterView viewOfFlatString(CellPointer flat);

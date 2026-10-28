@@ -14,6 +14,7 @@
 #include "AOTSort.h"
 #include "AOTThreads.h"
 #include <wtf/Deque.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -121,8 +122,9 @@ static void collectLiteralsOf(const ValueFlowResultInputs& inputs, FunctionID id
     forEachOperation([&](ValueID value, const Value& operation) {
         if (!literalPieceOperations.contains(operation.opcode))
             return;
-        auto literal = std::ranges::find(literalsOfFunction, operation.operand(literalOperandOfPiece), &Literal::allocation);
-        if (literal != literalsOfFunction.end())
+        ValueID allocation = operation.operand(literalOperandOfPiece);
+        auto literal = std::ranges::lower_bound(literalsOfFunction, allocation, { }, &Literal::allocation);
+        if (literal != literalsOfFunction.end() && literal->allocation == allocation)
             literal->pieces.append(describePiece(value, operation));
     });
 }
@@ -336,17 +338,38 @@ struct LiteralOrderSolver {
         }
 
         LiteralKeyOrders orders { WTF::move(keysAtAllocation) };
+        // The keys of an order of many keys, by the index of the order: a literal may define thousands. Empty: not listed yet.
+        using KeySet = UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+        constexpr size_t mostKeysSearchedOneByOne = 16;
+        Vector<KeySet, 2> keysOfLongOrders;
+        auto define = [&](size_t index, PropertyKeyID key) {
+            KeyOrder& order = orders[index];
+            if (order.size() <= mostKeysSearchedOneByOne) {
+                appendIfAbsent(order, key);
+                return;
+            }
+            if (keysOfLongOrders.size() <= index)
+                keysOfLongOrders.grow(index + 1);
+            KeySet& keys = keysOfLongOrders[index];
+            if (keys.isEmpty()) {
+                for (PropertyKeyID listed : order)
+                    keys.add(listed.index());
+            }
+            if (keys.add(key.index()).isNewEntry)
+                order.append(key);
+        };
         size_t nextCopy = 0;
         for (const LiteralPiece& piece : literal.pieces) {
             switch (piece.kind) {
             case PieceKind::DefinesUnknownProperty:
                 return false;
             case PieceKind::DefinesKey:
-                for (KeyOrder& order : orders)
-                    appendIfAbsent(order, piece.key);
+                for (size_t index = 0; index < orders.size(); ++index)
+                    define(index, piece.key);
                 break;
             case PieceKind::CopiesProperties:
                 orders = copyInto(orders, creation.copies[nextCopy++], function.at(piece.operation));
+                keysOfLongOrders.clear();
                 break;
             }
             if (orders.size() > maxOrders) {

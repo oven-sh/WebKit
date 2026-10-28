@@ -2487,6 +2487,20 @@ static bool handsObjectToFrequentCode(FunctionPassContext& context, ValueID call
     return false;
 }
 
+// The wrapper reads the parts of the object and hands them to the body. Where the caller has just made the object, the copy takes less code than the allocation that goes, however seldom it runs.
+static bool takesNewObjectApart(FunctionPassContext& context, ValueID call)
+{
+    const Function& caller = context.function;
+    const Function& callee = context.program.at(caller.at(call).function());
+    if (callee.creator.kind() != CreatorRecord::Kind::ParameterWrapper)
+        return false;
+    uint32_t operandIndex = callee.firstParameterIndex() + callee.creator.as<CreatorRecord::ParameterWrapper>().parameter;
+    if (operandIndex >= caller.at(call).numberOfOperands())
+        return false;
+    ValueID object = caller.at(call).operand(operandIndex);
+    return object && interpretedOf(caller.at(sameObjectThroughCasts(caller, object).valueInFrontOfFacts()).opcode) == Interpretation::Allocation;
+}
+
 static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t firstFrame)
 {
     const Function& caller = context.function;
@@ -2502,7 +2516,7 @@ static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t
             ValueID id = block.values[index];
             const Value& value = caller.at(id);
             bool isCandidate = value.opcode == Opcode::CallDirect && !value.isNeverInlined() && !value.isAfterInlinedHead();
-            if (value.inlineFrame >= firstFrame && isCandidate && (!isRare || handsObjectToFrequentCode(context, id)))
+            if (value.inlineFrame >= firstFrame && isCandidate && (!isRare || handsObjectToFrequentCode(context, id) || takesNewObjectApart(context, id)))
                 sites.append(InlineSite { .block = blockID, .index = index, .call = id });
         }
     }
@@ -2535,7 +2549,7 @@ static Vector<InlineSite> findInlineSites(FunctionPassContext& context, uint32_t
 
     const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
     sites.removeAllMatching([&](const InlineSite& site) {
-        return frequencies.classOf(site.block).predicted() == BlockFrequency::Rare && !handsObjectToFrequentCode(context, site.call);
+        return frequencies.classOf(site.block).predicted() == BlockFrequency::Rare && !handsObjectToFrequentCode(context, site.call) && !takesNewObjectApart(context, site.call);
     });
     return sites;
 }

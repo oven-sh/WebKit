@@ -350,15 +350,13 @@ function f25 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK: Int32 b@[[entry]] = Load(b@{{*}}, {{*}}Reads:AOTInstance_mutableFields, {{*}}:CallTable)
 # CHECK: Int64 b@[[base]] = Load(b@{{*}}, {{*}}Reads:AOTInstance_fixedFields, {{*}}:CallTable)
 # CHECK: Int64 b@[[address]] = Add(b@[[base]],
-# CHECK-NEXT: Int64 b@[[result]] = Patchpoint(b@[[shape]]:Register({{*}}), b@[[address]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:CallTable)
-# The number comes back as any value and is unboxed: an integer is converted, a double has its bits moved.
-# CHECK: Int32 b@[[isInteger]] = AboveEqual(b@[[result]],
-# CHECK-NEXT: Branch(b@[[isInteger]], Terminal,
-# CHECK: IToD(
-# CHECK: Double b@[[area]] = Phi(
+# Every method of the name returns a number, and flow says at the call that a number comes back: it comes back as a double in a register, whichever entry of the table is entered.
+# CHECK-NEXT: Double b@[[area]] = Patchpoint(b@[[shape]]:Register({{*}}), b@[[address]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:CallTable)
+# CHECK-NOT: Branch(
+# CHECK-NOT: IToD(
+# CHECK-NOT: BitwiseCast(
 # CHECK: Double b@[[sum]] = Add(b@[[area]],
 # CHECK-NEXT: Return(b@[[sum]], Terminal)
-# CHECK: BitwiseCast(
 # CHECK-LABEL: end of function
 # Nothing compares the shape word, reads a prototype or looks the name up.
 # NONE-LABEL: name="areaOf" role=Source
@@ -367,5 +365,5 @@ function f25 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # NONE-NOT: :CallDirect)
 # NONE-NOT: :PropGet)
 # NONE-LABEL: end of function
-# X64: instructions: 13, patchpoints: 1
-# ARM64: instructions: 17, patchpoints: 1
+# X64: instructions: 7, patchpoints: 1
+# ARM64: instructions: 11, patchpoints: 1

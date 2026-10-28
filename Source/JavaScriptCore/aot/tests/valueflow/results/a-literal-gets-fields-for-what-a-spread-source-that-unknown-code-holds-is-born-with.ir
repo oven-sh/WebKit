@@ -3,9 +3,9 @@
 # function copyAlone(from) { return { ...from } } has no member of its own and gets none.
 # function copyEither(from) { return { z: 1.5, ...from } }   copyEither(source); copyEither({ a: 1.5, c: 1.5 }); copyEither(unknown()): only what both are born with.
 # RUN: valueflow-apply
-# CHECK: layout L1 name="Copy" fields=[{key="z" {{*}}}, {key="a" declared={type=anything} flags=[IsAddedLate{{*}}] flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=anything} flags=[IsAddedLate{{*}}] flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1
+# CHECK: layout L1 name="Copy" fields=[{key="z" {{*}}}, {key="a" declared={type=anything} flags=[IsAddedLate{{*}}] flow={location={writers=AllKnown} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}, {key="b" declared={type=anything} flags=[IsAddedLate{{*}}] flow={location={writers=AllKnown} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1
 # CHECK: layout L2 name="CopyAlone" flow=
-# CHECK: layout L4 name="CopyOfEither" fields=[{key="z" {{*}}}, {key="a" declared={type=anything} flags=[IsAddedLate{{*}}] flow={location={writers=AllKnown} stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1
+# CHECK: layout L4 name="CopyOfEither" fields=[{key="z" {{*}}}, {key="a" declared={type=anything} flags=[IsAddedLate{{*}}] flow={location={writers=AllKnown} prototypeName=AbsentOnPrototypes stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}] ownFieldCount=1
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

@@ -359,6 +359,13 @@ BuiltinClassID builtinBaseClassOf(const Program& program, LayoutID id)
     return current ? builtinBaseClassOfLongRow(program, current) : BuiltinClassID();
 }
 
+// The constructor asks for the Structure of what it makes before it runs any code of the program.
+static bool asksForStructureFirst(const BuiltinTable& builtins, BuiltinClassID builtinClass)
+{
+    return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::WeakMap || builtinClass == BuiltinClasses::WeakSet
+        || builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Error);
+}
+
 void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops& loops)
 {
     const BuiltinTable& builtins = program.builtins();
@@ -378,7 +385,7 @@ void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops
                 return;
             BuiltinID constructor = builtins.canonicalID(named);
             BuiltinClassID instanceClass = builtins.at(constructor).instanceClass;
-            if (instanceClass && builtins.at(instanceClass).constructor && builtins.canonicalID(builtins.at(instanceClass).constructor) == constructor)
+            if (instanceClass && asksForStructureFirst(builtins, instanceClass) && builtins.at(instanceClass).constructor && builtins.canonicalID(builtins.at(instanceClass).constructor) == constructor)
                 found.append({ definition.layout(), instanceClass });
         });
     });
@@ -394,13 +401,6 @@ void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops
             highest = program.at(highest).base;
         layout.writtenBuiltinBase = program.at(highest).writtenBuiltinBase;
     }
-}
-
-// The constructor asks for the Structure of what it makes before it runs any code of the program.
-static bool asksForStructureFirst(const BuiltinTable& builtins, BuiltinClassID builtinClass)
-{
-    return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::WeakMap || builtinClass == BuiltinClasses::WeakSet
-        || builtinClass == BuiltinClasses::Array || builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Error);
 }
 
 bool isBornWithProperties(const Program& program, LayoutID id, BuiltinClassID builtinBase)

@@ -73,6 +73,7 @@ struct PropertyAnswer {
     bool absentIsUndefined { false };
     bool emptySlotMayBeUndefined { false };
     bool undefinedNeedsNoStorage { false };
+    bool readsByteOffset { false };
     std::optional<std::pair<uint32_t, uint32_t>> orderWords { };
     bool didFlatten { false };
     PropertyOffset offset { invalidOffset };

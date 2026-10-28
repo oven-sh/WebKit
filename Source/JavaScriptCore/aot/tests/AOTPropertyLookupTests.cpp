@@ -353,7 +353,14 @@ static void testLengthOfTypedArrays(LoadedProgram& program)
         AOT_TEST_CHECK_FOR_SOURCE(readAndClassify(program, realms.object(program.realm(), source), vm.propertyNames->byteLength).kind == PropertyAnswerKind::TypedArrayLength, source);
     for (ASCIILiteral source : { "new Uint16Array(4)"_s, "new Float64Array(4)"_s, "new DataView(new ArrayBuffer(8))"_s, "new (class extends Uint8Array { get byteLength() { return 1; } })(4)"_s })
         AOT_TEST_CHECK_FOR_SOURCE(readAndClassify(program, realms.object(program.realm(), source), vm.propertyNames->byteLength).kind == PropertyAnswerKind::Accessor, source);
-    AOT_TEST_CHECK(readAndClassify(program, realms.object(program.realm(), "new Uint8Array(4)"_s), vm.propertyNames->byteOffset).kind == PropertyAnswerKind::Accessor);
+    for (ASCIILiteral source : { "new Uint8Array(4)"_s, "new Float64Array(new ArrayBuffer(32), 8, 2)"_s }) {
+        JSObject* view = realms.object(program.realm(), source);
+        PropertyAnswer answer = readAndClassify(program, view, vm.propertyNames->byteOffset);
+        AOT_TEST_CHECK_FOR_SOURCE(answer.kind == PropertyAnswerKind::TypedArrayLength && answer.readsByteOffset, source);
+        AOT_TEST_CHECK_FOR_SOURCE(slotFor(answer, view->structure()).flags == (Slot::needsHandler | Slot::readsByteOffset), source);
+    }
+    for (ASCIILiteral source : { "new DataView(new ArrayBuffer(8))"_s, "new (class extends Uint8Array { get byteOffset() { return 1; } })(4)"_s })
+        AOT_TEST_CHECK_FOR_SOURCE(readAndClassify(program, realms.object(program.realm(), source), vm.propertyNames->byteOffset).kind != PropertyAnswerKind::TypedArrayLength, source);
 }
 
 static JSString* createKeyWithoutAtom(VM& vm)

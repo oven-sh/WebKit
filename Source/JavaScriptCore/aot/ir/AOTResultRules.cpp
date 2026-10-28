@@ -409,6 +409,10 @@ Type typeOfConvert(const TypingContext& context, const Type& source, const Type&
         return narrowed.isNever() ? proven.castTo(expected, types) : narrowed;
     }
 
+    // A request that resolves to nothing gives way to its operand, so it has the type of its operand: also the functions that are listed beside any function, which a cast would drop.
+    if (source.anyFunction && !source.functions.isEmpty() && resolveConvert(context, proven, declared).cast == CastResolution::Nothing)
+        return source;
+
     TypeID target = targetOfConvert(context, declared);
     TypeID testable = testablePartOf(context, target);
     if (testable != target && proven.isSubsetOf(types.at(target), context.program))
