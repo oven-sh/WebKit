@@ -2699,6 +2699,10 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
     auto scope = DECLARE_THROW_SCOPE(vm);
     size_t lastGoodPosition = 0;
 
+    // parseRecursively() holds a transition that it took from JSONCache as a StructureID, which the conservative scan
+    // does not see, across a collection. JSONCache marks its transitions only while a parse runs.
+    JSONCache::ParsingScope parsingScope(m_jsonCache);
+
     m_lexer.next();
 
     while (true) {
