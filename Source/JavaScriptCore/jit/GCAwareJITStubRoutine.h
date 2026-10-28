@@ -198,6 +198,7 @@ public:
     GCAwareJITStubRoutineWithExceptionHandler(const MacroAssemblerCodeRef<JITStubRoutinePtrTag>&, VM&, FixedVector<Ref<AccessCase>>&&, FixedVector<StructureID>&&, JSCell* owner, const Vector<JSCell*>&, Vector<std::unique_ptr<OptimizingCallLinkInfo>, 16>&&, CodeBlock*, DisposableCallSiteIndex, bool isCodeImmutable);
     ~GCAwareJITStubRoutineWithExceptionHandler();
 
+    void removeExceptionHandler();
 
 private:
     void aboutToDieImpl()
@@ -207,8 +208,6 @@ private:
         m_codeOriginPool = nullptr;
 #endif
     }
-
-    void observeZeroRefCountImpl();
 
     CodeBlock* m_codeBlockWithExceptionHandler;
 #if ENABLE(DFG_JIT)
