@@ -96,14 +96,14 @@ function f2 name="padBoth" module=m0 position=101 flags=[IsChecked, HasExplicitN
     Return v11
 }
 
-# The string goes as a pointer and the boolean as 0 or 1. Its negation is one exclusive or, and neither is boxed.
+# The string goes as a pointer and the boolean as 0 or 1. Its negation is one exclusive or, and neither is boxed. Each length comes back as an integer, and the sum is an addition of integers.
 # CHECK-LABEL: name="padBoth" role=Source
 # CHECK: Int32 b@[[wide]] = Trunc(
 # CHECK: Int64 b@[[text]] = ArgumentReg(
-# CHECK-NEXT: Double b@[[first]] = Patchpoint(b@[[text]]:Register({{*}}), b@[[wide]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK-NEXT: Int64 b@[[first]] = Patchpoint(b@[[text]]:Register({{*}}), b@[[wide]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
 # CHECK: Int32 b@[[narrow]] = BitXor(b@[[wide]], $1(
-# CHECK-NEXT: Double b@[[second]] = Patchpoint(b@[[text]]:Register({{*}}), b@[[narrow]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
-# CHECK-NEXT: Double b@[[sum]] = Add(b@[[first]], b@[[second]],
+# CHECK-NEXT: Int64 b@[[second]] = Patchpoint(b@[[text]]:Register({{*}}), b@[[narrow]]:Register({{*}}), resultConstraints = Register({{*}}), ControlDependent, {{*}}:CallDirect)
+# CHECK-NEXT: Int64 b@[[sum]] = Add(b@[[first]], b@[[second]],
 # CHECK-NEXT: Return(b@[[sum]], Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="padBoth" role=Source

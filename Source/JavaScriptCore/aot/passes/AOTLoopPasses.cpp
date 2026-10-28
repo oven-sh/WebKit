@@ -469,6 +469,117 @@ static Vector<ValueID, 4> boundTallies(FunctionPassContext& context, IRBuilder& 
     return bounded;
 }
 
+namespace {
+
+struct SumWithCounter {
+    ValueID counter;
+    int64_t addend { 0 };
+};
+
+struct TestOfSum {
+    ValueID comparison;
+    uint32_t sideOfSum;
+    SumWithCounter sum;
+};
+
+} // anonymous namespace
+
+static std::optional<SumWithCounter> findSumWithConstant(FunctionPassContext& context, ValueID id)
+{
+    const Function& function = context.function;
+    const Value& sum = function.at(context.analyses.identityOf(id));
+    auto constantAt = [&](uint32_t index) {
+        return integerConstantThroughCasts(context.program, function, sum.operand(index));
+    };
+    switch (sum.opcode) {
+    case Opcode::Increment:
+        return SumWithCounter { sum.operand(0), 1 };
+    case Opcode::Decrement:
+        return SumWithCounter { sum.operand(0), -1 };
+    case Opcode::Add:
+        if (std::optional<int64_t> right = constantAt(1))
+            return SumWithCounter { sum.operand(0), *right };
+        if (std::optional<int64_t> left = constantAt(0))
+            return SumWithCounter { sum.operand(1), *left };
+        return std::nullopt;
+    case Opcode::Sub:
+        if (std::optional<int64_t> right = constantAt(1); right && *right != std::numeric_limits<int64_t>::min())
+            return SumWithCounter { sum.operand(0), -*right };
+        return std::nullopt;
+    default:
+        return std::nullopt;
+    }
+}
+
+static bool testsSumInCycle(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub, Opcode::Increment, Opcode::Decrement };
+    return std::ranges::any_of(context.analyses.cfg().reversePostOrder(), [&](BlockID block) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || !relationalOperators.contains(function.at(terminator.conditionOperand()).opcode) || !context.analyses.isInCycle(block))
+            return false;
+        const Value& comparison = function.at(terminator.conditionOperand());
+        return sums.contains(function.at(context.analyses.identityOf(comparison.operand(0))).opcode) || sums.contains(function.at(context.analyses.identityOf(comparison.operand(1))).opcode);
+    });
+}
+
+// `k + 1 < length` says of the counter what `k < length - 1` says, and only a test of the counter itself bounds it for what follows.
+// A number without a fraction plus a small integer is exact wherever it comes near an integer that is far from the limit of exact integers; elsewhere its sign decides both comparisons.
+static bool testCountersInsteadOfSums(FunctionPassContext& context, IRBuilder& builder)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    constexpr int64_t farthestAddend = 1ll << 31;
+    constexpr int64_t farthestBound = 1ll << 51;
+    const NaturalLoops& loops = analyses.naturalLoops();
+    const UseLists& useLists = analyses.useLists();
+    Vector<TestOfSum, 2> tests;
+    for (const LoopInduction& induction : analyses.inductionVariables().loops()) {
+        const NaturalLoop& loop = loops.loop(induction.loopIndex);
+        for (unsigned index = 0; index < loop.size(); ++index) {
+            BlockID block = loop.at(index);
+            const Terminator& terminator = function.at(block).terminator;
+            if (terminator.kind != TerminatorKind::Branch || loops.belongsTo(terminator.taken().block, loop) == loops.belongsTo(terminator.notTaken().block, loop))
+                continue;
+            if (!terminator.taken().proofs.isEmpty() || !terminator.notTaken().proofs.isEmpty())
+                continue;
+            ValueID id = terminator.conditionOperand();
+            const Value& comparison = function.at(id);
+            if (!relationalOperators.contains(comparison.opcode) || useLists.useCount(id) != 1 || useLists.blockOf(id) != block)
+                continue;
+            for (uint32_t side = 0; side < 2; ++side) {
+                std::optional<SumWithCounter> sum = findSumWithConstant(context, comparison.operand(side));
+                if (!sum || !sum->addend || std::abs(sum->addend) > farthestAddend)
+                    continue;
+                const InductionVariable* variable = induction.find(analyses.identityOf(sum->counter));
+                if (!variable || variable->step.kind != InductionStepKind::Constant || variable->steppedValues.contains(analyses.identityOf(comparison.operand(side))))
+                    continue;
+                const Type& bound = context.program.typeOf(function, comparison.operand(1 - side));
+                if (!context.program.typeOf(function, sum->counter).isNumberWithoutFraction() || !bound.isInteger() || bound.integers.minimum < -farthestBound || bound.integers.maximum > farthestBound)
+                    continue;
+                tests.append({ id, side, *sum });
+                break;
+            }
+        }
+    }
+    for (const TestOfSum& test : tests) {
+        ProgramPoint point = useLists.pointOf(test.comparison);
+        builder.setOrigin(function.at(test.comparison).origin());
+        Value addend = IRBuilder::make(Opcode::Integer);
+        addend.setInteger(test.sum.addend);
+        ValueID bound = builder.insertBefore(point, IRBuilder::make(Opcode::Sub, { function.at(test.comparison).operand(1 - test.sideOfSum), builder.insertBefore(point, WTF::move(addend)) }));
+        Value& comparison = function.edit(test.comparison, ValueEdit::Definition);
+        comparison.setOperand(test.sideOfSum, test.sum.counter);
+        comparison.setOperand(1 - test.sideOfSum, bound);
+    }
+    if (tests.isEmpty())
+        return false;
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    return true;
+}
+
 PassOutcome convertCountersToIntegers(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasCycle() || (!hasNumberParameter(context.program, context.function) && !hasIntegerBeyondInt32(context.program, context.function)))
@@ -478,6 +589,11 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     uint64_t numberOfConvertedCounters = 0;
     BitVector parametersOverStepLimit;
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
+    if (testsSumInCycle(context) && testCountersInsteadOfSums(context, builder))
+        outcome = PassOutcome::Changed;
+    // In the rounds only a counter that has just got a test of its own is converted, ahead of the tests that the round would place on it. Whatever else counts has its bound by then or gets it behind the rounds.
+    if (context.isInRounds && outcome == PassOutcome::Unchanged)
+        return outcome;
     for (;;) {
         Vector<CounterCandidate, 4> candidates = findCounterCandidates(context, parametersOverStepLimit);
         if (candidates.isEmpty()) {

@@ -29,9 +29,11 @@
 #include "AOTProgramStatics.h"
 #include "AOTPropertyCaches.h"
 #include "AOTRuntimeCounters.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
+#include "BrandedStructure.h"
 #include "CustomGetterSetter.h"
 #include "DeferTermination.h"
 #include "FunctionPrototype.h"
@@ -79,10 +81,12 @@ ClassTable::ClassTable(State& state)
     state.instance.classes.placesOfPrototypeProperties = m_placesOfPrototypeProperties.data();
     state.instance.classes.prototypesOfClassObjects = m_prototypesOfClassObjects.data();
     state.instance.classes.instancesOfClassesBelow = m_instancesOfClassesBelow.data();
+    state.instance.classes.brandsOfInstances = state.tableArena.allocate<UniquedStringImpl*>(m_tables.numberOfClasses());
     state.caches->add(CacheKind::WeakByKey, "class sides by holder"_s, *this);
     state.caches->addClearedEachCollection("places of prototype properties"_s, asWritableBytes(std::span { m_placesOfPrototypeProperties }));
     state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
     state.caches->addClearedEachCollection("instances of classes below"_s, asWritableBytes(std::span { m_instancesOfClassesBelow }));
+    state.caches->addClearedEachCollection("structures with brands"_s, asWritableBytes(std::span { m_structuresWithBrands }));
 }
 
 ClassTable::~ClassTable() = default;
@@ -378,6 +382,55 @@ void ClassTable::registerClassPrototype(const LayoutData& classLayout, JSObject*
         MemberGuardWatchpoints::MethodTableUpdate update(m_state);
         m_state.objects->caches->memberGuardWatchpoints.didCreateHolder(classLayout, ClassSide::Prototype);
     }
+}
+
+Symbol* ClassTable::brandOfInstanceMadeBy(VM& vm, JSCell* parent, JSCell* newTarget)
+{
+    auto* classObject = dynamicDowncast<Closure>(newTarget);
+    const LayoutData* classLayout = classObject ? classObject->classData() : nullptr;
+    if (!classLayout || !classLayout->classData().instancesCarryBrand)
+        return nullptr;
+    const LayoutData* highest = classLayout;
+    while (const LayoutData* base = baseOf(*highest))
+        highest = base;
+    uint32_t builtinBase = highest->classData().builtinBase;
+    if (builtinBase == LayoutData::noBase || m_state.builtinCells->findObject(BuiltinID(builtinBase)) != parent)
+        return nullptr;
+
+    uint32_t rank = m_tables.rankOfClass(classLayout->index);
+    auto found = m_brandsOfInstances.find(rank + 1);
+    if (found != m_brandsOfInstances.end())
+        return found->value;
+    Symbol* brand = Symbol::create(vm, PrivateSymbolImpl::create(*StringImpl::empty()).get());
+    m_state.immortalCells->add(brand);
+    m_brandsOfInstances.add(rank + 1, brand);
+    m_state.instance.classes.brandsOfInstances[rank] = &brand->uid();
+    return brand;
+}
+
+Structure* ClassTable::structureOfInstanceMadeBy(VM& vm, JSCell* parent, JSCell* newTarget, Structure* structure)
+{
+    StructureWithBrand& last = m_structuresWithBrands[indexOfStructureWithBrand(newTarget)];
+    if (last.withoutBrand == structure && last.newTarget == newTarget && last.parent == parent) [[likely]]
+        return last.withBrand;
+    Symbol* brand = brandOfInstanceMadeBy(vm, parent, newTarget);
+    last = { parent, newTarget, structure, brand ? Structure::setBrandTransition(vm, structure, brand) : structure };
+    return last.withBrand;
+}
+
+bool ClassTable::carriesBrandOfClass(Structure* structure, uint32_t rankOfClass) const
+{
+    auto found = m_brandsOfInstances.find(rankOfClass + 1);
+    return found != m_brandsOfInstances.end() && structure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(structure)->checkBrand(found->value);
+}
+
+Structure* RuntimeHooks::structureOfInstanceMadeForSuperCall(VM& vm, JSFunction* newTarget, Structure* structure)
+{
+    VMState& vmState = vm.aotState();
+    vmState.newTargetOfSuperCall = nullptr;
+    Instance* instance = Instance::of(newTarget->realm());
+    State* state = instance ? instance->state : nullptr;
+    return state && state->objects ? state->objects->classes.structureOfInstanceMadeBy(vm, vmState.parentOfSuperCall, newTarget, structure) : structure;
 }
 
 bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData& classLayout) const

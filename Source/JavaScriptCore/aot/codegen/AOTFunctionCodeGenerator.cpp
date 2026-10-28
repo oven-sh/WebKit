@@ -261,7 +261,7 @@ bool FunctionCodeGenerator::generateB3()
     if (traits.savesFrameOnSuspend && options.verifiesProgram)
         policy.clientPhases.append(validateFrameAddresses(m_frameAddressViolations, frameMaps.suspensionValues(), findParametersWithoutObjects(program, m_function)));
     if (!options.recorded.useWideReferences() && !options.recorded.has(TestingSwitch::DropReferenceGuards)) {
-        NarrowReferenceOrigins origins { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand };
+        NarrowReferenceOrigins origins { findNarrowReferences(m_function), &m_records.operationsWithCompressedOperand };
         if (std::optional<DroppedGuard> dropped = droppedGuardIn(options.recorded, m_id)) {
             origins.ordinalOfDroppedGuard = dropped->ordinal;
             for (uint32_t index = 0; index < m_function.values.size(); ++index) {
@@ -273,7 +273,7 @@ bool FunctionCodeGenerator::generateB3()
     }
     policy.validation.keepsOriginsOfAccessesThatTakeTraps = options.validatesReferences;
     if (options.validatesReferences && !options.recorded.useWideReferences())
-        policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), frameMaps.suspensionValues(), &m_records.operationsWithCompressedOperand }));
+        policy.clientPhases.append(validateNarrowReferences(m_narrowReferenceFindings, { findNarrowReferences(m_function), &m_records.operationsWithCompressedOperand }));
     if (options.checksClaimsToBackEnd) {
         checkClaimsAtRunTime(policy, m_id, m_records.slotsOfFrameCells);
         m_records.totals.entriesUsed.set(static_cast<size_t>(AOT::Entry::operationAOTReportBrokenClaim));

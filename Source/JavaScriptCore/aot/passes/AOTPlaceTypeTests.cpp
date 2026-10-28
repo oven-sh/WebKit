@@ -2204,7 +2204,7 @@ static std::optional<Type> receiversThatAnswerWithFieldOrGetter(TestSiteReporter
 
 void reportUnionReceiverTests(TestSiteReporter& reporter)
 {
-    reporter.forEachCandidate([&](const Value& use) {
+    reporter.forEachCandidate({ Opcode::PropGet, Opcode::PropSet, Opcode::Call }, [&](const Value& use) {
         auto reportTestFor = [&](ValueID receiver, const Type& tested) {
             reporter.report({ makeTypeTest(receiver, reporter.types().intern(tested)) }, reporter.analyses().effectsOf(reporter.use()).normal);
         };

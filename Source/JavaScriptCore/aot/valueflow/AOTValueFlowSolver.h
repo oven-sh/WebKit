@@ -1001,12 +1001,6 @@ private:
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_writtenUnderNamesOfReads;
-    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_seenBehindTheRounds;
-    ValueSetID seenBehindTheRoundsAt(ValueFlowNodeID node) const
-    {
-        auto found = m_seenBehindTheRounds.find(node.index());
-        return found == m_seenBehindTheRounds.end() ? ValueSets::nothing : found->value;
-    }
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;
@@ -1117,6 +1111,8 @@ private:
     ValueSetID followedProxiesThatMoreMayBeDoneTo();
     bool wakeReadersOfNodesThatShowSomethingElse();
     Vector<ValueSetID> m_allButCoveredWhenReadersWereLastWoken;
+    uint16_t m_stateOfCoverings { 0 };
+    mutable ListWithRoomToFill<uint16_t> m_stateOfCoveringsInWhichShownViewHolds;
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;

@@ -28,7 +28,9 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <wtf/IterationStatus.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringImpl.h>
 
@@ -93,6 +95,8 @@ public:
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
     // Takes no lock and does not depend on the calling thread.
     static const Image* findByCodeAddress(const void*);
+    // Every image that a thread of the process has begun to use, each as the current one of the calling thread while the functor runs. Takes no lock.
+    static void forEachPublishedAsCurrent(const ScopedLambda<IterationStatus(const Image&)>&);
 
     JS_EXPORT_PRIVATE static Wire::ImageVerdict check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity);
     JS_EXPORT_PRIVATE static std::optional<Wire::AdmittedCode> admittedCode(std::span<const uint8_t> bytes);
@@ -138,6 +142,8 @@ public:
     enum class FrequentStub : uint8_t { EnterClosure, EnterSlimClosure, EnterModuleBody, EnterClosureForConstruct, EnterHandlerOfJob, EnterSavedFrame, RejectInFrame, RejectInFrameBelowSpilledArguments };
     template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
+    // Of the stub that begins at the offset in the shared code. x86-64 only.
+    bool usesCallConvention(uint32_t offsetInSharedCode) const;
     std::span<const StubReturnSite> stubReturnSites() const;
     std::span<const uint32_t> sharedCodeCopies() const { return section<uint32_t>(ImageSection::SharedCodeCopies); }
     std::span<const uint32_t> slotHandlerOffsets() const { return section<uint32_t>(ImageSection::SlotHandlers); }

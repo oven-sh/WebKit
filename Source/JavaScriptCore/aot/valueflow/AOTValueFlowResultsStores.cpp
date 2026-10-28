@@ -1778,6 +1778,16 @@ ValueSetID StoresByLayout::storedUnder(ValueSetMaker& maker, LayoutID layout, Pr
     return stored;
 }
 
+ValueSetID StoresByLayout::storedUnderNameItself(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
+{
+    ValueSetID stored = ValueSets::nothing;
+    forEachSourceOf(layout, ObjectsOfLayout::All, [&](const StoresIntoObjects& stores) {
+        if (auto found = stores.underKey.find(key.index()); found != stores.underKey.end())
+            stored = maker.unite(stored, found->value.value);
+    });
+    return stored;
+}
+
 bool StoresByLayout::isStoredAfterCreation(LayoutID layout, PropertyKeyID key) const
 {
     bool isStored = false;

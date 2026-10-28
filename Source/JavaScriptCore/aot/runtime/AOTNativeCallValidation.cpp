@@ -131,6 +131,16 @@ static bool isSameHalfOfNativeAccessor(JSCell* found, JSObject* callee)
     return false;
 }
 
+static bool isValueOfProperty(JSGlobalObject* realm, BuiltinID property, JSObject* callee)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    auto holder = findInRealm(realm, BuiltinCellKey::object(table.at(property).holder));
+    if (!holder || !(*holder)->isObject())
+        return false;
+    auto value = findValueInHolder(realm, asObject(*holder), table.identifierOf(realm->vm(), table.at(property).name));
+    return value && *value == JSValue(callee);
+}
+
 static BuiltinCallMode modeOf(BuiltinCellKey::Kind kind, CodeSpecializationKind specialization)
 {
     switch (kind) {
@@ -309,6 +319,11 @@ static NativeCallDeclaration findDeclaration(const NativeCall& call, const Nativ
             declare(CalleeInRealm, candidate, mode);
             return declaration;
         }
+        // A property that the program may replace holds a function of native code from the start, and its entry says what a call of that function does.
+        if (kind == Kind::Object && table.at(candidate).kind == BuiltinKind::DataProperty && mayBeInRealm(candidate) && isValueOfProperty(call.realm, candidate, call.callee)) {
+            declare(CalleeInRealm, candidate, mode);
+            return declaration;
+        }
     }
 
     // Nothing leads from the realm to what a native module exports either: a function of the realm that was not found there is known by its native code.
@@ -453,48 +468,60 @@ static bool isPrivateGlobal(JSGlobalObject* realm, JSObject* callee)
     return isFound;
 }
 
-// Where unseen code may run, an object that native code holds may change in any way, and no proof rests on the rule.
-static bool isAnsweredBy(JSGlobalObject* realm, BuiltinID binding, JSObject* callee)
-{
-    auto* hook = realm->globalObjectMethodTable()->nativeBinding;
-    auto* function = dynamicDowncast<JSFunction>(callee);
-    std::optional<uint16_t> hostNumber = BuiltinBindings::hostNumberOf(binding);
-    if (!hook || !function || !function->isHostFunction() || !hostNumber)
-        return false;
+struct CodeAnsweredByNativeBindings {
+    Lock lock;
+    WTF::Vector<std::pair<uint32_t, TaggedNativeFunction>> entries WTF_GUARDED_BY_LOCK(lock);
+};
 
-    VM& vm = realm->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue answer = hook(realm, *hostNumber);
-    if (scope.exception()) [[unlikely]] {
-        scope.clearException();
-        return false;
-    }
-    auto hasSameCode = [&](JSValue value) {
-        auto* other = dynamicDowncast<JSFunction>(value);
-        return other && other->isHostFunction() && other->nativeFunction() == function->nativeFunction();
+static CodeAnsweredByNativeBindings& codeAnsweredByNativeBindings()
+{
+    static NeverDestroyed<CodeAnsweredByNativeBindings> code;
+    return code;
+}
+
+void noteAnswerOfNativeBinding(uint32_t hostNumber, JSValue answer)
+{
+    CodeAnsweredByNativeBindings& code = codeAnsweredByNativeBindings();
+    Locker locker { code.lock };
+    auto note = [&](JSValue value) WTF_REQUIRES_LOCK(code.lock) {
+        auto* function = dynamicDowncast<JSFunction>(value);
+        if (!function || !function->isHostFunction())
+            return;
+        std::pair<uint32_t, TaggedNativeFunction> entry { hostNumber, function->nativeFunction() };
+        if (!code.entries.contains(entry))
+            code.entries.append(entry);
     };
-    if (hasSameCode(answer))
-        return true;
+    note(answer);
     if (!answer.isObject())
-        return false;
+        return;
     JSObject* holder = asObject(answer);
-    bool isFound = false;
     // A binding may answer its functions in an array.
     if (auto* array = dynamicDowncast<JSArray>(holder)) {
-        for (unsigned index = 0; index < array->length() && !isFound; ++index)
-            isFound = array->canGetIndexQuickly(index) && hasSameCode(array->getIndexQuickly(index));
-        if (isFound)
-            return true;
+        for (unsigned index = 0; index < array->length(); ++index) {
+            if (array->canGetIndexQuickly(index))
+                note(array->getIndexQuickly(index));
+        }
     }
-    holder->structure()->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
-        isFound = hasSameCode(holder->getDirect(entry.offset()));
-        return !isFound;
+    holder->structure()->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) WTF_REQUIRES_LOCK(code.lock) {
+        note(holder->getDirect(entry.offset()));
+        return true;
     });
-    return isFound;
+}
+
+// Where unseen code may run, an object that native code holds may change in any way, and no proof rests on the rule.
+static bool isAnsweredBy(BuiltinID binding, JSObject* callee)
+{
+    auto* function = dynamicDowncast<JSFunction>(callee);
+    std::optional<uint16_t> hostNumber = BuiltinBindings::hostNumberOf(binding);
+    if (!function || !function->isHostFunction() || !hostNumber)
+        return false;
+    CodeAnsweredByNativeBindings& code = codeAnsweredByNativeBindings();
+    Locker locker { code.lock };
+    return code.entries.contains(std::pair<uint32_t, TaggedNativeFunction> { *hostNumber, function->nativeFunction() });
 }
 
 // Nothing leads from the realm to what a native binding answers, and the compiler does not name the binding at the call.
-static bool isDeclaredByNativeBinding(JSGlobalObject* realm, JSObject* callee, OperandUses declaring)
+static bool isDeclaredByNativeBinding(JSObject* callee, OperandUses declaring)
 {
     const BuiltinTable& table = BuiltinTable::singleton();
     for (unsigned index = 0; index < table.builtinCount(); ++index) {
@@ -506,7 +533,7 @@ static bool isDeclaredByNativeBinding(JSGlobalObject* realm, JSObject* callee, O
                 return parameter.uses.containsAny(declaring);
             });
         });
-        if (declares && isAnsweredBy(realm, BuiltinID(index), callee))
+        if (declares && isAnsweredBy(BuiltinID(index), callee))
             return true;
     }
     return false;
@@ -567,6 +594,8 @@ public:
         checkChanges(othersMayHaveWritten);
         if (!othersMayHaveWritten)
             checkResult(result);
+        if (m_outer && result && result.isObject())
+            m_outer->m_resultsOfCalledFunctions.append(asObject(result));
         bool countsAsCode = didRunCode || m_declaration.overloads.isEmpty();
         if (m_outer && !countsAsCode && (m_didCallFunctionThatWrites || !declaredWrites().isEmpty()))
             m_outer->m_didCallFunctionThatWrites = true;
@@ -818,7 +847,7 @@ private:
         bool restsOnNativeCode = m_expectation.isKnown && m_expectation.trustsNativeCode && !isPrivateGlobal(m_call.realm, m_call.callee) && !isHelperOfLibraryFunctions();
         if (!restsOnNativeCode)
             noteChange(makeString(message, " (no proof of this program rests on it)"_s));
-        else if (!isDeclaredByNativeBinding(m_call.realm, m_call.callee, declaring))
+        else if (!isDeclaredByNativeBinding(m_call.callee, declaring))
             fail(ValidationFailureKind::NativeCallChangedOperand, found, message);
     }
 
@@ -911,8 +940,14 @@ private:
                     fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the call writes "_s, describeMembers(m_expectation.writes), ", not "_s, describeMembers(heaps)));
                 if (didRunCode || isDoneByNativeCodeOfObject(operand, difference, uses))
                     continue;
-                OperandUses declaring = rowOf(change).uses;
+                OperandUses declaring = difference.isOfRepresentationAlone ? OperandUses() : rowOf(change).uses;
                 if (!declaring.isEmpty() && isTakenForUnknownFunction()) {
+                    // Flow opens the contents of a container that native code gets, no type speaks of the length of a buffer or of a view, and the call writes every heap: Worker.prototype.postMessage takes the memory of what its list names.
+                    bool isOfBytes = difference.change == OperandChange::InternalStateChanged || difference.change == OperandChange::BytesChanged;
+                    if (isOfBytes && (operand.object->type() == ArrayBufferType || isTypedArrayTypeIncludingDataView(operand.object->type()))) {
+                        noteChange(makeString(what, " (no proof rests on the bytes of what native code gets)"_s));
+                        continue;
+                    }
                     failForUnknownFunction(operand.object, declaring, makeString(what, ", and native code changes nothing it is handed"_s));
                     continue;
                 }
@@ -1020,6 +1055,9 @@ private:
     {
         if (!result || !result.isObject() || isTakenForUnknownFunction() || mayReturnHeldValue())
             return;
+        // An entry that hands on what a member of an operand answers may find a function of the table there: Date.prototype.toJSON calls whatever `toISOString` finds. Flow calls that function, and what it answers is its own doing.
+        if (m_resultsOfCalledFunctions.contains(asObject(result)) && mayRunCode())
+            return;
         // A result declared as anything stands for every object that native code holds, and it holds an operand that it retains.
         bool mayReturnRetainedOperand = std::ranges::all_of(m_declaration.overloads, [&](const BuiltinOverload* overload) {
             return m_table.at(overload->result.type).isAnything();
@@ -1060,6 +1098,8 @@ private:
     // The call in the course of which this one is made.
     Checker* m_outer { nullptr };
     bool m_didCallFunctionThatWrites { false };
+    // They are only compared.
+    Vector<JSObject*, 2> m_resultsOfCalledFunctions;
     bool m_didChangeOperand { false };
     static thread_local Checker* s_innermost;
 };

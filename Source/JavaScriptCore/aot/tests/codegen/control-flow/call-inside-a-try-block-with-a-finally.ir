@@ -126,23 +126,25 @@ function f2 name="enter" module=m0 position=31 flags=[IsChecked, HasExplicitName
     Throw v19
 }
 
-# The statements of the finally block exist once, for both ways into them. The way without an exception carries a completion kind of 0 and its result as a boxed value into that block,
-# branches on the kind behind it, and returns the boxed result as it is: whoever relies on its type tests it.
+# The statements of a short finally block stand once for each way into them. Behind the call the way without an exception polls, subtracts, stores and returns the double as it came:
+# no completion kind, no merge, no branch, nothing boxed. The handler has its own subtraction and store and throws on.
 # CHECK-LABEL: name="enter" role=Source
+# CHECK-NOT: pureFunction
 # CHECK: Double b@[[result]] = Patchpoint(b@{{*}}:Register({{*}}Terminal|ExitsSideways{{*}}:CallDirect)
 # CHECK-NEXT: Successors: #[[next]], Rare:#[[handler]]
 # CHECK-NEXT: BB#[[next]]:
-# CHECK: Upsilon($0(b@{{*}}), ^[[kind]], WritesLocalState)
-# CHECK: Int32 b@[[kind]] = Phi(
-# CHECK-NEXT: Int64 b@[[completion]] = Phi(
+# CHECK-NOT: Store(
+# CHECK: Void b@{{*}} = Patchpoint({{*}}Terminal|ExitsSideways{{*}}:LoopHint)
+# CHECK-NEXT: Successors: #[[left]], Rare:#[[handler]]
+# CHECK-NEXT: BB#[[left]]:
+# CHECK-NOT: Phi(
+# CHECK-NOT: Branch(
+# CHECK-NOT: pureFunction
 # CHECK: Store(b@{{*}}, b@{{*}}Writes:ModuleVariables{{*}}:PutModuleVariable)
-# CHECK-NEXT: Branch(b@[[kind]], Terminal)
-# CHECK-NEXT: Successors: Then:Rare:#{{*}}, Else:#[[returns]]
-# CHECK-NEXT: BB#[[returns]]:
-# CHECK-NOT: TypeTest
-# CHECK: Return(b@[[completion]], Terminal)
+# CHECK-NEXT: Return(b@[[result]], Terminal)
+# CHECK-NEXT: BB#[[handler]]:
+# CHECK: Store(b@{{*}}, b@{{*}}Writes:ModuleVariables{{*}}:PutModuleVariable)
 # CHECK-LABEL: end of function
 # The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: instructions: 14, patchpoints: 3, rare instructions: 10
-# ARM64 boxes the number in line, where x86-64 calls a stub.
-# ARM64: instructions: 25, patchpoints: 3, rare instructions: 10
+# X64: instructions: 10, patchpoints: 2, rare instructions: 8
+# ARM64: instructions: 12, patchpoints: 2, rare instructions: 9

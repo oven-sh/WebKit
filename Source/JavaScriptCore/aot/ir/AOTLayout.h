@@ -19,6 +19,7 @@
 namespace JSC { namespace AOT {
 
 class BuildContext;
+class ParallelLoops;
 
 namespace Typed {
 
@@ -115,6 +116,12 @@ std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID,
 LayoutID expectedBaseOf(const Layout&);
 LayoutID predictedHeritageOf(const Layout&);
 BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
+// `class A extends Map`, and every class that is written below A: Layout::writtenBuiltinBase says Map. It is what the text says, so it stays as it is through the whole build.
+void noteClassesWrittenBelowBuiltinClasses(Program&, const ParallelLoops&);
+// The objects of the class are cells that the constructor of a built-in class makes for `super(..)`. Their Structures carry a brand of the class from birth on, whatever becomes of the object.
+bool carriesBrandOfClass(const Program&, LayoutID);
+// The objects of a class below a built-in class have properties from their construction on: the fields of the class, or what the built-in constructor lays on them.
+bool isBornWithProperties(const Program&, LayoutID, BuiltinClassID builtinBase);
 bool hasOnlyCompiledBases(const Program&, LayoutID);
 bool isEvaluatedOnce(const Program&, const Layout&);
 bool guardsAreNeverSet(const Program&, const Layout&);

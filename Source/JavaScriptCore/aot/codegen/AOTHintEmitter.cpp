@@ -92,13 +92,21 @@ bool HintEmitter::allocatesWhereErrorsAreCaught(BlockID block)
     const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(block);
     if (!loop)
         return false;
+    auto leavesHandler = [&](ValueID id) {
+        return m_function.at(id).opcode == Opcode::LoopHint && m_function.at(id).leavesHandler();
+    };
+    // What polls for itself before it goes on leaves nothing to the poll of the loop.
+    auto pollsAtHead = [&](const Target& target) {
+        const Block& block = m_function.at(target.block);
+        return !block.values.isEmpty() && leavesHandler(block.values.first());
+    };
     for (unsigned index = 0; index < loop->size(); ++index) {
         BlockID member = loop->at(index);
-        for (ValueID id : m_function.at(member).values) {
-            if (m_function.at(id).opcode != Opcode::LoopHint && analyses().effectsOf(id).onAnyEdge().mayCollect)
-                return true;
-        }
-        if (analyses().effectsOfTerminator(member).onAnyEdge().mayCollect)
+        bool mayOwe = false;
+        for (ValueID id : m_function.at(member).values)
+            mayOwe = m_function.at(id).opcode == Opcode::LoopHint ? mayOwe && !leavesHandler(id) : mayOwe || analyses().effectsOf(id).onAnyEdge().mayCollect;
+        mayOwe |= analyses().effectsOfTerminator(member).onAnyEdge().mayCollect;
+        if (mayOwe && !std::ranges::all_of(m_function.at(member).terminator.targets, pollsAtHead))
             return true;
     }
     return false;

@@ -492,6 +492,12 @@ static bool isCompilerFunction(const BuiltinTable& builtins, const Function& sou
     return source.enclosingRuntimeFunction && builtins.at(source.enclosingRuntimeFunction).role == RuntimeFunctionRole::CompilerFunction;
 }
 
+// Only compiled code calls a helper of the compiler, though the engine may have written it.
+static bool isCalledByPrograms(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
+{
+    return builtin && !isCompilerFunction(builtins, source) && builtins.at(*builtin).holder != Builtins::CompilerHelpers;
+}
+
 static StackTraceBuiltinKind builtinKindOf(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
 {
     if (!builtin)
@@ -511,7 +517,7 @@ FunctionTraceRecord functionTraceOf(const Program& program, FunctionID id)
     record.sourceFunctionIndex = sourceID.index();
     record.implementedBuiltinPlusOne = builtin ? builtin->index() + 1 : 0;
     record.implementsBuiltin = builtin.has_value();
-    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, builtin && !isCompilerFunction(program.builtins(), source)));
+    record.visibilityBits = static_cast<uint32_t>(visibilityOf(function, isCalledByPrograms(program.builtins(), source, builtin)));
     record.builtinKindBits = static_cast<uint32_t>(builtinKindOf(program.builtins(), source, builtin));
     record.codeTypeBits = static_cast<uint32_t>(source.kind == FunctionKind::Module ? ModuleCode : source.syntax.contains(FunctionSyntax::IsEvaluatedScript) ? EvalCode : FunctionCode);
     record.rejectsOnThrow = rejectsOnThrow(program, function);

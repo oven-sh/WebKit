@@ -30,14 +30,15 @@ function f0 name="loop-entered-by-branch" parameters=[{type=string}, {type=numbe
     Return v12
 }
 
-# The block on the edge is covered by the handler of the block in front of the loop and of the header
+# The block on the edge is covered by the handler of the header, and polls before it enters the loop, which has lost the handler
 # CHECK-LABEL: function f1 name="covered-loop-entered-by-branch"
-# CHECK: b0(v0: string, v1: number) {{*}}handler=b4():
+# CHECK: b0(v0: string, v1: number):
 # CHECK-NOT: FlattenString
 # CHECK: Branch v5 -> taken [[entry1]](), notTaken b3(v2)
 # CHECK: v9: number = StringRangeCodeUnitOrNaN [[flat1]], -, -, v6
 # CHECK: [[entry1]]() {{*}}handler=b4():
 # CHECK-NEXT: [[flat1]]: flatstring = FlattenString v0
+# CHECK-NEXT: LoopHint [leavesHandler]
 # CHECK-NEXT: Jump -> next b1(v3, v2)
 function f1 name="covered-loop-entered-by-branch" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
   b0(v0: string, v1: number) handler=b4():

@@ -156,7 +156,7 @@ CellPointer CellAllocationEmitter::allocateObject(InlineAllocation kind, LBasicB
 {
     CellPointer result = allocateCellWithHeader(kind, slowPath);
     CodeGenerator::InitializationScope scope(generator());
-    m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSObject_butterfly);
+    m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSNonArray_butterfly);
     return result;
 }
 
@@ -279,7 +279,7 @@ std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const Opera
     Word32 lengthAndCapacity = bitOr(length, shiftLeft(vectorLength, word32(holeArrayCapacityShift)));
     CellPointer array(callStub(context, newArrayWithLength(arrayElementKindOf(indexingType)), { zeroExtended(lengthAndCapacity).value() }).first);
     branchUnless(Condition(m_out.notNull(array.value())), slowPath);
-    return { array, Pointer(m_out.loadPtr(array.value(), m_heaps.JSObject_butterfly)) };
+    return { array, Pointer(m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly)) };
 }
 
 CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, std::span<const Boxed> elements, AllocationStorage storage)
@@ -365,7 +365,7 @@ std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArrayInFrame(Word
 
     CodeGenerator::InitializationScope scope(generator());
     storeHeader(array, header);
-    m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSObject_butterfly);
+    m_out.storePtr(butterfly.value(), array.value(), m_heaps.JSArray_butterfly);
     m_out.store32(length.value(), butterfly.value(), m_heaps.Butterfly_publicLength);
     m_out.store32(length.value(), butterfly.value(), m_heaps.Butterfly_vectorLength);
     return { array, butterfly };

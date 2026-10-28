@@ -95,6 +95,8 @@ const ModuleHost& moduleHostOf(JSGlobalObject*);
 JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
 // The image holds the file as something that only an import with an attribute gets.
 JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
+// False: the two above answer no for every path that begins with `start`.
+JS_EXPORT_PRIVATE bool mayHoldPathStartingWith(StringView start);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
 // The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
 String sourceProviderURL(ModuleID);
@@ -105,6 +107,8 @@ JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
 // A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
 JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
+// The path of each file of a program with code, in any image that is in use, that begins with `start`. A data file is looked for on the disk. A file that several images hold comes once for each. Any thread may ask.
+JS_EXPORT_PRIVATE void forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
 // A file whose loader answers an object of the host, a database or a page.

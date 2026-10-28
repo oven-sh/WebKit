@@ -540,6 +540,7 @@ static void testExcludedTextLeavesTheProgramClosed()
 {
     AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=EvaluatedText"_s }) == closed);
     AOT_TEST_CHECK(flagsOf(installsPlugin, { "exclude=EvaluatedText"_s }) == runsText);
+    AOT_TEST_CHECK(flagsOf(evaluatesUnknownText, { "exclude=HostEvaluatedText"_s }) == runsText);
 }
 
 static void testLossesOfTheAnalysisAdmitNothing()

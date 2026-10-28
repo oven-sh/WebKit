@@ -25,6 +25,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashMap.h>
 #include <wtf/Noncopyable.h>
@@ -180,6 +181,7 @@ private:
     std::span<AllocationSiteRecord> allocationSiteRecords() const;
 
     CompiledStructure* usualStructureIfExists(uint32_t shape) const;
+    CompiledStructure* usualStructure(VM&, uint32_t shape);
     Variant usualVariantOf(VM&, const LayoutData&);
     CompiledStructure* createUsual(VM&, const LayoutData&, const Variant&);
     CompiledStructure* create(VM&, const LayoutData&, const Variant&);
@@ -194,12 +196,16 @@ private:
 
     AllocationSiteRecord* recordOfSameAllocation(uint32_t allocation) const;
     AllocationSiteRecord& ensureRecord(uint32_t allocation);
+    AllocationSiteRecord& ensureRecord(uint32_t allocation, uint32_t shape);
     AllocationSiteRecord& filledRecord(VM&, uint32_t allocation);
 
     State& m_state;
     const ProgramTables& m_tables;
     EnvironmentShapes m_environmentShapes;
     uint32_t* m_structures { nullptr };
+    // Each once, whether or not its entry of m_structures is still filled.
+    Vector<uint32_t> m_shapesThatHadStructure;
+    BitVector m_hadStructure;
     uint32_t m_numberOfAllocationSiteRecords { 0 };
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
     // No cell has them. Every other Structure of a compiled object starts as a copy of one: the second is for objects with another prototype than their layout's.

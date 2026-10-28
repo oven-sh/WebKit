@@ -682,6 +682,22 @@ static std::optional<FunctionID> findFunctionOfAccessorIn(const ValueFlowResultI
     return isKnown ? std::optional(function) : std::nullopt;
 }
 
+static std::optional<FunctionID> findFunctionOfProgramIn(const ValueFlowResultInputs& inputs, ValueSetID value)
+{
+    if (ValueSets::isComplement(value))
+        return std::nullopt;
+    bool isOnly = true;
+    FunctionID function;
+    inputs.sets().forEachMember(value, [&](ValueFlowObjectID member) {
+        FunctionID defined = inputs.universe().closureFunction(member);
+        if (!defined)
+            return;
+        isOnly &= !function;
+        function = defined;
+    });
+    return isOnly ? std::optional(function) : std::nullopt;
+}
+
 enum class StoresUnderAccessors : uint8_t { MayDefineValues, RunSetters };
 
 static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, std::span<const AssignedValue> assigned, ClassFlow& flow, StoresUnderAccessors stores = StoresUnderAccessors::MayDefineValues)
@@ -724,6 +740,15 @@ static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMak
         bool mayBeData = stores == StoresUnderAccessors::MayDefineValues && inputs.sets().meet(values[0], allButUndefined);
         if (mayBeData || !getter || !setter || (!*getter && !*setter)) {
             list(MethodKind::Method, { });
+            // What the program defines under the name is expected there: the guard of the member asks the object.
+            std::optional<FunctionID> expectedGetter = findFunctionOfProgramIn(inputs, values[1]);
+            std::optional<FunctionID> expectedSetter = findFunctionOfProgramIn(inputs, values[2]);
+            if (expectedGetter && expectedSetter) {
+                for (auto [kind, function] : { std::pair { MethodKind::Getter, *expectedGetter }, std::pair { MethodKind::Setter, *expectedSetter } }) {
+                    if (function)
+                        flow.members.append({ .key = key, .side = ClassSide::Prototype, .kind = kind, .function = function });
+                }
+            }
             continue;
         }
         if (*getter)

@@ -1001,6 +1001,7 @@ void TypePropagation::cutAfterNeverValues()
         if (cut.values.isEmpty())
             cut.handler = std::nullopt;
         cut.terminator.become(TerminatorKind::Unreachable);
+        cut.terminator.setCutBy(m_inputs.build.passToNameAtUnreachableEnd());
         cut.terminator.setOrigin(origin);
         ++m_outcome.cutBlocks;
     }

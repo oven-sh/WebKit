@@ -234,14 +234,16 @@ static constexpr uint64_t bitsOfHeaderThatOnlyTheProgramChanges = ~(uint64_t { 0
     | static_cast<uint64_t>(IndexingTypeLockIsHeld | IndexingTypeLockHasParked) << (JSCell::indexingTypeAndMiscOffset() * 8));
 
 // Something to read where the operand holds no object: the code of the image never changes.
-Pointer RuntimeValidationEmitter::addressOfObjectOrOfCode(Operand operand)
+Pointer RuntimeValidationEmitter::addressOfObjectOrOfCode(Operand operand, ComparedCells compared)
 {
     Pointer code = loadImmutablePointer(AOT_INSTANCE_OFFSET(image.code));
     Integer bits(operand.value);
     Condition isCellOrEmpty = operand.is<CellPointer>() ? boolean(true) : isCell(operand.as<Boxed>());
     Pointer cell = select(logicalAnd(isCellOrEmpty, isNotZero(bits)), Pointer(operand.value), code);
     Word32 type(m_out.load8ZeroExt32(m_out.address(m_heaps.JSCell_header, cell.value(), JSCell::typeInfoTypeOffset())));
-    return select(aboveOrEqual(type, word32(ObjectType)), cell, code);
+    static_assert(DerivedArrayType == ArrayType + 1);
+    Condition isCompared = compared == ComparedCells::Objects ? aboveOrEqual(type, word32(ObjectType)) : belowOrEqual(sub(type, word32(ArrayType)), word32(DerivedArrayType - ArrayType));
+    return select(isCompared, cell, code);
 }
 
 Integer RuntimeValidationEmitter::headerAt(Pointer address)
@@ -255,8 +257,9 @@ Integer RuntimeValidationEmitter::wordBehindHeaderAt(Pointer address)
     return Integer(m_out.load64(m_out.address(m_heaps.JSObject_butterfly, address.value(), JSObject::butterflyOffset())));
 }
 
-// B3 keeps what it has loaded from the header of a cell, and from the word behind it, across a call of which AOTHeaps::mayConvertCells() says no.
-RuntimeValidationEmitter::OperandCells RuntimeValidationEmitter::captureOperandCells(const OperationContext& context)
+// B3 keeps what it has loaded from the header of a cell, and from the word behind it, across a call of which AOTHeaps::mayConvertCells() says no,
+// and the word behind the header of an array across a call of which AOTHeaps::mayReplaceStorageOfArrays() says no.
+RuntimeValidationEmitter::OperandCells RuntimeValidationEmitter::captureOperandCells(const OperationContext& context, ComparedCells compared)
 {
     OperandCells result;
     if (!context.valueID())
@@ -267,8 +270,8 @@ RuntimeValidationEmitter::OperandCells RuntimeValidationEmitter::captureOperandC
         Operand bits = get(operand);
         if (!bits.is<CellPointer>() && !bits.is<Boxed>())
             return;
-        Pointer address = addressOfObjectOrOfCode(bits);
-        result.append({ context.valueID(), operand, address, headerAt(address), wordBehindHeaderAt(address) });
+        Pointer address = addressOfObjectOrOfCode(bits, compared);
+        result.append({ context.valueID(), operand, address, compared == ComparedCells::Objects ? std::optional<Integer>(headerAt(address)) : std::nullopt, wordBehindHeaderAt(address) });
     });
     return result;
 }
@@ -287,8 +290,9 @@ void RuntimeValidationEmitter::checkCellsWereNotConverted(const OperandCells& be
     forgetsLoads->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
 
     for (const OperandCell& cell : beforeCall) {
-        Condition hasSameHeader = equal(headerAt(cell.address), cell.header);
-        Condition isAsBefore = logicalAnd(hasSameHeader, equal(wordBehindHeaderAt(cell.address), cell.wordBehindHeader));
+        Condition isAsBefore = equal(wordBehindHeaderAt(cell.address), cell.wordBehindHeader);
+        if (cell.header)
+            isAsBefore = logicalAnd(equal(headerAt(cell.address), *cell.header), isAsBefore);
         failUnless(isAsBefore, ValidationFailureKind::OperationConvertedCell, get(cell.operand), cell.operation);
     }
 }
@@ -366,7 +370,7 @@ void RuntimeValidationEmitter::validateExit(const TerminatorContext& terminator)
 {
     validateOperands(terminator);
     if (terminator.kind() == TerminatorKind::Unreachable)
-        reportUnreachable({ });
+        reportUnreachable({ }, terminator->cutBy());
     if (m_framePointers.isEmpty())
         return;
 
@@ -444,9 +448,9 @@ void RuntimeValidationEmitter::callReport(ValidationFailureKind kind, Operand fo
 }
 
 // The caller ends the block.
-void RuntimeValidationEmitter::reportUnreachable(ValueID id)
+void RuntimeValidationEmitter::reportUnreachable(ValueID id, PassID cutBy)
 {
-    callReport(ValidationFailureKind::UnreachableValue, { }, id);
+    callReport(ValidationFailureKind::UnreachableValue, cutBy == PassID::None ? Operand() : Operand(boxedConstant(jsNumber(static_cast<int32_t>(cutBy)))), id);
 }
 
 // The report prints only the class of what was found, which the IR already gives for everything but a cell.

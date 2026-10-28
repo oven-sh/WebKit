@@ -99,7 +99,7 @@ function f1 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # CHECK-LABEL: name="last" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[list]] = ArgumentReg(
-# CHECK-NEXT: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly)
+# CHECK-NEXT: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSArray_butterfly)
 # CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength)
 # CHECK-NEXT: Int64 b@[[wide]] = ZExt32(b@[[length]])
 # CHECK: Int64 b@[[index]] = Add(b@[[wide]], $-1(b@{{*}}))
@@ -119,8 +119,8 @@ function f1 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # CHECK-LABEL: end of function
 # The storage, the length and the kind are each loaded once. Only a list in none of the three kinds of storage calls Array.prototype.at itself.
 # ONCE-LABEL: name="last" role=Source
-# ONCE-COUNT-1: Reads:JSObject_butterfly
-# ONCE-NOT: Reads:JSObject_butterfly
+# ONCE-COUNT-1: Reads:JSArray_butterfly
+# ONCE-NOT: Reads:JSArray_butterfly
 # ONCE-COUNT-1: Reads:Butterfly_publicLength
 # ONCE-NOT: Reads:Butterfly_publicLength
 # ONCE-COUNT-1: Reads:JSCell_indexingTypeAndMisc
@@ -130,5 +130,5 @@ function f1 name="last" module=m0 flags=[IsChecked, HasExplicitName] length=1 th
 # ONCE-NOT: ExitsSideways
 # ONCE-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 39, patchpoints: 4, rare instructions: 23
-# ARM64: instructions: 40, patchpoints: 4, rare instructions: 24
+# X64: instructions: 33, patchpoints: 4, rare instructions: 23
+# ARM64: instructions: 34, patchpoints: 4, rare instructions: 24

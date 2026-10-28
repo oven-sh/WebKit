@@ -501,6 +501,7 @@ static Vector<FunctionID> functionsOfClosuresMadeBy(const Function& function)
 void EffectSummarizer::summarizeBodies()
 {
     AOT_THRESHOLD(size_t, fewestValuesOfLongFunction, 4096);
+    RELEASE_ASSERT(m_calleesAreRead == CalleesAreRead::AsTheyAre || !m_numberOfFunctionsBefore);
     const ParallelLoops& loops = m_build.parallelLoops();
     unsigned numberOfFunctions = m_program.functions.size();
 
@@ -508,7 +509,7 @@ void EffectSummarizer::summarizeBodies()
         FunctionID id(index);
         EffectContext context { m_program, seed };
         std::unique_ptr<FunctionAnalyses> analyses = createAnalysesForSummary(m_build, context, m_flow, id, m_program.functions[index]);
-        return summarizeBodyLocally(context, id, *analyses, references);
+        return summarizeBodyLocally(context, id, *analyses, references, m_calleesAreRead);
     };
     auto summarizeAndGiveReferences = [&](const EffectSummaries& seed, unsigned index) {
         if (!m_references)

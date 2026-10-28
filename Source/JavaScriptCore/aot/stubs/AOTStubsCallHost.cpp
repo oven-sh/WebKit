@@ -48,6 +48,10 @@ StubSignature signatureOfCallDirectFunction(StubKey key)
         signature.result = StubResult::TwoGPRs;
         signature.secondResult = GPRInfo::returnValueGPR2;
     }
+    if (static_cast<DirectFunctionCall>(key.form()) == DirectFunctionCall::LeafReturningNumber) {
+        signature.result = StubResult::FPR;
+        signature.firstResult = FPRInfo::returnValueFPR;
+    }
     signature.immediate = gprOf(stubImmediateRegister);
     return signature;
 }
@@ -70,7 +74,7 @@ void generateCallDirectFunction(StubAssembler& jit)
     const GPRReg function = jit.reuseScratch(StubRegister::Operation);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(builtinBindings.directFunctions)), function);
     jit.loadPtr(CCallHelpers::BaseIndex(function, jit.immediate(), CCallHelpers::TimesOne), function);
-    if (form == DirectFunctionCall::Leaf || form == DirectFunctionCall::LeafReturningFields) {
+    if (form == DirectFunctionCall::Leaf || form == DirectFunctionCall::LeafReturningFields || form == DirectFunctionCall::LeafReturningNumber) {
         jit.farJump(function, HostFunctionPtrTag);
         return;
     }

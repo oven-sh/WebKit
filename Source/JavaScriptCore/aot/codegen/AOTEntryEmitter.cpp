@@ -161,9 +161,9 @@ static uint8_t argumentsBorrowedBy(const FlowResults& flow, FunctionID id, const
         return 0;
 
     uint8_t borrowed = 0;
-    unsigned numberOfArguments = std::min<unsigned>(entrypoint.numberOfPositionalParameters(), ClosureWord::numberOfBorrowedArguments);
-    for (unsigned argument = 0; argument < numberOfArguments; ++argument) {
-        if (flow.framePointerSummary(id, entrypoint.firstParameterIndex() + argument).uses.containsOnly(usesOfBorrowedParameter))
+    for (unsigned argument = 0; argument < ClosureWord::numberOfBorrowedArguments; ++argument) {
+        // Nothing takes an argument that has no parameter.
+        if (argument >= entrypoint.numberOfPositionalParameters() || flow.framePointerSummary(id, entrypoint.firstParameterIndex() + argument).uses.containsOnly(usesOfBorrowedParameter))
             borrowed |= 1u << argument;
     }
     return borrowed;

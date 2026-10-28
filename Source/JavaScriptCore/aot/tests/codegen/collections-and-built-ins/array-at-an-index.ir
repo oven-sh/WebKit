@@ -101,7 +101,7 @@ function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # at with an integer adds the length to a negative index by a select, without a branch. One unsigned comparison with the length then catches both ends.
 # CHECK-LABEL: name="pick" role=Source
 # CHECK: Int64 b@[[index]] = SExt32(b@{{*}})
-# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly)
+# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSArray_butterfly)
 # CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength)
 # CHECK-NEXT: Int64 b@[[wide]] = ZExt32(b@[[length]])
 # CHECK: Int32 b@[[isNegative]] = LessThan(b@[[index]], $0(b@{{*}}))
@@ -120,5 +120,5 @@ function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CHECK-NEXT: Int64 b@{{*}} = Load(b@[[address]], ControlDependent|Reads:indexedInt32Properties)
 # CHECK-LABEL: end of function
 # The counts hold a call, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 42, patchpoints: 4, rare instructions: 23
-# ARM64: instructions: 41, patchpoints: 4, rare instructions: 24
+# X64: instructions: 36, patchpoints: 4, rare instructions: 23
+# ARM64: instructions: 35, patchpoints: 4, rare instructions: 24

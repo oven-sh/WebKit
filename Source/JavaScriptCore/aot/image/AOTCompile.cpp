@@ -177,7 +177,7 @@ static std::optional<ImageParts> createImageParts(const Typed::PipelineOutput& p
     if (diagnostics.hasErrors())
         return std::nullopt;
 
-    if (mayUseFFI(pipeline))
+    if (mayUseFFI(pipeline, context.options()))
         parts.ffiStubs = generateFFIStubs(context);
     times.didFinish("generate FFI stubs"_s);
     if (diagnostics.hasErrors())

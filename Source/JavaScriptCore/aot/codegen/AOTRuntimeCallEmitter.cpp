@@ -539,6 +539,13 @@ StubCallResult RuntimeCallEmitter::callDirectFunctionReturningFields(const Opera
     return emitCall(&context, request);
 }
 
+LValue RuntimeCallEmitter::callDirectFunctionReturningNumber(const OperationContext& context, uint32_t number, std::span<const LValue> arguments, std::span<const LValue> keptAlive)
+{
+    Effects effects = context.effects().onAnyEdge();
+    RELEASE_ASSERT(!effects.mayThrow && !effects.mayCollect && !effects.mayCallUnknownCode);
+    return emitCall(&context, requestOfDirectFunction(DirectFunctionCall::LeafReturningNumber, number, arguments, keptAlive)).first;
+}
+
 // A double takes a register of its own kind.
 static size_t countGPRArguments(std::span<const LValue> arguments)
 {
@@ -620,10 +627,13 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     if (effects.mayCollect && context)
         emitter<BarrierEmitter>().validateBeforeCollection(*context);
 
-    bool validates = generator().validates() && context;
+    // The operands of the operation are not known to be there either.
+    bool validates = generator().validates() && context && !generator().isPassingHandlerArguments();
     RuntimeValidationEmitter::OperandCells cellsBeforeCall;
-    if (validates && returns && !mayConvertCells(effects) && !options.runsCodeOfHost)
-        cellsBeforeCall = emitter<RuntimeValidationEmitter>().captureOperandCells(*context);
+    if (validates && returns && !options.runsCodeOfHost && !mayConvertCells(effects))
+        cellsBeforeCall = emitter<RuntimeValidationEmitter>().captureOperandCells(*context, RuntimeValidationEmitter::ComparedCells::Objects);
+    else if (validates && returns && !options.runsCodeOfHost && !AOTHeaps::mayReplaceStorageOfArrays(effects))
+        cellsBeforeCall = emitter<RuntimeValidationEmitter>().captureOperandCells(*context, RuntimeValidationEmitter::ComparedCells::Arrays);
     RuntimeValidationEmitter::PhotographedOperands photographedOperands;
     bool comesBack = returns || (branchesOnFlags && !effects.mayThrow);
     if (validates && comesBack && !effects.mayRunOtherCode() && !options.runsCodeOfHost && !generator().isInitializingCell())
@@ -900,10 +910,12 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     bool exitsSideways = effects.mayExitSideways();
     B3HeapList reads;
     B3HeapList writes;
+    bool replacesStorageOfArrays = conversions == CellConversions::WhateverEffectsSay || AOTHeaps::mayReplaceStorageOfArrays(effects);
+    bool saysLessThanItWrites = m_options.recorded.isSabotaged(Sabotage::CallsGiveNoArrayOtherStorage) && !effects.writes.isTop();
     m_heaps.appendHeaps(effects.reads, reads);
-    m_heaps.appendHeaps(effects.writes, writes);
+    m_heaps.appendHeaps(saysLessThanItWrites ? effects.writes.without(AbstractHeap::ArrayStorage) : effects.writes, writes);
     if (convertsCells)
-        m_heaps.appendHeapsOfConvertedCells(writes);
+        m_heaps.appendHeapsOfConvertedCells(writes, replacesStorageOfArrays && !saysLessThanItWrites ? AOTHeaps::ConvertedCells::All : AOTHeaps::ConvertedCells::AllButArrays);
     if (effects.mayCollect)
         m_heaps.appendHeapsWrittenByCollection(writes);
     else if (accessesCollectorState)

@@ -20,6 +20,7 @@
 #include "AOTStubProgramTables.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsAllocation.h"
+#include "AOTStubsBarriers.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsValues.h"
 #include "CellState.h"
@@ -160,6 +161,65 @@ void generateNewSlimClosure(StubAssembler& jit)
     slow.link(&jit);
     uint64_t restOfRequest = static_cast<uint64_t>(kind) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift;
     createClosureInOperation(jit, function, restOfRequest, allocator);
+}
+
+StubSignature signatureOfMakeClosureOfField(StubKey)
+{
+    return closureRequestSignature(1);
+}
+
+void generateMakeClosureOfField(StubAssembler& jit)
+{
+    const auto [cell, request, allocator, header] = allocateClosureRegisters(jit);
+    const GPRReg object = jit.operand(1);
+    const GPRReg word = allocator;
+    const GPRReg offset = allocator;
+    const unsigned kind = jit.key().form();
+    const unsigned count = jit.key().count();
+    const unsigned allocatorIndex = (count + 1) / 2;
+    RELEASE_ASSERT(object == captureGPR(0) && noOverlap(cell, request, allocator, header, object));
+
+    JumpList slow;
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.slimClosureAllocators) + allocatorIndex * sizeof(void*)), allocator);
+    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, cell, allocator, header, slow, MarkedSpace::sizeStep * (allocatorIndex + 1));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
+    jit.zeroExtend32ToWord(request, header);
+    jit.load64(BaseIndex(word, header, CCallHelpers::TimesEight), word);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(slimClosureHeaders) + kind * sizeof(uint64_t)), header);
+    jit.storePair64(header, word, Address(cell));
+    if (count)
+        jit.store64(object, Address(cell, offsetOfSlimClosureCaptures));
+    fenceAfterAllocation(jit);
+
+    Label isMade = jit.label();
+    jit.urshift64(request, TrustedImm32(32), offset);
+    jit.urshift64(cell, TrustedImm32(cell32Shift), header);
+    jit.store32(header, BaseIndex(object, offset, CCallHelpers::TimesOne));
+    Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, header);
+    jit.returnToCaller();
+
+    // The request and the object are as they came when the operation has returned.
+    emitLateRefill(jit, refill, slow);
+    slow.link(&jit);
+    const GPRReg wholeRequest = allocator;
+    uint64_t restOfRequest = static_cast<uint64_t>(kind) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit | static_cast<uint64_t>(count) << ClosureRequest::countShift;
+    jit.zeroExtend32ToWord(request, wholeRequest);
+    jit.or64(TrustedImm64(static_cast<int64_t>(restOfRequest)), wholeRequest);
+    jit.callOperationAndReturn(Entry::operationAOTNewClosureSlow, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = wholeRequest }, [&] {
+        jit.jump().linkTo(isMade, &jit);
+    });
+
+    // The barrier takes the object where the closure is, and the slot has the closure.
+    needsBarrier.link(&jit);
+    checkStubOperands(writeBarrier(), { cell });
+    jit.clobberOperand(0);
+    jit.emitFunctionPrologue();
+    jit.move(object, cell);
+    jit.callStub(writeBarrier());
+    jit.load32(BaseIndex(object, offset, CCallHelpers::TimesOne), cell);
+    decodeCell32(jit, cell, cell);
+    jit.emitFunctionEpilogue();
+    jit.ret();
 }
 
 // The caller loses the registers that a call of the operation which keeps registers would cost it.

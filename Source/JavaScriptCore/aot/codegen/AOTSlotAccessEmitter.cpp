@@ -305,6 +305,30 @@ void SlotAccessEmitter::readDeferringSlot(const ValueContext& value, bool readsE
     define(value, testsForField ? readIfMemberHasField(value, cell, access, load) : load());
 }
 
+// Where every receiver leaves the closure of one function unmade, over itself or over nothing, a stub makes it as the allocation would have.
+CellPointer SlotAccessEmitter::makeDeferredClosure(const ValueContext& value, CellPointer cell, const FieldAccess& access)
+{
+    FunctionID function;
+    ClosureDeferral deferral = ClosureDeferral::Unknown;
+    bool isOneClosure = !access.findsOffsetByShape && !access.slot.isOutOfLine() && std::ranges::all_of(m_program.at(access.receivers).completeMembers(), [&](LayoutID member) {
+        std::optional<uint32_t> field = m_program.at(member).findField(access.key);
+        if (!field)
+            return true;
+        FieldReference declaration = declarationOf(m_program, { member, *field });
+        const LocationFlow& location = flowOf(m_program, declaration).location;
+        if (!fieldAt(m_program, declaration).form.isEmpty() || !location.deferredFunction || (function && (function != location.deferredFunction || deferral != location.deferral)))
+            return false;
+        function = location.deferredFunction;
+        deferral = location.deferral;
+        return true;
+    });
+    if (isOneClosure && (deferral == ClosureDeferral::CapturesNothing || deferral == ClosureDeferral::CapturesObject)) {
+        if (std::optional<CellPointer> closure = emitter<ConstantEmitter>().tryMakeClosureOfField(value, function, cell, access.slot.offset, deferral == ClosureDeferral::CapturesObject))
+            return *closure;
+    }
+    return callOperation<CellPointer>(value, RuntimeOperation::MaterializeDeferredClosure, { cell, identifierNumber(access.key) }, { .isOnRarePath = true });
+}
+
 Operand SlotAccessEmitter::loadDeferringSlot(const ValueContext& value, CellPointer cell, const FieldAccess& access, bool readsEmptySlotAsUndefined)
 {
     // The words for "not made yet" and "absent" come first. Behind them come null, undefined and the references, which are what a narrow reference holds.
@@ -314,7 +338,7 @@ Operand SlotAccessEmitter::loadDeferringSlot(const ValueContext& value, CellPoin
         return word;
     }, [&] {
         auto makeClosure = [&] {
-            return compress(callOperation<CellPointer>(value, RuntimeOperation::MaterializeDeferredClosure, { cell, identifierNumber(access.key) }, { .isOnRarePath = true }));
+            return compress(makeDeferredClosure(value, cell, access));
         };
         if (!readsEmptySlotAsUndefined)
             return makeClosure();
@@ -349,7 +373,7 @@ Operand SlotAccessEmitter::loadDeferringSlotOrFieldOutsideIt(const ValueContext&
         return decodeWordOfDeferringSlot(value, word).as<Boxed>();
     }, [&] {
         return either<Boxed>(isZero(Word32(word.value())), [&] {
-            return decodeWordOfDeferringSlot(value, compress(callOperation<CellPointer>(value, RuntimeOperation::MaterializeDeferredClosure, { cell, identifierNumber(access.key) }, { .isOnRarePath = true }))).as<Boxed>();
+            return decodeWordOfDeferringSlot(value, compress(makeDeferredClosure(value, cell, access))).as<Boxed>();
         }, [&] {
             return either<Boxed>(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), orderWordHasFieldOutsideSlot), [&] {
                 return undefined();

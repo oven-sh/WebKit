@@ -210,10 +210,10 @@ static Vector<PlannedLayout> planLayouts(const SlotPlanContext& context, const S
     packEnvironments(context, uses, claims.span(), packed);
     if (!finishStep("packEnvironments"_s))
         return { };
-    widenSlotsIntoPadding(context, uses, claims.span(), WidenedRepresentations::Numbers, packed);
+    widenSlotsIntoPadding(context, uses, joinedRows, claims.span(), WidenedRepresentations::Numbers, packed);
     if (!finishStep("widenSlotsIntoPadding(Numbers)"_s))
         return { };
-    widenSlotsIntoPadding(context, uses, claims.span(), WidenedRepresentations::References, packed);
+    widenSlotsIntoPadding(context, uses, joinedRows, claims.span(), WidenedRepresentations::References, packed);
     if (!finishStep("widenSlotsIntoPadding(References)"_s))
         return { };
     reserveEmptySlotsInPadding(context, uses, packed);

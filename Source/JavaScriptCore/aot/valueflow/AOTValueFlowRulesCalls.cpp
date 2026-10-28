@@ -784,6 +784,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
     ClimbingSet callees = context.valueOf(context.operandsOf(statement)[0]);
     context.proxiesAskedByTheirTrapsIn(context.operandsOf(statement)[0]);
     applyEventsOfCall(statement, context, callees);
+    describeObjectsRefusedAsFunctions(context, callees);
     ValueFlowCallKind kind = constructs(statement.opcode) ? ValueFlowCallKind::Construct : ValueFlowCallKind::Call;
     if (statement.thrown)
         context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));

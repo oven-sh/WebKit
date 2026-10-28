@@ -538,7 +538,7 @@ void reportOperatorTests(TestSiteReporter& reporter)
 
     std::optional<BoundedCounters> boundedCounters;
     KnownOfCounters knownOfCounters;
-    reporter.forEachCandidate([&](const Value& value) {
+    reporter.forEachCandidate(Value::opcodesWithForm, [&](const Value& value) {
         if (!hasOperatorForm(value.opcode) || reporter.takesAwaySitesInColdCode())
             return;
         uint32_t numberOfOperands = value.numberOfOperands();

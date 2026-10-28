@@ -190,16 +190,20 @@ namespace JSC::B3 {
     macro(StringImpl_data, StringImpl::dataOffset(), Mutability::Immutable) \
     macro(StringImpl_hashAndFlags, StringImpl::flagsOffset(), Mutability::Mutable) \
     macro(StringImpl_length, StringImpl::lengthMemoryOffset(), Mutability::Immutable) \
+    macro(BrandedStructure_brand, BrandedStructure::offsetOfBrand(), Mutability::Immutable) \
+    macro(BrandedStructure_parentBrand, BrandedStructure::offsetOfParentBrand(), Mutability::Immutable) \
     macro(Structure_bitField, Structure::bitFieldOffset(), Mutability::Mutable) \
     macro(Structure_classInfo, Structure::classInfoOffset(), Mutability::Immutable) \
     macro(Structure_realm, Structure::realmOffset(), Mutability::Immutable) \
     macro(Structure_indexingModeIncludingHistory, Structure::indexingModeIncludingHistoryOffset(), Mutability::Immutable) \
     macro(Structure_inlineCapacity, Structure::inlineCapacityOffset(), Mutability::Immutable) \
+    macro(Structure_maxOffset, Structure::maxOffsetOffset(), Mutability::Mutable) \
     macro(Structure_outOfLineTypeFlags, Structure::outOfLineTypeFlagsOffset(), Mutability::Immutable) \
     macro(Structure_previousOrRareData, Structure::previousOrRareDataOffset(), Mutability::Mutable) \
     macro(Structure_propertyHash, Structure::propertyHashOffset(), Mutability::Mutable) \
     macro(Structure_prototype, Structure::prototypeOffset(), Mutability::Immutable) \
     macro(Structure_seenProperties, Structure::seenPropertiesOffset(), Mutability::Mutable) \
+    macro(Structure_variant, Structure::variantOffset(), Mutability::Immutable) \
     macro(StructureRareData_cachedEnumerableStrings, StructureRareData::offsetOfCachedPropertyNames(CachedPropertyNamesKind::EnumerableStrings), Mutability::Mutable) \
     macro(StructureRareData_cachedStrings, StructureRareData::offsetOfCachedPropertyNames(CachedPropertyNamesKind::Strings), Mutability::Mutable) \
     macro(StructureRareData_cachedSymbols, StructureRareData::offsetOfCachedPropertyNames(CachedPropertyNamesKind::Symbols), Mutability::Mutable) \

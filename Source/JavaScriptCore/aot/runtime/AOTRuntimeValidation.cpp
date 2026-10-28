@@ -307,6 +307,8 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
         dumpChangedRegister(WTF::dataFile(), failure.found);
     else if (failure.kind == ValidationFailureKind::CallCollected || failure.kind == ValidationFailureKind::CallThrew)
         dumpCalledCode(WTF::dataFile(), failure.found);
+    else if (failure.kind == ValidationFailureKind::UnreachableValue && failure.found.isInt32() && static_cast<uint32_t>(failure.found.asInt32()) < numberOfEnumerators<PassID>)
+        dataLog("cut by ", nameOf(static_cast<PassID>(failure.found.asInt32())));
     else
         dumpClassOf(WTF::dataFile(), failure.found);
     dataLogLn();

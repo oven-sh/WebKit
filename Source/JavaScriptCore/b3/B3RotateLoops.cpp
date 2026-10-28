@@ -14,6 +14,7 @@
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3RegionCloner.h"
+#include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 #include "B3VariableValue.h"
 
@@ -61,9 +62,15 @@ private:
         bool hasLikelyWithoutPoll { false };
     };
 
+    struct DecidedTest {
+        BasicBlock* block;
+        unsigned successorIndex;
+    };
+
     struct Rotation {
         unsigned depth { 0 };
         Vector<BasicBlock*, 4> testBlocks;
+        Vector<DecidedTest, 1> testsDecidedByLatches;
         Vector<BasicBlock*, 2> latches;
         BasicBlock* body { nullptr };
         std::optional<InductionRecord> induction;
@@ -134,6 +141,93 @@ private:
         return std::nullopt;
     }
 
+    static std::optional<int64_t> valueLeftBy(BasicBlock* latch, BasicBlock* header, Value* value, unsigned depth)
+    {
+        if (value->hasInt())
+            return value->asInt();
+        if (value->opcode() == Phi) {
+            if (!header->values().contains(value))
+                return std::nullopt;
+            for (Value* candidate : *latch) {
+                auto* upsilon = candidate->as<UpsilonValue>();
+                if (upsilon && upsilon->phi() == value && upsilon->child(0)->hasInt())
+                    return upsilon->child(0)->asInt();
+            }
+            return std::nullopt;
+        }
+        if (!depth || !value->numChildren() || value->numChildren() > 2 || !value->child(0)->type().isInt())
+            return std::nullopt;
+        std::optional<int64_t> left = valueLeftBy(latch, header, value->child(0), depth - 1);
+        std::optional<int64_t> right = value->numChildren() == 2 ? valueLeftBy(latch, header, value->child(1), depth - 1) : std::optional<int64_t>(0);
+        if (!left || !right)
+            return std::nullopt;
+        bool is32Bit = value->child(0)->type() == Int32;
+        uint64_t unsignedLeft = is32Bit ? static_cast<uint32_t>(*left) : static_cast<uint64_t>(*left);
+        uint64_t unsignedRight = is32Bit ? static_cast<uint32_t>(*right) : static_cast<uint64_t>(*right);
+        switch (value->opcode()) {
+        case BitAnd:
+            return *left & *right;
+        case BitOr:
+            return *left | *right;
+        case BitXor:
+            return *left ^ *right;
+        case Equal:
+            return *left == *right;
+        case NotEqual:
+            return *left != *right;
+        case LessThan:
+            return *left < *right;
+        case GreaterThan:
+            return *left > *right;
+        case LessEqual:
+            return *left <= *right;
+        case GreaterEqual:
+            return *left >= *right;
+        case Below:
+            return unsignedLeft < unsignedRight;
+        case Above:
+            return unsignedLeft > unsignedRight;
+        case BelowEqual:
+            return unsignedLeft <= unsignedRight;
+        case AboveEqual:
+            return unsignedLeft >= unsignedRight;
+        default:
+            return std::nullopt;
+        }
+    }
+
+    void addTestsDecidedByLatches(NaturalLoops& loops, const NaturalLoop& loop, Rotation& rotation, unsigned numberOfCopiedValues)
+    {
+        while (true) {
+            BasicBlock* block = rotation.body;
+            if (block->last()->opcode() != Branch || block->numPredecessors() != 1 || loops.innerMostLoopOf(block) != &loop || rotation.latches.contains(block))
+                return;
+            std::optional<unsigned> successorIndex;
+            for (BasicBlock* latch : rotation.latches) {
+                std::optional<int64_t> condition = valueLeftBy(latch, loop.header(), block->last()->child(0), 3);
+                if (!condition || (successorIndex && *successorIndex != !*condition))
+                    return;
+                successorIndex = !*condition;
+            }
+            const FrequentedBlock& staying = block->successor(*successorIndex);
+            const FrequentedBlock& other = block->successor(1 - *successorIndex);
+            if (staying.isRare() || staying.block() == loop.header() || !loops.belongsTo(staying.block(), loop) || loops.headerOf(staying.block()))
+                return;
+            if (loops.belongsTo(other.block(), loop) && !(other.isRare() && leadsBackToHeaderOnly(loops, loop, other.block(), staying.block())))
+                return;
+            for (Value* value : *block) {
+                if (!canCloneForLoop(value))
+                    return;
+                numberOfCopiedValues += emitsInstructions(value);
+            }
+            if (numberOfCopiedValues > m_proc.limit(Limit::MaxCopiedValuesPerRotatedLoop))
+                return;
+            rotation.testBlocks.append(block);
+            rotation.testsDecidedByLatches.append({ block, *successorIndex });
+            rotation.body = staying.block();
+        }
+    }
+
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
     {
         Rotation rotation;
@@ -200,6 +294,7 @@ private:
                     if (staying.block() == loop.header() || loops.headerOf(staying.block()) || rotation.latches.contains(block))
                         return;
                     rotation.body = staying.block();
+                    addTestsDecidedByLatches(loops, loop, rotation, numberOfCopiedValues);
                     rotation.induction = findInduction(loop.header());
                     m_rotations.append(WTF::move(rotation));
                     return;
@@ -218,6 +313,10 @@ private:
             transferInduction(rotation, copies);
         for (BasicBlock* latch : rotation.latches)
             latch->replaceSuccessor(rotation.testBlocks[0], copies.get(rotation.testBlocks[0]));
+        for (const DecidedTest& test : rotation.testsDecidedByLatches) {
+            BasicBlock* copy = copies.get(test.block);
+            copy->last()->replaceWithJump(copy, copy->successor(test.successorIndex));
+        }
         if (!rotation.guardKeepsPoll) {
             for (const EdgesBack* edgesBack : rotation.cyclesThroughGuardWithoutPoll)
                 pollOnWayBack(*edgesBack, rotation.testBlocks.span());

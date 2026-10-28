@@ -99,14 +99,14 @@ function f2 name="ends" module=m0 position=175 flags=[IsChecked, HasExplicitName
     Return v12
 }
 
-# Every call is taken to replace the storage of arrays. So no address into the storage lives across the call: behind it the storage and its length are loaded from the array again.
+# The callee makes an object and stores it into a variable of the module. That gives no array other storage: the storage and its length are loaded once, ahead of the call, and live across it.
 # CHECK-LABEL: name="ends" role=Source
-# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:IsInBounds)
+# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSArray_butterfly, {{*}}:IsInBounds)
+# CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:IsInBounds)
 # CHECK: Double b@{{*}} = Load(b@[[storage]], ControlDependent|Reads:indexedDoubleProperties{{*}}:GetArrayElement)
-# CHECK: Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, {{*}}JSObject_butterfly, {{*}}:CallDirect)
-# CHECK-NOT: b@[[storage]]
-# CHECK: Int64 b@[[storageBehind]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:IsInBounds)
-# CHECK-NEXT: Int32 b@{{*}} = Load(b@[[storageBehind]], offset = -8, ControlDependent|Reads:Butterfly_publicLength, {{*}}:IsInBounds)
-# CHECK-NOT: b@[[storage]]
-# CHECK: Double b@{{*}} = Load(b@[[storageBehind]], offset = 8, ControlDependent|Reads:indexedDoubleProperties{{*}}:GetArrayElement)
+# CHECK: Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = WarmAny, ControlDependent|Writes:{collectorState, {{*}}JSNonArray_butterfly, {{*}}:CallDirect)
+# CHECK-NOT: Reads:JSArray_butterfly
+# CHECK-NOT: Reads:Butterfly_publicLength
+# CHECK: Int32 b@{{*}} = Above(b@[[length]], $1(b@{{*}}), {{*}}:IsInBounds)
+# CHECK: Double b@{{*}} = Load(b@[[storage]], offset = 8, ControlDependent|Reads:indexedDoubleProperties{{*}}:GetArrayElement)
 # CHECK-LABEL: end of function

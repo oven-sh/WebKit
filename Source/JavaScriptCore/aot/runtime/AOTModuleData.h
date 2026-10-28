@@ -91,7 +91,8 @@ struct ModuleData {
     uint8_t importedWhileItRuns : 1;
     uint8_t beginsLoads : 1;
     uint8_t shownByFace : 1;
-    uint8_t unusedBits : 1;
+    // Of a module of the library with a body: the code was compiled for a body that is entered once.
+    uint8_t bodyRunsAtMostOnce : 1;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }
     void add(Flag flag) { flags |= static_cast<uint16_t>(flag); }

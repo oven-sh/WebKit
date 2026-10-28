@@ -142,6 +142,11 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             }
             number = std::nullopt;
         }
+        if (number && BuiltinBindings::directFunctionAt(*number).returnsNumber) {
+            DirectOperands operands = directOperandsOf(value, BuiltinBindings::directFunctionAt(*number));
+            defineAs(value, Number(emitter<RuntimeCallEmitter>().callDirectFunctionReturningNumber(value, *number, operands.words.span(), operands.keptAlive.span())), typeOf(value.id()));
+            return;
+        }
         // A validating build makes no host frame for a direct call, so what needs one goes through the host function there.
         bool needsHostFrame = number && (BuiltinBindings::directFunctionAt(*number).takesFrame() || (receiver && overload.throws() && !overload.onlyPropagatesErrors() && BuiltinCellKey::object(overload.builtin).hasCell(m_builtins)));
         if (number && !BuiltinBindings::directFunctionAt(*number).entersHostFunction() && !(generator().validates() && needsHostFrame)) {

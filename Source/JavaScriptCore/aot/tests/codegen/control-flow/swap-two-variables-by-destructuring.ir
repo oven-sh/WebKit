@@ -112,7 +112,7 @@ function f1 name="fibonacci" module=m0 flags=[IsChecked, HasExplicitName] length
 # CHECK-NEXT: Upsilon(b@[[sum]], ^[[b]], WritesLocalState
 # CHECK-NOT: Patchpoint
 # CHECK-LABEL: end of loop
-# X64: loop #{{*}}, instructions: 6, patchpoints: 0, {{*}} steps by 1
-# X64: loop #{{*}}, instructions: 6, patchpoints: 1, {{*}} steps by 1
+# X64: loop #{{*}}, instructions: 5, patchpoints: 0, {{*}} steps by 1
+# X64: loop #{{*}}, instructions: 5, patchpoints: 1, {{*}} steps by 1
 # ARM64: loop #{{*}}, instructions: 6, patchpoints: 0, {{*}} steps by 1
 # ARM64: loop #{{*}}, instructions: 6, patchpoints: 1, {{*}} steps by 1

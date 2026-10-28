@@ -104,6 +104,7 @@ void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowS
 void callOtherCallables(ClimbingSet callees, ValueFlowCallKind, const ValueFlowCallGroup&, ValueFlowRuleContext&);
 
 void runInstanceOf(const ValueFlowStatement&, ValueFlowRuleContext&);
+void describeObjectsRefusedAsFunctions(ValueFlowRuleContext&, ClimbingSet functions);
 void letNativeCodeTestAgainst(ValueFlowRuleContext&, const ValueFlowOperand& constructors);
 
 void runBehavior(const ValueFlowStatement&, ValueFlowRuleContext&);

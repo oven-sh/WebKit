@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCompileOptions.h"
+#include "AOTCurrentWork.h"
 #include "AOTDiagnostics.h"
 #include "AOTLimits.h"
 #include "AOTLosses.h"
@@ -53,6 +54,12 @@ public:
     const CompileOptions& options() const { return m_options; }
     const RecordedOptions& recordedOptions() const { return m_options.recorded; }
     bool validates() const { return m_options.recorded.validates; }
+    // A build that reports where an end that cannot be reached is reached says which pass made the end.
+    PassID passToNameAtUnreachableEnd() const
+    {
+        bool reportsEnds = validates() || m_options.recorded.has(TestingSwitch::CheckProofsAtRunTime);
+        return reportsEnds ? currentWork().pass.load(std::memory_order_relaxed) : PassID::None;
+    }
     bool isSabotaged(Sabotage part) const { return m_options.recorded.isSabotaged(part); }
 
     bool isEnabled(FlowResultKind kind, uint32_t subject) const { return m_options.recorded.isEnabled(kind, subject); }

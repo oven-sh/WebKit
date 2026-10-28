@@ -256,20 +256,14 @@ public:
     void report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome = TestOutcome::IsExpectedToPass);
     void report(std::initializer_list<Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome = TestOutcome::IsExpectedToPass) { report(std::span<const Value> { tests.begin(), tests.size() }, effectsWhenPassed, outcome); }
 
-    void forEachCandidate(NOESCAPE const Invocable<void(const Value&)> auto& functor)
+    // The operations among these that no rule has claimed, in the order of the blocks.
+    void forEachCandidate(const OpcodeSet& operations, NOESCAPE const Invocable<void(const Value&)> auto& functor)
     {
-        const CFG& cfg = m_context.analyses.cfg();
-        const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
-        for (BlockID block : cfg.reversePostOrder()) {
-            if (frequencies.classOf(block).predicted() == BlockFrequency::Rare && !isWrittenInCatchClause(block))
+        for (const Candidate& candidate : candidates()) {
+            if (!operations.contains(candidate.operation) || m_isClaimed.quickGet(candidate.use.index()))
                 continue;
-            const BlockValues& values = m_context.function.at(block).values;
-            for (uint32_t index = 0; index < values.size(); ++index) {
-                if (m_isClaimed.get(values[index].index()) || m_awaitsExpansion.get(values[index].index()))
-                    continue;
-                moveTo(m_rule, values[index], { block, index });
-                functor(m_context.function.at(values[index]));
-            }
+            moveTo(m_rule, candidate.use, candidate.point);
+            functor(m_context.function.at(candidate.use));
         }
     }
 
@@ -279,6 +273,14 @@ public:
     TestSites takeSites() { return WTF::move(m_sites); }
 
 private:
+    struct Candidate {
+        ValueID use;
+        ProgramPoint point;
+        Opcode operation;
+    };
+
+    // Most values of a function are of operations that no rule looks at, and each rule walks the function.
+    std::span<const Candidate> candidates() LIFETIME_BOUND;
     const FailedConditions& failedConditions() const;
     bool hasFailedTest(std::span<const Value> tests) const;
     bool isWrittenInCatchClause(BlockID);
@@ -291,6 +293,7 @@ private:
     mutable bool m_hasFailedEarlierTest { false };
     BitVector m_isClaimed;
     BitVector m_awaitsExpansion;
+    std::optional<Vector<Candidate, 32>> m_candidates;
     TestSites m_sites;
     mutable std::optional<FailedConditions> m_failedConditions;
     Vector<PlannedAccess> m_plannedAccesses;

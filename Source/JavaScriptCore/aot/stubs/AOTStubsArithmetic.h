@@ -57,7 +57,7 @@ constexpr BinaryWithDoubleForm binaryWithDoubleForm(BinaryOperator operation, bo
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-enum class UnaryOperationForm : uint8_t { Negate, Increment, Decrement, BitNot, ToNumeric };
+enum class UnaryOperationForm : uint8_t { Negate, Increment, Decrement, BitNot, ToNumeric, AddToEmptyString, ToString };
 enum class BoxedNumberForm : uint8_t { Double, OptionalDouble, Integer, OptionalInteger };
 
 constexpr StubKey binaryOperation(BinaryOperator operation, bool isAfterInt32Check) { return StubKey(StubFamily::BinaryOperation).withForm(binaryOperationForm(operation, isAfterInt32Check)); }

@@ -100,6 +100,8 @@ struct BuiltinDirectFunctionBinding {
     std::array<BuiltinDirectValue, maxParameterCount> parameters { };
     uint8_t parameterCount { 0 };
     bool returnsFields { false };
+    // It answers a double in the register for one. It cannot fail.
+    bool returnsNumber { false };
     uint16_t offsetOfNativeObject { 0 };
 };
 

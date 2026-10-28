@@ -497,6 +497,13 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
 void AccessRewriter::rewrite(const ElementAccessSite& site, const AccessOperands& operands)
 {
     const ElementAccessPlan& plan = site.plan;
+    ValueID stored = operands.stored;
+    if (plan.operation == Opcode::PutTypedArrayElement && contentType(plan.typedArrayType) == TypedArrayContentType::Number && !context.program.typeOf(context.function, stored).isNumber()) {
+        Value conversion = IRBuilder::make(Opcode::ToNumber);
+        conversion.setValueOperand(stored);
+        conversion.setOrigin(context.function.at(site.site.value).origin());
+        stored = insert(WTF::move(conversion));
+    }
     Value& value = context.function.edit(site.site.value);
     switch (plan.form) {
     case ElementAccessForm::NamedKey:
@@ -538,7 +545,7 @@ void AccessRewriter::rewrite(const ElementAccessSite& site, const AccessOperands
     value.setLevel(plan.level);
     value.setAccessSite(accessSite);
     if (OperandPosition::value(plan.operation))
-        value.setValueOperand(operands.stored);
+        value.setValueOperand(stored);
     if (plan.form == ElementAccessForm::Array) {
         value.setArrayOperand(operands.receiver);
         value.setGuardOperand(operands.guard);
@@ -2232,7 +2239,7 @@ static bool mayTestSlotFirst(const FunctionPassContext& context, const PropertyA
 void reportPropertyAccessTests(TestSiteReporter& reporter)
 {
     std::optional<UncheckedKeyHashMap<uint32_t, unsigned>> optionalFieldsRead;
-    reporter.forEachCandidate([&](const Value& access) {
+    reporter.forEachCandidate(namedAccesses, [&](const Value& access) {
         std::optional<PropertyAccessQuery> query = propertyAccessQueryOf(reporter.program(), reporter.function(), access, ExpectedClassObjects::Tested);
         if (!query)
             return;
@@ -3676,6 +3683,49 @@ static std::optional<PlannedSplit> planSplitOfNumberKey(FunctionPassContext& con
     return planSplitOfKey(context, site, singleElementSpan(number->type), true);
 }
 
+// A view of numbers stores a number as it is. What else the value may be becomes a number without running code, and that is rare: an optional number is undefined where nobody gave one.
+static std::optional<PlannedSplit> planSplitOfStoredNumber(FunctionPassContext& context, const ValueSite& site)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const Value& value = function.at(site.value);
+    if (elementAccessOf(value.opcode) != Access::Store || value.valueOperand() == value.propertyOperand())
+        return std::nullopt;
+    // Two stores in line are more code than one store by key.
+    if (isCold(heatClassOf(context, site.block)).predicted())
+        return std::nullopt;
+    ValueID stored = value.valueOperand();
+    const Type& storedType = program.typeOf(function, stored);
+    if (storedType.isNumber() || !storedType.isNumberLike())
+        return std::nullopt;
+    UnionParts parts = unionPartsOf(storedType);
+    auto number = std::ranges::find(parts, UnionPartKind::Number, &UnionPart::kind);
+    if (number == parts.end())
+        return std::nullopt;
+
+    ValueID receiver = value.objectOperand();
+    ValueID key = value.propertyOperand();
+    ElementAccessForm form = planElementAccess(program, {
+        .access = Access::Store,
+        .writtenIn = program.sourceFunctionOf(function, value),
+        .receiver = program.typeOf(function, receiver),
+        .receiverExpected = findExpectedType(program, function, receiver),
+        .key = program.typeOf(function, key),
+        .keyExpected = findExpectedType(program, function, key),
+        .stored = &number->type,
+    }).form;
+    if (form != ElementAccessForm::TypedArray)
+        return std::nullopt;
+
+    Expected<BlockFrequency> frequency = function.at(site.block).frequency;
+    const Type* expected = findExpectedType(program, function, stored);
+    Expected<BlockFrequency> restFrequency = expected && expected->isNumber() ? Expected<BlockFrequency>(BlockFrequency::Rare) : rarerOf(frequency, BlockFrequency::Unlikely);
+    PlannedSplit plan { site, *OperandPosition::value(value.opcode), { stored, { }, true, restFrequency }, { }, { }, { } };
+    plan.split.arms.append(SplitArm { context.types.intern(number->type), frequency });
+    plan.armReceivers.fill(LayoutSetID(), 1);
+    return plan;
+}
+
 static std::optional<PlannedSplit> planSplitByKeys(FunctionPassContext& context, const ValueSite& site)
 {
     const Value& value = context.function.at(site.value);
@@ -3725,7 +3775,13 @@ static std::optional<PlannedSplit> planSplit(FunctionPassContext& context, const
 
     if (!isNamedAccess(value.opcode)) {
         std::optional<ElementAccessPlan> plan = planElementAccessOf(context.program, function, value);
-        if (!plan || (plan->form != ElementAccessForm::ByKey && plan->form != ElementAccessForm::Split) || isInRareBlock())
+        if (!plan || isInRareBlock())
+            return std::nullopt;
+        if (plan->form == ElementAccessForm::ByKey || (plan->form == ElementAccessForm::TypedArray && plan->testsStoredValue)) {
+            if (std::optional<PlannedSplit> split = planSplitOfStoredNumber(context, site))
+                return split;
+        }
+        if (plan->form != ElementAccessForm::ByKey && plan->form != ElementAccessForm::Split)
             return std::nullopt;
         if (plan->form == ElementAccessForm::ByKey)
             return planSplitByKeys(context, site);

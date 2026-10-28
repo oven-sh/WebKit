@@ -322,7 +322,7 @@ static constexpr Step steps[] = {
         runLoopPass<eliminateRedundantPhiCycles> },
     { "convertBranchesToSelects"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.policy().optimization.convertsBranchesToSelects; },
-        runLoopPass<convertBranchesToSelects> },
+        runPass<convertBranchesToSelects> },
     { "mergeAdjacentConstantStores"_s,
         [](Procedure& procedure, const PipelineState&) { return procedure.optLevel() >= 2 && procedure.policy().optimization.mergesAdjacentConstantStores; },
         runPass<mergeAdjacentConstantStores> },

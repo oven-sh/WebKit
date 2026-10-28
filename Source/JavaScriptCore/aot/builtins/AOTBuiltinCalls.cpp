@@ -206,6 +206,14 @@ bool isCallThatRequiredPassRemoves(const Program& program, const Value& call)
     return !BuiltinBindings::directFunctionNumberOf(call.overload(), call.argumentsOperands().size());
 }
 
+bool answersUnboxedNumber(const Value& call)
+{
+    if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole)
+        return false;
+    std::optional<uint32_t> number = BuiltinBindings::directFunctionNumberOf(call.overload(), call.argumentsOperands().size());
+    return number && BuiltinBindings::directFunctionAt(*number).returnsNumber;
+}
+
 bool overloadHasForm(const BuiltinTable& table, BuiltinOverloadID id, BuiltinCallForm form)
 {
     const auto& code = table.at(id).code;

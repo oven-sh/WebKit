@@ -301,13 +301,52 @@ static bool areRegExpLiteralsSubset(const Type& a, const Type& b)
     return !a.regExpLiteralSet.isEmpty() && a.regExpLiteralSet.isSubsetOf(b.regExpLiteralSet);
 }
 
+// An object of a class that is written below a built-in class is an instance of that class, with a prototype and names of its own.
+BuiltinClassID builtinClassWrittenAbove(const TypeTable& types, LayoutID layout)
+{
+    const Program* program = types.program();
+    return program ? program->at(layout).writtenBuiltinBase : BuiltinClassID();
+}
+
+bool isInsideSomeClassPart(const TypeTable& types, LayoutID layout, const Type& type)
+{
+    BuiltinClassID builtinClass = builtinClassWrittenAbove(types, layout);
+    return builtinClass && std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+        bool saysOnlyThatItIsAnInstance = !part.contentsAreProven && part.provenPristine.isEmpty() && !(part.builtinClass == BuiltinClasses::RegExp && !type.regExpLiteralSet.isEmpty());
+        return saysOnlyThatItIsAnInstance && types.builtins().isSameOrSubclassOf(builtinClass, part.builtinClass);
+    });
+}
+
+// What the constructor of one class makes is an instance of the classes above it. It passes for an instance of another class where the test of that class cannot tell the two apart.
+bool mayHoldWhatConstructorMakes(const BuiltinTable& builtins, BuiltinClassID holder, BuiltinClassID constructed)
+{
+    if (builtins.isSameOrSubclassOf(constructed, holder) || builtins.isSameOrSubclassOf(holder, constructed))
+        return true;
+    if (builtins.at(holder).instanceTest == BuiltinInstanceTest::None || builtins.at(constructed).instanceTest == BuiltinInstanceTest::None)
+        return false;
+    return relate(builtins, constructed, holder) == ClassRelation::Unknown;
+}
+
+bool mayBeInsideSomeClassPart(const TypeTable& types, LayoutID layout, const Type& type)
+{
+    BuiltinClassID builtinClass = builtinClassWrittenAbove(types, layout);
+    return builtinClass && std::ranges::any_of(type.classes, [&](const ClassPart& part) {
+        return mayHoldWhatConstructorMakes(types.builtins(), part.builtinClass, builtinClass);
+    });
+}
+
 static bool areLayoutsSubset(const Type& a, const Type& b, const TypeTable& types)
 {
     if (!a.layouts || a.layouts == b.layouts)
         return true;
-    if (!b.layouts)
+    if (b.layouts && isSubsetOf(types.at(a.layouts), types.at(b.layouts)))
+        return true;
+    if (b.classes.isEmpty())
         return false;
-    return isSubsetOf(types.at(a.layouts), types.at(b.layouts));
+    std::span<const LayoutID> listed = membersOf(types, b);
+    return std::ranges::all_of(membersOf(types, a), [&](LayoutID member) {
+        return std::ranges::binary_search(listed, member) || isInsideSomeClassPart(types, member, b);
+    });
 }
 
 static bool areObjectsSubset(const Type& a, const Type& b, const TypeTable& types)
@@ -404,6 +443,15 @@ static bool layoutsOverlap(const Type& a, const Type& b, const TypeTable& types)
     return a.layouts == b.layouts || overlaps(types.at(a.layouts), types.at(b.layouts));
 }
 
+static bool layoutsOverlapClasses(const Type& layouts, const Type& classes, const TypeTable& types)
+{
+    if (!layouts.layouts || classes.classes.isEmpty())
+        return false;
+    return std::ranges::any_of(membersOf(types, layouts), [&](LayoutID member) {
+        return mayBeInsideSomeClassPart(types, member, classes);
+    });
+}
+
 static bool objectsOverlap(const Type& a, const Type& b, const TypeTable& types)
 {
     if (!a.hasObjects() || !b.hasObjects())
@@ -411,7 +459,8 @@ static bool objectsOverlap(const Type& a, const Type& b, const TypeTable& types)
     if (a.anyObject || b.anyObject)
         return true;
     const BuiltinTable& builtins = types.builtins();
-    return callablesOverlap(builtins, a, b) || builtinsOverlap(a, b, types) || classesOverlap(builtins, a, b) || layoutsOverlap(a, b, types);
+    return callablesOverlap(builtins, a, b) || builtinsOverlap(a, b, types) || classesOverlap(builtins, a, b) || layoutsOverlap(a, b, types)
+        || layoutsOverlapClasses(a, b, types) || layoutsOverlapClasses(b, a, types);
 }
 
 bool overlap(const Type& a, const Type& b, const TypeTable& types)

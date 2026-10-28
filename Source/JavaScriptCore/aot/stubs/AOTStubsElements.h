@@ -27,7 +27,11 @@ constexpr StubKey putByValExpecting(bool indexIsInteger, ECMAMode mode, Expected
     return StubKey(indexIsInteger ? StubFamily::PutByValAtIndexExpecting : StubFamily::PutByValExpecting).withForm((mode.isStrict() ? 0 : numberOfExpectedElements) + static_cast<uint8_t>(expected));
 }
 
-static_assert(exists(getByVal(false)) && exists(getByVal(true)));
+// From one byte to this many.
+inline constexpr unsigned maxBytesMovedByStub = 16;
+constexpr StubKey moveFewBytes() { return StubKey(StubFamily::MoveFewBytes); }
+
+static_assert(exists(getByVal(false)) && exists(getByVal(true)) && exists(moveFewBytes()));
 static_assert(exists(getByValExpecting(true, ExpectedElements::Uint8Array)) && !exists(StubKey(StubFamily::GetByValExpecting).withForm(numberOfExpectedElements)));
 static_assert(exists(StubKey(StubFamily::PutByValAtIndexExpecting).withForm(2 * numberOfExpectedElements - 1)) && !exists(StubKey(StubFamily::PutByValExpecting).withForm(2 * numberOfExpectedElements)));
 static_assert(exists(StubKey(StubFamily::PutByVal).withForm(static_cast<uint8_t>(ElementStoreMode::Sloppy))) && !exists(StubKey(StubFamily::PutByVal).withForm(2)));

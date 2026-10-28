@@ -365,6 +365,11 @@ private:
                     Value* a = m_value->child(0);
                     Value* b = m_value->child(1);
 
+                    if (m_proc.policy().selection.extendsInstructionSelection) {
+                        lowerMinOrMaxWithSelects(isMax, a, b);
+                        break;
+                    }
+
                     Value* isEqualValue = m_insertionSet.insert<Value>(
                         m_index, Equal, m_origin, a, b);
 
@@ -1156,6 +1161,60 @@ private:
         return true;
     }
 
+    // Select(LessThan(x, y), x, y) is y where one is NaN and where both are zeros. So of the two orders one gives a and the other b there, and both give the same value elsewhere.
+    void lowerMinOrMaxWithSelects(bool isMax, Value* a, Value* b)
+    {
+        Opcode comparison = isMax ? GreaterThan : LessThan;
+        auto select = [&](Value* first, Value* second) {
+            Value* isChosen = m_insertionSet.insert<Value>(m_index, comparison, m_origin, first, second);
+            return m_insertionSet.insert<Value>(m_index, Select, m_origin, isChosen, first, second);
+        };
+        auto isNeverNaN = [](Value* value) {
+            return (value->hasDouble() && value->asDouble() == value->asDouble()) || (value->hasFloat() && value->asFloat() == value->asFloat());
+        };
+        auto isZeroWithSign = [](Value* value, bool sign) {
+            return (value->hasDouble() && !value->asDouble() && std::signbit(value->asDouble()) == sign) || (value->hasFloat() && !value->asFloat() && std::signbit(value->asFloat()) == sign);
+        };
+        if (isNeverNaN(a))
+            std::swap(a, b);
+        // With b first, a is the answer where it is NaN and where both are zeros. That is wrong only where b is the zero that wins against the other zero.
+        if (isNeverNaN(b) && !isZeroWithSign(b, !isMax)) {
+            m_value->replaceWithIdentity(select(b, a));
+            m_changed = true;
+            return;
+        }
+        // Adding 0 turns -0 into 0 and changes nothing else.
+        if (isMax && isNeverNaN(b)) {
+            m_value->replaceWithIdentity(m_insertionSet.insert<Value>(m_index, Add, m_origin, select(b, a), b));
+            m_changed = true;
+            return;
+        }
+
+        Value* secondIfSpecial = select(a, b);
+        Value* firstIfSpecial = select(b, a);
+        Value* joined = m_insertionSet.insert<Value>(m_index, isMax ? BitAnd : BitOr, m_origin, secondIfSpecial, firstIfSpecial);
+        Value* isUnordered = isMax
+            ? m_insertionSet.insert<Value>(m_index, NotEqual, m_origin, secondIfSpecial, firstIfSpecial)
+            : m_insertionSet.insert<Value>(m_index, NotEqual, m_origin, joined, joined);
+        UpsilonValue* orderedResult = m_insertionSet.insert<UpsilonValue>(m_index, m_origin, joined);
+
+        BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
+        BasicBlock* unordered = m_blockInsertionSet.insertBefore(m_block);
+        before->replaceLastWithNew<Value>(m_proc, Branch, m_origin, isUnordered);
+        before->setSuccessors(FrequentedBlock(unordered, FrequencyClass::Rare), FrequentedBlock(m_block));
+
+        UpsilonValue* unorderedResult = unordered->appendNew<UpsilonValue>(m_proc, m_origin, unordered->appendNew<Value>(m_proc, Add, m_origin, firstIfSpecial, secondIfSpecial));
+        unordered->setSuccessors(FrequentedBlock(m_block));
+        unordered->appendNew<Value>(m_proc, Jump, m_origin);
+
+        Value* phi = m_insertionSet.insert<Value>(m_index, Phi, m_value->type(), m_origin);
+        orderedResult->setPhi(phi);
+        unorderedResult->setPhi(phi);
+        m_value->replaceWithIdentity(phi);
+        before->updatePredecessorsAfter();
+        m_changed = true;
+    }
+
     void makeDivisionChill(Opcode nonChillOpcode)
     {
         ASSERT(nonChillOpcode == Div || nonChillOpcode == Mod);
@@ -1539,6 +1598,9 @@ private:
         Value* child = m_value->child(0);
         Type type = child->type();
         Value* index = first ? before->appendNew<Value>(m_proc, Sub, m_origin, child, before->appendIntConstant(m_proc, m_origin, type, static_cast<int64_t>(first))) : child;
+        bool isWholeSwitch = !start && end == cases.size();
+        if (isWholeSwitch && tests.size() == 1 && !coversAll && tryBuildValueOfBit(tests[0].target.block(), fallThrough.block(), tests[0].mask, index, limit, needsRangeCheck, before))
+            return true;
         if (needsRangeCheck) {
             BasicBlock* inRange = m_blockInsertionSet.insertAfter(m_block);
             before->appendNew<Value>(m_proc, Branch, m_origin, before->appendNew<Value>(m_proc, Above, m_origin, index, before->appendIntConstant(m_proc, m_origin, type, static_cast<int64_t>(limit))));
@@ -1563,6 +1625,41 @@ private:
         }
         before->setSuccessors(tests.isEmpty() ? fallThrough : tests.last().target);
         before->appendNew<Value>(m_proc, Jump, m_origin);
+        return true;
+    }
+
+    // Where both sides of the test of a bit only say a constant, nothing branches: the bit chooses the constant, and where the constants are 1 and 0 it is the answer.
+    // An index past the window shifts by some other amount. What that gives is masked by the test of the range.
+    bool tryBuildValueOfBit(BasicBlock* ifSet, BasicBlock* ifClear, uint64_t mask, Value* index, uint64_t limit, bool needsRangeCheck, BasicBlock* before)
+    {
+        std::optional<ValueTableArm> set = describeValueTableArm(ifSet);
+        std::optional<ValueTableArm> clear = describeValueTableArm(ifClear);
+        if (!set || !clear || set->operand || clear->operand || set->type != clear->type || set->phi != clear->phi || set->join != clear->join)
+            return false;
+        Type maskType = limit < 32 ? Int32 : Int64;
+        Value* amount = index->type() == Int32 ? index : before->appendNew<Value>(m_proc, Trunc, m_origin, index);
+        Value* shifted = before->appendNew<Value>(m_proc, ZShr, m_origin, before->appendIntConstant(m_proc, m_origin, maskType, static_cast<int64_t>(mask)), amount);
+        if (maskType == Int64)
+            shifted = before->appendNew<Value>(m_proc, Trunc, m_origin, shifted);
+        Value* kept = needsRangeCheck
+            ? before->appendNew<Value>(m_proc, BelowEqual, m_origin, index, before->appendIntConstant(m_proc, m_origin, index->type(), static_cast<int64_t>(limit)))
+            : before->appendIntConstant(m_proc, m_origin, Int32, 1);
+        Value* bit = before->appendNew<Value>(m_proc, BitAnd, m_origin, shifted, kept);
+        Value* result;
+        if (static_cast<uint64_t>(set->constant) <= 1 && (set->constant ^ clear->constant) == 1) {
+            result = set->constant ? bit : before->appendNew<Value>(m_proc, BitXor, m_origin, bit, before->appendIntConstant(m_proc, m_origin, Int32, 1));
+            if (set->type == Int64)
+                result = before->appendNew<Value>(m_proc, ZExt32, m_origin, result);
+        } else
+            result = before->appendNew<Value>(m_proc, Select, m_origin, bit, before->appendIntConstant(m_proc, m_origin, set->type, set->constant), before->appendIntConstant(m_proc, m_origin, set->type, clear->constant));
+        if (!set->phi) {
+            before->appendNew<Value>(m_proc, Return, m_origin, result);
+            before->clearSuccessors();
+            return true;
+        }
+        before->appendNew<UpsilonValue>(m_proc, m_origin, result, set->phi);
+        before->appendNew<Value>(m_proc, Jump, m_origin);
+        before->setSuccessors(FrequentedBlock(set->join));
         return true;
     }
 

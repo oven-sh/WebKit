@@ -1422,6 +1422,22 @@ Structure* Structure::makeListedPropertiesImmutableTransition(VM& vm, Structure*
     return transition;
 }
 
+void Structure::makePropertiesImmutableWithoutTransition()
+{
+    ASSERT(isPinnedPropertyTable());
+    setDidPreventExtensions(true);
+    setHasImmutableProperties(true);
+    setTransitionWatchpointIsLikelyToBeFired(false);
+}
+
+void Structure::makeListedPropertiesImmutableWithoutTransition(VM& vm, ImmutablePropertyNames& names)
+{
+    ASSERT(isPinnedPropertyTable() && !hasImmutableProperties() && !isCompiledStructure());
+    ensureRareData(vm)->setImmutablePropertyNames(names);
+    setHasListedImmutableProperties(true);
+    setTransitionWatchpointIsLikelyToBeFired(false);
+}
+
 bool Structure::isListedImmutableProperty(UniquedStringImpl* uid) const
 {
     ASSERT(hasListedImmutableProperties());

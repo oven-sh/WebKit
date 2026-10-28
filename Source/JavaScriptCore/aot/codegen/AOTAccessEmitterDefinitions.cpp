@@ -10,12 +10,14 @@
 
 #include "AOTBarrierEmitter.h"
 #include "AOTCellAllocationEmitter.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCodeSizeEstimate.h"
 #include "AOTConstantEmitter.h"
 #include "AOTDerivedFunctions.h"
 #include "AOTFunctionKinds.h"
 #include "AOTObjectCreationEmitter.h"
 #include "AOTObjectWords.h"
+#include "AOTPendingStars.h"
 #include "AOTPlacement.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTPropertyCachesFront.h"
@@ -104,7 +106,10 @@ void AccessEmitter::generateTryReExportFields(const ValueContext& value)
         defineTest(value, boolean(false));
         return;
     }
-    uint32_t rule = closureCaptureSlotOf(m_program, getter, value->keyIsFirstCapture() ? 0 : 1) | static_cast<uint32_t>(value->reusesDescriptors()) << 1;
+    unsigned keyCapture = value->keyIsFirstCapture() ? 0 : 1;
+    uint32_t rule = closureCaptureSlotOf(m_program, getter, keyCapture) | (value->reusesDescriptors() ? starRuleReusesDescriptors : 0);
+    if (declaredRepresentationOf(m_program, getter.captures[keyCapture]) == Representation::LiteralString && !build().isSabotaged(Sabotage::KeysOfStarsAreHeldAsStrings))
+        rule |= starRuleKeyIsLiteralStringWord;
     defineTest(value, callOperation<Condition>(value, RuntimeOperation::TryReExportFields, { target, source, word32(static_cast<int32_t>(entrypoint.index())), word32(static_cast<int32_t>(rule)) }));
 }
 

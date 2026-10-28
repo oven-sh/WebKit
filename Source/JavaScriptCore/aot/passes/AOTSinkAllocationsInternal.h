@@ -60,6 +60,17 @@ void removeEntry(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, Key v
         entries.removeAt(entry - entries.begin());
 }
 
+// `values` is in ascending order, as the entries are.
+template<typename Entry, size_t inlineCapacity, typename Key>
+void removeEntries(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, std::span<const Key> values)
+{
+    if (values.empty())
+        return;
+    entries.removeAllMatching([&](const Entry& entry) {
+        return std::ranges::binary_search(values, entry.*key);
+    });
+}
+
 struct ObjectVariant {
     std::optional<uint8_t> tagBit;
     VirtualShapeID shape;
@@ -323,6 +334,7 @@ public:
     ObjectValues& ensure(VirtualObjectID object) { return ensureEntry(m_entries, &Entry::object, object).values; }
     const ObjectValues* find(VirtualObjectID) const;
     void remove(VirtualObjectID object) { removeEntry(m_entries, &Entry::object, object); }
+    void remove(std::span<const VirtualObjectID> ascendingObjects) { removeEntries(m_entries, &Entry::object, ascendingObjects); }
 
 private:
     struct Entry {

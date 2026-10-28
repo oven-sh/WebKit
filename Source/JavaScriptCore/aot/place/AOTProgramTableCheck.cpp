@@ -496,6 +496,8 @@ static bool isEncodingOf(const TableCheck& check, const RuntimeCellTest& encoded
         return encoded.operand == static_cast<uint32_t>(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return encoded.module() == test.module;
+    case CellTestKind::CarriesBrandOfClass:
+        return check.encoder.placement.rankOfClass(test.classLayout) == encoded.rankOfClass();
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

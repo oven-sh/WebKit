@@ -352,7 +352,8 @@ void compileFunctions(const CodeGenerationWorker& worker, const CodeGenerationIn
 
     Vector<std::unique_ptr<FunctionCodeGenerator>, 16> generators;
     Vector<B3::Procedure*, 16> procedures;
-    const bool comparesWithBackEnd = worker.build.options().validatesBackEnd;
+    // Under the switch the back end adds stores that no forwarding code has.
+    const bool comparesWithBackEnd = worker.build.options().validatesBackEnd && !worker.build.recordedOptions().has(TestingSwitch::OverwriteDeadValuesAtCollections);
     BitVector isForwardingCode(ids.size());
     CurrentWorkScope workScope(inputs.program, FunctionID());
     currentWork().setPass(PassID::GenerateCode);

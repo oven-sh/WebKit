@@ -479,6 +479,7 @@ public:
 
     ValueSetID storedUnder(LayoutID layout, PropertyKeyID key) { return storedUnder(m_heap.maker(), layout, key); }
     ValueSetID storedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
+    ValueSetID storedUnderNameItself(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     ValueFlowNumbers numbersStoredUnder(LayoutID, PropertyKeyID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool isStoredAfterCreation(LayoutID, PropertyKeyID) const;
     OptionSet<Actor> writersSeenUnder(LayoutID, PropertyKeyID) const;

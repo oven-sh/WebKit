@@ -1,7 +1,7 @@
-# A call under a handler is replaced where it is, and nothing is resolved in front of a loop whose header has another handler than the block that enters it
+# A call under a handler is replaced where it is. In front of a loop whose header has another handler than the block that enters it, the callee is resolved in a block of its own
 # FORM: Prepared
 # RUN: pass Select
-# STATISTIC: ResolvedCallTargetGroups = 1
+# STATISTIC: ResolvedCallTargetGroups = 2
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="call-under-handler" parameters=[{type=anything}, {type=boolean}, {type=anything}] results=[{type=undefined}] {
@@ -24,6 +24,7 @@ function f0 name="call-under-handler" parameters=[{type=anything}, {type=boolean
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: b2() handler=b4():
 # CHECK-NEXT: anything = CallResolved v0, [[target]], -, v2
+# CHECK-NEXT: LoopHint [leavesHandler]
 # CHECK-NEXT: Jump -> next b3()
 }
 
@@ -38,6 +39,11 @@ function f1 name="header-under-handler" parameters=[{type=anything}, {type=boole
     Return
   b3():
     Return
-# CHECK-NOT: ResolveCallTarget
-# CHECK: anything = Call v0, -, v2
+# CHECK: Jump -> next [[entry]]()
+# CHECK: b1() handler=b2():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: anything = CallResolved v0, [[target]], -, v2
+# CHECK: [[entry]]():
+# CHECK-NEXT: [[target]]: codeaddress = ResolveCallTarget v0 argumentCount=1
+# CHECK-NEXT: Jump -> next b1()
 }

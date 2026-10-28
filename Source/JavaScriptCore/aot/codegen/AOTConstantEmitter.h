@@ -46,6 +46,8 @@ public:
     CellPointer builtinCell(const OperationContext& context, BuiltinID id) { return builtinCell(context, BuiltinCellKey::object(id)); }
     CellPointer builtinCell(const OperationContext&, BuiltinCellKey);
     CellPointer singletonClosure(const OperationContext&, FunctionID);
+    // Makes the closure that a slot of the object has left unmade and stores it there. Null where the stub for closures without a function object does not make the closures of the function.
+    std::optional<CellPointer> tryMakeClosureOfField(const OperationContext&, FunctionID, CellPointer object, uint32_t offsetOfSlot, bool capturesObject);
     // For a type test, which has no context. Placement has numbered the cell.
     CellPointer keyConstant(PropertyKeyID);
     CellPointer builtinCell(BuiltinID);

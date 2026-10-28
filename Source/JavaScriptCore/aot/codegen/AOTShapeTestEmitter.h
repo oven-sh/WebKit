@@ -29,6 +29,14 @@ public:
     void switchOnShape(CellPointer, std::span<const LayoutSetID> cases, std::span<const B3::FrequentedBlock> targets, B3::FrequentedBlock otherwise);
     bool hasOnlyCompiledObjects(const Type& known) const;
     Condition hasNoExtraProperties(CellPointer);
+    // False for a class that has no place in ClassWords.
+    Condition carriesBrandOfClass(CellPointer, LayoutID);
+    // Every object of the type is a cell of a built-in class that carries the brand of one of a few classes.
+    bool hasOnlyCellsWithBrands(const Type&) const;
+    bool mayBeCellWithBrand(const Type&) const;
+    Condition isCompiledObject(CellPointer);
+    Condition hasPrototypeOfItsClass(CellPointer, const Type& cellsWithBrands);
+    Condition hasNoPropertyOfItsOwn(CellPointer);
 
 private:
     Condition passes(Word32 shapeWord, LayoutSetID tested, const ShapeTest&);

@@ -357,7 +357,7 @@ void CodeGenerator::generateTerminator(BlockID blockID, const Block& block)
     if (m_validates)
         emitter<RuntimeValidationEmitter>().validateExit(context);
     else if (m_checksProofs && context.kind() == TerminatorKind::Unreachable)
-        emitter<RuntimeValidationEmitter>().reportUnreachable({ });
+        emitter<RuntimeValidationEmitter>().reportUnreachable({ }, context->cutBy());
 
     auto begin = m_heaps.markDecorations();
     dispatch(context);
@@ -515,6 +515,7 @@ void CodeGenerator::passHandlerArguments(const Target& handler)
     // A landing pad is entered from every block that hands the handler these arguments: of what was made in the block that is being generated nothing is known to be there.
     size_t numberOfSharedForms = m_sharedForms.size();
     size_t firstSharedFormInReach = std::exchange(m_firstSharedFormInReach, numberOfSharedForms);
+    bool wasPassingHandlerArguments = std::exchange(m_isPassingHandlerArguments, true);
     std::optional<ConversionEmitter::PlaceOnEdge> outerPlace = emitter<ConversionEmitter>().setPlaceOnEdge(ConversionEmitter::PlaceOnEdge { BlockFrequency::Rare, CodeShape::Compact });
     auto& parameters = function().at(handler.block).parameters;
     RELEASE_ASSERT(handler.arguments.size() == parameters.size());
@@ -524,6 +525,7 @@ void CodeGenerator::passHandlerArguments(const Target& handler)
     }
     dropSharedFormsSince(numberOfSharedForms);
     m_firstSharedFormInReach = firstSharedFormInReach;
+    m_isPassingHandlerArguments = wasPassingHandlerArguments;
     emitter<ConversionEmitter>().setPlaceOnEdge(outerPlace);
 }
 

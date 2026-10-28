@@ -164,8 +164,51 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
 }
 
+static void generatePutKnownFieldThatTakesEveryNumber(StubAssembler& jit)
+{
+    static_assert(traitsOf(SlotRepresentation::OptionalDouble).absentBits == absentDouble && !traitsOf(SlotRepresentation::Double).hasAbsent);
+    const PutMode mode = static_cast<PutMode>(jit.key().form());
+    const GPRReg object = jit.operand(0);
+    const GPRReg value = jit.operand(1);
+    const GPRReg offsetOfRecord = jit.immediate();
+    const GPRReg offset = jit.allocateScratch(StubRegister::T10);
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    const GPRReg record = jit.allocateScratch(slotHeaderRegister);
+    const GPRReg structure = jit.allocateScratch(slotPayloadRegister);
+    const FPRReg number = CCallHelpers::fpTempRegister;
+    const BaseIndex slot(object, offset, CCallHelpers::TimesOne);
+    constexpr uint32_t flagsOfUnusualFields = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldIsStoredOnce;
+    JumpList isLeftToStubForAnyField;
+
+    isLeftToStubForAnyField.append(jit.branchIfNotNumber(value));
+    loadStructure(jit, object, structure);
+    jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), record);
+    jit.addPtr(offsetOfRecord, record);
+    isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(flagsOfUnusualFields)));
+    isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, Address(object, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(operationFor(mode)))));
+    jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), offset);
+    jit.and32(TrustedImm32(SlotData::maxOffset), offset);
+    jit.load64(slot, scratch);
+    isLeftToStubForAnyField.append(jit.branch64(CCallHelpers::Equal, scratch, TrustedImm64(static_cast<int64_t>(absentDouble))));
+    Jump isNotInt32 = jit.branchIfNotInt32(value);
+    jit.convertInt32ToDouble(value, number);
+    jit.storeDouble(number, slot);
+    jit.returnToCaller();
+
+    isNotInt32.link(&jit);
+    unboxDouble(jit, value, scratch, number);
+    jit.storeDouble(number, slot);
+    jit.returnToCaller();
+
+    jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
+}
+
 void generatePutKnownField(StubAssembler& jit)
 {
+    if (jit.key().count() == 2) {
+        generatePutKnownFieldThatTakesEveryNumber(jit);
+        return;
+    }
     if (jit.key().count()) {
         generatePutKnownFieldThatTakesAnyValue(jit);
         return;

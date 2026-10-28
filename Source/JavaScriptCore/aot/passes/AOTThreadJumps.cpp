@@ -668,23 +668,32 @@ struct EdgeThreader : Rewrite {
             const Block& block = at(id);
             if (leadsToOneBlock(block.terminator))
                 joinsThatLeadToOneBlock.append(id);
-            if (isLoopHeader(cfg, id) || block.terminator.kind != TerminatorKind::Branch || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency.predicted() != BlockFrequency::Normal)
+            if (isLoopHeader(cfg, id) || block.isHandlerBlock() || hasEdgeTo(block.terminator, id) || block.frequency.predicted() != BlockFrequency::Normal)
                 return false;
-            ValueID condition = block.terminator.conditionOperand();
+            ValueID condition = valueTestedBy(block.terminator);
+            if (!condition)
+                return false;
+            // The statements of a finally block stand in front of the choice of how to go on, and every way in says which it is.
+            // What such a block makes for the code below would be merged again there, and a closure or an object that comes out of a merge is known to nobody.
+            bool choosesByParameter = block.parameters.contains(condition)
+                && !std::ranges::all_of(block.values, [&](ValueID value) { return analyses.isRemovableWhenUnused(value); })
+                && std::ranges::all_of(block.values, [&](ValueID value) { return std::ranges::all_of(analyses.useLists().usesOf(value), [&](const Use& use) { return use.block == id; }); });
             const Value& test = at(condition);
-            if (test.opcode != Opcode::TypeTest || !block.values.contains(condition) || !block.parameters.contains(test.valueOperand()))
+            bool testsParameter = block.terminator.kind == TerminatorKind::Branch && test.opcode == Opcode::TypeTest && block.values.contains(condition) && block.parameters.contains(test.valueOperand());
+            if (!choosesByParameter && !testsParameter)
                 return false;
             size_t numberOfCopies = cfg.incomingEdges(id).size() - 1;
             if (context.exceeds(LimitID::MaxThreadedBlockValues, block.values.size() * numberOfCopies, condition))
                 return false;
             if (RegionCloner::checkCanDuplicate(analyses, singleElementSpan(id)) != CloneCheck::CanClone)
                 return false;
-            const Type& tested = context.types.at(test.testedType());
             return std::ranges::all_of(cfg.incomingEdges(id), [&](Edge edge) {
                 if (!canRedirect(edge))
                     return false;
-                const Type& passed = typeOf(substituteParameter(block, test.valueOperand(), targetOf(function, edge).arguments));
-                return evaluateTypeTest(program, passed, tested) != KnownBoolean::Unknown;
+                const Arguments& passed = targetOf(function, edge).arguments;
+                if (choosesByParameter)
+                    return decidedTargetOf(block.terminator, knownValueOf(program, function, substituteParameter(block, condition, passed))).has_value();
+                return evaluateTypeTest(program, typeOf(substituteParameter(block, test.valueOperand(), passed)), context.types.at(test.testedType())) != KnownBoolean::Unknown;
             });
         });
         if (!hasCandidates)

@@ -18,6 +18,7 @@
 #include "AOTIR.h"
 #include "AOTSort.h"
 #include "AOTThreshold.h"
+#include "AOTTypePropagation.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <array>
@@ -194,16 +195,46 @@ static bool hasEmptyDescription(TerminatorKind kind)
     return kinds.contains(kind);
 }
 
+// A set of locations without a heap has no mask either, so the words behind the heaps need not be read.
+static ALWAYS_INLINE bool isPure(const Effects& effects)
+{
+    return effects.reads.isEmpty() && effects.writes.isEmpty() && effects.mayThrow == ThrowEffect(false) && !effects.mayCollect && !effects.mayCallUnknownCode && !effects.maySuspend && !effects.mayBeTerminated;
+}
+
 static bool isEmpty(const EffectDescription& description)
 {
     return description.own == EffectsOnEdges::none() && description.functions.isEmpty() && description.slowPathFunctions.isEmpty() && !description.callsUnknownCode && !description.followsFieldsOfOperands;
+}
+
+static FunctionID genericVersionEnteredWithOwnParameters(const Program& program, const Function& function)
+{
+    if (function.role != FunctionRole::Source || !function.derivation.source || function.blocks.isEmpty())
+        return { };
+    const auto* record = program.at(function.derivation.source).creator.tryAs<CreatorRecord::EntryChecks>();
+    if (!record || &program.at(record->body) != &function)
+        return { };
+    const Function& generic = program.at(record->fallback);
+    if (generic.role != FunctionRole::GenericVersion || generic.blocks.isEmpty())
+        return { };
+    std::span<const ValueID> parameters = function.at(entryBlock).parameters.span();
+    if (parameters.size() != generic.at(entryBlock).parameters.size())
+        return { };
+    bool isEntered = std::ranges::any_of(function.blocks, [&](const Block& block) {
+        if (block.values.size() != 1 || block.handler || block.terminator.kind != TerminatorKind::ReturnCall)
+            return false;
+        const Value& call = function.at(block.values[0]);
+        return call.opcode == Opcode::CallDirect && call.function() == record->fallback && std::ranges::equal(call.variadicOperands(), parameters);
+    });
+    return isEntered ? record->fallback : FunctionID();
 }
 
 namespace {
 
 class BodySummarizer {
 public:
-    BodySummarizer(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references)
+    enum class ReadAs : uint8_t { Itself, ItselfAndCalleesByTypesOfOperands, GenericVersionGivenTypes, OutlinedBodyGivenTypes };
+
+    BodySummarizer(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references, ReadAs readAs)
         : m_context(context)
         , m_id(id)
         , m_analyses(analyses)
@@ -211,6 +242,8 @@ public:
         , m_function(analyses.function())
         , m_exits(computeExitReachability(m_function))
         , m_maySuspend(maySuspend(analyses))
+        , m_readAs(readAs)
+        , m_genericVersionEntered(readAs == ReadAs::ItselfAndCalleesByTypesOfOperands ? genericVersionEnteredWithOwnParameters(context.program, m_function) : FunctionID())
         , m_wordsInRow((firstBitOfParameters + m_function.numberOfEntryParameters() + bitsInWord - 1) / bitsInWord)
         , m_parametersInMemoryAsTargets(FillWith { }, m_wordsInRow, uint64_t { 0 })
     {
@@ -267,7 +300,7 @@ private:
     void addToExits(BlockID block, const Effects& normal, const Effects& handler)
     {
         m_gatheredForExits[exitsOf(block)].merge(normal);
-        if (handler.isPure())
+        if (isPure(handler))
             return;
         if (const std::optional<Target>& target = m_function.at(block).handler)
             m_gatheredForExits[exitsOf(target->block)].merge(handler);
@@ -547,6 +580,94 @@ private:
         }
     }
 
+    // A callee that takes more kinds of values than it is given here does what its operations do to values of the types given.
+    // So is the generic version in which this body begins again with its own parameters, and what was moved out of that version into a body of its own.
+    bool isReadWithTypesOfOperands(BlockID block, const Value& value) const
+    {
+        if (m_readAs == ReadAs::Itself || value.opcode != Opcode::CallDirect)
+            return false;
+        const Program& program = m_context.program;
+        const Function& callee = program.at(value.function());
+        std::span<const ValueID> operands = value.variadicOperands();
+        if (callee.blocks.isEmpty() || operands.size() != callee.numberOfEntryParameters() || operands.size() != value.numberOfOperands())
+            return false;
+        switch (m_readAs) {
+        case ReadAs::Itself:
+            return false;
+        case ReadAs::ItselfAndCalleesByTypesOfOperands:
+            return value.function() == m_genericVersionEntered && !m_function.at(block).handler && m_function.at(block).terminator.kind == TerminatorKind::ReturnCall
+                && std::ranges::equal(operands, m_function.at(entryBlock).parameters.span());
+        case ReadAs::GenericVersionGivenTypes:
+            return callee.role == FunctionRole::OutlinedBody;
+        case ReadAs::OutlinedBodyGivenTypes:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    void addDependencyOnNormalEdge(BlockID block, SummaryNode source)
+    {
+        addDependencyToParametersInMemoryAnd(source, exitBitsOf(block));
+    }
+
+    void addDependencyOnHandlerEdge(BlockID block, SummaryNode source)
+    {
+        const std::optional<Target>& handler = m_function.at(block).handler;
+        addDependencyToParametersInMemoryAnd(source, handler ? exitBitsOf(handler->block) : bitOfThrow);
+    }
+
+    void summarizeCalleeWithTypesOfOperands(BlockID block, ValueID call, const EffectDescription& description)
+    {
+        const Program& program = m_context.program;
+        const Value& value = m_function.at(call);
+        std::span<const ValueID> operands = value.variadicOperands();
+        Function callee(program.at(value.function()));
+        Vector<ValueID, 4> narrowedParameters;
+        for (uint32_t index = 0; index < operands.size(); ++index) {
+            ValueID parameter = callee.at(entryBlock).parameters[index];
+            TypeID given = m_function.at(operands[index]).type;
+            if (given == callee.at(parameter).type || !program.at(given).isSubsetOf(program.at(callee.at(parameter).type), program))
+                continue;
+            Value& narrowed = callee.edit(parameter);
+            narrowed.type = given;
+            narrowed.setExpected({ });
+            if (DeclaredType* declared = callee.declaredEntryParameter(index))
+                declared->establish(Proven::byPosition(given));
+            narrowedParameters.append(parameter);
+        }
+        AnalysisContext context = m_analyses.context();
+        context.id = value.function();
+        FunctionAnalyses analyses(context, callee);
+        // What is made of a parameter follows it: the side of a test, what two ways through the function join.
+        ScratchTypeArena types(program.types);
+        if (!narrowedParameters.isEmpty())
+            narrowValueTypesBehindChanges(TypePropagationInputs { program, value.function(), callee, analyses, types, context.build }, narrowedParameters.span());
+        BodySummary entered = BodySummarizer(m_context, value.function(), analyses, nullptr, m_readAs == ReadAs::ItselfAndCalleesByTypesOfOperands ? ReadAs::GenericVersionGivenTypes : ReadAs::OutlinedBodyGivenTypes).run();
+
+        addToExits(block, description.own.normal, description.own.handler);
+        addToExits(block, entered.onReturn, entered.onThrow);
+        m_summary.followsFieldsOfOperands |= entered.followsFieldsOfOperands;
+        if (entered.unknownCodeWitness && !m_summary.unknownCodeWitness)
+            m_summary.unknownCodeWitness = { m_id, call };
+        for (uint32_t index = 0; index < operands.size(); ++index)
+            addMemoryOfBase(block, operands[index], entered.parameters[index].memory, true);
+        for (const SummaryDependency& dependency : entered.dependencies) {
+            switch (dependency.target.part) {
+            case SummaryPart::OnReturn:
+                addDependencyOnNormalEdge(block, dependency.source);
+                break;
+            case SummaryPart::OnThrow:
+                addDependencyOnHandlerEdge(block, dependency.source);
+                break;
+            case SummaryPart::Parameter:
+                addBaseDependency(block, operands[dependency.target.parameter], dependency.source);
+                break;
+            case SummaryPart::UnknownCode:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+    }
+
     bool addCalledCode(BlockID block, const EffectDescription& description, ValueID entry)
     {
         if (!isFirstToRunAt(placeOfExits(block), description))
@@ -594,7 +715,9 @@ private:
                 m_references->read(value, m_emptyDescription);
             return;
         }
-        EffectDescription description = describeEffects(program, m_function, value);
+        bool isGivenTypes = m_readAs == ReadAs::GenericVersionGivenTypes || m_readAs == ReadAs::OutlinedBodyGivenTypes;
+        bool isUnmatchedCall = value.opcode == Opcode::CallBuiltin && value.builtinCallForm() == BuiltinCallForm::AnyReceiver;
+        EffectDescription description = isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByTypesOfOperands(program, m_function, value) : describeEffects(program, m_function, value);
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
@@ -605,6 +728,10 @@ private:
             description.functions.clear();
             description.callsUnknownCode = true;
             description.addOwn(Effects::unknownCode());
+        }
+        if (isReadWithTypesOfOperands(block, value)) [[unlikely]] {
+            summarizeCalleeWithTypesOfOperands(block, id, description);
+            return;
         }
         if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
             CalleeList callees = calleesThatBoundEffectsOf(program, value);
@@ -620,7 +747,7 @@ private:
             addMemoryOfOperands(value, description);
             return;
         }
-        if (own != EffectsOnEdges::none())
+        if (!isPure(own.normal) || !isPure(own.handler))
             addConfinedEffects(block, value, own);
     }
 
@@ -655,6 +782,8 @@ private:
 
     ExitReachability m_exits;
     bool m_maySuspend;
+    ReadAs m_readAs;
+    FunctionID m_genericVersionEntered;
     const EffectDescription m_emptyDescription;
     BodySummary m_summary;
     Vector<uint32_t, 4> m_parametersInMemory;
@@ -707,7 +836,7 @@ static BodySummary summarizeDescription(const Program& program, FunctionID id, c
     return summary;
 }
 
-BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references)
+BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references, CalleesAreRead calleesAreRead)
 {
     const Function& function = analyses.function();
     if (isSummarizedByRole(function.role)) {
@@ -716,7 +845,7 @@ BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, Fu
             return summarizeDescription(context.program, id, function, description);
     }
     if (function.hasBody())
-        return BodySummarizer(context, id, analyses, references).run();
+        return BodySummarizer(context, id, analyses, references, calleesAreRead == CalleesAreRead::AsTheyAre ? BodySummarizer::ReadAs::Itself : BodySummarizer::ReadAs::ItselfAndCalleesByTypesOfOperands).run();
 
     BodySummary summary;
     summary.onReturn = Effects::unknownCode();

@@ -311,6 +311,8 @@ constexpr std::array optimizeSteps {
         ScheduleStep::run(ResolveAccesses),
         ScheduleStep::run(HoistLoopInvariantReads),
         ScheduleStep::run(SplitUnions),
+        // A counter that is known for an integer before the tests are placed gets no test.
+        ScheduleStep::run(ConvertCountersToIntegers),
         ScheduleStep::run(PlaceTypeTests),
         ScheduleStep::run(ExpandIteration),
         ScheduleStep::run(ExpandOwnKeys),
@@ -339,7 +341,7 @@ constexpr std::array optimizeSteps {
     ScheduleStep::run(RestartInGenericVersion),
     ScheduleStep::run(StartGeneratorsAtFirstStep),
     ScheduleStep::run(SeparateUnlikelyLoopPaths),
-    ScheduleStep::run(ConvertCountersToIntegers),
+    ScheduleStep::runBehindRounds(ConvertCountersToIntegers),
     ScheduleStep::run(SimplifyCasts),
     ScheduleStep::run(SimplifyBuiltinCalls),
     ScheduleStep::run(ReduceIntegerDivisions),
@@ -1136,10 +1138,15 @@ void Pipeline::runSchedule(FunctionSchedule schedule, const StepsAroundSchedule&
     const PassDescriptor& summarizer = descriptorOf(PassID::ComputeEffectSummaries);
     bool canSummarize = verifierInputs.flow && summarizer.accepts(m_program.form()) && m_build.isEnabled(summarizer.id, FunctionID());
     EffectSummaries effectsForVerifier;
-    if (m_build.options().verifiesAfterEveryPass && !readsEffectSummaries(schedule) && canSummarize) {
-        effectsForVerifier = computeEffectSummaries(m_program, *verifierInputs.flow, m_build);
+    EffectSummaries effectsByTypesOfOperands;
+    if (m_build.options().verifiesAfterEveryPass && canSummarize) {
         VerifierInputs withEffects = verifierInputs;
-        withEffects.effects = &effectsForVerifier;
+        if (!readsEffectSummaries(schedule)) {
+            effectsForVerifier = computeEffectSummaries(m_program, *verifierInputs.flow, m_build);
+            withEffects.effects = &effectsForVerifier;
+        }
+        effectsByTypesOfOperands = computeEffectSummariesByTypesOfOperands(m_program, *verifierInputs.flow, m_build);
+        withEffects.effectsByTypesOfOperands = &effectsByTypesOfOperands;
         m_runner.setVerifierInputs(withEffects);
     }
     runOnFunctions(schedule, m_program, inputs, m_runner, m_analyses, steps);
@@ -1576,6 +1583,7 @@ void Pipeline::runReadStage()
     shuffleRecordedFrequencies(m_program, m_build);
     forgetLongExpectations(m_program, m_build);
     stage.run(PassID::CopyClosureFactories);
+    noteClassesWrittenBelowBuiltinClasses(m_program, m_build.parallelLoops());
     stage.run(PassID::AllocateTaggedLayouts);
     stage.run(PassID::CheckTypesAtEntry);
     shuffleExpectedTypes(m_program, m_build);

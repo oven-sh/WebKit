@@ -140,10 +140,13 @@ static bool suspendsBetween(SelectionContext& context, ProgramPoint first, Progr
     });
 }
 
-static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader)
+// A reader that resolves ropes may throw, and so may the flattening in its place: it goes no further out than the handler of the reader reaches.
+static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader, bool userResolvesRopes)
 {
+    const Function& function = context.function();
     const NaturalLoops& loops = context.analyses().naturalLoops();
     std::optional<BlockID> header;
+    std::optional<BlockID> headerUnderHandlerOfUser;
     // What is invariant in a loop is invariant in the loops inside it, and a loop around a suspending loop suspends too.
     for (const NaturalLoop* loop = loops.innerMostLoopOf(user); loop; loop = loops.innerMostOuterLoop(*loop)) {
         bool loopSuspends = table.suspendingLoops.ensure(loop->header(), [&] {
@@ -156,10 +159,12 @@ static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& contex
         if (loopSuspends)
             break;
         header = loop->header();
+        if (function.at(loop->header()).handler == function.at(user).handler)
+            headerUnderHandlerOfUser = header;
         if (loop->header() == outermostHeader)
             break;
     }
-    return header;
+    return userResolvesRopes && headerUnderHandlerOfUser ? headerUnderHandlerOfUser : header;
 }
 
 // The reader has a string. Outside the loop the same value may have a wider type, which the loop entry tests.
@@ -176,12 +181,12 @@ static std::optional<InvariantOperand> findInvariantString(SelectionContext& con
     return findOutermostInvariantLoop(context, block, context.analyses().identityOf(string), mayBeString);
 }
 
-static std::optional<uint32_t> findOrAddPair(SelectionContext& context, PairTable& table, BlockID block, ValueID string)
+static std::optional<uint32_t> findOrAddPair(SelectionContext& context, PairTable& table, BlockID block, ValueID string, bool readerResolvesRopes)
 {
     std::optional<InvariantOperand> invariant = findInvariantString(context, block, string);
     if (!invariant)
         return std::nullopt;
-    std::optional<BlockID> header = findLoopWithoutSuspension(context, table, block, invariant->header);
+    std::optional<BlockID> header = findLoopWithoutSuspension(context, table, block, invariant->header, readerResolvesRopes);
     if (!header)
         return std::nullopt;
 
@@ -211,8 +216,8 @@ static Vector<StringCharacterMatch> collectReaders(SelectionContext& context, Pa
             if (!reader)
                 continue;
 
-            reader->pair = findOrAddPair(context, table, block, reader->string);
             reader->resolvesRopes = effectsOfFlatteningString.isSubsetOf(context.analyses().effectsOf(id));
+            reader->pair = findOrAddPair(context, table, block, reader->string, reader->resolvesRopes);
             reader->readsCharacters = reader->resolvesRopes && !readersThatOnlyCutPieces.contains(opcode);
             if (reader->pair) {
                 Pair& pair = table.pairs[*reader->pair];

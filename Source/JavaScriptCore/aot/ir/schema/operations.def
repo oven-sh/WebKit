@@ -158,4 +158,4 @@ terminator Return (value?: Declared/returns) -> none ; none ; canEndHeadBlock = 
 terminator ReturnCall (call: Any/returns, casts: List<TailCast>, engine requirement: TailCallRequirement) -> none ; none
 terminator Throw (value: Any/retains) -> none ; throws ; canEndInteriorBlock = true
 terminator Rethrow (exception: Exception/retains) -> none ; throws
-terminator Unreachable () -> none ; none ; canEndInteriorBlock = true
+terminator Unreachable (engine cutBy: PassID) -> none ; none ; canEndInteriorBlock = true

@@ -100,7 +100,7 @@ function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CHECK: Int32 b@[[kind]] = BitAnd(b@[[byte]], $14(b@{{*}}))
 # CHECK: Int32 b@[[isIntegers]] = Equal(b@[[kind]], $4(b@{{*}}))
 # CHECK: Branch(b@[[isIntegers]], Terminal)
-# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly)
+# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSArray_butterfly)
 # CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength)
 # CHECK-NEXT: Int64 b@[[wide]] = ZExt32(b@[[length]])
 # CHECK: Int32 b@[[isShort]] = BelowEqual(b@[[wide]], $16(b@{{*}}))
@@ -135,5 +135,5 @@ function f1 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CALLS-NOT: :PropGet
 # CALLS-LABEL: end of function
 # The counts of the whole function hold calls, whose moves follow the calling convention: not for Windows.
-# X64SIZE: instructions: 46, patchpoints: 2, rare instructions: 14
-# ARM64SIZE: instructions: 43, patchpoints: 2, rare instructions: 14
+# X64SIZE: instructions: 44, patchpoints: 2, rare instructions: 14
+# ARM64SIZE: instructions: 42, patchpoints: 2, rare instructions: 14

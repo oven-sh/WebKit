@@ -1652,7 +1652,8 @@ static void reportPresenceTestOfResolvedAccess(TestSiteReporter& reporter, Array
 void reportElementAccessTests(TestSiteReporter& reporter)
 {
     ArrayUses arrays { reporter.analyses() };
-    reporter.forEachCandidate([&](const Value& use) {
+    static constexpr OpcodeSet operations = resolvedAccessesWithPresenceTest | OpcodeSet { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemDefine, Opcode::ElemHas };
+    reporter.forEachCandidate(operations, [&](const Value& use) {
         if (resolvedAccessesWithPresenceTest.contains(use.opcode))
             return reportPresenceTestOfResolvedAccess(reporter, arrays, use);
         ProgramPoint point = reporter.point();

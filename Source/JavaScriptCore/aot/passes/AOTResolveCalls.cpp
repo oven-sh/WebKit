@@ -3531,7 +3531,11 @@ static void reportInstanceOfTests(TestSiteReporter& reporter)
 
 void reportCallTests(TestSiteReporter& reporter)
 {
-    reporter.forEachCandidate([&](const Value& value) {
+    static constexpr OpcodeSet operations {
+        Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::PropGet, Opcode::PropSet, Opcode::SuperGet, Opcode::SuperSet,
+        Opcode::CallBuiltin, Opcode::GetConstructPrototype, Opcode::InstanceOf, Opcode::NewObject,
+    };
+    reporter.forEachCandidate(operations, [&](const Value& value) {
         ValueSite site { reporter.point().block, reporter.point().index, reporter.use() };
         switch (value.opcode) {
         case Opcode::Call:

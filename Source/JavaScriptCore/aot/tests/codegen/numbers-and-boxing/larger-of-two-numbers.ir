@@ -56,6 +56,6 @@ function f1 name="pick" module=m0 flags=[IsChecked, HasExplicitName] length=2 th
 # CHECK-NEXT: Double b@[[larger]] = FMax(b@{{*}}, b@{{*}}, {{*}}:CallInline)
 # CHECK-NEXT: Return(b@[[larger]], Terminal)
 # CHECK-LABEL: end of function
-# ARM64 has the instruction. x86-64 compares up to three times.
-# X64: instructions: 11, patchpoints: 0
+# ARM64 has the instruction. x86-64 asks its own in both orders, keeps the bits that both answers have, so 0 wins over -0, and branches only for NaN.
+# X64: instructions: 6, patchpoints: 0, rare instructions: 2
 # ARM64: instructions: 2, patchpoints: 0

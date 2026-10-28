@@ -133,6 +133,12 @@ std::optional<BuiltinOperand> operandCalledBy(const BuiltinOverload& overload)
     return operands ? std::optional(operands->callee) : std::nullopt;
 }
 
+std::optional<BuiltinOperand> operandListedBy(const BuiltinOverload& overload)
+{
+    std::optional<ForwardedOperands> operands = forwardedOperandsOf(overload);
+    return operands ? operands->list : std::nullopt;
+}
+
 // Function.prototype.apply takes undefined and null for an empty list. A built-in that requires its list refuses them.
 static bool mayOmit(const BuiltinOverload& overload, BuiltinOperand operand)
 {

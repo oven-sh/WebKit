@@ -2561,6 +2561,12 @@ private:
             inverted = !inverted;
         }
 
+        // An extended value is zero where the value is.
+        if (m_procedure.policy().selection.extendsInstructionSelection && (value->opcode() == ZExt32 || value->opcode() == SExt32) && value != m_value && canCommitInternal && canBeInternal(value)) {
+            commitInternal(value);
+            value = value->child(0);
+        }
+
         auto createRelCond = [&] (
             MacroAssembler::RelationalCondition relationalCondition,
             MacroAssembler::DoubleCondition doubleCondition) {
@@ -3941,6 +3947,32 @@ private:
                 return Inst();
             },
             inverted);
+    }
+
+    bool tryAppendSelectOfComparedNumbers()
+    {
+        if (!isX86() || !m_procedure.policy().selection.extendsInstructionSelection || !m_value->type().isFloat())
+            return false;
+        Value* condition = m_value->child(0);
+        if (condition->opcode() != LessThan && condition->opcode() != GreaterThan)
+            return false;
+        Value* first = m_value->child(1);
+        Value* second = m_value->child(2);
+        auto isSameValue = [](Value* a, Value* b) {
+            return a == b || (a->isConstant() && a->key() == b->key());
+        };
+        bool isMin = condition->opcode() == LessThan;
+        if (isSameValue(condition->child(0), second) && isSameValue(condition->child(1), first))
+            isMin = !isMin;
+        else if (!isSameValue(condition->child(0), first) || !isSameValue(condition->child(1), second))
+            return false;
+        if (canBeInternal(condition))
+            commitInternal(condition);
+        if (isMin)
+            appendBinOp<Air::Oops, Air::Oops, Air::MinOrSecondDouble, Air::MinOrSecondFloat>(first, second);
+        else
+            appendBinOp<Air::Oops, Air::Oops, Air::MaxOrSecondDouble, Air::MaxOrSecondFloat>(first, second);
+        return true;
     }
 
     bool tryAppendSelectOfIncrementedValue()
@@ -6779,6 +6811,8 @@ private:
             }
 
             if (tryAppendSelectOfIncrementedValue())
+                return;
+            if (tryAppendSelectOfComparedNumbers())
                 return;
 
             MoveConditionallyConfig config;

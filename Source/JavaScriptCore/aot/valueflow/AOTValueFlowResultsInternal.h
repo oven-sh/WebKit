@@ -427,6 +427,7 @@ struct ValueFlowFieldContents {
     Vector<Vector<ValueFlowNumbers>> storedNumbers;
     Vector<Vector<ValueSetID>> storedInAppendedFields;
     Vector<Vector<ValueFlowNumbers>> numbersStoredInAppendedFields;
+    Vector<BitVector> appendedFieldsGivenValuesNobodyKnows;
 };
 
 class ValueFlowNodesAskedFor {

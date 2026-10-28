@@ -82,7 +82,7 @@ function f1 name="put" module=m0 position=33 flags=[IsChecked, HasExplicitName] 
 # The element is stored, then the barrier tests the state byte of the array. The call behind the rare edge gets the array and the element that was stored.
 # CHECK-LABEL: name="put" role=Source
 # CHECK-NOT: collectorState
-# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly, {{*}}:PutArrayElement)
+# CHECK: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSArray_butterfly, {{*}}:PutArrayElement)
 # CHECK-NOT: collectorState
 # CHECK: Store(b@[[entry]], b@{{*}}, ControlDependent|Writes:indexedContiguousProperties, {{*}}:PutArrayElement)
 # CHECK: Int32 b@[[threshold]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:collectorState, {{*}}:PutArrayElement)

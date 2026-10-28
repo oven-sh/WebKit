@@ -27,6 +27,7 @@ struct MemberSite {
     TypeID testedReceiverType;
     BuiltinReceiver start;
     BuiltinMemberAnswer answer;
+    bool typeProvesNamesOfEveryClass { false };
 };
 
 enum class LocationState : uint8_t { Unknown, NeedsTest, Constant };
@@ -53,6 +54,34 @@ std::optional<Type> testedTypeOfExpectedInstances(const Program& program, TypeAr
     return Type::function();
 }
 
+// Instances of a class and of classes below it: a Uint8Array or a Buffer. Each class finds the same member at a place that never changes, and the type proves of each that its instances have the names they were made with.
+static std::optional<MemberSite> findMemberOfClassAndClassesBelow(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, const Type& present)
+{
+    if (!present.isObject() || !present.hasOnlyClassObjects() || present.classes.size() < 2)
+        return std::nullopt;
+    const BuiltinTable& table = inputs.program.builtins();
+    BuiltinClassID highest = present.classes[0].builtinClass;
+    for (const ClassPart& part : present.classes) {
+        if (table.isSameOrSubclassOf(highest, part.builtinClass))
+            highest = part.builtinClass;
+    }
+    BuiltinLookupContext lookup = inputs.lookup();
+    MemberSite site { .receiver = receiver, .key = key };
+    site.start = { BuiltinReceiverKind::Instance, { }, highest };
+    site.answer = findMemberOfInstances(lookup, highest, key);
+    site.typeProvesNamesOfEveryClass = true;
+    if (!site.answer.isConstant())
+        return std::nullopt;
+    for (const ClassPart& part : present.classes) {
+        if (!table.isSameOrSubclassOf(part.builtinClass, highest) || !part.provenPristine.contains(PristineAspects::Names))
+            return std::nullopt;
+        BuiltinMemberAnswer below = findMemberOfInstances(lookup, part.builtinClass, key);
+        if (!below.isConstant() || below.member != site.answer.member)
+            return std::nullopt;
+    }
+    return site;
+}
+
 static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, BuiltinClassID expectedClass = { })
 {
     const Program& program = inputs.program;
@@ -63,6 +92,8 @@ static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, Valu
     MemberSite site { .receiver = receiver, .key = key };
     site.start = builtinReceiverOf(program, present);
     if (!site.start) {
+        if (std::optional<MemberSite> found = findMemberOfClassAndClassesBelow(inputs, receiver, key, present))
+            return found;
         TypeID expectedType = inputs.function.at(receiver).expected().predicted();
         if (!expectedType)
             return std::nullopt;
@@ -218,7 +249,7 @@ static void addReceiverRequirements(const BuiltinUseInputs& inputs, const Member
     }
 
     bool isInherited = site.start.kind == BuiltinReceiverKind::Instance && !table.at(site.answer.member).flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
-    if (isInherited && !isClosureAsCreated(inputs, site)) {
+    if (isInherited && !site.typeProvesNamesOfEveryClass && !isClosureAsCreated(inputs, site)) {
         PristineRequirement names = testThatFindsMember(inputs, site);
         bool isProven = pristineProofOf(inputs.pristine(), site.receiver, names, point) == PristineProof::Proven;
         if (PristineRequirement wider = testThatInstancesOfClassAbovePassToo(table, names, site.answer.member); !isProven && wider != names) {

@@ -45,6 +45,10 @@ bool isSubset(const Type&, const Type&, const TypeTable&);
 bool isPartSubset(const ClassPart&, const ClassPart&, const TypeTable&);
 bool overlap(const Type&, const Type&, const TypeTable&);
 bool mayBeSameObject(const Type&, const Type&, const TypeTable&);
+BuiltinClassID builtinClassWrittenAbove(const TypeTable&, LayoutID);
+bool mayHoldWhatConstructorMakes(const BuiltinTable&, BuiltinClassID holder, BuiltinClassID constructed);
+bool isInsideSomeClassPart(const TypeTable&, LayoutID, const Type&);
+bool mayBeInsideSomeClassPart(const TypeTable&, LayoutID, const Type&);
 
 enum class DeclaredParts : uint8_t { FromEither, FromSecond };
 

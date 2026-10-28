@@ -7,6 +7,7 @@
 
 #define RUN_BUN_PASS_TESTS() do { \
         RUN(testHoistCommonMoves()); \
+        RUN(testHoistCopiesOfWayBack()); \
         RUN(testTerminalResultsOnEdge()); \
         RUN(testMovesBeforePatch()); \
         RUN(testForwardRegisterCopies()); \
@@ -325,10 +326,10 @@ void testHoistCommonMoves()
         appendSuccessor(notTaken, testCase == Case::DifferentSources ? a3 : a1, 2);
 
         unsigned branchIndex = root->size() - 1;
-        if (testCase == Case::Hoisted || (testCase == Case::BranchOnFlags && preservesFlags(Move))) {
+        if (testCase == Case::Hoisted || testCase == Case::Move32 || (testCase == Case::BranchOnFlags && preservesFlags(Move))) {
             checkPassChangesCode(code, hoistCommonMoves);
             CHECK(root->size() == branchIndex + 2);
-            CHECK(isInst(root->at(branchIndex), Move, { a1, a2 }));
+            CHECK(isInst(root->at(branchIndex), testCase == Case::Move32 ? Move32 : Move, { a1, a2 }));
             CHECK(root->last().isTerminal());
             CHECK(taken->size() == 3);
             CHECK(notTaken->size() == 3);
@@ -345,6 +346,55 @@ void testHoistCommonMoves()
         CHECK(invokeInt64(*compilation, 0, 10, 0, 20) == (testCase == Case::DifferentSources ? 22 : 12));
         if (hasSecondPredecessor)
             CHECK(invokeInt64(*compilation, 0, 10, 0, 0) == 11);
+    }
+}
+
+// sum = 0; do { previous = current; current += step; sum += previous; } while (--turns); the allocator is taken to have left `Move next, current` on the way back.
+void testHoistCopiesOfWayBack()
+{
+    enum class Case : uint8_t { Hoisted, DestinationIsReadOnWayOut, BranchTestsDestination, WayBackIsUnlikely, WayBackAdds, LeadsForward };
+    auto [turns, current, step, next, sum, ret] = PassRegisters { };
+    for (Case testCase : { Case::Hoisted, Case::DestinationIsReadOnWayOut, Case::BranchTestsDestination, Case::WayBackIsUnlikely, Case::WayBackAdds, Case::LeadsForward }) {
+        B3::Procedure proc;
+        proc.setOptLevel(2);
+        Code& code = proc.code();
+        BasicBlock* root = code.addBlock();
+        BasicBlock* body = code.addBlock(10);
+        BasicBlock* wayBack = code.addBlock(9);
+        BasicBlock* exit = code.addBlock();
+        BasicBlock* join = code.addBlock();
+
+        appendChecked(root, Move, Arg::imm(0), sum);
+        appendJump(root, body);
+        appendChecked(body, Add64, current, step, next);
+        appendChecked(body, Add64, current, sum);
+        appendChecked(body, Add64, Arg::imm(-1), turns);
+        FrequentedBlock back(wayBack, testCase == Case::WayBackIsUnlikely ? B3::FrequencyClass::Rare : B3::FrequencyClass::Normal);
+        appendBranchTest(body, testCase == Case::BranchTestsDestination ? current : turns, back, exit);
+        if (testCase == Case::WayBackAdds)
+            appendChecked(wayBack, Add64, Arg::imm(0), next);
+        appendChecked(wayBack, Move, next, current);
+        appendJump(wayBack, testCase == Case::LeadsForward ? join : body);
+        if (testCase == Case::DestinationIsReadOnWayOut)
+            appendChecked(exit, Add64, current, sum);
+        appendJump(exit, join);
+        appendChecked(join, Move, sum, ret);
+        appendReturn(join);
+
+        unsigned branchIndex = body->size() - 1;
+        if (testCase == Case::Hoisted) {
+            checkPassChangesCode(code, hoistCommonMoves);
+            CHECK(body->size() == branchIndex + 2);
+            CHECK(isInst(body->at(branchIndex), Move, { next, current }));
+            CHECK(body->last().isTerminal());
+            CHECK(wayBack->size() == 1);
+        } else
+            checkPassLeavesCodeUnchanged(code, hoistCommonMoves);
+        if (testCase == Case::BranchTestsDestination || testCase == Case::LeadsForward)
+            continue;
+        auto compilation = compile(proc);
+        CHECK(invokeInt64(*compilation, 3, 10, 5) == (testCase == Case::DestinationIsReadOnWayOut ? 65 : 45));
+        CHECK(invokeInt64(*compilation, 1, 10, 5) == (testCase == Case::DestinationIsReadOnWayOut ? 20 : 10));
     }
 }
 

@@ -1248,7 +1248,13 @@ public:
     void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping = true; }
     bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping; }
 
-    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry() { return *m_bytecodeIntrinsicRegistry; }
+    BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry()
+    {
+        if (!m_bytecodeIntrinsicRegistry) [[unlikely]]
+            createBytecodeIntrinsicRegistry();
+        return *m_bytecodeIntrinsicRegistry;
+    }
+    bool hasBytecodeIntrinsicRegistry() const { return !!m_bytecodeIntrinsicRegistry; }
     
     ShadowChicken* shadowChicken() { return m_shadowChicken.getIfExists(); }
     ShadowChicken& ensureShadowChicken() { return m_shadowChicken.get(*this); }

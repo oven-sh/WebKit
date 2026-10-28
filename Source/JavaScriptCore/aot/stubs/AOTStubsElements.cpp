@@ -44,6 +44,52 @@
 
 namespace JSC { namespace AOT {
 
+StubSignature signatureOfMoveFewBytes(StubKey)
+{
+    return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
+}
+
+// The ranges may overlap: every byte is read before one is written. The first and the last word of a range cover all of it.
+void generateMoveFewBytes(StubAssembler& jit)
+{
+    const GPRReg target = jit.operand(0);
+    const GPRReg source = jit.operand(1);
+    const GPRReg count = jit.operand(2);
+    const GPRReg first = jit.allocateScratch(StubRegister::T9);
+    const GPRReg last = jit.allocateScratch(StubRegister::T10);
+    auto endOf = [&](GPRReg range, int32_t size) {
+        return BaseIndex(range, count, CCallHelpers::TimesOne, -size);
+    };
+
+    Jump isUnderEight = jit.branch64(CCallHelpers::Below, count, TrustedImm32(8));
+    jit.load64(Address(source), first);
+    jit.load64(endOf(source, 8), last);
+    jit.store64(first, Address(target));
+    jit.store64(last, endOf(target, 8));
+    jit.returnToCaller();
+
+    isUnderEight.link(&jit);
+    Jump isUnderFour = jit.branch64(CCallHelpers::Below, count, TrustedImm32(4));
+    jit.load32(Address(source), first);
+    jit.load32(endOf(source, 4), last);
+    jit.store32(first, Address(target));
+    jit.store32(last, endOf(target, 4));
+    jit.returnToCaller();
+
+    isUnderFour.link(&jit);
+    Jump isOne = jit.branch64(CCallHelpers::Below, count, TrustedImm32(2));
+    jit.load16(Address(source), first);
+    jit.load16(endOf(source, 2), last);
+    jit.store16(first, Address(target));
+    jit.store16(last, endOf(target, 2));
+    jit.returnToCaller();
+
+    isOne.link(&jit);
+    jit.load8(Address(source), first);
+    jit.store8(first, Address(target));
+    jit.returnToCaller();
+}
+
 struct ElementRegisters {
     GPRReg base;
     GPRReg key;

@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTConversionEmitter.h"
+#include "AOTNumberLiteralStrings.h"
+#include "AOTRepresentationRules.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
@@ -197,8 +199,42 @@ Word32 StringEmitter::lengthOf(CellPointer string)
     return join.finish();
 }
 
+Word32 StringEmitter::lengthOf(LiteralStringWord word, const Type& type)
+{
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    bool mayBeCell = type.primitives & Primitive::String;
+    Vector<std::pair<StringID, unsigned>, maxLiteralsToldApartByLength> lengths;
+    for (StringID literal : type.stringLiterals) {
+        if (inputs().literalStrings.indexOf(literal))
+            lengths.append({ literal, m_program.strings.toWTFString(literal).length() });
+        else
+            mayBeCell |= !inputs().literalStrings.isLeftOut(literal);
+    }
+    std::optional<NarrowReference> narrow = mayBeCell ? std::nullopt : narrowWordBehind(word);
+    auto isLiteral = [&](StringID literal) {
+        if (narrow)
+            return equal(*narrow, NarrowReference(m_out.constInt32(static_cast<int32_t>(literalStringWord(inputs().literalStrings.numberOf(literal))))));
+        return equal(word, conversions.literalStringConstant(literal));
+    };
+    auto lengthByNumber = [&] {
+        Word32 length = word32(lengths.isEmpty() ? 0 : static_cast<int32_t>(lengths.last().second));
+        for (auto [literal, lengthOfLiteral] : lengths.span().first(lengths.isEmpty() ? 0 : lengths.size() - 1)) {
+            if (lengthOfLiteral != lengths.last().second)
+                length = Word32(m_out.select(isLiteral(literal).value(), m_out.constInt32(static_cast<int32_t>(lengthOfLiteral)), length.value()));
+        }
+        return length;
+    };
+    if (!mayBeCell)
+        return lengthByNumber();
+    return selectByBranch<Word32>(conversions.isStringCell(word), [&] {
+        return lengthOf(CellPointer(word.value()));
+    }, lengthByNumber);
+}
+
 Word32 StringEmitter::lengthOf(ValueID string)
 {
+    if (representationOf(string) == Representation::LiteralString)
+        return lengthOf(in<LiteralStringWord>(string), typeOf(string));
     CellPointer cell = in<CellPointer>(string);
     if (!typeOf(string).isOpaque(OpaqueKind::FlatString))
         return lengthOf(cell);

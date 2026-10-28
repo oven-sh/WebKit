@@ -2304,14 +2304,16 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
 #endif
 
-    m_performProxyObjectHasFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
-    m_performProxyObjectHasByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHasByVal)));
-    m_performProxyObjectGetFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGet)));
-    m_performProxyObjectGetByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGetByVal)));
-    m_performProxyObjectSetStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetStrict)));
-    m_performProxyObjectSetSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetSloppy)));
-    m_performProxyObjectSetByValStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValStrict)));
-    m_performProxyObjectSetByValSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValSloppy)));
+    if (!vm.hasCompiledCode()) {
+        m_performProxyObjectHasFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
+        m_performProxyObjectHasByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectHasByVal)));
+        m_performProxyObjectGetFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGet)));
+        m_performProxyObjectGetByValFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectGetByVal)));
+        m_performProxyObjectSetStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetStrict)));
+        m_performProxyObjectSetSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetSloppy)));
+        m_performProxyObjectSetByValStrictFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValStrict)));
+        m_performProxyObjectSetByValSloppyFunction.set(vm, this, uncheckedDowncast<JSFunction>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetByValSloppy)));
+    }
 
     if (Options::exposeProfilersOnGlobalObject()) {
 #if ENABLE(SAMPLING_PROFILER)

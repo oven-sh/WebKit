@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTEffectSummaries.h"
+#include "AOTFlowResults.h"
 #include "AOTProgramCaches.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
@@ -252,6 +254,30 @@ void ProgramVerifier::verifyDerivationChains()
         fail({ .kind = InternalErrorKind::InvalidCreatorRecord, .function = *cyclicFunction });
 }
 
+// The passes took a guard away by the summaries of their time. A call may since have taken the place of operations that stood in the callee's own body, and say more than they did.
+void ProgramVerifier::askAgainWhereGuardsDoNotLast(Vector<InternalError>& errors)
+{
+    auto isAboutGuard = [](const InternalError& error) {
+        return error.kind == InternalErrorKind::GuardNotAvailable;
+    };
+    if (!m_inputs.effects || m_inputs.effects->isEmpty() || !std::ranges::any_of(errors, isAboutGuard))
+        return;
+    FlowResults noResults;
+    EffectSummaries summaries = computeEffectSummariesByTypesOfOperands(m_program, m_inputs.flow ? *m_inputs.flow : noResults, m_build);
+    VerifierInputs inputs = m_inputs;
+    inputs.effects = &summaries;
+    Vector<FunctionID> functions;
+    for (const InternalError& error : errors) {
+        if (isAboutGuard(error) && !functions.contains(error.function))
+            functions.append(error.function);
+    }
+    errors.removeAllMatching([&](const InternalError& error) {
+        return functions.contains(error.function);
+    });
+    for (FunctionID id : functions)
+        errors.appendVector(findErrorsInFunction(m_program, id, m_program.at(id), m_form, m_build, inputs));
+}
+
 void ProgramVerifier::verifyFunctionBodies()
 {
     std::optional<TypeInterningPhase> scratch;
@@ -278,6 +304,8 @@ void ProgramVerifier::verifyFunctionBodies()
                 found.appendVector(verifier.takeErrors());
         });
     }
+
+    askAgainWhereGuardsDoNotLast(errors);
 
     if (scratch)
         scratch->discard();

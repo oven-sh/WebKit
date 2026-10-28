@@ -1412,12 +1412,27 @@ static bool isSiteOfChain(const Program& program, const Function& caller, const 
     return call.inlineFrame && caller.inlineFrames[call.inlineFrame].callee == call.function() && program.at(call.function()).role == FunctionRole::ChainStep;
 }
 
+static FunctionID workerThatNames(const FunctionPassContext& context, FunctionID wrapper)
+{
+    const Function& function = context.program.at(wrapper);
+    if (function.creator.kind() != CreatorRecord::Kind::ResultWrapper)
+        return { };
+    FunctionID worker = function.creator.as<CreatorRecord::ResultWrapper>().worker;
+    return std::ranges::contains(context.inputs.callGraph.calleesOf(worker), wrapper) ? worker : FunctionID();
+}
+
 // A function that calls what it is given does something else with each function it is given: a traversal in the callback of the same traversal repeats nothing.
 static bool closesCycle(const FunctionPassContext& context, const InliningSummary& summary, const Value& call)
 {
     FunctionID callee = call.function();
     if (callee == context.id)
         return true;
+    // A worker that calls its function again names the wrapper. With the worker in it the wrapper would be the whole function, and every level would make the object.
+    if (workerThatNames(context, context.id) == callee)
+        return true;
+    // So that wrapper only calls the worker and puts the parts together: it is the call of the worker that closes a cycle.
+    if (workerThatNames(context, callee))
+        return false;
     bool differsByCall = passesArgumentThat(call, summary.calledParameters, [&](ValueID argument, uint32_t) {
         return !!context.program.typeOf(context.function, argument).singleFunction();
     });
@@ -2343,7 +2358,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         // The limit bounds what each level adds to the caller. A body that costs no more than its call adds nothing to the code, but each level is one more look at all of the caller.
         isTooDeep = (cost > callOverheadBytes && context.exceeds(LimitID::MaxInlineDepth, depth + 1, call)) || context.exceeds(LimitID::MaxInlineNesting, inlineDepthOf(program, caller, value.inlineFrame) + 1, call);
         // Where code runs seldom, an allocation that goes is worth its own bytes and no more.
-        if (!isTooDeep && !isWithinBudget() && (!isCold(heat).predicted() || callerIsEntrypoint)) {
+        if (!isTooDeep && !isWithinBudget()) {
             uint64_t bytesOfAllocation = isCold(heat).predicted() ? InlineModel::allocationCallBytes : context.limit(LimitID::InlineSunkAllocationBytes);
             unsigned allocations = sinkableAllocationsAfterInlining(context, block, call, [&] {
                 return calleeReturnsFreshAggregate(context, summary, value.function());

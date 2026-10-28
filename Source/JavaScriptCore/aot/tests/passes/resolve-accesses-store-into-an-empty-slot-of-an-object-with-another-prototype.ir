@@ -2,7 +2,7 @@
 # An object that was handed another prototype stores by name where the store stands. Neither arm is marked as the rarer one, and what follows reads its slots for both.
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot
-# RUN: pipeline ConvertCountersToIntegers
+# RUN: pipeline SeparateUnlikelyLoopPaths
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

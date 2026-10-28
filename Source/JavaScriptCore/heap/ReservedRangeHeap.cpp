@@ -415,8 +415,9 @@ void ReservedRangeHeap::releaseFreeMemory()
 #if USE(MIMALLOC)
     if (m_backEnd == BackEnd::Malloc) {
         Locker locker { m_lock };
+        // Not forced: a forced collection purges every arena of the process, one thread at a time. What is free here goes back when malloc's delay has passed.
         for (void* heap : m_segmentHeaps)
-            mi_heap_collect(static_cast<mi_heap_t*>(heap), true);
+            mi_heap_collect(static_cast<mi_heap_t*>(heap), false);
     }
 #endif
 }

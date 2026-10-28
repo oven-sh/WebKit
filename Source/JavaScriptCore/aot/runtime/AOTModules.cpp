@@ -2008,6 +2008,12 @@ bool holdsFormThatAttributeAsksFor(StringView publicPath)
     return table && table->holdsFormThatAttributeAsksFor(publicPath);
 }
 
+bool mayHoldPathStartingWith(StringView start)
+{
+    std::optional<ModuleTable> table = currentModuleTable();
+    return table && (start.isEmpty() || start.startsWith('#') || table->holdsPathStartingWith(start));
+}
+
 // Each frame of each stack trace asks.
 struct PathOfModule {
     // A static string: every thread may hold it.
@@ -2080,6 +2086,13 @@ void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>& functor)
         if (table->hasFilePath(ModuleID(index)) && functor(ModuleID(index)) == IterationStatus::Done)
             return;
     }
+}
+
+void forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor)
+{
+    Image::forEachPublishedAsCurrent([&](const Image& image) {
+        return ModuleTable(image.programTables()).forEachFilePathStartingWith(start, functor);
+    });
 }
 
 bool refusesCodeOutsideImage(JSGlobalObject* realm, StringView path)

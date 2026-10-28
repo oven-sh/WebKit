@@ -321,6 +321,9 @@ static void printCellTest(const TablesContext& context, const RuntimeCellTest& t
     case CellTestKind::IsNamespaceOf:
         context.printer.print(test.module());
         break;
+    case CellTestKind::CarriesBrandOfClass:
+        context.out.print(test.rankOfClass());
+        break;
     }
     context.out.print(")");
 }

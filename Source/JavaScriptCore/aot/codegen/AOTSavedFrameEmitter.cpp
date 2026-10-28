@@ -266,7 +266,7 @@ CellPointer SavedFrameEmitter::allocateGenerator(CellPointer closure, LBasicBloc
         CodeGenerator::InitializationScope scope(generator());
         m_out.store32(structureID.value(), result.value(), m_heaps.JSCell_structureID);
         m_out.store32(m_out.load32(structure.value(), m_heaps.Structure_indexingModeIncludingHistory), result.value(), m_heaps.JSCell_usefulBytes);
-        m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSObject_butterfly);
+        m_out.storePtr(m_out.intPtrZero, result.value(), m_heaps.JSNonArray_butterfly);
         m_out.store64(m_out.int64Zero, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), result.value(), Generator::offsetOfSavedFrame()));
         m_out.store32(m_out.int32Zero, stateOf(result));
         m_out.store32(m_out.int32Zero, m_out.address(m_heaps.entire(AbstractHeap::PrototypeLinks), result.value(), Generator::offsetOfHasOtherPrototype()));

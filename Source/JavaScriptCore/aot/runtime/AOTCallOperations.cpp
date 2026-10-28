@@ -255,10 +255,31 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
 static StringView nameOfCalleeAtCallSite(VM&);
 static StringView nameOfForwardedCallee(VM&);
 
+class SuperCallScope {
+    WTF_MAKE_NONCOPYABLE(SuperCallScope);
+public:
+    SuperCallScope(VM& vm, JSValue parent, JSValue newTarget)
+        : m_state(vm.aotState())
+    {
+        if (!parent.isCell() || !newTarget.isCell())
+            return;
+        m_state.parentOfSuperCall = parent.asCell();
+        m_state.newTargetOfSuperCall = newTarget.asCell();
+    }
+
+    ~SuperCallScope() { m_state.newTargetOfSuperCall = nullptr; }
+
+private:
+    VMState& m_state;
+};
+
 template<bool isParent>
 static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue callee, JSValue newTarget, const ArgList& arguments)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
+    std::optional<SuperCallScope> superCall;
+    if constexpr (isParent)
+        superCall.emplace(vm, callee, newTarget);
     auto constructData = JSC::getConstructData(callee);
     if (constructData.type == CallData::Type::None) {
         StringView name = isParent ? StringView() : nameOfCalleeAtCallSite(vm);

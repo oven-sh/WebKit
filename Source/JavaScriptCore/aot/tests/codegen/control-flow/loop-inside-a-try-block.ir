@@ -14,9 +14,9 @@
 # RUN: lower-to-b3 optimized loops f1
 # REQUIRES: unsanitized-code
 # RUN(X64): lower-to-air loops f1
-# REQUIRES(X64): x86_64 unsanitized-code not-windows faulting-loop-polls
+# REQUIRES(X64): x86_64 unsanitized-code
 # RUN(ARM64): lower-to-air loops f1
-# REQUIRES(ARM64): arm64 unsanitized-code faulting-loop-polls
+# REQUIRES(ARM64): arm64 unsanitized-code
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
@@ -96,21 +96,23 @@ function f1 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
     Return v24
 }
 
-# Nothing in this loop can throw but its poll, and the poll has an edge to the handler. With that edge the loop stays as it was written: there is one copy, it is not unrolled,
-# and each turn tests the mode of the view twice, reads its length twice and reads the address of its elements.
-# CHECK-LABEL: steps by 1
-# CHECK: Patchpoint({{*}}Terminal|ExitsSideways{{*}}:LoopHint)
-# CHECK-NEXT: Successors: #{{*}}, Rare:#{{*}}
-# CHECK: Load8Z(b@[[view]], offset = 40, ControlDependent|Reads:JSArrayBufferView_mode
-# CHECK: Load(b@[[view]], offset = 24, ControlDependent|Reads:JSArrayBufferView_length
+# Nothing in this loop allocates, so its poll has no error to throw to the handler and the handler goes. The loop is the one that stands outside a try block: eight elements a turn,
+# no poll, no test of the view, no reload of its length or of the address of its elements. Its only branch is the loop condition.
+# CHECK-LABEL: steps by 8
+# CHECK-NOT: Branch(
+# CHECK-NOT: LoopHint
+# CHECK-NOT: Reads:JSArrayBufferView
+# CHECK: Double b@{{*}} = Load(b@{{*}}, ControlDependent|Reads:TypedArrayElements
+# REPEAT: turn = 1..7
+# CHECK: Double b@{{*}} = Load(b@{{*}}, offset = %(turn*8), ControlDependent|Reads:TypedArrayElements
+# END REPEAT
+# CHECK-NOT: Reads:TypedArrayElements
 # CHECK: Branch(b@{{*}}, Terminal, {{*}}:Less)
-# CHECK: Load(b@[[view]], offset = 24, ControlDependent|Reads:JSArrayBufferView_length, {{*}}:IsInsideView)
-# CHECK: Load(b@[[view]], offset = 16, ControlDependent|Reads:JSArrayBufferView_vector, {{*}}:GetTypedArrayElement)
-# CHECK: Double b@[[element]] = Load(b@{{*}}, ControlDependent|Reads:TypedArrayElements, {{*}}:GetTypedArrayElement)
-# CHECK: Double b@{{*}} = Add(b@{{*}}, b@[[element]], {{*}}:Add)
+# CHECK-NOT: Branch(
+# CHECK-NOT: LoopHint
 # CHECK-LABEL: end of loop
-# CHECK-NOT: loop #
+# No poll in the function is the end of a block with a way to a handler.
+# CHECK-NOT: Terminal|ExitsSideways{{*}}:LoopHint
 # CHECK-LABEL: end of function
-# The function has calls, and Windows passes arguments in other registers: its count is not checked.
-# X64: loop #{{*}}, instructions: 11, patchpoints: 2, rare instructions: 19
-# ARM64: loop #{{*}}, instructions: 13, patchpoints: 2, rare instructions: 17
+# X64: instructions: 10, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 8, {{*}} steps by 8

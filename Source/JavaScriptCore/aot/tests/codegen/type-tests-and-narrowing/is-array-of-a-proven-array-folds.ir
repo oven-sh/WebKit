@@ -82,12 +82,11 @@ function f1 name="count" module=m0 flags=[IsChecked, HasExplicitName] length=1 t
 # CHECK-LABEL: name="count" role=Source
 # CHECK-NEXT: BB#0:
 # CHECK-NEXT: Int64 b@[[list]] = ArgumentReg(
-# CHECK-NEXT: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSObject_butterfly
+# CHECK-NEXT: Int64 b@[[storage]] = Load(b@[[list]], offset = 8, ControlDependent|Reads:JSArray_butterfly
 # CHECK-NEXT: Int32 b@[[length]] = Load(b@[[storage]], offset = -8, ControlDependent|Reads:Butterfly_publicLength
 # CHECK-NEXT: Int64 b@[[wide]] = ZExt32(b@[[length]]
-# CHECK-NEXT: Double b@[[number]] = IToD(b@[[wide]])
-# CHECK-NEXT: Return(b@[[number]], Terminal)
+# CHECK-NEXT: Return(b@[[wide]], Terminal)
 # CHECK-NOT: BB#
 # CHECK-LABEL: end of function
-# X64: instructions: 4, patchpoints: 0
-# ARM64: instructions: 4, patchpoints: 0
+# X64: instructions: 3, patchpoints: 0
+# ARM64: instructions: 3, patchpoints: 0

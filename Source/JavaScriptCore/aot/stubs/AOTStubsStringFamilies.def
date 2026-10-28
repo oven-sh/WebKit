@@ -33,5 +33,5 @@ v(StringEqualsLiteralOfLength, CalledByCode, (), CountAxis, 0, 8, AllISAs, NoISA
 v(ValueEqualsLiteralOfLength, CalledByCode, (), CountAxis, 0, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteralOfLength)
 v(LooseEqualsLiteral, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, LooseEqualsLiteral)
 v(LiteralStringToString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), LiteralStringToString)
-v(ToLiteralString, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, RuntimeState), ToLiteralString)
+v(ToLiteralString, CalledByCode, (OfValue, OfString), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, RuntimeState), ToLiteralString)
 v(ShortStringOfValue, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), ShortStringOfValue)

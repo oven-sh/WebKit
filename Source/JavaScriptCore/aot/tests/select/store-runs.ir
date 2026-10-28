@@ -302,7 +302,7 @@ function f25 name="by-name-under-handler" parameters=[{type=object}, {type=anyth
 # CHECK-NEXT: b0({{*}} handler=[[handler]]():
 # CHECK-NEXT: [[attempt]]: boolean = TryPutByIds v0, v1, v2, v3 keys=["a", "b", "c"]
 # CHECK-NEXT: Branch [[attempt]] -> taken [[doneUnderHandler]](), notTaken [[slowUnderHandler]]()
-# CHECK-NEXT: [[doneUnderHandler]]() handler=[[handler]]():
+# CHECK-NEXT: [[doneUnderHandler]]():
 # CHECK-NEXT: Jump -> next [[join]]()
 # CHECK-NEXT: [[slowUnderHandler]]() frequency=Rare handler=[[handler]]():
 # CHECK-NEXT: PropSet v0, v1 key="a"

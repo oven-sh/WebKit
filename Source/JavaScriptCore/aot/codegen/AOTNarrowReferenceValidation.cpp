@@ -731,10 +731,10 @@ private:
         return effects.writes.overlaps(m_heaps.collectorState) && effects.writes.overlaps(m_heaps.weakTableStorage) && effects.reads.overlaps(m_heaps.frameSlots);
     }
 
-    bool savesFrame(B3::Value* safepoint) const
+    static bool savesFrame(B3::Value* safepoint)
     {
-        Typed::ValueID origin = Typed::valueOfOrigin(safepoint->origin());
-        return origin && m_origins.suspensions.get(origin.index());
+        auto* stackmap = safepoint->as<B3::StackmapValue>();
+        return stackmap && stackmap->isSuspension();
     }
 
     static bool usesOnlyBits(B3::Value* user, unsigned child)

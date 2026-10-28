@@ -155,7 +155,6 @@ public:
         NarrowReferenceOrigins origins;
         origins.references.set(referenceOrigin);
         origins.references.set(otherReferenceOrigin);
-        origins.suspensions.set(suspensionOrigin);
         return origins;
     }
 
@@ -689,7 +688,10 @@ static void testSuspension()
     auto build = [](Graph& graph, Lists lists) {
         B3::Value* reference = graph.loadReference();
         B3::Value* pointer = graph.unary(B3::Opaque, graph.decode(reference));
+        // An operation that suspends may call first. The frame is saved behind the call.
+        graph.safepoint(suspensionOrigin);
         B3::PatchpointValue* suspension = graph.safepoint(suspensionOrigin);
+        suspension->setIsSuspension(true);
         if (lists == Lists::Reference)
             suspension->append(reference, B3::ValueRep::LateColdAny);
         if (lists == Lists::Pointer)

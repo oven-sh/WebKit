@@ -142,6 +142,11 @@ static std::span<const String> takeInputWords(TestCommandContext& context, std::
         inputs.hasSummaries = true;
         words = words.subspan(1);
     }
+    if (!words.empty() && words.front() == "summaries-by-types-of-operands"_s) {
+        inputs.summaries = computeEffectSummariesByTypesOfOperands(*context.program, inputs.flow, context.build);
+        inputs.hasSummaries = true;
+        words = words.subspan(1);
+    }
     constexpr ASCIILiteral summariesBefore = "summaries-before=f"_s;
     if (!words.empty() && words.front().startsWith(summariesBefore)) {
         unsigned numberOfFunctions = parseInteger<unsigned>(StringView(words.front()).substring(summariesBefore.length())).value_or(0);

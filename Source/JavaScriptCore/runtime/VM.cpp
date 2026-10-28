@@ -577,7 +577,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // won't use this.
     m_typedArrayController = adoptRef(new SimpleTypedArrayController());
 
-    createBytecodeIntrinsicRegistry();
+    if (!hasCompiledCode())
+        createBytecodeIntrinsicRegistry();
 
     if (Options::useTypeProfiler())
         enableTypeProfiler();

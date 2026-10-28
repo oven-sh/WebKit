@@ -815,37 +815,126 @@ static ALWAYS_INLINE const void* removeSignature(const void* returnAddress)
 #endif
 }
 
-// Whether the frame at a return site, or the first one above it that has a record, has its record there. stackPointer is what the register holds at the site.
-static SUPPRESS_ASAN bool hasFrameRecordAt(const Image& image, CodeLocation site, const void* stackPointer, const CallFrame* frameRecord)
+// What a call has entered, as far as the call says so.
+struct CalleeOfCall {
+    bool names(const CodeLocation& site) const { return function && site.kind == CodeKind::Function && site.function == *function; }
+
+    bool mayBeFunction { false };
+    // Of a call that names its callee.
+    std::optional<uint32_t> function { };
+};
+
+static bool callsFunction(StubFrameKind kind)
+{
+    switch (kind) {
+    case StubFrameKind::Adapter:
+    case StubFrameKind::ConstructAdapter:
+    case StubFrameKind::SavedFrameAdapter:
+    case StubFrameKind::HandlerOfJob:
+    case StubFrameKind::GeneratorBody:
+    case StubFrameKind::AsyncGeneratorBody:
+    case StubFrameKind::ArgumentList:
+    case StubFrameKind::PlainFunctionConstruct:
+        return true;
+    case StubFrameKind::Plain:
+    case StubFrameKind::EngineCallee:
+    case StubFrameKind::HostCall:
+    case StubFrameKind::FirstOfTwoReads:
+    case StubFrameKind::MethodRead:
+    case StubFrameKind::BelowSpilledArguments:
+    case StubFrameKind::AtStubEntry:
+    case StubFrameKind::InHostCallFrame:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// x86-64 only. A function calls another by its address, by an address in a register, or through a stub that takes the callee as a function takes it.
+// Any other stub does the work itself or goes on to native code.
+static CalleeOfCall findCalleeOfCallEndingAt(const Image& image, const CodeLocation& returnSite, const void* returnAddress)
+{
+    if (returnSite.kind != CodeKind::Function)
+        return { callsFunction(returnSite.stubFrameKind) };
+    constexpr uint8_t opcodeOfNearCall = 0xe8;
+    constexpr uint8_t opcodeOfGroup5 = 0xff;
+    auto* end = static_cast<const uint8_t*>(returnAddress);
+    if (returnSite.offset >= sizeOfNearCall && end[-static_cast<ptrdiff_t>(sizeOfNearCall)] == opcodeOfNearCall) {
+        int32_t distance;
+        memcpy(&distance, end - sizeof(distance), sizeof(distance));
+        CodeLocation target = image.locate(std::bit_cast<const void*>(std::bit_cast<uintptr_t>(end) + distance));
+        if (target.kind == CodeKind::Function)
+            return { true, target.function };
+        if (target.kind != CodeKind::NotInImage)
+            return { target.kind == CodeKind::Stub && image.usesCallConvention(target.offset) };
+    }
+    return { returnSite.offset >= 2 && end[-2] == opcodeOfGroup5 && end[-1] >> 3 == 0x1a };
+}
+
+// stackPointer is what the register holds at the site.
+struct FrameAtSite {
+    CodeLocation site;
+    const void* stackPointer;
+};
+
+// The frame that has its record there: the given one, or the first one above it that has a record. Nothing if that frame has its record elsewhere.
+static SUPPRESS_ASAN std::optional<FrameAtSite> findFrameWithRecordAt(const Image& image, FrameAtSite frameAtSite, const CallFrame* frameRecord)
 {
     while (true) {
+        auto [site, stackPointer] = frameAtSite;
         bool isFunction = site.kind == CodeKind::Function;
         ImageFrame frame = isFunction ? image.frameAtReturnOffset(site.function, site.offset) : frameAtStubReturnSite(site.stubFrameKind);
-        if (frame.hasFrameRecord())
-            return std::bit_cast<uintptr_t>(stackPointer) + frame.frameSizeInBytes() - frame.bytesAboveFrameRecord() == std::bit_cast<uintptr_t>(frameRecord);
+        if (frame.hasFrameRecord()) {
+            if (std::bit_cast<uintptr_t>(stackPointer) + frame.frameSizeInBytes() - frame.bytesAboveFrameRecord() != std::bit_cast<uintptr_t>(frameRecord))
+                return std::nullopt;
+            return frameAtSite;
+        }
         CallFrame* callFrame = frameAtReturnSite(frame, stackPointer, nullptr);
         if (callFrame >= frameRecord)
-            return false;
-        stackPointer = stackPointerOfCaller(callFrame, isFunction ? bytesAboveReturnAddressOf(frame) : bytesAboveReturnAddressOf(site.stubFrameKind));
+            return std::nullopt;
         const void* returnAddress = removeCodePtrTag(reinterpret_cast<const CallerFrameAndPC*>(callFrame)->returnPC);
-        site = image.locate(returnAddress);
-        if (!site.runsCompiledCode() || !callEndsAt(image.code(), returnAddress))
-            return false;
+        CodeLocation caller = image.locate(returnAddress);
+        if (!caller.runsCompiledCode() || !callEndsAt(image.code(), returnAddress))
+            return std::nullopt;
+        if (isFunction) {
+            CalleeOfCall callee = findCalleeOfCallEndingAt(image, caller, returnAddress);
+            if (!callee.mayBeFunction || (callee.function && !callee.names(site)))
+                return std::nullopt;
+        }
+        frameAtSite = { caller, stackPointerOfCaller(callFrame, isFunction ? bytesAboveReturnAddressOf(frame) : bytesAboveReturnAddressOf(site.stubFrameKind)) };
     }
 }
 
 // Native code need not keep frame records. The first record above code that keeps none is the one of the compiled function that called it, or of a caller of that function.
 // Only where a call pushes its return address: the frame of the caller ends right above that word, so the size of the frame says whether the record is its own.
-static SUPPRESS_ASAN std::optional<SampledTop> findCallerOfCodeWithoutFrameRecord(const Image& image, const SuspendedThreadStack& stack, const void* stackPointer, CallFrame* frameRecord)
+// A function that has returned leaves such words behind, and what is called next has its record where that function had it. So the calls have their say. The word lies behind a call
+// that goes to native code. Where the call that the record returns to goes to native code too, the record is that of the native code; where it names its callee, the word of that function
+// is the one. A word of a function that it does not name is taken where frames of no other size fit: the function that is there has pushed one, and frames of one size end at one word.
+static SUPPRESS_ASAN std::optional<SampledTop> findCallerOfCodeWithoutFrameRecord(const Image& image, const SuspendedThreadStack& stack, const void* stackPointer, CallFrame* frameRecord, const CodeLocation& returnSite, const void* returnAddress)
 {
     if (!isX86_64() || !stack.contains(stackPointer))
         return std::nullopt;
+    CalleeOfCall callee = findCalleeOfCallEndingAt(image, returnSite, returnAddress);
+    if (!callee.mayBeFunction)
+        return std::nullopt;
+    std::optional<SampledTop> caller;
+    const void* endOfFrameWithRecord = nullptr;
+    bool framesOfSeveralSizesFit = false;
     for (auto* word = static_cast<void* const*>(stackPointer); std::bit_cast<uintptr_t>(word) < std::bit_cast<uintptr_t>(frameRecord); ++word) {
         CodeLocation site = image.locate(*word);
-        if (site.kind == CodeKind::Function && callEndsAt(image.code(), *word) && hasFrameRecordAt(image, site, word + 1, frameRecord))
+        if (site.kind != CodeKind::Function || !callEndsAt(image.code(), *word) || findCalleeOfCallEndingAt(image, site, *word).mayBeFunction)
+            continue;
+        std::optional<FrameAtSite> frameWithRecord = findFrameWithRecordAt(image, { site, word + 1 }, frameRecord);
+        if (!frameWithRecord)
+            continue;
+        if (callee.names(frameWithRecord->site))
             return sampledTopAtReturnSite(image, site, *word, word + 1, frameRecord);
+        if (!caller) {
+            caller = sampledTopAtReturnSite(image, site, *word, word + 1, frameRecord);
+            endOfFrameWithRecord = frameWithRecord->stackPointer;
+        } else if (frameWithRecord->stackPointer != endOfFrameWithRecord)
+            framesOfSeveralSizesFit = true;
     }
-    return std::nullopt;
+    return framesOfSeveralSizesFit ? std::nullopt : caller;
 }
 
 static SUPPRESS_ASAN std::optional<SampledTop> findTopBelowNativeCode(const Image& image, const SampledRegisters& registers, CallFrame* topCallFrame, const SuspendedThreadStack& stack)
@@ -865,7 +954,7 @@ static SUPPRESS_ASAN std::optional<SampledTop> findTopBelowNativeCode(const Imag
         if (frame == topCallFrame && !isOperationReturnSite(returnSite))
             return SampledTop { topCallFrame, pc, nullptr };
         if (returnSite.runsCompiledCode()) {
-            if (auto caller = findCallerOfCodeWithoutFrameRecord(image, stack, endOfFrameBelow, frame))
+            if (auto caller = findCallerOfCodeWithoutFrameRecord(image, stack, endOfFrameBelow, frame, returnSite, returnAddress))
                 return caller;
             return sampledTopAtReturnSite(image, returnSite, returnAddress, stackPointerOfCaller(frame), record->callerFrame);
         }

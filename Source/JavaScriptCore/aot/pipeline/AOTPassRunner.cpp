@@ -490,7 +490,7 @@ static constexpr OperationsThatPassAnswersFor operationsThatPassesAnswerFor[] {
     { PassID::ResolveBuiltins, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::ResolveCalls, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
     { PassID::RetypeValues, InPlaceOfOperation::NothingBecauseNothingComesHere, true, TakesHandlersAway::No, { } },
-    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::No, { } },
+    { PassID::Select, InPlaceOfOperation::ItsExpansion, true, TakesHandlersAway::Yes, { } },
     { PassID::SeparateUnlikelyLoopPaths, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::No, { } },
     { PassID::SinkAllocations, InPlaceOfOperation::NothingByProofOfThePass, true, TakesHandlersAway::No, { } },
     { PassID::SplitBehindEntryChecks, InPlaceOfOperation::TheSameOperationElsewhere, true, TakesHandlersAway::Yes, { } },
@@ -648,8 +648,10 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     // Not ProgramAnalyses::effects(): summaries cached here would reach later passes, and the output would depend on this option.
     EffectSummaries effects;
     const PassDescriptor& summarizer = descriptorOf(PassID::ComputeEffectSummaries);
-    if (m_verifierInputs.flow && summarizer.accepts(program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
-        effects = computeEffectSummaries(program, *m_verifierInputs.flow, m_build);
+    // A pass that is run by itself was given summaries made without results of the flow analysis. What it leaves is judged by such too.
+    FlowResults noResults;
+    if (summarizer.accepts(program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
+        effects = computeEffectSummaries(program, m_verifierInputs.flow ? *m_verifierInputs.flow : noResults, m_build);
 
     VerifierInputs inputs = m_verifierInputs;
     inputs.isOptimizing = form == IRForm::Prepared;
@@ -1001,8 +1003,17 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
         return;
     const bool verifiesFunction = canVerify(form) && !descriptor.isVerifiedAfterNextPass;
     Vector<InternalError> errors;
-    if (verifiesFunction && !isAsVerified)
+    if (verifiesFunction && !isAsVerified) {
         errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, inputs);
+        bool someGuardDoesNotLast = std::ranges::any_of(errors, [](const InternalError& error) {
+            return error.kind == InternalErrorKind::GuardNotAvailable;
+        });
+        if (someGuardDoesNotLast && inputs.effectsByTypesOfOperands) {
+            VerifierInputs finer = inputs;
+            finer.effects = inputs.effectsByTypesOfOperands;
+            errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, finer);
+        }
+    }
     if (errors.isEmpty() && !isAsVerified && hasTypedValues(context.function)) {
         // In an arena of its own: what is interned here must not reach the program, or the output would depend on this option.
         ScratchTypeArena types(context.program.types);

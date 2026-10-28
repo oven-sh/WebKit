@@ -185,6 +185,17 @@ void StringRangeReadEmitter::generateStringRangeCharacterOrUndefined(const Value
     }));
 }
 
+// A range that ends a constant number of units behind its start.
+static std::optional<int64_t> findLengthWrittenInRange(const Function& function, const Type& typeOfEnd, ValueID start, ValueID end)
+{
+    if (!start || !end || !typeOfEnd.isInt32())
+        return std::nullopt;
+    const Value& sum = function.at(end);
+    if (sum.opcode != Opcode::Add || sum.operand(0) != start || function.at(sum.operand(1)).opcode != Opcode::Integer)
+        return std::nullopt;
+    return function.at(sum.operand(1)).integer();
+}
+
 void StringRangeReadEmitter::generateStringRangeEqualsLiteral(const ValueContext& value)
 {
     CharacterView view = viewOfRange(value);
@@ -192,6 +203,10 @@ void StringRangeReadEmitter::generateStringRangeEqualsLiteral(const ValueContext
     if (!length) {
         ensureStillAliveHere(view.owner);
         defineTest(value, isZero(view.length));
+        return;
+    }
+    if (value->endOperand() && findLengthWrittenInRange(m_function, typeOf(value->endOperand()), value->startOperand(), value->endOperand()) == length) {
+        defineTest(value, strings().hasTextAt(view, word32(0), value->literal()));
         return;
     }
 

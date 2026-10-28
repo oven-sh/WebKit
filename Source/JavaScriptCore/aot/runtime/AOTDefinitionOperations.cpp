@@ -29,6 +29,7 @@
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSlimClosure.h"
+#include "AOTProgramStrings.h"
 #include "AOTState.h"
 #include "ArrayConventions.h"
 #include "Butterfly.h"
@@ -705,7 +706,7 @@ static bool tryReExportFields(Instance* instance, JSObject* target, JSObject* so
         if (existing->valueOrAccessor)
             return true;
         return tryDefineLiveBinding(globalObject, target, source, name, name, rule & reExportReusesDescriptors, [&] {
-            uint64_t capturedKey = JSValue::encode(key);
+            uint64_t capturedKey = rule & starRuleKeyIsLiteralStringWord ? instance->state->strings->literalStringWordFor(key) : JSValue::encode(key);
             uint64_t capturedSource = JSValue::encode(source);
             std::array<uint64_t, 2> captures { isKeyInFirstSlot ? capturedKey : capturedSource, isKeyInFirstSlot ? capturedSource : capturedKey };
             return instance->state->objects->closures.createClosure(vm, getter, captures, counts.references);

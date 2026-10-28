@@ -628,6 +628,9 @@ MemberAnswer findInstanceMember(const PropertyAccessContext& context, const Memb
         return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
 
     bool mayGainOwnProperty = ownPropertyGainOf(program, query.layout, key) != OwnPropertyGain::Impossible;
+    // Of a cell of a built-in class HasNoExtraProperties asks whether it has any property at all.
+    if (builtinBase && mayGainOwnProperty && isBornWithProperties(program, query.layout, builtinBase))
+        return MemberAnswer::unknown(UnprovenCause::BuiltinBase);
     MemberAnswer walked;
     if (query.isOwnLookup || query.access == Access::Define || keyKind == PropertyKeyKind::PrivateName) {
         if (mayGainOwnProperty && query.isOwnLookup)

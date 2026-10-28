@@ -346,6 +346,9 @@ private:
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, BuildContext&);
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, const BorrowedParameters&, BuildContext&);
 EffectSummaries computeEffectSummaries(const Program&, const FlowResults&, BuildContext&);
+// A typed body that begins again in the generic version of its function hands on its own parameters. Here that call says what the generic version does to values of their types, and so does a call
+// of what was moved out of the generic version into a body of its own. Each such callee is read once more for each such call, which is too dear for a build: the verifier asks where a guard does not last.
+EffectSummaries computeEffectSummariesByTypesOfOperands(const Program&, const FlowResults&, BuildContext&);
 void updateEffectSummaries(const Program&, const FlowResults&, BuildContext&, BodySummaries& kept, EffectSummaries&, BodyReferences* = nullptr);
 FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&);
 

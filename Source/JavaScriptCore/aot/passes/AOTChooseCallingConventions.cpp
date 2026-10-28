@@ -535,6 +535,10 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         ++numberOfBoxedResults;
     };
 
+    // A cell beside a boxed value is boxed with it.
+    auto returnSameBits = [](Representation first, Representation second) {
+        return first == second || (!isCellOrBoxedValue(first) && haveSameRegisterRepresentation(first, second));
+    };
     auto boxMixedClasses = [&] {
         unsigned callByValue = count;
         Vector<ConventionResultNode> nodes(count + 1);
@@ -552,7 +556,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         for (unsigned index = 0; index < count; ++index) {
             FunctionID id(index);
             FunctionID root(roots[index]);
-            if (root != id && root.index() != callByValue && (resultOf(id) != resultOf(root) || returnsNothing(id) != returnsNothing(root)))
+            if (root != id && root.index() != callByValue && (!returnSameBits(resultOf(id), resultOf(root)) || returnsNothing(id) != returnsNothing(root)))
                 isMixed.quickSet(root.index());
         }
         for (unsigned index = 0; index < count; ++index) {

@@ -501,7 +501,11 @@ void AccessEmitter::putNamedProperty(const ValueContext& value, Boxed object, Pu
         return;
     }
     recordArrival(value, object);
-    StubKey stub = storedFieldTakesAnyValue(m_program, m_placement, m_function, value.value()) ? putKnownFieldThatTakesAnyValue(mode) : putKnownField(mode);
+    StubKey stub = putKnownField(mode);
+    if (storedFieldTakesAnyValue(m_program, m_placement, m_function, value.value()))
+        stub = putKnownFieldThatTakesAnyValue(mode);
+    else if (storedFieldTakesEveryNumber(m_program, m_placement, m_function, value.value()))
+        stub = putKnownFieldThatTakesEveryNumber(mode);
     callStub(value, stub, { object.value(), in<Boxed>(value->valueOperand()).value() }, { .immediate = *record });
 }
 

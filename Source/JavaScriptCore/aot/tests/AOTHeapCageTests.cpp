@@ -51,6 +51,10 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
+#if USE(MIMALLOC)
+#include <bmalloc/mimalloc.h>
+#endif
+
 #if OS(LINUX)
 #include <cxxabi.h>
 #include <fcntl.h>
@@ -311,6 +315,38 @@ static void testRangeGrowsBySegments()
         ++count;
     AOT_TEST_CHECK(count < size / MB && range->reservedSize() <= size);
 }
+
+#if OS(LINUX) && USE(MIMALLOC)
+// A range gives its free memory back at malloc's pace, and touches nothing that another range has freed: the threads of a program that end together do not wait for one another.
+static void testReleasingFreeMemoryPurgesNoOtherRange()
+{
+    if (!bmalloc::api::isEnabled())
+        return;
+    auto isResident = [](void* page) {
+        unsigned char state = 0;
+        AOT_TEST_CHECK(!mincore(page, pageSize(), &state));
+        return !!(state & 1);
+    };
+    long delay = mi_option_get(mi_option_purge_delay);
+    mi_option_set(mi_option_purge_delay, 600 * 1000);
+
+    ReservedRangeHeap& first = createRange(blockSize);
+    ReservedRangeHeap& second = createRange(blockSize);
+    void* memory = first.tryAllocate(4 * MB);
+    AOT_TEST_CHECK(memory);
+    fill(memory, 4 * MB, 3);
+    void* page = static_cast<char*>(memory) + 2 * MB;
+    AOT_TEST_CHECK(isResident(page));
+    first.free(memory);
+    first.releaseFreeMemory();
+    bool wasLeftByItsOwnRange = isResident(page);
+    second.releaseFreeMemory();
+    bool wasLeftByOtherRange = isResident(page);
+
+    mi_option_set(mi_option_purge_delay, delay);
+    AOT_TEST_CHECK(wasLeftByItsOwnRange && wasLeftByOtherRange);
+}
+#endif
 
 static void testRandomWindowsLieFarApart()
 {
@@ -1663,6 +1699,9 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/takes-what-the-budget-leaves"_s, testRangeTakesWhatBudgetLeaves },
         { "heap-cage/reserved-range/exhaustion-returns-null"_s, testExhaustionReturnsNull },
         { "heap-cage/reserved-range/grows-by-segments"_s, testRangeGrowsBySegments },
+#if OS(LINUX) && USE(MIMALLOC)
+        { "heap-cage/reserved-range/releasing-free-memory-purges-no-other-range"_s, testReleasingFreeMemoryPurgesNoOtherRange },
+#endif
         { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },

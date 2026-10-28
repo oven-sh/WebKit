@@ -20,6 +20,7 @@
 #include "AOTSort.h"
 #include "AOTValueFlowResultsPlaces.h"
 #include "AOTValueFlowResultsUnseenCode.h"
+#include "AOTValueFlowRulesModules.h"
 #include <tuple>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -280,11 +281,10 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
         return builtins.canonicalID(constructor);
     };
 
-    bool refusesEvaluatedText = inputs.solver().input().refusedCode.evaluatedText;
     Vector<FeatureUseRecord> uses;
     for (size_t index : builtinsWhoseCodeRuns) {
         const Builtin& entry = builtins.at(BuiltinID(index));
-        if (refusesEvaluatedText && entry.flags.contains(BuiltinFlag::EvaluatesText))
+        if (entry.flags.contains(BuiltinFlag::EvaluatesText) && refusesEveryText(builtins, BuiltinID(index), inputs.solver().input().refusedCode))
             continue;
         uint32_t owner = classOfBuiltin[index];
         auto addUnlessRootedByMakersOfClass = [&](RemovableFeature feature) {

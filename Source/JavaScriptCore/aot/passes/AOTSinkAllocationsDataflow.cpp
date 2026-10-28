@@ -1356,12 +1356,13 @@ void ObjectInterpreter::dropDeadEntries(BlockID target, const SinkingState* head
         if (!entry.state.isCell() && !headOfTarget->find(entry.object))
             deadObjects.append(entry.object);
     }
+    // Thousands may die on one edge: they leave in one step.
+    removeEntries(m_state.objects, &ObjectEntry::object, deadObjects.span());
+    if (isRewriting())
+        values().remove(deadObjects.span());
     for (VirtualObjectID object : deadObjects) {
-        m_state.remove(object);
-        if (isRewriting()) {
-            values().remove(object);
-            continue;
-        }
+        if (isRewriting())
+            break;
         Candidate& candidate = m_sinking.at(object);
         candidate.diesVirtual = true;
         candidate.diesOutsideJoins |= !std::ranges::contains(m_enteredEdge.consumedSources, object, &ConsumedSource::source);

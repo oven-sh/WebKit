@@ -368,14 +368,35 @@ static bool tryMergeBitTests(B3::Procedure& proc, B3::BasicBlock* first)
     return true;
 }
 
+// What a condition is where a branch on another one was taken, or was not.
+static TriState evaluateBehindBranch(B3::Value* condition, B3::Value* branchCondition, bool wasTaken)
+{
+    if (condition == branchCondition)
+        return triState(wasTaken);
+    B3::DominatingCondition asked = B3::stripNegations(condition);
+    B3::DominatingCondition known = B3::stripNegations(branchCondition);
+    bool knownHolds = known.isNonZero == wasTaken;
+    if (asked.value == known.value)
+        return triState(asked.isNonZero == knownHolds);
+    if (!B3::isComparisonWithConstant(asked.value) || !B3::isComparisonWithConstant(known.value) || asked.value->child(0) != known.value->child(0))
+        return TriState::Indeterminate;
+    TriState holds = B3::evaluateImpliedComparison(asked.value, known.value, knownHolds);
+    if (holds == TriState::Indeterminate)
+        return holds;
+    return triState(asked.isNonZero == (holds == TriState::True));
+}
+
 static B3::Value* findSideChosenOnEveryPathTo(B3::BasicBlock* block, B3::Value* select)
 {
     AOT_THRESHOLD(unsigned, maxNumberOfBlocksAbove, 8);
     for (unsigned count = 0; count < maxNumberOfBlocksAbove && block->numPredecessors() == 1; ++count) {
         B3::BasicBlock* predecessor = block->predecessor(0);
         B3::Value* terminal = predecessor->last();
-        if (terminal->opcode() == B3::Branch && terminal->child(0) == select->child(0) && predecessor->successorBlock(0) != predecessor->successorBlock(1))
-            return select->child(predecessor->successorBlock(0) == block ? 1 : 2);
+        if (terminal->opcode() == B3::Branch && predecessor->successorBlock(0) != predecessor->successorBlock(1)) {
+            TriState holds = evaluateBehindBranch(select->child(0), terminal->child(0), predecessor->successorBlock(0) == block);
+            if (holds != TriState::Indeterminate)
+                return select->child(holds == TriState::True ? 1 : 2);
+        }
         block = predecessor;
     }
     return nullptr;

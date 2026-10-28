@@ -84,7 +84,7 @@ void FunctionBuiltinEmitter::generateFunctionBind(const InlineCall& call)
     {
         CodeGenerator::InitializationScope scope(generator());
         bound = emitter<CellAllocationEmitter>().allocateObject(InlineAllocation::BoundFunction, prepare);
-        storeField(bound, m_heaps.JSObject_butterfly, pointerConstant(0));
+        storeField(bound, m_heaps.JSNonArray_butterfly, pointerConstant(0));
         storeField(bound, m_heaps.JSCallee_scope, loadImmutablePointer(AOT_INSTANCE_OFFSET(globalObject)));
         storeField(bound, m_heaps.JSFunction_executableOrRareData, loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.boundFunctionExecutable)));
         storeField(bound, m_heaps.JSBoundFunction_targetFunction, target);

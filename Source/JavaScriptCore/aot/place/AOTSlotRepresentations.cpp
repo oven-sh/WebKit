@@ -251,7 +251,8 @@ static SlotClaim claimFor(const SlotPlanContext& context, const FieldInputs& fie
         return claim;
     }
 
-    claim.needsWideReference = field.members.needsWideReference || (context.isMadeSeldom(field.reference.layout) && !holdsEnvironmentOfDeferredClosures(field));
+    claim.isWideByChoice = !field.members.needsWideReference && context.isMadeSeldom(field.reference.layout) && !holdsEnvironmentOfDeferredClosures(field);
+    claim.needsWideReference = field.members.needsWideReference || claim.isWideByChoice;
     claim.representation = representationOfField(context, field.type, claim.needsAbsentState, {
         .prefersInt32 = typeFitsInt32Slot(field.type),
         .holdsWideReferences = claim.needsWideReference,
@@ -428,6 +429,7 @@ struct SharedClaim {
     SlotRepresentation outOfLineRepresentation { SlotRepresentation::JSValue };
     bool needsAbsentState { false };
     bool needsWideReference { false };
+    bool isWideByChoice { false };
 };
 
 std::optional<SharedValueKind> sharedValueKindOf(SlotRepresentation representation)
@@ -472,8 +474,11 @@ public:
     void run()
     {
         computeSpareBytes();
-        for (const JoinedRows::Set& joined : m_joinedRows.sets())
-            share(joined);
+        // A slot that has become narrower for one set leaves room in its cell for the slot of another, which may have come first.
+        for (unsigned round = 0; round < 2; ++round) {
+            for (const JoinedRows::Set& joined : m_joinedRows.sets())
+                share(joined);
+        }
     }
 
 private:
@@ -526,12 +531,15 @@ private:
     {
         SharedClaim shared;
         Type contents;
+        shared.isWideByChoice = true;
         for (const ClaimUnit& unit : units) {
             const SlotClaim& claim = claimOf(unit);
             contents = contentsOfSharedSlot(contents, *unit.type);
             shared.needsAbsentState |= claim.needsAbsentState;
-            shared.needsWideReference |= claim.needsWideReference;
+            shared.needsWideReference |= claim.needsWideReference && !claim.isWideByChoice;
+            shared.isWideByChoice &= claim.isWideByChoice;
         }
+        shared.needsWideReference |= shared.isWideByChoice;
         shared.representation = representationOfField(m_context, contents, shared.needsAbsentState, {
             .prefersInt32 = typeFitsInt32Slot(contents),
             .holdsWideReferences = shared.needsWideReference,
@@ -589,12 +597,12 @@ private:
             claim.representation = shared.representation;
             claim.needsAbsentState = shared.needsAbsentState;
             claim.needsWideReference = shared.needsWideReference;
+            claim.isWideByChoice = shared.isWideByChoice;
             if (claim.mayBeOutOfLine)
                 claim.outOfLineRepresentation = shared.outOfLineRepresentation;
         };
         for (SlotRow row : unit.rows) {
-            if (width > ownWidth)
-                m_spareBytes[m_context.rows.layoutOf(row).index()] -= width - ownWidth;
+            m_spareBytes[m_context.rows.layoutOf(row).index()] += ownWidth - width;
             applyTo(m_claims[row]);
         }
         applyTo(m_claims[m_context.inheritedRows.declaringRowOf(unit.rows[0])]);

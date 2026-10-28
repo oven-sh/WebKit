@@ -310,6 +310,7 @@ static constexpr OptionWordCase optionWordCases[] = {
     { "admit=inspector"_s, [](WireOptions& options) { options.admittedCode = Wire::AdmittedCode::Inspector; } },
     { "exclude=EvaluatedText"_s, [](WireOptions& options) { options.excludedCode = Wire::ExcludedCode::EvaluatedText; } },
     { "exclude=evaluated-text,FunctionSource"_s, [](WireOptions& options) { options.excludedCode = flagSet({ Wire::ExcludedCode::EvaluatedText, Wire::ExcludedCode::FunctionSource }); } },
+    { "exclude=HostEvaluatedText,foreign-calls"_s, [](WireOptions& options) { options.excludedCode = flagSet({ Wire::ExcludedCode::HostEvaluatedText, Wire::ExcludedCode::ForeignCalls }); } },
     { "obfuscate"_s, [](WireOptions& options) { options.output = Wire::OutputOptions::Obfuscate; } },
 };
 
@@ -463,6 +464,9 @@ static void testOptionWordsListedNamesAccepted()
         "admit=Inspector"_s,
         "exclude=EvaluatedText"_s,
         "exclude=FunctionSource"_s,
+        "exclude=HostEvaluatedText"_s,
+        "exclude=ForeignCalls"_s,
+        "exclude=ForeignCallsOfUnseenCode"_s,
         "obfuscate"_s,
     };
     static constexpr ASCIILiteral unlistedWords[] = {
@@ -846,6 +850,9 @@ static void testExcludedFunctionSourceIsRecorded()
     CompileOptions withoutSource = readWords({ "exclude=FunctionSource"_s });
     AOT_TEST_CHECK(withoutSource.recorded.omitsFunctionSource && !withoutSource.excludesEvaluatedText() && withoutSource.excludesCodeOutsideImage() == runsOnlyCodeOfImage);
     AOT_TEST_CHECK(readWords({ }).excludesCodeOutsideImage() == runsOnlyCodeOfImage && readWords({ "exclude=CodeOutsideImage"_s }).excludesCodeOutsideImage());
+    AOT_TEST_CHECK(!readWords({ "exclude=EvaluatedText"_s }).excludesHostEvaluatedText() && !readWords({ "exclude=HostEvaluatedText"_s }).excludesEvaluatedText() && readWords({ "exclude=HostEvaluatedText"_s }).excludesHostEvaluatedText());
+    AOT_TEST_CHECK(!readWords({ }).excludesForeignCalls() && readWords({ "exclude=ForeignCalls"_s }).excludesForeignCalls());
+    AOT_TEST_CHECK(!readWords({ "exclude=ForeignCalls"_s }).excludesForeignCallsOfUnseenCode() && !readWords({ "exclude=ForeignCallsOfUnseenCode"_s }).excludesForeignCalls() && readWords({ "exclude=ForeignCallsOfUnseenCode"_s }).excludesForeignCallsOfUnseenCode());
 }
 
 static void testInstrumentationAndTestingSwitchesAreRecorded()

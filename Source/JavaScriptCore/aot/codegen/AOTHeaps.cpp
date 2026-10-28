@@ -29,6 +29,7 @@ using IRHeap = Typed::AbstractHeap;
 struct SharedHeap {
     B3::AbstractHeap AOTHeaps::* heap;
     Typed::AbstractHeapSet otherOwners;
+    bool liesUnderHeapOfIR { true };
 };
 
 // A Structure transition rewrites the cell header, an out-of-line property moves the butterfly, and a bit of the order word says "has extra properties".
@@ -37,6 +38,9 @@ static constexpr SharedHeap sharedHeaps[] = {
     { &AOTHeaps::JSObject_butterfly, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTObject_orderWord, { IRHeap::NamedProperties } },
     { &AOTHeaps::AOTSlimClosure_word, { IRHeap::NamedProperties, IRHeap::PrototypeLinks } },
+    // To the IR a weak table is a collection like any other. A collection of garbage writes the weak ones alone, so they lie apart: what is read out of a Map or a Set stays read across it.
+    { &AOTHeaps::weakTableStorage, { IRHeap::CollectionStorage }, false },
+    { &AOTHeaps::weakTableEntries, { IRHeap::CollectionEntries }, false },
 };
 
 static void nestAsImmutable(B3::AbstractHeap& heap, B3::AbstractHeap& parent)
@@ -174,6 +178,8 @@ void AOTHeaps::nestUpstreamHeaps()
     nest(mutableEntire(IRHeap::ShapeWords), { &JSCell_header });
     nest(mutableEntire(IRHeap::PrototypeLinks), { &Structure_prototype });
     nest(mutableEntire(IRHeap::ArrayStorage), { &JSObject_butterfly, &Butterfly_publicLength, &Butterfly_vectorLength, &ArrayStorage_numValuesInVector });
+    // An array stays an array, so the word of an array and the word of another object are two words. JSObject_butterfly is the word of an object of which nobody knows.
+    nest(JSObject_butterfly, { &JSArray_butterfly, &JSNonArray_butterfly });
     nest(mutableEntire(IRHeap::TypedArrayStorage), {
         &JSArrayBufferView_byteOffset, &JSArrayBufferView_length, &JSArrayBufferView_mode, &JSArrayBufferView_vector, &ArrayBuffer_data, &Butterfly_arrayBuffer,
     });
@@ -310,10 +316,18 @@ bool AOTHeaps::mayConvertCells(const Typed::Effects& effectsOfCall)
     return !effectsOfCall.writes.isEmpty() || effectsOfCall.mayCollect || effectsOfCall.mayExitSideways() || effectsOfCall.reads.containsAny(heapsOfObjects);
 }
 
-void AOTHeaps::appendHeapsOfConvertedCells(B3HeapList& list) const
+// An array gets other storage where its elements or its length are written, where it gets or loses a property or becomes a prototype, and where a lookup by name puts the properties of what it comes by in order.
+// A collection leaves storage where it is as long as a register or a word of the stack points into it.
+bool AOTHeaps::mayReplaceStorageOfArrays(const Typed::Effects& effectsOfCall)
+{
+    constexpr Typed::AbstractHeapSet heapsWrittenWithStorage { IRHeap::ArrayStorage, IRHeap::Elements, IRHeap::NamedProperties, IRHeap::PrototypeLinks };
+    return effectsOfCall.mayRunOtherCode() || effectsOfCall.writes.containsAny(heapsWrittenWithStorage) || effectsOfCall.reads.contains(IRHeap::NamedProperties);
+}
+
+void AOTHeaps::appendHeapsOfConvertedCells(B3HeapList& list, ConvertedCells cells) const
 {
     list.append(&JSCell_header);
-    list.append(&JSObject_butterfly);
+    list.append(cells == ConvertedCells::All ? &JSObject_butterfly : &JSNonArray_butterfly);
     list.append(&AOTSlimClosure_word);
 }
 
@@ -356,8 +370,12 @@ std::optional<CoveredLocations> AOTHeaps::locationsOf(const B3::AbstractHeap& he
 bool AOTHeaps::isCoveredBy(const B3::AbstractHeap& written, const LocationMasks& declaredWrites) const
 {
     for (const SharedHeap& shared : sharedHeaps) {
-        if (declaredWrites.containsAny(shared.otherOwners) && isWithin(written, this->*shared.heap))
+        if (!isWithin(written, this->*shared.heap))
+            continue;
+        if (declaredWrites.containsAny(shared.otherOwners))
             return true;
+        if (!shared.liesUnderHeapOfIR)
+            return false;
     }
 
     std::optional<CoveredLocations> locations = locationsOf(written);

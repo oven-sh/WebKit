@@ -963,6 +963,7 @@ public:
     const BuiltinParameter* parameterFor(const BuiltinOverload&, BuiltinOperand position) const;
 
     JS_EXPORT_PRIVATE BuiltinTableIDRange<BuiltinID> membersOf(BuiltinID holder) const;
+    JS_EXPORT_PRIVATE std::span<const Builtin> memberEntriesOf(BuiltinID holder) const;
     BuiltinID findGlobal(BuiltinName name) const { return findOwnMember(Builtins::GlobalThis, name); }
     BuiltinID findOwnMember(BuiltinID holder, BuiltinName) const;
     BuiltinMemberLookup findMember(BuiltinID holder, BuiltinName) const;

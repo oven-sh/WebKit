@@ -78,9 +78,7 @@ public:
             });
         case OperatorForm::MayBeString:
         case OperatorForm::MayBeStringOrNumber:
-            return convertPossibleString(context, operand.as<Boxed>(), type, form, [&] {
-                return callToString(context, operand.as<Boxed>());
-            });
+            return convertPossibleString(context, operand.as<Boxed>(), type, form);
         case OperatorForm::Unselected:
         case OperatorForm::Integers:
         case OperatorForm::CheckedIntegers:
@@ -123,7 +121,27 @@ public:
         return convert(context, operand, type, form);
     }
 
-    CellPointer convertPossibleString(const OperationContext& context, Boxed boxed, const Type& type, OperatorForm form, NOESCAPE const Invocable<CellPointer()> auto& convertOther)
+private:
+    CellPointer callToString(const OperationContext& context, Boxed boxed, const CallOptions& options = { })
+    {
+        return callOperation<CellPointer>(context, RuntimeOperation::ToString, { boxed }, options);
+    }
+
+    CellPointer convertDouble(const OperationContext& context, Number value, OperatorForm form)
+    {
+        if (form == OperatorForm::NumberByOperation)
+            return callOperation<CellPointer>(context, RuntimeOperation::DoubleToString, { value });
+        ConversionEmitter& conversions = emitter<ConversionEmitter>();
+        Word32 whole = low32(conversions.toInteger(value));
+        Integer bitsOfWhole = conversions.bitsOf(toNumber(whole));
+        return selectByBranch<CellPointer>(equal(bitsOfWhole, conversions.bitsOf(value)), [&] {
+            return emitter<StringEmitter>().integerToString(context, whole);
+        }, [&] {
+            return emitter<StringEmitter>().numberToString(context, value);
+        });
+    }
+
+    CellPointer convertPossibleString(const OperationContext& context, Boxed boxed, const Type& type, OperatorForm form)
     {
         bool everyCellIsString = !type.hasObjects() && !(type.primitives & (Primitive::AnySymbol | Primitive::BigInt));
         bool convertsIntegers = form == OperatorForm::MayBeStringOrNumber;
@@ -156,28 +174,8 @@ public:
             m_out.jump(otherCase);
 
         m_out.appendTo(otherCase);
-        join.add(convertOther());
+        join.add(CellPointer(callStub(context, unaryOperation(UnaryOperationForm::ToString), { boxed.value() }).first));
         return join.finish();
-    }
-
-private:
-    CellPointer callToString(const OperationContext& context, Boxed boxed, const CallOptions& options = { })
-    {
-        return callOperation<CellPointer>(context, RuntimeOperation::ToString, { boxed }, options);
-    }
-
-    CellPointer convertDouble(const OperationContext& context, Number value, OperatorForm form)
-    {
-        if (form == OperatorForm::NumberByOperation)
-            return callOperation<CellPointer>(context, RuntimeOperation::DoubleToString, { value });
-        ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Word32 whole = low32(conversions.toInteger(value));
-        Integer bitsOfWhole = conversions.bitsOf(toNumber(whole));
-        return selectByBranch<CellPointer>(equal(bitsOfWhole, conversions.bitsOf(value)), [&] {
-            return emitter<StringEmitter>().integerToString(context, whole);
-        }, [&] {
-            return emitter<StringEmitter>().numberToString(context, value);
-        });
     }
 };
 
@@ -319,12 +317,9 @@ Operand OperatorEmitter::addStrings(const ValueContext& value)
         });
     }
     case OperatorForm::MayBeString: {
-        Boxed x = in<Boxed>(left);
-        Boxed y = in<Boxed>(right);
-        bool emptyTextIsOnLeft = typeOf(left).singleStringLiteral() == m_program.strings.emptyString();
-        return toStrings.convertPossibleString(value, emptyTextIsOnLeft ? y : x, typeOf(emptyTextIsOnLeft ? right : left), OperatorForm::MayBeString, [&] {
-            return unboxCell(arithmeticOnBoxedOperands(value, ArithmeticOperator::Add, x, y));
-        });
+        bool emptyStringIsOnLeft = typeOf(left).singleStringLiteral() == m_program.strings.emptyString();
+        Boxed other = in<Boxed>(emptyStringIsOnLeft ? right : left);
+        return unboxCell(Boxed(callStub(value, unaryOperation(UnaryOperationForm::AddToEmptyString), { other.value() }).first));
     }
     case OperatorForm::NullableStringAndPrimitive: {
         if (!resultIsBoxed)

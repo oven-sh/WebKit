@@ -439,6 +439,53 @@ static void testSinkValuesMovesInductionStepToFirstUse()
     CHECK_EQ(invoke<int64_t>(*code, 1, elements), 1);
 }
 
+// for (link = first; link; link = link->next) sum += link->value;
+static void testSinkValuesMovesLoadOfNextLinkBelowOtherReads()
+{
+    struct Link {
+        int64_t value;
+        Link* next;
+    };
+    enum class Between : uint8_t { Addition, Store, Nothing };
+    for (Between between : { Between::Addition, Between::Store, Between::Nothing }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        BasicBlock* loop = proc.addBlock(10);
+        BasicBlock* latch = proc.addBlock(9);
+        BasicBlock* exit = proc.addBlock();
+        Value* link = graph.phi(loop, Int64);
+        Value* sum = graph.phi(loop, Int64);
+        graph.upsilon(root, cCallArgumentValues<Link*>(proc, root)[0], link);
+        graph.upsilon(root, graph.int64(root, 0), sum);
+        graph.jump(root, loop);
+        Value* value = graph.load(loop, Int64, link, 0, firstHeap);
+        Value* total = between == Between::Nothing ? graph.make(loop, Add, value, sum) : nullptr;
+        Value* next = graph.load(loop, Int64, link, 8, secondHeap);
+        if (between == Between::Store)
+            graph.store(loop, value, link, 0, firstHeap);
+        if (!total)
+            total = graph.make(loop, Add, value, sum);
+        graph.branch(loop, next, latch, exit);
+        graph.upsilon(latch, next, link);
+        graph.upsilon(latch, total, sum);
+        graph.jump(latch, loop);
+        graph.ret(exit, total);
+        proc.resetReachability();
+        validate(proc);
+
+        CHECK_EQ(sinkValues(proc), between == Between::Addition);
+        validate(proc);
+        CHECK_EQ(loop->values().find(total) < loop->values().find(next), between != Between::Store);
+        Link last { 4, nullptr };
+        Link middle { 2, &last };
+        Link first { 1, &middle };
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, &first), 7);
+        CHECK_EQ(invoke<int64_t>(*code, &last), 4);
+    }
+}
+
 // Whether a cycle with two entries is ordered is asked in the middle of the phase, and the answer reads every value of every block.
 static void testSinkValuesMovesInductionStepBeforeAskingAboutIrreducibleCycle()
 {
@@ -1345,6 +1392,7 @@ void addBunPlacementTests(const TestConfig* config, BunTestTasks& tasks)
     RUN(testSinkValuesDoesNotSinkIntoLoop());
     RUN(testSinkValuesDoesNotSinkFromPreHeaderIntoLoop());
     RUN(testSinkValuesMovesInductionStepToFirstUse());
+    RUN(testSinkValuesMovesLoadOfNextLinkBelowOtherReads());
     RUN(testSinkValuesMovesInductionStepBeforeAskingAboutIrreducibleCycle());
     RUN(testValidateRefusesNullEntryInBlock());
     RUN(testSinkValuesLeavesInductionStepAboveAccessThatTakesItAsAddress());

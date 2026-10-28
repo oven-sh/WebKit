@@ -377,10 +377,13 @@ static PassOutcome runSteps(FunctionPassContext& context)
         rewriteBuiltinInstanceOfSites(context, tests.span());
         didChangeIf(!tests.isEmpty());
     }
-    if (context.hasRequiredTailCall() && hasSitesIn(SiteList::Calls)) {
+    // The list is tested where the callee has passed its test.
+    for (unsigned round = 0; round < 2 && context.hasRequiredTailCall() && hasSitesIn(SiteList::Calls); ++round) {
         Vector<CalledOperandTest> tests = planTestsOfCalledOperands(context);
+        if (tests.isEmpty())
+            break;
         emitTestsOfCalledOperands(context, tests.span());
-        didChangeIf(!tests.isEmpty());
+        didChangeIf(true);
     }
     if (hasSitesIn(SiteList::ArgumentsObjects) && hasSitesIn(SiteList::Calls)) {
         Vector<CallOfOwnArguments> calls = planCallsOfOwnArguments(context);

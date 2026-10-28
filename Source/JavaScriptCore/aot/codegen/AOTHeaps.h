@@ -38,7 +38,9 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(cards) \
     v(argumentBuffer) \
     v(frameSlots) \
-    v(counters)
+    v(counters) \
+    v(weakTableStorage) \
+    v(weakTableEntries)
 
 // AOTObject_shapeWord is read of every cell. In one that is no compiled object other things lie there and change. None of them has compiledObjectShapeBit, so every test of the word fails for them all.
 // A word of AOTInstance_fieldsFilledOnce is zero until it gets its value and keeps that value. Whoever reads zero goes the way that needs no word, so a read may stand anywhere.
@@ -67,13 +69,13 @@ using B3HeapList = Vector<const B3::AbstractHeap*, 8>;
     v(hostObjectCachedValues, 0, ExternalState) \
     v(AOTObject_orderWord, offsetOfOrderWord, OrderWords) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, ShapeWords) \
+    v(JSArray_butterfly, JSObject::butterflyOffset(), ArrayStorage) \
+    v(JSNonArray_butterfly, JSObject::butterflyOffset(), ArrayStorage) \
     v(AOTExtension_granuleBits, offsetOfExtensionGranuleBits, ObjectFields) \
     v(ArrayBuffer_sizeInBytes, ArrayBuffer::offsetOfSizeInBytes(), TypedArrayStorage) \
     v(AOTStringBuilderStorage_fields, 0, StringBuilderContents) \
     v(AOTStackStringBuilder_fields, 0, StringBuilderContents) \
     v(stringBuilderBytes, 0, StringBuilderContents) \
-    v(weakTableStorage, 0, CollectionStorage) \
-    v(weakTableEntries, 0, CollectionEntries) \
     v(JSGlobalObject_globalLexicalBindingEpoch, JSGlobalObject::globalLexicalBindingEpochOffset(), RuntimeState)
 
 struct CoveredLocations {
@@ -106,7 +108,9 @@ struct AOTHeaps final : B3::AbstractHeapRepository {
     // Memory outside the heap that a cell owns. A pointer into it keeps nothing alive.
     bool isFreedWithOwner(const B3::HeapRange&) const;
     static bool mayConvertCells(const Typed::Effects& effectsOfCall);
-    void appendHeapsOfConvertedCells(B3HeapList&) const;
+    static bool mayReplaceStorageOfArrays(const Typed::Effects& effectsOfCall);
+    enum class ConvertedCells : uint8_t { AllButArrays, All };
+    void appendHeapsOfConvertedCells(B3HeapList&, ConvertedCells = ConvertedCells::All) const;
 
     std::optional<CoveredLocations> locationsOf(const B3::AbstractHeap&) const;
     bool isCoveredBy(const B3::AbstractHeap& written, const Typed::LocationMasks& declaredWrites) const;

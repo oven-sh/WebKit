@@ -18,6 +18,7 @@
 #include "AOTGenericCopy.h"
 #include "AOTHeat.h"
 #include "AOTNaturalLoops.h"
+#include "AOTPlaceTypeTestsPlan.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTTypeTestReport.h"
@@ -235,6 +236,26 @@ bool TestSiteReporter::takesAwaySitesInColdCode()
 }
 
 // A catch clause counts as rare because a throw leads to it. It is code of the program all the same, no arm of a failed test, and a program that throws to leave a loop runs it as often as the loop.
+auto TestSiteReporter::candidates() -> std::span<const Candidate>
+{
+    if (m_candidates)
+        return m_candidates->span();
+    m_candidates.emplace();
+    const Function& function = m_context.function;
+    const BlockFrequencies& frequencies = m_context.analyses.blockFrequencies();
+    for (BlockID block : m_context.analyses.cfg().reversePostOrder()) {
+        if (frequencies.classOf(block).predicted() == BlockFrequency::Rare && !isWrittenInCatchClause(block))
+            continue;
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            Opcode operation = function.at(values[index]).opcode;
+            if (testSiteOpcodes.contains(operation) && !m_awaitsExpansion.quickGet(values[index].index()))
+                m_candidates->append(Candidate { values[index], { block, index }, operation });
+        }
+    }
+    return m_candidates->span();
+}
+
 bool TestSiteReporter::isWrittenInCatchClause(BlockID block)
 {
     if (!m_blocksOfCatchClauses) {
@@ -498,7 +519,7 @@ void reportRepeatedTests(TestSiteReporter& reporter)
 {
     HashMap<SubjectAndType, unsigned> numberOfTests;
     BitVector canBeDecided;
-    reporter.forEachCandidate([&](const Value& test) {
+    reporter.forEachCandidate({ Opcode::TypeTest }, [&](const Value& test) {
         if (!canBeDecidedEarlier(reporter, test))
             return;
         canBeDecided.set(reporter.use().index());
@@ -507,7 +528,7 @@ void reportRepeatedTests(TestSiteReporter& reporter)
     if (canBeDecided.isEmpty())
         return;
 
-    reporter.forEachCandidate([&](const Value& test) {
+    reporter.forEachCandidate({ Opcode::TypeTest }, [&](const Value& test) {
         if (!canBeDecided.get(reporter.use().index()))
             return;
         SubjectAndType tested = subjectAndTypeOf(reporter, test);

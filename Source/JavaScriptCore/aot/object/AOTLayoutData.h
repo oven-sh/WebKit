@@ -191,7 +191,9 @@ struct ClassData {
     uint32_t numberOfMethods;
     uint32_t numberOfStaticMethods;
     uint32_t numberOfStaticFields;
-    uint32_t numberOfMemberGuards : 30;
+    uint32_t numberOfMemberGuards : 29;
+    // The objects of the class are cells of a built-in class, and their Structures say which class of the program they were made for.
+    uint32_t instancesCarryBrand : 1;
     uint32_t hasMemberGuardAggregates : 1;
     // The first definition can only make what the record says: every member has a constant name, and the same goes for each class above.
     uint32_t guardsHoldWhileClear : 1;

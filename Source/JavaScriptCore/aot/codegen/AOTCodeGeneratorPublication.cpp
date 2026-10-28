@@ -287,6 +287,9 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
     constexpr unsigned headerSize = sizeof(JSCell);
 
     ASSERT(!(type.primitives & ~cellPrimitives));
+    // The word of a built-in that the realm lacks, or whose place held something else when it was first asked for, is zero.
+    if (!type.builtins.isEmpty())
+        return 0;
     if (type.environment)
         return placement.layout(type.environment).size;
     if (type.isAnyString() || type.isOpaque(OpaqueKind::FlatString))

@@ -250,7 +250,8 @@ static_assert(sizeof(ImageInnerEntry) == 8);
 struct StubAddressInImage {
     uint64_t key;
     uint32_t offset;
-    uint32_t reserved;
+    // Code calls the stub as it calls a function, and the stub goes on to the callee.
+    uint32_t usesCallConvention;
 };
 static_assert(sizeof(StubAddressInImage) == 16);
 

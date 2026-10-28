@@ -52,26 +52,47 @@ std::optional<InvariantOperand> findOutermostInvariantLoop(SelectionContext& con
     return outermost;
 }
 
-bool canEmitOnLoopEntry(SelectionContext& context, BlockID header)
+// What is emitted on the entry stands for what the first turn does, so it has the handler of the header, which gets what it would get from the head of the first turn.
+static std::optional<std::optional<Target>> findHandlerOnEntry(SelectionContext& context, Edge entry, BlockID header)
 {
     const Function& function = context.function();
+    const std::optional<Target>& handlerOfHeader = function.at(header).handler;
+    if (!handlerOfHeader || function.at(entry.from).handler == handlerOfHeader)
+        return handlerOfHeader;
+    Target handler = *handlerOfHeader;
+    const Target& target = targetOf(function, entry);
+    if (target.arguments.size() != function.at(header).parameters.size())
+        return std::nullopt;
+    ProgramPoint endOfEntry = pointBeforeTerminatorOf(function, entry.from);
+    for (ValueID& argument : handler.arguments) {
+        size_t parameter = function.at(header).parameters.find(argument);
+        if (parameter != notFound)
+            argument = target.arguments[parameter];
+        else if (!context.analyses().dominates(argument, endOfEntry))
+            return std::nullopt;
+    }
+    return handler;
+}
+
+bool canEmitOnLoopEntry(SelectionContext& context, BlockID header)
+{
     const NaturalLoops& loops = context.analyses().naturalLoops();
     const NaturalLoop* loop = loops.headerOf(header);
     if (!loop)
         return false;
     std::optional<Edge> entry = loops.findSingleEntry(*loop);
-    return entry && function.at(entry->from).handler == function.at(header).handler;
+    return entry && findHandlerOnEntry(context, *entry, header);
 }
 
-static BlockID ensurePreheader(IRBuilder& builder, Edge entry, BlockID header)
+static BlockID ensurePreheader(IRBuilder& builder, Edge entry, const std::optional<Target>& handler)
 {
     Function& function = builder.function();
-    if (function.at(entry.from).terminator.kind == TerminatorKind::Jump)
+    if (function.at(entry.from).terminator.kind == TerminatorKind::Jump && function.at(entry.from).handler == handler)
         return entry.from;
 
     BlockID preheader = builder.splitEdge(entry);
-    if (function.at(header).handler)
-        builder.coverWithHandler(singleElementSpan(preheader), *function.at(header).handler);
+    if (handler)
+        builder.coverWithHandler(singleElementSpan(preheader), *handler);
     return preheader;
 }
 
@@ -89,10 +110,11 @@ LoopEntryResult emitOnLoopEntry(SelectionContext& context, IRBuilder& builder, B
         return LoopEntryResult::NoSingleEntry;
 
     Function& function = builder.function();
-    if (function.at(entry->from).handler != function.at(header).handler)
+    std::optional<std::optional<Target>> handler = findHandlerOnEntry(context, *entry, header);
+    if (!handler)
         return LoopEntryResult::HandlerDiffers;
 
-    BlockID preheader = ensurePreheader(builder, *entry, header);
+    BlockID preheader = ensurePreheader(builder, *entry, *handler);
     Terminator jump = std::exchange(function.edit(preheader, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { });
     analyses.didChangeControlFlow();
 

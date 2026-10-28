@@ -664,6 +664,17 @@ EffectSummaries computeEffectSummaries(const Program& program, const FlowResults
     return summaries;
 }
 
+EffectSummaries computeEffectSummariesByTypesOfOperands(const Program& program, const FlowResults& flow, BuildContext& build)
+{
+    BodySummaries nothingKept;
+    EffectSummaries summaries;
+    EffectSummarizer summarizer(program, flow, build, nothingKept, EffectSummarizer::Witnesses::Found);
+    summarizer.setIsOnlyCheck();
+    summarizer.readCalleesByTypesOfOperands();
+    summarizer.update(summaries);
+    return summaries;
+}
+
 void updateEffectSummaries(const Program& program, const FlowResults& flow, BuildContext& build, BodySummaries& kept, EffectSummaries& summaries, BodyReferences* references)
 {
     EffectSummarizer summarizer(program, flow, build, kept, EffectSummarizer::Witnesses::Omitted);

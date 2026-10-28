@@ -70,7 +70,7 @@ public:
     // The answer of hasWritableShape() while no thread holds the lock of the cell.
     Condition hasWritableShapeIgnoringLock(Word32 modeWithWritability, const ArrayStorageForm& form) { return hasWritableShape(bitAnd(modeWithWritability, word32(0xff & ~cellLockBits)), form); }
 
-    ArrayElements elementsOf(CellPointer array) { return { array, loadField<Pointer>(array, m_heaps.JSObject_butterfly) }; }
+    ArrayElements elementsOf(CellPointer array) { return { array, loadField<Pointer>(array, m_heaps.JSArray_butterfly) }; }
     Integer publicLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_publicLength)); }
     Integer vectorLength(const ArrayElements& elements) { return zeroExtended(loadField<Word32>(elements.butterfly, m_heaps.Butterfly_vectorLength)); }
     void setPublicLength(const ArrayElements& elements, Integer length) { storeField(elements.butterfly, m_heaps.Butterfly_publicLength, low32(length)); }

@@ -87,6 +87,7 @@ function f4 name="slice-converted-under-handler" parameters=[{type=string}, {typ
 # CHECK: b0(v0: string, v1: int, v2: int) {{*}}handler=b2():
 # CHECK-NOT: = Substring
 # CHECK: [[result4]]: number = StringRangeToNumber v0, v5, v6
+# CHECK-NEXT: LoopHint [leavesHandler]
 # CHECK-NEXT: Jump -> next b1()
 # CHECK: Return [[result4]]
 }

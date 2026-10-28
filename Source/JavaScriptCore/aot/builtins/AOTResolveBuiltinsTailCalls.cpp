@@ -51,16 +51,46 @@ static bool passesOperandsUnchanged(const BuiltinCallPlan& plan)
     });
 }
 
+static std::optional<uint32_t> indexOfOperand(const Value& call, BuiltinOperand operand)
+{
+    if (operand.isReceiver())
+        return OperandIndex::Call::thisValue;
+    if (operand.argumentIndex() >= call.argumentsOperands().size())
+        return std::nullopt;
+    return call.numberOfOperands() - call.argumentsOperands().size() + operand.argumentIndex();
+}
+
 static std::optional<uint32_t> indexOfCalledOperand(const Program& program, const Value& call, BuiltinOverloadID id)
 {
     std::optional<BuiltinOperand> called = operandCalledBy(program.builtins().at(id));
     if (!called || !parameterTypeOfOverload(program, id, *called).isSubsetOf(program.at(TypeTable::function), program))
         return std::nullopt;
-    if (called->isReceiver())
-        return OperandIndex::Call::thisValue;
-    if (called->argumentIndex() >= call.argumentsOperands().size())
+    return indexOfOperand(call, *called);
+}
+
+// f.apply(t, list) hands an array on as it is. Of anything else a list is made first.
+static std::optional<CalledOperandTest> planTestOfList(FunctionPassContext& context, const ValueSite& site, BuiltinOverloadID id)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const Value& call = function.at(site.value);
+    std::optional<BuiltinOperand> listed = operandListedBy(program.builtins().at(id));
+    std::optional<uint32_t> operandIndex = listed ? indexOfOperand(call, *listed) : std::nullopt;
+    ValueID list = operandIndex ? call.operand(*operandIndex) : ValueID();
+    if (!list || context.analyses.blockFrequencies().classOf(site.block).predicted() == BlockFrequency::Rare)
         return std::nullopt;
-    return call.numberOfOperands() - call.argumentsOperands().size() + called->argumentIndex();
+
+    Type arrays = Type::builtinClass(BuiltinClasses::Array);
+    const Type& type = program.typeOf(function, list);
+    if (isAlwaysArray(type) || !type.overlaps(arrays, program))
+        return std::nullopt;
+    const Type& expected = program.expectedOrTypeOf(function, list).predicted();
+    if (!expected.anyObject && !expected.findClassPart(BuiltinClasses::Array))
+        return std::nullopt;
+    TypeID tested = context.types.intern(arrays);
+    if (context.analyses.findEarlierTest(makeTypeTest(list, tested), site.block) == EarlierTest::Failed)
+        return std::nullopt;
+    return CalledOperandTest { site, *operandIndex, tested };
 }
 
 Vector<CalledOperandTest> planTestsOfCalledOperands(FunctionPassContext& context)
@@ -81,10 +111,16 @@ Vector<CalledOperandTest> planTestsOfCalledOperands(FunctionPassContext& context
         for (BuiltinOverloadID overload : program.builtins().overloadIDsOf(callee)) {
             std::optional<uint32_t> operandIndex = indexOfCalledOperand(program, call, overload);
             ValueID operand = operandIndex ? call.operand(*operandIndex) : ValueID();
-            if (!operand)
-                continue;
+            // A built-in that takes anything for its callee refuses it by itself, behind the list.
+            if (!operand || program.typeOf(function, operand).isSubsetOf(anyFunction, program)) {
+                std::optional<CalledOperandTest> test = planTestOfList(context, site, overload);
+                if (!test)
+                    continue;
+                tests.append(*test);
+                return;
+            }
             const Type& type = program.typeOf(function, operand);
-            if (type.isSubsetOf(anyFunction, program) || !type.overlaps(anyFunction, program))
+            if (!type.overlaps(anyFunction, program))
                 return;
             if (context.analyses.findEarlierTest(makeTypeTest(operand, TypeTable::function), site.block) != EarlierTest::Failed)
                 tests.append(CalledOperandTest { site, *operandIndex });
@@ -103,8 +139,8 @@ void emitTestsOfCalledOperands(FunctionPassContext& context, std::span<const Cal
     SiteExpansion expansion(context, builder);
     for (const CalledOperandTest& test : tests | std::views::reverse) {
         expansion.begin(test.site);
-        ValueID isFunction = builder.append(makeTypeTest(expansion.original().operand(test.operandIndex), TypeTable::function));
-        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isFunction, testedOperandIndex, expansion.frequency(), BlockFrequency::Unlikely);
+        ValueID passes = builder.append(makeTypeTest(expansion.original().operand(test.operandIndex), test.testedType));
+        IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(passes, testedOperandIndex, expansion.frequency(), BlockFrequency::Unlikely);
         builder.moveToEndOf(branch.taken);
         expansion.finishArm(expansion.appendOriginal({ test.operandIndex, branch.provenOnTaken, { }, { }, true }));
         builder.moveToEndOf(branch.notTaken);

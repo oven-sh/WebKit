@@ -12,6 +12,7 @@
 #include "B3Limits.h"
 #include "B3MemoryValue.h"
 #include "B3NaturalLoops.h"
+#include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3UpsilonValue.h"
@@ -31,30 +32,29 @@ public:
 
     bool run()
     {
-        NaturalLoops& loops = m_proc.naturalLoops();
-        if (!loops.numLoops())
-            return false;
+        NaturalLoops* loops = m_proc.hasCycle() ? &m_proc.naturalLoops() : nullptr;
         Vector<BasicBlock*, 8> heads;
-        IndexSet<Value*> branchesOnLoadedValues;
+        IndexSet<Value*> hardToPredictBranches;
         bool didResetValueOwners = false;
         for (BasicBlock* block : m_proc) {
             if (block->last()->opcode() != Branch || block->taken().isRare() || block->notTaken().isRare())
                 continue;
             if (block->taken().block()->numPredecessors() != 1 && block->notTaken().block()->numPredecessors() != 1)
                 continue;
-            const NaturalLoop* loop = loops.innerMostLoopOf(block);
-            if (!loop)
+            bool mayChooseBetweenComparedValues = hasOnlyUpsilonsInArms(block) && isOrderingComparison(block->last()->child(0)->opcode());
+            const NaturalLoop* loop = loops ? loops->innerMostLoopOf(block) : nullptr;
+            if (!loop && !mayChooseBetweenComparedValues)
                 continue;
             if (!std::exchange(didResetValueOwners, true))
                 m_proc.resetValueOwners();
-            if (dependsOnValueLoadedInLoop(loops, *loop, block->last()->child(0))) {
+            if ((mayChooseBetweenComparedValues && choosesBetweenComparedValues(block)) || (loop && dependsOnValueLoadedInLoop(*loops, *loop, block->last()->child(0)))) {
                 heads.append(block);
-                branchesOnLoadedValues.add(block->last());
+                hardToPredictBranches.add(block->last());
             }
         }
         bool changed = false;
         for (BasicBlock* head : heads) {
-            while (!m_removedBlocks.contains(head) && branchesOnLoadedValues.contains(head->last())) {
+            while (!m_removedBlocks.contains(head) && hardToPredictBranches.contains(head->last())) {
                 Region region;
                 unsigned cost = 0;
                 if (!analyze(head, 0, cost, region))
@@ -94,6 +94,86 @@ private:
         return result;
     }
 
+    static bool isOrderingComparison(Opcode opcode)
+    {
+        switch (opcode) {
+        case LessThan:
+        case GreaterThan:
+        case LessEqual:
+        case GreaterEqual:
+        case Above:
+        case Below:
+        case AboveEqual:
+        case BelowEqual:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool hasOnlyUpsilonsInArms(BasicBlock* head)
+    {
+        for (BasicBlock* successor : head->successorBlocks()) {
+            if (successor->numPredecessors() != 1)
+                continue;
+            if (successor->size() != 2 || successor->at(0)->opcode() != Upsilon || successor->last()->opcode() != Jump)
+                return false;
+        }
+        return true;
+    }
+
+    static bool isSameValue(Value* a, Value* b)
+    {
+        return a == b || (a->isConstant() && a->key() == b->key());
+    }
+
+    static bool areComparedValues(Value* condition, const std::array<Value*, 2>& values)
+    {
+        return (isSameValue(condition->child(0), values[0]) && isSameValue(condition->child(1), values[1]))
+            || (isSameValue(condition->child(0), values[1]) && isSameValue(condition->child(1), values[0]));
+    }
+
+    static std::array<Value*, 2> valuesChosenFor(Value* phi, BasicBlock* head, const Region& region)
+    {
+        std::array<Value*, 2> result { };
+        for (unsigned i = 0; i < 2; ++i) {
+            UpsilonValue* upsilon = region.arms[i] ? lastUpsilonFor(region.arms[i], phi) : nullptr;
+            if (!upsilon)
+                upsilon = lastUpsilonFor(head, phi);
+            result[i] = upsilon ? upsilon->child(0) : nullptr;
+        }
+        return result;
+    }
+
+    // The smaller or the larger of two values. Which of them it is hangs on the data.
+    bool choosesBetweenComparedValues(BasicBlock* head)
+    {
+        Region region;
+        unsigned cost = 0;
+        if (!analyze(head, 0, cost, region) || region.numberOfSelects != 1)
+            return false;
+        for (Value* phi : *region.join) {
+            if (phi->opcode() != Phi)
+                continue;
+            if ((region.arms[0] && lastUpsilonFor(region.arms[0], phi)) || (region.arms[1] && lastUpsilonFor(region.arms[1], phi)))
+                return areComparedValues(head->last()->child(0), valuesChosenFor(phi, head, region));
+        }
+        return false;
+    }
+
+    // ARM64 selects one of two numbers by the flags. x86 has no such instruction, but it has the smaller and the larger of two numbers.
+    static bool isSelectedWithoutBranch(Value* phi, BasicBlock* head, const Region& region)
+    {
+        if (phi->type().isInt())
+            return true;
+        if (!phi->type().isFloat() || region.nested[0] || region.nested[1])
+            return false;
+        if (isARM64())
+            return true;
+        Value* condition = head->last()->child(0);
+        return (condition->opcode() == LessThan || condition->opcode() == GreaterThan) && areComparedValues(condition, valuesChosenFor(phi, head, region));
+    }
+
     bool dependsOnValueLoadedInLoop(NaturalLoops& loops, const NaturalLoop& loop, Value* condition)
     {
         Vector<Value*, 16> worklist;
@@ -121,6 +201,8 @@ private:
         case Const32:
         case Const64:
             return true;
+        case Patchpoint:
+            return value->as<PatchpointValue>()->onlyKeepsChildrenAlive;
         case Add:
         case Sub:
         case Neg:
@@ -255,7 +337,7 @@ private:
             }
             if (!isWritten)
                 continue;
-            if (!phi->type().isInt())
+            if (!isSelectedWithoutBranch(phi, head, region))
                 return false;
             if (++numberOfSelects > m_proc.limit(Limit::MaxSelectsPerJoin)) {
                 m_proc.didReachLimit(Limit::MaxSelectsPerJoin, head->last()->origin());

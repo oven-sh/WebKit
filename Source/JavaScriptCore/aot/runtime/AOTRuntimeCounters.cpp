@@ -493,6 +493,7 @@ void dumpCounts(VM& vm, PrintStream& out)
             out.println(hits, "\tlimit:", Wire::nameOf(limit));
     }
     dumpOperationCalls(vm, out);
+    out.println(vm.hasBytecodeIntrinsicRegistry() ? 1 : 0, "\tmade:BytecodeIntrinsicRegistry");
 
     forEachInstance(vm, [&](const Instance& instance) {
         if (!instance.runtime.counters.branchCounts)

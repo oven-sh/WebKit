@@ -3201,7 +3201,7 @@ void reportEnumeratedKeyTests(TestSiteReporter& reporter)
         return;
     auto isResultRead = [](const Value& value, ForInStepResult result) { return value.opcode == Opcode::ResultAt && value.index() == static_cast<uint32_t>(result); };
 
-    reporter.forEachCandidate([&](const Value& use) {
+    reporter.forEachCandidate({ Opcode::ElemGet, Opcode::ElemHas, Opcode::CallBuiltin }, [&](const Value& use) {
         std::optional<KeyedOperation> operation = keyedOperationOf(reporter.program(), use);
         if (!operation)
             return;

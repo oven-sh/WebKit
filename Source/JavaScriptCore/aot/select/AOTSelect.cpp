@@ -200,6 +200,9 @@ PassOutcome select(FunctionPassContext& pass)
     }
     if (context.didRewrite())
         outcome = PassOutcome::Changed;
+    // What the rules have put in place of an operation may throw and allocate less than the operation did.
+    if (context.didRewrite() && pass.analyses.cfg().hasHandlers())
+        outcome |= removeRedundantHandlers(pass);
 
     bool didReturnTestedValues = returnTestedValues(pass.function);
     if (didReturnTestedValues)

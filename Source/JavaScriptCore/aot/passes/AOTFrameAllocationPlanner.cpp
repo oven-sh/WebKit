@@ -595,8 +595,12 @@ bool FramePlanner::keepClosureUntilItLeaves(ObjectID closure)
 Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t operandIndex) const
 {
     auto borrows = [&](FunctionID id) {
-        std::optional<uint32_t> entryParameter = entryParameterOf(m_program.at(id), call, operandIndex);
-        return entryParameter && m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
+        const Function& callee = m_program.at(id);
+        if (std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, operandIndex))
+            return m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
+        // Nothing takes an argument that has no parameter.
+        std::optional<uint32_t> argument = call.variadicOperandIndex(operandIndex);
+        return argument && *argument >= callee.numberOfPositionalParameters() && !callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter });
     };
     CalleeList callees = calleesOfCall(m_program, call);
     Callees seen = callees.seen().predicted();

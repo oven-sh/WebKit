@@ -663,7 +663,7 @@ struct WindowScanner {
 };
 
 struct DeferralAnalysis {
-    enum AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation };
+    enum AccessKind : uint8_t { SlotRead, SlotStore, PresenceTest, NamedAccess, KeyOrderTest, FunctionEntry, Allocation, NamedReadExpectedToRun };
 
     struct CandidateWithKey {
         auto operator<=>(const CandidateWithKey&) const = default;
@@ -948,9 +948,14 @@ struct DeferralAnalysis {
                 }
                 RELEASE_ASSERT_NOT_REACHED();
             };
-            forEachListedValueNaming(program, FunctionID(index), classifiedOpcodes, mayBeClassified, [&](BlockID, ValueID id, const Value&) {
-                if (std::optional<AccessKind> kind = classifyAccess({ FunctionID(index), id }))
-                    found.append({ { FunctionID(index), id }, *kind });
+            forEachListedValueNaming(program, FunctionID(index), classifiedOpcodes, mayBeClassified, [&](BlockID block, ValueID id, const Value& value) {
+                std::optional<AccessKind> kind = classifyAccess({ FunctionID(index), id });
+                if (!kind)
+                    return;
+                found.append({ { FunctionID(index), id }, *kind });
+                // The arm that a tested read by slot falls back to is a read by name on a way that is not expected to run.
+                if (*kind == NamedAccess && !storedOf(value.opcode) && program.functions[index].at(block).frequency.predicted() == BlockFrequency::Normal)
+                    found.append({ { FunctionID(index), id }, NamedReadExpectedToRun });
             });
         });
         for (const FoundAccess& access : foundAccesses)
@@ -1238,18 +1243,16 @@ struct DeferralAnalysis {
     }
 
     // A read takes an empty slot for an absent property behind a test that no field of the object lies outside its slot, or without one where the property stays in its slot.
-    // The first read makes the closure in the run time, which costs as much as forty closures made beside the allocation. Where the layout is proven the reads are few. Code that only expects it makes an object for whoever comes, so the closure waits only where no code that is expected to run often asks for it.
-    void rejectFieldsOfExpectedLayoutsReadByWarmCode()
+    // The first read by slot makes the closure as the allocation would have. The first read by name makes it in the run time, which costs as much as forty closures made beside the allocation. Where the layout is proven such reads are few. Code that only expects it makes an object for whoever comes, so the closure waits only where no code that is expected to run often asks for it by name.
+    void rejectFieldsOfExpectedLayoutsReadByNameInWarmCode()
     {
-        for (AccessKind kind : { SlotRead, NamedAccess }) {
-            for (ValueReference reference : accesses[kind]) {
-                if (storedOf(valueAt(reference).opcode) || isCold(heat.of(program, reference.function)).predicted())
-                    continue;
-                forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
-                    if (states[row].isGivenWhereLayoutIsExpected)
-                        reject(row);
-                });
-            }
+        for (ValueReference reference : accesses[NamedReadExpectedToRun]) {
+            if (isCold(heat.of(program, reference.function)).predicted())
+                continue;
+            forEachCandidateOf(reference, [&](FieldReference, uint32_t row) {
+                if (states[row].isGivenWhereLayoutIsExpected)
+                    reject(row);
+            });
         }
     }
 
@@ -1422,7 +1425,7 @@ struct DeferralAnalysis {
         findAccesses();
         findCalleeStores();
         rejectFieldsByWhatComesIntoThem();
-        rejectFieldsOfExpectedLayoutsReadByWarmCode();
+        rejectFieldsOfExpectedLayoutsReadByNameInWarmCode();
         for (uint64_t numberOfChangesBefore = numberOfChanges + 1; numberOfChangesBefore != numberOfChanges;) {
             numberOfChangesBefore = numberOfChanges;
             countFolds();
@@ -1454,7 +1457,7 @@ struct DeferralAnalysis {
     Vector<EnteredCall> callSites { };
     Vector<CalleeState> calleesByFunction { };
     Vector<CalleeStoreState> calleeStores { };
-    std::array<Vector<ValueReference>, 7> accesses { };
+    std::array<Vector<ValueReference>, 8> accesses { };
     Vector<ValueReference> removedStores { };
     Vector<ClosureEnvironmentField> environmentFields { };
     uint64_t numberOfChanges { 0 };

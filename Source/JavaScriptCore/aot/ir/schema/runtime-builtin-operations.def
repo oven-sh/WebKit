@@ -18,6 +18,7 @@ runtime CodeURIOfAnyValue : EncodedJSValue (EncodedJSValue value, uint32_t codin
 runtime ArraySearchOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue searched, EncodedJSValue fromIndex, uint32_t answersIndex) ; unknownCode
 runtime ByteLengthOfAnyValue : EncodedJSValue (EncodedJSValue value, EncodedJSValue encoding) ; unknownCode
 runtime ArrayFromTypedArray : JSCell* (JSCell* view, uint32_t indexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
+runtime MoveBytes : void (uint8_t* target, const uint8_t* source, uint64_t count) ; reads(TypedArrayElements) writes(TypedArrayElements) ; leaf
 runtime ArrayIndexOfDouble : size_t (JSCell* array, double searched) ; reads(all)
 runtime ArrayIndexOfInt32 : size_t (JSCell* array, EncodedJSValue searched) ; reads(all)
 runtime ArrayIndexOfString : size_t (JSCell* array, JSCell* searched, uint64_t start) ; RuntimeCreatesString

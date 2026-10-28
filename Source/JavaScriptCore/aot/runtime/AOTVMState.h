@@ -18,6 +18,7 @@
 namespace JSC {
 
 class CallFrame;
+class JSCell;
 class JSGlobalObject;
 class Structure;
 class VM;
@@ -64,6 +65,8 @@ public:
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }
     static constexpr ptrdiff_t offsetOfRegExpMatchOutput() { return OBJECT_OFFSETOF(VMState, regExpMatchOutput); }
+    static constexpr ptrdiff_t offsetOfParentOfSuperCall() { return OBJECT_OFFSETOF(VMState, parentOfSuperCall); }
+    static constexpr ptrdiff_t offsetOfNewTargetOfSuperCall() { return OBJECT_OFFSETOF(VMState, newTargetOfSuperCall); }
     // regExpMatchOutput has room for the literals of the image, and for any pattern made at run time with so many groups.
     static constexpr unsigned maxGroupsInRegExpMatchOutput = 15;
 
@@ -85,6 +88,9 @@ public:
     Instance* onlyInstance { nullptr };
     // The frame of the host function that throws because a class was called without `new`, while it makes the error.
     CallFrame* classCalledWithoutNew { nullptr };
+    // From where `super(..)` of compiled code enters a native constructor until that constructor asks for the Structure of what it makes, or returns. Only compared with, never read through.
+    JSCell* parentOfSuperCall { nullptr };
+    JSCell* newTargetOfSuperCall { nullptr };
     // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.
     void* stackPointerOfExceptionTaker { nullptr };
     // While an import() runs a module that `bun run` runs from a job: no stack trace lists the frames from here on down.

@@ -56,6 +56,7 @@ bool isCalledWithoutStartupLoads(const BuiltinTable&, BuiltinID holder, BuiltinN
 // Whether an entry in use among these is listed with one of the features, under a condition that may hold.
 bool usesFeatureAmong(ValueFlowRuleContext&, ClimbingSet entries, const BitVector& features);
 
+bool refusesEveryText(const BuiltinTable&, BuiltinID canonicalEntry, RefusedCode);
 std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable&, BuiltinID, RefusedCode);
 
 void raiseHostFlag(ValueFlowRuleContext&, ValueFlowHostNode);

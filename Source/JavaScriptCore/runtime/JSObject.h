@@ -544,8 +544,10 @@ public:
     // on an object that inherits from this one works as before.
     // Returns false, and changes nothing, for a class with write hooks of its own that do not check for this: ProxyObject, typed
     // arrays, DirectArguments and ScopedArguments, and any class outside JavaScriptCore that overrides a write hook.
-    JS_EXPORT_PRIVATE bool makePropertiesImmutable(VM&);
-    JS_EXPORT_PRIVATE bool makePropertiesImmutable(VM&, ImmutablePropertyNames&);
+    // WithoutTransition is for an object that no code has seen since it was created.
+    enum class StructureTransitionMode : bool { WithTransition, WithoutTransition };
+    JS_EXPORT_PRIVATE bool makePropertiesImmutable(VM&, StructureTransitionMode = StructureTransitionMode::WithTransition);
+    JS_EXPORT_PRIVATE bool makePropertiesImmutable(VM&, ImmutablePropertyNames&, StructureTransitionMode = StructureTransitionMode::WithTransition);
     JS_EXPORT_PRIVATE bool hasImmutableProperties() const;
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);

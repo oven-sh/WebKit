@@ -14,6 +14,7 @@
 #include "AOTPendingStars.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesAnswers.h"
+#include "AOTProgramStrings.h"
 #include "AOTState.h"
 #include "AOTVector.h"
 #include "DeferGCInlines.h"
@@ -109,6 +110,7 @@ static JSObject* createExtraPropertiesWithAttributes(JSGlobalObject* realm, std:
 using NameSet = UncheckedKeyHashSet<UniquedStringImpl*>;
 
 static constexpr uint32_t starRuleSourceIsMarkedAsESModule = 1 << 2;
+static_assert(!(starRuleSourceIsMarkedAsESModule & (starRuleKeyCaptureSlot | starRuleReusesDescriptors | starRuleKeyIsLiteralStringWord)));
 static constexpr uint32_t starRulesOfReuse = starRuleReusesDescriptors | starRuleSourceIsMarkedAsESModule;
 static constexpr unsigned attributesOfStarBinding = PropertyAttribute::Accessor | PropertyAttribute::DontDelete;
 
@@ -191,7 +193,7 @@ static GetterSetter* createAccessorOfStar(VM& vm, State& state, JSGlobalObject* 
 {
     unsigned keySlot = star.rule() & starRuleKeyCaptureSlot;
     std::array<uint64_t, 2> captures;
-    captures[keySlot] = JSValue::encode(key);
+    captures[keySlot] = star.rule() & starRuleKeyIsLiteralStringWord ? state.strings->literalStringWordFor(key) : JSValue::encode(key);
     captures[!keySlot] = JSValue::encode(&star.source());
     JSObject* getter = state.objects->closures.createClosure(vm, star.getter(), captures, 2);
     JSObject* setter = nullptr;

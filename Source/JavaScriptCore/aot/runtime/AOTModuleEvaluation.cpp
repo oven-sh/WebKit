@@ -2439,9 +2439,12 @@ JSValue Modules::execute(ModuleID module)
         SetForScope isStartingRuntimeModule(m_isStartingRuntimeModule, true);
         setStatus(module, ModuleStatus::Evaluating);
         value = callBody(module);
-        // Bun's registry keeps nothing of a module whose body threw: the next request runs the body again.
-        if (scope.exception()) [[unlikely]] {
-            setStatus(module, ModuleStatus::Linked);
+        // Bun's registry keeps nothing of a module whose body threw: the next request runs the body again. A body that was compiled to be entered once is not entered again: the next request gets the error, as for a file of the program.
+        if (Exception* exception = scope.exception()) [[unlikely]] {
+            if (moduleData.bodyRunsAtMostOnce && !vm.isTerminationException(exception))
+                setFailed(module, exception->value());
+            else
+                setStatus(module, ModuleStatus::Linked);
             return { };
         }
     } else if (moduleData.kind == ModuleKind::Runtime) {

@@ -188,6 +188,7 @@ void branchUnlessTypeAccepts(StubAssembler& jit, const TypeTestRegisters& r, Jum
         case CellTestKind::IsSymbol:
         case CellTestKind::SharingModeIs:
         case CellTestKind::IsNamespaceOf:
+        case CellTestKind::CarriesBrandOfClass:
             cannot.append(branchOnKind(CCallHelpers::Equal));
             return;
         }

@@ -1042,7 +1042,7 @@ static PassOutcome simplifyGuardLists(FunctionPassContext& context)
 
 static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
 {
-    if (context.build.validates() || !context.analyses.opcodesOfValues().contains(Opcode::BelongsToInstance))
+    if (!context.analyses.opcodesOfValues().contains(Opcode::BelongsToInstance))
         return PassOutcome::Unchanged;
 
     Function& function = context.function;
@@ -1066,13 +1066,25 @@ static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    bool keepsTests = context.build.validates();
     for (BlockID block : blocks) {
         ValueID test = function.at(block).terminator.conditionOperand();
         replaceBranchWithJumpToTaken(builder, function, block, [&] {
             return builder.append(Opcode::AllGuards, { });
         });
-        eraseTest(builder, function, block, test);
+        if (!keepsTests) {
+            eraseTest(builder, function, block, test);
+            continue;
+        }
+        // In a validating build the test is made all the same, and its answer is compared with the one that the type stands for.
+        builder.setOrigin(function.at(test).origin());
+        ProgramPoint end = pointBeforeTerminatorOf(function, block);
+        Value boolean = IRBuilder::make(Opcode::Boolean);
+        boolean.setBoolean(true);
+        ValueID constant = builder.insertBefore(end, WTF::move(boolean));
+        builder.insertBefore(end, IRBuilder::make(Opcode::ValidateSameValue, { test, constant }));
     }
+    builder.applyInsertions();
     // The builder sees the jumps that it emits, not the branches that were taken away for them.
     context.analyses.didChangeControlFlow();
     builder.emptyUnreachableBlocks();

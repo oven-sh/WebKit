@@ -31,6 +31,7 @@ std::optional<ForwardedCallPlan> planForwardedCall(const Program&, const Functio
 // The built-in refuses a callee and a new.target that are no constructors in its own words, and before it reads the list.
 std::optional<ForwardedCallPlan> planForwardedConstruct(const Program&, const Function&, const BuiltinCall&);
 std::optional<BuiltinOperand> operandCalledBy(const BuiltinOverload&);
+std::optional<BuiltinOperand> operandListedBy(const BuiltinOverload&);
 
 bool isAlwaysArray(const Type&);
 

@@ -31,6 +31,7 @@ class JSFinalObject;
 class JSGlobalObject;
 class JSObject;
 class Structure;
+class Symbol;
 class VM;
 
 namespace AOT {
@@ -94,6 +95,10 @@ public:
     JSObject* classPrototypeIfExists(const LayoutData&) const;
     JSObject* createClassPrototype(VM&, const LayoutData&, JSObject* parent);
     void registerClassPrototype(const LayoutData&, JSObject*);
+    // Null where what the parent makes for that new.target is told from other cells of the built-in class by nothing.
+    Symbol* brandOfInstanceMadeBy(VM&, JSCell* parent, JSCell* newTarget);
+    Structure* structureOfInstanceMadeBy(VM&, JSCell* parent, JSCell* newTarget, Structure*);
+    bool carriesBrandOfClass(Structure*, uint32_t rankOfClass) const;
     Structure* lazyClassObjectStructureInheritingFrom(VM&, JSObject* parent);
     Structure* classObjectStructureInheritingFrom(VM&, JSObject* parent);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -224,6 +229,17 @@ private:
     void rememberInstanceOfClassBelow(InstanceOfClassBelow);
     void rememberInstanceOfOtherEvaluation(VM&, const Object& instance, JSObject* prototype, uint32_t allocation);
     std::array<InstanceOfClassBelow, numberOfInstancesOfClassesBelow> m_instancesOfClassesBelow { };
+    // By the rank of the class plus one.
+    HashMap<uint32_t, Symbol*> m_brandsOfInstances;
+    struct StructureWithBrand {
+        JSCell* parent;
+        JSCell* newTarget;
+        Structure* withoutBrand;
+        Structure* withBrand;
+    };
+    static constexpr size_t numberOfStructuresWithBrands = 16;
+    static size_t indexOfStructureWithBrand(const JSCell* newTarget) { return std::bit_cast<uintptr_t>(newTarget) >> 4 & (numberOfStructuresWithBrands - 1); }
+    std::array<StructureWithBrand, numberOfStructuresWithBrands> m_structuresWithBrands { };
     State& m_state;
     const ProgramTables& m_tables;
     mutable std::array<std::atomic<uint64_t>, 64> m_recentClassLookups { };

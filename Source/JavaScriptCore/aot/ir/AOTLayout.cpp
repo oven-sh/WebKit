@@ -8,7 +8,10 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
+#include "AOTBuiltinTable.h"
+#include "AOTDefinitions.h"
 #include "AOTEdgeResults.h"
 #include "AOTIRProgram.h"
 #include "AOTLayoutUses.h"
@@ -356,6 +359,82 @@ BuiltinClassID builtinBaseClassOf(const Program& program, LayoutID id)
     return current ? builtinBaseClassOfLongRow(program, current) : BuiltinClassID();
 }
 
+void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops& loops)
+{
+    const BuiltinTable& builtins = program.builtins();
+    using Written = std::pair<LayoutID, BuiltinClassID>;
+    Vector<Written> written = collectInParallel<Written>(loops, program.functions.size(), [&](unsigned index, Vector<Written>& found) {
+        const Function& function = program.functions[index];
+        forEachListedValue(program, FunctionID(index), { Opcode::NewClass }, [&](BlockID, uint32_t, ValueID, const Value& definition) {
+            if (!definition.heritageOperand() || program.at(definition.layout()).base)
+                return;
+            const Value& heritage = function.at(definition.heritageOperand());
+            BuiltinID named;
+            if (heritage.opcode == Opcode::Builtin)
+                named = heritage.builtin();
+            else if (heritage.opcode == Opcode::Convert && heritage.declared().written())
+                named = program.at(heritage.declared().written()).singleBuiltin();
+            if (!named)
+                return;
+            BuiltinID constructor = builtins.canonicalID(named);
+            BuiltinClassID instanceClass = builtins.at(constructor).instanceClass;
+            if (instanceClass && builtins.at(instanceClass).constructor && builtins.canonicalID(builtins.at(instanceClass).constructor) == constructor)
+                found.append({ definition.layout(), instanceClass });
+        });
+    });
+    if (written.isEmpty())
+        return;
+    for (auto [layout, builtinClass] : written)
+        program.at(layout).writtenBuiltinBase = builtinClass;
+    for (Layout& layout : program.layouts) {
+        if (!layout.base || layout.writtenBuiltinBase)
+            continue;
+        LayoutID highest = layout.base;
+        for (size_t steps = 0; program.at(highest).base && steps < program.layouts.size(); ++steps)
+            highest = program.at(highest).base;
+        layout.writtenBuiltinBase = program.at(highest).writtenBuiltinBase;
+    }
+}
+
+// The constructor asks for the Structure of what it makes before it runs any code of the program.
+static bool asksForStructureFirst(const BuiltinTable& builtins, BuiltinClassID builtinClass)
+{
+    return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::WeakMap || builtinClass == BuiltinClasses::WeakSet
+        || builtinClass == BuiltinClasses::Array || builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Error);
+}
+
+bool isBornWithProperties(const Program& program, LayoutID id, BuiltinClassID builtinBase)
+{
+    if (!program.at(id).fields.isEmpty())
+        return true;
+    const BuiltinTable& builtins = program.builtins();
+    for (BuiltinClassID current = builtinBase; current; current = builtins.at(current).parent) {
+        const BuiltinClass& entry = builtins.at(current);
+        if (!entry.listsNamesDefinedOnNewInstances || !entry.namesDefinedOnNewInstances.empty())
+            return true;
+    }
+    return false;
+}
+
+bool carriesBrandOfClass(const Program& program, LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    if (!layout.writtenBuiltinBase || layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsConstructorFunction))
+        return false;
+    if (layout.classFlow.evaluations != ExecutionCount::AtMostOnce || layout.flow.allocation == AllocationState::NeverAllocated || !asksForStructureFirst(program.builtins(), layout.writtenBuiltinBase))
+        return false;
+    LayoutID current = id;
+    for (size_t steps = 0; steps < program.layouts.size(); ++steps) {
+        const LayoutFlow& flow = program.at(current).flow;
+        if (flow.baseState == BaseState::BuiltinClass)
+            return flow.baseClass == layout.writtenBuiltinBase && builtinParentNamedByClassRecord(program, program.at(current));
+        if (flow.baseState != BaseState::Layout)
+            return false;
+        current = flow.base;
+    }
+    return false;
+}
+
 bool isEvaluatedOnce(const Program& program, const Layout& layout)
 {
     if (layout.classFlow.evaluations != ExecutionCount::AtMostOnce)
@@ -413,6 +492,7 @@ Layout createDerivedLayout(const Program& program, LayoutID base)
     layout.module = declared.module;
     layout.position = declared.position;
     layout.flags = LayoutFlags::IsDerived;
+    layout.writtenBuiltinBase = declared.writtenBuiltinBase;
     layout.flow.baseState = BaseState::Layout;
     layout.flow.base = base;
     return layout;

@@ -40,6 +40,7 @@ v(NewDictionary, CalledByCode, (), CountAxis, 0, 13, AllISAs, NoISA, NoChoice, N
 // AOTStubsClosures.cpp
 v(NewClosure, CalledByCode, (), CountAxis, 0, ClosureRequest::maxNumberOfCaptures, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewClosure)
 v(NewSlimClosure, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewSlimClosure)
+v(MakeClosureOfField, CalledByCode, (Plain, Async), FormAxis | CountAxis, 0, 1, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState, RuntimeState) | writes(AllocatorState, ObjectFields), MakeClosureOfField)
 v(ClosureOfTable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState, AllocatorState) | writes(RuntimeState, AllocatorState), ClosureOfTable)
 v(InitializeClosure, CalledByCode, (), CountAxis, 0, ClosureRequest::maxSlimClosureCaptures, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, InitializeClosure)
 v(MaterializeEnvironment, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(EnvironmentFields, AllocatorState) | writes(AllocatorState), MaterializeEnvironment)
@@ -64,7 +65,7 @@ v(Equal, CalledByCode, (Loose, Strict), FormAxis, 0, 0, AllISAs, NoISA, NoChoice
 // AOTStubsArithmetic.cpp
 v(BinaryOperation, CalledByCode, (Add, Sub, Mul, Div, BitAnd, BitOr, BitXor, LShift, RShift, URShift, Mod, Less, LessEq, Greater, GreaterEq, AddAfterInt32Check, SubAfterInt32Check, MulAfterInt32Check, BitAndAfterInt32Check, BitOrAfterInt32Check, BitXorAfterInt32Check, LShiftAfterInt32Check, RShiftAfterInt32Check, URShiftAfterInt32Check, LessAfterInt32Check, LessEqAfterInt32Check, GreaterAfterInt32Check, GreaterEqAfterInt32Check), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(StringStorage, AllocatorState) | writes(AllocatorState), BinaryOperation)
 v(BinaryWithDouble, CalledByCode, (Add, Mul, Sub, SubWithNumberOnRight, Div, DivWithNumberOnRight), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, BinaryWithDouble)
-v(UnaryOperation, CalledByCode, (Negate, Increment, Decrement, BitNot, ToNumeric), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, UnaryOperation)
+v(UnaryOperation, CalledByCode, (Negate, Increment, Decrement, BitNot, ToNumeric, AddToEmptyString, ToString), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, UnaryOperation)
 v(BoxNumber, CalledByCode, (Double, OptionalDouble, Integer, OptionalInteger), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, BoxNumber)
 
 // AOTStubsPrimitiveFastPaths.cpp
@@ -73,6 +74,7 @@ v(ToStringFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never,
 AOT_STUB_FRONT_END(ToString, ToStringFrontEnd)
 
 // AOTStubsElements.cpp
+v(MoveFewBytes, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(TypedArrayElements) | writes(TypedArrayElements), MoveFewBytes)
 v(GetByVal, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByVal)
 v(GetByValAtIndex, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByVal)
 v(PutByVal, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)

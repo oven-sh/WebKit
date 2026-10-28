@@ -135,6 +135,23 @@ static bool canAccessBufferInline(const InlineBuiltinSite& site)
     return !offset || offset->isNumber();
 }
 
+static TypedArrayType elementsOfView(const InlineBuiltinSite& site, const Type& view)
+{
+    TypedArrayType elements = view.isObject() ? typedArrayTypeOf(site.context.program().builtins(), view) : NotTypedArray;
+    return isTypedView(elements) ? elements : NotTypedArray;
+}
+
+// The bytes of a view of one known kind go into a view of a known kind. Each position is a number. The tests take more bytes than a call, so they stand in code that runs often.
+static bool canCopyBufferInline(const InlineBuiltinSite& site)
+{
+    std::span<const ValueID> arguments = site.arguments();
+    if (site.shape != CodeShape::Fast || arguments.empty() || arguments.size() > 4 || !elementsOfView(site, receiverTypeOf(site)) || !elementsOfView(site, site.typeOf(arguments[0])))
+        return false;
+    return std::ranges::all_of(arguments.subspan(1), [&](ValueID position) {
+        return site.typeOf(position).isNumber();
+    });
+}
+
 InlineForm chooseFormOfBufferBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
@@ -150,6 +167,8 @@ InlineForm chooseFormOfBufferBuiltin(const InlineBuiltinSite& site)
         return twoWayIf(site, canAccessAtomicallyInline(site));
     case InlineBuiltin::BufferAccess:
         return twoWayIf(site, canAccessBufferInline(site));
+    case InlineBuiltin::BufferCopy:
+        return twoWayIf(site, canCopyBufferInline(site));
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -168,6 +187,16 @@ static bool canCopyTypedArrayInline(const InlineBuiltinSite& site)
     return arguments.size() == 1 && hasInlineElementAccess(typedArrayTypeOf(site.context.program().builtins(), site.typeOf(arguments[0])));
 }
 
+// Elements of one kind go into a view of the same kind as they lie in memory.
+static bool canSetTypedArrayInline(const InlineBuiltinSite& site)
+{
+    std::span<const ValueID> arguments = site.arguments();
+    if (site.shape != CodeShape::Fast || arguments.empty() || arguments.size() > 2)
+        return false;
+    TypedArrayType elements = elementsOfView(site, receiverTypeOf(site));
+    return elements && elementsOfView(site, site.typeOf(arguments[0])) == elements && (arguments.size() == 1 || site.typeOf(arguments[1]).isNumber());
+}
+
 InlineForm chooseFormOfArrayBufferViewBuiltin(const InlineBuiltinSite& site)
 {
     switch (site.builtin) {
@@ -180,6 +209,8 @@ InlineForm chooseFormOfArrayBufferViewBuiltin(const InlineBuiltinSite& site)
         return canAllocateTypedArrayInline(site) ? InlineForm::Whole : InlineForm::Call;
     case InlineBuiltin::ArrayFrom:
         return twoWayIf(site, canCopyTypedArrayInline(site));
+    case InlineBuiltin::TypedArraySet:
+        return twoWayIf(site, canSetTypedArrayInline(site));
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

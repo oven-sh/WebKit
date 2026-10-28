@@ -73,6 +73,8 @@ public:
     bool throwsWhatIsOwed { false };
     // Of a loop poll: nothing on the likely paths of the loop runs other code of the program or goes on for long, so many turns may pass between two polls.
     bool turnsAreShort { false };
+    // It generates no code and has no result. It stands where its children must still be alive.
+    bool onlyKeepsChildrenAlive { false };
     std::optional<PureFunction> pureFunction;
     ClientTag clientTag;
 

@@ -91,6 +91,7 @@ private:
     // Nothing where the operation has got its result without a read.
     std::optional<CellPointer> loadHalfOfAccessorInSlot(const ValueContext&, ptrdiff_t offsetInGetterSetter);
     void readDeferringSlot(const ValueContext&, bool readsEmptySlotAsUndefined);
+    CellPointer makeDeferredClosure(const ValueContext&, CellPointer, const FieldAccess&);
     Operand loadDeferringSlot(const ValueContext&, CellPointer, const FieldAccess&, bool readsEmptySlotAsUndefined);
     bool mayHaveLeftDeferringSlot(const ValueContext&, const FieldAccess&) const;
     Operand loadDeferringSlotOrFieldOutsideIt(const ValueContext&, CellPointer, const FieldAccess&);

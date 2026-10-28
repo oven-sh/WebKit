@@ -241,6 +241,8 @@ void passOperandsOf(const ValueFlowBuiltinCall& call, const ValueFlowCallGroup& 
     context.connect(call.thisValue, isConstruction(call.kind) ? group.newTarget : group.thisValue);
     if (isConstruction(call.kind))
         context.connect(call.thisValue, context.nodes().ofHost(ValueFlowHostNode::NewTargetsFromOperands));
+    else if (!call.thisValue.node && (!call.thisValue.constant || call.thisValue.constant == ValueSets::nothing))
+        context.add(group.thisValue, context.universe().undefinedValue());
     for (unsigned index = 0; index < call.arguments.size(); ++index)
         context.connect(call.arguments[index], group.argumentAt(index));
     context.connect(call.laterArguments, group.laterArguments);
@@ -853,9 +855,24 @@ private:
         }
     }
 
+    void describeReceiversRefusedAsFunctions(const BuiltinOverload& overload)
+    {
+        bool callsReceiver = std::ranges::any_of(overload.flow.callbacks, [](const BuiltinCallback& callback) {
+            return callback.callee.isReceiver();
+        });
+        if (!callsReceiver)
+            return;
+        SetForScope everyReceiver(m_receiversAccepted, ValueSets::anything);
+        forEachOperandAt(BuiltinOperand::receiver(), [&](const ValueFlowOperand& operand) {
+            describeObjectsRefusedAsFunctions(m_context, m_context.valueOf(operand));
+        });
+    }
+
     void apply(const BuiltinOverload& overload)
     {
         SetForScope receiversAccepted(m_receiversAccepted, receiversAcceptedBy(overload));
+        if (m_receiversAccepted != ValueSets::anything)
+            describeReceiversRefusedAsFunctions(overload);
         if (m_receiversAccepted != ValueSets::anything && !m_context.meet(valueAt(BuiltinOperand::receiver()), ValueSets::anything)) {
             if (overload.receiver->roles.contains(BuiltinOperandRole::DescribedWhenRefused))
                 describeRefusedOperands(*overload.receiver);
@@ -2677,6 +2694,7 @@ private:
 
     void applyCallback(const BuiltinCallback& callback)
     {
+        describeObjectsRefusedAsFunctions(m_context, valueAt(callback.callee));
         forEachPartOfCallees(m_context, calleesOf(callback), [&](ClimbingSet callees) {
             ValueFlowCallGroup group = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands());
             if (callback.constructs) {
@@ -2727,6 +2745,7 @@ private:
             connectFrom(handlerCall.thisValue, m_context.hub(m_tables.conversionToPrimitive()));
             return;
         }
+        describeObjectsRefusedAsFunctions(m_context, valueAt(handlerCall.callee));
         forEachPartOfCallees(m_context, m_context.restrict(valueAt(handlerCall.callee), m_universe.callables()), [&](ClimbingSet callees) {
             ValueFlowCallGroup group = m_context.group(callees, ValueFlowCallKind::CallByNativeCode, originOfOperands());
             if (handlerCall.thisValue.kind == BuiltinPlaceKind::None)
@@ -2827,10 +2846,13 @@ private:
             bool standsAtOperand = action.value.kind == BuiltinPlaceKind::Operand && !action.value.isSettled;
             bool hasComputedNames = false;
             std::optional<Vector<PropertyKeyID, 16>> names = standsAtOperand ? namesOfLiteralAt(*action.value.operand, &hasComputedNames) : std::nullopt;
+            ValueFlowObjectID namedPrototypeObject = prototypeObjectReadAt(action.object);
             forEachOperandAt(action.value, [&](const ValueFlowOperand& map) {
                 forEachOperandAt(action.object, [&](const ValueFlowOperand& object) {
                     defineAsMapDescribes(action, object, map, names, hasComputedNames);
                 });
+                if (namedPrototypeObject)
+                    defineAsMapDescribes(action, operandHolding(m_context.maker().of(namedPrototypeObject)), map, names, hasComputedNames);
             });
             return;
         }
@@ -2925,6 +2947,27 @@ private:
             operands.namesInMap = namesInMap->span();
         operands.mapHasComputedNames = mapHasComputedNames;
         Typed::applyPropertyAction(m_context, action, operands);
+    }
+
+    // `Object.defineProperties(F.prototype, ..)`: the object that F was born with is one of the receivers.
+    ValueFlowObjectID prototypeObjectReadAt(BuiltinOperand position)
+    {
+        if (!m_call.operation || position.kind() != BuiltinOperand::Kind::Argument)
+            return { };
+        const Function& function = m_program.at(m_call.operation->function);
+        const Value& call = function.at(m_call.operation->site);
+        constexpr uint32_t numberOfOperandsBeforeArguments = 2;
+        uint32_t operandIndex = numberOfOperandsBeforeArguments + position.argumentIndex();
+        if (call.opcode != Opcode::Call || operandIndex >= call.numberOfOperands())
+            return { };
+        const Value& read = function.at(sameObjectThroughCasts(function, call.operand(operandIndex)).valueInFrontOfFacts());
+        if (read.opcode != Opcode::PropGet || read.key() != m_program.keyOf(BuiltinNames::prototype))
+            return { };
+        FunctionID constructor = m_program.typeOf(function, read.objectOperand()).singleFunction();
+        LayoutID constructed = constructor ? m_program.at(constructor).constructedClass : LayoutID();
+        if (!constructed || !m_program.at(constructed).has(LayoutFlags::IsConstructorFunction))
+            return { };
+        return m_universe.prototypeOf(constructed);
     }
 
     std::optional<Vector<PropertyKeyID, 16>> namesOfLiteralAt(BuiltinOperand position, bool* hasComputedNames = nullptr)
@@ -3634,6 +3677,9 @@ static void callThroughProxies(ClimbingSet proxies, const ValueFlowBuiltinCall& 
     ClimbingSet targets = context.restrict(context.valueOf(context.readWhatWasWritten(proxies, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() })), universe.callables());
     ValueFlowBuiltinCall handedOn = description;
     handedOn.kind = ValueFlowCallKind::CallByNativeCode;
+    // A call that names no receiver hands undefined on.
+    if (!handedOn.thisValue.node && (!handedOn.thisValue.constant || handedOn.thisValue.constant == ValueSets::nothing))
+        handedOn.thisValue = context.operandHolding(ClimbingSet(universe.undefinedValue()));
     Vector<ValueFlowObjectID, 4> applied;
     context.forEachMember(context.restrict(targets, universe.builtinFunctions()), [&](ValueFlowObjectID target) {
         if (raisesEventWhenCalled(context.program().builtins(), universe.builtinOf(target)))
@@ -3893,9 +3939,24 @@ static bool mayBeInstance(ValueFlowRuleContext& context, const ValueFlowOperand&
     return context.meet(chain, mayBeAnything) || context.meet(chain, prototypes);
 }
 
+// The message names the class of the object: after the function that it finds under `constructor`, or else after what it finds under Symbol.toStringTag. No getter runs for it.
+void describeObjectsRefusedAsFunctions(ValueFlowRuleContext& context, ClimbingSet functions)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    ClimbingSet refused = context.restrict(functions, context.maker().intersect(universe.knownObjects(), ValueSets::complement(universe.callables())));
+    if (!context.meet(refused, ValueSets::anything))
+        return;
+    ClimbingSet constructors = context.restrict(context.valueOf(context.lookup(refused, property(context, BuiltinNames::constructor))), universe.knownObjects());
+    context.lookup(constructors, property(context, BuiltinNames::name));
+    if (PropertyKeyID displayName = universe.builtinTables().heap().displayNameKey())
+        context.lookup(constructors, ValueFlowName::property(displayName));
+    context.lookup(refused, property(context, BuiltinNames::toStringTagSymbol));
+}
+
 void runInstanceOf(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     std::span<const ValueFlowOperand> operands = context.operandsOf(statement);
+    describeObjectsRefusedAsFunctions(context, context.valueOf(operands[1]));
     if (statement.result) {
         context.add(statement.result, context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::False)));
         if (mayBeInstance(context, operands[0], operands[1]))

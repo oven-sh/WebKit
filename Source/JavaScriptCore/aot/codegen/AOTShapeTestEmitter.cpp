@@ -13,7 +13,9 @@
 #include "AOTLayout.h"
 #include "AOTPlacement.h"
 #include "AOTShapeTest.h"
+#include "AOTThreshold.h"
 #include "AOTVector.h"
+#include "BrandedStructure.h"
 #include "MarkedBlock.h"
 #include <algorithm>
 
@@ -50,6 +52,93 @@ bool ShapeTestEmitter::hasOnlyCompiledObjects(const Type& known) const
 Condition ShapeTestEmitter::hasNoExtraProperties(CellPointer cell)
 {
     return hasNoBits(orderWordOf(cell), orderWordHasExtraProperties);
+}
+
+Condition ShapeTestEmitter::carriesBrandOfClass(CellPointer cell, LayoutID classLayout)
+{
+    static_assert(sizeof(CompactRefPtr<UniquedStringImpl>) == sizeof(void*));
+    std::optional<uint32_t> rank = m_placement.rankOfClass(classLayout);
+    if (!rank)
+        return boolean(false);
+    ptrdiff_t offsetOfBrand = static_cast<ptrdiff_t>(*rank) * sizeof(void*);
+    Pointer structure = loadStructure(cell);
+    Condition isBranded = equal(Word32(m_out.load8ZeroExt32(structure.value(), m_heaps.Structure_variant)), word32(static_cast<uint32_t>(Structure::StructureVariant::Branded)));
+    return selectByBranch<Condition>(isBranded, [&] {
+        Pointer brands = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.brandsOfInstances));
+        LValue brandOfClass = m_out.loadPtr(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), brands.value(), offsetOfBrand));
+
+        // The brand of the class is the first that the object got. Text that is evaluated at run time may have laid others over it.
+        LBasicBlock loop = newBlock();
+        LBasicBlock earlierBrand = newBlock();
+        LBasicBlock continuation = newBlock();
+        ValueFromBlock latest = m_out.anchor(structure.value());
+        m_out.jump(loop);
+
+        m_out.appendTo(loop);
+        LValue branded = m_out.phi(B3::pointerType(), latest);
+        ValueFromBlock found = m_out.anchor(boolean(true).value());
+        m_out.branch(m_out.equal(m_out.loadPtr(branded, m_heaps.BrandedStructure_brand), brandOfClass), normalEdge(continuation), normalEdge(earlierBrand));
+
+        m_out.appendTo(earlierBrand);
+        static_assert(sizeof(WriteBarrierStructureID) == sizeof(uint32_t));
+        Word32 earlier(m_out.load32(branded, m_heaps.BrandedStructure_parentBrand));
+        m_out.addIncomingToPhi(branded, m_out.anchor(decodeStructureID(earlier).value()));
+        ValueFromBlock notFound = m_out.anchor(boolean(false).value());
+        m_out.branch(m_out.isZero32(earlier.value()), normalEdge(continuation), unlikelyEdge(loop));
+
+        m_out.appendTo(continuation);
+        return Condition(m_out.phi(B3::Int32, found, notFound));
+    }, [&] {
+        return boolean(false);
+    });
+}
+
+bool ShapeTestEmitter::hasOnlyCellsWithBrands(const Type& type) const
+{
+    AOT_THRESHOLD(size_t, mostClasses, 4);
+    if (!type.hasOnlyLayouts())
+        return false;
+    std::span<const LayoutID> members = membersOf(m_program, type);
+    return !members.empty() && members.size() <= mostClasses && std::ranges::all_of(members, [&](LayoutID member) {
+        return Typed::carriesBrandOfClass(m_program, member) && m_placement.rankOfClass(member);
+    });
+}
+
+bool ShapeTestEmitter::mayBeCellWithBrand(const Type& type) const
+{
+    return type.layouts && std::ranges::any_of(membersOf(m_program, type), [&](LayoutID member) {
+        return Typed::carriesBrandOfClass(m_program, member);
+    });
+}
+
+Condition ShapeTestEmitter::isCompiledObject(CellPointer cell)
+{
+    return hasBits(shapeWordOf(cell), compiledObjectShapeBit);
+}
+
+Condition ShapeTestEmitter::hasPrototypeOfItsClass(CellPointer cell, const Type& cellsWithBrands)
+{
+    Pointer structure = loadStructure(cell);
+    LValue prototype = m_out.load64(structure.value(), m_heaps.Structure_prototype);
+    Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
+    std::span<const LayoutID> members = membersOf(m_program, cellsWithBrands);
+    if (members.size() == 1) {
+        ptrdiff_t offset = static_cast<ptrdiff_t>(*m_placement.rankOfClass(members[0])) * sizeof(void*);
+        return Condition(m_out.equal(prototype, m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), offset))));
+    }
+    Condition result;
+    for (LayoutID member : members) {
+        ptrdiff_t offset = static_cast<ptrdiff_t>(*m_placement.rankOfClass(member)) * sizeof(void*);
+        Condition hasPrototype(m_out.equal(prototype, m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), prototypes.value(), offset))));
+        result = logicalOr(result, logicalAnd(carriesBrandOfClass(cell, member), hasPrototype));
+    }
+    return result;
+}
+
+Condition ShapeTestEmitter::hasNoPropertyOfItsOwn(CellPointer cell)
+{
+    Pointer structure = loadStructure(cell);
+    return equal(Word32(m_out.load16ZeroExt32(structure.value(), m_heaps.Structure_maxOffset)), word32(static_cast<uint32_t>(Structure::greatestMaxOffsetOutsideRareData + 1)));
 }
 
 Condition ShapeTestEmitter::hasShapeIn(CellPointer cell, LayoutSetID tested, const Type& known)

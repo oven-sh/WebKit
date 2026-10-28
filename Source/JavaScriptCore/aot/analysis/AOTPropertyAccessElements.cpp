@@ -342,7 +342,9 @@ static bool fitsContentType(const Type& stored, TypedArrayContentType contentTyp
 {
     switch (contentType) {
     case TypedArrayContentType::Number:
-        return stored.isNumber();
+        // What is undefined, null or a boolean becomes a number without running code, in front of the store: AccessRewriter::rewrite().
+        // A value that may be a number too is tested for one first: planSplitOfStoredNumber().
+        return stored.isNumber() || (!stored.isNever() && stored.isNumberLike() && !(stored.primitives & Primitive::Number));
     case TypedArrayContentType::BigInt:
         return !stored.isNever() && stored.hasOnlyPrimitives(Primitive::BigInt);
     case TypedArrayContentType::None:

@@ -62,7 +62,7 @@ function f1 name="path" module=m0 flags=[HasExplicitName] length=2 thisType={typ
 }
 
 # Without types each part of a template is asked whether it is a text: is it a cell, is the cell's type byte 2. A text goes into the rope as it is, and that is the way that falls through.
-# Anything else is converted by the run time, on an unlikely path. The rope is the same one call as with types.
+# Anything else is converted by the run time, on an unlikely path, through a stub that keeps every register. The rope is the same one call as with types.
 # CHECK-LABEL: name="path" role=Source
 # CHECK: Int64 b@[[isNoCell]] = BitAnd(b@[[folder]], b@{{*}}:ToString)
 # CHECK: Branch(b@[[isNoCell]], Terminal,
@@ -77,6 +77,6 @@ function f1 name="path" module=m0 flags=[HasExplicitName] length=2 thisType={typ
 # CHECK: Patchpoint(b@[[folder]]:{{*}}:ToString)
 # CHECK-LABEL: end of function
 # CALLS-LABEL: f1: size=
-# CALLS-NEXT: operation operationAOTToString x2
 # CALLS-NEXT: stub Concatenate.n3 x1
+# CALLS-NEXT: stub UnaryOperation.ToString x2
 # CALLS-NEXT: f{{*}}: size=

@@ -61,8 +61,12 @@ Condition RuntimeValidationEmitter::hasType(Operand operand, const TypeTestPlan&
 
 void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
 {
-    if (generator().isValidatedWhereLookedAt(id) || operand.representation == Representation::Void || operand.representation == Representation::LiteralString)
+    if (generator().isValidatedWhereLookedAt(id) || operand.representation == Representation::Void)
         return;
+    if (operand.is<LiteralStringWord>()) {
+        checkLiteralStringWord(id, operand.as<LiteralStringWord>());
+        return;
+    }
     const Type& type = typeOf(id);
     if (type.isNever() || type.opaque)
         return;
@@ -70,11 +74,25 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         // A deleted member leaves its variable empty, and a read may stand in front of the test that the member is unchanged.
         const Value& definition = m_function.at(id);
         bool readsMemberKeptInVariable = definition.opcode == Opcode::GetModuleVariable && m_program.at(definition.variable()).owner;
-        checkHasType(id, operand, readsMemberKeptInVariable ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
+        // So is the word of a built-in that the realm lacks.
+        bool mayBeEmpty = readsMemberKeptInVariable || definition.opcode == Opcode::Builtin;
+        checkHasType(id, operand, mayBeEmpty ? type.withPrimitives(Primitive::Absent) : type, ValidationFailureKind::ValueType);
         return;
     }
     if (operand.is<CellPointer>())
         checkEnvironmentShape(operand.as<CellPointer>(), type.environment, id);
+}
+
+// Comparisons, switches and type tests compare words: a text that has a number is never held as its cell.
+void RuntimeValidationEmitter::checkLiteralStringWord(ValueID id, LiteralStringWord word)
+{
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    Condition isShortest = either<Condition>(logicalNot(conversions.isStringCell(word)), [&] {
+        return boolean(true);
+    }, [&] {
+        return equal(conversions.toLiteralString(CellPointer(word.value())), word);
+    });
+    failUnless(isShortest, ValidationFailureKind::ValueType, { }, id);
 }
 
 // A cell of a frame may have no header. In a validating build only environments live in frames (staysOnHeapForValidation()), so the header of an object or a closure is there to be read.
@@ -422,7 +440,7 @@ static Type kindsRejectedDespiteWidening(const Type& listed, const BuiltinTable&
 void RuntimeValidationEmitter::generateValidateCallee(const ValueContext& value)
 {
     ValueID callee = value->calleeOperand();
-    if (!hasTestableBits(callee))
+    if (!hasTestableBits(callee) || m_function.at(callee).opcode == Opcode::Builtin)
         return;
 
     Operand operand = get(callee);
@@ -606,7 +624,7 @@ void RuntimeValidationEmitter::poisonFrameArray(CellPointer array)
     LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, array.value(), JSCell::cellStateOffset()));
     m_out.branch(m_out.equal(state, m_out.constInt32(frameCellState)), normalEdge(isInFrame), normalEdge(continuation));
     m_out.appendTo(isInFrame);
-    m_out.storePtr(m_out.constIntPtr(-1), array.value(), m_heaps.JSObject_butterfly);
+    m_out.storePtr(m_out.constIntPtr(-1), array.value(), m_heaps.JSArray_butterfly);
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }

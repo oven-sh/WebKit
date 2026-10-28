@@ -157,10 +157,12 @@ enum Sabotage {
     CallsThatThrowHaveNoSite
     BoundsReadTwiceOutlastWrites
     ChangedClosuresFailEveryTest
+    KeysOfStarsAreHeldAsStrings
+    CallsGiveNoArrayOtherStorage
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }
-flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage }
+flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode }
 flags OutputOptions { Obfuscate }
 record SwitchRange abi { firstID: UInt32 count: UInt32 }
 record DroppedGuardWords abi { opcode: UInt32 ordinal: UInt32 }

@@ -446,6 +446,8 @@ export interface DirectEntrySpec {
   offsetOfNativeObject?: string;
   /** The function answers the fields of the layout that the row returns, in registers, and makes no object. Compiled code calls it where the program only reads the fields. */
   returnsFields?: boolean;
+  /** The function answers a `double`, in a register for numbers, and nothing is boxed. It cannot fail. A NaN that it answers is the one that arithmetic makes. */
+  returnsNumber?: boolean;
 }
 
 export interface NativeCodeRef {

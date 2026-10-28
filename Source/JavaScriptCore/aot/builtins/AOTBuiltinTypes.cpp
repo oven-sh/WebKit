@@ -669,8 +669,14 @@ Type typeOfBuiltinConstant(const BuiltinTable& table, BuiltinID id)
 
 TypedArrayType typedArrayTypeOf(const BuiltinTable& table, const Type& type)
 {
-    const ClassPart* part = type.singleBuiltinClass();
-    return part ? table.typedArrayTypeOf(part->builtinClass) : NotTypedArray;
+    if (type.primitives & ~Primitive::UndefinedOrNull || !type.hasOnlyClassObjects() || type.classes.isEmpty())
+        return NotTypedArray;
+    TypedArrayType common = table.typedArrayTypeOf(type.classes[0].builtinClass);
+    for (const ClassPart& part : type.classes) {
+        if (table.typedArrayTypeOf(part.builtinClass) != common)
+            return NotTypedArray;
+    }
+    return common;
 }
 
 } } } // namespace JSC::AOT::Typed

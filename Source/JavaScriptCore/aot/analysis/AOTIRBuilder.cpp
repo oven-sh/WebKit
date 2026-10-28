@@ -630,7 +630,7 @@ void IRBuilder::emitRethrow(ValueID exception)
 
 void IRBuilder::emitUnreachable()
 {
-    openTerminator();
+    openTerminator().setCutBy(context().build.passToNameAtUnreachableEnd());
     closeBlock();
 }
 

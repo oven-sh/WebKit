@@ -370,6 +370,10 @@ static std::optional<RuntimeCellTest> encodeCellTest(TableEncoder& encoder, cons
         return RuntimeCellTest::sharingModeIs(test.sharingMode);
     case CellTestKind::IsNamespaceOf:
         return RuntimeCellTest::isNamespaceOf(test.module);
+    case CellTestKind::CarriesBrandOfClass:
+        if (std::optional<uint32_t> rank = encoder.placement.rankOfClass(test.classLayout))
+            return RuntimeCellTest::carriesBrandOfClass(*rank);
+        return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1242,6 +1246,7 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
     data.base = hasProvenBase ? expectedBaseOf(layout).index() : LayoutData::noBase;
     data.expectedBase = hasProvenBase ? LayoutData::noBase : indexOrNone(expectedBaseOf(layout));
     data.builtinBase = indexOrNone(builtinParentNamedByClassRecord(program, layout));
+    data.instancesCarryBrand = carriesBrandOfClass(program, id);
     data.classConstructor = indexOrNone(classConstructor);
     data.environment = indexOrNone(environment);
     data.numberOfStaticFields = static_cast<uint32_t>(parts.staticFields.size());
@@ -2367,6 +2372,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
     entry.importedWhileItRuns = module.flags.contains(ModuleFlags::MayBeImportedWhileItRuns);
+    entry.bodyRunsAtMostOnce = module.kind == ModuleKind::RuntimeSource && module.body && encoder.flow.runsAtMostOnce(program, module.body);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;
     entry.exportRule = module.exportRule;

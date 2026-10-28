@@ -41,7 +41,7 @@ static OperatorForm chooseConcatenationForm(const OperatorSite& site, const Oper
     const Type& left = types.left;
     const Type& right = types.right;
     if (left.hasObjects() || right.hasObjects()) {
-        if (shape == CodeShape::Fast && (isSumOfEmptyTextAndPossibleText(site, left, right) || isSumOfEmptyTextAndPossibleText(site, right, left)))
+        if (isSumOfEmptyTextAndPossibleText(site, left, right) || isSumOfEmptyTextAndPossibleText(site, right, left))
             return OperatorForm::MayBeString;
         return OperatorForm::Generic;
     }

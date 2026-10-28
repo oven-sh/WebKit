@@ -358,6 +358,7 @@ static bool isDecidedByStructure(const RuntimeCellTest& test, JSObject* object)
     case CellTestKind::IsSymbol:
     case CellTestKind::SharingModeIs:
     case CellTestKind::IsNamespaceOf:
+    case CellTestKind::CarriesBrandOfClass:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -29,6 +29,8 @@ class Object;
 static constexpr uint32_t starRuleKeyCaptureSlot = 1 << 0;
 // An accessor of a source that is marked as an ES module is taken over as it is, as TypeScript's `__createBinding` does from version 4.6 on.
 static constexpr uint32_t starRuleReusesDescriptors = 1 << 1;
+// The getter holds its key as the number of a literal where the text has one.
+static constexpr uint32_t starRuleKeyIsLiteralStringWord = 1 << 3;
 
 // False where the star has to be carried out now. Nothing has been done then. Runs no code of the program.
 bool tryAddPendingStar(VM&, Object& target, Object& source, FunctionID getter, uint32_t rule);

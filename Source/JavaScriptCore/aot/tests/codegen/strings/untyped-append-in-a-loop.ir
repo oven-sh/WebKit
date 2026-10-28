@@ -62,24 +62,19 @@ function f1 name="repeated" module=m0 flags=[HasExplicitName] length=2 thisType=
     Return v19
 }
 
-# Without types `out += piece` still fills the buffer on the stack. A piece that is a text is copied into the buffer as it is: a turn has one call. Whether it is a text is asked in line: its type byte is 2.
-# Anything else is first added to the empty text, which makes a text of whatever it is, on a path of its own.
+# Without types `out += piece` still fills the buffer on the stack. The piece is added to the empty text, which makes a text of whatever it is, and that text is copied into the buffer.
+# The sum takes the piece alone, and a piece that is a text comes back as it is, behind two tests: no run-time function is entered for it, and no register is written but that of the piece.
 # CHECK-LABEL: loop #
 # CHECK: Int64 b@[[cursor]] = Phi(
-# CHECK: Int32 b@[[kind]] = Load8Z(b@[[piece]], offset = 5, ControlDependent|ReadsImmutable|Reads:JSCell_typeInfoType, {{*}}:Add)
-# CHECK-NEXT: Int32 b@[[isText]] = Equal(b@[[kind]], $2(
-# CHECK-NEXT: Branch(b@[[isText]], Terminal,
-# CHECK-NEXT: Successors: Then:#[[copy]], Else:Unlikely:#[[convert]]
-# CHECK-NEXT: BB#[[copy]]:
-# CHECK-NEXT: Predecessors:
-# CHECK-NEXT: Int64 b@{{*}} = Patchpoint(b@{{*}}:Register({{*}}), b@[[cursor]]:Register({{*}}), b@[[piece]]:Register({{*}}), resultConstraints = Register({{*}}:StringBuilderAppendString)
-# CHECK: BB#[[convert]]:
-# CHECK: Int64 b@[[text]] = Patchpoint(b@{{*}}:Register({{*}}), b@[[piece]]:Register({{*}}), resultConstraints = Register({{*}}:Add)
+# CHECK: Int64 b@[[text]] = Patchpoint(b@[[piece]]:Register({{*}}), resultConstraints = Register({{*}}:Add)
 # CHECK-NEXT: Int64 b@{{*}} = Patchpoint(b@{{*}}:Register({{*}}), b@[[cursor]]:Register({{*}}), b@[[text]]:Register({{*}}), resultConstraints = Register({{*}}:StringBuilderAppendString)
 # CHECK-LABEL: end of loop
 # No rope is made, and the text is made once, behind the loop.
 # CALLS-LABEL: f1: size=
 # CALLS-NOT: Concatenate
+# CALLS-NOT: BinaryOperation
 # CALLS: operation operationAOTStackStringBuilderFinish x1
 # CALLS-NOT: Concatenate
+# CALLS-NOT: BinaryOperation
+# CALLS: stub UnaryOperation.AddToEmptyString
 # CALLS: f{{*}}: size=

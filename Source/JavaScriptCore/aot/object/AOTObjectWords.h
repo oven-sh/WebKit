@@ -235,6 +235,8 @@ struct ClassWords {
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
     const InstanceOfClassBelow* instancesOfClassesBelow;
+    // By class, as classPrototypes: the brand that the Structure of a cell carries which a built-in constructor has made for `super(..)` of the class. Null until the first is made.
+    UniquedStringImpl** brandsOfInstances;
 };
 
 static_assert(sizeof(KeyOrderTransition) == 16);

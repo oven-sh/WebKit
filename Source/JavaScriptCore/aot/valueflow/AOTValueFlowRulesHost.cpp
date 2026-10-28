@@ -637,13 +637,23 @@ static bool loadsOnlyLibraryModules(BuiltinID loader)
     return loader == Builtins::ProcessGetBuiltinModule;
 }
 
+bool refusesEveryText(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
+{
+    const Builtin& entry = builtins.at(builtin);
+    if (entry.origin == BuiltinOrigin::Engine)
+        return refused.evaluatedText && entry.flags.contains(BuiltinFlag::EvaluatesText);
+    return refused.hostEvaluatedText && (entry.flags.contains(BuiltinFlag::EvaluatesText) || builtins.has(BuiltinMark::EvaluatesTextInGlobalScope, builtin));
+}
+
 std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
 {
     const Builtin& entry = builtins.at(builtin);
     if (entry.flags.contains(BuiltinFlag::LoadsModuleByName))
         return refused.codeOutsideImage || loadsOnlyLibraryModules(builtin) ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName;
+    if (refusesEveryText(builtins, builtin, refused))
+        return std::nullopt;
     if (entry.flags.contains(BuiltinFlag::EvaluatesText))
-        return refused.evaluatedText ? std::nullopt : std::optional(UnseenCodeCause::EvaluatesText);
+        return UnseenCodeCause::EvaluatesText;
     const BuiltinUnseenCode* unseenCode = builtins.unseenCodeOf(builtin);
     if (unseenCode && unseenCode->condition && unseenCode->condition->hasProperty)
         return std::nullopt;

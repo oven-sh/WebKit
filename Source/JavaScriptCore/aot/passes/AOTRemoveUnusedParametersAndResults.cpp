@@ -11,6 +11,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTCallGraph.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTEffectSummaries.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTFunctionEditing.h"
@@ -616,6 +617,192 @@ static bool returnsOnlyWhatIsExpected(const Program& program, const Function& fu
     });
 }
 
+namespace {
+
+// Numbers, booleans, undefined and null: what a register holds without a box.
+struct ReturnedNumbers {
+    void add(const ReturnedNumbers& other)
+    {
+        primitives |= other.primitives;
+        integers = integers.unionWith(other.integers);
+        hasOtherValues |= other.hasOtherValues;
+    }
+    void add(const Type& type)
+    {
+        if (!type.hasOnlyPrimitives(Primitive::NumberLike)) {
+            hasOtherValues = true;
+            return;
+        }
+        primitives |= type.primitives;
+        integers = integers.unionWith(type.integers);
+    }
+    Type type() const
+    {
+        Type type = Type::fromPrimitives(primitives);
+        type.integers = integers;
+        type.canonicalize();
+        return type;
+    }
+
+    friend bool operator==(const ReturnedNumbers&, const ReturnedNumbers&) = default;
+
+    uint16_t primitives { 0 };
+    Range integers { Range::empty() };
+    bool hasOtherValues { false };
+};
+
+struct ReturnsOfFunction {
+    FunctionID function;
+    ReturnedNumbers values;
+    // Whose result it returns as it gets it.
+    Vector<FunctionID, 2> handedOn;
+};
+
+struct DirectTailCall {
+    friend auto operator<=>(const DirectTailCall&, const DirectTailCall&) = default;
+
+    FunctionID callee;
+    FunctionID caller;
+};
+
+} // anonymous namespace
+
+static Representation representationOfResult(const Program& program, const Function& function)
+{
+    return entryConventionOf(function) == EntryConvention::Direct ? declaredRepresentationOf(program, function.result()) : Representation::JSValue;
+}
+
+// Whoever calls it reads where the result lies from its record.
+static bool mayReturnInAnotherRegister(const Program& program, const Function& function)
+{
+    if (!function.hasBody() || function.isModuleBody() || function.results.size() != 1 || function.isUnsplitCoroutine() || !function.hasOrdinaryFrame() || function.mayBeCalledByHost())
+        return false;
+    if (entryConventionOf(function) != EntryConvention::Direct || !program.at(function.result().written()).isJavaScriptValue())
+        return false;
+    if (function.role == FunctionRole::TableEntrypoint || function.role == FunctionRole::TableLookup || function.role == FunctionRole::StubBody)
+        return false;
+    Representation representation = representationOfResult(program, function);
+    return representation == Representation::JSValue || isDoubleOrMarker(representation) || isInt64OrMarker(representation);
+}
+
+static ReturnsOfFunction collectReturnsOf(const Program& program, FunctionID id)
+{
+    const Function& function = program.at(id);
+    ReturnsOfFunction returns { .function = id };
+    forEachBlockEndingWith(program, id, { TerminatorKind::Return, TerminatorKind::ReturnCall }, [&](BlockID block) {
+        ValueID returned = *returnedValueOf(function.at(block).terminator);
+        if (!returned) {
+            returns.values.add(program.at(TypeTable::undefined));
+            return;
+        }
+        const Value& value = function.at(returned);
+        if (value.opcode == Opcode::CallDirect && program.at(value.function()).results.size() == 1) {
+            if (!returns.handedOn.contains(value.function()))
+                returns.handedOn.append(value.function());
+            return;
+        }
+        returns.values.add(program.typeOf(function, returned));
+    });
+    return returns;
+}
+
+// A result lies where its type puts it, and its type is what the function returns: numbers that are all integers come back as an integer, a number or undefined comes back in a floating-point register.
+// A function that hands on the result of another returns what that one does. A tail call that is a jump stays one: its two ends move together or not at all.
+static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const Program& program, BuildContext& build, std::span<const FunctionID> functions)
+{
+    const ParallelLoops& loops = build.parallelLoops();
+    unsigned count = program.functions.size();
+    Vector<ReturnsOfFunction> returns = collectInParallel<ReturnsOfFunction>(loops, functions.size(), [&](unsigned index, Vector<ReturnsOfFunction>& found) {
+        FunctionID id = functions[index];
+        if (!mayReturnInAnotherRegister(program, program.at(id)) || !build.isEnabled(PassID::ProveResults, findFunctionAsRead(&program, id)))
+            return;
+        ReturnsOfFunction returnsOfFunction = collectReturnsOf(program, id);
+        if (!returnsOfFunction.values.hasOtherValues)
+            found.append(WTF::move(returnsOfFunction));
+    });
+    if (returns.isEmpty())
+        return { };
+
+    using Index = ID<struct ReturnsIndexTag>;
+    Vector<Index> indexOf(count);
+    for (unsigned index = 0; index < returns.size(); ++index)
+        indexOf[returns[index].function.index()] = Index(index);
+    Vector<DirectTailCall> tailCalls = collectInParallel<DirectTailCall>(loops, count, [&](unsigned caller, Vector<DirectTailCall>& found) {
+        const Function& function = program.functions[caller];
+        forEachBlockEndingWith(program, FunctionID(caller), { TerminatorKind::ReturnCall }, [&](BlockID block) {
+            const Value& call = function.at(function.at(block).terminator.callOperand());
+            if (call.opcode == Opcode::CallDirect && call.function().index() != caller && (indexOf[call.function().index()] || indexOf[caller]))
+                found.append({ call.function(), FunctionID(caller) });
+        });
+    });
+
+    auto asDeclared = [&](FunctionID id) {
+        ReturnedNumbers declared;
+        const DeclaredType& result = program.at(id).result();
+        if (result.isExpected())
+            declared.hasOtherValues = true;
+        else
+            declared.add(program.at(result.written()));
+        return declared;
+    };
+    BitVector staysAsDeclared(returns.size());
+    Vector<ReturnedNumbers> returned(returns.size());
+    Vector<Representation> chosen(returns.size());
+    auto representationBehind = [&](FunctionID id) {
+        Index index = indexOf[id.index()];
+        return index && !staysAsDeclared.quickGet(index.index()) ? chosen[index.index()] : representationOfResult(program, program.at(id));
+    };
+    for (bool isSettled = false; !isSettled;) {
+        for (unsigned index = 0; index < returns.size(); ++index)
+            returned[index] = returns[index].values;
+        for (bool didGrow = true; didGrow;) {
+            didGrow = false;
+            for (unsigned index = 0; index < returns.size(); ++index) {
+                if (staysAsDeclared.quickGet(index))
+                    continue;
+                ReturnedNumbers before = returned[index];
+                for (FunctionID callee : returns[index].handedOn) {
+                    Index calleeIndex = indexOf[callee.index()];
+                    returned[index].add(calleeIndex && !staysAsDeclared.quickGet(calleeIndex.index()) ? returned[calleeIndex.index()] : asDeclared(callee));
+                }
+                didGrow |= before != returned[index];
+            }
+        }
+
+        isSettled = true;
+        auto keepAsDeclared = [&](FunctionID id) {
+            Index index = indexOf[id.index()];
+            if (index && !staysAsDeclared.quickSet(index.index()))
+                isSettled = false;
+        };
+        for (unsigned index = 0; index < returns.size(); ++index) {
+            if (staysAsDeclared.quickGet(index))
+                continue;
+            chosen[index] = returned[index].hasOtherValues ? Representation::JSValue : defaultRepresentationOf(returned[index].type());
+            if (chosen[index] == Representation::JSValue || chosen[index] == Representation::Void || chosen[index] == representationOfResult(program, program.at(returns[index].function)))
+                keepAsDeclared(returns[index].function);
+        }
+        // A function that only callers with a boxed result enter by a jump boxes its result for them.
+        auto isJump = [](Representation returned, Representation expected) {
+            return expected == Representation::JSValue || haveSameRegisterRepresentation(returned, expected);
+        };
+        for (const DirectTailCall& tailCall : tailCalls) {
+            bool wasJump = isJump(representationOfResult(program, program.at(tailCall.callee)), representationOfResult(program, program.at(tailCall.caller)));
+            if (wasJump && !isJump(representationBehind(tailCall.callee), representationBehind(tailCall.caller))) {
+                keepAsDeclared(tailCall.caller);
+                keepAsDeclared(tailCall.callee);
+            }
+        }
+    }
+
+    Vector<std::pair<FunctionID, ReturnedNumbers>> narrowed;
+    for (unsigned index = 0; index < returns.size(); ++index) {
+        if (!staysAsDeclared.quickGet(index))
+            narrowed.append({ returns[index].function, returned[index] });
+    }
+    return narrowed;
+}
+
 // The arm that made a result uncertain may be gone: a test in front of it was decided. Whoever calls the function then has nothing left to test, and its own result may be certain in turn.
 void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const PassRunner& runner)
 {
@@ -626,16 +813,38 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
     auto findProvenAmong = [&](std::span<const FunctionID> functions) {
         return collectInParallel<FunctionID>(loops, functions.size(), [&](unsigned index, Vector<FunctionID>& found) {
             FunctionID id = functions[index];
-            if (returnsOnlyWhatIsExpected(program, program.at(id)) && build.isEnabled(PassID::ProveResults, findFunctionAsRead(&program, id)))
+            if (hasResultThatMayBeProven(program, program.at(id)) && returnsOnlyWhatIsExpected(program, program.at(id)) && build.isEnabled(PassID::ProveResults, findFunctionAsRead(&program, id)))
                 found.append(id);
         });
     };
+    auto isCandidateFunction = [&](const Function& function) {
+        return hasResultThatMayBeProven(program, function) || mayReturnInAnotherRegister(program, function);
+    };
+    // Establishes what is found and answers whose results have another type now.
+    uint64_t numberOfProvenResults = 0;
+    auto establishAmong = [&](std::span<const FunctionID> functions) {
+        Vector<FunctionID> changed = findProvenAmong(functions);
+        editFunctionsInParallel(editor, build, changed.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
+            function.results[0].establish(Proven::byEveryArrival(function.results[0].expected()));
+        });
+        Vector<std::pair<FunctionID, ReturnedNumbers>> narrowed = findResultsToNarrow(program, build, functions);
+        Vector<FunctionID> narrowedFunctions = narrowed.map([](auto& entry) { return entry.first; });
+        editFunctionsInParallel(editor, build, narrowedFunctions.span(), [&](unsigned index, FunctionID, Function& function, TaskArenas& arenas) {
+            function.results[0].establish(Proven::byEveryArrival(ExpectedType(arenas.types.intern(narrowed[index].second.type()))));
+        });
+        for (FunctionID id : narrowedFunctions) {
+            if (!changed.contains(id))
+                changed.append(id);
+        }
+        numberOfProvenResults += changed.size();
+        return changed;
+    };
 
     Vector<FunctionID> candidates = collectInParallel<FunctionID>(loops, count, [&](unsigned index, Vector<FunctionID>& found) {
-        if (hasResultThatMayBeProven(program, program.functions[index]))
+        if (isCandidateFunction(program.functions[index]))
             found.append(FunctionID(index));
     });
-    Vector<FunctionID> proven = findProvenAmong(candidates.span());
+    Vector<FunctionID> proven = establishAmong(candidates.span());
     if (proven.isEmpty())
         return;
 
@@ -661,13 +870,7 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
     });
     sortAndRemoveDuplicates(loops, typedCalls);
 
-    uint64_t numberOfProvenResults = 0;
     while (!proven.isEmpty()) {
-        numberOfProvenResults += proven.size();
-        editFunctionsInParallel(editor, build, proven.span(), [&](unsigned, FunctionID, Function& function, TaskArenas&) {
-            function.results[0].establish(Proven::byEveryArrival(function.results[0].expected()));
-        });
-
         BitVector isCaller(count);
         Vector<FunctionID> callers;
         for (FunctionID id : proven) {
@@ -693,8 +896,8 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
         if (typedCalls.size() != numberOfSortedCalls)
             sortAndRemoveDuplicates(loops, typedCalls);
 
-        callers.removeAllMatching([&](FunctionID id) { return !hasResultThatMayBeProven(program, program.at(id)); });
-        proven = findProvenAmong(callers.span());
+        callers.removeAllMatching([&](FunctionID id) { return !isCandidateFunction(program.at(id)); });
+        proven = establishAmong(callers.span());
     }
     build.statistics().count(StatisticID::ResultsProvenByReturns, numberOfProvenResults);
 }

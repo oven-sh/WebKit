@@ -142,7 +142,7 @@ static void testGapsAreZero()
     AOT_TEST_CHECK(isAllZero(bytes.subspan(endOfCode, header.size - endOfCode)));
 
     for (const StubAddressInImage& address : image.image->section<StubAddressInImage>(ImageSection::StubAddresses))
-        AOT_TEST_CHECK(!address.reserved);
+        AOT_TEST_CHECK(address.usesCallConvention <= 1);
 
     alignas(ImageHeader) std::array<uint8_t, sizeof(ImageHeader)> storage { };
     copyHeaderMembers(*reinterpret_cast<ImageHeader*>(storage.data()), header);

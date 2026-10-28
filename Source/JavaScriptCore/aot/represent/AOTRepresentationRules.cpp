@@ -201,11 +201,25 @@ static Representation wantedByBits(const RepresentationInputs& inputs, const Val
     return everyOperandHasDefault(inputs, operation, Representation::Cell) ? Representation::Cell : Representation::JSValue;
 }
 
+// The name of a property: its word is found once, by where its characters lie, and every comparison of the key shares it.
+static bool isEnumeratedKey(const Function& function, ValueID id)
+{
+    const Value& definition = function.at(definitionThroughUpcasts(function, id));
+    return definition.opcode == Opcode::ResultAt && definition.index() == static_cast<uint32_t>(ForInStepResult::Key) && function.at(definition.resultsOperand()).opcode == Opcode::ForInStep;
+}
+
 static bool comparesLiteralStringWords(const RepresentationInputs& inputs, const Value& operation)
 {
-    return isEquality(operation.opcode) && everyOperandHasDefault(inputs, operation, Representation::LiteralString) && std::ranges::none_of(operation.operands(), [&](ValueID operand) {
-        return operand && isSameWord(inputs.function.at(operand).representation, Representation::JSValue);
-    });
+    if (!isEquality(operation.opcode))
+        return false;
+    auto isHeldAsWord = [&](ValueID operand) {
+        return defaultRepresentationOf(inputs.typeOf(operand)) == Representation::LiteralString && !isSameWord(inputs.function.at(operand).representation, Representation::JSValue);
+    };
+    ValueID left = operation.leftOperand();
+    ValueID right = operation.rightOperand();
+    if (isHeldAsWord(left) && isHeldAsWord(right))
+        return true;
+    return (isHeldAsWord(left) && isEnumeratedKey(inputs.function, right)) || (isHeldAsWord(right) && isEnumeratedKey(inputs.function, left));
 }
 
 static Representation wantedByConcatenation(const Type& part)
@@ -554,6 +568,8 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
         return integerRepresentationOf(type);
     if (opcode == Opcode::GetMyArgumentByVal)
         return unboxedNumberOrJSValue(type);
+    if (opcode == Opcode::GetStringLength && defaultRepresentationOf(type) == Representation::LiteralString && type.stringLiterals.size() <= maxLiteralsToldApartByLength)
+        return Representation::Unchosen;
     if (isNewArrayElement(user, operandIndex))
         return wantedByNewArrayElement(inputs, operand);
     if (opcode == Opcode::Strcat && !user.isLikelyKey())
@@ -887,6 +903,8 @@ Representation resultRepresentationOf(const RepresentationInputs& inputs, const 
         return naturalOrDefaultRepresentation(type, elementRepresentationOf(value.arrayStorage()));
     if (value.opcode == Opcode::GetTypedArrayElement)
         return inFormOfDouble(Representation::ImpureDouble, naturalOrDefaultRepresentation(type, defaultRepresentationOf(elementTypeOf(value.typedArrayType()))));
+    if (answersUnboxedNumber(value))
+        return Representation::Double;
     if (operationsReturningBoxedValue.contains(value.opcode) || (value.opcode == Opcode::CallBuiltin && !isCompiledInline(value.builtinCallForm())))
         return Representation::JSValue;
 
