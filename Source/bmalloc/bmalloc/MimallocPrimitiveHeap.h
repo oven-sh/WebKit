@@ -24,7 +24,8 @@ namespace bmalloc {
 // nothing else is allocated from. What is allocated with that kind holds no pointers, and scripts and input choose
 // its content: the bytes of ArrayBuffers and typed arrays, Wasm memories. Unlike in a Gigacage, pointers are not masked.
 //
-// A request that no range can serve goes to the default heap, so nothing fails that would succeed there.
+// A request fails when the ranges have no room for it, as it does in a Gigacage that is full: it does not go to the
+// default heap.
 class MimallocPrimitiveHeap {
 public:
     BINLINE static void* tryMalloc(size_t size)
@@ -73,14 +74,15 @@ public:
         return allocateSlow(size, 0, false, block);
     }
 
-    // Settles whether the process has ranges, from its environment as it is now. Otherwise the first allocation does.
+    // Settles whether the process has ranges, from its environment as it is now, and reserves the first one. Otherwise
+    // the first allocation does.
     BEXPORT static void decideWhetherToHaveRanges();
 
     // mi_collect and mi_theap_collect(mi_theap_get_default()) leave what the calling thread holds of these heaps.
     BEXPORT static void collectThisThread(bool force);
 
     BEXPORT static bool isInRange(const void*);
-    // How many allocations went to the default heap in a process that has ranges.
+    // How many allocations were too large or too aligned for a range, in a process that has ranges.
     BEXPORT static size_t allocationsOutsideRanges();
 
 private:
@@ -92,7 +94,7 @@ private:
     };
 
     // Beyond these mimalloc puts a block in no arena, whichever heap is asked: it maps it by itself. A heap that is
-    // bound to an arena can only refuse such a block, and it collects before it refuses.
+    // bound to an arena can only refuse such a block, and it collects before it refuses. The default heap gets them.
     static constexpr size_t largestBlockSize = 2 * Sizes::GB;
     static constexpr size_t largestAlignment = 64 * Sizes::kB;
 
@@ -110,8 +112,8 @@ private:
     static void decide();
     static void doWithoutRanges();
 
-    // The heap of the range in use, or the default heap in a process without ranges. Null before the first allocation
-    // and while all ranges are full.
+    // The heap of the range in use, or the default heap in a process without ranges. Null until that is settled and
+    // while all ranges are full.
     BEXPORT static std::atomic<mi_heap_t*> s_heap;
 };
 

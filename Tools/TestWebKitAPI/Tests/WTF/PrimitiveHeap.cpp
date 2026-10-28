@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <wtf/FastMalloc.h>
+#include <wtf/MonotonicTime.h>
 #include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
@@ -203,29 +204,62 @@ TEST(WTF_PrimitiveHeap, MoreThanOneRange)
         Gigacage::free(Gigacage::Primitive, block);
 }
 
-TEST(WTF_PrimitiveHeap, WhenAllRangesAreFull)
+TEST(WTF_PrimitiveHeap, AllocationFailsWhenAllRangesAreFull)
 {
     if (!hasDedicatedRange())
         return;
     size_t outsideBefore = Gigacage::allocationsOutsideDedicatedRange(Gigacage::Primitive);
+    void* small = Gigacage::malloc(Gigacage::Primitive, 100);
+    memset(small, 1, 100);
+
     // Never touched.
     Vector<void*> blocks;
-    size_t inside = 0;
-    while (blocks.size() < 100) {
-        void* block = Gigacage::tryMalloc(Gigacage::Primitive, GB);
-        ASSERT_TRUE(block);
-        blocks.append(block);
-        if (!isPrimitive(block))
-            break;
-        ++inside;
+    uint64_t total = 0;
+    for (size_t size = GB; size >= 64; size /= 2) {
+        while (void* block = Gigacage::tryMalloc(Gigacage::Primitive, size)) {
+            ASSERT_TRUE(isPrimitive(block));
+            blocks.append(block);
+            total += size;
+        }
     }
-    EXPECT_GT(inside, 40u);
-    EXPECT_LT(inside, 64u);
-    EXPECT_EQ(1u, Gigacage::allocationsOutsideDedicatedRange(Gigacage::Primitive) - outsideBefore);
+    EXPECT_GT(total, 40 * static_cast<uint64_t>(GB));
+    EXPECT_LE(total, 1024 * static_cast<uint64_t>(GB));
 
+    // A small block may still find room in a page that is in use.
+    for (size_t size : sizes) {
+        void* more[] = {
+            Gigacage::tryZeroedMalloc(Gigacage::Primitive, size),
+            Gigacage::tryAlignedMalloc(Gigacage::Primitive, 16 * KB, roundUpToMultipleOf<16 * KB>(size)),
+            Gigacage::tryMallocArray(Gigacage::Primitive, size, 2),
+            Gigacage::tryAllocateZeroedVirtualPages(Gigacage::Primitive, roundUpToMultipleOf(pageSize(), size)),
+        };
+        for (void* block : more) {
+            if (!block)
+                continue;
+            EXPECT_TRUE(isPrimitive(block));
+            blocks.append(block);
+        }
+    }
+    EXPECT_FALSE(Gigacage::tryRealloc(Gigacage::Primitive, small, GB));
+    EXPECT_EQ(1, static_cast<uint8_t*>(small)[99]);
+    EXPECT_EQ(outsideBefore, Gigacage::allocationsOutsideDedicatedRange(Gigacage::Primitive));
+
+    void* other = fastMalloc(MB);
+    EXPECT_FALSE(isPrimitive(other));
+    fastFree(other);
+
+    Gigacage::free(Gigacage::Primitive, small);
     for (void* block : blocks)
         Gigacage::free(Gigacage::Primitive, block);
-    void* block = Gigacage::tryMalloc(Gigacage::Primitive, GB);
+
+    // Full ranges are tried again from time to time, not for each request.
+    void* block = nullptr;
+    auto deadline = MonotonicTime::now() + 30_s;
+    while (!(block = Gigacage::tryMalloc(Gigacage::Primitive, GB)) && MonotonicTime::now() < deadline)
+        Thread::yield();
+    EXPECT_TRUE(isPrimitive(block));
+    Gigacage::free(Gigacage::Primitive, block);
+    block = Gigacage::tryMalloc(Gigacage::Primitive, 64);
     EXPECT_TRUE(isPrimitive(block));
     Gigacage::free(Gigacage::Primitive, block);
 }

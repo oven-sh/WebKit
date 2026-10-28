@@ -32,7 +32,8 @@ struct Range {
 
 // The most that one mimalloc arena holds. A heap is bound to one arena, and an arena does not grow.
 constexpr uint64_t rangeSize = 16 * static_cast<uint64_t>(Sizes::GB);
-constexpr size_t maxRangeCount = Gigacage::primitiveAddressSpaceBudget / rangeSize;
+// Ranges cost address space only, and only once they are needed. mimalloc has 160 arenas for the whole process.
+constexpr size_t maxRangeCount = 64;
 
 // That no range has room for a block above this size says little about smaller ones.
 constexpr size_t largestSizeThatShowsRangesAreFull = Sizes::MB;
@@ -92,7 +93,9 @@ void MimallocPrimitiveHeap::decide()
     if (s_isDecided)
         return;
     s_isDecided = true;
-    if (!shouldHaveRanges())
+    if (mi_heap_t* heap = shouldHaveRanges() ? tryAddRange() : nullptr)
+        s_heap.store(heap, std::memory_order_release);
+    else
         doWithoutRanges();
 }
 
@@ -115,9 +118,6 @@ mi_heap_t* MimallocPrimitiveHeap::tryAddRange()
     size_t count = s_rangeCount.load(std::memory_order_relaxed);
     if (count == maxRangeCount)
         return nullptr;
-    decide();
-    if (s_hasNoRanges.load(std::memory_order_relaxed))
-        return nullptr;
 
     // Exclusive: mimalloc gives the free pages of any other arena to whichever heap asks next.
     mi_arena_id_t arena { };
@@ -135,12 +135,11 @@ mi_heap_t* MimallocPrimitiveHeap::tryAddRange()
 
 void* MimallocPrimitiveHeap::allocateInSomeRange(const Request& request)
 {
-    size_t count = s_rangeCount.load(std::memory_order_relaxed);
-    bool areFull = count && !s_heap.load(std::memory_order_relaxed);
+    bool areFull = !s_heap.load(std::memory_order_relaxed);
     if (areFull && std::chrono::steady_clock::now() < s_timeOfNextAttempt)
         return nullptr;
 
-    for (size_t index = count; index--;) {
+    for (size_t index = s_rangeCount.load(std::memory_order_relaxed); index--;) {
         mi_heap_t* heap = s_ranges[index].heap;
         if (void* result = allocateIn(heap, request)) {
             s_heap.store(heap, std::memory_order_release);
@@ -153,9 +152,7 @@ void* MimallocPrimitiveHeap::allocateInSomeRange(const Request& request)
         return allocateIn(heap, request);
     }
 
-    if (!count)
-        doWithoutRanges();
-    else if (request.size <= largestSizeThatShowsRangesAreFull) {
+    if (request.size <= largestSizeThatShowsRangesAreFull) {
         // A heap walks all its pages before it refuses, which is too much to pay for each allocation.
         s_heap.store(nullptr, std::memory_order_relaxed);
         s_timeOfNextAttempt = std::chrono::steady_clock::now() + timeBetweenAttemptsWhileFull;
@@ -166,10 +163,11 @@ void* MimallocPrimitiveHeap::allocateInSomeRange(const Request& request)
 void* MimallocPrimitiveHeap::allocateSlow(size_t size, size_t alignment, bool isZeroed, void* blockToReallocate)
 {
     Request request { size, alignment, isZeroed, blockToReallocate };
-    if (request.size <= largestBlockSize && request.alignment <= largestAlignment && !s_hasNoRanges.load(std::memory_order_relaxed)) {
+    if (!s_hasNoRanges.load(std::memory_order_relaxed)) {
         LockHolder locker(s_lock);
-        if (void* result = allocateInSomeRange(request))
-            return result;
+        decide();
+        if (request.size <= largestBlockSize && request.alignment <= largestAlignment && !s_hasNoRanges.load(std::memory_order_relaxed))
+            return allocateInSomeRange(request);
     }
     if (s_rangeCount.load(std::memory_order_relaxed))
         s_allocationsOutsideRanges.fetch_add(1, std::memory_order_relaxed);
