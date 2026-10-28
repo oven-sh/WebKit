@@ -1,3 +1,7 @@
+// Bun: upstream runs this in every mode. It expects the second match, the one that RegExp.lastMatch starts for the captures, to run out of stack.
+// A flat program and the code of an image make that match within --maxRegExpStackSize, so nothing throws.
+//@ $skipModes << "regexp-flat-program".to_sym
+//@ $skipModes << "regexp-image-mode".to_sym
 //@ requireOptions("--maxRegExpStackSize=65536")
 
 function shouldBe(actual, expected) {
