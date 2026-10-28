@@ -461,10 +461,14 @@ void ArrayBuffer::refreshAfterWasmMemoryGrow(Wasm::Memory* memory)
     ASSERT(isWasmMemory());
 
     void* oldData = m_contents.data();
+    size_t oldSizeInBytes = m_contents.m_sizeInBytes;
+    RefPtr oldMemoryHandle = m_contents.m_memoryHandle;
     m_contents.refreshAfterWasmMemoryGrow(memory);
     void* newData = m_contents.data();
     if (newData == oldData)
         return;
+
+    keepWhilePinned({ oldData, oldSizeInBytes, oldSizeInBytes, oldMemoryHandle.releaseNonNull() });
 
     // JSArrayBufferViews (typed arrays) effectively cache their buffer's data pointer.
     for (size_t i = numberOfIncomingReferences(); i--;) {
@@ -524,8 +528,16 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
 // We allow detaching wasm memory ArrayBuffers even though they are locked.
 void ArrayBuffer::detach(VM& vm)
 {
-    auto unused = m_contents.detach();
+    auto contents = m_contents.detach();
     notifyDetaching(vm);
+    keepWhilePinned(WTF::move(contents));
+}
+
+// Whoever pinned us while these were our bytes holds a pointer into them, so they stay allocated until the last unpin().
+void ArrayBuffer::keepWhilePinned(ArrayBufferContents&& contents)
+{
+    if (std::exchange(m_contentsArePinned, false))
+        m_contentsKeptWhilePinned.append(WTF::move(contents));
 }
 
 void ArrayBuffer::notifyDetaching(VM& vm)

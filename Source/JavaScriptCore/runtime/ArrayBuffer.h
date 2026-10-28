@@ -331,6 +331,9 @@ private:
     static inline size_t LEGACY_NODELETE clampValue(double x, size_t left, size_t right);
 
     void notifyDetaching(VM&);
+    // Every wasm memory buffer is locked, so the lock alone does not say that anyone holds a pointer.
+    bool isPinned() const { return m_pinCount.value() & ~s_lockedFlag; }
+    void keepWhilePinned(ArrayBufferContents&&);
 
     ArrayBufferContents m_contents;
     InlineWatchpointSet m_detachingWatchpointSet { IsWatched };
@@ -340,6 +343,8 @@ private:
     static constexpr unsigned s_lockedFlag = INT32_MIN;
     Checked<unsigned> m_pinCount { 0 };
     bool m_isWasmMemory { false };
+    bool m_contentsArePinned { false };
+    Vector<ArrayBufferContents> m_contentsKeptWhilePinned;
 };
 
 void* ArrayBuffer::data() LIFETIME_BOUND
@@ -386,6 +391,7 @@ size_t ArrayBuffer::gcSizeEstimateInBytes() const
 void ArrayBuffer::pin()
 {
     m_pinCount++;
+    m_contentsArePinned = true;
 }
 
 void ArrayBuffer::unpin()
@@ -393,6 +399,10 @@ void ArrayBuffer::unpin()
     unsigned old = m_pinCount;
     m_pinCount--;
     m_pinCount |= (old & s_lockedFlag);
+    if (!isPinned()) {
+        m_contentsArePinned = false;
+        m_contentsKeptWhilePinned.clear();
+    }
 }
 
 bool ArrayBuffer::isDetachable() const
