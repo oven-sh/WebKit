@@ -1461,9 +1461,9 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         readWhatNamesOfProgramMayHaveHidden(chain, result, builtinGetters);
     if (mayHoldUndeclaredProperty(chain.objects, key)) {
         builtinGetters.append(m_tables.undescribedNativeCode());
-        // What a name finds on the prototype object of a host class and the table does not list may be a method of the class.
+        // What a name finds on the prototype object of a host class and the table does not list may be a method of the class. Whoever made an instance has entered the class.
         if (key.keyClass == HeapKeyClass::Name) {
-            m_context.forEachMember(m_context.restrict(m_context.restrict(chain.objects, holdersOfUndeclaredPropertiesUnder(key)), m_tables.prototypeObjectsOfHost()), [&](ValueFlowObjectID holder) {
+            m_context.forEachMember(m_context.restrict(m_context.restrict(chain.start, holdersOfUndeclaredPropertiesUnder(key)), m_tables.prototypeObjectsOfHost()), [&](ValueFlowObjectID holder) {
                 use(m_universe.builtinOf(holder), BuiltinUse::Called);
             });
         }

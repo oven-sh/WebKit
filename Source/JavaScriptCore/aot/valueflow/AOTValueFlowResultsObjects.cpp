@@ -429,6 +429,8 @@ struct FunctionsWhoseClosuresMayBeRenamed {
     BitVector onlyWhereNobodySees;
     // In neither: no statement is seen to name a closure of the function, and its closures go where nobody follows them.
     BitVector outOfSight;
+    // Of those: a statement of the program defines `name` on an object nobody follows.
+    BitVector namedOutOfSight;
 };
 
 // No key stands for a key that nobody knows.
@@ -465,6 +467,10 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
     BitVector functions(program.functions.size());
     BitVector onlyWhereNobodySees(program.functions.size());
     BitVector outOfSight(program.functions.size());
+    BitVector namedOutOfSight(program.functions.size());
+    ValueSetID namedByDefinitions = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatDefinitionsName));
+    bool escapedClosuresMayBeNamed = inputs.sets().contains(namedByDefinitions, ValueFlowUniverse::unknownObject());
+    bool lostClosuresMayBeNamed = inputs.sets().contains(namedByDefinitions, ValueFlowUniverse::untrackedObject());
     inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename)), [&](ValueFlowObjectID object) {
         if (FunctionID function = inputs.universe().closureFunction(object); function && function.index() < program.functions.size())
             functions.quickSet(function.index());
@@ -492,8 +498,11 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
             functions.quickSet(index);
         else if ((escapedClosuresMayBeRenamed && inputs.hasEscaped(closure)) || (lostClosuresMayBeRenamed && inputs.isLost(closure)))
             onlyWhereNobodySees.quickSet(index);
-        else if ((inputs.hasEscaped(closure) || inputs.isLost(closure)) && !isWrittenUnderAnyKeyThat(writtenOnThisFunction, [&](PropertyKeyID key) { return keys.contains(key); }))
+        else if ((inputs.hasEscaped(closure) || inputs.isLost(closure)) && !isWrittenUnderAnyKeyThat(writtenOnThisFunction, [&](PropertyKeyID key) { return keys.contains(key); })) {
             outOfSight.quickSet(index);
+            if ((escapedClosuresMayBeNamed && inputs.hasEscaped(closure)) || (lostClosuresMayBeNamed && inputs.isLost(closure)))
+                namedOutOfSight.quickSet(index);
+        }
     }
     // Without a class of its closures nothing says what a function object of the function meets.
     for (unsigned index = 0; index < program.functions.size(); ++index) {
@@ -501,7 +510,7 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
             functions.quickSet(index);
     }
     // The run time keeps a name for the function as it is written, so what holds of one form holds of all.
-    for (BitVector* forms : { &functions, &onlyWhereNobodySees, &outOfSight }) {
+    for (BitVector* forms : { &functions, &onlyWhereNobodySees, &outOfSight, &namedOutOfSight }) {
         BitVector written(program.functions.size());
         for (size_t index : *forms)
             written.quickSet(writtenFunctionOf(program, FunctionID(static_cast<uint32_t>(index))).index());
@@ -513,7 +522,7 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
     onlyWhereNobodySees.exclude(functions);
     functions.merge(onlyWhereNobodySees);
     outOfSight.exclude(functions);
-    return { WTF::move(functions), WTF::move(onlyWhereNobodySees), WTF::move(outOfSight) };
+    return { WTF::move(functions), WTF::move(onlyWhereNobodySees), WTF::move(outOfSight), WTF::move(namedOutOfSight) };
 }
 
 static BitVector findFunctionsWhoseClosuresAreGivenDisplayName(const ValueFlowResultInputs& inputs)
@@ -620,6 +629,7 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
     tables.functions.functionsWhoseClosuresMayBeRenamed = WTF::move(renamed.all);
     tables.functions.functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees = WTF::move(renamed.onlyWhereNobodySees);
     tables.functions.functionsWhoseClosuresGoOutOfSightUnnamed = WTF::move(renamed.outOfSight);
+    tables.functions.functionsWhoseClosuresMayBeNamedOutOfSight = WTF::move(renamed.namedOutOfSight);
     tables.functions.functionsWhoseClosuresAreGivenDisplayName = findFunctionsWhoseClosuresAreGivenDisplayName(inputs);
     tables.sites.allocationClasses.appendVector(WTF::move(classesOfClosures));
 }

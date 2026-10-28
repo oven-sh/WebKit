@@ -1,4 +1,5 @@
 # Flow lost sight of the closures of f0, so once one is renamed only calls by value record which closure runs. A caller that creates such a closure and lets it escape around the call tests that no function was renamed before it calls directly. Behind a failed test the call stays by value. A closure that does not escape is called directly.
+# A call of a closure that nobody else has seen says that it enters the caller's own function object: its frame shows the name that the closure was made with, whatever another closure of f0 was called meanwhile
 # FORM: Prepared
 # RUN: pass ResolveCalls
 # CHECK: outcome: Changed
@@ -13,7 +14,7 @@ function f1 name="onlyCalls" parameters=[{type=anything}] results=[{type=anythin
     v2 = Call v1, -, v0
     Return v2
 # CHECK-NOT: AreFunctionNamesUnchanged
-# CHECK: = CallDirect v0 function=f0
+# CHECK: = CallDirect v0 function=f0 [callsOwnFunctionObject,
 }
 
 function f2 name="escapesBeforeTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {

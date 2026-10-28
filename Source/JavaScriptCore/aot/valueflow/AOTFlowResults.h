@@ -168,6 +168,7 @@ struct FlowFunctionTables {
     BitVector functionsWhoseClosuresMayBeRenamed;
     BitVector functionsWhoseClosuresMayBeRenamedOnlyWhereNobodySees;
     BitVector functionsWhoseClosuresGoOutOfSightUnnamed;
+    BitVector functionsWhoseClosuresMayBeNamedOutOfSight;
     BitVector functionsWhoseClosuresAreGivenDisplayName;
     BitVector functionsWhoseClosuresAreMadeOnce;
     // By the function as it is written: all its forms together.
@@ -358,6 +359,8 @@ public:
     bool closuresMayBeRenamedOnlyWhereNobodySees(FunctionID closureFunction) const;
     // No statement is seen to name one, and they go where nobody follows them.
     bool closuresGoOutOfSightUnnamed(FunctionID closureFunction) const;
+    // Of those: a statement of the program defines `name` on an object nobody follows.
+    bool closuresMayBeNamedOutOfSight(FunctionID closureFunction) const;
     // By a statement that is seen to reach the closure and writes that key or a key nobody knows.
     bool closuresAreGivenDisplayName(FunctionID closureFunction) const;
     // By one operation that runs once, or by the first read of the variable that starts with the function.

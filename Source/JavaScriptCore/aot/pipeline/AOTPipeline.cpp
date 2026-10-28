@@ -141,7 +141,7 @@ constexpr InvalidatedAnalyses nothing = InvalidatedAnalyses::None;
 constexpr InvalidatedAnalyses values = InvalidatedAnalyses::Values;
 constexpr InvalidatedAnalyses everything = InvalidatedAnalyses::All;
 
-constexpr Results slotInputs { Flow, CallGraph, Heat, FrameAllocation, EnvironmentReuse };
+constexpr Results slotInputs { Flow, CallGraph, FrameAllocation, EnvironmentReuse };
 constexpr Results placementInputs { Flow, CallGraph, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, SlotPlan, RegExpRequests };
 constexpr Results codeGenerationInputs { Flow, EffectSummaries, Heat, CallingConventions, FrameAllocation, EnvironmentReuse, LiteralStrings, ConstantCollections, RegExpRequests, StackChecks, Placement, SiteCaches };
 
@@ -1100,7 +1100,6 @@ static SlotPlanInputs createSlotPlanInputs(Pipeline& pipeline)
     return {
         .flow = flow,
         .callGraph = pipeline.analyses().callGraph(flow),
-        .heat = pipeline.analyses().heat(flow),
         .frameAllocation = *pipeline.output().frameAllocation,
         .environmentReuse = *pipeline.output().environmentReuse,
     };

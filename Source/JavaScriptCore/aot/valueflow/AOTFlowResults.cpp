@@ -373,6 +373,14 @@ bool FlowResults::closuresGoOutOfSightUnnamed(FunctionID closureFunction) const
     return analyzed && m_tables.functions.functionsWhoseClosuresGoOutOfSightUnnamed.get(analyzed.index());
 }
 
+bool FlowResults::closuresMayBeNamedOutOfSight(FunctionID closureFunction) const
+{
+    if (!hasResults())
+        return true;
+    FunctionID analyzed = findAnalyzedFunction(closureFunction);
+    return analyzed && m_tables.functions.functionsWhoseClosuresMayBeNamedOutOfSight.get(analyzed.index());
+}
+
 bool FlowResults::closuresAreGivenDisplayName(FunctionID closureFunction) const
 {
     if (!hasResults())

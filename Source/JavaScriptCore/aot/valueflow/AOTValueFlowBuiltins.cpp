@@ -694,6 +694,17 @@ private:
         return argument && argument->opcode == Opcode::Integer && argument->integer() >= range.minimum && argument->integer() <= range.maximum;
     }
 
+    bool isStringLiteralAmong(BuiltinOperand position, const BuiltinType& type) const
+    {
+        const Value* argument = type.stringLiterals.empty() ? nullptr : argumentSpelledOutAt(position);
+        if (!argument || argument->opcode != Opcode::String)
+            return false;
+        std::span<const uint8_t> text = m_program.strings[argument->string()];
+        return std::ranges::any_of(type.stringLiterals, [&](BuiltinName literal) {
+            return std::ranges::equal(text, m_builtins.textOf(literal));
+        });
+    }
+
     ValueSetID allocatedByBuiltinsAs(BuiltinOperand position, ValueSetID classes, bool hasPrototypeOfClass) { return classes == ValueSets::nothing ? ValueSets::nothing : objectsAllocatedByBuiltinsAs(m_context, valueAt(position), classes, hasPrototypeOfClass); }
 
     void noteAllocationAs(BuiltinClassID builtinClass, ValueFlowObjectID object)
@@ -742,6 +753,8 @@ private:
             stillTested = m_context.maker().intersect(stillTested, ValueSets::complement(allocatedByBuiltinsAs(node.operand, m_tables.classesSurelyOf(branch.tested), false)));
             if (isIntegerLiteralWithin(node.operand, m_builtins.at(branch.tested).integers))
                 stillTested = m_context.maker().intersect(stillTested, ValueSets::complement(m_context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::Integer))));
+            if (isStringLiteralAmong(node.operand, m_builtins.at(branch.tested)))
+                stillTested = m_context.maker().intersect(stillTested, ValueSets::complement(m_universe.strings()));
             absenceIsStillTested &= !admitsAbsence;
 
             ValueSetID whilePristine = m_context.maker().unite(m_tables.membersOfWhilePristine(branch.tested), allocatedByBuiltinsAs(node.operand, m_tables.classesOfWhilePristine(branch.tested), true));
@@ -1750,7 +1763,8 @@ private:
             forEachCallbackResultIn(place.newValueType, functor);
             return;
         case BuiltinPlaceKind::NativeMemory:
-            constant = m_context.maker().unite(constant, undescribedValue());
+            // Somebody stored it there: the read makes nothing.
+            constant = m_context.maker().unite(constant, undescribedValueThatIsNoBuffer(m_context));
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -3736,17 +3750,6 @@ static void forEachNameCalledIn(const ValueFlowBehavior& behavior, NOESCAPE cons
     }
 }
 
-static bool isPassedOnlyPrimitives(ValueFlowRuleContext& context, const ValueFlowBehavior& behavior, BuiltinName name)
-{
-    if (behavior.protocols.contains(Protocol::ToPrimitive) && (name == BuiltinNames::toPrimitiveSymbol || name == BuiltinNames::valueOf || name == BuiltinNames::toString))
-        return true;
-    if (behavior.protocols.contains(Protocol::ToJSON) && name == BuiltinNames::toJSON)
-        return true;
-    const BuiltinTable& builtins = context.program().builtins();
-    const BuiltinNamedMemberCall* record = builtins.callOfMemberNamed(name);
-    return record && passesOnlyPrimitives(builtins, *record);
-}
-
 static void callLibraryMethodsOfUnknownReceiver(ValueFlowRuleContext& context, ValueFlowNodeID hub, const ValueFlowBehavior& behavior)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -3792,9 +3795,8 @@ static void applyBuiltinsThatActOnEscapedReceivers(ValueFlowRuleContext& context
         auto find = [&](ClimbingSet receivers) {
             return context.restrict(membersToCall(context, receivers, name), acting);
         };
-        ValueSetID passed = isPassedOnlyPrimitives(context, behavior, name) ? universe.anyPrimitive() : unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult);
         forEachReceiverToldApart(context, context.valueWithin(ClimbingSet(universe.knownObjects()), hub), { }, [&](ClimbingSet receivers, const ValueFlowOperand& thisValue) {
-            callFromNativeCode(context, find(receivers), thisValue, passed, behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), find);
+            callFromNativeCode(context, find(receivers), thisValue, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult), behavior.isTransitive ? hub : ValueFlowProgramNodes::escaped(), find);
         });
     });
 }

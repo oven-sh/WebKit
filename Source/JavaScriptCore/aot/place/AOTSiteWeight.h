@@ -63,12 +63,16 @@ inline SiteWeight saturatedProduct(SiteWeight a, SiteWeight b)
 class FunctionSiteWeights {
 public:
     FunctionSiteWeights(const Program&, const Heat&, FunctionID, FunctionAnalyses&);
+    // Every function counts as entered once: a site weighs what the branches and loops of its own function say.
+    FunctionSiteWeights(const Program&, FunctionID, FunctionAnalyses&);
 
     SiteWeight weightOf(BlockID) const;
     SiteHeat heatOf(BlockID) const;
     Expected<bool> isInLoop(BlockID) const;
 
 private:
+    FunctionSiteWeights(double activations, FunctionAnalyses&);
+
     double m_activations;
     bool m_isLeastInEveryBlock;
     FunctionAnalyses& m_analyses;
