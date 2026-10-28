@@ -301,9 +301,10 @@ private:
     void callSettersOfReceivers(ClimbingSet start, const HeapKey&, const ValueFlowOperand& value);
     void remove(const ValueFlowOperand& object, const HeapKey&);
     enum class CopiedProperties : uint8_t { AreDefinedAsValues, AreAssigned, AreDefinedAsTheyStand };
-    void copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties, std::optional<std::span<const PropertyKeyID>> namesOfSource = std::nullopt);
+    void copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties);
     bool readsRestArgumentOfInstance();
     bool readsUnderNameOfEnumerationOfSameObject();
+    bool listsNamesOfEnumeration();
     void readWhatNamesOfProgramMayHaveHidden(const HeapChain&, ValueFlowNodeID result, Members& getters);
     void readOwnPropertiesListedAbove(ClimbingSet objects, ValueFlowNodeID result, Members& getters);
     bool hasMemberOfHost(ValueFlowObjectID holder) const;

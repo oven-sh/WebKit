@@ -46,6 +46,8 @@ inline ValueFlowCellName cellOfDroppedResults(const BuiltinTable& builtins)
 }
 
 ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext&, BuiltinName cell);
+// True where flow can list the own names of every object among the values: `held` gets them.
+bool listKeysAsObjectKeysDoes(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID held);
 
 void applyHostUses(BuiltinID onBehalfOf, const ValueFlowOperand& value, const BuiltinHostUses&, ValueFlowRuleContext&);
 void callFromHost(BuiltinID onBehalfOf, const ValueFlowOperand& callees, const BuiltinHostCall&, ValueFlowRuleContext&);
@@ -81,6 +83,10 @@ void enterCodeThatEntryDescribes(ValueFlowObjectID closure, ValueFlowRuleContext
 void noteCallOfBuiltin(BuiltinID, ValueFlowCallKind, ValueFlowRuleContext&);
 void noteInstancesIn(ValueFlowRuleContext&, BuiltinTypeID);
 void connectEnumerableMembersOf(ClimbingSet hostObjects, ValueFlowNodeID to, ValueFlowRuleContext&);
+// The keys of objects that only the statements of the program have laid a name on: those that they were made with. What was added since is under AddedNames.
+enum class OwnKeys : uint8_t { EnumerableStrings, Strings, All };
+ClimbingSet objectsWithOwnKeysAmong(ValueFlowRuleContext&, ClimbingSet values);
+std::optional<ValueSetID> keysThatObjectsWereMadeWith(ValueFlowRuleContext&, ClimbingSet objects, OwnKeys);
 void carryOut(ValueFlowRuleContext&, ValueFlowNodeID values);
 void carryOut(ValueFlowRuleContext&, const ValueFlowOperand& values);
 bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext&, BuiltinName);

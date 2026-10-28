@@ -39,6 +39,8 @@ void forEachPartOfCallees(ValueFlowRuleContext& context, ClimbingSet callees, NO
 }
 
 ValueID definitionThroughTests(const Function&, ValueID);
+// TryReExportFields passes on the names of its source, or leaves that to the loop that is written behind it. This is a step of that loop.
+bool walksNamesThatAreReExported(const Function&, const Value& stepOfEnumeration);
 BuiltinID entryNamedByOperations(const Program&, const Function&, ValueID);
 
 bool hasRuleOfItsOwn(Opcode);

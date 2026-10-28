@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTValueFlowBodies.h"
 #include "AOTValueFlowBuiltins.h"
+#include "AOTKnownClosures.h"
+#include "AOTValueFlowRules.h"
 
 #if ENABLE(AOT)
 
@@ -992,6 +994,68 @@ private:
         }
     }
 
+    // The modules of the library whose code names a function of the host that evaluates text or loads code the build has not seen, or calls such a function of the language, and the modules that ask for one of those.
+    BitVector libraryModulesThatMayRaiseEvents()
+    {
+        const BuiltinTable& builtins = m_program.builtins();
+        uint32_t numberOfModules = m_program.modules.size();
+        BitVector mayRaiseEvents(numberOfModules);
+        Vector<Vector<uint32_t, 4>> askedForBy(numberOfModules);
+        Vector<uint32_t, 32> worklist;
+        auto isOfLibrary = [&](ModuleID module) {
+            return module && m_program.at(module).kind == ModuleKind::RuntimeSource;
+        };
+        auto raise = [&](uint32_t module) {
+            if (!mayRaiseEvents.set(module))
+                worklist.append(module);
+        };
+        auto entryNamedBy = [&](const Function& function, ValueID id) {
+            const Value& value = function.at(id);
+            if (value.opcode == Opcode::Builtin || value.opcode == Opcode::NativeBinding)
+                return builtins.canonicalID(value.builtin());
+            BuiltinID named = value.opcode == Opcode::PropGet ? entryNamedByOperations(m_program, function, id) : BuiltinID();
+            return named ? builtins.canonicalID(named) : BuiltinID();
+        };
+        auto ask = [&](ModuleID asking, ModuleID asked) {
+            if (isOfLibrary(asked))
+                askedForBy[asked.index()].append(asking.index());
+        };
+        for (uint32_t index = 0; index < numberOfModules; ++index) {
+            if (!isOfLibrary(ModuleID(index)))
+                continue;
+            for (const ModuleRequest& request : m_program.modules[index].requests)
+                ask(ModuleID(index), request.target);
+        }
+        for (const Function& function : m_program.functions) {
+            if (!isOfLibrary(function.module))
+                continue;
+            for (uint32_t index = 0; index < function.values.size(); ++index) {
+                const Value& value = function.values[index];
+                BuiltinID named = entryNamedBy(function, ValueID(index));
+                if (named && builtins.at(named).origin == BuiltinOrigin::Host && raisesEventWhenCalled(builtins, named))
+                    raise(function.module.index());
+                if (flowRuleOf(value.opcode) == FlowRule::Call && value.numberOfOperands() && value.operand(0)) {
+                    BuiltinID callee = entryNamedBy(function, definitionThroughSameValues(function, value.operand(0)));
+                    if (callee && raisesEventWhenCalled(builtins, callee))
+                        raise(function.module.index());
+                }
+                if (value.opcode == Opcode::RequireModule || value.opcode == Opcode::ImportModule || value.opcode == Opcode::ModuleNamespace || value.opcode == Opcode::EvaluateModule)
+                    ask(function.module, value.module());
+                if (value.opcode != Opcode::RequireBuiltinModule)
+                    continue;
+                for (uint32_t asked = 0; asked < numberOfModules; ++asked) {
+                    if (m_program.modules[asked].runtimeModule == value.runtimeModule())
+                        ask(function.module, ModuleID(asked));
+                }
+            }
+        }
+        while (!worklist.isEmpty()) {
+            for (uint32_t asking : askedForBy[worklist.takeLast()])
+                raise(asking);
+        }
+        return mayRaiseEvents;
+    }
+
     void makeMasksOfUniverse()
     {
         ValueFlowUniverse& universe = m_result.m_universe;
@@ -1128,12 +1192,16 @@ private:
         universe.m_prototypeObjectsOfLibraryClasses = take();
         universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
         universe.m_holdersOfLibraryExports = ValueSets::nothing;
+        universe.m_holdersOfLibraryExportsThatRaiseNoEvent = ValueSets::nothing;
+        BitVector mayRaiseEvents = libraryModulesThatMayRaiseEvents();
         for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
             if (m_program.modules[index].kind != ModuleKind::RuntimeSource)
                 continue;
             appendHoldersOfExports(list, ModuleID(index));
             universe.m_holdersOfExportsOfModule[index] = take();
             universe.m_holdersOfLibraryExports = maker.unite(universe.m_holdersOfLibraryExports, universe.m_holdersOfExportsOfModule[index]);
+            if (!mayRaiseEvents.get(index))
+                universe.m_holdersOfLibraryExportsThatRaiseNoEvent = maker.unite(universe.m_holdersOfLibraryExportsThatRaiseNoEvent, universe.m_holdersOfExportsOfModule[index]);
         }
         universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
 

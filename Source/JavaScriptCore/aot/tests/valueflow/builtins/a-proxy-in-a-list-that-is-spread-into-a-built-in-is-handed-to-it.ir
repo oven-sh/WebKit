@@ -1,0 +1,26 @@
+# Object.isExtensible(...[new Proxy({}, { isExtensible(target) { .. } })])
+# The call has the list for its operand and reads what it hands over out of the list by itself. The built-in gets the proxy all the same: whatever native code may do to it enters a trap.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target"
+layout L1 name="Handler" fields=[{key="isExtensible" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    v2 = NewObject -, v1 layout=L1 fields=[0]
+    v3 = Builtin builtin=Proxy
+    v4 = Construct v3, -, v0, v2
+    v5 = Builtin builtin=Object
+    v6 = Builtin builtin=ObjectIsExtensible
+    v7 = NewArray contents=anything
+    AppendElement v7, v4
+    v9 = CallList v6, v5, v7
+    Return v9
+}
+function f1 name="isExtensible" kind=Method parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Boolean boolean=true
+    Return v1
+}

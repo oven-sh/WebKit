@@ -44,7 +44,6 @@ struct ValueFlowPropertyActionOperands {
     ValueFlowNodeID thrown;
     std::optional<std::span<const PropertyKeyID>> namesInMap { };
     bool mapHasComputedNames { false };
-    std::optional<std::span<const PropertyKeyID>> namesOfSource { };
 };
 void applyPropertyAction(ValueFlowRuleContext&, const BuiltinPropertyAction&, const ValueFlowPropertyActionOperands&);
 

@@ -331,6 +331,17 @@ static void lookUpThroughInstances(ValueFlowRuleContext& context, ValueFlowObjec
     ClimbingSet anyName(markOfAnyName(universe));
     ClimbingSet anyIndex(context.maker().unite(markOfAnyIndex(universe), markOfAnyName(universe)));
     ClimbingSet names = context.unite(context.valueOf(context.read(above, ValueFlowCellName { ValueFlowNameKind::AddedNames })), context.valueOf(context.read(above, ValueFlowCellName { ValueFlowNameKind::NamesOfMethods })));
+    Vector<ValueFlowObjectID, 16> declaredNames;
+    context.forEachMember(known(context, above), [&](ValueFlowObjectID object) {
+        LayoutID layout = universe.layoutOf(object);
+        if (!layout)
+            return;
+        for (const Field& field : program.at(layout).fields) {
+            if (field.key)
+                declaredNames.append(universe.keyConstant(field.key));
+        }
+    });
+    names = context.unite(names, ClimbingSet(context.maker().of(declaredNames.span())));
     bool holdsThemUnderAnyName = context.meet(names, ValueSets::complement(universe.keys()));
     bool isReadUnderSomeName = holdsSomething(context, context.valueOf(namesRead)) || (holdsSomething(context, context.valueOf(namesFoundBelow)) && holdsSomething(context, context.valueOf(namesHandedOn)));
     if (context.holdsAnyOf(anyName, namesRead) || (context.holdsAnyOf(anyName, namesFoundBelow) && context.holdsAnyOf(anyName, namesHandedOn)) || (holdsThemUnderAnyName && isReadUnderSomeName))

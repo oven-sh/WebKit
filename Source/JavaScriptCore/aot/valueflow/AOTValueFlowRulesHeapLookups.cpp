@@ -611,7 +611,7 @@ void HeapRule::collectChain()
 {
     ClimbingSet start = m_context.setOfKey();
     ValueFlowName nameOfChain = m_context.nameOfKey();
-    add(m_statement.result, start);
+    add(m_statement.result, m_context.withoutProxiesThatWalksPass(start));
     if (mayBeUnknownObject(start))
         letPrototypeObjectsOfLanguageEscape();
     if (mayBeUntrackedObject(start)) {
@@ -628,6 +628,8 @@ void HeapRule::collectChain()
     if (!atCreation)
         atCreation = prototypesAtCreationOf(start);
     ClimbingSet above = prototypesOf(start, atCreation);
+    if (ClimbingSet passed = m_context.proxiesThatWalksPassAmong(known(above)); holdsAnything(passed))
+        connect(m_context.readWhatWasWritten(passed, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() }), m_context.written(passed, prototypeLinkName));
     ValueFlowNodeID chainAbove = m_context.lookup(known(above), nameOfChain);
     connect(chainAbove, m_statement.result);
     add(m_statement.result, m_context.restrict(above, m_context.maker().unite(m_universe.placeholdersAlone(), only(ValueFlowUniverse::markOfNamedBun()))));
@@ -639,7 +641,7 @@ void HeapRule::collectChain()
     ClimbingSet targetsOfCopies = nameOfChain == chainWithoutCopiesOntoRealmName ? m_context.restrict(known(start), ValueSets::complement(m_tables.objectsOfRealm())) : known(start);
     ValueFlowNodeID sourcesOfCopies = readWhereWritten(targetsOfCopies, copiedFromName);
     above = m_context.unite(above, withSourcesOfCopies(m_context, known(valueOfNodeIfAny(sourcesOfCopies))));
-    add(m_statement.result, known(above));
+    add(m_statement.result, m_context.withoutProxiesThatWalksPass(known(above)));
     if (sourcesOfCopies && m_context.holdsAnyOf(ClimbingSet(only(ValueFlowUniverse::markOfNamedBun())), sourcesOfCopies))
         add(m_statement.result, only(ValueFlowUniverse::markOfNamedBun()));
 
@@ -1179,6 +1181,9 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
     if (chain.holdsUnknownObject) {
         AOT_THRESHOLD(unsigned, longestChain, 8);
         ClimbingSet above = known(chain.start);
+        // The object nobody knows stands for no evaluator, so a function that it covers still counts here.
+        if (object.node)
+            above = m_context.unite(above, m_context.valueWithin(ClimbingSet(m_universe.closures()), object.node));
         above = m_context.unite(above, m_context.restrict(publicModulesThatMayBe(object), m_context.maker().intersect(holders, allButBunUnlessNamed(object))));
         Vector<ClimbingSet, longestChain> walked;
         for (unsigned step = 0; step < longestChain && holdsAnything(above); ++step) {

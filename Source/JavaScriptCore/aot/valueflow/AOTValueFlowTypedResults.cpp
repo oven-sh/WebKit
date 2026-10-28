@@ -124,6 +124,8 @@ static ValueFlowTypedResult findTypedResult(const Program& program, const ValueF
 
 static bool mayCallFunctionWithTypedResult(const Program& program, const ValueFlowBuiltinTables& tables, const Function& function, const Value& call)
 {
+    if (typedResultFormOf(program, call) != TypedResultForm::None)
+        return true;
     if (PropertyKeyID key = call.calleeKey()) {
         return std::ranges::any_of(tables.namesOfFunctionsWithTypedResults(), [&](BuiltinName name) {
             return program.keyOf(name) == key;
@@ -157,26 +159,11 @@ void appendSitesOfTypedResults(const Program& program, const ValueFlowBuiltinTab
     }
 }
 
-void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStatement& call, const ValueFlowBuiltinCall& description, ValueFlowObjectID promise, ValueSetID plainDataOfCall, ValueFlowRuleContext& context)
+static void fillTypedResult(const ValueFlowStatement& call, ValueFlowNodeID target, ValueSetID plainDataOfCall, ValueFlowRuleContext& context)
 {
-    if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || description.kind != ValueFlowCallKind::Call)
-        return;
-
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     const Function& function = program.at(call.function);
-    ExpectedResultID expected = function.at(call.site).expectedResult();
-    TypedResultForm form = overload.result.typedResultForm;
-    if (form == TypedResultForm::None || !universe.siteObject(call, ValueFlowTypedResult::firstOrdinal))
-        return;
-
-    ValueFlowNodeID target = description.result;
-    if (!expected && form != TypedResultForm::ParsedText && answersPromise(program.builtins(), overload)) {
-        if (!promise)
-            return;
-        target = context.written(ClimbingSet(context.maker().of(promise)), { ValueFlowNameKind::Slot, BuiltinSlots::PromiseValue.index() });
-    }
-
     CFG cfg(function);
     ValueFlowTypedResult result = findTypedResult(program, universe.builtinTables(), function, UseLists(function, cfg), call.site);
     RELEASE_ASSERT(result);
@@ -268,6 +255,34 @@ void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStateme
     }
     if (target)
         context.add(target, valueOf(result.type));
+}
+
+void allocateTypedResult(const BuiltinOverload& overload, const ValueFlowStatement& call, const ValueFlowBuiltinCall& description, ValueFlowObjectID promise, ValueSetID plainDataOfCall, ValueFlowRuleContext& context)
+{
+    if (call.kind != ValueFlowStatementKind::Operation || call.opcode != Opcode::Call || description.kind != ValueFlowCallKind::Call)
+        return;
+
+    const Program& program = context.program();
+    ExpectedResultID expected = program.at(call.function).at(call.site).expectedResult();
+    TypedResultForm form = overload.result.typedResultForm;
+    if (form == TypedResultForm::None || !context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
+        return;
+
+    ValueFlowNodeID target = description.result;
+    if (!expected && form != TypedResultForm::ParsedText && answersPromise(program.builtins(), overload)) {
+        if (!promise)
+            return;
+        target = context.written(ClimbingSet(context.maker().of(promise)), { ValueFlowNameKind::Slot, BuiltinSlots::PromiseValue.index() });
+    }
+    fillTypedResult(call, target, plainDataOfCall, context);
+}
+
+void allocateRowsOfQuery(const ValueFlowStatement& call, ValueFlowRuleContext& context)
+{
+    if (call.opcode != Opcode::Call || typedResultFormOf(context.program(), context.program().at(call.function).at(call.site)) != TypedResultForm::Rows)
+        return;
+    if (context.universe().siteObject(call, ValueFlowTypedResult::firstOrdinal))
+        fillTypedResult(call, call.result, { }, context);
 }
 
 void computeTypedResultResults(const ValueFlowResultInputs& inputs, FlowResultTables& tables)

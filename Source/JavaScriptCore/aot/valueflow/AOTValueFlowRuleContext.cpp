@@ -296,6 +296,21 @@ ClimbingSet ValueFlowRuleContext::proxiesAskedByTheirTrapsIn(const ValueFlowOper
     return proxies;
 }
 
+ClimbingSet ValueFlowRuleContext::withoutProxiesThatWalksPass(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return values;
+    ValueSetID passed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesThatHandOnWhatComesFromBelow));
+    return passed == ValueSets::nothing ? values : restrict(values, ValueSets::complement(passed));
+}
+
+ClimbingSet ValueFlowRuleContext::proxiesThatWalksPassAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    return restrict(values, valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesThatHandOnWhatComesFromBelow)));
+}
+
 void ValueFlowRuleContext::openProxiesAmong(ClimbingSet values)
 {
     if (!m_solver.m_input.nodes)

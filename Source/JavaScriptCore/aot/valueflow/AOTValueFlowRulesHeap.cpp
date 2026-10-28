@@ -839,6 +839,20 @@ bool HeapRule::readsUnderNameOfEnumerationOfSameObject()
     return definitionThroughTests(function, step.operand(At::ForInStep::object)) == definitionThroughTests(function, operation().operand(At::ElemGet::object));
 }
 
+// The names of objects below Object.prototype alone, where nobody has given that object a name that an enumeration shows.
+bool HeapRule::listsNamesOfEnumeration()
+{
+    if (mayUnknownCodeWrite(m_context) || isHostFlagRaised(m_context, ValueFlowHostNode::ObjectNobodyKnowsIsWritten))
+        return false;
+    ClimbingSet enumerated = m_context.valueOf(operand(OperandIndex::ForInStep::object));
+    ValueSetID objectPrototype = only(m_universe.objectOf(Builtins::ObjectPrototype));
+    if (m_context.meet(objectsAbove(known(enumerated)), ValueSets::complement(objectPrototype)))
+        return false;
+    if (holdsAnything(m_context.markedAmong(ClimbingSet(objectPrototype), { ObjectMutation::AddProperty, ObjectMutation::RedefineProperty })) || hasBeenLost(ClimbingSet(objectPrototype)))
+        return false;
+    return listKeysAsObjectKeysDoes(m_context, enumerated, m_statement.result);
+}
+
 void HeapRule::runOperation()
 {
     namespace At = OperandIndex;
@@ -1012,6 +1026,8 @@ void HeapRule::runOperation()
         [[fallthrough]];
     case Opcode::ForInStep:
         add(m_statement.result, m_universe.maskOf(m_context.maker(), m_program, m_program.at(operation().type)));
+        if (walksNamesThatAreReExported(m_program.at(m_statement.function), operation()) && !listsNamesOfEnumeration())
+            add(m_statement.result, m_universe.strings());
         mayThrow();
         return;
     case Opcode::GetSuperBase: {

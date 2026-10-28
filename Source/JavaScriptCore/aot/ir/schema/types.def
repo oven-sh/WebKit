@@ -52,7 +52,8 @@ enum IllTypedCause abi {
 enum CastResolution { | engine Unresolved Nothing Upcast Check Assume }
 record TailCast wire { declared: DeclaredType | engine resolution: CastResolution }
 
-record ExpectedResult wire { type: Type layouts: Span<Layout> }
+flags ExpectedResultFlags { IsRowsOfQuery }
+record ExpectedResult wire { type: Type layouts: Span<Layout> flags: ExpectedResultFlags }
 
 list bytes : Byte
 list words : Word

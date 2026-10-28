@@ -837,7 +837,8 @@ private:
         }
         if (producer.opcode == Opcode::CallDirect && !m_program.at(producer.function()).isUnsplitCoroutine())
             return setNode(id, NodeName::result(producer.function(), value.index()));
-        if (!typeOf(id).hasObjects() && typeOf(id).isJavaScriptValue())
+        bool isListedName = value.index() == static_cast<uint32_t>(ForInStepResult::Key) && walksNamesThatAreReExported(m_function, producer);
+        if (!isListedName && !typeOf(id).hasObjects() && typeOf(id).isJavaScriptValue())
             return setConstant(id, constantOfType(typeOf(id)));
         beginSources(id);
         addSource(id, producerID, maskInside(value.type, kindOfResultMask(producer.opcode)));

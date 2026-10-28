@@ -288,6 +288,10 @@ ValueSetID ValueFlowHeapTables::findLockedHolders(const MembersUnderKey& members
         appendIfLocked(holder, locked);
         noteHolderListingName(holder);
     }
+    // The global object holds itself under its own name, and is no member of any holder in the table.
+    const Builtin& globalObject = m_program.builtins().at(Builtins::GlobalThis);
+    if (!isPrivateName && name == globalObject.name && globalObject.mutability == BuiltinMutability::AlwaysLocked)
+        locked.append(objectsOf(Builtins::GlobalThis));
     for (auto found = std::ranges::lower_bound(m_closedHoldersListingNames, name, { }, &HolderListingName::name); found != m_closedHoldersListingNames.end() && found->name == name; ++found)
         noteHolderListingName(found->holder);
 
@@ -567,7 +571,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         };
         Vector<ValueFlowObjectID, 32> functionsThatCallOrBindOperand;
         for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
-            if (builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Get))
+            if (builtins.at(BuiltinID(index)).kind != BuiltinKind::Constant && builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Get))
                 m_hasGetEntry.quickSet(index);
             if (builtins.dispatchOf(BuiltinID(index), BuiltinCallMode::Set))
                 m_hasSetEntry.quickSet(index);

@@ -8,18 +8,13 @@
 
 #if ENABLE(AOT)
 
+#include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties copiedProperties, std::optional<std::span<const PropertyKeyID>> namesOfSource)
+void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties copiedProperties)
 {
-    auto forEachKeyOfSource = [&](NOESCAPE const Invocable<void(const HeapKey&)> auto& functor) {
-        if (!namesOfSource)
-            return functor(unknownHeapKey);
-        for (PropertyKeyID name : *namesOfSource)
-            functor(keyNamed(name));
-    };
     bool storesThroughSetters = copiedProperties == CopiedProperties::AreAssigned;
     bool keepsAccessors = copiedProperties == CopiedProperties::AreDefinedAsTheyStand;
     ClimbingSet targets = m_context.valueOf(target);
@@ -29,6 +24,14 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     ValueFlowName everySetter = foundName(unknownHeapKey, HeapPropertyPart::Setter);
     ValueFlowName valueUnderUnknownKey = writtenName(unknownHeapKey, HeapPropertyPart::Value);
 
+    // The copy stays a copy. Of the setters above the target it runs those under the keys of the sources.
+    ClimbingSet sourcesWithKeys = objectsWithOwnKeysAmong(m_context, sources);
+    std::optional<ValueSetID> keysOfNewSources = storesThroughSetters ? keysThatObjectsWereMadeWith(m_context, sourcesWithKeys, OwnKeys::All) : std::nullopt;
+    auto forEachKeyOfSource = [&](NOESCAPE const Invocable<void(const HeapKey&)> auto& functor) {
+        if (!keysOfNewSources)
+            return functor(unknownHeapKey);
+        forEachKey(m_context.operandHolding(m_context.unite(ClimbingSet(*keysOfNewSources), m_context.valueOf(m_context.read(sourcesWithKeys, addedNamesName)))), functor);
+    };
     if (storesThroughSetters) {
         forEachKeyOfSource([&](const HeapKey& key) {
             replaceMembersThroughSettersFoundFrom(targets, key, PropertySearch::WholeChain, nullptr, true);
@@ -195,7 +198,7 @@ void HeapRule::changePrototype(ClimbingSet objects, const ValueFlowOperand& prot
 {
     write(objects, prototypeLinkName, prototype);
     m_context.mark(m_context.restrict(objects, m_universe.objects()), ObjectMutation::ChangePrototype);
-    m_context.mark(m_context.restrict(m_context.valueOf(prototype), m_universe.objects()), ObjectMutation::BecomePrototype);
+    m_context.mark(m_context.withoutProxiesThatWalksPass(m_context.restrict(m_context.valueOf(prototype), m_universe.objects())), ObjectMutation::BecomePrototype);
 }
 
 void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapKey& key, HeapPropertyPart part, PropertySearch search)
@@ -295,7 +298,7 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         return;
     case BuiltinPropertyActionKind::AssignsFrom:
         if (!operands.namesInMap) {
-            copyProperties(object, value, CopiedProperties::AreAssigned, operands.namesOfSource);
+            copyProperties(object, value, CopiedProperties::AreAssigned);
             return;
         }
         for (PropertyKeyID name : *operands.namesInMap) {

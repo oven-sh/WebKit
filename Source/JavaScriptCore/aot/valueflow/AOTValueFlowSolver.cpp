@@ -12,6 +12,7 @@
 #include "AOTCFG.h"
 #include "AOTIRProgram.h"
 #include "AOTPhaseTimes.h"
+#include "AOTPrototypesAtCreation.h"
 #include "AOTSort.h"
 #include "AOTSystemResources.h"
 #include "AOTThreshold.h"
@@ -1673,6 +1674,8 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     const ValueFlowProgramNodes& nodes = *m_input.nodes;
     ValueFlowNodeID listOfFollowed = nodes.ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed);
     ValueFlowNodeID listOfOpen = nodes.ofHost(ValueFlowHostNode::ProxiesThatAreOpen);
+    ValueFlowNodeID listOfThoseThatWalksPass = nodes.ofHost(ValueFlowHostNode::ProxiesThatHandOnWhatComesFromBelow);
+    ValueFlowNodeID listOfThoseWithTrapsForWalks = nodes.ofHost(ValueFlowHostNode::ProxiesWithTrapsForWhatComesFromBelow);
     ValueSetID open = maker.uniteAll({ { m_graph.valueOf(listOfOpen), m_graph.valueOf(ValueFlowProgramNodes::escaped()), m_graph.valueOf(ValueFlowProgramNodes::lost()) } });
     ValueSetID asked = maker.intersect(m_graph.valueOf(listOfFollowed), ValueSets::complement(open));
     if (asked == ValueSets::nothing)
@@ -1686,7 +1689,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
 
     // In hands that no statement stands for: what the host holds, what a behavior of built-ins takes in.
     for (uint32_t index = nodes.ofHost(static_cast<ValueFlowHostNode>(0)).index(); index < m_input.numberOfNodes; ++index) {
-        if (index != listOfFollowed.index() && index != listOfOpen.index())
+        if (index != listOfFollowed.index() && index != listOfOpen.index() && index != listOfThoseThatWalksPass.index() && index != listOfThoseWithTrapsForWalks.index())
             note(m_graph.valueOf(ValueFlowNodeID(index)));
     }
 
@@ -1698,6 +1701,8 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     }
 
     ValueSetID closures = m_input.universe->closures();
+    ValueSetID stopWalks = maker.unite(ValueSets::complement(m_graph.valueOf(listOfThoseThatWalksPass)), m_graph.valueOf(listOfThoseWithTrapsForWalks));
+    Vector<const MadeNodes*> links;
     // A rule that asks about all objects at once, whatever they are, has taken none of them out of a value.
     ValueSetID everyObjectThatBuiltinsMake = maker.intersect(m_input.universe->objectsThatMayBeAnything(), m_input.universe->knownObjects());
     // Flow follows a value out of a cell that the table names, and out of the cell of a member whose reads are answered from it.
@@ -1716,6 +1721,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
         });
         return isReadBack;
     };
+    BitVector readsProxy(m_madeNodes.size());
     for (const MadeNodes& made : m_madeNodes) {
         const ValueFlowNodeKey& key = made.key;
         switch (key.kind) {
@@ -1730,8 +1736,12 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             }
             break;
         case ValueFlowMadeNodeKind::Hub:
-        case ValueFlowMadeNodeKind::Marked:
             note(m_graph.valueOf(made.first));
+            break;
+        case ValueFlowMadeNodeKind::Marked:
+            // The model writes the link from a proxy to its target.
+            if (key != ValueFlowNodeKey::objectsWithRareWrite(ValueFlowRareWrite::PrototypeLink))
+                note(m_graph.valueOf(made.first));
             break;
         case ValueFlowMadeNodeKind::CallGroup:
             note(key.set);
@@ -1752,10 +1762,18 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             ValueFlowName name = key.name();
             bool isUnderKind = key.kind == ValueFlowMadeNodeKind::WrittenUnderKind || key.kind == ValueFlowMadeNodeKind::ReadUnderKind;
             bool isOfModel = name.kind == ValueFlowNameKind::AllocatedAs || (name.kind == ValueFlowNameKind::HiddenSlot && (isUnderKind || name.payload == proxyItselfName.payload)) || (name.kind == ValueFlowNameKind::Slot && (isUnderKind || name.payload == BuiltinSlots::ProxyHandler.index() || name.payload == BuiltinSlots::ProxyTarget.index()));
+            // A walk that comes to a proxy goes on at its target, unless the handler may have a trap for what the walk is for.
+            bool isLink = shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink;
+            isOfModel |= isLink && key.kind == ValueFlowMadeNodeKind::Written;
             if (!isOfModel && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
-                note(key.set);
-            if (shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink)
-                note(m_graph.valueOf(made.first));
+                note(isLink ? maker.intersect(key.set, stopWalks) : key.set);
+            if (!isOfModel && key.kind != ValueFlowMadeNodeKind::Written && key.kind != ValueFlowMadeNodeKind::WrittenUnderKind && maker.meet(isLink ? maker.intersect(m_graph.valueOf(made.first), stopWalks) : m_graph.valueOf(made.first), asked))
+                readsProxy.set(&made - m_madeNodes.span().data());
+            if (isLink) {
+                note(maker.intersect(m_graph.valueOf(made.first), stopWalks));
+                if (key.kind == ValueFlowMadeNodeKind::Written)
+                    links.append(&made);
+            }
             // What is written into a built-in lies with native code.
             if (key.kind == ValueFlowMadeNodeKind::Written && maker.meet(key.set, m_input.universe->builtinObjects()) && !isReadBackOutOfBuiltins(name, key.set))
                 note(m_graph.valueOf(made.first));
@@ -1765,7 +1783,73 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     }
 
     // An operand that an operation only keeps or hands on does nothing to what it holds, unless what the operation calls is no function of the program.
+    // The language goes up from an object by the same steps whatever stands above it. Code of the host may look at what stands above an object in ways of its own.
+    ValueSetID standingAbove = ValueSets::nothing;
+    for (const MadeNodes* link : links)
+        standingAbove = maker.unite(standingAbove, maker.intersect(m_graph.valueOf(link->first), asked));
+    if (standingAbove != ValueSets::nothing) {
+        const BuiltinTable& builtins = m_input.program->builtins();
+        const ValueFlowBuiltinTables& tables = m_input.universe->builtinTables();
+        BitVector behaviorsOfHost(tables.numberOfBehaviors());
+        for (uint32_t index = 0; index < builtins.builtinCount(); ++index) {
+            if (builtins.at(BuiltinID(index)).origin != BuiltinOrigin::Host)
+                continue;
+            for (const BuiltinOverload& overload : builtins.overloadsOf(BuiltinID(index))) {
+                auto add = [&](const BuiltinParameter& parameter) {
+                    if (ValueFlowBehaviorID behavior = tables.behaviorOf(parameter))
+                        behaviorsOfHost.quickSet(behavior.index());
+                };
+                if (overload.receiver)
+                    add(*overload.receiver);
+                for (const BuiltinParameter& parameter : overload.parameters)
+                    add(parameter);
+            }
+        }
+        ValueSetID reached = maker.uniteAll({ { m_graph.valueOf(nodes.ofHost(ValueFlowHostNode::HeldByNativeCode)), m_graph.valueOf(nodes.ofHost(ValueFlowHostNode::ValuesCarriedOut)), m_graph.valueOf(ValueFlowProgramNodes::escaped()), m_graph.valueOf(ValueFlowProgramNodes::lost()) } });
+        for (size_t behavior : behaviorsOfHost)
+            reached = maker.unite(reached, m_graph.valueOf(nodes.hub(ValueFlowBehaviorID(static_cast<uint32_t>(behavior)))));
+        ValueSetID knownObjects = m_input.universe->knownObjects();
+        reached = maker.intersect(reached, knownObjects);
+        for (ValueSetID last = reached; last != ValueSets::nothing;) {
+            ValueSetID above = ValueSets::nothing;
+            for (const MadeNodes* link : links) {
+                if (maker.meet(link->key.set, last))
+                    above = maker.unite(above, m_graph.valueOf(link->first));
+            }
+            Vector<ValueFlowObjectID, 64> aboveAtCreation;
+            m_sets.forEachMember(last, [&](ValueFlowObjectID object) {
+                forEachPrototypeAtCreation(*m_input.program, *m_input.universe, object, [&](ValueFlowObjectID prototype) {
+                    aboveAtCreation.append(prototype);
+                }, [](SilentAboutPrototype) { });
+            });
+            above = maker.unite(above, maker.of(aboveAtCreation.span()));
+            last = maker.intersect(maker.intersect(above, knownObjects), ValueSets::complement(reached));
+            reached = maker.unite(reached, last);
+        }
+        note(reached);
+    }
+
     constexpr OperandUses usesThatHandOn { OperandUse::Retains, OperandUse::Returns };
+    // A built-in that links an operand above an object does nothing else to it.
+    constexpr OperandUses usesThatLinkAbove { OperandUse::Inspects, OperandUse::BecomesPrototype, OperandUse::Retains };
+    auto onlyLinksArgumentAbove = [&](ValueFlowObjectID callee, unsigned argument) {
+        const BuiltinTable& builtins = m_input.program->builtins();
+        BuiltinID builtin = m_sets.contains(m_input.universe->builtinFunctions(), callee) ? m_input.universe->builtinOf(callee) : BuiltinID();
+        if (!builtin)
+            return false;
+        bool isDescribed = false;
+        for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {
+            if (overload.mode != BuiltinCallMode::Call)
+                continue;
+            if (overload.isUndeclared())
+                return false;
+            auto parameter = std::ranges::find(overload.parameters, BuiltinOperand::argument(argument), &BuiltinParameter::operand);
+            if (parameter == overload.parameters.end() || !parameter->uses.contains(OperandUse::BecomesPrototype) || !usesThatLinkAbove.containsAll(parameter->uses) || !parameter->protocols.isEmpty())
+                return false;
+            isDescribed = true;
+        }
+        return isDescribed;
+    };
     for (uint32_t index = 0; index < m_input.statements.size(); ++index) {
         const ValueFlowStatement& statement = m_input.statements[index];
         bool isOperation = statement.kind == ValueFlowStatementKind::Operation;
@@ -1773,7 +1857,19 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
         bool holdsSome = false;
         for (const ValueFlowOperand& operand : operands)
             holdsSome |= operand.node && operand.node.index() < m_input.numberOfNodes && holdsProxy.quickGet(operand.node.index());
-        if (!holdsSome)
+        auto forEachProxyReadByStatement = [&](NOESCAPE const Invocable<void(ValueSetID)> auto& functor) {
+            for (uint32_t use = isOperation && index < m_firstUseOfStatement.size() ? m_firstUseOfStatement[index] : UINT32_MAX; use != UINT32_MAX; use = m_uses[use].next) {
+                if (readsProxy.get(m_uses[use].madeNodes))
+                    functor(m_graph.valueOf(m_madeNodes[m_uses[use].madeNodes].first));
+            }
+        };
+        bool hasReadSome = false;
+        if (!readsProxy.isEmpty()) {
+            forEachProxyReadByStatement([&](ValueSetID) {
+                hasReadSome = true;
+            });
+        }
+        if (!holdsSome && !hasReadSome)
             continue;
         bool callsOnlyFunctionsOfProgram = true;
         for (unsigned position = 0; isOperation && position < operands.size(); ++position) {
@@ -1783,6 +1879,9 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             callsOnlyFunctionsOfProgram &= !callee.constant || !maker.meet(callee.constant, ValueSets::complement(closures));
             callsOnlyFunctionsOfProgram &= !callee.node || !maker.meet(m_graph.valueOf(callee.node), ValueSets::complement(closures));
         }
+        // What calls something that is no function of the program hands it whatever it has read out of a list or an object by itself.
+        if (hasReadSome && !callsOnlyFunctionsOfProgram)
+            forEachProxyReadByStatement(note);
         for (unsigned position = 0; position < operands.size(); ++position) {
             const ValueFlowOperand& operand = operands[position];
             if (!operand.node || operand.node.index() >= m_input.numberOfNodes || !holdsProxy.quickGet(operand.node.index()))
@@ -1791,6 +1890,15 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
                 continue;
             if (isOperation && callsOnlyFunctionsOfProgram && usesThatHandOn.containsAll(operandUsesOf(statement.opcode, position)))
                 continue;
+            if (isOperation && statement.opcode == Opcode::Call && position >= 2) {
+                bool isOnlyLinkedAbove = true;
+                ValueSetID callees = maker.unite(operands[0].constant ? operands[0].constant : ValueSets::nothing, operands[0].node ? m_graph.valueOf(operands[0].node) : ValueSets::nothing);
+                m_sets.forEachMember(callees, [&](ValueFlowObjectID callee) {
+                    isOnlyLinkedAbove &= m_sets.contains(closures, callee) || onlyLinksArgumentAbove(callee, position - 2);
+                });
+                if (isOnlyLinkedAbove)
+                    continue;
+            }
             note(m_graph.valueOf(operand.node));
             if (auto held = heldByInstancesOfNode.find(operand.node.index()); held != heldByInstancesOfNode.end())
                 note(held->value);
@@ -4520,7 +4628,7 @@ bool ValueFlowSolver::solve()
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare), m_input.universe->closures());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach), m_input.universe->builtinTables().heap().prototypeObjectsThatListingDoesNotName());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed), m_input.universe->prototypeObjectsOfLibraryClasses());
-                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::LibraryModulesHandedOut), m_input.universe->holdersOfLibraryExports());
+                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::LibraryModulesHandedOut), m_input.universe->holdersOfLibraryExportsThatRaiseNoEvent());
             }
         },
         [&] {
