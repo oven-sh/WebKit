@@ -444,7 +444,7 @@ private:
 };
 
 struct ValueFlowNodeName {
-    enum class Kind : uint8_t { None, OfBody, Escaped, Variable, Field, EntryParameter, Result, Thrown, OfHost };
+    enum class Kind : uint8_t { None, OfBody, Escaped, Variable, Field, EntryParameter, Result, Thrown, OfHost, Hub };
 
     Kind kind { Kind::None };
     uint32_t owner { 0 };
@@ -457,7 +457,7 @@ struct ValueFlowNodeName {
     static constexpr ValueFlowNodeName result(FunctionID function, uint32_t index) { return { Kind::Result, function.index(), index }; }
     static constexpr ValueFlowNodeName thrown(FunctionID function) { return { Kind::Thrown, function.index(), 0 }; }
     static constexpr ValueFlowNodeName ofHost(ValueFlowHostNode node) { return { Kind::OfHost, static_cast<uint32_t>(node), 0 }; }
-    static constexpr ValueFlowNodeName hub(ValueFlowBehaviorID behavior) { return { Kind::OfHost, numberOfValueFlowHostNodes + behavior.index(), 0 }; }
+    static constexpr ValueFlowNodeName hub(ValueFlowBehaviorID behavior) { return { Kind::Hub, behavior.index(), 0 }; }
     static constexpr ValueFlowNodeName escaped() { return { Kind::Escaped, 0, 0 }; }
 
     constexpr explicit operator bool() const { return kind != Kind::None; }
