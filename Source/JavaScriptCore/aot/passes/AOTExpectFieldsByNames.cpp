@@ -74,7 +74,8 @@ static FieldReferenceList findUntoldFields(const Program& program, const Functio
 static bool isArray(const Program& program, const Function& function, ValueID value)
 {
     auto holdsArraysAlone = [](const Type& type) {
-        const ClassPart* part = type.withoutPrimitives(Primitive::UndefinedOrNull).singleBuiltinClass();
+        Type object = type.withoutPrimitives(Primitive::UndefinedOrNull);
+        const ClassPart* part = object.singleBuiltinClass();
         return part && part->builtinClass == BuiltinClasses::Array && !(type.primitives & ~Primitive::UndefinedOrNull);
     };
     TypeID expected = function.at(value).expected().predicted();

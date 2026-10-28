@@ -88,7 +88,8 @@ static std::optional<Type> tryTypeOfField(const TypingContext& context, LayoutID
 
 static bool holdsArraysAlone(const Type& type)
 {
-    const ClassPart* part = type.withoutPrimitives(Primitive::UndefinedOrNull).singleBuiltinClass();
+    Type object = type.withoutPrimitives(Primitive::UndefinedOrNull);
+    const ClassPart* part = object.singleBuiltinClass();
     return part && part->builtinClass == BuiltinClasses::Array && !(type.primitives & ~Primitive::UndefinedOrNull);
 }
 

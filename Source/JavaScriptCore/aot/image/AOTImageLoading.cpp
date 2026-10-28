@@ -96,8 +96,11 @@ using WTF::isAddressRandomizationDisabled;
 #else
 static bool isAddressRandomizationDisabled()
 {
-    int persona = personality(0xffffffff);
-    return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+    static const bool result = [] {
+        int persona = personality(0xffffffff);
+        return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+    }();
+    return result;
 }
 #endif
 #endif
@@ -119,6 +122,12 @@ static void* chooseAddressForCode(size_t size)
 static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_t executableSize)
 {
     int fileDescriptor = static_cast<int>(descriptor);
+#if OS(LINUX)
+    if (size == executableSize) {
+        void* code = mmap(chooseAddressForCode(size), size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
+        return code == MAP_FAILED ? nullptr : code;
+    }
+#endif
     void* code = mmap(chooseAddressForCode(size), size, PROT_READ, MAP_PRIVATE, fileDescriptor, fileOffset);
     if (code == MAP_FAILED)
         return nullptr;

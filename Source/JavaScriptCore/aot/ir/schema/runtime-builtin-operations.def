@@ -140,6 +140,8 @@ runtime JSONObjectKey : uint64_t (uint64_t order, uint32_t shape, uint32_t field
 runtime JSONObjectFinish : size_t (JSCell* object, EncodedJSValue extra, uint64_t order) ; reads(all) writes(OrderWords, NamedProperties, AllocatorState, RuntimeState) collects
 runtime JSONParseExtraMembers : const uint8_t* (uint32_t shape, const uint8_t* cursor, uint64_t* extraAndOrder) ; reads(all) writes(NamedProperties, Elements, ArrayStorage, StringStorage, AllocatorState, RuntimeState) collects
 
+runtime KeyOrderEntries : const uint8_t* (uint32_t shape, uint32_t orderWord) ; reads(all) writes(RuntimeState)
+runtime KeyNamesInOrder : EncodedJSValue (uint32_t shape, uint32_t orderWord, uint32_t position) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime JSONAppendString : uint8_t* (JSCell* builder, uint8_t* cursor, JSCell* string) ; reads(all) writes(StringBuilderContents, StringStorage, AllocatorState, RuntimeState) throws collects
 runtime JSONAppendInteger : uint8_t* (uint8_t* cursor, int64_t integer) ; writes(StringBuilderContents) ; leaf
 runtime JSONAppendNumber : uint8_t* (uint8_t* cursor, double number) ; writes(StringBuilderContents) ; leaf

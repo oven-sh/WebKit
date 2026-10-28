@@ -102,6 +102,17 @@ struct KeyListCacheEntry {
 static constexpr uint32_t numberOfKeyLists = 1024;
 static constexpr uint32_t indexOfKeyList(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord) % numberOfKeyLists; }
 
+// The fields of the objects with these two words, in the order of their keys, as indexes into the record of the layout. No entries: the order word does not list every own key.
+struct KeyOrderEntriesCacheEntry {
+    uint32_t orderWord;
+    uint32_t shapeWord;
+    const uint16_t* entries;
+};
+
+static constexpr uint32_t numberOfCachedKeyOrderEntries = 256;
+static constexpr unsigned keyOrderEntriesHashShift = orderWordCountShift - 5;
+static constexpr uint32_t indexOfKeyOrderEntries(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord + (orderWord >> keyOrderEntriesHashShift)) % numberOfCachedKeyOrderEntries; }
+
 // The enumerator that a for-in loop over a compiled object with this Structure and order word got last.
 struct EnumeratorCacheEntry {
     uint32_t orderWord;
@@ -155,6 +166,7 @@ struct ObjectWords {
     PrototypeTransition* prototypeTransitions;
     EnumeratorCacheEntry* enumerators;
     KeyOrderRun* keyOrderRuns;
+    KeyOrderEntriesCacheEntry* keyOrderEntries;
 
     AllocationSiteRecord* emptyAllocationSite() const { return reinterpret_cast<AllocationSiteRecord*>(distancesToAllocationSites) - 1; }
 
@@ -248,6 +260,7 @@ constexpr uint32_t structureHasOtherNames = 1;
 static_assert(sizeof(KeyOrderTransition) == 16);
 static_assert(sizeof(KeyListCacheEntry) == 16);
 static_assert(!(numberOfKeyLists & (numberOfKeyLists - 1)));
+static_assert(sizeof(KeyOrderEntriesCacheEntry) == 16 && !(numberOfCachedKeyOrderEntries & (numberOfCachedKeyOrderEntries - 1)));
 static_assert(sizeof(EnumeratorCacheEntry) == 16);
 static_assert(!(numberOfCachedEnumerators & (numberOfCachedEnumerators - 1)));
 static_assert(sizeof(PrototypeTransition) == 16);
@@ -257,6 +270,7 @@ static_assert(indexOfKeyList(3, numberOfKeyLists + 4) == 7);
 
 static_assert(std::is_trivially_default_constructible_v<KeyOrderTransition>);
 static_assert(std::is_trivially_default_constructible_v<KeyListCacheEntry>);
+static_assert(std::is_trivially_default_constructible_v<KeyOrderEntriesCacheEntry>);
 static_assert(std::is_trivially_default_constructible_v<EnumeratorCacheEntry>);
 static_assert(std::is_trivially_default_constructible_v<PrototypeTransition>);
 static_assert(std::is_trivially_default_constructible_v<ObjectWords>);

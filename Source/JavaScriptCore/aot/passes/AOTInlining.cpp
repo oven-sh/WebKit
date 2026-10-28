@@ -535,6 +535,47 @@ static BitVector findHeadBlocks(const Function& function, FunctionAnalyses& anal
     return blocks;
 }
 
+// A short function without a loop whose rest parameter goes nowhere but into the lists of its calls. Where the caller has made the rest parameter for the call,
+// both lists go in the caller, and the arguments reach the callee in registers.
+static bool onlyHandsOnRestParameter(const Program& program, const Function& function, FunctionAnalyses& analyses, uint32_t codeBytes)
+{
+    AOT_THRESHOLD(uint32_t, maxCodeBytes, 160);
+    if (!function.has(FunctionFlags::HasRestParameter) || function.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }) || codeBytes > maxCodeBytes || analyses.cfg().hasCycle())
+        return false;
+    const Block& entry = function.at(entryBlock);
+    unsigned restIndex = function.firstParameterIndex() + function.numberOfPositionalParameters();
+    if (restIndex >= entry.parameters.size())
+        return false;
+
+    static_assert(OperandIndex::CallList::list == OperandIndex::ConstructList::list && OperandIndex::CallList::list == OperandIndex::SuperConstructList::list);
+    constexpr OpcodeSet callsWithList { Opcode::CallList, Opcode::ConstructList, Opcode::SuperConstructList };
+    const UseLists& useLists = analyses.useLists();
+    bool isHandedOn = false;
+    Vector<ValueID, 4> names { entry.parameters[restIndex] };
+    for (size_t index = 0; index < names.size(); ++index) {
+        for (const Use& use : useLists.usesOf(names[index])) {
+            if (use.kind == Use::Kind::BlockSubject)
+                continue;
+            if (use.kind != Use::Kind::Operand)
+                return false;
+            const Value& user = function.at(use.user);
+            if (isCast(user.opcode) && user.opcode != Opcode::Check) {
+                names.append(use.user);
+                continue;
+            }
+            bool goesIntoList = (user.opcode == Opcode::AppendSpread && use.operandIndex == OperandIndex::AppendSpread::iterable)
+                || (user.opcode == Opcode::AppendElements && use.operandIndex == OperandIndex::AppendElements::source)
+                || (callsWithList.contains(user.opcode) && use.operandIndex == OperandIndex::CallList::list);
+            isHandedOn |= goesIntoList;
+            bool onlyLooks = user.operandKind(use.operandIndex) == OperandKind::Guard || user.opcode == Opcode::AllGuards || user.opcode == Opcode::IsPristine || user.opcode == Opcode::HasArrayStorage
+                || user.opcode == Opcode::ValidateType || user.opcode == Opcode::GetArrayLength || (user.opcode == Opcode::PropGet && user.key() == program.keyOf(BuiltinNames::length));
+            if (!goesIntoList && !onlyLooks)
+                return false;
+        }
+    }
+    return isHandedOn;
+}
+
 InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, const Function& function, Expected<HeatClass> heat)
 {
     RELEASE_ASSERT(context.flow);
@@ -1001,6 +1042,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     summary.likelyCodeBytes = computeLikelyBytes();
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
+    summary.onlyHandsOnRestParameter = onlyHandsOnRestParameter(program, function, analyses, summary.codeBytes);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
     if (isCold(heat).predicted() && !(function.role == FunctionRole::Library && cfg.hasCycle()))
         return summary;
@@ -2308,7 +2350,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // In a loop of the caller the tests run at every turn wherever they stand. Beside the call they are the same tests, and the typed body behind them can be copied in.
     bool isExpectedToPassInLoop = isEntryChecks && !isCold(heat).predicted() && context.analyses.isInCycle(block) && passesEveryEntryCheck(program, caller, value, ArgumentTypes::Expected);
     bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || isExpectedToPassInLoop || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
-    bool isAlwaysWorthInlining = summary.isWrapper && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
+    bool handsOnListMadeForCall = summary.onlyHandsOnRestParameter && value.numberOfVariadicOperands() && lengthOfListMadeForCall(context, value.variadicOperands().back(), call);
+    bool isAlwaysWorthInlining = (summary.isWrapper || handsOnListMadeForCall) && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
     if (canInlineWholeBody && (value.isAlwaysInlined() || isAlwaysWorthInlining)) {
         addBenefit(value.isAlwaysInlined() ? InlineBenefit::CallOverhead : InlineBenefit::Wrapper, cost);
         verdict.decision = InlineDecision::Inline;
