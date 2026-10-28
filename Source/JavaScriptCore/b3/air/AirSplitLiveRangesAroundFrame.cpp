@@ -74,14 +74,10 @@ public:
                 return false;
             m_isInRegion = WTF::move(*region);
         }
-        if (m_isInRegion.isEmpty() || !canPlaceShufflesOnBorder())
-            return false;
-        // What lives across a call on a rare arm is split around the call by the allocator, and what a rare arm computes is spilled first.
-        // Where a rare arm is crowded by itself, something that lives through it gives way, and it is spilled wherever it lives: that costs most in a loop.
-        if (!isEnteredOnLikelyPath() && (crowdedBlocks.isEmpty() || !holdsLikelyCycle(Side::OutsideRegion)))
+        if (m_isInRegion.isEmpty() || !isEnteredOnLikelyPath() || !canPlaceShufflesOnBorder())
             return false;
         findTmpsLiveAcrossBorder();
-        if (holdsLikelyCycle(Side::InRegion) && !savesMoreThanItCosts(numberOfRegisters))
+        if (holdsLikelyCycle() && !savesMoreThanItCosts(numberOfRegisters))
             return false;
         makeTmpsOfRegion();
         if (!m_hasSplitTmp)
@@ -174,6 +170,7 @@ private:
         return result;
     }
 
+    // What lives across a call on a rare arm is split around the call by the allocator, and what a rare arm computes is spilled first.
     bool isEnteredOnLikelyPath()
     {
         bool result = false;
@@ -209,22 +206,17 @@ private:
         });
     }
 
-    enum class Side : bool { InRegion, OutsideRegion };
-
-    // Every turn of such a loop in the region needs the frame. What needs it only on an unlikely way out of a loop is entered far less often than its frequency says.
-    bool holdsLikelyCycle(Side side)
+    // Every turn of such a loop needs the frame. What needs it only on an unlikely way out of a loop is entered far less often than its frequency says.
+    bool holdsLikelyCycle()
     {
         enum class State : uint8_t { Unseen, Open, Done };
         IndexMap<BasicBlock*, State> states(m_code.size(), State::Unseen);
         Vector<std::pair<BasicBlock*, unsigned>, 16> path;
-        auto isOnSide = [&](BasicBlock* block) {
-            return isInRegion(block) == (side == Side::InRegion);
-        };
-        for (BasicBlock* start : m_code) {
-            if (!isOnSide(start) || states[start] != State::Unseen)
+        for (size_t blockIndex : m_isInRegion) {
+            if (states[m_code[blockIndex]] != State::Unseen)
                 continue;
-            states[start] = State::Open;
-            path.append({ start, 0 });
+            states[m_code[blockIndex]] = State::Open;
+            path.append({ m_code[blockIndex], 0 });
             while (!path.isEmpty()) {
                 auto& [block, next] = path.last();
                 if (next == block->numSuccessors()) {
@@ -233,7 +225,7 @@ private:
                     continue;
                 }
                 const FrequentedBlock& edge = block->successor(next++);
-                if (shareOf(edge) < 1 || !isOnSide(edge.block()))
+                if (shareOf(edge) < 1 || !isInRegion(edge.block()))
                     continue;
                 if (states[edge.block()] == State::Open)
                     return true;

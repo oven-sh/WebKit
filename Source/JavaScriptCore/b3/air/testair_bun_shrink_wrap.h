@@ -1135,38 +1135,6 @@ void testValueKeptThroughCrowdedBlockLeavesOtherPathWithoutFrame()
     }
 }
 
-// Only a rare edge enters the crowded arm. `kept` gives way in it, and a loop that reads `kept` would pay for that on every turn.
-void testValueKeptThroughRareCrowdedBlockIsSplitWhereLoopReadsIt()
-{
-    for (bool hasLoop : { true, false }) {
-        KeptValueGraph graph(frameSplittingPolicy());
-        Code& code = graph.code;
-        BasicBlock* reader = code.addBlock();
-        BasicBlock* arm = code.addBlock();
-        BasicBlock* latch = code.addBlock();
-        BasicBlock* exit = code.addBlock();
-        appendJump(graph.entry, reader);
-        graph.appendAdd(reader, graph.kept);
-        appendBranchTest(reader, graph.first, rarely(arm), latch);
-        unsigned numberOfValues = 0;
-        for (Reg reg : code.regsInPriorityOrder(GP))
-            numberOfValues += !RegisterSet::calleeSaveRegisters().contains(reg, IgnoreVectors);
-        Vector<Tmp> values;
-        for (unsigned i = 0; i < numberOfValues; ++i) {
-            values.append(code.newTmp(GP));
-            arm->append(Move, nullptr, graph.addressOf(FrameGraph::Word::Second), values.last());
-        }
-        for (Tmp value : values)
-            graph.appendAdd(arm, value);
-        appendJump(arm, latch);
-        appendBranchTest(latch, graph.second, hasLoop ? reader : exit, exit);
-        graph.appendReturnOfSum(exit);
-        code.resetReachability();
-
-        CHECK(splitLiveRangesAroundFrame(code) == hasLoop);
-    }
-}
-
 // Random control flow over values that are read and changed on both sides of the frame's border: calls, crowded blocks, rare edges and a loop.
 struct RandomFrameBorders {
     struct Step {
@@ -1483,7 +1451,6 @@ void testLiveRangeSplitPutsShufflesOnBorder()
         RUN(testValueKeptAcrossCallsLeavesEarlyExitWithoutFrame()); \
         RUN(testValueKeptThroughCallsReturnsToItsTmp()); \
         RUN(testValueKeptThroughCrowdedBlockLeavesOtherPathWithoutFrame()); \
-        RUN(testValueKeptThroughRareCrowdedBlockIsSplitWhereLoopReadsIt()); \
         RUN(testValuesSurviveRandomFrameBorders()); \
         RUN(testLiveRangesAreNotSplitWithoutBorderToCross()); \
         RUN(testLiveRangeSplitInFunctionWithManyBlocksAndTmps()); \

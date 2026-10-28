@@ -556,6 +556,37 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
         return InlineBarrier::None;
     };
 
+    auto isLikely = [&](BlockID id) {
+        return function.at(id).frequency.predicted() == BlockFrequency::Normal;
+    };
+
+    // A declared type has its test in the body already. Without a declared type the same test is placed after the body is copied.
+    auto bytesOfDeclaredTypeTest = [&](const Block& block) -> uint32_t {
+        const Terminator& terminator = block.terminator;
+        if (!terminator.isConditionalBranch() || block.values.isEmpty() || terminator.conditionOperand() != block.values.last())
+            return 0;
+        const Value& test = function.at(block.values.last());
+        if (test.opcode != Opcode::TypeTest || !isLikely(terminator.taken().block) || isLikely(terminator.notTaken().block) || targetDecidedByTypeOfCondition(program, function, terminator))
+            return 0;
+        return estimatedCodeBytes(program, function, test) + estimatedCodeBytes(terminator);
+    };
+
+    auto computeLikelyBytes = [&]() -> uint32_t {
+        if (!isLikely(entryBlock) || !function.has(FunctionFlags::IsChecked))
+            return std::numeric_limits<uint32_t>::max();
+        uint32_t likelyBytes = 0;
+        uint32_t otherBytes = 0;
+        for (BlockID id : analyses.cfg().reversePostOrder()) {
+            uint32_t bytes = blockBytes[id.index()];
+            if (isLikely(id))
+                likelyBytes = saturatingSum<uint32_t>(likelyBytes, bytes - std::min(bytes, bytesOfDeclaredTypeTest(function.at(id))));
+            else
+                otherBytes = saturatingSum<uint32_t>(otherBytes, bytes);
+        }
+        // The copy for values that fail a test is about as large as the function without its types.
+        return std::max(likelyBytes, otherBytes);
+    };
+
     auto entryParameterBehind = [&](ValueID value) -> std::optional<uint32_t> {
         size_t index = function.at(entryBlock).parameters.find(sameObjectThroughCasts(function, value).valueInFrontOfFacts());
         if (index == notFound)
@@ -956,6 +987,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     estimateComparisonChainsAsSwitches(analyses, blockBytes);
     for (uint32_t bytes : blockBytes)
         summary.codeBytes = saturatingSum<uint32_t>(summary.codeBytes, bytes);
+    summary.likelyCodeBytes = computeLikelyBytes();
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
@@ -2200,8 +2232,13 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     bool isRepeatedByCaller = isHot(heat).predicted() && context.analyses.isInCycle(block);
     bool runsInLoopAroundCaller = heat.predicted() == HeatClass::Warm && context.inputs.heat.isCalledInLoop(program, context.id).predicted() && context.analyses.blockFrequencies().frequencyOf(block).predicted() >= HeatModel::minWeightOfNearlyCertainCall;
     uint32_t foldedBytes = computeFoldedBytes(context, call, summary, isRepeatedByCaller ? DecidedTests::Go : DecidedTests::AreCharged);
-    uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, estimatedCodeBytes(program, caller, value));
+    uint32_t callBytes = estimatedCodeBytes(program, caller, value);
+    uint32_t removedBytes = saturatingSum<uint32_t>(foldedBytes, callBytes);
     uint32_t cost = summary.codeBytes > removedBytes ? summary.codeBytes - removedBytes : 0;
+    // In a loop of the caller, what counts is the code that the loop runs. What folds may be code that is not expected to run, so it is not taken off a second time.
+    // A loop of the callee takes its heat from the function that holds it, and a caller that runs once has none to give.
+    bool countsLikelyCode = isRepeatedByCaller && (!summary.hasCycle || context.inputs.heat.of(program, context.id).predicted() != HeatClass::RunsOnce);
+    uint32_t likelyCost = !countsLikelyCode ? std::numeric_limits<uint32_t>::max() : summary.likelyCodeBytes > callBytes ? summary.likelyCodeBytes - callBytes : 0;
 
     unsigned depth = depthOfCopies(context, value.inlineFrame, heat);
     // The budget halves with each level and is small where code runs seldom. A bet that did neither let a body in at every level, and what a caller knew of one object cost it many times its size.
@@ -2213,8 +2250,10 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         verdict.benefits.add(benefit);
         verdict.benefitBytes = clampTo<uint32_t>(verdict.benefitBytes + bytes);
     };
+    // The bets are sized for whole bodies: beside the likely code they count for no more than the budget.
     auto isWithinBudget = [&] {
-        return cost <= uint64_t { verdict.budgetBytes } + verdict.benefitBytes;
+        uint64_t allowance = uint64_t { verdict.budgetBytes } + verdict.benefitBytes;
+        return cost <= allowance || (cost <= 2 * allowance && likelyCost <= uint64_t { verdict.budgetBytes } + std::min(verdict.benefitBytes, verdict.budgetBytes));
     };
 
     bool isEntryChecks = callee.role == FunctionRole::EntryChecks;
@@ -2235,6 +2274,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         const auto& record = callee.creator.as<CreatorRecord::EntryChecks>();
         const InliningSummaries& inlining = context.inputs.inlining;
         cost = saturatingSum<uint32_t>(cost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
+        likelyCost = saturatingSum<uint32_t>(likelyCost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
         verdict.costBytes = cost;
     }
 
