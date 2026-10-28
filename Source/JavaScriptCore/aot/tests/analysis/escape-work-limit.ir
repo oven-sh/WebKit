@@ -1,6 +1,6 @@
 # Past the work limit every object of the one function is unknown, and the functions beside it are analyzed
 # FORM: Prepared
-# OPTIONS: limit=MaxEscapeAnalysisWork:4
+# OPTIONS: limit=MaxEscapeAnalysisWork:5
 # RUN: analyses escape
 # LOSS: MaxEscapeAnalysisWork x1 f0
 

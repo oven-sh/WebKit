@@ -484,6 +484,7 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         case StubFrameKind::InHostCallFrame:
             RELEASE_ASSERT_NOT_REACHED();
         case StubFrameKind::Plain:
+        case StubFrameKind::ReturnsBehindOperation:
         case StubFrameKind::ArgumentList:
         case StubFrameKind::HostCall:
         case StubFrameKind::BelowSpilledArguments:
@@ -837,6 +838,7 @@ static bool callsFunction(StubFrameKind kind)
     case StubFrameKind::PlainFunctionConstruct:
         return true;
     case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsBehindOperation:
     case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
     case StubFrameKind::FirstOfTwoReads:

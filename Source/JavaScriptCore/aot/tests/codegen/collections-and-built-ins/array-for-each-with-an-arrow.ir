@@ -182,18 +182,16 @@ function f5 name="forEach" module=m1 position=3958 kind=Method role=Library flag
 # LOOP-COUNT-8: Double b@{{*}} = Load(b@{{*}}Reads:indexedDoubleProperties, {{*}}:GetArrayElement)
 # LOOP-NOT: Reads:indexedDoubleProperties
 # LOOP-LABEL: end of loop
-# The variable that the arrow adds to lives in memory, in the environment that the arrow would capture. It is loaded once for the eight turns and stored in each.
+# The variable that the arrow adds to goes around the loop as a value. Only the arms that are seldom taken call the arrow: each hands it a copy of the environment and takes the variable back out of the copy.
 # NONE-LABEL: steps by 8
-# NONE-COUNT-1: Reads:EnvironmentFields
 # NONE-NOT: Reads:EnvironmentFields
 # NONE-LABEL: end of loop
 # STORES-LABEL: steps by 8
-# STORES-COUNT-8: Writes:EnvironmentFields
 # STORES-NOT: Writes:EnvironmentFields
 # STORES-LABEL: end of loop
 # No function object is made for the arrow.
 # WHOLE-LABEL: name="total" role=Source
 # WHOLE-NOT: :NewClosure
 # WHOLE-LABEL: end of function
-# X64: instructions: 19, patchpoints: 0, {{*}} steps by 8
-# ARM64: instructions: 28, patchpoints: 0, {{*}} steps by 8
+# X64: instructions: 10, patchpoints: 0, {{*}} steps by 8
+# ARM64: instructions: 19, patchpoints: 0, {{*}} steps by 8

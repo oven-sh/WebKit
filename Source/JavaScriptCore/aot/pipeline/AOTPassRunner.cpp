@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayChains.h"
+#include "AOTBackgroundTask.h"
 #include "AOTBindGlobalNames.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
@@ -678,8 +679,16 @@ bool PassRunner::mayRunAnalysesTogether() const
     return !m_stopAfter && !m_build.options().logging.dumpedPass;
 }
 
-void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAPE const ScopedLambda<void()>& second) const
+void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAPE const ScopedLambda<void()>& second, TaskPriority priorityOfSecond) const
 {
+    if (priorityOfSecond != TaskPriority::Foreground) {
+        Ref<BackgroundTask> task = BackgroundTask::start(m_build.parallelLoops(), priorityOfSecond, { }, [&] {
+            second();
+        });
+        first();
+        task->finish();
+        return;
+    }
     forEachIndexInParallel(m_build.parallelLoops(), 2, [&](unsigned index) {
         index ? second() : first();
     });

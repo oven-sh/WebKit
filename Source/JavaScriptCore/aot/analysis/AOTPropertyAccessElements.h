@@ -71,6 +71,7 @@ struct ElementAccessPlan {
     bool isPresent { false };
     bool readsHoleAsNaN { false };
     bool isInsideView { false };
+    bool receiverIsNeverPristine { false };
     OptionSet<PristineAspects> requiredAspects;
     UnprovenCause cause { UnprovenCause::Unknown };
 

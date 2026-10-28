@@ -17,10 +17,10 @@
 #include "AOTFunctionKinds.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTKnownClosures.h"
+#include "AOTPhaseTimes.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
-#include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
@@ -917,11 +917,35 @@ static Vector<LayoutID> findLayoutsOfFreshResults(const Program& program, std::s
 
 static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std::span<const FunctionUses> functions)
 {
+    const ParallelLoops& loops = context.build.parallelLoops();
     unsigned numberOfFunctions = context.program.functions.size();
     Vector<const FunctionUses*> usesOf = usesByFunction(context.program, functions);
     auto calleesOf = [&](unsigned index) {
         return usesOf[index] ? usesOf[index]->functionsCalledByName.span() : std::span<const FunctionID>();
     };
+
+    // What a cycle of calls reaches, its members included, is what is left when functions that nobody left calls are taken away one after the other. The order they go in changes nothing.
+    Vector<uint32_t> numberOfCallsLeft(FillWith { }, numberOfFunctions, 0u);
+    forEachIndexInParallel(loops, functions.size(), [&](unsigned position) {
+        for (FunctionID callee : functions[position].functionsCalledByName)
+            AtomicRef(numberOfCallsLeft[callee.index()]).fetch_add(1, std::memory_order_relaxed);
+    });
+    AOT_THRESHOLD(size_t, fewestFunctionsTakenAwayOnPool, 512);
+    auto takeAway = [&](uint32_t index, Vector<uint32_t>& calledByNobody) {
+        for (FunctionID callee : calleesOf(index)) {
+            if (AtomicRef(numberOfCallsLeft[callee.index()]).fetch_sub(1, std::memory_order_relaxed) == 1)
+                calledByNobody.append(callee.index());
+        }
+    };
+    for (Vector<uint32_t> calledByNobody = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) { return !numberOfCallsLeft[index]; }); !calledByNobody.isEmpty();) {
+        if (calledByNobody.size() < fewestFunctionsTakenAwayOnPool) {
+            takeAway(calledByNobody.takeLast(), calledByNobody);
+            continue;
+        }
+        calledByNobody = collectInParallel<uint32_t>(loops, calledByNobody.size(), [&](unsigned position, Vector<uint32_t>& found) {
+            takeAway(calledByNobody[position], found);
+        });
+    }
 
     BitVector runsInLoop(numberOfFunctions);
     Vector<FunctionID> worklist;
@@ -929,8 +953,8 @@ static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std
         if (!runsInLoop.quickSet(function.index()))
             worklist.append(function);
     };
-    for (size_t index : computeStronglyConnectedComponents(numberOfFunctions, calleesOf).isInCycle)
-        add(FunctionID(index));
+    for (uint32_t index : findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) { return !!numberOfCallsLeft[index]; }))
+        runsInLoop.quickSet(index);
     for (const FunctionUses& uses : functions) {
         for (FunctionID callee : uses.functionsCalledByNameInLoops)
             add(callee);
@@ -1142,6 +1166,12 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
     const ParallelLoops& loops = context.build.parallelLoops();
     SlotUses uses;
     ScanInputs inputs { context, { }, { }, { }, { } };
+    PhaseTimes times(context.build, PassID::PlanSlots);
+    auto timed = [&](ASCIILiteral name, const auto& step) {
+        PhaseTimes timesOfStep(context.build, PassID::PlanSlots);
+        step();
+        timesOfStep.didFinish(name);
+    };
     runTasksInParallel(loops, {
         [&] { uses.rows.fill({ }, context.rows.count()); },
         [&] {
@@ -1152,41 +1182,49 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
             uses.keysDefinedByDescriptor = FastBitVector(program.types.numberOfPropertyKeys());
             uses.stringsNamed = FastBitVector(program.strings.size());
         },
-        [&] { inputs.layoutsNamedBelow = findLayoutsNamedBelow(context); },
-        [&] { inputs.objectsUnderConstruction = findObjectsUnderConstruction(context); },
-        [&] { inputs.zeroEncodingCandidates = findZeroEncodingCandidates(context); },
-        [&] { inputs.runsBeforeEntry = computeRunsBeforeEntry(context); },
+        [&] { timed("findLayoutsNamedBelow"_s, [&] { inputs.layoutsNamedBelow = findLayoutsNamedBelow(context); }); },
+        [&] { timed("findObjectsUnderConstruction"_s, [&] { inputs.objectsUnderConstruction = findObjectsUnderConstruction(context); }); },
+        [&] { timed("findZeroEncodingCandidates"_s, [&] { inputs.zeroEncodingCandidates = findZeroEncodingCandidates(context); }); },
+        [&] { timed("computeRunsBeforeEntry"_s, [&] { inputs.runsBeforeEntry = computeRunsBeforeEntry(context); }); },
     });
+    times.didFinish("prepareToScanBodies"_s);
     ParallelArray<FunctionUses> usesOfFunctions = collectIntoArrayInParallel<FunctionUses>(loops, program.functions.size(), largeFunctions(program, loops).span(), [&](unsigned index, Vector<FunctionUses>& collected) {
         if (program.functions[index].hasBody())
             collected.append(SlotUseScanner(inputs, uses, FunctionID(index)).run());
     });
+    times.didFinish("scanBodies"_s);
     std::span<const FunctionUses> functions = usesOfFunctions.span();
     Vector<StoreByNameUse> stores;
     Vector<StoreOfUndefined> storesOfUndefined;
     runTasksInParallel(loops, {
         [&] {
-            uses.accesses = listsOfAll(functions, &FunctionUses::accesses);
-            parallelSort(loops, uses.accesses.mutableSpan(), accessIsOrderedBefore);
-            foldEqualAccesses(uses.accesses);
-            moveToExactBuffer(uses.accesses);
+            timed("mergeAccesses"_s, [&] {
+                uses.accesses = listsOfAll(functions, &FunctionUses::accesses);
+                parallelSort(loops, uses.accesses.mutableSpan(), accessIsOrderedBefore);
+                foldEqualAccesses(uses.accesses);
+                moveToExactBuffer(uses.accesses);
+            });
         },
-        [&] { stores = mergeStoresByName(loops, functions); },
-        [&] { storesOfUndefined = mergeStoresOfUndefined(loops, functions); },
-        [&] { findRowsStoredTogether(context, functions, uses.rowsStoredTogether); },
-        [&] { markVariables(inputs.runsBeforeEntry, functions, uses.variables.mutableSpan()); },
-        [&] { markFunctionsWhoseNewClosuresAreStoredInto(functions, uses.functionsWhoseNewClosuresAreStoredInto); },
-        [&] { countStoresOfFactories(context, functions, uses); },
-        [&] { addUpCreations(context, functions, uses); },
+        [&] { timed("mergeStoresByName"_s, [&] { stores = mergeStoresByName(loops, functions); }); },
+        [&] { timed("mergeStoresOfUndefined"_s, [&] { storesOfUndefined = mergeStoresOfUndefined(loops, functions); }); },
+        [&] { timed("findRowsStoredTogether"_s, [&] { findRowsStoredTogether(context, functions, uses.rowsStoredTogether); }); },
+        [&] { timed("markVariables"_s, [&] { markVariables(inputs.runsBeforeEntry, functions, uses.variables.mutableSpan()); }); },
+        [&] { timed("markFunctionsWhoseNewClosuresAreStoredInto"_s, [&] { markFunctionsWhoseNewClosuresAreStoredInto(functions, uses.functionsWhoseNewClosuresAreStoredInto); }); },
+        [&] { timed("countStoresOfFactories"_s, [&] { countStoresOfFactories(context, functions, uses); }); },
+        [&] { timed("addUpCreations"_s, [&] { addUpCreations(context, functions, uses); }); },
         [&] {
-            for (const FunctionUses& function : functions) {
-                for (auto [row, heat] : function.fills)
-                    uses.rows[row].fillHeat += heat;
-            }
+            timed("addUpFills"_s, [&] {
+                for (const FunctionUses& function : functions) {
+                    for (auto [row, heat] : function.fills)
+                        uses.rows[row].fillHeat += heat;
+                }
+            });
         },
-        [&] { addUpFillsBesideCreation(context, functions, uses); },
+        [&] { timed("addUpFillsBesideCreation"_s, [&] { addUpFillsBesideCreation(context, functions, uses); }); },
     });
+    times.didFinish("mergeUsesOfBodies"_s);
     distributeToRows(context, uses, functions, stores.span(), storesOfUndefined.span());
+    times.didFinish("distributeToRows"_s);
     context.build.destroyLater(WTF::move(usesOfFunctions));
     return uses;
 }

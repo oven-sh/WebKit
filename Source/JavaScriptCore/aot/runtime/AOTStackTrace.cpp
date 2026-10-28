@@ -303,6 +303,7 @@ private:
     {
         switch (kind) {
         case StubFrameKind::Plain:
+        case StubFrameKind::ReturnsBehindOperation:
         case StubFrameKind::EngineCallee:
         case StubFrameKind::HostCall:
         case StubFrameKind::GeneratorBody:

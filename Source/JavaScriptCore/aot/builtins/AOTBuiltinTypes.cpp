@@ -368,6 +368,7 @@ public:
 
     TypeFit run();
     bool needsPristineProof() const { return m_needsPristineProof; }
+    bool fitsIfPristine() const { return m_fitsIfPristine; }
 
 private:
     bool has(BuiltinTypeFlag flag) const { return m_tested.flags.contains(flag); }
@@ -386,6 +387,15 @@ private:
     {
         m_isInside &= fit == TypeFit::Inside;
         m_isOutside &= fit == TypeFit::Outside;
+        m_fitsIfPristine &= fit == TypeFit::Inside;
+    }
+
+    void add(LayoutID layout)
+    {
+        TypeFit fit = fitOfLayout(layout);
+        m_isInside &= fit == TypeFit::Inside;
+        m_isOutside &= fit == TypeFit::Outside;
+        m_fitsIfPristine &= fit == TypeFit::Inside || isInstanceThatIsNeverPristine(layout);
     }
 
     TypeFit fitOfMember(BuiltinPrimitive member) const { return has(member) ? TypeFit::Inside : TypeFit::Outside; }
@@ -395,6 +405,7 @@ private:
     TypeFit fitOfFunctions() const;
     TypeFit fitOfBuiltin(BuiltinID) const;
     TypeFit fitOfLayout(LayoutID) const;
+    bool isInstanceThatIsNeverPristine(LayoutID) const;
     TypeFit fitOfClassPart(const ClassPart&);
     TypeFit fitOfContents(const ClassPart&, const BuiltinTypePart& admitting) const;
 
@@ -406,11 +417,13 @@ private:
     bool m_isInside { true };
     bool m_isOutside { true };
     bool m_needsPristineProof { false };
+    bool m_fitsIfPristine { true };
 };
 
 struct FitWithoutProofs {
     TypeFit fit { TypeFit::Unknown };
     bool needsPristineProof { false };
+    bool fitsIfPristine { false };
 };
 
 } // anonymous namespace
@@ -472,7 +485,7 @@ TypeFit FitWalk::run()
     for (BuiltinID builtin : m_operand.builtins)
         add(fitOfBuiltin(builtin));
     for (LayoutID layout : membersOf(m_program, m_operand))
-        add(fitOfLayout(layout));
+        add(layout);
     for (const ClassPart& part : m_operand.classes)
         add(fitOfClassPart(part));
 
@@ -576,6 +589,13 @@ TypeFit FitWalk::fitOfLayout(LayoutID layout) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+bool FitWalk::isInstanceThatIsNeverPristine(LayoutID layout) const
+{
+    BuiltinClassID builtinClass = m_program.at(layout).writtenBuiltinBase;
+    const BuiltinTypePart* admitting = builtinClass ? findPartAdmitting(m_table, m_tested, builtinClass) : nullptr;
+    return admitting && !admitting->pristine.isEmpty() && admitting->contents.empty();
+}
+
 TypeFit FitWalk::fitOfContents(const ClassPart& part, const BuiltinTypePart& admitting) const
 {
     bool areInside = std::ranges::all_of(admitting.contents, [&](const BuiltinSlotContents& tested) {
@@ -616,25 +636,25 @@ static FitWithoutProofs fitWithoutProofs(const TypingContext& context, TypeID op
 {
     const BuiltinTable& table = context.program.builtins();
     if (!testedID || table.at(testedID).isAnything())
-        return { TypeFit::Inside, false };
+        return { TypeFit::Inside, false, true };
 
     const BuiltinType& tested = table.at(testedID);
     if (std::ranges::any_of(tested.parts, isRelativeToOperands))
         return { TypeFit::Unknown, false };
     if (!operandOrNotPassed) {
         bool takesOmittedOperand = tested.primitives.containsAny({ BuiltinPrimitive::NotPassed, BuiltinPrimitive::Undefined });
-        return { takesOmittedOperand ? TypeFit::Inside : TypeFit::Outside, false };
+        return { takesOmittedOperand ? TypeFit::Inside : TypeFit::Outside, false, takesOmittedOperand };
     }
 
     const Type& operand = context.types.at(operandOrNotPassed);
     if (operand.isNever())
-        return { TypeFit::Inside, false };
+        return { TypeFit::Inside, false, true };
     if (!operand.isJavaScriptValue())
         return { TypeFit::Unknown, false };
 
     FitWalk walk(context, operand, tested);
     TypeFit fit = walk.run();
-    return { fit, fit == TypeFit::Inside && walk.needsPristineProof() };
+    return { fit, fit == TypeFit::Inside && walk.needsPristineProof(), walk.fitsIfPristine() };
 }
 
 OperandFit fitOf(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
@@ -650,7 +670,7 @@ OperandFit fitOf(const TypingContext& context, TypeID operandOrNotPassed, Builti
 
 bool fitsIfPristine(const TypingContext& context, TypeID operandOrNotPassed, BuiltinTypeID tested)
 {
-    return fitWithoutProofs(context, operandOrNotPassed, tested).fit == TypeFit::Inside;
+    return fitWithoutProofs(context, operandOrNotPassed, tested).fitsIfPristine;
 }
 
 Type typeOfBuiltinConstant(const BuiltinTable& table, BuiltinID id)

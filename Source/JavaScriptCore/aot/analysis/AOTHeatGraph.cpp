@@ -95,7 +95,8 @@ static bool entersOnlyBuiltins(const Program& program, const Value& call)
 {
     if (effectRuleOf(call.opcode) == EffectRule::Builtin)
         return true;
-    std::optional<ProvenValue<Callees>> callees = calleesOfCall(program, call).all();
+    CalleeList list = calleesOfCall(program, call);
+    std::optional<ProvenValue<Callees>> callees = list.all();
     return callees && callees->value().functions.empty() && !callees->value().builtins.empty();
 }
 
@@ -388,6 +389,9 @@ struct SeenCode {
 
 } // anonymous namespace
 
+// The record of a module that only compiled code evaluates names no body.
+static bool holdsCodeOfModule(const Function& function) { return function.module && function.isModuleBody(); }
+
 // A module is loaded by the entry, or by a module that names it. A closure is made by a body that runs. A call of a callee that nobody knows reaches what has been made and may stand there.
 static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<WeightedCallList>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate)
 {
@@ -423,19 +427,21 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
         if (!isReached.quickSet(node))
             worklist.append(node);
     };
+    BitVector isLoaded(program.modules.size());
+    BitVector hasCode(program.modules.size());
+    for (unsigned index = 0; index < count; ++index) {
+        if (program.functions[index].hasBody() && holdsCodeOfModule(program.functions[index]))
+            hasCode.quickSet(program.functions[index].module.index());
+    }
     auto moduleIsLoaded = [&](FunctionID function) {
         ModuleID module = program.at(function).module;
-        if (!module)
-            return true;
-        FunctionID body = program.at(module).body;
-        return !body || isReached.quickGet(body.index());
+        return !module || !hasCode.quickGet(module.index()) || isLoaded.quickGet(module.index());
     };
     auto exists = [&](FunctionID function) {
         return hasMaker.quickGet(function.index()) ? isMade.quickGet(function.index()) : moduleIsLoaded(function);
     };
     auto isBodyOfModule = [&](FunctionID function) {
-        ModuleID module = program.at(function).module;
-        return module && program.at(module).body == function;
+        return holdsCodeOfModule(program.at(function));
     };
     // Text that the application makes at run time names what the application has made.
     bool evaluatesText = false;
@@ -474,10 +480,23 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
         else if (!hasMaker.quickGet(function.index()) && !isWaiting.quickSet(function.index()))
             functionsWaitingFor[program.at(function).module.index()].append(function);
     };
-    for (const Entry& entry : program.entries) {
-        if (FunctionID body = program.at(entry.module).body)
-            reach(body.index());
-    }
+    Vector<ModuleID> modulesToLoad;
+    auto load = [&](ModuleID first) {
+        modulesToLoad.append(first);
+        while (!modulesToLoad.isEmpty()) {
+            ModuleID module = modulesToLoad.takeLast();
+            if (isLoaded.quickSet(module.index()))
+                continue;
+            if (FunctionID body = program.at(module).body)
+                reach(body.index());
+            for (const ModuleRequest& request : program.at(module).requests)
+                modulesToLoad.append(request.target);
+            for (FunctionID waiting : std::exchange(functionsWaitingFor[module.index()], { }))
+                reachIfCalled(waiting);
+        }
+    };
+    for (const Entry& entry : program.entries)
+        load(entry.module);
     if (program.entries.isEmpty()) {
         // Nothing says where such a program starts.
         for (unsigned index = 0; index < count; ++index) {
@@ -507,10 +526,8 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
         }
         FunctionID function(node);
         constructsValue |= !!constructsUnknownValue[node];
-        for (ModuleID module : modulesLoadedBy[node]) {
-            if (FunctionID body = program.at(module).body)
-                reach(body.index());
-        }
+        for (ModuleID module : modulesLoadedBy[node])
+            load(module);
         if (FunctionID entrypoint = entrypointOf[node])
             reach(entrypoint.index());
         for (FunctionID made : functionsMadeBy[node]) {
@@ -544,15 +561,8 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
             }
             reach(call.node);
         }
-        if (isBodyOfModule(function)) {
-            ModuleID module = program.at(function).module;
-            for (const ModuleRequest& request : program.at(module).requests) {
-                if (FunctionID body = program.at(request.target).body)
-                    reach(body.index());
-            }
-            for (FunctionID waiting : std::exchange(functionsWaitingFor[module.index()], { }))
-                reachIfCalled(waiting);
-        }
+        if (isBodyOfModule(function))
+            load(program.at(function).module);
         if (FunctionID functionAsRead = findFunctionAsRead(&program, function)) {
             for (const FlowIndirectCall& call : flow.indirectCallsFrom(functionAsRead)) {
                 if (program.at(call.callee).hasBody())
@@ -594,9 +604,20 @@ static Vector<double> estimateHowSurelyNodesAreReached(const Program& program, c
         heap.append({ howSurely, node });
         std::ranges::push_heap(heap);
     };
-    auto enterBodyOf = [&](ModuleID module, double howSurely) {
-        if (FunctionID body = program.at(module).body)
-            enter(body.index(), howSurely);
+    Vector<double> surenessOfModules(FillWith { }, program.modules.size(), 0.0);
+    Vector<ModuleID> modulesToLoad;
+    auto load = [&](ModuleID first, double howSurely) {
+        modulesToLoad.append(first);
+        while (!modulesToLoad.isEmpty()) {
+            ModuleID module = modulesToLoad.takeLast();
+            if (howSurely <= surenessOfModules[module.index()])
+                continue;
+            surenessOfModules[module.index()] = howSurely;
+            if (FunctionID body = program.at(module).body)
+                enter(body.index(), howSurely);
+            for (const ModuleRequest& request : program.at(module).requests)
+                modulesToLoad.append(request.target);
+        }
     };
     Vector<FunctionID> entrypointOf(count);
     for (unsigned index = 0; index < count; ++index) {
@@ -607,7 +628,7 @@ static Vector<double> estimateHowSurelyNodesAreReached(const Program& program, c
             entrypointOf[record->target.index()] = FunctionID(index);
     }
     for (const Entry& entry : program.entries)
-        enterBodyOf(entry.module, 1);
+        load(entry.module, 1);
     while (!heap.isEmpty()) {
         std::ranges::pop_heap(heap);
         auto [howSurely, node] = heap.takeLast();
@@ -636,11 +657,9 @@ static Vector<double> estimateHowSurelyNodesAreReached(const Program& program, c
         if (FunctionID entrypoint = entrypointOf[node])
             enter(entrypoint.index(), howSurely);
         for (ModuleID module : modulesLoadedBy[node])
-            enterBodyOf(module, howSurely);
-        if (ModuleID module = program.at(function).module; module && program.at(module).body == function) {
-            for (const ModuleRequest& request : program.at(module).requests)
-                enterBodyOf(request.target, howSurely);
-        }
+            load(module, howSurely);
+        if (holdsCodeOfModule(program.at(function)))
+            load(program.at(function).module, howSurely);
         for (const WeightedCall& call : calls[node])
             enter(call.node, howSurely * std::min(call.weight, 1.0));
         if (FunctionID functionAsRead = findFunctionAsRead(&program, function)) {
@@ -719,41 +738,67 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
         bool runsAsLoopDoes = estimate == EstimateOf::Classes && callGraph.callerSet(callee) != CallerSet::Complete && seen.mayEnter(callee) && !flow.runsAtMostOnce(program, callee);
         return WeightedCall { graph.nodeOf(callee).index(), std::max(runsAsLoopDoes ? frequencyConstants.iterationsPerLoop : 1.0, comesWithEvents(callee) ? entriesPerEvent[callee.index()] : 0.0) };
     };
-    WeightedCallList calls;
-    calls.reserveInitialCapacity(callees.size());
-    Vector<FunctionID> calleesCountedByProgram;
-    for (FunctionID callee : callees) {
+    struct CalleeOfHost {
+        FunctionID function;
+        std::optional<WeightedCall> call;
+    };
+    Vector<CalleeOfHost> calleesWithBody = collectInParallel<CalleeOfHost>(loops, callees.size(), [&](unsigned position, Vector<CalleeOfHost>& found) {
+        FunctionID callee = callees[position];
         if (!program.at(callee).hasBody() || !seen.reaches(callee) || hasOnlySeenCallers.get(callee.index()))
-            continue;
+            return;
         if (isCountedByProgram[callee.index()] && !comesWithEvents(callee))
-            calleesCountedByProgram.append(callee);
+            found.append({ callee, std::nullopt });
         else
-            calls.append(callOf(callee));
+            found.append({ callee, callOf(callee) });
+    });
+    WeightedCallList calls;
+    calls.reserveInitialCapacity(calleesWithBody.size());
+    Vector<FunctionID> calleesCountedByProgram;
+    for (const CalleeOfHost& callee : calleesWithBody) {
+        if (callee.call)
+            calls.append(*callee.call);
+        else
+            calleesCountedByProgram.append(callee.function);
     }
     if (calleesCountedByProgram.isEmpty())
         return calls;
 
-    BitVector isReached(callsOfProgram.size());
-    Vector<uint32_t> worklist;
-    auto reachWithCallees = [&](uint32_t node) {
-        if (isReached.quickSet(node))
-            return;
-        worklist.append(node);
-        while (!worklist.isEmpty()) {
-            for (const WeightedCall& call : callsOfProgram[worklist.takeLast()]) {
-                if (!isReached.quickSet(call.node))
-                    worklist.append(call.node);
-            }
+    Vector<uint8_t> isReached(FillWith { }, callsOfProgram.size(), static_cast<uint8_t>(0));
+    auto reach = [&](uint32_t node) {
+        return !AtomicRef(isReached[node]).load(std::memory_order_relaxed) && !AtomicRef(isReached[node]).exchange(1, std::memory_order_relaxed);
+    };
+    auto reachCalleesOf = [&](uint32_t node, Vector<uint32_t>& found) {
+        for (const WeightedCall& call : callsOfProgram[node]) {
+            if (reach(call.node))
+                found.append(call.node);
         }
     };
-    for (const WeightedCall& call : calls)
-        reachWithCallees(call.node);
+    // What is reached from a set of nodes is the same in whatever order they are followed.
+    AOT_THRESHOLD(size_t, fewestNodesFollowedOnPool, 512);
+    Vector<uint32_t> worklist;
+    auto followWorklist = [&] {
+        while (!worklist.isEmpty()) {
+            if (worklist.size() < fewestNodesFollowedOnPool) {
+                reachCalleesOf(worklist.takeLast(), worklist);
+                continue;
+            }
+            worklist = collectInParallel<uint32_t>(loops, worklist.size(), [&](unsigned position, Vector<uint32_t>& found) {
+                reachCalleesOf(worklist[position], found);
+            });
+        }
+    };
+    for (const WeightedCall& call : calls) {
+        if (reach(call.node))
+            worklist.append(call.node);
+    }
+    followWorklist();
     size_t numberOfSortedCalls = calls.size();
     for (FunctionID callee : calleesCountedByProgram) {
-        if (isReached.quickGet(graph.nodeOf(callee).index()))
+        if (!reach(graph.nodeOf(callee).index()))
             continue;
         calls.append(callOf(callee));
-        reachWithCallees(graph.nodeOf(callee).index());
+        worklist.append(graph.nodeOf(callee).index());
+        followWorklist();
     }
     if (calls.size() > numberOfSortedCalls)
         AOT::sort(calls, { }, &WeightedCall::node);
@@ -1190,22 +1235,32 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
     };
     auto fillEdges = [&](HeatGraph& filled) {
         filled.m_firstSuccessor.fill(0u, numberOfNodes + 1);
-        for (unsigned index = 0; index < numberOfNodes; ++index)
-            filled.m_firstSuccessor[index + 1] = filled.m_firstSuccessor[index] + calls[index].size();
+        filled.m_firstPredecessor.fill(0u, numberOfNodes + 1);
+        forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
+            filled.m_firstSuccessor[index + 1] = calls[index].size();
+            for (const WeightedCall& call : calls[index])
+                AtomicRef(filled.m_firstPredecessor[call.node + 1]).fetch_add(1, std::memory_order_relaxed);
+        });
+        for (unsigned index = 0; index < numberOfNodes; ++index) {
+            filled.m_firstSuccessor[index + 1] += filled.m_firstSuccessor[index];
+            filled.m_firstPredecessor[index + 1] += filled.m_firstPredecessor[index];
+        }
         growInParallel(loops, filled.m_successors, filled.m_firstSuccessor[numberOfNodes]);
         growInParallel(loops, filled.m_multipliers, filled.m_firstSuccessor[numberOfNodes]);
+        filled.m_predecessors.shrink(0);
+        growInParallel(loops, filled.m_predecessors, filled.m_firstPredecessor[numberOfNodes]);
+        Vector<uint32_t> nextPredecessor(filled.m_firstPredecessor.span().first(numberOfNodes));
         forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
             uint32_t position = filled.m_firstSuccessor[index];
             for (const WeightedCall& call : calls[index]) {
                 filled.m_successors[position] = HeatNodeID(call.node);
                 filled.m_multipliers[position++] = call.weight;
+                filled.m_predecessors[AtomicRef(nextPredecessor[call.node]).fetch_add(1, std::memory_order_relaxed)] = HeatNodeID(index);
             }
         });
-        groupByIndex(numberOfNodes, filled.m_firstPredecessor, filled.m_predecessors, [&](const auto& add) {
-            for (unsigned index = 0; index < numberOfNodes; ++index) {
-                for (HeatNodeID successor : filled.successors(HeatNodeID(index)))
-                    add(successor.index(), HeatNodeID(index));
-            }
+        // The predecessors of a node stand in the order of their numbers.
+        forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
+            AOT::sort(filled.m_predecessors.mutableSpan().subspan(filled.m_firstPredecessor[index], filled.m_firstPredecessor[index + 1] - filled.m_firstPredecessor[index]));
         });
     };
     addCallsOfNodes(EstimateOf::Ranks);
@@ -1236,10 +1291,16 @@ uint64_t maxValuesOfOrdinaryProgram(const BuildContext& build)
 
 bool isVeryLargeProgram(const Program& program, const BuildContext& build)
 {
-    uint64_t numberOfValues = 0;
-    for (unsigned index = 0; index < program.functions.size(); ++index)
-        numberOfValues += numberOfValuesIn(program, FunctionID(index));
-    return numberOfValues > maxValuesOfOrdinaryProgram(build);
+    std::atomic<uint64_t> numberOfValues { 0 };
+    constexpr unsigned functionsInShare = 4096;
+    unsigned count = program.functions.size();
+    forEachIndexInParallel(build.parallelLoops(), (count + functionsInShare - 1) / functionsInShare, [&](unsigned share) {
+        uint64_t numberInShare = 0;
+        for (unsigned index = share * functionsInShare; index < std::min(count, (share + 1) * functionsInShare); ++index)
+            numberInShare += numberOfValuesIn(program, FunctionID(index));
+        numberOfValues.fetch_add(numberInShare, std::memory_order_relaxed);
+    });
+    return numberOfValues.load(std::memory_order_relaxed) > maxValuesOfOrdinaryProgram(build);
 }
 
 Vector<double> estimateActivations(HeatGraph& graph)

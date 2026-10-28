@@ -12,6 +12,7 @@
 #include "AOTCallSiteTable.h"
 #include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
+#include "AOTLargeVectors.h"
 
 namespace JSC { namespace AOT {
 
@@ -338,7 +339,7 @@ void removeJumpOnlyFunctions(LinkedFunctions& functions, Vector<EntryAlias>& ali
     RELEASE_ASSERT(aliases.isEmpty());
     const ParallelLoops& loops = context.parallelLoops();
     unsigned count = safeCast<unsigned>(functions.size());
-    CodeIndex index(functions.span());
+    CodeIndex index(functions.span(), &loops);
     Vector<OptionalIndex> jumpsTo(FillWith { }, count, OptionalIndex { });
     forEachIndexInParallel(loops, count, [&](unsigned position) {
         trimPadding(functions[position], templates);
@@ -364,7 +365,7 @@ void removeJumpOnlyFunctions(LinkedFunctions& functions, Vector<EntryAlias>& ali
         });
         functions.reorder(retainedPositions.span(), context);
     }
-    CodeIndex indexOfRetained(functions.span());
+    CodeIndex indexOfRetained(functions.span(), &loops);
     BitVector isHost(functions.size());
     for (const EntryAlias& alias : aliases) {
         if (alias.placement == AliasPlacement::AfterBody)
@@ -409,11 +410,11 @@ struct FoldingInputs {
 };
 
 struct FoldingCandidates {
-    explicit FoldingCandidates(size_t numberOfBodies)
-        : comparisonKeys(numberOfBodies)
-        , codeHashes(FillWith { }, numberOfBodies, static_cast<uint64_t>(0))
+    FoldingCandidates(size_t numberOfBodies, const ParallelLoops& loops)
+        : comparisonKeys(createVectorInParallel<ComparisonKey>(loops, numberOfBodies))
+        , codeHashes(createVectorInParallel<uint64_t>(loops, numberOfBodies, 0))
         , isCandidate(FillWith { }, numberOfBodies, static_cast<uint8_t>(0))
-        , candidateCallees(numberOfBodies)
+        , candidateCallees(createVectorInParallel<CalleeList>(loops, numberOfBodies))
     {
     }
 
@@ -613,7 +614,7 @@ static bool tryDescribeCandidate(uint32_t position, const FoldingInputs& inputs,
 static FoldingCandidates findCandidates(const FoldingInputs& inputs, const ParallelLoops& loops)
 {
     const LinkedFunctions& functions = inputs.functions;
-    FoldingCandidates result(functions.size());
+    FoldingCandidates result(functions.size(), loops);
     result.candidates = findIndicesInParallel(loops, safeCast<unsigned>(functions.size()), [&](unsigned position) {
         if (!tryDescribeCandidate(position, inputs, result.comparisonKeys[position], result.candidateCallees[position]))
             return false;
@@ -775,8 +776,8 @@ static Vector<FoldedFunction> removeFoldedBodies(LinkedFunctions& functions, Vec
 Vector<FoldedFunction> foldIdenticalFunctions(LinkedFunctions& functions, Vector<EntryAlias>& aliases, const Typed::Program& program, BuildContext& context)
 {
     const ParallelLoops& loops = context.parallelLoops();
-    CodeIndex index(functions.span());
-    AliasIndex aliasIndex(aliases.span());
+    CodeIndex index(functions.span(), &loops);
+    AliasIndex aliasIndex(aliases.span(), &loops);
     Vector<AppendedEntryList> appendedEntriesOf = collectAppendedEntries(aliases, index, functions.size());
     FoldingCandidates found = findCandidates({ functions, aliases, program, index, aliasIndex, appendedEntriesOf }, loops);
     Vector<uint32_t> equivalenceClasses = computeInitialClasses(functions, found, loops);

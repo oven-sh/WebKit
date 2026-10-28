@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTAllocationCounts.h"
+#include "AOTCompiledCallee.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTModuleNamespace.h"
@@ -26,6 +27,7 @@
 #include "ArrayStorage.h"
 #include "DeferGCInlines.h"
 #include "DeferTermination.h"
+#include "FunctionPrototype.h"
 #include "JSCInlines.h"
 #include "JSGlobalProxy.h"
 #include "SparseArrayValueMap.h"
@@ -295,7 +297,7 @@ static KeyName nameOfKeyForLeaf(Instance* instance, JSCell* key, KeyAtomization 
     StringImpl* textBefore = key->isString() ? asString(key)->tryGetValueImpl() : nullptr;
     KeyName name = nameOfKeyWithoutAllocating(instance->globalObject, key, atomization);
     // A text that became the name itself is the first of its characters. The stubs look for the name of a text that comes again.
-    if (!wasAtom && name.kind == KeyNameKind::Name && name.uid != textBefore)
+    if (!wasAtom && key->isString() && name.kind == KeyNameKind::Name && name.uid != textBefore)
         instance->state->propertyCaches->tables().rememberNameOfText(name.uid);
     return name;
 }
@@ -362,6 +364,11 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key, L
         return { value, value ? LeafPresence::Own : LeafPresence::TakeSlowPath };
     }
     case KeyNameKind::Name: {
+        // Nothing is filed for a function that stands for a key: the objects themselves answer.
+        if (key->isObject()) {
+            if (StructuralRead read = readGeneric(*instance->vm, object, name.uid); read.presence != LeafPresence::TakeSlowPath)
+                return read;
+        }
         bool isDueForFiling = false;
         StructuralRead read = readAndCache(instance, object, name.uid, isDueForFiling);
         // What is due is filed by the operation that the stub calls next, and from then on the stub answers.
@@ -501,14 +508,35 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance
     return static_cast<size_t>(answer);
 }
 
+// A function of the program for a key is its text: it has no property of its own, nothing above it has Symbol.toPrimitive, and the toString that it finds is the one of the language.
+// The Structure remembers both from the first conversion for as long as they hold, and the text is there from then on.
+static JSString* textOfFunctionForKey(VM& vm, JSCell* key)
+{
+    if (key->type() != SlimClosureType)
+        return nullptr;
+    Structure* structure = key->structure();
+    JSValue toPrimitive = structure->cachedSpecialProperty(CachedSpecialPropertyKey::ToPrimitive);
+    JSValue toString = structure->cachedSpecialProperty(CachedSpecialPropertyKey::ToString);
+    if (!toPrimitive || !toPrimitive.isUndefined() || !toString)
+        return nullptr;
+    auto* function = dynamicDowncast<JSFunction>(toString);
+    if (!function || !function->isHostFunction() || function->nativeFunction() != toTagged(NativeFunction(functionProtoFuncToString)))
+        return nullptr;
+    return CompiledCallee::sourceTextIfMade(vm, asObject(key));
+}
+
 KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, KeyAtomization atomization)
 {
     if (key->isSymbol()) {
         SymbolImpl& uid = asSymbol(key)->uid();
         return uid.isPrivate() || isPreparedBeforeLookups(globalObject->vm(), &uid) ? KeyName { } : KeyName { KeyNameKind::Name, &uid };
     }
-    if (!key->isString())
-        return { };
+    if (!key->isString()) {
+        key = textOfFunctionForKey(globalObject->vm(), key);
+        // The first conversion has left the name in the place of the text.
+        if (!key || !atomOfKey(key))
+            return { };
+    }
     constexpr unsigned maxIndexLength = 10;
     JSString* string = asString(key);
     StringImpl* text = string->tryGetValueImpl();

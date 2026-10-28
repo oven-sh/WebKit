@@ -127,6 +127,7 @@ static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax,
         madeNoObject.append(jit.branchIfNotObject(GPRInfo::returnValueGPR));
     }
     jit.emitFunctionEpilogue();
+    jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
     if (syntax == ConstructSyntax::NewExpression)
         return;

@@ -878,8 +878,10 @@ static void testEveryKindOfMutation()
         "globalThis.sink = function () { Object.freeze(this.k); };"_s,
         "globalThis.sink = function () { Object.preventExtensions(this.k); };"_s,
         "globalThis.sink = function () { globalThis.child = Object.create(this.k); };"_s,
-    })
+    }) {
         checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ImpossibleMutation, statements);
+        checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ImpossibleMutation, statements, { "testing=CheckProofsAtRunTime"_s });
+    }
     // A store of a value of the field's type is found where the program reads the field again.
     checkValidationFails(objectWithEveryFieldRead, ValidationFailureKind::ReadsDiffer, "globalThis.sink = function () { this.k.x = 0.5; };"_s);
 }
@@ -980,6 +982,7 @@ static void testStableFieldOfLayoutThatLosesAnotherField()
     UTF8CString text = makeStringByReplacingAll(String(leakedObject), "    v15 = Call v14, -, v13\n"_s, "    v15 = Call v14, -, v13\n    v16 = PropGet v5 key=\"unread\"\n    v17 = Call v14, -, v16\n    v18 = PropDelete v5 key=\"unread\" mode=Sloppy\n"_s).utf8();
     ASCIILiteral objectThatLosesField = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
     checkValidationFails(objectThatLosesField, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { delete this.k.x; };"_s);
+    checkValidationFails(objectThatLosesField, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { delete this.k.x; };"_s, { "testing=CheckProofsAtRunTime"_s });
 
     UTF8CString numberedText = withNumbersOfModels(objectThatLosesField);
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n5\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);
@@ -992,6 +995,7 @@ static void testNameOutsideCompleteListOfAddedNames()
     ASCIILiteral objectWithAddedProperty = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
     OptionWords optionWords { "validate"_s, "disable=flow:AppendedFields"_s };
     checkValidationFails(objectWithAddedProperty, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { this.k.toString = () => 'own'; };"_s, optionWords);
+    checkValidationFails(objectWithAddedProperty, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { this.k.toString = () => 'own'; };"_s, { "testing=CheckProofsAtRunTime"_s, "disable=flow:AppendedFields"_s });
 
     UTF8CString numberedText = withNumbersOfModels(objectWithAddedProperty);
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n"_s, optionWords, "globalThis.sink = function () { this.k.p = 1; };"_s);
@@ -1002,6 +1006,8 @@ static void testMembersOfClassChange()
     checkValidationFails(leakedInstance, ValidationFailureKind::LookupDiffers, "globalThis.sink = function () { Object.getPrototypeOf(this.k).method = () => 'replaced'; };"_s);
     checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).other = 5; };"_s);
     checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).toString = () => 'of the class'; };"_s);
+    checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).other = 5; };"_s, { "testing=CheckProofsAtRunTime"_s });
+    checkValidationFails(leakedInstance, ValidationFailureKind::ImpossibleMutation, "globalThis.sink = function () { Object.getPrototypeOf(this.k).toString = () => 'of the class'; };"_s, { "testing=CheckProofsAtRunTime"_s });
 
     UTF8CString numberedText = withNumbersOfModels(leakedInstance);
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "as defined\nundefined\n[object Object]\n"_s, { "validate"_s }, "globalThis.sink = function () { };"_s);

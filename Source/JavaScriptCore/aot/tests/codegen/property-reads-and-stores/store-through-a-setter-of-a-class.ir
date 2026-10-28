@@ -122,23 +122,18 @@ function f4 module=m0 position=85 kind=Initializer flags=[HasThis, IsChecked, Is
     Return v4
 }
 
-# Calls are inlined everywhere but in the body of the module. The setter is found at compile time. One test of a byte that says whether members of the class were replaced stands in front of its body,
-# which is an addition and one store of a double. The setter is not loaded and not called.
+# Calls are inlined everywhere but in the body of the module. The setter is found at compile time. Statements only ever assign to the name, and an assignment that meets the setter
+# of the class adds nothing to the object, so no test stands in front of its body, which is an addition and one store of a double. The setter is not loaded and not called.
 # CHECK-LABEL: name="warm" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK: Int32 b@[[guards]] = Load8Z(b@{{*}}ControlDependent|Reads:MemberGuards{{*}}:AreMembersUnchanged)
-# CHECK: Int32 b@[[changed]] = BitAnd(b@[[guards]],
-# CHECK: Branch(b@[[changed]], Terminal,
-# CHECK-NEXT: Successors: Then:Unlikely:#{{*}}, Else:#[[inlined]]
-# CHECK-NEXT: BB#[[inlined]]:
+# CHECK-NOT: AreMembersUnchanged
 # CHECK-NOT: :CallDirect
 # CHECK-NOT: Branch(
 # CHECK: Double b@[[kelvin]] = Add(b@[[celsius]], b@
-# CHECK-NEXT: Store(b@[[kelvin]], b@[[room]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
-# CHECK-NEXT: Jump(Terminal)
-# CHECK: Return(Terminal)
+# CHECK: Store(b@[[kelvin]], b@[[room]], offset = 16, ControlDependent|Writes:ObjectFields{{*}}:PutSlot)
+# CHECK-NEXT: Return(Terminal)
 # CHECK-LABEL: end of function
 # X64-LABEL: name="warm" role=Source
-# X64-NEXT: instructions: 9, patchpoints: 2
+# X64-NEXT: instructions: 3, patchpoints: 1
 # ARM64-LABEL: name="warm" role=Source
-# ARM64-NEXT: instructions: 15, patchpoints: 2
+# ARM64-NEXT: instructions: {{*}}, patchpoints: 1

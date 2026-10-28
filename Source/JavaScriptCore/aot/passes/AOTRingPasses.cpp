@@ -1061,6 +1061,8 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
 // FoldConstants.
 
 AOT_THRESHOLD(uint64_t, maxPrimitiveTextBytes, 24);
+AOT_THRESHOLD(uint64_t, foldedTextBytesForEachValue, 64);
+AOT_THRESHOLD(uint64_t, foldedTextsOfFullLengthInOneBody, 16);
 AOT_THRESHOLD(unsigned, maxOperationsBetweenTextAndPattern, 8);
 
 static std::optional<TypeofType> typeofTypeNamed(std::span<const uint8_t> text)
@@ -1271,6 +1273,16 @@ struct ConstantFolder {
         FoldingRules rules = foldingRulesOfOpcodes[static_cast<unsigned>(value.opcode)];
         if (rules.isEmpty())
             return false;
+        if (joinsOfTexts.contains(value.opcode)) {
+            switch (letJoinWait(id, value)) {
+            case JoinOfKnownTexts::Waits:
+                return false;
+            case JoinOfKnownTexts::IsWrittenOut:
+                return true;
+            case JoinOfKnownTexts::IsFoldedAsAnyOperation:
+                break;
+            }
+        }
         if (rules.contains(FoldingRule::MayHaveSeveralResults) && numberOfResultsOf(program, function, value))
             return false;
         if (rules.contains(FoldingRule::MayPassProof)) {
@@ -1412,6 +1424,105 @@ struct ConstantFolder {
         return hasNarrowPart && hasWidePart;
     }
 
+    // `s = s + n + a;` line after line, all of it known: each join is used by the next alone, and nobody reads its characters. Such a join waits, and the first one that
+    // somebody else uses gathers the pieces, so that n joins leave one text and not n texts of up to n pieces.
+    static constexpr OpcodeSet joinsOfTexts { Opcode::Add, Opcode::Strcat };
+    enum class JoinOfKnownTexts : uint8_t { Waits, IsWrittenOut, IsFoldedAsAnyOperation };
+    // By the index of the value: the bytes of its text.
+    UncheckedKeyHashMap<uint32_t, uint64_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> waitingJoins { };
+    Vector<ValueID, 4> joinsWrittenOut { };
+
+    bool isReadByOneJoinAlone(ValueID id)
+    {
+        std::optional<Use> use = useLists().singleUse(id);
+        return use && use->kind == Use::Kind::Operand && joinsOfTexts.contains(function.at(use->user).opcode);
+    }
+
+    bool writeOutJoin(ValueID id, uint64_t bytes)
+    {
+        if (exceedsLimitOfFoldedString(id, bytes))
+            return false;
+        StringBuilder result(OverflowPolicy::RecordOverflow);
+        Vector<ValueID, 16> left { id };
+        Vector<ValueID, 16> gathered;
+        while (!left.isEmpty()) {
+            ValueID next = left.takeLast();
+            if (next != id && !waitingJoins.contains(next.index())) {
+                result.append(*textOf(program, knownValueOf(next)));
+                continue;
+            }
+            if (next != id)
+                gathered.append(next);
+            const Value& join = function.at(next);
+            for (uint32_t index = join.numberOfOperands(); index--;)
+                left.append(join.operand(index));
+        }
+        if (result.hasOverflowed() || !becomeConstant(id, KnownValue::string(context.strings.intern(StringView(result)))))
+            return false;
+        context.bytesOfFoldedTexts += bytes;
+        waitingJoins.remove(id.index());
+        // Each was read by the join above it alone, and made a text that is shorter than this one.
+        for (ValueID join : gathered) {
+            waitingJoins.remove(join.index());
+            explainOperationThatGoes(function, join, InPlaceOfOperation::NothingByProofOfThePass);
+            becomeUndefined(function, join);
+            joinsWrittenOut.append(join);
+        }
+        context.analyses.invalidate(FunctionAnalysis::Effects);
+        return true;
+    }
+
+    JoinOfKnownTexts letJoinWait(ValueID id, const Value& value)
+    {
+        // What a text that the program makes is held in, and a text of narrow and wide parts, is the business of the rules below.
+        bool canWait = textsMadeByProgram.isEmpty();
+        bool hasWaitingOperand = false;
+        bool hasText = false;
+        uint64_t bytes = 0;
+        uint64_t mostBytes = 0;
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            ValueID operand = value.operand(index);
+            if (auto waiting = operand ? waitingJoins.find(operand.index()) : waitingJoins.end(); waiting != waitingJoins.end()) {
+                hasWaitingOperand = true;
+                hasText = true;
+                bytes += waiting->value;
+                mostBytes += waiting->value;
+                continue;
+            }
+            KnownValue known = canWait && operand ? knownValueOf(operand) : KnownValue();
+            if (!isPrimitive(known)) {
+                canWait = false;
+                continue;
+            }
+            if (known.kind() != KnownValue::Kind::String) {
+                bytes += textOf(program, known)->length();
+                mostBytes += maxPrimitiveTextBytes;
+                continue;
+            }
+            std::span<const uint8_t> text = program.string(known.asString());
+            canWait = !std::ranges::any_of(text, [](uint8_t byte) { return byte > 0xc3; });
+            hasText = true;
+            bytes += text.size();
+            mostBytes += text.size();
+        }
+        canWait = canWait && hasText && mostBytes <= context.limit(LimitID::MaxFoldedStringBytes);
+        if (canWait && isReadByOneJoinAlone(id)) {
+            waitingJoins.add(id.index(), bytes);
+            return JoinOfKnownTexts::Waits;
+        }
+        if (!hasWaitingOperand)
+            return JoinOfKnownTexts::IsFoldedAsAnyOperation;
+        if (canWait && writeOutJoin(id, bytes))
+            return JoinOfKnownTexts::IsWrittenOut;
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            ValueID operand = value.operand(index);
+            auto waiting = operand ? waitingJoins.find(operand.index()) : waitingJoins.end();
+            if (waiting != waitingJoins.end() && writeOutJoin(operand, waiting->value))
+                joinsWrittenOut.append(operand);
+        }
+        return JoinOfKnownTexts::IsFoldedAsAnyOperation;
+    }
+
     KnownValue joinKnownStrings(ValueID id, const Value& value)
     {
         if (!opcodesCreatingKnownStrings.contains(value.opcode))
@@ -1426,7 +1537,10 @@ struct ConstantFolder {
         }
         if (exceedsLimitOfFoldedString(id, bytes))
             return { };
-        return evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
+        KnownValue joined = evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
+        if (joined.kind() == KnownValue::Kind::String)
+            context.bytesOfFoldedTexts += bytes;
+        return joined;
     }
 
     bool foldKnownString(ValueID id, const Value& value)
@@ -1489,11 +1603,15 @@ struct ConstantFolder {
         });
     }
 
+    // `s = s + n + a; use(s);` line after line: each text is as long as all the lines before it, and the program holds every one. So the texts of one body together are held to a few times the limit, beyond a share that grows with the body.
     bool exceedsLimitOfFoldedString(ValueID id, uint64_t bytes)
     {
         if (bytes > context.limit(LimitID::MaxFoldedStringBytes) && feedsOnlyRegExpPatterns(id))
             return context.exceeds(LimitID::RegExpCandidateTextLength, bytes, id);
-        return context.exceeds(LimitID::MaxFoldedStringBytes, bytes, id);
+        uint64_t together = context.bytesOfFoldedTexts + bytes;
+        uint64_t shareOfBody = foldedTextBytesForEachValue * function.values.size();
+        uint64_t beyondShare = together > shareOfBody ? together - shareOfBody : 0;
+        return context.exceeds(LimitID::MaxFoldedStringBytes, std::max(bytes, beyondShare / foldedTextsOfFullLengthInOneBody), id);
     }
 
     // A literal that nothing but the call uses is as created when the call begins, and nobody sees what the call leaves in it.
@@ -1601,6 +1719,7 @@ struct ConstantFolder {
             return becomeAnswer(answer->primitive);
         if (exceedsLimitOfFoldedString(id, answer->text.sizeInBytes()))
             return false;
+        context.bytesOfFoldedTexts += answer->text.sizeInBytes();
         StringID characters = context.strings.intern(StringView(answer->text));
         // How the answer is held follows how the operands are, and the realm was handed literals.
         if (answer->isStoredLikeLiteral && !hasOperandMadeByProgram(value))
@@ -1689,6 +1808,7 @@ PassOutcome foldConstants(FunctionPassContext& context)
             didChangeCasts |= isCastOrConversion(opcode) || isCastOrConversion(function.at(id).opcode);
         }
     }
+    foldedValues.appendVector(folder.joinsWrittenOut);
     if (!folder.textsMadeByProgram.isEmpty()) {
         if (!foldedValues.isEmpty()) {
             context.analyses.invalidate(FunctionAnalysis::UseLists);

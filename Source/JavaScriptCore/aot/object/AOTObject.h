@@ -174,8 +174,10 @@ public:
     bool isInSlot(const FieldData&) const;
     JSValue read(const FieldData&) const;
     JSValue readInline(const FieldData&) const;
+    // The word of a literal string is read here too, by whoever answers stringForWordInSlot().
+    JSValue readInline(const FieldData&, const auto* strings) const;
     // Calls the functor with an int32_t, a bool or a double where the slot holds one, and with a JSValue otherwise, which is empty for an absent field.
-    template<typename Functor> auto readInlineUnboxed(const FieldData&, const Functor&) const;
+    template<typename Functor, typename Strings = std::nullptr_t> auto readInlineUnboxed(const FieldData&, const Functor&, Strings = nullptr) const;
     bool tryStore(VM&, const FieldData&, JSValue);
     bool tryInitialize(VM&, const FieldData&, JSValue);
     bool store(VM&, const FieldData&, AcceptedValue);
@@ -408,8 +410,8 @@ inline Extension* Object::extension() const
     return reinterpret_cast<Extension*>(const_cast<uint8_t*>(extensionStorageOrNull(this, *slot)));
 }
 
-template<typename Functor>
-ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Functor& functor) const
+template<typename Functor, typename Strings>
+ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Functor& functor, Strings strings) const
 {
     if (field.isOutOfLine()) [[unlikely]]
         return functor(read(field));
@@ -452,27 +454,40 @@ ALWAYS_INLINE auto Object::readInlineUnboxed(const FieldData& field, const Funct
     case SlotRepresentation::Float:
     case SlotRepresentation::OptionalInt64:
     case SlotRepresentation::OptionalDouble:
+    case SlotRepresentation::DeferredClosure:
+        return functor(read(field));
     case SlotRepresentation::LiteralString:
     case SlotRepresentation::LiteralString32:
-    case SlotRepresentation::DeferredClosure:
+        if constexpr (!std::is_null_pointer_v<Strings>) {
+            uint64_t word = field.slot.representation() == SlotRepresentation::LiteralString ? at<uint64_t>(field.slot.offset) : at<uint32_t>(field.slot.offset);
+            if (auto* string = strings->stringForWordInSlot(word)) [[likely]]
+                return functor(JSValue(string));
+        }
         return functor(read(field));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+inline constexpr auto boxValueOfSlot = [](auto value) ALWAYS_INLINE_LAMBDA -> JSValue {
+    using Unboxed = decltype(value);
+    if constexpr (std::same_as<Unboxed, bool>)
+        return jsBoolean(value);
+    else if constexpr (std::same_as<Unboxed, double>)
+        return jsNumber(withoutPayload(value));
+    else if constexpr (std::same_as<Unboxed, int32_t>)
+        return jsNumber(value);
+    else
+        return value;
+};
+
 ALWAYS_INLINE JSValue Object::readInline(const FieldData& field) const
 {
-    return readInlineUnboxed(field, [](auto value) ALWAYS_INLINE_LAMBDA -> JSValue {
-        using Unboxed = decltype(value);
-        if constexpr (std::same_as<Unboxed, bool>)
-            return jsBoolean(value);
-        else if constexpr (std::same_as<Unboxed, double>)
-            return jsNumber(withoutPayload(value));
-        else if constexpr (std::same_as<Unboxed, int32_t>)
-            return jsNumber(value);
-        else
-            return value;
-    });
+    return readInlineUnboxed(field, boxValueOfSlot);
+}
+
+ALWAYS_INLINE JSValue Object::readInline(const FieldData& field, const auto* strings) const
+{
+    return readInlineUnboxed(field, boxValueOfSlot, strings);
 }
 
 ALWAYS_INLINE std::optional<std::span<const FieldAsProperty>> Object::fieldsInKeyOrder() const

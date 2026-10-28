@@ -991,13 +991,19 @@ static void checkTransitionTableGrows(LoadedProgram& program)
     constexpr uint32_t initialMask = 1023;
     AOT_TEST_CHECK(program.instance().objects.keyOrderTransitionMask == initialMask);
 
+    // Compiled code takes the step to the next key of an order of the image without the table, so such a step has no place there.
     Vector<KeyOrderTransition> seen;
+    Vector<KeyOrderTransition> seenInsideOrdersOfImage;
+    const KeyOrderTable& keyOrders = program.state().objects->keyOrders;
     CreationOrder order;
     std::iota(order.begin(), order.end(), 0);
     for (unsigned count = 0; count < numberOfOrders; ++count) {
         createBag(program, order, [&](Object& bag, const FieldData& field, uint64_t wordsBefore) {
             AOT_TEST_CHECK(!bag.hasOutOfLineKeyOrder());
-            seen.append({ wordsBefore & orderCountAndShapeMask, slotKeyFor(field.slot.offset, field.isOutOfLine()), bag.orderWord() & orderAndCountMask });
+            KeyOrderTransition step { wordsBefore & orderCountAndShapeMask, slotKeyFor(field.slot.offset, field.isOutOfLine()), bag.orderWord() & orderAndCountMask };
+            std::optional<uint32_t> insideOrderOfImage = keyOrders.stepInsideOrderOfImage(bag.layout(), static_cast<uint32_t>(wordsBefore), bag.indexOf(field));
+            AOT_TEST_CHECK(!insideOrderOfImage || *insideOrderOfImage == step.orderAndCountAfter);
+            (insideOrderOfImage ? seenInsideOrdersOfImage : seen).append(step);
         });
         AOT_TEST_CHECK(std::ranges::next_permutation(order).found);
     }
@@ -1008,6 +1014,9 @@ static void checkTransitionTableGrows(LoadedProgram& program)
         const KeyOrderTransition* found = findTransition(program, expected.orderAndShapeWordsBefore, expected.key);
         AOT_TEST_CHECK(found && found->orderAndCountAfter == expected.orderAndCountAfter);
     }
+    AOT_TEST_CHECK(!seenInsideOrdersOfImage.isEmpty());
+    for (const KeyOrderTransition& step : seenInsideOrdersOfImage)
+        AOT_TEST_CHECK(!findTransition(program, step.orderAndShapeWordsBefore, step.key));
 
     uint64_t wordsOfOtherShape = static_cast<uint64_t>(shapeWordOf(layoutNamed(program, "Mutable"_s).shape)) << 32 | (seen[0].orderAndShapeWordsBefore & UINT32_MAX);
     AOT_TEST_CHECK(!findTransition(program, wordsOfOtherShape, seen[0].key) && !findTransition(program, seen[0].orderAndShapeWordsBefore, outOfLineSlotKey - 8));

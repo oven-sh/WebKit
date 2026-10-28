@@ -39,6 +39,7 @@ struct ElementReceiver {
     ElementReceiverKind kind { ElementReceiverKind::Unknown };
     const ClassPart* part { nullptr };
     bool isExpected { false };
+    bool isNeverPristine { false };
 };
 
 } // anonymous namespace
@@ -275,10 +276,21 @@ static const ClassPart* findOnlyClassWithElements(const BuiltinTable& builtins, 
     return found;
 }
 
+static bool hasOnlyObjectsOfClassesBelowArray(const Program& program, const Type& type)
+{
+    return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
+        return program.at(member).writtenBuiltinBase == BuiltinClasses::Array;
+    });
+}
+
 static ElementReceiver elementReceiverOf(const Program& program, const ElementAccessQuery& query)
 {
     if (const ClassPart* part = query.receiver.singleBuiltinClass())
-        return { ElementReceiverKind::Class, part, false };
+        return { ElementReceiverKind::Class, part, false, part->builtinClass == BuiltinClasses::Array && query.receiverExpected && hasOnlyObjectsOfClassesBelowArray(program, *query.receiverExpected) };
+    if (hasOnlyObjectsOfClassesBelowArray(program, query.receiver)) {
+        static const NeverDestroyed<ClassPart> anyArray { ClassPart { .builtinClass = BuiltinClasses::Array } };
+        return { ElementReceiverKind::Class, &anyArray.get(), false, true };
+    }
     if (query.receiver.isAnyString())
         return { ElementReceiverKind::String };
     if (canSplitReceiver(query.receiver))
@@ -323,6 +335,9 @@ static ArrayStorage expectedArrayStorageOf(const Program& program, const Element
 static ElementAccessPlan planArrayAccess(const Program& program, const ElementAccessQuery& query, NumberKey key, const ElementReceiver& receiver, ElementAccessPlan plan)
 {
     const ClassPart& part = *receiver.part;
+    if (receiver.isNeverPristine && query.access != Access::Read)
+        return planByKey(query);
+    plan.receiverIsNeverPristine = receiver.isNeverPristine;
     plan.requiredAspects = PristineAspects::Storage;
     if (!key.isArrayIndex)
         plan.requiredAspects.add(PristineAspects::Names);

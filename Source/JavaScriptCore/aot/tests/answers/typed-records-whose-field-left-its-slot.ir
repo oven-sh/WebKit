@@ -22,77 +22,77 @@
 # A field that was removed and added again lies outside its slot. Typed code reads by slot behind a test of the slot; what it counted, logged, made or stored in front of the failing test has happened once.
 # At the end the shell runs the same text itself: every answer is the same.
 # FORM: AsRead
-# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = report => { let calls = 0; const log = []; function moved(x, y) { const point = { x, y }; delete point.y; point.y = y; return point; } function sum(point) { return point.x + point.y; } report(sum({ x: 1, y: 2 })); report(sum(moved(3, 4))); function countThenSum(point) { calls++; return point.x + point.y; } report(countThenSum({ x: 1, y: 2 })); report(countThenSum(moved(3, 4))); report(calls); function sumThenCount(point) { const total = point.x + point.y; calls++; return total; } report(sumThenCount({ x: 1, y: 2 })); report(sumThenCount(moved(3, 4))); report(calls); function between(point) { const x = point.x; log.push("between"); return x + point.y; } report(between({ x: 1, y: 2 })); report(between(moved(3, 4))); report(log.length); function made(point) { const copy = { x: point.x, y: 0 }; copy.y = point.y; return copy; } report(made({ x: 1, y: 2 }).y); report(made(moved(3, 4)).y); function both(a, b) { return a.x + a.y + b.x + b.y; } report(both({ x: 1, y: 2 }, moved(3, 4))); report(both(moved(1, 2), { x: 3, y: 4 })); report(both(moved(1, 2), moved(3, 4))); function stored(point, value) { point.x = value; return point.x + point.y; } report(stored({ x: 1, y: 2 }, 5)); report(stored(moved(3, 4), 5)); function inLoop(points) { let total = 0; for (let i = 0;i < points.length; i++) { calls++; total += points[i].x + points[i].y; } return total; } report(inLoop([{ x: 1, y: 2 }, moved(3, 4), { x: 5, y: 6 }])); report(calls); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); }); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + got[n] + " and not " + expected[n]); } print(same + " of " + expected.length + " of " + got.length); }; })();
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { let calls = 0; const log = []; function moved(x, y) { const point = { x, y }; delete point.y; point.y = y; return point; } function sum(point) { return point.x + point.y; } report(sum({ x: 1, y: 2 })); report(sum(moved(3, 4))); function countThenSum(point) { calls++; return point.x + point.y; } report(countThenSum({ x: 1, y: 2 })); report(countThenSum(moved(3, 4))); report(calls); function sumThenCount(point) { const total = point.x + point.y; calls++; return total; } report(sumThenCount({ x: 1, y: 2 })); report(sumThenCount(moved(3, 4))); report(calls); function between(point) { const x = point.x; log.push("between"); return x + point.y; } report(between({ x: 1, y: 2 })); report(between(moved(3, 4))); report(log.length); function made(point) { const copy = { x: point.x, y: 0 }; copy.y = point.y; return copy; } report(made({ x: 1, y: 2 }).y); report(made(moved(3, 4)).y); function both(a, b) { return a.x + a.y + b.x + b.y; } report(both({ x: 1, y: 2 }, moved(3, 4))); report(both(moved(1, 2), { x: 3, y: 4 })); report(both(moved(1, 2), moved(3, 4))); function stored(point, value) { point.x = value; return point.x + point.y; } report(stored({ x: 1, y: 2 }, 5)); report(stored(moved(3, 4), 5)); function inLoop(points) { let total = 0; for (let i = 0;i < points.length; i++) { calls++; total += points[i].x + points[i].y; } return total; } report(inLoop([{ x: 1, y: 2 }, moved(3, 4), { x: 5, y: 6 }])); report(calls); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
 # CHECK: 21 of 21 of 21
 # CHECK-NEXT: exited with 0
 
-module m0 path="main.js" displayPath="main.js" body=f0
+module m0 path="typed-records-whose-field-left-its-slot.ts" displayPath="typed-records-whose-field-left-its-slot.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0
-typesite w0 module=m0 kind=Variable
-typesite w1 module=m0 kind=Variable
-typesite w2 module=m0 kind=Parameter
-typesite w3 module=m0 kind=Parameter
-typesite w4 module=m0 kind=Result
-typesite w5 module=m0 kind=Parameter
-typesite w6 module=m0 kind=Result
-typesite w7 module=m0 kind=Parameter
-typesite w8 module=m0 kind=Result
-typesite w9 module=m0 kind=Parameter
-typesite w10 module=m0 kind=Result
-typesite w11 module=m0 kind=Parameter
-typesite w12 module=m0 kind=Result
-typesite w13 module=m0 kind=Parameter
-typesite w14 module=m0 kind=Result
-typesite w15 module=m0 kind=Parameter
-typesite w16 module=m0 kind=Parameter
-typesite w17 module=m0 kind=Result
-typesite w18 module=m0 kind=Parameter
-typesite w19 module=m0 kind=Parameter
-typesite w20 module=m0 kind=Result
-typesite w21 module=m0 kind=Parameter
-typesite w22 module=m0 kind=Result
-typesite w23 module=m0 kind=CallResult
-typesite w24 module=m0 kind=CallResult
-typesite w25 module=m0 kind=CallResult
-typesite w26 module=m0 kind=CallResult
-typesite w27 module=m0 kind=CallResult
-typesite w28 module=m0 kind=CallResult
-typesite w29 module=m0 kind=CallResult
-typesite w30 module=m0 kind=CallResult
-typesite w31 module=m0 kind=CallResult
-typesite w32 module=m0 kind=CallResult
-typesite w33 module=m0 kind=CallResult
-typesite w34 module=m0 kind=CallResult
-typesite w35 module=m0 kind=PropertyRead
-typesite w36 module=m0 kind=CallResult
-typesite w37 module=m0 kind=CallResult
-typesite w38 module=m0 kind=CallResult
-typesite w39 module=m0 kind=CallResult
-typesite w40 module=m0 kind=CallResult
-typesite w41 module=m0 kind=CallResult
-typesite w42 module=m0 kind=CallResult
-typesite w43 module=m0 kind=CallResult
-typesite w44 module=m0 kind=CallResult
-typesite w45 module=m0 kind=CallResult
-typesite w46 module=m0 kind=CallResult
-typesite w47 module=m0 kind=CallResult
-typesite w48 module=m0 kind=CallResult
-typesite w49 module=m0 kind=CallResult
-typesite w50 module=m0 kind=CallResult
-typesite w51 module=m0 kind=Variable
-typesite w52 module=m0 kind=Field
-typesite w53 module=m0 kind=Variable
-typesite w54 module=m0 kind=Variable
-typesite w55 module=m0 kind=CallResult
-typesite w56 module=m0 kind=Variable
-typesite w57 module=m0 kind=Field
-typesite w58 module=m0 kind=Field
-typesite w59 module=m0 kind=Variable
-typesite w60 module=m0 kind=Variable
-typesite w61 module=m0 kind=PropertyRead
-typesite w62 module=m0 kind=Element
-typesite w63 module=m0 kind=Element
-layout L0 name="Point" module=m0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+typesite w0 module=m0 position=92 kind=Variable
+typesite w1 module=m0 position=109 kind=Variable
+typesite w2 module=m0 position=144 kind=Parameter
+typesite w3 module=m0 position=155 kind=Parameter
+typesite w4 module=m0 position=129 kind=Result
+typesite w5 module=m0 position=273 kind=Parameter
+typesite w6 module=m0 position=260 kind=Result
+typesite w7 module=m0 position=402 kind=Parameter
+typesite w8 module=m0 position=380 kind=Result
+typesite w9 module=m0 position=573 kind=Parameter
+typesite w10 module=m0 position=551 kind=Result
+typesite w11 module=m0 position=760 kind=Parameter
+typesite w12 module=m0 position=743 kind=Result
+typesite w13 module=m0 position=943 kind=Parameter
+typesite w14 module=m0 position=929 kind=Result
+typesite w15 module=m0 position=1116 kind=Parameter
+typesite w16 module=m0 position=1126 kind=Parameter
+typesite w17 module=m0 position=1102 kind=Result
+typesite w18 module=m0 position=1320 kind=Parameter
+typesite w19 module=m0 position=1334 kind=Parameter
+typesite w20 module=m0 position=1304 kind=Result
+typesite w21 module=m0 position=1487 kind=Parameter
+typesite w22 module=m0 position=1471 kind=Result
+typesite w23 module=m0 position=332 kind=CallResult
+typesite w24 module=m0 position=365 kind=CallResult
+typesite w25 module=m0 position=361 kind=CallResult
+typesite w26 module=m0 position=470 kind=CallResult
+typesite w27 module=m0 position=521 kind=CallResult
+typesite w28 module=m0 position=508 kind=CallResult
+typesite w29 module=m0 position=662 kind=CallResult
+typesite w30 module=m0 position=713 kind=CallResult
+typesite w31 module=m0 position=700 kind=CallResult
+typesite w32 module=m0 position=853 kind=CallResult
+typesite w33 module=m0 position=894 kind=CallResult
+typesite w34 module=m0 position=886 kind=CallResult
+typesite w35 module=m0 position=916 kind=PropertyRead
+typesite w36 module=m0 position=1048 kind=CallResult
+typesite w37 module=m0 position=1085 kind=CallResult
+typesite w38 module=m0 position=1080 kind=CallResult
+typesite w39 module=m0 position=1206 kind=CallResult
+typesite w40 module=m0 position=1185 kind=CallResult
+typesite w41 module=m0 position=1233 kind=CallResult
+typesite w42 module=m0 position=1228 kind=CallResult
+typesite w43 module=m0 position=1276 kind=CallResult
+typesite w44 module=m0 position=1289 kind=CallResult
+typesite w45 module=m0 position=1271 kind=CallResult
+typesite w46 module=m0 position=1411 kind=CallResult
+typesite w47 module=m0 position=1453 kind=CallResult
+typesite w48 module=m0 position=1446 kind=CallResult
+typesite w49 module=m0 position=1665 kind=CallResult
+typesite w50 module=m0 position=1641 kind=CallResult
+typesite w51 module=m0 position=181 kind=Variable
+typesite w52 module=m0 position=231 kind=Field
+typesite w53 module=m0 position=603 kind=Variable
+typesite w54 module=m0 position=790 kind=Variable
+typesite w55 module=m0 position=803 kind=CallResult
+typesite w56 module=m0 position=972 kind=Variable
+typesite w57 module=m0 position=1008 kind=Field
+typesite w58 module=m0 position=1359 kind=Field
+typesite w59 module=m0 position=1518 kind=Variable
+typesite w60 module=m0 position=1538 kind=Variable
+typesite w61 module=m0 position=1549 kind=PropertyRead
+typesite w62 module=m0 position=1589 kind=Element
+typesite w63 module=m0 position=1603 kind=Element
+layout L0 name="Point" module=m0 position=57 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
 data d0 root=Array{contents=undefined|null|string} module=m0
 data d1 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}, {key="y" value=Number{value=2}}]} module=m0
 data d2 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}, {key="y" value=Number{value=2}}]} module=m0
@@ -106,362 +106,362 @@ data d9 root=Object{layout=L0 members=[{key="x" value=Number{value=1}}, {key="y"
 data d10 root=Object{layout=L0 members=[{key="x" value=Number{value=5}}, {key="y" value=Number{value=6}}]} module=m0
 variable g0 name="calls" module=m0 declared={type=number|absent site=w0}
 variable g1 name="log" module=m0 declared={type=undefined|null|absent|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
-function f0 name="main" kind=Module flags=[IsChecked] results=[{type=anything}] {
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f1
-    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f2
-    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f3
-    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f4
-    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v8 = NewClosure function=f5
-    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v10 = NewClosure function=f6
-    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v12 = NewClosure function=f7
-    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v14 = NewClosure function=f8
-    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v16 = NewClosure function=f9
-    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v18 = Integer
-    v19 = Convert v18 declared={type=number site=w0}
-    PutModuleVariable v19 variable=g0
-    v21 = Data data=d0
-    v22 = Convert v21 declared={type=undefined|null|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]}
-    PutModuleVariable v22 variable=g1
-    v24 = Builtin builtin=GlobalThis
-    v25 = PropGet v24 key="report" [isFreeName]
-    v26 = Data data=d1
-    v27 = Call v3, -, v26
-    v28 = Convert v27 declared={type=number site=w23}
-    v29 = Call v25, -, v28
-    v30 = Builtin builtin=GlobalThis
-    v31 = PropGet v30 key="report" [isFreeName]
-    v32 = Integer integer=3
-    v33 = Integer integer=4
-    v34 = Call v1, -, v32, v33
-    v35 = Convert v34 declared={type=undefined|null|L0 site=w24 flags=[OmitsNull, OmitsUndefined]}
-    v36 = Call v3, -, v35
-    v37 = Convert v36 declared={type=number site=w25}
-    v38 = Call v31, -, v37
-    v39 = Builtin builtin=GlobalThis
-    v40 = PropGet v39 key="report" [isFreeName]
-    v41 = Data data=d2
-    v42 = Call v5, -, v41
-    v43 = Convert v42 declared={type=number site=w26}
-    v44 = Call v40, -, v43
-    v45 = Builtin builtin=GlobalThis
-    v46 = PropGet v45 key="report" [isFreeName]
-    v47 = Integer integer=3
-    v48 = Integer integer=4
-    v49 = Call v1, -, v47, v48
-    v50 = Convert v49 declared={type=undefined|null|L0 site=w27 flags=[OmitsNull, OmitsUndefined]}
-    v51 = Call v5, -, v50
-    v52 = Convert v51 declared={type=number site=w28}
-    v53 = Call v46, -, v52
-    v54 = Builtin builtin=GlobalThis
-    v55 = PropGet v54 key="report" [isFreeName]
-    v56 = GetModuleVariable variable=g0
-    v57 = CheckInitialized v56 name="calls"
-    v58 = Call v55, -, v57
-    v59 = Builtin builtin=GlobalThis
-    v60 = PropGet v59 key="report" [isFreeName]
-    v61 = Data data=d3
-    v62 = Call v7, -, v61
-    v63 = Convert v62 declared={type=number site=w29}
-    v64 = Call v60, -, v63
-    v65 = Builtin builtin=GlobalThis
-    v66 = PropGet v65 key="report" [isFreeName]
-    v67 = Integer integer=3
-    v68 = Integer integer=4
-    v69 = Call v1, -, v67, v68
-    v70 = Convert v69 declared={type=undefined|null|L0 site=w30 flags=[OmitsNull, OmitsUndefined]}
-    v71 = Call v7, -, v70
-    v72 = Convert v71 declared={type=number site=w31}
-    v73 = Call v66, -, v72
-    v74 = Builtin builtin=GlobalThis
-    v75 = PropGet v74 key="report" [isFreeName]
-    v76 = GetModuleVariable variable=g0
-    v77 = CheckInitialized v76 name="calls"
-    v78 = Call v75, -, v77
-    v79 = Builtin builtin=GlobalThis
-    v80 = PropGet v79 key="report" [isFreeName]
-    v81 = Data data=d4
-    v82 = Call v9, -, v81
-    v83 = Convert v82 declared={type=number site=w32}
-    v84 = Call v80, -, v83
-    v85 = Builtin builtin=GlobalThis
-    v86 = PropGet v85 key="report" [isFreeName]
-    v87 = Integer integer=3
-    v88 = Integer integer=4
-    v89 = Call v1, -, v87, v88
-    v90 = Convert v89 declared={type=undefined|null|L0 site=w33 flags=[OmitsNull, OmitsUndefined]}
-    v91 = Call v9, -, v90
-    v92 = Convert v91 declared={type=number site=w34}
-    v93 = Call v86, -, v92
-    v94 = Builtin builtin=GlobalThis
-    v95 = PropGet v94 key="report" [isFreeName]
-    v96 = PropGet v22 key="length"
-    v97 = Convert v96 declared={type=number site=w35} illTypedCause=Assertion
-    v98 = Call v95, -, v97
-    v99 = Builtin builtin=GlobalThis
-    v100 = PropGet v99 key="report" [isFreeName]
-    v101 = Data data=d5
-    v102 = Call v11, -, v101
-    v103 = Convert v102 declared={type=undefined|null|L0 site=w36 flags=[OmitsNull, OmitsUndefined]}
-    v104 = PropGet v103 key="y"
-    v105 = Call v100, -, v104
-    v106 = Builtin builtin=GlobalThis
-    v107 = PropGet v106 key="report" [isFreeName]
-    v108 = Integer integer=3
-    v109 = Integer integer=4
-    v110 = Call v1, -, v108, v109
-    v111 = Convert v110 declared={type=undefined|null|L0 site=w37 flags=[OmitsNull, OmitsUndefined]}
-    v112 = Call v11, -, v111
-    v113 = Convert v112 declared={type=undefined|null|L0 site=w38 flags=[OmitsNull, OmitsUndefined]}
-    v114 = PropGet v113 key="y"
-    v115 = Call v107, -, v114
-    v116 = Builtin builtin=GlobalThis
-    v117 = PropGet v116 key="report" [isFreeName]
-    v118 = Data data=d6
-    v119 = Integer integer=3
-    v120 = Integer integer=4
-    v121 = Call v1, -, v119, v120
-    v122 = Convert v121 declared={type=undefined|null|L0 site=w39 flags=[OmitsNull, OmitsUndefined]}
-    v123 = Call v13, -, v118, v122
-    v124 = Convert v123 declared={type=number site=w40}
-    v125 = Call v117, -, v124
-    v126 = Builtin builtin=GlobalThis
-    v127 = PropGet v126 key="report" [isFreeName]
-    v128 = Integer integer=1
-    v129 = Integer integer=2
-    v130 = Call v1, -, v128, v129
-    v131 = Convert v130 declared={type=undefined|null|L0 site=w41 flags=[OmitsNull, OmitsUndefined]}
-    v132 = Data data=d7
-    v133 = Call v13, -, v131, v132
-    v134 = Convert v133 declared={type=number site=w42}
-    v135 = Call v127, -, v134
-    v136 = Builtin builtin=GlobalThis
-    v137 = PropGet v136 key="report" [isFreeName]
-    v138 = Integer integer=1
-    v139 = Integer integer=2
-    v140 = Call v1, -, v138, v139
-    v141 = Convert v140 declared={type=undefined|null|L0 site=w43 flags=[OmitsNull, OmitsUndefined]}
-    v142 = Integer integer=3
-    v143 = Integer integer=4
-    v144 = Call v1, -, v142, v143
-    v145 = Convert v144 declared={type=undefined|null|L0 site=w44 flags=[OmitsNull, OmitsUndefined]}
-    v146 = Call v13, -, v141, v145
-    v147 = Convert v146 declared={type=number site=w45}
-    v148 = Call v137, -, v147
-    v149 = Builtin builtin=GlobalThis
-    v150 = PropGet v149 key="report" [isFreeName]
-    v151 = Data data=d8
-    v152 = Integer integer=5
-    v153 = Call v15, -, v151, v152
-    v154 = Convert v153 declared={type=number site=w46}
-    v155 = Call v150, -, v154
-    v156 = Builtin builtin=GlobalThis
-    v157 = PropGet v156 key="report" [isFreeName]
-    v158 = Integer integer=3
-    v159 = Integer integer=4
-    v160 = Call v1, -, v158, v159
-    v161 = Convert v160 declared={type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]}
-    v162 = Integer integer=5
-    v163 = Call v15, -, v161, v162
-    v164 = Convert v163 declared={type=number site=w48}
-    v165 = Call v157, -, v164
-    v166 = Builtin builtin=GlobalThis
-    v167 = PropGet v166 key="report" [isFreeName]
-    v168 = Data data=d9
-    v169 = Integer integer=3
-    v170 = Integer integer=4
-    v171 = Call v1, -, v169, v170
-    v172 = Convert v171 declared={type=undefined|null|L0 site=w49 flags=[OmitsNull, OmitsUndefined]}
-    v173 = Data data=d10
-    v174 = NewArray v168, v172, v173 contents=undefined|null|L0
-    v175 = Call v17, -, v174
-    v176 = Convert v175 declared={type=number site=w50}
-    v177 = Call v167, -, v176
-    v178 = Builtin builtin=GlobalThis
-    v179 = PropGet v178 key="report" [isFreeName]
-    v180 = GetModuleVariable variable=g0
-    v181 = CheckInitialized v180 name="calls"
-    v182 = Call v179, -, v181
-    v183 = Builtin builtin=GlobalThis
-    v184 = PropGet v183 key="report" [isFreeName]
-    v185 = String string="end"
-    v186 = Call v184, -, v185
-    v187 = Undefined
-    Return v187
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f5 @0
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f6 @0
+    v11 = Convert v10 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure function=f7 @0
+    v13 = Convert v12 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = NewClosure function=f8 @0
+    v15 = Convert v14 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v16 = NewClosure function=f9 @0
+    v17 = Convert v16 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v18 = Integer @100
+    v19 = Convert v18 declared={type=number site=w0} @100
+    PutModuleVariable v19 variable=g0 @92
+    v21 = Data data=d0 @125
+    v22 = Convert v21 declared={type=undefined|null|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]} @125
+    PutModuleVariable v22 variable=g1 @109
+    v24 = Builtin builtin=GlobalThis @325
+    v25 = PropGet v24 key="report" [isFreeName] @325
+    v26 = Data data=d1 @336
+    v27 = Call v3, -, v26 calleeName="sum" @332
+    v28 = Convert v27 declared={type=number site=w23} @332
+    v29 = Call v25, -, v28 calleeName="report" @325
+    v30 = Builtin builtin=GlobalThis @354
+    v31 = PropGet v30 key="report" [isFreeName] @354
+    v32 = Integer integer=3 @371
+    v33 = Integer integer=4 @374
+    v34 = Call v1, -, v32, v33 calleeName="moved" @365
+    v35 = Convert v34 declared={type=undefined|null|L0 site=w24 flags=[OmitsNull, OmitsUndefined]} @365
+    v36 = Call v3, -, v35 calleeName="sum" @361
+    v37 = Convert v36 declared={type=number site=w25} @361
+    v38 = Call v31, -, v37 calleeName="report" @354
+    v39 = Builtin builtin=GlobalThis @463
+    v40 = PropGet v39 key="report" [isFreeName] @463
+    v41 = Data data=d2 @483
+    v42 = Call v5, -, v41 calleeName="countThenSum" @470
+    v43 = Convert v42 declared={type=number site=w26} @470
+    v44 = Call v40, -, v43 calleeName="report" @463
+    v45 = Builtin builtin=GlobalThis @501
+    v46 = PropGet v45 key="report" [isFreeName] @501
+    v47 = Integer integer=3 @527
+    v48 = Integer integer=4 @530
+    v49 = Call v1, -, v47, v48 calleeName="moved" @521
+    v50 = Convert v49 declared={type=undefined|null|L0 site=w27 flags=[OmitsNull, OmitsUndefined]} @521
+    v51 = Call v5, -, v50 calleeName="countThenSum" @508
+    v52 = Convert v51 declared={type=number site=w28} @508
+    v53 = Call v46, -, v52 calleeName="report" @501
+    v54 = Builtin builtin=GlobalThis @536
+    v55 = PropGet v54 key="report" [isFreeName] @536
+    v56 = GetModuleVariable variable=g0 @548 @543
+    v57 = CheckInitialized v56 name="calls" @548 @543
+    v58 = Call v55, -, v57 calleeName="report" @536
+    v59 = Builtin builtin=GlobalThis @655
+    v60 = PropGet v59 key="report" [isFreeName] @655
+    v61 = Data data=d3 @675
+    v62 = Call v7, -, v61 calleeName="sumThenCount" @662
+    v63 = Convert v62 declared={type=number site=w29} @662
+    v64 = Call v60, -, v63 calleeName="report" @655
+    v65 = Builtin builtin=GlobalThis @693
+    v66 = PropGet v65 key="report" [isFreeName] @693
+    v67 = Integer integer=3 @719
+    v68 = Integer integer=4 @722
+    v69 = Call v1, -, v67, v68 calleeName="moved" @713
+    v70 = Convert v69 declared={type=undefined|null|L0 site=w30 flags=[OmitsNull, OmitsUndefined]} @713
+    v71 = Call v7, -, v70 calleeName="sumThenCount" @700
+    v72 = Convert v71 declared={type=number site=w31} @700
+    v73 = Call v66, -, v72 calleeName="report" @693
+    v74 = Builtin builtin=GlobalThis @728
+    v75 = PropGet v74 key="report" [isFreeName] @728
+    v76 = GetModuleVariable variable=g0 @740 @735
+    v77 = CheckInitialized v76 name="calls" @740 @735
+    v78 = Call v75, -, v77 calleeName="report" @728
+    v79 = Builtin builtin=GlobalThis @846
+    v80 = PropGet v79 key="report" [isFreeName] @846
+    v81 = Data data=d4 @861
+    v82 = Call v9, -, v81 calleeName="between" @853
+    v83 = Convert v82 declared={type=number site=w32} @853
+    v84 = Call v80, -, v83 calleeName="report" @846
+    v85 = Builtin builtin=GlobalThis @879
+    v86 = PropGet v85 key="report" [isFreeName] @879
+    v87 = Integer integer=3 @900
+    v88 = Integer integer=4 @903
+    v89 = Call v1, -, v87, v88 calleeName="moved" @894
+    v90 = Convert v89 declared={type=undefined|null|L0 site=w33 flags=[OmitsNull, OmitsUndefined]} @894
+    v91 = Call v9, -, v90 calleeName="between" @886
+    v92 = Convert v91 declared={type=number site=w34} @886
+    v93 = Call v86, -, v92 calleeName="report" @879
+    v94 = Builtin builtin=GlobalThis @909
+    v95 = PropGet v94 key="report" [isFreeName] @909
+    v96 = PropGet v22 key="length" @916
+    v97 = Convert v96 declared={type=number site=w35} illTypedCause=Assertion @916
+    v98 = Call v95, -, v97 calleeName="report" @909
+    v99 = Builtin builtin=GlobalThis @1041
+    v100 = PropGet v99 key="report" [isFreeName] @1041
+    v101 = Data data=d5 @1053
+    v102 = Call v11, -, v101 calleeName="made" @1048
+    v103 = Convert v102 declared={type=undefined|null|L0 site=w36 flags=[OmitsNull, OmitsUndefined]} @1048
+    v104 = PropGet v103 key="y" @1067
+    v105 = Call v100, -, v104 calleeName="report" @1041
+    v106 = Builtin builtin=GlobalThis @1073
+    v107 = PropGet v106 key="report" [isFreeName] @1073
+    v108 = Integer integer=3 @1091
+    v109 = Integer integer=4 @1094
+    v110 = Call v1, -, v108, v109 calleeName="moved" @1085
+    v111 = Convert v110 declared={type=undefined|null|L0 site=w37 flags=[OmitsNull, OmitsUndefined]} @1085
+    v112 = Call v11, -, v111 calleeName="made" @1080
+    v113 = Convert v112 declared={type=undefined|null|L0 site=w38 flags=[OmitsNull, OmitsUndefined]} @1080
+    v114 = PropGet v113 key="y" @1096
+    v115 = Call v107, -, v114 calleeName="report" @1073
+    v116 = Builtin builtin=GlobalThis @1178
+    v117 = PropGet v116 key="report" [isFreeName] @1178
+    v118 = Data data=d6 @1190
+    v119 = Integer integer=3 @1212
+    v120 = Integer integer=4 @1215
+    v121 = Call v1, -, v119, v120 calleeName="moved" @1206
+    v122 = Convert v121 declared={type=undefined|null|L0 site=w39 flags=[OmitsNull, OmitsUndefined]} @1206
+    v123 = Call v13, -, v118, v122 calleeName="both" @1185
+    v124 = Convert v123 declared={type=number site=w40} @1185
+    v125 = Call v117, -, v124 calleeName="report" @1178
+    v126 = Builtin builtin=GlobalThis @1221
+    v127 = PropGet v126 key="report" [isFreeName] @1221
+    v128 = Integer integer=1 @1239
+    v129 = Integer integer=2 @1242
+    v130 = Call v1, -, v128, v129 calleeName="moved" @1233
+    v131 = Convert v130 declared={type=undefined|null|L0 site=w41 flags=[OmitsNull, OmitsUndefined]} @1233
+    v132 = Data data=d7 @1246
+    v133 = Call v13, -, v131, v132 calleeName="both" @1228
+    v134 = Convert v133 declared={type=number site=w42} @1228
+    v135 = Call v127, -, v134 calleeName="report" @1221
+    v136 = Builtin builtin=GlobalThis @1264
+    v137 = PropGet v136 key="report" [isFreeName] @1264
+    v138 = Integer integer=1 @1282
+    v139 = Integer integer=2 @1285
+    v140 = Call v1, -, v138, v139 calleeName="moved" @1276
+    v141 = Convert v140 declared={type=undefined|null|L0 site=w43 flags=[OmitsNull, OmitsUndefined]} @1276
+    v142 = Integer integer=3 @1295
+    v143 = Integer integer=4 @1298
+    v144 = Call v1, -, v142, v143 calleeName="moved" @1289
+    v145 = Convert v144 declared={type=undefined|null|L0 site=w44 flags=[OmitsNull, OmitsUndefined]} @1289
+    v146 = Call v13, -, v141, v145 calleeName="both" @1271
+    v147 = Convert v146 declared={type=number site=w45} @1271
+    v148 = Call v137, -, v147 calleeName="report" @1264
+    v149 = Builtin builtin=GlobalThis @1404
+    v150 = PropGet v149 key="report" [isFreeName] @1404
+    v151 = Data data=d8 @1418
+    v152 = Integer integer=5 @1434
+    v153 = Call v15, -, v151, v152 calleeName="stored" @1411
+    v154 = Convert v153 declared={type=number site=w46} @1411
+    v155 = Call v150, -, v154 calleeName="report" @1404
+    v156 = Builtin builtin=GlobalThis @1439
+    v157 = PropGet v156 key="report" [isFreeName] @1439
+    v158 = Integer integer=3 @1459
+    v159 = Integer integer=4 @1462
+    v160 = Call v1, -, v158, v159 calleeName="moved" @1453
+    v161 = Convert v160 declared={type=undefined|null|L0 site=w47 flags=[OmitsNull, OmitsUndefined]} @1453
+    v162 = Integer integer=5 @1466
+    v163 = Call v15, -, v161, v162 calleeName="stored" @1446
+    v164 = Convert v163 declared={type=number site=w48} @1446
+    v165 = Call v157, -, v164 calleeName="report" @1439
+    v166 = Builtin builtin=GlobalThis @1634
+    v167 = PropGet v166 key="report" [isFreeName] @1634
+    v168 = Data data=d9 @1649
+    v169 = Integer integer=3 @1671
+    v170 = Integer integer=4 @1674
+    v171 = Call v1, -, v169, v170 calleeName="moved" @1665
+    v172 = Convert v171 declared={type=undefined|null|L0 site=w49 flags=[OmitsNull, OmitsUndefined]} @1665
+    v173 = Data data=d10 @1678
+    v174 = NewArray v168, v172, v173 contents=undefined|null|L0 @1648
+    v175 = Call v17, -, v174 calleeName="inLoop" @1641
+    v176 = Convert v175 declared={type=number site=w50} @1641
+    v177 = Call v167, -, v176 calleeName="report" @1634
+    v178 = Builtin builtin=GlobalThis @1697
+    v179 = PropGet v178 key="report" [isFreeName] @1697
+    v180 = GetModuleVariable variable=g0 @1709 @1704
+    v181 = CheckInitialized v180 name="calls" @1709 @1704
+    v182 = Call v179, -, v181 calleeName="report" @1697
+    v183 = Builtin builtin=GlobalThis @1712
+    v184 = PropGet v183 key="report" [isFreeName] @1712
+    v185 = String string="end" @1719
+    v186 = Call v184, -, v185 calleeName="report" @1712
+    v187 = Undefined @1712
+    Return v187 @1712
 }
-function f1 name="moved" flags=[IsChecked] parameters=[{type=number site=w2}, {type=number site=w3}] results=[{type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}] {
+function f1 name="moved" module=m0 position=129 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w2}, {type=number site=w3}] results=[{type=undefined|null|L0 site=w4 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: number, v1: number):
-    Jump -> next b1()
+    Jump -> next b1() @129
   b1():
-    v2 = Convert v0 declared={type=number}
-    v3 = Convert v1 declared={type=number}
-    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
-    v5 = FinishObject v4
-    v6 = Convert v5 declared={type=undefined|null|L0 site=w51 flags=[OmitsNull, OmitsUndefined]}
-    v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v8 = PropDelete v7 key="y"
-    v9 = Convert v1 declared={type=number site=w52}
-    PropSet v6, v9 key="y"
-    Return v6
+    v2 = Convert v0 declared={type=number} @198
+    v3 = Convert v1 declared={type=number} @201
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1] @196
+    v5 = FinishObject v4 @196
+    v6 = Convert v5 declared={type=undefined|null|L0 site=w51 flags=[OmitsNull, OmitsUndefined]} @196
+    v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]} @214
+    v8 = PropDelete v7 key="y" @228
+    v9 = Convert v1 declared={type=number site=w52} @231
+    PropSet v6, v9 key="y" @231
+    Return v6 @251
 }
-function f2 name="sum" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w6}] {
+function f2 name="sum" module=m0 position=260 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w5 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
-    Jump -> next b1()
+    Jump -> next b1() @260
   b1():
-    v1 = PropGet v0 key="x"
-    v2 = PropGet v0 key="y"
-    v3 = Add v1, v2
-    v4 = Convert v3 declared={type=number site=w6}
-    Return v4
+    v1 = PropGet v0 key="x" @304
+    v2 = PropGet v0 key="y" @314
+    v3 = Add v1, v2 @304
+    v4 = Convert v3 declared={type=number site=w6} @304
+    Return v4 @304
 }
-function f3 name="countThenSum" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w8}] {
+function f3 name="countThenSum" module=m0 position=380 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w7 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w8}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
-    Jump -> next b1()
+    Jump -> next b1() @380
   b1():
-    v1 = GetModuleVariable variable=g0
-    v2 = CheckInitialized v1 name="calls"
-    v3 = Increment v2
-    v4 = Convert v3 declared={type=number site=w0}
-    v5 = GetModuleVariable variable=g0
-    v6 = CheckInitialized v5 name="calls"
-    PutModuleVariable v4 variable=g0
-    v8 = PropGet v0 key="x"
-    v9 = PropGet v0 key="y"
-    v10 = Add v8, v9
-    v11 = Convert v10 declared={type=number site=w8}
-    Return v11
+    v1 = GetModuleVariable variable=g0 @426
+    v2 = CheckInitialized v1 name="calls" @426
+    v3 = Increment v2 @426
+    v4 = Convert v3 declared={type=number site=w0} @426
+    v5 = GetModuleVariable variable=g0 @426
+    v6 = CheckInitialized v5 name="calls" @426
+    PutModuleVariable v4 variable=g0 @426
+    v8 = PropGet v0 key="x" @442
+    v9 = PropGet v0 key="y" @452
+    v10 = Add v8, v9 @442
+    v11 = Convert v10 declared={type=number site=w8} @442
+    Return v11 @442
 }
-function f4 name="sumThenCount" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w9 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w10}] {
+function f4 name="sumThenCount" module=m0 position=551 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w9 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
-    Jump -> next b1()
+    Jump -> next b1() @551
   b1():
-    v1 = PropGet v0 key="x"
-    v2 = PropGet v0 key="y"
-    v3 = Add v1, v2
-    v4 = Convert v3 declared={type=number site=w53}
-    v5 = GetModuleVariable variable=g0
-    v6 = CheckInitialized v5 name="calls"
-    v7 = Increment v6
-    v8 = Convert v7 declared={type=number site=w0}
-    v9 = GetModuleVariable variable=g0
-    v10 = CheckInitialized v9 name="calls"
-    PutModuleVariable v8 variable=g0
-    Return v4
+    v1 = PropGet v0 key="x" @611
+    v2 = PropGet v0 key="y" @621
+    v3 = Add v1, v2 @611
+    v4 = Convert v3 declared={type=number site=w53} @611
+    v5 = GetModuleVariable variable=g0 @630
+    v6 = CheckInitialized v5 name="calls" @630
+    v7 = Increment v6 @630
+    v8 = Convert v7 declared={type=number site=w0} @630
+    v9 = GetModuleVariable variable=g0 @630
+    v10 = CheckInitialized v9 name="calls" @630
+    PutModuleVariable v8 variable=g0 @630
+    Return v4 @646
 }
-function f5 name="between" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w12}] {
+function f5 name="between" module=m0 position=743 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w11 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
-    Jump -> next b1()
+    Jump -> next b1() @743
   b1():
-    v1 = PropGet v0 key="x"
-    v2 = Convert v1 declared={type=number site=w54}
-    v3 = GetModuleVariable variable=g1
-    v4 = CheckInitialized v3 name="log"
-    v5 = PropGet v4 key="push"
-    v6 = String string="between"
-    v7 = Call v5, v4, v6 calleeKey="push"
-    v8 = Convert v7 declared={type=number site=w55} illTypedCause=DeclarationWithoutBody
-    v9 = PropGet v0 key="y"
-    v10 = Add v2, v9
-    v11 = Convert v10 declared={type=number site=w12}
-    Return v11
+    v1 = PropGet v0 key="x" @794
+    v2 = Convert v1 declared={type=number site=w54} @794
+    v3 = GetModuleVariable variable=g1 @803
+    v4 = CheckInitialized v3 name="log" @803
+    v5 = PropGet v4 key="push" @803
+    v6 = String string="between" @812
+    v7 = Call v5, v4, v6 calleeKey="push" calleeName="log.push" @807
+    v8 = Convert v7 declared={type=number site=w55} illTypedCause=DeclarationWithoutBody @803
+    v9 = PropGet v0 key="y" @835
+    v10 = Add v2, v9 @831
+    v11 = Convert v10 declared={type=number site=w12} @831
+    Return v11 @831
 }
-function f6 name="made" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w14 flags=[OmitsNull, OmitsUndefined]}] {
+function f6 name="made" module=m0 position=929 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w13 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 site=w14 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
-    Jump -> next b1()
+    Jump -> next b1() @929
   b1():
-    v1 = PropGet v0 key="x"
-    v2 = Convert v1 declared={type=number}
-    v3 = Integer
-    v4 = Convert v3 declared={type=number}
-    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1]
-    v6 = FinishObject v5
-    v7 = Convert v6 declared={type=undefined|null|L0 site=w56 flags=[OmitsNull, OmitsUndefined]}
-    v8 = PropGet v0 key="y"
-    v9 = Convert v8 declared={type=number site=w57}
-    PropSet v7, v9 key="y"
-    Return v7
+    v1 = PropGet v0 key="x" @991
+    v2 = Convert v1 declared={type=number} @991
+    v3 = Integer @1003
+    v4 = Convert v3 declared={type=number} @1003
+    v5 = NewObject -, v2, v4 layout=L0 fields=[0, 1] @986
+    v6 = FinishObject v5 @986
+    v7 = Convert v6 declared={type=undefined|null|L0 site=w56 flags=[OmitsNull, OmitsUndefined]} @986
+    v8 = PropGet v0 key="y" @1017
+    v9 = Convert v8 declared={type=number site=w57} @1008
+    PropSet v7, v9 key="y" @1008
+    Return v7 @1033
 }
-function f7 name="both" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w17}] {
+function f7 name="both" module=m0 position=1102 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w15 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 site=w16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w17}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0, v1: undefined|null|L0):
-    Jump -> next b1()
+    Jump -> next b1() @1102
   b1():
-    v2 = PropGet v0 key="x"
-    v3 = PropGet v0 key="y"
-    v4 = Add v2, v3
-    v5 = PropGet v1 key="x"
-    v6 = Add v4, v5
-    v7 = PropGet v1 key="y"
-    v8 = Add v6, v7
-    v9 = Convert v8 declared={type=number site=w17}
-    Return v9
+    v2 = PropGet v0 key="x" @1153
+    v3 = PropGet v0 key="y" @1159
+    v4 = Add v2, v3 @1153
+    v5 = PropGet v1 key="x" @1165
+    v6 = Add v4, v5 @1153
+    v7 = PropGet v1 key="y" @1171
+    v8 = Add v6, v7 @1153
+    v9 = Convert v8 declared={type=number site=w17} @1153
+    Return v9 @1153
 }
-function f8 name="stored" flags=[IsChecked] parameters=[{type=undefined|null|L0 site=w18 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w19}] results=[{type=number site=w20}] {
+function f8 name="stored" module=m0 position=1304 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w18 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w19}] results=[{type=number site=w20}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0, v1: number):
-    Jump -> next b1()
+    Jump -> next b1() @1304
   b1():
-    v2 = Convert v1 declared={type=number site=w58}
-    PropSet v0, v2 key="x"
-    v4 = PropGet v0 key="x"
-    v5 = PropGet v0 key="y"
-    v6 = Add v4, v5
-    v7 = Convert v6 declared={type=number site=w20}
-    Return v7
+    v2 = Convert v1 declared={type=number site=w58} @1359
+    PropSet v0, v2 key="x" @1359
+    v4 = PropGet v0 key="x" @1383
+    v5 = PropGet v0 key="y" @1393
+    v6 = Add v4, v5 @1383
+    v7 = Convert v6 declared={type=number site=w20} @1383
+    Return v7 @1383
 }
-function f9 name="inLoop" flags=[IsChecked] parameters=[{type=undefined|null|Array<undefined|null|L0> site=w21 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w22}] {
+function f9 name="inLoop" module=m0 position=1471 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> site=w21 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w22}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|L0>):
-    Jump -> next b1()
+    Jump -> next b1() @1471
   b1():
-    v1 = Integer
-    v2 = Convert v1 declared={type=number site=w59}
-    v3 = Integer
-    v4 = Convert v3 declared={type=number site=w60}
-    Jump -> next b2(v2, v4)
+    v1 = Integer @1526
+    v2 = Convert v1 declared={type=number site=w59} @1526
+    v3 = Integer @1542
+    v4 = Convert v3 declared={type=number site=w60} @1542
+    Jump -> next b2(v2, v4) @1538
   b2(v5: number, v6: number):
-    LoopHint
-    v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
-    v9 = PropGet v0 key="length"
-    v10 = Convert v9 declared={type=number site=w61} illTypedCause=Assertion
-    v11 = Less v8, v10
-    Branch v11 -> taken b3(| 0), notTaken b6(| 0)
+    LoopHint @1538
+    v8 = Convert v6 declared={type=i32 flags=[IsExpected]} @1545
+    v9 = PropGet v0 key="length" @1549
+    v10 = Convert v9 declared={type=number site=w61} illTypedCause=Assertion @1549
+    v11 = Less v8, v10 @1545
+    Branch v11 -> taken b3(| 0), notTaken b6(| 0) @1545
   b3(v12):
-    Jump -> next b4()
+    Jump -> next b4() @1545
   b4():
-    v13 = GetModuleVariable variable=g0
-    v14 = CheckInitialized v13 name="calls"
-    v15 = Increment v14
-    v16 = Convert v15 declared={type=number site=w0}
-    v17 = GetModuleVariable variable=g0
-    v18 = CheckInitialized v17 name="calls"
-    PutModuleVariable v16 variable=g0
-    v20 = Convert v12 declared={type=i32 flags=[IsExpected]}
-    v21 = ElemGet v0, v20
-    v22 = Convert v21 declared={type=undefined|null|L0 site=w62 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v23 = PropGet v22 key="x"
-    v24 = ElemGet v0, v20
-    v25 = Convert v24 declared={type=undefined|null|L0 site=w63 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
-    v26 = PropGet v25 key="y"
-    v27 = Add v23, v26
-    v28 = Add v5, v27
-    v29 = Convert v28 declared={type=number site=w59}
-    Jump -> next b5()
+    v13 = GetModuleVariable variable=g0 @1571
+    v14 = CheckInitialized v13 name="calls" @1571
+    v15 = Increment v14 @1571
+    v16 = Convert v15 declared={type=number site=w0} @1571
+    v17 = GetModuleVariable variable=g0 @1571
+    v18 = CheckInitialized v17 name="calls" @1571
+    PutModuleVariable v16 variable=g0 @1571
+    v20 = Convert v12 declared={type=i32 flags=[IsExpected]} @1596
+    v21 = ElemGet v0, v20 @1589
+    v22 = Convert v21 declared={type=undefined|null|L0 site=w62 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1589
+    v23 = PropGet v22 key="x" @1596
+    v24 = ElemGet v0, v20 @1603
+    v25 = Convert v24 declared={type=undefined|null|L0 site=w63 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen @1603
+    v26 = PropGet v25 key="y" @1610
+    v27 = Add v23, v26 @1589
+    v28 = Add v5, v27 @1589
+    v29 = Convert v28 declared={type=number site=w59} @1580
+    Jump -> next b5() @1580
   b5():
-    v30 = Increment v20
-    v31 = Convert v30 declared={type=number site=w60}
-    Jump -> next b2(v29, v31)
+    v30 = Increment v20 @1589
+    v31 = Convert v30 declared={type=number site=w60} @1564
+    Jump -> next b2(v29, v31) @1564
   b6(v32):
-    Jump -> next b7()
+    Jump -> next b7() @1545
   b7():
-    v33 = Convert v5 declared={type=number site=w22}
-    Return v33
+    v33 = Convert v5 declared={type=number site=w22} @1625
+    Return v33 @1625
 }

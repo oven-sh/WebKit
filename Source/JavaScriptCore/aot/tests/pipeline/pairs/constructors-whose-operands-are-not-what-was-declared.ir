@@ -1,0 +1,10 @@
+# The program of ../../answers is one in which constructors are split behind the checks of their operands, calls begin again in the generic version, and births are finished where the object is known to be whole and left to the run time where it is not.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: FunctionsSplitBehindEntryChecks >= 1
+# STATISTIC: RestartsInGenericVersion >= 1
+# STATISTIC: BirthsFinished >= 1
+# STATISTIC: BirthsLeftToRunTime >= 1
+# STATISTIC: StoresFoldedIntoAllocations >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/constructors-whose-operands-are-not-what-was-declared.ir

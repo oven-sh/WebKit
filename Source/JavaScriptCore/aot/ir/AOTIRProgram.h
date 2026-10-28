@@ -73,6 +73,15 @@ public:
     Vector<ExpectedResult> expectedResults;
     Vector<Layout> layouts;
     Vector<TaggedFamily> taggedFamilies;
+    // A parameter whose declared type names a function type that says what its functions are given. In the order of the functions.
+    struct DeclaredCallback {
+        FunctionID function;
+        uint32_t parameter;
+        FunctionID functionType;
+
+        friend auto operator<=>(const DeclaredCallback&, const DeclaredCallback&) = default;
+    };
+    Vector<DeclaredCallback> declaredCallbacks;
     Vector<Variable> variables;
     Vector<Module> modules;
     Vector<ModuleFailure> moduleFailures;

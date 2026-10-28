@@ -37,6 +37,7 @@
 #include "LinkTimeConstant.h"
 #include "Microtask.h"
 #include "MicrotaskQueueInlines.h"
+#include "OwedOutOfMemoryError.h"
 #include "TopExceptionScope.h"
 #include "VMInlines.h"
 #include <array>
@@ -828,6 +829,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSaveFrameAndYield, JSCell*, (Instance* inst
     RELEASE_ASSERT(!savedFrameOfGenerator(object));
     SuspendedMachineFrame machineFrame { frame, bottom, resumeAddress, reinterpret_cast<const SuspensionWords*>(suspensionWords) };
     SavedFrame* saved = SavedFrame::create(vm, *instance, kind, machineFrame);
+    // Nothing is suspended yet, and the stub does not return to the function.
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]] {
+        DeferGCForAWhile deferGC(vm);
+        if (throwOutOfMemoryErrorIfOwed(vm, globalObject, scope))
+            OPERATION_RETURN(scope, nullptr);
+    }
     saved->save(vm, machineFrame, SuspensionKind::Yield);
     setSavedFrameOfGenerator(vm, object, saved);
     OPERATION_RETURN(scope, saved);

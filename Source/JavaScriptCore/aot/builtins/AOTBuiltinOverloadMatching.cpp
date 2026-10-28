@@ -238,12 +238,15 @@ OperandDecision OverloadWalk::decideOperand(BuiltinOperand operand, BuiltinTypeI
     TypeArena& types = context.types;
     TypeID current = m_narrowing.typeOf(m_query.proven, operand);
     OperandFit proven = fitOf(context, current, tested);
-    if (proven.fit != TypeFit::Unknown)
+    bool isDecidedByTest = proven.fit == TypeFit::Inside && proven.unprovenPristine;
+    if (proven.fit != TypeFit::Unknown && !isDecidedByTest)
         return { operand, proven.fit, { }, proven.unprovenPristine };
 
-    OperandDecision undecided { operand, TypeFit::Unknown, { }, { } };
+    OperandDecision undecided { operand, proven.fit, { }, proven.unprovenPristine };
     TypeID expected = expectedWithin(m_query, operand, current).predicted();
     if (!expected)
+        return undecided;
+    if (isDecidedByTest && fitOf(context, expected, tested).fit != TypeFit::Outside)
         return undecided;
 
     Type testedType = typeOfBuiltinType({ context, nullptr }, tested);

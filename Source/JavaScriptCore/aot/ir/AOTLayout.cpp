@@ -364,7 +364,7 @@ BuiltinClassID builtinBaseClassOf(const Program& program, LayoutID id)
 static bool asksForStructureFirst(const BuiltinTable& builtins, BuiltinClassID builtinClass)
 {
     return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::WeakMap || builtinClass == BuiltinClasses::WeakSet
-        || builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Error);
+        || builtinClass == BuiltinClasses::Array || builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Error);
 }
 
 // No test tells the objects of such a class from other instances of the built-in class, and a test for its layout passes for none of them.
@@ -500,9 +500,6 @@ void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops
     Vector<BuiltinClassID> classWithoutBrandAbove(program.layouts.size());
     bool hasClassWithoutBrand = false;
     for (auto [layout, builtinClass] : written) {
-        // Of an array the compiler expects that it is as the constructor of Array makes its own, which an object of a class below never is.
-        if (builtinClass == BuiltinClasses::Array)
-            continue;
         bool givesBrand = asksForStructureFirst(builtins, builtinClass);
         (givesBrand ? program.at(layout).writtenBuiltinBase : classWithoutBrandAbove[layout.index()]) = builtinClass;
         hasClassWithoutBrand |= !givesBrand;

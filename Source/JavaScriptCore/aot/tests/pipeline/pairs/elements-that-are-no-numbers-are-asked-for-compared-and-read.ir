@@ -1,0 +1,9 @@
+# The program of ../../answers is one in which tests of positions are placed in front of element reads, stretches behind them are copied with ways back, a loop is separated from its unlikely paths, and the copies for other storage ask each element whether it is there.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: TypeTestsPlaced >= 1
+# STATISTIC: StretchCopiesToWaysBack >= 1
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths >= 1
+# STATISTIC: ElementPresenceTestsPlaced >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/elements-that-are-no-numbers-are-asked-for-compared-and-read.ir

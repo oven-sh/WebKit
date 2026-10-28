@@ -268,7 +268,7 @@ JSObject* createRuntimeError(JSGlobalObject* globalObject, Typed::RuntimeErrorKi
     case Typed::RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject:
         return createTypeError(globalObject, "iterator method should return an object"_s);
     case Typed::RuntimeErrorKind::LeftOutOfExecutable:
-        if (validatesRuntime(globalObject->vm()))
+        if (checksClaimsAboutObjects(globalObject->vm()))
             crashOnValidationFailure(globalObject->vm(), { ValidationFailureKind::UnreachableValue, { }, { }, JSValue() });
         if (String nameOfFunction = name ? name->string() : nameOfFunctionOnTop(globalObject->vm()); !nameOfFunction.isEmpty())
             return createTypeError(globalObject, makeString('\'', nameOfFunction, "' was left out of the executable, because nothing seemed to refer to it. This is a bug in Bun."_s));

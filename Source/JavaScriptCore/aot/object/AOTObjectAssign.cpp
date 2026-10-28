@@ -169,7 +169,7 @@ Object* Object::tryCreateCopyOfFields(VM& vm, const Object& source)
 
 static void validateCopyOfExtraProperties(VM& vm, const Object& target, JSObject* extraProperties)
 {
-    if (!vm.aotState().validatesRuntime)
+    if (!checksClaimsAboutObjects(vm))
         return;
     RuntimeLayoutTable& layouts = target.state().objects->layouts;
     bool addsName = false;
@@ -392,6 +392,13 @@ ALWAYS_INLINE bool FieldStoreRun::isAccepted(AssignmentPlan::FieldStore& store, 
     return isKindAccepted;
 }
 
+static NEVER_INLINE bool hasEveryExtraPropertyOfPlan(const AssignmentPlan& plan, const AssignmentSource& source)
+{
+    return std::ranges::all_of(plan.extraPropertyStores, [&](auto& store) {
+        return !!source.read(store);
+    });
+}
+
 static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& plan, JSObject* extra, const AssignmentSource& source)
 {
     if (plan.addsExtraProperties)
@@ -404,12 +411,8 @@ static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& p
         Butterfly* butterfly = after->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, after->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
         extra = JSFinalObject::createWithButterfly(vm, after, butterfly);
     } else if (before->outOfLineCapacity() != after->outOfLineCapacity()) {
-        if (source.compiledObject) {
-            for (auto& store : plan.extraPropertyStores) {
-                if (!source.read(store))
-                    return false;
-            }
-        }
+        if (source.compiledObject && !hasEveryExtraPropertyOfPlan(plan, source))
+            return false;
         extra->nukeStructureAndSetButterfly(vm, before->id(), extra->allocateMoreOutOfLineStorage(vm, before->outOfLineCapacity(), after->outOfLineCapacity()));
     }
     for (auto& store : plan.extraPropertyStores) {

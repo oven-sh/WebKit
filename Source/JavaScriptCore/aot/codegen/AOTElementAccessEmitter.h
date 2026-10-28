@@ -114,6 +114,7 @@ public:
     Operand readElementInsideLength(const ValueContext&, const ArrayStorageForm&, const ArrayElements&, Integer index, LBasicBlock isHole);
     // Taken if the array has an element of its own at the position. A position that is no index has none.
     void branchOnPresentElement(const ValueContext& test, const ArrayStorageForm&, BranchTargets);
+    void branchOnPresentElementInAnyStorage(const ValueContext& test, BranchTargets);
     void appendElement(const ValueContext& store, CellPointer array, ValueID element);
     // The result is the new length.
     Boxed appendOutOfLine(const OperationContext&, CellPointer array, ValueID element);

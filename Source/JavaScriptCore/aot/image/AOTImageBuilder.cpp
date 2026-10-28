@@ -209,7 +209,7 @@ static void reportCalleesWithoutCode(const CompiledCode& code, const Vector<Reso
 
 ResolvedCallees resolveCallees(const LinkedFunctions& functions, const CodeIndex& index, std::span<const EntryAlias> aliases, BuildContext& context)
 {
-    AliasIndex aliasIndex(aliases);
+    AliasIndex aliasIndex(aliases, &context.parallelLoops());
     for (auto& alias : aliases)
         RELEASE_ASSERT(alias.function && !index.indexOf(alias.function) && index.indexOf(alias.body));
     ResolvedCallees result;
@@ -877,7 +877,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     times.didFinish("remove jump-only functions"_s);
     result.foldedFunctions = foldIdenticalFunctions(result.functions, result.aliases, *inputs.pipeline.program, context);
     times.didFinish("fold identical functions"_s);
-    CodeIndex index(functions.span());
+    CodeIndex index(functions.span(), &loops);
     ResolvedCallees callees = resolveCallees(functions, index, result.aliases.span(), context);
     times.didFinish("resolve callees"_s);
     if (diagnostics.hasErrors())

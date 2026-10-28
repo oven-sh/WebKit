@@ -47,10 +47,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAllocateSlow, JSCell*, (Instance* 
     }
     if (AllocationCounts::isEnabled()) [[unlikely]]
         AllocationCounts::willAllocate(*instance, allocation);
-    if (vm.traps().needsOutOfMemoryError() && !vm.heap.cage().tryTakeBackOutOfMemoryError(vm)) [[unlikely]] {
-        if (findReturnIntoFunction(vm, std::bit_cast<CallFrame*>(frameRecord)))
-            OPERATION_RETURN(scope, instance->state->objects->structures.allocate(vm, allocation));
-    }
+    if (vm.traps().needsOutOfMemoryError()) [[unlikely]]
+        vm.heap.cage().tryTakeBackOutOfMemoryError(vm);
     OPERATION_RETURN(scope, instance->state->objects->structures.allocateAsCompiledCodeDoes(vm, allocation));
 }
 

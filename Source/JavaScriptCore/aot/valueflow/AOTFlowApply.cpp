@@ -312,7 +312,6 @@ static void appendFlowFields(const Program& program, TypeArena& arena, std::span
         if (appended.isFilledByMakers)
             field.flags.add(FieldFlags::IsFilledByCreator);
         field.flow = appended.flow;
-        field.form = appended.formOfValue;
         if (appended.accessor.isAccessor())
             becomeAccessor(arena, field, appended.accessor);
         else if (!mustKeepTypes)
@@ -651,7 +650,8 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
             for (const FlowCallStamp& stamp : bodies[index].calls) {
                 if (!!OperandPosition::newTarget(program.functions[index].at(stamp.value).opcode) != ofConstructions)
                     continue;
-                for (FunctionID callee : program.at(stamp.callees).followed().value())
+                ProvenValue<std::span<const FunctionID>> followed = program.at(stamp.callees).followed();
+                for (FunctionID callee : followed.value())
                     functor(callee);
             }
         }

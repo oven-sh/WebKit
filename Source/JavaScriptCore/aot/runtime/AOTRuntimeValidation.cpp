@@ -48,9 +48,11 @@
 
 namespace JSC { namespace AOT {
 
+std::atomic<bool> imageChecksProofs;
+
 void willReadLegacyRegExpStatics(VM& vm)
 {
-    if (validatesRuntime(vm) && vm.aotState().image->programTables().flags & ProgramTables::neverReadsLegacyRegExpStatics)
+    if (checksClaimsAboutObjects(vm) && vm.aotState().image && vm.aotState().image->programTables().flags & ProgramTables::neverReadsLegacyRegExpStatics)
         crashOnValidationFailure(vm, { ValidationFailureKind::LegacyRegExpStaticRead, { }, { }, JSValue() });
 }
 
@@ -292,7 +294,23 @@ std::optional<MarkOfCallWithoutSite> MarkOfCallWithoutSite::read(const void* ret
     return MarkOfCallWithoutSite { Typed::ValueID(*value), static_cast<int32_t>(*callee) };
 }
 
-void crashOnValidationFailure(VM&, const ValidationFailure& failure)
+// What the run time finds where it changes or lists an object, and at the end of an operation, it finds on the thread of the program.
+static bool isFoundOnThreadOfProgram(ValidationFailureKind kind)
+{
+    switch (kind) {
+    case ValidationFailureKind::ImpossibleMutation:
+    case ValidationFailureKind::KeysListed:
+    case ValidationFailureKind::RemovedFieldNamed:
+    case ValidationFailureKind::OperationEnteredVM:
+    case ValidationFailureKind::OperationCollected:
+    case ValidationFailureKind::LegacyRegExpStaticRead:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void crashOnValidationFailure(VM& vm, const ValidationFailure& failure)
 {
     // Never released: another thread that fails waits here until this one has crashed.
     static Lock lock;
@@ -314,6 +332,10 @@ void crashOnValidationFailure(VM&, const ValidationFailure& failure)
     dataLogLn();
     if (ASCIILiteral word = disableOf(failure.kind); !word.isEmpty())
         dataLogLn("AOT: the check belongs to --aot-disable=", word);
+    if (isFoundOnThreadOfProgram(failure.kind)) {
+        for (const String& place : placesOfInnermostCompiledFrames(vm))
+            dataLogLn("AOT: at ", place);
+    }
     writeCheckedNativeCalls();
     CRASH_WITH_INFO(static_cast<uint64_t>(failure.kind), failure.function.index(), failure.value.index());
 }

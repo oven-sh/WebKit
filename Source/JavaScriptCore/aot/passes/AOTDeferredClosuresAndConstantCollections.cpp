@@ -24,6 +24,7 @@
 #include "AOTIR.h"
 #include "AOTIRBuilder.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTPhaseTimes.h"
 #include "AOTRemoveUnreadFields.h"
 #include "AOTResultRules.h"
 #include "AOTSort.h"
@@ -1413,26 +1414,34 @@ struct DeferralAnalysis {
 
     void run()
     {
+        PhaseTimes times(build, PassID::DeferClosuresInFields);
         firstRows.reserveInitialCapacity(program.layouts.size() + 1);
         firstRows.append(0);
         for (const Layout& layout : program.layouts)
             firstRows.append(firstRows.last() + layout.fields.size());
         findObjects();
+        times.didFinish("findObjects"_s);
         if (objects.isEmpty() && closureStores.isEmpty())
             return;
         findCandidates();
         findEnteredCalls();
+        times.didFinish("findCandidates"_s);
         findAccesses();
+        times.didFinish("findAccesses"_s);
         findCalleeStores();
         rejectFieldsByWhatComesIntoThem();
+        times.didFinish("rejectFieldsByWhatComesIntoThem"_s);
         rejectFieldsOfExpectedLayoutsReadByNameInWarmCode();
+        times.didFinish("rejectFieldsOfExpectedLayoutsReadByNameInWarmCode"_s);
         for (uint64_t numberOfChangesBefore = numberOfChanges + 1; numberOfChangesBefore != numberOfChanges;) {
             numberOfChangesBefore = numberOfChanges;
             countFolds();
             rejectFieldsWithUnguardedSlotAccesses();
             rejectFieldsOverSeveralEnvironments();
         }
+        times.didFinish("countFolds"_s);
         finish();
+        times.didFinish("finish"_s);
     }
 
     const Program& program;

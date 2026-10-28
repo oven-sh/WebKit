@@ -1062,6 +1062,18 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
             return;
         m_objectsThatFiltersSpeakOf.add(holder);
     }
+    // Only the names of its own fields are ever asked of the filter of a compiled object, and many names share a bit. A field whose bit is set is looked up itself, so that it pays for no other name: the accessor
+    // `__proto__` of Object.prototype alone is above nearly every object.
+    if (const Object* receiver = compiledObjectOrNull(object)) {
+        AbsenceFilter ofAllNames = std::exchange(filled, AbsenceFilter { filled.structureID, filled.generationForStores, { }, filled.changesUnderNames, 0 });
+        for (const FieldData& field : receiver->layout().fields()) {
+            if (ofAllNames.letsStoresPass(field.name) || !FieldTableEntry::hasColumn(field.name))
+                continue;
+            ChainWalk walk = walkChain({ globalObject, structure, object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, m_vm.aotState().identifiers->identifier(field.name).impl());
+            if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
+                filled.addNameThatStopsStores(field.name);
+        }
+    }
     filter = filled;
 }
 

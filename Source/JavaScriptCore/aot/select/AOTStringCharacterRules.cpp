@@ -424,6 +424,8 @@ static void emitFlatString(SelectionContext& context, GroupRewriter& rewriter, P
 static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, const StringCharacterMatch& match, ValueID flat)
 {
     ValueID root = match.group.root;
+    if (flat && match.resolvesRopes && rewriter.function().at(context.analyses().useLists().blockOf(root)).handler)
+        context.noteAllocatesLessUnderHandler();
     // The reader runs only where the value is a string, and there the flat string has been made.
     if (flat && context.typeOf(flat).mayBeUnspecified())
         flat = rewriter.insert(makeCastBehindFact(rewriter.function(), rewriter.builder().types(), flat, rewriter.insert(IRBuilder::make(Opcode::Specified))));

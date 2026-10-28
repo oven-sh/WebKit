@@ -59,6 +59,7 @@ static bool letsThrowPass(StubFrameKind kind)
 {
     switch (kind) {
     case StubFrameKind::Plain:
+    case StubFrameKind::ReturnsBehindOperation:
     case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
     case StubFrameKind::GeneratorBody:
@@ -234,6 +235,7 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
             case StubFrameKind::InHostCallFrame:
                 RELEASE_ASSERT_NOT_REACHED();
             case StubFrameKind::Plain:
+            case StubFrameKind::ReturnsBehindOperation:
             case StubFrameKind::ArgumentList:
             case StubFrameKind::HostCall:
             case StubFrameKind::FirstOfTwoReads:
@@ -509,28 +511,23 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
     return isCaughtByCallersOfNativeCode(vm, runWithoutHandler->exit) ? Action::CaptureStack : Action::CaptureStackOfThrow;
 }
 
-CallFrame* findReturnIntoFunction(VM& vm, CallFrame* operationFrame)
-{
-    const Image& image = *vm.aotState().image;
-    if (vm.exceptionForInspection() || !image.stubAddress(handleException(false)))
-        return nullptr;
-    CallFrame* frame = operationFrame;
-    CodeLocation location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
-    if (location.kind == CodeKind::Stub) {
-        if (location.stubFrameKind != StubFrameKind::Plain)
-            return nullptr;
-        frame = static_cast<CallFrame*>(frame->callerFrameOrEntryFrame());
-        location = image.locate(removeCodePtrTag(frame->rawReturnPC()));
-    }
-    return location.kind == CodeKind::Function ? frame : nullptr;
-}
-
-// Under a handler the site of whatever may allocate names the handler, so the error is unwound from the site as any other.
+// Only where the operation returns into a function, by itself or through a stub that does nothing more behind it: any other stub goes on, and must not find an exception.
+// Which handler is in force at a return address is known where the address has a site of its own, and in a function without handlers.
 void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
 {
     VM& vm = *instance.vm;
-    CallFrame* frameThatReturns = findReturnIntoFunction(vm, std::bit_cast<CallFrame*>(frameRecordOfOperation));
-    if (!frameThatReturns)
+    const Image& image = *vm.aotState().image;
+    if (vm.exceptionForInspection() || !image.stubAddress(handleException(false)))
+        return;
+    CallFrame* frameThatReturns = std::bit_cast<CallFrame*>(frameRecordOfOperation);
+    CodeLocation location = image.locate(removeCodePtrTag(frameThatReturns->rawReturnPC()));
+    if (location.kind == CodeKind::Stub && location.stubFrameKind == StubFrameKind::ReturnsBehindOperation) {
+        frameThatReturns = static_cast<CallFrame*>(frameThatReturns->callerFrameOrEntryFrame());
+        location = image.locate(removeCodePtrTag(frameThatReturns->rawReturnPC()));
+    }
+    if (location.kind != CodeKind::Function)
+        return;
+    if (catchesExceptions(image, location.function) && !image.returnSiteInfoAt(location.function, location.offset).site)
         return;
     if (vm.heap.cage().tryTakeBackOutOfMemoryErrorAtPoll(vm) || !vm.traps().needsOutOfMemoryError())
         return;

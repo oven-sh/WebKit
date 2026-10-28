@@ -1017,6 +1017,9 @@ void PointsToSolver::record(SolvedUse& solved, const ArrivedObjects& arrived)
     bool onlyCreatesFollowedAlias = solved.flowsTo && !solved.retainedBy && solved.reasons.isEmpty() && solved.uses.containsOnly({ OperandUse::Inspects, OperandUse::Returns });
     if (onlyCreatesFollowedAlias)
         return;
+    // An entry for each object at each use: a value that n objects reach, with n such values in a row, is n x n entries for each of its uses.
+    if (!takeWork(arrived.objects.size()))
+        return;
     size_t size = m_results.uses.size() + arrived.objects.size();
     if (size > m_results.uses.capacity())
         m_results.uses.reserveCapacity(std::max<size_t>({ 16, size, m_results.uses.capacity() * 2 }));

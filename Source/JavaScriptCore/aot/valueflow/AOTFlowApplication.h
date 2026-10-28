@@ -53,8 +53,6 @@ struct FlowAppendedField {
     FieldFlow flow;
     FlowAccessorField accessor;
     bool isFilledByMakers { false };
-    // Of a field that holds a value: the form in which every definition creates the property.
-    OptionSet<FieldForm> formOfValue;
 };
 
 struct FlowLayoutUpdate {

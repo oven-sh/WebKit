@@ -588,12 +588,11 @@ void EffectSummarizer::summarizeBodies()
         doesSomethingElse.insertFill(firstPosition, 0, numberToSummarize);
         usesOperandsOtherwise.insertFill(firstPosition, 0, numberToSummarize);
         functionsNamedForTheFirstTime.grow(functionsToSummarize.size());
-        Vector<uint64_t> longFunctions;
-        for (uint32_t position = 0; position < numberToSummarize; ++position) {
+        Vector<uint64_t> longFunctions = collectInParallel<uint64_t>(loops, numberToSummarize, [&](unsigned position, Vector<uint64_t>& found) {
             size_t numberOfValues = m_program.functions[functionsToSummarize[firstPosition + position]].values.size();
             if (numberOfValues >= fewestValuesOfLongFunction)
-                longFunctions.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | position);
-        }
+                found.append((UINT32_MAX - static_cast<uint64_t>(numberOfValues)) << 32 | position);
+        });
         AOT::sort(longFunctions);
         Vector<uint32_t> longestFirst = longFunctions.map([](uint64_t key) {
             return static_cast<uint32_t>(key);
@@ -1338,12 +1337,13 @@ void EffectSummarizer::numberAllNodes()
     unsigned numberOfFunctions = m_program.functions.size();
     m_kept.m_firstNode.grow(numberOfFunctions);
     m_kept.m_numberOfNodesOf.grow(numberOfFunctions);
+    forEachIndexInParallel(m_build.parallelLoops(), numberOfFunctions, [&](unsigned index) {
+        m_kept.m_numberOfNodesOf[index] = 2 + m_kept.m_bodies[index].numberOfParameters();
+    });
     uint32_t firstNode = 0;
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
-        uint32_t numberOfOwnNodes = 2 + m_kept.m_bodies[index].numberOfParameters();
         m_kept.m_firstNode[index] = firstNode;
-        m_kept.m_numberOfNodesOf[index] = numberOfOwnNodes;
-        firstNode += numberOfOwnNodes;
+        firstNode += m_kept.m_numberOfNodesOf[index];
     }
     m_kept.m_numberOfNodes = firstNode;
 }
@@ -1395,12 +1395,14 @@ void EffectSummarizer::createNodes()
 
     Vector<uint32_t> firstSourceIn(numberOfFunctions);
     Vector<uint32_t> firstNodeEntered(numberOfFunctions);
+    forEachIndexInParallel(loops, numberOfFunctions, [&](unsigned index) {
+        firstSourceIn[index] = m_kept.m_bodies[index].numberOfDependencies();
+    });
     uint64_t numberOfDependencies = 0;
     uint64_t numberOfNodesEntered = 0;
     for (unsigned index = 0; index < numberOfFunctions; ++index) {
-        firstSourceIn[index] = static_cast<uint32_t>(numberOfDependencies);
+        numberOfDependencies += std::exchange(firstSourceIn[index], static_cast<uint32_t>(numberOfDependencies));
         firstNodeEntered[index] = static_cast<uint32_t>(numberOfNodesEntered);
-        numberOfDependencies += m_kept.m_bodies[index].numberOfDependencies();
         numberOfNodesEntered += isEnteredByUnknownCode[index] ? m_kept.m_numberOfNodesOf[index] : 0;
     }
     RELEASE_ASSERT(numberOfDependencies + numberOfNodesEntered <= UINT32_MAX);

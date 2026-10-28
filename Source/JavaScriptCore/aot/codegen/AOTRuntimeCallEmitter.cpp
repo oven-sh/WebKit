@@ -620,7 +620,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
     // What finds no room for what it allocates throws where it returns. In a function with handlers its site says which handler is in force there, or that none is.
-    bool mayFindNoRoom = context && returns && effects.mayCollect && !options.followsThrow && analyses().cfg().hasHandlers();
+    bool mayFindNoRoom = context && returns && request.effectsOfCallee.mayCollect && !options.pureFunction && !options.followsThrow && analyses().cfg().hasHandlers();
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace || mayFindNoRoom;
     if (m_options.recorded.isSabotaged(Sabotage::CallsThatThrowHaveNoSite) && returns && context && !effects.mayRunOtherCode() && !options.capturesStackTrace && !options.throwSite && !request.firstRead) [[unlikely]]
         hasSite = false;

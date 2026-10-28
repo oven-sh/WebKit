@@ -171,7 +171,14 @@ function f1 name="hasOnly" module=m0 flags=[IsChecked, HasExplicitName] length=4
 
 # Each of the three names is one of three texts that the callers spell, and arrives as the number of its text. The key that the walk hands out is the name of a property.
 # Its number is found once a turn, by a call without effects, and each comparison is one comparison of two words: no name is made a string, and no two strings are compared.
+# Nothing in the loop changes the keys of an object, so a turn asks nothing of the object: its position lies below the number of names that the object is known to have, and the name is taken.
 # CHECK-LABEL: loop #
+# CHECK: = Below(b@{{*}}, b@{{*}}, {{*}}:ForInStep)
+# CHECK-NEXT: Branch(
+# CHECK-NEXT: Successors: Then:#[[takesName]], Else:
+# CHECK-NEXT: BB#[[takesName]]:
+# CHECK-NEXT: Predecessors:
+# CHECK-NEXT: JSPropertyNameEnumerator_cachedPropertyNamesVector,
 # CHECK: Int64 b@[[key]] = Patchpoint(b@{{*}}:Register({{*}}), resultConstraints = Register({{*}}), pureFunction{{*}}:StrictEq)
 # CHECK-NEXT: Int32 b@[[isFirst]] = Equal(b@{{*}}, b@[[key]], {{*}}:StrictEq)
 # CHECK-NEXT: Branch(b@[[isFirst]], Terminal,

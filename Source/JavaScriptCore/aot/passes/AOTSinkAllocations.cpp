@@ -9,12 +9,14 @@
 #if ENABLE(AOT)
 
 #include "AOTArrayStorageForms.h"
+#include "AOTBorrowedParameters.h"
 #include "AOTBuildContext.h"
 #include "AOTFlowApply.h"
 #include "AOTFlowResults.h"
 #include "AOTFrameAllocationPlanner.h"
 #include "AOTRegionCloner.h"
 #include "AOTSort.h"
+#include "AOTSpecifiedValues.h"
 #include "AOTStatistics.h"
 #include "AOTThreshold.h"
 #include "AOTValueIdentity.h"
@@ -282,6 +284,133 @@ void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID merge
         candidate.mergeBlock = mergeBlock;
 }
 
+// `let sum = 0; list.forEach(value => { sum += value; })`: the arrow is inlined where the loop is expected to run, and called with its environment in the arms that are seldom taken.
+// Each such call gets a copy of the environment, and what the callee left in the copy is stored back behind the call. Then only reads and stores name the environment, and its variables become values.
+// The callee only borrows the environment: nothing holds it once the callee has returned.
+// Every variable got a value of its type where the environment was made, so it holds one from there on, wherever the program itself first reads it.
+static PassOutcome lendCopiesOfEnvironmentsToRareCalls(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const Program& program = context.program;
+    if (!analyses.opcodesOfValues().contains(Opcode::CallDirect) || !analyses.opcodesOfValues().contains(Opcode::PutEnvironmentField))
+        return PassOutcome::Unchanged;
+
+    const UseLists& useLists = analyses.useLists();
+    struct Loan {
+        ValueID environment;
+        ValueID call;
+    };
+    // Null for a field that holds no value of the program, as the environment around this one.
+    auto flowOfVariable = [&](LayoutID layout, uint32_t field) -> const LocationFlow* {
+        if (!program.at(program.at(layout).fields[field].declared.written()).isJavaScriptValue())
+            return nullptr;
+        return &flowOf(program, { layout, field }).location;
+    };
+    // Of such a variable flow says only that it is stored to ahead of every read of the program. A read that a pass adds is read as a word, and the cast behind it names the fact.
+    auto isReadAsWord = [&](LayoutID layout, uint32_t field) {
+        const LocationFlow* flow = flowOfVariable(layout, field);
+        return flow && flow->initialization == InitializationState::StoredBeforeEveryRead;
+    };
+    auto isMadeWithValuesOfDeclaredTypes = [&](const Value& made) {
+        std::span<const uint32_t> fields = made.fields();
+        std::span<const ValueID> values = made.valuesOperands();
+        for (size_t index = 0; index < fields.size(); ++index) {
+            const Type& listed = program.typeOf(function, values[index]);
+            if (listed.mayBeUnspecified() || !listed.isSubsetOf(program.at(program.at(made.layout()).fields[fields[index]].declared.written()), program))
+                return false;
+        }
+        return fields.size() == values.size();
+    };
+    Vector<Loan, 4> loans;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& made = function.at(id);
+            if (made.opcode != Opcode::NewObject || program.at(made.layout()).kind != LayoutKind::Environment)
+                continue;
+            if (made.fields().size() != program.at(made.layout()).fields.size() || made.listsOnlyStoredValues() || !isMadeWithValuesOfDeclaredTypes(made))
+                continue;
+            bool isStoredWhereCodeIsExpectedToRun = false;
+            Vector<ValueID, 2> calls;
+            bool canLend = std::ranges::all_of(useLists.usesOf(id), [&](const Use& use) {
+                if (use.kind != Use::Kind::Operand)
+                    return false;
+                const Value& user = function.at(use.user);
+                const Block& at = function.at(useLists.blockOf(use.user));
+                if (user.opcode == Opcode::GetEnvironmentField)
+                    return true;
+                if (user.opcode == Opcode::PutEnvironmentField && use.operandIndex == OperandIndex::PutEnvironmentField::environment) {
+                    isStoredWhereCodeIsExpectedToRun |= at.frequency.predicted() != BlockFrequency::Rare;
+                    return true;
+                }
+                if (user.opcode != Opcode::CallDirect || at.frequency.predicted() != BlockFrequency::Rare || at.handler || program.typeOf(function, use.user).hasCells())
+                    return false;
+                // The callee reads and writes the variables and keeps the environment nowhere.
+                if (!usesOfBorrowedParameter.containsAll(summarizeOperand(analyses.effectContext(), function, user, use.operandIndex).uses))
+                    return false;
+                calls.append(use.user);
+                return std::ranges::count(user.argumentsOperands(), id) == 1;
+            });
+            if (!canLend || !isStoredWhereCodeIsExpectedToRun || calls.isEmpty())
+                continue;
+            for (ValueID call : calls)
+                loans.append(Loan { id, call });
+        }
+    }
+    if (loans.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    auto read = [&](ProgramPoint point, ValueID from, LayoutID layout, uint32_t field) {
+        Value read = IRBuilder::make(Opcode::GetEnvironmentField, { from });
+        read.setLayout(layout);
+        read.setField(field);
+        read.setMayPrecedeItsStore(isReadAsWord(layout, field));
+        bool isWord = read.mayPrecedeItsStore();
+        ValueID word = builder.insertBefore(point, WTF::move(read));
+        if (!isWord)
+            return word;
+        ValueID fact = builder.insertBefore(point, IRBuilder::make(Opcode::Specified));
+        return builder.insertBefore(point, makeCastBehindFact(function, context.types, word, fact));
+    };
+    auto store = [&](ProgramPoint point, ValueID to, ValueID value, LayoutID layout, uint32_t field) {
+        Value store = IRBuilder::make(Opcode::PutEnvironmentField, { to, value });
+        store.setLayout(layout);
+        store.setField(field);
+        builder.insertBefore(point, WTF::move(store));
+    };
+    for (const Loan& loan : loans) {
+        ValueLocation location = useLists.locationOf(loan.call);
+        ProgramPoint before { location.block, location.index };
+        ProgramPoint behind { location.block, location.index + 1 };
+        builder.setOrigin(function.at(loan.call).origin());
+        Value copy = function.at(loan.environment);
+        LayoutID layout = copy.layout();
+        Vector<uint32_t, 8> fields(copy.fields());
+        Vector<ValueID, 8> held;
+        for (uint32_t field : fields)
+            held.append(read(before, loan.environment, layout, field));
+        copy.setValuesOperands(held.span());
+        copy.setStorage(AllocationStorage::Heap);
+        ValueID lent = builder.insertBefore(before, WTF::move(copy));
+        for (uint32_t field : fields) {
+            const LocationFlow* flow = flowOfVariable(layout, field);
+            if (flow && !flow->isUnchangedDuringActivation)
+                store(behind, loan.environment, read(behind, lent, layout, field), layout, field);
+        }
+        Value& call = function.edit(loan.call);
+        Vector<ValueID, 8> arguments(call.argumentsOperands());
+        for (ValueID& argument : arguments) {
+            if (argument == loan.environment)
+                argument = lent;
+        }
+        call.setArgumentsOperands(arguments.span());
+    }
+    builder.applyInsertions();
+    analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 // Where a way on which an object and a closure over it are cells meets a way on which they are not, cells in the fields that tie the two would have the object built where the closure is made, in front of every store that follows.
 // Built in front of the first branch behind that place, the two meet nothing. Where they still do, the fields hold cells.
 bool AllocationSinking::buildCycleBeforeBranches(const SinkingState& state, VirtualObjectID holder, VirtualObjectID held)
@@ -311,11 +440,12 @@ PassOutcome sinkAllocations(FunctionPassContext& context)
     if (4 * context.analyses.cfg().reversePostOrder().size() > 3 * context.numberOfBlocksWhenSinkingGaveUp && context.numberOfBlocksWhenSinkingGaveUp)
         return PassOutcome::Unchanged;
 
+    PassOutcome lent = lendCopiesOfEnvironmentsToRareCalls(context);
     BlocksThatMayGetTests blocksThatMayGetTests { context.inputs.heat };
     SinkingPolicy policy { .leavesWhenNoAllocationPays = true, .followsUndefinedAndNullInFields = true, .blocksThatMayGetTests = &blocksThatMayGetTests };
     if (!context.build.options().verifiesAfterEveryPass)
         policy.tracesOfFruitlessAllocations = &context.tracesOfAllocationsNotWorthSinking;
-    PassOutcome outcome = PassOutcome::Unchanged;
+    PassOutcome outcome = lent;
     std::optional<SinkingFindings> findingsBeforeSplitting;
     bool hasGivenUp = false;
     for (unsigned round = 0; round < maxEdgeSplittingRounds; ++round) {

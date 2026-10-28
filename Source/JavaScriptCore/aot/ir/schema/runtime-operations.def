@@ -64,8 +64,8 @@ runtime RememberElement : void (JSCell* array, EncodedJSValue element) ; reads(a
 runtime NewArray : JSCell* (uint32_t count, const EncodedJSValue* values) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayOfHoles : JSCell* (uint32_t lengthAndCapacity, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayAtReviewedSite : JSCell* (void* profile, uint32_t seedIndexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
-runtime ArrayPush : EncodedJSValue (JSCell* array, EncodedJSValue value) ; RuntimeGrowsArray
-runtime ArrayPushNumber : EncodedJSValue (JSCell* array, uint64_t numberBits) ; RuntimeGrowsArray
+runtime ArrayPush : EncodedJSValue (JSCell* array, EncodedJSValue value) ; unknownCode
+runtime ArrayPushNumber : EncodedJSValue (JSCell* array, uint64_t numberBits) ; unknownCode
 runtime ArraySlice : EncodedJSValue (JSCell* array, int64_t from, int64_t to) ; unknownCode
 runtime ArrayCopy : EncodedJSValue (JSCell* array) ; unknownCode
 runtime AppendElements : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray

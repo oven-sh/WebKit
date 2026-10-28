@@ -187,15 +187,20 @@ enum class PlaceInOrder : uint8_t { Inside, Behind };
 static void forEachPlace(const CreationOrders& orders, FieldList created, const Invocable<bool()> auto& isFull, const Invocable<void(FieldList, FieldList, PlaceInOrder)> auto& add)
 {
     auto addPlacesInside = [&](const KeyOrderList& list) {
+        bool hasPlace = false;
         for (auto& order : list) {
             if (isFull())
-                return;
-            if (std::optional<size_t> position = findPlaceInside(order.span(), created))
+                break;
+            if (std::optional<size_t> position = findPlaceInside(order.span(), created)) {
                 add(order.span().first(*position), order.span().first(*position + created.size()), PlaceInOrder::Inside);
+                hasPlace = true;
+            }
         }
+        return hasPlace;
     };
     addPlacesInside(orders.constructorOrders);
-    addPlacesInside(orders.ordersOfStoresAsWritten);
+    // An order of its own for the field right behind the allocation would share its first keys with the order of the text, and an object has the number of the first order that begins with its keys.
+    bool hasPlaceAmongStoresAsWritten = addPlacesInside(orders.ordersOfStoresAsWritten);
     bool isFilledInDeclaredOrder = !orders.hasConstructor && std::ranges::any_of(orders.declaredOrders, [&](const Vector<FieldIndex>& order) {
         std::optional<size_t> position = findPlaceInside(order.span(), created);
         return position && orders.countsReachedAmongDeclarations.get(*position);
@@ -204,7 +209,7 @@ static void forEachPlace(const CreationOrders& orders, FieldList created, const 
         addPlacesInside(orders.declaredOrders);
     // What an object has when the stores outside its constructor begin. The orders of a constructor start at the allocation.
     for (auto& order : orders.hasConstructor ? orders.constructorOrders : orders.allocationOrders) {
-        if (isFull())
+        if (isFull() || hasPlaceAmongStoresAsWritten)
             break;
         bool haveCommonField = std::ranges::any_of(order, [&](FieldIndex field) {
             return std::ranges::contains(created, field);

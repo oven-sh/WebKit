@@ -11,6 +11,7 @@
 #include "AOTFieldMoves.h"
 #include "AOTMappedCopy.h"
 #include "AOTObject.h"
+#include "AOTProgramStrings.h"
 #include "AOTSlotAccess.h"
 #include "AOTThreshold.h"
 #include "AOTVector.h"
@@ -57,13 +58,32 @@ private:
     uint32_t m_runNumberPlusOne;
 };
 
+// A field that holds the word of a literal string mostly holds the word it held in the copy before. The strings of such words live as long as the instance.
+template<typename Store>
+struct LiteralStringsReadByStore {
+    // Null where the word is not that of a literal string.
+    ALWAYS_INLINE JSString* stringForWordInSlot(uint64_t word) const
+    {
+        if (word == store.lastLiteralStringWord) [[likely]]
+            return store.lastLiteralString;
+        if (!strings || !isLiteralStringWord(word))
+            return nullptr;
+        store.lastLiteralString = strings->stringForLiteralStringWord(word);
+        store.lastLiteralStringWord = static_cast<uint32_t>(word);
+        return store.lastLiteralString;
+    }
+
+    const ProgramStrings* strings;
+    const Store& store;
+};
+
 struct AssignmentSource {
     ALWAYS_INLINE JSValue read(const auto& store) const
     {
         if (!store.from)
             return propertyStorage->getDirect(store.sourceOffset);
         if (!store.from->isOutOfLine())
-            return compiledObject->readInline(*store.from);
+            return readInline(store);
         SlotRepresentation representation = store.from->slot.representation();
         const void* slot = extension ? extension->slotOrNull(store.from->slot.offset) : nullptr;
         if (slot && representation != SlotRepresentation::DeferredClosure) [[likely]] {
@@ -71,6 +91,13 @@ struct AssignmentSource {
                 return value;
         }
         return compiledObject->read(*store.from);
+    }
+
+    template<typename Store>
+    ALWAYS_INLINE JSValue readInline(const Store& store) const
+    {
+        LiteralStringsReadByStore<Store> literalStrings { strings, store };
+        return compiledObject->readInline(*store.from, &literalStrings);
     }
 
     StructureID propertyStorageStructureID() const { return propertyStorage ? propertyStorage->structureID() : StructureID(); }
@@ -106,6 +133,8 @@ struct AssignmentPlan {
         bool leavesUndefinedAndNullToOtherWay { false };
         uint8_t width { 0 };
         uint64_t absentBits { 0 };
+        mutable uint32_t lastLiteralStringWord { 0 };
+        mutable JSString* lastLiteralString { nullptr };
     };
 
     struct ExtraPropertyStore {
@@ -115,6 +144,8 @@ struct AssignmentPlan {
         // extraPropertiesAfter keeps it.
         UniquedStringImpl* name { nullptr };
         bool addsName { false };
+        mutable uint32_t lastLiteralStringWord { 0 };
+        mutable JSString* lastLiteralString { nullptr };
     };
     // In storesInSourceOrder: the index of an ExtraPropertyStore. Without it, of a FieldStore.
     static constexpr uint16_t isExtraPropertyStore = 1 << 15;

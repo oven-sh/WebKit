@@ -15,6 +15,7 @@
 #include "AOTSelectionContext.h"
 #include "AOTSlotPlan.h"
 #include "AOTSort.h"
+#include "AOTThreshold.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -79,8 +80,10 @@ static bool canFindOffsetByShape(Opcode opcode, const SlotAgreement& agreement)
 }
 
 // Where the operation finds the offset by the shape, the groups that keep the field in the cell in one representation need one arm between them.
+// What finds the offset grows with the layouts it tells apart, so many layouts keep an arm for each place.
 static Vector<Vector<LayoutID, 8>, 4> membersOfArms(const SlotAgreement& agreement, bool findsOffsetsByShape)
 {
+    AOT_THRESHOLD(size_t, maxLayoutsOfSharedArm, 16);
     Vector<Vector<LayoutID, 8>, 4> arms;
     Vector<const PlacedSlot*, 4> slots;
     for (const SlotGroup& group : agreement.groups) {
@@ -95,6 +98,13 @@ static Vector<Vector<LayoutID, 8>, 4> membersOfArms(const SlotAgreement& agreeme
         arms.append(Vector<LayoutID, 8>(group.members.span()));
         slots.append(mayShareArm ? &group.slot : nullptr);
     }
+    bool sharedArmHasManyLayouts = arms.size() < agreement.groups.size() && std::ranges::any_of(arms, [&](const Vector<LayoutID, 8>& members) {
+        return members.size() > maxLayoutsOfSharedArm && std::ranges::none_of(agreement.groups, [&](const SlotGroup& group) {
+            return group.members.size() == members.size() && group.members[0] == members[0];
+        });
+    });
+    if (sharedArmHasManyLayouts)
+        return membersOfArms(agreement, false);
     return arms;
 }
 

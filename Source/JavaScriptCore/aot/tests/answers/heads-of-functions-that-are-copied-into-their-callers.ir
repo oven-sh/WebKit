@@ -1,0 +1,432 @@
+# let calls = 0;
+# function slow(text) { calls++; let sum = 0, odd = 0, even = 0, most = 0, least = 65536, said = ""; for (let at = 0; at < text.length; at++) { const code = text.charCodeAt(at); sum += code; if (code & 1) odd += code; else even += code; if (code > most) most = code; if (code < least) least = code; said = String.fromCharCode(code) + said; } for (let at = 0; at < said.length; at++) sum += said.charCodeAt(at) * at; for (let at = said.length; at > 0; at--) sum -= at; return sum + odd * 2 + even * 3 + most - least; }
+# function cached(table, key) { const found = table[key]; if (found !== undefined) return found; const made = slow(key); table[key] = made; let more = 0; for (let at = 0; at < key.length; at++) more += slow(key.slice(at)); table[key + "!"] = more; return made; }
+# function checked(value) { if (typeof value === "number") return value + 1; let text = ""; for (let at = 0; at < 3; at++) text += slow(String(value) + at) + ","; for (let at = 0; at < 3; at++) text += slow(text.slice(at, at + 2)) + ";"; return text; }
+# function run(turns) { const table = {}; let said = ""; for (let turn = 0; turn < turns; turn++) { said += cached(table, turn % 3 ? "ab" : "abc") + ","; said += checked(turn % 5 ? turn : "t" + turn) + ";"; said += cached(table, "ab!") + "."; } return said + calls; }
+# report(run(1)); report(run(7)); report(run(12));
+# report("end");
+# Two functions answer at once on their usual way and do long work on the other. The usual way is copied into the loop that calls them, the other is still called: it is taken on some turns.
+# At the end the shell runs the same text itself: every answer is the same.
+# FORM: AsRead
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { let calls = 0; function slow(text) { calls++; let sum = 0, odd = 0, even = 0, most = 0, least = 65536, said = ""; for (let at = 0; at < text.length; at++) { const code = text.charCodeAt(at); sum += code; if (code & 1) odd += code; else even += code; if (code > most) most = code; if (code < least) least = code; said = String.fromCharCode(code) + said; } for (let at = 0; at < said.length; at++) sum += said.charCodeAt(at) * at; for (let at = said.length; at > 0; at--) sum -= at; return sum + odd * 2 + even * 3 + most - least; } function cached(table, key) { const found = table[key]; if (found !== undefined) return found; const made = slow(key); table[key] = made; let more = 0; for (let at = 0; at < key.length; at++) more += slow(key.slice(at)); table[key + "!"] = more; return made; } function checked(value) { if (typeof value === "number") return value + 1; let text = ""; for (let at = 0; at < 3; at++) text += slow(String(value) + at) + ","; for (let at = 0; at < 3; at++) text += slow(text.slice(at, at + 2)) + ";"; return text; } function run(turns) { const table = {}; let said = ""; for (let turn = 0; turn < turns; turn++) { said += cached(table, turn % 3 ? "ab" : "abc") + ","; said += checked(turn % 5 ? turn : "t" + turn) + ";"; said += cached(table, "ab!") + "."; } return said + calls; } report(run(1)); report(run(7)); report(run(12)); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
+# CHECK: 4 of 4 of 4
+# CHECK-NEXT: exited with 0
+
+module m0 path="heads-of-functions-that-are-copied-into-their-callers.js" displayPath="heads-of-functions-that-are-copied-into-their-callers.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=1079
+data d0 root=Object{layout=L0} module=m0
+variable g0 name="slow" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="cached" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="checked" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="calls" module=m0 declared={type=number|absent flags=[IsExpected]}
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1() @0
+  b1():
+    v0 = NewClosure function=f4 @0
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = Integer @12
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @12
+    PutModuleVariable v3 variable=g3 @4
+    v5 = Builtin builtin=GlobalThis @1309
+    v6 = PropGet v5 key="report" [isFreeName] @1309
+    v7 = Integer integer=1 @1320
+    v8 = Call v1, -, v7 calleeName="run" @1316
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]} @1316
+    v10 = Call v6, -, v9 calleeName="report" @1309
+    v11 = Builtin builtin=GlobalThis @1325
+    v12 = PropGet v11 key="report" [isFreeName] @1325
+    v13 = Integer integer=7 @1336
+    v14 = Call v1, -, v13 calleeName="run" @1332
+    v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]} @1332
+    v16 = Call v12, -, v15 calleeName="report" @1325
+    v17 = Builtin builtin=GlobalThis @1341
+    v18 = PropGet v17 key="report" [isFreeName] @1341
+    v19 = Integer integer=12 @1352
+    v20 = Call v1, -, v19 calleeName="run" @1348
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @1348
+    v22 = Call v18, -, v21 calleeName="report" @1341
+    v23 = Builtin builtin=GlobalThis @1358
+    v24 = PropGet v23 key="report" [isFreeName] @1358
+    v25 = String string="end" @1365
+    v26 = Call v24, -, v25 calleeName="report" @1358
+    v27 = Undefined @1358
+    Return v27 @1358
+}
+function f1 name="slow" module=m0 position=15 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    Jump -> next b1() @15
+  b1():
+    v1 = GetModuleVariable variable=g3 @37
+    v2 = CheckInitialized v1 name="calls" @37
+    v3 = Increment v2 @37
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @37
+    v5 = GetModuleVariable variable=g3 @37
+    v6 = CheckInitialized v5 name="calls" @37
+    PutModuleVariable v4 variable=g3 @37
+    v8 = Integer @56
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @56
+    v10 = Integer @65
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @65
+    v12 = Integer @75
+    v13 = Convert v12 declared={type=number flags=[IsExpected]} @75
+    v14 = Integer @85
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @85
+    v16 = Integer integer=65536 @96
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @96
+    v18 = String string="" @110
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @110
+    v20 = Integer @128
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @128
+    Jump -> next b2(v9, v11, v13, v15, v17, v19, v21) @123
+  b2(v22, v23, v24, v25, v26, v27, v28):
+    LoopHint @123
+    v30 = PropGet v0 key="length" @136
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @136
+    v32 = Less v28, v31 @131
+    Branch v32 -> taken b3(| 0), notTaken b19(| 0) @131
+  b3(v33):
+    Jump -> next b4() @131
+  b4():
+    v34 = PropGet v0 key="charCodeAt" @170
+    v35 = Convert v34 declared={type=undefined|null|function flags=[IsExpected]} @170
+    v36 = Call v35, v0, v33 calleeKey="charCodeAt" calleeName="text.charCodeAt" @175
+    v37 = Convert v36 declared={type=number flags=[IsExpected]} @170
+    v38 = Convert v37 declared={type=i32 flags=[IsExpected]} @170
+    v39 = Add v22, v38 @198
+    v40 = Convert v39 declared={type=number flags=[IsExpected]} @191
+    v41 = Integer integer=1 @215
+    v42 = BitAnd v38, v41 @208
+    v43 = ToBoolean v42 @208
+    Branch v43 -> taken b5(| 0), notTaken b7(| 0) @208
+  b5(v44):
+    Jump -> next b6() @208
+  b6():
+    v45 = Add v23, v38 @225
+    v46 = Convert v45 declared={type=number flags=[IsExpected]} @218
+    Jump -> next b9(v46, v24) @218
+  b7(v47):
+    Jump -> next b8() @208
+  b8():
+    v48 = Add v24, v38 @244
+    v49 = Convert v48 declared={type=number flags=[IsExpected]} @236
+    Jump -> next b9(v23, v49) @236
+  b9(v50, v51):
+    v52 = Greater v38, v25 @254
+    Branch v52 -> taken b10(| 0, 1), notTaken b12(| 0, 1) @254
+  b10(v53, v54):
+    Jump -> next b11() @254
+  b11():
+    v55 = Convert v53 declared={type=number flags=[IsExpected]} @267
+    Jump -> next b13(v53, v55) @267
+  b12(v56, v57):
+    Jump -> next b13(v56, v57) @254
+  b13(v58, v59):
+    v60 = Less v58, v26 @284
+    Branch v60 -> taken b14(| 0, 1), notTaken b16(| 0, 1) @284
+  b14(v61, v62):
+    Jump -> next b15() @284
+  b15():
+    v63 = Convert v61 declared={type=number flags=[IsExpected]} @298
+    Jump -> next b17(v61, v63) @298
+  b16(v64, v65):
+    Jump -> next b17(v64, v65) @284
+  b17(v66, v67):
+    v68 = Builtin builtin=String @319
+    v69 = Builtin builtin=StringFromCharCode @319
+    v70 = Call v69, v68, v66 calleeName="String.fromCharCode" @326
+    v71 = Convert v70 declared={type=undefined|null|string flags=[IsExpected]} @319
+    v72 = Add v71, v27 @319
+    v73 = Convert v72 declared={type=undefined|null|string flags=[IsExpected]} @312
+    Jump -> next b18() @312
+  b18():
+    v74 = Increment v33 @319
+    v75 = Convert v74 declared={type=number flags=[IsExpected]} @149
+    Jump -> next b2(v40, v50, v51, v59, v67, v73, v75) @149
+  b19(v76):
+    Jump -> next b20() @131
+  b20():
+    v77 = Integer @369
+    v78 = Convert v77 declared={type=number flags=[IsExpected]} @369
+    Jump -> next b21(v22, v78) @364
+  b21(v79, v80):
+    LoopHint @364
+    v82 = PropGet v27 key="length" @377
+    v83 = Convert v82 declared={type=number flags=[IsExpected]} @377
+    v84 = Less v80, v83 @372
+    Branch v84 -> taken b22(| 0), notTaken b25(| 0) @372
+  b22(v85):
+    Jump -> next b23() @372
+  b23():
+    v86 = PropGet v27 key="charCodeAt" @403
+    v87 = Convert v86 declared={type=undefined|null|function flags=[IsExpected]} @403
+    v88 = Call v87, v27, v85 calleeKey="charCodeAt" calleeName="said.charCodeAt" @408
+    v89 = Convert v88 declared={type=number flags=[IsExpected]} @403
+    v90 = Mul v89, v85 @403
+    v91 = Add v79, v90 @403
+    v92 = Convert v91 declared={type=number flags=[IsExpected]} @396
+    Jump -> next b24() @396
+  b24():
+    v93 = Increment v85 @403
+    v94 = Convert v93 declared={type=number flags=[IsExpected]} @390
+    Jump -> next b21(v92, v94) @390
+  b25(v95):
+    Jump -> next b26() @372
+  b26():
+    v96 = PropGet v27 key="length" @443
+    v97 = Convert v96 declared={type=number flags=[IsExpected]} @443
+    Jump -> next b27(v79, v97) @438
+  b27(v98, v99):
+    LoopHint @438
+    v101 = Integer @461
+    v102 = Greater v99, v101 @456
+    Branch v102 -> taken b28(| 0), notTaken b31(| 0) @456
+  b28(v103):
+    Jump -> next b29() @456
+  b29():
+    v104 = Sub v98, v103 @477
+    v105 = Convert v104 declared={type=number flags=[IsExpected]} @470
+    Jump -> next b30() @470
+  b30():
+    v106 = Decrement v103 @477
+    v107 = Convert v106 declared={type=number flags=[IsExpected]} @464
+    Jump -> next b27(v105, v107) @464
+  b31(v108):
+    Jump -> next b32() @456
+  b32():
+    v109 = Integer integer=2 @500
+    v110 = Mul v23, v109 @488
+    v111 = Add v98, v110 @488
+    v112 = Integer integer=3 @511
+    v113 = Mul v24, v112 @488
+    v114 = Add v111, v113 @488
+    v115 = Add v114, v25 @488
+    v116 = Sub v115, v26 @488
+    v117 = Convert v116 declared={type=number flags=[IsExpected]} @488
+    Return v117 @488
+}
+function f2 name="cached" module=m0 position=531 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: undefined|null|string):
+    Jump -> next b1() @531
+  b1():
+    v2 = ElemGet v0, v1 @575
+    v3 = TypeTest v2 testedType=undefined @591
+    Branch v3 -> taken b2(| 0), notTaken b10(| 0) @591
+  b2(v4):
+    Jump -> next b3() @591
+  b3():
+    v5 = GetModuleVariable variable=g0 @639
+    v6 = Call v5, -, v1 calleeName="slow" @639
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @639
+    ElemSet v0, v1, v7 @650
+    v9 = Integer @680
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @680
+    v11 = Integer @697
+    v12 = Convert v11 declared={type=number flags=[IsExpected]} @697
+    Jump -> next b4(v10, v12) @692
+  b4(v13, v14):
+    LoopHint @692
+    v16 = PropGet v1 key="length" @705
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @705
+    v18 = Less v14, v17 @700
+    Branch v18 -> taken b5(| 0), notTaken b8(| 0) @700
+  b5(v19):
+    Jump -> next b6() @700
+  b6():
+    v20 = GetModuleVariable variable=g0 @731
+    v21 = PropGet v1 key="slice" @736
+    v22 = Convert v21 declared={type=undefined|null|function flags=[IsExpected]} @736
+    v23 = Call v22, v1, v19 calleeKey="slice" calleeName="key.slice" @740
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @736
+    v25 = Call v20, -, v24 calleeName="slow" @731
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @731
+    v27 = Add v13, v26 @731
+    v28 = Convert v27 declared={type=number flags=[IsExpected]} @723
+    Jump -> next b7() @723
+  b7():
+    v29 = Increment v19 @731
+    v30 = Convert v29 declared={type=number flags=[IsExpected]} @717
+    Jump -> next b4(v28, v30) @717
+  b8(v31):
+    Jump -> next b9() @700
+  b9():
+    v32 = String string="!" @764
+    v33 = Add v1, v32 @758
+    ElemSet v0, v33, v13 @752
+    Return v7 @784
+  b10(v35):
+    Jump -> next b11() @591
+  b11():
+    v36 = Convert v35 declared={type=number flags=[IsExpected]} @619
+    Return v36 @619
+}
+function f3 name="checked" module=m0 position=792 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|number|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @792
+  b1():
+    v1 = TypeTest v0 testedType=number @822
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0) @822
+  b2(v2):
+    Jump -> next b3() @822
+  b3():
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @856
+    v4 = Integer integer=1 @864
+    v5 = Add v3, v4 @856
+    v6 = Convert v5 declared={type=undefined|null|number|string flags=[IsExpected]} @856
+    Return v6 @856
+  b4(v7):
+    Jump -> next b5() @822
+  b5():
+    v8 = String string="" @878
+    v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]} @878
+    v10 = Integer @896
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @896
+    Jump -> next b6(v9, v11) @891
+  b6(v12, v13):
+    LoopHint @891
+    v15 = Integer integer=3 @904
+    v16 = Less v13, v15 @899
+    Branch v16 -> taken b7(| 0), notTaken b10(| 0) @899
+  b7(v17):
+    Jump -> next b8() @899
+  b8():
+    v18 = GetModuleVariable variable=g0 @921
+    v19 = Builtin builtin=String @926
+    v20 = Convert v7 declared={type=number flags=[IsExpected]} @933
+    v21 = Call v19, -, v20 calleeName="String" @926
+    v22 = Convert v21 declared={type=undefined|null|string flags=[IsExpected]} @926
+    v23 = Add v22, v17 @926
+    v24 = Call v18, -, v23 calleeName="slow" @921
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @921
+    v26 = String string="," @948
+    v27 = Add v25, v26 @921
+    v28 = Add v12, v27 @921
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]} @913
+    Jump -> next b9() @913
+  b9():
+    v30 = Increment v17 @921
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @907
+    Jump -> next b6(v29, v31) @907
+  b10(v32):
+    Jump -> next b11() @899
+  b11():
+    v33 = Integer @967
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @967
+    Jump -> next b12(v12, v34) @962
+  b12(v35, v36):
+    LoopHint @962
+    v38 = Integer integer=3 @975
+    v39 = Less v36, v38 @970
+    Branch v39 -> taken b13(| 0), notTaken b16(| 0) @970
+  b13(v40):
+    Jump -> next b14() @970
+  b14():
+    v41 = GetModuleVariable variable=g0 @992
+    v42 = PropGet v35 key="slice" @997
+    v43 = Convert v42 declared={type=undefined|null|function flags=[IsExpected]} @997
+    v44 = Integer integer=2 @1017
+    v45 = Add v40, v44 @1012
+    v46 = Call v43, v35, v40, v45 calleeKey="slice" calleeName="text.slice" @1002
+    v47 = Convert v46 declared={type=undefined|null|string flags=[IsExpected]} @997
+    v48 = Call v41, -, v47 calleeName="slow" @992
+    v49 = Convert v48 declared={type=number flags=[IsExpected]} @992
+    v50 = String string=";" @1023
+    v51 = Add v49, v50 @992
+    v52 = Add v35, v51 @992
+    v53 = Convert v52 declared={type=undefined|null|string flags=[IsExpected]} @984
+    Jump -> next b15() @984
+  b15():
+    v54 = Increment v40 @992
+    v55 = Convert v54 declared={type=number flags=[IsExpected]} @978
+    Jump -> next b12(v53, v55) @978
+  b16(v56):
+    Jump -> next b17() @970
+  b17():
+    v57 = Convert v35 declared={type=undefined|null|number|string flags=[IsExpected]} @1035
+    Return v57 @1035
+}
+function f4 name="run" module=m0 position=1043 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1() @1043
+  b1():
+    v1 = Data data=d0 @1079
+    v2 = String string="" @1094
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @1094
+    v4 = Integer @1114
+    v5 = Convert v4 declared={type=number flags=[IsExpected]} @1114
+    Jump -> next b2(v3, v5) @1107
+  b2(v6, v7):
+    LoopHint @1107
+    v9 = Convert v0 declared={type=number flags=[IsExpected]} @1124
+    v10 = Less v7, v9 @1117
+    Branch v10 -> taken b3(| 0, 1), notTaken b16(| 0, 1) @1117
+  b3(v11, v12):
+    Jump -> next b4() @1117
+  b4():
+    v13 = GetModuleVariable variable=g1 @1149
+    v14 = Integer integer=3 @1170
+    v15 = Mod v11, v14 @1163
+    v16 = ToBoolean v15 @1163
+    Branch v16 -> taken b5(| 0), notTaken b7(| 0) @1163
+  b5(v17):
+    Jump -> next b6() @1163
+  b6():
+    v18 = String string="ab" @1174
+    Jump -> next b9(v18) @1174
+  b7(v19):
+    Jump -> next b8() @1163
+  b8():
+    v20 = String string="abc" @1181
+    Jump -> next b9(v20) @1181
+  b9(v21):
+    v22 = Call v13, -, v1, v21 calleeName="cached" @1149
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @1149
+    v24 = String string="," @1190
+    v25 = Add v23, v24 @1149
+    v26 = Add v6, v25 @1149
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]} @1141
+    v28 = GetModuleVariable variable=g2 @1203
+    v29 = Integer integer=5 @1218
+    v30 = Mod v11, v29 @1211
+    v31 = ToBoolean v30 @1211
+    Branch v31 -> taken b10(| 0), notTaken b12(| 0) @1211
+  b10(v32):
+    Jump -> next b11() @1211
+  b11():
+    Jump -> next b14(v11) @1222
+  b12(v33):
+    Jump -> next b13() @1211
+  b13():
+    v34 = String string="t" @1229
+    v35 = Add v34, v11 @1229
+    Jump -> next b14(v35) @1229
+  b14(v36):
+    v37 = Call v28, -, v36 calleeName="checked" @1203
+    v38 = Convert v37 declared={type=undefined|null|number|string flags=[IsExpected]} @1203
+    v39 = String string=";" @1243
+    v40 = Add v38, v39 @1203
+    v41 = Add v27, v40 @1203
+    v42 = Convert v41 declared={type=undefined|null|string flags=[IsExpected]} @1195
+    v43 = GetModuleVariable variable=g1 @1256
+    v44 = String string="ab!" @1270
+    v45 = Call v43, -, v1, v44 calleeName="cached" @1256
+    v46 = Convert v45 declared={type=number flags=[IsExpected]} @1256
+    v47 = String string="." @1279
+    v48 = Add v46, v47 @1256
+    v49 = Add v42, v48 @1256
+    v50 = Convert v49 declared={type=undefined|null|string flags=[IsExpected]} @1248
+    Jump -> next b15() @1248
+  b15():
+    v51 = Increment v11 @1256
+    v52 = Convert v51 declared={type=number flags=[IsExpected]} @1131
+    Jump -> next b2(v50, v52) @1131
+  b16(v53, v54):
+    Jump -> next b17() @1117
+  b17():
+    v55 = GetModuleVariable variable=g3 @1300
+    v56 = CheckInitialized v55 name="calls" @1300
+    v57 = Add v6, v56 @1293
+    v58 = Convert v57 declared={type=undefined|null|string flags=[IsExpected]} @1293
+    Return v58 @1293
+}

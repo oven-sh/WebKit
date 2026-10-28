@@ -994,13 +994,83 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
     return numberOfHoistedReads;
 }
 
+static bool mayChangeKeys(const EffectsOnEdges& effects)
+{
+    constexpr AbstractHeapSet heapsThatSayWhichKeysThereAre { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
+    Effects any = effects.onAnyEdge();
+    return any.mayRunOtherCode() || any.writes.containsAny(heapsThatSayWhichKeysThereAre);
+}
+
+// From behind the opening of the enumerator to the entry of the loop there is one way, and nothing on it changes the keys of any object.
+static bool leadsToLoopWithoutChangeOfKeys(FunctionPassContext& context, ValueID open, BlockID lastBlock)
+{
+    const Function& function = context.function;
+    const CFG& cfg = context.analyses.cfg();
+    AOT_THRESHOLD(unsigned, maxBlocksBetweenOpeningAndLoop, 4);
+    BlockID block = lastBlock;
+    for (unsigned step = 0; step < maxBlocksBetweenOpeningAndLoop; ++step) {
+        if (function.at(block).terminator.kind != TerminatorKind::Jump || mayChangeKeys(context.analyses.effectsOfTerminator(block)))
+            return false;
+        const BlockValues& values = function.at(block).values;
+        for (size_t index = values.size(); index--;) {
+            if (values[index] == open)
+                return true;
+            if (mayChangeKeys(context.analyses.effectsOf(values[index])))
+                return false;
+        }
+        std::span<const BlockID> predecessors = cfg.predecessors(block);
+        if (predecessors.size() != 1)
+            return false;
+        block = predecessors[0];
+    }
+    return false;
+}
+
+// Whether an enumerator still says which keys its object has is asked at each step. Where nothing else in the loop can change the keys of an object, the answer changes at most in a step that the run time takes.
+static unsigned markStepsOfLoopsThatChangeNoKeys(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    NaturalLoops& naturalLoops = context.analyses.naturalLoops();
+    unsigned numberOfMarkedSteps = 0;
+    for (unsigned i = 0; i < naturalLoops.numLoops(); ++i) {
+        const NaturalLoop& loop = naturalLoops.loop(i);
+        ValueID step;
+        bool changesNoKeys = true;
+        for (unsigned j = 0; j < loop.size() && changesNoKeys; ++j) {
+            BlockID block = loop.at(j);
+            for (ValueID id : function.at(block).values) {
+                if (function.at(id).opcode == Opcode::ForInStep && !step && naturalLoops.innerMostLoopOf(block) == &loop)
+                    step = id;
+                else
+                    changesNoKeys &= !mayChangeKeys(context.analyses.effectsOf(id));
+            }
+            changesNoKeys &= !function.at(block).isHandlerBlock() && !mayChangeKeys(context.analyses.effectsOfTerminator(block));
+        }
+        if (!step || !changesNoKeys || function.at(step).keysChangeOnlyInSteps() || !function.at(step).positionOperand())
+            continue;
+        // It takes a few more bytes.
+        if (!isHot(heatClassOf(context, loop.header())).predicted())
+            continue;
+        ValueID open = function.at(step).enumeratorOperand();
+        if (function.at(open).opcode != Opcode::ForInOpen || function.at(open).objectOperand() != function.at(step).objectOperand())
+            continue;
+        std::optional<Edge> entry = naturalLoops.findSingleEntry(loop);
+        if (!entry || entry->isHandlerEdge() || !leadsToLoopWithoutChangeOfKeys(context, open, entry->from))
+            continue;
+        function.edit(step).setKeysChangeOnlyInSteps(true);
+        ++numberOfMarkedSteps;
+    }
+    return numberOfMarkedSteps;
+}
+
 PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasCycle())
         return PassOutcome::Unchanged;
 
     Vector<Edge, 2> entriesFromBranches;
-    unsigned numberOfChanges = hoistReadsOutOfLoops(context, entriesFromBranches);
+    unsigned numberOfChanges = markStepsOfLoopsThatChangeNoKeys(context);
+    numberOfChanges += hoistReadsOutOfLoops(context, entriesFromBranches);
     if (!entriesFromBranches.isEmpty()) {
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
         for (Edge entry : entriesFromBranches)

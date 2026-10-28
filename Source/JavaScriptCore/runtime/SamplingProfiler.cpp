@@ -55,6 +55,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+#include "AOTCompiledCallee.h"
 #include "AOTCompiledFrame.h"
 #include "AOTFunctionDescription.h"
 #include "AOTImage.h"
@@ -866,6 +867,14 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 stackFrame.callee = callee;
                 m_liveCellPointers.add(callee);
             };
+
+#if ENABLE(AOT)
+            // The frame is there and the pc is not in the code of the function: the sample fell between the call and its first instruction.
+            if (std::optional<AOT::FunctionID> function = alreadyHasExecutable ? std::nullopt : AOT::functionOf(calleeCell)) {
+                stackFrame.compiledFrame = { { }, AOT::FunctionDescription(*function).sourceFunction(), CallSiteIndex(), false, false };
+                return;
+            }
+#endif
 
             if (!isJSFunctionType(calleeCell->type())) {
                 if (JSObject* object = dynamicDowncast<JSObject>(calleeCell))

@@ -12,10 +12,12 @@
 #include "AOTEffectsDescription.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTIR.h"
+#include "AOTLargeVectors.h"
 #include "AOTOpcodesNamingRecords.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
+#include "AOTThreshold.h"
 #include <atomic>
 #include <numeric>
 #include <wtf/Atomics.h>
@@ -65,7 +67,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
     const Node firstType = firstLayoutSet + program.types.numberOfLayoutSets();
     const Node firstVariable = firstType + program.types.size();
     const RecordNodes nodes { firstLayoutSet, firstType, firstVariable };
-    Vector<Mark> marks(FillWith { }, firstVariable + program.variables.size(), static_cast<Mark>(0));
+    Vector<Mark> marks = createVectorInParallel<Mark>(loops, firstVariable + program.variables.size(), 0);
     Vector<uint8_t> isKeyOfMarkedField;
     Vector<FieldReference> fieldsOfEnvironments;
 
@@ -322,6 +324,34 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
 
     auto addMarksOfSources = [&](Node count, const auto& forEachSourceOf) {
         constexpr unsigned nodesInShare = 512;
+        // Marks are only added, so they end the same in whatever order nodes take those of their sources. Most come within a few steps of a source. A long chain is followed from source to target below.
+        AOT_THRESHOLD(unsigned, maxRoundsOverAllNodes, 3);
+        bool isFinished = false;
+        for (unsigned round = 0; round < maxRoundsOverAllNodes && !isFinished; ++round) {
+            std::atomic<bool> didAdd { false };
+            forEachIndexInParallel(loops, (count + nodesInShare - 1) / nodesInShare, [&](unsigned share) {
+                bool didAddInShare = false;
+                for (Node target = share * nodesInShare; target < std::min(count, (share + 1) * nodesInShare); ++target) {
+                    Mark known = markAt(target);
+                    if (known == seenByAll)
+                        continue;
+                    Mark mark = known;
+                    forEachSourceOf(target, [&](Node source) {
+                        mark |= markAt(source);
+                    });
+                    if (mark == known)
+                        continue;
+                    addAt(target, mark);
+                    didAddInShare = true;
+                }
+                if (didAddInShare)
+                    didAdd.store(true, std::memory_order_relaxed);
+            });
+            isFinished = !didAdd.load(std::memory_order_relaxed);
+        }
+        if (isFinished)
+            return;
+
         auto forEachEdge = [&](const auto& functor) {
             forEachIndexInParallel(loops, (count + nodesInShare - 1) / nodesInShare, [&](unsigned share) {
                 for (Node target = share * nodesInShare; target < std::min(count, (share + 1) * nodesInShare); ++target) {

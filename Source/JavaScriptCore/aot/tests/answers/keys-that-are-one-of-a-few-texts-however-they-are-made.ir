@@ -25,540 +25,540 @@
 # A key that is one of a few texts is held as the number of its literal. The same texts also come out of sums, slices, joins, walks over keys and parsed text.
 # At the end the shell runs the same text itself: every answer is the same.
 # FORM: AsRead
-# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = report => { const table = { first: "one", second: "two", third: "three" }; function pick(key) { return table[key]; } report(pick("first")); report(pick("second")); report(pick("third")); function pickJoined(head, tail) { return table[head + tail]; } report(pickJoined("fir", "st")); report(pickJoined("sec", "ond")); report(pickJoined("thi", "rd")); report(pickJoined("four", "th")); function walk() { let text = ""; for (const key in table) text += key === "second" ? "(" + table[key] + ")" : table[key]; return text; } report(walk()); function listed() { const keys = Object.keys(table); let text = ""; for (let i = 0; i < keys.length; i++) text += keys[i] === "third" ? "!" : pick(keys[i]); return text; } report(listed()); function kindOf(key) { switch (key) { case "first": return 1; case "second": return 2; case "third": return 3; default: return 0; } } report(kindOf("first")); report(kindOf("sec" + "ond")); report(kindOf(["th", "ird"].join(""))); report(kindOf("fourth")); report(kindOf("second".slice(0, 6))); report(kindOf("xthird".slice(1))); function isOneOf(key) { return key === "first" || key === "third"; } report(isOneOf("first")); report(isOneOf("second")); report(isOneOf("thirdx".slice(0, 5))); report(isOneOf(String("first"))); function getterFor(source, key) { return function () { return source[key]; }; } report(getterFor(table, "first")()); report(getterFor(table, "second")()); report(getterFor(table, "thi" + "rd")()); function parsed(text) { const key = JSON.parse(text); return key === "second" ? table[key] : kindOf(key); } report(parsed("\"second\"")); report(parsed("\"third\"")); report(parsed("\"other\"")); function lengthOf(key) { return key.length; } report(lengthOf("first")); report(lengthOf("second")); report(lengthOf("third")); function stored(key, value) { const made = { first: 0, second: 0 }; made[key] = value; return made.first + "," + made.second + "," + made[key]; } report(stored("first", 1)); report(stored("second", 2)); report(stored("sec" + "ond", 3)); function templated(key) { return `${key}/${table[key]}`; } report(templated("first")); report(templated("third")); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); }); let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + got[n] + " and not " + expected[n]); } print(same + " of " + expected.length + " of " + got.length); }; })();
+# RUN: run-in-shell (function () { "use strict"; const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value); const twin = async report => { const table = { first: "one", second: "two", third: "three" }; function pick(key) { return table[key]; } report(pick("first")); report(pick("second")); report(pick("third")); function pickJoined(head, tail) { return table[head + tail]; } report(pickJoined("fir", "st")); report(pickJoined("sec", "ond")); report(pickJoined("thi", "rd")); report(pickJoined("four", "th")); function walk() { let text = ""; for (const key in table) text += key === "second" ? "(" + table[key] + ")" : table[key]; return text; } report(walk()); function listed() { const keys = Object.keys(table); let text = ""; for (let i = 0; i < keys.length; i++) text += keys[i] === "third" ? "!" : pick(keys[i]); return text; } report(listed()); function kindOf(key) { switch (key) { case "first": return 1; case "second": return 2; case "third": return 3; default: return 0; } } report(kindOf("first")); report(kindOf("sec" + "ond")); report(kindOf(["th", "ird"].join(""))); report(kindOf("fourth")); report(kindOf("second".slice(0, 6))); report(kindOf("xthird".slice(1))); function isOneOf(key) { return key === "first" || key === "third"; } report(isOneOf("first")); report(isOneOf("second")); report(isOneOf("thirdx".slice(0, 5))); report(isOneOf(String("first"))); function getterFor(source, key) { return function () { return source[key]; }; } report(getterFor(table, "first")()); report(getterFor(table, "second")()); report(getterFor(table, "thi" + "rd")()); function parsed(text) { const key = JSON.parse(text); return key === "second" ? table[key] : kindOf(key); } report(parsed("\"second\"")); report(parsed("\"third\"")); report(parsed("\"other\"")); function lengthOf(key) { return key.length; } report(lengthOf("first")); report(lengthOf("second")); report(lengthOf("third")); function stored(key, value) { const made = { first: 0, second: 0 }; made[key] = value; return made.first + "," + made.second + "," + made[key]; } report(stored("first", 1)); report(stored("second", 2)); report(stored("sec" + "ond", 3)); function templated(key) { return `${key}/${table[key]}`; } report(templated("first")); report(templated("third")); report("end"); }; const got = []; globalThis.report = value => { got.push(show(value)); if (value !== "end") return; const expected = []; twin(value => { expected.push(show(value)); if (value !== "end") return; let same = 0; for (let n = 0; n < expected.length; n++) { if (got[n] === expected[n]) same++; else print("answer " + n + ": " + String(got[n]).slice(0, 90) + " and not " + expected[n].slice(0, 90)); } print(same + " of " + expected.length + " of " + got.length); }); }; })();
 # CHECK: 34 of 34 of 34
 # CHECK-NEXT: exited with 0
 
-module m0 path="main.js" displayPath="main.js" body=f0
+module m0 path="keys-that-are-one-of-a-few-texts-however-they-are-made.js" displayPath="keys-that-are-one-of-a-few-texts-however-they-are-made.js" body=f0 namespaceLayout=L(m0)
 entry module=m0
-layout L0 module=m0 fields=[{key="first" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="second" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="third" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
-layout L1 module=m0 fields=[{key="first" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="second" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L0 module=m0 position=14 fields=[{key="first" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="second" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="third" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=3
+layout L1 module=m0 position=1803 fields=[{key="first" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="second" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
 data d0 root=Object{layout=L0 members=[{key="first" value=String{value="one"}}, {key="second" value=String{value="two"}}, {key="third" value=String{value="three"}}]} module=m0
 data d1 root=Array{contents=undefined|null|string elements=[String{value="th"}, String{value="ird"}]} module=m0
 data d2 root=Object{layout=L1 members=[{key="first" value=Number{}}, {key="second" value=Number{}}]} module=m0
 variable g0 name="pick" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
 variable g1 name="kindOf" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
 variable g2 name="table" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable]
-function f0 name="main" kind=Module results=[{type=anything}] {
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @0
   b1():
-    v0 = NewClosure function=f3
-    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = NewClosure function=f4
-    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v4 = NewClosure function=f5
-    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v6 = NewClosure function=f6
-    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v8 = NewClosure function=f7
-    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v10 = NewClosure function=f8
-    v11 = Convert v10 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v12 = NewClosure function=f9
-    v13 = Convert v12 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v14 = NewClosure function=f10
-    v15 = Convert v14 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v16 = NewClosure function=f11
-    v17 = Convert v16 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v18 = Data data=d0
-    v19 = Convert v18 declared={type=undefined|null|L0 flags=[IsExpected]}
-    PutModuleVariable v19 variable=g2
-    v21 = Builtin builtin=GlobalThis
-    v22 = PropGet v21 key="report" [isFreeName]
-    v23 = GetModuleVariable variable=g0
-    v24 = String string="first"
-    v25 = Call v23, -, v24
-    v26 = Call v22, -, v25
-    v27 = Builtin builtin=GlobalThis
-    v28 = PropGet v27 key="report" [isFreeName]
-    v29 = GetModuleVariable variable=g0
-    v30 = String string="second"
-    v31 = Call v29, -, v30
-    v32 = Call v28, -, v31
-    v33 = Builtin builtin=GlobalThis
-    v34 = PropGet v33 key="report" [isFreeName]
-    v35 = GetModuleVariable variable=g0
-    v36 = String string="third"
-    v37 = Call v35, -, v36
-    v38 = Call v34, -, v37
-    v39 = Builtin builtin=GlobalThis
-    v40 = PropGet v39 key="report" [isFreeName]
-    v41 = String string="fir"
-    v42 = String string="st"
-    v43 = Call v1, -, v41, v42
-    v44 = Call v40, -, v43
-    v45 = Builtin builtin=GlobalThis
-    v46 = PropGet v45 key="report" [isFreeName]
-    v47 = String string="sec"
-    v48 = String string="ond"
-    v49 = Call v1, -, v47, v48
-    v50 = Call v46, -, v49
-    v51 = Builtin builtin=GlobalThis
-    v52 = PropGet v51 key="report" [isFreeName]
-    v53 = String string="thi"
-    v54 = String string="rd"
-    v55 = Call v1, -, v53, v54
-    v56 = Call v52, -, v55
-    v57 = Builtin builtin=GlobalThis
-    v58 = PropGet v57 key="report" [isFreeName]
-    v59 = String string="four"
-    v60 = String string="th"
-    v61 = Call v1, -, v59, v60
-    v62 = Call v58, -, v61
-    v63 = Builtin builtin=GlobalThis
-    v64 = PropGet v63 key="report" [isFreeName]
-    v65 = Call v3
-    v66 = Convert v65 declared={type=undefined|null|string flags=[IsExpected]}
-    v67 = Call v64, -, v66
-    v68 = Builtin builtin=GlobalThis
-    v69 = PropGet v68 key="report" [isFreeName]
-    v70 = Call v5
-    v71 = Convert v70 declared={type=undefined|null|string flags=[IsExpected]}
-    v72 = Call v69, -, v71
-    v73 = Builtin builtin=GlobalThis
-    v74 = PropGet v73 key="report" [isFreeName]
-    v75 = GetModuleVariable variable=g1
-    v76 = String string="first"
-    v77 = Call v75, -, v76
-    v78 = Convert v77 declared={type=int[0, 3] flags=[IsExpected]}
-    v79 = Call v74, -, v78
-    v80 = Builtin builtin=GlobalThis
-    v81 = PropGet v80 key="report" [isFreeName]
-    v82 = GetModuleVariable variable=g1
-    v83 = String string="second"
-    v84 = Call v82, -, v83
-    v85 = Convert v84 declared={type=int[0, 3] flags=[IsExpected]}
-    v86 = Call v81, -, v85
-    v87 = Builtin builtin=GlobalThis
-    v88 = PropGet v87 key="report" [isFreeName]
-    v89 = GetModuleVariable variable=g1
-    v90 = Data data=d1
-    v91 = Convert v90 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v92 = PropGet v91 key="join"
-    v93 = Convert v92 declared={type=undefined|null|function flags=[IsExpected]}
-    v94 = String string=""
-    v95 = Call v93, v91, v94 calleeKey="join"
-    v96 = Convert v95 declared={type=undefined|null|string flags=[IsExpected]}
-    v97 = Call v89, -, v96
-    v98 = Convert v97 declared={type=int[0, 3] flags=[IsExpected]}
-    v99 = Call v88, -, v98
-    v100 = Builtin builtin=GlobalThis
-    v101 = PropGet v100 key="report" [isFreeName]
-    v102 = GetModuleVariable variable=g1
-    v103 = String string="fourth"
-    v104 = Call v102, -, v103
-    v105 = Convert v104 declared={type=int[0, 3] flags=[IsExpected]}
-    v106 = Call v101, -, v105
-    v107 = Builtin builtin=GlobalThis
-    v108 = PropGet v107 key="report" [isFreeName]
-    v109 = GetModuleVariable variable=g1
-    v110 = String string="second"
-    v111 = PropGet v110 key="slice"
-    v112 = Convert v111 declared={type=undefined|null|function flags=[IsExpected]}
-    v113 = Integer
-    v114 = Integer integer=6
-    v115 = Call v112, v110, v113, v114 calleeKey="slice"
-    v116 = Convert v115 declared={type=undefined|null|string flags=[IsExpected]}
-    v117 = Call v109, -, v116
-    v118 = Convert v117 declared={type=int[0, 3] flags=[IsExpected]}
-    v119 = Call v108, -, v118
-    v120 = Builtin builtin=GlobalThis
-    v121 = PropGet v120 key="report" [isFreeName]
-    v122 = GetModuleVariable variable=g1
-    v123 = String string="xthird"
-    v124 = PropGet v123 key="slice"
-    v125 = Convert v124 declared={type=undefined|null|function flags=[IsExpected]}
-    v126 = Integer integer=1
-    v127 = Call v125, v123, v126 calleeKey="slice"
-    v128 = Convert v127 declared={type=undefined|null|string flags=[IsExpected]}
-    v129 = Call v122, -, v128
-    v130 = Convert v129 declared={type=int[0, 3] flags=[IsExpected]}
-    v131 = Call v121, -, v130
-    v132 = Builtin builtin=GlobalThis
-    v133 = PropGet v132 key="report" [isFreeName]
-    v134 = String string="first"
-    v135 = Call v7, -, v134
-    v136 = Convert v135 declared={type=boolean flags=[IsExpected]}
-    v137 = Call v133, -, v136
-    v138 = Builtin builtin=GlobalThis
-    v139 = PropGet v138 key="report" [isFreeName]
-    v140 = String string="second"
-    v141 = Call v7, -, v140
-    v142 = Convert v141 declared={type=boolean flags=[IsExpected]}
-    v143 = Call v139, -, v142
-    v144 = Builtin builtin=GlobalThis
-    v145 = PropGet v144 key="report" [isFreeName]
-    v146 = String string="thirdx"
-    v147 = PropGet v146 key="slice"
-    v148 = Convert v147 declared={type=undefined|null|function flags=[IsExpected]}
-    v149 = Integer
-    v150 = Integer integer=5
-    v151 = Call v148, v146, v149, v150 calleeKey="slice"
-    v152 = Convert v151 declared={type=undefined|null|string flags=[IsExpected]}
-    v153 = Call v7, -, v152
-    v154 = Convert v153 declared={type=boolean flags=[IsExpected]}
-    v155 = Call v145, -, v154
-    v156 = Builtin builtin=GlobalThis
-    v157 = PropGet v156 key="report" [isFreeName]
-    v158 = Builtin builtin=String
-    v159 = String string="first"
-    v160 = Call v158, -, v159
-    v161 = Convert v160 declared={type=undefined|null|string flags=[IsExpected]}
-    v162 = Call v7, -, v161
-    v163 = Convert v162 declared={type=boolean flags=[IsExpected]}
-    v164 = Call v157, -, v163
-    v165 = Builtin builtin=GlobalThis
-    v166 = PropGet v165 key="report" [isFreeName]
-    v167 = String string="first"
-    v168 = Call v9, -, v19, v167
-    v169 = Convert v168 declared={type=undefined|null|function|f12 flags=[IsExpected]}
-    v170 = Call v169
-    v171 = Call v166, -, v170
-    v172 = Builtin builtin=GlobalThis
-    v173 = PropGet v172 key="report" [isFreeName]
-    v174 = String string="second"
-    v175 = Call v9, -, v19, v174
-    v176 = Convert v175 declared={type=undefined|null|function|f12 flags=[IsExpected]}
-    v177 = Call v176
-    v178 = Call v173, -, v177
-    v179 = Builtin builtin=GlobalThis
-    v180 = PropGet v179 key="report" [isFreeName]
-    v181 = String string="third"
-    v182 = Call v9, -, v19, v181
-    v183 = Convert v182 declared={type=undefined|null|function|f12 flags=[IsExpected]}
-    v184 = Call v183
-    v185 = Call v180, -, v184
-    v186 = Builtin builtin=GlobalThis
-    v187 = PropGet v186 key="report" [isFreeName]
-    v188 = String string="\"second\""
-    v189 = Call v11, -, v188
-    v190 = Convert v189 declared={type=number flags=[IsExpected]}
-    v191 = Call v187, -, v190
-    v192 = Builtin builtin=GlobalThis
-    v193 = PropGet v192 key="report" [isFreeName]
-    v194 = String string="\"third\""
-    v195 = Call v11, -, v194
-    v196 = Convert v195 declared={type=number flags=[IsExpected]}
-    v197 = Call v193, -, v196
-    v198 = Builtin builtin=GlobalThis
-    v199 = PropGet v198 key="report" [isFreeName]
-    v200 = String string="\"other\""
-    v201 = Call v11, -, v200
-    v202 = Convert v201 declared={type=number flags=[IsExpected]}
-    v203 = Call v199, -, v202
-    v204 = Builtin builtin=GlobalThis
-    v205 = PropGet v204 key="report" [isFreeName]
-    v206 = String string="first"
-    v207 = Call v13, -, v206
-    v208 = Convert v207 declared={type=number flags=[IsExpected]}
-    v209 = Call v205, -, v208
-    v210 = Builtin builtin=GlobalThis
-    v211 = PropGet v210 key="report" [isFreeName]
-    v212 = String string="second"
-    v213 = Call v13, -, v212
-    v214 = Convert v213 declared={type=number flags=[IsExpected]}
-    v215 = Call v211, -, v214
-    v216 = Builtin builtin=GlobalThis
-    v217 = PropGet v216 key="report" [isFreeName]
-    v218 = String string="third"
-    v219 = Call v13, -, v218
-    v220 = Convert v219 declared={type=number flags=[IsExpected]}
-    v221 = Call v217, -, v220
-    v222 = Builtin builtin=GlobalThis
-    v223 = PropGet v222 key="report" [isFreeName]
-    v224 = String string="first"
-    v225 = Integer integer=1
-    v226 = Call v15, -, v224, v225
-    v227 = Convert v226 declared={type=undefined|null|string flags=[IsExpected]}
-    v228 = Call v223, -, v227
-    v229 = Builtin builtin=GlobalThis
-    v230 = PropGet v229 key="report" [isFreeName]
-    v231 = String string="second"
-    v232 = Integer integer=2
-    v233 = Call v15, -, v231, v232
-    v234 = Convert v233 declared={type=undefined|null|string flags=[IsExpected]}
-    v235 = Call v230, -, v234
-    v236 = Builtin builtin=GlobalThis
-    v237 = PropGet v236 key="report" [isFreeName]
-    v238 = String string="second"
-    v239 = Integer integer=3
-    v240 = Call v15, -, v238, v239
-    v241 = Convert v240 declared={type=undefined|null|string flags=[IsExpected]}
-    v242 = Call v237, -, v241
-    v243 = Builtin builtin=GlobalThis
-    v244 = PropGet v243 key="report" [isFreeName]
-    v245 = String string="first"
-    v246 = Call v17, -, v245
-    v247 = Convert v246 declared={type=undefined|null|string flags=[IsExpected]}
-    v248 = Call v244, -, v247
-    v249 = Builtin builtin=GlobalThis
-    v250 = PropGet v249 key="report" [isFreeName]
-    v251 = String string="third"
-    v252 = Call v17, -, v251
-    v253 = Convert v252 declared={type=undefined|null|string flags=[IsExpected]}
-    v254 = Call v250, -, v253
-    v255 = Builtin builtin=GlobalThis
-    v256 = PropGet v255 key="report" [isFreeName]
-    v257 = String string="end"
-    v258 = Call v256, -, v257
-    v259 = Undefined
-    Return v259
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v2 = NewClosure function=f4 @0
+    v3 = Convert v2 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v4 = NewClosure function=f5 @0
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v6 = NewClosure function=f6 @0
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v8 = NewClosure function=f7 @0
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v10 = NewClosure function=f8 @0
+    v11 = Convert v10 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v12 = NewClosure function=f9 @0
+    v13 = Convert v12 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v14 = NewClosure function=f10 @0
+    v15 = Convert v14 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v16 = NewClosure function=f11 @0
+    v17 = Convert v16 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType @0
+    v18 = Data data=d0 @14
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[IsExpected]} @14
+    PutModuleVariable v19 variable=g2 @6
+    v21 = Builtin builtin=GlobalThis @105
+    v22 = PropGet v21 key="report" [isFreeName] @105
+    v23 = GetModuleVariable variable=g0 @112
+    v24 = String string="first" @117
+    v25 = Call v23, -, v24 calleeName="pick" @112
+    v26 = Call v22, -, v25 calleeName="report" @105
+    v27 = Builtin builtin=GlobalThis @128
+    v28 = PropGet v27 key="report" [isFreeName] @128
+    v29 = GetModuleVariable variable=g0 @135
+    v30 = String string="second" @140
+    v31 = Call v29, -, v30 calleeName="pick" @135
+    v32 = Call v28, -, v31 calleeName="report" @128
+    v33 = Builtin builtin=GlobalThis @152
+    v34 = PropGet v33 key="report" [isFreeName] @152
+    v35 = GetModuleVariable variable=g0 @159
+    v36 = String string="third" @164
+    v37 = Call v35, -, v36 calleeName="pick" @159
+    v38 = Call v34, -, v37 calleeName="report" @152
+    v39 = Builtin builtin=GlobalThis @238
+    v40 = PropGet v39 key="report" [isFreeName] @238
+    v41 = String string="fir" @256
+    v42 = String string="st" @263
+    v43 = Call v1, -, v41, v42 calleeName="pickJoined" @245
+    v44 = Call v40, -, v43 calleeName="report" @238
+    v45 = Builtin builtin=GlobalThis @271
+    v46 = PropGet v45 key="report" [isFreeName] @271
+    v47 = String string="sec" @289
+    v48 = String string="ond" @296
+    v49 = Call v1, -, v47, v48 calleeName="pickJoined" @278
+    v50 = Call v46, -, v49 calleeName="report" @271
+    v51 = Builtin builtin=GlobalThis @305
+    v52 = PropGet v51 key="report" [isFreeName] @305
+    v53 = String string="thi" @323
+    v54 = String string="rd" @330
+    v55 = Call v1, -, v53, v54 calleeName="pickJoined" @312
+    v56 = Call v52, -, v55 calleeName="report" @305
+    v57 = Builtin builtin=GlobalThis @338
+    v58 = PropGet v57 key="report" [isFreeName] @338
+    v59 = String string="four" @356
+    v60 = String string="th" @364
+    v61 = Call v1, -, v59, v60 calleeName="pickJoined" @345
+    v62 = Call v58, -, v61 calleeName="report" @338
+    v63 = Builtin builtin=GlobalThis @509
+    v64 = PropGet v63 key="report" [isFreeName] @509
+    v65 = Call v3 calleeName="walk" @516
+    v66 = Convert v65 declared={type=undefined|null|string flags=[IsExpected]} @516
+    v67 = Call v64, -, v66 calleeName="report" @509
+    v68 = Builtin builtin=GlobalThis @697
+    v69 = PropGet v68 key="report" [isFreeName] @697
+    v70 = Call v5 calleeName="listed" @704
+    v71 = Convert v70 declared={type=undefined|null|string flags=[IsExpected]} @704
+    v72 = Call v69, -, v71 calleeName="report" @697
+    v73 = Builtin builtin=GlobalThis @849
+    v74 = PropGet v73 key="report" [isFreeName] @849
+    v75 = GetModuleVariable variable=g1 @856
+    v76 = String string="first" @863
+    v77 = Call v75, -, v76 calleeName="kindOf" @856
+    v78 = Convert v77 declared={type=int[0, 3] flags=[IsExpected]} @856
+    v79 = Call v74, -, v78 calleeName="report" @849
+    v80 = Builtin builtin=GlobalThis @874
+    v81 = PropGet v80 key="report" [isFreeName] @874
+    v82 = GetModuleVariable variable=g1 @881
+    v83 = String string="second" @888
+    v84 = Call v82, -, v83 calleeName="kindOf" @881
+    v85 = Convert v84 declared={type=int[0, 3] flags=[IsExpected]} @881
+    v86 = Call v81, -, v85 calleeName="report" @874
+    v87 = Builtin builtin=GlobalThis @905
+    v88 = PropGet v87 key="report" [isFreeName] @905
+    v89 = GetModuleVariable variable=g1 @912
+    v90 = Data data=d1 @919
+    v91 = Convert v90 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @919
+    v92 = PropGet v91 key="join" @931
+    v93 = Convert v92 declared={type=undefined|null|function flags=[IsExpected]} @919
+    v94 = String string="" @938
+    v95 = Call v93, v91, v94 calleeKey="join" calleeName="join" @933
+    v96 = Convert v95 declared={type=undefined|null|string flags=[IsExpected]} @919
+    v97 = Call v89, -, v96 calleeName="kindOf" @912
+    v98 = Convert v97 declared={type=int[0, 3] flags=[IsExpected]} @912
+    v99 = Call v88, -, v98 calleeName="report" @905
+    v100 = Builtin builtin=GlobalThis @945
+    v101 = PropGet v100 key="report" [isFreeName] @945
+    v102 = GetModuleVariable variable=g1 @952
+    v103 = String string="fourth" @959
+    v104 = Call v102, -, v103 calleeName="kindOf" @952
+    v105 = Convert v104 declared={type=int[0, 3] flags=[IsExpected]} @952
+    v106 = Call v101, -, v105 calleeName="report" @945
+    v107 = Builtin builtin=GlobalThis @971
+    v108 = PropGet v107 key="report" [isFreeName] @971
+    v109 = GetModuleVariable variable=g1 @978
+    v110 = String string="second" @985
+    v111 = PropGet v110 key="slice" @985
+    v112 = Convert v111 declared={type=undefined|null|function flags=[IsExpected]} @985
+    v113 = Integer @1000
+    v114 = Integer integer=6 @1003
+    v115 = Call v112, v110, v113, v114 calleeKey="slice" calleeName="slice" @994
+    v116 = Convert v115 declared={type=undefined|null|string flags=[IsExpected]} @985
+    v117 = Call v109, -, v116 calleeName="kindOf" @978
+    v118 = Convert v117 declared={type=int[0, 3] flags=[IsExpected]} @978
+    v119 = Call v108, -, v118 calleeName="report" @971
+    v120 = Builtin builtin=GlobalThis @1009
+    v121 = PropGet v120 key="report" [isFreeName] @1009
+    v122 = GetModuleVariable variable=g1 @1016
+    v123 = String string="xthird" @1023
+    v124 = PropGet v123 key="slice" @1023
+    v125 = Convert v124 declared={type=undefined|null|function flags=[IsExpected]} @1023
+    v126 = Integer integer=1 @1038
+    v127 = Call v125, v123, v126 calleeKey="slice" calleeName="slice" @1032
+    v128 = Convert v127 declared={type=undefined|null|string flags=[IsExpected]} @1023
+    v129 = Call v122, -, v128 calleeName="kindOf" @1016
+    v130 = Convert v129 declared={type=int[0, 3] flags=[IsExpected]} @1016
+    v131 = Call v121, -, v130 calleeName="report" @1009
+    v132 = Builtin builtin=GlobalThis @1113
+    v133 = PropGet v132 key="report" [isFreeName] @1113
+    v134 = String string="first" @1128
+    v135 = Call v7, -, v134 calleeName="isOneOf" @1120
+    v136 = Convert v135 declared={type=boolean flags=[IsExpected]} @1120
+    v137 = Call v133, -, v136 calleeName="report" @1113
+    v138 = Builtin builtin=GlobalThis @1139
+    v139 = PropGet v138 key="report" [isFreeName] @1139
+    v140 = String string="second" @1154
+    v141 = Call v7, -, v140 calleeName="isOneOf" @1146
+    v142 = Convert v141 declared={type=boolean flags=[IsExpected]} @1146
+    v143 = Call v139, -, v142 calleeName="report" @1139
+    v144 = Builtin builtin=GlobalThis @1166
+    v145 = PropGet v144 key="report" [isFreeName] @1166
+    v146 = String string="thirdx" @1181
+    v147 = PropGet v146 key="slice" @1181
+    v148 = Convert v147 declared={type=undefined|null|function flags=[IsExpected]} @1181
+    v149 = Integer @1196
+    v150 = Integer integer=5 @1199
+    v151 = Call v148, v146, v149, v150 calleeKey="slice" calleeName="slice" @1190
+    v152 = Convert v151 declared={type=undefined|null|string flags=[IsExpected]} @1181
+    v153 = Call v7, -, v152 calleeName="isOneOf" @1173
+    v154 = Convert v153 declared={type=boolean flags=[IsExpected]} @1173
+    v155 = Call v145, -, v154 calleeName="report" @1166
+    v156 = Builtin builtin=GlobalThis @1205
+    v157 = PropGet v156 key="report" [isFreeName] @1205
+    v158 = Builtin builtin=String @1220
+    v159 = String string="first" @1227
+    v160 = Call v158, -, v159 calleeName="String" @1220
+    v161 = Convert v160 declared={type=undefined|null|string flags=[IsExpected]} @1220
+    v162 = Call v7, -, v161 calleeName="isOneOf" @1212
+    v163 = Convert v162 declared={type=boolean flags=[IsExpected]} @1212
+    v164 = Call v157, -, v163 calleeName="report" @1205
+    v165 = Builtin builtin=GlobalThis @1319
+    v166 = PropGet v165 key="report" [isFreeName] @1319
+    v167 = String string="first" @1343
+    v168 = Call v9, -, v19, v167 calleeName="getterFor" @1326
+    v169 = Convert v168 declared={type=undefined|null|function|f12 flags=[IsExpected]} @1326
+    v170 = Call v169 @1350
+    v171 = Call v166, -, v170 calleeName="report" @1319
+    v172 = Builtin builtin=GlobalThis @1356
+    v173 = PropGet v172 key="report" [isFreeName] @1356
+    v174 = String string="second" @1380
+    v175 = Call v9, -, v19, v174 calleeName="getterFor" @1363
+    v176 = Convert v175 declared={type=undefined|null|function|f12 flags=[IsExpected]} @1363
+    v177 = Call v176 @1388
+    v178 = Call v173, -, v177 calleeName="report" @1356
+    v179 = Builtin builtin=GlobalThis @1394
+    v180 = PropGet v179 key="report" [isFreeName] @1394
+    v181 = String string="third" @1418
+    v182 = Call v9, -, v19, v181 calleeName="getterFor" @1401
+    v183 = Convert v182 declared={type=undefined|null|function|f12 flags=[IsExpected]} @1401
+    v184 = Call v183 @1430
+    v185 = Call v180, -, v184 calleeName="report" @1394
+    v186 = Builtin builtin=GlobalThis @1544
+    v187 = PropGet v186 key="report" [isFreeName] @1544
+    v188 = String string="\"second\"" @1558
+    v189 = Call v11, -, v188 calleeName="parsed" @1551
+    v190 = Convert v189 declared={type=number flags=[IsExpected]} @1551
+    v191 = Call v187, -, v190 calleeName="report" @1544
+    v192 = Builtin builtin=GlobalThis @1574
+    v193 = PropGet v192 key="report" [isFreeName] @1574
+    v194 = String string="\"third\"" @1588
+    v195 = Call v11, -, v194 calleeName="parsed" @1581
+    v196 = Convert v195 declared={type=number flags=[IsExpected]} @1581
+    v197 = Call v193, -, v196 calleeName="report" @1574
+    v198 = Builtin builtin=GlobalThis @1603
+    v199 = PropGet v198 key="report" [isFreeName] @1603
+    v200 = String string="\"other\"" @1617
+    v201 = Call v11, -, v200 calleeName="parsed" @1610
+    v202 = Convert v201 declared={type=number flags=[IsExpected]} @1610
+    v203 = Call v199, -, v202 calleeName="report" @1603
+    v204 = Builtin builtin=GlobalThis @1678
+    v205 = PropGet v204 key="report" [isFreeName] @1678
+    v206 = String string="first" @1694
+    v207 = Call v13, -, v206 calleeName="lengthOf" @1685
+    v208 = Convert v207 declared={type=number flags=[IsExpected]} @1685
+    v209 = Call v205, -, v208 calleeName="report" @1678
+    v210 = Builtin builtin=GlobalThis @1705
+    v211 = PropGet v210 key="report" [isFreeName] @1705
+    v212 = String string="second" @1721
+    v213 = Call v13, -, v212 calleeName="lengthOf" @1712
+    v214 = Convert v213 declared={type=number flags=[IsExpected]} @1712
+    v215 = Call v211, -, v214 calleeName="report" @1705
+    v216 = Builtin builtin=GlobalThis @1733
+    v217 = PropGet v216 key="report" [isFreeName] @1733
+    v218 = String string="third" @1749
+    v219 = Call v13, -, v218 calleeName="lengthOf" @1740
+    v220 = Convert v219 declared={type=number flags=[IsExpected]} @1740
+    v221 = Call v217, -, v220 calleeName="report" @1733
+    v222 = Builtin builtin=GlobalThis @1906
+    v223 = PropGet v222 key="report" [isFreeName] @1906
+    v224 = String string="first" @1920
+    v225 = Integer integer=1 @1929
+    v226 = Call v15, -, v224, v225 calleeName="stored" @1913
+    v227 = Convert v226 declared={type=undefined|null|string flags=[IsExpected]} @1913
+    v228 = Call v223, -, v227 calleeName="report" @1906
+    v229 = Builtin builtin=GlobalThis @1934
+    v230 = PropGet v229 key="report" [isFreeName] @1934
+    v231 = String string="second" @1948
+    v232 = Integer integer=2 @1958
+    v233 = Call v15, -, v231, v232 calleeName="stored" @1941
+    v234 = Convert v233 declared={type=undefined|null|string flags=[IsExpected]} @1941
+    v235 = Call v230, -, v234 calleeName="report" @1934
+    v236 = Builtin builtin=GlobalThis @1963
+    v237 = PropGet v236 key="report" [isFreeName] @1963
+    v238 = String string="second" @1977
+    v239 = Integer integer=3 @1992
+    v240 = Call v15, -, v238, v239 calleeName="stored" @1970
+    v241 = Convert v240 declared={type=undefined|null|string flags=[IsExpected]} @1970
+    v242 = Call v237, -, v241 calleeName="report" @1963
+    v243 = Builtin builtin=GlobalThis @2056
+    v244 = PropGet v243 key="report" [isFreeName] @2056
+    v245 = String string="first" @2073
+    v246 = Call v17, -, v245 calleeName="templated" @2063
+    v247 = Convert v246 declared={type=undefined|null|string flags=[IsExpected]} @2063
+    v248 = Call v244, -, v247 calleeName="report" @2056
+    v249 = Builtin builtin=GlobalThis @2084
+    v250 = PropGet v249 key="report" [isFreeName] @2084
+    v251 = String string="third" @2101
+    v252 = Call v17, -, v251 calleeName="templated" @2091
+    v253 = Convert v252 declared={type=undefined|null|string flags=[IsExpected]} @2091
+    v254 = Call v250, -, v253 calleeName="report" @2084
+    v255 = Builtin builtin=GlobalThis @2112
+    v256 = PropGet v255 key="report" [isFreeName] @2112
+    v257 = String string="end" @2119
+    v258 = Call v256, -, v257 calleeName="report" @2112
+    v259 = Undefined @2112
+    Return v259 @2112
 }
-function f1 name="pick" parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+function f1 name="pick" module=m0 position=63 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
-    Jump -> next b1()
+    Jump -> next b1() @63
   b1():
-    v1 = GetModuleVariable variable=g2
-    v2 = CheckInitialized v1 name="table"
-    v3 = ElemGet v2, v0
-    Return v3
+    v1 = GetModuleVariable variable=g2 @91
+    v2 = CheckInitialized v1 name="table" @91
+    v3 = ElemGet v2, v0 @91
+    Return v3 @91
 }
-function f2 name="kindOf" parameters=[{type=anything}] results=[{type=int[0, 3] flags=[IsExpected]}] {
+function f2 name="kindOf" module=m0 position=715 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=int[0, 3] flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
-    Jump -> next b1()
+    Jump -> next b1() @715
   b1():
-    SwitchString v0 strings=["first", "second", "third"] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8()
+    SwitchString v0 strings=["first", "second", "third"] -> case b2(| 0), case b4(| 0), case b6(| 0), otherwise b8() @758
   b2(v1):
-    Jump -> next b3()
+    Jump -> next b3() @758
   b3():
-    v2 = Integer integer=1
-    v3 = Convert v2 declared={type=int[0, 3] flags=[IsExpected]}
-    Return v3
+    v2 = Integer integer=1 @774
+    v3 = Convert v2 declared={type=int[0, 3] flags=[IsExpected]} @774
+    Return v3 @774
   b4(v4):
-    Jump -> next b5()
+    Jump -> next b5() @758
   b5():
-    v5 = Integer integer=2
-    v6 = Convert v5 declared={type=int[0, 3] flags=[IsExpected]}
-    Return v6
+    v5 = Integer integer=2 @799
+    v6 = Convert v5 declared={type=int[0, 3] flags=[IsExpected]} @799
+    Return v6 @799
   b6(v7):
-    Jump -> next b7()
+    Jump -> next b7() @758
   b7():
-    v8 = Integer integer=3
-    v9 = Convert v8 declared={type=int[0, 3] flags=[IsExpected]}
-    Return v9
+    v8 = Integer integer=3 @823
+    v9 = Convert v8 declared={type=int[0, 3] flags=[IsExpected]} @823
+    Return v9 @823
   b8():
-    Jump -> next b9()
+    Jump -> next b9() @758
   b9():
-    v10 = Integer
-    v11 = Convert v10 declared={type=int[0, 3] flags=[IsExpected]}
-    Return v11
+    v10 = Integer @842
+    v11 = Convert v10 declared={type=int[0, 3] flags=[IsExpected]} @842
+    Return v11 @842
 }
-function f3 name="pickJoined" parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+function f3 name="pickJoined" module=m0 position=175 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: undefined|null|string):
-    Jump -> next b1()
+    Jump -> next b1() @175
   b1():
-    v2 = GetModuleVariable variable=g2
-    v3 = CheckInitialized v2 name="table"
-    v4 = Add v0, v1
-    v5 = ElemGet v3, v4
-    Return v5
+    v2 = GetModuleVariable variable=g2 @216
+    v3 = CheckInitialized v2 name="table" @216
+    v4 = Add v0, v1 @222
+    v5 = ElemGet v3, v4 @216
+    Return v5 @216
 }
-function f4 name="walk" results=[{type=undefined|null|string flags=[IsExpected]}] {
+function f4 name="walk" module=m0 position=372 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @372
   b1():
-    v0 = String string=""
-    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-    v2 = GetModuleVariable variable=g2
-    v3 = CheckInitialized v2 name="table"
-    v4 = ForInOpen v3
-    Jump -> next b2(v1)
+    v0 = String string="" @401
+    v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]} @401
+    v2 = GetModuleVariable variable=g2 @423
+    v3 = CheckInitialized v2 name="table" @423
+    v4 = ForInOpen v3 @423
+    Jump -> next b2(v1) @423
   b2(v5):
-    LoopHint
-    v7 = ForInStep v4, v3
-    v8 = ResultAt v7
-    v9 = ResultAt v7 index=1
-    Branch v8 -> taken b3(), notTaken b4()
+    LoopHint @423
+    v7 = ForInStep v4, v3 @423
+    v8 = ResultAt v7 @423
+    v9 = ResultAt v7 index=1 @423
+    Branch v8 -> taken b3(), notTaken b4() @423
   b3():
-    v10 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v10
+    v10 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]} @501
+    Return v10 @501
   b4():
-    v11 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
-    v12 = String string="second"
-    v13 = StrictEq v11, v12
-    Branch v13 -> taken b5(| 0), notTaken b7(| 0)
+    v11 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]} @416
+    v12 = String string="second" @446
+    v13 = StrictEq v11, v12 @438
+    Branch v13 -> taken b5(| 0), notTaken b7(| 0) @438
   b5(v14):
-    Jump -> next b6()
+    Jump -> next b6() @438
   b6():
-    v15 = String string="("
-    v16 = GetModuleVariable variable=g2
-    v17 = CheckInitialized v16 name="table"
-    v18 = Convert v14 declared={type=undefined|null|"second" flags=[IsExpected]}
-    v19 = ElemGet v17, v18
-    v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]}
-    v21 = Add v15, v20
-    v22 = String string=")"
-    v23 = Add v21, v22
-    Jump -> next b9(v23)
+    v15 = String string="(" @457
+    v16 = GetModuleVariable variable=g2 @463
+    v17 = CheckInitialized v16 name="table" @463
+    v18 = Convert v14 declared={type=undefined|null|"second" flags=[IsExpected]} @469
+    v19 = ElemGet v17, v18 @463
+    v20 = Convert v19 declared={type=undefined|null|string flags=[IsExpected]} @463
+    v21 = Add v15, v20 @463
+    v22 = String string=")" @476
+    v23 = Add v21, v22 @463
+    Jump -> next b9(v23) @463
   b7(v24):
-    Jump -> next b8()
+    Jump -> next b8() @438
   b8():
-    v25 = GetModuleVariable variable=g2
-    v26 = CheckInitialized v25 name="table"
-    v27 = ElemGet v26, v24
-    Jump -> next b9(v27)
+    v25 = GetModuleVariable variable=g2 @482
+    v26 = CheckInitialized v25 name="table" @482
+    v27 = ElemGet v26, v24 @482
+    Jump -> next b9(v27) @482
   b9(v28):
-    v29 = Add v5, v28
-    v30 = Convert v29 declared={type=undefined|null|string flags=[IsExpected]}
-    Jump -> next b2(v30)
+    v29 = Add v5, v28 @482
+    v30 = Convert v29 declared={type=undefined|null|string flags=[IsExpected]} @430
+    Jump -> next b2(v30) @430
 }
-function f5 name="listed" results=[{type=undefined|null|string flags=[IsExpected]}] {
+function f5 name="listed" module=m0 position=525 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
-    Jump -> next b1()
+    Jump -> next b1() @525
   b1():
-    v0 = Builtin builtin=Object
-    v1 = Builtin builtin=ObjectKeys
-    v2 = GetModuleVariable variable=g2
-    v3 = CheckInitialized v2 name="table"
-    v4 = Call v1, v0, v3
-    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-    v6 = String string=""
-    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
-    v8 = Integer
-    v9 = Convert v8 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b2(v7, v9)
+    v0 = Builtin builtin=Object @558
+    v1 = Builtin builtin=ObjectKeys @558
+    v2 = GetModuleVariable variable=g2 @575 @570
+    v3 = CheckInitialized v2 name="table" @575 @570
+    v4 = Call v1, v0, v3 calleeName="Object.keys" @565
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @558
+    v6 = String string="" @589
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @589
+    v8 = Integer @606
+    v9 = Convert v8 declared={type=i32 flags=[IsExpected]} @606
+    Jump -> next b2(v7, v9) @602
   b2(v10, v11):
-    LoopHint
-    v13 = PropGet v5 key="length"
-    v14 = Convert v13 declared={type=number flags=[IsExpected]}
-    v15 = Less v11, v14
-    Branch v15 -> taken b3(| 0), notTaken b9(| 0)
+    LoopHint @602
+    v13 = PropGet v5 key="length" @613
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @613
+    v15 = Less v11, v14 @609
+    Branch v15 -> taken b3(| 0), notTaken b9(| 0) @609
   b3(v16):
-    Jump -> next b4()
+    Jump -> next b4() @609
   b4():
-    v17 = ElemGet v5, v16
-    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]}
-    v19 = String string="third"
-    v20 = StrictEq v18, v19
-    Branch v20 -> taken b5(), notTaken b6()
+    v17 = ElemGet v5, v16 @639
+    v18 = Convert v17 declared={type=undefined|null|string flags=[IsExpected]} @639
+    v19 = String string="third" @651
+    v20 = StrictEq v18, v19 @639
+    Branch v20 -> taken b5(), notTaken b6() @639
   b5():
-    v21 = String string="!"
-    Jump -> next b7(v21)
+    v21 = String string="!" @661
+    Jump -> next b7(v21) @661
   b6():
-    v22 = GetModuleVariable variable=g0
-    v23 = ElemGet v5, v16
-    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]}
-    v25 = Call v22, -, v24
-    Jump -> next b7(v25)
+    v22 = GetModuleVariable variable=g0 @667
+    v23 = ElemGet v5, v16 @672
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @672
+    v25 = Call v22, -, v24 calleeName="pick" @667
+    Jump -> next b7(v25) @667
   b7(v26):
-    v27 = Add v10, v26
-    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]}
-    Jump -> next b8()
+    v27 = Add v10, v26 @667
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]} @631
+    Jump -> next b8() @631
   b8():
-    v29 = Increment v16
-    v30 = Convert v29 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b2(v28, v30)
+    v29 = Increment v16 @667
+    v30 = Convert v29 declared={type=i32 flags=[IsExpected]} @626
+    Jump -> next b2(v28, v30) @626
   b9(v31):
-    Jump -> next b10()
+    Jump -> next b10() @609
   b10():
-    v32 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v32
+    v32 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]} @689
+    Return v32 @689
 }
-function f6 name="isOneOf" parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] {
+function f6 name="isOneOf" module=m0 position=1044 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
-    Jump -> next b1()
+    Jump -> next b1() @1044
   b1():
-    v1 = String string="first"
-    v2 = StrictEq v0, v1
-    v3 = ToBoolean v2
-    Branch v3 -> taken b2(| 0), notTaken b3(| 0)
+    v1 = String string="first" @1083
+    v2 = StrictEq v0, v1 @1075
+    v3 = ToBoolean v2 @1075
+    Branch v3 -> taken b2(| 0), notTaken b3(| 0) @1075
   b2(v4):
-    Jump -> next b5(v4)
+    Jump -> next b5(v4) @1075
   b3(v5):
-    Jump -> next b4()
+    Jump -> next b4() @1075
   b4():
-    v6 = String string="third"
-    v7 = StrictEq v0, v6
-    Jump -> next b5(v7)
+    v6 = String string="third" @1102
+    v7 = StrictEq v0, v6 @1075
+    Jump -> next b5(v7) @1075
   b5(v8):
-    v9 = Convert v8 declared={type=boolean flags=[IsExpected]}
-    Return v9
+    v9 = Convert v8 declared={type=boolean flags=[IsExpected]} @1075
+    Return v9 @1075
 }
-function f7 name="getterFor" parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|function|f12 flags=[IsExpected]}] {
+function f7 name="getterFor" module=m0 position=1239 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|function|f12 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object, v1: undefined|null|string):
-    Jump -> next b1()
+    Jump -> next b1() @1239
   b1():
-    v2 = NewClosure v0, v1 function=f12
-    v3 = Convert v2 declared={type=undefined|null|function|f12 flags=[IsExpected]}
-    Return v3
+    v2 = NewClosure v0, v1 function=f12 @1280
+    v3 = Convert v2 declared={type=undefined|null|function|f12 flags=[IsExpected]} @1280
+    Return v3 @1280
 }
-function f8 name="parsed" parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+function f8 name="parsed" module=m0 position=1436 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
-    Jump -> next b1()
+    Jump -> next b1() @1436
   b1():
-    v1 = Builtin builtin=JSON
-    v2 = PropGet v1 key="parse"
-    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-    v4 = Call v3, v1, v0 calleeKey="parse"
-    v5 = String string="second"
-    v6 = StrictEq v4, v5
-    Branch v6 -> taken b2(| 0), notTaken b5(| 0)
+    v1 = Builtin builtin=JSON @1472
+    v2 = PropGet v1 key="parse" @1472
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]} @1472
+    v4 = Call v3, v1, v0 calleeKey="parse" calleeName="JSON.parse" @1477
+    v5 = String string="second" @1505
+    v6 = StrictEq v4, v5 @1497
+    Branch v6 -> taken b2(| 0), notTaken b5(| 0) @1497
   b2(v7):
-    Jump -> next b3()
+    Jump -> next b3() @1497
   b3():
-    v8 = GetModuleVariable variable=g2
-    v9 = CheckInitialized v8 name="table"
-    v10 = ElemGet v9, v7
-    Jump -> next b4()
+    v8 = GetModuleVariable variable=g2 @1516
+    v9 = CheckInitialized v8 name="table" @1516
+    v10 = ElemGet v9, v7 @1516
+    Jump -> next b4() @1516
   b4():
-    v11 = Convert v10 declared={type=number flags=[IsExpected]}
-    Return v11
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @1529
+    Return v11 @1529
   b5(v12):
-    Jump -> next b6()
+    Jump -> next b6() @1497
   b6():
-    v13 = GetModuleVariable variable=g1
-    v14 = Call v13, -, v12
-    ReturnCall v14 casts=[{declared={type=number flags=[IsExpected]}}]
+    v13 = GetModuleVariable variable=g1 @1529
+    v14 = Call v13, -, v12 calleeName="kindOf" @1529
+    ReturnCall v14 casts=[{declared={type=number flags=[IsExpected]}}] @1529
 }
-function f9 name="lengthOf" parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] {
+function f9 name="lengthOf" module=m0 position=1632 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
-    Jump -> next b1()
+    Jump -> next b1() @1632
   b1():
-    v1 = PropGet v0 key="length"
-    v2 = Convert v1 declared={type=number flags=[IsExpected]}
-    Return v2
+    v1 = PropGet v0 key="length" @1664
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @1664
+    Return v2 @1664
 }
-function f10 name="stored" parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] {
+function f10 name="stored" module=m0 position=1760 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string, v1: anything):
-    Jump -> next b1()
+    Jump -> next b1() @1760
   b1():
-    v2 = Data data=d2
-    v3 = Convert v2 declared={type=undefined|null|L0|L1 flags=[IsExpected]}
-    v4 = Convert v1 declared={type=number flags=[IsExpected]}
-    ElemSet v3, v0, v4
-    v6 = PropGet v3 key="first"
-    v7 = Convert v6 declared={type=number flags=[IsExpected]}
-    v8 = String string=","
-    v9 = Add v7, v8
-    v10 = PropGet v3 key="second"
-    v11 = Convert v10 declared={type=number flags=[IsExpected]}
-    v12 = Add v9, v11
-    v13 = String string=","
-    v14 = Add v12, v13
-    v15 = ElemGet v3, v0
-    v16 = Add v14, v15
-    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v17
+    v2 = Data data=d2 @1803
+    v3 = Convert v2 declared={type=undefined|null|L0|L1 flags=[IsExpected]} @1803
+    v4 = Convert v1 declared={type=number flags=[IsExpected]} @1840
+    ElemSet v3, v0, v4 @1828
+    v6 = PropGet v3 key="first" @1854
+    v7 = Convert v6 declared={type=number flags=[IsExpected]} @1854
+    v8 = String string="," @1867
+    v9 = Add v7, v8 @1854
+    v10 = PropGet v3 key="second" @1873
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @1873
+    v12 = Add v9, v11 @1873
+    v13 = String string="," @1887
+    v14 = Add v12, v13 @1873
+    v15 = ElemGet v3, v0 @1893
+    v16 = Add v14, v15 @1893
+    v17 = Convert v16 declared={type=undefined|null|string flags=[IsExpected]} @1893
+    Return v17 @1893
 }
-function f11 name="templated" parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
+function f11 name="templated" module=m0 position=1997 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string):
-    Jump -> next b1()
+    Jump -> next b1() @1997
   b1():
-    v1 = ToString v0
-    v2 = String string="/"
-    v3 = GetModuleVariable variable=g2
-    v4 = CheckInitialized v3 name="table"
-    v5 = ElemGet v4, v0
-    v6 = ToString v5
-    v7 = Strcat v1, v2, v6
-    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
-    Return v8
+    v1 = ToString v0 @2033
+    v2 = String string="/" @2033
+    v3 = GetModuleVariable variable=g2 @2040
+    v4 = CheckInitialized v3 name="table" @2040
+    v5 = ElemGet v4, v0 @2040
+    v6 = ToString v5 @2040
+    v7 = Strcat v1, v2, v6 @2030
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @2030
+    Return v8 @2030
 }
-function f12 captures=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] {
+function f12 module=m0 position=1280 captures=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|object, v1: undefined|null|string):
-    Jump -> next b1()
+    Jump -> next b1() @1280
   b1():
-    v2 = ElemGet v0, v1
-    Return v2
+    v2 = ElemGet v0, v1 @1301
+    Return v2 @1301
 }

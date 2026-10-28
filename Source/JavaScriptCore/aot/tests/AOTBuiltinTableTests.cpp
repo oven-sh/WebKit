@@ -1108,7 +1108,7 @@ static void testHostUsesOfLibraryFunctions()
     // Whoever prints a warning calls `write` of the second, with the stream as the receiver, and drops what that answers.
     for (BuiltinID stream : std::initializer_list<BuiltinID> { hostBuiltin("ProcessStdout"_s), hostBuiltin("ProcessStderr"_s) }) {
         const BuiltinHostCall* creation = findCallOfOnlyFunction(stream, 1);
-        AOT_TEST_CHECK(creation && creation->arguments.size() == 7 && creation->result.list.size() == 5);
+        AOT_TEST_CHECK(creation && creation->arguments.size() == 7 && creation->result.list.size() == 6);
         std::span<const BuiltinHostUse> uses = creation->result.list;
         for (size_t index : { 0, 2 }) {
             BuiltinName holder = nameOf(index ? "stderr"_s : "stdout"_s);

@@ -454,10 +454,10 @@ static void followEntriesMadeByEngine(const Program& program, const FlowResults&
 }
 
 // The structure of a very large program does not tell which of its cold functions run, but it tells which hardly do.
-static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, const Vector<uint8_t>& isExpectedToRun)
+static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowResults& flow, const ParallelLoops& loops, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, const Vector<uint8_t>& isExpectedToRun)
 {
-    Vector<uint32_t> worklist;
     auto findWhatBusyCodeReaches = [&](double minWeight) {
+        Vector<uint32_t> worklist;
         Vector<uint8_t> isReached = isExpectedToRun;
         for (uint32_t index : functionsWithBody) {
             if (isExpectedToRun[index])
@@ -471,9 +471,14 @@ static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowRe
         followCallsFromWorklist(graph, minWeight, isReached, worklist);
         return isReached;
     };
-    Vector<uint8_t> isNearBusyCode = findWhatBusyCodeReaches(HeatModel::minWeightOfCallNearBusyCode);
-    Vector<uint8_t> mayRun = findWhatBusyCodeReaches(HeatModel::minWeightOfCallToFollow);
+    Vector<uint8_t> isNearBusyCode;
+    Vector<uint8_t> mayRun;
+    runTasksInParallel(loops, {
+        [&] { isNearBusyCode = findWhatBusyCodeReaches(HeatModel::minWeightOfCallNearBusyCode); },
+        [&] { mayRun = findWhatBusyCodeReaches(HeatModel::minWeightOfCallToFollow); },
+    });
 
+    Vector<uint32_t> worklist;
     for (uint32_t index : functionsWithBody) {
         FunctionID id(index);
         if (mayRun[index] || flow.runsAtMostOnce(program, id))
@@ -600,21 +605,26 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
             if (heat.m_hasWeights)
                 heat.m_layoutsStoredUnderNames = collectLayoutsStoredUnderNames(program, loops, functionsWithBody.span());
             isCalledInLoop = findFunctionsCalledInLoops(loops, graph, functionsWithBody.span());
-            runsInLoop = followNearlyCertainCalls(graph, isCalledInLoop);
-            isCalledPerEvent = findFunctionsCalledPerEvent(program, graph);
-            if (!isVeryLargeProgram)
-                return;
-            functionsThatRunOften.fill(static_cast<uint8_t>(0), graph.numberOfFunctions());
-            forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
-                FunctionID id(functionsWithBody[k]);
-                functionsThatRunOften[id.index()] = hasManyCallers(program, flow, graph, id);
+            // Each follows calls on one thread, and none asks for what another finds.
+            runTasksInParallel(loops, {
+                [&] { runsInLoop = followNearlyCertainCalls(graph, isCalledInLoop); },
+                [&] { isCalledPerEvent = findFunctionsCalledPerEvent(program, graph); },
+                [&] {
+                    if (!isVeryLargeProgram)
+                        return;
+                    functionsThatRunOften.fill(static_cast<uint8_t>(0), graph.numberOfFunctions());
+                    forEachIndexInParallel(loops, functionsWithBody.size(), [&](unsigned k) {
+                        FunctionID id(functionsWithBody[k]);
+                        functionsThatRunOften[id.index()] = hasManyCallers(program, flow, graph, id);
+                    });
+                    followEntriesMadeByEngine(program, flow, graph, functionsWithBody.span(), functionsThatRunOften);
+                    // What a loop calls and few others is entered no more often than cold code is. It may run all the same.
+                    Vector<uint8_t> functionsExpectedToRun = functionsThatRunOften;
+                    for (uint32_t index : functionsWithBody)
+                        functionsExpectedToRun[index] |= isCalledInLoop[index];
+                    isCompact = findCompactFunctions(program, flow, loops, graph, functionsWithBody.span(), functionsExpectedToRun);
+                },
             });
-            followEntriesMadeByEngine(program, flow, graph, functionsWithBody.span(), functionsThatRunOften);
-            // What a loop calls and few others is entered no more often than cold code is. It may run all the same.
-            Vector<uint8_t> functionsExpectedToRun = functionsThatRunOften;
-            for (uint32_t index : functionsWithBody)
-                functionsExpectedToRun[index] |= isCalledInLoop[index];
-            isCompact = findCompactFunctions(program, flow, graph, functionsWithBody.span(), functionsExpectedToRun);
         },
     });
     times.didFinish("estimateActivations"_s);

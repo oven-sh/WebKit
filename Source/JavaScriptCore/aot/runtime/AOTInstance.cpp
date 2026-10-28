@@ -1023,6 +1023,8 @@ void VMState::attachImage(VM& vm)
 
     structureIDBase = JSC::structureIDBase();
     validatesRuntime = image->header().options.validates || Options::validateAOTRuntime();
+    if (image->header().options.has(TestingSwitch::CheckProofsAtRunTime)) [[unlikely]]
+        imageChecksProofs.store(true, std::memory_order_relaxed);
     vm.updateSoftReservedZoneSize(Options::softReservedZoneSize() + BuiltinCells::stackKeptFromProgram);
 
     pages = makeUnique<PagesOfVM>(sizeOfPagesAtStart(*image));
@@ -1045,7 +1047,7 @@ void VMState::attachImage(VM& vm)
     moduleRecordStructure.setWithoutWriteBarrier(ModuleRecord::createStructure(vm, nullptr, jsNull()));
     stringBuilderStorageStructure.setWithoutWriteBarrier(StringBuilderStorage::createStructure(vm, nullptr, jsNull()));
 
-    if (validatesRuntime)
+    if (checksClaimsAboutObjects(vm))
         caches->addObserver("validation after collection"_s, collectionValidator);
 }
 

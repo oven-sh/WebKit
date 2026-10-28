@@ -36,34 +36,40 @@ static constexpr unsigned numberOfRowFields = 20;
 
 #define AOT_ROW_FIELD(number) "{key=\"k" #number "\" declared={type=anything} flags=[IsRequired]}"
 
-static constexpr ASCIILiteral rowProgramText =
-    "layout L0 name=\"Row\" module=m0 fields=["
-    AOT_ROW_FIELD(0) ", " AOT_ROW_FIELD(1) ", " AOT_ROW_FIELD(2) ", " AOT_ROW_FIELD(3) ", " AOT_ROW_FIELD(4) ", "
-    AOT_ROW_FIELD(5) ", " AOT_ROW_FIELD(6) ", " AOT_ROW_FIELD(7) ", " AOT_ROW_FIELD(8) ", " AOT_ROW_FIELD(9) ", "
-    AOT_ROW_FIELD(10) ", " AOT_ROW_FIELD(11) ", " AOT_ROW_FIELD(12) ", " AOT_ROW_FIELD(13) ", " AOT_ROW_FIELD(14) ", "
-    AOT_ROW_FIELD(15) ", " AOT_ROW_FIELD(16) ", " AOT_ROW_FIELD(17) ", " AOT_ROW_FIELD(18) ", " AOT_ROW_FIELD(19) "]\n"
-    "layout L1 name=\"Unlisted\" module=m0 fields=[{key=\"a\" declared={type=anything} flags=[IsRequired]}, {key=\"b\" declared={type=anything} flags=[IsRequired]}]\n"
-    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
-    "entry module=m0\n"
-    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
-    "  b0():\n"
-    "    v0 = Integer integer=1\n"
-    "    v1 = NewObject -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]\n"
-    "    v2 = Builtin builtin=GlobalThis\n"
-    "    PropSet v2, v1 key=\"row\"\n"
-    "    v4 = NewObject -, v0, v0 layout=L1 fields=[0, 1]\n"
-    "    v5 = PropGet v4 key=\"a\"\n"
-    "    v6 = PropGet v4 key=\"b\"\n"
-    "    v7 = Builtin builtin=MathRandom\n"
-    "    v8 = Call v7\n"
-    "    v9 = ToString v8\n"
-    "    ElemSet v1, v9, v0 mode=Strict\n"
-    "    v11 = Builtin builtin=ObjectKeys\n"
-    "    v12 = Call v11, -, v1\n"
-    "    PropSet v2, v12 key=\"keys\"\n"
-    "    Return v4\n"
-    "}\n"_s;
+#define AOT_ROW_PROGRAM(field18, field19, definitions, value18, value19) \
+    "layout L0 name=\"Row\" module=m0 fields=[" \
+    AOT_ROW_FIELD(0) ", " AOT_ROW_FIELD(1) ", " AOT_ROW_FIELD(2) ", " AOT_ROW_FIELD(3) ", " AOT_ROW_FIELD(4) ", " \
+    AOT_ROW_FIELD(5) ", " AOT_ROW_FIELD(6) ", " AOT_ROW_FIELD(7) ", " AOT_ROW_FIELD(8) ", " AOT_ROW_FIELD(9) ", " \
+    AOT_ROW_FIELD(10) ", " AOT_ROW_FIELD(11) ", " AOT_ROW_FIELD(12) ", " AOT_ROW_FIELD(13) ", " AOT_ROW_FIELD(14) ", " \
+    AOT_ROW_FIELD(15) ", " AOT_ROW_FIELD(16) ", " AOT_ROW_FIELD(17) ", " field18 ", " field19 "]\n" \
+    "layout L1 name=\"Unlisted\" module=m0 fields=[{key=\"a\" declared={type=anything} flags=[IsRequired]}, {key=\"b\" declared={type=anything} flags=[IsRequired]}]\n" \
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n" \
+    "entry module=m0\n" \
+    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n" \
+    "  b0():\n" \
+    "    v0 = Integer integer=1\n" definitions \
+    "    v3 = NewObject -, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, v0, " value18 ", " value19 " layout=L0 fields=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]\n" \
+    "    v4 = Builtin builtin=GlobalThis\n" \
+    "    PropSet v4, v3 key=\"row\"\n" \
+    "    v6 = NewObject -, v0, v0 layout=L1 fields=[0, 1]\n" \
+    "    v7 = PropGet v6 key=\"a\"\n" \
+    "    v8 = PropGet v6 key=\"b\"\n" \
+    "    v9 = Builtin builtin=MathRandom\n" \
+    "    v10 = Call v9\n" \
+    "    v11 = ToString v10\n" \
+    "    ElemSet v3, v11, v0 mode=Strict\n" \
+    "    v13 = Builtin builtin=ObjectKeys\n" \
+    "    v14 = Call v13, -, v3\n" \
+    "    PropSet v4, v14 key=\"keys\"\n" \
+    "    Return v6\n" \
+    "}\n"_s
 
+static constexpr ASCIILiteral rowProgramText = AOT_ROW_PROGRAM(AOT_ROW_FIELD(18), AOT_ROW_FIELD(19), "    v1 = Integer integer=1\n    v2 = Integer integer=1\n", "v1", "v2");
+static constexpr ASCIILiteral rowWithListsProgramText = AOT_ROW_PROGRAM(
+    "{key=\"k18\" declared={type=Array<number>} flags=[IsRequired]}", "{key=\"k19\" declared={type=Array<Array<number>>} flags=[IsRequired]}",
+    "    v1 = NewArray contents=number\n    v2 = NewArray contents=Array<number>\n", "v1", "v2");
+
+#undef AOT_ROW_PROGRAM
 #undef AOT_ROW_FIELD
 
 namespace {
@@ -359,6 +365,40 @@ static void testExtraMembers(LoadedProgram& program)
     AOT_TEST_CHECK(checkText(everyFieldAndExtraMembers.toString()) == timesParsed - 1);
 }
 
+static void testListMembersAmongExtraMembers(LoadedProgram& program)
+{
+    Row row(program);
+    auto textWith = [&](ASCIILiteral numbers, ASCIILiteral lists) {
+        StringBuilder text;
+        for (unsigned i = 0; i < numberOfRowFields - 2; ++i)
+            text.append(i ? ","_s : "{\"x\":true,"_s, "\"k"_s, i, "\":"_s, i);
+        text.append(",\"y\":[1,{\"a\":[]}],\"k18\":"_s, numbers, ",\"z\":null,\"k19\":"_s, lists, ",\"w\":\"s\"}"_s);
+        return text.toString();
+    };
+    auto timesParsedWhole = [&](ASCIILiteral numbers, ASCIILiteral lists) {
+        String text = textWith(numbers, lists);
+        String expected = JSONStringify(row.realm(), JSONParse(row.realm(), text), 0u);
+        AOT_TEST_CHECK(!expected.isNull());
+        unsigned count = 0;
+        for (unsigned i = 0; i < timesParsed; ++i) {
+            AOT_TEST_CHECK(row.stringifyAfterParsing(text) == expected);
+            if (std::optional<String> whole = row.stringifyAfterParsingWhole(text)) {
+                AOT_TEST_CHECK(*whole == expected);
+                ++count;
+            }
+        }
+        return count;
+    };
+    AOT_TEST_CHECK(timesParsedWhole("[1,2,3]"_s, "[[1],[2,3]]"_s) == timesParsed - 1);
+    AOT_TEST_CHECK(timesParsedWhole("[]"_s, "[[],[]]"_s) == timesParsed);
+    AOT_TEST_CHECK(timesParsedWhole("[1.5,-2,1e3,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34]"_s, "[]"_s) == timesParsed);
+    AOT_TEST_CHECK(timesParsedWhole("[1,\"s\",null,true]"_s, "[[1,null],[\"s\"]]"_s) == timesParsed);
+    for (ASCIILiteral numbers : { "[1,]"_s, "[,1]"_s, "[1 2]"_s, "[1"_s, "[1}"_s }) {
+        AOT_TEST_CHECK(!row.stringifyAfterParsingWhole(textWith(numbers, "[]"_s)));
+        AOT_TEST_CHECK(timesParsedWhole("[4]"_s, "[[5]]"_s) == timesParsed);
+    }
+}
+
 static void testDeclaredNameAmongExtraMembers(LoadedProgram& program)
 {
     Row row(program);
@@ -469,6 +509,8 @@ static void testKeysNeverEnumerated(LoadedProgram& program)
 
 template<LoadedProgramTest body>
 static constexpr void (*withRowProgram)() = runNativeTestWithLoadedProgram<jsonKeyOrderTests, rowProgramText, body>;
+template<LoadedProgramTest body>
+static constexpr void (*withRowWithListsProgram)() = runNativeTestWithLoadedProgram<jsonKeyOrderTests, rowWithListsProgramText, body>;
 
 std::span<const NativeTest> jsonKeyOrderTests()
 {
@@ -477,6 +519,7 @@ std::span<const NativeTest> jsonKeyOrderTests()
         { "json-parser/key-orders/other-orders"_s, withRowProgram<testOtherOrders> },
         { "json-parser/key-orders/unknown-order"_s, withRowProgram<testUnknownOrder> },
         { "json-parser/key-orders/extra-members"_s, withRowProgram<testExtraMembers> },
+        { "json-parser/key-orders/list-members-among-extra-members"_s, withRowWithListsProgram<testListMembersAmongExtraMembers> },
         { "json-parser/key-orders/declared-name-among-extra-members"_s, withRowProgram<testDeclaredNameAmongExtraMembers> },
         { "json-parser/key-orders/full-order-table"_s, withRowProgram<testFullOrderTable> },
         { "json-parser/key-orders/keys-never-enumerated"_s, withRowProgram<testKeysNeverEnumerated> },

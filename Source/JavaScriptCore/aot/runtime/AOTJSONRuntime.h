@@ -17,6 +17,7 @@
 #include "Allocator.h"
 #include "JSCJSValue.h"
 #include "Structure.h"
+#include <algorithm>
 #include <array>
 #include <limits>
 #include <memory>
@@ -142,17 +143,25 @@ public:
         AOT_CLASS_THRESHOLD(unsigned, maxNumberOfFields, 32);
         AOT_CLASS_THRESHOLD(unsigned, maxNumberOfExtraMembers, 64);
         AOT_CLASS_THRESHOLD(size_t, maxMembersParsedTwiceForEachReturnSaved, 3);
+        AOT_CLASS_THRESHOLD(size_t, minExtraRunsWithList, 2);
         static constexpr uint32_t shapeOfNoObject = UINT32_MAX;
+        static constexpr uint32_t plainObjectShape = UINT32_MAX - 1;
 
         enum Kind : uint8_t {
             SmallInteger = 1 << 0,
             String = 1 << 1,
             Boolean = 1 << 2,
             OtherKind = 1 << 3,
+            List = 1 << 4,
         };
 
         struct Member : LearnedName {
+            bool hasRecordShape() const { return shapeOfValue && shapeOfValue < plainObjectShape; }
+            bool mayRecurse() const { return hasRecordShape() || listStorageKinds; }
+
             uint8_t indexOfValue;
+            uint8_t listStorageKinds;
+            uint16_t field;
             uint32_t shapeOfValue;
         };
 
@@ -162,6 +171,7 @@ public:
             Store store;
             uint8_t indexOfValue;
             Kind kind;
+            uint32_t structureID;
         };
 
         bool isFor(uint32_t shapeOfObject, uint64_t firstWordOfText) const { return shape == shapeOfObject && firstWord == firstWordOfText; }
@@ -186,6 +196,7 @@ public:
         size_t allocationSize { 0 };
         bool hasPerCellBit { false };
         uint8_t numberOfExtraMembers { 0 };
+        uint8_t consecutiveFailures { 0 };
         bool wasFound { false };
         bool isOnlySeen { false };
         bool isBeingLearned { false };
@@ -205,11 +216,67 @@ public:
     bool mayLearnAnotherObject();
     LearnedObject* learnedObjectFoundLast() const { return m_learnedObjectFoundLast; }
     void setLearnedObjectFoundLast(LearnedObject* learned) { m_learnedObjectFoundLast = learned; }
-    void forgetFinishedObjects() { m_finishedObjects.fill({ }); }
+    void disableFinishCache()
+    {
+        m_finishedObjects.fill({ });
+        m_uncachedFinishesRemaining = uncachedFinishCount;
+    }
+    bool isFinishCacheDisabled() const { return m_uncachedFinishesRemaining; }
+    bool consumeUncachedFinish()
+    {
+        if (!m_uncachedFinishesRemaining)
+            return false;
+        --m_uncachedFinishesRemaining;
+        return true;
+    }
     bool waitsForShapeOfMember() const { return m_waitsForShapeOfMember; }
     void setWaitsForShapeOfMember(bool waits) { m_waitsForShapeOfMember = waits; }
-    void didSeeMember(uint32_t shape, uint16_t field, uint32_t shapeOfValue) { m_shapesOfMembers.set(static_cast<uint64_t>(shape) << 16 | field, shapeOfValue); }
-    uint32_t shapeOfMember(uint32_t shape, uint16_t field) const { return m_shapesOfMembers.get(static_cast<uint64_t>(shape) << 16 | field); }
+    struct ObservedMember {
+        static constexpr unsigned maxListDepth = 4;
+        static constexpr unsigned bitsPerListStorage = 2;
+        enum ListStorage : uint8_t { Unknown, Int32, Double, Contiguous };
+
+        static ListStorage listStorageAt(uint8_t listStorageKinds, unsigned level) { return level < maxListDepth ? static_cast<ListStorage>(listStorageKinds >> (level * bitsPerListStorage) & ((1 << bitsPerListStorage) - 1)) : Unknown; }
+        void recordListStorage(unsigned level, ListStorage);
+
+        uint32_t shape { 0 };
+        uint8_t listStorageKinds { 0 };
+    };
+    void didSeeMember(uint32_t shape, uint16_t field, ObservedMember observed) { m_observedMembers.set(static_cast<uint64_t>(shape) << 16 | field, observed.shape | static_cast<uint64_t>(observed.listStorageKinds) << 32); }
+    ObservedMember observedMember(uint32_t shape, uint16_t field) const
+    {
+        uint64_t bits = m_observedMembers.get(static_cast<uint64_t>(shape) << 16 | field);
+        return { static_cast<uint32_t>(bits), static_cast<uint8_t>(bits >> 32) };
+    }
+
+    ALWAYS_INLINE bool canStartAttemptAt(const uint8_t* cursor) const { return cursor >= m_furthestAttemptedPosition; }
+    void resetAttemptState()
+    {
+        m_isAttemptAbandoned = false;
+        m_outermostFailedForm = nullptr;
+        m_unmatchedObjectShape = 0;
+    }
+    std::pair<uint32_t, const uint8_t*> unmatchedObject() const { return { m_unmatchedObjectShape, m_unmatchedObjectFirstName }; }
+    void setUnmatchedObject(uint32_t shape, const uint8_t* firstName)
+    {
+        m_unmatchedObjectShape = shape;
+        m_unmatchedObjectFirstName = firstName;
+    }
+    ALWAYS_INLINE void noteAttemptReached(const uint8_t* reached) { m_furthestAttemptedPosition = std::max(m_furthestAttemptedPosition, reached); }
+    ALWAYS_INLINE void noteParsedThrough(const uint8_t* reached)
+    {
+        m_furthestAttemptedPosition = reached;
+        m_furthestParsedPosition = reached;
+    }
+    bool isBeforeParsedPosition(const uint8_t* cursor) const { return cursor < m_furthestParsedPosition; }
+    bool isAttemptAbandoned() const { return m_isAttemptAbandoned; }
+    void noteAttemptFailure(const uint8_t* reached, bool shouldAbandon)
+    {
+        noteAttemptReached(reached);
+        m_isAttemptAbandoned |= shouldAbandon;
+    }
+    LearnedObject* outermostFailedForm() const { return m_outermostFailedForm; }
+    void setOutermostFailedForm(LearnedObject* learned) { m_outermostFailedForm = learned; }
     void didSeeExtraMembers(uint32_t shape);
     ALWAYS_INLINE bool remembersTextsOf(uint32_t shape) const { return m_timesNotFoundInARow[shape % numberOfJSONShapeBits] != maxTimesNotFoundInARow; }
     ALWAYS_INLINE void didFindTextOf(uint32_t shape) { m_timesNotFoundInARow[shape % numberOfJSONShapeBits] = 0; }
@@ -254,6 +321,7 @@ private:
     AOT_CLASS_THRESHOLD(unsigned, maxObjectsLearnedBetweenCollections, 64);
     AOT_CLASS_THRESHOLD(uint8_t, maxTimesNotFoundInARow, 255);
     AOT_CLASS_THRESHOLD(uint8_t, maxTimesRefusedInARow, 4);
+    AOT_CLASS_THRESHOLD(uint8_t, uncachedFinishCount, 8);
     static constexpr size_t recordPlanCacheIndex(uint32_t structureID) { return (structureID >> 4) % recordPlanCacheSize; }
 
     RecordPlan findRecordPlan(VM&, Structure*);
@@ -282,7 +350,14 @@ private:
     unsigned m_numberOfObjectsLearned { 0 };
     LearnedObject* m_learnedObjectFoundLast { nullptr };
     bool m_waitsForShapeOfMember { false };
-    UncheckedKeyHashMap<uint64_t, uint32_t> m_shapesOfMembers;
+    uint8_t m_uncachedFinishesRemaining { 0 };
+    bool m_isAttemptAbandoned { false };
+    const uint8_t* m_furthestAttemptedPosition { nullptr };
+    const uint8_t* m_furthestParsedPosition { nullptr };
+    LearnedObject* m_outermostFailedForm { nullptr };
+    uint32_t m_unmatchedObjectShape { 0 };
+    const uint8_t* m_unmatchedObjectFirstName { nullptr };
+    UncheckedKeyHashMap<uint64_t, uint64_t> m_observedMembers;
     std::array<uint8_t, numberOfJSONShapeBits> m_timesNotFoundInARow { };
     std::array<uint8_t, numberOfJSONShapeBits> m_timesRefusedInARow { };
     Vector<RecordPlanForNames> m_recordPlans;

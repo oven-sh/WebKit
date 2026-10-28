@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <utility>
+#include <wtf/DataLog.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -474,11 +475,28 @@ public:
     void run()
     {
         computeSpareBytes();
-        // A slot that has become narrower for one set leaves room in its cell for the slot of another, which may have come first.
-        for (unsigned round = 0; round < 2; ++round) {
-            for (const JoinedRows::Set& joined : m_joinedRows.sets())
-                share(joined);
+        std::span<const JoinedRows::Set> sets = m_joinedRows.sets();
+        m_timeRoomLastChangedIn.fill(0, m_context.program.layouts.size());
+        m_timeClaimLastChanged.fill(0, m_claims.size());
+        Vector<uint32_t> timeOfLook(sets.size());
+        for (size_t index = 0; index < sets.size(); ++index) {
+            share(sets[index]);
+            timeOfLook[index] = m_time;
         }
+        // A slot that has become narrower for one set leaves room in its cell for the slot of another, which may have come first.
+        // What is decided for a set follows from the claims of its rows and from the room in their cells: where neither has changed since, it is decided as before.
+        size_t numberOfSetsLookedAtAgain = 0;
+        for (size_t index = 0; index < sets.size(); ++index) {
+            bool hasChanged = std::ranges::any_of(m_joinedRows.rowsOf(sets[index]), [&](SlotRow row) {
+                return m_timeClaimLastChanged[row] > timeOfLook[index] || m_timeRoomLastChangedIn[m_context.rows.layoutOf(row).index()] > timeOfLook[index];
+            });
+            if (!hasChanged)
+                continue;
+            ++numberOfSetsLookedAtAgain;
+            share(sets[index]);
+        }
+        if (m_context.build.options().logging.logsPhaseTimes) [[unlikely]]
+            dataLogLn("AOT shared slot claims: sets of joined rows ", sets.size(), " | looked at again ", numberOfSetsLookedAtAgain);
     }
 
 private:
@@ -593,7 +611,14 @@ private:
     {
         uint32_t ownWidth = widthOf(claimOf(unit).representation);
         uint32_t width = widthOf(shared.representation);
-        auto applyTo = [&](SlotClaim& claim) {
+        ++m_time;
+        auto applyTo = [&](SlotRow row) {
+            SlotClaim& claim = m_claims[row];
+            bool isAsBefore = claim.representation == shared.representation && claim.needsAbsentState == shared.needsAbsentState && claim.needsWideReference == shared.needsWideReference && claim.isWideByChoice == shared.isWideByChoice
+                && (!claim.mayBeOutOfLine || claim.outOfLineRepresentation == shared.outOfLineRepresentation);
+            if (isAsBefore)
+                return;
+            m_timeClaimLastChanged[row] = m_time;
             claim.representation = shared.representation;
             claim.needsAbsentState = shared.needsAbsentState;
             claim.needsWideReference = shared.needsWideReference;
@@ -602,10 +627,13 @@ private:
                 claim.outOfLineRepresentation = shared.outOfLineRepresentation;
         };
         for (SlotRow row : unit.rows) {
-            m_spareBytes[m_context.rows.layoutOf(row).index()] += ownWidth - width;
-            applyTo(m_claims[row]);
+            if (ownWidth != width) {
+                m_spareBytes[m_context.rows.layoutOf(row).index()] += ownWidth - width;
+                m_timeRoomLastChangedIn[m_context.rows.layoutOf(row).index()] = m_time;
+            }
+            applyTo(row);
         }
-        applyTo(m_claims[m_context.inheritedRows.declaringRowOf(unit.rows[0])]);
+        applyTo(m_context.inheritedRows.declaringRowOf(unit.rows[0]));
     }
 
     bool tryShare(const JoinedRows::Set& joined, Vector<ClaimUnit, 8>&& units)
@@ -654,6 +682,10 @@ private:
     const JoinedRows& m_joinedRows;
     std::span<SlotClaim> m_claims;
     Vector<uint32_t> m_spareBytes;
+    // The time goes on with every unit that takes a shared claim.
+    Vector<uint32_t> m_timeRoomLastChangedIn;
+    Vector<uint32_t> m_timeClaimLastChanged;
+    uint32_t m_time { 0 };
     Vector<SlotRow, 16> m_rowsByFamily;
     Vector<ClaimUnit, 8> m_units;
 };

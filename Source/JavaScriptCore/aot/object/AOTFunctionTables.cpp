@@ -809,6 +809,17 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
     RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
 }
 
+JSString* sourceTextIfMade(VM& vm, JSObject* callee)
+{
+    FunctionID function = checkedFunctionOf(callee);
+    FunctionKindData kindData = functionKindData(function);
+    if (kindData.isBound() || kindData.isInRuntimeModule)
+        return nullptr;
+    const FunctionTables::TextsByFunction& answered = FunctionTables::of(vm).sourceTexts;
+    auto found = answered.find(function);
+    return found == answered.end() ? nullptr : found->value.get();
+}
+
 bool isBoundFunction(JSObject* callee)
 {
     return functionKindData(checkedFunctionOf(callee)).isBound();

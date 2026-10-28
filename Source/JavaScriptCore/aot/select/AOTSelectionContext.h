@@ -80,6 +80,9 @@ public:
 
     bool didRewrite() const { return m_didRewrite; }
     bool needsCompaction() const { return m_needsCompaction; }
+    // What stood under a handler and might allocate is done once in front of its loop, or needs no doing any more: the loop may need the handler no longer.
+    bool allocatesLessUnderHandler() const { return m_allocatesLessUnderHandler; }
+    void noteAllocatesLessUnderHandler() { m_allocatesLessUnderHandler = true; }
     std::span<const ValueID> narrowedValues() const LIFETIME_BOUND { return m_narrowedValues.span(); }
     bool hasWidenedValue() const { return m_hasWidenedValue; }
     void didRestoreTypes();
@@ -128,6 +131,7 @@ private:
     bool m_hasWidenedValue { false };
     bool m_didRewrite { false };
     bool m_needsCompaction { false };
+    bool m_allocatesLessUnderHandler { false };
     std::array<uint32_t, numberOfClaimResults> m_claimCounts { };
 };
 

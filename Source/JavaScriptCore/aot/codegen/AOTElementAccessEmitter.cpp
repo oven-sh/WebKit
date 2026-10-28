@@ -594,6 +594,16 @@ void ElementAccessEmitter::branchOnPresentElement(const ValueContext& test, cons
     branchOnElementPresence(test, &form, elementsOf(array), index, targets);
 }
 
+void ElementAccessEmitter::branchOnPresentElementInAnyStorage(const ValueContext& test, BranchTargets targets)
+{
+    CellPointer array = in<CellPointer>(test->arrayOperand());
+    Integer index = indexOrElse(test->positionOperand(), test->keyIsIntegral(), targets.notTaken.block(), NaNIndexMode::ProduceOutOfBoundsIndex);
+    ArrayElements elements = elementsOf(array);
+    forBoxedAndDoubleShapes(*this, m_out, indexingMode(array, arrayStorageTestMask), targets.notTaken.block(), [&](const ArrayStorageForm* form) {
+        branchOnElementPresence(test, form, elements, index, targets);
+    });
+}
+
 void ElementAccessEmitter::generateHasArrayElement(const ValueContext& value)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());

@@ -512,6 +512,10 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
     if (layout.keysAreNeverEnumerated)
         return;
     KeyOrderTable& keyOrders = state.objects->keyOrders;
+    if (std::optional<uint32_t> after = keyOrders.stepInsideOrderOfImage(layout, orderWord(), indexOf(field))) {
+        setOrderAndCount(*after);
+        return;
+    }
     uint32_t before = orderWord() & orderAndCountMask;
     std::optional<uint32_t> numberOfExtraKeys = numberOfExtraKeysByStructure();
     if (numberOfExtraKeys && !hasOutOfLineKeyOrder()) {

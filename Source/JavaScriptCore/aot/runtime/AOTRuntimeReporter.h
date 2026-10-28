@@ -94,6 +94,8 @@ void reportFailedCheck(Instance&, uint32_t typeSite, const RuntimeType& expected
 // A log that was asked for gets every mismatch of a run. Without one the first mismatch ends the run.
 void reportOrCrash(VM&, const ValidationFailure&, ASCIILiteral whatIsCalled, const String& callee, const String& mismatch);
 void writeToStandardError(const String& line);
+// Where the program stands, on its own thread: the places of the innermost frames of compiled code.
+Vector<String, RuntimeReporter::maxNumberOfCallers> placesOfInnermostCompiledFrames(VM&);
 #if ENABLE(WEBASSEMBLY)
 void reportInterpreterFallback(Wasm::InterpreterFallbackReason);
 #endif

@@ -58,6 +58,8 @@ public:
     // The entries of an order word that lists every own key of the objects that have it, which are fields all of them, or null. Compiled code finds the answer without a call from then on.
     const uint16_t* publishEntriesOfFields(const LayoutData&, uint32_t orderWord);
     std::optional<uint32_t> orderStartingWith(const LayoutData&, std::span<const uint16_t> entries);
+    // The step that compiled code takes without a look at any table: to the next key of an order that the image lists.
+    std::optional<uint32_t> stepInsideOrderOfImage(const LayoutData&, uint32_t orderWord, uint16_t entry) const;
     enum class Step : bool { IsPublished, IsNotPublished };
     std::optional<uint32_t> orderAfterCreating(const LayoutData&, uint32_t orderWord, uint16_t entry, Step = Step::IsPublished);
     bool positionsExtraKeys(const LayoutData&, uint32_t orderWord, uint32_t numberOfExtraKeys);

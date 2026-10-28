@@ -189,6 +189,22 @@ static std::optional<std::pair<String, LineColumn>> shownPositionOf(const Image&
     return { { shownPath(image, position->source, &ModuleTable::pathTextForLineColumns), position->lineColumn } };
 }
 
+Vector<String, RuntimeReporter::maxNumberOfCallers> placesOfInnermostCompiledFrames(VM& vm)
+{
+    Vector<String, RuntimeReporter::maxNumberOfCallers> places;
+    const Image* image = vm.aotState().image;
+    if (!vm.topCallFrame || !image)
+        return places;
+    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+        if (!visitor->isCompiledFrame())
+            return IterationStatus::Continue;
+        if (auto position = shownPositionOf(*image, visitor->compiledFrame()))
+            places.append(makeString(position->first, ':', position->second.line, ':', position->second.column));
+        return places.size() < RuntimeReporter::maxNumberOfCallers ? IterationStatus::Continue : IterationStatus::Done;
+    });
+    return places;
+}
+
 static Vector<String, RuntimeReporter::maxNumberOfCallers> findCallers(VM& vm)
 {
     Vector<String, RuntimeReporter::maxNumberOfCallers> callers;

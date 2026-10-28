@@ -14,6 +14,7 @@
 #include "AOTCirclesOfModuleLoads.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
+#include "AOTPhaseTimes.h"
 #include "AOTRegionCloner.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
@@ -1950,6 +1951,7 @@ struct Copier {
 
     BitVector run()
     {
+        PhaseTimes times(build, PassID::CopyClosureFactories);
         // The reader notes which functions name Object.create only where nothing asks for the program as it was read. A build that verifies the program makes the same copies: there every function is looked at.
         Vector<FunctionID> found;
         const Program::BodiesAsRead* bodiesAsRead = program.bodiesAsRead();
@@ -1964,6 +1966,7 @@ struct Copier {
         }
         findBodies();
         findMakers(bodiesAsRead ? bodiesAsRead->functionsThatNameObjectCreate.span() : found.span());
+        times.didFinish("findMakers"_s);
 
         Vector<Vector<CallToCopyFor>> callsByCaller;
         // The list grows while it is walked.
@@ -1971,6 +1974,7 @@ struct Copier {
             copyCodeForWrittenNamesIn(callersThatRunOnce[index]);
             callsByCaller.append(findCallsIn(callersThatRunOnce[index], 0));
         }
+        times.didFinish("findCalls"_s);
         dropCallsThroughFieldsStoredElsewhere(callsByCaller);
         for (const Vector<CallToCopyFor>& calls : callsByCaller) {
             for (const CallToCopyFor& call : calls) {
@@ -1982,8 +1986,10 @@ struct Copier {
             if (!callsByCaller[index].isEmpty())
                 copyForCalls(callersThatRunOnce[index], WTF::move(callsByCaller[index]), 0);
         }
+        times.didFinish("copyForCalls"_s);
         for (FunctionID caller : callersThatRunOnce)
             copyForExpectedCallsIn({ caller, { }, { }, true }, 0);
+        times.didFinish("copyForExpectedCalls"_s);
         if (didCopyClasses) {
             nameClassesWhereClassesAboveAreNamed();
             editor.indexClassesAndNames(build.parallelLoops());

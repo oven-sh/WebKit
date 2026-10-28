@@ -12,7 +12,9 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTShapeTestEmitter.h"
 #include "AOTStringEmitter.h"
+#include "AOTRuntimeValidationEmitter.h"
 #include "AOTVector.h"
+#include "B3VariableValue.h"
 #include "IndexingType.h"
 #include "JSPropertyNameEnumerator.h"
 #include "StructureRareData.h"
@@ -41,12 +43,20 @@ void ForInEmitter::generateForInOpen(const ValueContext& value)
     LBasicBlock isCompiledObject = newBlock();
     LBasicBlock isOtherCell = newBlock();
     LBasicBlock slowPath = newBlock();
-    Join<CellPointer> join(m_out);
+    // The enumerator, and how many of the names at its front the object is known to have.
+    ResultsJoin<CellPointer, Integer> join(m_out);
+    const bool hasStepThatAsksOnce = m_function.values.containsIf([&](const Value& step) {
+        return step.opcode == Opcode::ForInStep && step.keysChangeOnlyInSteps() && step.enumeratorOperand() == value.id();
+    });
+    // What is kept for the Structure of the object, and for its key order, is current.
+    auto addCurrent = [&](CellPointer enumerator) {
+        join.add(enumerator, hasStepThatAsksOnce ? zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endOwnPropertyIndex)) : integer(0));
+    };
 
     branch(isUndefinedOrNull(object, typeOf(value->objectOperand()).primitives), { unlikelyEdge(isNullish), normalEdge(isNotNullish) });
 
     m_out.appendTo(isNullish);
-    join.add(CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(iteration.emptyEnumerator)).value()));
+    join.add(CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(iteration.emptyEnumerator)).value()), integer(0));
 
     m_out.appendTo(isNotNullish);
     takeSlowPathUnless(m_out, isCell(object), slowPath);
@@ -61,7 +71,7 @@ void ForInEmitter::generateForInOpen(const ValueContext& value)
     LValue entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.enumerators)), index, 4).value();
     takeSlowPathUnless(m_out, equal(Word32(m_out.load32(m_out.address(published, entry, OBJECT_OFFSETOF(EnumeratorCacheEntry, structureID)))), structureID), slowPath);
     takeSlowPathUnless(m_out, equal(Word32(m_out.load32(m_out.address(published, entry, OBJECT_OFFSETOF(EnumeratorCacheEntry, orderWord)))), orderWord), slowPath);
-    join.add(CellPointer(m_out.loadPtr(m_out.address(published, entry, OBJECT_OFFSETOF(EnumeratorCacheEntry, enumerator)))));
+    addCurrent(CellPointer(m_out.loadPtr(m_out.address(published, entry, OBJECT_OFFSETOF(EnumeratorCacheEntry, enumerator)))));
 
     m_out.appendTo(isOtherCell);
     Word32 indexingType = bitAnd(loadByte(cell, m_heaps.JSCell_indexingTypeAndMisc), IndexingTypeMask);
@@ -74,12 +84,30 @@ void ForInEmitter::generateForInOpen(const ValueContext& value)
     Pointer cachedEnumeratorAndFlag = loadField<Pointer>(previousOrRareData, m_heaps.StructureRareData_cachedPropertyNameEnumeratorAndFlag);
     takeSlowPathUnless(m_out, notEqual(cachedEnumeratorAndFlag, pointerConstant(0)), slowPath);
     takeSlowPathUnless(m_out, hasNoBits(cachedEnumeratorAndFlag, StructureRareData::cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag), slowPath);
-    join.add(CellPointer(cachedEnumeratorAndFlag.value()));
+    addCurrent(CellPointer(cachedEnumeratorAndFlag.value()));
 
     m_out.appendTo(slowPath);
-    join.add(callOperation<CellPointer>(value, RuntimeOperation::GetPropertyEnumerator, { object }));
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::GetPropertyEnumerator, { object }), integer(0));
 
-    define(value, join.finish());
+    auto [enumerator, numberOfCurrentNames] = join.finish();
+    define(value, enumerator.as<CellPointer>());
+    if (hasStepThatAsksOnce)
+        setNumberOfCurrentNames(value.id(), numberOfCurrentNames.as<Integer>());
+}
+
+B3::Variable* ForInEmitter::numberOfCurrentNamesOf(ValueID open)
+{
+    for (auto& [id, variable] : m_numbersOfCurrentNames) {
+        if (id == open)
+            return variable;
+    }
+    m_numbersOfCurrentNames.append({ open, m_proc.addVariable(B3::Int64) });
+    return m_numbersOfCurrentNames.last().second;
+}
+
+void ForInEmitter::setNumberOfCurrentNames(ValueID open, Integer number)
+{
+    m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), numberOfCurrentNamesOf(open), number.value());
 }
 
 void ForInEmitter::generateForInStep(const ValueContext& value)
@@ -95,11 +123,27 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
 
     EnumeratorFields fields = loadFields(enumerator);
     Integer nameIndex = nameIndexOf(fields, position);
-    branch(isOwnName(fields, nameIndex), { normalEdge(isStructureName), normalEdge(isNotStructureName) });
+    // Only behind the opening itself is the number written.
+    const bool asksOnce = value->keysChangeOnlyInSteps() && m_function.at(value->enumeratorOperand()).opcode == Opcode::ForInOpen;
+    LBasicBlock isOwnNameToAskAbout = asksOnce ? newBlock() : isStructureName;
+    if (asksOnce) {
+        LBasicBlock isNotKnownToBeCurrent = newBlock();
+        Integer numberOfCurrentNames(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), numberOfCurrentNamesOf(value->enumeratorOperand())));
+        branch(below(nameIndex, numberOfCurrentNames), { normalEdge(isStructureName), normalEdge(isNotKnownToBeCurrent) });
+        m_out.appendTo(isNotKnownToBeCurrent);
+    }
+    branch(isOwnName(fields, nameIndex), { asksOnce ? unlikelyEdge(isOwnNameToAskAbout) : normalEdge(isOwnNameToAskAbout), normalEdge(isNotStructureName) });
 
-    m_out.appendTo(isStructureName);
+    m_out.appendTo(isOwnNameToAskAbout);
     takeSlowPathUnless(m_out, isCell(object), slowPath);
     takeSlowPathUnless(m_out, hasCachedKeys(enumerator, fields, unboxCell(object)), slowPath);
+    if (asksOnce) {
+        setNumberOfCurrentNames(value->enumeratorOperand(), zeroExtended(fields.endOwnPropertyIndex));
+        m_out.jump(isStructureName);
+        m_out.appendTo(isStructureName);
+        if (generator().validatesOrChecksProofs())
+            emitter<RuntimeValidationEmitter>().checkPrecondition(value, hasCachedKeys(enumerator, fields, unboxCell(object)));
+    }
     Condition isNotDone = boolean(false);
     Pointer names = loadField<Pointer>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVector);
     CellPointer name(m_out.loadPtr(m_out.baseIndex(m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, names.value(), nameIndex.value())));
@@ -117,6 +161,9 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     m_out.appendTo(slowPath);
     Operand arguments[] = { enumerator, object, position };
     StubCallResult next = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, RuntimeOperation::EnumeratorNext, arguments);
+    // It may have run code of the program.
+    if (asksOnce)
+        setNumberOfCurrentNames(value->enumeratorOperand(), integer(0));
     Condition isDone = isZero(Integer(next.first));
     join.add(isDone, select(isDone, emptyString(), CellPointer(next.first)), Integer(next.second));
 

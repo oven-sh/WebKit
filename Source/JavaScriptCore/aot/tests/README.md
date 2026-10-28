@@ -33,7 +33,7 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 | `represent/` | the representations of values |
 | `codegen/` | code generation, type test plans, barriers, frame maps, validation |
 | `runtime/` | programs that run in the shell and count their calls into the run time: the caches, tables and Structures that fill while a program runs |
-| `answers/` | programs that run in the shell and hold what they answer, and nothing else: no count, no shape of code. The shell runs the same text itself and compares. Bun's `test/aot/tools/answers-test-from-source.ts` makes such a file from a program, and its `test/aot/engine/answers-in-other-ways.test.ts` runs the folder again under ten option words |
+| `answers/` | programs that run in the shell and hold what they answer, and nothing else: no count, no shape of code. The shell runs the same text itself and compares. Bun's `test/aot/tools/answers-test-from-source.ts` makes such a file from a program, its `test/aot/engine/answers-in-other-ways.test.ts` runs the folder again under ten option words, and its `test/aot/engine/answers-under-a-sabotage.test.ts` builds programs of the folder with one thing in the compiler broken on purpose: then they fail |
 | `validation/` | a lie per producer: a program in which one thing that typed code relies on is false. The validating build ends the process with the kind that names the lie, or fails at build time |
 | `cliffs/` | the cliffs that no program can cause |
 

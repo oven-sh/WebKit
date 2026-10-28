@@ -631,6 +631,18 @@ size_t KeyOrderTable::indexOfFieldAt(const LayoutData& layout, uint32_t slotKey)
     return static_cast<uint32_t>(*found);
 }
 
+std::optional<uint32_t> KeyOrderTable::stepInsideOrderOfImage(const LayoutData& layout, uint32_t orderWord, uint16_t entry) const
+{
+    uint32_t order = orderOf(orderWord);
+    if (orderWord & ~orderAndCountMask || order >= layout.numberOfOrders)
+        return std::nullopt;
+    std::span<const uint16_t> entries = m_tables.keyOrder(layout, order).entries();
+    uint32_t count = countOf(orderWord);
+    if (count >= entries.size() || entries[count] != entry)
+        return std::nullopt;
+    return orderWordOf(order, count + 1);
+}
+
 std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layout, uint32_t orderWord, uint16_t entry, Step step)
 {
     ASSERT(!isOrderStoredOutOfLine(orderWord));

@@ -122,7 +122,7 @@ bool tryDefineElementOfCompiledObject(Instance* instance, JSObject* object, uint
     JSObject* extra = compiled->extraProperties();
     if (extra && (!is<JSFinalObject>(extra) || extra->inSparseIndexingMode() || isCopyOnWrite(extra->indexingMode()) || extra->structure()->hasImmutableIndexedProperties()))
         return false;
-    if (vm.aotState().validatesRuntime && !(extra && extra->hasOwnProperty(instance->globalObject, index)))
+    if (checksClaimsAboutObjects(vm) && !(extra && extra->hasOwnProperty(instance->globalObject, index)))
         validateMutation(vm, *compiled, ObjectMutation::AddProperty);
     if (!extra) {
         const CompiledStructure* before = WTF::opaque(&compiled->compiledStructure());

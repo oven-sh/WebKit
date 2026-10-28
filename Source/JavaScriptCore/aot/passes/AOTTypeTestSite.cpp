@@ -110,6 +110,9 @@ Value TestConditions::canonicalize(const Value& test) const
         else if (ValueID operand = canonical.operand(operandIndex))
             canonical.setOperand(operandIndex, m_identities.identityOf(operand));
     }
+    // Who asks does not change the answer: the test that the program wrote proves what the test in front of an access proves.
+    if (Value::opcodesWithIsAskedByProgram.contains(canonical.opcode))
+        canonical.setIsAskedByProgram(false);
     canonical.type = TypeID();
     canonical.setExpected({ });
     canonical.representation = Representation::Unchosen;

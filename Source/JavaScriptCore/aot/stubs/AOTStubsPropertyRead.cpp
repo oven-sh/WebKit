@@ -457,6 +457,14 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
         }
     };
 
+    // Only a name that begins with a digit spells an index. Of a character of 16 bits this looks at the low half. The name has a character.
+    auto branchIfNameBeginsWithDigit = [&] {
+        jit.loadPtr(Address(r.uid, StringImpl::dataOffset()), r.index);
+        jit.load8(Address(r.index), r.index);
+        jit.sub32(TrustedImm32('0'), r.index);
+        return jit.branch32(CCallHelpers::BelowOrEqual, r.index, TrustedImm32(9));
+    };
+
     isUnknown.append(jit.branchIfNotCell(r.receiver));
     isUnknown.append(jit.branchIfNotObject(r.receiver));
     // The empty name is the one name of the image whose uid is no atom of the image, so neither can be had from the other.
@@ -467,7 +475,7 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     Jump hasOwnLookup = jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(flagsOfOwnLookup));
     Label askPropertyTable = jit.label();
     // A name may spell an index, and an element is in no property table.
-    isUnknown.append(jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
+    Jump hasElements = jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask));
     Label askPropertyTableForNameThatSpellsNoIndex = jit.label();
     loadStructure(jit, r.object, r.structure);
     answerByPropertyTableAndReturn(jit, question, r, isAbsentHere, isUnknown, isUnknown, [] { }, willReturnValue);
@@ -505,7 +513,9 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     loadExtraProperties(jit, objectWithExtraProperties, r.index, r.object, extraPropertiesDoNotSay);
     // In their place may be the record of what is still to be made.
     extraPropertiesDoNotSay.append(jit.branch8(CCallHelpers::NotEqual, Address(r.object, JSCell::typeInfoTypeOffset()), TrustedImm32(FinalObjectType)));
-    extraPropertiesDoNotSay.append(jit.branchTest8(CCallHelpers::NonZero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
+    Jump extraPropertiesHaveNoElements = jit.branchTest8(CCallHelpers::Zero, Address(r.object, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask));
+    extraPropertiesDoNotSay.append(branchIfNameBeginsWithDigit());
+    extraPropertiesHaveNoElements.link(&jit);
     loadStructure(jit, r.object, r.structure);
     answerByPropertyTableAndReturn(jit, question, r, isAbsentFromExtraProperties, extraPropertiesDoNotSay, isUnknown, restoreName);
 
@@ -517,6 +527,10 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     extraPropertiesDoNotSay.link(&jit);
     restoreName();
     isUnknown.append(jit.jump());
+
+    hasElements.link(&jit);
+    isUnknown.append(branchIfNameBeginsWithDigit());
+    jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
 
     isNotCompiledObject.link(&jit);
     if (jit.options().useWideReferences) {
@@ -548,12 +562,8 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
 
     // JSArray::getOwnPropertySlot() answers by itself for the length alone.
     Jump isNoArray = jit.branchPtr(CCallHelpers::NotEqual, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.lookupOfArrays)), r.index);
-    // A name that begins with a digit may spell an index. Of a character of 16 bits this is the low half.
-    jit.loadPtr(Address(r.uid, StringImpl::dataOffset()), r.index);
-    jit.load8(Address(r.index), r.index);
-    jit.sub32(TrustedImm32('0'), r.index);
-    jit.branch32(CCallHelpers::Above, r.index, TrustedImm32(9)).linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
-    isUnknown.append(jit.jump());
+    isUnknown.append(branchIfNameBeginsWithDigit());
+    jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
 
     // JSFunction::getOwnPropertySlot() makes three properties when they are first looked for.
     isNoArray.link(&jit);

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTCodeShapes.h"
@@ -2006,7 +2007,7 @@ static Expected<LayoutList> findLayoutsStoredUnderNameOfSubject(FunctionPassCont
 }
 
 // Answers whether the subject is settled. One whose names have more declarations than a test is made for waits until the layouts of the other subjects are known.
-static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues, ExpectedValues& widenedValues)
+static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> usesOfSubject, Expected<LayoutList>& layoutsMet, bool waitsForOtherSubjects, ExpectedValues& expectedValues)
 {
     Function& function = context.function;
     auto expectLayouts = [&](std::span<const NamedUse> uses, const Expected<LayoutList>& layouts) {
@@ -2025,26 +2026,6 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return !context.program.at(layout).flags.contains(LayoutFlags::IsNeverAllocated) && context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
         });
     });
-    // In code without types, what is expected of a value is read off the places that are seen to give it. An object that has left the sight of the program arrives where nobody sees it given:
-    // where the analysis has seen nothing arrive either, the layouts that hold the names and have left join what is expected.
-    // A name that built-ins answer too says little of who arrives, and a test takes only so many layouts.
-    bool isExpectedByTextAlone = isFollowed && !typeListsLayouts && !function.has(FunctionFlags::IsChecked) && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) { return !use.stamp && tellsLayoutsApart(context.program, use.key); });
-    if (isExpectedByTextAlone && !waitsForOtherSubjects) {
-        LayoutsToTest others = findLayoutsToTestFor(context, usesOfSubject, context.limit(LimitID::MaxDeclarationsPredictedFromNames), context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
-        if (!others.layouts.predicted().isEmpty() && !others.leavesOutDeclarations) {
-            Type arriving = Type::forLayouts(others.layouts.predicted().span(), context.types);
-            for (const NamedUse& use : usesOfSubject) {
-                TypeID expected = function.at(use.receiver).expected().predicted();
-                if (!expected || !context.types.at(expected).layouts || arriving.isSubsetOf(context.types.at(expected), context.program) || widenedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
-                    continue;
-                Type widened = context.types.at(expected).unionWith(arriving, context.types);
-                if (membersOf(context.program, widened).size() <= context.limit(LimitID::MaxDispatchCases))
-                    widenedValues.append({ use.receiver, ExpectedType(context.types.intern(widened)) });
-            }
-        }
-    }
-    if (isExpectedByTextAlone && waitsForOtherSubjects)
-        return false;
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
         return true;
 
@@ -2316,23 +2297,16 @@ bool expectLayoutsByNames(FunctionPassContext& context, ExpectedTypesByUse& expe
     findUsesOnEveryPath(context, uses.mutableSpan());
 
     ExpectedValues expectedValues;
-    ExpectedValues widenedValues;
     Expected<LayoutList> layoutsMet;
     Vector<std::span<NamedUse>, 4> unsettledSubjects;
     for (std::span<NamedUse> usesOfSubject : uses.mutableSpan() | std::views::chunk_by([](const NamedUse& a, const NamedUse& b) { return a.subject == b.subject; })) {
-        if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues, widenedValues))
+        if (!expectLayoutsOf(context, usesOfSubject, layoutsMet, true, expectedValues))
             unsettledSubjects.constructAndAppend(usesOfSubject);
     }
     if (!unsettledSubjects.isEmpty())
         addLayoutsOfKnownReceivers(context, layoutsMet);
     for (std::span<NamedUse> usesOfSubject : unsettledSubjects)
-        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues, widenedValues);
-    for (auto [value, expected] : widenedValues) {
-        if (findUncheckedEntryParameter(context.function, value))
-            continue;
-        expectations.expect(value, expected.predicted());
-        expectations.didGuessFromNames(value);
-    }
+        expectLayoutsOf(context, usesOfSubject, layoutsMet, false, expectedValues);
     return expectValues(context, expectedValues, expectations);
 }
 
@@ -3917,6 +3891,62 @@ static PassOutcome markArmsThatAreSeldomTaken(FunctionPassContext& context)
     return outcome;
 }
 
+// `index in list`, where the list has a known kind of storage, nothing above it answers for an index and the key is an index, asks what the read of `list[index]` asks ahead of itself: the one test answers both.
+// The arm that it fails into is the program's, not the general form of an access. The test says so, for whoever looks for a place where an access can start over.
+static PassOutcome askForPositionsOfElements(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::HasArrayElement))
+        return PassOutcome::Unchanged;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    PassOutcome outcome = PassOutcome::Unchanged;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            ValueID id = values[index];
+            const Value& question = function.at(id);
+            if (question.opcode != Opcode::HasArrayElement || !question.keyIsIntegral() || !hasArrayStorageForm(question.arrayStorage()))
+                continue;
+            const Type& position = context.program.typeOf(function, question.positionOperand());
+            if (!isArrayIndex(position) || !position.isInteger())
+                continue;
+            ValueID array = question.arrayOperand();
+            ValueID key = question.positionOperand();
+            ValueID guard = question.guardOperand();
+            ArrayStorage arrayStorage = question.arrayStorage();
+            const Type& list = context.program.typeOf(function, array);
+            // Where the kind of storage is only tested, reads of numbers are copied for another kind, and an element that does not fit the copy leaves by the arm of the test that the read has for itself.
+            const ClassPart* part = list.singleBuiltinClass();
+            bool storageIsProven = part && part->contentsAreProven && part->arrayStorage == arrayStorage && !list.mayBeUndefinedOrNull();
+            if (!storageIsProven && (holdsOnlyNumbers(arrayStorage) || typeOfContentsRead({ context.program, function, context.types, TypeLevel::Expected }, list, ContentsSlot::Element).withoutPrimitives(Primitive::Undefined).isNumber()))
+                continue;
+            bool isDense = pristineAspectsProvenBy(list, BuiltinClasses::Array).contains(PristineAspects::Dense);
+            // In a validating build the question is asked as it was written too, and the two answers are compared.
+            if (context.build.validates()) {
+                builder.setOrigin(question.origin());
+                ValueID asWritten = builder.insertBefore(ProgramPoint { block, index }, Value(question));
+                builder.insertBefore(ProgramPoint { block, index + 1 }, IRBuilder::make(Opcode::ValidateSameValue, { asWritten, id }));
+            }
+            Value& test = function.edit(id);
+            test.become(isDense ? Opcode::IsInBounds : Opcode::IsElementPresent);
+            test.setArrayOperand(array);
+            test.setPositionOperand(key);
+            test.setIsAskedByProgram(true);
+            if (!isDense) {
+                test.setGuardOperand(guard);
+                test.setArrayStorage(arrayStorage);
+                test.setKeyIsIntegral(true);
+            }
+            outcome = PassOutcome::Changed;
+        }
+    }
+    if (outcome == PassOutcome::Changed) {
+        builder.applyInsertions();
+        context.analyses.didChangeValues();
+    }
+    return outcome;
+}
+
 // `x !== x`: only NaN differs from itself. So what is no number has its answer, and the test for a number is no guess that sends other values into a copy.
 static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext& context)
 {
@@ -3975,6 +4005,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
 
     PassOutcome marked = markArmsThatAreSeldomTaken(context);
     marked |= askOnlyNumbersWhetherTheyEqualThemselves(context);
+    marked |= askForPositionsOfElements(context);
     ExpectedTypesByUse expectations(context.function);
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.build.recordedOptions().usesExpectedTypes()) {

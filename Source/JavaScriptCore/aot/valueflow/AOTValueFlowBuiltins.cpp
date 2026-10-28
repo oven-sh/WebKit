@@ -4128,6 +4128,11 @@ bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName na
         return true;
     if (maySymbolNobodyKnowsBeOneThatHostLooksFor(context) && mayLieUnderSymbolNobodyKnows(context))
         return true;
+    // Machine code that is loaded at run time registers what symbol it likes and lays what it likes under it.
+    for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode()) {
+        if (context.holdsAnyOf(only(context, universe.objectOf(loader.callee)), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins)))
+            return true;
+    }
     const ValueFlowHeapTables& heap = universe.builtinTables().heap();
     const ValueFlowMembersUnderKey& members = heap.under(context.program().keyOf(name));
     ClimbingSet prototypes(context.maker().unite(members.prototypeObjects, context.maker().intersect(members.holdersOfUndeclaredProperties, heap.prototypeObjectsOfHost())));

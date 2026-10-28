@@ -115,6 +115,8 @@ LoopEntryResult emitOnLoopEntry(SelectionContext& context, IRBuilder& builder, B
         return LoopEntryResult::HandlerDiffers;
 
     BlockID preheader = ensurePreheader(builder, *entry, *handler);
+    if (*handler)
+        context.noteAllocatesLessUnderHandler();
     Terminator jump = std::exchange(function.edit(preheader, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { });
     analyses.didChangeControlFlow();
 

@@ -1502,6 +1502,12 @@ static void encodeRemovedFields(TableEncoder& encoder)
     setSortedTable(encoder, ProgramTableIndex::removedFields, removedFields);
 }
 
+// The run time holds what happens to an object against these lists. They are data, and no code depends on them.
+static bool listsNamesThatObjectsGet(const BuildContext& build)
+{
+    return build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
+}
+
 static void encodeAddedNames(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
@@ -1514,7 +1520,7 @@ static void encodeAddedNames(TableEncoder& encoder)
     const Vector<PropertyKeyID>* sharedKeys = program.keysStoredThroughUnknownReceivers();
     bool canListSharedKeys = sharedKeys && haveNumbers(*sharedKeys);
     bool listsSharedKeys = false;
-    for (unsigned index = 0; encoder.build.validates() && index < program.layouts.size(); ++index) {
+    for (unsigned index = 0; listsNamesThatObjectsGet(encoder.build) && index < program.layouts.size(); ++index) {
         LayoutID id(index);
         const LayoutFlow& flow = program.at(id).flow;
         if (!flow.addedKeysAreComplete || encoder.slots.storageOf(id) != LayoutStorage::CompiledObject)
@@ -1540,7 +1546,7 @@ static void encodeClassPrototypeNames(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
     Vector<AddedNameData> names;
-    for (unsigned index = 0; encoder.build.validates() && index < program.layouts.size(); ++index) {
+    for (unsigned index = 0; listsNamesThatObjectsGet(encoder.build) && index < program.layouts.size(); ++index) {
         const ClassFlow& flow = program.layouts[index].classFlow;
         if (!flow.prototypeNamesAreComplete)
             continue;

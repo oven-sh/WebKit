@@ -113,6 +113,8 @@ struct FunctionPassContext {
     ChangeLog& changes { changeLogOf(analyses) };
     OpenSites openSites { };
     size_t numberOfBlocksWhenSinkingGaveUp { 0 };
+    // Of all the runs of FoldConstants.
+    uint64_t bytesOfFoldedTexts { 0 };
     // Where in a schedule the running pass stands: in the rounds of a fixpoint, at a step for what was left for later, or neither.
     bool isInRounds { false };
     bool isBehindRounds { false };

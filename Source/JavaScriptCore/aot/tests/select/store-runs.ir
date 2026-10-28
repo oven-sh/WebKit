@@ -302,14 +302,14 @@ function f25 name="by-name-under-handler" parameters=[{type=object}, {type=anyth
 # CHECK-NEXT: b0({{*}} handler=[[handler]]():
 # CHECK-NEXT: [[attempt]]: boolean = TryPutByIds v0, v1, v2, v3 keys=["a", "b", "c"]
 # CHECK-NEXT: Branch [[attempt]] -> taken [[doneUnderHandler]](), notTaken [[slowUnderHandler]]()
-# CHECK-NEXT: [[doneUnderHandler]]():
+# CHECK-NEXT: [[doneUnderHandler]]() handler=[[handler]]():
 # CHECK-NEXT: Jump -> next [[join]]()
 # CHECK-NEXT: [[slowUnderHandler]]() frequency=Rare handler=[[handler]]():
 # CHECK-NEXT: PropSet v0, v1 key="a"
 # CHECK-NEXT: PropSet v0, v2 key="b"
 # CHECK-NEXT: PropSet v0, v3 key="c"
 # CHECK-NEXT: Jump -> next [[join]]()
-# CHECK-NEXT: [[join]]():
+# CHECK-NEXT: [[join]]() handler=[[handler]]():
 # CHECK: [[handler]]() role=CatchHandler:
 }
 function f26 name="instance-of-object-by-name" parameters=[{type=Object}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {

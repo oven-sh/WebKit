@@ -1509,6 +1509,9 @@ static ValueID findPositionTestInFrontOf(FunctionPassContext& context, const Rea
     const Value& test = function.at(terminator.conditionOperand());
     if (test.opcode == Opcode::IsElementPresent ? !found.reads.contains(terminator.conditionOperand()) : test.opcode != Opcode::IsInBounds || test.arrayOperand() != read.arrayOperand())
         return { };
+    // `index in list`: where that fails the program goes on as it does without an element, and an element that is there does not go that way.
+    if (test.isAskedByProgram())
+        return { };
     if (context.analyses.identityOf(test.positionOperand()) != context.analyses.identityOf(read.positionOperand()))
         return { };
     // What a validating build asks again changes nothing, and nobody but the validation takes the answer.
@@ -1545,6 +1548,9 @@ static std::optional<Vector<ValueID, 4>> findPresenceTestsThatLostTheirRead(Func
     for (ValueID read : found.reads) {
         if (context.function.at(read).opcode != Opcode::IsElementPresent || testsInFrontOfReads.contains(read))
             continue;
+        // Behind `index in list` a read may be gone as well, and what is no number has no arm to leave by.
+        if (context.function.at(read).isAskedByProgram())
+            return std::nullopt;
         for (const Use& use : useLists.usesOf(read)) {
             if (use.kind != Use::Kind::TerminatorOperand)
                 continue;

@@ -86,7 +86,7 @@ function f9 name="addQBehindNothingOrTwoKeys" parameters=[{type=L3}, {type=numbe
 # The two stores stand one behind the other in the text, so what they create is listed together behind the allocation without keys.
 # CHECK: L0 orders=2: [0 1 2] [1 2]
 # No store creates "d", so the image does not list it behind "c".
-# CHECK-NEXT: L1 orders=2: [0 1 2] [0 2]
+# CHECK-NEXT: L1 orders=1: [0 1 2]
 # What the stores create comes behind the keys of either allocation in the sequence of the stores, so the image has no order [2 1].
 # CHECK-NEXT: L2 orders=2: [0 1 2] [2 0 1]
 # CHECK-NEXT: L3 orders=3: [0 1 2] [1] [2 0 1]
@@ -103,7 +103,8 @@ function f9 name="addQBehindNothingOrTwoKeys" parameters=[{type=L3}, {type=numbe
 # CHECK-NEXT: L0 creating [2]: order=1 count=1 -> order=1 count=2; order=0 count=2 -> order=0 count=3;
 # The place among the declarations and the place behind the allocation are one place.
 # CHECK-NEXT: L1 creating [1]: order=0 count=1 -> order=0 count=2;
-# CHECK-NEXT: L1 creating [2]: order=0 count=2 -> order=0 count=3; order=0 count=1 -> order=1 count=2;
+# A field that has its place in the sequence of the stores gets no order of its own right behind the allocation.
+# CHECK-NEXT: L1 creating [2]: order=0 count=2 -> order=0 count=3;
 # CHECK-NOT: L1 creating [3
 # CHECK: L2 creating [0]: order=0 count=0 -> order=0 count=1; order=1 count=1 -> order=1 count=2;
 # CHECK-NEXT: L2 creating [1]: order=0 count=1 -> order=0 count=2; order=1 count=2 -> order=1 count=3;

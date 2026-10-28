@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinMembers.h"
 #include "AOTClaimsOfFields.h"
+#include "AOTPropertyAccessInternal.h"
 #include "AOTSharedMemo.h"
 #include "AOTThreshold.h"
 #include "AOTValueFlowTypedResults.h"
@@ -284,8 +285,6 @@ struct FieldResults {
     };
     // For the layouts that have objects.
     Vector<OptionSet<Actor>> actorsOpenOnObjectsOfLayouts { };
-    // By layout and key, where the receiver of a definition is only seen to be an object of the layout: ValueForms. A store under the name counts as the plain form.
-    mutable UncheckedKeyHashMap<uint64_t, uint8_t> formsOfValuesSeenDefined { };
 
     ValueSetID chainBuiltByProgram(ValueSetID objects) const
     {
@@ -1571,66 +1570,6 @@ struct FieldResults {
         return keys;
     }
 
-    // `fill(this)` .. `function fill(made) { made.name = ..; Object.defineProperty(made, "other", { .. }) }`, where whoever else may call `fill` is not seen.
-    // What a function that only hands `this` on constructs has the fields that the program is seen to give it.
-    void noteKeyGivenToInstancesSeenToArrive(ValueSetMaker& maker, const Function& function, const ValueFlowStatement& statement, KeysByLayout& keysGivenToInstancesSeen) const
-    {
-        AOT_THRESHOLD(size_t, mostLayoutsSeenToArriveAtStore, 4);
-        std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
-        const ValueFlowOperand* receiver = nullptr;
-        PropertyKeyID key;
-        uint8_t forms = 0;
-        if (statement.opcode == Opcode::PropSet) {
-            receiver = &operands[0];
-            key = function.at(statement.site).key();
-            forms = ValueForms::of(true, true, true);
-        } else if (statement.opcode == Opcode::Call && operands.size() == OperandIndex::Call::arguments + 3) {
-            const Value& callee = function.at(definitionThroughUpcasts(function, function.at(statement.site).calleeOperand()));
-            BuiltinID builtin = callee.opcode == Opcode::Builtin ? program.builtins().canonicalID(callee.builtin()) : BuiltinID();
-            if (builtin != Builtins::ObjectDefineProperty && builtin != Builtins::ReflectDefineProperty)
-                return;
-            receiver = &operands[OperandIndex::Call::arguments];
-            ValueSetID keys = std::as_const(heap).possibleValuesOf(maker, operands[OperandIndex::Call::arguments + 1]);
-            ValueFlowObjectID only = ValueSets::isComplement(keys) ? ValueFlowObjectID() : sets.onlyMember(keys);
-            if (!only || inputs.universe().kindOf(only) != ValueFlowObjectKind::Key)
-                return;
-            key = inputs.universe().keyOf(only);
-            forms = stores.formsOfValueDefinedByCall(maker, statement);
-        }
-        if (!receiver || !key || !receiver->node)
-            return;
-        // Where every receiver is listed, the tables of the stores have the key.
-        ValueSetID possible = std::as_const(heap).possibleValuesOf(maker, *receiver);
-        if (!ValueSets::isComplement(possible) && sets.isSubset(possible, inputs.universe().knownObjects()))
-            return;
-        ValueSetID seen = inputs.seenValuesOf(maker, *receiver);
-        if (ValueSets::isComplement(seen))
-            return;
-        Vector<LayoutID, mostLayoutsSeenToArriveAtStore + 1> layouts;
-        sets.forEachMember(maker.intersect(seen, inputs.universe().knownObjects()), [&](ValueFlowObjectID object) {
-            if (LayoutID layout = inputs.universe().layoutOf(object); layout && layouts.size() <= mostLayoutsSeenToArriveAtStore && !layouts.contains(layout))
-                layouts.append(layout);
-        });
-        if (layouts.size() > mostLayoutsSeenToArriveAtStore)
-            return;
-        for (LayoutID layout : layouts) {
-            const Layout& made = program.at(layout);
-            if (made.kind != LayoutKind::Instance || !made.has(LayoutFlags::IsConstructorFunction) || !made.fields.isEmpty())
-                continue;
-            keysGivenToInstancesSeen[layout.index()].append(key);
-            formsOfValuesSeenDefined.add(static_cast<uint64_t>(layout.index()) << 32 | key.index(), 0).iterator->value |= forms;
-        }
-    }
-
-    // The form in which the objects are seen to get a value under the key.
-    std::optional<OptionSet<FieldForm>> formOfValueGivenUnder(LayoutID layout, PropertyKeyID key) const
-    {
-        uint8_t forms = stores.formsOfValuesGivenUnder(layout, key);
-        if (auto seen = formsOfValuesSeenDefined.find(static_cast<uint64_t>(layout.index()) << 32 | key.index()); seen != formsOfValuesSeenDefined.end())
-            forms |= seen->value;
-        return ValueForms::formToPlanFor(forms);
-    }
-
     KeysByLayout chooseAppendedKeys(KeysByLayout& keysFilledByMakersOutside) const
     {
         ValueSetMakers makers(inputs);
@@ -1648,15 +1587,11 @@ struct FieldResults {
         KeysByLayout keysNamedBehindReads(numberOfLayouts);
         KeysByLayout keysNamedWhereObjectsWereFollowedTo(numberOfLayouts);
         KeysByLayout keysNamedByMakersOutsideAlone(numberOfLayouts);
-        KeysByLayout keysGivenToInstancesSeen(numberOfLayouts);
         for (uint32_t index = 0; index < program.functions.size(); ++index) {
             if (!inputs.isReached(FunctionID(index)))
                 continue;
             for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
-                if (statement.kind != ValueFlowStatementKind::Operation)
-                    continue;
-                noteKeyGivenToInstancesSeenToArrive(makers.of(0), program.functions[index], statement, keysGivenToInstancesSeen);
-                if (statement.opcode != Opcode::PropSet)
+                if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::PropSet)
                     continue;
                 ValueFlowNodeID receiver = inputs.bodies().operandsOf(statement)[0].node;
                 PropertyKeyID key = program.functions[index].at(statement.site).key();
@@ -1688,7 +1623,7 @@ struct FieldResults {
                     nameFieldOfLayoutsIn(seen, mostLayoutsFollowedToStore, true, keysNamedWhereObjectsWereFollowedTo);
             }
         }
-        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedWhereObjectsWereFollowedTo, &keysGivenToInstancesSeen }) {
+        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedWhereObjectsWereFollowedTo }) {
             for (Vector<PropertyKeyID>& keys : *keysNamed) {
                 AOT::sort(keys);
                 keys.shrink(std::unique(keys.begin(), keys.end()) - keys.begin());
@@ -1713,10 +1648,6 @@ struct FieldResults {
             });
             uniteSortedKeys(keysByLayout[index], keysNamedWhereObjectsWereFollowedTo[index]);
             uniteSortedKeys(keysByLayout[index], accessors);
-            if (program.layouts[index].kind == LayoutKind::Instance) {
-                uniteSortedKeys(keysByLayout[index], stores.keysOfValuesDefinedIn(LayoutID(index)));
-                uniteSortedKeys(keysByLayout[index], keysGivenToInstancesSeen[index]);
-            }
             keysStoredByMembersAbove[index] = keysStoredIntoThisByMembersAbove(layoutsHandedToObjectCreate, LayoutID(index));
             uniteSortedKeys(keysByLayout[index], keysStoredByMembersAbove[index]);
         });
@@ -1835,24 +1766,12 @@ struct FieldResults {
                 bool inheritsNothing = build.isEnabled(FlowResultKind::OwnNames, index);
                 bool isFirst = true;
                 bool isGivenValuesNobodyKnows = false;
-                std::optional<OptionSet<FieldForm>> formOfValue;
-                bool hasOneFormOfValue = true;
                 forEachLayoutBelow(LayoutID(index), [&](LayoutID below) {
                     if (!hasObjects(below))
                         return;
-                    std::optional<OptionSet<FieldForm>> formBelow = formOfValueGivenUnder(below, key);
-                    hasOneFormOfValue &= formBelow && (isFirst || formOfValue == formBelow);
-                    formOfValue = formBelow;
                     ValueSetID above;
                     inheritsNothing = inheritsNothing && inheritsNothingUnder(maker, below, above, key);
-                    OptionSet<ObjectMutation> possibleBelow = possibleMutationsOf(below);
-                    // A definition names its key: where only followed code gets hold of the objects, it costs the field of that key alone.
-                    if (possibleBelow.contains(ObjectMutation::RedefineProperty) && isSeenByFollowedCodeAlone(below)) {
-                        ValueSetID objects = layoutsOfObjects.objectsWith(below);
-                        if (sets.isEmpty(heap.writtenUnder(maker, objects, { ValueFlowNameKind::RedefinedMember, key.index() })) && sets.isEmpty(heap.writtenUnder(maker, objects, ValueFlowName::of(ValueFlowNameKind::RedefinedMemberUnderUnknownKey))))
-                            possibleBelow.remove(ObjectMutation::RedefineProperty);
-                    }
-                    possible.add(possibleBelow);
+                    possible.add(possibleMutationsOf(below));
                     open.add(actorsOpenOnFieldsOfObjectsWith(below));
                     stored = maker.unite(stored, stores.getsCopiedProperties(below) ? stores.storedUnderNameItself(maker, below, key) : stores.storedUnder(maker, below, key));
                     writers.add(stores.writersSeenUnder(below, key));
@@ -1866,8 +1785,6 @@ struct FieldResults {
                     isStoredBeforeObjectsLeak &= holdsSinceBirth(below, key) || (constructions.isFollowed(below) && constructions.isStoredBeforeObjectLeaks(below, key, { }));
                     uniteAccessors(field.accessor, stores.accessorDefinedUnder(maker, below, key), std::exchange(isFirst, false));
                 });
-                if (hasOneFormOfValue && formOfValue && !field.accessor.isAccessor())
-                    field.formOfValue = *formOfValue;
                 WritesSeen writes = writesSeen(writers, stored, true, possible);
                 ClaimsOfFieldsEnabled enabled = claimsEnabledFor(index);
                 enabled.storeCounts &= !sets.isEmpty(stored);
@@ -1910,18 +1827,35 @@ struct FieldResults {
         return layouts;
     }
 
+    bool assignmentsMeetAccessorOfClass(LayoutID id, PropertyKeyID key) const
+    {
+        constexpr OptionSet<ObjectMutation> mutationsThatMayHideMember { ObjectMutation::ChangePrototype, ObjectMutation::RedefineProperty, ObjectMutation::ReachUnknownJavaScript };
+        if (program.at(id).kind != LayoutKind::Instance || program.at(key).kind != PropertyKeyKind::Text || possibleMutationsOf(id).containsAny(mutationsThatMayHideMember))
+            return false;
+        if (stores.getsNameNobodyLists(id) || stores.hasObjectOfCodeWithoutSolve(id))
+            return false;
+        LayoutID current = declaredLayoutOf(program, id);
+        for (size_t steps = 0; current && steps < numberOfLayouts; ++steps) {
+            const LayoutFlow& flow = application.layouts[current.index()].flow;
+            const ClassFlow& classFlow = application.layouts[current.index()].classFlow;
+            if (program.at(current).kind != LayoutKind::Instance || !program.at(current).constructor || !classFlow.prototypeNamesAreComplete)
+                return false;
+            DeclaredMember member = findDeclaredMember(classFlow, ClassSide::Prototype, key);
+            if (member.isDeclared() || member.mutability != MemberMutability::Fixed)
+                return member.isAccessor() && member.mutability == MemberMutability::Fixed;
+            if (classFlow.prototypeLink != MemberMutability::Fixed || flow.baseState != BaseState::Layout)
+                return false;
+            current = flow.base;
+        }
+        return false;
+    }
+
     void computeAddedKeys(const KeysByLayout& appendedKeys) const
     {
         BitVector isConstructedByNativeCode = findLayoutsConstructedByNativeCode();
         const Vector<PropertyKeyID>& sharedKeys = stores.keysStoredThroughPlaceholders();
         tables.wholeProgram.keysStoredThroughUnknownReceivers = sharedKeys;
         tables.wholeProgram.keysDefinedOnObjectsWithoutKnownLayout = stores.keysDefinedOnObjectsWithoutKnownLayout();
-        // The objects that the definition is seen to reach have a field for it now.
-        tables.wholeProgram.keysDefinedOnObjectsWithoutKnownLayout.removeAllMatching([&](PropertyKeyID key) {
-            return std::ranges::any_of(formsOfValuesSeenDefined.keys(), [&](uint64_t layoutAndKey) {
-                return static_cast<uint32_t>(layoutAndKey) == key.index() && std::ranges::binary_search(appendedKeys[layoutAndKey >> 32], key);
-            });
-        });
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
             LayoutID id(index);
             LayoutFlow& flow = application.layouts[index].flow;
@@ -1950,6 +1884,12 @@ struct FieldResults {
                 AOT::sort(privateNamesMadeAgain);
                 uniteSortedKeys(addedKeys, privateNamesMadeAgain);
                 mayGainSharedKey = stores.isReachedThroughPlaceholders(id) && !std::ranges::all_of(sharedKeys, isField);
+                // An assignment that meets an accessor of the class adds nothing. That counts only where nothing else is added either: then the layout says that no object of it gains a property, which a checking build holds every object to.
+                bool everyKeyMeetsAccessor = !mayGainSharedKey && build.isEnabled(FlowResultKind::HolderMutations, index) && std::ranges::all_of(addedKeys, [&](PropertyKeyID key) {
+                    return stores.isOnlyAssignedByStatements(id, key) && assignmentsMeetAccessorOfClass(id, key);
+                });
+                if (everyKeyMeetsAccessor)
+                    addedKeys.clear();
             }
             bool mayAddProperty = !listsEveryName || !addedKeys.isEmpty() || mayGainSharedKey;
             auto apply = [&](auto& record) {

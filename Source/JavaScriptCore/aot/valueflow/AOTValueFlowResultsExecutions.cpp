@@ -27,7 +27,8 @@ static void forEachFunctionEnteredBy(const Program& program, const FlowBodyUpdat
     if (!PayloadWord::callees(value.opcode))
         return;
     if (const FlowCallStamp* stamp = findByValue(update.calls.span(), id, &FlowCallStamp::value)) {
-        for (FunctionID callee : program.at(stamp->callees).followed().value())
+        ProvenValue<std::span<const FunctionID>> followed = program.at(stamp->callees).followed();
+        for (FunctionID callee : followed.value())
             functor(callee);
     }
 }

@@ -16,6 +16,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTObjectWords.h"
 #include "AOTOpcodesNamingRecords.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTRemoveUnreachableFunctions.h"
 #include "AOTSchemaWalkers.h"
@@ -64,6 +65,8 @@ struct PlacedFunctionSites : SiteLists {
     Vector<GlobalBindingSite> globalBindingSites;
     FunctionID function;
     Vector<LayoutSetID> receiversOfStoresThatMayAdd;
+    // What the stores and the definitions under a known key may create, in the sequence of the body.
+    Vector<FieldCreationUse> fieldCreationsAsWritten;
     uint32_t numberOfOperationsWithWordForSiteCache { 0 };
 };
 
@@ -253,8 +256,30 @@ private:
                 if (field && slots.slot(member, *field).canBeCreatedByStore())
                     fields.append(*field);
             }
-            if (!fields.isEmpty())
+            if (!fields.isEmpty()) {
+                m_sites->fieldCreationsAsWritten.append(FieldCreationUse { member, fields });
                 m_sites->fieldCreations.append(FieldCreationUse { member, WTF::move(fields) });
+            }
+        }
+    }
+
+    // `Object.defineProperty(exports, "name", { enumerable: true, get })`: the run time creates the field, and it comes where the definition stands among the stores.
+    void appendFieldCreationByDefinition(const Value& definition)
+    {
+        LayoutSetID receivers = knownSetOf(definition.objectOperand());
+        ConstantKey constant = constantKeyOf(m_program, m_program.typeOf(m_function, definition.computedKeyOperand()));
+        if (!receivers || constant.kind != ConstantKeyKind::Text)
+            return;
+        std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = constant.text });
+        if (!key)
+            return;
+        const SlotPlan& slots = m_context.slots();
+        for (LayoutID member : m_program.at(receivers).completeMembers()) {
+            if (!m_context.isCompiledObject(member) || slots.layout(member).keysAreNeverEnumerated)
+                continue;
+            std::optional<FieldIndex> field = m_program.at(member).findField(*key);
+            if (field && slots.slot(member, *field).hasStorage())
+                m_sites->fieldCreationsAsWritten.append(FieldCreationUse { member, { *field } });
         }
     }
 
@@ -497,6 +522,9 @@ private:
         case Opcode::DefineAccessors:
             for (PropertyKeyID key : value.keys())
                 appendKeyCell(key);
+            break;
+        case Opcode::DefineOwnProperty:
+            appendFieldCreationByDefinition(value);
             break;
         case Opcode::GetGlobalBinding:
             sites.globalBindingSites.append(GlobalBindingSite { { value.key(), value.seesScriptBindings(), false, value.isForTypeOf() }, m_id, point, id });
@@ -892,7 +920,7 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
         [&] { mergeEach(&SiteLists::shapeTests); },
         [&] {
             for (PlacedFunctionSites* function : functions)
-                sites.fieldCreationsAsWritten.appendVector(function->fieldCreations);
+                sites.fieldCreationsAsWritten.appendVector(WTF::move(function->fieldCreationsAsWritten));
             std::ranges::stable_sort(sites.fieldCreationsAsWritten, { }, &FieldCreationUse::layout);
             mergeEach(&SiteLists::allocations, &SiteLists::keyOrderTests, &SiteLists::fieldCreations, &SiteLists::guards);
             sites.guards.removeAllMatching([&](const GuardUse& guard) {

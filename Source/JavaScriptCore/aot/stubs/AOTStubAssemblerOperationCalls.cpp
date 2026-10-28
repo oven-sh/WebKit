@@ -173,6 +173,8 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
         emitFunctionPrologue();
     prepareCallOperation();
     call(function, OperationPtrTag);
+    if (!callerIsStub)
+        bindReturnLabel(StubFrameKind::ReturnsBehindOperation);
     if (callerIsStub) {
 #if CPU(ARM64)
         popToRestore(linkRegister);
@@ -271,6 +273,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         const GPRReg function = setUpOperationCall(operation, operationCall);
         prepareCallOperation();
         call(function, OperationPtrTag);
+        bindReturnLabel(StubFrameKind::ReturnsBehindOperation);
     });
     if (operationCall.checksException) {
         if (returnsDouble) {
@@ -343,6 +346,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         const GPRReg function = setUpOperationCall(operation, operationCall);
         prepareCallOperation();
         call(function, OperationPtrTag);
+        bindReturnLabel(StubFrameKind::ReturnsBehindOperation);
     });
     if (operationCall.checksException) {
         if (returnsDouble) {

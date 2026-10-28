@@ -1,0 +1,10 @@
+# The program of ../../answers is one in which types are checked at entry, functions are split behind those checks and have a generic version, checks become guards, and positions that may hold something else are marked.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: FunctionsSplitBehindEntryChecks >= 1
+# STATISTIC: GenericVersionsBehindEntryChecksCompiled >= 1
+# STATISTIC: ChecksReplacedByGuards >= 1
+# STATISTIC: TaintedPositions >= 1
+# STATISTIC: StretchCopiesToEndOfFunction >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/a-typed-function-that-begins-again-keeps-what-it-was-told.ir

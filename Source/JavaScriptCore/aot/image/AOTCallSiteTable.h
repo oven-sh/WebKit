@@ -108,6 +108,7 @@ struct HandlerRecord {
 
 void encodeHandlers(Vector<uint8_t>& bytes, std::span<const SiteHandler>);
 std::optional<HandlerRecord> findHandler(std::span<const uint8_t> handlers, CallSiteIndex);
+bool catchesExceptions(const Image&, uint32_t function);
 
 struct SourcePosition {
     friend bool operator==(const SourcePosition&, const SourcePosition&) = default;

@@ -238,7 +238,7 @@ constexpr std::array rows {
     functionPass(EliminateDeadCode, eliminateDeadCode, Optional, Prepared, { Flow, EffectSummaries }, values),
     functionPass(CompactBlocks, compactBlocks, Required, Prepared, { }, everything),
     functionPass(RemoveRedundantHandlers, removeRedundantHandlers, Optional, Prepared, { EffectSummaries }, everything),
-    functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, EffectSummaries }, everything),
+    functionPass(HoistLoopInvariantReads, hoistLoopInvariantReads, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
     functionPass(SimplifyBuiltinCalls, simplifyBuiltinCalls, Optional, Prepared, { EffectSummaries }, everything),
     functionPass(ReduceIntegerDivisions, reduceIntegerDivisions, Optional, Prepared, { }, values),
     functionPass(PlanArrayCapacities, planArrayCapacities, Optional, Prepared, { Flow, Heat, EffectSummaries }, everything),
@@ -1198,9 +1198,10 @@ PassOutcome Pipeline::inlineHeads(const ReaderOfScheduledFunction* readEditedFun
 
 void Pipeline::countGenericVersions()
 {
-    m_build.statistics().count(StatisticID::GenericVersionsBehindEntryChecksCompiled, std::ranges::count_if(m_program.functions, [](const Function& function) {
+    m_build.statistics().count(StatisticID::GenericVersionsBehindEntryChecksCompiled, findIndicesInParallel(m_build.parallelLoops(), m_program.functions.size(), [&](unsigned index) {
+        const Function& function = m_program.functions[index];
         return function.hasBody() && function.role == FunctionRole::GenericVersion;
-    }));
+    }).size());
 }
 
 void Pipeline::didPlace()
@@ -1680,6 +1681,7 @@ void Pipeline::runSlotStage()
     inputsFor(PassID::NumberLiteralStrings);
     {
         ProgramCachesWithScratchTypes caches(m_program, m_build);
+        // The plan reads all bodies on all threads and then places the slots of layouts on one, which lasts as long. What runs beside it leaves the threads to the first and takes them during the second.
         *m_output->slots = m_runner.runAnalysisBeside(PassID::PlanSlots, m_program, [&] {
             return planSlots(m_program, inputs, m_build);
         }, [&] {
@@ -1688,7 +1690,7 @@ void Pipeline::runSlotStage()
             }, [&] {
                 m_analyses.effects(flow());
             });
-        });
+        }, TaskPriority::Background);
     }
     stage.didFinish(nameOf(PassID::PlanSlots));
 }

@@ -89,6 +89,7 @@ struct IterationArm {
     bool bypassesIterator { false };
     // The protocol arm of a value that may be a string nobody expected.
     bool alsoServesStrings { false };
+    bool alsoWalksLists { false };
     // A class arm of an async iteration: it stands for the wrapper around the synchronous iterator.
     bool awaitsEachValue { false };
 
@@ -171,6 +172,7 @@ struct OpenedIterator {
     ValueID next;
     ValueID isSteppedWithoutCall;
     bool isOpenedBySharedFunction { false };
+    ValueID walkedList { };
 };
 
 struct StateVariable {
@@ -184,6 +186,7 @@ struct ArmState {
     ValueID subject;
     ValueID nextMethod;
     ValueID isSteppedWithoutCall;
+    ValueID walkedList;
     bool callsSharedFunctions { false };
     bool storageIsUndecided { false };
     std::optional<StateVariable> position;
@@ -940,6 +943,20 @@ static FunctionID findGeneratorMethodOpening(FunctionPassContext& pass, ValueID 
     return isUnchangedGenerator && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Generator, .builtinClass = BuiltinClasses::Generator }) ? plan.member.method : FunctionID();
 }
 
+static bool isExpectedToBeBelowArray(FunctionPassContext& pass, ValueID iterable)
+{
+    const Program& program = pass.program;
+    const Type& expected = program.expectedOrTypeOf(pass.function, iterable).predicted();
+    if (!expected.layouts || !expected.withoutNullish().hasOnlyLayouts())
+        return false;
+    bool isBelowArray = std::ranges::all_of(membersOf(program, expected), [&](LayoutID member) {
+        return program.at(member).writtenBuiltinBase == BuiltinClasses::Array;
+    });
+    PropertyKeyID next = program.keyOf(BuiltinNames::next);
+    return isBelowArray && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Array, .builtinClass = BuiltinClasses::Array })
+        && findMemberOfInstances({ program, pass.inputs.flow }, BuiltinClasses::ArrayIterator, next).isConstant();
+}
+
 static IterationPlan planIteration(FunctionPassContext& pass, const Iteration& iteration)
 {
     const Function& function = pass.function;
@@ -964,7 +981,9 @@ static IterationPlan planIteration(FunctionPassContext& pass, const Iteration& i
 
     // The protocol arm of a value that may be a string nobody expected walks the string itself.
     IterationPlan plan = planWithClassArms(pass, planned.value, findClassArms(pass, planned));
-    if (isOnlyAskedForNextValue && plan.hasProtocolArm() && !plan.arms.containsIf([](const IterationArm& arm) { return arm.form == IterationForm::String; }))
+    if (isOnlyAskedForNextValue && plan.hasProtocolArm() && isExpectedToBeBelowArray(pass, planned.value))
+        plan.arms.last().alsoWalksLists = true;
+    else if (isOnlyAskedForNextValue && plan.hasProtocolArm() && !plan.arms.containsIf([](const IterationArm& arm) { return arm.form == IterationForm::String; }))
         plan.arms.last().alsoServesStrings = canServe(pass, planned, IterationArm { .form = IterationForm::String, .testedType = TypeTable::string, .namesAreProven = true });
     return plan;
 }
@@ -1181,6 +1200,11 @@ static ArmState stringStateOf(const ArmState& state, ValueID string)
     return ArmState { .arm = IterationArm { .form = IterationForm::String, .testedType = TypeTable::string, .classIsProven = true, .namesAreProven = true }, .subject = string, .position = state.position };
 }
 
+static ArmState listStateOf(const ArmState& state, ValueID list)
+{
+    return ArmState { .arm = IterationArm { .form = IterationForm::Array, .builtinClass = BuiltinClasses::Array, .classIsProven = true, .namesAreProven = true }, .subject = list, .storageIsUndecided = state.storageIsUndecided, .position = state.position };
+}
+
 static ArmState withSubject(const ArmState& state, ValueID subject)
 {
     ArmState narrowed = state;
@@ -1210,17 +1234,10 @@ static bool isOpenedBySharedFunction(IterationExpansion& expansion, ValueID iter
 
 enum class SyncIteratorUse : uint8_t { Stepped, WrappedForAsyncIteration };
 
-static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID iterable, SyncIteratorUse use = SyncIteratorUse::Stepped)
+static OpenedIterator openWithMethod(IterationExpansion& expansion, ValueID iterable, ValueID method, bool isWrapped)
 {
     IRBuilder& builder = expansion.builder;
-    bool isWrapped = use == SyncIteratorUse::WrappedForAsyncIteration;
-    if (!isWrapped && isOpenedBySharedFunction(expansion, iterable)) {
-        ValueID opened = appendCallOfSharedFunction(expansion, OutlinedIteration::OpenIterator, singleElementSpan(iterable));
-        return { expansion.appendResultAt(opened, 0), expansion.appendResultAt(opened, 1), { }, true };
-    }
-
-    iterable = appendRequireObjectCoercible(expansion, iterable);
-    IRBuilder::ProvenBranch branch = expansion.branchOnType(expansion.appendPropGet(iterable, WellKnownSymbol::Iterator), TypeTable::function, BlockFrequency::Normal, BlockFrequency::Rare);
+    IRBuilder::ProvenBranch branch = expansion.branchOnType(method, TypeTable::function, BlockFrequency::Normal, BlockFrequency::Rare);
 
     builder.moveToEndOf(branch.notTaken);
     if (isWrapped)
@@ -1245,6 +1262,53 @@ static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID it
     }
     ValueID iterator = expansion.appendIteratorMethodCall(branch.provenOnTaken, iterable, isWrapped ? RuntimeErrorKind::SyncIteratorForAsyncIterationIsNotAnObject : RuntimeErrorKind::IteratorIsNotAnObject);
     return { iterator, expansion.appendPropGet(iterator, BuiltinNames::next), { } };
+}
+
+static OpenedIterator openSyncIterator(IterationExpansion& expansion, ValueID iterable, SyncIteratorUse use = SyncIteratorUse::Stepped)
+{
+    bool isWrapped = use == SyncIteratorUse::WrappedForAsyncIteration;
+    if (!isWrapped && isOpenedBySharedFunction(expansion, iterable)) {
+        ValueID opened = appendCallOfSharedFunction(expansion, OutlinedIteration::OpenIterator, singleElementSpan(iterable));
+        return { expansion.appendResultAt(opened, 0), expansion.appendResultAt(opened, 1), { }, true };
+    }
+
+    iterable = appendRequireObjectCoercible(expansion, iterable);
+    return openWithMethod(expansion, iterable, expansion.appendPropGet(iterable, WellKnownSymbol::Iterator), isWrapped);
+}
+
+static OpenedIterator openSyncIteratorOrList(IterationExpansion& expansion, ValueID iterable)
+{
+    IRBuilder& builder = expansion.builder;
+    iterable = appendRequireObjectCoercible(expansion, iterable);
+    ValueID method = expansion.appendPropGet(iterable, WellKnownSymbol::Iterator);
+
+    TypeID listType = expansion.types.intern(expansion.program.typeOf(expansion.function, iterable).intersectWith(Type::builtinClass(BuiltinClasses::Array), expansion.types));
+    BlockID byProtocol = expansion.addSiblingBlock();
+    BlockID merge = expansion.addSiblingBlock();
+    OpenedIterator merged;
+    merged.iterator = builder.addParameter(merge, TypeTable::object);
+    merged.next = builder.addParameter(merge, TypeTable::anything);
+    merged.isSteppedWithoutCall = builder.addParameter(merge, TypeTable::boolean);
+    merged.walkedList = builder.addParameter(merge, listType);
+    if (TypeID expected = expansion.function.at(iterable).expected().predicted()) {
+        expansion.function.edit(merged.walkedList, ValueEdit::Type).setExpected(ExpectedType(expansion.types.intern(expansion.types.at(expected).withoutNullish())));
+        expansion.pass->analyses.didChangeValues();
+    }
+
+    IRBuilder::BranchBlocks isMethodOfLists = builder.emitBranch(builder.appendTypeTest(method, Type::forBuiltin(Builtins::ArrayPrototypeValues)));
+    IRBuilder::ProvenBranch isList = expansion.branchOnType(iterable, listType);
+    builder.emitJump(merge, { isList.provenOnTaken, builder.appendUndefined(), builder.appendBoolean(true), isList.provenOnTaken });
+    builder.moveToEndOf(isList.notTaken);
+    builder.emitJump(byProtocol);
+    builder.moveToEndOf(isMethodOfLists.notTaken);
+    builder.emitJump(byProtocol);
+
+    builder.moveToEndOf(byProtocol);
+    OpenedIterator opened = openWithMethod(expansion, iterable, method, false);
+    builder.emitJump(merge, { opened.iterator, opened.next, builder.appendBoolean(false), builder.append(makeWith(Opcode::Unspecified, { }, &Value::setValueType, listType)) });
+
+    builder.moveToEndOf(merge);
+    return merged;
 }
 
 static ValueID openWrappedIterator(IterationExpansion& expansion, ValueID iterable)
@@ -1295,6 +1359,18 @@ static void emitProtocolOpen(IterationExpansion& expansion, ArmState& state, Ite
     IRBuilder& builder = expansion.builder;
     if (expansion.origin == IterationOrigin::Spread)
         builder.append(Opcode::RequireLengthFitsList, { state.subject });
+    if (state.arm.alsoWalksLists) {
+        RELEASE_ASSERT(kind == IteratorKind::Sync && !state.arm.alsoServesStrings);
+        ArmState walked = listStateOf(state, state.subject);
+        emitIndexedOpen(expansion, walked);
+        state.position = walked.position;
+        OpenedIterator opened = openSyncIteratorOrList(expansion, state.subject);
+        state.subject = opened.iterator;
+        state.nextMethod = opened.next;
+        state.isSteppedWithoutCall = opened.isSteppedWithoutCall;
+        state.walkedList = opened.walkedList;
+        return;
+    }
     if (!state.arm.alsoServesStrings) {
         OpenedIterator opened = kind == IteratorKind::Async ? openAsyncIterator(expansion, state.subject) : openSyncIterator(expansion, state.subject);
         state.subject = opened.iterator;
@@ -1389,7 +1465,12 @@ static void emitProtocolClose(IterationExpansion& expansion, const ArmState& sta
     }
 
     BlockID after = expansion.addSiblingBlock();
-    if (state.arm.alsoServesStrings) {
+    if (state.arm.alsoWalksLists) {
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(state.isSteppedWithoutCall);
+        builder.emitJump(after);
+        builder.moveToEndOf(blocks.notTaken);
+        emitCloseOfIterator(expansion, state, kind, completion, after);
+    } else if (state.arm.alsoServesStrings) {
         IRBuilder::ProvenBranch branch = expansion.branchOnType(state.subject, TypeTable::string);
         builder.emitJump(after);
         builder.moveToEndOf(branch.notTaken);
@@ -1433,6 +1514,14 @@ static void emitStepByCall(IterationExpansion& expansion, const ArmState& state,
 static void emitProtocolStep(IterationExpansion& expansion, const ArmState& state, const StepRequest& request)
 {
     IRBuilder& builder = expansion.builder;
+    if (state.arm.alsoWalksLists) {
+        RELEASE_ASSERT(request.kind == IteratorKind::Sync && request.mode == ResumeMode::Next && !request.sent);
+        IRBuilder::BranchBlocks blocks = builder.emitBranch(state.isSteppedWithoutCall);
+        emitElementStep(expansion, listStateOf(state, state.walkedList));
+        builder.moveToEndOf(blocks.notTaken);
+        emitStepByCall(expansion, state, request);
+        return;
+    }
     if (state.arm.alsoServesStrings) {
         RELEASE_ASSERT(request.mode == ResumeMode::Next && !request.sent);
         bool walksStringBySharedFunction = state.callsSharedFunctions && !expansion.isExpectedToRun();
@@ -1922,7 +2011,7 @@ static PatternRead choosePatternRead(FunctionPassContext& pass, const Iteration&
             return PatternRead::BySteps;
         return stepsMatchElements(function, iteration, *count) && !regionMayChangeArray(pass, iteration, arm, liveRegion, open.iterableOperand()) ? PatternRead::ByIndex : PatternRead::BySteps;
     }
-    if (arm.form != IterationForm::Protocol || pass.exceeds(LimitID::MaxDestructuredElements, *count, iteration.open) || !stepsMatchElements(function, iteration, *count))
+    if (arm.form != IterationForm::Protocol || arm.alsoWalksLists || pass.exceeds(LimitID::MaxDestructuredElements, *count, iteration.open) || !stepsMatchElements(function, iteration, *count))
         return PatternRead::BySteps;
 
     ValueID first = findFirstStep(function, iteration);
@@ -2449,7 +2538,7 @@ struct ArmDispatcher {
 
     void joinArmsByForm()
     {
-        static constexpr ValueID ArmState::* joinedValues[] { &ArmState::subject, &ArmState::nextMethod, &ArmState::isSteppedWithoutCall };
+        static constexpr ValueID ArmState::* joinedValues[] { &ArmState::subject, &ArmState::nextMethod, &ArmState::isSteppedWithoutCall, &ArmState::walkedList };
         BlockID join = builder.addBlock(function.at(head).frequency);
         form = builder.addParameter(join, pass.types.intern(Type::integer({ 0, static_cast<int64_t>(states.size()) - 1 })));
 
