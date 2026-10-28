@@ -96,8 +96,11 @@ using WTF::isAddressRandomizationDisabled;
 #else
 static bool isAddressRandomizationDisabled()
 {
-    int persona = personality(0xffffffff);
-    return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+    static const bool result = [] {
+        int persona = personality(0xffffffff);
+        return persona != -1 && persona & ADDR_NO_RANDOMIZE;
+    }();
+    return result;
 }
 #endif
 #endif
@@ -119,6 +122,12 @@ static void* chooseAddressForCode(size_t size)
 static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_t executableSize)
 {
     int fileDescriptor = static_cast<int>(descriptor);
+#if OS(LINUX)
+    if (size == executableSize) {
+        void* code = mmap(chooseAddressForCode(size), size, PROT_READ | PROT_EXEC, MAP_PRIVATE, fileDescriptor, fileOffset);
+        return code == MAP_FAILED ? nullptr : code;
+    }
+#endif
     void* code = mmap(chooseAddressForCode(size), size, PROT_READ, MAP_PRIVATE, fileDescriptor, fileOffset);
     if (code == MAP_FAILED)
         return nullptr;
@@ -358,6 +367,8 @@ static std::optional<Image::PositionInFile> findPositionOfImage(std::span<const 
         std::array<uint8_t, offsetof(ImageHeader, codeSize) + sizeof(ImageHeader::codeSize)> header;
         return pread(descriptor, header.data(), header.size(), segment->offsetInFile) == static_cast<ssize_t>(header.size()) && !memcmp(header.data(), bytes.data(), header.size());
     };
+    static Lock lock;
+    Locker locker { lock };
     static int descriptorOfExecutable = -1;
     if (descriptorOfExecutable >= 0)
         return isImageInFile(descriptorOfExecutable) ? std::optional(PositionInFile { descriptorOfExecutable, segment->offsetInFile }) : std::nullopt;
@@ -419,7 +430,7 @@ static bool isLoadedAsItsHeaderSays(std::span<const uint8_t> bytes, const ImageH
         && liesInOneSegmentOfExecutable(bytes.subspan(endOfExecutedPart, header.size - endOfExecutedPart), false);
 }
 
-static const void* mapCodeOfImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, const std::optional<Image::PositionInFile>& position, const ImageHeader& header, Wire::ImageVerdict& refusal)
+static const void* mapCodeOfImage(std::span<const uint8_t> bytes, std::optional<ImageFile> file, std::optional<Image::PositionInFile>& position, const ImageHeader& header, Wire::ImageVerdict& refusal)
 {
     UNUSED_PARAM(position);
     refusal = Wire::ImageVerdict::CannotMapCode;
@@ -439,17 +450,22 @@ static const void* mapCodeOfImage(std::span<const uint8_t> bytes, std::optional<
     if (isLoadedExecutable && isAddressRandomizationDisabled())
         return code.data();
 #endif
-    if (position && (!segment || segment->offsetInFile != position->offset + static_cast<int64_t>(header.codeOffset))) {
-        refusal = Wire::ImageVerdict::OutsideItsSegments;
-        return nullptr;
-    }
     void* mapping = nullptr;
-    if (position)
-        mapping = mapCode(position->descriptor, position->offset + header.codeOffset, size, executableSize);
 #if OS(LINUX) && !defined(BUN_REFUSES_EXECUTE_ONLY_START)
-    if (!mapping && isLoadedExecutable)
+    // Moving what the loader mapped opens and reads nothing.
+    if (isLoadedExecutable)
         mapping = moveLoadedCode(code, executableSize);
 #endif
+    if (!mapping) {
+        if (!position)
+            position = findPositionOfImage(bytes, std::nullopt);
+        if (position && (!segment || segment->offsetInFile != position->offset + static_cast<int64_t>(header.codeOffset))) {
+            refusal = Wire::ImageVerdict::OutsideItsSegments;
+            return nullptr;
+        }
+        if (position)
+            mapping = mapCode(position->descriptor, position->offset + header.codeOffset, size, executableSize);
+    }
     if (mapping) {
         // Compiled code reads the constants in the code part through pointers into the loaded image.
 #if defined(BUN_HARDENED)
@@ -492,10 +508,14 @@ bool mapPrivateCloneOfImagePages(std::span<const uint8_t> pages, void* target)
     return mach_vm_protect(mach_task_self(), address, pages.size(), true, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY) == KERN_SUCCESS
         && mach_vm_protect(mach_task_self(), address, pages.size(), false, VM_PROT_READ) == KERN_SUCCESS;
 #elif OS(LINUX) || OS(FREEBSD)
-    const std::optional<Image::PositionInFile>& position = Image::current()->positionInFile();
+    // The file of an image whose code was moved is opened here, by the first who maps something out of it.
+    const ImageHeader& header = Image::current()->header();
+    std::optional<Image::PositionInFile> position = Image::current()->positionInFile();
+    if (!position)
+        position = findPositionOfImage({ reinterpret_cast<const uint8_t*>(&header), header.size }, std::nullopt);
     if (!position)
         return false;
-    int64_t offset = position->offset + (pages.data() - reinterpret_cast<const uint8_t*>(&Image::current()->header()));
+    int64_t offset = position->offset + (pages.data() - reinterpret_cast<const uint8_t*>(&header));
     return mmap(target, pages.size(), PROT_READ, MAP_PRIVATE | MAP_FIXED, position->descriptor, offset) != MAP_FAILED;
 #else
     UNUSED_PARAM(target);
@@ -564,7 +584,10 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
     if (!removeWriteAccessFromLoadedSection(bytes.first(header.size)))
         return ImageVerdict::CannotMapCode;
     std::optional<Image::PositionInFile> positionInFile;
-#if OS(LINUX) || OS(FREEBSD)
+#if OS(LINUX) && !defined(BUN_REFUSES_EXECUTE_ONLY_START)
+    if (file)
+        positionInFile = findPositionOfImage(bytes, file);
+#elif OS(LINUX) || OS(FREEBSD)
     positionInFile = findPositionOfImage(bytes, file);
 #endif
 #if OS(LINUX) && defined(BUN_REFUSES_EXECUTE_ONLY_START)

@@ -64,6 +64,7 @@ public:
     static constexpr unsigned regionShift = 12;
     static constexpr uint32_t numberOfHotNames = 1u << 11;
     static constexpr uint32_t hotNameMultiplier = 1779;
+    static size_t sizeOfPagesAtStart(uint64_t valueOfLimitOfBases);
 
     static constexpr bool hasColumn(uint32_t identifierNumber) { return identifierNumber != rowMarkerColumn && identifierNumber <= maxColumn; }
     static constexpr uint32_t numberForRank(uint32_t rankByUse, uint32_t numberOfNames)

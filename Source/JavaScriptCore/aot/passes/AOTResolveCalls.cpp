@@ -13,6 +13,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinPristine.h"
 #include "AOTCFG.h"
+#include "AOTChooseCallingConventions.h"
 #include "AOTCreateBoundFunctions.h"
 #include "AOTDominators.h"
 #include "AOTEffectsDeclared.h"
@@ -2018,6 +2019,16 @@ struct CallResolver {
         };
     }
 
+    bool passesNumbersInRegisters(FunctionID id) const
+    {
+        auto isNumberInRegister = [&](const DeclaredType& declared) {
+            Representation representation = declaredRepresentationOf(program, declared);
+            return representation == Representation::Int32 || isInt64OrMarker(representation) || isDoubleOrMarker(representation);
+        };
+        const Function& callee = program.at(id);
+        return std::ranges::any_of(callee.results, isNumberInRegister) || std::ranges::any_of(callee.parameters, isNumberInRegister);
+    }
+
     std::expected<Vector<FunctionID, 4>, CallDeclineReason> chooseDispatchedCallees(const CallSite& site, const CalleeCandidates& candidates, bool (*canEnter)(const Program&, FunctionID))
     {
         if (!candidates.isDispatchedAtOperation())
@@ -2044,7 +2055,10 @@ struct CallResolver {
         // What exceeds a limit is reported, site by site.
         context.planAsksAboutPlace |= listsEveryCallee || members.size() <= 1;
         // Callees get an arm each or none: arms for some of them would be chosen by id, and the next run would take as many from the rest.
-        if ((!listsEveryCallee && members.size() > 1) || context.exceeds(LimitID::MaxDispatchCases, members.size(), site.position.value))
+        // A call by value boxes each number that it passes, the entry of the callee takes it out of its box, and so again for the result. A few more comparisons cost less than that.
+        AOT_THRESHOLD(uint64_t, timesAsManyArmsWhereNumbersStayInRegisters, 2);
+        bool isWithinWiderLimit = listsEveryCallee && members.size() <= context.limit(LimitID::MaxDispatchCases) * timesAsManyArmsWhereNumbersStayInRegisters && std::ranges::all_of(members, [&](FunctionID member) { return passesNumbersInRegisters(member); });
+        if ((!listsEveryCallee && members.size() > 1) || (!isWithinWiderLimit && context.exceeds(LimitID::MaxDispatchCases, members.size(), site.position.value)))
             return std::unexpected(CallDeclineReason::TooManyCallees);
         // The value of a provisional id depends on which thread asked for the function first.
         AOT::sort(members, [&](FunctionID a, FunctionID b) { return context.inputs.derivedFunctions->compare(a, b) < 0; });

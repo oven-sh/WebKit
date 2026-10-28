@@ -160,6 +160,40 @@ static size_t granuleIndexOf(uintptr_t start, size_t size, const void* pointer)
     return offset / granuleSize;
 }
 
+// What is reserved without access has none from the start, and child processes inherit it: malloc keeps its records of a range inside the range.
+static void* tryReserveAt(size_t size, OSAllocator::Usage usage, void* address, bool isWritable)
+{
+#if OS(LINUX)
+    if (!isWritable) {
+        void* result = mmap(address, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        if (result == MAP_FAILED)
+            return nullptr;
+        while (madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+        return result;
+    }
+#endif
+    return OSAllocator::tryReserveUncommitted(size, usage, address, isWritable);
+}
+
+static void* tryReserveAligned(size_t size, size_t alignment, OSAllocator::Usage usage, bool isWritable)
+{
+#if OS(LINUX)
+    if (!isWritable) {
+        auto* mapped = static_cast<uint8_t*>(tryReserveAt(size + alignment, usage, nullptr, false));
+        if (!mapped)
+            return nullptr;
+        auto* aligned = std::bit_cast<uint8_t*>(roundUpToMultipleOf(alignment, std::bit_cast<uintptr_t>(mapped)));
+        size_t sizeBelow = aligned - mapped;
+        if (sizeBelow)
+            munmap(mapped, sizeBelow);
+        if (sizeBelow < alignment)
+            munmap(aligned + size, alignment - sizeBelow);
+        return aligned;
+    }
+#endif
+    return OSAllocator::tryReserveUncommittedAligned(size, alignment, usage, nullptr, isWritable);
+}
+
 ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
 {
     RELEASE_ASSERT(request.minSize && !(request.size % sizeStep) && !(request.minSize % sizeStep) && request.minSize <= request.size, request.size, request.minSize);
@@ -204,7 +238,7 @@ void* ReservedRangeHeap::tryReserveRandomWindow(size_t size, size_t alignment, O
         if (reserved == MAP_FAILED)
             reserved = nullptr;
 #else
-        void* reserved = OSAllocator::tryReserveUncommitted(size, usage, requestedAddress, isWritable);
+        void* reserved = tryReserveAt(size, usage, requestedAddress, isWritable);
 #endif
         if (!reserved) {
             if (refusalMeansNoRoomAnywhere)
@@ -228,7 +262,7 @@ uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
     if (request.placement == Placement::AtStart) {
         void* requestedAddress = std::bit_cast<void*>(request.start + request.unreservedPrefixSize);
         size_t reservedSize = size - request.unreservedPrefixSize;
-        address = OSAllocator::tryReserveUncommitted(reservedSize, request.usage, requestedAddress, isWritable);
+        address = tryReserveAt(reservedSize, request.usage, requestedAddress, isWritable);
         if (!address)
             return 0;
         if (address != requestedAddress) {
@@ -237,7 +271,7 @@ uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
         }
 #if OS(UNIX)
         if (request.initialAccess == InitialAccess::None) {
-            size_t inaccessibleSize = isWritable ? request.unusedPrefixSize - request.unreservedPrefixSize : reservedSize;
+            size_t inaccessibleSize = isWritable ? request.unusedPrefixSize - request.unreservedPrefixSize : 0;
             RELEASE_ASSERT(!inaccessibleSize || !mprotect(address, inaccessibleSize, PROT_NONE));
         }
 #endif
@@ -248,12 +282,12 @@ uintptr_t ReservedRangeHeap::tryReserve(size_t size, const Request& request)
     if (request.placement == Placement::RandomWindow)
         address = tryReserveRandomWindow(reservedSize, alignment, request.usage, isWritable);
     if (!address)
-        address = OSAllocator::tryReserveUncommittedAligned(reservedSize, alignment, request.usage, nullptr, isWritable);
+        address = tryReserveAligned(reservedSize, alignment, request.usage, isWritable);
     if (!address)
         return 0;
 #if OS(UNIX)
     if (request.initialAccess == InitialAccess::None) {
-        size_t inaccessibleSize = isWritable ? request.reservedSizeBelowStart + request.unusedPrefixSize : reservedSize;
+        size_t inaccessibleSize = isWritable ? request.reservedSizeBelowStart + request.unusedPrefixSize : 0;
         RELEASE_ASSERT(!inaccessibleSize || !mprotect(address, inaccessibleSize, PROT_NONE));
     }
 #endif
@@ -290,7 +324,7 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     // Undo tryReserveUncommittedAligned's MADV_DONTFORK: mimalloc stores
     // mi_arena_t and theaps inside this region and registers them in
     // process-wide lists that _mi_process_fork_child walks pre-exec.
-    while (madvise(std::bit_cast<void*>(start + request.unreservedPrefixSize - request.reservedSizeBelowStart), size - request.unreservedPrefixSize + request.reservedSizeBelowStart, MADV_DOFORK) == -1 && errno == EAGAIN) { }
+    while (!reservesWithoutAccess(request) && madvise(std::bit_cast<void*>(start + request.unreservedPrefixSize - request.reservedSizeBelowStart), size - request.unreservedPrefixSize + request.reservedSizeBelowStart, MADV_DOFORK) == -1 && errno == EAGAIN) { }
 #elif OS(DARWIN)
     // Undo tryReserveUncommittedAligned's mach_vm_map(..., VM_INHERIT_NONE);
     // same rationale as the Linux MADV_DOFORK branch above.
@@ -519,7 +553,7 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
         size = std::min(size, (m_size - offset) / mallocChunkSize * mallocChunkSize);
 
         void* address = std::bit_cast<void*>(m_start + offset);
-        void* reserved = OSAllocator::tryReserveUncommitted(size, m_usage, address, false);
+        void* reserved = tryReserveAt(size, m_usage, address, false);
         if (!reserved) {
             size = size / 2 / mallocChunkSize * mallocChunkSize;
             if (size < minSize)
@@ -533,7 +567,6 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
             m_segmentsEnd = offset + size;
             continue;
         }
-        RELEASE_ASSERT(!mprotect(address, size, PROT_NONE));
 
         std::optional<Backing> backing = tryCreateBacking(m_start + offset, size, request);
         if (!backing) {

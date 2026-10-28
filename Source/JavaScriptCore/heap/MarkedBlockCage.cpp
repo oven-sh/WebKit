@@ -185,7 +185,9 @@ static void makeEmptyExtensionReadable(uintptr_t start)
 #if OS(UNIX) && !PLATFORM(PLAYSTATION)
     OSAllocator::protect(page, pageSize(), true, false);
 #endif
+#if !OS(LINUX)
     OSAllocator::commit(page, pageSize(), false, false);
+#endif
 }
 #endif
 

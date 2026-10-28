@@ -13,6 +13,8 @@
 
 namespace JSC { namespace AOT {
 
+struct CompileOptions;
+
 struct FFIStubs {
     Vector<uint8_t> code;
     size_t codeAlignment { 1 };

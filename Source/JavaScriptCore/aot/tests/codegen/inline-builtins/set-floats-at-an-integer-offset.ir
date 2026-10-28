@@ -74,7 +74,6 @@ function f1 name="write" module=m0 flags=[IsChecked, HasExplicitName] length=3 t
     v7 = Undefined
     Return v7
 }
-# -- generated: *
 
 # An offset that is an integer is not converted, and both the offset and the number of elements become numbers of bytes.
 # CHECK-LABEL: name="write" role=Source

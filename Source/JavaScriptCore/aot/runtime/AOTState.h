@@ -12,6 +12,7 @@
 #include "StructureID.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <memory>
 #include <span>
 #include <type_traits>
@@ -21,6 +22,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -45,15 +47,46 @@ class StringKeyCache;
 struct BuiltinFamilyState;
 struct ObjectModel;
 
-// Zeroed pages for what lives as long as a VM or the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
+// Zeroed pages of their own for what lives as long as the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void releaseGuardedPages(void* pages, size_t bytes);
 
+// Zeroed pages for what lives no longer than a VM. What the VM takes as it starts are pieces of one mapping, which goes back to the system in one call when the VM ends:
+// threads that start or end together ask the system once each. What does not fit has pages of its own. With ENABLE(AOT_GUARDED_PAGES) everything has.
+class PagesOfVM {
+    WTF_MAKE_TZONE_ALLOCATED(PagesOfVM);
+    WTF_MAKE_NONCOPYABLE(PagesOfVM);
+public:
+    explicit PagesOfVM(size_t sizeOfMapping);
+    ~PagesOfVM();
+
+    void* allocate(size_t bytes);
+    void* tryAllocate(size_t bytes);
+    void release(void* pages, size_t bytes);
+    // The system has taken the pages elsewhere: nothing is mapped here any more.
+    void didMoveAway(void* pages, size_t bytes);
+    // From here on a piece of the mapping that is released stays until the mapping goes, if the mapping is still whole.
+    void willReleaseEverything() { m_releasesEverything = true; }
+
+private:
+    bool contains(const void* pages) const { return std::bit_cast<uintptr_t>(pages) - std::bit_cast<uintptr_t>(m_start) < m_size; }
+
+    uint8_t* m_start { nullptr };
+    size_t m_size { 0 };
+    size_t m_used { 0 };
+    bool m_releasesEverything { false };
+    // Where pieces went early, in no order. A piece beside one may have grown into it since.
+    Vector<std::pair<uint8_t*, size_t>> m_gaps;
+};
+
 class ZeroedPages {
     WTF_MAKE_NONCOPYABLE(ZeroedPages);
 public:
-    ZeroedPages() = default;
+    explicit ZeroedPages(PagesOfVM& pagesOfVM)
+        : m_pagesOfVM(pagesOfVM)
+    {
+    }
     ~ZeroedPages();
 
     // AllAtOnce is for a table whose every page is written right away: one call into the kernel takes the place of a fault per page.
@@ -63,6 +96,7 @@ public:
     std::span<const std::pair<void*, size_t>> ranges() const { return m_ranges.span(); }
 
 private:
+    PagesOfVM& m_pagesOfVM;
     Vector<std::pair<void*, size_t>> m_ranges;
 };
 

@@ -72,7 +72,6 @@ function f1 name="write" module=m0 flags=[IsChecked, HasExplicitName] length=3 t
     v5 = Undefined
     Return v5
 }
-# -- generated: *
 
 # Each element is converted: that is the function's work. Nothing about the views is read here.
 # CHECK-LABEL: name="write" role=Source

@@ -186,7 +186,6 @@ function f2 name="writes" module=m0 position=238 flags=[IsChecked, HasExplicitNa
     v20 = Undefined
     Return v20
 }
-# -- generated: *
 
 # The loop reads the variable only behind the test that may end it. Nothing in the loop throws or runs code, so nobody can look at the variable before the loop is left:
 # it is read ahead of the loop, goes around in a register and is stored on the ways out.

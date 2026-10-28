@@ -3677,9 +3677,6 @@ static void callThroughProxies(ClimbingSet proxies, const ValueFlowBuiltinCall& 
     ClimbingSet targets = context.restrict(context.valueOf(context.readWhatWasWritten(proxies, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() })), universe.callables());
     ValueFlowBuiltinCall handedOn = description;
     handedOn.kind = ValueFlowCallKind::CallByNativeCode;
-    // A call that names no receiver hands undefined on.
-    if (!handedOn.thisValue.node && (!handedOn.thisValue.constant || handedOn.thisValue.constant == ValueSets::nothing))
-        handedOn.thisValue = context.operandHolding(ClimbingSet(universe.undefinedValue()));
     Vector<ValueFlowObjectID, 4> applied;
     context.forEachMember(context.restrict(targets, universe.builtinFunctions()), [&](ValueFlowObjectID target) {
         if (raisesEventWhenCalled(context.program().builtins(), universe.builtinOf(target)))

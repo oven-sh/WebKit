@@ -72,7 +72,6 @@ function f1 name="write" module=m0 flags=[IsChecked, HasExplicitName] length=3 t
     v5 = Undefined
     Return v5
 }
-# -- generated: *
 
 # The elements are moved in place: no function of the engine is entered. One test says that neither view can change its length, two that the elements fit behind the offset, which is cut to a whole number and not compared with what it was.
 # CHECK-LABEL: name="write" role=Source

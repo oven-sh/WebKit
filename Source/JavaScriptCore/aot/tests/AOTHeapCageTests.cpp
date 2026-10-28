@@ -10,6 +10,7 @@
 
 #include "AOTChildProcess.h"
 #include "AOTRuntimeTable.h"
+#include "AOTState.h"
 #include "AOTVector.h"
 #include "AddressSpaceBudget.h"
 #include "CagedAlignedMemoryAllocator.h"
@@ -346,6 +347,82 @@ static void testReleasingFreeMemoryPurgesNoOtherRange()
 
     mi_option_set(mi_option_purge_delay, delay);
     AOT_TEST_CHECK(wasLeftByItsOwnRange && wasLeftByOtherRange);
+}
+#endif
+
+#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+static bool isMapped(void* page)
+{
+    unsigned char state = 0;
+    return !mincore(page, pageSize(), &state);
+}
+
+static bool isZero(const uint8_t* bytes, size_t size)
+{
+    return std::all_of(bytes, bytes + size, [](uint8_t byte) {
+        return !byte;
+    });
+}
+
+static void testPiecesOfOneMappingGoTogether()
+{
+    constexpr size_t pieceSize = 64 * KB;
+    uint8_t* first;
+    uint8_t* second;
+    {
+        PagesOfVM pages(MB);
+        first = static_cast<uint8_t*>(pages.allocate(pieceSize));
+        second = static_cast<uint8_t*>(pages.allocate(pieceSize - 1));
+        auto* third = static_cast<uint8_t*>(pages.allocate(1));
+        AOT_TEST_CHECK(second == first + pieceSize && third == second + pieceSize);
+        AOT_TEST_CHECK(isZero(first, pieceSize) && isZero(second, pieceSize));
+        fill(second, pieceSize, 7);
+
+        auto* large = static_cast<uint8_t*>(pages.allocate(2 * MB));
+        AOT_TEST_CHECK(large && (large + 2 * MB <= first || large >= first + MB) && isZero(large, 2 * MB));
+        pages.release(large, 2 * MB);
+        AOT_TEST_CHECK(!isMapped(large));
+
+        pages.willReleaseEverything();
+        pages.release(first, pieceSize);
+        pages.release(third, 1);
+        AOT_TEST_CHECK(isMapped(first) && isMapped(third) && isFilled(second, pieceSize, 7));
+    }
+    AOT_TEST_CHECK(!isMapped(first) && !isMapped(second) && !isMapped(first + MB - pageSize()));
+}
+
+// Something else may be mapped where a piece has gone, so nothing there is touched again.
+static void testPieceThatGoesEarlyLeavesItsNeighbors()
+{
+    constexpr size_t pieceSize = 64 * KB;
+    uint8_t* pieces[4];
+    void* stranger;
+    {
+        PagesOfVM pages(MB);
+        for (auto& piece : pieces) {
+            piece = static_cast<uint8_t*>(pages.allocate(pieceSize));
+            fill(piece, pieceSize, 5);
+        }
+        pages.release(pieces[1], pieceSize);
+        AOT_TEST_CHECK(!isMapped(pieces[1]) && isFilled(pieces[0], pieceSize, 5) && isFilled(pieces[2], pieceSize, 5));
+        stranger = mmap(pieces[1], pieceSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        AOT_TEST_CHECK(stranger == pieces[1]);
+        fill(stranger, pieceSize, 9);
+
+        void* moved = mremap(pieces[3], pieceSize, 4 * MB, MREMAP_MAYMOVE);
+        AOT_TEST_CHECK(moved != MAP_FAILED && moved != pieces[3]);
+        pages.didMoveAway(pieces[3], pieceSize);
+        AOT_TEST_CHECK(isFilled(moved, pieceSize, 5));
+        pages.release(moved, 4 * MB);
+        AOT_TEST_CHECK(!isMapped(moved));
+
+        pages.willReleaseEverything();
+        pages.release(pieces[0], pieceSize);
+        AOT_TEST_CHECK(!isMapped(pieces[0]) && isFilled(pieces[2], pieceSize, 5));
+    }
+    AOT_TEST_CHECK(!isMapped(pieces[0]) && !isMapped(pieces[2]) && !isMapped(pieces[3]) && !isMapped(pieces[0] + MB - pageSize()));
+    AOT_TEST_CHECK(isFilled(stranger, pieceSize, 9));
+    munmap(stranger, pieceSize);
 }
 #endif
 
@@ -1773,6 +1850,10 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/releasing-free-memory-purges-no-other-range"_s, testReleasingFreeMemoryPurgesNoOtherRange },
 #endif
         { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },
+#if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
+        { "heap-cage/pages-of-a-vm/pieces-of-one-mapping-go-together"_s, testPiecesOfOneMappingGoTogether },
+        { "heap-cage/pages-of-a-vm/a-piece-that-goes-early-leaves-its-neighbors"_s, testPieceThatGoesEarlyLeavesItsNeighbors },
+#endif
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },
         { "heap-cage/cage/off-without-compiled-code"_s, testCageIsOffWithoutCompiledCode },

@@ -256,7 +256,6 @@ function f9 name="aroundUnknown" module=m0 position=762 flags=[IsChecked, HasExp
     Return v10
 }
 function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-# -- generated: *
 
 # What each of these callees does may give a list other storage, and the list that it reaches may be the caller's: behind the call the storage and its length are loaded from the list again.
 # The callee pushes onto a list.

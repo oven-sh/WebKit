@@ -169,7 +169,7 @@ JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForFirstThread();
 JS_EXPORT_PRIVATE void releasePagesForNewThread(void* pages);
 // On the new thread, before it has a VM.
 JS_EXPORT_PRIVATE void adoptPagesForNewThread(void* pages);
-// On the new thread, once it has its instance, or ends without one.
+// On the new thread, where it ends: the pages go back if no VM has taken them. A VM takes all of them, and gives them back when it ends.
 JS_EXPORT_PRIVATE void releaseUnusedPagesOfThread();
 // On the new thread, before the first statement of the program runs, or once it has run code that is not compiled, or where it ends. Until then room is kept for what the thread has yet to take.
 JS_EXPORT_PRIVATE void didStartThread(VM*);

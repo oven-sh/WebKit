@@ -136,8 +136,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         return result.leakSpan().data();
 
 #if OS(LINUX)
-    if (const char* name = vmTagName(static_cast<bmalloc::VMTag>(usage)))
-        prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, result.mutableSpan().data(), bytes, name);
+    // A kernel that was built without names for mappings refuses every one.
+    static std::atomic<bool> namesAreRefused { false };
+    if (const char* name = vmTagName(static_cast<bmalloc::VMTag>(usage)); name && !namesAreRefused.load(std::memory_order_relaxed)) {
+        if (prctl(PR_SET_VMA, PR_SET_VMA_ANON_NAME, result.mutableSpan().data(), bytes, name) == -1 && errno == EINVAL)
+            namesAreRefused.store(true, std::memory_order_relaxed);
+    }
 #endif
 
     if (numGuardPagesToAddOnEachEnd) {

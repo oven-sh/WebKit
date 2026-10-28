@@ -90,18 +90,9 @@ struct PagesOfPlanes {
 };
 static_assert(!(RowDisplacementTable::numberOfColumns % 64) && !(RowDisplacementTable::initialNumberOfBases % 64));
 
-static void* tryReservePagesOfTable(size_t size)
+static void* reservePagesOfTable(VM& vm, size_t size)
 {
-    void* result = tryReserveGuardedPages(size);
-#if OS(LINUX)
-    while (result && madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
-#endif
-    return result;
-}
-
-static void* reservePagesOfTable(size_t size)
-{
-    void* result = tryReservePagesOfTable(size);
+    void* result = vm.aotState().pages->tryAllocate(size);
     RELEASE_ASSERT(result, size);
     return result;
 }
@@ -110,15 +101,24 @@ static void* reservePagesOfTable(size_t size)
 static constexpr bool pagesOfTablesCanGrow = true;
 
 // What the pages held stays, what is added is zero. A refusal changes nothing.
-static void* tryGrowPagesOfTable(void* pages, size_t size, size_t newSize)
+static void* tryGrowPagesOfTable(VM& vm, void* pages, size_t size, size_t newSize)
 {
     void* result = mremap(pages, size, newSize, MREMAP_MAYMOVE);
-    return result == MAP_FAILED ? nullptr : result;
+    if (result == MAP_FAILED)
+        return nullptr;
+    if (result != pages)
+        vm.aotState().pages->didMoveAway(pages, size);
+    return result;
 }
 #else
 static constexpr bool pagesOfTablesCanGrow = false;
-static void* tryGrowPagesOfTable(void*, size_t, size_t) { return nullptr; }
+static void* tryGrowPagesOfTable(VM&, void*, size_t, size_t) { return nullptr; }
 #endif
+
+static uint32_t numberOfBasesAtStart(uint32_t limitOfBases)
+{
+    return pagesOfTablesCanGrow ? std::min(RowDisplacementTable::initialNumberOfBases, limitOfBases) : limitOfBases;
+}
 
 StructureRows& StructureRows::singleton()
 {
@@ -136,9 +136,18 @@ StructureRows::StructureRows()
     size_t size = g_jscConfig.sizeOfStructureHeap;
     RELEASE_ASSERT(start && size);
     RELEASE_ASSERT((start & StructureID::structureIDMask) + (size - 1) <= StructureID::structureIDMask);
-    void* words = reservePagesOfTable((size >> StructureRowWords::granuleShift) << StructureRowWords::wordShift);
+    size_t sizeOfWords = (size >> StructureRowWords::granuleShift) << StructureRowWords::wordShift;
+    void* words = reserveGuardedPages(sizeOfWords);
+#if OS(LINUX)
+    while (madvise(words, sizeOfWords, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+#endif
     // SAFETY: The pointer lies outside the allocation. It is only indexed with the bits of a StructureID shifted by granuleShift: the low 32 bits of an address in the structure heap, which does not cross a 4 GB boundary.
     m_rowsForStructureIDZero = static_cast<uint32_t*>(words) - (static_cast<uint32_t>(start) >> StructureRowWords::granuleShift);
+}
+
+size_t RowDisplacementTable::sizeOfPagesAtStart(uint64_t valueOfLimitOfBases)
+{
+    return PagesOfPlanes(numberOfBasesAtStart(static_cast<uint32_t>(std::clamp<uint64_t>(valueOfLimitOfBases, firstBase + 1, maxNumberOfBases)))).size;
 }
 
 RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, const CustomAccessorTable& customAccessors)
@@ -148,9 +157,9 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
     , m_cageBase(vm.heap.cage().base())
 {
     m_limitOfBases = static_cast<uint32_t>(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::LookupTableBases), firstBase + 1, maxNumberOfBases));
-    m_capacityOfBases = pagesOfTablesCanGrow ? std::min(initialNumberOfBases, m_limitOfBases) : m_limitOfBases;
+    m_capacityOfBases = numberOfBasesAtStart(m_limitOfBases);
     PagesOfPlanes layout(m_capacityOfBases);
-    auto* pages = static_cast<uint8_t*>(reservePagesOfTable(layout.size));
+    auto* pages = static_cast<uint8_t*>(reservePagesOfTable(vm, layout.size));
     for (unsigned i = 0; i < numberOfSlotAccesses; ++i) {
         uint8_t* plane = pages + i * layout.sizeOfPlane;
         m_planes[i] = reinterpret_cast<RememberedSlot<PackedSlot>*>(plane);
@@ -164,13 +173,14 @@ RowDisplacementTable::RowDisplacementTable(VM& vm, CacheRegistry& registry, cons
 RowDisplacementTable::~RowDisplacementTable()
 {
     clear();
+    PagesOfVM& pages = *m_vm.aotState().pages;
     if (!pagesOfTablesCanGrow) {
-        releaseGuardedPages(m_planes[0], PagesOfPlanes(m_capacityOfBases).size);
+        pages.release(m_planes[0], PagesOfPlanes(m_capacityOfBases).size);
         return;
     }
     for (unsigned i = 0; i < numberOfSlotAccesses; ++i)
-        releaseGuardedPages(m_planes[i], PagesOfPlanes(m_numbersOfBasesWithPages[i]).sizeOfPlane);
-    releaseGuardedPages(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
+        pages.release(m_planes[i], PagesOfPlanes(m_numbersOfBasesWithPages[i]).sizeOfPlane);
+    pages.release(m_occupied, PagesOfPlanes(m_numbersOfBasesWithPages[numberOfSlotAccesses]).sizeOfOccupied);
 }
 
 // Where there is no room for more pages the table stays as large as it is, and rows give way to rows as they do at the limit.
@@ -183,7 +193,7 @@ bool RowDisplacementTable::tryGrow()
     auto tryGrowPart = [&](unsigned part, void* pages, size_t PagesOfPlanes::* size) -> void* {
         if (m_numbersOfBasesWithPages[part] == numberOfBases)
             return pages;
-        void* result = tryGrowPagesOfTable(pages, PagesOfPlanes(m_numbersOfBasesWithPages[part]).*size, to.*size);
+        void* result = tryGrowPagesOfTable(m_vm, pages, PagesOfPlanes(m_numbersOfBasesWithPages[part]).*size, to.*size);
         if (result)
             m_numbersOfBasesWithPages[part] = numberOfBases;
         return result;
@@ -619,13 +629,13 @@ CustomAccessorTable::CustomAccessorTable(VM& vm, CacheRegistry& registry)
     : m_vm(vm)
     , m_capacity(safeCast<uint32_t>(runtimeLimitValue(vm, LimitID::CustomAccessorRecords)))
 {
-    m_records = static_cast<CustomAccessorRecord*>(reserveGuardedPages(sizeOfRecords(m_capacity)));
+    m_records = static_cast<CustomAccessorRecord*>(vm.aotState().pages->allocate(sizeOfRecords(m_capacity)));
     registry.add(CacheKind::WeakByKey, "CustomAccessorTable"_s, *this);
 }
 
 CustomAccessorTable::~CustomAccessorTable()
 {
-    releaseGuardedPages(m_records, sizeOfRecords(m_capacity));
+    m_vm.aotState().pages->release(m_records, sizeOfRecords(m_capacity));
 }
 
 std::optional<uint32_t> CustomAccessorTable::find(const CustomAccessorRecord& record) const
@@ -689,7 +699,7 @@ HashedSlotTable::HashedSlotTable(VM& vm, CacheRegistry& registry, const CustomAc
     , m_customAccessors(customAccessors)
     , m_maxNumberOfEntries(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(vm, LimitID::HashedTableEntries), initialNumberOfEntries, maxAddressableEntries))))
     , m_numberOfEntries(initialNumberOfEntries)
-    , m_entries(static_cast<Entry*>(reservePagesOfTable(sizeOfReservation(m_maxNumberOfEntries))))
+    , m_entries(static_cast<Entry*>(reservePagesOfTable(vm, sizeOfReservation(m_maxNumberOfEntries))))
     , m_writtenRegions(asByteSpan(allEntries()), regionShift)
 {
     registry.add(CacheKind::WeakByKey, "HashedSlotTable"_s, *this);
@@ -698,7 +708,7 @@ HashedSlotTable::HashedSlotTable(VM& vm, CacheRegistry& registry, const CustomAc
 HashedSlotTable::~HashedSlotTable()
 {
     clear();
-    releaseGuardedPages(m_entries, sizeOfReservation(m_maxNumberOfEntries));
+    m_vm.aotState().pages->release(m_entries, sizeOfReservation(m_maxNumberOfEntries));
 }
 
 auto HashedSlotTable::findEntry(StructureID structureID, UniquedStringImpl* uid, uintptr_t key) const -> Entry*
@@ -959,7 +969,7 @@ void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStri
 size_t VMPropertyCaches::maxSizeOfPagesAtStart(const Image& image)
 {
     return sizeOfRecords(safeCast<uint32_t>(runtimeLimitValue(&image, LimitID::CustomAccessorRecords)))
-        + PagesOfPlanes(RowDisplacementTable::initialNumberOfBases).size
+        + RowDisplacementTable::sizeOfPagesAtStart(runtimeLimitValue(&image, LimitID::LookupTableBases))
         + sizeOfReservation(static_cast<uint32_t>(std::bit_floor(std::clamp<uint64_t>(runtimeLimitValue(&image, LimitID::HashedTableEntries), HashedSlotTable::initialNumberOfEntries, maxAddressableEntries))));
 }
 
