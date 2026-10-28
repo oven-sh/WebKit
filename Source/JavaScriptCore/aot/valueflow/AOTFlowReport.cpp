@@ -277,7 +277,7 @@ FlowReportBodyRecords collectFlowReportBodyRecords(const Program& program, Build
     return records;
 }
 
-FlowReport buildFlowReport(const Program& program, const FlowResults& flow, const GradedSites& sites, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&& bodyRecords, BuildContext& build)
+FlowReport reportUsesOfLibraryCode(const FlowResults& flow)
 {
     FlowReport report;
     report.unseenCode = Vector<Wire::UnseenCodeRecord>(flow.unseenCode());
@@ -287,6 +287,12 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
     report.builtinsUsed = Vector<Wire::BuiltinUseRecord>(flow.builtinUses());
     for (RuntimeFunctionID function : flow.libraryFunctionsLacked())
         report.libraryFunctionsLacked.append(Wire::LackedFunctionRecord { .function = function.index() });
+    return report;
+}
+
+FlowReport buildFlowReport(const Program& program, const FlowResults& flow, const GradedSites& sites, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&& bodyRecords, BuildContext& build)
+{
+    FlowReport report = reportUsesOfLibraryCode(flow);
     report.featuresUsed = Vector<Wire::FeatureUseRecord>(flow.featureUses());
     countDirectCallsAsUses(program, bodyRecords.builtinsCalledDirectly.span(), report, build);
     appendLocaleUses(program, flow, report);

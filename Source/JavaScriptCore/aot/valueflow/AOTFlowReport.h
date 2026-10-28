@@ -103,6 +103,8 @@ struct FlowReportBodyRecords {
     Vector<BuiltinID> builtinsCalledDirectly;
 };
 FlowReportBodyRecords collectFlowReportBodyRecords(const Program&, BuildContext&);
+// Of the report: unseenCode, builtinsUsed and libraryFunctionsLacked.
+FlowReport reportUsesOfLibraryCode(const FlowResults&);
 FlowReport buildFlowReport(const Program&, const FlowResults&, const GradedSites&, std::span<const Wire::RemainingCheckRecord> checksLeftByFlow, FlowReportBodyRecords&&, BuildContext&);
 
 } } } // namespace JSC::AOT::Typed

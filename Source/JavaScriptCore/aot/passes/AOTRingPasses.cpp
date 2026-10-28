@@ -1765,6 +1765,21 @@ struct TrivialParameterRemover {
         return positionsFoundInBounds->quickGet(parameter.index());
     }
 
+    // `index < length` says nothing of the index while the declared type of the length is only expected. It does behind the test of the length, or where the body stands in a caller that knows the length.
+    bool isLeftByComparisonWithExpectedNumber(const ParameterPosition& position) const
+    {
+        std::optional<Edge> edge = cfg.singleIncomingEdge(position.block);
+        if (!edge || edge->isHandlerEdge() || !function.at(edge->from).terminator.isConditionalBranch())
+            return false;
+        const Value& comparison = function.at(function.at(edge->from).terminator.conditionOperand());
+        uint32_t first = firstEdgeResultParameter(function, edge->from, edge->targetIndex);
+        if (!relationalOperators.contains(comparison.opcode) || position.index < first || !context.program.sourceFunctionOf(function, comparison.origin()).has(FunctionFlags::IsChecked))
+            return false;
+        uint32_t narrowedOperandIndex = targetOf(function, *edge).proofs[position.index - first];
+        const Value& other = function.at(comparison.operand(1 - narrowedOperandIndex));
+        return context.types.at(function.at(position.parameter).type).isNumber() && !context.types.at(other.type).isNumber() && context.types.at(other.expectedOrType().predicted()).isNumber();
+    }
+
     KnownValue onlyValueOf(const Block& block, ValueID parameter) const
     {
         if (block.handler || block.subject == parameter)
@@ -1808,7 +1823,7 @@ struct TrivialParameterRemover {
                 return valueBehindCasts(position);
             only = leader;
         }
-        if (receivesEdgeResult && only && !canReplaceParameter(function, only, position.parameter))
+        if (receivesEdgeResult && only && (!canReplaceParameter(function, only, position.parameter) || isLeftByComparisonWithExpectedNumber(position)))
             return position.parameter;
         return only;
     }

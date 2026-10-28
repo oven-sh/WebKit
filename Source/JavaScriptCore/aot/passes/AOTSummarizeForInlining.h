@@ -86,6 +86,12 @@ struct ReceiverParameter {
     uint32_t stores { 0 };
 };
 
+// A parameter under which objects are read: `events[type]`.
+struct KeyParameter {
+    uint32_t entryParameter { 0 };
+    uint32_t accesses { 0 };
+};
+
 struct InliningSummary {
     bool canInlineWholeBody() const { return barrier == InlineBarrier::None && blocksBoundToFrame.isEmpty(); }
     bool canInlineHead() const { return barrier == InlineBarrier::None && !headBlocks.isEmpty(); }
@@ -108,6 +114,7 @@ struct InliningSummary {
     Vector<BytesInRange, 0> partsOfBytesOnlyIfSomeTestFails;
     Vector<SpreadOfParameter, 0> spreadsOfParameters;
     Vector<ReceiverParameter, 1> receiverParameters;
+    Vector<KeyParameter, 1> keyParameters;
     bool neverReturns { false };
     bool hasCycle { false };
     bool hasBareReturn { false };

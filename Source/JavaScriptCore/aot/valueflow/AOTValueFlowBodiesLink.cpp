@@ -1269,6 +1269,23 @@ private:
         forEachIndexInParallel(m_loops, ofLayout.size(), [&](unsigned index, unsigned worker) {
             allocatedWithLayout[index] = makerOf(worker).of(ofLayout[index].span());
         });
+        auto standsBelowLibraryClass = [&](LayoutID layout) {
+            for (size_t steps = 0; steps < m_program.layouts.size() && layout; ++steps) {
+                const Layout& above = m_program.at(layout);
+                if (layoutIsDefinedByClass(above) && above.module && m_program.at(above.module).kind == ModuleKind::RuntimeSource)
+                    return true;
+                if (!above.has(LayoutFlags::HasHeritage))
+                    return false;
+                layout = predictedHeritageOf(above);
+            }
+            return false;
+        };
+        Vector<ValueSetID> belowLibraryClasses;
+        for (uint32_t index = 0; index < ofLayout.size(); ++index) {
+            if (standsBelowLibraryClass(LayoutID(index)))
+                belowLibraryClasses.append(allocatedWithLayout[index]);
+        }
+        universe.m_instancesBelowLibraryClasses = maker.uniteAll(belowLibraryClasses.span());
         Vector<ValueSetID> inheritingLayouts;
         universe.m_objectsOfLayout = Vector<ValueSetID>(ofLayout.size(), [&](size_t index) {
             ValueSetID objects = allocatedWithLayout[index];

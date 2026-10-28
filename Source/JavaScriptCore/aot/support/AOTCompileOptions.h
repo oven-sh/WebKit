@@ -181,8 +181,6 @@ struct CompileOptions {
 
     bool isVerifyOnly() const { return action == CompileAction::VerifyOnly; }
     bool isCheckOnly() const { return action == CompileAction::CheckOnly; }
-    // The caller hands over the program again, with what the flow analysis has found it to lack.
-    bool stopsWhereLibraryCodeIsLacked() const { return action == CompileAction::CompileUnlessLibraryCodeIsLacked; }
     bool collectsDeclines() const { return hasFlag(reports, ReportSet::Declines); }
     bool collectsAllocationRemarks() const { return hasFlag(reports, ReportSet::Allocations); }
     // Code comes in at any place and at any time, so nothing holds for the program as a whole.

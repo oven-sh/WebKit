@@ -32,7 +32,7 @@ public:
     Pipeline(Program&, PassRunner&);
     ~Pipeline();
 
-    void runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries = [](const PipelineOutput&) { });
+    void runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries = [](const PipelineOutput&) { }, NOESCAPE const JudgeOfFlowResults& goesOnBehindFlowAnalysis = [](const FlowResults&) { return true; });
     std::unique_ptr<PipelineOutput> takeOutput() { return WTF::move(m_output); }
 
     void runReadStage();

@@ -938,6 +938,17 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                 continue;
             for (ValueID id : function.at(block).values) {
                 const Value& access = function.at(id);
+                if (access.opcode == Opcode::ElemGet) {
+                    if (std::optional<uint32_t> key = entryParameterBehind(analyses.identityOf(access.propertyOperand()))) {
+                        size_t position = summary.keyParameters.findIf([&](const KeyParameter& other) { return other.entryParameter == *key; });
+                        if (position == notFound) {
+                            position = summary.keyParameters.size();
+                            summary.keyParameters.append({ *key, 0 });
+                        }
+                        ++summary.keyParameters[position].accesses;
+                    }
+                    continue;
+                }
                 bool isStore = isStoreByKey(access.opcode);
                 if (!isNamedAccess(access.opcode) && !isStore)
                     continue;
@@ -1133,6 +1144,8 @@ void InliningSummaries::dump(PrintStream& out, const Program& program) const
             out.print(" spread(p", spread.entryParameter, " bytes=", spread.code.bytes, ")");
         for (const ReceiverParameter& receiver : summary.receiverParameters)
             out.print(" receiver(p", receiver.entryParameter, " accesses=", receiver.accessesByName, " stores=", receiver.stores, ")");
+        for (const KeyParameter& key : summary.keyParameters)
+            out.print(" key(p", key.entryParameter, " accesses=", key.accesses, ")");
         out.print("\n");
     }
 }
@@ -1969,6 +1982,19 @@ static uint64_t computeKnownReceiverBenefit(const FunctionPassContext& context, 
     return bytes;
 }
 
+// A read under a name that is written at the call remembers where it found the name. A read under a key that arrives looks it up each time.
+static uint64_t computeKnownKeyBenefit(const FunctionPassContext& context, const Value& call, const InliningSummary& summary, Bets bets)
+{
+    uint64_t bytesOfAccess = bets == Bets::OnSpeed ? InlineModel::knownReceiverAccessBytes : InlineModel::slotInPlaceOfNameBytes;
+    uint64_t bytes = 0;
+    for (const KeyParameter& key : summary.keyParameters) {
+        ValueID argument = argumentAt(call, key.entryParameter);
+        if (argument && context.program.typeOf(context.function, argument).singleStringLiteral())
+            bytes += bytesOfAccess * key.accesses;
+    }
+    return bytes;
+}
+
 // The frame holds the call that leads to the function here.
 static unsigned numberOfCallSitesCountedHere(const FunctionPassContext& context, uint32_t frame)
 {
@@ -2292,6 +2318,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         addBenefit(InlineBenefit::KnownCalleeArgument, bytes);
     if (uint64_t bytes = computeKnownReceiverBenefit(context, value, summary, bets))
         addBenefit(InlineBenefit::KnownReceiver, bytes);
+    if (uint64_t bytes = computeKnownKeyBenefit(context, value, summary, bets))
+        addBenefit(InlineBenefit::KnownKey, bytes);
 
     bool isTooDeep = false;
     if (canInlineWholeBody) {
@@ -2383,6 +2411,8 @@ static StatisticID statisticFor(InlineBenefit benefit)
         return StatisticID::InlineBenefitKnownCalleeArgument;
     case InlineBenefit::KnownReceiver:
         return StatisticID::InlineBenefitKnownReceiver;
+    case InlineBenefit::KnownKey:
+        return StatisticID::InlineBenefitKnownKey;
     case InlineBenefit::SunkAllocation:
         return StatisticID::InlineBenefitSunkAllocation;
     case InlineBenefit::Wrapper:

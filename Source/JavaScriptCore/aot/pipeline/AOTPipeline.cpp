@@ -1839,19 +1839,7 @@ void Pipeline::runPlacementAndRepresentationStagesTogether()
     stage.didFinish(nameOf(PassID::PlaceSiteCaches));
 }
 
-static bool lacksLibraryCode(const Program& program, const FlowResults& flow)
-{
-    if (!flow.libraryFunctionsLacked().empty())
-        return true;
-    const BuiltinTable& builtins = program.builtins();
-    return std::ranges::any_of(builtins.startupLoads(), [&](const BuiltinModuleLoad& load) {
-        bool isHeld = std::ranges::contains(program.modules, load.module, &Module::runtimeModule);
-        BuiltinID namespaceObject = builtins.namespaceOf(load.module);
-        return !isHeld && namespaceObject && std::ranges::contains(flow.builtinUses(), namespaceObject.index(), &BuiltinUseRecord::builtin);
-    });
-}
-
-void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries)
+void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, NOESCAPE const JudgeOfFlowResults& goesOnBehindFlowAnalysis)
 {
     runReadStage();
     if (m_build.options().isVerifyOnly())
@@ -1860,8 +1848,8 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
     // Nothing behind this refuses a program for what it says. The limits of what follows are about the executable.
     if (m_build.options().isCheckOnly())
         return;
-    if (m_build.options().stopsWhereLibraryCodeIsLacked() && lacksLibraryCode(m_program, flow())) {
-        m_output->lacksLibraryCode = true;
+    if (!goesOnBehindFlowAnalysis(flow())) {
+        m_output->endedBehindFlowAnalysis = true;
         return;
     }
     runOptimizeStage();
@@ -1898,7 +1886,7 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
     m_output->isComplete = !m_runner.isStopped();
 }
 
-std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, const ExternalFunctionBodies* externalBodies, BuildContext& build, NOESCAPE const ScopedLambda<void()>& didReadProgram, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries)
+std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programBytes, const ExternalFunctionBodies* externalBodies, BuildContext& build, NOESCAPE const ScopedLambda<void()>& didReadProgram, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, NOESCAPE const JudgeOfFlowResults& goesOnBehindFlowAnalysis)
 {
     std::unique_ptr<Program> program;
     {
@@ -1911,10 +1899,10 @@ std::unique_ptr<PipelineOutput> runPipeline(std::span<const uint8_t> programByte
         build.diagnostics().finish(nullptr);
         return nullptr;
     }
-    return runPipeline(WTF::move(program), build, readBesideLastEffectSummaries);
+    return runPipeline(WTF::move(program), build, readBesideLastEffectSummaries, std::nullopt, goesOnBehindFlowAnalysis);
 }
 
-std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, BuildContext& build, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, std::optional<PassID> last)
+std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, BuildContext& build, NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries, std::optional<PassID> last, NOESCAPE const JudgeOfFlowResults& goesOnBehindFlowAnalysis)
 {
     build.resolveFunctionToDump(*program);
     PassRunner runner(build, last);
@@ -1922,7 +1910,7 @@ std::unique_ptr<PipelineOutput> runPipeline(std::unique_ptr<Program> program, Bu
     {
         Pipeline pipeline(*program, runner);
         pipeline.output().program = WTF::move(program);
-        pipeline.runAllStages(readBesideLastEffectSummaries);
+        pipeline.runAllStages(readBesideLastEffectSummaries, goesOnBehindFlowAnalysis);
         output = pipeline.takeOutput();
     }
     if (build.diagnostics().hasErrors()) {

@@ -231,6 +231,9 @@ void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
         if (ClimbingSet listed = hostObjectsListedBesideUnknownObject(object, receivers); holdsAnything(listed))
             connect(m_context.lookup(listed, name), m_statement.result);
         readExportsOfListedHolders(object, receivers);
+        // The members of a library class are found by name alone once an instance has escaped. A key nobody knows may be any of their names.
+        if (ClimbingSet listed = instancesBelowLibraryClassesListedBesideUnknownObjectInProgram(object, receivers); holdsAnything(listed))
+            connect(m_context.lookup(listed, name), m_statement.result);
         if (holdsNamedOrLoadedBun(object))
             add(m_statement.result, only(ValueFlowUniverse::markOfLoadedBun()));
     }

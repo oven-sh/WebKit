@@ -1384,6 +1384,29 @@ static bool isMadeInFrontOfLoopAround(FunctionPassContext& context, ValueID arra
     });
 }
 
+// Such a test fails for an absent element alone, so the test of the position takes its place. Of a number in storage for any value it also tells how the number is held, which whoever reckons with it asks anyway.
+static bool isTestedForTypeOfElements(FunctionAnalyses& analyses, ValueID read, ArrayStorage arrayStorage)
+{
+    const Program& program = analyses.program();
+    const Function& function = analyses.function();
+    Type element = program.typeOf(function, read).withoutPrimitives(Primitive::Undefined);
+    if (arrayStorage == ArrayStorage::Contiguous && element.isNumber())
+        return false;
+    Vector<ValueID, 4> worklist { read };
+    while (!worklist.isEmpty()) {
+        for (const Use& use : analyses.useLists().usesOf(worklist.takeLast())) {
+            if (use.kind != Use::Kind::Operand || use.operandIndex)
+                continue;
+            const Value& user = function.at(use.user);
+            if (isCastWithoutTest(user.opcode))
+                worklist.append(use.user);
+            else if (user.opcode == Opcode::TypeTest && !program.at(user.testedType()).mayBeUndefinedOrNull() && element.isSubsetOf(program.at(user.testedType()), program))
+                return true;
+        }
+    }
+    return false;
+}
+
 static bool hasFormWithoutAbsentElement(FunctionPassContext& context, const PresenceQuery& query)
 {
     const Program& program = context.program;
@@ -1397,7 +1420,7 @@ static bool hasFormWithoutAbsentElement(FunctionPassContext& context, const Pres
     // In a dense one only a position outside finds nothing, and the arm for that is one comparison with the length, which the loop mostly makes itself.
     const Value& array = function.at(sameObjectThroughCasts(function, query.receiver));
     if (localArrayAllocations.contains(array.opcode))
-        return !query.isDense && isMadeInFrontOfLoopAround(context, query.receiver, query.block);
+        return isMadeInFrontOfLoopAround(context, query.receiver, query.block) && (!query.isDense || isTestedForTypeOfElements(context.analyses, query.access, query.arrayStorage));
     return array.opcode != Opcode::CallBuiltin || !program.builtins().at(array.overload()).code.prefixForm;
 }
 

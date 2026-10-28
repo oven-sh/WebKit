@@ -378,7 +378,7 @@ static void run(NOESCAPE const PipelineRunner& runPipeline, BuildContext& contex
     output.entryModuleIDs = program.entries.map([](const Typed::Entry& entry) {
         return entry.module.index() + 1;
     });
-    if (context.options().isVerifyOnly() || pipeline->lacksLibraryCode) {
+    if (context.options().isVerifyOnly() || pipeline->endedBehindFlowAnalysis) {
         PhaseTimes times(context, Stage::AnalyzeFlow);
         buildFlowReport(*pipeline, Typed::collectFlowReportBodyRecords(program, context), context, output);
         times.didFinish("collect type tests, build flow report"_s);
@@ -430,7 +430,17 @@ std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, 
             return Typed::runPipeline(program, owner.externalBodies, context, [&] {
                 if (owner.release)
                     owner.release(owner.owner);
-            }, readBesideLastEffectSummaries);
+            }, readBesideLastEffectSummaries, [&](const Typed::FlowResults& flow) {
+                if (!owner.goesOnBehindFlowAnalysis)
+                    return true;
+                Typed::FlowReport report = Typed::reportUsesOfLibraryCode(flow);
+                FlowFindings findings {
+                    report.unseenCode.span().data(), report.unseenCode.size(),
+                    report.builtinsUsed.span().data(), report.builtinsUsed.size(),
+                    report.libraryFunctionsLacked.span().data(), report.libraryFunctionsLacked.size(),
+                };
+                return owner.goesOnBehindFlowAnalysis(owner.owner, &findings);
+            });
         }, context, *output, WhatTheBuildLeaves::DiesBesideTheCaller);
         takeResults(context, *output, WhatTheBuildLeaves::DiesBesideTheCaller);
         context.parallelLoops().sendRestingThreadsBack();

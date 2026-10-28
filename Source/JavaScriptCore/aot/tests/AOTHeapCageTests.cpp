@@ -48,6 +48,21 @@
 #include <wtf/Threading.h>
 #include <wtf/threads/BinarySemaphore.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringToIntegerConversion.h>
+
+#if OS(LINUX)
+#include <cxxabi.h>
+#include <fcntl.h>
+#include <link.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <ucontext.h>
+#include <unistd.h>
+
+extern "C" char __executable_start;
+#endif
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -413,6 +428,92 @@ static void testMarkStackThatCannotGrowSaysWhy()
 #endif
 
 #if OS(LINUX) && !ASAN_ENABLED
+static constexpr ASCIILiteral frameLinePrefix = "frame 0x"_s;
+
+// Addresses alone: there may be no memory to name them with.
+static void printFramesAndEnd(int signalNumber, siginfo_t* info, void* context)
+{
+    auto print = [](ASCIILiteral prefix, uintptr_t value) {
+        char line[64];
+        int length = snprintf(line, sizeof(line), "%s%lx\n", prefix.characters(), static_cast<unsigned long>(value));
+        if (write(STDERR_FILENO, line, length) < 0) { }
+    };
+    auto& machine = static_cast<ucontext_t*>(context)->uc_mcontext;
+#if CPU(X86_64)
+    uintptr_t pc = machine.gregs[REG_RIP];
+    uintptr_t frame = machine.gregs[REG_RBP];
+#else
+    uintptr_t pc = machine.pc;
+    uintptr_t frame = machine.regs[29];
+#endif
+    print("signal at address 0x"_s, std::bit_cast<uintptr_t>(info->si_addr));
+    for (unsigned depth = 0; depth < 32; ++depth) {
+        print(frameLinePrefix, pc);
+        if (!frame || frame % sizeof(uintptr_t))
+            break;
+        auto* words = std::bit_cast<uintptr_t*>(frame);
+        if (words[0] <= frame)
+            break;
+        pc = words[1];
+        frame = words[0];
+    }
+    signal(signalNumber, SIG_DFL);
+    raise(signalNumber);
+}
+
+static void printFramesAtSignals()
+{
+    struct sigaction action { };
+    action.sa_sigaction = printFramesAndEnd;
+    action.sa_flags = SA_SIGINFO | SA_RESETHAND | SA_NODEFER;
+    for (int signalNumber : { SIGSEGV, SIGBUS, SIGILL, SIGTRAP, SIGABRT })
+        AOT_TEST_CHECK(!sigaction(signalNumber, &action, nullptr));
+}
+
+// The process ran this executable, so its addresses are named by the symbols of this one.
+static String withNamedFrames(const String& output)
+{
+    int file = open("/proc/self/exe", O_RDONLY);
+    struct stat status;
+    if (file < 0 || fstat(file, &status))
+        return output;
+    auto* bytes = static_cast<const uint8_t*>(mmap(nullptr, status.st_size, PROT_READ, MAP_PRIVATE, file, 0));
+    close(file);
+    if (bytes == MAP_FAILED)
+        return output;
+    auto* header = reinterpret_cast<const ElfW(Ehdr)*>(bytes);
+    auto sections = unsafeMakeSpan(reinterpret_cast<const ElfW(Shdr)*>(bytes + header->e_shoff), header->e_shnum);
+    std::span<const ElfW(Sym)> symbols;
+    const char* names = nullptr;
+    for (auto& section : sections) {
+        if (section.sh_type != SHT_SYMTAB)
+            continue;
+        symbols = unsafeMakeSpan(reinterpret_cast<const ElfW(Sym)*>(bytes + section.sh_offset), section.sh_size / sizeof(ElfW(Sym)));
+        names = reinterpret_cast<const char*>(bytes + sections[section.sh_link].sh_offset);
+    }
+    uintptr_t slide = header->e_type == ET_DYN ? std::bit_cast<uintptr_t>(&__executable_start) : 0;
+
+    StringBuilder result;
+    for (auto line : StringView(output).split('\n')) {
+        result.append(line);
+        if (line.startsWith(frameLinePrefix)) {
+            uintptr_t address = parseInteger<uint64_t>(line.substring(frameLinePrefix.length()), 16).value_or(0) - slide;
+            for (auto& symbol : symbols) {
+                if (ELF64_ST_TYPE(symbol.st_info) != STT_FUNC || address - symbol.st_value >= symbol.st_size)
+                    continue;
+                int status = -1;
+                char* demangled = abi::__cxa_demangle(names + symbol.st_name, nullptr, nullptr, &status);
+                result.append(' ', String::fromUTF8(status ? names + symbol.st_name : demangled));
+                free(demangled);
+                break;
+            }
+        }
+        result.append('\n');
+    }
+    munmap(const_cast<uint8_t*>(bytes), status.st_size);
+    return result.toString();
+}
+
 // Within a limit on address space every cage of the process takes from one range.
 template<void (*body)()>
 static void runInProcessWithSharedRange()
@@ -426,6 +527,7 @@ static void runInProcessWithSharedRange()
 
     if (MarkedBlockCage::isEnabled()) {
         AOT_TEST_CHECK(MarkedBlockCage::require().has_value() && MarkedBlockCage::isRequired());
+        printFramesAtSignals();
         body();
         return;
     }
@@ -434,7 +536,7 @@ static void runInProcessWithSharedRange()
     Vector<String> arguments { "-c"_s, "ulimit -c 0 && ulimit -v 1048576 && exec \"$0\" \"$@\""_s, String(programPath()), String(nativeSubcommandName), String(singleProcessFlag), String(name), "--useAOT=true"_s };
     ChildProcessResult result = launcher.run(arguments.span());
     if (!result.exitedWith(0)) {
-        dataLogLn(result.output);
+        dataLogLn(withNamedFrames(result.output));
         dataLogLn("The process under a limit on address space ", result.description());
         failNativeTest(__FILE__, __LINE__, name.characters());
     }
@@ -613,6 +715,45 @@ static void checkRequestsThatMayNotFailUseBallast()
     keepAddressSpaceBallast();
     AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
     bmalloc::api::setAddressSpaceBallastHandler(nullptr);
+}
+
+// All the address space is taken, and requests that may not fail have let go of every piece. What the last piece left serves one more.
+static void checkRequestsThatMayNotFailLookInWhatLastPieceLeft()
+{
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
+
+    struct Mapping {
+        void* pages;
+        size_t size;
+    };
+    Vector<Mapping, 64> mappings;
+    for (size_t size = 64 * MB; size >= pageSize(); size /= 2) {
+        while (void* pages = OSAllocator::tryReserveUncommitted(size))
+            mappings.append({ pages, size });
+    }
+    Vector<void*> pieces;
+    pieces.reserveInitialCapacity(256 * KB);
+    while (void* piece = tryFastAlignedMalloc(16, 16 * KB))
+        pieces.append(piece);
+    AOT_TEST_CHECK(pieces.size() < pieces.capacity());
+
+    // An allocator that does not remember what it refused cannot be asked again.
+    if (void* served = bmalloc::api::memalignAgainWithBallast()) {
+        pieces.append(served);
+        while (bmalloc::api::sizeOfAddressSpaceBallastKept() && pieces.size() < pieces.capacity())
+            pieces.append(fastMalloc(16 * KB));
+        AOT_TEST_CHECK(!bmalloc::api::sizeOfAddressSpaceBallastKept());
+        // Another size needs a page of its own.
+        pieces.append(fastMalloc(20 * KB));
+    }
+
+    for (void* piece : pieces)
+        fastFree(piece);
+    for (auto [pages, size] : mappings)
+        OSAllocator::releaseDecommitted(pages, size, 0);
+    keepAddressSpaceBallast();
+    AOT_TEST_CHECK(bmalloc::api::hasWholeAddressSpaceBallast());
 }
 
 // Each VM that runs compiled code adds to the ballast, and what it added is let go of when the VM is gone.
@@ -1116,6 +1257,42 @@ static void checkErrorWaitsAtFunctionEntriesAlone()
     traps.unregisterMirror(mirror);
 }
 
+static constexpr size_t sizeOfFrameAboveDeadStack = 256 * KB;
+
+static NEVER_INLINE uintptr_t createErrorInDeeperFrame(MarkedBlockCage& cage)
+{
+    volatile char frame[sizeOfFrameAboveDeadStack];
+    frame[0] = 0;
+    cage.didCreateOutOfMemoryError();
+    return std::bit_cast<uintptr_t>(&frame[0]);
+}
+
+static NEVER_INLINE void checkDeadStackInDeeperFrame(TestVM& test, bool isBelowSoftLimit)
+{
+    volatile char frame[sizeOfFrameAboveDeadStack];
+    frame[0] = 0;
+    uintptr_t endOfFrame = std::bit_cast<uintptr_t>(&frame[0]);
+    VM& vm = test.vm();
+    AOT_TEST_CHECK((endOfFrame < std::bit_cast<uintptr_t>(vm.softStackLimit())) == isBelowSoftLimit);
+    uintptr_t endOfFrameOfError = createErrorInDeeperFrame(test.cage());
+    AOT_TEST_CHECK(test.cage().hasDeadStackToClear());
+    uintptr_t lowest = std::bit_cast<uintptr_t>(test.cage().takeLowestAddressOfDeadStack(vm));
+    AOT_TEST_CHECK(!test.cage().hasDeadStackToClear());
+    AOT_TEST_CHECK(lowest < endOfFrameOfError && lowest >= std::bit_cast<uintptr_t>(vm.stackLimit()));
+    lowest = std::bit_cast<uintptr_t>(test.cage().takeLowestAddressOfDeadStack(vm));
+    AOT_TEST_CHECK(lowest > endOfFrameOfError && lowest < endOfFrame);
+}
+
+// The dead stack begins below the frame that made the error and ends below the frame that asks, wherever the soft limit lies.
+static void checkDeadStackLiesBelowTheFrameThatAsks()
+{
+    TestVM test;
+    checkDeadStackInDeeperFrame(test, false);
+    size_t softReservedZoneSize = test.vm().updateSoftReservedZoneSize(Options::maxPerThreadStackUsage());
+    checkDeadStackInDeeperFrame(test, true);
+    test.vm().updateSoftReservedZoneSize(softReservedZoneSize);
+}
+
 // A heap that stays almost full of live objects finds no room again and again, with little allocated in between. The fourth time in a row the error is owed.
 static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
 {
@@ -1461,6 +1638,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/cell-in-a-full-range-grows-into-the-shared-reserve"_s, runInProcessWithSharedRange<checkCellInFullRangeGrowsIntoSharedReserve> },
 #if USE(MIMALLOC)
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
+        { "heap-cage/ballast/requests-that-may-not-fail-look-in-what-the-last-piece-left"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailLookInWhatLastPieceLeft> },
         { "heap-cage/ballast/it-grows-with-the-vms"_s, runInProcessWithSharedRange<checkBallastGrowsWithVMs> },
         { "heap-cage/ballast/address-space-that-cannot-be-counted-counts-as-taken"_s, runInProcessWithSharedRange<checkAddressSpaceThatCannotBeCountedCountsAsTaken> },
         { "heap-cage/ballast/what-it-lets-go-of-stays-with-requests-that-may-not-fail"_s, runInProcessWithSharedRange<checkWhatBallastLetsGoOfStaysWithRequestsThatMayNotFail> },
@@ -1481,6 +1659,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/infallible-scope-uses-reserve"_s, withCage<checkInfallibleScopeUsesReserve> },
         { "heap-cage/cage/constants-are-compiled-in-full-cage"_s, withCage<checkConstantsAreCompiledInFullCage> },
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
+        { "heap-cage/cage/dead-stack-lies-below-the-frame-that-asks"_s, withCage<checkDeadStackLiesBelowTheFrameThatAsks> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },
         { "heap-cage/cage/error-owed-for-structures-then-storage-is-heard-of-by-both"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Structures, ErrorGiven::TheOneOwed>> },

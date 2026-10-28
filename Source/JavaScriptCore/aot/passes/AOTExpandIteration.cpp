@@ -517,13 +517,13 @@ static ValueID findMakerOfUnchangedArguments(FunctionPassContext& pass, ValueID 
     if (resultRuleOf(maker.opcode) != ResultRule::Allocation || !madeClass || madeClass->builtinClass != BuiltinClasses::Arguments)
         return { };
 
-    // By what the schema says of the operand. A walk calls the method that the object was made with, and an operation that runs no code hands the object to nobody.
+    // By what the schema says of the operand. A walk calls the method that the object was made with, and only the walk reads the state that holds the object. An operation that runs no code and keeps the object nowhere hands it to nobody.
     auto readsOrWalks = [&](const Use& use) {
         if (use.kind != Use::Kind::Operand)
             return false;
         const Value& user = function.at(use.user);
         OperandBehavior declared = declaredBehaviorOf(user.opcode, use.operandIndex);
-        if (declared.retainedIn == RetainedIn::Result)
+        if (declared.retainedIn == RetainedIn::Result && declared.protocols.contains(Protocol::Iterate))
             declared.uses.remove(OperandUse::Retains);
         if (!declared.uses.containsOnly(usesOfContents))
             return false;

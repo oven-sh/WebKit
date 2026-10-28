@@ -567,10 +567,12 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
 
 void* MarkedBlockCage::takeLowestAddressOfDeadStack(VM& vm)
 {
-    uintptr_t lowest = std::bit_cast<uintptr_t>(currentStackPointer());
+    uintptr_t stackPointer = std::bit_cast<uintptr_t>(currentStackPointer());
+    uintptr_t lowest = stackPointer;
     if (void* stackPointerAtError = std::exchange(m_stackPointerAtError, nullptr))
         lowest = std::min(lowest, std::bit_cast<uintptr_t>(stackPointerAtError));
-    return std::bit_cast<void*>(std::max(lowest - stackBelowErrorToClear, std::bit_cast<uintptr_t>(vm.softStackLimit())));
+    // A frame that has no stack check of its own may end below the soft limit.
+    return std::bit_cast<void*>(std::min(stackPointer, std::max(lowest - stackBelowErrorToClear, std::bit_cast<uintptr_t>(vm.stackLimit()))));
 }
 
 void MarkedBlockCage::clearDeadStack(VM& vm)

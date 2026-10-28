@@ -1082,8 +1082,7 @@ private:
             return;
         if (isOpen) {
             connectOperands(BuiltinOperand::argument(1), escaped());
-            // What the get trap answers is found under every name. The trap stands for it.
-            m_context.connect(m_context.lookup(handlers, property(m_context, BuiltinNames::get)), m_context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads));
+            noteWhatGetTrapAnswers(handlers);
         } else {
             connectOperands(BuiltinOperand::argument(1), m_context.written(followed, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyHandler.index() }));
             connectOperands(BuiltinOperand::argument(0), m_context.written(followed, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() }));
@@ -1128,6 +1127,23 @@ private:
         markWhereNameReadOnProxyMayAnswerMemberLeftOut(proxy);
         m_context.connect(m_context.masked(escaped(), m_context.maker().of(ValueFlowUniverse::markOfLoadedBun())), proxy);
         m_context.add(proxy, m_context.restrict(objectsAt(BuiltinOperand::argument(0)), m_context.maker().unite(m_tables.heap().objectsThatLetInUnseenCode(), m_context.maker().of(m_universe.objectOf(Builtins::Bun)))));
+    }
+
+    // What the get trap answers is found under every name. A trap that is no function of the program stands for what it answers, and so does a handler that the program has not written out.
+    void noteWhatGetTrapAnswers(ClimbingSet handlers)
+    {
+        ValueFlowNodeID found = m_context.nodes().ofHost(ValueFlowHostNode::StoredUnderNamesOfMethodsCallingStartupLoads);
+        ValueFlowName get = property(m_context, BuiltinNames::get);
+        ValueSetID functionsOfProgram = m_context.maker().unite(m_universe.closures(), m_universe.otherCallables());
+        ValueFlowNodeID arguments[] {
+            m_context.holding(objectsAt(BuiltinOperand::argument(0))),
+            m_context.holding(ClimbingSet(m_tables.heap().stringAndSymbolKinds())),
+            m_context.holding(ClimbingSet(m_universe.unknownObjectAlone())),
+        };
+        callInProtocol(m_context, { .callees = m_context.restrict(m_context.valueOf(m_context.lookup(known(handlers), get)), functionsOfProgram), .thisValue = handlers, .arguments = arguments, .result = found });
+        m_context.connect(m_context.masked(m_context.readWhatWasWritten(known(handlers), get), ValueSets::complement(functionsOfProgram)), found);
+        if (m_context.meet(handlers, m_context.maker().unite(m_universe.placeholdersAlone(), m_universe.objectsThatMayBeAnything())))
+            m_context.add(found, m_universe.unknownObjectAlone());
     }
 
     // What is done to an object goes up to a proxy above it: a read, a test, a store, a walk over the keys or up the chain. Without a trap for any of them the proxy hands all of it on,

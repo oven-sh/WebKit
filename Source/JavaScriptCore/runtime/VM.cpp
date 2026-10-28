@@ -1969,7 +1969,7 @@ SUPPRESS_ASAN void sanitizeStackForVMFrom(VM& vm, void* lowestAddress)
 {
     if (!vm.currentThreadIsHoldingAPILock())
         return;
-    lowestAddress = std::max(lowestAddress, vm.softStackLimit());
+    lowestAddress = std::max(lowestAddress, vm.stackLimit());
     // A stack grows a page at a time, from the top.
     for (uintptr_t address = WTF::roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(currentStackPointer())); address > std::bit_cast<uintptr_t>(lowestAddress); address -= pageSize())
         static_cast<void>(*std::bit_cast<volatile char*>(address - 1));

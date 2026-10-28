@@ -73,11 +73,24 @@ struct CompileOutput {
     ImageContents contents;
 };
 
+// The lists of the flow report that say what a program uses of the caller's own code.
+struct FlowFindings {
+    const Wire::UnseenCodeRecord* unseenCode { nullptr };
+    size_t unseenCodeCount { 0 };
+    const Wire::BuiltinUseRecord* builtinsUsed { nullptr };
+    size_t builtinsUsedCount { 0 };
+    const Wire::LackedFunctionRecord* libraryFunctionsLacked { nullptr };
+    size_t libraryFunctionsLackedCount { 0 };
+};
+
 // The compiler calls release(owner) at most once, on any thread, when it has read the program bytes.
+// It calls goesOnBehindFlowAnalysis(owner, ..) at most once, on any thread, when the flow analysis has ended. False: the caller hands over
+// another program in place of this one, so the build ends there, with the flow report and without an image.
 struct ProgramOwner {
     void (*release)(void* owner) { nullptr };
     void* owner { nullptr };
     const ExternalFunctionBodies* externalBodies { nullptr };
+    bool (*goesOnBehindFlowAnalysis)(void* owner, const FlowFindings*) { nullptr };
 };
 
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr, ProgramOwner = { });
