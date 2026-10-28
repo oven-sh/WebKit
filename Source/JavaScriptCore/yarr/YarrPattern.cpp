@@ -3038,7 +3038,7 @@ public:
     bool dropMinimumOfGroupsThatCanAlwaysMatchEmpty(PatternDisjunction& disjunction)
     {
         if (!isSafeToRecurse()) [[unlikely]] {
-            m_error = ErrorCode::PatternTooLarge;
+            m_error = ErrorCode::TooManyDisjunctions; // What setupOffsets() reports for the same pattern.
             return false;
         }
 
