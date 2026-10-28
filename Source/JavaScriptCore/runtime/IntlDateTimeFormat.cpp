@@ -1404,9 +1404,16 @@ static void LEGACY_NODELETE replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(
 
 // Every path that prints a single date formats here. udat_format() is not used for that: it has no way to report that
 // ICU failed to compute the date in the calendar of the formatter, and returns the text that ICU made before it failed.
+// The call is on the calendar of the formatter itself: the entries of ICU that take a UDate clone that calendar, and
+// its time zone, for every call. A formatter belongs to one VM, and every user of its calendar sets the time first.
 static UErrorCode formatDateToBuffer(UDateFormat* format, double value, Vector<char16_t, 32>& result, UFieldPositionIterator* fields = nullptr)
 {
-    auto status = callBufferProducingFunction(udat_formatForFields, format, value, result, fields);
+    UErrorCode status = U_ZERO_ERROR;
+    auto* calendar = const_cast<UCalendar*>(udat_getCalendar(format));
+    ucal_setMillis(calendar, value, &status);
+    if (U_FAILURE(status)) [[unlikely]]
+        return status;
+    status = callBufferProducingFunction(udat_formatCalendarForFields, format, calendar, result, fields);
     if (U_FAILURE(status)) [[unlikely]]
         return status;
     replaceNarrowNoBreakSpaceOrThinSpaceWithNormalSpace(result);
