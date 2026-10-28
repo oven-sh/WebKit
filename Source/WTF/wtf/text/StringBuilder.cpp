@@ -140,6 +140,8 @@ std::span<Latin1Character> StringBuilder::extendBufferForAppendingLatin1Characte
 
 std::span<char16_t> StringBuilder::extendBufferForAppendingWithUpconvert(unsigned requiredLength)
 {
+    if (hasOverflowed()) [[unlikely]]
+        return { };
     if (is8Bit()) {
         allocateBuffer<char16_t>(span8(), expandedCapacity(capacity(), requiredLength));
         if (hasOverflowed()) [[unlikely]]
@@ -183,12 +185,33 @@ bool LEGACY_NODELETE StringBuilder::shouldShrinkToFit() const
     return !hasOverflowed() && m_buffer && m_buffer->length() > m_length + (m_length >> 2);
 }
 
+template<typename CharacterType> void StringBuilder::shrinkBufferOrKeep()
+{
+    m_string = { }; // Clear the string to remove the reference to m_buffer if any before checking the reference count of m_buffer.
+    if (m_buffer->hasOneRef()) {
+        m_buffer = StringImpl::reallocateOrKeep(m_buffer.releaseNonNull(), m_length);
+        return;
+    }
+    std::span<CharacterType> characters;
+    if (auto buffer = StringImpl::tryCreateUninitialized(m_length, characters)) {
+        StringImpl::copyCharacters(characters, span<CharacterType>());
+        m_buffer = WTF::move(buffer);
+    }
+}
+
 void StringBuilder::shrinkToFit()
 {
-    if (shouldShrinkToFit()) {
-        reallocateBuffer(m_length);
+    if (!shouldShrinkToFit())
+        return;
+
+    // The characters are all there, so this is no overflow when the allocator refuses:
+    // the buffer stays as large as it is, and reifyString() makes a substring of it.
+    if (is8Bit())
+        shrinkBufferOrKeep<Latin1Character>();
+    else
+        shrinkBufferOrKeep<char16_t>();
+    if (m_buffer->length() == m_length)
         m_string = std::exchange(m_buffer, nullptr);
-    }
 }
 
 bool StringBuilder::containsOnlyASCII() const

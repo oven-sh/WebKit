@@ -309,6 +309,8 @@ public:
     static Ref<StringImpl> reallocate(Ref<StringImpl>&& originalString, unsigned length, char16_t*& data);
     static std::expected<Ref<StringImpl>, UTF8ConversionError> tryReallocate(Ref<StringImpl>&& originalString, unsigned length, Latin1Character*& data);
     static std::expected<Ref<StringImpl>, UTF8ConversionError> tryReallocate(Ref<StringImpl>&& originalString, unsigned length, char16_t*& data);
+    // tryReallocate frees the original string when it fails. This returns it, as it was.
+    static Ref<StringImpl> reallocateOrKeep(Ref<StringImpl>&& originalString, unsigned length);
 
     static constexpr unsigned flagsOffset() { return OBJECT_OFFSETOF(StringImpl, m_hashAndFlags); }
     static constexpr unsigned flagIs8Bit() { return s_hashFlag8BitBuffer; }
@@ -604,6 +606,7 @@ private:
     template<typename CharacterType> static Ref<StringImpl> createUninitializedInternal(size_t, std::span<CharacterType>&);
     template<typename CharacterType> static Ref<StringImpl> createUninitializedInternalNonEmpty(size_t, std::span<CharacterType>&);
     template<typename CharacterType> static std::expected<Ref<StringImpl>, UTF8ConversionError> reallocateInternal(Ref<StringImpl>&&, unsigned, CharacterType*&);
+    template<typename CharacterType> static Ref<StringImpl> reallocateOrKeepInternal(Ref<StringImpl>&&, unsigned);
     template<typename CharacterType> static Ref<StringImpl> createInternal(std::span<const CharacterType>);
     WTF_EXPORT_PRIVATE NEVER_INLINE unsigned hashSlowCase() const;
     Ref<StringImpl> convertToUppercaseWithoutLocaleUpconvert();

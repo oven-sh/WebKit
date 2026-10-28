@@ -161,8 +161,11 @@ NEVER_INLINE bool LiteralParser<CharType, reviverMode>::tryJSONPParse(Vector<JSO
         JSValue startParseExpressionValue = parse(vm, StartParseExpression, nullptr);
         RETURN_IF_EXCEPTION(scope, false);
         results.last().m_value.set(vm, startParseExpressionValue);
-        if (!results.last().m_value)
+        if (!results.last().m_value) {
+            // The parser of programs, which the caller tries next, needs more memory and stops the process without it.
+            throwOutOfMemoryErrorIfLexerFailedToAllocate(scope);
             return false;
+        }
         results.last().m_path.swap(path);
         if (entry.m_type == JSONPPathEntryTypeCall) {
             if (m_lexer.currentToken()->type != TokRParen)
@@ -1507,6 +1510,11 @@ slowPathBegin:
         setParserTokenString<CharType>(token, runStart);
         token.stringOrIdentifierLength = m_ptr - runStart;
     } else {
+        if (m_builder.hasOverflowed()) [[unlikely]] {
+            m_builder.clear();
+            m_failedToAllocate = true;
+            return TokError;
+        }
         if (m_builder.is8Bit()) {
             token.stringIs8Bit = 1;
             token.stringStart8 = m_builder.span8().data();
@@ -2655,10 +2663,8 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
                 results.clear();
                 return { 0, StreamingJSONParseResult::Status::NeedsText };
             }
-            if (m_lexer.failedToAllocate()) [[unlikely]] {
-                throwOutOfMemoryError(m_globalObject, scope);
+            if (throwOutOfMemoryErrorIfLexerFailedToAllocate(scope)) [[unlikely]]
                 return { lastGoodPosition, StreamingJSONParseResult::Status::Error };
-            }
             if (m_lexer.isAtEnd())
                 return { lastGoodPosition, StreamingJSONParseResult::Status::NeedMoreData };
             return { lastGoodPosition, StreamingJSONParseResult::Status::Error };

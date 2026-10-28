@@ -444,6 +444,81 @@ TEST(StringBuilderTest, ShouldShrinkToFit)
     EXPECT_FALSE(builder.shouldShrinkToFit());
 }
 
+#if !defined(NDEBUG)
+// toString() gives a buffer with much spare capacity the size of its characters. The characters are all
+// there when the allocator refuses that, so it is neither an overflow nor a crash.
+template<typename CharacterType> static void expectToStringWithBufferThatCannotShrink(OverflowPolicy policy, bool shareBuffer)
+{
+    constexpr unsigned length = 4096;
+    Vector<CharacterType> characters(FillWith { }, length, 'x');
+    String expected { characters.span() };
+
+    StringBuilder builder(policy);
+    builder.append(characters.span().first(length - 1));
+    builder.reserveCapacity(8 * length);
+    // A buffer that a string is a part of has another owner. It is not reallocated but copied into a new one.
+    String partOfBuffer = shareBuffer ? builder.toStringPreserveCapacity() : String();
+    builder.append(characters.last());
+    EXPECT_TRUE(builder.shouldShrinkToFit());
+
+    fastSetMaxSingleAllocationSize(length / 2);
+    String string = builder.toString();
+    fastSetMaxSingleAllocationSize(std::numeric_limits<size_t>::max());
+
+    EXPECT_FALSE(builder.hasOverflowed());
+    EXPECT_EQ(length, builder.length());
+    EXPECT_EQ(expected, string);
+    EXPECT_EQ(sizeof(CharacterType) == 1, string.is8Bit());
+    EXPECT_EQ(string.impl(), builder.toString().impl());
+
+    // The string is a part of the buffer, which the builder goes on to use.
+    builder.append("yz"_s);
+    EXPECT_EQ(expected, string);
+    EXPECT_EQ(makeString(expected, "yz"_s), builder.toString());
+}
+
+TEST(StringBuilderTest, ToStringWithBufferThatCannotShrink)
+{
+    for (auto policy : { OverflowPolicy::CrashOnOverflow, OverflowPolicy::RecordOverflow }) {
+        for (bool shareBuffer : { false, true }) {
+            SCOPED_TRACE(::testing::Message() << "records overflow " << (policy == OverflowPolicy::RecordOverflow) << ", shared buffer " << shareBuffer);
+            expectToStringWithBufferThatCannotShrink<Latin1Character>(policy, shareBuffer);
+            expectToStringWithBufferThatCannotShrink<char16_t>(policy, shareBuffer);
+        }
+    }
+}
+#endif
+
+TEST(StringBuilderTest, AppendAfterOverflow)
+{
+    constexpr std::array<char16_t, 2> wide { 0x3042, 0x3044 };
+    for (bool hasBuffer : { false, true }) {
+        SCOPED_TRACE(::testing::Message() << "has a buffer " << hasBuffer);
+        StringBuilder builder(OverflowPolicy::RecordOverflow);
+        if (hasBuffer)
+            builder.append("abc"_s);
+        builder.didOverflow();
+
+        builder.append('x');
+        builder.append(wide[0]);
+        builder.append("abc"_s);
+        builder.append(std::span { wide });
+        builder.append("abc"_s, 'x', 1);
+        builder.append(StringView { std::span { wide } }, 'x');
+        builder.append(String { "abc"_s });
+        builder.appendQuotedJSONString("abc"_s);
+        builder.reserveCapacity(64);
+        builder.shrink(1);
+        EXPECT_TRUE(builder.hasOverflowed());
+        EXPECT_FALSE(builder.shouldShrinkToFit());
+
+        builder.clear();
+        EXPECT_FALSE(builder.hasOverflowed());
+        builder.append(StringView { std::span { wide } }, 'x');
+        EXPECT_EQ(3U, builder.length());
+    }
+}
+
 TEST(StringBuilderTest, ToAtomString)
 {
     StringBuilder builder;

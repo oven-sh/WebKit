@@ -108,6 +108,7 @@ private:
     template<typename AllocationCharacterType, typename CurrentCharacterType> void allocateBuffer(std::span<const CurrentCharacterType> currentCharacters, unsigned requiredCapacity);
     template<typename CharacterType> void reallocateBuffer(unsigned requiredCapacity);
     void reallocateBuffer(unsigned requiredCapacity);
+    template<typename CharacterType> void shrinkBufferOrKeep();
 
     template<typename CharacterType> std::span<CharacterType> extendBufferForAppending(unsigned requiredLength);
     template<typename CharacterType> std::span<CharacterType> extendBufferForAppendingSlowCase(unsigned requiredLength);

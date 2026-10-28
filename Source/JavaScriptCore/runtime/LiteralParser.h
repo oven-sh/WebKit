@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ArgList.h"
+#include "ExceptionHelpers.h"
 #include "GetVM.h"
 #include "Identifier.h"
 #include "JSCJSValue.h"
@@ -159,9 +160,13 @@ public:
         requires (reviverMode == JSONReviverMode::Disabled)
     {
         ASSERT(m_mode == StrictJSON);
-        m_lexer.next();
         VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        m_lexer.next();
         JSValue result = parseRecursivelyEntry(vm);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (throwOutOfMemoryErrorIfLexerFailedToAllocate(scope)) [[unlikely]]
+            return { };
         if (m_lexer.currentToken()->type != TokEnd)
             return JSValue();
         return result;
@@ -171,8 +176,13 @@ public:
         requires (reviverMode == JSONReviverMode::Enabled)
     {
         ASSERT(m_mode == StrictJSON);
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         m_lexer.next();
-        JSValue result = parse(getVM(m_globalObject), StartParseExpression, sourceRanges);
+        JSValue result = parse(vm, StartParseExpression, sourceRanges);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (throwOutOfMemoryErrorIfLexerFailedToAllocate(scope)) [[unlikely]]
+            return { };
         if (m_lexer.currentToken()->type != TokEnd)
             return JSValue();
         return result;
@@ -196,8 +206,13 @@ public:
         requires (reviverMode == JSONReviverMode::Disabled)
     {
         ASSERT(m_mode == StrictJSON);
+        VM& vm = getVM(m_globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
         m_lexer.next();
-        JSValue result = parsePrimitiveValue(getVM(m_globalObject));
+        JSValue result = parsePrimitiveValue(vm);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (throwOutOfMemoryErrorIfLexerFailedToAllocate(scope)) [[unlikely]]
+            return { };
         if (result) {
             if (m_lexer.currentToken()->type != TokEnd) {
                 m_parseErrorMessage = "Unexpected content at end of JSON literal"_s;
@@ -292,7 +307,12 @@ private:
         bool isAtEnd() const { return m_ptr >= m_end; }
         const CharType* positionAfterLastToken() const { return m_positionAfterLastToken; }
         const CharType* end() const { return m_end; }
-        void advanceTo(const CharType* p) { m_ptr = p; }
+        // Forgets the current token, and with it that there was no memory for it.
+        void advanceTo(const CharType* p)
+        {
+            m_ptr = p;
+            m_failedToAllocate = false;
+        }
 #endif
         inline const CharType* LEGACY_NODELETE currentTokenStart() const;
         inline const CharType* LEGACY_NODELETE currentTokenEnd() const;
@@ -320,7 +340,7 @@ private:
         ParserMode m_mode;
         const CharType* m_ptr;
         const CharType* m_end;
-        StringBuilder m_builder;
+        StringBuilder m_builder { OverflowPolicy::RecordOverflow };
         static constexpr size_t maxLengthDecodedInPlace = 256;
         struct Nothing { };
         NO_UNIQUE_ADDRESS std::conditional_t<isUTF8, std::array<char16_t, maxLengthDecodedInPlace>, Nothing> m_decodedCharacters;
@@ -355,6 +375,16 @@ private:
     ALWAYS_INLINE JSString* tryMakeJSString(VM&, JSONCache&, typename Lexer::LiteralParserTokenPtr);
 
     void setErrorMessageForToken(TokenType);
+
+    // The lexer cannot throw. Its token for a string that it had no memory for is a TokError, where the parser
+    // stops as at a syntax error.
+    bool throwOutOfMemoryErrorIfLexerFailedToAllocate(ThrowScope& scope)
+    {
+        if (!m_lexer.failedToAllocate()) [[likely]]
+            return false;
+        throwOutOfMemoryError(m_globalObject, scope);
+        return true;
+    }
 
     JSGlobalObject* const m_globalObject;
     CodeBlock* const m_nullOrCodeBlock;

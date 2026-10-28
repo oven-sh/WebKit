@@ -248,6 +248,35 @@ std::expected<Ref<StringImpl>, UTF8ConversionError> StringImpl::tryReallocate(Re
     return reallocateInternal(WTF::move(originalString), length, data);
 }
 
+template<typename CharacterType> inline Ref<StringImpl> StringImpl::reallocateOrKeepInternal(Ref<StringImpl>&& originalString, unsigned length)
+{
+    ASSERT(originalString->hasOneRef());
+    ASSERT(originalString->bufferOwnership() == BufferInternal);
+
+    if (!length)
+        return *empty();
+
+    if (!isValidLength<CharacterType>(length))
+        return WTF::move(originalString);
+
+    unsigned originalLength = originalString->length();
+    originalString->~StringImpl();
+    SUPPRESS_UNCOUNTED_LOCAL auto* rawPointer = &originalString.leakRef();
+    SUPPRESS_UNCOUNTED_LOCAL auto* string = static_cast<StringImpl*>(StringImplMalloc::tryRealloc(rawPointer, allocationSize<CharacterType>(length)));
+    if (!string) {
+        // A realloc that fails leaves the block alone, so only the header is to be made again.
+        return constructInternal<CharacterType>(*rawPointer, originalLength);
+    }
+    return constructInternal<CharacterType>(*string, length);
+}
+
+Ref<StringImpl> StringImpl::reallocateOrKeep(Ref<StringImpl>&& originalString, unsigned length)
+{
+    if (originalString->is8Bit())
+        return reallocateOrKeepInternal<Latin1Character>(WTF::move(originalString), length);
+    return reallocateOrKeepInternal<char16_t>(WTF::move(originalString), length);
+}
+
 template<typename CharacterType> inline Ref<StringImpl> StringImpl::createInternal(std::span<const CharacterType> characters)
 {
     if (characters.empty())
