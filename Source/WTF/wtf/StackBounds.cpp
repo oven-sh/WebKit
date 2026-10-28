@@ -78,11 +78,11 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
         // FIXME: <rdar://problem/13741204>
         // pthread_get_size lies to us when we're the main thread, use get_rlimit instead
         void* origin = pthread_get_stackaddr_np(pthread_self());
+        // A limit that cannot be read counts as no limit.
+        rlim_t size = 8 * MB;
         rlimit limit;
-        getrlimit(RLIMIT_STACK, &limit);
-        rlim_t size = limit.rlim_cur;
-        if (size == RLIM_INFINITY)
-            size = 8 * MB;
+        if (!getrlimit(RLIMIT_STACK, &limit) && limit.rlim_cur != RLIM_INFINITY)
+            size = limit.rlim_cur;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         void* bound = static_cast<char*>(origin) - size;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -166,8 +166,10 @@ static void* endOfMainThreadStack()
 
 StackBounds StackBounds::currentThreadStackBoundsInternal()
 {
-#if OS(LINUX) && USE(BUN_JSC_ADDITIONS)
+#if OS(LINUX)
     bool isMainThread = getpid() == static_cast<pid_t>(syscall(SYS_gettid));
+#endif
+#if OS(LINUX) && USE(BUN_JSC_ADDITIONS)
     void* endOfStack = isMainThread ? endOfMainThreadStack() : nullptr;
     auto ret = endOfStack ? StackBounds { endOfStack, endOfStack } : newThreadStackBounds(pthread_self());
 #else
@@ -179,13 +181,19 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
     // on musl, it will return the currently reserved size - since the stack bounds are expected to
     // be constant (and they are for every thread except main, which is allowed to grow), check
     // resource limits and use that as the boundary instead (and prevent stack overflows in JSC)
-    if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) {
-        void* origin = ret.origin();
+    if (isMainThread) {
+        // A seccomp filter can deny prlimit64(), which getrlimit() calls. A limit that cannot be read counts as no limit,
+        // as it does to glibc when it sizes the stacks of threads.
+        rlim_t size = 8 * MB;
         rlimit limit;
-        getrlimit(RLIMIT_STACK, &limit);
-        rlim_t size = limit.rlim_cur;
-        if (size == RLIM_INFINITY)
-            size = 8 * MB;
+        if (!getrlimit(RLIMIT_STACK, &limit)) {
+            if (limit.rlim_cur != RLIM_INFINITY)
+                size = limit.rlim_cur;
+        } else if (ret.isEmpty()) {
+            // glibc's pthread_getattr_np() needs the limit for this thread too: nothing is known of the stack.
+            return emptyBounds();
+        }
+        void* origin = ret.origin();
         // account for a guard page
         size -= static_cast<rlim_t>(sysconf(_SC_PAGESIZE));
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
