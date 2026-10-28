@@ -170,6 +170,8 @@ ValueSetID HeapRule::holdersWithMemberUnder(const HeapKey& key) const
 
 bool HeapRule::mayTakeMemberFromCopy(ClimbingSet holders, const HeapKey& key)
 {
+    if (key.keyClass == HeapKeyClass::Name && !m_context.mayFindWhatIsWrittenUnderUnknownKey(ValueFlowName::property(key.name)))
+        return false;
     ClimbingSet writable = m_context.restrict(known(holders), ValueSets::complement(holdersWithLockedLocationUnder(key)));
     return holdsAnything(writable) && holdsAnything(readWhereWritten(writable, copiedFromName));
 }
@@ -1163,6 +1165,9 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         break;
     }
     if (holders == ValueSets::nothing || !isOperationOfFunction())
+        return;
+    // Under a computed key an evaluator is found only where every value of the key is known. Whether one nobody knows is still to come shows once all else is at rest.
+    if (key.isComputed && !isHostFlagRaised(m_context, ValueFlowHostNode::AllElseIsAtRest))
         return;
 
     Members getters;

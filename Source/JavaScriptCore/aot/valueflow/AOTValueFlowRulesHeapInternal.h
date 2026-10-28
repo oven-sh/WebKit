@@ -36,6 +36,7 @@ struct HeapKey {
     PropertyKeyID name;
     bool namesEnumerableProperty { false };
     HeapKeyReceivers receivers { HeapKeyReceivers::All };
+    bool isComputed { false };
 
     bool mayNameNonEnumerable(PropertyKeyID other) const { return (keyClass == HeapKeyClass::Unknown && !namesEnumerableProperty) || (keyClass == HeapKeyClass::Name && name == other); }
 };
@@ -154,7 +155,7 @@ private:
     void use(BuiltinID builtin, OptionSet<BuiltinUse> uses) { m_context.use(builtin, uses); }
     void noteTestOfMembers(const ValueFlowOperand& object, const HeapKey&);
     ValueFlowOperand withoutProxiesAskedByTheirTraps(const ValueFlowOperand& object);
-    void askProxiesByTheirTrap(const HeapKey&, BuiltinName trap, ValueFlowNodeID result);
+    void askProxiesByTheirTrap(const HeapKey&, BuiltinName trap, ValueFlowNodeID result, const ValueFlowOperand* stored = nullptr);
     void mayThrow() { add(m_statement.thrown, unknownValue(ValueFlowUnknownSource::ThrownByRunTime)); }
     void answerBoolean() { add(m_statement.result, m_tables.booleanKinds()); }
     bool holdsAnything(ClimbingSet set) const { return m_context.meet(set, ValueSets::anything); }
@@ -300,7 +301,7 @@ private:
     void callSettersOfReceivers(ClimbingSet start, const HeapKey&, const ValueFlowOperand& value);
     void remove(const ValueFlowOperand& object, const HeapKey&);
     enum class CopiedProperties : uint8_t { AreDefinedAsValues, AreAssigned, AreDefinedAsTheyStand };
-    void copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties);
+    void copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties, std::optional<std::span<const PropertyKeyID>> namesOfSource = std::nullopt);
     bool readsRestArgumentOfInstance();
     bool readsUnderNameOfEnumerationOfSameObject();
     void readWhatNamesOfProgramMayHaveHidden(const HeapChain&, ValueFlowNodeID result, Members& getters);
@@ -402,6 +403,7 @@ inline NEVER_INLINE void HeapRule::forEachKey(const ValueFlowOperand& property, 
             namesIndex = true;
             return;
         }
+        key.isComputed = true;
         if (countsNamesOfProgramTogether && m_tables.under(key.name).holders == ValueSets::nothing) {
             hasNameOfProgram = true;
             key.receivers = HeapKeyReceivers::BuiltinObjects;

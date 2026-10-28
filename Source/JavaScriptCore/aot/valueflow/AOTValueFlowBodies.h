@@ -167,6 +167,7 @@ public:
     ValueSetID objectsWithLockedPrototypeLink() const { return m_objectsWithLockedPrototypeLink; }
     ValueSetID objectsBornWithoutPrototype() const { return m_objectsBornWithoutPrototype; }
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
+    ValueSetID holdersOfExportsOf(ModuleID module) const { return m_holdersOfExportsOfModule[module.index()]; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
     ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
     ValueSetID callables() const { return m_callables; }
@@ -294,6 +295,7 @@ private:
     ValueSetID m_objectsWithLockedPrototypeLink;
     ValueSetID m_objectsBornWithoutPrototype;
     ValueSetID m_holdersOfLibraryExports;
+    Vector<ValueSetID> m_holdersOfExportsOfModule;
     ValueSetID m_prototypeObjectsOfLibraryClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_primitives;
@@ -379,9 +381,11 @@ enum class ValueFlowHostNode : uint8_t {
     AllElseIsAtRest,
     ProxiesWhoseHandlerIsFollowed,
     ProxiesThatAreOpen,
+    LibraryModulesRequestedByProgram,
+    LibraryModulesHandedOut,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 63;
+inline constexpr unsigned numberOfValueFlowHostNodes = 65;
 
 class ValueFlowProgramNodes {
 public:

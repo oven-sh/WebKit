@@ -954,44 +954,40 @@ private:
         }
     }
 
-    void appendHoldersOfLibraryExports(Vector<ValueFlowObjectID>& holders)
+    void appendHoldersOfExports(Vector<ValueFlowObjectID>& holders, ModuleID moduleID)
     {
         const ValueFlowUniverse& universe = m_result.m_universe;
-        for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
-            const Module& module = m_program.modules[index];
-            if (module.kind != ModuleKind::RuntimeSource)
-                continue;
-            holders.append(universe.namespaceOf(ModuleID(index)));
-            if (!module.body)
-                continue;
+        const Module& module = m_program.at(moduleID);
+        holders.append(universe.namespaceOf(moduleID));
+        if (!module.body)
+            return;
 
-            const Function& body = m_program.at(module.body);
-            BitVector isVisited(body.values.size());
-            Vector<ValueID, 8> worklist;
-            auto visit = [&](ValueID value) {
-                if (value && !isVisited.set(value.index()))
-                    worklist.append(value);
-            };
-            for (const Block& block : body.blocks) {
-                if (block.terminator.kind == TerminatorKind::Return)
-                    visit(block.terminator.valueOperand());
+        const Function& body = m_program.at(module.body);
+        BitVector isVisited(body.values.size());
+        Vector<ValueID, 8> worklist;
+        auto visit = [&](ValueID value) {
+            if (value && !isVisited.set(value.index()))
+                worklist.append(value);
+        };
+        for (const Block& block : body.blocks) {
+            if (block.terminator.kind == TerminatorKind::Return)
+                visit(block.terminator.valueOperand());
+        }
+        while (!worklist.isEmpty()) {
+            ValueID id = worklist.takeLast();
+            const Value& value = body.at(id);
+            if (ValueFlowObjectID object = universe.siteObject(module.body, id))
+                holders.append(object);
+            if (value.opcode == Opcode::GetModuleVariable) {
+                for (const Value& store : body.values) {
+                    if (store.opcode == Opcode::PutModuleVariable && store.variable() == value.variable())
+                        visit(store.valueOperand());
+                }
+                continue;
             }
-            while (!worklist.isEmpty()) {
-                ValueID id = worklist.takeLast();
-                const Value& value = body.at(id);
-                if (ValueFlowObjectID object = universe.siteObject(module.body, id))
-                    holders.append(object);
-                if (value.opcode == Opcode::GetModuleVariable) {
-                    for (const Value& store : body.values) {
-                        if (store.opcode == Opcode::PutModuleVariable && store.variable() == value.variable())
-                            visit(store.valueOperand());
-                    }
-                    continue;
-                }
-                for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
-                    if (operandUsesOf(value.opcode, operandIndex).contains(OperandUse::Returns))
-                        visit(value.operand(operandIndex));
-                }
+            for (uint32_t operandIndex = 0; operandIndex < value.numberOfOperands(); ++operandIndex) {
+                if (operandUsesOf(value.opcode, operandIndex).contains(OperandUse::Returns))
+                    visit(value.operand(operandIndex));
             }
         }
     }
@@ -1130,8 +1126,15 @@ private:
                 list.append(universe.prototypeOf(LayoutID(index)));
         }
         universe.m_prototypeObjectsOfLibraryClasses = take();
-        appendHoldersOfLibraryExports(list);
-        universe.m_holdersOfLibraryExports = take();
+        universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
+        universe.m_holdersOfLibraryExports = ValueSets::nothing;
+        for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
+            if (m_program.modules[index].kind != ModuleKind::RuntimeSource)
+                continue;
+            appendHoldersOfExports(list, ModuleID(index));
+            universe.m_holdersOfExportsOfModule[index] = take();
+            universe.m_holdersOfLibraryExports = maker.unite(universe.m_holdersOfLibraryExports, universe.m_holdersOfExportsOfModule[index]);
+        }
         universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
 
         list.append(ValueFlowUniverse::primitive(PrimitiveSet::String));

@@ -3723,7 +3723,7 @@ struct TestPlacer {
 static TypeID narrowExpectedTypeByUses(FunctionPassContext& context, std::span<const ValueID> values, TypeID expected)
 {
     const Type& expectedType = context.types.at(expected);
-    if (maxNumberOfUnionParts(expectedType) < 2)
+    if (maxNumberOfUnionPartsWithObjects(expectedType) < 2)
         return expected;
     UnionParts parts = unionPartsOf(expectedType);
     // Only a part that has objects can go, and never the last one. undefined | null stands beside every reference type.

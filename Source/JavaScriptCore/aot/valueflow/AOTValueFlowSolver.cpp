@@ -422,7 +422,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
 
 static bool isNameOfProperty(ValueFlowName name)
 {
-    return name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Getter || name.kind == ValueFlowNameKind::Setter;
+    return shapeOf(name.kind).reach == ValueFlowNameReach::OneKey;
 }
 
 // A computed key is a text or a symbol, never a private name.
@@ -1703,7 +1703,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     // Flow follows a value out of a cell that the table names, and out of the cell of a member whose reads are answered from it.
     auto isReadBackOutOfBuiltins = [&](ValueFlowName name, ValueSetID holders) {
         const BuiltinTable& builtins = m_input.program->builtins();
-        if (name.kind != ValueFlowNameKind::Slot || name.payload < builtins.slotCount())
+        if ((name.kind != ValueFlowNameKind::Slot && name.kind != ValueFlowNameKind::HiddenSlot) || name.payload < builtins.slotCount())
             return false;
         if (name.payload < builtins.slotCount() + builtins.nameCount())
             return true;
@@ -1751,7 +1751,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             // Somebody has asked the heap about the proxy itself, or the proxy stands above an object.
             ValueFlowName name = key.name();
             bool isUnderKind = key.kind == ValueFlowMadeNodeKind::WrittenUnderKind || key.kind == ValueFlowMadeNodeKind::ReadUnderKind;
-            bool isOfModel = name.kind == ValueFlowNameKind::AllocatedAs || (name.kind == ValueFlowNameKind::Slot && (isUnderKind || name.payload == BuiltinSlots::ProxyHandler.index() || name.payload == BuiltinSlots::ProxyTarget.index()));
+            bool isOfModel = name.kind == ValueFlowNameKind::AllocatedAs || (name.kind == ValueFlowNameKind::HiddenSlot && (isUnderKind || name.payload == proxyItselfName.payload)) || (name.kind == ValueFlowNameKind::Slot && (isUnderKind || name.payload == BuiltinSlots::ProxyHandler.index() || name.payload == BuiltinSlots::ProxyTarget.index()));
             if (!isOfModel && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
                 note(key.set);
             if (shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink)
@@ -4520,6 +4520,7 @@ bool ValueFlowSolver::solve()
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare), m_input.universe->closures());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach), m_input.universe->builtinTables().heap().prototypeObjectsThatListingDoesNotName());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed), m_input.universe->prototypeObjectsOfLibraryClasses());
+                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::LibraryModulesHandedOut), m_input.universe->holdersOfLibraryExports());
             }
         },
         [&] {

@@ -1,4 +1,4 @@
-# Another function makes the proxy. Flow has seen that proxy arrive at the read, and where it is made one layout arrive as the handler and one as the target: the value is asked whether it is a proxy, and what the proxy holds is tested for the two layouts.
+# Another function makes the proxy. Flow has seen that proxy arrive at the read, and where it is made one layout arrive as the handler and one as the target: the value is that proxy for sure, and what the proxy holds is tested for the two layouts.
 # class Counting {
 #   constructor() {
 #     this.reads = 0;
@@ -129,7 +129,7 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 
 # CHECK-LABEL: name="read"
-# CHECK: [[isProxy]]: boolean = TypeTest v0 testedType=Proxy
+# CHECK-NOT: testedType=Proxy
 # CHECK: ([[proxy]]: Proxy):
 # CHECK: [[heldHandler]]: anything = GetInternalField [[proxy]] index=1
 # CHECK: [[heldTarget]]: anything = GetInternalField [[proxy]]

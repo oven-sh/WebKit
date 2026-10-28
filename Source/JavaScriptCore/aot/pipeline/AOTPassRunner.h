@@ -254,6 +254,14 @@ private:
         std::optional<PassClock> clockAtEndOfLastPass;
         Vector<PassID> changingRuns;
         ShapesWithMonotoneResult shapesWithMonotoneResult;
+        // A pass that edits nothing and computes no analysis leaves nothing to verify again.
+        struct VerifiedState {
+            uint32_t numberOfEdits;
+            IRForm form;
+            bool cannotJudgeGuards;
+            AnalysisSet analyses;
+        };
+        std::optional<VerifiedState> verified;
     };
 
     static constexpr unsigned numberOfSizeClasses = 16;

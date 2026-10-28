@@ -60,6 +60,7 @@ export default b.declarations(
   ),
   b.excluded("ArrayIteratorPrototype", "arrayIteratorNextHelper"),
   b.excluded("GeneratorPrototype", "generatorResume"),
+  b.excluded("ShadowRealmPrototype", "crossRealmThrow", "evaluate", "importValue", "wrapRemoteValue"),
   b.handwritten(
     "ArrayIteratorPrototype",
     "AsyncDisposableStackPrototype",
@@ -125,7 +126,6 @@ export default b.declarations(
     isProxyObject: "ProxyObjectType",
     isRegExpObject: "RegExpObjectType",
     isSet: "JSSetType",
-    isShadowRealm: "ShadowRealmType",
     isWrapForValidIterator: "JSWrapForValidIteratorType",
   }),
   b.intrinsic("isTypedArrayView", "Call", {
@@ -187,9 +187,6 @@ export default b.declarations(
   b.intrinsic("functionPrototypeApply", "Value", { intrinsic: "Builtin", path: "Function.prototype.apply" }),
   b.intrinsic("functionPrototypeCall", "Value", { intrinsic: "Builtin", path: "Function.prototype.call" }),
   intrinsics("Call", { intrinsic: "LinkTimeConstant" }, [
-    "createRemoteFunction",
-    "evalInRealm",
-    "importInRealm",
     "performPromiseThen",
     "rejectPromise",
     "resolvePromise",
@@ -212,10 +209,8 @@ export default b.declarations(
     "iteratorGenericNext",
     "iteratorZip",
     "removeFirstFromList",
-    "wrapRemoteValue",
   ]),
   intrinsics("Value", { intrinsic: "LinkedFunction" }, [
-    "crossRealmThrow",
     "defaultAsyncFromAsyncArrayLike",
     "defaultAsyncFromAsyncIterator",
     "defaultAsyncFromAsyncIteratorWithNext",

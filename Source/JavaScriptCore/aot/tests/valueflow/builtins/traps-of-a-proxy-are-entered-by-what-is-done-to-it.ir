@@ -1,12 +1,12 @@
 # const proxy = new Proxy({}, { get(target, key, receiver) {..}, has(target, key) {..}, set(target, key, value) {..} });  proxy.a;  "b" in proxy
 # const stored = new Proxy({}, { get(..) {..}, set(..) {..} });  stored.a = 1
 # A read through a proxy enters the handler's `get` with the target, the key and the proxy, a test by `in` its `has`. Nothing stores through the first proxy: its `set` is not entered.
-# A store is something that flow has no trap for yet: it opens the second proxy, and all that its handler holds is entered.
+# A store through the second proxy enters its `set` with the target, the key, the value and the proxy. Nothing reads through it: its `get` is not entered.
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
 # CHECK-NOT: unreached f2
 # CHECK: unreached f3
-# CHECK-NOT: unreached f4
+# CHECK: unreached f4
 # CHECK-NOT: unreached f5
 
 module m0 path="main.js" displayPath="main.js" body=f0

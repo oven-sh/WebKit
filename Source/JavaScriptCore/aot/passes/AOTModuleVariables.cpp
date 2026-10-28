@@ -230,7 +230,8 @@ static void narrowConstantFields(ProgramEditor& editor, BuildContext& build)
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         bool isLiteral = (layout.kind == LayoutKind::Record || layout.kind == LayoutKind::Container) && !layout.flags.containsAny(flagsOfOtherLayouts);
-        if (isLiteral && layout.flow.baseState == BaseState::None && program.layoutsBelow(LayoutID(index)).empty() && std::ranges::any_of(layout.fields, isWrittenByAllocationsAlone))
+        bool isFilledByNativeCode = layout.flow.observedUses.contains(ObservedUse::ReachesTypedParse);
+        if (isLiteral && !isFilledByNativeCode && layout.flow.baseState == BaseState::None && program.layoutsBelow(LayoutID(index)).empty() && std::ranges::any_of(layout.fields, isWrittenByAllocationsAlone))
             hasCandidates.quickSet(index);
     }
     if (hasCandidates.isEmpty())

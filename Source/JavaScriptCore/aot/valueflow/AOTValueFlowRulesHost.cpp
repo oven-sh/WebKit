@@ -81,6 +81,23 @@ static void passFromNativeCode(ValueFlowRuleContext& context, FunctionID functio
         context.add(parameter, context.maker().intersect(unknown, universe.objects()));
 }
 
+static bool isLibraryRole(FunctionRole role)
+{
+    return role == FunctionRole::Library || role == FunctionRole::Model;
+}
+
+// A module that a function of the library answers with stays found by name alone.
+static void handOutOfFunction(ValueFlowRuleContext& context, const Function& callee, ValueFlowNodeID values)
+{
+    if (!isLibraryRole(callee.role)) {
+        carryOut(context, values);
+        return;
+    }
+    ValueSetID modules = context.universe().holdersOfLibraryExports();
+    carryOut(context, context.masked(values, ValueSets::complement(modules)));
+    context.connect(context.masked(values, modules), ValueFlowProgramNodes::escaped());
+}
+
 void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, NativeCaller caller)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -97,16 +114,22 @@ void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, Nat
             passFromNativeCode(context, function, callee, index, caller, unknown);
     }
     if (const auto* summary = nodes.resultSummaryOf(function))
-        carryOut(context, summary->ownResult);
+        handOutOfFunction(context, callee, summary->ownResult);
     else {
         for (unsigned index = 0; index < callee.results.size(); ++index)
-            carryOut(context, nodes.result(function, index));
+            handOutOfFunction(context, callee, nodes.result(function, index));
     }
-    context.connect(nodes.thrown(function), escaped);
+    if (isLibraryRole(callee.role))
+        context.connect(nodes.thrown(function), escaped);
+    else
+        carryOut(context, nodes.thrown(function));
     if (!callee.isUnsplitCoroutine() || !callee.has(FunctionFlags::IsGenerator))
         return;
     context.add(escaped, only(context, universe.coroutineResultOf(function)));
-    context.connect(nodes.yielded(function), escaped);
+    if (isLibraryRole(callee.role))
+        context.connect(nodes.yielded(function), escaped);
+    else
+        carryOut(context, nodes.yielded(function));
     context.add(nodes.sent(function), unknown);
 }
 
@@ -190,10 +213,10 @@ static void enterRuntimeFunction(ValueFlowRuleContext& context, RuntimeFunctionI
         enterFromNativeCode(context, function, caller);
 }
 
-static ValueFlowSources memberOfRequiredValue(ValueFlowRuleContext& context, ModuleID module, StringID name)
+static ValueFlowSources memberOf(ValueFlowRuleContext& context, const ValueFlowSources& object, StringID name)
 {
     std::optional<PropertyKeyID> key = context.program().types.find({ .kind = PropertyKeyKind::Text, .text = name });
-    return { { context.lookup(valueOf(context, requiredValueOf(context, module)), key ? ValueFlowName::property(context.program(), *key) : everyPropertyName) }, { } };
+    return { { context.lookup(valueOf(context, object), key ? ValueFlowName::property(context.program(), *key) : everyPropertyName) }, { } };
 }
 
 static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& context, ModuleID id, StringID name)
@@ -210,17 +233,21 @@ static std::optional<ValueFlowSources> namedExportOf(ValueFlowRuleContext& conte
         bool isDefault = name == program.stringOf(BuiltinNames::defaultKeyword);
         ValueFlowSources value = isDefault ? requiredValueOf(context, id) : ValueFlowSources();
         if (!isDefault || module.exportRule != SyntheticExportRule::CommonJsIgnoringAnnotation)
-            value.nodes.appendVector(memberOfRequiredValue(context, id, name).nodes);
+            value.nodes.appendVector(memberOf(context, requiredValueOf(context, id), name).nodes);
         return value;
     }
 
-    bool listsEveryExport = module.kind == ModuleKind::SourceText && !module.requests.containsIf([](const ModuleRequest& request) {
+    if (module.kind != ModuleKind::SourceText) {
+        connect(context, namespaceOf(context, id), ValueFlowProgramNodes::escaped());
+        return unknown;
+    }
+    bool listsEveryExport = !module.requests.containsIf([](const ModuleRequest& request) {
         return request.isDynamicStarExport;
     });
-    if (listsEveryExport)
+    // A star passes on every name but `default`.
+    if (listsEveryExport || name == program.stringOf(BuiltinNames::defaultKeyword))
         return std::nullopt;
-    connect(context, namespaceOf(context, id), ValueFlowProgramNodes::escaped());
-    return unknown;
+    return memberOf(context, namespaceOf(context, id), name);
 }
 
 static void handToBuiltin(ValueFlowRuleContext& context, const HostRead& read, const ValueFlowSources& value)
@@ -338,7 +365,7 @@ static void loadRuntimeModule(ValueFlowRuleContext& context, const BuiltinModule
         auto found = std::ranges::find(module.exports, program.stringOf(name), &ModuleExport::name);
         bool isListed = found != module.exports.end() && (found->kind != ModuleExportKind::Variable || found->variable);
         if (!isListed) {
-            use(memberOfRequiredValue(context, id, program.stringOf(name)), index);
+            use(memberOf(context, requiredValueOf(context, id), program.stringOf(name)), index);
             continue;
         }
         switch (found->kind) {
@@ -489,11 +516,6 @@ struct Attachments {
     bool hostMethodsMayRun { false };
 };
 
-static bool isLibraryRole(FunctionRole role)
-{
-    return role == FunctionRole::Library || role == FunctionRole::Model;
-}
-
 static void followWhatNativeCodeHolds(ValueFlowRuleContext& context)
 {
     const Program& program = context.program();
@@ -636,6 +658,8 @@ void noteRequest(ValueFlowRuleContext& context, FunctionID requester, ModuleID m
 {
     if (isInSeenCode(context, requester))
         context.add(context.nodes().ofHost(ValueFlowHostNode::ModulesOfSeenCode), only(context, context.universe().namespaceOf(module)));
+    if (!isLibraryRole(context.program().at(requester).role))
+        context.add(context.nodes().ofHost(ValueFlowHostNode::LibraryModulesRequestedByProgram), context.universe().holdersOfExportsOf(module));
 }
 
 static bool isWrittenByProgram(const Program& program, const Module& module)

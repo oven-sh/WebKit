@@ -1840,6 +1840,18 @@ void Pipeline::runPlacementAndRepresentationStagesTogether()
     stage.didFinish(nameOf(PassID::PlaceSiteCaches));
 }
 
+static bool lacksLibraryCode(const Program& program, const FlowResults& flow)
+{
+    if (!flow.libraryFunctionsLacked().empty())
+        return true;
+    const BuiltinTable& builtins = program.builtins();
+    return std::ranges::any_of(builtins.startupLoads(), [&](const BuiltinModuleLoad& load) {
+        bool isHeld = std::ranges::contains(program.modules, load.module, &Module::runtimeModule);
+        BuiltinID namespaceObject = builtins.namespaceOf(load.module);
+        return !isHeld && namespaceObject && std::ranges::contains(flow.builtinUses(), namespaceObject.index(), &BuiltinUseRecord::builtin);
+    });
+}
+
 void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLastEffectSummaries)
 {
     runReadStage();
@@ -1849,6 +1861,10 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
     // Nothing behind this refuses a program for what it says. The limits of what follows are about the executable.
     if (m_build.options().isCheckOnly())
         return;
+    if (m_build.options().stopsWhereLibraryCodeIsLacked() && lacksLibraryCode(m_program, flow())) {
+        m_output->lacksLibraryCode = true;
+        return;
+    }
     runOptimizeStage();
     runSlotStage();
     runSelectStage();

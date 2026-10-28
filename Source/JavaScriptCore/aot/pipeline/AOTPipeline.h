@@ -74,6 +74,7 @@ struct PipelineOutput {
     // By function: what forEachCalledFunction() names. Empty where the bodies were not read for it while they were in the cache.
     Vector<Vector<FunctionID>> calledFunctions;
     bool isComplete { false };
+    bool lacksLibraryCode { false };
 };
 
 using ReaderOfFinishedBodies = ScopedLambda<void(const PipelineOutput&)>;

@@ -323,8 +323,11 @@ bool hoistLoopInvariantValues(Procedure& proc)
                     }
                     if (std::optional<MovedLoad> moved = MovedLoad::of(proc, value)) {
                         proc.movedLoadLog().add(*moved, block, static_cast<unsigned>(&value - block->values().begin()), value->lastChild(), value);
-                        for (unsigned inLoop = 0; inLoop < loop.size(); ++inLoop)
-                            proc.movedLoadLog().addBehindEachValueThatStaysIn(loop.at(inLoop), *moved, value->lastChild(), value);
+                        // A load that a branch leads to says nothing of the ways that do not come by it: nothing uses it there, and another kind of thing may lie at its address.
+                        for (unsigned inLoop = 0; inLoop < loop.size(); ++inLoop) {
+                            if (dominators.dominates(block, loop.at(inLoop)))
+                                proc.movedLoadLog().addBehindEachValueThatStaysIn(loop.at(inLoop), *moved, value->lastChild(), value);
+                        }
                     }
                     value = proc.add<Value>(Nop, Void, value->origin());
                     changed = true;

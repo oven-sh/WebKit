@@ -137,7 +137,6 @@ void enableGlobalsOfBuiltinTable()
     if (!Options::aotImagePath())
         return;
     Options::useSharedArrayBuffer() = true;
-    Options::useShadowRealm() = true;
     Options::useTemporal() = true;
     Options::useExplicitResourceManagement() = true;
 }

@@ -1,6 +1,7 @@
 # main.cjs: function wrap(fn) { .. return eval(..) }   const picked = lose(table[key]); picked(1)   lose(require)("node:zlib")
 # Once the file hands its `require` on itself, a call of a value that nobody follows may be a call of it
 # RUN: valueflow-solve unseen
+# REQUIRES: code-outside-image
 # CHECK: unseen EvaluatesText
 # CHECK: unseen LoadsCodeByName ModuleRequire
 

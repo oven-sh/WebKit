@@ -230,6 +230,7 @@ inline constexpr ValueFlowCellName valueOfEntriesPair { ValueFlowNameKind::Hidde
 inline constexpr ValueFlowCellName sourcesOfEntriesPair { ValueFlowNameKind::HiddenSlot, 0xfffffffd };
 inline constexpr ValueFlowCellName entriesPairsOfMap { ValueFlowNameKind::HiddenSlot, 0xfffffffc };
 inline constexpr ValueFlowCellName describedObjectName { ValueFlowNameKind::HiddenSlot, 0xfffffffb };
+inline constexpr ValueFlowCellName proxyItselfName { ValueFlowNameKind::HiddenSlot, 0xfffffffa };
 
 inline constexpr ValueFlowName elementsName = ValueFlowName::of(ValueFlowNameKind::Elements);
 inline constexpr ValueFlowName unknownKeyName = ValueFlowName::of(ValueFlowNameKind::UnknownKey);

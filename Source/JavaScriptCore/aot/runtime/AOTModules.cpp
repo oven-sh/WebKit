@@ -2159,11 +2159,7 @@ static Modules* modulesOrThrow(JSGlobalObject* realm, ModuleID module, LoadByNam
         return nullptr;
     }
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
-#if ENABLE(SHADOW_REALM)
-    throwException(realm, scope, createModuleInShadowRealmError(realm, modulePath(module)));
-#else
     throwException(realm, scope, createModuleInOtherRealmError(realm, modulePath(module)));
-#endif
     return nullptr;
 }
 

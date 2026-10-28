@@ -142,7 +142,7 @@ void RuntimeValidationEmitter::validateSlotAccess(const OperationContext& contex
 void RuntimeValidationEmitter::checkGuardIsAvailable(const OperationContext& context, ValueID guard, uint32_t operandIndex)
 {
     Use::Kind kind = context.valueID() ? Use::Kind::Operand : Use::Kind::TerminatorOperand;
-    if (analyses().guardStateAt(guard, Use { kind, context.block(), context.valueID(), operandIndex, 0 }) != GuardState::Unavailable)
+    if (analyses().guardStateAt(guard, Use { kind, context.block(), context.valueID(), operandIndex, 0 }) != GuardState::Unavailable || analyses().escape().gaveUp())
         return;
     if (context.valueID() && findReadsKeptForValidation(m_function).get(context.valueID().index()))
         return;

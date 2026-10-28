@@ -12,8 +12,14 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
-void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties copiedProperties)
+void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& source, CopiedProperties copiedProperties, std::optional<std::span<const PropertyKeyID>> namesOfSource)
 {
+    auto forEachKeyOfSource = [&](NOESCAPE const Invocable<void(const HeapKey&)> auto& functor) {
+        if (!namesOfSource)
+            return functor(unknownHeapKey);
+        for (PropertyKeyID name : *namesOfSource)
+            functor(keyNamed(name));
+    };
     bool storesThroughSetters = copiedProperties == CopiedProperties::AreAssigned;
     bool keepsAccessors = copiedProperties == CopiedProperties::AreDefinedAsTheyStand;
     ClimbingSet targets = m_context.valueOf(target);
@@ -23,8 +29,11 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     ValueFlowName everySetter = foundName(unknownHeapKey, HeapPropertyPart::Setter);
     ValueFlowName valueUnderUnknownKey = writtenName(unknownHeapKey, HeapPropertyPart::Value);
 
-    if (storesThroughSetters)
-        replaceMembersThroughSettersFoundFrom(targets, unknownHeapKey, PropertySearch::WholeChain, nullptr, true);
+    if (storesThroughSetters) {
+        forEachKeyOfSource([&](const HeapKey& key) {
+            replaceMembersThroughSettersFoundFrom(targets, key, PropertySearch::WholeChain, nullptr, true);
+        });
+    }
     add(m_context.written(known(targets), copiedFromName), m_context.unite(known(sources), findListedBun(source, sources)));
     if (holdsNamedBun(source))
         add(m_context.written(known(targets), copiedFromName), only(ValueFlowUniverse::markOfNamedBun()));
@@ -138,11 +147,13 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
 
     if (storesThroughSetters) {
         ValueFlowOperand held = operandOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyValue));
-        convertStoredValue(targets, unknownHeapKey, held);
-        convertStoredValue(targets, unknownHeapKey, operandOf(copied));
-        forEachStartOfLookup(targets, [&](ClimbingSet start) {
-            callSettersOfReceivers(start, unknownHeapKey, held);
-            callSettersOfReceivers(start, unknownHeapKey, operandOf(m_context.readWhatWasWritten(known(targets), valueUnderUnknownKey)));
+        forEachKeyOfSource([&](const HeapKey& key) {
+            convertStoredValue(targets, key, held);
+            convertStoredValue(targets, key, operandOf(copied));
+            forEachStartOfLookup(targets, [&](ClimbingSet start) {
+                callSettersOfReceivers(start, key, held);
+                callSettersOfReceivers(start, key, operandOf(m_context.readWhatWasWritten(known(targets), valueUnderUnknownKey)));
+            });
         });
     }
 
@@ -284,7 +295,7 @@ void HeapRule::runPropertyAction(const BuiltinPropertyAction& action, const Valu
         return;
     case BuiltinPropertyActionKind::AssignsFrom:
         if (!operands.namesInMap) {
-            copyProperties(object, value, CopiedProperties::AreAssigned);
+            copyProperties(object, value, CopiedProperties::AreAssigned, operands.namesOfSource);
             return;
         }
         for (PropertyKeyID name : *operands.namesInMap) {

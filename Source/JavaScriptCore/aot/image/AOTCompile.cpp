@@ -378,7 +378,7 @@ static void run(NOESCAPE const PipelineRunner& runPipeline, BuildContext& contex
     output.entryModuleIDs = program.entries.map([](const Typed::Entry& entry) {
         return entry.module.index() + 1;
     });
-    if (context.options().isVerifyOnly()) {
+    if (context.options().isVerifyOnly() || pipeline->lacksLibraryCode) {
         PhaseTimes times(context, Stage::AnalyzeFlow);
         buildFlowReport(*pipeline, Typed::collectFlowReportBodyRecords(program, context), context, output);
         times.didFinish("collect type tests, build flow report"_s);
