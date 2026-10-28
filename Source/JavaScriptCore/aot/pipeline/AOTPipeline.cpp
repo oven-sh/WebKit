@@ -1342,7 +1342,7 @@ PassOutcome Pipeline::runProgramPass(PassID id)
         edit(id, deferClosuresInFields, inputsFor(id).heat, m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::ReadCapturesFromEnvironments:
-        edit(id, readCapturesFromEnvironments, flow(), m_build);
+        edit(id, readCapturesFromEnvironments, *output.flow, m_analyses.effectsAsLastComputed(), m_build);
         return m_runner.lastProgramPassOutcome();
     case PassID::RemoveUnreadFields:
         edit(id, removeUnreadFields, inputsFor(id), m_runner);

@@ -737,6 +737,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet callees = context.valueOf(context.operandsOf(statement)[0]);
+    context.openProxiesAmong(callees);
     applyEventsOfCall(statement, context, callees);
     ValueFlowCallKind kind = constructs(statement.opcode) ? ValueFlowCallKind::Construct : ValueFlowCallKind::Call;
     if (statement.thrown)

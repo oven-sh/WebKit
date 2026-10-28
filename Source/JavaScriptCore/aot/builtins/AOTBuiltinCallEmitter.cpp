@@ -313,7 +313,7 @@ Boxed BuiltinCallEmitter::readCachedGetter(const ValueContext& value, const Buil
 {
     RELEASE_ASSERT(overload.mode == BuiltinCallMode::Get);
     Boxed receiver = boxedOperand(value, value->receiverOperand());
-    Boxed cached(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::ExternalState), unboxCell(receiver).value(), offsetOfCachedValue)));
+    Boxed cached(m_out.load64(m_out.address(m_heaps.hostObjectCachedValues, unboxCell(receiver).value(), offsetOfCachedValue)));
     return either<Boxed>(isNotEmpty(cached), [&] {
         return cached;
     }, [&] {

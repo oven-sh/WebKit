@@ -275,6 +275,22 @@ void FlowResults::removeEntryParameters(FunctionID function, const BitVector& re
     summaries.shrink(numberOfRemainingParameters);
 }
 
+void FlowResults::replaceEntryParameter(FunctionID function, uint32_t entryParameter, const OperandSummary& summaryOfNewValue)
+{
+    if (!hasResults() || !isAnalyzed(m_tables.functions, function))
+        return;
+    RELEASE_ASSERT(!m_borrowedParameters.size());
+
+    Vector<OperandSummary>& summaries = m_tables.functions.parameterSummaries[function.index()];
+    if (entryParameter >= summaries.size())
+        return;
+    summaries[entryParameter] = summaryOfNewValue;
+    for (OperandSummary& summary : summaries) {
+        if (summary.retainedIn == RetainedIn::Operand && summary.retainingOperand == entryParameter)
+            summary = { summary.uses, RetainedIn::UnknownMemory, 0 };
+    }
+}
+
 void FlowResults::setOperandSummaries(Vector<Vector<OperandSummary>>&& parameterSummaries, Vector<Vector<OperandUses>>&& storedValueUses)
 {
     RELEASE_ASSERT(parameterSummaries.size() == m_tables.functions.functions.size());

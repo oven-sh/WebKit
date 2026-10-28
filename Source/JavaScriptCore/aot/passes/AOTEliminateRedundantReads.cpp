@@ -2299,6 +2299,7 @@ struct LoopPathSeparator : LoopEditor {
         Vector<TypeID> typesOfCarriedValues { };
         BitVector carriedValuesThatMayBeUnspecified { };
         bool letsVariablesBeCarried { false };
+        BitVector emptyPathsThatStay { };
     };
 
     Vector<TypeID> m_rememberedTypes { };
@@ -2654,8 +2655,78 @@ struct LoopPathSeparator : LoopEditor {
         return isMadeOfNarrowedParameter;
     }
 
+    bool holdsOnlyConstants(const Block& block)
+    {
+        return std::ranges::all_of(block.values, [&](ValueID value) {
+            return isRematerializable(m_function.at(value));
+        });
+    }
+
+    // The loop is typed by the rules of its operations as if no unlikely path passed anything on: what the likely paths make of a narrower parameter is as narrow as it will be.
+    BitVector findBlocksThatWidenParameters(const BitVector& isInLoop, const BitVector& isUnlikely, const BitVector& askedBlocks)
+    {
+        struct PassedValue {
+            Edge edge;
+            uint32_t position;
+        };
+        BitVector widensParameter(m_function.blocks.size());
+        Vector<PassedValue, 8> passedValues;
+        Vector<ValueID, 16> typedValues;
+        for (size_t index : askedBlocks) {
+            const Terminator& terminator = m_function.blocks[index].terminator;
+            for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex) {
+                const Target& target = terminator.targets[targetIndex];
+                if (!isInLoop.get(target.block.index()) || isUnlikely.get(target.block.index()))
+                    continue;
+                const CompactList<ValueID>& parameters = m_function.at(target.block).parameters;
+                for (uint32_t position = 0; position < parameters.size(); ++position) {
+                    if (position < target.arguments.size()) {
+                        if (isAllocationButForLeavingPaths(target.block, position, isUnlikely))
+                            widensParameter.set(index);
+                        typedValues.append(target.arguments[position]);
+                    }
+                    passedValues.append({ Edge { BlockID(index), targetIndex }, position });
+                    typedValues.append(parameters[position]);
+                }
+            }
+            // What a test proves on an edge is typed from the operands of the test.
+            terminator.forEachOperand([&](ValueID test, uint32_t) {
+                typedValues.append(test);
+                m_function.at(test).forEachOperand([&](ValueID operand, uint32_t) {
+                    typedValues.append(operand);
+                });
+            });
+        }
+
+        BitVector isValueOfLoop(m_function.values.size());
+        for (size_t index : isInLoop) {
+            for (ValueID parameter : m_function.blocks[index].parameters)
+                isValueOfLoop.set(parameter.index());
+            for (ValueID value : m_function.blocks[index].values)
+                isValueOfLoop.set(value.index());
+        }
+        TypePropagationInputs inputs = typingInputs();
+        inputs.blocksThatPassNothing = &isUnlikely;
+        TypePropagation propagation(inputs);
+        propagation.restartSourcesOf(typedValues.span(), isValueOfLoop);
+        propagation.solveTypes();
+        for (const PassedValue& passed : passedValues) {
+            const Target& target = targetOf(m_function, passed.edge);
+            const Type& typeOnLikelyPaths = typeOf(m_function.at(target.block).parameters[passed.position]);
+            if (!typeOnLikelyPaths.isJavaScriptValue())
+                continue;
+            TypeID passedType = passed.position < target.arguments.size()
+                ? m_function.at(target.arguments[passed.position]).type
+                : typeOnEdge(m_program, m_function, { passed.edge.from, passed.edge.targetIndex, passed.position - static_cast<uint32_t>(target.arguments.size()) }, m_context.types);
+            if (!m_context.types.at(passedType).isSubsetOf(typeOnLikelyPaths, m_program))
+                widensParameter.set(passed.edge.from.index());
+        }
+        propagation.restoreTypes();
+        return widensParameter;
+    }
+
     // A path that only computes leaves too where a parameter of the likely paths is wider for what it passes, or is an object of theirs but for that.
-    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute)
+    BitVector findLeavingBlocks(const NaturalLoop& loop, const BitVector& isInLoop, PathsThatOnlyCompute pathsThatOnlyCompute, BitVector& emptyPathsThatStay)
     {
         BitVector isUnlikely = findUnlikelyBlocks(loop).predicted();
         BitVector leaves = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
@@ -2665,9 +2736,7 @@ struct LoopPathSeparator : LoopEditor {
             return leaves;
         Vector<std::optional<Type>> typeOnLikelyPaths = typeParametersWithout(isInLoop, isUnlikely);
         BitVector mayGetNarrower = findValuesMadeOfNarrowedParameters(isInLoop, isUnlikely, typeOnLikelyPaths);
-        BitVector leavesWithPathsThatOnlyCompute = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
-            if (leaves.get(block.index()))
-                return true;
+        auto mayWidenParameter = [&](BlockID block) {
             return std::ranges::any_of(m_function.at(block).terminator.targets, [&](const Target& target) {
                 const CompactList<ValueID>& parameters = m_function.at(target.block).parameters;
                 for (size_t position = 0; position < target.arguments.size(); ++position) {
@@ -2682,7 +2751,27 @@ struct LoopPathSeparator : LoopEditor {
                 }
                 return false;
             });
+        };
+        // What has left comes back at the end of a turn of this loop: for a path of a loop inside, behind all the turns that the inner loop has left.
+        // Such a path without an operation takes nothing out of the inner loop, so it leaves only where the types say that a parameter is wider for it.
+        BitVector mayWiden(m_function.blocks.size());
+        BitVector emptyPaths(m_function.blocks.size());
+        for (size_t index : isUnlikely) {
+            if (leaves.get(index) || !mayWidenParameter(BlockID(index)))
+                continue;
+            mayWiden.set(index);
+            if (m_analyses.naturalLoops().innerMostLoopOf(BlockID(index)) != &loop && holdsOnlyConstants(m_function.blocks[index]))
+                emptyPaths.set(index);
+        }
+        if (!emptyPaths.isEmpty()) {
+            emptyPaths.exclude(findBlocksThatWidenParameters(isInLoop, isUnlikely, emptyPaths));
+            mayWiden.exclude(emptyPaths);
+        }
+        BitVector leavesWithPathsThatOnlyCompute = findLeavingBlocks(isInLoop, isUnlikely, [&](BlockID block) {
+            return leaves.get(block.index()) || mayWiden.get(block.index());
         });
+        emptyPathsThatStay = WTF::move(emptyPaths);
+        emptyPathsThatStay.exclude(leavesWithPathsThatOnlyCompute);
         m_pathThatOnlyComputesLeaves = leavesWithPathsThatOnlyCompute != leaves;
         return leavesWithPathsThatOnlyCompute;
     }
@@ -2720,7 +2809,7 @@ struct LoopPathSeparator : LoopEditor {
         if (!isHot && !isShort)
             return std::nullopt;
 
-        BitVector leaves = findLeavingBlocks(loop, isInLoop, pathsThatOnlyCompute);
+        BitVector leaves = findLeavingBlocks(loop, isInLoop, pathsThatOnlyCompute, plan.emptyPathsThatStay);
         plan.letsVariablesBeCarried = isHot && mayCarryVariables && VariableCarrier { { m_context }, false }.letWritersOfVariablesLeave(loop, leaves);
         if (leaves.isEmpty() || leaves.get(header.index()))
             return std::nullopt;
@@ -2785,6 +2874,9 @@ struct LoopPathSeparator : LoopEditor {
             const Target& target = targetOf(m_function, edge);
             builder.redirectEdge(edge, cloner.cloneOf(target.block), Arguments(target.arguments));
         }
+        // They are as far out of the way of the likely paths as the paths that have left.
+        for (size_t index : plan.emptyPathsThatStay)
+            m_function.edit(BlockID(index), BlockEdit::Rest).frequency = BlockFrequency::Rare;
         // A path that has left is unreachable in the loop.
         SSARepair repair(builder, m_analyses);
         cloner.addVariablesTo(repair, m_analyses);

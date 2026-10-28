@@ -251,6 +251,7 @@ function formatClass(builtinClass: ModelClass, pools: ClassPools): string {
         ),
       ),
     ],
+    ["namesReadToDescribeInstances", classNames.add(builtinClass.namesReadToDescribeInstances.map(name => formatName(name)))],
     [
       "constructorOnlyReadsPrototypeOfNewTarget",
       formatUnlessFalse(builtinClass.constructorOnlyReadsPrototypeOfNewTarget),

@@ -282,6 +282,30 @@ ClimbingSet ValueFlowRuleContext::valueOf(ValueFlowNodeID named)
     return ClimbingSet(m_solver.valueForReadersOf(node, m_maker));
 }
 
+// A proxy comes to every place through the list of the followed ones, so whoever finds it in a value finds it listed.
+ClimbingSet ValueFlowRuleContext::proxiesAskedByTheirTrapsIn(const ValueFlowOperand& operand)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    ValueSetID followed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed));
+    if (followed == ValueSets::nothing)
+        return { };
+    ClimbingSet proxies = restrict(valueOf(operand), followed);
+    if (meet(proxies, ValueSets::anything) && !m_keyOfStatementOfThisTurn)
+        m_log.statementsThatAskProxiesByTheirTraps.append(m_statement);
+    return proxies;
+}
+
+void ValueFlowRuleContext::openProxiesAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return;
+    ValueSetID followed = valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed));
+    if (followed == ValueSets::nothing || !meet(values, followed))
+        return;
+    add(nodes().ofHost(ValueFlowHostNode::ProxiesThatAreOpen), restrict(values, followed));
+}
+
 bool ValueFlowRuleContext::holdsAnything(ValueFlowNodeID named)
 {
     if (!named)
@@ -814,6 +838,15 @@ void ValueFlowRuleContext::useAsAnswerOfUnknownObject(BuiltinID builtin, OptionS
 }
 
 void ValueFlowRuleContext::noteMembersNotToldApart() { m_log.statementsWithMembersNotToldApart.append(m_statement); }
+
+FunctionID ValueFlowRuleContext::libraryFunctionToEnter(RuntimeFunctionID id)
+{
+    if (const RuntimeFunctionEntry* entry = findRuntimeFunction(program(), id); entry && entry->function)
+        return entry->function;
+    if (id && !m_solver.lacksLibraryFunction(id))
+        m_log.libraryFunctionsLacked.append(id);
+    return { };
+}
 
 } } } // namespace JSC::AOT::Typed
 

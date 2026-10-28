@@ -107,6 +107,7 @@ private:
 
     const Value& operation() const { return m_program.at(m_statement.function).at(m_statement.site); }
     const ValueFlowOperand& operand(uint32_t index) const { return m_operands[index]; }
+    ClimbingSet m_proxiesAskedByTheirTraps;
     static bool isPassed(const ValueFlowOperand& operand) { return operand.node || (operand.constant && operand.constant != ValueSets::nothing); }
     static ValueFlowOperand operandOf(ValueFlowNodeID node) { return { node, { }, { } }; }
 
@@ -152,6 +153,8 @@ private:
     void passToAccessorNobodyKnows(const HeapReceiver&, ValueSetID mask);
     void use(BuiltinID builtin, OptionSet<BuiltinUse> uses) { m_context.use(builtin, uses); }
     void noteTestOfMembers(const ValueFlowOperand& object, const HeapKey&);
+    ValueFlowOperand withoutProxiesAskedByTheirTraps(const ValueFlowOperand& object);
+    void askProxiesByTheirTrap(const HeapKey&, BuiltinName trap, ValueFlowNodeID result);
     void mayThrow() { add(m_statement.thrown, unknownValue(ValueFlowUnknownSource::ThrownByRunTime)); }
     void answerBoolean() { add(m_statement.result, m_tables.booleanKinds()); }
     bool holdsAnything(ClimbingSet set) const { return m_context.meet(set, ValueSets::anything); }
@@ -208,7 +211,6 @@ private:
     void forEachMemberUnder(ClimbingSet objects, const HeapKey&, NOESCAPE const Invocable<void(BuiltinID member, ModuleID)> auto&);
     ClimbingSet holdersFoundThroughUnknownObject(const HeapKey&);
     ClimbingSet prototypeObjectsAboveEscapedEntries(std::span<const ValueFlowClassOfEntries>, ClimbingSet holders);
-    ClimbingSet holdersOfAccessorsThatRunOnUnknownObject(const HeapKey&);
     ClimbingSet foundThroughUntrackedObject(ValueSetID objects);
     ValueFlowNodeID readWhatStaysBehindUnder(ValueFlowName);
     bool mayBeFoundThroughPlaceholder(BuiltinID member);

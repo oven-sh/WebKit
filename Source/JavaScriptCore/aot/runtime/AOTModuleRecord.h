@@ -86,6 +86,11 @@ public:
     void willBeLoadedByImport();
     bool takeStepOfMainModule();
     bool takeLoadPromiseBelowMainModule();
+    // The host has asked for the evaluation of the record and this is its promise. Answers the promise that the host waits for.
+    JSPromise* evaluateMainModule(JSPromise* evaluation);
+    // A job has ended the evaluation of some modules.
+    static void didEvaluateModulesInJob(JSGlobalObject*);
+    static void didFailModulesInJob(JSGlobalObject*);
     // The loader reports the module as loaded so many steps later.
     void setStepsBehindLoad(uint32_t steps) { m_stepsBehindLoad = steps; }
     bool takeStepBehindLoad() { return m_stepsBehindLoad && m_stepsBehindLoad--; }

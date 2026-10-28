@@ -285,6 +285,8 @@ FlowReport buildFlowReport(const Program& program, const FlowResults& flow, cons
         report.unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
     report.unseenCode.append(flow.loadsOfMachineCode());
     report.builtinsUsed = Vector<Wire::BuiltinUseRecord>(flow.builtinUses());
+    for (RuntimeFunctionID function : flow.libraryFunctionsLacked())
+        report.libraryFunctionsLacked.append(Wire::LackedFunctionRecord { .function = function.index() });
     report.featuresUsed = Vector<Wire::FeatureUseRecord>(flow.featureUses());
     countDirectCallsAsUses(program, bodyRecords.builtinsCalledDirectly.span(), report, build);
     appendLocaleUses(program, flow, report);

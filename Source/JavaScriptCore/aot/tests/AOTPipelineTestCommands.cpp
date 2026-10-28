@@ -207,13 +207,21 @@ static void runInShellCommand(TestCommandContext& context)
     }
 
     TemporaryFile image(".image"_s, output->image.span());
+    Vector<String> arguments { makeString("--aotImagePath="_s, image.path()) };
     StringBuilder script;
     script.append("globalThis.id = value => value; "_s);
-    for (const String& word : context.arguments)
-        script.append(word, ' ');
+    bool isOptionOfShell = true;
+    for (const String& word : context.arguments) {
+        isOptionOfShell = isOptionOfShell && word.startsWith("--"_s);
+        if (isOptionOfShell)
+            arguments.append(word);
+        else
+            script.append(word, ' ');
+    }
     script.append("runCompiledEntryPoint("_s, output->entryModuleIDs[0], ").catch(error => print(\"the program threw \" + error));"_s);
+    arguments.append(String("-e"_s));
+    arguments.append(script.toString());
 
-    Vector<String> arguments { makeString("--aotImagePath="_s, image.path()), String("-e"_s), script.toString() };
     ChildProcessResult result = ChildProcessLauncher(shellPath(), { }).run(arguments.span());
     String printed = makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
     context.out.print(printed);

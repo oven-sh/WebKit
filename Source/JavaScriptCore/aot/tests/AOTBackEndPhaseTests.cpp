@@ -31,6 +31,7 @@
 #include "B3MemoryValue.h"
 #include "B3PatchpointValue.h"
 #include "B3Procedure.h"
+#include "B3RegionCloner.h"
 #include "B3RotateLoops.h"
 #include "B3SlotBaseValue.h"
 #include "B3UnrollLoops.h"
@@ -971,6 +972,39 @@ static void testBoundReadTwiceIsHeldAgainstWhatStandsForIt()
     }
 }
 
+// What leaves a block that may be copied goes through a variable. A user in another block that names the value itself is seen.
+static void testNoOtherBlockNamesValueOfBlockThatMayBeCopied()
+{
+    B3::Procedure proc;
+    B3::Origin origin = originOf(otherOrigin);
+    B3::BasicBlock* root = proc.addBlock();
+    B3::BasicBlock* copied = proc.addBlock();
+    B3::BasicBlock* behind = proc.addBlock();
+    B3::Value* argument = root->appendNew<B3::ArgumentRegValue>(proc, origin, GPRInfo::argumentGPR0);
+    root->appendNew<B3::Value>(proc, B3::Jump, origin);
+    root->setSuccessors(B3::FrequentedBlock(copied));
+    B3::Value* sum = copied->appendNew<B3::Value>(proc, B3::Add, origin, argument, argument);
+    copied->appendNew<B3::Value>(proc, B3::Jump, origin);
+    copied->setSuccessors(B3::FrequentedBlock(behind));
+    B3::Value* product = behind->appendNew<B3::Value>(proc, B3::Mul, origin, sum, argument);
+    behind->appendNew<B3::Value>(proc, B3::Return, origin, product);
+    proc.resetReachability();
+    B3::validate(proc);
+
+    B3::RegionCloner cloner(proc);
+    cloner.addBlock(copied);
+    cloner.demoteEscapingValues();
+    B3::Value* read = product->child(0);
+    AOT_TEST_CHECK(read != sum && read->owner == behind);
+    AOT_TEST_CHECK(cloner.valuesStayInDeclaredBlocks());
+    product->child(0) = sum;
+    AOT_TEST_CHECK(!cloner.valuesStayInDeclaredBlocks());
+    product->child(0) = read;
+    AOT_TEST_CHECK(cloner.finish());
+    B3::fixSSA(proc);
+    B3::validate(proc);
+}
+
 // Two loops in a row are both copied. The second goes on from the counter of the first, up to a number that the first has counted.
 static void testLoopGoesOnFromCounterOfCopiedLoop()
 {
@@ -1670,6 +1704,7 @@ std::span<const NativeTest> backEndPhaseTests()
         { "merged-tests-of-bits-tell-the-log-of-the-word-read-again"_s, testMergedTestsOfBitsTellTheLogOfTheWordReadAgain },
         { "variable-read-again-in-loop-is-held-against-what-stands-for-it"_s, testVariableReadAgainInLoopIsHeldAgainstWhatStandsForIt },
         { "bound-read-twice-is-held-against-what-stands-for-it"_s, testBoundReadTwiceIsHeldAgainstWhatStandsForIt },
+        { "no-other-block-names-value-of-block-that-may-be-copied"_s, testNoOtherBlockNamesValueOfBlockThatMayBeCopied },
         { "loop-goes-on-from-counter-of-copied-loop"_s, testLoopGoesOnFromCounterOfCopiedLoop },
         { "merge-into-branch-with-two-likely-ways"_s, testMergeIntoBranchWithTwoLikelyWays },
         { "merge-keeps-likely-branch"_s, testMergeKeepsLikelyBranch },

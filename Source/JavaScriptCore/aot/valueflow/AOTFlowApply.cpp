@@ -798,7 +798,9 @@ static BitVector findWidenedVariables(const Program& program, const FlowApplicat
     for (uint32_t index = 0; index < application.variables.size(); ++index) {
         const FlowPositionUpdate& position = application.variables[index].position;
         const DeclaredType& declared = program.variables[index].declared;
-        if (position.isProven && position.type && declared.isExpected() && program.at(position.type).isNumber() && !program.at(position.type).isSubsetOf(program.at(declared.written()), program))
+        if (!position.isProven || !position.type || !program.at(position.type).isNumber())
+            continue;
+        if (!program.at(position.type).isSubsetOf(declared.isExpected() ? program.at(declared.written()) : program.at(TypeTable::int32), program))
             variables.set(index);
     }
     return variables;

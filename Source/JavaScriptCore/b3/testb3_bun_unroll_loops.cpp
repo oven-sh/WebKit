@@ -587,6 +587,7 @@ static void testUnrollLoopsPollsBetweenStretches()
 }
 
 // A loop that walks nothing is not written out. It goes without its poll where its turns are few, and a copy of it that polls takes the others.
+// A counter that rises from a place that is not below zero is asked only where it ends: a bound within a stretch of zero has few turns in front of it.
 static void testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut()
 {
     constexpr int64_t stretch = Limits::maxTurnsWithoutPoll;
@@ -603,13 +604,14 @@ static void testUnrollLoopsLeavesPollToCopyOfLoopThatIsNotWrittenOut()
             CHECK_EQ(sum.proc.report().countOf(Counter::LoopPollsRemoved), 1u);
             checkValueCountInEachLoop(sum.proc, isLoopPoll, "polls"_s, { 0, 1 });
             auto code = compileProc(sum.proc);
-            for (int64_t turns : { int64_t { -5 }, int64_t { 0 }, int64_t { 1 }, int64_t { 9 }, stretch - 1, stretch, stretch + 1, 2 * stretch + 5 }) {
+            for (int64_t turns : { int64_t { -5 }, int64_t { 0 }, int64_t { 1 }, int64_t { 9 }, stretch - 4, stretch - 3, stretch - 2, stretch - 1, stretch, stretch + 1, 2 * stretch + 5 }) {
                 int64_t bound = 3 + turns * step;
                 int64_t numberOfTurns = sum.expected(bound, one);
                 state = { };
                 CHECK_EQ(run(*code, bound), sum.expected(bound, itself));
+                bool hasFewTurns = step > 0 ? bound <= stretch * step : turns <= stretch;
                 if (turns >= 0)
-                    CHECK_EQ(state.numberOfPolls, turns <= stretch ? 0 : numberOfTurns);
+                    CHECK_EQ(state.numberOfPolls, hasFewTurns ? 0 : numberOfTurns);
             }
         }
     }

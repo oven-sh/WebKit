@@ -32,6 +32,7 @@ Bun's `test/aot/programs`, and the tests of lowering are in Bun's `test/aot/ir`.
 | `place/` | slots, numbering, shape tests, site caches, program tables |
 | `represent/` | the representations of values |
 | `codegen/` | code generation, type test plans, barriers, frame maps, validation |
+| `runtime/` | programs that run in the shell and count their calls into the run time: the caches, tables and Structures that fill while a program runs |
 | `validation/` | a lie per producer: a program in which one thing that typed code relies on is false. The validating build ends the process with the kind that names the lie, or fails at build time |
 | `cliffs/` | the cliffs that no program can cause |
 
@@ -386,8 +387,9 @@ A command is registered by the owner of the code it runs, in `aot/**/AOT*TestCom
   `OPTIONS: report=Declines` the `decline` lines of all passes that ran, and the program.
 - `compile` runs the whole build and prints `diagnostic <kind>`, `loss <limit> x<count>`, `image <empty|not empty>` and
   `statistic <name> <value>` lines.
-- `run-in-shell { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The words are statements of
-  JavaScript, joined by one space, which the shell runs first; `id` is the identity function. It prints what the shell printed, then
+- `run-in-shell { --<option> } { word }` runs the whole build, then the entry module in `jsc` from the folder of `testaot`. The leading words
+  that begin with `--` are options of the shell: with `--aotCountsPath=/dev/null` the statements can ask `aotOperationCount`. The other words are
+  statements of JavaScript, joined by one space, which the shell runs first; `id` is the identity function. It prints what the shell printed, then
   `exited with <code>` or `crashed with <signal>`. A failure of a validating build is the line `AOT validation: <Kind> f<n> v<n> ..` in
   front of `crashed with`.
 - `lower-to-b3 [ optimized | after=<step>[:<n>] ] [ loops ] [ entry-modules ] { f<n> }` generates code for the functions it prints, and prints their B3 procedures: IR in, B3 out. It starts

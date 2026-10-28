@@ -674,6 +674,8 @@ export interface ClassColumns {
   typesOfNamesDefinedOnNewInstances?: Readonly<Record<string, TypeSpec>>;
   /** Property to static member: native code calls the function the program stored under the member on the constructor to make the property. */
   namesMadeByStaticMembers?: Readonly<Record<string, string>>;
+  /** What native code looks up on an instance and the objects above it whenever it describes the instance. It calls nothing that it finds. */
+  namesReadToDescribeInstances?: readonly string[];
   /** The constructor reads `prototype` from new.target and nothing else, and it calls nothing that it finds on the new object, whatever code of its operands it runs. */
   constructorOnlyReadsPrototypeOfNewTarget?: boolean;
   instanceCppClass?: CppClassRef;

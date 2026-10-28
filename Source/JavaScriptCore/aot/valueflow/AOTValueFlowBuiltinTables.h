@@ -66,6 +66,8 @@ public:
     ValueSetID closuresThatEntriesDescribe() const { return m_closuresThatEntriesDescribe; }
     BuiltinID entryDescribing(ValueFlowObjectID closure) const;
     bool isCodeThatRecordsDescribe(FunctionID function) const { return m_codeThatRecordsDescribe.get(function.index()); }
+    // What a call of the entry does to its operands the statements of its code say, as of any function of the program.
+    bool isDescribedByCodeAlone(BuiltinID entry) const { return m_entriesDescribedByCodeAlone.get(entry.index()); }
 
     const ValueFlowHeapTables& heap() const LIFETIME_BOUND { return *m_heap; }
 
@@ -89,6 +91,7 @@ private:
     Vector<BuiltinName> m_namesOfFunctionsWithTypedResults;
     BitVector m_entriesHoldingValueFromLibrary;
     BitVector m_codeThatRecordsDescribe;
+    BitVector m_entriesDescribedByCodeAlone;
     Vector<std::pair<ValueFlowObjectID, BuiltinID>> m_describedClosures;
     ValueSetID m_closuresThatEntriesDescribe;
     HeadLayoutsOfFamilies m_headLayoutsOfFamilies;

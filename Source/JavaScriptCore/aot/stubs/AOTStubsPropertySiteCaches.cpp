@@ -155,6 +155,7 @@ void generateGetByIdAtSite(StubAssembler& jit)
     // Each word is compared where it lies.
     jit.load64(Address(registers.site, Slot::offsetOfStructureID()), registers.header);
     Jump hasOtherStructure = jit.branch32(CCallHelpers::NotEqual, registers.header, Address(registers.receiver, JSCell::structureIDOffset()));
+    // Slot::needsHandler says what this one comparison tells.
     jit.m_assembler.cmpb_im(Slot::isOwn, Slot::offsetOfFlags(), registers.site);
     Jump isNotOwnInlineValue = branchOnFlags(X86Assembler::ConditionNE);
     jit.urshift64(TrustedImm32(Slot::locationShiftInHeader), wordIndex);

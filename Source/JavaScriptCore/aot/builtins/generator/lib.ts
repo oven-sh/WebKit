@@ -1168,6 +1168,7 @@ const classColumnKeys = [
   "namesDefinedOnNewInstances",
   "typesOfNamesDefinedOnNewInstances",
   "namesMadeByStaticMembers",
+  "namesReadToDescribeInstances",
   "constructorOnlyReadsPrototypeOfNewTarget",
   "instanceCppClass",
   "prototypeCppExpression",

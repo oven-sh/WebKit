@@ -82,6 +82,7 @@ struct ThrowSite {
     ThrowKind kind;
     uint32_t a;
     std::optional<uint32_t> b;
+    bool calleeIsReadFromReceiver { false };
 };
 
 struct TrapSite {

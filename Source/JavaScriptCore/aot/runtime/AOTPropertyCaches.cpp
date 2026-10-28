@@ -2257,7 +2257,8 @@ bool SiteCaches::tryWrite(SiteCache site, const Slot& slot, unsigned mostRefills
     }
     if (site->get().kind == Slot::Kind::Constant)
         m_state.propertyCaches->watchedValues().stopWatchingConstant(site);
-    if (!site->get().isEmpty())
+    // A slot without a Structure fits no object: didFailToFill() put it there.
+    if (!site->get().isEmpty() && site->get().structureID)
         count(m_state.instance, RuntimeCounterID::SiteCacheRefills);
     site->set(m_writtenRegions, slot);
     m_wasWrittenSinceLastSweep = true;

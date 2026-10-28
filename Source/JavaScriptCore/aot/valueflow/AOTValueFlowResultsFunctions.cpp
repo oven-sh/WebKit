@@ -1023,7 +1023,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
 
     BitVector isNamedByTable(numberOfFunctions);
     for (const RuntimeFunctionEntry& entry : program.runtimeFunctions) {
-        if (entry.function)
+        if (entry.function && !isEnteredByCallsAlone(program, entry.id))
             isNamedByTable.quickSet(entry.function.index());
     }
     Vector<Witness> witnessesOfEscapes = findWitnessesOfEscapes(inputs, maker);

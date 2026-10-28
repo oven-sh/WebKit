@@ -196,7 +196,6 @@ void generateStringBuilderAppendString(StubAssembler& jit)
     // A short rope of flat 8-bit strings, as `first + " " + last` kept in a field is: its pieces are copied one after the other.
     isRope.link(&jit);
     slowPath.append(jit.branchTestPtr(CCallHelpers::NonZero, source, TrustedImm32(JSRopeString::isSubstringInPointer)));
-    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, source, TrustedImm32(JSRopeString::is8BitInPointer)));
     jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
     slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, Address(builder, Storage::offsetOfMinLengthAppendedByReference())));
     jit.load32(Address(builder, Storage::offsetOfPosition()), target);
@@ -261,7 +260,6 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
     CharacterCopy { jit, source, cursor, length, first, second, offset }.copy(nullptr);
 
     isRope.link(&jit);
-    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, source, TrustedImm32(JSRopeString::is8BitInPointer)));
     jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
     slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, TrustedImm32(StackStringBuilder::minLengthAppendedByReference)));
     jit.add64(length, cursor, end);

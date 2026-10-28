@@ -435,10 +435,21 @@ static void defineAccessor(JSGlobalObject* globalObject, JSObject* object, JSVal
     defineAccessor(globalObject, object, property, function, accessorFlags & accessorIsEnumerable, accessorFlags & accessorIsGetter);
 }
 
+// Compiled code that finds no allocator comes here, and makes the next pair by itself.
+static void prepareAllocationOfAccessors(Instance* instance)
+{
+    if (instance->allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::GetterSetter)].allocator) [[likely]]
+        return;
+    instance->allocation.getterOfAccessorWithoutGetter = instance->globalObject->nullGetterFunction();
+    instance->allocation.setterOfAccessorWithoutSetter = instance->globalObject->nullSetterFunction();
+    prepareInlineAllocation<GetterSetter>(instance, InlineAllocation::GetterSetter, instance->vm->getterSetterStructure.get());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineAccessor, void, (Instance* instance, EncodedJSValue object, EncodedJSValue key, EncodedJSValue function, uint32_t accessorFlags))
 {
     constexpr Entry entry = Entry::operationAOTDefineAccessor;
     AOT_OPERATION_BEGIN(instance, entry);
+    prepareAllocationOfAccessors(instance);
     defineAccessor(globalObject, objectArgument(object, entry), JSValue::decode(key), JSValue::decode(function), accessorFlags);
     OPERATION_RETURN(scope);
 }
@@ -449,6 +460,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineAccessors, void, (Instance* instance,
     constexpr uint32_t maskWidth = 32;
     constexpr size_t wordsPerAccessor = sizeof(DefinedAccessor) / sizeof(EncodedJSValue);
     AOT_OPERATION_BEGIN(instance, entry);
+    prepareAllocationOfAccessors(instance);
     JSObject* object = cellArgument<JSObject>(cell, entry);
     if (count > maskWidth) [[unlikely]]
         crashOnWrongOperand(entry);
@@ -714,7 +726,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryReExportFields, size_t, (Instan
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRecordCallee, void, (Instance* instance, JSCell* closure))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRecordCallee);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTRecordCallee);
     recordCallee(vm, asObject(closure));
     instance->heap.recordedCallees = FunctionTables::recordedCalleesOf(&FunctionTables::of(vm));
 }

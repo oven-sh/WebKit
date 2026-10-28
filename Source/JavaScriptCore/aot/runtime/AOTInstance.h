@@ -177,9 +177,9 @@ struct LazyStringWords {
 };
 
 // Behind DefaultFinalObject: the same object with room in its cell for two more properties, for four more and so on.
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, DefaultFinalObject };
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, DefaultFinalObject };
 static constexpr unsigned numberOfRoomierFinalObjects = 13;
-static constexpr unsigned numberOfInlineAllocations = 9 + numberOfRoomierFinalObjects;
+static constexpr unsigned numberOfInlineAllocations = 10 + numberOfRoomierFinalObjects;
 static_assert(static_cast<unsigned>(InlineAllocation::DefaultFinalObject) + 1 + numberOfRoomierFinalObjects == numberOfInlineAllocations);
 
 struct InlineAllocationData {
@@ -209,6 +209,9 @@ struct AllocationWords {
     void* cellSpace;
     void* primitiveAuxiliarySpace;
     InlineAllocationData inlineAllocations[numberOfInlineAllocations];
+    // What a GetterSetter holds in place of a getter and of a setter that it lacks. Null until InlineAllocation::GetterSetter has its allocator.
+    JSCell* getterOfAccessorWithoutGetter;
+    JSCell* setterOfAccessorWithoutSetter;
     TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations];
     uint64_t newCopyOnWriteArrayHeaders[2];
     // Of an array of values that lies in a frame. Zero unless the Structure of such arrays is pristine in every aspect.

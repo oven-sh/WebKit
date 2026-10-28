@@ -394,13 +394,23 @@ function formatStartupLoad({ module, exports }: ModelStartup["loads"][number]): 
   ]);
 }
 
-function emitStartup({ modules, loads, functionsCalledWithLoads, moduleLoaderFunctions }: ModelStartup): string {
+function emitStartup({
+  modules,
+  loads,
+  functionsCalledWithLoads,
+  namesOfMethodsCallingLoads,
+  moduleLoaderFunctions,
+}: ModelStartup): string {
   return [
     emitSlice("pub static STARTUP_MODULES: &[RuntimeModule]", sortModules(modules).map(formatModule)),
     emitSlice("pub static STARTUP_LOADS: &[StartupLoad]", loads.map(formatStartupLoad)),
     emitSlice(
       "pub static STARTUP_FUNCTIONS: &[RuntimeFunction]",
       formatFunctions(functionsCalledWithLoads.map(called => called.function)),
+    ),
+    emitSlice(
+      "pub static NAMES_OF_METHODS_CALLING_STARTUP_LOADS: &[BuiltinName]",
+      namesOfMethodsCallingLoads.map(name => formatBuiltinName(name.number)),
     ),
     emitSlice("pub static MODULE_LOADER_FUNCTIONS: &[RuntimeFunction]", formatFunctions(moduleLoaderFunctions)),
   ].join("");

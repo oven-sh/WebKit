@@ -1157,7 +1157,7 @@ static void forgetExpectationsBehindWidenedLocations(const FlowBodyApplication& 
     Vector<ValueID, 8> reads;
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& value = function.values[index];
-        if (hasVariables && value.opcode == Opcode::GetModuleVariable && body.widenedVariables->get(value.variable().index()) && value.expected().predicted()) {
+        if (hasVariables && value.opcode == Opcode::GetModuleVariable && body.widenedVariables->get(value.variable().index())) {
             reads.append(ValueID(index));
             continue;
         }

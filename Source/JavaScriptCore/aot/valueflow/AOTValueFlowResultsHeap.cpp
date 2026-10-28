@@ -964,7 +964,7 @@ static BuiltinsToApply builtinsToApplyAmong(const ValueFlowResultInputs& inputs,
     const ValueFlowUniverse& universe = inputs.universe();
     Vector<ValueFlowObjectID> objects;
     inputs.sets().forEachMember(maker.unite(universe.builtinFunctions(), universe.builtinObjects()), [&](ValueFlowObjectID object) {
-        if (onlyOfBuiltins.quickGet(universe.builtinOf(object).index()))
+        if (onlyOfBuiltins.quickGet(universe.builtinOf(object).index()) && !universe.builtinTables().isDescribedByCodeAlone(universe.builtinOf(object)))
             objects.append(object);
     });
     ValueSetID among = maker.of(objects.span());

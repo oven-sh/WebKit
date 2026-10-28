@@ -70,6 +70,7 @@ enum ResultSection {
     Image Text UserDiagnostics InternalErrors EntryModuleIds UnseenCode BuiltinsUsed FeaturesUsed LocalesUsed WorkerEntries Accesses AccessCounts TypeTests RemainingChecks
     Declines AllocationRemarks Losses Functions OperationCounts PassTimes Statistics LimitValues Symbols ObfuscatedSites
     ArrivalSites ArrivalSiteLayouts ArrivalLayouts ArrivalLayoutFields
+    LibraryFunctionsLacked
 }
 
 record TextRange abi { offset: UInt32 length: UInt32 }
@@ -85,6 +86,7 @@ record InternalErrorRecord abi {
 }
 record UnseenCodeRecord abi { cause: UnseenCodeCause builtin: Builtin? witness: Witness }
 record BuiltinUseRecord abi { builtin: Builtin uses: BuiltinUse witness: Witness }
+record LackedFunctionRecord abi { function: UInt32 }
 record FeatureUseRecord abi { feature: Feature builtin: Builtin? witness: Witness kind: FeatureUseKind }
 record LocaleUseRecord abi { kind: LocaleUseKind tag: TextRange builtin: Builtin? witness: Witness }
 record WorkerEntryRecord abi { path: TextRange isGuess: UInt32 hasOptions: UInt32 witness: Witness }
@@ -147,6 +149,7 @@ enum Sabotage {
     VectorTurnsMeetNoOtherAccess
     LanesHoldWhateverIsComputed
     SumsOfNumbersAreWhole
+    SignsOfComparedLanesDoNotMatter
     FramesAlwaysFit
     CallbacksOfOneChainShareNoMemory WalkedArraysStayAsTheyWereOpened HeadsThatAreCopiedLeaveNoTrace ConversionsOfStorageEndNoProofs WhatRunsAgainLeavesNoTrace GettersInSlotsHaveNoEffects ReadsOfCalleesSinkPastWrites RemovedTestsOutlastWrites
     VariablesReadAgainInLoopsOutlastWrites
@@ -154,6 +157,7 @@ enum Sabotage {
     WrittenOutTurnsAlwaysFit
     CallsThatThrowHaveNoSite
     BoundsReadTwiceOutlastWrites
+    ChangedClosuresFailEveryTest
 }
 flags Instrumentation { CountBranches CountArrivals }
 flags AdmittedCode { Inspector }

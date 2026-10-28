@@ -599,6 +599,7 @@ export interface ModelClass {
   namesDefinedOnNewInstances: readonly ModelName[] | null;
   typesOfNamesDefinedOnNewInstances: readonly ModelResultProperty[];
   namesMadeByStaticMembers: readonly { name: ModelName; member: ModelName }[];
+  namesReadToDescribeInstances: readonly ModelName[];
   constructorOnlyReadsPrototypeOfNewTarget: boolean;
   slots: readonly ModelSlot[];
   stateHeap: Heap | null;

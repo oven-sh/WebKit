@@ -35,6 +35,7 @@ struct AllocationSiteReport {
 struct FlowReport {
     Vector<Wire::UnseenCodeRecord> unseenCode;
     Vector<Wire::BuiltinUseRecord> builtinsUsed;
+    Vector<Wire::LackedFunctionRecord> libraryFunctionsLacked;
     Vector<Wire::FeatureUseRecord> featuresUsed;
     Vector<Wire::LocaleUseRecord> localesUsed;
     Vector<uint8_t> localeTags;

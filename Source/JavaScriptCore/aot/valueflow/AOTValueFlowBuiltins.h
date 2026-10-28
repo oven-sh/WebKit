@@ -52,6 +52,7 @@ void callFromHost(BuiltinID onBehalfOf, const ValueFlowOperand& callees, const B
 
 bool doRecordsDescribe(const BuiltinTable&, const BuiltinOverload&);
 bool standsBehindDescribedBuiltins(const Program&, FunctionID);
+bool isEnteredByCallsAlone(const Program&, RuntimeFunctionID);
 ValueFlowObjectID calleeOfDescribedCall(const ValueFlowUniverse&);
 bool isCodeThatRecordsDescribe(const ValueFlowUniverse&, FunctionID);
 

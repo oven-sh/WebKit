@@ -186,8 +186,8 @@ void letModulesBeLoadedByName(ValueFlowRuleContext& context, ValueFlowHostNode a
 
 static void enterRuntimeFunction(ValueFlowRuleContext& context, RuntimeFunctionID id, NativeCaller caller)
 {
-    if (const RuntimeFunctionEntry* entry = findRuntimeFunction(context.program(), id); entry && entry->function)
-        enterFromNativeCode(context, entry->function, caller);
+    if (FunctionID function = context.libraryFunctionToEnter(id))
+        enterFromNativeCode(context, function, caller);
 }
 
 static ValueFlowSources memberOfRequiredValue(ValueFlowRuleContext& context, ModuleID module, StringID name)
@@ -445,6 +445,8 @@ struct Attachments {
 
     void addCode(RuntimeFunctionID function)
     {
+        if (isEnteredByCallsAlone(context.program(), function))
+            return;
         add(function);
         functionsBehindBuiltins.set(function.index());
     }
@@ -459,11 +461,11 @@ struct Attachments {
         }
         bool textFindsFunctions = isHostFlagRaised(context, ValueFlowHostNode::UnseenCodeRuns);
         for (const BuiltinCalledFunction* row : rowsListingUses) {
-            const RuntimeFunctionEntry* entry = findRuntimeFunction(context.program(), row->function);
-            if (!entry || !entry->function)
+            FunctionID function = context.libraryFunctionToEnter(row->function);
+            if (!function)
                 continue;
-            ClimbingSet closure = only(context, context.universe().closureOf(entry->function));
-            applyHostUses(row->builtin ? row->builtin : Builtins::UndeclaredNativeCode, { { }, context.maker().of(context.universe().closureOf(entry->function)), ValueSets::anything }, row->uses, context);
+            ClimbingSet closure = only(context, context.universe().closureOf(function));
+            applyHostUses(row->builtin ? row->builtin : Builtins::UndeclaredNativeCode, { { }, context.maker().of(context.universe().closureOf(function)), ValueSets::anything }, row->uses, context);
             if (textFindsFunctions)
                 context.add(ValueFlowProgramNodes::escaped(), closure);
         }

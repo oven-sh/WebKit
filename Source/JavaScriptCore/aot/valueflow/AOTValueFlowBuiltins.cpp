@@ -373,18 +373,23 @@ public:
         ClimbingSet self = only(m_context, object);
         if (record.prototype)
             m_context.add(m_context.written(self, prototypeLinkName), only(m_context, m_universe.objectOf(record.prototype)));
-        for (const BuiltinHostObjectField& field : record.fields) {
-            if (field.name) {
-                connectFrom(field.value, m_context.written(self, property(m_context, field.name)));
-                continue;
+        {
+            // What lies in the object without a type was handed to native code. Native code makes nothing for it.
+            SetForScope makesNoObjectOfHost(m_makesNoObjectOfHost, true);
+            for (const BuiltinHostObjectField& field : record.fields) {
+                if (field.name) {
+                    connectFrom(field.value, m_context.written(self, property(m_context, field.name)));
+                    continue;
+                }
+                connectFrom(field.value, m_context.written(self, unknownKeyName));
+                connectFrom(field.value, m_context.written(self, elementsName));
+                m_context.mark(self, ObjectMutation::AddProperty);
             }
-            connectFrom(field.value, m_context.written(self, unknownKeyName));
-            connectFrom(field.value, m_context.written(self, elementsName));
-            m_context.mark(self, ObjectMutation::AddProperty);
+            if (!record.internalFields.empty())
+                m_context.add(m_context.written(self, cellOfValueFromLibrary(m_builtins)), undescribedValue());
         }
         if (record.internalFields.empty())
             return;
-        m_context.add(m_context.written(self, cellOfValueFromLibrary(m_builtins)), undescribedValue());
         ValueFlowName internalFields = ValueFlowName::of(ValueFlowNameKind::InternalFields);
         for (const BuiltinHostObjectInternalField& field : record.internalFields)
             useByHost(operandOfBuiltinAt(m_context.written(self, internalFields)), field.uses);
@@ -591,6 +596,7 @@ private:
         forEachOperandAt(position, [&](const ValueFlowOperand& operand) {
             value = m_context.unite(value, m_context.valueOf(operand));
         });
+        m_context.openProxiesAmong(value);
         return value;
     }
 
@@ -763,9 +769,9 @@ private:
             return;
         if (overload.effects.capability == BuiltinCapability::JS && !overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode))
             noteCallThatRunsOtherCode(m_builtin, m_context);
-        if (RuntimeFunctionID function = functionThatSaysWhatCallDoes(overload)) {
-            if (const RuntimeFunctionEntry* entry = findRuntimeFunction(m_program, function)) {
-                enter(entry->function);
+        if (RuntimeFunctionID code = functionThatSaysWhatCallDoes(overload)) {
+            if (FunctionID function = m_context.libraryFunctionToEnter(code)) {
+                enter(function);
                 return;
             }
         }
@@ -839,9 +845,9 @@ private:
             makeClass();
             return;
         }
-        if (RuntimeFunctionID function = makesPairs ? RuntimeFunctionID() : functionThatSaysWhatCallDoes(overload)) {
-            if (const RuntimeFunctionEntry* entry = findRuntimeFunction(m_program, function)) {
-                enter(entry->function);
+        if (RuntimeFunctionID code = makesPairs ? RuntimeFunctionID() : functionThatSaysWhatCallDoes(overload)) {
+            if (FunctionID function = m_context.libraryFunctionToEnter(code)) {
+                enter(function);
                 applyReadsIntoResult(overload);
                 if (m_builtins.canonicalID(m_builtin) == Builtins::ObjectFromEntries)
                     listNamedBunOnResult(BuiltinOperand::argument(0));
@@ -856,6 +862,7 @@ private:
         m_overload = &overload;
         m_handsOnResult = handsOnResult(overload);
         m_resultObject = m_call.resultObject ? m_call.resultObject : m_universe.resultOf(m_builtin, 0);
+        enterCodeThatRecordsAnswerFor(overload);
         if (BuiltinID canonical = m_builtins.canonicalID(m_builtin); (canonical == Builtins::Proxy && isConstruction(m_call.kind)) || canonical == Builtins::ProxyRevocable) {
             makeProxy();
             return;
@@ -973,14 +980,31 @@ private:
         throwValue(unknownObjectSet(m_context, ValueFlowUnknownSource::ThrownByRunTime));
         if (!m_call.result)
             return;
-        connectOperands(BuiltinOperand::argument(1), escaped());
         // Proxy.revocable answers an object that holds the proxy.
         bool answersProxy = m_builtins.canonicalID(m_builtin) == Builtins::Proxy;
+        ClimbingSet handlers = objectsAt(BuiltinOperand::argument(1));
+        // Without an object for each there is no proxy, only what is thrown.
+        if (!holdsAnything(handlers) || !holdsAnything(objectsAt(BuiltinOperand::argument(0))))
+            return;
+        ClimbingSet followed = answersProxy && m_resultObject ? only(m_context, m_resultObject) : ClimbingSet();
+        // A proxy of a function is there to be called, and no rule calls `apply` or `construct` yet. A target nobody knows may be a function.
+        bool isOpen = !answersProxy || !m_resultObject || mayBeUnknownObject(handlers) || mayBeUntrackedObject(handlers) || m_context.meet(objectsAt(BuiltinOperand::argument(0)), m_context.maker().uniteAll({ { m_universe.closures(), m_universe.builtinFunctions(), m_universe.placeholdersAlone() } }))
+            || m_context.holdsAnyOf(followed, m_context.nodes().ofHost(ValueFlowHostNode::ProxiesThatAreOpen))
+            || m_context.holdsAnyOf(followed, escaped()) || m_context.holdsAnyOf(followed, ValueFlowProgramNodes::lost());
+        if (isOpen)
+            connectOperands(BuiltinOperand::argument(1), escaped());
+        else {
+            connectOperands(BuiltinOperand::argument(1), m_context.written(followed, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyHandler.index() }));
+            connectOperands(BuiltinOperand::argument(0), m_context.written(followed, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() }));
+            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed), followed);
+        }
         ValueFlowNodeID proxy = answersProxy ? m_call.result : m_context.written(only(m_context, m_resultObject), unknownKeyName);
         forEachOperandAt(BuiltinOperand::argument(0), [&](const ValueFlowOperand& target) {
-            carryOut(m_context, target);
-            if (ValueFlowNodeID exports = exportsOfHoldersIn(m_context, target))
-                m_context.connect(exports, escaped());
+            if (isOpen) {
+                carryOut(m_context, target);
+                if (ValueFlowNodeID exports = exportsOfHoldersIn(m_context, target))
+                    m_context.connect(exports, escaped());
+            }
             // A name read on the proxy is read on its target.
             if (ValueFlowNodeID listedBun = findNodeOfListedBun(m_context, target))
                 m_context.connect(listedBun, proxy);
@@ -991,12 +1015,16 @@ private:
                 noteCallOfBuiltin(m_universe.builtinOf(function), ValueFlowCallKind::CallByNativeCode, m_context);
             });
         }
-        m_context.mark(objectsAt(BuiltinOperand::argument(0)), ObjectMutation::RedefineProperty);
+        if (isOpen)
+            m_context.mark(objectsAt(BuiltinOperand::argument(0)), ObjectMutation::RedefineProperty);
         m_context.add(proxy, undescribedObject());
         // The object of the call goes beside it, for whoever predicts where a proxy of the program arrives. It has no layout and no class, so every rule takes it for an object of which nothing is known.
         ValueFlowObjectID made = answersProxy ? m_resultObject : m_call.contentsObject ? m_call.contentsObject : m_universe.resultOf(m_builtin, 1);
         noteAllocationAs({ }, made);
-        m_context.add(proxy, only(m_context, made));
+        if (isOpen)
+            m_context.add(proxy, only(m_context, made));
+        else
+            m_context.connect(m_context.masked(m_context.nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed), m_context.maker().of(made)), proxy);
         if (!answersProxy) {
             ClimbingSet pair = only(m_context, m_resultObject);
             m_context.add(m_context.written(pair, prototypeLinkName), only(m_context, m_universe.objectOf(Builtins::ObjectPrototype)));
@@ -1047,7 +1075,8 @@ private:
         bool isCall = overload.mode == BuiltinCallMode::Call || overload.mode == BuiltinCallMode::Construct;
         bool runsOtherCode = overload.effects.capability == BuiltinCapability::JS && !overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode);
         bool answersAnything = m_builtins.at(overload.result.type).flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject });
-        if (m_builtins.at(m_builtin).origin == BuiltinOrigin::Host && (isCall || overload.isUndeclared()) && runsOtherCode && answersAnything)
+        // What a function of the compiler makes its body says.
+        if (m_builtins.at(m_builtin).origin == BuiltinOrigin::Host && (isCall || overload.isUndeclared()) && runsOtherCode && answersAnything && (doRecordsDescribe(m_builtins, overload) || !isEnteredByCallsAlone(m_program, overload.libraryFunction())))
             appendHoldersOf(BuiltinClasses::Promise);
 
         m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::UsedBuiltins), m_context.maker().of(holdersOfRows.span()));
@@ -1178,11 +1207,47 @@ private:
         }
     }
 
+    ValueFlowCallGroup groupEntering(FunctionID function)
+    {
+        ClimbingSet closure = only(m_context, m_universe.closureOf(function));
+        FunctionID caller = m_context.functionOfStatement();
+        if (!caller || isInSeenCode(m_context, caller))
+            m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::FunctionsOfSeenCode), closure);
+        return m_context.group(closure, m_call.kind);
+    }
+
     void enter(FunctionID function)
     {
-        passOperandsOf(m_call, m_context.group(only(m_context, m_universe.closureOf(function)), m_call.kind), m_context);
+        passOperandsOf(m_call, groupEntering(function), m_context);
         if (handsOverUnknownObject() && isCodeThatRecordsDescribe(m_universe, function))
             letUnknownCodeWrite(m_context);
+    }
+
+    // The records answer the call. The code of a function of the compiler runs on what its calls pass. The callers have what it makes and returns under the name that the records give it: what they store there is not seen under its own name, and what they do to it counts for both.
+    void enterCodeThatRecordsAnswerFor(const BuiltinOverload& overload)
+    {
+        RuntimeFunctionID code = overload.libraryFunction();
+        FunctionID function = code && isEnteredByCallsAlone(m_program, code) ? m_context.libraryFunctionToEnter(code) : FunctionID();
+        if (!function)
+            return;
+        ValueFlowBuiltinCall operands = m_call;
+        operands.result = { };
+        passOperandsOf(operands, groupEntering(function), m_context);
+
+        OptionSet<ObjectMutation> mutations { ObjectMutation::ReachNativeCode };
+        for (ObjectMutation mutation : OptionSet<ObjectMutation>::all()) {
+            if (m_context.meet(m_context.markedAmong(only(m_context, m_resultObject), mutation), ValueSets::anything))
+                mutations.add(mutation);
+        }
+        ValueSetID objectsOfProgram = m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()));
+        auto markAsAnswer = [&](ValueFlowNodeID returned) {
+            m_context.mark(m_context.restrict(m_context.valueOf(returned), objectsOfProgram), mutations);
+        };
+        const ValueFlowProgramNodes& nodes = m_context.nodes();
+        if (const auto* summary = nodes.resultSummaryOf(function))
+            return markAsAnswer(summary->ownResult);
+        for (unsigned index = 0; index < m_program.at(function).results.size(); ++index)
+            markAsAnswer(nodes.result(function, index));
     }
 
     bool handsOverUnknownObject()
@@ -1963,7 +2028,7 @@ private:
         });
     }
 
-    ValueSetID undescribedValue() { return m_builtins.at(m_builtin).origin == BuiltinOrigin::Host ? unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult) : undescribedValueThatIsNoBuffer(m_context); }
+    ValueSetID undescribedValue() { return m_builtins.at(m_builtin).origin == BuiltinOrigin::Host && !m_makesNoObjectOfHost ? unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult) : undescribedValueThatIsNoBuffer(m_context); }
     ValueSetID undescribedObject() { return m_context.maker().intersect(undescribedValue(), m_universe.objects()); }
 
     ValueSetID valueInSlot(BuiltinSlotID slot, BuiltinTypeID type)
@@ -2311,6 +2376,13 @@ private:
                 if (made)
                     m_context.add(m_context.written(object, ValueFlowName::property(m_program, made)), unknownValue(m_context, ValueFlowUnknownSource::ResultOfUnknownCallee));
             }
+            if (entry.namesReadToDescribeInstances.empty())
+                continue;
+            // What a built-in object holds under such a name is text that nothing hands on: it is no use of that object.
+            ValueSetID objectsOfProgram = m_context.maker().intersect(m_universe.knownObjects(), ValueSets::complement(m_universe.builtinObjects()));
+            ClimbingSet above = m_context.restrict(m_context.valueOf(m_context.lookup(object, prototypeLinkName)), objectsOfProgram);
+            for (BuiltinName name : entry.namesReadToDescribeInstances)
+                m_context.readWhatWasWritten(above, property(m_context, name));
         }
     }
 
@@ -2713,6 +2785,7 @@ private:
     ValueFlowOperand m_undefined;
     const BuiltinOverload* m_overload { nullptr };
     bool m_handsOnResult { false };
+    bool m_makesNoObjectOfHost { false };
     ValueFlowObjectID m_resultObject;
     ValueFlowObjectID m_contentsObject;
     ValueSetID m_plainDataOfResult;
@@ -2802,13 +2875,17 @@ void callFromHost(BuiltinID onBehalfOf, const ValueFlowOperand& callees, const B
     BuiltinApplication(onBehalfOf, noCall, context).actWithoutOverload().callByHost(callees, call);
 }
 
-bool doRecordsDescribe(const BuiltinTable& builtins, const BuiltinOverload& overload)
+static bool doRecordsDescribeUsesOfOperands(const BuiltinOverload& overload)
 {
     auto claimsEveryUse = [](const BuiltinParameter& parameter) {
         return parameter.uses == OperandUses::all();
     };
-    return !overload.isUndeclared() && !builtins.at(overload.result.type).isAnything()
-        && !(overload.receiver && claimsEveryUse(*overload.receiver)) && std::ranges::none_of(overload.parameters, claimsEveryUse);
+    return !overload.isUndeclared() && !(overload.receiver && claimsEveryUse(*overload.receiver)) && std::ranges::none_of(overload.parameters, claimsEveryUse);
+}
+
+bool doRecordsDescribe(const BuiltinTable& builtins, const BuiltinOverload& overload)
+{
+    return doRecordsDescribeUsesOfOperands(overload) && !builtins.at(overload.result.type).isAnything();
 }
 
 ValueFlowObjectID calleeOfDescribedCall(const ValueFlowUniverse& universe)
@@ -2841,7 +2918,57 @@ bool standsBehindDescribedBuiltins(const Program& program, FunctionID id)
         if (builtins.canonicalID(builtin) == Builtins::CompilerHelpersTraverseArray)
             return true;
         return std::ranges::all_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
-            return overload.code.implementation.function != code || overload.code.model || overload.isUndeclared() || doRecordsDescribe(builtins, overload);
+            return overload.code.implementation.function != code || overload.code.model || overload.isUndeclared() || doRecordsDescribeUsesOfOperands(overload);
+        });
+    });
+}
+
+// The one object that the records make is the answer itself. What lies in it the operands bring.
+static bool makesNothingInsideAnswer(const BuiltinTable& builtins, const BuiltinOverload& overload)
+{
+    auto isBroughtByOperands = [&](BuiltinTypeID id) {
+        const BuiltinType& type = builtins.at(id);
+        if (type.flags.containsAny({ BuiltinTypeFlag::IsAnything, BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction, BuiltinTypeFlag::HasPlainData }))
+            return false;
+        return std::ranges::all_of(type.parts, [](const BuiltinTypePart& part) {
+            switch (part.kind) {
+            case BuiltinTypePartKind::Builtin:
+            case BuiltinTypePartKind::Operand:
+            case BuiltinTypePartKind::Slot:
+            case BuiltinTypePartKind::IteratedValues:
+            case BuiltinTypePartKind::CallbackResult:
+            case BuiltinTypePartKind::Prototype:
+                return true;
+            case BuiltinTypePartKind::Instance:
+            case BuiltinTypePartKind::InstanceOfReceiverClass:
+            case BuiltinTypePartKind::TypedArrayOfReceiverElementType:
+            case BuiltinTypePartKind::Layout:
+                return false;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        });
+    };
+    bool storesNewObject = std::ranges::any_of(overload.flow.transfers, [&](const BuiltinTransfer& transfer) {
+        return transfer.from.kind == BuiltinPlaceKind::NewValue && transfer.from.newValueType && !isBroughtByOperands(transfer.from.newValueType);
+    });
+    return !storesNewObject && overload.result.properties.empty() && std::ranges::all_of(builtins.at(overload.result.type).parts, [&](const BuiltinTypePart& part) {
+        return part.kind != BuiltinTypePartKind::Layout && std::ranges::all_of(part.contents, [&](const BuiltinSlotContents& contents) {
+            return isBroughtByOperands(contents.type);
+        });
+    });
+}
+
+// The host never calls a function of the compiler, and no realm holds one: each call enters it with its own operands. TraverseArray is called by passes too.
+bool isEnteredByCallsAlone(const Program& program, RuntimeFunctionID code)
+{
+    const BuiltinTable& builtins = program.builtins();
+    if (!builtins.contains(code) || builtins.at(code).role != RuntimeFunctionRole::CompilerFunction || builtins.at(code).implements.empty())
+        return false;
+    return std::ranges::all_of(builtins.at(code).implements, [&](BuiltinID builtin) {
+        if (!builtins.at(builtin).flags.contains(BuiltinFlag::IsCompilerHelper) || builtins.canonicalID(builtin) == Builtins::CompilerHelpersTraverseArray)
+            return false;
+        return std::ranges::all_of(builtins.overloadsOf(builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
+            return overload.code.implementation.function == code && !overload.code.model && !overload.isUndeclared() && (!doRecordsDescribe(builtins, overload) || makesNothingInsideAnswer(builtins, overload));
         });
     });
 }

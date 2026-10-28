@@ -184,6 +184,8 @@ export default b.declarations(
     "wrapForValidIteratorCreate",
   ),
   b.intrinsic("ownKeys", "Call", { intrinsic: "Builtin", path: "Reflect.ownKeys" }),
+  b.intrinsic("functionPrototypeApply", "Value", { intrinsic: "Builtin", path: "Function.prototype.apply" }),
+  b.intrinsic("functionPrototypeCall", "Value", { intrinsic: "Builtin", path: "Function.prototype.call" }),
   intrinsics("Call", { intrinsic: "LinkTimeConstant" }, [
     "createRemoteFunction",
     "evalInRealm",

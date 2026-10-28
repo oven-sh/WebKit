@@ -254,6 +254,9 @@ ValueFlowMembersUnderKey ValueFlowHeapTables::describeMembersUnder(PropertyKeyID
 
     ValueSetID holders = m_maker.of(objectsOfHolders.span());
     ValueSetID undeclared = m_maker.intersect(isPrivateName ? m_builtinObjects : m_entriesOpenToTableOrNativeCode, ValueSets::complement(holders));
+    // BuiltinTable::mismatches() compares: an object of the table that has such a method lists it.
+    if (!isPrivateName && std::ranges::contains(builtins.namesOfHostMethodsCallingStartupLoads(), name))
+        undeclared = m_maker.intersect(undeclared, openTo(Actor::NativeCode));
     ValueSetID instancesThatKeepProperty = ValueSets::nothing;
     if (!isPrivateName) {
         Objects prototypes;

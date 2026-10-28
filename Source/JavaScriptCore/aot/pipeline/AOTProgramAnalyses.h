@@ -64,6 +64,8 @@ public:
 
     const CallGraph& callGraph(const FlowResults&) const;
     const EffectSummaries& effects(const FlowResults&) const;
+    // Of the bodies as they were then. Null where there are none.
+    const EffectSummaries* effectsAsLastComputed() const { return m_effects.get(); }
     const Heat& heat(const FlowResults&) const;
     const InliningSummaries& inlining(const FlowResults&) const;
     // For nobody: the inputs hold effect summaries that know nothing, and those of the program stay as they are.

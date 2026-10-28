@@ -1162,6 +1162,57 @@ struct ConstantFolder {
     KnownValue knownValueOf(ValueID id) const { return Typed::knownValueOf(program, function, id); }
     static bool isPrimitive(KnownValue value) { return value.isKnown() && !value.isObject(); }
 
+    // A text whose characters are known and that the program makes all the same: a literal would be held in another way.
+    struct TextMadeByProgram {
+        ValueID value;
+        StringID characters;
+    };
+    Vector<TextMadeByProgram, 4> textsMadeByProgram { };
+
+    KnownValue charactersOfTextMadeByProgram(ValueID id) const
+    {
+        if (textsMadeByProgram.isEmpty())
+            return { };
+        RootThroughCasts made = sameObjectThroughCasts(function, id);
+        for (const TextMadeByProgram& text : textsMadeByProgram) {
+            if (made == text.value)
+                return KnownValue::string(text.characters);
+        }
+        return { };
+    }
+
+    // For whoever asks for the characters alone.
+    KnownValue knownCharactersOf(ValueID id) const
+    {
+        KnownValue known = knownValueOf(id);
+        return known.isKnown() ? known : charactersOfTextMadeByProgram(id);
+    }
+
+    // Its answer is known, so the call ends without an error, and nobody sees what else it leaves behind.
+    void takeOutCallsNobodyAsks(Vector<ValueID, 16>& foldedValues)
+    {
+        const UseLists& uses = useLists();
+        for (const TextMadeByProgram& text : textsMadeByProgram) {
+            if (function.at(text.value).opcode != Opcode::CallBuiltin || !uses.usesOf(text.value).empty())
+                continue;
+            explainOperationThatGoes(function, text.value, InPlaceOfOperation::NothingByProofOfThePass);
+            becomeUndefined(function, text.value);
+            foldedValues.append(text.value);
+        }
+    }
+
+    bool hasOperandMadeByProgram(const Value& value) const
+    {
+        if (textsMadeByProgram.isEmpty())
+            return false;
+        for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
+            ValueID operand = value.operand(index);
+            if (operand && !knownValueOf(operand).isKnown() && charactersOfTextMadeByProgram(operand).isKnown())
+                return true;
+        }
+        return false;
+    }
+
     bool becomeConstant(ValueID id, KnownValue constant)
     {
         if (evaluateTypeTest(program, constant, typeOf(id)) != KnownBoolean::True)
@@ -1217,11 +1268,17 @@ struct ConstantFolder {
             if (conditionsWithProofs->get(id.index()))
                 return false;
         }
-        if (rules.contains(FoldingRule::KnownString) && joinsNarrowAndWideParts(value))
+        bool takesTextMadeByProgram = hasOperandMadeByProgram(value);
+        // A conversion of a text hands on its operand.
+        if (rules.contains(FoldingRule::KnownString) && value.opcode != Opcode::ToString && (takesTextMadeByProgram || joinsNarrowAndWideParts(value))) {
+            if (KnownValue joined = joinKnownStrings(id, value); joined.kind() == KnownValue::Kind::String)
+                textsMadeByProgram.append({ id, joined.asString() });
             return false;
+        }
         if (rules.contains(FoldingRule::KnownOperands)) {
-            KnownValue result = evaluateWithKnownOperands(program, function, value, [&](ValueID operand) { return knownValueOf(operand); });
-            if (isPrimitive(result) && becomeConstant(id, result))
+            KnownValue result = evaluateWithKnownOperands(program, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
+            bool isOperandMadeByProgram = takesTextMadeByProgram && result.kind() == KnownValue::Kind::String;
+            if (isPrimitive(result) && !isOperandMadeByProgram && becomeConstant(id, result))
                 return true;
         }
         if (rules.contains(FoldingRule::SingleValueType)) {
@@ -1231,7 +1288,7 @@ struct ConstantFolder {
                 return true;
         } else if (rules.contains(FoldingRule::SingleValueBehindCasts) && resultRuleOf(value.opcode) != ResultRule::None && becomeConstantIfRemovable(id, knownValueOf(id)))
             return true;
-        if (rules.contains(FoldingRule::KnownString) && foldKnownString(id, value))
+        if (rules.contains(FoldingRule::KnownString) && !takesTextMadeByProgram && foldKnownString(id, value))
             return true;
         if (!rules.contains(FoldingRule::OwnRule))
             return false;
@@ -1344,21 +1401,26 @@ struct ConstantFolder {
         return hasNarrowPart && hasWidePart;
     }
 
-    bool foldKnownString(ValueID id, const Value& value)
+    KnownValue joinKnownStrings(ValueID id, const Value& value)
     {
         if (!opcodesCreatingKnownStrings.contains(value.opcode))
-            return false;
+            return { };
 
         uint64_t bytes = 0;
         for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
-            KnownValue operand = knownValueOf(value.operand(index));
+            KnownValue operand = knownCharactersOf(value.operand(index));
             if (!isPrimitive(operand))
-                return false;
+                return { };
             bytes += operand.kind() == KnownValue::Kind::String ? program.string(operand.asString()).size() : maxPrimitiveTextBytes;
         }
         if (exceedsLimitOfFoldedString(id, bytes))
-            return false;
-        KnownValue result = evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownValueOf(operand); });
+            return { };
+        return evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
+    }
+
+    bool foldKnownString(ValueID id, const Value& value)
+    {
+        KnownValue result = joinKnownStrings(id, value);
         return result.kind() == KnownValue::Kind::String && becomeConstant(id, result);
     }
 
@@ -1468,7 +1530,7 @@ struct ConstantFolder {
         if (!callee)
             return false;
         ValueID receiverOperand = value.receiverOperand();
-        KnownValue receiver = receiverOperand ? knownValueOf(receiverOperand) : KnownValue();
+        KnownValue receiver = receiverOperand ? knownCharactersOf(receiverOperand) : KnownValue();
         bool takesNumber = callee == Builtins::NumberPrototypeToLocaleString;
         if (takesNumber ? !receiver.isNumber() : receiver.kind() != KnownValue::Kind::String)
             return false;
@@ -1478,7 +1540,7 @@ struct ConstantFolder {
         Vector<ScratchRealm::Operand, 2> arguments;
         Vector<TypeID, 2> argumentTypes;
         for (ValueID argument : value.argumentsOperands()) {
-            KnownValue primitive = knownValueOf(argument);
+            KnownValue primitive = knownCharactersOf(argument);
             if (isPrimitive(primitive)) {
                 if (primitive.kind() == KnownValue::Kind::String)
                     bytes += program.string(primitive.asString()).size();
@@ -1518,13 +1580,22 @@ struct ConstantFolder {
         }
 
         std::optional<ScratchRealm::Answer> answer = context.build.scratchRealms().ofCurrentThread().call(program, callee, receiver, arguments.span());
-        if (!answer || !answer->isStoredLikeLiteral)
+        if (!answer)
             return false;
+        auto becomeAnswer = [&](KnownValue known) {
+            explainOperationThatGoes(function, id, InPlaceOfOperation::NothingByProofOfThePass);
+            return becomeConstant(id, known);
+        };
         if (answer->text.isNull())
-            return becomeConstant(id, answer->primitive);
+            return becomeAnswer(answer->primitive);
         if (exceedsLimitOfFoldedString(id, answer->text.sizeInBytes()))
             return false;
-        return becomeConstant(id, KnownValue::string(context.strings.intern(StringView(answer->text))));
+        StringID characters = context.strings.intern(StringView(answer->text));
+        // How the answer is held follows how the operands are, and the realm was handed literals.
+        if (answer->isStoredLikeLiteral && !hasOperandMadeByProgram(value))
+            return becomeAnswer(KnownValue::string(characters));
+        textsMadeByProgram.append({ id, characters });
+        return false;
     }
 
     PropertyKeyID findNameGivenTo(const Value& operation, ValueID key)
@@ -1606,6 +1677,13 @@ PassOutcome foldConstants(FunctionPassContext& context)
             foldedValues.append(id);
             didChangeCasts |= isCastOrConversion(opcode) || isCastOrConversion(function.at(id).opcode);
         }
+    }
+    if (!folder.textsMadeByProgram.isEmpty()) {
+        if (!foldedValues.isEmpty()) {
+            context.analyses.invalidate(FunctionAnalysis::UseLists);
+            folder.useListsOnceAsked = nullptr;
+        }
+        folder.takeOutCallsNobodyAsks(foldedValues);
     }
     context.foldingAskedForUses = folder.askedForUses;
     if (foldedValues.isEmpty())

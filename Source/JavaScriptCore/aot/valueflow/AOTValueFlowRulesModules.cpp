@@ -25,6 +25,12 @@ ClimbingSet unknownObject(ValueFlowRuleContext& context, ValueFlowUnknownSource 
     return context.restrict(ClimbingSet(unknownValue(context, source)), context.universe().objects());
 }
 
+// It stands over a namespace object of the program. No class of the host has it as an instance.
+static ClimbingSet objectThatLoaderMakes(ValueFlowRuleContext& context)
+{
+    return context.restrict(ClimbingSet(undescribedValueThatIsNoBuffer(context)), context.universe().objects());
+}
+
 static ValueFlowName writtenNameOf(const Program& program, StringID text)
 {
     std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = text });
@@ -351,7 +357,7 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
         if (const ModuleExport* entry = name ? findExport(module, program.stringOf(name)) : nullptr)
             append(context, sources, exportedValueOf(context, *entry));
         if (module.kind == ModuleKind::SourceText)
-            append(context, sources, sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult)));
+            append(context, sources, sourcesOf(objectThatLoaderMakes(context)));
         return sources;
     }
     }
@@ -417,7 +423,7 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
                 break;
             }
             context.add(ValueFlowProgramNodes::escaped(), exportedNamespace);
-            context.add(location, unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
+            context.add(location, objectThatLoaderMakes(context));
             break;
         }
         }
@@ -509,7 +515,7 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
         return sourcesOf(namespaceObject);
     case ImportPhase::Defer:
         context.add(ValueFlowProgramNodes::escaped(), namespaceObject);
-        return sourcesOf(unknownObject(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        return sourcesOf(objectThatLoaderMakes(context));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -543,7 +549,9 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
         return;
 
     const BuiltinTable& builtins = program.builtins();
-    ValueSetID filled = unknownValue(context, sourceOfWhatLoaderMakes(module));
+    auto filled = [&] {
+        return unknownValue(context, sourceOfWhatLoaderMakes(module));
+    };
     BuiltinID object = module.kind == ModuleKind::Runtime && module.runtimeModule ? builtins.namespaceOf(module.runtimeModule) : BuiltinID();
     if (object)
         runGettersThatProgramLaidOn(context, valueOf(context, runtimeNamespaceOf(context, module.runtimeModule)));
@@ -555,7 +563,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
         BuiltinName name = key ? program.builtinNameOf(*key) : BuiltinName();
         BuiltinID member = name ? builtins.findOwnMember(object, name) : BuiltinID();
         if (!member) {
-            context.add(variable, filled);
+            context.add(variable, filled());
             if (key)
                 connect(context, ownPropertyOf(context, valueOf(context, runtimeNamespaceOf(context, module.runtimeModule)), key), variable);
             continue;
@@ -566,7 +574,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
             || context.holdsAnyOf(objectOfModule, ValueFlowProgramNodes::escaped())
             || context.holdsAnyOf(objectOfModule, ValueFlowProgramNodes::lost());
         if (mayBeMadeAnew)
-            context.add(variable, filled);
+            context.add(variable, filled());
         if (!isObjectKind(builtins.at(member).kind))
             context.add(variable, context.universe().undefinedValue());
         else if (context.universe().builtinTables().heap().letsInUnseenCode(member)) {
@@ -578,7 +586,7 @@ static void noteEvaluation(ValueFlowRuleContext& context, ModuleID id)
     }
     for (const ModuleExport& entry : module.exports) {
         if (entry.kind == ModuleExportKind::Variable && entry.variable)
-            context.add(context.nodes().variable(entry.variable), filled);
+            context.add(context.nodes().variable(entry.variable), filled());
     }
 }
 

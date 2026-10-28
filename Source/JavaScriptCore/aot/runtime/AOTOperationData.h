@@ -351,7 +351,8 @@ struct ThrowSiteWord {
     uint32_t representation : 4;
     uint32_t hasWideA : 1;
     uint32_t hasB : 1;
-    uint32_t unused : 1;
+    // Of a call site: the callee is a member of the receiver, read at the site. Function.prototype.call and apply, entered from there, refuse the receiver under the name of the site.
+    uint32_t calleeIsReadFromReceiver : 1;
     uint32_t a : 17;
 };
 static_assert(sizeof(ThrowSiteWord) == 4);

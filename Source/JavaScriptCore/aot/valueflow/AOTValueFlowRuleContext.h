@@ -68,6 +68,10 @@ public:
     ValueFlowObjectID markerOfKey() const;
 
     ClimbingSet valueOf(ValueFlowNodeID);
+    // The proxies in the value of the first operand of the statement whose handler flow follows. The rule that asks calls their trap, and hands the operation on to their target.
+    ClimbingSet proxiesAskedByTheirTrapsIn(const ValueFlowOperand&);
+    // A rule that knows that it does more to what it was handed says so at once. Nothing hangs on it: what no rule says the solver finds when all is quiet.
+    void openProxiesAmong(ClimbingSet);
     bool holdsAnything(ValueFlowNodeID);
     ValueFlowOperand operandHolding(ClimbingSet set) const { return { { }, set.m_set, ValueSets::anything }; }
     ClimbingSet valueOf(const ValueFlowOperand&);
@@ -171,6 +175,8 @@ public:
     void use(BuiltinID, OptionSet<BuiltinUse>);
     void useAsAnswerOfUnknownObject(BuiltinID, OptionSet<BuiltinUse>);
     void noteMembersNotToldApart();
+    // The function of the library under the number, or nothing. Where a rule wants to enter it and the program does not hold it, whoever handed the program over hears of it.
+    FunctionID libraryFunctionToEnter(RuntimeFunctionID);
 
     void noteUnknownSource(ValueFlowUnknownSource source) { m_unknownSource = source; }
     bool leavesOut(ValueFlowUnknownSource) const;

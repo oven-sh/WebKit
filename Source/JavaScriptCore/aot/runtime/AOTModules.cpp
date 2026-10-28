@@ -2410,6 +2410,25 @@ bool ModuleRecord::takeLoadPromiseBelowMainModule()
     return !requestedModules().isEmpty() && modules().takeLoadPromiseBelowMainModule(m_module);
 }
 
+JSPromise* ModuleRecord::evaluateMainModule(JSPromise* evaluation)
+{
+    return modules().evaluateMainModule(m_module, evaluation);
+}
+
+void ModuleRecord::didEvaluateModulesInJob(JSGlobalObject* globalObject)
+{
+    Modules* modules = modulesOf(globalObject);
+    if (modules && modules->mainModuleWaitsForItsImport()) [[unlikely]]
+        modules->runMainModuleThatWaited();
+}
+
+void ModuleRecord::didFailModulesInJob(JSGlobalObject* globalObject)
+{
+    Modules* modules = modulesOf(globalObject);
+    if (modules && modules->mainModuleWaitsForItsImport()) [[unlikely]]
+        modules->failMainModuleThatWaited();
+}
+
 void ModuleRecord::takeStatus()
 {
     if (!m_holdsStatus)

@@ -353,6 +353,8 @@ public:
         return found == m_writtenUnderNamesOfReads.end() ? ValueSets::nothing : found->value;
     }
     bool isReached(FunctionID function) const { return m_isReached.get(function.index()); }
+    bool lacksLibraryFunction(RuntimeFunctionID function) const { return m_libraryFunctionsLacked.get(function.index()); }
+    const BitVector& libraryFunctionsLacked() const LIFETIME_BOUND { return m_libraryFunctionsLacked; }
     OptionSet<BuiltinUse> usesOf(BuiltinID builtin) const { return builtin.index() < m_usesOfBuiltin.size() ? m_usesOfBuiltin[builtin.index()] : OptionSet<BuiltinUse>(); }
     OptionSet<ObjectMutation> marksOf(ValueFlowObjectID object) const { return m_marksOfObject[object.index()]; }
 
@@ -1091,6 +1093,9 @@ private:
     Vector<OptionSet<ObjectMutation>> m_marksOfObject;
     Vector<OptionSet<BuiltinUse>> m_usesOfBuiltin;
     BitVector m_statementsWithMembersNotToldApart;
+    BitVector m_statementsThatAskProxiesByTheirTraps;
+    BitVector m_libraryFunctionsLacked;
+    ValueSetID followedProxiesThatMoreMayBeDoneTo();
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;

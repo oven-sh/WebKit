@@ -90,6 +90,9 @@ private:
             return false;
         const ValueFlowProgramNodes& nodes = m_inputs.bodies().nodes();
         const ValueFlowProgramNodes::ResultSummary* summary = isConstruction ? nullptr : nodes.resultSummaryOf(id);
+        // A constructor below another class has no object of its own: its construction answers the object that super() made, or never completes.
+        if (isConstruction && callee.kind == FunctionKind::DerivedConstructor)
+            return m_inputs.sets().meet(m_inputs.solver().possibleValuesOf(nodes.result(id, 0)), m_inputs.universe().objects());
         return !holdsNothing(summary ? summary->ownResult : nodes.result(id, 0));
     }
 

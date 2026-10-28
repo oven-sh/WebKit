@@ -31,7 +31,7 @@ static KnownBoolean outcomeOnEdge(Edge edge)
     return knownBoolean(!edge.targetIndex);
 }
 
-static Vector<KnownBoolean> outcomesBehindOutermostEdges(FunctionAnalyses& analyses, uint32_t numberOfGroups, NOESCAPE const Invocable<void(BlockID, const ScopedLambda<void(uint32_t)>&)> auto& forEachGroupBranchedOn, NOESCAPE const Invocable<uint32_t(BlockID)> auto& groupAskedFor)
+static Vector<KnownBoolean> outcomesBehindOutermostEdges(FunctionAnalyses& analyses, uint32_t numberOfGroups, NOESCAPE const Invocable<void(BlockID, KnownBoolean outcome, const ScopedLambda<void(uint32_t)>&)> auto& forEachGroupDecided, NOESCAPE const Invocable<uint32_t(BlockID)> auto& groupAskedFor)
 {
     const CFG& cfg = analyses.cfg();
     Vector<KnownBoolean> outcomes(FillWith { }, cfg.numNodes(), KnownBoolean::Unknown);
@@ -47,7 +47,7 @@ static Vector<KnownBoolean> outcomesBehindOutermostEdges(FunctionAnalyses& analy
                 outcomeInScope[group] = outcome;
                 decided.append({ block, group });
             };
-            forEachGroupBranchedOn(edge->from, ScopedLambda<void(uint32_t)>(decide));
+            forEachGroupDecided(edge->from, outcome, ScopedLambda<void(uint32_t)>(decide));
         }
         if (uint32_t group = groupAskedFor(block); group != noGroup)
             outcomes[block.index()] = outcomeInScope[group];
@@ -82,8 +82,8 @@ static void keepRepeated(auto& sorted, const auto& keyOf)
     sorted.shrink(end);
 }
 
-// Each of the branches has a block, and behind an edge of one of them the test of all of them has the outcome of that edge.
-static KnownBoolean outcomeBehindEdges(FunctionAnalyses& analyses, const auto& branches, BlockID block, Vector<KnownBoolean>& outcomesOfFrequentBranches, NOESCAPE const auto& computeOutcomes)
+// Each of the branches has a block, and behind an edge of one of them the test of all of them has the outcome of that edge, unless its refusal does not decide.
+static KnownBoolean outcomeBehindEdges(FunctionAnalyses& analyses, const auto& branches, BlockID block, Vector<KnownBoolean>& outcomesOfFrequentBranches, NOESCAPE const auto& refusalDecides, NOESCAPE const auto& computeOutcomes)
 {
     auto compareWithEachBranch = [&] {
         for (const auto& branch : branches) {
@@ -91,7 +91,7 @@ static KnownBoolean outcomeBehindEdges(FunctionAnalyses& analyses, const auto& b
                 continue;
             if (analyses.dominates(Edge { branch.block, 0 }, block))
                 return KnownBoolean::True;
-            if (analyses.dominates(Edge { branch.block, 1 }, block))
+            if (refusalDecides(branch) && analyses.dominates(Edge { branch.block, 1 }, block))
                 return KnownBoolean::False;
         }
         return KnownBoolean::Unknown;
@@ -116,7 +116,7 @@ static Vector<KnownBoolean> outcomesOfFrequentConditions(FunctionAnalyses& analy
         if (branches.size() > maxComparedBranches)
             groupOfValue[branches[0].operand.index()] = numberOfGroups++;
     });
-    return outcomesBehindOutermostEdges(analyses, numberOfGroups, [&](BlockID block, const ScopedLambda<void(uint32_t)>& functor) {
+    return outcomesBehindOutermostEdges(analyses, numberOfGroups, [&](BlockID block, KnownBoolean, const ScopedLambda<void(uint32_t)>& functor) {
         const Terminator& terminator = function.at(block).terminator;
         if (!terminator.isConditionalBranch())
             return;
@@ -140,7 +140,7 @@ KnownBoolean TypeTestBranches::outcomeFromDominatingBranches(ValueID condition, 
         return KnownBoolean::Unknown;
     const Terminator& terminator = m_analyses.function().at(block).terminator;
     RELEASE_ASSERT(branches.size() <= maxComparedBranches || (terminator.isConditionalBranch() && terminator.conditionOperand() == condition));
-    return outcomeBehindEdges(m_analyses, branches, block, m_outcomesOfFrequentConditions, [&] {
+    return outcomeBehindEdges(m_analyses, branches, block, m_outcomesOfFrequentConditions, [](const BranchOnValue&) { return true; }, [&] {
         return outcomesOfFrequentConditions(m_analyses, m_branchesByOperand.span());
     });
 }
@@ -151,6 +151,19 @@ const Value* typeTestBranchedOn(const Function& function, const Block& block)
         return nullptr;
     const Value& test = function.at(block.terminator.conditionOperand());
     return test.opcode == Opcode::TypeTest ? &test : nullptr;
+}
+
+bool mayRefuseChangedClosures(const Type& typeOfTestedValue)
+{
+    return typeOfTestedValue.anyFunction || typeOfTestedValue.anyObject;
+}
+
+static bool mayRefuseChangedClosures(FunctionAnalyses& analyses, const Value& test)
+{
+    const Program& program = analyses.program();
+    if (analyses.context().build.isSabotaged(Sabotage::ChangedClosuresFailEveryTest))
+        return false;
+    return !program.at(test.testedType()).functions.isEmpty() && mayRefuseChangedClosures(program.typeOf(analyses.function(), test.valueOperand()));
 }
 
 void keepRepeatedTests(FunctionAnalyses& analyses, Vector<BranchOnTypeTest>& branches)
@@ -177,7 +190,7 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
             m_branchesByOperand.append(BranchOnValue { operand, block });
         });
         if (const Value* test = typeTestBranchedOn(function, function.at(block))) {
-            m_branches.append({ test->valueOperand(), test->testedType(), block });
+            m_branches.append({ test->valueOperand(), test->testedType(), block, mayRefuseChangedClosures(analyses, *test) });
             m_blocksThatBranchOnTypeTest.append(block);
         }
     }
@@ -194,31 +207,40 @@ TypeTestBranches::TypeTestBranches(FunctionAnalyses& analyses)
 
 static Vector<KnownBoolean> outcomesOfFrequentTests(FunctionAnalyses& analyses, std::span<const BranchOnTypeTest> branches)
 {
+    // Two groups for a test: an even one for the branches that refuse only what is none of the functions, and the next for the others.
     Vector<uint32_t> groupOfBlock(FillWith { }, analyses.cfg().numNodes(), noGroup);
     uint32_t numberOfGroups = 0;
     forEachRunOfEqualKeys(branches, &BranchOnTypeTest::test, [&](std::span<const BranchOnTypeTest> branchesOnTest) {
         if (branchesOnTest.size() <= maxComparedBranches)
             return;
         for (const BranchOnTypeTest& branch : branchesOnTest)
-            groupOfBlock[branch.block.index()] = numberOfGroups;
-        ++numberOfGroups;
+            groupOfBlock[branch.block.index()] = numberOfGroups + branch.mayRefuseChangedClosures;
+        numberOfGroups += 2;
     });
-    return outcomesBehindOutermostEdges(analyses, numberOfGroups, [&](BlockID block, const ScopedLambda<void(uint32_t)>& functor) {
-        if (uint32_t group = groupOfBlock[block.index()]; group != noGroup)
-            functor(group);
+    return outcomesBehindOutermostEdges(analyses, numberOfGroups, [&](BlockID block, KnownBoolean outcome, const ScopedLambda<void(uint32_t)>& functor) {
+        uint32_t group = groupOfBlock[block.index()];
+        if (group == noGroup)
+            return;
+        functor(group | 1);
+        if (!(group & 1) || outcome == KnownBoolean::True)
+            functor(group & ~1u);
     }, [&](BlockID block) {
         return groupOfBlock[block.index()];
     });
 }
 
-// What a value is tested for never changes, so behind an edge of one test every other test of the value for the same type has the same outcome.
+// What a value is tested for never changes, so behind an edge of one test every other test of the value for the same type has the same outcome. A test that may refuse a changed closure decides by its refusal only tests that may do so too.
 KnownBoolean TypeTestBranches::outcomeFromDominatingTest(BlockID block) const
 {
     const Value* test = m_repeatsTest.get(block.index()) ? typeTestBranchedOn(m_analyses.function(), m_analyses.function().at(block)) : nullptr;
     if (!test)
         return KnownBoolean::Unknown;
     std::tuple tested { m_analyses.identityOf(test->valueOperand()).index(), test->testedType().index() };
-    return outcomeBehindEdges(m_analyses, std::ranges::equal_range(m_branches, tested, { }, &BranchOnTypeTest::test), block, m_outcomesOfFrequentTests, [&] {
+    bool everyRefusalDecides = m_branches[m_indexOfBranch[block.index()]].mayRefuseChangedClosures;
+    auto refusalDecides = [&](const BranchOnTypeTest& branch) {
+        return everyRefusalDecides || !branch.mayRefuseChangedClosures;
+    };
+    return outcomeBehindEdges(m_analyses, std::ranges::equal_range(m_branches, tested, { }, &BranchOnTypeTest::test), block, m_outcomesOfFrequentTests, refusalDecides, [&] {
         return outcomesOfFrequentTests(m_analyses, m_branches.span());
     });
 }
@@ -242,6 +264,7 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
         return KnownBoolean::Unknown;
 
     const size_t firstBranchOnTest = branchesOnTest.begin() - m_branches.begin();
+    bool everyRefusalDecides = m_branches[m_indexOfBranch[block.index()]].mayRefuseChangedClosures;
     auto branchesOnSameTest = [&](BlockID from) {
         return m_repeatsTest.get(from.index()) && m_indexOfBranch[from.index()] - firstBranchOnTest < branchesOnTest.size();
     };
@@ -257,6 +280,8 @@ KnownBoolean TypeTestBranches::outcomeOnEveryWay(BlockID block) const
             if (branchesOnSameTest(edge.from)) {
                 KnownBoolean onEdge = outcomeOnEdge(edge);
                 if (onEdge == KnownBoolean::Unknown || (outcome != KnownBoolean::Unknown && outcome != onEdge))
+                    return KnownBoolean::Unknown;
+                if (onEdge == KnownBoolean::False && !everyRefusalDecides && m_branches[m_indexOfBranch[edge.from.index()]].mayRefuseChangedClosures)
                     return KnownBoolean::Unknown;
                 outcome = onEdge;
                 continue;

@@ -143,8 +143,8 @@ void runAwaitedValue(const ValueFlowStatement& statement, ValueFlowRuleContext& 
         ClimbingSet methods = without(context, found, builtinThen);
         if (!context.meet(methods, universe.callables()))
             return;
-        callInProtocol(context, { .callees = methods, .thisValue = thenables, .otherArguments = unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult) });
-        context.add(result, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+        callInProtocol(context, { .callees = methods, .thisValue = thenables, .otherArguments = undescribedValueThatIsNoBuffer(context) });
+        context.add(result, undescribedValueThatIsNoBuffer(context));
     });
     ClimbingSet promises = context.restrict(without(context, values, ValueFlowUniverse::unknownObject()), universe.instancesOf(BuiltinClasses::Promise));
     ValueSetID instancesOfProgram = universe.placeholders().objectsWithLayoutOfProgram;
@@ -163,7 +163,7 @@ void runAwaitedValue(const ValueFlowStatement& statement, ValueFlowRuleContext& 
         forEachPartOfCallees(context, constructed, [&](ClimbingSet part) {
             ValueFlowCallGroup group = context.group(part, ValueFlowCallKind::ConstructByNativeCode, ValueFlowCalleeOrigin::MemberFoundUnderName);
             context.add(group.newTarget, part);
-            context.add(group.otherArguments, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
+            context.add(group.otherArguments, undescribedValueThatIsNoBuffer(context));
             context.connect(group.result, escaped);
             context.connect(group.thrown, escaped);
         });

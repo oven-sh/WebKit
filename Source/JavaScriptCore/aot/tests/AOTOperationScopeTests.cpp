@@ -170,10 +170,24 @@ static NEVER_INLINE void JIT_OPERATION_ATTRIBUTES allocateObject(JSGlobalObject*
 static constexpr bool operationsAreGuarded = CallWithoutCollection<&allocateObject>::call != &allocateObject;
 static_assert(!operationsAreGuarded || ASSERT_ENABLED);
 
+static ALWAYS_INLINE CallFrame* framePointerRegister()
+{
+    CallFrame* result;
+#if CPU(X86_64)
+    asm volatile("movq %%rbp, %0" : "=r"(result));
+#elif CPU(ARM64)
+    asm volatile("mov %0, x29" : "=r"(result));
+#else
+#error "no name for the frame pointer of this CPU"
+#endif
+    return result;
+}
+
+// The frame of its caller is, to an operation, what the frame pointer held when it was called.
 static NEVER_INLINE void testFrameRecordNamesCallerOfGuardedOperation()
 {
-    CallFrame* callerFrame = CallWithoutCollection<&callerFrameSeenByOperation>::call();
-    AOT_TEST_CHECK(std::bit_cast<CallerFrameAndPC*>(callerFrame) == AOT_FRAME_RECORD_OF_THIS_FUNCTION());
+    CallFrame* framePointer = framePointerRegister();
+    AOT_TEST_CHECK(CallWithoutCollection<&callerFrameSeenByOperation>::call() == framePointer);
 }
 
 static void testPermissionsFollowDeclaredEffects()

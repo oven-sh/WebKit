@@ -26,6 +26,8 @@ public:
     // Of whichever instance.
     Condition isSlimClosureAsCreated(CellPointer);
     CellPointer closureIfCreated(FunctionID genericEntrypoint);
+    // While it is set no test refuses a closure of the function that it asks for.
+    bool& passesChangedClosures() { return m_passesChangedClosures; }
 
 private:
     struct EntrypointRun {
@@ -35,8 +37,9 @@ private:
 
     // Every slim closure is one of this instance, so the word of one that is as it was created names its function and no other cell has that word.
     bool closureWordNames(FunctionID) const;
+    bool closuresStayAsCreated(FunctionID) const;
     bool isDecidedByClosureWord(FunctionID, const Type& tested) const;
-    Condition hasClosureWordThatDecides(CellPointer, FunctionID genericEntrypoint);
+    Condition hasClosureWordThatDecides(CellPointer, FunctionID, FunctionID genericEntrypoint);
     Word32 upperHalfOfWordAtSlimClosureWord(CellPointer);
     void branchOnIsClosureOfAny(CellPointer, std::span<const FunctionID>, BranchTargets);
     void branchOnIndexInRuns(Word32 index, std::span<const EntrypointRun>, BranchTargets);
@@ -47,6 +50,8 @@ private:
     Condition hasClosureStructure(CellPointer, FunctionID);
     Condition hasClosureWordOf(CellPointer, bool isSlim, FunctionID genericEntrypoint);
     uint32_t upperHalfOfClosureWordOf(FunctionID genericEntrypoint);
+
+    bool m_passesChangedClosures { false };
 };
 
 } } } // namespace JSC::AOT::Typed

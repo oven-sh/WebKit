@@ -547,6 +547,7 @@ struct BuiltinClass {
     std::span<const BuiltinName> namesDefinedOnNewInstances { };
     std::span<const BuiltinResultProperty> typesOfNamesDefinedOnNewInstances { };
     std::span<const BuiltinPropertyMaker> makersOfNamesDefinedOnNewInstances { };
+    std::span<const BuiltinName> namesReadToDescribeInstances { };
     bool constructorOnlyReadsPrototypeOfNewTarget { false };
     std::span<const BuiltinSlotID> slots { };
     std::optional<AbstractHeap> stateHeap { };

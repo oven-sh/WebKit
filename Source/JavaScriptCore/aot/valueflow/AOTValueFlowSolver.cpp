@@ -1661,6 +1661,123 @@ ValueFlowStatement ValueFlowSolver::statementMadeWith(const MadeNodes& made)
     return statement;
 }
 
+// A trap of a proxy whose handler is followed is reached by the rule that asks the proxy by it. Nothing else may be done to such a proxy, and no rule is trusted to say so: a rule may walk a chain, pass
+// an operand by or only hand a value on without a look at what it holds. The graph says where the proxy lies and who may touch it there. What is not known to be harmless opens the proxy.
+ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
+{
+    if (!m_input.nodes || !m_input.universe)
+        return ValueSets::nothing;
+    ValueSetMaker& maker = *m_makers[0];
+    const ValueFlowProgramNodes& nodes = *m_input.nodes;
+    ValueFlowNodeID listOfFollowed = nodes.ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed);
+    ValueFlowNodeID listOfOpen = nodes.ofHost(ValueFlowHostNode::ProxiesThatAreOpen);
+    ValueSetID open = maker.uniteAll({ { m_graph.valueOf(listOfOpen), m_graph.valueOf(ValueFlowProgramNodes::escaped()), m_graph.valueOf(ValueFlowProgramNodes::lost()) } });
+    ValueSetID asked = maker.intersect(m_graph.valueOf(listOfFollowed), ValueSets::complement(open));
+    if (asked == ValueSets::nothing)
+        return ValueSets::nothing;
+
+    ValueSetID found = ValueSets::nothing;
+    auto note = [&](ValueSetID held) {
+        if (held != ValueSets::nothing && maker.meet(held, asked))
+            found = maker.unite(found, maker.intersect(held, asked));
+    };
+
+    // In hands that no statement stands for: what the host holds, what a behavior of built-ins takes in.
+    for (uint32_t index = nodes.ofHost(static_cast<ValueFlowHostNode>(0)).index(); index < m_input.numberOfNodes; ++index) {
+        if (index != listOfFollowed.index() && index != listOfOpen.index())
+            note(m_graph.valueOf(ValueFlowNodeID(index)));
+    }
+
+    BitVector holdsProxy(m_input.numberOfNodes);
+    HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> heldByInstancesOfNode;
+    for (uint32_t index = 0; index < nodes.ofHost(static_cast<ValueFlowHostNode>(0)).index(); ++index) {
+        if (ValueSetID held = m_graph.valueOf(ValueFlowNodeID(index)); held != ValueSets::nothing && maker.meet(held, asked))
+            holdsProxy.quickSet(index);
+    }
+
+    ValueSetID closures = m_input.universe->closures();
+    // A rule that asks about all objects at once, whatever they are, has taken none of them out of a value.
+    ValueSetID everyObjectThatBuiltinsMake = maker.intersect(m_input.universe->objectsThatMayBeAnything(), m_input.universe->knownObjects());
+    for (const MadeNodes& made : m_madeNodes) {
+        const ValueFlowNodeKey& key = made.key;
+        switch (key.kind) {
+        case ValueFlowMadeNodeKind::Constant:
+        case ValueFlowMadeNodeKind::Masked:
+            break;
+        case ValueFlowMadeNodeKind::Instance:
+            if (key.isInstanceOfNode() && key.nodeOfInstance().index() < m_input.numberOfNodes && maker.meet(m_graph.valueOf(made.first), asked)) {
+                holdsProxy.quickSet(key.nodeOfInstance().index());
+                ValueSetID& held = heldByInstancesOfNode.add(key.nodeOfInstance().index(), ValueSets::nothing).iterator->value;
+                held = maker.unite(held, m_graph.valueOf(made.first));
+            }
+            break;
+        case ValueFlowMadeNodeKind::Hub:
+        case ValueFlowMadeNodeKind::Marked:
+            note(m_graph.valueOf(made.first));
+            break;
+        case ValueFlowMadeNodeKind::CallGroup:
+            note(key.set);
+            if (!maker.meet(key.set, ValueSets::complement(closures)))
+                break;
+            for (unsigned offset = 0; offset < key.numberOfNodes(); ++offset) {
+                ValueFlowNodeID node(made.first.index() + offset);
+                if (node != callGroupAt(made.first).result && node != callGroupAt(made.first).thrown)
+                    note(m_graph.valueOf(node));
+            }
+            break;
+        case ValueFlowMadeNodeKind::Read:
+        case ValueFlowMadeNodeKind::Written:
+        case ValueFlowMadeNodeKind::Lookup:
+        case ValueFlowMadeNodeKind::WrittenUnderKind:
+        case ValueFlowMadeNodeKind::ReadUnderKind: {
+            // Somebody has asked the heap about the proxy itself, or the proxy stands above an object.
+            ValueFlowName name = key.name();
+            bool isUnderKind = key.kind == ValueFlowMadeNodeKind::WrittenUnderKind || key.kind == ValueFlowMadeNodeKind::ReadUnderKind;
+            bool isOfModel = name.kind == ValueFlowNameKind::AllocatedAs || (name.kind == ValueFlowNameKind::Slot && (isUnderKind || name.payload == BuiltinSlots::ProxyHandler.index() || name.payload == BuiltinSlots::ProxyTarget.index()));
+            if (!isOfModel && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
+                note(key.set);
+            if (shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink)
+                note(m_graph.valueOf(made.first));
+            break;
+        }
+        }
+    }
+
+    // An operand that an operation only keeps or hands on does nothing to what it holds, unless what the operation calls is no function of the program.
+    constexpr OperandUses usesThatHandOn { OperandUse::Retains, OperandUse::Returns };
+    for (uint32_t index = 0; index < m_input.statements.size(); ++index) {
+        const ValueFlowStatement& statement = m_input.statements[index];
+        bool isOperation = statement.kind == ValueFlowStatementKind::Operation;
+        std::span<const ValueFlowOperand> operands = operandsOf(statement);
+        bool holdsSome = false;
+        for (const ValueFlowOperand& operand : operands)
+            holdsSome |= operand.node && operand.node.index() < m_input.numberOfNodes && holdsProxy.quickGet(operand.node.index());
+        if (!holdsSome)
+            continue;
+        bool callsOnlyFunctionsOfProgram = true;
+        for (unsigned position = 0; isOperation && position < operands.size(); ++position) {
+            if (!operandUsesOf(statement.opcode, position).contains(OperandUse::Calls))
+                continue;
+            const ValueFlowOperand& callee = operands[position];
+            callsOnlyFunctionsOfProgram &= !callee.constant || !maker.meet(callee.constant, ValueSets::complement(closures));
+            callsOnlyFunctionsOfProgram &= !callee.node || !maker.meet(m_graph.valueOf(callee.node), ValueSets::complement(closures));
+        }
+        for (unsigned position = 0; position < operands.size(); ++position) {
+            const ValueFlowOperand& operand = operands[position];
+            if (!operand.node || operand.node.index() >= m_input.numberOfNodes || !holdsProxy.quickGet(operand.node.index()))
+                continue;
+            if (!position && m_statementsThatAskProxiesByTheirTraps.get(index))
+                continue;
+            if (isOperation && callsOnlyFunctionsOfProgram && usesThatHandOn.containsAll(operandUsesOf(statement.opcode, position)))
+                continue;
+            note(m_graph.valueOf(operand.node));
+            if (auto held = heldByInstancesOfNode.find(operand.node.index()); held != heldByInstancesOfNode.end())
+                note(held->value);
+        }
+    }
+    return found;
+}
+
 void ValueFlowSolver::runStatementsMadeBy(Thread& thread)
 {
     ValueFlowRoundLog& log = thread.log;
@@ -3400,6 +3517,10 @@ bool ValueFlowSolver::merge()
         }
         for (ValueFlowStatementID statement : thread->log.statementsWithMembersNotToldApart)
             m_statementsWithMembersNotToldApart.set(statement.index());
+        for (ValueFlowStatementID statement : thread->log.statementsThatAskProxiesByTheirTraps)
+            m_statementsThatAskProxiesByTheirTraps.set(statement.index());
+        for (RuntimeFunctionID function : thread->log.libraryFunctionsLacked)
+            m_libraryFunctionsLacked.set(function.index());
     }
 
     for (const std::unique_ptr<Thread>& thread : m_threads) {
@@ -4506,6 +4627,10 @@ bool ValueFlowSolver::solve()
         giveBackRoomOfLargerRounds(m_roundsDone.last().statementRuns + static_cast<uint64_t>(m_roundsDone.last().edgesAdded) + m_roundsDone.last().evaluations);
 
         bool isQuiet = !hasAdded && moved.isEmpty() && m_due.isEmpty() && m_dueBehindLongRows.isEmpty() && m_dueLast.isEmpty() && m_dueStatementsThatWait.isEmpty() && m_edgesOfRound.isEmpty() && m_readToLink.isEmpty() && m_writtenToLink.isEmpty() && m_bodiesReachedInRound.isEmpty();
+        if (ValueSetID proxies = isQuiet ? followedProxiesThatMoreMayBeDoneTo() : ValueSets::nothing; proxies != ValueSets::nothing) {
+            m_edgesOfRound.append(ValueFlowEdge { ensureNodes(ValueFlowNodeKey::constant(proxies)), m_input.nodes->ofHost(ValueFlowHostNode::ProxiesThatAreOpen) });
+            continue;
+        }
         if (isQuiet && !m_hasSaidThatAllElseIsAtRest && m_input.nodes && m_input.placeholders.unknown) {
             m_hasSaidThatAllElseIsAtRest = true;
             m_edgesOfRound.append(ValueFlowEdge { ensureNodes(ValueFlowNodeKey::constant(m_makers[0]->of(m_input.placeholders.unknown))), m_input.nodes->ofHost(ValueFlowHostNode::AllElseIsAtRest) });
@@ -4620,7 +4745,7 @@ void ValueFlowSolver::dumpBytesByTable() const
     auto addListsOfStatements = [&](const auto&... lists) {
         (bytes.addList(statements, lists), ...);
     };
-    addBitsOfStatements(m_isReached, m_hasStatementOfBodyRun, m_isDue, m_isDear, m_hasLongRowBehindIt, m_hasRunInTurn, m_isDueLast, m_statementsWithMembersNotToldApart);
+    addBitsOfStatements(m_isReached, m_hasStatementOfBodyRun, m_isDue, m_isDear, m_hasLongRowBehindIt, m_hasRunInTurn, m_isDueLast, m_statementsWithMembersNotToldApart, m_statementsThatAskProxiesByTheirTraps);
     addListsOfStatements(m_firstStatementWaitingForNode, m_nextStatementWaiting, m_reachedBy, m_dearStatements, m_due, m_dueStatementsThatWait, m_dueBehindLongRows, m_dueInNextTurn, m_dueLast, m_bodiesReachedInRound);
     bytes.addList("statements: set remembered"_s, m_rememberedByStatement);
     bytes.addMap("statements: values shown"_s, m_valuesShownToStatement);

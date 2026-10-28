@@ -132,6 +132,8 @@ static void printStatement(PrintStream& out, const ValueFlowSolver& solver, Valu
     out.print(nameOf(statement.kind));
     if (statement.function)
         out.print(" f", statement.function.index());
+    if (statement.kind == ValueFlowStatementKind::Behavior)
+        out.print(" n", statement.result.index());
     if (solver.isMadeByRule(id) && statement.kind != ValueFlowStatementKind::Escape) {
         out.print(" ");
         printKey(out, solver, solver.keyOf(id));
@@ -270,6 +272,62 @@ static void printTimeline(PrintStream& out, ValueFlowSolution& solution)
         if (flag)
             out.print(flag);
         out.print(" <- ");
+        printNode(out, solution, logged.edge.from);
+        out.print(" holding ");
+        printValue(out, solution, solver.possibleValuesOf(logged.edge.from));
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+}
+
+static void printFirstCallsOfUnknownCallees(PrintStream& out, ValueFlowSolution& solution)
+{
+    constexpr unsigned numberOfEdgesPrinted = 40;
+    const ValueFlowSolver& solver = solution.solver();
+    unsigned printed = 0;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(logged.edge.to);
+        if (!key || key->kind != ValueFlowMadeNodeKind::CallGroup || !key->set || ValueSets::isComplement(key->set) || !solver.sets().contains(key->set, ValueFlowUniverse::unknownObject()))
+            continue;
+        if (++printed > numberOfEdgesPrinted)
+            return;
+        out.print("round ", logged.round, " ");
+        printNode(out, solution, logged.edge.to);
+        out.print(" <- ");
+        printNode(out, solution, logged.edge.from);
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.println();
+    }
+}
+
+static void printFirstEscapes(PrintStream& out, ValueFlowSolution& solution)
+{
+    constexpr unsigned numberOfEdgesPrinted = 150;
+    const ValueFlowSolver& solver = solution.solver();
+    unsigned printed = 0;
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        if (logged.edge.to != ValueFlowProgramNodes::escaped() && logged.edge.to != ValueFlowProgramNodes::lost())
+            continue;
+        if (++printed > numberOfEdgesPrinted)
+            return;
+        out.print("round ", logged.round, logged.edge.to == ValueFlowProgramNodes::escaped() ? " escaped <- " : " lost <- ");
+        printNode(out, solution, logged.edge.from);
+        out.print("      by ");
+        printStatement(out, solver, logged.statement);
+        out.print("      now holding ");
+        printValue(out, solution, solver.possibleValuesOf(logged.edge.from));
+    }
+}
+
+static void printEdgesInto(PrintStream& out, ValueFlowSolution& solution, ValueFlowNodeID node)
+{
+    const ValueFlowSolver& solver = solution.solver();
+    for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
+        if (logged.edge.to != node)
+            continue;
+        out.print("round ", logged.round, " <- ");
         printNode(out, solution, logged.edge.from);
         out.print(" holding ");
         printValue(out, solution, solver.possibleValuesOf(logged.edge.from));
@@ -1079,6 +1137,14 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             printTimeline(out, solution);
             continue;
         }
+        if (word == "first-escapes"_s) {
+            printFirstEscapes(out, solution);
+            continue;
+        }
+        if (word == "first-unknown-calls"_s) {
+            printFirstCallsOfUnknownCallees(out, solution);
+            continue;
+        }
         if (word.startsWith("unknown-callees"_s)) {
             size_t slash = word.find('/');
             std::optional<uint32_t> oneSiteIn = slash == notFound ? std::optional<uint32_t>(1) : numberAfter(word, slash + 1);
@@ -1099,6 +1165,14 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
                 return printBadArgument(out, word);
             out.println(word);
             printWhyHeld(out, solution, ValueFlowNodeID(*node), ValueFlowObjectID(*object));
+            continue;
+        }
+        if (word.startsWith("into="_s)) {
+            std::optional<uint32_t> node = numberAfter(word, 6);
+            if (!node || *node >= solver.graph().numberOfNodes())
+                return printBadArgument(out, word);
+            out.println(word);
+            printEdgesInto(out, solution, ValueFlowNodeID(*node));
             continue;
         }
         if (word == "evaluators"_s) {

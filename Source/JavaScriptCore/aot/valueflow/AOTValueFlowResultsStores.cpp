@@ -1736,6 +1736,25 @@ bool StoresByLayout::mayGetAccessorUnder(LayoutID layout, PropertyKeyID key, Obj
     return mayGetOne;
 }
 
+// An allocation fills the slots that it lists, whatever flow holds for the values.
+bool StoresByLayout::hasAllocationListing(LayoutID layout, PropertyKeyID key) const
+{
+    const Program& program = m_inputs.program;
+    const ValueFlowUniverse& universe = m_inputs.universe();
+    bool isListed = false;
+    m_inputs.sets().forEachMember(m_layoutsOfObjects.objectsWith(layout), [&](ValueFlowObjectID object) {
+        const ValueFlowSite* site = universe.siteOf(object);
+        if (isListed || !site || site->origin != ValueFlowSiteOrigin::Operation)
+            return;
+        const Value& allocation = program.at(universe.functionOf(object)).at(site->value);
+        if (allocation.opcode != Opcode::NewObject)
+            return;
+        const Vector<Field>& fields = program.at(allocation.layout()).fields;
+        isListed = std::ranges::any_of(allocation.fields(), [&](uint32_t field) { return fields[field].key == key; });
+    });
+    return isListed;
+}
+
 FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
 {
     const StoresIntoObjects& stores = m_storesOfLayout[layout.index()];
@@ -1774,7 +1793,7 @@ FlowAccessorField StoresByLayout::accessorDefinedUnder(ValueSetMaker& maker, Lay
     std::optional<OptionSet<FieldForm>> form = AccessorForms::onlyFormIn(forms);
     if (!form)
         return { };
-    if (sets.meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers))
+    if (sets.meet(m_layoutsOfObjects.objectsWith(layout), m_objectsPutAboveOthers) || hasAllocationListing(layout, key))
         return { };
 
     FlowAccessorField accessor { *form, { }, { } };

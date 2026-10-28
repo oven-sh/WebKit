@@ -1046,6 +1046,10 @@ Vector<ValueFlowWriteUnderNewName> computeBuiltinResults(const ValueFlowResultIn
         if (OptionSet<BuiltinUse> uses = inputs.solver().usesOf(BuiltinID(index)); !uses.isEmpty())
             tables.builtins.uses.append(BuiltinUseRecord { index, static_cast<BuiltinUse>(uses.toRaw()), noWitness });
     }
+    tables.builtins.libraryFunctionsLacked = { };
+    for (size_t function : inputs.solver().libraryFunctionsLacked())
+        tables.builtins.libraryFunctionsLacked.append(RuntimeFunctionID(static_cast<uint32_t>(function)));
+    inputs.build.statistics().count(StatisticID::FlowLibraryFunctionsLacked, tables.builtins.libraryFunctionsLacked.size());
     times.didFinish("built-ins: uses"_s);
     tables.builtins.legacyRegExpStatics = findReadsOfLegacyRegExpStatics(inputs, holders);
     tables.builtins.featureUses = collectFeatureUses(inputs, holders, builtinsWhoseCodeRuns);

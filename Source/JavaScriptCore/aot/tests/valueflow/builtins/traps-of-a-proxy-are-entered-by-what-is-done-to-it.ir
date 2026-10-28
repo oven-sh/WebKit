@@ -1,0 +1,52 @@
+# const proxy = new Proxy({}, { get(target, key, receiver) {..}, has(target, key) {..}, set(target, key, value) {..} });  proxy.a;  "b" in proxy
+# const stored = new Proxy({}, { get(..) {..}, set(..) {..} });  stored.a = 1
+# A read through a proxy enters the handler's `get` with the target, the key and the proxy, a test by `in` its `has`. Nothing stores through the first proxy: its `set` is not entered.
+# A store is something that flow has no trap for yet: it opens the second proxy, and all that its handler holds is entered.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+# CHECK-NOT: unreached f4
+# CHECK-NOT: unreached f5
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Target"
+layout L1 name="Handler" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="has" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="HandlerOfStored" fields=[{key="get" declared={type=anything} flags=[IsRequired]}, {key="set" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f2
+    v3 = NewClosure function=f3
+    v4 = NewObject -, v1, v2, v3 layout=L1 fields=[0, 1, 2]
+    v5 = Builtin builtin=Proxy
+    v6 = Construct v5, -, v0, v4
+    v7 = PropGet v6 key="a"
+    v8 = PropHas v6 key="b"
+    v9 = NewClosure function=f4
+    v10 = NewClosure function=f5
+    v11 = NewObject -, v9, v10 layout=L2 fields=[0, 1]
+    v12 = Construct v5, -, v0, v11
+    v13 = Integer integer=1
+    PropSet v12, v13 key="a" mode=Strict
+    Return
+}
+function f1 name="get" kind=Method parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f2 name="has" kind=Method parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = Boolean boolean=true
+    Return v2
+}
+function f3 name="set" kind=Method parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    Return v3
+}
+function f4 name="get" kind=Method parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}
+function f5 name="set" kind=Method parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+    v3 = Boolean boolean=true
+    Return v3
+}

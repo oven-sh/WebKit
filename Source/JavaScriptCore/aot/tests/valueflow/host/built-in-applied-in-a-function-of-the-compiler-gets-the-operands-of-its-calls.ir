@@ -1,0 +1,28 @@
+# Array.from({ length: 2 }, same), as the front end writes it, where the compiler's arrayFromLength (runtimefunction 131110) hands its operands on to Array.from
+# The length that Array.from converts is the number that the call passes, and the mapper is `same`. Nothing is converted or called that nobody knows, so the host chooses no operands.
+# LIBRARY: own
+# RUN: valueflow-why flag=h7
+# CHECK: flag=h7
+# CHECK-NEXT: not held
+
+layout L0 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+runtimefunction id=131110 function=f1
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=2
+    v1 = NewClosure function=f2
+    v2 = Builtin builtin=CompilerHelpersArrayFromLength
+    v3 = Call v2, -, v0, v1
+    Return
+}
+function f1 name="from" role=Library enclosingRuntimeFunction=131110 parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = Builtin builtin=Array
+    v4 = Builtin builtin=ArrayFrom
+    v5 = Call v4, v3, v2, v1
+    Return v5
+}
+function f2 name="same" kind=Arrow parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    Return v1
+}

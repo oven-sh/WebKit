@@ -843,6 +843,10 @@ void CyclicModuleRecord::asyncExecutionRejected(JSGlobalObject* globalObject, JS
         for (const WriteBarrier<AbstractModuleRecord>& m : module->asyncParentModules() | std::views::reverse)
             stack.append(uncheckedDowncast<CyclicModuleRecord>(m.get()));
     }
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        AOT::ModuleRecord::didFailModulesInJob(globalObject);
+#endif
     // 11. Return UNUSED.
 }
 
@@ -958,6 +962,10 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
             }
         }
     }
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode())
+        RELEASE_AND_RETURN(scope, AOT::ModuleRecord::didEvaluateModulesInJob(globalObject));
+#endif
     // 13. Return UNUSED.
 }
 

@@ -2274,7 +2274,7 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
         const auto& record = callee.creator.as<CreatorRecord::EntryChecks>();
         const InliningSummaries& inlining = context.inputs.inlining;
         cost = saturatingSum<uint32_t>(cost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
-        likelyCost = saturatingSum<uint32_t>(likelyCost, inlining.of(program, record.body).codeBytes, inlining.of(program, record.fallback).codeBytes);
+        likelyCost = std::numeric_limits<uint32_t>::max();
         verdict.costBytes = cost;
     }
 

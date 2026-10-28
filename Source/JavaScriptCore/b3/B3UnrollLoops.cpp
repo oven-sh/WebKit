@@ -876,7 +876,11 @@ private:
         };
         counter = inBlock(counter);
         bound = inBlock(bound);
-        Value* distance = block->appendNew<Value>(m_proc, Sub, origin, rises ? bound : counter, rises ? counter : bound);
+        // Where the lower end is not below zero, the upper end is no nearer to zero than to it.
+        Signedness signedness = isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed;
+        Value* distance = rises ? bound : counter;
+        if (intervalFor(m_proc, rises ? counter : bound, signedness).min < 0)
+            distance = block->appendNew<Value>(m_proc, Sub, origin, distance, rises ? counter : bound);
         Value* greatest = block->appendIntConstant(m_proc, origin, distance->type(), Limits::maxTurnsWithoutPoll * (rises ? plan.step : -plan.step));
         block->appendNew<Value>(m_proc, Branch, origin, block->appendNew<Value>(m_proc, BelowEqual, origin, distance, greatest));
         block->setSuccessors(FrequentedBlock(plan.header), FrequentedBlock(headerOfCopy, FrequencyClass::Rare));
@@ -1354,6 +1358,29 @@ private:
         return block->appendNew<Value>(m_proc, Sub, origin, bounds.bound, block->appendIntConstant(m_proc, origin, bounds.bound->type(), roomForTurnsBehindFirst(plan)));
     }
 
+    static int64_t lengthOfStretch(const Plan& plan, Type type)
+    {
+        return std::min<int64_t>(turnsOfStretch * (plan.step > 0 ? plan.step : -plan.step), type == Int32 ? 1 << 30 : 1ll << 62);
+    }
+
+    // A counter that rises starts at the lower end. One that falls ends there, at a far bound that has not wrapped around.
+    bool lowerEndIsNotBelowZero(const Plan& plan, const Bounds& bounds)
+    {
+        Signedness signedness = isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed;
+        if (plan.step > 0)
+            return intervalFor(m_proc, plan.counter, signedness).min >= 0;
+        if (signedness == Signedness::Unsigned)
+            return false;
+        // The bound may be a choice between the bound of the loop and a stand-in for it.
+        Value* choice = bounds.bound->opcode() == Select ? bounds.bound : nullptr;
+        IntegerInterval bound = intervalFor(m_proc, choice ? choice->child(1) : bounds.bound, signedness);
+        if (choice)
+            bound = bound.join(intervalFor(m_proc, choice->child(2), signedness));
+        int64_t room = roomForTurnsBehindFirst(plan);
+        int64_t greatest = bounds.bound->type() == Int32 ? std::numeric_limits<int32_t>::max() : std::numeric_limits<int64_t>::max();
+        return bound.min >= room && bound.max <= greatest + room;
+    }
+
     void appendFarBoundOfStretch(const Plan& plan, const Stretch& stretch, const Bounds& bounds, BasicBlock* block, Variable* beginning, BoundLiesBeyond farBoundLiesBeyond, BasicBlock* successor)
     {
         Origin origin = plan.test->last()->origin();
@@ -1384,8 +1411,23 @@ private:
         Origin origin = plan.test->last()->origin();
         BasicBlock* tests = stretch.tests;
         BasicBlock* begins = stretch.begins;
+        // Where the lower end of what the counter walks is not below zero, the two ends lie nearer to each other than the upper end lies to zero:
+        // that the upper end lies within a stretch of zero needs no subtraction to be told.
+        BasicBlock* first = stretch.first;
+        Type type = bounds.bound->type();
+        if (lowerEndIsNotBelowZero(plan, bounds)) {
+            bool rises = plan.step > 0;
+            Value* farBound = appendFarBound(plan, bounds, first);
+            Value* farthest = first->appendIntConstant(m_proc, origin, type, lengthOfStretch(plan, type));
+            Value* upperEnd = rises ? farBound : first->appendNew<VariableValue>(m_proc, Get, origin, variableOfCounter(plan));
+            first->appendNew<VariableValue>(m_proc, Set, origin, stretch.farBoundVariable, farBound);
+            first->appendNew<Value>(m_proc, Branch, origin, first->appendNew<Value>(m_proc, Above, origin, upperEnd, farthest));
+            BasicBlock* liesFarther = m_proc.addBlock();
+            first->setSuccessors(FrequentedBlock(liesFarther, FrequencyClass::Rare), FrequentedBlock(begins));
+            first = liesFarther;
+        }
         // A test at the bottom is reached only where there is room for the turns that are written out. A test at the top asks that by itself.
-        appendFarBoundOfStretch(plan, stretch, bounds, stretch.first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, begins);
+        appendFarBoundOfStretch(plan, stretch, bounds, first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, begins);
         appendPoll(plan, stretch.next);
         // The counter has passed the end of the last stretch by less than the turns that are written out. Nothing but the test of those turns looks at the counter here, so it stays in one register.
         appendFarBoundOfStretch(plan, stretch, bounds, stretch.next, stretch.farBoundVariable, BoundLiesBeyond::Yes, tests);
@@ -1547,8 +1589,16 @@ private:
         Bounds bounds = appendBoundsAndEnter(plan, unrolledHeader, { stretch.begins, stretch.farBoundVariable });
         if (stretch.tests) {
             appendStartOfStretch(plan, stretch, integers.span(), bounds, turns[0].get(plan.header), headerOfLoopThatPolls);
-            headerBehindRest->appendNew<Value>(m_proc, Branch, origin, headerBehindRest->appendNew<Value>(m_proc, plan.relation, origin, headerBehindRest->appendNew<VariableValue>(m_proc, Get, origin, testedVariable), appendFarBound(plan, bounds, headerBehindRest)));
-            headerBehindRest->setSuccessors(FrequentedBlock(stretch.next, FrequencyClass::Rare), FrequentedBlock(plan.header));
+            BasicBlock* asks = headerBehindRest;
+            // A stretch that is not the last ends a whole stretch beyond a counter that is not below zero.
+            if (plan.step > 0 && lowerEndIsNotBelowZero(plan, bounds)) {
+                asks = m_proc.addBlock();
+                Value* end = headerBehindRest->appendNew<VariableValue>(m_proc, Get, origin, stretch.farBoundVariable);
+                headerBehindRest->appendNew<Value>(m_proc, Branch, origin, headerBehindRest->appendNew<Value>(m_proc, AboveEqual, origin, end, headerBehindRest->appendIntConstant(m_proc, origin, end->type(), lengthOfStretch(plan, end->type()))));
+                headerBehindRest->setSuccessors(FrequentedBlock(asks, FrequencyClass::Rare), FrequentedBlock(plan.header));
+            }
+            asks->appendNew<Value>(m_proc, Branch, origin, asks->appendNew<Value>(m_proc, plan.relation, origin, asks->appendNew<VariableValue>(m_proc, Get, origin, testedVariable), appendFarBound(plan, bounds, asks)));
+            asks->setSuccessors(FrequentedBlock(stretch.next, FrequencyClass::Rare), FrequentedBlock(plan.header));
         }
         Value* farBoundOfTurns = stretch.tests ? stretch.farBound : bounds.farBound;
         enterAgainBehindRareEdges(cloner, plan, bounds, turns.span(), unrolledHeader);

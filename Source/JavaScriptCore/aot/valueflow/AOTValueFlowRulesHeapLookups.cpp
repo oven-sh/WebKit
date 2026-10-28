@@ -506,19 +506,15 @@ ClimbingSet HeapRule::holdersFoundThroughUnknownObject(const HeapKey& key)
     if (key.keyClass == HeapKeyClass::Index || (key.keyClass == HeapKeyClass::Name && holders == ValueSets::nothing))
         return ClimbingSet(ValueSets::nothing);
     ClimbingSet found = m_context.unite(escapedAmong(ClimbingSet(holders)), ClimbingSet(key.keyClass == HeapKeyClass::Name ? m_tables.under(key.name).prototypeObjects : m_tables.prototypeObjects()));
-    return m_context.unite(found, prototypeObjectsAboveEscapedEntries(m_tables.classesOfEntries(), ClimbingSet(holders)));
-}
-
-ClimbingSet HeapRule::holdersOfAccessorsThatRunOnUnknownObject(const HeapKey& key)
-{
-    ClimbingSet holders = holdersFoundThroughUnknownObject(key);
-    ClimbingSet ofHost = m_context.restrict(holders, m_tables.prototypeObjectsOfHost());
+    found = m_context.unite(found, prototypeObjectsAboveEscapedEntries(m_tables.classesOfEntries(), ClimbingSet(holders)));
+    ClimbingSet ofHost = m_context.restrict(found, m_tables.prototypeObjectsOfHost());
     if (!holdsAnything(ofHost) || doesUnseenCodeRun())
-        return holders;
+        return found;
 
+    // An object nobody knows stands below the prototype object of a host class only once the class has an instance.
     ClimbingSet withInstances = m_context.unite(m_context.valueWithin(ofHost, m_context.nodes().ofHost(ValueFlowHostNode::PrototypeObjectsOfInstances)), escapedAmong(ofHost));
     withInstances = m_context.unite(withInstances, prototypeObjectsAboveEscapedEntries(m_tables.classesOfHostWithEntries(), ofHost));
-    return m_context.unite(m_context.restrict(holders, ValueSets::complement(m_tables.prototypeObjectsOfHost())), withInstances);
+    return m_context.unite(m_context.restrict(found, ValueSets::complement(m_tables.prototypeObjectsOfHost())), withInstances);
 }
 
 ClimbingSet HeapRule::foundThroughUntrackedObject(ValueSetID objects)
@@ -1538,7 +1534,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         add(ValueFlowProgramNodes::escaped(), m_context.maker().of(handedOutAsUnknownObject.span()));
         // A read runs getters on the holders where a store runs setters. What they answer is among the values nobody knows.
         // That names no member of the host: native code is there whoever reads it. A getter that is a function of the library is in the image only once it is read.
-        forEachMemberUnder(holdersOfAccessorsThatRunOnUnknownObject(key), key, [&](BuiltinID member, ModuleID) {
+        forEachMemberUnder(holdersFoundThroughUnknownObject(key), key, [&](BuiltinID member, ModuleID) {
             if (!runsGetterThroughPlaceholder(member, key))
                 return;
             for (const BuiltinOverload& overload : m_builtins.overloadsOf(m_builtins.canonicalID(member))) {
@@ -1718,7 +1714,7 @@ void HeapRule::collectAccessors(BuiltinCallMode mode)
     if (chain.holdsUnknownObject) {
         if (key.keyClass != HeapKeyClass::Name || m_program.at(key.name).kind != PropertyKeyKind::ModulePrivateName)
             accessors.append(ValueFlowUniverse::unknownObject());
-        appendAccessorsOf(holdersOfAccessorsThatRunOnUnknownObject(key));
+        appendAccessorsOf(holdersFoundThroughUnknownObject(key));
         answer(readWhatStaysBehindUnder(name));
         if (key.keyClass == HeapKeyClass::Name) {
             answer(m_context.readWhatWasWritten(letMembersOfHeldPrototypeObjectsEscape(key.name, { name }), name));

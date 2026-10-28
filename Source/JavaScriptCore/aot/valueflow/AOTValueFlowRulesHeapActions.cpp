@@ -193,7 +193,7 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
     ClimbingSet searched = search == PropertySearch::OwnProperty ? receivers : ClimbingSet(m_universe.knownObjects());
     bool mayFindAccessorOfArguments = key.mayNameNonEnumerable(m_tables.calleeKey()) && m_context.meet(searched, m_tables.argumentsObjects());
     auto addFunctionNobodyFollows = [&] {
-        add(m_statement.result, m_context.restrict(ClimbingSet(Typed::unknownValue(m_context, ValueFlowUnknownSource::UndescribedNativeResult)), m_universe.objects()));
+        add(m_statement.result, m_context.restrict(ClimbingSet(undescribedValueThatIsNoBuffer(m_context)), m_universe.objects()));
     };
     // Whoever has the setter in hand calls it with any value.
     if (replaceMembersThroughSettersFoundFrom(receivers, key, search, nullptr, part == HeapPropertyPart::Setter))

@@ -166,13 +166,26 @@ private:
         Value* nextOfVectorLoop;
     };
 
+    // A Phi behind a branch whose two ways hold nothing but what they hand to it: Select(condition, ifTrue, ifFalse).
+    struct Choice {
+        Value* phi;
+        Value* condition;
+        Value* ifTrue;
+        Value* ifFalse;
+    };
+
+    // A Phi of the header that every turn replaces by the lesser or the greater of itself and an integer. Or:
     // A Phi of the header to which every turn adds an integer, or from which it takes one: as an integer, or as a number. Numbers that are whole add up without rounding while they stay under 2^53, in whatever order.
     struct Sum {
         Value* phi;
         Value* start;
         Value* next;
         Value* addend;
-        bool isTakenAway;
+        // Add | Sub | VectorMin | VectorMax.
+        Opcode opcode;
+        bool comparesWithoutSign;
+        bool lanesCompareWithoutSign;
+        bool lanesHoldNoSign;
         // At the head of a stretch of turns, in its lanes, and behind it.
         Value* atHeadOfStretch;
         Value* lanes;
@@ -268,6 +281,10 @@ private:
         unsigned numberOfCounters { 0 };
         Sum sumTable[Limits::maxSumsOfVectorizedLoop] { };
         unsigned numberOfSums { 0 };
+        Choice choiceTable[Limits::maxChoicesPerTurnOfVectorizedLoop] { };
+        unsigned numberOfChoices { 0 };
+        // The two ways of every choice. They belong to the turn and hold nothing to copy.
+        Vector<BasicBlock*, 4> waysOfChoices;
         bool computes { false };
         // No more, so that no lane of a sum wraps around and no sum of numbers is rounded.
         int64_t turnsPerStretch { Limits::maxTurnsWithoutPoll };
@@ -334,6 +351,15 @@ private:
             return nullptr;
         }
 
+        const Choice* choiceFor(const Value* value) const
+        {
+            for (unsigned index = 0; index < numberOfChoices; ++index) {
+                if (choiceTable[index].phi == value)
+                    return &choiceTable[index];
+            }
+            return nullptr;
+        }
+
         const Sum* sumFor(const Value* value) const
         {
             for (const Sum& sum : sums()) {
@@ -376,6 +402,49 @@ private:
     };
 
     // One way leads through a turn, and one branch on it leaves the loop. A branch on a constant is a jump, so the blocks of the loop that are not on that way are never entered.
+    // Where the two ways of a branch meet again, if neither does anything but hand values to the Phis there.
+    static BasicBlock* readChoices(Plan& plan, BasicBlock* block)
+    {
+        BasicBlock* ways[2] = { block->successorBlock(0), block->successorBlock(1) };
+        BasicBlock* join = ways[0]->numSuccessors() == 1 ? ways[0]->successorBlock(0) : nullptr;
+        if (!join || join == plan.header || join->numPredecessors() != 2 || ways[0] == ways[1])
+            return nullptr;
+        unsigned firstChoice = plan.numberOfChoices;
+        for (Value* phi : *join) {
+            if (phi->opcode() != Phi)
+                continue;
+            if (plan.numberOfChoices == Limits::maxChoicesPerTurnOfVectorizedLoop)
+                return nullptr;
+            Choice& choice = plan.choiceTable[plan.numberOfChoices++];
+            choice = { };
+            choice.phi = phi;
+            choice.condition = block->last()->child(0);
+        }
+        for (unsigned index = 0; index < 2; ++index) {
+            BasicBlock* way = ways[index];
+            if (way->numPredecessors() != 1 || way->last()->opcode() != Jump || way->successorBlock(0) != join)
+                return nullptr;
+            for (Value* value : *way) {
+                if (value == way->last() || value->isConstant())
+                    continue;
+                auto* upsilon = value->as<UpsilonValue>();
+                Choice* choice = upsilon ? const_cast<Choice*>(plan.choiceFor(upsilon->phi())) : nullptr;
+                if (!choice || choice < plan.choiceTable + firstChoice)
+                    return nullptr;
+                (index ? choice->ifFalse : choice->ifTrue) = upsilon->child(0)->foldIdentity();
+            }
+        }
+        for (unsigned index = firstChoice; index < plan.numberOfChoices; ++index) {
+            if (!plan.choiceTable[index].ifTrue || !plan.choiceTable[index].ifFalse)
+                return nullptr;
+        }
+        for (BasicBlock* way : ways) {
+            plan.blockSet.add(way);
+            plan.waysOfChoices.append(way);
+        }
+        return join;
+    }
+
     static bool findTurn(const NaturalLoops& loops, const NaturalLoop& loop, Plan& plan)
     {
         BasicBlock* block = plan.header;
@@ -395,6 +464,12 @@ private:
                         plan.blocksBehindEdgesNeverTaken.append(other);
                 } else {
                     bool firstStays = loops.belongsTo(block->successorBlock(0), loop);
+                    if (firstStays && loops.belongsTo(block->successorBlock(1), loop)) {
+                        if (BasicBlock* join = readChoices(plan, block)) {
+                            block = join;
+                            continue;
+                        }
+                    }
                     if (plan.test || firstStays == loops.belongsTo(block->successorBlock(1), loop)) {
                         dataLogLnIf(verbose, "   second branch: ", deepDump(last), " in ", *block);
                         return false;
@@ -416,7 +491,7 @@ private:
         for (unsigned index = 0; index < plan.blocks.size(); ++index) {
             BasicBlock* before = plan.blocks[index ? index - 1 : plan.blocks.size() - 1];
             for (BasicBlock* predecessor : plan.blocks[index]->predecessors()) {
-                if (predecessor != before && plan.blockSet.contains(predecessor))
+                if (predecessor != before && plan.blockSet.contains(predecessor) && !plan.waysOfChoices.contains(predecessor))
                     return false;
             }
         }
@@ -485,9 +560,19 @@ private:
     // What was read of a Phi that is no counter.
     static bool readSum(Plan& plan, const Counter& read)
     {
-        if (!read.start || !read.next || (read.next->opcode() != Add && read.next->opcode() != Sub) || plan.numberOfSums == Limits::maxSumsOfVectorizedLoop)
+        if (!read.start || !read.next || plan.numberOfSums == Limits::maxSumsOfVectorizedLoop)
             return false;
-        Value* added = read.next->child(0) == read.phi ? read.next->child(1) : read.next->child(1) == read.phi && read.next->opcode() == Add ? read.next->child(0) : nullptr;
+        Value* added = nullptr;
+        Value* comparison = nullptr;
+        LesserOrGreater operation = asLesserOrGreater(plan, read.next);
+        if (operation.opcode != Oops) {
+            added = operation.left == read.phi ? operation.right : operation.right == read.phi ? operation.left : nullptr;
+            const Choice* choice = plan.choiceFor(read.next);
+            comparison = choice ? choice->condition : read.next->child(0);
+        } else if (read.next->opcode() == Add || read.next->opcode() == Sub) {
+            operation.opcode = read.next->opcode();
+            added = read.next->child(0) == read.phi ? read.next->child(1) : read.next->child(1) == read.phi && read.next->opcode() == Add ? read.next->child(0) : nullptr;
+        }
         if (!added || added == read.phi)
             return false;
         if (read.phi->type() == Double) {
@@ -499,7 +584,7 @@ private:
         // Nothing else in a turn looks at the sum.
         for (BasicBlock* block : plan.blocks) {
             for (Value* value : *block) {
-                if (value == read.next)
+                if (value == read.next || value == comparison)
                     continue;
                 auto* upsilon = value->as<UpsilonValue>();
                 if (upsilon && !plan.blockSet.contains(upsilon->phi()->owner))
@@ -516,7 +601,8 @@ private:
         sum.start = read.start;
         sum.next = read.next;
         sum.addend = added;
-        sum.isTakenAway = read.next->opcode() == Sub;
+        sum.opcode = operation.opcode;
+        sum.comparesWithoutSign = operation.comparesWithoutSign;
         return true;
     }
 
@@ -799,6 +885,7 @@ private:
         Opcode opcode { Oops };
         Value* left { nullptr };
         Value* right { nullptr };
+        bool comparesWithoutSign { false };
     };
 
     // The arm of a Select is what was compared, perhaps made wider with its sign.
@@ -811,20 +898,52 @@ private:
         return arm == compared || (arm->hasInt() && compared->hasInt() && arm->asInt() == compared->asInt());
     }
 
-    // Select(a < b, a, b) and the like, of integers with a sign.
-    static LesserOrGreater asLesserOrGreater(Value* value)
+    // Select(a < b, a, b) and the like, of integers, and the same written as a branch.
+    static LesserOrGreater asLesserOrGreater(const Plan& plan, Value* value)
     {
-        if (value->opcode() != Select || !value->type().isInt())
+        if (!value->type().isInt())
             return { };
-        Value* comparison = value->child(0);
-        bool picksLesserInOrder = comparison->opcode() == LessThan || comparison->opcode() == LessEqual;
-        if (!picksLesserInOrder && comparison->opcode() != GreaterThan && comparison->opcode() != GreaterEqual)
+        const Choice* choice = plan.choiceFor(value);
+        if (!choice && value->opcode() != Select)
             return { };
-        if (isComparedValue(value->child(1), comparison->child(0)) && isComparedValue(value->child(2), comparison->child(1)))
-            return { picksLesserInOrder ? VectorMin : VectorMax, value->child(1), value->child(2) };
-        if (isComparedValue(value->child(1), comparison->child(1)) && isComparedValue(value->child(2), comparison->child(0)))
-            return { picksLesserInOrder ? VectorMax : VectorMin, value->child(2), value->child(1) };
+        Value* comparison = choice ? choice->condition : value->child(0);
+        Value* ifTrue = choice ? choice->ifTrue : value->child(1);
+        Value* ifFalse = choice ? choice->ifFalse : value->child(2);
+        bool comparesWithoutSign = isUnsignedRelation(comparison->opcode());
+        bool picksLesserInOrder = isLessRelation(comparison->opcode());
+        switch (comparison->opcode()) {
+        case LessThan:
+        case LessEqual:
+        case GreaterThan:
+        case GreaterEqual:
+        case Below:
+        case BelowEqual:
+        case Above:
+        case AboveEqual:
+            break;
+        default:
+            return { };
+        }
+        if (isComparedValue(ifTrue, comparison->child(0)) && isComparedValue(ifFalse, comparison->child(1)))
+            return { picksLesserInOrder ? VectorMin : VectorMax, ifTrue, ifFalse, comparesWithoutSign };
+        if (isComparedValue(ifTrue, comparison->child(1)) && isComparedValue(ifFalse, comparison->child(0)))
+            return { picksLesserInOrder ? VectorMax : VectorMin, ifFalse, ifTrue, comparesWithoutSign };
         return { };
+    }
+
+    // A lane that holds a whole value holds it with its sign. Read without a sign, in a lane as in a word, the negative ones come behind all others, in their order.
+    bool canCompareInLanes(const Plan& plan, LesserOrGreater& operation)
+    {
+        if (operation.opcode == Oops || plan.bytesPerLane == 8 || !holdsWholeValue(plan, operation.left) || !holdsWholeValue(plan, operation.right))
+            return false;
+        if (operation.comparesWithoutSign) {
+            auto left = intervalInTurn(plan, operation.left, Limits::maxDepthOfAddressInVectorizedLoop);
+            auto right = intervalInTurn(plan, operation.right, Limits::maxDepthOfAddressInVectorizedLoop);
+            if ((left && right && left->min >= 0 && right->min >= 0) || m_proc.policy().validation.comparesAllLanesWithSign)
+                operation.comparesWithoutSign = false;
+        }
+        // Without a sign: pminub, pmaxub | pminuw, pmaxuw | pminud, pmaxud. All but the first pair came with those of 32 bits with a sign.
+        return targetHas(operation.opcode, operation.comparesWithoutSign ? SIMDLane::i32x4 : laneFor(plan, Int32));
     }
 
     // What the value may be, where that follows from what is loaded and what comes from outside the loop. Nothing: it may wrap around, or it is not known.
@@ -892,13 +1011,14 @@ private:
                     result = result ? IntegerInterval { 0, std::min(result->max, mask->max) } : IntegerInterval { 0, mask->max };
             }
             break;
+        case Phi:
         case Select: {
-            LesserOrGreater operation = asLesserOrGreater(value);
+            LesserOrGreater operation = asLesserOrGreater(plan, value);
             if (operation.opcode == Oops)
                 return std::nullopt;
             auto left = intervalInTurn(plan, operation.left, timeToLive - 1);
             auto right = intervalInTurn(plan, operation.right, timeToLive - 1);
-            if (!left || !right)
+            if (!left || !right || (operation.comparesWithoutSign && (left->min < 0 || right->min < 0)))
                 return std::nullopt;
             result = operation.opcode == VectorMin
                 ? IntegerInterval { std::min(left->min, right->min), std::min(left->max, right->max) }
@@ -924,10 +1044,10 @@ private:
     {
         Value* stored = access.memory->child(0);
         IntegerInterval element = intervalOfLane(plan.bytesPerElement, Signedness::Unsigned);
-        LesserOrGreater outer = asLesserOrGreater(stored);
-        if (outer.opcode != Oops && outer.right->hasInt()) {
-            LesserOrGreater inner = asLesserOrGreater(outer.left);
-            if (inner.opcode != Oops && inner.opcode != outer.opcode && inner.right->hasInt()) {
+        LesserOrGreater outer = asLesserOrGreater(plan, stored);
+        if (outer.opcode != Oops && outer.right->hasInt() && !outer.comparesWithoutSign) {
+            LesserOrGreater inner = asLesserOrGreater(plan, outer.left);
+            if (inner.opcode != Oops && inner.opcode != outer.opcode && inner.right->hasInt() && !inner.comparesWithoutSign) {
                 int64_t least = (outer.opcode == VectorMax ? outer : inner).right->asInt();
                 int64_t greatest = (outer.opcode == VectorMin ? outer : inner).right->asInt();
                 if (least == element.min && greatest == element.max)
@@ -1014,11 +1134,12 @@ private:
         case Load16S:
         case Load:
             return (!plan.hasWideLanes() || targetHas(VectorExtendLow, laneFor(plan, type))) && needScalar(plan, value->lastChild());
+        case Phi:
         case Select: {
             // A lane must hold the whole of what is compared.
-            LesserOrGreater operation = asLesserOrGreater(value);
-            if (operation.opcode == Oops || !holdsWholeValue(plan, operation.left) || !holdsWholeValue(plan, operation.right) || plan.bytesPerLane == 8 || !targetHas(operation.opcode, laneFor(plan, type))) {
-                dataLogLnIf(verbose, "   vector: ", deepDump(value), " on ", deepDump(value->child(0)));
+            LesserOrGreater operation = asLesserOrGreater(plan, value);
+            if (!canCompareInLanes(plan, operation)) {
+                dataLogLnIf(verbose, "   vector: ", deepDump(value));
                 return false;
             }
             return needVector(plan, operation.left) && needVector(plan, operation.right);
@@ -1081,11 +1202,32 @@ private:
         if (!plan.numberOfSums)
             return true;
         SIMDLane lane = laneOfSums(plan);
-        if (!plan.testsCounterBeforeStep || plan.boundingCounter() || plan.bytesPerLane < 2
+        bool addsUp = false;
+        for (const Sum& sum : plan.sums())
+            addsUp |= sum.opcode == Add || sum.opcode == Sub;
+        if (!plan.testsCounterBeforeStep || plan.boundingCounter() || (addsUp && plan.bytesPerLane < 2)
             || !targetHas(VectorAdd, lane) || !targetHas(VectorSplat, lane) || !targetHas(VectorExtractLane, lane) || !targetHas(VectorDotProduct, SIMDLane::i32x4))
             return false;
         Int128 turns = plan.turnsPerStretch;
-        for (const Sum& sum : plan.sums()) {
+        for (Sum& sum : plan.sums()) {
+            if (sum.opcode == VectorMin || sum.opcode == VectorMax) {
+                // The lanes compare the elements with each other. What they find is compared with what was found before as the loop compares.
+                LesserOrGreater operation { sum.opcode, sum.addend, sum.addend, sum.comparesWithoutSign };
+                if (sum.phi->type() != Int32 || sum.addend->type() != Int32 || !targetHas(VectorExtractLane, laneFor(plan, Int32)))
+                    return false;
+                // Elements that fill their lanes and are never negative stand in one order, with a sign or without.
+                auto interval = intervalInTurn(plan, sum.addend, Limits::maxDepthOfAddressInVectorizedLoop);
+                sum.lanesHoldNoSign = !holdsWholeValue(plan, sum.addend) && !plan.hasWideLanes() && interval && intervalOfLane(plan.bytesPerLane, Signedness::Unsigned).contains(*interval);
+                if (sum.lanesHoldNoSign) {
+                    if (!targetHas(sum.opcode, SIMDLane::i32x4))
+                        return false;
+                } else if (!canCompareInLanes(plan, operation))
+                    return false;
+                if (!needVector(plan, sum.addend))
+                    return false;
+                sum.lanesCompareWithoutSign = (sum.lanesHoldNoSign && !m_proc.policy().validation.comparesAllLanesWithSign) || operation.comparesWithoutSign;
+                continue;
+            }
             // A sum of 32 bits wraps around in a lane as it does in a register.
             if (sum.phi->type() == Int32 && lane == SIMDLane::i32x4) {
                 if (!holdsWholeValue(plan, sum.addend) || !needVector(plan, sum.addend))
@@ -1143,7 +1285,7 @@ private:
                     continue;
                 }
                 if (value->opcode() == Phi) {
-                    if (!plan.counterFor(value) && !plan.sumFor(value))
+                    if (!plan.counterFor(value) && !plan.sumFor(value) && !plan.choiceFor(value))
                         return false;
                     continue;
                 }
@@ -1449,10 +1591,11 @@ private:
         SIMDLane lane = laneFor(plan, value->type());
         bool isNumber = value->type().isFloat();
         uint64_t signBit = 1ull << (plan.bytesPerLane * 8 - 1);
-        if (value->opcode() == Select) {
-            LesserOrGreater operation = asLesserOrGreater(value);
+        if (value->opcode() == Select || value->opcode() == Phi) {
+            LesserOrGreater operation = asLesserOrGreater(plan, value);
+            RELEASE_ASSERT(canCompareInLanes(plan, operation));
             Value* left = vectorFor(plan, operation.left);
-            return appendVector(plan.turn, operation.opcode, origin, lane, left, vectorFor(plan, operation.right), 0, SIMDSignMode::Signed);
+            return appendVector(plan.turn, operation.opcode, origin, lane, left, vectorFor(plan, operation.right), 0, operation.comparesWithoutSign ? SIMDSignMode::Unsigned : SIMDSignMode::Signed);
         }
         Value* first = vectorFor(plan, value->child(0));
         if (value->opcode() == Shl)
@@ -1555,10 +1698,14 @@ private:
         for (Sum& sum : plan.sums()) {
             Origin origin = sum.next->origin();
             Value* added = vectorFor(plan, sum.addend);
-            // Lanes of sixteen bits are added up in pairs.
-            if (plan.bytesPerLane == 2)
-                added = appendVector(turn, VectorDotProduct, origin, SIMDLane::i32x4, added, appendLanesOf(plan, origin, 1));
-            sum.behindStretch = appendVector(turn, VectorAdd, origin, laneOfSums(plan), sum.lanes, added);
+            if (sum.opcode == VectorMin || sum.opcode == VectorMax)
+                sum.behindStretch = appendVector(turn, sum.opcode, origin, laneFor(plan, Int32), sum.lanes, added, 0, sum.lanesCompareWithoutSign ? SIMDSignMode::Unsigned : SIMDSignMode::Signed);
+            else {
+                // Lanes of sixteen bits are added up in pairs.
+                if (plan.bytesPerLane == 2)
+                    added = appendVector(turn, VectorDotProduct, origin, SIMDLane::i32x4, added, appendLanesOf(plan, origin, 1));
+                sum.behindStretch = appendVector(turn, VectorAdd, origin, laneOfSums(plan), sum.lanes, added);
+            }
             appendUpsilon(turn, origin, sum.behindStretch, sum.lanes);
         }
     }
@@ -1567,18 +1714,28 @@ private:
     void appendSumBehindStretch(Plan& plan, BasicBlock* block, Sum& sum)
     {
         Origin origin = sum.next->origin();
-        SIMDLane lane = laneOfSums(plan);
-        Value* total = nullptr;
+        bool compares = sum.opcode == VectorMin || sum.opcode == VectorMax;
+        SIMDLane lane = compares ? laneFor(plan, Int32) : laneOfSums(plan);
+        Opcode relation = sum.opcode == VectorMin ? (sum.comparesWithoutSign ? Below : LessThan) : (sum.comparesWithoutSign ? Above : GreaterThan);
+        Value* total = compares ? sum.atHeadOfStretch : nullptr;
         for (unsigned index = 0; index < bytesPerVector / elementByteSize(lane); ++index) {
-            Value* part = appendVector(block, VectorExtractLane, origin, lane, sum.behindStretch, nullptr, index);
+            Value* part = appendVector(block, VectorExtractLane, origin, lane, sum.behindStretch, nullptr, index, elementByteSize(lane) == 4 || elementByteSize(lane) == 8 ? SIMDSignMode::None : sum.lanesHoldNoSign ? SIMDSignMode::Unsigned : SIMDSignMode::Signed);
+            if (compares) {
+                total = block->appendNew<Value>(m_proc, Select, origin, append(block, relation, origin, part, total), part, total);
+                continue;
+            }
             if (part->type() == Int32)
                 part = append(block, SExt32, origin, part);
             total = total ? append(block, Add, origin, total, part) : part;
         }
+        if (compares) {
+            sum.behindStretch = total;
+            return;
+        }
         Type type = sum.phi->type();
         if (type != Int64)
             total = append(block, type == Double ? IToD : Trunc, origin, total);
-        sum.behindStretch = append(block, sum.isTakenAway ? Sub : Add, origin, sum.atHeadOfStretch, total);
+        sum.behindStretch = append(block, sum.opcode, origin, sum.atHeadOfStretch, total);
     }
 
     // Whether a number is whole and under 2^51. Added to 1.5 * 2^52 such a number loses whatever it has behind the point.
@@ -1677,7 +1834,15 @@ private:
             sum.atHeadOfStretch = head->appendNew<Value>(m_proc, Phi, sum.phi->type(), origin);
             appendUpsilon(first, origin, sum.start->isConstant() ? appendCopy(first, sum.start) : sum.start, sum.atHeadOfStretch);
             sum.lanes = turn->appendNew<Value>(m_proc, Phi, V128, origin);
-            appendUpsilon(entered, origin, appendVector(entered, VectorSplat, origin, laneOfSums(plan), appendInteger(entered, origin, plan.bytesPerLane == 8 ? Int64 : Int32, 0)), sum.lanes);
+            // A sum begins at zero. The least begins at the greatest that a lane holds and the greatest at the least: every lane takes an element in the first turn.
+            Value* start = nullptr;
+            if (sum.opcode == VectorMin || sum.opcode == VectorMax) {
+                uint64_t allBits = plan.bytesPerLane == 4 ? 0xffffffffull : (1ull << (plan.bytesPerLane * 8)) - 1;
+                uint64_t greatest = sum.lanesCompareWithoutSign ? allBits : allBits >> 1;
+                start = appendLanesOf(plan, origin, sum.opcode == VectorMin ? greatest : greatest ^ allBits);
+            } else
+                start = appendVector(entered, VectorSplat, origin, laneOfSums(plan), appendInteger(entered, origin, plan.bytesPerLane == 8 ? Int64 : Int32, 0));
+            appendUpsilon(entered, origin, start, sum.lanes);
         }
         Value* bound = bounding ? starts[plan.indexOfBoundingCounter] : plan.bound->isConstant() ? appendCopy(first, plan.bound) : plan.bound;
         int64_t room = plan.room();
@@ -1774,7 +1939,7 @@ private:
         for (const Sum& sum : plan.sums()) {
             if (sum.phi->type() != Double || !testsSumsOfNumbers)
                 continue;
-            Value* isWhole = appendTestOfWholeNumber(head, origin, sum.atHeadOfStretch, sum.isTakenAway);
+            Value* isWhole = appendTestOfWholeNumber(head, origin, sum.atHeadOfStretch, sum.opcode == Sub);
             staysWhole = staysWhole ? append(head, BitAnd, origin, staysWhole, isWhole) : isWhole;
         }
         if (staysWhole) {

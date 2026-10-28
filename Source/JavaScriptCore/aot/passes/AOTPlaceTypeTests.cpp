@@ -1513,19 +1513,41 @@ static bool isCalledInPlace(FunctionPassContext& context, ValueID read)
     return anyUserBehindCasts(context.analyses, read, isCalleeOf);
 }
 
+static bool isGetterAlone(const BuiltinTable& builtins, BuiltinID member)
+{
+    return builtins.at(member).kind == BuiltinKind::Accessor && !std::ranges::contains(builtins.overloadSummariesOf(member), BuiltinCallMode::Set, &BuiltinOverloadSummary::mode);
+}
+
+// By name such a store is a call by value out of a stub. Into a field it is a few instructions, and a test for the layout buys little.
+static bool findsSetterOfProgram(const Program& program, PropertyKeyID key)
+{
+    auto isSetter = [&](const ClassMember& member) {
+        return member.key == key && member.side == ClassSide::Prototype && member.kind == MethodKind::Setter;
+    };
+    return std::ranges::any_of(program.declarersOfName(key), [&](LayoutID declarer) {
+        const ClassFlow& classFlow = program.at(declarer).classFlow;
+        return std::ranges::any_of(classFlow.members, isSetter) || std::ranges::any_of(classFlow.namedMembers, isSetter);
+    });
+}
+
 static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key)
 {
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinMemberName name = builtinMemberNameOf(context.program, key);
     if (!isOrdinaryText(context.program, key) || !name || name.isPrivateAlias)
         return false;
+    bool stores = accessOf(context.function.at(access).opcode) == Access::Store && findsSetterOfProgram(context.program, key);
     bool asksForMethod = accessOf(context.function.at(access).opcode) == Access::Read && isCalledInPlace(context, access);
     std::span<const BuiltinClassID> classes = builtins.classesWithInstanceMember(name.name);
     if (asksForMethod && classes.empty())
         return false;
     return std::ranges::all_of(classes, [&](BuiltinClassID builtinClass) {
         BuiltinMemberLookup found = builtins.findForInstance(builtinClass, name.name);
-        return found.outcome == BuiltinMemberLookup::Outcome::Found && (builtins.at(builtins.canonicalID(found.member)).kind == BuiltinKind::Method) != asksForMethod;
+        if (found.outcome != BuiltinMemberLookup::Outcome::Found)
+            return false;
+        BuiltinID member = builtins.canonicalID(found.member);
+        // `response.body = text` stores nothing: whoever stores under the name has an object in mind that takes the value.
+        return (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
     });
 }
 
@@ -3516,11 +3538,14 @@ struct TestPlacer {
         for (const EmittedTest* emitted : narrowingTests)
             isSubject.set(analyses.identityOf(subjectOf(*emitted)).index());
         Vector<NarrowableUse> uses;
-        const ValueIdentities& identities = analyses.identities();
         const UseLists& useLists = analyses.useLists();
-        for (size_t index = 0; index < function.values.size(); ++index) {
+        const size_t numberOfListedValues = function.values.size();
+        // A build that validates adds a value at each replacement, and the identities do not outlast that.
+        Vector<ValueID> identityOfListedValue(numberOfListedValues);
+        for (size_t index = 0; index < numberOfListedValues; ++index) {
             ValueID alias(index);
-            ValueID identity = identities.identityOf(alias);
+            ValueID identity = analyses.identityOf(alias);
+            identityOfListedValue[index] = identity;
             if (!isSubject.get(identity.index()))
                 continue;
             for (const Use& use : useLists.usesOf(alias)) {
@@ -3614,6 +3639,32 @@ struct TestPlacer {
             replaceUsesDominatedBy(edgeInto(emitted->passed), subject, emitted->provenWhenPassed);
             if (emitted->provenWhenFailed)
                 replaceUsesDominatedBy(edgeInto(emitted->failed), subject, emitted->provenWhenFailed);
+        }
+
+        // Code that two tests of one value lead to is behind neither of them. What passed either comes there as a parameter.
+        for (size_t index = 0; index < numberOfListedValues; ++index) {
+            ValueID joined(index);
+            ValueID identity = identityOfListedValue[index];
+            if (identity == joined || !isSubject.get(identity.index()))
+                continue;
+            ValueLocation location = useLists.locationOf(joined);
+            if (location.placement != ValuePlacement::Parameter || cfg.singleIncomingEdge(location.block))
+                continue;
+            TypeID joinedTypeID = function.at(joined).type;
+            Type joinedType = types.at(joinedTypeID);
+            for (NarrowableUse& narrowable : std::ranges::equal_range(uses, identity, { }, &NarrowableUse::identity)) {
+                const Use& use = narrowable.use;
+                if (narrowable.getsCast || (use.kind != Use::Kind::Operand && use.kind != Use::Kind::TerminatorOperand && use.kind != Use::Kind::EdgeArgument))
+                    continue;
+                if (use.kind == Use::Kind::Operand && function.at(use.user).opcode == Opcode::ValidateSameValue)
+                    continue;
+                ValueID current = usedValueOf(function, use);
+                TypeID currentTypeID = function.at(current).type;
+                if (current == joined || currentTypeID == joinedTypeID || !analyses.dominators().dominates(location.block, use.block))
+                    continue;
+                if (joinedType.isSubsetOf(types.at(currentTypeID), context.program))
+                    replace(use, joined);
+            }
         }
 
         Vector<std::pair<TypeID, ValueID>, 2> castsOfProvenValue;

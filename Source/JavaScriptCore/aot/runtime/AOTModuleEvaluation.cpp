@@ -1970,8 +1970,12 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
         resumeDeferredLoadsWithoutImporter(module);
         exception = scope.exception();
     }
-    if (!exception) [[likely]]
+    if (!exception) [[likely]] {
+        // The loader takes the names of a file when the file has run. A file that no module of the image imports has them itself.
+        if (data(module).kind == ModuleKind::CommonJs && !m_table.faceOfFile(module) && !didCaptureExports(module))
+            RELEASE_AND_RETURN(scope, captureExports(module));
         return;
+    }
     if (statusAtStart == ModuleStatus::Failed || vm.isTerminationException(exception) || !wasImportedWhileItRan(m_table.fileBehindFace(module).value_or(module)))
         return;
     TRY_CLEAR_EXCEPTION(scope, void());
@@ -2095,6 +2099,62 @@ JSPromise* Modules::evaluate(ModuleID root, std::optional<int64_t> referrerAsync
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
     RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(realm, jsUndefined()));
+}
+
+JSPromise* Modules::evaluateMainModule(ModuleID entryPoint, JSPromise* evaluation)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!host().isImportOfMainModule || mainModuleWaitsForItsImport() || !host().isImportOfMainModule(realm, entryPoint))
+        return evaluation;
+
+    switch (evaluation->status()) {
+    case JSPromise::Status::Pending: {
+        JSPromise* capability = JSPromise::create(vm, realm->promiseStructure());
+        // The main module hears of a failure in the job of the failure, and the host of the failure of the main module.
+        evaluation->markAsHandled();
+        m_importOfMainModule = entryPoint;
+        m_evaluationOfImportOfMainModule.set(vm, evaluation);
+        m_capabilityOfMainModule.set(vm, capability);
+        return capability;
+    }
+    case JSPromise::Status::Fulfilled:
+        host().runMainModule(realm, entryPoint);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        return evaluation;
+    case JSPromise::Status::Rejected:
+        return evaluation;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void Modules::runMainModuleThatWaited()
+{
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_evaluationOfImportOfMainModule->status() != JSPromise::Status::Fulfilled)
+        return;
+    JSPromise* capability = m_capabilityOfMainModule.get();
+    m_evaluationOfImportOfMainModule.clear();
+    m_capabilityOfMainModule.clear();
+    host().runMainModule(m_instance.globalObject, m_importOfMainModule);
+    if (scope.exception()) [[unlikely]] {
+        capability->rejectWithCaughtException(vm, scope);
+        return;
+    }
+    capability->fulfill(vm, jsUndefined());
+}
+
+void Modules::failMainModuleThatWaited()
+{
+    JSPromise* evaluation = m_evaluationOfImportOfMainModule.get();
+    if (evaluation->status() != JSPromise::Status::Rejected)
+        return;
+    JSPromise* capability = m_capabilityOfMainModule.get();
+    m_evaluationOfImportOfMainModule.clear();
+    m_capabilityOfMainModule.clear();
+    capability->reject(*m_instance.vm, evaluation->result());
 }
 
 // To evaluate such a module is to evaluate what stands in its place in the lists of its importers.

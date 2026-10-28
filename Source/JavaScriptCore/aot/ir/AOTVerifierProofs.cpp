@@ -247,13 +247,41 @@ void FunctionVerifier::verifyProofsOfValueBesideMode(BlockID blockOfSuspension, 
             });
         }
     };
-    // A parameter stands for the mode where every edge that is reached by no arm hands the mode on. On any other edge the mode has been asked, or the edge comes from elsewhere.
+    Vector<ValueID, 8> copiesOfValue;
+    BitVector isCopyOfValue;
+    auto addCopyOfValue = [&](ValueID id) {
+        if (!isCopyOfValue.set(id.index()))
+            copiesOfValue.append(id);
+    };
+    auto findCopiesOfValue = [&] {
+        std::ranges::for_each(sameValues, addCopyOfValue);
+        for (size_t next = 0; next < copiesOfValue.size(); ++next) {
+            for (const Use& use : useLists.usesOf(copiesOfValue[next])) {
+                if (use.isEdgeUse())
+                    addCopyOfValue(parameterTaking(use));
+                else if (use.kind == Use::Kind::Operand && !use.operandIndex && isCastWithoutTest(m_function.at(use.user).opcode))
+                    addCopyOfValue(use.user);
+            }
+        }
+    };
+    // An edge drops the value where it passes no copy of it and no copy is defined above the target: past the edge the value is named only after the operation has run again.
+    auto dropsValue = [&](Edge edge) {
+        if (copiesOfValue.isEmpty())
+            findCopiesOfValue();
+        const Target& target = targetOf(m_function, edge);
+        if (target.arguments.containsIf([&](ValueID argument) { return isCopyOfValue.get(argument.index()); }))
+            return false;
+        return std::ranges::none_of(copiesOfValue, [&](ValueID value) {
+            return analyses().dominators().strictlyDominates(useLists.locationOf(value).block, target.block);
+        });
+    };
+    // A parameter stands for the mode where every edge that is reached by no arm hands the mode on or drops the value. On any other edge the mode has been asked, or the edge comes from elsewhere.
     auto holdsMode = [&](ValueID id) {
         ValueLocation location = useLists.locationOf(id);
         if (location.placement != ValuePlacement::Parameter)
             return modes.contains(m_function.at(id).operand(0));
         return std::ranges::all_of(cfg.incomingEdges(location.block), [&](Edge edge) {
-            return !reachedByNoArm.quickGet(edge.from.index()) || modes.contains(valuePassedOn(m_function, edge, location.index));
+            return !reachedByNoArm.quickGet(edge.from.index()) || modes.contains(valuePassedOn(m_function, edge, location.index)) || dropsValue(edge);
         });
     };
     for (;;) {
