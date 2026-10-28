@@ -2338,6 +2338,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionEvaluateWithScopeExtension);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapExtraMemorySize);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionHeapTotalBytesAllocated);
+static JSC_DECLARE_HOST_FUNCTION(functionPinArrayBuffer);
+static JSC_DECLARE_HOST_FUNCTION(functionUnpinArrayBuffer);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockCensus);
 #if ENABLE(JIT)
@@ -5092,6 +5094,34 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapTotalBytesAllocated, (JSGlobalObject* globa
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(globalObject->vm().heap.totalBytesAllocated()));
 }
+
+// Pins the buffer as an embedder does while native code holds a pointer into its bytes: ArrayBuffer::pin(). Until
+// $vm.unpinArrayBuffer(buffer) a transfer of the buffer copies the bytes and leaves the buffer attached.
+// Usage: $vm.pinArrayBuffer(buffer)
+JSC_DEFINE_HOST_FUNCTION(functionPinArrayBuffer, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
+    if (!buffer || buffer->isShared())
+        return throwVMTypeError(globalObject, scope, "pinArrayBuffer expects an ArrayBuffer"_s);
+    buffer->impl()->pin();
+    return JSValue::encode(jsUndefined());
+}
+
+// Usage: $vm.unpinArrayBuffer(buffer), once for each $vm.pinArrayBuffer(buffer)
+JSC_DEFINE_HOST_FUNCTION(functionUnpinArrayBuffer, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
+    if (!buffer || buffer->isShared() || buffer->impl()->isDetachable() || buffer->impl()->isWasmMemory())
+        return throwVMTypeError(globalObject, scope, "unpinArrayBuffer expects a pinned ArrayBuffer"_s);
+    buffer->impl()->unpin();
+    return JSValue::encode(jsUndefined());
+}
 #endif
 
 #if ENABLE(JIT)
@@ -6263,6 +6293,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "heapExtraMemorySize"_s, functionHeapExtraMemorySize, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "heapTotalBytesAllocated"_s, functionHeapTotalBytesAllocated, 0);
+    addFunction(vm, allowIfNotFuzz, "pinArrayBuffer"_s, functionPinArrayBuffer, 1);
+    addFunction(vm, allowIfNotFuzz, "unpinArrayBuffer"_s, functionUnpinArrayBuffer, 1);
 #endif
     addFunction(vm, alwaysAllow, "codeBlockCensus"_s, functionCodeBlockCensus, 0);
 

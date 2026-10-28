@@ -234,7 +234,7 @@ private:
     void tryAllocate(size_t numElements, unsigned elementByteSize, InitializationPolicy);
     
     void makeShared();
-    void copyTo(ArrayBufferContents&);
+    void copyTo(VM&, ArrayBufferContents&);
 
     using DataType = CagedPtr<Gigacage::Primitive, void>;
     DataType m_data { nullptr };
