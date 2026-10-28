@@ -302,4 +302,19 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
 #error Need a way to get the stack bounds on this platform
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+// Bun asks when a thread starts, and Thread::initializeInThread() asks when the thread gets its WTF::Thread. Both get the first answer.
+// A second computation makes the system calls again, and on the Linux main thread it finds another origin once setenv() has moved environ:
+// endOfMainThreadStack() gives up, and libc's origin is below the strings of execve().
+StackBounds StackBounds::currentThreadStackBounds()
+{
+    static constinit thread_local StackBounds bounds;
+    if (bounds.isEmpty()) {
+        bounds = currentThreadStackBoundsInternal();
+        bounds.checkConsistency();
+    }
+    return bounds;
+}
+#endif
+
 } // namespace WTF

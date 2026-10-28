@@ -115,8 +115,8 @@ public:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // Bun computes the bounds once per thread (Bun__StackCheck__initialize) for threads that are not
-    // WTF threads, which is the once-per-thread use currentThreadStackBounds() is meant for.
+    // Bun asks for a thread's bounds before the thread has a WTF::Thread (Bun__StackCheck__initialize).
+    // currentThreadStackBounds() computes them once per thread, so Thread::initializeInThread() gets the same value later.
     static StackBounds currentThreadStackBoundsForEmbedder() { return currentThreadStackBounds(); }
 #endif
 
@@ -144,12 +144,16 @@ private:
 
     // Obtaining stack bounds from the OS may be slow; only Thread class should do it.
     // Other callers should use the cached bounds via Thread::currentSingleton().stack()
+#if USE(BUN_JSC_ADDITIONS)
+    WTF_EXPORT_PRIVATE static StackBounds currentThreadStackBounds();
+#else
     static StackBounds currentThreadStackBounds()
     {
         auto result = currentThreadStackBoundsInternal();
         result.checkConsistency();
         return result;
     }
+#endif
 
     void checkConsistency() const
     {
