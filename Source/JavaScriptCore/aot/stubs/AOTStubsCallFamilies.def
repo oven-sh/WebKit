@@ -34,7 +34,7 @@ v(CallWithList, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never,
 v(TailCallWithList, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, TailCallWithList)
 v(SuperConstructWithList, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuperConstructWithList)
 v(SuperConstructWithArray, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuperConstructWithArray)
-v(CallFromArgumentListFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallFromArgumentListFrame)
+v(CallFromArgumentListFrame, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallFromArgumentListFrame)
 v(ReturnFromArgumentListFrame, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallFromArgumentListFrame)
 
 // AOTStubsCallHost.cpp

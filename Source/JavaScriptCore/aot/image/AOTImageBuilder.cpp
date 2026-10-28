@@ -372,7 +372,7 @@ SideTables encodeSideTables(const LinkedFunctions& functions, std::span<const Ve
             .frame = frameTable->frameOf[position],
             .frameMapRange = frameMapRange,
             .handlers = handlers.span(),
-            .callsOfOwnFunctionObjects = sites.callsOfOwnFunctionObjects.span(),
+            .calleesOfSites = sites.calleesOfSites.span(),
             .constructedCallees = constructedCallees.span(),
             .callSites = callSites[position].span(),
         };

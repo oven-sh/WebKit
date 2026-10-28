@@ -704,6 +704,197 @@ struct BitOfEachValue {
     Vector<uint64_t, 16> words;
 };
 
+// Nobody lists the frames from where control only goes on.
+static bool runsToItsEnd(TerminatorKind kind)
+{
+    switch (kind) {
+    case TerminatorKind::Jump:
+    case TerminatorKind::Branch:
+    case TerminatorKind::TestAndBranch:
+    case TerminatorKind::Switch:
+    case TerminatorKind::SwitchOnShape:
+    case TerminatorKind::Return:
+    case TerminatorKind::Unreachable:
+        return true;
+    case TerminatorKind::SwitchString:
+    case TerminatorKind::ReturnCall:
+    case TerminatorKind::Throw:
+    case TerminatorKind::Rethrow:
+    case TerminatorKind::TryCallInline:
+        return false;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static bool keepsCalleeInFrame(Opcode opcode) { return opcode == Opcode::KeepCalleeInFrame || opcode == Opcode::KeepEnvironmentOfCalleeInFrame; }
+
+// A call, and what keeps its callee, are one position in one inline frame.
+static uint64_t keyOfCall(uint32_t position, uint32_t inlineFrame) { return static_cast<uint64_t>(position) << 32 | inlineFrame; }
+
+// Only who lists the frames asks which function object a call has entered, and from a copy of the callee that can be done only where something may exit sideways.
+// Where those places are expected to run less often than the head of the copy, the function object is kept in front of them.
+struct KeptCalleeMover {
+    struct Keep {
+        ValueID id;
+        ProgramPoint point;
+        uint64_t key { 0 };
+        bool stays { false };
+        // In the order of the walk.
+        Vector<ProgramPoint, 2> askedAt { };
+    };
+    struct Question {
+        uint64_t key { 0 };
+        ProgramPoint point;
+    };
+    struct StateOfKey {
+        BlockID closedIn;
+        bool stays { false };
+    };
+
+    FunctionPassContext& context;
+    Function& function { context.function };
+    FunctionAnalyses& analyses { context.analyses };
+    Vector<Keep, 8> keeps { };
+    Vector<Question, 16> questions { };
+    UncheckedKeyHashMap<uint64_t, StateOfKey, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> stateOfKey { };
+    Vector<uint64_t, 4> lastKeyOfWord { };
+
+    uint32_t wordOf(uint64_t key) const
+    {
+        uint32_t depth = 0;
+        for (uint32_t frame = static_cast<uint32_t>(key); frame; frame = function.inlineFrames[frame].parent)
+            ++depth;
+        return depth;
+    }
+
+    // The calls made from one depth share a word. A call whose places in a block lie around those of another one keeps its callee where it is.
+    void didMeet(uint64_t key, BlockID block)
+    {
+        uint32_t word = wordOf(key);
+        while (lastKeyOfWord.size() <= word)
+            lastKeyOfWord.append(std::numeric_limits<uint64_t>::max() - 1);
+        if (lastKeyOfWord[word] == key)
+            return;
+        if (auto last = stateOfKey.find(lastKeyOfWord[word]); last != stateOfKey.end())
+            last->value.closedIn = block;
+        StateOfKey& state = stateOfKey.add(key, StateOfKey { }).iterator->value;
+        state.stays |= state.closedIn == block;
+        lastKeyOfWord[word] = key;
+    }
+
+    void collect()
+    {
+        for (BlockID blockID : analyses.cfg().reversePostOrder()) {
+            const Block& block = function.at(blockID);
+            lastKeyOfWord.shrink(0);
+            auto ask = [&](uint32_t frame, uint32_t index) {
+                for (; frame; frame = function.inlineFrames[frame].parent) {
+                    const InlineFrame& record = function.inlineFrames[frame];
+                    if (!record.calleeIsKeptInFrame)
+                        continue;
+                    uint64_t key = keyOfCall(record.callPosition, record.parent);
+                    didMeet(key, blockID);
+                    questions.append({ key, { blockID, index } });
+                }
+            };
+            for (uint32_t index = 0; index < block.values.size(); ++index) {
+                ValueID id = block.values[index];
+                const Value& value = function.at(id);
+                if (keepsCalleeInFrame(value.opcode)) {
+                    uint64_t key = keyOfCall(value.position, value.inlineFrame);
+                    didMeet(key, blockID);
+                    keeps.append({ id, { blockID, index }, key });
+                    continue;
+                }
+                // The call itself asks, right behind what keeps its callee.
+                if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
+                    stateOfKey.add(keyOfCall(value.position, value.inlineFrame), StateOfKey { }).iterator->value.stays = true;
+                if (value.inlineFrame && analyses.mayExitSidewaysOnAnyEdge(id))
+                    ask(value.inlineFrame, index);
+            }
+            if (block.terminator.inlineFrame && !runsToItsEnd(block.terminator.kind))
+                ask(block.terminator.inlineFrame, block.values.size());
+        }
+    }
+
+    bool standsInFrontOf(const Keep& keep, ProgramPoint point)
+    {
+        return keep.point.block == point.block ? keep.point.index < point.index : analyses.dominators().strictlyDominates(keep.point.block, point.block);
+    }
+
+    void assignQuestions()
+    {
+        AOT::stableSort(keeps, [](const Keep& a, const Keep& b) { return a.key < b.key; });
+        for (const Question& question : questions) {
+            auto [first, last] = std::ranges::equal_range(keeps, question.key, { }, &Keep::key);
+            Keep* nearest = nullptr;
+            for (Keep& keep : std::ranges::subrange(first, last)) {
+                if (standsInFrontOf(keep, question.point) && (!nearest || standsInFrontOf(*nearest, keep.point)))
+                    nearest = &keep;
+            }
+            // Ways from several of them meet in front of the place.
+            if (!nearest) {
+                stateOfKey.add(question.key, StateOfKey { }).iterator->value.stays = true;
+                continue;
+            }
+            nearest->askedAt.append(question.point);
+        }
+    }
+
+    bool run()
+    {
+        if (std::ranges::none_of(function.inlineFrames, &InlineFrame::calleeIsKeptInFrame))
+            return false;
+        collect();
+        if (keeps.isEmpty())
+            return false;
+        assignQuestions();
+
+        IRBuilder builder(analyses.context(), function, context.types, &analyses);
+        Vector<const Keep*, 8> moved;
+        for (Keep& keep : keeps) {
+            if (keep.stays || stateOfKey.get(keep.key).stays)
+                continue;
+            double frequencyWhereAsked = 0;
+            BlockID lastBlock;
+            for (ProgramPoint point : keep.askedAt) {
+                if (point.block != std::exchange(lastBlock, point.block))
+                    frequencyWhereAsked += analyses.blockFrequencies().frequencyOf(point.block).predicted();
+            }
+            if (!keep.askedAt.isEmpty() && frequencyWhereAsked >= analyses.blockFrequencies().frequencyOf(keep.point.block).predicted())
+                continue;
+            moved.append(&keep);
+        }
+        if (moved.isEmpty())
+            return false;
+
+        for (const Keep* keep : moved) {
+            const Value original = function.at(keep->id);
+            builder.setOrigin(original.origin());
+            BlockID lastBlock;
+            for (ProgramPoint point : keep->askedAt) {
+                if (point.block != std::exchange(lastBlock, point.block))
+                    builder.insertBefore(point, Value(original));
+            }
+        }
+        builder.applyInsertions();
+
+        AOT::sort(moved, { }, [](const Keep* keep) { return keep->point.block; });
+        for (size_t first = 0; first < moved.size();) {
+            BlockID block = moved[first]->point.block;
+            BitVector erased;
+            const auto& values = function.at(block).values;
+            for (; first < moved.size() && moved[first]->point.block == block; ++first) {
+                size_t index = values.find(moved[first]->id);
+                RELEASE_ASSERT(index != notFound);
+                erased.set(index);
+            }
+            builder.eraseValues(block, erased);
+        }
+        return true;
+    }
+};
+
 // ONE WALK BACKWARD, block by block against the reverse post order and value by value against the order in the block.
 struct DeadCodeEliminator {
     static constexpr uint32_t noWaitingStore = UINT32_MAX;
@@ -728,6 +919,8 @@ struct DeadCodeEliminator {
     Vector<WaitingStore, 16> waitingStores { };
     UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lastWaitingStoreInto { };
     std::optional<Position> firstFreshAllocation { };
+    // The position and the inline frame of each, in rising order.
+    std::optional<Vector<uint64_t, 8>> callsWhoseCalleeIsAskedFor { };
     Vector<ValueLocation> parameterLocations { };
     Vector<Vector<ValueID, 2>> storesInto { };
     BitVector isActive { };
@@ -799,6 +992,8 @@ struct DeadCodeEliminator {
         case UnusedValueRule::IsRemoved:
             return false;
         case UnusedValueRule::Stays:
+            if (keepsCalleeInFrame(value.opcode))
+                return isCalleeAskedFor(value);
             // All that the look at a heritage does is throw, or run a getter. The type of the heritage may rule out both.
             return value.opcode != Opcode::ResolveHeritage || !observable.neitherThrowsNorRunsCode(id);
         case UnusedValueRule::StaysWithWrittenObject:
@@ -814,6 +1009,36 @@ struct DeadCodeEliminator {
             return true;
         const EffectsOnEdges& effects = analyses.effectsOf(id);
         return !writesOnlyObjects(effects.normal) || !writesOnlyObjects(effects.handler) || !waitsForWrittenObject(id, value, position);
+    }
+
+    // Whoever lists the frames asks which function object a call has entered. Nobody lists them from a copy of the callee in which everything runs to its end.
+    bool isCalleeAskedFor(const Value& keep)
+    {
+        if (!callsWhoseCalleeIsAskedFor) {
+            callsWhoseCalleeIsAskedFor.emplace();
+            BitVector holdsWayOut(function.inlineFrames.size());
+            auto didFindWayOutOf = [&](uint32_t frame) {
+                for (; frame && !holdsWayOut.quickSet(frame); frame = function.inlineFrames[frame].parent) { }
+            };
+            for (BlockID blockID : cfg.reversePostOrder()) {
+                const Block& block = function.at(blockID);
+                for (ValueID id : block.values) {
+                    const Value& value = function.at(id);
+                    if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
+                        callsWhoseCalleeIsAskedFor->append(keyOfCall(value.position, value.inlineFrame));
+                    if (value.inlineFrame && !holdsWayOut.quickGet(value.inlineFrame) && analyses.mayExitSidewaysOnAnyEdge(id))
+                        didFindWayOutOf(value.inlineFrame);
+                }
+                if (!runsToItsEnd(block.terminator.kind))
+                    didFindWayOutOf(block.terminator.inlineFrame);
+            }
+            for (uint32_t frame = 1; frame < function.inlineFrames.size(); ++frame) {
+                if (function.inlineFrames[frame].calleeIsKeptInFrame && holdsWayOut.quickGet(frame))
+                    callsWhoseCalleeIsAskedFor->append(keyOfCall(function.inlineFrames[frame].callPosition, function.inlineFrames[frame].parent));
+            }
+            std::ranges::sort(*callsWhoseCalleeIsAskedFor);
+        }
+        return std::ranges::binary_search(*callsWhoseCalleeIsAskedFor, keyOfCall(keep.position, keep.inlineFrame));
     }
 
     void checkRules(ValueID id, const OpcodeRules& rules)
@@ -1032,6 +1257,7 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
 {
     if (context.build.recordedOptions().sabotage) [[unlikely]]
         stopWhereSabotaged(context.build, context.program, context.function, PassID::EliminateDeadCode);
+    bool movedKeptCallees = KeptCalleeMover { context }.run();
     DeadCodeEliminator eliminator { context };
     eliminator.walkBackward();
     // A store into an object that does not escape is live once a live value may be the object.
@@ -1039,7 +1265,7 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
     if (usedEscapeAnalysis)
         eliminator.propagate();
     if (!eliminator.sweep())
-        return PassOutcome::Unchanged;
+        return movedKeptCallees ? PassOutcome::Changed : PassOutcome::Unchanged;
 
     context.keptAnalyses = allAnalyses;
     // With fewer objects left, the escape analysis may prove more on a second run.
@@ -3487,6 +3713,11 @@ static bool isRare(const Block& block)
     return block.frequency.predicted() == BlockFrequency::Rare;
 }
 
+static bool isPollOfLoop(const Function& function, ValueID id)
+{
+    return function.at(id).opcode == Opcode::LoopHint && !function.at(id).followsStores();
+}
+
 static bool likelyTurnsAllocateNothing(FunctionAnalyses& analyses, const NaturalLoop& loop)
 {
     const Function& function = analyses.function();
@@ -3495,7 +3726,7 @@ static bool likelyTurnsAllocateNothing(FunctionAnalyses& analyses, const Natural
         if (isRare(block))
             continue;
         for (ValueID value : block.values) {
-            if (function.at(value).opcode != Opcode::LoopHint && analyses.effectsOf(value).onAnyEdge().mayCollect)
+            if (!isPollOfLoop(function, value) && analyses.effectsOf(value).onAnyEdge().mayCollect)
                 return false;
         }
         if (analyses.effectsOfTerminator(loop.at(index)).onAnyEdge().mayCollect)
@@ -3529,7 +3760,7 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context)
             if (!block.handler || loops.innerMostLoopOf(id) != &loop)
                 continue;
             size_t position = block.values.findIf([&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
-            if (position == notFound || function.at(block.values[position]).opcode != Opcode::LoopHint)
+            if (position == notFound || !isPollOfLoop(function, block.values[position]))
                 continue;
             if (!allocatesNothing)
                 allocatesNothing = likelyTurnsAllocateNothing(analyses, loop);
@@ -3550,13 +3781,41 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context)
     return !polls.isEmpty();
 }
 
+// A store that adds a field allocates and may not collect, so it throws nothing where it finds no room. Under a handler a poll behind the last one of a block throws for them.
+static bool pollBehindStoresThatMayAddFields(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::PutSlotOrAdd))
+        return false;
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    bool hasChanged = false;
+    for (BlockID id : context.analyses.cfg().reversePostOrder()) {
+        const Block& block = function.at(id);
+        if (!block.handler)
+            continue;
+        size_t last = block.values.reverseFindIf([&](ValueID value) { return function.at(value).opcode == Opcode::PutSlotOrAdd; });
+        if (last == notFound)
+            continue;
+        if (std::ranges::any_of(block.values.span().subspan(last + 1), [&](ValueID value) { return function.at(value).opcode == Opcode::LoopHint; }))
+            continue;
+        Value poll = IRBuilder::make(Opcode::LoopHint);
+        poll.setFollowsStores(true);
+        builder.setOrigin(function.at(block.values[last]).origin());
+        builder.insertBefore({ id, static_cast<uint32_t>(last + 1) }, WTF::move(poll));
+        hasChanged = true;
+    }
+    builder.applyInsertions();
+    return hasChanged;
+}
+
 PassOutcome removeRedundantHandlers(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
-    bool hasTakenPollsOut = takePollsOfLoopsOutOfHandlers(context);
+    bool hasMovedPolls = pollBehindStoresThatMayAddFields(context);
+    hasMovedPolls |= takePollsOfLoopsOutOfHandlers(context);
     if (runRules<redundantHandlerRules, Rounds::UntilUnchanged>(context) == PassOutcome::Unchanged)
-        return hasTakenPollsOut ? PassOutcome::Changed : PassOutcome::Unchanged;
+        return hasMovedPolls ? PassOutcome::Changed : PassOutcome::Unchanged;
     Rewrite(context).builder().emptyUnreachableBlocks();
     return PassOutcome::Changed;
 }

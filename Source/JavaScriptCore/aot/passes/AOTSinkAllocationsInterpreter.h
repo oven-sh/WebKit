@@ -154,6 +154,7 @@ private:
     void noteListsThatMayNotFit(ValueID test);
     void executeReturn(const Terminator&);
     void buildBeforeBranch(const Terminator&);
+    void buildBeforeLeavingHandler(const Terminator&);
     void narrow(VirtualObjectID, uint32_t keptTagBits);
     void narrowOnEdge(const Terminator&, uint32_t targetIndex);
     void forgetAnswersOfTests();

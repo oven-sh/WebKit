@@ -1461,6 +1461,9 @@ struct OutliningScan {
         // Only the body of a coroutine may hold it.
         if (value.opcode == Opcode::TakeGeneratorPrototype)
             return false;
+        // The function object that it calls lies in this frame.
+        if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
+            return false;
         const Terminator& terminator = function.at(useLists.blockOf(id)).terminator;
         if (terminator.kind == TerminatorKind::ReturnCall && terminator.callOperand() == id)
             return false;

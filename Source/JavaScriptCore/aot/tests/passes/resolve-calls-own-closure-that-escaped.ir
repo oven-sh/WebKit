@@ -1,4 +1,4 @@
-# Flow lost sight of the closures of f0, so once one is renamed only calls by value record which closure runs. A caller that creates such a closure and lets it escape around the call tests that no function was renamed before it calls directly. Behind a failed test the call stays by value. A closure that does not escape is called directly.
+# Flow lost sight of the closures of f0, so once one is renamed a frame of f0 is named by the closure that runs in it. A caller that creates such a closure and lets it escape around the call keeps the closure in a word of its own frame and calls directly, also behind a failed test of the names.
 # A call of a closure that nobody else has seen says that it enters the caller's own function object: its frame shows the name that the closure was made with, whatever another closure of f0 was called meanwhile
 # FORM: Prepared
 # RUN: pass ResolveCalls
@@ -23,9 +23,10 @@ function f2 name="escapesBeforeTheCall" parameters=[{type=anything}, {type=anyth
     v4 = Call v2, -, v1
     Return v4
 # CHECK: [[escapedBefore]]: f0 = NewClosure function=f0
-# CHECK: = AreFunctionNamesUnchanged
-# CHECK: = CallDirect v1 function=f0
-# CHECK: = Call [[escapedBefore]], -, v1
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: KeepCalleeInFrame [[escapedBefore]]
+# CHECK-NEXT: = CallDirect v1 function=f0 [calleeIsKeptInFrame
+# CHECK-NOT: = Call [[escapedBefore]], -, v1
 }
 
 function f3 name="isConvertedBeforeTheCall" parameters=[{type=string}, {type=anything}] results=[{type=anything}] {
@@ -34,9 +35,10 @@ function f3 name="isConvertedBeforeTheCall" parameters=[{type=string}, {type=any
     v4 = Call v2, -, v1
     Return v4
 # CHECK: [[converted]]: f0 = NewClosure function=f0
-# CHECK: = AreFunctionNamesUnchanged
-# CHECK: = CallDirect v1 function=f0
-# CHECK: = Call [[converted]], -, v1
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: KeepCalleeInFrame [[converted]]
+# CHECK-NEXT: = CallDirect v1 function=f0 [calleeIsKeptInFrame
+# CHECK-NOT: = Call [[converted]], -, v1
 }
 
 function f4 name="escapesAfterTheCall" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -45,9 +47,10 @@ function f4 name="escapesAfterTheCall" parameters=[{type=anything}, {type=anythi
     v4 = Call v0, -, v2
     Return v3
 # CHECK: [[escapedAfter]]: f0 = NewClosure function=f0
-# CHECK: = AreFunctionNamesUnchanged
-# CHECK: = CallDirect v1 function=f0
-# CHECK: = Call [[escapedAfter]], -, v1
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: KeepCalleeInFrame [[escapedAfter]]
+# CHECK-NEXT: = CallDirect v1 function=f0 [calleeIsKeptInFrame
+# CHECK-NOT: = Call [[escapedAfter]], -, v1
 }
 
 function f5 name="escapesInRareCode" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
@@ -61,9 +64,8 @@ function f5 name="escapesInRareCode" parameters=[{type=boolean}, {type=anything}
     Return v2
 # CHECK: [[escapedInRareCode]]: f0 = NewClosure function=f0
 # CHECK: = Call v1, -, [[escapedInRareCode]]
-# CHECK-NEXT: = AreFunctionNamesUnchanged
-# CHECK: = CallDirect v2 function=f0
-# CHECK: = Call [[escapedInRareCode]], -, v2
+# CHECK-NEXT: KeepCalleeInFrame [[escapedInRareCode]]
+# CHECK-NEXT: = CallDirect v2 function=f0 [calleeIsKeptInFrame
 }
 
 function f6 name="escapesOnTheOtherSide" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
@@ -75,8 +77,8 @@ function f6 name="escapesOnTheOtherSide" parameters=[{type=boolean}, {type=anyth
   b2():
     v5 = Call v1, -, v3
     Return v5
-# CHECK-NOT: AreFunctionNamesUnchanged
-# CHECK: = CallDirect v2 function=f0
+# CHECK-NOT: KeepCalleeInFrame
+# CHECK: = CallDirect v2 function=f0 [callsOwnFunctionObject
 # CHECK: = Call v1, -, v3
 }
 
@@ -98,5 +100,6 @@ function f7 name="callsBehindAFailedTest" parameters=[{type=boolean}, {type=anyt
     v8 = Call v7, -, v2
     Return v8
 # CHECK: b5([[eitherClosure]]: f0)
-# CHECK-NEXT: = Call [[eitherClosure]], -, v2
+# CHECK-NEXT: KeepCalleeInFrame [[eitherClosure]]
+# CHECK-NEXT: = CallDirect v2 function=f0 [calleeIsKeptInFrame
 }

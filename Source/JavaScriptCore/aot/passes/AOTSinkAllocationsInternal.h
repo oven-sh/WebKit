@@ -273,6 +273,9 @@ struct Candidate {
     // The same, from where the object holds what refers to it. The solver asks for it in one round and follows it from the next one on.
     bool isBuiltBeforeBranchesOnceCyclic { false };
     bool willBeBuiltBeforeBranchesOnceCyclic { false };
+    // Made under a handler and needed where no handler covers: it is built before the way leaves the handler, so that whoever finds no room for it throws to that handler. Asked for and followed as above.
+    bool isBuiltUnderHandler { false };
+    bool willBeBuiltUnderHandler { false };
     bool wasFruitlessBefore { false };
     // Abandoned before the families were made: no field of it is known, so nothing may take it up again.
     bool isLeftOut { false };
@@ -308,6 +311,8 @@ struct SinkingInputs {
     BitVector mergeBlocks;
     BitVector blocksWithCandidates;
     BitVector blocksWithJoins;
+    // The block of the handler of each block, as the function was read.
+    Vector<BlockID> handlers;
     bool hasOperationsOnSlots { false };
     bool hasObjectsGivenPrototypes { false };
     bool isLargeForItsWork { false };
@@ -404,6 +409,12 @@ public:
     void setOrigin(Origin origin) { m_builder.setOrigin(origin); }
 
     void stateDidChange() { m_handlerArgumentsAreStale = true; }
+    // What is built may find no room and throw. Every block that is added between the two is covered as the block where the first one is called: the handler finds the objects as they were before.
+    void willBuild(ObjectInterpreter&);
+    void didBuild();
+    // What is built on the ways out of a block stands in front of its terminator: the handler finds the objects as they are there.
+    void willEnterEdges(ObjectInterpreter& atTerminator) { m_interpreterAtTerminator = &atTerminator; }
+    void didEnterEdges() { m_interpreterAtTerminator = nullptr; }
     void willKeepThrowingValue(ObjectInterpreter&);
     void cut(ObjectInterpreter&);
 
@@ -421,6 +432,9 @@ private:
     std::optional<Target> m_originalHandler;
     Expected<BlockFrequency> m_frequency { BlockFrequency::Normal };
     bool m_handlerArgumentsAreStale { false };
+    unsigned m_numberOfBuildsBegun { 0 };
+    std::optional<Target> m_handlerOfBuild;
+    ObjectInterpreter* m_interpreterAtTerminator { nullptr };
 };
 
 // What an analysis ended with: which candidates it gave up, and what it decided to build where.
@@ -573,6 +587,8 @@ public:
     void didEnterJoin(VirtualObjectID join, VirtualObjectID source) { m_entriesIntoJoins.append(EntryIntoJoin { join, source }); }
     void didBuildAfterMerge(VirtualObjectID, BlockID mergeBlock);
     bool buildCycleBeforeBranches(const SinkingState&, VirtualObjectID holder, VirtualObjectID held);
+    void buildUnderHandler(VirtualObjectID);
+    BlockID handlerOf(BlockID block) const { return m_inputs.handlers[block.index()]; }
     bool mayBeListOfNumbers(VirtualObjectID) const;
     void didTestListThatMayNotFit(ValueID literal) { m_testedListsThatMayNotFit.appendIfNotContains(literal); }
 

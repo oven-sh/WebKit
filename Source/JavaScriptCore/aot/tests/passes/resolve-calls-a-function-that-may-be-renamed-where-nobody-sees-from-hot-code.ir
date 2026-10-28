@@ -15,7 +15,8 @@ function f1 name="renamedInSight" kind=Arrow parameters=[{type=anything}] result
 function f2 name="callsTheFirst" parameters=[{type=f0}, {type=anything}] results=[{type=anything}] {
     v2 = Call v0, -, v1
     Return v2
-# CHECK: = AreFunctionNamesUnchanged
+# CHECK-NOT: AreFunctionNamesUnchanged
+# CHECK: KeepCalleeInFrame v0
 # CHECK-NOT: isNeverInlined
 # CHECK: = CallDirect {{*}}, v1 function=f0
 # CHECK-NOT: isNeverInlined

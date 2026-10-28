@@ -187,7 +187,7 @@ static void emitCallOfUncreatedClosure(StubAssembler& jit, unsigned count)
         jit.load64(Address(sp, (i + 2) * sizeof(EncodedJSValue)), argumentGPR(i));
     jit.addPtr(TrustedImm32(offsetOfClosure), sp, calleeGPR);
     jit.move(TrustedImm32(count), countGPR);
-    jit.loadStubAddress(callValueCell(count), jit.clobberRegister(callTargetRegister));
+    jit.loadStubAddress(callValueCell(count), valueEntryGPR);
     jit.jumpToStub(callFromArgumentListFrame());
 
     otherwise.link(&jit);

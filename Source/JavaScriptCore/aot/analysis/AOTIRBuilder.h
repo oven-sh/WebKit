@@ -112,7 +112,7 @@ public:
     void emitUnreachable();
     void emitTerminator(Terminator&&);
 
-    BlockID splitEdge(Edge);
+    BlockID splitEdge(Edge, std::optional<Target> handlerOfAddedBlock = std::nullopt);
     BlockID splitBlock(ProgramPoint point) { return splitBlock(point.block, singleElementSpan(point.index)).first(); }
     Vector<BlockID> splitBlock(BlockID, std::span<const uint32_t> ascendingIndexes);
     void redirectEdge(Edge, BlockID target, Arguments&&);

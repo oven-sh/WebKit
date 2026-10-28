@@ -264,20 +264,20 @@ static bool isFormThatLeftByTailCall(FunctionID candidate, FunctionID sourceFunc
     return leftByTailCall && FunctionDescription(candidate).sourceFunction() == sourceFunction;
 }
 
-bool isCopiedForOwnFunctionObject(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame)
+std::optional<CalleeOfSite> calleeOfCopiedFrame(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame)
 {
     if (frame.isOfCalledBuiltin || !frame.inlineFrame)
-        return false;
+        return std::nullopt;
     FunctionID source = FunctionDescription(frame.function).sourceFunction();
     while (frame.inlineFrame) {
         InlineFrameRecord record = reader.at(image, code.index(), frame.inlineFrame);
-        if (image.callsOwnFunctionObjectAt(code.index(), record.callSite))
-            return true;
+        if (std::optional<CalleeOfSite> callee = image.calleeOfSiteAt(code.index(), record.callSite))
+            return callee;
         frame = callerOfInlinedFrame(image, reader, code, frame);
         if (!isEntrypointOf(frame.function, source) && !isFormThatLeftByTailCall(frame.function, source, record.isTailCall))
-            return false;
+            return std::nullopt;
     }
-    return false;
+    return std::nullopt;
 }
 
 bool hasOnlyEntrypointsBelow(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame, FunctionID source)
@@ -697,8 +697,11 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.
     FunctionID source = FunctionDescription(frame().function).sourceFunction();
     LogicalFrame logical { m_frame.function, m_frame.callSite, m_frame.inlineFrame, m_isInlinedConstructCall, m_frame.isTailDeleted };
-    if (isCopiedForOwnFunctionObject(*m_image, m_inlineFrames, m_frame.code, logical))
-        return nullptr;
+    auto calleeSaidBy = [&](CalleeOfSite callee, const CallFrame* machineFrame) -> std::optional<JSObject*> {
+        return callee.isOwnFunctionObject() ? nullptr : tables.calleeKeptInFrame(*m_vm, machineFrame, callee, source);
+    };
+    if (std::optional<CalleeOfSite> callee = calleeOfCopiedFrame(*m_image, m_inlineFrames, m_frame.code, logical))
+        return calleeSaidBy(*callee, m_cursor.callFrame);
     if (!hasOnlyEntrypointsBelow(*m_image, m_inlineFrames, m_frame.code, logical, source))
         return std::nullopt;
 
@@ -707,14 +710,14 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     RunEnd runEnd;
     const void* stackPointer = callerStackPointer();
     while (const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd)) {
-        if (entry->callsOwnFunctionObject)
-            return nullptr;
+        if (entry->saysCallee)
+            return calleeSaidBy(*m_image->calleeOfSiteAt(entry->code.index(), entry->site.callSite), cursor.callFrame);
         // A function object of the same function that is called by value in tail position has a record of its own.
         if (!isEntrypointOf(entry->innermostFunction, source) && (!isFormThatLeftByTailCall(entry->innermostFunction, source, entry->site.isTailCall()) || tables.recordedCalleeOfCallFrom(stackPointer, source)))
             break;
         LogicalFrame caller { entry->innermostFunction, entry->site.callSite, entry->site.inlineFrame, entry->innermostIsInlinedConstructCall, false };
-        if (isCopiedForOwnFunctionObject(*m_image, m_inlineFrames, entry->code, caller))
-            return nullptr;
+        if (std::optional<CalleeOfSite> callee = calleeOfCopiedFrame(*m_image, m_inlineFrames, entry->code, caller))
+            return calleeSaidBy(*callee, cursor.callFrame);
         if (!hasOnlyEntrypointsBelow(*m_image, m_inlineFrames, entry->code, caller, source))
             break;
         stackPointer = AOT::stackPointerOfCaller(cursor.callFrame, cursor.bytesAboveReturnAddress);
@@ -1029,7 +1032,7 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     FunctionDescription innermostDescription(innermost.function);
     entry.innermostVisibility = innermostDescription.visibility();
     entry.innermostIsAsync = innermostDescription.isAsync();
-    entry.callsOwnFunctionObject = image.callsOwnFunctionObjectAt(location.function, entry.site.callSite);
+    entry.saysCallee = image.calleeOfSiteAt(location.function, entry.site.callSite).has_value();
     entry.namesConstructedCallee = image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
     entry.outermostVisibleFunction = findOutermostVisibleFunction(image, reader, entry, true);
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());

@@ -116,6 +116,7 @@ static std::optional<uint64_t> exactKeyOf(const Program& program, const MemoryLo
     case IRHeap::AllocatorState:
     case IRHeap::RuntimeState:
     case IRHeap::ValidationState:
+    case IRHeap::CalleesInFrames:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

@@ -25,6 +25,7 @@ class LocalAllocator;
 namespace AOT {
 
 struct Instance;
+struct VMState;
 
 struct CountedCells {
     friend auto operator<=>(const CountedCells&, const CountedCells&) = default;
@@ -50,6 +51,8 @@ public:
     static void willAllocateMap(Instance&);
     static void willAllocateSet(Instance&);
     static void willRefill(VM&, const LocalAllocator&);
+    // The lists of a VM go with its heap: what is used of them is counted here, and its allocators are forgotten.
+    static void willShutDownHeap(VMState&);
     JS_EXPORT_PRIVATE static void didMake(VM&, ASCIILiteral what, const char* detailOrNull = nullptr);
 
     // "allocation <function> <file>:<line> <layout> <cells> <bytes>", the most bytes first, then "refill", "made" and "slow-allocation" lines.

@@ -197,8 +197,10 @@ LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const Logic
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);
 OutermostVisibleFunction findOutermostVisibleFunction(const Image&, InlineFrameReader&, const CallSiteCache::Entry&, bool calleeWasEntered);
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction);
-// The frame, or a hidden one of the same function below it, stands in the code of a caller that made the function object itself and handed it to nobody.
-bool isCopiedForOwnFunctionObject(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame);
+// What the call says in whose place the frame, or a hidden one of the same function below it, stands in the code of a caller.
+std::optional<CalleeOfSite> calleeOfCopiedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame);
+// The caller made the function object itself and handed it to nobody.
+inline bool isCopiedForOwnFunctionObject(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame) { return calleeOfCopiedFrame(image, reader, code, frame) == CalleeOfSite::ownFunctionObject(); }
 // All frames below it in its machine frame are hidden ones of the function.
 bool hasOnlyEntrypointsBelow(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame, FunctionID sourceFunction);
 // The frame is that of the stub that stepped the body of an async generator. Behind an await of the body its callers wait for the step, though they are still on the stack.

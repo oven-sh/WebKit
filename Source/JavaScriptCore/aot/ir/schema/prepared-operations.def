@@ -96,6 +96,8 @@ operation MaterializeEnvironment (environment: Environment/inspects+returns, lay
 operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; writes(RuntimeState) ; boundTo = Frame
 operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame
 operation RecordCallee (closure: Callable/retains) -> none ; writes(ExternalState, RuntimeState) ; runtime = RecordCallee ; boundTo = Frame
+operation KeepCalleeInFrame (closure: Callable/inspects) -> none ; writes(CalleesInFrames) ; boundTo = Function
+operation KeepEnvironmentOfCalleeInFrame (environment: Layout/inspects, layout: Layout, field: Field) -> none ; reads(EnvironmentFields[layout, field]) writes(CalleesInFrames) ; boundTo = Function
 operation AreFunctionNamesUnchanged () -> natural(boolean) ; reads(RuntimeState) ; proves = MemberUnchanged ; branches = May
 
 family BuiltinCall Prepared..Placed

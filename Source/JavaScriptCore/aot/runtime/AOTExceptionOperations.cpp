@@ -54,13 +54,34 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
     return *result;
 }
 
+// A caller that enters a function without its function object keeps that in a word of its own frame. A tail call by value out of what it has entered returns to the same place, and the word says what runs there now.
+SUPPRESS_ASAN static bool keepCalleeInFrameOfCaller(VM& vm, FunctionTables& tables, JSCell* callee, void* stackPointerOfCaller)
+{
+    std::optional<FunctionID> function = functionOf(callee);
+    if (!function || !tables.recordsCalleesOf(*function))
+        return false;
+    // generatePollBeforeEntering() has the return address of the call on the stack: where the call has pushed it, or below that of the stub.
+    const void* returnAddress = removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
+    const VMState& state = vm.aotState();
+    const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, returnAddress);
+    if (!site || site->isStubReturnSite() || !site->saysCallee)
+        return false;
+    CalleeOfSite said = *state.image->calleeOfSiteAt(site->code.index(), site->site.callSite);
+    if (said.isOwnFunctionObject())
+        return false;
+    auto* frameRecord = reinterpret_cast<JSCell**>(static_cast<char*>(stackPointerOfCaller) + site->frame.frameSizeInBytes() - site->frame.bytesAboveFrameRecord());
+    frameRecord[said.wordInFrame()] = callee;
+    return true;
+}
+
 // The limit that sends a call here lies above every frame once calls by value record their callees.
 static bool recordCalleeInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller)
 {
     FunctionTables& tables = FunctionTables::of(*instance->vm);
     if (!tables.recordsCalleesOfCallsByValue())
         return false;
-    tables.recordCalleeOfCallByValue(*instance->vm, stackPointerOfCaller, asObject(callee));
+    if (!keepCalleeInFrameOfCaller(*instance->vm, tables, callee, stackPointerOfCaller))
+        tables.recordCalleeOfCallByValue(*instance->vm, stackPointerOfCaller, asObject(callee));
     return stackPointerOfCaller >= instance->stackMirror.get().trapAwareSoftStackLimit();
 }
 

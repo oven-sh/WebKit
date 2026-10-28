@@ -341,8 +341,6 @@ public:
         }
         return m_graph.valueOf(node);
     }
-    // The objects that functions handed to the library are given by what the library declares.
-    ValueSetID objectsGivenToCallbacksAsDeclared() const { return m_objectsGivenToCallbacksAsDeclared; }
     // The functions of the engine that came to the node before the unknown object covered them. Which they are hangs on the order of the rules: only the report reads this, for a place to name.
     ValueSetID functionsOfEngineListedAt(ValueFlowNodeID node) const
     {
@@ -1009,7 +1007,6 @@ private:
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;
     Vector<Vector<ValueFlowNodeSet>> m_listedWithCoveredMembers;
-    ValueSetID m_objectsGivenToCallbacksAsDeclared { ValueSets::nothing };
     Vector<Vector<ValueFlowNodeSet>> m_functionsOfEngineListed;
     bool m_haveLostObjectsEscaped { false };
     ValueSetID m_objectsThatPlaceholdersMayCover { ValueSets::nothing };

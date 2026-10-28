@@ -638,6 +638,11 @@ struct ReturnedNumbers {
         primitives |= type.primitives;
         integers = integers.unionWith(type.integers);
     }
+    void keepOnly(const Type& type)
+    {
+        primitives &= type.primitives;
+        integers = integers.intersectWith(type.integers);
+    }
     Type type() const
     {
         Type type = Type::fromPrimitives(primitives);
@@ -855,6 +860,9 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
                     Index calleeIndex = indexOf[callee.index()];
                     returned[index].add(calleeIndex && !staysAsDeclared.quickGet(calleeIndex.index()) ? returned[calleeIndex.index()] : asDeclared(callee));
                 }
+                // The casts of a tail call let through less than its callee returns.
+                if (const DeclaredType& result = program.at(returns[index].function).result(); !result.isExpected())
+                    returned[index].keepOnly(program.at(result.written()));
                 didGrow |= before != returned[index];
             }
         }

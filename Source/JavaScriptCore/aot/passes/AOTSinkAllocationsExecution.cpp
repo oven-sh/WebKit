@@ -1733,8 +1733,29 @@ void ObjectInterpreter::buildBeforeBranch(const Terminator& terminator)
         build(object, BuildCause { .limit = LimitID::MaxMaterializations });
 }
 
+void ObjectInterpreter::buildBeforeLeavingHandler(const Terminator& terminator)
+{
+    BlockID handler = m_sinking.handlerOf(m_state.block);
+    if (!handler)
+        return;
+    bool leavesHandler = false;
+    for (uint32_t targetIndex = 0; targetIndex < terminator.targets.size(); ++targetIndex)
+        leavesHandler |= !isDeadEdge(terminator, targetIndex) && m_sinking.handlerOf(terminator.targets[targetIndex].block) != handler;
+    if (!leavesHandler)
+        return;
+
+    Vector<VirtualObjectID, 4> objects;
+    for (const ObjectEntry& entry : m_state.objects) {
+        if (!entry.state.isCell() && m_sinking.at(entry.object).isBuiltUnderHandler)
+            objects.append(entry.object);
+    }
+    for (VirtualObjectID object : objects)
+        build(object, BuildCause { });
+}
+
 void ObjectInterpreter::executeTerminator(const Terminator& terminator)
 {
+    buildBeforeLeavingHandler(terminator);
     buildBeforeBranch(terminator);
     switch (terminator.kind) {
     case TerminatorKind::Return:
@@ -2547,6 +2568,8 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
             m_sinking.abandon(member);
         if (m_mode == SinkingMode::Count && state.hasCell())
             m_sinking.didBuildAfterMerge(member, state.cellJoinedAt);
+        if (!isRewriting() && !m_sinking.handlerOf(m_state.block))
+            m_sinking.buildUnderHandler(member);
     }
 
     if (!isRewriting()) {
@@ -2555,7 +2578,9 @@ void ObjectInterpreter::build(VirtualObjectID root, const BuildCause& cause)
     }
 
     Origin userOrigin = cursor().builder().origin();
+    cursor().willBuild(*this);
     buildMembers(members.span(), cause);
+    cursor().didBuild();
     cursor().setOrigin(userOrigin);
 }
 

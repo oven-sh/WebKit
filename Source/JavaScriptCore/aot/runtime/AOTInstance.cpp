@@ -1056,6 +1056,8 @@ void VMState::willShutDownHeap()
 {
     if (propertyCaches)
         propertyCaches->front().clear();
+    if (AllocationCounts::isEnabled()) [[unlikely]]
+        AllocationCounts::willShutDownHeap(*this);
 }
 
 void VMState::releaseImage(VM& vm)

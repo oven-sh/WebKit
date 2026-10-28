@@ -483,6 +483,13 @@ private:
         bool includesCurrentState { true };
     };
 
+    static bool holdsObjectToBuild(const SinkingState& state)
+    {
+        return std::ranges::any_of(state.objects, [](const ObjectEntry& entry) {
+            return !entry.state.isCell();
+        });
+    }
+
     void meetCurrentState(HandlerEntry& entry, const SinkingState& state)
     {
         if (entry.includesCurrentState)
@@ -595,7 +602,9 @@ private:
                 handlerEntry->includesCurrentState = false;
             numberOfValuesPassed = index + 1;
             bool mayThrowToHandler = handlerEntry && m_inputs.throwingValues.get(value.index());
-            if (mayThrowToHandler)
+            // Whatever names an object may have it built, and what is built may find no room.
+            bool mayBuild = handlerEntry && !(entry & AllocationSinking::onlyWritesOrThrows) && holdsObjectToBuild(state);
+            if (mayThrowToHandler || mayBuild)
                 meetCurrentState(*handlerEntry, state);
             interpreter.executeRelevantValue(block.values, entry);
             if (!handlerEntry)
@@ -610,12 +619,13 @@ private:
             interpreter.checkThatOtherValuesChangeNothing(id);
 
         bool mayThrowToHandler = handlerEntry && m_inputs.throwingTerminators.get(id.index());
-        if (mayThrowToHandler)
+        if (mayThrowToHandler || (handlerEntry && holdsObjectToBuild(state)))
             meetCurrentState(*handlerEntry, state);
         interpreter.executeTerminatorOf(id);
         if (handlerEntry) {
             handlerEntry->includesCurrentState = false;
-            if (mayThrowToHandler)
+            // The ways on may build what is left.
+            if (mayThrowToHandler || holdsObjectToBuild(state))
                 meetCurrentState(*handlerEntry, state);
         }
 
@@ -645,8 +655,10 @@ void AllocationSinking::solve()
 {
     for (uint64_t round = 1;; ++round) {
         m_mustSolveAgain = false;
-        for (Candidate& candidate : m_candidates)
+        for (Candidate& candidate : m_candidates) {
             candidate.isBuiltBeforeBranchesOnceCyclic = candidate.willBeBuiltBeforeBranchesOnceCyclic;
+            candidate.isBuiltUnderHandler = candidate.willBeBuiltUnderHandler;
+        }
         findWhetherObjectsAreBuiltBeforeBranches();
         m_decisions.forgetNewDecisions();
         for (VirtualFamily& family : m_families)

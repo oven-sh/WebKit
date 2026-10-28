@@ -173,8 +173,8 @@ struct SiteDescription {
     Vector<SitePosition> positions;
     Vector<InlineFrame> inlineFrames;
     Vector<FlaggedSite> flaggedSites;
-    // In rising order. A site without code stands for the call that an inline frame has taken the place of.
-    Vector<uint32_t> callsOfOwnFunctionObjects;
+    // In rising order of the sites. A site without code stands for the call that an inline frame has taken the place of.
+    Vector<std::pair<uint32_t, CalleeOfSite>> calleesOfSites;
     // In rising order of the sites. The callee is an index into CodeBody::callees.
     Vector<ConstructedCallee> constructedCallees;
     Vector<SiteHandler> handlers;

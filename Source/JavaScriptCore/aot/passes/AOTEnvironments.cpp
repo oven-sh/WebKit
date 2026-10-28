@@ -1108,6 +1108,9 @@ struct ClosureWebs {
                 const Value& value = function.at(id);
                 if (value.opcode == Opcode::GetCapture || (value.opcode == Opcode::PutEnvironmentField && storeOf(value.valueOperand()) == id))
                     continue;
+                // Whoever lists the frames finds the closure in its field of the environment, if it was made.
+                if (value.opcode == Opcode::KeepCalleeInFrame && candidateOf(value.operand(0)) < closureParameters.firstCandidateWithoutField)
+                    continue;
                 if ((value.opcode == Opcode::ToBoolean || value.opcode == Opcode::TypeTest) && candidateOf(value.operand(0)) != noCandidate && asksForClosure(program, function, value))
                     continue;
                 if ((value.opcode == Opcode::CallDirect || value.opcode == Opcode::NewClosure) && closureParameters.functions.get(value.function().index())) {
@@ -2096,6 +2099,15 @@ static void readCaptures(const Program& program, const CaptureCandidateTable& ca
             }
             if (value.opcode == Opcode::PutEnvironmentField && webs.storeOf(value.valueOperand()) == id && webs.standsForCapturesOnly(value.valueOperand())) {
                 erasedIndexes.set(index);
+                continue;
+            }
+            if (value.opcode == Opcode::KeepCalleeInFrame && webs.standsForCapturesOnly(value.operand(0))) {
+                ValueID closure = value.operand(0);
+                FieldReference field = candidates.fields[webs.candidateOf(closure)];
+                value.become(Opcode::KeepEnvironmentOfCalleeInFrame);
+                value.setOperand(0, closure);
+                value.setLayout(field.layout);
+                value.setField(field.field);
                 continue;
             }
             if (value.opcode != Opcode::GetCapture)

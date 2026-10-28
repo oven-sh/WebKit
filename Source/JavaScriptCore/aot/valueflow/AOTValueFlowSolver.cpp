@@ -5028,79 +5028,12 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             for (const FoundStep& arrival : comeFromNodesInSight)
                 doArrival(arrival);
         }
-        // Whoever declares a function type says what it hands to the functions that it is given. A function that comes to such a parameter is seen to be given the objects of the declared layouts that have gone out of sight.
-        AOT_THRESHOLD(size_t, mostLayoutsDeclaredForOperandOfCallback, 4);
-        struct OperandOfCallback {
-            uint32_t callback;
-            uint32_t operand;
-            ValueSetID given;
-        };
-        Vector<OperandOfCallback> operandsOfCallbacks;
-        {
-            std::span<const Program::DeclaredCallback> callbacks = m_input.program->declaredCallbacks.span();
-            HashMap<uint32_t, Vector<ValueFlowObjectID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> objectsOfDeclaredLayouts;
-            auto layoutsDeclaredFor = [&](const DeclaredType& declared) -> std::span<const LayoutID> {
-                LayoutSetID layouts = m_input.program->at(declared.expected().predicted()).layouts;
-                if (!layouts)
-                    return { };
-                std::span<const LayoutID> members = m_input.program->at(layouts).completeMembers();
-                return members.size() <= mostLayoutsDeclaredForOperandOfCallback ? members : std::span<const LayoutID>();
-            };
-            for (const Program::DeclaredCallback& callback : callbacks) {
-                if (!isReached(callback.function))
-                    continue;
-                for (const DeclaredType& declared : m_input.program->at(callback.functionType).parameters) {
-                    for (LayoutID layout : layoutsDeclaredFor(declared))
-                        objectsOfDeclaredLayouts.add(layout.index(), Vector<ValueFlowObjectID>());
-                }
-            }
-            if (!objectsOfDeclaredLayouts.isEmpty()) {
-                m_sets.forEachMember(followed, [&](ValueFlowObjectID object) {
-                    LayoutID layout = m_input.universe->layoutOf(object);
-                    if (auto found = layout ? objectsOfDeclaredLayouts.find(layout.index()) : objectsOfDeclaredLayouts.end(); found != objectsOfDeclaredLayouts.end())
-                        found->value.append(object);
-                });
-            }
-            for (uint32_t index = 0; index < callbacks.size(); ++index) {
-                if (!isReached(callbacks[index].function))
-                    continue;
-                const Vector<DeclaredType>& parameters = m_input.program->at(callbacks[index].functionType).parameters;
-                for (uint32_t operand = 0; operand < parameters.size(); ++operand) {
-                    ValueSetID given = ValueSets::nothing;
-                    for (LayoutID layout : layoutsDeclaredFor(parameters[operand]))
-                        given = maker.unite(given, maker.of(objectsOfDeclaredLayouts.find(layout.index())->value.span()));
-                    if (given == ValueSets::nothing)
-                        continue;
-                    operandsOfCallbacks.append({ index, operand, given });
-                    m_objectsGivenToCallbacksAsDeclared = maker.unite(m_objectsGivenToCallbacksAsDeclared, given);
-                }
-            }
-        }
-        auto giveCallbacksWhatIsDeclared = [&] {
-            for (const OperandOfCallback& declared : operandsOfCallbacks) {
-                const Program::DeclaredCallback& callback = m_input.program->declaredCallbacks[declared.callback];
-                ValueFlowNodeID parameter = m_input.nodes->entryParameter(callback.function, m_input.program->at(callback.function).firstParameterIndex() + callback.parameter);
-                ValueSetID held = m_graph.valueOf(parameter);
-                ValueSetID come = ValueSets::isComplement(held) ? ValueSets::nothing : maker.intersect(held, m_input.placeholders.closures);
-                if (ValueSetID seen = seenBehindTheRoundsAt(parameter); seen != many)
-                    come = maker.unite(come, maker.intersect(seen, m_input.placeholders.closures));
-                if (m_sets.size(come) > mostCalleesOfOneCallFollowed)
-                    continue;
-                m_sets.forEachMember(come, [&](ValueFlowObjectID closure) {
-                    FunctionID function = m_input.universe->closureFunction(closure);
-                    if (!function || !isReached(function) || !m_input.program->at(function).hasBody() || declared.operand >= m_input.program->at(function).numberOfPositionalParameters())
-                        return;
-                    arriveAt(m_input.nodes->entryParameter(function, m_input.program->at(function).firstParameterIndex() + declared.operand), declared.given);
-                });
-            }
-        };
         // The nodes are visited in waves, each in the order of their numbers: in which order the links of a node stand says nothing.
         findOnAllThreadsAndDo(stores.size(), findStore, runStore);
         m_stepTimes.didFinish("behind the rounds: covered: every call and store run, what stands in sight handed on"_s);
         Vector<uint32_t> wave;
         auto visitUntilAtRest = [&] {
-            giveCallbacksWhatIsDeclared();
-            for (; !toVisit.isEmpty(); giveCallbacksWhatIsDeclared()) {
+            while (!toVisit.isEmpty()) {
                 wave.shrink(0);
                 std::swap(wave, toVisit);
                 parallelSort(m_loops, wave.mutableSpan(), std::less<uint32_t> { });
@@ -5113,11 +5046,18 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             }
         };
         visitUntilAtRest();
+        // `copyDescriptors(app, members); app.handle(request)`: the receiver is in sight, what it was given under keys that nobody knows is not. Where nothing was seen to come to such a read, the name tells as it does off a receiver nobody knows.
+        Vector<std::pair<uint32_t, ValueSetID>> comeByName;
         for (auto [key, written] : toldByName) {
-            forEachResultOfReadOffUnknownObjectUnder(key, [&](ValueFlowNodeID result) {
-                arriveAt(result, written);
-            });
+            ReadsUnderKey range = readsUnderKey.get(key);
+            for (uint32_t index = range.first; index < range.end; ++index) {
+                const Read& read = reads[readsByGroup[index].read];
+                if (read.statement != noStatement && (holdsUnknownObject(ValueFlowNodeID(read.object)) || seenBehindTheRoundsAt(ValueFlowNodeID(read.result)) == ValueSets::nothing))
+                    comeByName.append({ read.result, written });
+            }
         }
+        for (auto [result, written] : comeByName)
+            arriveAt(ValueFlowNodeID(result), written);
         visitUntilAtRest();
     }
     std::atomic<bool> isSomethingSeenBehindTheRounds { false };

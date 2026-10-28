@@ -158,7 +158,7 @@ bool CodeGenerator::recordSitesWithoutCode()
             sites.inlineCallSites.append(0);
             continue;
         }
-        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction }, .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain, .callsOwnFunctionObject = frame.callsOwnFunctionObject }));
+        sites.inlineCallSites.append(sites.addSite({ .origin = { .position = frame.callPosition, .inlineFrame = frame.parent, .isPartOfConstruction = frame.callIsPartOfConstruction || frame.isConstruction }, .kind = frame.isConstruction ? CallSiteKind::Construct : CallSiteKind::Plain, .callsOwnFunctionObject = frame.callsOwnFunctionObject, .keptCalleePlusOne = frame.calleeIsKeptInFrame ? sites.addKeptCallee(function(), frame.callPosition, frame.parent) : 0 }));
     }
     sites.numberOfSitesWithoutCode = sites.positions.size();
 

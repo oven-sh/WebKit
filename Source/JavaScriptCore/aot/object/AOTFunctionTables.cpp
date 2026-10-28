@@ -24,11 +24,14 @@
 #include "AOTObjectWords.h"
 #include "AOTProgramStrings.h"
 #include "AOTSlimClosure.h"
+#include "AOTSlotAccess.h"
 #include "AOTState.h"
 #include "AOTStaticFields.h"
 #include "AOTThreshold.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "FunctionRareData.h"
+#include "HeapUtil.h"
+#include "MarkedBlockCage.h"
 #include "JSCInlines.h"
 #include "NativeExecutable.h"
 #include "Options.h"
@@ -366,6 +369,28 @@ std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(const void* st
     if (entry.stackPointerOfCaller != stackPointerOfCaller || sourceFunctionOf(entry) != sourceFunction)
         return std::nullopt;
     return closureOnHeapOf(entry);
+}
+
+SUPPRESS_ASAN std::optional<JSObject*> FunctionTables::calleeKeptInFrame(VM& vm, const void* frameRecordOfCaller, CalleeOfSite site, FunctionID sourceFunction)
+{
+    if (!framesAreNamedByCallee(sourceFunction))
+        return std::nullopt;
+    auto isFunctionObjectOfFunction = [&](JSCell* cell) {
+        std::optional<FunctionID> function = functionOf(cell);
+        return function && sourceFunctionOf(*function) == sourceFunction;
+    };
+    auto* kept = static_cast<JSCell* const*>(frameRecordOfCaller)[site.wordInFrame()];
+    bool liesInFrame = Thread::currentSingleton().stack().contains(kept) || CheckedFrameCells::isInRange(kept);
+    if (!liesInFrame && (!kept || kept->isPreciseAllocation() || !HeapUtil::isJSCellStorage(vm.heap, vm.heap.objectSpace().blocks().filter(), kept)))
+        return std::nullopt;
+    if (std::optional<uint32_t> field = site.fieldOfEnvironment(); field && kept->type() == CompiledEnvironmentType) {
+        SlotData slot = SlotData::decode(*field);
+        JSCell* closure = cellInSlot(slot.representation(), reinterpret_cast<const uint8_t*>(kept) + slot.offset, vm.heap.cage().base());
+        return closure && isFunctionObjectOfFunction(closure) ? asObject(closure) : nullptr;
+    }
+    if (liesInFrame)
+        return nullptr;
+    return isFunctionObjectOfFunction(kept) ? std::optional(asObject(kept)) : std::nullopt;
 }
 
 // How far the stack of the program reaches is not asked during a collection. A call has returned for sure once the program has returned to whoever entered it from outside.

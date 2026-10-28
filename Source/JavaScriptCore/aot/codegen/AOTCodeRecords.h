@@ -26,7 +26,11 @@
 #include <wtf/Box.h>
 #include <wtf/Noncopyable.h>
 
-namespace JSC { namespace AOT { namespace Typed {
+namespace JSC { namespace B3 { namespace Air {
+class StackSlot;
+} }
+
+namespace AOT { namespace Typed {
 
 struct FrameRequirements {
     bool readsCallerFrame { false };
@@ -51,12 +55,42 @@ struct RecordedSite {
     FunctionID constructedCallee { };
     // The function has made the function object that it calls here itself and has handed it to nobody.
     bool callsOwnFunctionObject { false };
+    // The function object that is called here is kept in the frame: an index into SiteRecords::keptCallees, plus one.
+    uint32_t keptCalleePlusOne { 0 };
+};
+
+struct KeptCallee {
+    // An index into SiteRecords::wordsOfCallees.
+    uint32_t word { 0 };
+    // The position and the inline frame of the call, which are those of the operation that keeps its callee.
+    uint64_t call { 0 };
 };
 
 struct SiteRecords {
     Vector<RecordedSite> positions;
     Vector<uint32_t> inlineCallSites;
     uint32_t numberOfSitesWithoutCode { 0 };
+    // By the number of inline frames around the call. A call that is copied in keeps its word for as long as the copy runs, and the calls of the copy have the next one.
+    Vector<B3::Air::StackSlot*, 2> wordsOfCallees;
+    Vector<KeptCallee, 4> keptCallees;
+    // By KeptCallee::call, where the word holds an environment: SlotData::encoded() of the field that holds the function object. Nothing: the field has no storage, so no function object is made.
+    UncheckedKeyHashMap<uint64_t, std::optional<uint32_t>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> fieldsOfCallees;
+
+    static uint32_t wordOfCalleeCalledFrom(const Function& function, uint32_t inlineFrame)
+    {
+        uint32_t depth = 0;
+        for (; inlineFrame; inlineFrame = function.inlineFrames[inlineFrame].parent)
+            ++depth;
+        return depth;
+    }
+    static uint64_t keyOfCall(uint32_t position, uint32_t inlineFrame) { return static_cast<uint64_t>(position) << 32 | inlineFrame; }
+
+    // RecordedSite::keptCalleePlusOne.
+    uint32_t addKeptCallee(const Function& function, uint32_t position, uint32_t inlineFrame)
+    {
+        keptCallees.append({ wordOfCalleeCalledFrom(function, inlineFrame), keyOfCall(position, inlineFrame) });
+        return keptCallees.size();
+    }
 
     uint32_t addSite(const RecordedSite& site)
     {

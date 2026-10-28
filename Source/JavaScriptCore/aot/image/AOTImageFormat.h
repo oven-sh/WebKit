@@ -176,7 +176,7 @@ enum class ImageFunctionFlag : uint8_t {
     HasPositions = 1 << 4,
     // At its entry, in front of the stack words of its caller and above its return address.
     SpillsArgumentRegisters = 1 << 5,
-    HasCallsOfOwnFunctionObjects = 1 << 6,
+    HasCalleesOfSites = 1 << 6,
     HasConstructedCallees = 1 << 7,
 };
 
@@ -258,6 +258,42 @@ static_assert(sizeof(StubAddressInImage) == 16);
 // SlotHandlers has an offset into the shared code for each member of PropertyCacheWords::handlers, in the order of that array.
 static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
+// What a call site says of the function object that it calls.
+class CalleeOfSite {
+public:
+    // The caller has made it itself and has handed it to nobody.
+    static constexpr CalleeOfSite ownFunctionObject() { return CalleeOfSite(0, 0); }
+    // It lies in the frame of the caller, so many words from the place of the frame record.
+    static constexpr CalleeOfSite inFrame(int32_t word) { return CalleeOfSite(1 + 2 * (word < 0 ? 2 * static_cast<uint32_t>(-(word + 1)) + 1 : 2 * static_cast<uint32_t>(word)), 0); }
+    // The word holds it, or the environment in whose field it lies once it is made: SlotData::encoded().
+    static constexpr CalleeOfSite inEnvironmentInFrame(int32_t word, uint32_t field) { return CalleeOfSite(inFrame(word).m_bits + 1, field); }
+    static constexpr CalleeOfSite fromBits(uint32_t bits, uint32_t field) { return CalleeOfSite(bits, field); }
+    static constexpr bool bitsNameField(uint32_t bits) { return bits && !(bits & 1); }
+
+    constexpr bool isOwnFunctionObject() const { return !m_bits; }
+    constexpr int32_t wordInFrame() const
+    {
+        ASSERT_UNDER_CONSTEXPR_CONTEXT(m_bits);
+        uint32_t word = (m_bits - 1) / 2;
+        return word & 1 ? -static_cast<int32_t>(word / 2) - 1 : static_cast<int32_t>(word / 2);
+    }
+    constexpr std::optional<uint32_t> fieldOfEnvironment() const { return bitsNameField(m_bits) ? std::optional(m_field) : std::nullopt; }
+    constexpr uint32_t bits() const { return m_bits; }
+    friend constexpr bool operator==(CalleeOfSite, CalleeOfSite) = default;
+
+private:
+    constexpr CalleeOfSite(uint32_t bits, uint32_t field)
+        : m_bits(bits)
+        , m_field(field)
+    {
+    }
+
+    uint32_t m_bits;
+    uint32_t m_field;
+};
+static_assert(CalleeOfSite::inFrame(0).wordInFrame() == 0 && CalleeOfSite::inFrame(-1).wordInFrame() == -1 && CalleeOfSite::inFrame(7).wordInFrame() == 7 && !CalleeOfSite::inFrame(0).isOwnFunctionObject() && !CalleeOfSite::inFrame(-3).fieldOfEnvironment());
+static_assert(CalleeOfSite::inEnvironmentInFrame(-3, 0).wordInFrame() == -3 && CalleeOfSite::inEnvironmentInFrame(0, 9).fieldOfEnvironment() == 9u && !CalleeOfSite::inEnvironmentInFrame(0, 0).isOwnFunctionObject());
+
 // frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
 struct SideTableInputs {
     // Which parts are written. Their reader goes by these flags in the function's record.
@@ -267,7 +303,7 @@ struct SideTableInputs {
     uint32_t frame { 0 };
     std::optional<std::pair<uint32_t, uint32_t>> frameMapRange;
     std::span<const uint8_t> handlers;
-    std::span<const uint32_t> callsOfOwnFunctionObjects;
+    std::span<const std::pair<uint32_t, CalleeOfSite>> calleesOfSites;
     // A site and a FunctionID index.
     std::span<const std::pair<uint32_t, uint32_t>> constructedCallees;
     std::span<const uint8_t> callSites;
@@ -279,7 +315,7 @@ struct SideTableParts {
     static void appendFrameChange(Vector<uint8_t>& bytes, uint32_t previousChange, uint32_t change);
 
     bool hasFrameAt(uint32_t offset) const;
-    bool callsOwnFunctionObjectAt(uint32_t site) const;
+    std::optional<CalleeOfSite> calleeOfSiteAt(uint32_t site) const;
     std::optional<uint32_t> constructedCalleeAt(uint32_t site) const;
 
     std::span<const uint8_t> frameRanges;
@@ -287,8 +323,8 @@ struct SideTableParts {
     uint32_t firstFrameMapWord { 0 };
     uint32_t numberOfFrameMapWords { 0 };
     std::span<const uint8_t> handlers;
-    // Each site as its distance from the one in front.
-    std::span<const uint8_t> callsOfOwnFunctionObjects;
+    // Each site as its distance from the one in front, CalleeOfSite::bits(), and the field where the bits name one.
+    std::span<const uint8_t> calleesOfSites;
     // Each site as its distance from the one in front, and its function.
     std::span<const uint8_t> constructedCallees;
     const uint8_t* callSites { nullptr };
@@ -318,9 +354,9 @@ inline SideTableParts SideTableParts::read(const ImageFunction& function, const 
         parts.handlers = unsafeMakeSpan(cursor, size);
         cursor += size;
     }
-    if (function.has(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) {
+    if (function.has(ImageFunctionFlag::HasCalleesOfSites)) {
         size_t size = static_cast<size_t>(readVarint(cursor));
-        parts.callsOfOwnFunctionObjects = unsafeMakeSpan(cursor, size);
+        parts.calleesOfSites = unsafeMakeSpan(cursor, size);
         cursor += size;
     }
     if (function.has(ImageFunctionFlag::HasConstructedCallees)) {
@@ -338,7 +374,7 @@ inline OptionSet<ImageFunctionFlag> SideTableInputs::flags() const
     OptionSet<ImageFunctionFlag> flags;
     flags.set(ImageFunctionFlag::HasFrameMaps, frameMapRange && frameMapRange->second);
     flags.set(ImageFunctionFlag::HasHandlers, !handlers.empty());
-    flags.set(ImageFunctionFlag::HasCallsOfOwnFunctionObjects, !callsOfOwnFunctionObjects.empty());
+    flags.set(ImageFunctionFlag::HasCalleesOfSites, !calleesOfSites.empty());
     flags.set(ImageFunctionFlag::HasConstructedCallees, !constructedCallees.empty());
     flags.set(ImageFunctionFlag::HasCallSites, !callSites.empty());
     return flags;
@@ -359,15 +395,18 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
         appendVarint(stream, inputs.handlers.size());
         stream.append(inputs.handlers);
     }
-    if (flags.contains(ImageFunctionFlag::HasCallsOfOwnFunctionObjects)) {
-        Vector<uint8_t> distances;
+    if (flags.contains(ImageFunctionFlag::HasCalleesOfSites)) {
+        Vector<uint8_t> rows;
         uint32_t previous = 0;
-        for (uint32_t site : inputs.callsOfOwnFunctionObjects) {
+        for (auto [site, callee] : inputs.calleesOfSites) {
             RELEASE_ASSERT(site > previous);
-            appendVarint(distances, site - std::exchange(previous, site));
+            appendVarint(rows, site - std::exchange(previous, site));
+            appendVarint(rows, callee.bits());
+            if (std::optional<uint32_t> field = callee.fieldOfEnvironment())
+                appendVarint(rows, *field);
         }
-        appendVarint(stream, distances.size());
-        stream.appendVector(distances);
+        appendVarint(stream, rows.size());
+        stream.appendVector(rows);
     }
     if (flags.contains(ImageFunctionFlag::HasConstructedCallees)) {
         Vector<uint8_t> rows;
@@ -383,14 +422,19 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
     stream.append(inputs.callSites);
 }
 
-inline bool SideTableParts::callsOwnFunctionObjectAt(uint32_t site) const
+inline std::optional<CalleeOfSite> SideTableParts::calleeOfSiteAt(uint32_t site) const
 {
-    const uint8_t* cursor = callsOfOwnFunctionObjects.data();
-    const uint8_t* end = cursor + callsOfOwnFunctionObjects.size();
+    const uint8_t* cursor = calleesOfSites.data();
+    const uint8_t* end = cursor + calleesOfSites.size();
     uint64_t listed = 0;
-    while (cursor < end && listed < site)
+    while (cursor < end && listed < site) {
         listed += readVarint(cursor);
-    return site && listed == site;
+        uint32_t bits = static_cast<uint32_t>(readVarint(cursor));
+        uint32_t field = CalleeOfSite::bitsNameField(bits) ? static_cast<uint32_t>(readVarint(cursor)) : 0;
+        if (listed == site)
+            return CalleeOfSite::fromBits(bits, field);
+    }
+    return std::nullopt;
 }
 
 inline std::optional<uint32_t> SideTableParts::constructedCalleeAt(uint32_t site) const

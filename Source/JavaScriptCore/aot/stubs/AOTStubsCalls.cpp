@@ -703,7 +703,7 @@ static void emitCallWithBoundArgumentsInListFrame(StubAssembler& jit, const Call
         jit.loadPair64(Address(list, i * sizeOfStackWord), argumentGPR(i), argumentGPR(i + 1));
     jit.addPtr(TrustedImm32(sizeOfSpilledArgumentRegisters), list, sp);
     emitReplaceBoundFunctionWithTarget(jit);
-    jit.loadStubAddress(callCellWithCount(), registers.target);
+    jit.loadStubAddress(callCellWithCount(), valueEntryGPR);
     jit.jumpToStub(callFromArgumentListFrame());
 
     doesNotFitOnStack.link(&jit);

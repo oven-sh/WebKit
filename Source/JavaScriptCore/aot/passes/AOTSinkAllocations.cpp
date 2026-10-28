@@ -413,6 +413,26 @@ static PassOutcome lendCopiesOfEnvironmentsToRareCalls(FunctionPassContext& cont
 
 // Where a way on which an object and a closure over it are cells meets a way on which they are not, cells in the fields that tie the two would have the object built where the closure is made, in front of every store that follows.
 // Built in front of the first branch behind that place, the two meet nothing. Where they still do, the fields hold cells.
+void AllocationSinking::buildUnderHandler(VirtualObjectID object)
+{
+    if (at(object).willBeBuiltUnderHandler || !m_analyses.cfg().hasHandlers())
+        return;
+    VirtualFamilyID family = at(object).family;
+    auto isOfFamily = [&](const Candidate& candidate) {
+        return !candidate.isLeftOut && candidate.family == family;
+    };
+    bool isMadeUnderHandler = std::ranges::any_of(m_candidates, [&](const Candidate& candidate) {
+        return isOfFamily(candidate) && !candidate.isJoin && handlerOf(candidate.block);
+    });
+    if (!isMadeUnderHandler)
+        return;
+    for (Candidate& candidate : m_candidates) {
+        if (isOfFamily(candidate))
+            candidate.willBeBuiltUnderHandler = true;
+    }
+    m_mustSolveAgain = true;
+}
+
 bool AllocationSinking::buildCycleBeforeBranches(const SinkingState& state, VirtualObjectID holder, VirtualObjectID held)
 {
     Candidate& holding = at(holder);
@@ -850,6 +870,8 @@ static void resetAnalysis(AllocationSinking& sinking)
         candidate.isBuiltBeforeBranches = false;
         candidate.isBuiltBeforeBranchesOnceCyclic = false;
         candidate.willBeBuiltBeforeBranchesOnceCyclic = false;
+        candidate.isBuiltUnderHandler = false;
+        candidate.willBeBuiltUnderHandler = false;
     }
     sinking.decisions() = SinkingDecisions { };
 }

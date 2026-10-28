@@ -215,10 +215,10 @@ Vector<OperationThatWent> findOperationsThatWentWithoutReason(const EffectContex
             bool isListed = !!now;
             if (isListed && block.handler && !hasHandlerAfter.quickGet(now.index()) && effectsOf(context, after, after.at(now)).normal.mayThrow && !reasons.hasReasonFor(id))
                 result.append({ id, blockID, value.opcode, OperationThatWent::How::LostItsHandler, OperationThatWent::Under::TypesAsTheyStand });
-            // An operation that has become another one is the matter of whoever rewrote it. What it has become may do nothing and go in a later run, which has nothing to say about that.
-            // So whoever has listened for longer hears now that the operation did nothing either, by the types of its operands in this run.
+            // An operation that has become another one is the matter of whoever rewrote it: it may know the values of the operands, where their types say less.
+            // What the operation has become may do nothing and go in a later run, which has nothing to say about that. So whoever has listened for longer hears of it now.
             if (isListed) {
-                if (reasons.outer() && after.at(now).opcode != value.opcode && isSeenByProgram(declaredBoundOf(value.opcode)) && !isSeenByProgram(context, before, value) && !isOwedToCheck(value))
+                if (reasons.outer() && after.at(now).opcode != value.opcode && isSeenByProgram(declaredBoundOf(value.opcode)))
                     reasons.addForOperationThatWent(id, InPlaceOfOperation::NothingByProofOfThePass);
                 continue;
             }

@@ -22,6 +22,7 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStubsClosures.h"
 #include "AOTStubsCallFrames.h"
+#include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsValues.h"
 #include "AOTTypeTestEmitter.h"
@@ -94,6 +95,23 @@ static void emitJumpTo(CCallHelpers& jit, CodeRecords& records, const Target& ta
             records.stubCalls.tailCall(jit, target.calledStub, *target.immediate);
         else
             records.stubCalls.tailCall(jit, target.calledStub);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+template<typename Target>
+static void emitMoveAddressOf(CCallHelpers& jit, CodeRecords& records, const Target& target)
+{
+    using TargetKind = decltype(Target::kind);
+    switch (target.kind) {
+    case TargetKind::Function:
+        records.stubCalls.moveAddressOfFunction(target.calledFunction, target.entry, valueEntryGPR);
+        return;
+    case TargetKind::Address:
+        return;
+    case TargetKind::Stub:
+        records.stubCalls.moveAddressOfStub(jit, target.calledStub, target.immediate, valueEntryGPR);
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -237,9 +255,8 @@ void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const Plac
         RELEASE_ASSERT(params.context().frameIsSetUp);
         B3::Air::emitCalleeSaveRestore(jit, params.code());
         emitMoveStackWordsToArgumentListFrame(jit, numberOfWords, spilledBytes);
-        emitCallFromArgumentListFrame(jit, [&] {
-            emitJumpTo(jit, *records, destination);
-        });
+        emitMoveAddressOf(jit, *records, destination);
+        records->stubCalls.tailCall(jit, AOT::callFromArgumentListFrame());
     });
 }
 

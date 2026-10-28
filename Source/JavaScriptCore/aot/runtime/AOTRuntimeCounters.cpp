@@ -406,8 +406,8 @@ void AllocationCounts::willAllocateSet(Instance& instance)
         addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " Set"_s), *list);
 }
 
-// An allocator comes by willRefill() before it has its first list.
-using AllocatorsOfVMs = UncheckedKeyHashSet<std::pair<const VM*, const LocalAllocator*>>;
+// The allocators of each VM that have asked for a list. An allocator comes by willRefill() before it has its first list.
+using AllocatorsOfVMs = UncheckedKeyHashMap<const VMState*, UncheckedKeyHashSet<const LocalAllocator*>>;
 static Lock allocatorsOfVMsLock;
 static AllocatorsOfVMs& allocatorsOfVMs() WTF_REQUIRES_LOCK(allocatorsOfVMsLock)
 {
@@ -421,12 +421,13 @@ static String describeCellsOf(const LocalAllocator& allocator)
 }
 
 // A list is counted when it is used up. What is used of the lists at hand makes the sum of the lines the number of cells that were handed out.
-static void addListsInUse(const VM& vm, AllocationCounts::Lines& refills)
+static void addListsInUse(const VMState& state, AllocationCounts::Lines& refills)
 {
     Locker locker { allocatorsOfVMsLock };
-    for (auto [owner, allocator] : allocatorsOfVMs()) {
-        if (owner != &vm)
-            continue;
+    auto allocators = allocatorsOfVMs().find(&state);
+    if (allocators == allocatorsOfVMs().end())
+        return;
+    for (const LocalAllocator* allocator : allocators->value) {
         const FreeList& list = freeListOf(allocator);
         uint64_t bytesLeft = 0;
         list.forEachInterval([&](char* start, char* end) {
@@ -441,7 +442,7 @@ void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
 {
     {
         Locker locker { allocatorsOfVMsLock };
-        allocatorsOfVMs().add({ &vm, &allocator });
+        allocatorsOfVMs().add(&vm.aotState(), UncheckedKeyHashSet<const LocalAllocator*> { }).iterator->value.add(&allocator);
     }
     if (RuntimeTable* table = vm.aotState().runtimeTable.get())
         table->willRefillAllocator();
@@ -449,6 +450,14 @@ void AllocationCounts::willRefill(VM& vm, const LocalAllocator& allocator)
     AllocationCounts* counts = list.bytes ? ensureForFirstInstance(vm) : nullptr;
     if (counts)
         addLine(counts->m_refills, makeString(describePlace(vm), ' ', describeCellsOf(allocator)), list);
+}
+
+void AllocationCounts::willShutDownHeap(VMState& state)
+{
+    if (!state.instances.isEmpty() && state.instances.first()->state)
+        addListsInUse(state, ensure(*state.instances.first()).m_refills);
+    Locker locker { allocatorsOfVMsLock };
+    allocatorsOfVMs().remove(&state);
 }
 
 void AllocationCounts::didMake(VM& vm, ASCIILiteral what, const char* detailOrNull)
@@ -488,7 +497,7 @@ void AllocationCounts::dump(const Instance& instance, PrintStream& out)
         refills = counts->m_refills;
     // The lists of a VM are counted for its first instance.
     if (instance.vm->aotState().instances.first() == &instance)
-        addListsInUse(*instance.vm, refills);
+        addListsInUse(instance.vm->aotState(), refills);
     dumpLines(out, "refill"_s, refills);
     if (!counts)
         return;

@@ -147,7 +147,6 @@ private:
     struct SeenInBody {
         bool namesObjectCreate { false };
         Vector<FunctionID, 4> directCallees;
-        Vector<Program::DeclaredCallback, 2> declaredCallbacks;
     };
     Failure readFunction(uint32_t index, Function&, SeenInBody&) const;
     bool checkTypesAgainstLayouts();

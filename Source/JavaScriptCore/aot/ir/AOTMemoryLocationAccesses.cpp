@@ -277,6 +277,7 @@ LocationStability stabilityOf(const Program& program, const Value& access, const
     case AbstractHeap::AllocatorState:
     case AbstractHeap::RuntimeState:
     case AbstractHeap::ValidationState:
+    case AbstractHeap::CalleesInFrames:
         return LocationStability::Unknown;
     }
     RELEASE_ASSERT_NOT_REACHED();

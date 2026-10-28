@@ -1779,7 +1779,7 @@ const BitVector& AllocationSinking::loadableFieldsOf(VirtualObjectID object)
 void AllocationSinking::findWhetherObjectsAreBuiltBeforeBranches()
 {
     m_buildsSomeObjectBeforeBranches = std::ranges::any_of(m_candidates, [](const Candidate& candidate) {
-        return candidate.isBuiltBeforeBranches || candidate.isBuiltBeforeBranchesOnceCyclic;
+        return candidate.isBuiltBeforeBranches || candidate.isBuiltBeforeBranchesOnceCyclic || candidate.isBuiltUnderHandler;
     });
 }
 
@@ -2077,6 +2077,10 @@ void AllocationSinking::computeInputs()
     m_inputs.blocksInCycles.ensureSize(numberOfBlocks);
     m_inputs.mergeBlocks.ensureSize(numberOfBlocks);
     m_inputs.blocksWithCandidates.ensureSize(numberOfBlocks);
+    m_inputs.handlers = Vector<BlockID>(numberOfBlocks, [&](size_t index) {
+        const std::optional<Target>& handler = m_function.at(BlockID(index)).handler;
+        return handler ? handler->block : BlockID();
+    });
 
     m_preparedBlocks.ensureSize(numberOfBlocks);
     m_blocksWithLiveDefinition.grow(m_candidates.size());
@@ -2112,12 +2116,17 @@ void AllocationSinking::computeInputsOf(BlockID block)
         uint64_t endedMemberGuards { 0 };
         uint64_t readMemberGuards { 0 };
     };
+    const Block& contents = m_function.at(block);
+    // An operation that finds no room for what it allocates throws where it returns.
+    auto mayThrowToHandler = [&](const EffectsOnEdges& effects) {
+        return effects.mayThrow() || (contents.handler && effects.onAnyEdge().mayCollect);
+    };
     auto traitsOf = [&](ValueID id) -> Traits {
         if (m_analyses.hasNoEffects(id))
             return { };
         const EffectsOnEdges& effects = m_analyses.effectsOf(id);
         return {
-            effects.mayThrow(),
+            mayThrowToHandler(effects),
             effects.normal.writes.containsAny(perObjectHeaps) || effects.handler.writes.containsAny(perObjectHeaps) || effects.normal.mayRunOtherCode(),
             effects.normal.mayCallUnknownCode && reliesOf(m_function.at(id).opcode).isEmpty(),
             effects.normal.mayRunOtherCode() ? LocationMasks::entireHeap : effects.normal.writes.maskOf(AbstractHeap::MemberGuards) | effects.handler.writes.maskOf(AbstractHeap::MemberGuards),
@@ -2125,8 +2134,7 @@ void AllocationSinking::computeInputsOf(BlockID block)
         };
     };
 
-    const Block& contents = m_function.at(block);
-    if (m_analyses.effectsOfTerminator(block).mayThrow())
+    if (mayThrowToHandler(m_analyses.effectsOfTerminator(block)))
         m_inputs.throwingTerminators.quickSet(block.index());
 
     uint32_t first = m_relevantValues.size();

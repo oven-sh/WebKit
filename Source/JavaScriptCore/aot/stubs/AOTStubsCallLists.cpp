@@ -40,7 +40,7 @@ StubSignature signatureOfReturnFromArgumentListFrame(StubKey) { return { }; }
 StubSignature signatureOfCallFromArgumentListFrame(StubKey)
 {
     StubSignature signature = callConventionSignatureWithCount();
-    signature.addOperand(gprOf(callTargetRegister));
+    signature.addOperand(valueEntryGPR);
     return signature;
 }
 
@@ -71,7 +71,7 @@ static void emitPopArgumentRegisters(StubAssembler& jit, GPRReg words)
 
 static void emitCallValueFromArgumentListFrame(StubAssembler& jit)
 {
-    jit.loadStubAddress(callValueWithCount(), jit.clobberRegister(callTargetRegister));
+    jit.loadStubAddress(callValueWithCount(), valueEntryGPR);
     jit.jumpToStub(callFromArgumentListFrame());
 }
 
@@ -415,7 +415,7 @@ void generateCallWithArray(StubAssembler& jit)
 // The frame kind has one return address, so every stub calls from here: a return that is paired with a call is predicted.
 void generateCallFromArgumentListFrame(StubAssembler& jit)
 {
-    jit.call(gprOf(callTargetRegister), JSEntryPtrTag);
+    jit.call(valueEntryGPR, JSEntryPtrTag);
     jit.bindEntry(returnFromArgumentListFrame());
     jit.bindReturnLabel(StubFrameKind::ArgumentList);
     jit.emitFunctionEpilogue();

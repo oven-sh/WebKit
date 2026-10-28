@@ -225,6 +225,16 @@ void StubCalls::jumpToFunction(CCallHelpers&, FunctionID callee, uint16_t entry)
     emitJump({ SymbolSpace::Function, indexOf(callee), entry });
 }
 
+void StubCalls::moveAddressOfFunction(FunctionID callee, uint16_t entry, GPRReg destination)
+{
+    m_relocations.moveAddress({ SymbolSpace::Function, indexOf(callee), entry }, destination, PCRelativeReach::Far);
+}
+
+void StubCalls::moveAddressOfStub(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, GPRReg destination)
+{
+    m_relocations.moveAddress({ SymbolSpace::Stub, indexOf(prepare(jit, key, immediate)) }, destination, PCRelativeReach::Far);
+}
+
 void StubCalls::describeCalls(std::span<const Relocation> relocations, CodeBody& body, LinkBuffer* linkBuffer)
 {
     body.stubKeys = WTF::move(m_stubKeys);

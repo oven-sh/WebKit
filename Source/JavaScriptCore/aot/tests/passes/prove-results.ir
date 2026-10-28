@@ -2,7 +2,7 @@
 # Where numbers, booleans, undefined and null are all that a body returns, and a register holds those in another form than the declared type, the result takes the type of what is returned.
 # FORM: Prepared
 # RUN: pass ProveResults
-# STATISTIC: ResultsProvenByReturns = 9
+# STATISTIC: ResultsProvenByReturns = 10
 # CHECK: outcome: Changed
 
 module m0 path="main.js" displayPath="main.js"
@@ -134,3 +134,36 @@ function f13 name="returnsTrueOrFalseWhereAnythingIsDeclared" parameters=[{type=
     Return v1
 }
 # CHECK-LABEL: function f13 name="returnsTrueOrFalseWhereAnythingIsDeclared"{{*}}results=[{type=boolean}] 
+
+# The casts of a tail call let through less than its callee returns. The result keeps the type that it has, and so does what a caller hands on to a parameter of that type.
+function f14 name="returnsWhatItIsGiven" parameters=[{type=number}] results=[{type=number}] {
+    Return v0
+}
+# CHECK-LABEL: function f14 name="returnsWhatItIsGiven"{{*}}results=[{type=number}] 
+
+function f15 name="handsOnIntegersOnly" parameters=[{type=int}] results=[{type=int}] {
+    v1 = CallDirect v0 function=f14
+    ReturnCall v1 casts=[{declared={type=int} resolution=Assume}]
+}
+# CHECK-LABEL: function f15 name="handsOnIntegersOnly"{{*}}results=[{type=int}] 
+
+function f16 name="givesTheResultBack" parameters=[{type=int}] results=[{type=int}] {
+    v1 = CallDirect v0 function=f15
+    v2 = CallDirect v1 function=f15
+    Return v2
+}
+# CHECK-LABEL: function f16 name="givesTheResultBack"{{*}}results=[{type=int}] 
+# CHECK: [[first]]: int = CallDirect v0 function=f15
+# CHECK-NEXT: : int = CallDirect [[first]] function=f15
+
+function f17 name="handsOnNumbersOnly" parameters=[{type=number}, {type=boolean}] results=[{type=number}] {
+    v2 = CallDirect v0, v1 function=f2
+    ReturnCall v2 casts=[{declared={type=number} resolution=Assume}]
+}
+# CHECK-LABEL: function f17 name="handsOnNumbersOnly"{{*}}results=[{type=number}] 
+
+function f18 name="handsOnSmallIntegersOnly" parameters=[{type=i32}] results=[{type=int}] {
+    v1 = CallDirect v0, v0 function=f5
+    ReturnCall v1 casts=[{declared={type=int} resolution=Assume}]
+}
+# CHECK-LABEL: function f18 name="handsOnSmallIntegersOnly"{{*}}results=[{type=i32}] 

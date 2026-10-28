@@ -147,6 +147,8 @@ struct FunctionTables {
     std::span<RecordedCallee> recordedCallees() { return recordedCalleeStorage.mutableSpan().subspan(hasRecordedCallees() ? 1 : 0); }
     // Nothing unless the last call made from there recorded a function object of the function. Null: one that lies in a frame.
     std::optional<JSObject*> recordedCalleeOfCallFrom(const void* stackPointerOfCaller, FunctionID sourceFunction);
+    // Of a call that enters the function without its function object: the caller keeps that, or the environment that holds it, in a word of its own frame. Nothing unless a function object of the function is found there. Null: one that lies in a frame, or that was never made.
+    std::optional<JSObject*> calleeKeptInFrame(VM&, const void* frameRecordOfCaller, CalleeOfSite, FunctionID sourceFunction);
     // Those of calls that may not have returned. The others leave the table.
     template<typename Visitor> void visitRecordedCallees(VM&, Visitor&, uint64_t phaseOfCollector);
     void finalizeRecordedCallees(VM&, uint64_t phaseOfCollector);

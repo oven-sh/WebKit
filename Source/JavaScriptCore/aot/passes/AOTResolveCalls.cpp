@@ -342,6 +342,8 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
         }
     }
 
+    if (request.calleeKeptInFrame)
+        insert(IRBuilder::make(Opcode::KeepCalleeInFrame, { request.calleeKeptInFrame }));
     Value call = IRBuilder::make(Opcode::CallDirect);
     call.setFunction(request.callee);
     call.setArgumentsOperands(all.span());
@@ -352,6 +354,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     call.setIsNeverInlined(request.isNeverInlined);
     call.setIsAlwaysInlined(request.isAlwaysInlined);
     call.setCallsOwnFunctionObject(request.callsOwnFunctionObject);
+    call.setCalleeIsKeptInFrame(!!request.calleeKeptInFrame);
     call.setCalleeIsPredicted(request.calleeIsPredicted);
     call.setOrigin(insertion.origin);
     call.isTailCall |= request.isTailCall;
@@ -1251,6 +1254,7 @@ struct CallArm {
     FunctionID callee;
     ValueID closureCreation;
     bool capturesReceiver { false };
+    bool keepsCalleeInFrame { false };
     LayoutSetID receivers;
     MemberConditions conditions;
 };
@@ -1679,6 +1683,7 @@ struct CallResolver {
             .isNeverInlined = original.opcode == Opcode::Call && original.isNeverInlined(),
             .isAlwaysInlined = original.opcode == Opcode::Call && original.isAlwaysInlined(),
             .isTailCall = !newTarget && expansion.isTailCall(),
+            .calleeKeptInFrame = arm.keepsCalleeInFrame ? closure : ValueID(),
             .calleeIsPredicted = !isFollowedTo(program, original, arm.closureFunction),
         });
     }
@@ -2099,7 +2104,25 @@ struct CallResolver {
         RELEASE_ASSERT(site.opcode == Opcode::Call);
         const Value& call = function.at(site.position.value);
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
-        // From the first name on that a function object gets where nobody sees, a frame is named by the function object that a call by value has recorded. Until then nobody can tell how a function was entered.
+        // From the first name on that a function object gets where nobody sees, a frame is named by the function object that was called. The caller keeps it in its own frame, which a tail call gives up.
+        if (!isTailCall(function, site.position) && !call.isTailCall) {
+            auto members = chooseDispatchedCallees(site, candidates, mayBeCalledDirectlyWhileFunctionNamesAreUnchanged);
+            if (!members)
+                return std::unexpected(members.error());
+            auto arms = members->map<Vector<CallArm, 4>>([&](FunctionID member) {
+                CallArm arm = directCallArm(member, { }, candidates.value);
+                arm.keepsCalleeInFrame = isNamedByCallee(site, candidates.value, member);
+                return arm;
+            });
+            return [this, &site, proof = candidates.proof(), arms = WTF::move(arms), split = createCalleeSplit(site, candidates, members->span())] {
+                expansion.begin(site.position);
+                const Value& original = expansion.original();
+                emitCalleeDispatch(proof, split, OperandIndex::Call::callee, [&](uint32_t armIndex, ValueID narrowed) {
+                    expansion.finishArm(appendCall(arms[armIndex], original.thisValueOperand(), narrowed, original.variadicOperands()));
+                });
+            };
+        }
+        // Until then nobody can tell how a function was entered.
         bool calleeEscapes = false;
         bool calleeMayHaveRenamedSibling = false;
         if (std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member); })) {
@@ -2248,6 +2271,16 @@ struct CallResolver {
 
     bool haveFunctionNamesChanged(const CallSite& site) { return hasFailedEarlier(IRBuilder::make(Opcode::AreFunctionNamesUnchanged), site); }
 
+    bool isNamedByCallee(const CallSite& site, ValueID closure, FunctionID callee)
+    {
+        if (!mayBeCalledDirectly(program, callee))
+            return true;
+        if (!recordsCalleeOnlyOnceRenamed(callee))
+            return false;
+        context.planAsksAboutPlace = true;
+        return flow.closuresMayBeNamedOutOfSight(callee) || callsOwnClosureThatEscapes(site, closure, callee);
+    }
+
     bool callsOwnClosureThatEscapes(const CallSite& site, ValueID closure, FunctionID callee)
     {
         ValueID closureCreation = findClosureCreation(function, closure, callee);
@@ -2266,12 +2299,20 @@ struct CallResolver {
         FunctionID only = typeOf(closure).singleFunction();
         if (!only || typeOf(closure).mayBeUndefinedOrNull() || !mayBeCalledDirectlyOrThroughEntrypoint(program, only) || context.limit(LimitID::MaxDispatchCases) < 1 || isTailCall(function, site.position))
             return nullptr;
-        // A frame without a record shows the name that was last given to a function object of the function, unless the call says that it enters the caller's own.
+        // A frame without a record shows the name that was last given to a function object of the function, unless the call says that it enters the caller's own, or keeps the function object where the frame of the caller shows it.
         bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only) || (recordsCalleeOnlyOnceRenamed(only) && flow.closuresMayBeNamedOutOfSight(only));
-        if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only))))
-            return nullptr;
-        if (recordsCalleeOnlyOnceRenamed(only) && (haveFunctionNamesChanged(site) || callsOwnClosureThatEscapes(site, closure, only)))
-            return nullptr;
+        bool keepsCalleeInFrame = false;
+        if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only)))) {
+            if (call.isTailCall || !mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, only))
+                return nullptr;
+            callsOwnFunctionObject = false;
+            keepsCalleeInFrame = true;
+        }
+        if (!callsOwnFunctionObject && !keepsCalleeInFrame && recordsCalleeOnlyOnceRenamed(only) && callsOwnClosureThatEscapes(site, closure, only)) {
+            if (call.isTailCall)
+                return nullptr;
+            keepsCalleeInFrame = true;
+        }
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))
             return nullptr;
@@ -2279,7 +2320,7 @@ struct CallResolver {
         if (TypeTable::isProvisional(result) || result == TypeTable::never || !program.at(result).isSubsetOf(typeOf(site.position.value), program))
             return nullptr;
 
-        return [this, &site, only, closure, callsOwnFunctionObject, closureCreation = findClosureCreation(function, closure, only)] {
+        return [this, &site, only, closure, callsOwnFunctionObject, keepsCalleeInFrame, closureCreation = findClosureCreation(function, closure, only)] {
             const Value original = function.at(site.position.value);
             const Function& callee = program.at(only);
             builder.setOrigin(original.origin());
@@ -2305,6 +2346,7 @@ struct CallResolver {
                 .isAlwaysInlined = original.isAlwaysInlined(),
                 .isTailCall = !!original.isTailCall,
                 .callsOwnFunctionObject = callsOwnFunctionObject,
+                .calleeKeptInFrame = keepsCalleeInFrame ? closure : ValueID(),
                 .calleeIsPredicted = !isFollowedTo(program, original, only),
             }));
             RELEASE_ASSERT(typeOf(result).isSubsetOf(program.at(original.type), program) && !typeOf(result).isNever());
@@ -3294,11 +3336,22 @@ static bool canRecreateMethodClosure(const Program& program, const PropertyAcces
     return !method.has(FunctionFlags::TakesCallee) && method.captures.size() == (plan.capturesReceiver ? 1u : 0u);
 }
 
+// The frame of the caller, which keeps the function object that it calls, is there for as long as the callee runs.
+static bool keepsFrameOfCaller(TestSiteReporter& reporter)
+{
+    return !reporter.useValue().isTailCall && !isTailCall(reporter.function(), ValueSite { reporter.point().block, reporter.point().index, reporter.use() });
+}
+
+static bool mayBeCalledDirectlyAt(TestSiteReporter& reporter, FunctionID function)
+{
+    return keepsFrameOfCaller(reporter) ? mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(reporter.program(), function) : mayBeCalledDirectly(reporter.program(), function);
+}
+
 static void reportClosureTest(TestSiteReporter& reporter, ValueID callee, FunctionID function)
 {
     bool isCall = reporter.useValue().opcode == Opcode::Call;
     Vector<Value, 2> tests { makeClosureTest(callee, function) };
-    if (isCall && recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function))
+    if (isCall && !keepsFrameOfCaller(reporter) && recordsCalleeOnlyOnceRenamed(reporter.program(), function) && reporter.context().inputs.flow.closuresMayBeNamedOutOfSight(function))
         tests.append(IRBuilder::make(Opcode::AreFunctionNamesUnchanged));
     reporter.report(tests.span(), isCall ? effectsOfDirectCall(reporter.context(), function) : reporter.analyses().effectsOf(reporter.use()).normal);
 }
@@ -3338,7 +3391,7 @@ static bool reportMemberCallTests(TestSiteReporter& reporter, const ValueSite& s
     const PropertyAccessPlan& plan = use->site.plan;
     if ((plan.requiredProofs | monotoneObjectProofs) != monotoneObjectProofs) {
         refused.willReport();
-        if (!mayBeCalledDirectly(context.program, plan.member.method))
+        if (!mayBeCalledDirectlyAt(reporter, plan.member.method))
             return false;
         // What may come back says nothing about the time of the read, so the function that was read is tested itself: a closure kept in a field whose slot may be emptied and filled again.
         reportClosureTest(reporter, call.calleeOperand(), plan.member.method);
@@ -3490,7 +3543,7 @@ static void reportCalleeTest(TestSiteReporter& reporter)
     if (!candidates.hasOneExpectedCallee())
         return;
     FunctionID member = candidates.expected().predicted()[0];
-    if (call.opcode != Opcode::Call ? canConstructDirectly(program, member) : mayBeCalledDirectly(program, member))
+    if (call.opcode != Opcode::Call ? canConstructDirectly(program, member) : mayBeCalledDirectlyAt(reporter, member))
         reportClosureTest(reporter, callee, member);
 }
 
@@ -3649,6 +3702,9 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         bool isNeverInlined = call.isNeverInlined();
         bool isTailCall = call.isTailCall;
         bool calleeIsPredicted = !isFollowedTo(context.program, call, function);
+        // reportClosureTest() asks about the names only where the frame of the caller goes.
+        bool isNamedByCallee = !mayBeCalledDirectly(context.program, function) || (recordsCalleeOnlyOnceRenamed(context.program, function) && context.inputs.flow.closuresMayBeNamedOutOfSight(function));
+        bool testsNames = std::ranges::any_of(rewriter.tests(), [](const Value& test) { return test.opcode == Opcode::AreFunctionNamesUnchanged; });
         Vector<ValueID, 8> arguments(call.variadicOperands());
 
         Vector<ValueID, 8> captures;
@@ -3666,6 +3722,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
             .calledBuiltin = calledBuiltin,
             .isNeverInlined = isNeverInlined,
             .isTailCall = isTailCall,
+            .calleeKeptInFrame = testsCallee && isNamedByCallee && !testsNames ? callee : ValueID(),
             .calleeIsPredicted = calleeIsPredicted,
         });
         break;

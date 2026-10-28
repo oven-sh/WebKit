@@ -43,8 +43,8 @@ public:
         bool rejectsOnThrow : 1 { false };
         bool isInModuleBody : 1 { false };
         bool innermostIsAsync : 1 { false };
-        // What the site calls is a function object that its own function made and handed to nobody.
-        bool callsOwnFunctionObject : 1 { false };
+        // Image::calleeOfSiteAt() has an answer.
+        bool saysCallee : 1 { false };
         // Image::constructedCalleeAt() has an answer.
         bool namesConstructedCallee : 1 { false };
         // Once the callee of the site has been entered.

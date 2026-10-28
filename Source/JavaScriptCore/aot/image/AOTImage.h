@@ -165,7 +165,9 @@ public:
 
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
     // The function has made the function object that it calls at the site itself and has handed it to nobody. The site of an inline frame stands for the call whose place the frame has taken.
-    bool callsOwnFunctionObjectAt(uint32_t function, CallSiteIndex) const;
+    // Nothing: the site does not say which function object it calls.
+    std::optional<CalleeOfSite> calleeOfSiteAt(uint32_t function, CallSiteIndex) const;
+    bool saysCalleesOfSites(uint32_t function) const { return this->function(function).has(ImageFunctionFlag::HasCalleesOfSites); }
     // The callee of a direct construct that may leave its frame by a tail call.
     std::optional<FunctionID> constructedCalleeAt(uint32_t function, CallSiteIndex) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;

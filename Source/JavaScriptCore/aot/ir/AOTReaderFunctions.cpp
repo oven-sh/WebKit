@@ -349,7 +349,6 @@ Vector<Failure> Reader::readFunctions()
     size_t numberOfFunctions = m_sections.functions.size();
     Vector<Failure> failures((numberOfFunctions + functionsPerChunk - 1) / functionsPerChunk);
     Vector<Program::BodiesAsRead> seenByWorkers(m_build.parallelLoops().width());
-    Vector<Vector<Program::DeclaredCallback>> declaredCallbacksOfWorkers(m_build.parallelLoops().width());
     forEachIndexInParallel(m_build.parallelLoops(), static_cast<unsigned>(failures.size()), [&](unsigned chunk, unsigned worker) {
         size_t end = std::min(numberOfFunctions, (static_cast<size_t>(chunk) + 1) * functionsPerChunk);
         for (size_t index = static_cast<size_t>(chunk) * functionsPerChunk; index < end && !failures[chunk]; ++index) {
@@ -360,7 +359,6 @@ Vector<Failure> Reader::readFunctions()
                 break;
             if (seen.namesObjectCreate)
                 seenByWorkers[worker].functionsThatNameObjectCreate.append(FunctionID(static_cast<uint32_t>(index)));
-            declaredCallbacksOfWorkers[worker].appendVector(seen.declaredCallbacks);
             if (!seen.directCallees.isEmpty()) {
                 seenByWorkers[worker].functionsCalledDirectly.ensureSize(numberOfFunctions);
                 for (FunctionID callee : seen.directCallees)
@@ -372,9 +370,6 @@ Vector<Failure> Reader::readFunctions()
                 m_longExpectations->forgetInBodyOf(function);
         }
     });
-    for (Vector<Program::DeclaredCallback>& found : declaredCallbacksOfWorkers)
-        m_program.declaredCallbacks.appendVector(found);
-    AOT::sort(m_program.declaredCallbacks);
     if (m_preparesFunctionsForTyping) {
         Program::BodiesAsRead bodies;
         bodies.functionsCalledDirectly.ensureSize(numberOfFunctions);
@@ -424,18 +419,6 @@ Failure Reader::readFunction(uint32_t index, Function& function, SeenInBody& see
         read(checker, wire, static_cast<FunctionRecord&>(function));
     if (Failure failure = checker.takeFailure())
         return failure;
-    if (m_form == IRForm::AsRead && wire.body.blockCount) {
-        std::span<const Wire::DeclaredType> parameters = checker.slice<Wire::DeclaredType>(wire.parameters);
-        for (uint32_t parameter = 0; parameter < parameters.size(); ++parameter) {
-            uint32_t type = parameters[parameter].type;
-            if (remap)
-                type = remap->tables[static_cast<size_t>(RemappedIDKind::Type)].entries[type] - 1;
-            for (uint32_t named : checker.words(m_sections.types[type].functions)) {
-                if (m_sections.functions[named].role == static_cast<uint32_t>(FunctionRole::Signature) && m_sections.functions[named].parameters.count)
-                    seen.declaredCallbacks.append({ id, parameter, FunctionID(named) });
-            }
-        }
-    }
 
     Vector<unsigned, 8> checkedParameters;
     if (m_preparesFunctionsForTyping) {

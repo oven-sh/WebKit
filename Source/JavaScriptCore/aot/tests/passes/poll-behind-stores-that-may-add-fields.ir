@@ -1,0 +1,73 @@
+# A store that adds a field allocates and may not collect, so it throws nothing where it finds no room. Under a handler a poll behind the last one of a block throws for them.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass RemoveRedundantHandlers
+
+module m0 path="main.js" displayPath="main.js"
+layout L0 name="Point" fields=[{key="x" declared={type=anything}}, {key="y" declared={type=anything}}]
+
+function f0 name="covered" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1()
+  b1() handler=b3():
+    PutSlotOrAdd v0, -, v1 key="x" receivers=[L0] level=Proven
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    Return v0
+  b3() role=CatchHandler:
+    v4 = CatchValue
+    Return v4
+# CHECK: handler=b3():
+# CHECK-NEXT: PutSlotOrAdd {{*}} key="x"
+# CHECK-NEXT: PutSlotOrAdd {{*}} key="y"
+# CHECK-NEXT: LoopHint [followsStores]
+# CHECK-NEXT: Jump
+# CHECK-NOT: LoopHint
+}
+
+function f1 name="notCovered" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+    PutSlotOrAdd v0, -, v1 key="y" receivers=[L0] level=Proven
+    Return v0
+# CHECK-NOT: LoopHint
+}
+
+function f2 name="storeThatAddsNothing" parameters=[{type=L0}, {type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    Jump -> next b1()
+  b1() handler=b3():
+    PutSlot v0, -, v1 key="x" receivers=[L0] level=Proven
+    Jump -> next b2()
+  b2():
+    Return v0
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    Return v3
+# CHECK-NOT: LoopHint
+# CHECK-NOT: handler=
+}
+
+function f3 name="insideLoop" parameters=[{type=L0}, {type=int[0, 100]}] results=[{type=anything}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3) handler=b4():
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(| 0), notTaken b3()
+  b2(v6) handler=b4():
+    PutSlotOrAdd v0, -, v6 key="y" receivers=[L0] level=Proven
+    v8 = Integer integer=1
+    v9 = Add v6, v8
+    Jump -> next b1(v9)
+  b3():
+    Return v0
+  b4() role=CatchHandler:
+    v10 = CatchValue
+    Return v10
+# CHECK: handler=b4():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: = Less
+# CHECK: handler=b4():
+# CHECK-NEXT: PutSlotOrAdd
+# CHECK-NEXT: LoopHint [followsStores]
+}
