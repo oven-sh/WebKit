@@ -15,6 +15,7 @@
 #include "ReservedRangeHeap.h"
 #include "ResourceExhaustion.h"
 #include "StructureAlignedMemoryAllocator.h"
+#include "WeakInlines.h"
 #include <algorithm>
 #include <array>
 #include <cstring>

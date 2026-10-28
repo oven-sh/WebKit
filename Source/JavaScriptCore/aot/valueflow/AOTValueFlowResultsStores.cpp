@@ -1852,6 +1852,19 @@ Vector<PropertyKeyID> StoresByLayout::keysStoredIntoKnownObjects(LayoutID layout
     return keys;
 }
 
+bool StoresByLayout::isOnlyAssignedByStatements(LayoutID layout, PropertyKeyID key) const
+{
+    bool isOnlyAssigned = true;
+    forEachTableOfKnownObjects(layout, [&](const StoresIntoObjects& stores) {
+        auto found = stores.underKey.find(key.index());
+        if (found == stores.underKey.end())
+            return;
+        const StoredUnderKey& stored = found->value;
+        isOnlyAssigned &= stored.writers == OptionSet<Actor> { Actor::Statements } && !stored.isGivenValueByDefinition && !stored.mayBeAccessor;
+    });
+    return isOnlyAssigned;
+}
+
 Vector<PropertyKeyID> StoresByLayout::keysNamedByStoresIntoKnownObjects(LayoutID layout) const
 {
     Vector<PropertyKeyID> keys = sortedKeysNamedIn(m_storesOfLayout[layout.index()]);

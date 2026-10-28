@@ -658,6 +658,7 @@ struct ReturnsOfFunction {
     ReturnedNumbers values;
     // Whose result it returns as it gets it.
     Vector<FunctionID, 2> handedOn;
+    bool hasLoop { false };
 };
 
 struct DirectTailCall {
@@ -777,6 +778,9 @@ static ReturnsOfFunction collectReturnsOf(const Program& program, FunctionID id)
         }
         returns.values.add(program.typeOf(function, returned));
     });
+    forEachValueListedOrNot(program, id, { Opcode::LoopHint }, [&](auto&&...) {
+        returns.hasLoop = true;
+    });
     return returns;
 }
 
@@ -869,7 +873,10 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
             if (staysAsDeclared.quickGet(index))
                 continue;
             chosen[index] = returned[index].hasOtherValues ? Representation::JSValue : defaultRepresentationOf(returned[index].type());
-            if (chosen[index] == Representation::JSValue || chosen[index] == Representation::Void || chosen[index] == representationOfResult(program, program.at(returns[index].function)))
+            // A function that comes to an end and returns nowhere throws: it hands nothing back, and a call of it ends its block.
+            bool neverReturns = !returned[index].hasOtherValues && returned[index].type().isNever() && !returns[index].hasLoop && returns[index].handedOn.isEmpty()
+                && !program.at(program.at(returns[index].function).result().written()).isNever();
+            if (chosen[index] == Representation::JSValue || (chosen[index] == Representation::Void && !neverReturns) || chosen[index] == representationOfResult(program, program.at(returns[index].function)))
                 keepAsDeclared(returns[index].function);
         }
         // A function that only callers with a boxed result enter by a jump boxes its result for them.

@@ -487,6 +487,7 @@ public:
     bool getsNameNobodyLists(LayoutID) const;
     Vector<PropertyKeyID> keysStoredInto(LayoutID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     Vector<PropertyKeyID> keysStoredIntoKnownObjects(LayoutID) const;
+    bool isOnlyAssignedByStatements(LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysNamedByStoresIntoKnownObjects(LayoutID) const;
     bool isStoredByConstructor(LayoutID, PropertyKeyID) const;
     const Vector<PropertyKeyID>& keysStoredThroughPlaceholders() const LIFETIME_BOUND { return m_keysThroughPlaceholders; }
