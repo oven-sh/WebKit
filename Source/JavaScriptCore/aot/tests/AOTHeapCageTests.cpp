@@ -49,6 +49,12 @@
 #include <wtf/threads/BinarySemaphore.h>
 #include <wtf/text/MakeString.h>
 
+#if USE(MIMALLOC)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#include <bmalloc/mimalloc.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
@@ -296,6 +302,27 @@ static void testRangeGrowsBySegments()
         ++count;
     AOT_TEST_CHECK(count < size / MB && range->reservedSize() <= size);
 }
+
+#if USE(MIMALLOC)
+static void testMallocArenaStartsAlignedBehindPrefix()
+{
+    uintptr_t start = std::bit_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(rangeSize, rangeSize));
+    AOT_TEST_CHECK(start);
+    // Nothing lies behind a prefix as large as the range.
+    AOT_TEST_CHECK(!ReservedRangeHeap::tryCreateMallocArena(start, blockSize, blockSize));
+
+    std::optional<ReservedRangeHeap::MallocArena> arena = ReservedRangeHeap::tryCreateMallocArena(start, rangeSize, blockSize);
+    AOT_TEST_CHECK(arena && arena->heap);
+    size_t arenaSize = 0;
+    uintptr_t arenaStart = std::bit_cast<uintptr_t>(mi_arena_area(static_cast<mi_arena_id_t>(arena->arena), &arenaSize));
+    // The arena begins at the first multiple of mimalloc's alignment behind the prefix, so the block that the prefix is stays out of it.
+    AOT_TEST_CHECK(arenaStart == roundUpToMultipleOf(mi_arena_min_alignment(), start + blockSize));
+    AOT_TEST_CHECK(arenaSize && arenaStart + arenaSize <= start + rangeSize);
+
+    uintptr_t block = std::bit_cast<uintptr_t>(mi_heap_malloc_aligned(static_cast<mi_heap_t*>(arena->heap), blockSize, blockSize));
+    AOT_TEST_CHECK(block >= arenaStart && block + blockSize <= arenaStart + arenaSize);
+}
+#endif
 
 static void testRandomWindowsLieFarApart()
 {
@@ -1449,6 +1476,9 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/takes-what-the-budget-leaves"_s, testRangeTakesWhatBudgetLeaves },
         { "heap-cage/reserved-range/exhaustion-returns-null"_s, testExhaustionReturnsNull },
         { "heap-cage/reserved-range/grows-by-segments"_s, testRangeGrowsBySegments },
+#if USE(MIMALLOC)
+        { "heap-cage/reserved-range/malloc-arena-starts-aligned-behind-prefix"_s, testMallocArenaStartsAlignedBehindPrefix },
+#endif
         { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },

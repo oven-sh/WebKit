@@ -45,6 +45,16 @@ public:
     // Null where none of the multiples of the alignment that were drawn is free.
     static void* tryReserveRandomWindow(size_t, size_t alignment, OSAllocator::Usage, bool isWritable);
 
+#if USE(MIMALLOC)
+    struct MallocArena {
+        void* heap { nullptr };
+        void* arena { nullptr };
+    };
+    // Makes a fresh reservation, less a prefix that stays unused, an arena of mimalloc with a heap in it. The arena begins at the first
+    // multiple of mimalloc's arena alignment at or after start + unusedPrefixSize. Nullopt where nothing is left there or mimalloc refuses it.
+    static std::optional<MallocArena> tryCreateMallocArena(uintptr_t start, size_t, size_t unusedPrefixSize);
+#endif
+
     uintptr_t start() const { return m_start; }
     size_t size() const { return m_size; }
     size_t initialSegmentSize() const { return m_initialSegmentSize; }

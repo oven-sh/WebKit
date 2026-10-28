@@ -278,11 +278,32 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     bmalloc_force_auxiliary_heap_into_reserved_memory(heapRef, start + request.unusedPrefixSize, start + size);
     return Backing { BackEnd::Malloc, heapRef, size };
 #elif USE(MIMALLOC)
+    std::optional<MallocArena> mallocArena = tryCreateMallocArena(start, size, request.unusedPrefixSize);
+    if (!mallocArena)
+        return std::nullopt;
+    return Backing { BackEnd::Malloc, mallocArena->heap, size, mallocArena->arena };
+#else
+    UNUSED_PARAM(start);
+    UNUSED_PARAM(request);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
+}
+
+#if USE(MIMALLOC)
+auto ReservedRangeHeap::tryCreateMallocArena(uintptr_t start, size_t size, size_t unusedPrefixSize) -> std::optional<MallocArena>
+{
+    // mimalloc starts an arena on a multiple of its arena alignment: it rounds another start up, and 3.2.8 built with assertions stops on one.
+    // The alignment is asked of the mimalloc that is linked, which is not the vendored one under USE_EXTERNAL_MIMALLOC.
+    uintptr_t end = start + size;
+    uintptr_t arenaStart = roundUpToMultipleOf(mi_arena_min_alignment(), start + unusedPrefixSize);
+    if (arenaStart >= end)
+        return std::nullopt;
+
     // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
     // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
     // for a 4 GB region is about 40 KB of pages touched before the first allocation.
     mi_arena_id_t arena { };
-    if (!mi_manage_os_memory_ex(std::bit_cast<void*>(start + request.unusedPrefixSize), size - request.unusedPrefixSize, false, false, true, -1, true, &arena))
+    if (!mi_manage_os_memory_ex(std::bit_cast<void*>(arenaStart), end - arenaStart, false, false, true, -1, true, &arena))
         return std::nullopt;
     mi_heap_t* heap = mi_heap_new_in_arena(arena);
     RELEASE_ASSERT(heap);
@@ -296,13 +317,9 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     // same rationale as the Linux MADV_DOFORK branch above.
     vm_inherit(mach_task_self(), static_cast<vm_address_t>(start), static_cast<vm_size_t>(size), VM_INHERIT_COPY);
 #endif
-    return Backing { BackEnd::Malloc, heap, size, arena };
-#else
-    UNUSED_PARAM(start);
-    UNUSED_PARAM(request);
-    RELEASE_ASSERT_NOT_REACHED();
-#endif
+    return MallocArena { heap, arena };
 }
+#endif
 
 ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, const Backing& backing, const Request& request)
     : m_start(start)
