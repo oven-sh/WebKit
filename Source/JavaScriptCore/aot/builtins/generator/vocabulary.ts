@@ -159,6 +159,7 @@ export const operandRoles = [
   "CopiesHolesToResult",
   "WorkerEntryPath",
   "DescribedWhenRefused",
+  "ContentsOfContentsAreOnlyStored",
 ] as const;
 export type OperandRole = (typeof operandRoles)[number];
 

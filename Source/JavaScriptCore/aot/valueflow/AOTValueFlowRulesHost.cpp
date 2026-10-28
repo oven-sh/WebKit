@@ -899,6 +899,7 @@ static void exposeMembersOf(ValueFlowRuleContext& context, ValueFlowObjectID hol
             continue;
         if (!isObjectKind(builtins.at(member).kind)) {
             context.use(member, { BuiltinUse::Read, BuiltinUse::Written });
+            openProxiesThatMemberAnswers(context, member);
             continue;
         }
         context.use(member, BuiltinUse::Read);

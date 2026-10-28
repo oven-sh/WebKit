@@ -700,6 +700,7 @@ function needsText(role: OperandRole): boolean {
     case "CopiesHolesToResult":
     case "WorkerEntryPath":
     case "DescribedWhenRefused":
+    case "ContentsOfContentsAreOnlyStored":
       return false;
   }
 }
@@ -774,7 +775,13 @@ function checkIteration(model: TableModel, problems: Problems): void {
 
 function checkPrototypeSources(model: TableModel, problems: Problems): void {
   for (const overload of model.overloads) {
-    const { type, prototypeSource, properties } = overload.result;
+    const { type, prototypeSource, properties, testedOperand, testedType } = overload.result;
+    if (testedOperand !== null && parameterAt(overload, testedOperand) === null) {
+      report(problems, overload, `answersWhetherInstance names ${describeOperand(testedOperand)}, which it does not have`);
+    }
+    if (testedType !== null && (testedType.parts.length === 0 || testedType.parts.some(({ part }) => part !== "Instance"))) {
+      report(problems, overload, "answersWhetherInstance takes instances of classes and nothing else");
+    }
     if (properties.length > 0 && type.freshness === "No") {
       report(problems, overload, "resultProperties needs a result that is a new object");
     }

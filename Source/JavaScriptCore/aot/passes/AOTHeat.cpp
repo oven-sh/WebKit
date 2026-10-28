@@ -842,6 +842,28 @@ Expected<HeatClass> heatClassOf(FunctionPassContext& context, BlockID block)
     return heatClassOf(context.inputs.heat, context.analyses, block);
 }
 
+Expected<HeatClass> heatClassByOwnLoops(FunctionPassContext& context, BlockID block)
+{
+    switch (context.build.recordedOptions().heat()) {
+    case HeatOverride::EverythingIsHot:
+        return HeatClass::Hot;
+    case HeatOverride::EverythingIsCold:
+        return HeatClass::Cold;
+    case HeatOverride::Shuffled:
+        return static_cast<HeatClass>(static_cast<uint32_t>(HeatClass::RunsOnce) + drawForShuffledHeat(*seedOfShuffledHeat(context.build), context.id.index(), block.index(), 4));
+    case HeatOverride::None:
+    case HeatOverride::OnlyLoopsAreHot:
+    case HeatOverride::NothingIsHottest:
+        break;
+    }
+    if (context.analyses.executionCountOf(block) == ExecutionCount::AtMostOnce)
+        return HeatClass::RunsOnce;
+    const BlockFrequencies& frequencies = context.analyses.blockFrequencies();
+    if (frequencies.alwaysEndsInThrow(block))
+        return HeatClass::Cold;
+    return (frequencies.frequencyOf(block) > 1.0).predicted() ? HeatClass::Hot : HeatClass::Warm;
+}
+
 // A loop runs as often as what it calls and as what was inlined into it. What counts as hot was settled while the cycle through a generic version still counted as a loop around the loop, so a loop may stand under a threshold that it set itself. The thresholds of a very large program are constants.
 static bool runsCodeOfHotFunction(FunctionPassContext& context, const NaturalLoop& loop)
 {

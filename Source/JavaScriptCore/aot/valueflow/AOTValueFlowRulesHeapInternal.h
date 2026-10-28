@@ -99,7 +99,8 @@ public:
     ClimbingSet prototypesOf(ClimbingSet start, ValueSetID atCreation = { });
     ValueFlowNodeID exportsOfHoldersListedBesideUnknownObject(const ValueFlowOperand& object);
     ValueFlowNodeID exportsOfHoldersIn(const ValueFlowOperand& object);
-    ClimbingSet objectsAbove(ClimbingSet start) { return m_context.unite(prototypesOf(start), valueOfNodeIfAny(readWhereWritten(known(start), copiedFromName))); }
+    ClimbingSet objectsAbove(ClimbingSet start) { return m_context.unite(withTargetsOfProxiesThatWalksPass(prototypesOf(start)), valueOfNodeIfAny(readWhereWritten(known(start), copiedFromName))); }
+    ClimbingSet withTargetsOfProxiesThatWalksPass(ClimbingSet above);
 
     void askWithoutNodesWhereNothingIsWritten() { m_asksWithoutNodes = !m_context.usesGeneralRulesOnly(); }
 
@@ -156,6 +157,10 @@ private:
     void noteTestOfMembers(const ValueFlowOperand& object, const HeapKey&);
     ValueFlowOperand withoutProxiesAskedByTheirTraps(const ValueFlowOperand& object);
     void askProxiesByTheirTrap(const HeapKey&, BuiltinName trap, ValueFlowNodeID result, const ValueFlowOperand* stored = nullptr);
+    void readThroughProxies(ClimbingSet proxies, const HeapKey&, ValueFlowNodeID result);
+public:
+    void readForReceiver(const ValueFlowOperand& object, const ValueFlowOperand& property, const ValueFlowOperand& receiver);
+private:
     void mayThrow() { add(m_statement.thrown, unknownValue(ValueFlowUnknownSource::ThrownByRunTime)); }
     void answerBoolean() { add(m_statement.result, m_tables.booleanKinds()); }
     bool holdsAnything(ClimbingSet set) const { return m_context.meet(set, ValueSets::anything); }

@@ -78,6 +78,7 @@ export default b.declarations(
       isError: {
         args: { value: b.any },
         returns: b.bool,
+        answersWhetherInstance: { value: b.instance("Error") },
         capability: "heap",
         uses: { value: b.inspected },
         implementation: b.hostCall,

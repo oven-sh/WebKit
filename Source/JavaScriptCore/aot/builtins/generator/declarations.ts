@@ -67,6 +67,7 @@ export interface SignatureDeclaration extends SignatureColumns {
   resultsByPlatform?: readonly PlatformResultDeclaration[];
   resultProperties?: readonly ResultPropertyDeclaration[];
   prefixProperties?: readonly ResultPropertyDeclaration[];
+  answersWhetherInstance?: { operand: OperandName; type: TypeSpec };
   capability: Capability;
   throws: boolean;
   /** It throws, and it has no step of its own that does: see b.propagated. */

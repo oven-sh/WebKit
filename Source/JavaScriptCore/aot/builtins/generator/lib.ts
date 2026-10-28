@@ -415,6 +415,8 @@ export const membersOfObjectsOnly: UseSpec = { use: "Role", role: "MembersAreOfO
 export const functionsConvertedUnderNamesOnly: UseSpec = { use: "Role", role: "FunctionsAreConvertedUnderNamesOnly" };
 // Of the objects that it meets, native code converts those to a primitive that are made by Number, String or a class below one of them, and no other.
 export const onlyBoxedPrimitivesConverted: UseSpec = { use: "Role", role: "OnlyBoxedPrimitivesAreConverted" };
+// The protocols run on the operand and on what it holds. What those hold in turn is taken out and stored, and nothing is run on it.
+export const contentsOfContentsOnlyStored: UseSpec = { use: "Role", role: "ContentsOfContentsAreOnlyStored" };
 export const ownPropertyTraps: readonly UseSpec[] = [
   { use: "Runs", protocols: ["OwnKeys"] },
   { use: "Role", role: "KeysAreNotListed" },
@@ -783,6 +785,9 @@ export interface SignatureOptions extends SignatureColumns {
   // Every own property that the new object has and an instance fresh from the constructor of its class has not.
   resultProperties?: Readonly<Record<string, TableType>>;
   prefixProperties?: Readonly<Record<string, TableType>>;
+  // It looks at what kind of cell the operand is, and answers true for what was made as an instance of one of the classes of the type and false for everything else.
+  // For a proxy it may answer either.
+  answersWhetherInstance?: Readonly<Record<string, TableType>>;
   capability: Capability;
   throws?: boolean | typeof propagated;
 }
@@ -956,6 +961,7 @@ const signatureKeys = [
   "returns",
   "resultProperties",
   "prefixProperties",
+  "answersWhetherInstance",
   "capability",
   "throws",
   ...signatureColumnKeys,
@@ -1042,6 +1048,7 @@ function signatureOf(
     ...resultsOf(path, field.returns),
     resultProperties: Object.entries(field.resultProperties ?? {}).map(([name, type]) => ({ name, type: type.spec })),
     prefixProperties: Object.entries(field.prefixProperties ?? {}).map(([name, type]) => ({ name, type: type.spec })),
+    answersWhetherInstance: Object.entries(field.answersWhetherInstance ?? {}).map(([operand, type]) => ({ operand, type: type.spec }))[0],
     capability: field.capability,
     throws: (field.throws ?? false) !== false,
     onlyPropagatesErrors: field.throws === propagated,

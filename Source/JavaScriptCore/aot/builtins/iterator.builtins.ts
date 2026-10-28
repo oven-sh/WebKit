@@ -123,6 +123,9 @@ const disposalCallback = (...args: readonly b.PlaceLike[]) => [
 ];
 
 export default b.declarations(
+  // An iterator helper steps and closes the iterator below it without operands.
+  b.namedMemberCall("next", []),
+  b.namedMemberCall("return", []),
   b.class("Iterator", {
     isNeverPristine: true,
     lockedMembers: ["prototype"],

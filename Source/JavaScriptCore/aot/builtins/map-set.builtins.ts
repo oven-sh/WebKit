@@ -11,6 +11,7 @@ const value = b.slot("this", "value");
 // Each value that the operand yields is an object whose elements 0 and 1 become a key and its value.
 const storedAsEntries = [
   b.runsTransitively("Iterate", "OwnValues", "PrototypeChain"),
+  b.contentsOfContentsOnlyStored,
   b.reachableValuesStoredIn(b.resultSlot("key")),
   b.reachableValuesStoredIn(b.resultSlot("value")),
 ];

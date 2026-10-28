@@ -179,6 +179,15 @@ void ValueFlowRuleContext::end()
 FunctionID ValueFlowRuleContext::functionOfStatement() const { return m_keyOfStatementOfThisTurn ? FunctionID() : m_solver.statementAt(m_statement).function; }
 std::span<const ValueFlowOperand> ValueFlowRuleContext::operandsOf(const ValueFlowStatement& statement) const { return m_operandsInPlace.empty() ? m_solver.operandsOf(statement) : m_operandsInPlace; }
 ValueFlowNodeID ValueFlowRuleContext::markersOf(FunctionID function) { return nodeFor(ValueFlowNodeKey::markersOf(function)); }
+
+bool ValueFlowRuleContext::canBeReached(const ValueFlowStatement& statement)
+{
+    for (const ValueFlowOperand& guard : m_solver.guardsOf(statement)) {
+        if (!meet(valueOf(guard), ValueSets::anything))
+            return false;
+    }
+    return true;
+}
 void ValueFlowRuleContext::makeInstanceOfOtherCalls(FunctionID function) { makeInstance(*instancedFunctions()->find(function), ValueFlowInstancedFunctions::markerOfOtherCalls()); }
 
 ValueFlowNodeID ValueFlowRuleContext::restArgumentEntered(FunctionID function, unsigned index)
@@ -309,6 +318,19 @@ ClimbingSet ValueFlowRuleContext::proxiesThatWalksPassAmong(ClimbingSet values)
     if (!m_solver.m_input.nodes)
         return { };
     return restrict(values, valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesThatHandOnWhatComesFromBelow)));
+}
+
+void ValueFlowRuleContext::noteThatStatementAsksProxiesOfConstructorByTheirTraps()
+{
+    if (m_solver.m_input.nodes && !m_keyOfStatementOfThisTurn && valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed)) != ValueSets::nothing)
+        m_log.statementsThatAskProxiesByTheirTraps.append(m_statement);
+}
+
+ClimbingSet ValueFlowRuleContext::followedProxiesAmong(ClimbingSet values)
+{
+    if (!m_solver.m_input.nodes)
+        return { };
+    return restrict(values, valueHeldInGraph(m_solver.graph(), nodes().ofHost(ValueFlowHostNode::ProxiesWhoseHandlerIsFollowed)));
 }
 
 void ValueFlowRuleContext::openProxiesAmong(ClimbingSet values)

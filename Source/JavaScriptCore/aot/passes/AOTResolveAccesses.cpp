@@ -3956,6 +3956,33 @@ bool testsCoverConditions(std::span<const Value> tests, std::span<const MemberCo
     });
 }
 
+LayoutID constructorFunctionAskedAbout(const Program& program, const Value& conditionsTest)
+{
+    if (conditionsTest.opcode != Opcode::AreMembersUnchanged)
+        return { };
+    // Whoever asks for the prototype property alone is about to make an object, or looks for one that was made.
+    PropertyKeyID prototype = program.keyOf(BuiltinNames::prototype);
+    for (const MemberConditionRecord& condition : conditionsTest.conditions()) {
+        if (condition.kind == MemberConditionKind::MemberUnchanged && condition.side == ClassSide::Static && condition.key != prototype && program.at(condition.layout).has(LayoutFlags::IsConstructorFunction))
+            return condition.layout;
+    }
+    return { };
+}
+
+void appendStartOfMemberGuards(IRBuilder& builder, const Program& program, TypeArena& types, LayoutID constructorFunction)
+{
+    // Guards that have begun say so: the one of the property holds until the program puts another object there.
+    MemberCondition property { MemberCondition::Kind::MemberUnchanged, constructorFunction, ClassSide::Static, program.keyOf(BuiltinNames::prototype) };
+    ValueID haveBegun = builder.append(makeConditionsTest(types, { &property, 1 }));
+    IRBuilder::BranchBlocks begun = builder.emitBranch(haveBegun, builder.function().at(builder.currentBlock()).frequency, BlockFrequency::Rare);
+    builder.moveToEndOf(begun.notTaken);
+    Value begin = IRBuilder::make(Opcode::BeginMemberGuards);
+    begin.setLayout(constructorFunction);
+    builder.append(WTF::move(begin));
+    builder.emitJump(begun.taken);
+    builder.moveToEndOf(begun.taken);
+}
+
 static Type testableTypeOf(const PropertyAccessContext& context, const Type& stored, const UnionPart& part)
 {
     switch (part.kind) {

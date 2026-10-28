@@ -607,6 +607,20 @@ ClimbingSet HeapRule::prototypesOf(ClimbingSet start, ValueSetID atCreation)
     return above;
 }
 
+ClimbingSet HeapRule::withTargetsOfProxiesThatWalksPass(ClimbingSet above)
+{
+    AOT_THRESHOLD(unsigned, mostProxiesPassedInOneStep, 4);
+    ValueFlowName target { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() };
+    for (unsigned step = 0; step < mostProxiesPassedInOneStep; ++step) {
+        ClimbingSet passed = m_context.proxiesThatWalksPassAmong(known(above));
+        if (!holdsAnything(passed))
+            break;
+        connect(m_context.readWhatWasWritten(passed, target), m_context.written(passed, prototypeLinkName));
+        above = m_context.unite(m_context.withoutProxiesThatWalksPass(above), m_context.valueOf(m_context.readWhatWasWritten(passed, target)));
+    }
+    return above;
+}
+
 void HeapRule::collectChain()
 {
     ClimbingSet start = m_context.setOfKey();
@@ -1008,16 +1022,18 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
     m_context.forEachMember(holders, [&](ValueFlowObjectID holder) {
         if (key.namesEnumerableProperty && !hasMemberOfHost(holder))
             return;
-        if (ModuleID module = m_universe.moduleOf(holder)) {
+        if (m_builtins.at(m_universe.builtinOf(holder)).scope == BuiltinScope::Module) {
             bool isReceiver = m_context.contains(start, holder);
             for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder))) {
                 if (isReceiver || !isFoundByNameAlone(m_builtins.canonicalID(member)))
-                    readMember(member, module, result, getters);
+                    readMember(member, m_universe.moduleOf(holder), result, getters);
             }
             return;
         }
         if (isNativeModuleThatNobodyNames(holder) || m_builtins.canonicalID(m_universe.builtinOf(holder)) == Builtins::Bun) {
             add(result, unknownValue(ValueFlowUnknownSource::UndescribedNativeResult));
+            for (BuiltinID member : m_builtins.membersOf(m_universe.builtinOf(holder)))
+                openProxiesThatMemberAnswers(m_context, member);
             return;
         }
         const ValueFlowMembersOfHolder& members = m_tables.membersOf(m_universe.builtinOf(holder));
@@ -1030,7 +1046,7 @@ void HeapRule::readMembers(ClimbingSet objects, ClimbingSet start, const HeapKey
         m_context.sets().forEachMember(members.accessors, [&](ValueFlowObjectID accessor) {
             BuiltinID member = m_builtins.canonicalID(m_universe.builtinOf(accessor));
             letConstructorEscapeWithPrototypeObject(member, ModuleID());
-            if (!isFoundByNameAlone(member) || (member == Builtins::ProcessMainModule && namesWaysToModuleObjects(m_program)))
+            if (!isFoundByNameAlone(member) || member == Builtins::ProcessMainModule)
                 getters.append(accessor);
         });
     });
@@ -1552,6 +1568,7 @@ void HeapRule::readThroughChain(ClimbingSet start, const HeapKey& keyOfRead, con
         forEachMemberUnder(holdersFoundThroughUnknownObject(key), key, [&](BuiltinID member, ModuleID) {
             if (!runsGetterThroughPlaceholder(member, key))
                 return;
+            openProxiesThatMemberAnswers(m_context, member);
             for (const BuiltinOverload& overload : m_builtins.overloadsOf(m_builtins.canonicalID(member))) {
                 if (overload.mode != BuiltinCallMode::Get)
                     continue;
@@ -1749,10 +1766,12 @@ void HeapRule::noteUseOfMembers(const HeapKey& key, BuiltinUse noted)
     if (mayBeUntrackedObject(start))
         foundThroughPlaceholders = m_context.unite(foundThroughPlaceholders, lostAmong(ClimbingSet(holdersWithMemberUnder(key))));
     bool namesMember = key.keyClass == HeapKeyClass::Name;
-    forEachMemberUnder(start, key, [&](BuiltinID member, ModuleID module) {
+    forEachMemberUnder(start, key, [&](BuiltinID member, ModuleID) {
         if (noted == BuiltinUse::Read && !namesMember && m_builtins.at(member).holder && isNativeModuleThatNobodyNames(m_universe.objectOf(m_builtins.at(member).holder)))
             return;
-        if (!namesMember && !module && isFoundByNameAlone(m_builtins.canonicalID(member)))
+        BuiltinID holder = m_builtins.at(member).holder;
+        bool isFoundByWalk = (holder && m_builtins.at(holder).scope == BuiltinScope::Module) || (noted == BuiltinUse::Read && m_builtins.canonicalID(member) == Builtins::ProcessMainModule);
+        if (!namesMember && !isFoundByWalk && isFoundByNameAlone(m_builtins.canonicalID(member)))
             return;
         if (noted == BuiltinUse::Read && !namesMember && isMemberOfBunUsedByNameAlone(member))
             return;
@@ -1826,8 +1845,14 @@ void HeapRule::runLookup()
                 redefined = m_context.restrict(redefined, m_tables.objectsWithoutPropertiesOfNativeCode());
             readOwnPropertiesNobodyWrote(m_context.setOfKey(), enumeratedHeapKey, m_statement.result);
             readOwnPropertiesNobodyWrote(redefined, unknownHeapKey, m_statement.result);
-        } else if (!splitLookupThroughPlaceholders())
-            readThroughChain(m_context.setOfKey(), keyOfFoundName(name), { nullptr, m_context.setOfKey() }, m_statement.result);
+        } else if (!splitLookupThroughPlaceholders()) {
+            ClimbingSet start = m_context.setOfKey();
+            if (ClimbingSet proxies = m_findsOwnPropertiesAlone || m_keepsHoldersOfExportsItStartsFrom ? ClimbingSet() : m_context.followedProxiesAmong(start); holdsAnything(proxies)) {
+                readThroughProxies(proxies, keyOfFoundName(name), m_statement.result);
+                start = m_context.restrict(start, ValueSets::complement(m_context.withMembersOf(ValueSets::nothing, proxies)));
+            }
+            readThroughChain(start, keyOfFoundName(name), { nullptr, start }, m_statement.result);
+        }
         return;
     case ValueFlowNameKind::Setter:
     case ValueFlowNameKind::SetterUnderUnknownKey:

@@ -163,6 +163,8 @@ Expected<HeatClass> heatClassOf(const Heat&, FunctionAnalyses&, BlockID);
 // By how often the code of the function is taken to run for its size.
 Expected<bool> isInColderPartOfProgram(const Heat&, const Program&, FunctionID);
 Expected<HeatClass> heatClassOf(FunctionPassContext&, BlockID);
+// Reads nothing outside the function: hot in a loop, warm elsewhere, cold on the way to a throw.
+Expected<HeatClass> heatClassByOwnLoops(FunctionPassContext&, BlockID);
 Expected<bool> isHotLoop(FunctionPassContext&, const NaturalLoop&);
 
 } } } // namespace JSC::AOT::Typed

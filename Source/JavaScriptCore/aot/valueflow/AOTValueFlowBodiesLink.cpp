@@ -1318,8 +1318,6 @@ private:
             bool hasCallableInstances = Type::builtinClass(tested).overlaps(Type::function(), m_program);
             if (hasCallableInstances)
                 callableInstances.append(allocatedAs[index]);
-            if (builtins.at(tested).instanceTest == BuiltinInstanceTest::None)
-                return universe.m_objects;
 
             parts.shrink(0);
             parts.append(tested == BuiltinClasses::Promise ? inEveryClassButNoBuiltinObject : inEveryClass);
@@ -1331,10 +1329,13 @@ private:
             }
             return maker.uniteAll(parts.span());
         });
+        universe.m_objectsThatMayBeMadeAs = universe.m_objectsOfClass;
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
+                universe.m_objectsOfClass[index] = universe.m_objects;
+        }
         universe.m_sureInstancesOfClass = Vector<ValueSetID>(builtins.classCount(), [&](size_t index) {
             BuiltinClassID tested(static_cast<uint32_t>(index));
-            if (builtins.at(tested).instanceTest == BuiltinInstanceTest::None)
-                return ValueSets::nothing;
             parts.shrink(0);
             for (uint32_t other = 0; other < builtins.classCount(); ++other) {
                 if (allocatedAs[other] != ValueSets::nothing && builtins.isSameOrSubclassOf(BuiltinClassID(other), tested))
@@ -1342,6 +1343,11 @@ private:
             }
             return maker.uniteAll(parts.span());
         });
+        universe.m_objectsMadeAs = universe.m_sureInstancesOfClass;
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            if (builtins.at(BuiltinClassID(index)).instanceTest == BuiltinInstanceTest::None)
+                universe.m_sureInstancesOfClass[index] = ValueSets::nothing;
+        }
         parts.shrink(0);
         for (uint32_t index = 0; index < builtins.classCount(); ++index) {
             if (builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::Iterator) || builtins.isSameOrSubclassOf(BuiltinClassID(index), BuiltinClasses::AsyncIterator))
@@ -1495,6 +1501,14 @@ private:
             if (ValueFlowObjectID object = universe.objectOf(builtin, module))
                 linked.set = maker.intersect(linked.set, ValueSets::complement(maker.of(object)));
         }
+        if (!mask.insideOneOfClasses.isEmpty()) {
+            ValueSetID instances = ValueSets::nothing;
+            for (BuiltinClassID builtinClass : mask.insideOneOfClasses)
+                instances = maker.unite(instances, universe.instancesOf(builtinClass));
+            linked.set = maker.intersect(linked.set, instances);
+        }
+        for (BuiltinClassID builtinClass : mask.outsideClasses)
+            linked.set = maker.intersect(linked.set, ValueSets::complement(universe.sureInstancesOf(builtinClass)));
         if (linked.familyObjects)
             linked.familyObjects = maker.intersect(linked.familyObjects, linked.set);
         return linked;
@@ -1563,13 +1577,15 @@ private:
                 nodeNamed(index, statement.thrown),
                 statement.firstSite == Body::none ? UINT32_MAX : universe.m_firstSiteOfFunction[index] + statement.firstSite,
                 statement.isOnlyCalledOnItsHolder,
+                statement.guardCount,
+                first.operand + statement.firstGuard,
             };
         });
         std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(first.observedValue).begin(), [&](const Body::ObservedValue& observed) {
             return ValueFlowObservedValue { body.function, observed.test, link(observed.operand) };
         });
-        std::ranges::transform(body.valuesAliveForComparisonsOnly, m_result.m_valuesAliveForComparisonsOnly.mutableSpan().subspan(first.valueAliveForComparisonsOnly).begin(), [&](ValueID value) {
-            return ValueFlowValueOfFunction { body.function, value };
+        std::ranges::transform(body.valuesAliveForComparisonsOnly, body.nodesOfValuesAliveForComparisonsOnly, m_result.m_valuesAliveForComparisonsOnly.mutableSpan().subspan(first.valueAliveForComparisonsOnly).begin(), [&](ValueID value, const ValueFlowNodeName& node) {
+            return ValueFlowValueOfFunction { body.function, value, nodeNamed(index, node) };
         });
         std::ranges::transform(body.comparedValues, m_result.m_comparedValues.mutableSpan().subspan(first.comparedValues).begin(), [&](const Body::ComparedValues& compared) {
             return ValueFlowComparedValues { body.function, link(compared.left), link(compared.right) };

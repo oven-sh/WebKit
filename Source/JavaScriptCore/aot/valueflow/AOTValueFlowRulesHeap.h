@@ -27,6 +27,8 @@ inline constexpr ValueFlowName everyEnumerableOwnPropertyHeldName { ValueFlowNam
 void runHeapOperation(const ValueFlowStatement&, ValueFlowRuleContext&);
 
 void runLookup(const ValueFlowStatement&, ValueFlowRuleContext&);
+// What Reflect.get answers: an accessor that is found from the object runs for the receiver.
+void readForReceiver(ValueFlowRuleContext&, const ValueFlowOperand& object, const ValueFlowOperand& property, const ValueFlowOperand& receiver, ValueFlowNodeID result, ValueFlowNodeID thrown);
 
 ClimbingSet objectsHeldFromCreation(ValueFlowRuleContext&, ClimbingSet objects);
 void readOwnPropertiesNobodyWrote(ValueFlowRuleContext&, ClimbingSet holders, std::optional<PropertyKeyID>, ValueFlowNodeID result);

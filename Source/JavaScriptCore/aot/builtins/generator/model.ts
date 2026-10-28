@@ -310,6 +310,8 @@ export interface ModelResult {
   iteratedOperand: ModelOperand | null;
   iterationKind: IterationKind | null;
   prototypeSource: ModelOperand | null;
+  testedOperand: ModelOperand | null;
+  testedType: ModelType | null;
   properties: readonly ModelResultProperty[];
 }
 

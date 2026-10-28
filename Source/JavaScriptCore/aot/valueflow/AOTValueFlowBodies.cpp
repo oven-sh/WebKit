@@ -77,6 +77,19 @@ struct PendingStatement {
     bool leavesBody { true };
 };
 
+struct Guard {
+    ValueID value;
+    uint32_t mask { 0 };
+};
+
+struct GuardsOfBlock {
+    Vector<Guard, 4> values;
+    bool areAskedFor { false };
+    bool areWritten { false };
+    uint8_t count { 0 };
+    uint32_t first { 0 };
+};
+
 constexpr OperandUses inspectsOrReturns { OperandUse::Inspects, OperandUse::Returns };
 
 bool carriesProgramValues(OpaqueKind kind)
@@ -183,6 +196,7 @@ public:
                 at(block.parameters[index]).role = Role::Passing;
                 m_blockParameters.append({ id, index, block.parameters[index] });
             }
+            findGuardsOf(id);
             for (ValueID value : block.values)
                 describeValue(id, value);
             describeTerminator(id, block.terminator);
@@ -350,6 +364,11 @@ private:
             add(hasher, type);
         for (auto [builtin, module] : mask.outsideBuiltinsOfModules)
             add(hasher, builtin.index(), module.index());
+        for (BuiltinClassID builtinClass : mask.insideOneOfClasses)
+            add(hasher, builtinClass.index());
+        add(hasher, 0x5eed);
+        for (BuiltinClassID builtinClass : mask.outsideClasses)
+            add(hasher, builtinClass.index());
         return m_masks.intern(WTF::move(mask), hasher.hash());
     }
 
@@ -376,6 +395,27 @@ private:
         return internMask({ { }, WTF::move(outside), ValueFlowMaskKind::Checked });
     }
 
+    uint32_t maskOfCellTypeTest(const Value& test, EdgeSide side)
+    {
+        const BuiltinTable& builtins = m_program.builtins();
+        JSType first = toJSType(test.first());
+        JSType last = toJSType(test.last());
+        Vector<BuiltinClassID, 0> classes;
+        BitVector typesWithClass;
+        for (uint32_t index = 0; index < builtins.classCount(); ++index) {
+            const BuiltinClass& candidate = builtins.at(BuiltinClassID(index));
+            if (candidate.instanceTest != BuiltinInstanceTest::JSTypeEquals || candidate.type < first || candidate.type > last)
+                continue;
+            classes.append(candidate.id);
+            typesWithClass.set(candidate.type - first);
+        }
+        if (side == EdgeSide::NotTaken)
+            return internMask({ { }, { }, ValueFlowMaskKind::Checked, { }, { }, WTF::move(classes) });
+        if (first > last || typesWithClass.bitCount() != static_cast<size_t>(last - first) + 1)
+            return 0;
+        return internMask({ { }, { }, ValueFlowMaskKind::Checked, { }, WTF::move(classes), { } });
+    }
+
     bool areOfOneKind(uint32_t first, uint32_t second) const { return !first || !second || m_body.masks[first].kind == m_body.masks[second].kind; }
 
     uint32_t intersectMasks(uint32_t first, uint32_t second)
@@ -397,7 +437,14 @@ private:
             if (!outsideBuiltinsOfModules.contains(object))
                 outsideBuiltinsOfModules.append(object);
         }
-        return internMask({ unite(m_body.masks[first].inside, m_body.masks[second].inside), unite(m_body.masks[first].outside, m_body.masks[second].outside), m_body.masks[first].kind, WTF::move(outsideBuiltinsOfModules) });
+        // Of two lists of which one member has to hold the value, one list is kept: the mask lets more through.
+        auto insideOneOfClasses = m_body.masks[first].insideOneOfClasses.isEmpty() ? m_body.masks[second].insideOneOfClasses : m_body.masks[first].insideOneOfClasses;
+        auto outsideClasses = m_body.masks[first].outsideClasses;
+        for (BuiltinClassID builtinClass : m_body.masks[second].outsideClasses) {
+            if (!outsideClasses.contains(builtinClass))
+                outsideClasses.append(builtinClass);
+        }
+        return internMask({ unite(m_body.masks[first].inside, m_body.masks[second].inside), unite(m_body.masks[first].outside, m_body.masks[second].outside), m_body.masks[first].kind, WTF::move(outsideBuiltinsOfModules), WTF::move(insideOneOfClasses), WTF::move(outsideClasses) });
     }
 
     uint32_t maskFor(TypeID from, TypeID to)
@@ -570,6 +617,66 @@ private:
     }
 
     bool isTypedByChecks(ValueID id) const { return isBehindCheck(id) && takesTypeFromOperands(m_function.at(id).opcode); }
+
+    // A block that one edge leads to is entered only behind what that edge is behind. Out of a test the edge brings the tested value as the test lets it through.
+    void findGuardsOf(BlockID id)
+    {
+        if (m_guardsOfBlock.isEmpty())
+            m_guardsOfBlock.grow(m_function.blocks.size());
+        std::span<const Edge> incoming = m_cfg.incomingEdges(id);
+        if (id == entryBlock || incoming.size() != 1)
+            return;
+        GuardsOfBlock& guards = m_guardsOfBlock[id.index()];
+        guards.values = m_guardsOfBlock[incoming[0].from.index()].values;
+        const Block& block = m_function.at(id);
+        for (uint32_t index = 0; index < block.parameters.size(); ++index) {
+            ValueID parameter = block.parameters[index];
+            if (!carriesValue(parameter) || !isBehindCheck(parameter))
+                continue;
+            IncomingValue value = incomingValueOf(m_function, incoming[0], index);
+            if (value.kind != IncomingValue::Kind::EdgeResult)
+                continue;
+            EdgeResult result = edgeResultAt(m_function, value.result);
+            if (result.kind != EdgeResultKind::NarrowedOperand || (!result.test && !result.caseIndex))
+                continue;
+            addGuard(guards, { parameter, 0 });
+        }
+        const Terminator& terminator = m_function.at(incoming[0].from).terminator;
+        if (terminator.isConditionalBranch() && !incoming[0].isHandlerEdge())
+            addGuardOfCondition(guards, terminator.conditionOperand(), incoming[0].targetIndex ? EdgeSide::NotTaken : EdgeSide::Taken);
+    }
+
+    void addGuard(GuardsOfBlock& guards, Guard guard)
+    {
+        AOT_THRESHOLD(size_t, mostGuardsOfBlock, 4);
+        if (guards.values.size() == mostGuardsOfBlock)
+            guards.values.removeAt(0);
+        guards.values.append(guard);
+    }
+
+    // What the edge brings of the operand of the last conversion is a guard already.
+    void addGuardOfCondition(GuardsOfBlock& guards, ValueID condition, EdgeSide side)
+    {
+        bool isNegated = false;
+        ValueID tested = condition;
+        for (;;) {
+            const Value& value = m_function.at(tested);
+            if (value.opcode == Opcode::LogicalNot) {
+                isNegated = true;
+                side = side == EdgeSide::Taken ? EdgeSide::NotTaken : EdgeSide::Taken;
+            } else if (value.opcode != Opcode::ToBoolean && !isCast(value.opcode))
+                break;
+            tested = value.operand(0);
+        }
+        const Value& test = m_function.at(tested);
+        if (test.opcode == Opcode::HasJSType) {
+            if (uint32_t mask = maskOfCellTypeTest(test, side); mask && carriesValue(test.valueOperand()))
+                addGuard(guards, { test.valueOperand(), mask });
+            return;
+        }
+        if (isNegated && carriesValue(tested))
+            addGuard(guards, { tested, maskOfTruthinessTest(side) });
+    }
 
     void addSourcesOfBlockParameters()
     {
@@ -995,6 +1102,9 @@ private:
         case Opcode::NewFunctionThatThrows:
         case Opcode::NewSuppressedError:
             return setConstant(id, constantOf({ ValueFlowObjectKind::UnknownObject, 0, { } }));
+        case Opcode::InstanceOf:
+            at(id).role = Role::Result;
+            return;
         default:
             break;
         }
@@ -1124,6 +1234,7 @@ private:
         PendingStatement statement { id, block, static_cast<uint32_t>(m_statementOperands.size()), value.numberOfOperands(), !onlyLooksAtOperands(value) };
         for (uint32_t index = 0; index < statement.operandCount; ++index)
             m_statementOperands.append(value.operand(index));
+        m_guardsOfBlock[block.index()].areAskedFor = true;
         m_statements.append(statement);
     }
 
@@ -1234,6 +1345,12 @@ private:
     void markLiveValues()
     {
         addSourcesOfBlockParameters();
+        // A test that is not read lets everything through.
+        for (GuardsOfBlock& guards : m_guardsOfBlock) {
+            guards.values.removeAllMatching([&](const Guard& guard) {
+                return !guard.mask && !sourcesOf(guard.value)[0].mask;
+            });
+        }
         m_body.answersOnlyWhatItConstructs = answersOnlyWhatItConstructs();
 
         Vector<ValueID, 64> worklist;
@@ -1266,12 +1383,21 @@ private:
             markLive(left);
             markLive(right);
         }
+        forEachGuardAskedFor(markLive);
         markSources();
 
         for (ValueID check : m_checks) {
             ValueID tested = m_function.at(check).valueOperand();
             if (at(tested).isLive && !at(tested).isLiveForComparisonsOnly)
                 m_observedValues.append({ check, tested });
+        }
+    }
+
+    void forEachGuardAskedFor(NOESCAPE const Invocable<void(ValueID)> auto& functor)
+    {
+        for (const GuardsOfBlock& guards : m_guardsOfBlock) {
+            if (guards.areAskedFor)
+                std::ranges::for_each(guards.values, functor, &Guard::value);
         }
     }
 
@@ -1287,6 +1413,9 @@ private:
             ++at(left).operandReaders;
             ++at(right).operandReaders;
         }
+        forEachGuardAskedFor([&](ValueID guard) {
+            ++at(guard).operandReaders;
+        });
         for (const EdgeToNode& edge : m_edges)
             ++at(edge.value).otherReaders;
         for (uint32_t index = 0; index < m_descriptions.size(); ++index) {
@@ -1827,6 +1956,18 @@ private:
         }
     }
 
+    // The pass that replaces such a call reads the type of its answer, wherever the call stands.
+    bool callsHelperOfCompiler(const Value& value) const
+    {
+        if (flowRuleOf(value.opcode) != FlowRule::Call || !value.operand(0))
+            return false;
+        const Value& callee = m_function.at(definitionThroughSameValues(m_function, value.operand(0)));
+        if (callee.opcode != Opcode::Builtin)
+            return false;
+        const Builtin& entry = m_program.builtins().at(callee.builtin());
+        return entry.flags.contains(BuiltinFlag::IsCompilerHelper) || entry.holder == Builtins::BunBundle;
+    }
+
     void emitStatement(const PendingStatement& pending)
     {
         const Value& value = m_function.at(pending.site);
@@ -1839,6 +1980,22 @@ private:
         for (uint32_t index = 0; index < pending.operandCount; ++index) {
             const UnobservedFieldDefinition* unobserved = findUnobservedDefinition(pending.site, index);
             m_body.operands.append(unobserved ? valueOf(*unobserved) : operandFormOf(value, index, m_statementOperands[pending.firstOperand + index]));
+        }
+        GuardsOfBlock& guards = m_guardsOfBlock[pending.block.index()];
+        if (!guards.areWritten) {
+            guards.areWritten = true;
+            guards.first = m_body.operands.size();
+            for (const Guard& guard : guards.values) {
+                // Of a value that has no node flow says nothing.
+                if (OperandForm form = operandFormOf(guard.value); form.node) {
+                    m_body.operands.append(guard.mask ? throughMask(form, guard.mask) : form);
+                    ++guards.count;
+                }
+            }
+        }
+        if (!callsHelperOfCompiler(value)) {
+            statement.firstGuard = guards.first;
+            statement.guardCount = guards.count;
         }
         if (at(pending.site).role == Role::Result && at(pending.site).isLive)
             statement.result = at(pending.site).name;
@@ -1873,6 +2030,14 @@ private:
             if (m_descriptions[index].isLiveForComparisonsOnly)
                 m_body.valuesAliveForComparisonsOnly.append(ValueID(index));
         }
+        m_body.nodesOfValuesAliveForComparisonsOnly.grow(m_body.valuesAliveForComparisonsOnly.size());
+        for (uint32_t index = 0; index < m_body.nodes.size() && !m_body.valuesAliveForComparisonsOnly.isEmpty(); ++index) {
+            ValueID value = m_body.nodes[index].value;
+            if (!value || !at(value).isLiveForComparisonsOnly)
+                continue;
+            size_t position = std::ranges::lower_bound(m_body.valuesAliveForComparisonsOnly, value) - m_body.valuesAliveForComparisonsOnly.begin();
+            m_body.nodesOfValuesAliveForComparisonsOnly[position] = NodeName::ofBody(index);
+        }
     }
 
     struct BlockParameter {
@@ -1903,6 +2068,7 @@ private:
     ValueID m_valueWithHashedSources;
     UncheckedKeyHashSet<uint64_t> m_hashedSources;
     Vector<BlockParameter, 16> m_blockParameters;
+    Vector<GuardsOfBlock> m_guardsOfBlock;
     Vector<ValueID, 8> m_returnedValues;
     bool m_returnsCall { false };
     Vector<NodeName, 16> m_caughtNodes;

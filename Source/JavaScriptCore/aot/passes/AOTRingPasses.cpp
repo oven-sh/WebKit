@@ -1737,14 +1737,32 @@ struct TrivialParameterRemover {
     ValueSubstitution candidates { function };
     Vector<uint32_t> positionOfParameter = Vector<uint32_t>(FillWith { }, function.values.size(), noPosition);
 
+    mutable std::optional<BitVector> positionsFoundInBounds;
+
+    bool isNarrowedOnEdge(ValueID parameter) const
+    {
+        uint32_t index = positionOfParameter[parameter.index()];
+        if (index == noPosition)
+            return false;
+        const ParameterPosition& position = parameters[index];
+        return std::ranges::any_of(cfg.incomingEdges(position.block), [&](Edge edge) {
+            return position.index >= targetOf(function, edge).arguments.size();
+        });
+    }
+
     bool isPositionThatTestFoundInBounds(ValueID parameter) const
     {
-        return std::ranges::any_of(context.analyses.useLists().usesOf(parameter), [&](const Use& use) {
-            if (use.kind != Use::Kind::Operand)
-                return false;
-            const Value& user = function.at(use.user);
-            return provesOf(user.opcode) == Proof::InBounds && user.positionOperand() == parameter;
-        });
+        if (!positionsFoundInBounds) {
+            positionsFoundInBounds.emplace(function.values.size());
+            for (BlockID block : cfg.reversePostOrder()) {
+                for (ValueID id : function.at(block).values) {
+                    const Value& value = function.at(id);
+                    if (provesOf(value.opcode) == Proof::InBounds && value.positionOperand())
+                        positionsFoundInBounds->quickSet(value.positionOperand().index());
+                }
+            }
+        }
+        return positionsFoundInBounds->quickGet(parameter.index());
     }
 
     KnownValue onlyValueOf(const Block& block, ValueID parameter) const
@@ -1756,9 +1774,10 @@ struct TrivialParameterRemover {
         case KnownValue::Kind::Undefined:
         case KnownValue::Kind::Null:
         case KnownValue::Kind::Boolean:
+            return value;
         case KnownValue::Kind::Integer:
             // What a test has found in bounds is the value that was narrowed to the parameter. A constant in its place says nothing of that value.
-            return isPositionThatTestFoundInBounds(parameter) ? KnownValue() : value;
+            return isNarrowedOnEdge(parameter) && isPositionThatTestFoundInBounds(parameter) ? KnownValue() : value;
         case KnownValue::Kind::Unknown:
         case KnownValue::Kind::Double:
         case KnownValue::Kind::String:

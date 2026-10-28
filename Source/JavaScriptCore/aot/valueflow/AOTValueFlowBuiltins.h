@@ -46,6 +46,8 @@ inline ValueFlowCellName cellOfDroppedResults(const BuiltinTable& builtins)
 }
 
 ValueFlowNodeID nodeReadFromNativeCell(ValueFlowRuleContext&, BuiltinName cell);
+// Whoever takes the member without naming it holds what the member answers out of a native cell as a value nobody knows.
+void openProxiesThatMemberAnswers(ValueFlowRuleContext&, BuiltinID member);
 // True where flow can list the own names of every object among the values: `held` gets them.
 bool listKeysAsObjectKeysDoes(ValueFlowRuleContext&, ClimbingSet values, ValueFlowNodeID held);
 
@@ -53,6 +55,8 @@ void applyHostUses(BuiltinID onBehalfOf, const ValueFlowOperand& value, const Bu
 void callFromHost(BuiltinID onBehalfOf, const ValueFlowOperand& callees, const BuiltinHostCall&, ValueFlowRuleContext&);
 
 bool doRecordsDescribe(const BuiltinTable&, const BuiltinOverload&);
+// True where every way to call the built-in does nothing to the operand but call it.
+bool onlyCallsOperand(const BuiltinTable&, BuiltinID, BuiltinOperand);
 bool standsBehindDescribedBuiltins(const Program&, FunctionID);
 bool isEnteredByCallsAlone(const Program&, RuntimeFunctionID);
 ValueFlowObjectID calleeOfDescribedCall(const ValueFlowUniverse&);

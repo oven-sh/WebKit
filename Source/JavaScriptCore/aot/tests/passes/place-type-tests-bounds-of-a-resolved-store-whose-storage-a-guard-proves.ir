@@ -1,0 +1,27 @@
+# A store that was resolved while its value could still be absent has the kind of storage from a guard. Once the value fits the storage and the position is compared with the length, the store gets the test of the bounds, and the kind of storage is asked for again beside it
+# FORM: Prepared optimizing
+# RUN: pass PlaceTypeTests
+
+module m0 path="main.js" displayPath="main.js"
+
+function f0 name="fill" parameters=[{type=Array<i32, pristine[Storage, Names]>}, {type=i32}] results=[{type=undefined}] {
+    v2 = Integer integer=0
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = CallBuiltin v0 overload=ArrayPrototypeLength/0
+    v6 = Less v3, v5
+    Branch v6 -> taken b2(| 0), notTaken b4()
+  b2(v7):
+    v8 = HasArrayStorage v0 arrayStorage=Int32 [isWritable]
+    Branch v8 -> taken b3(| 0), notTaken b4()
+  b3(v9: guard):
+    PutArrayElement v0, v7, v1, v9 arrayStorage=Int32 level=Expected [keyIsIntegral]
+    v11 = Increment v7
+    Jump -> next b1(v11)
+  b4():
+    Return
+}
+# CHECK-LABEL: function f0 name="fill"
+# CHECK: = IsInBounds v0,
+# CHECK: PutArrayElement v0, {{*}}[keyIsIntegral, isInBounds]

@@ -566,7 +566,9 @@ static void runRuleOnNodesNamed(const ValueFlowStatement& statement, ValueFlowRu
 {
     switch (statement.kind) {
     case ValueFlowStatementKind::Operation:
-        return runOperation(statement, context);
+        if (context.canBeReached(statement))
+            runOperation(statement, context);
+        return;
     case ValueFlowStatementKind::CallGroup:
         return runCallGroup(statement, context);
     case ValueFlowStatementKind::ModuleEvaluation:

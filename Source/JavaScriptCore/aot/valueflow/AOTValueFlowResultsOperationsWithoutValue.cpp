@@ -40,7 +40,7 @@ public:
     {
         Vector<const ValueFlowStatement*, 4> suspects;
         for (const ValueFlowStatement& statement : statements()) {
-            if (isOperationWithoutValue(statement) && mayHaveToHoldValue(statement) && !hasOperandWithoutValue(statement) && mustHaveValue(statement))
+            if (isOperationWithoutValue(statement) && mayHaveToHoldValue(statement) && !hasOperandWithoutValue(statement) && !standsBehindTestThatNothingPasses(statement) && mustHaveValue(statement))
                 suspects.append(&statement);
         }
         if (suspects.isEmpty())
@@ -76,6 +76,13 @@ private:
     {
         return std::ranges::any_of(operandsOf(statement), [&](const ValueFlowOperand& operand) {
             return isGiven(operand) && holdsNothing(operand);
+        });
+    }
+
+    bool standsBehindTestThatNothingPasses(const ValueFlowStatement& statement)
+    {
+        return std::ranges::any_of(m_inputs.bodies().guardsOf(statement), [&](const ValueFlowOperand& guard) {
+            return holdsNothing(guard);
         });
     }
 

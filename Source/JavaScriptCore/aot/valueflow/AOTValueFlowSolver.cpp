@@ -1687,8 +1687,17 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             found = maker.unite(found, maker.intersect(held, asked));
     };
 
+    // A lookup of a name asks a proxy by its trap.
+    uint32_t firstHub = nodes.hub(ValueFlowBehaviorID(0u)).index();
+    auto onlyLooksNamesUp = [](const ValueFlowBehavior& behavior) {
+        if (behavior.describesRefusedOperands || !behavior.calledMembers.empty())
+            return false;
+        return behavior.protocols == Protocols { Protocol::HasInstance } || (behavior.protocols == Protocols { Protocol::Named } && !behavior.namedMembers.empty() && !behavior.isTransitive);
+    };
     // In hands that no statement stands for: what the host holds, what a behavior of built-ins takes in.
     for (uint32_t index = nodes.ofHost(static_cast<ValueFlowHostNode>(0)).index(); index < m_input.numberOfNodes; ++index) {
+        if (index >= firstHub && onlyLooksNamesUp(m_input.universe->builtinTables().at(ValueFlowBehaviorID(index - firstHub))))
+            continue;
         if (index != listOfFollowed.index() && index != listOfOpen.index() && index != listOfThoseThatWalksPass.index() && index != listOfThoseWithTrapsForWalks.index())
             note(m_graph.valueOf(ValueFlowNodeID(index)));
     }
@@ -1703,6 +1712,17 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     ValueSetID closures = m_input.universe->closures();
     ValueSetID stopWalks = maker.unite(ValueSets::complement(m_graph.valueOf(listOfThoseThatWalksPass)), m_graph.valueOf(listOfThoseWithTrapsForWalks));
     Vector<const MadeNodes*> links;
+    // The table says how a data property of a built-in is read. Nothing is called, and the receiver goes nowhere.
+    auto readsOnlyDataOfTable = [&](const ValueFlowNodeKey& group) {
+        if (group.callKind() != ValueFlowCallKind::Get || ValueSets::isComplement(group.set))
+            return false;
+        bool readsOnlyData = true;
+        m_sets.forEachMember(group.set, [&](ValueFlowObjectID callee) {
+            BuiltinID builtin = m_input.universe->builtinOf(callee);
+            readsOnlyData &= m_sets.contains(closures, callee) || (builtin && m_input.program->builtins().at(builtin).kind == BuiltinKind::DataProperty);
+        });
+        return readsOnlyData;
+    };
     // A rule that asks about all objects at once, whatever they are, has taken none of them out of a value.
     ValueSetID everyObjectThatBuiltinsMake = maker.intersect(m_input.universe->objectsThatMayBeAnything(), m_input.universe->knownObjects());
     // Flow follows a value out of a cell that the table names, and out of the cell of a member whose reads are answered from it.
@@ -1745,8 +1765,8 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
                 note(m_graph.valueOf(made.first));
             break;
         case ValueFlowMadeNodeKind::CallGroup:
-            note(key.set);
-            if (!maker.meet(key.set, ValueSets::complement(closures)))
+            // Whoever calls a proxy asks it by its trap.
+            if (!maker.meet(key.set, ValueSets::complement(closures)) || readsOnlyDataOfTable(key))
                 break;
             for (unsigned offset = 0; offset < key.numberOfNodes(); ++offset) {
                 ValueFlowNodeID node(made.first.index() + offset);
@@ -1766,9 +1786,13 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             // A walk that comes to a proxy goes on at its target, unless the handler may have a trap for what the walk is for.
             bool isLink = shapeOf(name.kind).sort == ValueFlowNameSort::PrototypeLink;
             isOfModel |= isLink && key.kind == ValueFlowMadeNodeKind::Written;
-            if (!isOfModel && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
+            // A lookup of a name asks a proxy that it starts at by its trap.
+            bool asksWhereItStarts = key.kind == ValueFlowMadeNodeKind::Lookup && (name.kind == ValueFlowNameKind::Property || name.kind == ValueFlowNameKind::Elements || name == everyPropertyName);
+            if (!isOfModel && !asksWhereItStarts && maker.meet(everyObjectThatBuiltinsMake, ValueSets::complement(key.set)))
                 note(isLink ? maker.intersect(key.set, stopWalks) : key.set);
-            if (!isOfModel && key.kind != ValueFlowMadeNodeKind::Written && key.kind != ValueFlowMadeNodeKind::WrittenUnderKind && maker.meet(isLink ? maker.intersect(m_graph.valueOf(made.first), stopWalks) : m_graph.valueOf(made.first), asked))
+            // What a bound function was bound over is read to be called or to be tested against, and either asks a proxy by its trap.
+            bool readsTargetOfBoundFunction = name.kind == ValueFlowNameKind::HiddenSlot && name.payload == BuiltinSlots::BoundFunctionTarget.index();
+            if (!isOfModel && !readsTargetOfBoundFunction && key.kind != ValueFlowMadeNodeKind::Written && key.kind != ValueFlowMadeNodeKind::WrittenUnderKind && maker.meet(isLink ? maker.intersect(m_graph.valueOf(made.first), stopWalks) : m_graph.valueOf(made.first), asked))
                 readsProxy.set(&made - m_madeNodes.span().data());
                 someReadHoldsProxy = true;
             if (isLink) {
@@ -1832,6 +1856,7 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
     }
 
     constexpr OperandUses usesThatHandOn { OperandUse::Retains, OperandUse::Returns };
+    ValueSetID objectsThatAreNoClosures = maker.intersect(m_input.universe->callables(), ValueSets::complement(closures));
     // A built-in that links an operand above an object does nothing else to it.
     constexpr OperandUses usesThatLinkAbove { OperandUse::Inspects, OperandUse::BecomesPrototype, OperandUse::Retains };
     auto onlyLinksArgumentAbove = [&](ValueFlowObjectID callee, unsigned argument) {
@@ -1839,6 +1864,11 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
         BuiltinID builtin = m_sets.contains(m_input.universe->builtinFunctions(), callee) ? m_input.universe->builtinOf(callee) : BuiltinID();
         if (!builtin)
             return false;
+        // Reflect.get hands its receiver to the accessor that it finds.
+        if (builtins.canonicalID(builtin) == Builtins::ReflectGet && argument == 2)
+            return true;
+        if (onlyCallsOperand(builtins, builtin, BuiltinOperand::argument(argument)))
+            return true;
         bool isDescribed = false;
         for (const BuiltinOverload& overload : builtins.overloadsOf(builtins.canonicalID(builtin))) {
             if (overload.mode != BuiltinCallMode::Call)
@@ -1880,24 +1910,35 @@ ValueSetID ValueFlowSolver::followedProxiesThatMoreMayBeDoneTo()
             if (!operandUsesOf(statement.opcode, position).contains(OperandUse::Calls))
                 continue;
             const ValueFlowOperand& callee = operands[position];
-            callsOnlyFunctionsOfProgram &= !callee.constant || !maker.meet(callee.constant, ValueSets::complement(closures));
-            callsOnlyFunctionsOfProgram &= !callee.node || !maker.meet(m_graph.valueOf(callee.node), ValueSets::complement(closures));
+            callsOnlyFunctionsOfProgram &= !callee.constant || !maker.meet(callee.constant, objectsThatAreNoClosures);
+            callsOnlyFunctionsOfProgram &= !callee.node || !maker.meet(m_graph.valueOf(callee.node), objectsThatAreNoClosures);
         }
         // What calls something that is no function of the program hands it whatever it has read out of a list or an object by itself.
-        if (hasReadSome && !callsOnlyFunctionsOfProgram)
+        bool isTestAgainstConstructor = isOperation && statement.opcode == Opcode::InstanceOf && m_statementsThatAskProxiesByTheirTraps.get(index);
+        if (hasReadSome && !callsOnlyFunctionsOfProgram && !isTestAgainstConstructor)
             forEachProxyReadByStatement(note);
         for (unsigned position = 0; position < operands.size(); ++position) {
             const ValueFlowOperand& operand = operands[position];
             if (!operand.node || operand.node.index() >= m_input.numberOfNodes || !holdsProxy.quickGet(operand.node.index()))
                 continue;
-            if (!position && m_statementsThatAskProxiesByTheirTraps.get(index))
+            if (position == (isTestAgainstConstructor ? 1 : 0) && m_statementsThatAskProxiesByTheirTraps.get(index))
                 continue;
             if (isOperation && callsOnlyFunctionsOfProgram && usesThatHandOn.containsAll(operandUsesOf(statement.opcode, position)))
                 continue;
+            if (isOperation && statement.opcode == Opcode::Call && position == 1) {
+                bool isAskedByTraps = true;
+                ValueSetID callees = maker.unite(operands[0].constant ? operands[0].constant : ValueSets::nothing, operands[0].node ? m_graph.valueOf(operands[0].node) : ValueSets::nothing);
+                m_sets.forEachMember(maker.intersect(callees, m_input.universe->callables()), [&](ValueFlowObjectID callee) {
+                    BuiltinID builtin = m_sets.contains(m_input.universe->builtinFunctions(), callee) ? m_input.program->builtins().canonicalID(m_input.universe->builtinOf(callee)) : BuiltinID();
+                    isAskedByTraps &= m_sets.contains(closures, callee) || builtin == Builtins::FunctionPrototypeBind || builtin == Builtins::FunctionPrototypeSymbolHasInstance || (builtin && onlyCallsOperand(m_input.program->builtins(), builtin, BuiltinOperand::receiver()));
+                });
+                if (isAskedByTraps)
+                    continue;
+            }
             if (isOperation && statement.opcode == Opcode::Call && position >= 2) {
                 bool isOnlyLinkedAbove = true;
                 ValueSetID callees = maker.unite(operands[0].constant ? operands[0].constant : ValueSets::nothing, operands[0].node ? m_graph.valueOf(operands[0].node) : ValueSets::nothing);
-                m_sets.forEachMember(callees, [&](ValueFlowObjectID callee) {
+                m_sets.forEachMember(maker.intersect(callees, m_input.universe->callables()), [&](ValueFlowObjectID callee) {
                     isOnlyLinkedAbove &= m_sets.contains(closures, callee) || onlyLinksArgumentAbove(callee, position - 2);
                 });
                 if (isOnlyLinkedAbove)

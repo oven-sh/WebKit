@@ -1629,7 +1629,19 @@ JSPromise* JSModuleLoader::loadModuleSync(JSGlobalObject* globalObject, const Id
     // record, the ModuleLoadStep that settles it is on the normal microtask queue, which this load never drains.
     auto waitsForStepOfImport = [&, type = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript] {
         ModuleRegistryEntry* entry = vm.hasCompiledCode() ? getRegisteredMayBeNull(moduleName, type) : nullptr;
-        return entry && entry->status() == ModuleRegistryEntry::Status::Fetched && entry->loadPromise() && entry->loadPromise()->status() == JSPromise::Status::Pending;
+        if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetched || !entry->loadPromise() || entry->loadPromise()->status() != JSPromise::Status::Pending)
+            return false;
+        // Not where the graph of the root waits for a step of a synchronous load further out, which goes on when this one returns.
+        for (auto* outer = vm.m_synchronousModuleQueue->prev; outer; outer = outer->prev) {
+            for (const VM::SynchronousModuleTask& step : outer->tasks) {
+                if (step.task != InternalMicrotask::ModuleLoadStep || uncheckedDowncast<JSPromise>(step.arg0)->status() != JSPromise::Status::Pending)
+                    continue;
+                auto* load = dynamicDowncast<ModuleGraphLoadingState>(uncheckedDowncast<ModuleLoadingContext>(step.arg2)->payload());
+                if (load && load->containsVisited(entry->record()))
+                    return false;
+            }
+        }
+        return true;
     };
     JSPromise* result = loadModule(globalObject, moduleName, parameters.copyRef(), scriptFetcher.copyRef(), { ModuleLoadFlag::Evaluate });
     RETURN_IF_EXCEPTION(scope, result);

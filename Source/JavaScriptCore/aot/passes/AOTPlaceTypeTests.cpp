@@ -3066,7 +3066,8 @@ struct TestPlacer {
             BlockID blockOfTest = builder.currentBlock();
 
             // No block is made that only jumps: SimplifyControlFlow would merge it away in the same round, and every pass in between would walk it.
-            bool provesNothingWhenFailed = provesForStretch(provesOf(function.at(test).opcode));
+            LayoutID functionWhoseGuardsBegin = constructorFunctionAskedAbout(context.program, function.at(test));
+            bool provesNothingWhenFailed = provesForStretch(provesOf(function.at(test).opcode)) && !functionWhoseGuardsBegin;
             bool entersPassedTarget = &plannedTest == &plannedTests.back() && isOnlyWayToPassedTarget;
             IRBuilder::ProvenBranchTargets targets;
             if (entersPassedTarget)
@@ -3076,6 +3077,8 @@ struct TestPlacer {
             IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(test, testedOperandIndex, frequency, everyTestIsUnpredictable ? frequency : frequencyOfGenericCopy(frequency), WTF::move(targets));
             if (!provesNothingWhenFailed) {
                 builder.moveToEndOf(branch.notTaken);
+                if (functionWhoseGuardsBegin)
+                    appendStartOfMemberGuards(builder, context.program, context.types, functionWhoseGuardsBegin);
                 builder.emitJump(failedTarget.block, Arguments(failedTarget.arguments));
             }
             if (!entersPassedTarget)

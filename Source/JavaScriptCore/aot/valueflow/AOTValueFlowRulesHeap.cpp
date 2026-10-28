@@ -143,6 +143,51 @@ void HeapRule::askProxiesByTheirTrap(const HeapKey& key, BuiltinName trap, Value
     });
 }
 
+// Whoever looks a name up on a proxy, a statement or a built-in, gets what the trap answers, and what the target holds where the handler may lack the trap.
+void HeapRule::readThroughProxies(ClimbingSet proxies, const HeapKey& key, ValueFlowNodeID result)
+{
+    ClimbingSet handlers = m_context.valueOf(m_context.readWhatWasWritten(proxies, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyHandler.index() }));
+    ClimbingSet traps = m_context.valueOf(m_context.lookup(known(handlers), ValueFlowName { ValueFlowNameKind::Property, m_program.keyOf(BuiltinNames::get).index() }));
+    ValueFlowNodeID proxiesAsElsewhere = m_context.read(proxies, proxyItselfName);
+    ValueFlowNodeID targets = m_context.readWhatWasWritten(proxies, ValueFlowName { ValueFlowNameKind::Slot, BuiltinSlots::ProxyTarget.index() });
+    ValueFlowNodeID arguments[] {
+        targets,
+        m_context.holding(ClimbingSet(key.keyClass == HeapKeyClass::Name ? only(m_universe.keyConstant(key.name)) : m_tables.stringAndSymbolKinds())),
+        proxiesAsElsewhere,
+    };
+    callInProtocol(m_context, { .callees = traps, .thisValue = handlers, .arguments = arguments, .result = result });
+    if (!m_context.meet(traps, ValueSets::complement(m_context.maker().unite(m_universe.closures(), m_universe.builtinFunctions()))))
+        return;
+    // A target that is a proxy itself would be asked for the first one.
+    m_context.openProxiesAmong(m_context.valueOf(targets));
+    ValueFlowOperand holdingProxies { proxiesAsElsewhere, { }, { } };
+    HeapReceiver receiver { &holdingProxies, { }, { }, false };
+    forEachStartOfLookup(m_context.valueOf(targets), [&](ClimbingSet start) {
+        readThroughChain(start, key, receiver, result);
+    });
+}
+
+void HeapRule::readForReceiver(const ValueFlowOperand& object, const ValueFlowOperand& property, const ValueFlowOperand& receiver)
+{
+    ClimbingSet holders = m_context.valueOf(object);
+    m_context.openProxiesAmong(holders);
+    HeapReceiver forReceiver { &receiver, { }, { }, false };
+    forEachKey(property, [&](const HeapKey& key) {
+        forEachStartOfLookup(holders, [&](ClimbingSet start) {
+            readThroughChain(start, key, forReceiver, m_statement.result);
+        });
+    });
+    mayThrow();
+}
+
+void readForReceiver(ValueFlowRuleContext& context, const ValueFlowOperand& object, const ValueFlowOperand& property, const ValueFlowOperand& receiver, ValueFlowNodeID result, ValueFlowNodeID thrown)
+{
+    ValueFlowStatement statement;
+    statement.result = result;
+    statement.thrown = thrown;
+    HeapRule(statement, context).readForReceiver(object, property, receiver);
+}
+
 void HeapRule::read(const ValueFlowOperand& object, const HeapKey& key)
 {
     askProxiesByTheirTrap(key, BuiltinNames::get, m_statement.result);

@@ -60,6 +60,7 @@ public:
     ValueSetID& rememberedByStatement();
     FunctionID functionOfStatement() const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) const LIFETIME_BOUND;
+    bool canBeReached(const ValueFlowStatement&);
     ClimbingSet setOfKey() const;
     uint32_t numberOfMembersOfKey() const;
     ValueFlowName nameOfKey() const;
@@ -72,6 +73,8 @@ public:
     ClimbingSet proxiesAskedByTheirTrapsIn(const ValueFlowOperand&);
     // A rule that knows that it does more to what it was handed says so at once. Nothing hangs on it: what no rule says the solver finds when all is quiet.
     void openProxiesAmong(ClimbingSet);
+    ClimbingSet followedProxiesAmong(ClimbingSet);
+    void noteThatStatementAsksProxiesOfConstructorByTheirTraps();
     // A proxy that hands on what comes from below holds nothing itself: whoever walks up finds what stands above it.
     ClimbingSet withoutProxiesThatWalksPass(ClimbingSet);
     ClimbingSet proxiesThatWalksPassAmong(ClimbingSet);

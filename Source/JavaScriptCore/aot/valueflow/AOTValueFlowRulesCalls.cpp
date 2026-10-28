@@ -153,6 +153,9 @@ ValueFlowObjectsToldApart tellObjectsApart(ValueFlowRuleContext& context, Climbi
     });
 
     ValueFlowObjectsToldApart result;
+    // Of many, some may yet turn out to have escaped, and a set that holds the object nobody knows lists none of those. How many are left shows once all else is at rest: until then the first are told apart and the others wait.
+    if (members.size() > mostGroups && !isHostFlagRaised(context, ValueFlowHostNode::AllElseIsAtRest))
+        members.shrink(mostGroups);
     if (members.size() <= mostGroups) {
         for (const Member& member : members)
             result.groups.append(context.maker().of(member.object));
@@ -757,7 +760,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet callees = context.valueOf(context.operandsOf(statement)[0]);
-    context.openProxiesAmong(callees);
+    context.proxiesAskedByTheirTrapsIn(context.operandsOf(statement)[0]);
     applyEventsOfCall(statement, context, callees);
     ValueFlowCallKind kind = constructs(statement.opcode) ? ValueFlowCallKind::Construct : ValueFlowCallKind::Call;
     if (statement.thrown)

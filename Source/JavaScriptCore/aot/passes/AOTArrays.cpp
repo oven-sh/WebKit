@@ -1374,16 +1374,31 @@ static bool everyUseConvertsToNumber(const Program& program, FunctionAnalyses& a
     return isUsed;
 }
 
-static bool hasFormWithoutAbsentElement(const Program& program, const Function& function, const PresenceQuery& query)
+static bool isMadeInFrontOfLoopAround(FunctionPassContext& context, ValueID array, BlockID block)
 {
+    const NaturalLoops& loops = context.analyses.naturalLoops();
+    const NaturalLoop* loop = loops.innerMostLoopOf(block);
+    return loop && std::ranges::any_of(CastChain(context.function, array), [&](ValueID candidate) {
+        ValueLocation location = context.analyses.useLists().locationOf(candidate);
+        return location.placement != ValuePlacement::Detached && !loops.belongsTo(location.block, *loop);
+    });
+}
+
+static bool hasFormWithoutAbsentElement(FunctionPassContext& context, const PresenceQuery& query)
+{
+    const Program& program = context.program;
+    const Function& function = context.function;
     // A store outside a typed array does nothing, and no program relies on that.
     if (query.form == ElementAccessForm::TypedArray)
         return (query.kind == Access::Read || query.kind == Access::Store) && hasInlineElementAccess(query.typedArrayType);
     if (query.form != ElementAccessForm::Array || query.kind != Access::Read || !hasArrayStorageForm(query.arrayStorage))
         return false;
-    // The first elements of such a result are delivered without the array, each as the element or undefined.
+    // The first elements of such a result are delivered without the array, each as the element or undefined. An array that lasts through the turns of a loop stays an array.
+    // In a dense one only a position outside finds nothing, and the arm for that is one comparison with the length, which the loop mostly makes itself.
     const Value& array = function.at(sameObjectThroughCasts(function, query.receiver));
-    return !localArrayAllocations.contains(array.opcode) && (array.opcode != Opcode::CallBuiltin || !program.builtins().at(array.overload()).code.prefixForm);
+    if (localArrayAllocations.contains(array.opcode))
+        return !query.isDense && isMadeInFrontOfLoopAround(context, query.receiver, query.block);
+    return array.opcode != Opcode::CallBuiltin || !program.builtins().at(array.overload()).code.prefixForm;
 }
 
 // That a hole reads as undefined is a fact about the prototypes, whose test pays only in front of a loop.
@@ -1393,19 +1408,13 @@ static bool canReadHolesAsNaN(FunctionPassContext& context, const PresenceQuery&
     const Type& type = context.program.typeOf(context.function, query.access);
     if (query.arrayStorage != ArrayStorage::Double || !query.keyIsInteger || !type.isNumberOrNullish() || !type.mayBeNaN())
         return false;
-    const NaturalLoops& loops = context.analyses.naturalLoops();
-    const NaturalLoop* loop = loops.innerMostLoopOf(query.block);
-    bool isInvariantInLoop = loop && std::ranges::any_of(CastChain(context.function, query.receiver), [&](ValueID candidate) {
-        ValueLocation location = context.analyses.useLists().locationOf(candidate);
-        return location.placement != ValuePlacement::Detached && !loops.belongsTo(location.block, *loop);
-    });
-    return isInvariantInLoop && everyUseConvertsToNumber(context.program, context.analyses, query.access);
+    return isMadeInFrontOfLoopAround(context, query.receiver, query.block) && everyUseConvertsToNumber(context.program, context.analyses, query.access);
 }
 
 // Nothing where the access keeps its arm for an absent element.
 static std::optional<PresenceTest> choosePresenceTest(FunctionPassContext& context, const PresenceQuery& query)
 {
-    if (!hasFormWithoutAbsentElement(context.program, context.function, query) || context.analyses.blockFrequencies().classOf(query.block).predicted() == BlockFrequency::Rare)
+    if (!hasFormWithoutAbsentElement(context, query) || context.analyses.blockFrequencies().classOf(query.block).predicted() == BlockFrequency::Rare)
         return std::nullopt;
     if (query.kind == Access::Read && isTestedForAbsence(context.analyses, query.access))
         return std::nullopt;
@@ -1523,10 +1532,9 @@ static void countPresenceTest(const TestSiteReporter& reporter)
         reporter.context().build.statistics().count(StatisticID::ElementPresenceTestsPlaced);
 }
 
-// Flow proves a kind of storage only for what a literal or a step over entries has allocated, which is storage of the array's own.
 static void reportBoundsTestOfResolvedStore(TestSiteReporter& reporter, ArrayUses& arrays, const Value& use)
 {
-    if (!hasArrayStorageForm(use.arrayStorage()) || proofsNeededFromGuard(reporter.program(), reporter.function(), use).contains(Proof::ArrayStorage))
+    if (!hasArrayStorageForm(use.arrayStorage()))
         return;
     const Type& positionType = reporter.typeOf(use.positionOperand());
     if (!positionType.isInteger() || !canStoreWithoutConversion(use.arrayStorage(), reporter.typeOf(use.valueOperand())))
@@ -1535,7 +1543,12 @@ static void reportBoundsTestOfResolvedStore(TestSiteReporter& reporter, ArrayUse
         return;
     Effects effects = declaredBoundOf(use.opcode);
     refineElementEffects(use.opcode, positionType, ElementPosition::InsideLength, effects);
-    reporter.report({ makeBoundsTest(use.arrayOperand(), use.positionOperand()) }, effects);
+    // As for a read: where the store has the kind of storage from its own guard, the test of the kind is asked for again, and the proof that still holds answers.
+    ElementAccessTests tests;
+    if (proofsNeededFromGuard(reporter.program(), reporter.function(), use).contains(Proof::ArrayStorage))
+        tests.append(makeArrayStorageTest(use.arrayOperand(), use.arrayStorage(), true));
+    tests.append(makeBoundsTest(use.arrayOperand(), use.positionOperand()));
+    reporter.report(tests.span(), effects);
 }
 
 static void reportPresenceTestOfResolvedAccess(TestSiteReporter& reporter, ArrayUses& arrays, const Value& use)

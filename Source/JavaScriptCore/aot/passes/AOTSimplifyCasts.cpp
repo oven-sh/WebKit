@@ -183,11 +183,15 @@ struct CastSimplification : Rewrite {
         return !typeOf(operand).isSubsetOf(program.at(expected), program);
     }
 
-    // What a list is expected to hold says how its elements are stored, also where the list itself is proven.
+    // What a list is expected to hold says how its elements are stored, also where the list itself is proven. A literal without elements is expected to hold nothing, which says nothing.
     bool expectsContentsThatAreNotIn(const Value& cast, const Type& type)
     {
         TypeID expected = cast.expected().predicted();
-        return expected && type.isSubsetOf(program.at(expected), program) && !isUnchangedByCastTo(type, program.at(expected));
+        if (!expected || !type.isSubsetOf(program.at(expected), program) || isUnchangedByCastTo(type, program.at(expected)))
+            return false;
+        return std::ranges::any_of(program.at(expected).classes, [](const ClassPart& part) {
+            return std::ranges::any_of(part.writtenContents, [](TypeID contents) { return contents != TypeTable::never; });
+        });
     }
 
     bool expectsOtherContentsThan(const Value& cast, ValueID operand)

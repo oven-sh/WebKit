@@ -11,6 +11,7 @@
 #include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
+#include "AOTValueFlowRuleContext.h"
 #include <wtf/HashMap.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
@@ -823,12 +824,18 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
 static void printValuesAt(PrintStream& out, ValueFlowSolution& solution, const ValueFlowStatement& statement)
 {
     out.println("  ", statement.opcode, solution.solver().isReached(statement.function) ? "" : " in a function that is not reached");
+    BorrowedValueSetMaker borrowedMaker(solution.makerPool());
     unsigned index = 0;
     for (const ValueFlowOperand& operand : solution.bodies().operandsOf(statement)) {
         out.print("  operand ", index++, " ");
         if (operand.node)
             out.print("n", operand.node.index(), " ");
         printValue(out, solution, solution.possibleValuesOf(operand));
+    }
+    index = 0;
+    for (const ValueFlowOperand& guard : solution.bodies().guardsOf(statement)) {
+        out.print("  behind test ", index++, " n", guard.node.index(), " ");
+        printValue(out, solution, ValueFlowRuleContext::valueShownToRules(guard, solution.solver(), borrowedMaker.get()));
     }
     if (statement.result) {
         out.print("  result n", statement.result.index(), " ");

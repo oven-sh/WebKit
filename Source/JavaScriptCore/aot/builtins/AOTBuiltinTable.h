@@ -344,6 +344,9 @@ struct BuiltinResult {
     std::optional<BuiltinOperand> iteratedOperand { };
     IterationKind iterationKind { IterationKind::Values };
     std::optional<BuiltinOperand> prototypeSource { };
+    // It answers whether this operand was made as an instance of one of the classes of that type.
+    std::optional<BuiltinOperand> testedOperand { };
+    BuiltinTypeID testedType { };
     BuiltinRecordStretch<BuiltinResultProperty, BuiltinRecordPool::ResultProperties> properties { };
 };
 

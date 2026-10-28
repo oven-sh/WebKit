@@ -981,11 +981,17 @@ private:
         ValueFlowNodeID pairsOfSteps = m_inputs.bodies().nodes().ofHost(ValueFlowHostNode::PairsOfSteps);
         constexpr uint32_t nodesPerShare = 1 << 12;
         uint32_t numberOfNodes = solver.input().numberOfNodes;
+        // Such a value gets no type, so nothing is read or stored through it.
+        BitVector isOnlyCompared(numberOfNodes);
+        for (const ValueFlowValueOfFunction& value : m_inputs.bodies().valuesAliveForComparisonsOnly()) {
+            if (value.node)
+                isOnlyCompared.quickSet(value.node.index());
+        }
         forEachIndexInParallel(m_inputs.loops(), (numberOfNodes + nodesPerShare - 1) / nodesPerShare, [&](unsigned share, unsigned worker) {
             Walker& walker = walkerOf(worker);
             for (uint32_t index = share * nodesPerShare; index < std::min(numberOfNodes, (share + 1) * nodesPerShare); ++index) {
                 ValueSetID set = solver.possibleValuesOf(ValueFlowNodeID(index));
-                if (ValueFlowNodeID(index) != pairsOfEntries && ValueFlowNodeID(index) != pairsOfSteps && set != ValueSets::nothing && walker.setsWithArrays.contains(set))
+                if (ValueFlowNodeID(index) != pairsOfEntries && ValueFlowNodeID(index) != pairsOfSteps && set != ValueSets::nothing && !isOnlyCompared.quickGet(index) && walker.setsWithArrays.contains(set))
                     noteSetOfArrays(walker, set);
             }
         });
