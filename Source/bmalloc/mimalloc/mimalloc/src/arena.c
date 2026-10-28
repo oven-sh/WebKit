@@ -1376,7 +1376,7 @@ static mi_arena_pages_t* mi_arena_pages_alloc(mi_arena_t* arena) {
 static bool mi_manage_os_memory_ex2(mi_subproc_t* subproc, void* start, size_t size, int numa_node, bool exclusive,
                                     mi_memid_t memid, mi_commit_fun_t* commit_fun, void* commit_fun_arg, mi_arena_id_t* arena_id) mi_attr_noexcept
 {
-  mi_assert(_mi_is_aligned(start,MI_ARENA_SLICE_SIZE));
+  // Bun: no assertion that start is a multiple of MI_ARENA_SLICE_SIZE. It is rounded up below, and JavaScriptCore passes a start one MarkedBlock into its reservation. mimalloc 3.4.0 has no such assertion either (microsoft/mimalloc#1326).
   mi_assert(start!=NULL);
   if (arena_id != NULL) { *arena_id = _mi_arena_id_none(); }
   if (start==NULL) return false;
