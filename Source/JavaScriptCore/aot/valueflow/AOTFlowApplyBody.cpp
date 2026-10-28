@@ -1146,15 +1146,23 @@ bool assumeTypesOfPositionsAtStoresInCopy(IRBuilder& builder, Function& function
     return !found.isEmpty();
 }
 
-// What is expected of a value only ever gets narrower, so the integers that were expected of a field which holds any number now would stay with every value that comes of it.
-static void forgetExpectationsBehindWidenedFields(const FlowBodyApplication& body)
+// What is expected of a value only ever gets narrower, so the integers that were expected of a field or a variable which holds any number now would stay with every value that comes of it.
+static void forgetExpectationsBehindWidenedLocations(const FlowBodyApplication& body)
 {
-    if (!body.keysOfWidenedFields || body.keysOfWidenedFields->isEmpty())
+    bool hasFields = body.keysOfWidenedFields && !body.keysOfWidenedFields->isEmpty();
+    bool hasVariables = body.widenedVariables && !body.widenedVariables->isEmpty();
+    if (!hasFields && !hasVariables)
         return;
     Function& function = body.function;
     Vector<ValueID, 8> reads;
     for (uint32_t index = 0; index < function.values.size(); ++index) {
         const Value& value = function.values[index];
+        if (hasVariables && value.opcode == Opcode::GetModuleVariable && body.widenedVariables->get(value.variable().index()) && value.expected().predicted()) {
+            reads.append(ValueID(index));
+            continue;
+        }
+        if (!hasFields)
+            continue;
         if (!Value::opcodesWithKey.contains(value.opcode) || !value.key() || !body.keysOfWidenedFields->get(value.key().index()) || !value.expected().predicted())
             continue;
         TypeID expected = expectedTypeOf(body.program, function, value, body.types).predicted();
@@ -1177,7 +1185,7 @@ FlowBodyCounts applyBodyUpdate(const FlowBodyApplication& body)
 {
     const FlowBodyUpdate& update = body.application.bodies[body.id.index()];
     FlowBodyCounts counts;
-    forgetExpectationsBehindWidenedFields(body);
+    forgetExpectationsBehindWidenedLocations(body);
     Vector<ValueID, 8> answeredChecks;
     counts.removedChecks = applyCheckUpdates(body, update, answeredChecks);
     AnalysisContext context { body.build, body.program, nullptr, nullptr, body.id };

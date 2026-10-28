@@ -11,6 +11,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTEffectsOfOperands.h"
 #include "AOTFlowIDs.h"
+#include "AOTFlowModuleOrder.h"
 #include "AOTFrameArrayParameters.h"
 #include "AOTIR.h"
 #include "AOTKnownValue.h"
@@ -239,6 +240,7 @@ BitVector findBuiltinsThatMayBeTrimmed(const BuiltinTable&, std::span<const Feat
 
 struct FlowProgramTables {
     Vector<ModuleFlow> modules;
+    FlowModuleOrder moduleOrder;
     Vector<UnseenCodeRecord> unseenCode;
     Vector<UnseenCodeRecord> loadsOfMachineCode;
     bool findsFilesOfProgramByName { true };
@@ -379,6 +381,8 @@ public:
     std::span<const UnseenCodeRecord> unseenCode() const LIFETIME_BOUND { return m_tables.wholeProgram.unseenCode.span(); }
     std::span<const UnseenCodeRecord> loadsOfMachineCode() const LIFETIME_BOUND { return m_tables.wholeProgram.loadsOfMachineCode.span(); }
     bool findsFilesOfProgramByName() const { return !hasResults() || m_tables.wholeProgram.findsFilesOfProgramByName; }
+    // The body of the first has run to its end when the body of the second begins.
+    bool completesBefore(ModuleID first, ModuleID second) const { return m_tables.wholeProgram.moduleOrder.completesBefore(first, second); }
     std::span<const BuiltinUseRecord> builtinUses() const LIFETIME_BOUND { return m_tables.builtins.uses.span(); }
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.builtins.featureUses.span(); }
     std::span<const FlowLocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.builtins.localeUses.span(); }

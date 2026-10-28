@@ -1,0 +1,118 @@
+# An arguments object that stays in its function and is only walked is walked by index: it still holds its length and, under @@iterator, Array.prototype.values. No iterator is made, and where nothing else needs the object it is never built. An object that is kept, stored into, read by an operation that may run code, or made by a caller follows the protocol
+# FORM: Prepared optimizing
+# RUN: pass ExpandIteration
+# RUN(SUNK): pass ExpandIteration ResolveAccesses SinkAllocations
+# STATISTIC: IterationsExpandedByClass = 3
+
+module m0 path="main.js" displayPath="main.js"
+variable g0 name="kept" module=m0 declared={type=anything} initialization=Undefined
+
+function f0 name="spread" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = NewArray contents=anything
+    AppendSpread v4, v3
+    Return v4
+# CHECK-NOT: CallDirect
+# CHECK: LoopHint
+# CHECK-NEXT: [[length0]]: anything = PropGet [[walked0]] key="length"
+# CHECK-NEXT: = ToLength [[length0]]
+# CHECK: AppendElement v4, [[element0]]
+# CHECK: anything = ElemGet [[walked0]], {{*}} [keyIsIntegral]
+# CHECK-NOT: @@iterator
+# SUNK-NOT: CreateUnmappedArguments
+}
+
+function f1 name="loop" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = IteratorOpen v3 iteratorKind=Sync
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4 iteratorKind=Sync resumeMode=Next
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Return v1
+  b3():
+    PutModuleVariable v8 variable=g0
+    Jump -> next b1()
+# CHECK: [[length1]]: anything = PropGet v3 key="length"
+# CHECK-NEXT: = ToLength [[length1]]
+# CHECK: anything = ElemGet v3, {{*}} [keyIsIntegral]
+# CHECK-NOT: @@iterator
+# SUNK-NOT: CreateUnmappedArguments
+}
+
+function f2 name="mapped" flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: function, v1: int[0, 4294967295], v2: anything, v3: Array):
+    v4 = CreateMappedArguments v0, v1, v3, v2
+    v5 = NewArray contents=anything
+    AppendSpread v5, v4
+    Return v5
+# CHECK-NOT: CallDirect
+# CHECK: anything = ElemGet {{*}}, {{*}} [keyIsIntegral]
+# SUNK-NOT: CreateMappedArguments
+}
+
+function f3 name="alsoReadByIndexAndLength" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}, {type=number}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: number, v3: Array):
+    v4 = CreateUnmappedArguments v0, v3, v1, v2
+    v5 = PropGet v4 key="length"
+    v6 = ElemGet v4, v2
+    v7 = NewArray v5, v6 contents=anything
+    AppendSpread v7, v4
+    Return v7
+# CHECK: undefined = CallDirect v7, {{*}} function=f9 [isNeverInlined]
+# SUNK: Arguments = CreateUnmappedArguments v0, v3, v1, v2
+}
+
+function f4 name="kept" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    PutModuleVariable v3 variable=g0
+    v5 = NewArray contents=anything
+    AppendSpread v5, v3
+    Return v5
+# CHECK: undefined = CallDirect v5, {{*}} function=f9 [isNeverInlined]
+# SUNK: v3: Arguments = CreateUnmappedArguments v0, v2, v1
+}
+
+function f5 name="lengthStored" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    PropSet v3, v1 key="length" mode=Strict
+    v5 = NewArray contents=anything
+    AppendSpread v5, v3
+    Return v5
+# CHECK: undefined = CallDirect v5, {{*}} function=f9 [isNeverInlined]
+}
+
+function f6 name="storedUnderAnyKey" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    ElemSet v3, v1, v1 mode=Strict
+    v5 = NewArray contents=anything
+    AppendSpread v5, v3
+    Return v5
+# CHECK: undefined = CallDirect v5, {{*}} function=f9 [isNeverInlined]
+}
+
+function f7 name="readUnderAnyKey" flags=[HasArgumentCount, HasHiddenRest] parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: anything, v2: Array):
+    v3 = CreateUnmappedArguments v0, v2, v1
+    v4 = ElemGet v3, v1
+    v5 = NewArray v4 contents=anything
+    AppendSpread v5, v3
+    Return v5
+# CHECK: undefined = CallDirect v5, {{*}} function=f9 [isNeverInlined]
+}
+
+function f8 name="madeByTheCaller" parameters=[{type=Arguments}] results=[{type=anything}] {
+    v1 = NewArray contents=anything
+    AppendSpread v1, v0
+    Return v1
+# CHECK: undefined = CallDirect v1, {{*}} function=f9 [isNeverInlined]
+}

@@ -9,6 +9,7 @@
 
 #include "AOTCFG.h"
 #include "AOTFlowIDs.h"
+#include "AOTFlowModuleOrder.h"
 #include "AOTVector.h"
 #include <array>
 #include <optional>
@@ -80,16 +81,6 @@ struct FlowOrderInputs {
     BitVector staticFieldsOfEscapedClasses;
 
     FunctionID host() const { return FunctionID(program.functions.size()); }
-};
-
-struct FlowModuleOrder {
-    Vector<uint32_t> componentOf;
-    BitVector modulesInCycles;
-    Vector<BitVector> componentsCompletedBefore;
-    BitVector modulesThatJobsMayInterrupt;
-
-    bool completesBefore(ModuleID first, ModuleID second) const;
-    bool runsAfterRequests(ModuleID module) const { return module.index() < componentOf.size() && !modulesInCycles.get(module.index()); }
 };
 
 FlowModuleOrder computeModuleOrder(const FlowOrderInputs&);

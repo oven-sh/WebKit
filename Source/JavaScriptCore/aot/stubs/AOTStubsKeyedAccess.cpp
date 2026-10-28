@@ -385,6 +385,8 @@ static void loadNameOfKeyCell(StubAssembler& jit, const KeyedProbeRegisters& reg
     RELEASE_ASSERT(noOverlap(key, uid, instanceGPR));
     Jump isString = jit.branchIfString(key);
     hasNoName.append(jit.branchIfNotSymbol(key));
+    // PropertyCaches::prepareHoldersBeforeLookupsUnder(): the run time sees each look by value under such a symbol.
+    hasNoName.append(jit.branchTest8(CCallHelpers::NonZero, Address(key, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit)));
     hasNoName.append(jit.loadCacheableIdentifierImpl(key, uid, false, true));
     Jump isLoaded = jit.jump();
 

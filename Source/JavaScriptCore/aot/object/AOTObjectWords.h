@@ -224,6 +224,9 @@ struct InstanceOfClassBelow {
 constexpr unsigned numberOfInstancesOfClassesBelow = 64;
 // No two prototype objects begin closer to each other.
 constexpr unsigned shiftOfPrototypeForInstanceOfClassBelow = 5;
+// A record lies at one of two places, so how far apart the prototype objects lie does not decide how many of them have a record.
+constexpr size_t firstPlaceOfInstanceOfClassBelow(uintptr_t prototype) { return prototype >> shiftOfPrototypeForInstanceOfClassBelow & (numberOfInstancesOfClassesBelow - 1); }
+constexpr size_t secondPlaceOfInstanceOfClassBelow(uintptr_t prototype) { return firstPlaceOfInstanceOfClassBelow(prototype) ^ (firstPlaceOfInstanceOfClassBelow(prototype >> shiftOfPrototypeForInstanceOfClassBelow) | 1); }
 // With this bit the number that operationAOTAllocateSlow() takes is the index of such a record, and the operation makes the whole object.
 constexpr uint32_t allocatesInstanceOfClassBelow = 1u << 31;
 

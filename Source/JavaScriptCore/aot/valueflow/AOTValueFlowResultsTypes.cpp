@@ -1593,6 +1593,20 @@ static void widenToStoredIntegers(const Type& declared, const ValueFlowNumbers* 
     update.type = types.intern(held);
 }
 
+// Numbers alone arrive, and not only the integers that were expected: the location holds a number, as one that is declared a number does.
+static void holdNumbersThatArrive(const ValueFlowResultInputs& inputs, const DeclaredType& declared, ValueFlowNodeID node, DeadZone deadZone, const ValueFlowNumbers* numbers, ValueFlowPositions& positions, TypeArena& types, FlowPositionUpdate& update)
+{
+    if (update.isProven || !declared.isExpected() || declared.site || deadZone != DeadZone::IsNeverObserved)
+        return;
+    ValueFlowPositionResult arriving = positions.resultAmongAllValues(inputs.solver().possibleValuesOf(node));
+    if (arriving.proof != ValueFlowProof::Proven || !arriving.narrowed || !arriving.narrowed->isNumber())
+        return;
+    Type held = *arriving.narrowed;
+    if (numbers)
+        numbers->narrow(held);
+    update = { .type = types.intern(held), .isProven = true };
+}
+
 static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, const BitVector& variablesStoredUndefined, const NumbersOfPositions& numbers, ValueFlowPositions& positions, TypeArena& types, FlowVariableUpdate& update)
 {
     if (update.flow.writers != WriterState::AllKnown)
@@ -1603,7 +1617,10 @@ static void narrowVariable(const ValueFlowResultInputs& inputs, VariableID id, c
         deadZone = DeadZone::UndefinedAtStartIsNeverObserved;
     else if (!everyReadSeesStore && startsWithoutValueInSolve(inputs.program, inputs.program.at(id)))
         deadZone = DeadZone::UndefinedAtStartMayBeObserved;
-    update.position = positions.updateFor(inputs.program.at(id).declared, inputs.bodies().nodes().variable(id), deadZone, numbers.ofVariable(id));
+    const DeclaredType& declared = inputs.program.at(id).declared;
+    ValueFlowNodeID node = inputs.bodies().nodes().variable(id);
+    update.position = positions.updateFor(declared, node, deadZone, numbers.ofVariable(id));
+    holdNumbersThatArrive(inputs, declared, node, deadZone, numbers.ofVariable(id), positions, types, update.position);
     if (isStoredIntegersThatOnlyChecksBound(inputs.ledger->writersOf(Place::variable(id))))
         widenToStoredIntegers(inputs.program.at(inputs.program.at(id).declared.written()), numbers.ofVariable(id), types, update.position);
 }

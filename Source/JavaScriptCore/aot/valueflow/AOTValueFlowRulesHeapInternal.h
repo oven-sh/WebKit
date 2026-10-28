@@ -290,6 +290,7 @@ private:
     ValueFlowNodeID valueOfDescriptorsInAnswer();
     bool m_keepsHoldersOfExportsItStartsFrom { false };
     bool m_findsOwnPropertiesAlone { false };
+    bool m_findsOwnPropertiesListedAbove { false };
     bool m_answersNothingForNameThatIsLacking { false };
     void noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet receivers);
     void notePrototypeObjectsThatWriteMayReach(const ValueFlowOperand& object, ClimbingSet receivers, const HeapKey&);
@@ -301,6 +302,7 @@ private:
     bool readsRestArgumentOfInstance();
     bool readsUnderNameOfEnumerationOfSameObject();
     void readWhatNamesOfProgramMayHaveHidden(const HeapChain&, ValueFlowNodeID result, Members& getters);
+    void readOwnPropertiesListedAbove(ClimbingSet objects, ValueFlowNodeID result, Members& getters);
     bool hasMemberOfHost(ValueFlowObjectID holder) const;
     enum class DefinedObject : bool { IsNew, MayHoldProperty };
     void defineAsDescribed(const ValueFlowOperand& object, const HeapKey&, ClimbingSet descriptors, DefinedObject);

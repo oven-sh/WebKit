@@ -796,7 +796,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             AbstractModuleRecord* loaded = iter->value.m_module.get();
             ModuleRegistryEntry* loadedEntry = getRegisteredMayBeNull(loaded->moduleKey(), type);
             ASSERT(loadedEntry);
+#if USE(BUN_JSC_ADDITIONS)
+            ASSERT(loadedEntry->record());
+#else
             ASSERT(loadedEntry->record() == loaded);
+#endif
 #if USE(BUN_JSC_ADDITIONS)
             JSPromise* loadedPromise = loadedEntry->loadedPromise(globalObject);
 #else
@@ -898,6 +902,9 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                     // mode). Replay that step inline. The queued
                     // normal-microtask copy will see modulePromise already
                     // settled and bail in moduleRegistryFetchSettled's handler.
+#if ENABLE(AOT)
+                    SetForScope moduleWhoseRecordIsMadeInline(m_moduleWhoseRecordIsMadeInline, resolved.impl());
+#endif
                     JSPromise* makePromise = makeModule(globalObject, resolved, fetchPromise->result());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     if (makePromise->status() == JSPromise::Status::Fulfilled) {
@@ -908,9 +915,13 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                             RETURN_IF_EXCEPTION(scope, nullptr);
                         }
 #endif
-                        mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
-                        modulePromise->fulfillPromise(vm, makePromise->result());
-                    } else if (makePromise->status() == JSPromise::Status::Rejected)
+                        // Making the record of a CommonJS module runs the module. A synchronous load that the module starts may come back to this entry and settle it.
+                        if (modulePromise->status() == JSPromise::Status::Pending) {
+                            mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
+                            modulePromise->fulfillPromise(vm, makePromise->result());
+                        } else
+                            mapEntry->replaceRecord(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));
+                    } else if (makePromise->status() == JSPromise::Status::Rejected && modulePromise->status() == JSPromise::Status::Pending)
                         modulePromise->rejectPromise(vm, makePromise->result());
                 }
                 // The reactions above were diverted to the sync queue but
@@ -1222,7 +1233,12 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
         // 1.a. If referrer.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsEqual(record, moduleRequest) is true, then
         if (auto iter = loadedModules.find(ModuleMapKey { moduleRequest.m_specifier.impl(), moduleRequest.type() }); iter != loadedModules.end()) {
             // 1.a.i. Assert: record.[[Module]] and result.[[Value]] are the same Module Record.
+#if USE(BUN_JSC_ADDITIONS)
+            // ModuleRegistryEntry::replaceRecord(): a CommonJS module may have a second record.
+            ASSERT(iter->value.m_module.get() == *resultRecord || iter->value.m_module->moduleKey() == (*resultRecord)->moduleKey());
+#else
             ASSERT(iter->value.m_module.get() == *resultRecord);
+#endif
         // 1.b. Else,
         } else {
             // 1.b.i. Append the LoadedModuleRequest Record { [[Specifier]]: moduleRequest.[[Specifier]], [[Attributes]]: moduleRequest.[[Attributes]], [[Module]]: result.[[Value]] } to referrer.[[LoadedModules]].

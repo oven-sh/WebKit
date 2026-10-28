@@ -790,7 +790,7 @@ Vector<Int32ParameterCandidate> narrowFieldTypes(Program& program, BuildContext&
             field.typeBeforeNarrowing = field.declared.written() && expected.isSubsetOf(program.at(field.declared.written()), program) ? field.declared.written() : slotTypeOf(program, field);
         field.declared.establish(Proven::byTestsAtStores(ExpectedType(type)));
         field.flags.set(FieldFlags::IsCountedWith, evidence->stores.isAddedTo(reference.layout, reference.field).predicted() || evidence->stores.isUsedAsInteger(reference.layout, reference.field).predicted()
-            || evidence->stores.isUsedAsBits(reference.layout, reference.field).predicted());
+            || evidence->stores.isUsedAsBits(reference.layout, reference.field).predicted() || evidence->stores.isStoredCopiesOfIntegers(reference.layout, reference.field).predicted());
         narrowedKeys.set(field.key.index());
         return true;
     };

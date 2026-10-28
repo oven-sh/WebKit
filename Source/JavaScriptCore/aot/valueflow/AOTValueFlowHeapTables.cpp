@@ -659,6 +659,7 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         Objects holdersClosedToOtherNames;
         Objects functionsOfEngine;
         Objects prototypesOfInstancesWithNames;
+        Objects prototypeObjectsListingOwnPropertiesOfInstances;
         struct NamedMember {
             BuiltinName name;
             MemberOfHolder member;
@@ -735,10 +736,12 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
             bool hasMemberThatHostMakes = false;
             bool hasReplaceableMember = false;
             bool hasMemberUnderNumericName = false;
+            bool listsOwnPropertyOfInstances = false;
             for (BuiltinID member : builtins.membersOf(holder)) {
                 const Builtin& memberEntry = builtins.at(member);
                 if (!memberEntry.name)
                     continue;
+                listsOwnPropertyOfInstances |= memberEntry.flags.contains(BuiltinFlag::IsOwnPropertyOfInstances);
                 if (memberEntry.flags.contains(BuiltinFlag::IsDefaultExport)) {
                     if (hasClosedKeys)
                         listName(memberEntry.name);
@@ -778,6 +781,8 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
                 holdersOfReplaceableMembers.appendVector(objects);
             if (hasMemberUnderNumericName)
                 holdersWithMembersUnderNumericNames.appendVector(objects);
+            if (listsOwnPropertyOfInstances)
+                prototypeObjectsListingOwnPropertiesOfInstances.appendVector(objects);
         }
         m_membersUnderNames.grow(layOutByKey(m_endOfMembersUnderName));
         for (const NamedMember& named : namedMembers)
@@ -825,7 +830,10 @@ ValueFlowHeapTables::ValueFlowHeapTables(const Program& program, const ValueFlow
         }
         m_entriesOpenToTableOrNativeCode = without(maker.unite(openTo(Actor::Table), openTo(Actor::NativeCode)), placeholders);
         m_holdersOfUndeclaredPropertiesUnderIndexes = m_entriesOpenToTableOrNativeCode;
-        m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_entriesOpenToTableOrNativeCode, maker.of(prototypesOfInstancesWithNames.span()));
+        m_prototypeObjectsOfClassesThatListNamesWithoutTypes = maker.of(prototypesOfInstancesWithNames.span());
+        m_prototypeObjectsListingOwnPropertiesOfInstances = maker.of(prototypeObjectsListingOwnPropertiesOfInstances.span());
+        m_prototypeObjectsOfClassesThatLayPropertiesOnInstances = maker.unite(maker.unite(m_prototypeObjectsListingOwnPropertiesOfInstances, m_prototypeObjectsOfClassesThatListNamesWithoutTypes), maker.unite(m_prototypeObjectsOfClassesThatListNoOwnNames, m_prototypesAboveNativeElements));
+        m_holdersOfUndeclaredPropertiesUnderAnyKey = maker.unite(m_entriesOpenToTableOrNativeCode, m_prototypeObjectsOfClassesThatListNamesWithoutTypes);
 
         m_lockedObjects = maker.of(lockedObjects.span());
         m_holdersWithLockedIndexes = maker.of(holdersWithLockedIndexes.span());

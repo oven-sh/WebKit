@@ -17,6 +17,7 @@
 #include "AOTFunctionKinds.h"
 #include "AOTGuardFactDetails.h"
 #include "AOTKnownClosures.h"
+#include "AOTPropertyAccessElements.h"
 #include "AOTSchemaWalkers.h"
 #include "AOTSort.h"
 #include "AOTStronglyConnectedComponents.h"
@@ -670,6 +671,42 @@ private:
         }, [](auto) { }));
     }
 
+    void noteKeyDefinedByDescriptor(const Type& key)
+    {
+        ConstantKey constant = constantKeyOf(m_program, key);
+        std::optional<PropertyKeyID> known = constant.kind == ConstantKeyKind::Symbol ? std::optional(constant.symbol)
+            : constant.kind == ConstantKeyKind::Text ? m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = constant.text }) : std::nullopt;
+        if (known)
+            setBit(m_shared.keysDefinedByDescriptor, known->index());
+    }
+
+    // The names under which the text gives some object an accessor, or a property by a descriptor.
+    void scanDefinitionsByDescriptor(const Value& value)
+    {
+        std::span<const ValueID> arguments = value.argumentsOperands();
+        auto typeOfArgument = [&](const std::optional<BuiltinOperand>& operand) -> const Type* {
+            if (!operand || operand->kind() != BuiltinOperand::Kind::Argument || operand->argumentIndex() >= arguments.size())
+                return nullptr;
+            return &m_program.typeOf(m_function, arguments[operand->argumentIndex()]);
+        };
+        for (const BuiltinPropertyAction& action : m_program.builtins().at(value.overload()).flow.propertyActions) {
+            if (action.kind == BuiltinPropertyActionKind::TakesDescriptor && action.key.kind == BuiltinKeyKind::Operand) {
+                if (const Type* key = typeOfArgument(action.key.operand))
+                    noteKeyDefinedByDescriptor(*key);
+            } else if (action.kind == BuiltinPropertyActionKind::TakesDescriptorMap && action.value.kind == BuiltinPlaceKind::Operand) {
+                const Type* map = typeOfArgument(action.value.operand);
+                if (!map || !map->layouts)
+                    continue;
+                for (LayoutID layout : m_program.at(map->layouts).written()) {
+                    for (const Field& field : m_program.at(layout).fields) {
+                        if (field.key)
+                            setBit(m_shared.keysDefinedByDescriptor, field.key.index());
+                    }
+                }
+            }
+        }
+    }
+
     void scanValue(BlockID block, const Value& value)
     {
         Opcode opcode = value.opcode;
@@ -695,6 +732,10 @@ private:
             scanAllocation(block, value);
         if (opcode == Opcode::CopyDataProperties)
             scanCopy(block, value);
+        if ((opcode == Opcode::DefineGetter || opcode == Opcode::DefineSetter) && value.key())
+            setBit(m_shared.keysDefinedByDescriptor, value.key().index());
+        if (opcode == Opcode::CallBuiltin)
+            scanDefinitionsByDescriptor(value);
         if (opcode == Opcode::NewClosure && value.isLent())
             m_uses.functionsWithLentClosures.append(value.function());
         if (opcode == Opcode::CallDirect)
@@ -1103,6 +1144,7 @@ SlotUses collectSlotUses(const SlotPlanContext& context)
             uses.variables.fill({ }, program.variables.size());
             uses.keyWeights.fill(0, program.types.numberOfPropertyKeys());
             uses.keysNamed = FastBitVector(program.types.numberOfPropertyKeys());
+            uses.keysDefinedByDescriptor = FastBitVector(program.types.numberOfPropertyKeys());
             uses.stringsNamed = FastBitVector(program.strings.size());
         },
         [&] { inputs.layoutsNamedBelow = findLayoutsNamedBelow(context); },

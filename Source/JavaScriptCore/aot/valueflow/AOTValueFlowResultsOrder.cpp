@@ -326,6 +326,7 @@ void computeOrderResults(const ValueFlowResultInputs& inputs, const ValueFlowSta
         if (flow.writers == WriterState::AllKnown && inputs.build.isEnabled(FlowResultKind::Initialization, switchSubject))
             application.bodies[read.function.index()].readsAfterInitialization.append(read.value);
     }
+    tables.wholeProgram.moduleOrder = WTF::move(moduleOrder);
 }
 
 } } } // namespace JSC::AOT::Typed

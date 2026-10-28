@@ -161,6 +161,10 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
         return 0;
     if (isRematerializable(value))
         return CodeSize::cellConstant;
+    if (provesOf(opcode) == Proof::TestedType && knownValueOfType(program.at(value.type)).isKnown())
+        return 0;
+    if (opcode == Opcode::RequireObjectCoercible && !program.typeOf(function, value.valueOperand()).mayBeUndefinedOrNull())
+        return 0;
     if (isCast(opcode) || provesForStretch(provesOf(opcode)) || provesOf(opcode) == Proof::TestedType)
         return CodeSize::typeCheck;
     if (opcode == Opcode::ToBoolean)
@@ -232,6 +236,35 @@ unsigned estimatedCodeBytes(const Program& program, const Function& function, co
     for (ValueID id : block.values)
         bytes = saturatingSum<unsigned>(bytes, estimatedCodeBytes(program, function, function.at(id)));
     return bytes;
+}
+
+static std::optional<uint32_t> targetDecidedByTypeOfCondition(const Program& program, const Function& function, const Terminator& terminator)
+{
+    if (terminator.kind != TerminatorKind::Branch)
+        return std::nullopt;
+    return decidedTargetOf(terminator, knownValueOfType(program.typeOf(function, terminator.conditionOperand())));
+}
+
+static void takeOffWhatDecidedBranchesCutOff(const Program& program, const Function& function, const CFG& cfg, Vector<uint32_t>& blockBytes)
+{
+    BitVector isCutOff(function.blocks.size());
+    for (BlockID id : cfg.reversePostOrder()) {
+        std::span<const Edge> incoming = cfg.incomingEdges(id);
+        bool isReachedByNoEdge = !incoming.empty() && std::ranges::all_of(incoming, [&](Edge edge) {
+            if (isCutOff.get(edge.from.index()))
+                return true;
+            std::optional<uint32_t> decided = edge.isHandlerEdge() ? std::nullopt : targetDecidedByTypeOfCondition(program, function, function.at(edge.from).terminator);
+            return decided && *decided != edge.targetIndex;
+        });
+        if (isReachedByNoEdge) {
+            isCutOff.set(id.index());
+            blockBytes[id.index()] = 0;
+            continue;
+        }
+        const Terminator& terminator = function.at(id).terminator;
+        if (targetDecidedByTypeOfCondition(program, function, terminator))
+            blockBytes[id.index()] -= std::min(blockBytes[id.index()], estimatedCodeBytes(terminator));
+    }
 }
 
 namespace {
@@ -685,7 +718,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
                     summary.switches.last().onlyInCase.append({ isOnStrings ? int64_t { terminator.strings()[position].index() } : terminator.cases()[position], BytesInRange { } });
                 continue;
             }
-            if (terminator.kind != TerminatorKind::Branch)
+            if (terminator.kind != TerminatorKind::Branch || targetDecidedByTypeOfCondition(program, function, terminator))
                 continue;
             if (std::optional<uint32_t> entryParameter = findDecidingParameter(terminator.conditionOperand()))
                 summary.conditions.append(ParameterCondition { block, terminator.conditionOperand(), *entryParameter });
@@ -919,6 +952,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
             continue;
         blockBytes[id.index()] = estimatedCodeBytes(program, function, function.at(id));
     }
+    takeOffWhatDecidedBranchesCutOff(program, function, cfg, blockBytes);
     estimateComparisonChainsAsSwitches(analyses, blockBytes);
     for (uint32_t bytes : blockBytes)
         summary.codeBytes = saturatingSum<uint32_t>(summary.codeBytes, bytes);

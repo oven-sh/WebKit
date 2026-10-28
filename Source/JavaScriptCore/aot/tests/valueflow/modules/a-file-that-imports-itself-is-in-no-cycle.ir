@@ -1,0 +1,31 @@
+# main.mjs: import hooks from "./hooks.mjs"; hooks.other        hooks.mjs: export const other = "other"; export * as default from "./hooks.mjs"; early.mjs the same, and it reads `late` of itself ahead of the store
+# A file that imports itself has begun when the loader comes to that import, and nothing else begins because of it. So whoever imports the file runs behind its end, as if the import
+# were not there: the variable is stored before every read, though a namespace lists it. What the file reads of itself goes by where the read stands in its own body.
+# RUN: valueflow-apply
+# CHECK: variable g0 name="other" {{*}}initialization=StoredBeforeEveryRead
+# CHECK: variable g1 name="late"
+# CHECK-NOT: initialization=StoredBeforeEveryRead
+
+variable g0 name="other" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+variable g1 name="late" module=m2 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="/app/hooks.mjs" displayPath="hooks.mjs" flags=[KeepsError] body=f0 requests=[{target=m0 completes=true}] exports=[{name="other" variable=g0}]
+module m1 path="/app/main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f1 requests=[{target=m0 completes=true}, {target=m2 completes=true}]
+module m2 path="/app/early.mjs" displayPath="early.mjs" flags=[KeepsError] body=f2 requests=[{target=m2 completes=true}] exports=[{name="late" variable=g1}]
+entry module=m1
+function f0 name="hooks" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = String string="other"
+    PutModuleVariable v0 variable=g0
+    Return
+}
+function f1 name="main" module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="other"
+    Return v1
+}
+function f2 name="early" module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+    v0 = GetModuleVariable variable=g1
+    v1 = CheckInitialized v0 name="late"
+    v2 = String string="late"
+    PutModuleVariable v2 variable=g1
+    Return
+}

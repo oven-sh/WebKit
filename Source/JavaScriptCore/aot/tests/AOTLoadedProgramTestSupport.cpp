@@ -98,13 +98,17 @@ static std::span<const uint8_t> leakAlignedCopy(std::span<const uint8_t> bytes)
     return copy;
 }
 
-// On Linux and on macOS nothing makes the copy executable: the code is mapped from the file, as it is for an executable. The descriptor stays open for as long as the process lives.
+// On Linux, on macOS and on Windows nothing makes the copy executable: the code is mapped from the file, as it is for an executable. The file stays open for as long as the process lives.
 static std::optional<ImageFile> fileToMapCodeFrom(const String& path)
 {
 #if OS(DARWIN) || OS(LINUX)
     int descriptor = open(byteCast<char>(FileSystem::fileSystemRepresentation(path).data()), O_RDONLY | O_CLOEXEC);
     AOT_TEST_CHECK(descriptor >= 0);
     return ImageFile { descriptor, 0 };
+#elif OS(WINDOWS)
+    HANDLE file = CreateFileA(path.utf8().data(), GENERIC_READ | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    AOT_TEST_CHECK(file != INVALID_HANDLE_VALUE);
+    return ImageFile { reinterpret_cast<intptr_t>(file), 0 };
 #else
     UNUSED_PARAM(path);
     return std::nullopt;

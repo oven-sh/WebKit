@@ -226,6 +226,27 @@ static void testVectorizeLoopsCopiesElementsOfEveryKind()
     }
 }
 
+static void testVectorizeLoopsLeavesLoopThatOnlyMovesTwoElementsToVectorInShortArrays()
+{
+    const ElementKind& numbers = elementKinds[6];
+    const ElementKind& words = elementKinds[4];
+    auto vectorizes = [&](const ElementKind& kind, bool arraysAreShort, bool computes) {
+        Policy policy = vectorPolicy();
+        policy.holdsMostlyShortArrays = createSharedTask<bool(Procedure&, const HeapRange&)>([=](Procedure&, const HeapRange& range) {
+            return arraysAreShort && range == firstHeap;
+        });
+        LoopOverElements loop { policy };
+        Value* element = loop.element(loop.from(), kind, loop.index());
+        loop.setElement(loop.to(), kind, loop.index(), computes ? loop.graph.make(loop.loop.body, Add, element, element) : element);
+        loop.finish();
+        return vectorizeLoopsAndValidate(loop.proc);
+    };
+    CHECK(!vectorizes(numbers, true, false));
+    CHECK(vectorizes(numbers, false, false));
+    CHECK(vectorizes(numbers, true, true));
+    CHECK(vectorizes(words, true, false));
+}
+
 static void testVectorizeLoopsFillsElements()
 {
     for (CPUFeatureSet features : featureSets()) {
@@ -1693,6 +1714,7 @@ static void testPipelineVectorizesNothingUnlessAsked()
 void addBunLoopVectorizingTests(const TestConfig* config, BunTestTasks& tasks)
 {
     RUN(testVectorizeLoopsCopiesElementsOfEveryKind());
+    RUN(testVectorizeLoopsLeavesLoopThatOnlyMovesTwoElementsToVectorInShortArrays());
     RUN(testVectorizeLoopsFillsElements());
     RUN(testVectorizeLoopsComputesWithIntegersOfEveryWidth());
     RUN(testVectorizeLoopsComputesWithNumbersBitForBit());

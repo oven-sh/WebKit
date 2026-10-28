@@ -67,9 +67,12 @@ public:
         std::span<JSObject* const> changeableObjects;
     };
 
+    uint8_t& refillCountOf(SiteCache site) const { return m_refillCounts[&stateOf(site) - m_states]; }
+
     bool didMissBefore(SiteCache);
     void didMissRepeatedly(SiteCache site) { didMissBefore(site); }
     void didFailToFill(SiteCache);
+    void didFailToFillWithRun(SiteCache);
     void didFindNothingToFill(SiteCache);
     void fill(SiteCache, const Slot&);
     void fill(SiteCache, const Slot&, const NamedFill&);
@@ -89,12 +92,15 @@ public:
     }
 
 private:
-    bool tryWrite(SiteCache, const Slot&);
+    bool tryWrite(SiteCache, const Slot&, unsigned mostRefillsThatCount = SiteCacheState::maxRefillCount);
+    void waitLongerForNextFill(SiteCache, unsigned mostRefillsThatCount = SiteCacheState::maxRefillCount);
 
     State& m_state;
     const CustomAccessorTable& m_customAccessors;
     std::span<RememberedSlot<Slot>> m_slots;
     SiteCacheState* m_states { nullptr };
+    // How often the sites of a state were filled again. The stubs do not read it.
+    uint8_t* m_refillCounts { nullptr };
     uint64_t* m_sitesThatMissed { nullptr };
     ChainDependentOwnerID m_ownerID;
     RememberedSlotSet m_writtenRegions;
@@ -323,12 +329,12 @@ public:
     void countMiss(ASCIILiteral access, bool shouldFile, JSValue receiver, UniquedStringImpl* name);
     void dumpNamedCounts(PrintStream&) const;
     // The second store in a row that finds a field of an object of this Structure absent and leaves the stubs.
-    void remember(const FieldExit& exit) { placeOf(exit.structureBefore, exit.field->name) = exit; }
+    void remember(const FieldExit& exit) { placeOf(exit.structureBefore, exit.name) = exit; }
     void forgetFieldExits() { m_fieldExits.fill({ }); }
     const FieldExit* findFieldExit(StructureID structureID, uint32_t name)
     {
         const FieldExit& exit = placeOf(structureID, name);
-        return exit.field && exit.structureBefore == structureID && exit.field->name == name ? &exit : nullptr;
+        return exit.field && exit.structureBefore == structureID && exit.name == name ? &exit : nullptr;
     }
     bool createsFieldOutsideStubsAgain(StructureID structureID) { return std::exchange(m_structureOfLastFieldCreatedOutsideStubs, structureID) == structureID; }
     void didAddProperty(Structure* before, Structure* after);
@@ -386,8 +392,8 @@ private:
     std::array<uint8_t, numberOfMissCounters> m_missCounters { };
     uint8_t* m_counterOfPairToFile { nullptr };
     StructureID m_structureOfLastFieldCreatedOutsideStubs;
-    FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % m_fieldExits.size()]; }
-    std::array<FieldExit, 64> m_fieldExits { };
+    FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldExit::numberOfPlaces]; }
+    std::array<FieldExit, FieldExit::numberOfPlaces> m_fieldExits { };
     std::atomic<bool> m_shouldForgetMisses { false };
     std::unique_ptr<UncheckedKeyHashSet<uint64_t>> m_countedFilings;
     UncheckedKeyHashMap<String, uint64_t> m_namedCounts;

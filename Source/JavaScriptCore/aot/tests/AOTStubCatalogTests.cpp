@@ -241,7 +241,7 @@ static void checkReadSummaries(const StubCatalog& catalog)
     AOT_TEST_CHECK(&catalog.summaryOf(getById().withImmediate(nameWithReadStub)) == &catalog.summaryOf(getById()));
 
     // The way to a getter stores and loads two floating-point registers, not all: the others are lost to whoever reads or stores by name.
-    for (StubKey key : { getById(), getByIdAtSite(), putById(PutMode::Strict) }) {
+    for (StubKey key : { getById(), getByIdAtSite(), getByIdAtSiteHashed(), putById(PutMode::Strict) }) {
         RegisterSet kept = RegisterSet::allFPRs();
         kept.exclude(catalog.summaryOf(key).clobbered);
         AOT_TEST_CHECK(kept.numberOfSetRegisters() < RegisterSet::allFPRs().numberOfSetRegisters() / 2);

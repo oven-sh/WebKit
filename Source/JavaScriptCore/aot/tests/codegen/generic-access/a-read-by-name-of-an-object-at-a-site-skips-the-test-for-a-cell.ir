@@ -1,0 +1,44 @@
+# A read by name in fast code asks the cache of its site. Where the receiver is proven an object the read enters the stub behind its test for a cell, and so does the read of a method that is called. Where the receiver may be something else the read enters in front of the test
+# FORM: Selected
+# OPTIONS: heat=OnlyLoopsAreHot check=validate-back-end
+# RUN: generate-code calls
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="ofObject" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="label"
+    v4 = NewArray v3 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK: f0: size=
+# CHECK-NOT: stub GetByIdAtSite
+# CHECK: stub GetByIdOfObjectAtSite
+# CHECK: f1: size=
+function f1 name="ofWhatMayBeMissing" parameters=[{type=undefined|object}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = PropGet v0 key="label"
+    v4 = NewArray v3 contents=anything
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-NOT: stub GetByIdOfObjectAtSite
+# CHECK: stub GetByIdAtSite
+# CHECK: f2: size=
+function f2 name="methodOfObject" parameters=[{type=object}, {type=boolean}] results=[{type=undefined}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v3 = CallMethod v0 key="method" @30
+    Branch v1 -> taken b1(), notTaken b2()
+  b2():
+    Return
+}
+# CHECK-NOT: stub GetByIdAtSite
+# CHECK: stub GetByIdOfObjectAtSite

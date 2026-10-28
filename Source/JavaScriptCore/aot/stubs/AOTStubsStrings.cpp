@@ -123,13 +123,14 @@ struct CharacterCopy {
             jit.returnToCaller();
     }
 
-    // The source holds the first word of the rope. The target ends behind the last piece. Whoever meets a piece that is itself a rope leaves by the slow path.
+    // The source holds the first word of the rope. The target ends behind the last piece. Whoever meets a piece that is itself a rope, or whose storage is 16-bit by now, leaves by the slow path.
     NEVER_INLINE void copyPiecesOfRope(GPRReg rope, JumpList& slowPath) const
     {
         auto copyPiece = [&] {
             JumpList isCopied;
             jit.loadPtr(Address(source, JSString::offsetOfValue()), source);
             slowPath.append(jit.branchIfRopeStringImpl(source));
+            slowPath.append(jit.branchTest32(CCallHelpers::Zero, Address(source, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
             jit.load32(Address(source, StringImpl::lengthMemoryOffset()), length);
             jit.loadPtr(Address(source, StringImpl::dataOffset()), source);
             copy(&isCopied);
@@ -268,6 +269,7 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
     Jump hasPieces = jit.branchTestPtr(CCallHelpers::Zero, source, TrustedImm32(JSRopeString::isSubstringInPointer));
     loadSubstringBaseAndOffset(jit, string, source, offset);
     jit.loadPtr(Address(source, JSString::offsetOfValue()), source);
+    slowPath.append(jit.branchTest32(CCallHelpers::Zero, Address(source, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(source, StringImpl::dataOffset()), source);
     jit.addPtr(offset, source);
     jit.jump().linkTo(copy, &jit);

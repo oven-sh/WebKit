@@ -684,7 +684,7 @@ static BitVector findFunctionsThatAreOnlyConstructed(const FlowApplyContext& con
     return constructed;
 }
 
-static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, const Vector<BitVector>& fieldsExpectedAsRead, const BitVector& keysOfWidenedFields)
+static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& editor, const Vector<BitVector>& fieldsExpectedAsRead, const BitVector& keysOfWidenedFields, const BitVector& widenedVariables)
 {
     BitVector onlyConstructed = findFunctionsThatAreOnlyConstructed(context);
     FlowFirstTimeMarks firstTimeMarks = createFirstTimeMarks(context, editor);
@@ -697,6 +697,7 @@ static void applyBodyUpdates(const FlowApplyContext& context, ProgramEditor& edi
         body.provesEverything = provesEverything && !isOfRuntimeModule(context.program, function.module);
         body.isOnlyConstructed = onlyConstructed.quickGet(id.index());
         body.keysOfWidenedFields = &keysOfWidenedFields;
+        body.widenedVariables = &widenedVariables;
         countsByTask[task] = applyBodyUpdate(body);
     });
 
@@ -791,6 +792,18 @@ static BitVector findKeysOfWidenedFields(const Program& program, const FlowAppli
     return keys;
 }
 
+static BitVector findWidenedVariables(const Program& program, const FlowApplication& application)
+{
+    BitVector variables;
+    for (uint32_t index = 0; index < application.variables.size(); ++index) {
+        const FlowPositionUpdate& position = application.variables[index].position;
+        const DeclaredType& declared = program.variables[index].declared;
+        if (position.isProven && position.type && declared.isExpected() && program.at(position.type).isNumber() && !program.at(position.type).isSubsetOf(program.at(declared.written()), program))
+            variables.set(index);
+    }
+    return variables;
+}
+
 void applyFlowResults(Program& program, FlowResults& results, BuildContext& build)
 {
     RELEASE_ASSERT(program.form() == IRForm::AsRead);
@@ -815,6 +828,7 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     Vector<BitVector> fieldsExpectedAsRead = findExpectedFields(program, build.parallelLoops());
     nameObjectInPlaceOfDictionaryLayouts(program, *application, build.parallelLoops());
     BitVector keysOfWidenedFields = findKeysOfWidenedFields(program, *application);
+    BitVector widenedVariables = findWidenedVariables(program, *application);
     applyLayoutUpdates(context);
     takeBackFieldsThatListUntestedValues(program, results, *application, build);
     times.didFinish("applyLayoutUpdates"_s);
@@ -827,7 +841,7 @@ void applyFlowResults(Program& program, FlowResults& results, BuildContext& buil
     dropDataOfUnreachedCode(context);
     narrowContentsOfData(context);
     times.didFinish("removeUnreachedBodies"_s);
-    applyBodyUpdates(context, editor, fieldsExpectedAsRead, keysOfWidenedFields);
+    applyBodyUpdates(context, editor, fieldsExpectedAsRead, keysOfWidenedFields, widenedVariables);
     times.didFinish("applyBodyUpdates"_s);
     ProgramCaches caches(program, build);
     computeOperandSummaries(program, results, build);

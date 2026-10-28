@@ -515,7 +515,9 @@ private:
         auto* memory = word->as<B3::MemoryValue>();
         if (!memory || memory->opcode() != B3::Load || !memory->range())
             return false;
-        return m_heaps.permanentCells.begin() <= memory->range().begin() && memory->range().end() <= m_heaps.permanentCells.end();
+        return std::ranges::any_of(m_heaps.permanentCells, [&](B3::HeapRange cells) {
+            return cells.begin() <= memory->range().begin() && memory->range().end() <= cells.end();
+        });
     }
 
     bool definesReference(B3::Value* value) const
@@ -979,7 +981,7 @@ static HeapsOfCollection heapsOfCollectionIn(B3::Procedure& proc)
         .collectorState = heaps.rangeOf(heaps.collectorState),
         .weakTableStorage = heaps.rangeOf(heaps.weakTableStorage),
         .frameSlots = heaps.rangeOf(heaps.frameSlots),
-        .permanentCells = heaps.rangeOf(heaps.AOTInstance_stringCells),
+        .permanentCells = { heaps.rangeOf(heaps.AOTInstance_stringCells), heaps.rangeOf(heaps.AOTInstance_closureCells) },
     };
 }
 

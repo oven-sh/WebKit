@@ -743,6 +743,37 @@ public:
         return followed.size() <= maxValuesFollowed;
     }
 
+    // What a field that is used as an integer holds, handed on as it is.
+    void findCopiesOfIntegers()
+    {
+        m_isCopyOfInteger = FilledArray<std::atomic<uint8_t>>(m_loops, m_kinds.size());
+        // A read without a receiver finds what all the fields under its key hold.
+        auto isUsedAsInteger = [&](Node place) {
+            if (place < m_firstKeyNode)
+                return !!(m_usesAsIntegers[place].load(std::memory_order_relaxed) & usesAsIntegers);
+            PropertyKeyID key((place - m_firstKeyNode) / nodesPerKey);
+            return place == nodeOfAllStores(key) && std::ranges::any_of(fieldsWithKey(key), [&](const FieldWithKey& field) {
+                return !!(m_usesAsIntegers[field.declaration].load(std::memory_order_relaxed) & usesAsIntegers);
+            });
+        };
+        forEachShare(m_firstVariableNode, 1 << 10, [&](unsigned, Node first, Node end) {
+            Vector<Node> worklist;
+            for (Node place = first; place < end; ++place) {
+                if (isUsedAsInteger(place))
+                    worklist.append(place);
+            }
+            while (!worklist.isEmpty()) {
+                Node node = worklist.takeLast();
+                for (Node successor : m_successors.subspan(m_firstSuccessor[node], m_firstSuccessor[node + 1] - m_firstSuccessor[node])) {
+                    if (successor >= m_numberOfPlaces && m_operationOfValue[successor - m_numberOfPlaces] != UINT32_MAX)
+                        continue;
+                    if (!m_isCopyOfInteger[successor].exchange(1, std::memory_order_relaxed))
+                        worklist.append(successor);
+                }
+            }
+        });
+    }
+
     void findFieldsAddedTo()
     {
         m_isAddedTo = FilledArray<uint8_t>(m_loops, m_firstVariableNode);
@@ -769,15 +800,25 @@ public:
         });
     }
 
-    bool isAddedTo(Node field, PropertyKeyID key) const
+    bool holdsOfFieldOrStoresWithoutReceiver(Node field, PropertyKeyID key, NOESCAPE const Invocable<bool(Node)> auto& holds) const
     {
-        if (m_isAddedTo[field])
+        if (holds(field))
             return true;
         for (CodeClass storing : { CodeClass::Checked, CodeClass::Unchecked, CodeClass::Library }) {
-            if (m_isAddedTo[nodeOfStoresWithoutReceiver(storing, key)] && storesWithoutReceiverReach(storing, m_codeClassOfField[field]))
+            if (holds(nodeOfStoresWithoutReceiver(storing, key)) && storesWithoutReceiverReach(storing, m_codeClassOfField[field]))
                 return true;
         }
         return false;
+    }
+
+    bool isAddedTo(Node field, PropertyKeyID key) const
+    {
+        return holdsOfFieldOrStoresWithoutReceiver(field, key, [&](Node node) { return !!m_isAddedTo[node]; });
+    }
+
+    bool isStoredCopiesOfIntegers(Node field, PropertyKeyID key) const
+    {
+        return holdsOfFieldOrStoresWithoutReceiver(field, key, [&](Node node) { return !!m_isCopyOfInteger[node].load(std::memory_order_relaxed); });
     }
 
     const Program& m_program;
@@ -810,6 +851,7 @@ public:
     Vector<Node> m_usedAsIntegers;
     Vector<Node> m_usedAsBits;
     FilledArray<std::atomic<uint8_t>> m_usesAsIntegers;
+    FilledArray<std::atomic<uint8_t>> m_isCopyOfInteger;
     FilledArray<uint8_t> m_isAddedTo;
     bool m_unseenSourcesAreOther { false };
 };
@@ -1335,9 +1377,11 @@ VisibleStores::VisibleStores(const Program& program, const ParallelLoops& loops,
     graph.build(shouldRead);
     graph.solve();
     graph.findUsesAsIntegers();
+    graph.findCopiesOfIntegers();
     graph.findFieldsAddedTo();
     m_fieldsUsedAsIntegers = Vector<BitVector>(program.layouts.size());
     m_fieldsUsedAsBits = Vector<BitVector>(program.layouts.size());
+    m_fieldsStoredCopiesOfIntegers = Vector<BitVector>(program.layouts.size());
     m_fieldsAddedTo = Vector<BitVector>(program.layouts.size());
     m_fieldsStartedWithOtherTypes = Vector<BitVector>(program.layouts.size());
     m_kinds = Vector<Vector<Kinds>>(program.layouts.size());
@@ -1349,7 +1393,10 @@ VisibleStores::VisibleStores(const Program& program, const ParallelLoops& loops,
                 m_fieldsUsedAsIntegers[layout].set(field);
             if (uses & StoreGraph::usesAsBits)
                 m_fieldsUsedAsBits[layout].set(field);
-            if (PropertyKeyID key = program.layouts[layout].fields[field].key; key && graph.isAddedTo(node, key))
+            PropertyKeyID key = program.layouts[layout].fields[field].key;
+            if (key && graph.isStoredCopiesOfIntegers(node, key))
+                m_fieldsStoredCopiesOfIntegers[layout].set(field);
+            if (key && graph.isAddedTo(node, key))
                 m_fieldsAddedTo[layout].set(field);
             if (graph.m_fieldsStartedWithOtherTypes.quickGet(node))
                 m_fieldsStartedWithOtherTypes[layout].set(field);

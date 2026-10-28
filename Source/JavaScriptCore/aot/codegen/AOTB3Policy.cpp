@@ -12,6 +12,7 @@
 #include "AOTBuildContext.h"
 #include "AOTConvention.h"
 #include "AOTFaultTable.h"
+#include "AOTHeaps.h"
 #include "AOTRelocation.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubBodyConvention.h"
@@ -291,6 +292,11 @@ B3::Policy b3PolicyFor(const BuildContext& build, const FunctionBackEndTraits& t
     policy.selection.extendsInstructionSelection = true;
     policy.selection.attributesTrapsToAccesses = true;
     policy.loops = loopPolicyFor(traits);
+    // Lists are. Views are not.
+    policy.holdsMostlyShortArrays = createSharedTask<bool(B3::Procedure&, const B3::HeapRange&)>([](B3::Procedure& procedure, const B3::HeapRange& range) {
+        AOTHeaps& heaps = AOTHeaps::of(procedure);
+        return !range.overlaps(heaps.rangeOf(heaps.entire(Typed::AbstractHeap::TypedArrayElements)));
+    });
     policy.switchLowering.usesBitTests = true;
     policy.switchLowering.usesValueTables = true;
     policy.switchLowering.minCasesForJumpTable = minCasesForJumpTableInConstantData;

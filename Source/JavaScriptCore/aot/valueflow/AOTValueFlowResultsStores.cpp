@@ -275,6 +275,13 @@ auto StoresByLayout::objectsCopiedOnto(ValueSetMaker& maker, LayoutID target) co
     });
     if (!holdOnlyWhatIsWritten)
         return std::nullopt;
+    // The constructor at the top makes what is constructed below other classes, and a built-in class lays properties on it that no statement wrote. A function that a store hangs above an object has not made it.
+    const ValueFlowHeapTables& tables = m_inputs.universe().builtinTables().heap();
+    if (ValueSetID others = maker.intersect(sources, ValueSets::complement(tables.objectsWithoutPropertiesOfNativeCode())); others != ValueSets::nothing) {
+        ValueSetID above = m_heap.chainOf(maker, maker.intersect(m_heap.prototypesOf(maker, others), ValueSets::complement(m_inputs.universe().closures())));
+        if (ValueSets::isComplement(above) || sets.meet(above, maker.unite(m_inputs.universe().placeholdersAlone(), tables.prototypeObjectsOfClassesThatLayPropertiesOnInstances())))
+            return std::nullopt;
+    }
     AOT::sort(layouts);
     removeRepeatedElements(layouts);
 

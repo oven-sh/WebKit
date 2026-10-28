@@ -194,18 +194,10 @@ struct TypedArrayAllocation {
     uint64_t unused;
 };
 
-struct ClonedStructure {
-    uint64_t header;
-    uint64_t cellSize;
-};
-
 struct MappedCopy;
 
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
-    static constexpr unsigned numberOfClonedStructures = 16;
-    static constexpr unsigned clonedStructureShift = 4;
-    static constexpr unsigned placeOfClonedStructure(uint32_t structureID) { return structureID >> clonedStructureShift & (numberOfClonedStructures - 1); }
     static constexpr unsigned numberOfCopiesWithoutFrame = 64;
     static constexpr unsigned placeOfCopyWithoutFrame(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
     {
@@ -224,7 +216,6 @@ struct AllocationWords {
     uint64_t compactTableHeader;
     // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
     const uint64_t* compactTableGrowthPlans;
-    ClonedStructure clonedStructures[numberOfClonedStructures];
     const MappedCopy* copiesWithoutFrame[numberOfCopiesWithoutFrame];
 };
 

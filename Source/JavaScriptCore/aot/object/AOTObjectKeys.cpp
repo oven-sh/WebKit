@@ -899,6 +899,19 @@ static bool enumerableNamesFollowFromStructureAndOrderWord(VM& vm, const Object&
     return holdsEveryListedField;
 }
 
+static bool holdsValueUnderEveryOwnName(const Object& object)
+{
+    JSObject* extra = object.extraProperties();
+    if (extra && extra->structure()->hasAnyKindOfGetterSetterProperties())
+        return false;
+    std::span<const FieldData> fields = object.layout().fields();
+    bool hasAccessor = false;
+    object.forEachFieldInKeyOrder(object.state(), [&](uint16_t index) {
+        hasAccessor |= fields[index].isAccessor();
+    });
+    return !hasAccessor;
+}
+
 static bool canCacheEnumeratorFor(StructureChain* prototypeChain)
 {
     for (StructureID* current = prototypeChain->head(); *current; ++current) {
@@ -947,7 +960,7 @@ JSPropertyNameEnumerator* Object::propertyNameEnumerator(JSGlobalObject* globalO
     if (!names.size())
         enumerator = vm.emptyPropertyNameEnumerator();
     else if (ownNamesAreFixed && isUnchanged)
-        enumerator = JSPropertyNameEnumerator::tryCreate(vm, structureBefore, 0, numberOfOwnNames, WTF::move(names), orderWordBefore & orderWordMask, orderWordMask);
+        enumerator = JSPropertyNameEnumerator::tryCreate(vm, structureBefore, 0, holdsValueUnderEveryOwnName(*this) ? numberOfOwnNames : 0, WTF::move(names), orderWordBefore & orderWordMask, orderWordMask, numberOfOwnNames);
     else
         enumerator = JSPropertyNameEnumerator::tryCreate(vm, structure(), 0, 0, WTF::move(names));
     if (!enumerator) [[unlikely]] {

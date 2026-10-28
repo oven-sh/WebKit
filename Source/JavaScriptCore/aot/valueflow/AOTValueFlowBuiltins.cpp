@@ -1493,6 +1493,9 @@ private:
     void forEachNodeHoldingOwnValuesOf(ClimbingSet holders, ValueSetID& constant, NOESCAPE const Invocable<void(ValueFlowNodeID)> auto& functor)
     {
         forEachNodeReadByWalkOver(m_context, m_context.restrict(holders, m_universe.builtinObjects()), { }, functor);
+        // A definition makes enumerable what a built-in object holds since it was made.
+        if (ClimbingSet redefined = m_context.markedAmong(m_context.restrict(holders, m_universe.builtinObjects()), ObjectMutation::RedefineProperty); holdsAnything(redefined))
+            functor(m_context.lookup(redefined, everyOwnPropertyHeldName));
         if (m_context.meet(holders, m_universe.strings()))
             constant = m_context.maker().unite(constant, m_context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::String)));
 

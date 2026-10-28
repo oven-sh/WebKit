@@ -546,7 +546,12 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. Assert: module.[[Status]] is one of UNLINKED, LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    // A record that is evaluating may be linked and evaluated again where require() of an ES module re-enters it.
+    ASSERT(status() == Status::Unlinked || status() == Status::Linked || status() == Status::Evaluating || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#else
     ASSERT(status() == Status::Unlinked || status() == Status::Linked || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#endif
     // 2. Let stack be a new empty List.
     Vector<CyclicModuleRecord*, 8> stack;
     // 3. Let result be Completion(InnerModuleLinking(module, stack, 0)).
@@ -567,7 +572,11 @@ void CyclicModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetcher
         return;
     }
     // 5. Assert: module.[[Status]] is one of LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(status() == Status::Linked || status() == Status::Evaluating || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#else
     ASSERT(status() == Status::Linked || status() == Status::EvaluatingAsync || status() == Status::Evaluated);
+#endif
     // 6. Assert: stack is empty.
     ASSERT(stack.isEmpty());
     // 7. Return UNUSED.
@@ -587,7 +596,11 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     // 1. Assert: This call to Evaluate is not happening at the same time as another call to Evaluate within the surrounding agent.
     // FIXME: is this needed?
     // 2. Assert: module.[[Status]] is one of LINKED, EVALUATING-ASYNC, or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(m_status == Status::Linked || m_status == Status::Evaluating || m_status == Status::EvaluatingAsync || m_status == Status::Evaluated);
+#else
     ASSERT(m_status == Status::Linked || m_status == Status::EvaluatingAsync || m_status == Status::Evaluated);
+#endif
     CyclicModuleRecord* module = this;
     // 3. If module.[[Status]] is either EVALUATING-ASYNC or EVALUATED, then
     if (m_status == Status::EvaluatingAsync || m_status == Status::Evaluated) {
@@ -641,7 +654,11 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
     // 10. Else,
     } else {
         // 10.a. Assert: module.[[Status]] is either EVALUATING-ASYNC or EVALUATED.
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT(module->status() == Status::Evaluating || module->status() == Status::EvaluatingAsync || module->status() == Status::Evaluated);
+#else
         ASSERT(module->status() == Status::EvaluatingAsync || module->status() == Status::Evaluated);
+#endif
         // 10.b. Assert: module.[[EvaluationError]] is EMPTY.
         ASSERT(module->evaluationError() == nullptr);
         // 10.c. If module.[[Status]] is EVALUATED, then

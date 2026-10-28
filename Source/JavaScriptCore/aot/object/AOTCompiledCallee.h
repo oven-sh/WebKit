@@ -45,6 +45,8 @@ JS_EXPORT_PRIVATE void setNameProperty(JSGlobalObject*, JSObject* callee, JSStri
 JS_EXPORT_PRIVATE void showNameUntilLookedFor(VM&, JSObject* callee, const String& name);
 
 JS_EXPORT_PRIVATE String displayName(JSObject*);
+// The text that the function object itself holds as the data property `displayName`, wherever it keeps it. Null without one.
+JS_EXPORT_PRIVATE String ownDisplayName(JSObject*);
 JS_EXPORT_PRIVATE bool reifyProperties(VM&, JSObject*);
 JS_EXPORT_PRIVATE Structure* cachedBoundFunctionStructure(JSObject*);
 JS_EXPORT_PRIVATE void setCachedBoundFunctionStructure(VM&, JSObject*, Structure*);

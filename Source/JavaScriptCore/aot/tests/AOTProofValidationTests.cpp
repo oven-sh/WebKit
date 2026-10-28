@@ -897,6 +897,18 @@ static void testRemovedFieldIsRead()
     checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { print(this.k.unread); };"_s);
 }
 
+// A heap snapshot looks for `constructor` on every object, to name it. Nothing else may name the removed field.
+static void testHeapSnapshotLooksForRemovedConstructor()
+{
+    UTF8CString text = makeStringByReplacingAll(String(leakedObject), "key=\"unread\""_s, "key=\"constructor\""_s).utf8();
+    ASCIILiteral objectWithoutConstructor = ASCIILiteral::fromLiteralUnsafe(byteCast<char>(text.data()));
+    checkValidationFails(objectWithoutConstructor, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { print(this.k.constructor); };"_s);
+    checkValidationFails(objectWithoutConstructor, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { generateHeapSnapshot(); print(this.k.constructor); };"_s);
+
+    UTF8CString numberedText = withNumbersOfModels(objectWithoutConstructor);
+    checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "true\n"_s, { "validate"_s }, "globalThis.sink = function () { generateHeapSnapshot(); };"_s);
+}
+
 static void testKeysOfObjectWithRemovedField()
 {
     checkValidationFails(leakedObject, ValidationFailureKind::RemovedFieldNamed, "globalThis.sink = function () { print(Object.keys(this.k)); };"_s);
@@ -1023,6 +1035,7 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/pristine-array-with-many-names"_s, testPristineArrayWithManyNames },
         { "proof-validation/array-with-proven-storage-alone"_s, testArrayWithProvenStorageAlone },
         { "proof-validation/removed-field-is-read"_s, testRemovedFieldIsRead },
+        { "proof-validation/heap-snapshot-looks-for-removed-constructor"_s, testHeapSnapshotLooksForRemovedConstructor },
         { "proof-validation/keys-of-object-with-removed-field"_s, testKeysOfObjectWithRemovedField },
         { "proof-validation/walks-over-object-with-removed-field"_s, testWalksOverObjectWithRemovedField },
         { "proof-validation/keys-of-object-without-key-order"_s, testKeysOfObjectWithoutKeyOrder },

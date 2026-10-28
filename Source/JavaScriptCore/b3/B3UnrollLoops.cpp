@@ -480,13 +480,6 @@ private:
                 continue;
             plan.sums.append(sum);
         }
-        // The end of a stretch is computed from wherever the counter stands.
-        Signedness signedness = isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed;
-        IntegerInterval counter = intervalFor(m_proc, plan.tested, signedness).join(intervalFor(m_proc, plan.start, signedness));
-        IntegerInterval full = fullInterval(plan.tested->type(), signedness);
-        Int128 stretch = Int128 { plan.step } * (turnsOfStretch + plan.factor);
-        if (counter.min + stretch < full.min || counter.max + stretch > full.max)
-            plan.sums.clear();
         if (plan.sums.isEmpty())
             return;
         for (Value* value : m_proc.values()) {
@@ -1291,6 +1284,11 @@ private:
                     Value* most = notShort->appendIntConstant(m_proc, origin, type, Limits::maxTurnsWithoutPoll * plan.step - 1);
                     notShort->appendNew<Value>(m_proc, Branch, origin, notShort->appendNew<Value>(m_proc, BelowEqual, origin, turnsBehindFirst, most));
                     notShort->setSuccessors(FrequentedBlock(fits), FrequentedBlock(other));
+                    // What still enters behind that has more turns than a stretch.
+                    for (FrequentedBlock& successor : other->successors()) {
+                        if (successor.block() == entered)
+                            successor = FrequentedBlock(entered, FrequencyClass::Rare);
+                    }
                 }
                 testOfFirstTurn->setSuccessors(FrequentedBlock(notShort), FrequentedBlock(found->blocksBehind[0]));
                 return { bound, farBound, entered };
@@ -1386,8 +1384,20 @@ private:
         Origin origin = plan.test->last()->origin();
         BasicBlock* tests = stretch.tests;
         BasicBlock* begins = stretch.begins;
+        // A counter that rises and is not below zero is nearer to the far bound than zero is: a far bound within a stretch of zero needs no subtraction to be told.
+        BasicBlock* first = stretch.first;
+        Type type = bounds.bound->type();
+        if (plan.step > 0 && !plan.testsCounterBeforeStep && intervalFor(m_proc, plan.counter, isUnsignedRelation(plan.relation) ? Signedness::Unsigned : Signedness::Signed).min >= 0) {
+            Value* farBound = appendFarBound(plan, bounds, first);
+            Value* farthest = first->appendIntConstant(m_proc, origin, type, std::min<int64_t>(turnsOfStretch * plan.step, type == Int32 ? 1 << 30 : 1ll << 62));
+            first->appendNew<VariableValue>(m_proc, Set, origin, stretch.farBoundVariable, farBound);
+            first->appendNew<Value>(m_proc, Branch, origin, first->appendNew<Value>(m_proc, Above, origin, farBound, farthest));
+            BasicBlock* liesFarther = m_proc.addBlock();
+            first->setSuccessors(FrequentedBlock(liesFarther, FrequencyClass::Rare), FrequentedBlock(begins));
+            first = liesFarther;
+        }
         // A test at the bottom is reached only where there is room for the turns that are written out. A test at the top asks that by itself.
-        appendFarBoundOfStretch(plan, stretch, bounds, stretch.first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, begins);
+        appendFarBoundOfStretch(plan, stretch, bounds, first, variableOfCounter(plan), plan.testsCounterBeforeStep ? BoundLiesBeyond::No : BoundLiesBeyond::Yes, begins);
         appendPoll(plan, stretch.next);
         // The counter has passed the end of the last stretch by less than the turns that are written out. Nothing but the test of those turns looks at the counter here, so it stays in one register.
         appendFarBoundOfStretch(plan, stretch, bounds, stretch.next, stretch.farBoundVariable, BoundLiesBeyond::Yes, tests);

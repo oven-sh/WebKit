@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCellFormat.h"
+#include "AOTEffectsDeclared.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTProgramIdentifiers.h"
@@ -111,6 +112,12 @@ private:
 #define AOT_OPERATION_FRAME_RECORD() AOT_FRAME_RECORD_OF_THIS_FUNCTION()
 #endif
 
+constexpr bool throwsWithoutCollecting(Entry entry)
+{
+    std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
+    return operation && Typed::declaredBoundOf(*operation).mayThrow && !Typed::declaredBoundOf(*operation).mayCollect;
+}
+
 template<auto operation, typename Function = std::remove_pointer_t<decltype(operation)>>
 struct CallWithoutCollection {
     static constexpr auto call = operation;
@@ -136,11 +143,26 @@ struct CallWithoutCollection<operation, Result(Arguments...) noexcept(isNoexcept
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
-#define AOT_OPERATION_BEGIN(instance, entry) \
+#define AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry) \
     JSC::CallerFrameAndPC* frameRecord = AOT_OPERATION_FRAME_RECORD(); \
     CallFrame* callFrame = frameRecord->callerFrame; \
     UNUSED_VARIABLE(callFrame); \
     AOT_OPERATION_BEGIN_IN_FRAME(instance, frameRecord, entry)
+
+#define AOT_OPERATION_BEGIN(instance, entry) \
+    static_assert(!JSC::AOT::throwsWithoutCollecting(entry), "an operation that throws and is declared not to collect begins with AOT_OPERATION_BEGIN_WITHOUT_COLLECTION"); \
+    AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
+
+// An error is a new object. Collections are put off while the operation runs, and what takes the exception runs them.
+#define AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, entry) \
+    static_assert(JSC::AOT::throwsWithoutCollecting(entry)); \
+    AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry); \
+    DeferGCForAWhile deferGC(vm)
+
+// A value that the program throws exists already. Only where somebody inspects exceptions is one made for it, and that road puts collections off itself.
+#define AOT_OPERATION_BEGIN_THROW_OF_VALUE(instance, entry) \
+    static_assert((entry) == JSC::AOT::Entry::operationAOTThrow || (entry) == JSC::AOT::Entry::operationAOTThrowAfterCleanup); \
+    AOT_OPERATION_BEGIN_IN_OWN_FRAME(instance, entry)
 
 ALWAYS_INLINE Identifier identifierAt(Instance* instance, unsigned number) { return instance->vm->aotState().identifiers->identifier(number); }
 

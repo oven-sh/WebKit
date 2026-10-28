@@ -346,7 +346,7 @@ AOT_THRESHOLD(size_t, maxLengthOfStringEscapedHere, 16 * KB);
 static NEVER_INLINE JSString* quoteStringWithEscapes(VM& vm, std::span<const Latin1Character> characters)
 {
     Vector<Latin1Character, 1024> text;
-    if (!text.tryGrow(roomForEscapedString(characters.size()))) [[unlikely]]
+    if (!text.tryGrow(maxLengthOfEscapedJSONString(characters.size()))) [[unlikely]]
         return nullptr;
     Latin1Character* end = appendQuotedAndEscapedJSONString(text.mutableSpan().data(), characters);
     return jsNontrivialString(vm, String { std::span<const Latin1Character> { text.span().data(), end } });

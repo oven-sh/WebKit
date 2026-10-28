@@ -94,27 +94,37 @@ static RuntimeOperation putOperationWithoutCachesFor(PutMode mode)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, PropertyKeyID key, SiteCacheID cache, std::optional<Origin> origin)
+StubKey AccessEmitter::stubThatReadsAtSite(uint32_t identifierNumber, ValueID receiver)
+{
+    if (!RowDisplacementTable::hasColumn(identifierNumber))
+        return getByIdAtSiteHashed();
+    return receiver && typeOf(receiver).isObject() ? getByIdOfObjectAtSite() : getByIdAtSite();
+}
+
+Boxed AccessEmitter::getById(const OperationContext& context, Boxed receiver, PropertyKeyID key, SiteCacheID cache, std::optional<Origin> origin, ValueID receiverID)
 {
     recordArrival(context, receiver);
     std::optional<uint32_t> identifier = findIdentifierNumber(context, key);
     if (!identifier)
         return undefined();
     CallOptions options { .immediate = *identifier, .origin = origin };
+    const bool hasColumn = RowDisplacementTable::hasColumn(*identifier);
     auto readThroughTables = [&] {
-        StubKey stub = RowDisplacementTable::hasColumn(*identifier) ? AOT::getById() : getByIdHashed();
+        StubKey stub = hasColumn ? AOT::getById() : getByIdHashed();
         return Boxed(callStub(context, stub, { receiver.value() }, options).first);
     };
     // Behind the tables the stub asks the objects themselves and files nothing, so code that runs once takes the way of all other code and leaves nothing behind.
     if (!comesAgain(context))
         return readThroughTables();
-    if (cache && m_program.nameClassOf(key) == NameClass::Length)
+    if (cache && hasColumn && m_program.nameClassOf(key) == NameClass::Length)
         return Boxed(callStub(context, getLengthAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
     // A site cache pays where one kind of receiver comes again and again.
     // The tables answer for every Structure alike, in about what a hit at a site and the site's operand cost together.
     bool tablesAnswer = context.shape() != CodeShape::Fast || inputs().stubCatalog.bindsImmediate(AOT::getById(), *identifier);
-    if (cache && (!tablesAnswer || !RowDisplacementTable::hasColumn(*identifier)))
-        return Boxed(callStub(context, getByIdAtSite(), { receiver.value(), siteCacheAddress(cache).value() }, options).first);
+    if (cache && (!tablesAnswer || !hasColumn)) {
+        StubKey stub = stubThatReadsAtSite(*identifier, receiverID);
+        return Boxed(callStub(context, stub, { receiver.value(), siteCacheAddress(cache).value() }, options).first);
+    }
     return readThroughTables();
 }
 
@@ -126,7 +136,7 @@ Boxed AccessEmitter::getMemberAboveLayouts(const ValueContext& value)
     std::optional<uint32_t> identifier = build().identifierNumbering().numberOf(value->key());
     bool asksSiteInLine = cache && identifier && value.shape() == CodeShape::Fast && value->receivers() && typeOf(value->objectOperand()).isObject() && m_program.nameClassOf(value->key()) != NameClass::Length;
     if (!asksSiteInLine || !comesAgain(value))
-        return getById(value, receiver, value->key(), cache);
+        return getById(value, receiver, value->key(), cache, std::nullopt, value->objectOperand());
 
     recordArrival(value, receiver);
     Pointer site = siteCacheAddress(cache);
@@ -135,7 +145,7 @@ Boxed AccessEmitter::getMemberAboveLayouts(const ValueContext& value)
     join.add(loadBySlotAtSite(unboxCell(receiver), site, Slot::Kind::Value, asksStub, asksStub));
 
     m_out.appendTo(asksStub);
-    join.add(Boxed(callStub(value, getByIdAtSite(), { receiver.value(), site.value() }, { .immediate = *identifier, .isOnRarePath = true }).first));
+    join.add(Boxed(callStub(value, stubThatReadsAtSite(*identifier, value->objectOperand()), { receiver.value(), site.value() }, { .immediate = *identifier, .isOnRarePath = true }).first));
     return join.finish();
 }
 
@@ -232,9 +242,9 @@ Condition AccessEmitter::countMissAtSite(Pointer site)
     Pointer states = loadImmutablePointer(AOT_INSTANCE_OFFSET(propertyCaches.siteCacheStates));
     LValue offset = m_out.bitAnd(m_out.lShr(site.value(), SiteCacheState::slotAddressShift), SiteCacheState::offsetMask);
     LValue state = m_out.add(states.value(), offset);
-    TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, SiteCacheState::offsetOfMissesLeft());
-    Word32 count(m_out.load8ZeroExt32(missesLeft));
-    m_out.store32As8(m_out.sub(count.value(), m_out.constInt32(1)), missesLeft);
+    TypedPointer missesLeft = m_out.address(m_heaps.entire(AbstractHeap::RuntimeState), state, 0);
+    Word32 count(m_out.load16ZeroExt32(missesLeft));
+    m_out.store32As16(m_out.sub(count.value(), m_out.constInt32(1)), missesLeft);
     return equal(count, word32(0));
 }
 

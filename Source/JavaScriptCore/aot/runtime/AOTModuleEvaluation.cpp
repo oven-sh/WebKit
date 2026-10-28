@@ -553,6 +553,9 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
         setFailed(module, error);
     else
         setStatus(module, ModuleStatus::Evaluated);
+    // Whoever runs the file hears of the error. Whoever asks later gets what the loader has.
+    if (isCommonJSFileOrFace(module) && wasImportedWhileItRan(m_table.fileBehindFace(module).value_or(module)))
+        dropErrorOfFile(module);
 }
 
 void Modules::abandonEvaluation(ModuleID module, JSValue error)
@@ -1925,11 +1928,13 @@ void Modules::noteLoadOfFile(ModuleID module)
         RELEASE_AND_RETURN(scope, captureExports(file));
 }
 
-ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module)
+ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module, LoadOfFile load)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    noteLoadOfFile(module);
-    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (load == LoadOfFile::HasComeToFile) {
+        noteLoadOfFile(module);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     ModuleRecord* record = ensureRecord(module);
     record->retain();
     record->setRunsWhenLoaded();

@@ -574,8 +574,7 @@ static JSValue calleeOfDecodedReference(Instance* instance, EncodedJSValue calle
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallable, void, (Instance* instance, EncodedJSValue callee))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessCallable);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowUnlessCallable);
     JSValue value = calleeOfDecodedReference(instance, callee);
     if (!value.isCallable())
         throwException(globalObject, scope, createNotAFunctionError(globalObject, value, nameOfForwardedCallee(vm)));
@@ -584,8 +583,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallable, void, (Instance* insta
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessCallableNamed, void, (Instance* instance, EncodedJSValue callee, uint32_t name))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessCallableNamed);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowUnlessCallableNamed);
     JSValue value = calleeOfDecodedReference(instance, callee);
     if (!value.isCallable()) {
         StringView nameAtCallSite = nameOfCalleeAtCallSite(vm);
@@ -605,8 +603,7 @@ static bool forwardsCallToReceiver(JSValue callee)
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessForwardedCalleeIsCallable, void, (Instance* instance, EncodedJSValue callee, EncodedJSValue receiver))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowUnlessForwardedCalleeIsCallable);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowUnlessForwardedCalleeIsCallable);
     JSValue value = calleeOfDecodedReference(instance, callee);
     if (value.isCallable() && forwardsCallToReceiver(value))
         value = calleeOfDecodedReference(instance, receiver);
@@ -617,8 +614,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowUnlessForwardedCalleeIsCallable, void,
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* instance))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTThrowStackOverflowError);
-    DeferGCForAWhile deferGC(vm);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowStackOverflowError);
     if (!throwOutOfMemoryErrorIfOwed(vm, globalObject, scope)) [[likely]]
         throwStackOverflowError(globalObject, scope);
     OPERATION_RETURN(scope);

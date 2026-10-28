@@ -133,6 +133,13 @@ std::optional<BuiltinOperand> operandCalledBy(const BuiltinOverload& overload)
     return operands ? std::optional(operands->callee) : std::nullopt;
 }
 
+// Function.prototype.apply takes undefined and null for an empty list. A built-in that requires its list refuses them.
+static bool mayOmit(const BuiltinOverload& overload, BuiltinOperand operand)
+{
+    auto parameter = std::ranges::find(overload.parameters, operand, &BuiltinParameter::operand);
+    return parameter != overload.parameters.end() && parameter->mode == BuiltinParameterMode::Optional;
+}
+
 static std::optional<ForwardedCallPlan> planForwardedCall(const Program& program, const Function& function, const BuiltinCall& call, bool constructs)
 {
     std::optional<ForwardedOperands> operands = forwardedOperandsOf(program.builtins().at(call.overload), constructs);
@@ -156,7 +163,8 @@ static std::optional<ForwardedCallPlan> planForwardedCall(const Program& program
     if (list && !program.typeOf(function, list).isUndefinedOrNull()) {
         plan.list = list;
         plan.operandOfList = operands->list;
-    }
+    } else if (operands->list && !mayOmit(program.builtins().at(call.overload), *operands->list))
+        return std::nullopt;
 
     size_t numberOfArguments = call.arguments.size();
     size_t firstForwardedArgument = operands->firstArgument ? std::min<size_t>(*operands->firstArgument, numberOfArguments) : numberOfArguments;

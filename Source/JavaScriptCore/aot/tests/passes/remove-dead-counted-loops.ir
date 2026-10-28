@@ -1,7 +1,7 @@
 # A counted loop without effects whose values nothing outside uses is skipped
 # FORM: Prepared
 # RUN: pass RemoveDeadCountedLoops
-# STATISTIC: RemoveDeadCountedLoopsChanges = 5
+# STATISTIC: RemoveDeadCountedLoopsChanges = 6
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="emptyLoop" parameters=[{type=int[0, 100]}] results=[{type=undefined}] {
@@ -164,6 +164,11 @@ function f7 name="irreducibleCycleInside" parameters=[{type=int[0, 100]}, {type=
     Return
 # CHECK: b0(
 # CHECK: Jump -> next b1(v3)
+# One hint is enough for the way round through b3 and b4.
+# CHECK: b3():
+# CHECK-NEXT: LoopHint
+# CHECK: b4():
+# CHECK-NEXT: Branch v2
 }
 
 function f8 name="uncountedInnerLoop" parameters=[{type=int[0, 100]}, {type=boolean}] results=[{type=undefined}] {

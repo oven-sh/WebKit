@@ -1,0 +1,40 @@
+# Every field here starts at an int32 and is stored nothing but int32s and sums of them, so each is kept as an integer.
+# Scanner.position is counted up and is the index of an element of an array. Scanner.start is stored what position holds, as it is: it ends where the array ends too.
+# Scanner.end is stored the same by a function that knows nothing of its receiver.
+# Scanner.width is stored a difference of two positions, which is no copy, and Scanner.other a number of its own.
+# FORM: AsRead
+# RUN: pass TypeValues NarrowFieldTypes VerifyProgram
+# CHECK: layout L0 name="Scanner" module=m0 fields=[{key="position" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}, {key="start" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}, {key="end" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced, IsCountedWith] typeBeforeNarrowing=number}, {key="width" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced] typeBeforeNarrowing=number}, {key="other" declared={type=int[-2147483643, 2147483647]} flags=[IsRequired, IsEnforced] typeBeforeNarrowing=number}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Scanner" module=m0 fields=[{key="position" declared={type=number} flags=[IsRequired]}, {key="start" declared={type=number} flags=[IsRequired]}, {key="end" declared={type=number} flags=[IsRequired]}, {key="width" declared={type=number} flags=[IsRequired]}, {key="other" declared={type=number} flags=[IsRequired]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=0
+    v1 = Integer integer=1
+    v2 = NewArray v0, v0 contents=anything
+    v3 = NewObject -, v0, v0, v0, v0, v0 layout=L0 fields=[0, 1, 2, 3, 4]
+    v4 = FinishObject v3
+    ElemSet v2, v0, v4 mode=Strict
+    v6 = PropGet v4 key="position"
+    v7 = Add v6, v1
+    PropSet v4, v7 key="position" mode=Strict
+    v9 = PropGet v4 key="position"
+    v10 = ElemGet v2, v9
+    v11 = PropGet v4 key="position"
+    PropSet v4, v11 key="start" mode=Strict
+    v13 = CallDirect v4 function=f1
+    v14 = PropGet v4 key="position"
+    v15 = PropGet v4 key="start"
+    v16 = Sub v14, v15
+    PropSet v4, v16 key="width" mode=Strict
+    PropSet v4, v1 key="other" mode=Strict
+    Return v10
+}
+
+function f1 name="finish" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="position"
+    PropSet v0, v1 key="end" mode=Strict
+    Return v1
+}

@@ -431,10 +431,47 @@ static Vector<B3::Air::BasicBlock*> collectBlocks(B3::Air::Code& code)
 
 enum class PrintedLoopParts : uint8_t { HeadingOnly, HeadingAndBlocks };
 
+// The moves on the way into a loop may be the same as those of its latch, and then one block serves both: a cycle with two ways in, which is no natural loop.
+// Here the way in from outside gets a block of its own again.
+static void splitLatchesThatAreEnteredFromOutside(B3::Air::Code& code)
+{
+    using namespace B3::Air;
+
+    Dominators dominators(code);
+    NaturalLoops loops(code, dominators);
+    Vector<BasicBlock*> latches;
+    for (BasicBlock* block : code) {
+        if (block->numSuccessors() != 1 || dominators.dominates(block->successorBlock(0), block) || loops.headerOf(block->successorBlock(0)))
+            continue;
+        bool isEnteredFromInside = false;
+        for (BasicBlock* predecessor : block->predecessors())
+            isEnteredFromInside |= dominators.dominates(block->successorBlock(0), predecessor);
+        if (isEnteredFromInside)
+            latches.append(block);
+    }
+    for (BasicBlock* latch : latches) {
+        BasicBlock* header = latch->successorBlock(0);
+        BasicBlock* wayIn = code.addBlock(latch->frequency());
+        wayIn->insts() = latch->insts();
+        wayIn->setSuccessors(latch->successor(0));
+        for (BasicBlock* predecessor : latch->predecessors()) {
+            if (dominators.dominates(header, predecessor))
+                continue;
+            for (B3::Air::FrequentedBlock& successor : predecessor->successors()) {
+                if (successor.block() == latch)
+                    successor.block() = wayIn;
+            }
+        }
+    }
+    if (!latches.isEmpty())
+        code.resetReachability();
+}
+
 static void dumpAirLoops(PrintStream& out, B3::Air::Code& code, PrintedLoopParts parts)
 {
     using namespace B3::Air;
 
+    splitLatchesThatAreEnteredFromOutside(code);
     Dominators dominators(code);
     NaturalLoops loops(code, dominators);
     BitVector isLikelyInFunction = findBlocksReachedWithoutRareEdge(code, code[0], collectBlocks(code).span());

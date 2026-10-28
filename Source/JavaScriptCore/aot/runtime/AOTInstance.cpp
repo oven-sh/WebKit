@@ -338,7 +338,7 @@ static void fillInstanceClassInfos(Instance& instance)
     instance.realm.instanceClassInfos = classInfos.data();
 }
 
-#if CPU(X86_64) && OS(LINUX)
+#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
 static void* loopPollPage(Instance* instance)
 {
     return reinterpret_cast<char*>(instance) + InstanceLayout::offsetOfLoopPollPage();
@@ -363,7 +363,7 @@ static void registerStackMirror(Instance* instance, VM& vm)
     vm.traps().registerMirror(instance->callsByValue.limit.get());
     if (FunctionTables* tables = vm.aotState().functionTables.get(); tables && tables->recordsCalleesOfCallsByValue())
         makeCallsByValuePoll(*instance, tables->isRenamedAtRunTime.load(std::memory_order_acquire));
-#if CPU(X86_64) && OS(LINUX)
+#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
     VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
     // The list grows outside the lock: a request to malloc may tell this thread that it owes an error, which takes the lock. This thread alone changes the list.
     decltype(loopPollPages.pages) pages;
@@ -379,13 +379,13 @@ static void registerStackMirror(Instance* instance, VM& vm)
     pages.append(page);
     loopPollPages.pages.swap(pages);
     if (vm.traps().stopsAtEveryPoll() || vm.traps().needsOutOfMemoryError())
-        RELEASE_ASSERT(!mprotect(page, WTF::pageSize(), PROT_NONE));
+        OSAllocator::protect(page, WTF::pageSize(), false, false);
 #endif
 }
 
 static void unregisterStackMirror(Instance* instance, VM& vm)
 {
-#if CPU(X86_64) && OS(LINUX)
+#if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
     {
         VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
         Locker locker { loopPollPages.lock };
@@ -518,7 +518,6 @@ Instance* Instance::create(JSGlobalObject* realm)
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("short young arrays converted"_s, asMutableByteSpan(instance->arrays.shortYoungArraysConverted));
     instance->state->caches->addClearedEachCollection("last array looked at in vain"_s, asMutableByteSpan(instance->arrays.lastArrayLookedAtInVain));
-    instance->state->caches->addClearedEachCollection("cloned structures"_s, asMutableByteSpan(instance->allocation.clonedStructures));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asMutableByteSpan(instance->allocation.copiesWithoutFrame));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
@@ -667,6 +666,7 @@ static size_t arenaCapacity(const ProgramTables& tables)
         + sizeOfZeroedTable(InstanceLayout::holdsBuiltinCells(tables.builtinCells().size()) ? 0 : tables.builtinCells().size(), sizeof(JSCell*))
         + sizeOfZeroedTable(numberOfPropertyRuns, sizeof(const PropertyRun*))
         + sizeOfZeroedTable(SiteCacheState::numberOfStates, sizeof(SiteCacheState))
+        + sizeOfZeroedTable(SiteCacheState::numberOfStates, sizeof(uint8_t))
         + sizeOfZeroedTable(SiteCaches::numberOfMissWords(tables.instanceSizes.numberOfSiteCaches), sizeof(uint64_t))
         + sizeOfZeroedTable(RememberedSlotSet::numberOfCardsFor(tables.instanceSizes.numberOfSiteCaches * sizeof(Slot), SiteCaches::regionShift), sizeof(uint8_t))
         + sizeOfZeroedTable(InstanceLayout::holdsGlobalBindings(tables.globalBindings().size() * sizeof(GlobalBinding)) ? 0 : tables.globalBindings().size(), sizeof(GlobalBinding))

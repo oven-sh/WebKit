@@ -147,6 +147,9 @@ private:
     macro(ValueSetID, objectsThatTheirClassAnswersFor) \
     macro(ValueSetID, objectsMadeWithPropertiesListedAboveThem) \
     macro(ValueSetID, prototypeObjectsOfClassesThatListNoOwnNames) \
+    macro(ValueSetID, prototypeObjectsListingOwnPropertiesOfInstances) \
+    macro(ValueSetID, prototypeObjectsOfClassesThatListNamesWithoutTypes) \
+    macro(ValueSetID, prototypeObjectsOfClassesThatLayPropertiesOnInstances) \
     macro(ValueSetID, objectsHoldingOnlyWhatWasWritten) \
     macro(ValueFlowObjectID, undescribedNativeCode) \
     macro(ValueFlowObjectID, accessorOfPrototypeLink) \

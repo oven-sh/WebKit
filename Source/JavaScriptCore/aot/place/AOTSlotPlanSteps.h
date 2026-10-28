@@ -182,6 +182,7 @@ struct SlotUses {
     Vector<VariableUse> variables;
     Vector<SiteWeight> keyWeights;
     FastBitVector keysNamed;
+    FastBitVector keysDefinedByDescriptor;
     FastBitVector stringsNamed;
     BitVector functionsWhoseNewClosuresAreStoredInto;
 };

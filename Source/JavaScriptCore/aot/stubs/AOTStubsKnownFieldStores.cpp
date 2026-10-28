@@ -218,8 +218,9 @@ void generatePutKnownField(StubAssembler& jit)
     slotIsEmpty.link(&jit);
     isNotStoredOnce.link(&jit);
     storeField(jit, registers, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmitted, nullptr, exits);
-    goesByName.append(exits.wasAbsentAndIsNotAccepted);
-    goesByName.append(exits.cannot);
+    JumpList isRefusedBySlot;
+    isRefusedBySlot.append(exits.wasAbsentAndIsNotAccepted);
+    isRefusedBySlot.append(exits.cannot);
 
     auto loadOffsetOfExtensionWord = [&] {
         jit.load32(Address(structure, CompiledStructure::offsetOfExtensionSlot()), registers.field.extensionWordOffset);
@@ -294,6 +295,11 @@ void generatePutKnownField(StubAssembler& jit)
     jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), registers.field.slotData);
     computeFieldAddress(jit, registers.field, false, hasNoStorage);
     jit.jump().linkTo(createsField, &jit);
+
+    isRefusedBySlot.link(&jit);
+    loadNameOfField(jit, record, name);
+    jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
+    jit.jumpToStub(putValueThatSlotRefuses(mode, false));
 
     goesByName.link(&jit);
     loadNameOfField(jit, record, name);

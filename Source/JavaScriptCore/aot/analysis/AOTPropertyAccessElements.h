@@ -44,6 +44,8 @@ ConstantKey constantKeyOf(const Program&, const Type& key);
 // Anywhere else it is a key like any other value, and the run time sees each look under it: PropertyCaches::prepareHoldersBeforeLookupsUnder().
 ConstantKey constantNameOf(const Program&, const Function& writtenIn, const Type& key);
 bool isSymbolCreatedByLibrary(const Program&, PropertyKeyID);
+// The run time asks such an object to prepare itself before native code looks at its own properties: PropertyCaches::prepareHoldersBeforeLookupsUnder().
+bool hasFieldUnderSymbolCreatedByLibrary(const Program&, const Layout&);
 TypeID testedNumberTypeContaining(const Type& expectedNumber);
 PropertyKeyID internKey(TypeArena&, const ConstantKey&);
 void becomeNamedAccess(Value& elementAccess, PropertyKeyID);

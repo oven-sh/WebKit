@@ -1431,7 +1431,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringBuilderRollBack, void, (Inst
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringBuilderCheckLength, void, (Instance* instance, JSCell* builder))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringBuilderCheckLength);
+    AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTStringBuilderCheckLength);
     cellArgument<StringBuilderStorage>(builder, Entry::operationAOTStringBuilderCheckLength)->checkLength(globalObject);
     OPERATION_RETURN(scope);
 }

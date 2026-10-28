@@ -793,8 +793,14 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
         return fetchParameters.error();
-    if (!data(module).isUncompiledCode())
+    if (!data(module).isUncompiledCode()) {
+        // The build has bound the call by what its text says of the attributes. The image may hold the file as what the options ask for.
+        if (const ScriptFetchParameters* attributes = fetchParameters->get()) {
+            if (std::optional<ModuleID> form = findWithAttributes(moduleKey(fileOf(module)), attributes))
+                module = m_table.faceOfFile(*form).value_or(*form);
+        }
         RELEASE_AND_RETURN(scope, startImport(module, asyncEvaluationOrder(referrer)));
+    }
 
     const Identifier& key = resolvedKey(module);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -952,7 +958,10 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
     ModuleRecord* record = nullptr;
     {
         SetForScope stackPointerOfImport(m_instance.vm->aotState().stackPointerOfImport, currentStackPointer());
-        record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module) : exposeRecord(module, RecordHolder::Loader);
+        // Where the loader makes the record of a file inline, what the file throws rejects at once: no step of this import() comes to the file ahead of that.
+        ModuleRecord* made = recordIfExists(module);
+        bool isMadeInline = made && loader()->isMakingRecordInline(made->moduleKey());
+        record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module, isMadeInline ? LoadOfFile::IsAskedFor : LoadOfFile::HasComeToFile) : exposeRecord(module, RecordHolder::Loader);
     }
     JSPromise* loaded = scope.exception() ? nullptr : loader()->requestImportModuleForKey(m_instance.globalObject, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), record);
     setIsAskingHost(wasAskingHost);

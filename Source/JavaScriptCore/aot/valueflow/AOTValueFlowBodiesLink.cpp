@@ -1395,7 +1395,10 @@ private:
         case Kind::Thrown:
             return nodes.thrown(FunctionID(name.owner));
         case Kind::OfHost:
+            RELEASE_ASSERT(name.owner < numberOfValueFlowHostNodes);
             return nodes.ofHost(static_cast<ValueFlowHostNode>(name.owner));
+        case Kind::Hub:
+            return nodes.hub(ValueFlowBehaviorID(name.owner));
         }
         RELEASE_ASSERT_NOT_REACHED();
     }

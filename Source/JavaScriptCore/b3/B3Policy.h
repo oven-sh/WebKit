@@ -243,6 +243,8 @@ struct Policy {
     RefPtr<SharedTask<bool(const MemoryValue&, MovedLoad&)>> saysWhatCountsOfMovedLoad;
     // For a phase that puts its own check where it moves loads. `found` and `given` are what the check compared.
     RefPtr<SharedTask<void(CCallHelpers&, const MovedLoad&, GPRReg found, GPRReg given)>> reportsMovedLoad;
+    // Whether arrays in that memory are mostly short. Null: none are.
+    RefPtr<SharedTask<bool(Procedure&, const HeapRange&)>> holdsMostlyShortArrays;
 
     JS_EXPORT_PRIVATE static Policy fromProcessOptions();
 

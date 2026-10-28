@@ -247,6 +247,8 @@ bool isBundlerHelperNamedByProgram(const Program&, ModuleID);
 bool answersToPath(const Program&, const Module&);
 ModuleID compiledModuleWithObject(const Program&, BuiltinID);
 ModuleID commonJsModuleCapturedBy(const Program&, const Module& face);
+// The attributes of an import() say as what a file is loaded, and its text need not say them. These are the modules that hold the file of `named` as something that only an attribute asks for.
+Vector<ModuleID, 2> formsInImage(const Program&, ModuleID named);
 bool namesWaysToModuleObjects(const Program&);
 // `require` hands the module to this function of the host, so a stack trace lists it between what the module runs and the code that called `require`.
 BuiltinID functionOfHostThatRequireCallsFor(const Module&);

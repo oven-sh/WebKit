@@ -175,22 +175,27 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
     auto overlapsAnyFunction = [&](const ClassPart& part, const Type& type) {
         return !(a.anyFunction && b.anyFunction) && type.anyFunction && isFunctionClass(builtins, part.builtinClass);
     };
+    // What finds the names of its class inherits from the prototype of that class. Nothing finds the names of two classes.
+    auto findNamesOfTheirClasses = [](const ClassPart& part, const ClassPart& otherPart) {
+        return part.provenPristine.contains(PristineAspects::Names) && otherPart.provenPristine.contains(PristineAspects::Names);
+    };
     auto isListedUnder = [&](const ClassPart& part, const Type& other) {
         return std::ranges::any_of(other.classes, [&](const ClassPart& otherPart) {
             return otherPart.builtinClass != part.builtinClass
                 && relate(builtins, part.builtinClass, otherPart.builtinClass) == ClassRelation::Unknown
-                && !builtins.isSameOrSubclassOf(otherPart.builtinClass, part.builtinClass);
+                && !builtins.isSameOrSubclassOf(otherPart.builtinClass, part.builtinClass)
+                && !findNamesOfTheirClasses(part, otherPart);
         });
     };
     auto extendsClassOf = [&](const ClassPart& part, const Type& other) {
         return std::ranges::any_of(other.classes, [&](const ClassPart& otherPart) {
-            return otherPart.builtinClass != part.builtinClass && builtins.isSameOrSubclassOf(part.builtinClass, otherPart.builtinClass);
+            return otherPart.builtinClass != part.builtinClass && builtins.isSameOrSubclassOf(part.builtinClass, otherPart.builtinClass) && !findNamesOfTheirClasses(part, otherPart);
         });
     };
     for (const ClassPart& part : a.classes) {
         const ClassPart* partner = b.findClassPart(part.builtinClass);
         bool includesPart = overlapsAnyFunction(part, b);
-        bool includesPartner = partner && (overlapsAnyFunction(*partner, a) || isListedUnder(part, a) || holdsBuiltinListedUnder(builtins, a, b, part.builtinClass));
+        bool includesPartner = partner && (overlapsAnyFunction(*partner, a) || isListedUnder(*partner, a) || holdsBuiltinListedUnder(builtins, a, b, part.builtinClass));
         if (!partner && !includesPart && !extendsClassOf(part, b))
             continue;
         if (isRegExpPart(part)) {

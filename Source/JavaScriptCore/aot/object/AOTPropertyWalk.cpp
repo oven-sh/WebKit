@@ -423,6 +423,7 @@ bool ordinaryGetOwnPropertySlot(JSGlobalObject* globalObject, JSObject* object, 
     ASSERT(slot.isVMInquiry());
     VM& vm = globalObject->vm();
     if (isCompiledObject(object)) {
+        DeferTerminationForAWhile deferTermination(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         bool isFound = Object::getOwnPropertySlot(object, globalObject, name, slot);
         scope.assertNoException();

@@ -1164,12 +1164,6 @@ static bool isPutAmongExtraProperties(VM& vm, State& state, Object& target, Uniq
     return !isValidOffset(extra->structure()->get(vm, name, attributes)) || !attributes;
 }
 
-static unsigned attributesOfOwnProperty(VM& vm, Object& target, UniquedStringImpl* name)
-{
-    unsigned attributes = 0;
-    return target.getDirectFromNativeCode(vm, name, &attributes) ? attributes : 0;
-}
-
 enum class ExistingAttributes : bool { AreReset, AreKept };
 
 template<ExistingAttributes existingAttributes>
@@ -1184,8 +1178,8 @@ static bool putPropertiesInOrder(VM& vm, Object& target, std::span<UniquedString
         if (end - index < minNumberOfNamesPutTogether) {
             end = std::max(end, index + 1);
             for (; index < end; ++index) {
-                unsigned attributes = existingAttributes == ExistingAttributes::AreKept ? attributesOfOwnProperty(vm, target, names[index]) : 0;
-                if (!target.putDirectFromNativeCode(vm, names[index], JSValue::decode(values[index]), attributes))
+                JSValue value = JSValue::decode(values[index]);
+                if (!(existingAttributes == ExistingAttributes::AreKept ? target.storeDirectFromNativeCode(vm, names[index], value) : target.putDirectFromNativeCode(vm, names[index], value, 0)))
                     return false;
             }
             continue;

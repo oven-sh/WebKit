@@ -773,6 +773,11 @@ public:
         return OBJECT_OFFSETOF(Structure, m_bitField);
     }
 
+    static constexpr ptrdiff_t variantOffset()
+    {
+        return OBJECT_OFFSETOF(Structure, m_structureVariant);
+    }
+
     static constexpr ptrdiff_t maxOffsetOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_maxOffset);

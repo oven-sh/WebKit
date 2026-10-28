@@ -448,7 +448,7 @@ private:
 };
 
 struct ValueFlowNodeName {
-    enum class Kind : uint8_t { None, OfBody, Escaped, Variable, Field, EntryParameter, Result, Thrown, OfHost };
+    enum class Kind : uint8_t { None, OfBody, Escaped, Variable, Field, EntryParameter, Result, Thrown, OfHost, Hub };
 
     Kind kind { Kind::None };
     uint32_t owner { 0 };
@@ -461,13 +461,17 @@ struct ValueFlowNodeName {
     static constexpr ValueFlowNodeName result(FunctionID function, uint32_t index) { return { Kind::Result, function.index(), index }; }
     static constexpr ValueFlowNodeName thrown(FunctionID function) { return { Kind::Thrown, function.index(), 0 }; }
     static constexpr ValueFlowNodeName ofHost(ValueFlowHostNode node) { return { Kind::OfHost, static_cast<uint32_t>(node), 0 }; }
-    static constexpr ValueFlowNodeName hub(ValueFlowBehaviorID behavior) { return { Kind::OfHost, numberOfValueFlowHostNodes + behavior.index(), 0 }; }
+    static constexpr ValueFlowNodeName hub(ValueFlowBehaviorID behavior) { return { Kind::Hub, behavior.index(), 0 }; }
     static constexpr ValueFlowNodeName escaped() { return { Kind::Escaped, 0, 0 }; }
 
     constexpr explicit operator bool() const { return kind != Kind::None; }
     friend constexpr bool operator==(const ValueFlowNodeName&, const ValueFlowNodeName&) = default;
     friend constexpr auto operator<=>(const ValueFlowNodeName&, const ValueFlowNodeName&) = default;
 };
+
+// The table of built-ins says how many behaviors there are. The host nodes are counted here, and their enumeration has 8 bits.
+static_assert(numberOfValueFlowHostNodes <= std::numeric_limits<std::underlying_type_t<ValueFlowHostNode>>::max());
+static_assert(ValueFlowNodeName::hub(ValueFlowBehaviorID(100000u)).owner == 100000 && ValueFlowNodeName::hub(ValueFlowBehaviorID(0u)) != ValueFlowNodeName::ofHost(static_cast<ValueFlowHostNode>(0)));
 
 enum class ValueFlowBodyNodeKind : uint8_t {
     EntryParameter,

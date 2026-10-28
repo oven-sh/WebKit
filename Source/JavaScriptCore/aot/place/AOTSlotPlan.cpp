@@ -255,6 +255,21 @@ static BitVector findLayoutsMadeSeldom(const SlotPlanContext& context, const Slo
     return layouts;
 }
 
+static BitVector findKeysDefinedByDescriptor(const Program& program, const SlotUses& uses)
+{
+    BitVector keys(program.types.numberOfPropertyKeys());
+    uses.keysDefinedByDescriptor.forEachSetBit([&](size_t index) {
+        keys.quickSet(index);
+    });
+    for (const Layout& layout : program.layouts) {
+        for (const ClassMember& member : layout.classFlow.members) {
+            if (member.key && member.kind != MethodKind::Method)
+                keys.quickSet(member.key.index());
+        }
+    }
+    return keys;
+}
+
 SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildContext& build)
 {
     PhaseTimes times(build, PassID::PlanSlots);
@@ -290,6 +305,7 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
         [&] { plan.m_closureForms = timed("chooseClosureForms"_s, [&] { return chooseClosureForms(context, uses); }); },
         [&] { plan.m_classCreation = timed("planClassCreation"_s, [&] { return planClassCreation(context); }); },
         [&] { plan.m_keysWithColumn = timed("chooseKeysWithColumn"_s, [&] { return chooseKeysWithColumn(context, uses); }); },
+        [&] { plan.m_keysDefinedByDescriptor = findKeysDefinedByDescriptor(program, uses); },
     });
     if (build.diagnostics().hasErrors())
         return { };

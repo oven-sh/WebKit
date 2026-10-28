@@ -327,6 +327,10 @@ static void findSites(const EvaluationPlan& plan, const Vector<ModuleID>& module
                 flagged.append({ BlockID(blockIndex), site });
             else
                 found.append(site);
+            if (value.opcode == Opcode::ImportModule && value.optionsOperand()) {
+                for (ModuleID form : formsInImage(plan.program, value.module()))
+                    found.append({ id, valueID, form, SiteKind::Named });
+            }
         }
     }
 

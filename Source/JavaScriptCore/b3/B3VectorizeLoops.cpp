@@ -268,6 +268,7 @@ private:
         unsigned numberOfCounters { 0 };
         Sum sumTable[Limits::maxSumsOfVectorizedLoop] { };
         unsigned numberOfSums { 0 };
+        bool computes { false };
         // No more, so that no lane of a sum wraps around and no sum of numbers is rounded.
         int64_t turnsPerStretch { Limits::maxTurnsWithoutPoll };
         // It is tested against a value that does not change in the loop, or against another counter.
@@ -1005,6 +1006,7 @@ private:
             return targetHas(VectorSplat, laneFor(plan, type));
         copy->isVector = true;
         bool isSupported = false;
+        plan.computes |= !value->as<MemoryValue>();
         switch (value->opcode()) {
         case Load8Z:
         case Load8S:
@@ -1084,6 +1086,12 @@ private:
             return false;
         Int128 turns = plan.turnsPerStretch;
         for (const Sum& sum : plan.sums()) {
+            // A sum of 32 bits wraps around in a lane as it does in a register.
+            if (sum.phi->type() == Int32 && lane == SIMDLane::i32x4) {
+                if (!holdsWholeValue(plan, sum.addend) || !needVector(plan, sum.addend))
+                    return false;
+                continue;
+            }
             auto interval = intervalInTurn(plan, sum.addend, Limits::maxDepthOfAddressInVectorizedLoop);
             if (!interval || !holdsWholeValue(plan, sum.addend) || !needVector(plan, sum.addend)) {
                 dataLogLnIf(verbose, "   sum: ", deepDump(sum.next));
@@ -1102,6 +1110,7 @@ private:
     bool findRoles(Plan& plan)
     {
         plan.numberOfCopies = 0;
+        plan.computes = false;
         plan.poll = nullptr;
         plan.upsilonsForPhisBehindLoop.shrink(0);
         unsigned indexOfAccess = 0;
@@ -1249,6 +1258,8 @@ private:
         const char* reason = !findCounters(phiChildren, *plan) ? "counters" : !stores && !plan->numberOfSums ? "nothing stored or added up" : !readTest(*plan) ? "test" : nullptr;
         for (unsigned lanesPerElementWidth = 1; !reason; ++lanesPerElementWidth) {
             reason = !findAccesses(*plan, lanesPerElementWidth) ? "accesses" : !keepsOrderOfAccesses(*plan) ? "order" : !findRoles(*plan) ? "roles" : !planFarBound(*plan) ? "far bound" : nullptr;
+            if (!reason && plan->bytesPerLane == 8 && !plan->computes && !plan->numberOfSums && movesWithinShortArrays(*plan))
+                reason = "two lanes, nothing computed, short arrays";
             if (!reason || lanesPerElementWidth == 2)
                 break;
             reason = nullptr;
@@ -1256,6 +1267,19 @@ private:
         dataLogLnIf(verbose, "vectorizeLoops: ", *plan->header, ": ", reason ? reason : "planned");
         if (!reason)
             m_plans.append(WTF::move(plan));
+    }
+
+    // Two elements to a vector that are only moved win little, and the tests in front of the loop cost short arrays more than that.
+    bool movesWithinShortArrays(const Plan& plan)
+    {
+        auto& holdsMostlyShortArrays = m_proc.policy().holdsMostlyShortArrays;
+        if (!holdsMostlyShortArrays)
+            return false;
+        for (unsigned index = 0; index < plan.numberOfAccesses; ++index) {
+            if (holdsMostlyShortArrays->run(m_proc, plan.accessTable[index].memory->range()))
+                return true;
+        }
+        return false;
     }
 
     bool isNeverEntered(const Plan& plan, BasicBlock* block)

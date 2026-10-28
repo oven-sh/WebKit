@@ -430,7 +430,6 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
     const GPRReg structure = jit.allocateScratch(StubRegister::T12);
     const GPRReg layout = structure;
     const GPRReg allocator = structure;
-    const GPRReg place = structure;
     const GPRReg header = excludedRun;
     const GPRReg shapeWord = count;
     RELEASE_ASSERT(noOverlap(source, excludedRun, count, jit.operand(3), copy, word, size, structure, instanceGPR));
@@ -510,13 +509,28 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
     isNotCompiledObject.link(&jit);
     callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(FinalObjectType)));
     callsOperation.append(jit.branchTestPtr(CCallHelpers::NonZero, Address(source, JSObject::butterflyOffset())));
-    static_assert(sizeof(ClonedStructure) == 1 << AllocationWords::clonedStructureShift && hasOneBitSet(AllocationWords::numberOfClonedStructures));
+    // What tryCreateObjectViaCloning() asks of a Structure before it gives the copy the same one.
+    constexpr uint32_t bitsThatForbid = Structure::s_dictionaryKindBits | Structure::s_hasAnyKindOfGetterSetterPropertiesBits | Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits
+        | Structure::s_hasNonEnumerablePropertiesBits | Structure::s_anyImmutablePropertiesBits | Structure::s_mayBePrototypeBits | Structure::s_didPreventExtensionsBits | Structure::s_hasBeenFlattenedBeforeBits
+        | Structure::s_hasBeenDictionaryBits | Structure::s_hasUnderscoreProtoPropertyExcludingOriginalProtoBits | Structure::s_hasNonConfigurablePropertiesBits;
+    constexpr uint32_t bitsThatAreNeeded = Structure::s_isQuickPropertyAccessAllowedForEnumerationBits | Structure::s_didTransitionBits;
+    static_assert(!TypeInfoBlob::indexingModeIncludingHistoryOffset() && sizeof(TypeInfoBlob) == sizeof(uint32_t) && JSCell::indexingTypeAndMiscOffset() == sizeof(uint32_t));
+    loadStructure(jit, source, structure);
+    jit.load32(Address(structure, Structure::bitFieldOffset()), word);
+    jit.and32(TrustedImm32(static_cast<int32_t>(bitsThatForbid | bitsThatAreNeeded)), word);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(bitsThatAreNeeded))));
+    callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(structure, Structure::variantOffset()), TrustedImm32(static_cast<int32_t>(Structure::StructureVariant::Normal))));
+    jit.loadPtr(Address(structure, Structure::realmOffset()), word);
+    callsOperation.append(jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+    jit.load64(Address(structure, Structure::prototypeOffset()), word);
+    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
+    jit.load8(Address(structure, Structure::inlineCapacityOffset()), size);
+    jit.lshift32(TrustedImm32(3), size);
+    jit.add32(TrustedImm32(static_cast<int32_t>(JSFinalObject::allocationSize(0))), size);
+    jit.load32(Address(structure, Structure::indexingModeIncludingHistoryOffset()), header);
+    jit.lshift64(TrustedImm32(32), header);
     jit.load32(Address(source, JSCell::structureIDOffset()), word);
-    jit.and32(TrustedImm32((AllocationWords::numberOfClonedStructures - 1) << AllocationWords::clonedStructureShift), word, place);
-    jit.addPtr(instanceGPR, place);
-    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, Address(place, AOT_INSTANCE_OFFSET(allocation.clonedStructures) + OBJECT_OFFSETOF(ClonedStructure, header))));
-    jit.load32(Address(place, AOT_INSTANCE_OFFSET(allocation.clonedStructures) + OBJECT_OFFSETOF(ClonedStructure, cellSize)), size);
-    jit.load64(Address(place, AOT_INSTANCE_OFFSET(allocation.clonedStructures) + OBJECT_OFFSETOF(ClonedStructure, header)), header);
+    jit.or64(word, header);
     allocateAndCopy(false);
 
     callsOperationWithoutExclusions.link(&jit);

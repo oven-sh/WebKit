@@ -17,6 +17,7 @@ constexpr StubKey callWithArray() { return StubKey(StubFamily::CallWithArray); }
 constexpr StubKey callWithList() { return StubKey(StubFamily::CallWithList); }
 constexpr StubKey tailCallWithList() { return StubKey(StubFamily::TailCallWithList); }
 constexpr StubKey superConstructWithList() { return StubKey(StubFamily::SuperConstructWithList); }
+constexpr StubKey superConstructWithArray() { return StubKey(StubFamily::SuperConstructWithArray); }
 constexpr StubKey callFromArgumentListFrame() { return StubKey(StubFamily::CallFromArgumentListFrame); }
 constexpr StubKey returnFromArgumentListFrame() { return StubKey(StubFamily::ReturnFromArgumentListFrame); }
 

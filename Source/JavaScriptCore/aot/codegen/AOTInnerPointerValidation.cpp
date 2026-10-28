@@ -1169,7 +1169,7 @@ InnerPointerRules innerPointerRulesOf(B3::Procedure& proc, bool usesNarrowRefere
     rules.fieldsThatHoldPointersTheScanKnows.append(heaps.rangeOf(heaps.JSObject_butterfly));
     for (const B3::AbstractHeap* heap : std::initializer_list<const B3::AbstractHeap*> { &heaps.indexedInt32Properties.atAnyIndex(), &heaps.indexedDoubleProperties.atAnyIndex(), &heaps.Butterfly_publicLength, &heaps.Butterfly_vectorLength, &heaps.ArrayBuffer_sizeInBytes })
         rules.contentsWithoutCells.append(heaps.rangeOf(*heap));
-    for (const B3::AbstractHeap* heap : std::initializer_list<const B3::AbstractHeap*> { &heaps.AOTInstance_stringCells, &heaps.AOTInstance_fixedFields, &heaps.AOTImage_tables })
+    for (const B3::AbstractHeap* heap : std::initializer_list<const B3::AbstractHeap*> { &heaps.AOTInstance_stringCells, &heaps.AOTInstance_closureCells, &heaps.AOTInstance_fixedFields, &heaps.AOTImage_tables })
         rules.permanentCells.append(heaps.rangeOf(*heap));
     rules.collectorState = heaps.rangeOf(heaps.collectorState);
     rules.weakTableStorage = heaps.rangeOf(heaps.weakTableStorage);

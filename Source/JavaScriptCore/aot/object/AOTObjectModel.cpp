@@ -16,6 +16,7 @@
 #include "AOTCompiledCallee.h"
 #include "AOTFieldTable.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTHeapHooks.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTInterpreterSlowPaths.h"
@@ -294,11 +295,26 @@ const FieldData* RuntimeLayoutTable::findFieldWithoutColumn(const LayoutData& la
     return nullptr;
 }
 
+static thread_local bool heapSnapshotLooksForConstructor;
+
+HeapHooks::LookForConstructorBySnapshot::LookForConstructorBySnapshot()
+{
+    ASSERT(!heapSnapshotLooksForConstructor);
+    heapSnapshotLooksForConstructor = true;
+}
+
+HeapHooks::LookForConstructorBySnapshot::~LookForConstructorBySnapshot()
+{
+    heapSnapshotLooksForConstructor = false;
+}
+
 // A store under the name of a removed field creates an ordinary property, which breaks no proof: the proof is that nothing reads the field.
 void RuntimeLayoutTable::failIfFieldWasRemoved(VM& vm, const LayoutData& layout, UniquedStringImpl* name) const
 {
     std::optional<uint32_t> number = vm.aotState().identifiers->numberOf(name);
     if (!number || !std::ranges::binary_search(m_tables.removedFields(), RemovedFieldData { layout.index, *number }))
+        return;
+    if (heapSnapshotLooksForConstructor && name == vm.propertyNames->constructor.impl())
         return;
     dataLogLn("AOT: a read names the field ", String(name), " of layout ", layout.index, ", which was removed as unread");
     crashOnValidationFailure(vm, { ValidationFailureKind::RemovedFieldNamed, { }, { }, JSValue() });

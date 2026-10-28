@@ -63,7 +63,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     RELEASE_ASSERT(field.canLeaveSlot());
     UniquedStringImpl* name = propertyNameOf(vm, *this, field);
     JSObject* extraBefore = extraPropertiesIfMade(*this);
-    FieldExit exit { &field, structureID(), { }, extraBefore ? extraBefore->structureID() : StructureID(), { }, orderWord(), 0, invalidOffset, isInSlot(field) };
+    FieldExit exit { .field = &field, .structureBefore = structureID(), .extraPropertiesBefore = extraBefore ? extraBefore->structureID() : StructureID(), .orderWordBefore = orderWord(), .name = field.name, .wasInSlot = isInSlot(field) };
     bool hadOtherCellInPlaceOfExtraProperties = !extraBefore && hasExtraProperties();
     JSObject* extra = ensureExtraProperties(vm);
     RELEASE_ASSERT(extra);
@@ -91,6 +91,15 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     exit.structureAfter = structureID();
     exit.extraPropertiesAfter = extraStructure->id();
     exit.orderWordAfter = orderWord();
+    exit.generationForStores = state.propertyCaches->tables().absenceFilterGenerationForStores();
+    exit.extraPropertiesCellSize = JSFinalObject::allocationSize(extraStructure->inlineCapacity());
+    exit.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
+    SlotTraits traits = traitsOf(field.slot.representation());
+    if (!field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
+        exit.absentBits = traits.absentBits;
+        exit.offsetOfSlot = field.slot.offset;
+        exit.widthOfSlot = traits.width;
+    }
     state.propertyCaches->remember(exit);
 }
 
@@ -320,9 +329,13 @@ JSValue Object::getDirectFromNativeCode(VM& vm, PropertyName name, unsigned* att
     return extra->getDirect(vm, name, attributes ? *attributes : ignored);
 }
 
-static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, PropertyName name, Object::LeavingProperty property)
+enum class CurrentAttributes : bool { AreReplaced, AreKept };
+
+static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, PropertyName name, Object::LeavingProperty property, CurrentAttributes currentAttributes)
 {
     FieldProperty current = findFieldProperty(vm, object, field);
+    if (current && currentAttributes == CurrentAttributes::AreKept)
+        property.attributes = current.attributes;
     bool fitsSlot = property.attributes == object.attributesOf(field);
     if (current && !current.isInSlot) {
         putProperty(vm, object.extraProperties(), name, property);
@@ -337,18 +350,31 @@ static bool putFieldDirect(VM& vm, Object& object, const FieldData& field, Prope
     return true;
 }
 
+static bool putOwnProperty(VM& vm, Object& object, PropertyName name, Object::LeavingProperty property, CurrentAttributes currentAttributes)
+{
+    if (const FieldData* field = object.fieldNamed(object.state(), name))
+        return putFieldDirect(vm, object, *field, name, property, currentAttributes);
+    JSObject* extra = object.ensureExtraProperties(vm);
+    RELEASE_ASSERT(extra);
+    unsigned attributesOfCurrent = 0;
+    if (!extra->getDirect(vm, name, attributesOfCurrent))
+        object.willAddExtraProperty(vm, name);
+    else if (currentAttributes == CurrentAttributes::AreKept)
+        property.attributes = attributesOfCurrent;
+    putProperty(vm, extra, name, property);
+    object.didChangeExtraProperties(vm);
+    didChangeOwnProperties(vm, object, VM::StructureChainIntegrityEvent::Change, name.uid());
+    return true;
+}
+
 bool Object::putDirectFromNativeCode(VM& vm, PropertyName name, JSValue value, unsigned attributes)
 {
-    if (const FieldData* field = fieldNamed(state(), name))
-        return putFieldDirect(vm, *this, *field, name, { value, attributes });
-    JSObject* extra = ensureExtraProperties(vm);
-    RELEASE_ASSERT(extra);
-    if (!extra->getDirect(vm, name))
-        willAddExtraProperty(vm, name);
-    putProperty(vm, extra, name, { value, attributes });
-    didChangeExtraProperties(vm);
-    didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name.uid());
-    return true;
+    return putOwnProperty(vm, *this, name, { value, attributes }, CurrentAttributes::AreReplaced);
+}
+
+bool Object::storeDirectFromNativeCode(VM& vm, PropertyName name, JSValue value)
+{
+    return putOwnProperty(vm, *this, name, { value, 0 }, CurrentAttributes::AreKept);
 }
 
 bool Object::tryDefineAbsentGetterInSlot(VM& vm, JSGlobalObject* globalObject, UniquedStringImpl* name, JSObject* getter, unsigned attributes)

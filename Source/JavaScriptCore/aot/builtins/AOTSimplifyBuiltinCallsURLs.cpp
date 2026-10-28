@@ -14,6 +14,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTIRBuilder.h"
 #include "AOTPlainURL.h"
+#include "AOTPredictedValues.h"
 #include "AOTPropertyAccessMembers.h"
 #include "AOTSplitUnions.h"
 #include "AOTValueIdentity.h"
@@ -62,6 +63,27 @@ struct ReplayedCall {
     std::optional<Value> readOfSearchParams;
     std::optional<Value> readOfMember;
     Value call;
+};
+
+// What is written here goes into every version of the function, also where the body still holds its checks.
+class TypesInEveryVersion {
+public:
+    explicit TypesInEveryVersion(FunctionPassContext& context)
+        : m_context(context)
+    {
+    }
+
+    const Type* find(ValueID value)
+    {
+        if (!m_predicted)
+            m_predicted.emplace(m_context.function);
+        std::optional<ProvenInEveryVersion> proven = Proven::byRules(*m_predicted, value, m_context.function.at(value).type).inEveryVersion();
+        return proven ? &m_context.types.at(*proven) : nullptr;
+    }
+
+private:
+    FunctionPassContext& m_context;
+    std::optional<PredictedValues> m_predicted;
 };
 
 } // anonymous namespace
@@ -200,12 +222,16 @@ static bool collectUsesOfSearchParams(FunctionPassContext& context, ValueID sear
     });
 }
 
-static BuiltinID constructedBuiltin(FunctionPassContext& context, const Value& value)
+static BuiltinID constructedBuiltin(FunctionPassContext& context, TypesInEveryVersion& types, const Value& value)
 {
     const Program& program = context.program;
     if (value.opcode == Opcode::Construct) {
         BuiltinID callee = singleBuiltinOf(program.typeOf(context.function, value.calleeOperand()));
-        return callee && !value.newTargetOperand() ? program.builtins().canonicalID(callee) : BuiltinID();
+        if (!callee || value.newTargetOperand())
+            return { };
+        callee = program.builtins().canonicalID(callee);
+        bool mayStayUnbuilt = callee == Builtins::URL || callee == Builtins::URLSearchParams;
+        return mayStayUnbuilt && types.find(value.calleeOperand()) ? callee : BuiltinID();
     }
     if (value.opcode != Opcode::CallBuiltin || (value.builtinCallForm() != BuiltinCallForm::Whole && value.builtinCallForm() != BuiltinCallForm::AnyReceiver))
         return { };
@@ -239,10 +265,10 @@ static bool collectUsesOfURL(FunctionPassContext& context, UnbuiltObject& object
     });
 }
 
-static std::optional<UnbuiltObject> matchUnbuiltObject(FunctionPassContext& context, ValueID id)
+static std::optional<UnbuiltObject> matchUnbuiltObject(FunctionPassContext& context, TypesInEveryVersion& types, ValueID id)
 {
     const Value& construction = context.function.at(id);
-    BuiltinID constructed = constructedBuiltin(context, construction);
+    BuiltinID constructed = constructedBuiltin(context, types, construction);
     size_t numberOfArguments = construction.opcode == Opcode::Construct || construction.opcode == Opcode::CallBuiltin ? construction.argumentsOperands().size() : 0;
     bool isURL = constructed == Builtins::URL && numberOfArguments && numberOfArguments <= 2;
     bool isSearchParams = constructed == Builtins::URLSearchParams && numberOfArguments == 1;
@@ -318,7 +344,7 @@ static IRBuilder::Expansion beginExpansionOf(FunctionPassContext& context, IRBui
     return builder.beginExpansion(context.analyses.useLists().pointOf(value));
 }
 
-static URLParts expandConstruction(FunctionPassContext& context, IRBuilder& builder, const UnbuiltObject& unbuilt)
+static URLParts expandConstruction(FunctionPassContext& context, TypesInEveryVersion& types, IRBuilder& builder, const UnbuiltObject& unbuilt)
 {
     Function& function = context.function;
     ValueID id = unbuilt.construction;
@@ -337,7 +363,8 @@ static URLParts expandConstruction(FunctionPassContext& context, IRBuilder& buil
 
     BlockID makesObject = builder.addBlock(BlockFrequency::Unlikely);
     ValueID string = text;
-    if (!context.program.typeOf(function, text).isAnyString()) {
+    const Type* typeOfText = types.find(text);
+    if (!typeOfText || !typeOfText->isAnyString()) {
         IRBuilder::ProvenBranch isString = builder.emitBranchWithProof(builder.appendTypeTest(text, TypeTable::string), 0, BlockFrequency::Normal, BlockFrequency::Unlikely);
         builder.moveToEndOf(isString.notTaken);
         builder.emitJump(makesObject);
@@ -499,11 +526,12 @@ static void expandWalk(FunctionPassContext& context, IRBuilder& builder, const U
 unsigned leaveURLsUnbuilt(FunctionPassContext& context)
 {
     Function& function = context.function;
+    TypesInEveryVersion types(context);
     Vector<UnbuiltObject> objects;
     for (const ValueSite& site : context.sitesIn(SiteList::ConstructionsAndBuiltinCalls)) {
         if (function.at(site.block).frequency.predicted() != BlockFrequency::Normal)
             continue;
-        if (std::optional<UnbuiltObject> object = matchUnbuiltObject(context, site.value))
+        if (std::optional<UnbuiltObject> object = matchUnbuiltObject(context, types, site.value))
             objects.append(WTF::move(*object));
     }
     if (objects.isEmpty())
@@ -521,7 +549,7 @@ unsigned leaveURLsUnbuilt(FunctionPassContext& context)
                 pointWalksAt(context, call.call);
         }
 
-        URLParts parts = expandConstruction(context, builder, object);
+        URLParts parts = expandConstruction(context, types, builder, object);
         for (const ReadOfMember& read : object.reads)
             expandRead(context, builder, parts, read);
         for (size_t index = 0; index < object.calls.size(); ++index)

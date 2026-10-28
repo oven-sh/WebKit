@@ -488,17 +488,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instan
     AOT_MUST_TAIL_CALL return operationAOTCopyDataProperties(instance, target, source, excludedRun, count, excludedKeys);
 }
 
-static JSObject* tryCopyWithoutNames(Instance* instance, VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
+static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
 {
     bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && (!source->structure()->isDictionary() || flattenOnce(vm, source)) && source->structure()->canPerformFastPropertyEnumerationCommon();
-    if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr) {
-        if (copy->structureID() == source->structureID() && !source->butterfly()) {
-            ClonedStructure& cloned = instance->allocation.clonedStructures[AllocationWords::placeOfClonedStructure(copy->structureID().bits())];
-            cloned.cellSize = JSFinalObject::allocationSize(copy->structure()->inlineCapacity());
-            cloned.header = *std::bit_cast<const uint64_t*>(copy);
-        }
+    if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr)
         return copy;
-    }
     return tryCopyAsOrdinaryObject(vm, globalObject, source, excluded);
 }
 
@@ -514,7 +508,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, E
             OPERATION_RETURN(scope, copy);
     }
     if (!count && source.isObject()) {
-        if (JSObject* copy = tryCopyWithoutNames(instance, vm, globalObject, asObject(source), run))
+        if (JSObject* copy = tryCopyWithoutNames(vm, globalObject, asObject(source), run))
             OPERATION_RETURN(scope, copy);
     }
     JSObject* copy = constructEmptyObject(globalObject);

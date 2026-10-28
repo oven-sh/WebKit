@@ -266,6 +266,10 @@ String JSFunction::nameWithoutGC(VM& vm)
 
 String JSFunction::displayName(VM& vm)
 {
+#if ENABLE(AOT)
+    if (isCompiledClosure())
+        return AOT::CompiledCallee::ownDisplayName(this);
+#endif
     JSValue displayName = getDirect(vm, vm.propertyNames->displayName);
     
     if (displayName && isJSString(displayName))
@@ -543,6 +547,8 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
     if (auto* function = dynamicDowncast<JSFunction>(object)) {
 #if ENABLE(AOT)
         if (function->isCompiledClosure()) {
+            if (String ownDisplayName = AOT::CompiledCallee::ownDisplayName(function); !ownDisplayName.isNull())
+                return ownDisplayName;
             if (String displayName = AOT::CompiledCallee::displayName(function); !displayName.isNull())
                 return displayName;
         }
