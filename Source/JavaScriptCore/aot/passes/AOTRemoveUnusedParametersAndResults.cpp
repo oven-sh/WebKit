@@ -621,7 +621,7 @@ static bool returnsOnlyWhatIsExpected(const Program& program, const Function& fu
 
 namespace {
 
-// Numbers, booleans, undefined and null: what a register holds without a box.
+// Numbers, booleans, undefined and null: values that a register holds unboxed.
 struct ReturnedNumbers {
     void add(const ReturnedNumbers& other)
     {
@@ -661,7 +661,7 @@ struct ReturnedNumbers {
 struct ReturnsOfFunction {
     FunctionID function;
     ReturnedNumbers values;
-    // Whose result it returns as it gets it.
+    // The function whose result it returns unchanged.
     Vector<FunctionID, 2> handedOn;
 };
 
@@ -672,11 +672,11 @@ struct DirectTailCall {
     FunctionID caller;
 };
 
-// A call through the method table enters the lookup of its selector or one of the entrypoints: they return in one place.
+// A call through the method table enters its selector's lookup or one of the entrypoints, so they all return in the same location.
 struct TableFunctions {
     struct Lookup {
         FunctionID function;
-        // What flow says at every call under the selector about the result. Whatever the lookup finds and calls, it returns to one of those calls.
+        // What flow analysis says about the result at every call with the selector. Whatever the lookup finds and calls returns to one of those calls.
         ReturnedNumbers claimedAtCalls;
         Vector<FunctionID, 4> entrypoints;
     };
@@ -689,7 +689,7 @@ struct TableFunctions {
     const Lookup* find(FunctionID lookup) const { return const_cast<TableFunctions*>(this)->find(lookup); }
 
     Vector<Lookup> lookups;
-    // By the index of an entrypoint.
+    // Indexed by entrypoint.
     Vector<FunctionID> lookupOfEntrypoint;
 };
 
@@ -751,7 +751,7 @@ static TableFunctions collectTableFunctions(const Program& program, BuildContext
     return tables;
 }
 
-// Whoever calls it reads where the result lies from its record.
+// Callers read the result's location from its record.
 static bool mayReturnInAnotherRegister(const Program& program, const Function& function, const TableFunctions* tables = nullptr)
 {
     if (!function.hasBody() || function.isModuleBody() || function.results.size() != 1 || function.isUnsplitCoroutine() || !function.hasOrdinaryFrame() || function.mayBeCalledByHost())
@@ -785,8 +785,8 @@ static ReturnsOfFunction collectReturnsOf(const Program& program, FunctionID id)
     return returns;
 }
 
-// A result lies where its type puts it, and its type is what the function returns: numbers that are all integers come back as an integer, a number or undefined comes back in a floating-point register.
-// A function that hands on the result of another returns what that one does. A tail call that is a jump stays one: its two ends move together or not at all.
+// A result's location follows from its type, which is what the function returns: numbers that are all integers return as an integer, a number or undefined returns in a floating-point register.
+// A function that forwards another's result returns what that one does. A tail call that is a jump stays one: both ends change together or not at all.
 static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const Program& program, BuildContext& build, std::span<const FunctionID> functions, const TableFunctions* tables)
 {
     const ParallelLoops& loops = build.parallelLoops();
@@ -825,7 +825,7 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
         const Function& function = program.functions[caller];
         forEachBlockEndingWith(program, FunctionID(caller), { TerminatorKind::ReturnCall }, [&](BlockID block) {
             const Value& call = function.at(function.at(block).terminator.callOperand());
-            // An entrypoint of the table whose method returns an integer where others return a fraction calls it and converts.
+            // A table entrypoint whose method returns an integer where others return a double calls it and converts.
             if (call.opcode == Opcode::CallDirect && call.function().index() != caller && function.role != FunctionRole::TableEntrypoint && (indexOf[call.function().index()] || indexOf[caller]))
                 found.append({ call.function(), FunctionID(caller) });
         });
@@ -843,7 +843,7 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
     BitVector staysAsDeclared(returns.size());
     Vector<ReturnedNumbers> returned(returns.size());
     Vector<Representation> chosen(returns.size());
-    auto representationBehind = [&](FunctionID id) {
+    auto representationAfter = [&](FunctionID id) {
         Index index = indexOf[id.index()];
         return index && !staysAsDeclared.quickGet(index.index()) ? chosen[index.index()] : representationOfResult(program, program.at(id));
     };
@@ -860,7 +860,7 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
                     Index calleeIndex = indexOf[callee.index()];
                     returned[index].add(calleeIndex && !staysAsDeclared.quickGet(calleeIndex.index()) ? returned[calleeIndex.index()] : asDeclared(callee));
                 }
-                // The casts of a tail call let through less than its callee returns.
+                // A tail call's casts accept less than its callee returns.
                 if (const DeclaredType& result = program.at(returns[index].function).result(); !result.isExpected())
                     returned[index].keepOnly(program.at(result.written()));
                 didGrow |= before != returned[index];
@@ -880,13 +880,13 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
             if (chosen[index] == Representation::JSValue || chosen[index] == Representation::Void || chosen[index] == representationOfResult(program, program.at(returns[index].function)))
                 keepAsDeclared(returns[index].function);
         }
-        // A function that only callers with a boxed result enter by a jump boxes its result for them.
+        // A function that is only entered by jumps from callers with a boxed result boxes its result for them.
         auto isJump = [](Representation returned, Representation expected) {
             return expected == Representation::JSValue || haveSameRegisterRepresentation(returned, expected);
         };
         for (const DirectTailCall& tailCall : tailCalls) {
             bool wasJump = isJump(representationOfResult(program, program.at(tailCall.callee)), representationOfResult(program, program.at(tailCall.caller)));
-            if (wasJump && !isJump(representationBehind(tailCall.callee), representationBehind(tailCall.caller))) {
+            if (wasJump && !isJump(representationAfter(tailCall.callee), representationAfter(tailCall.caller))) {
                 keepAsDeclared(tailCall.caller);
                 keepAsDeclared(tailCall.callee);
             }
@@ -901,8 +901,8 @@ static Vector<std::pair<FunctionID, ReturnedNumbers>> findResultsToNarrow(const 
     return narrowed;
 }
 
-// The program says what the function returns. A way out with something else is the one that the program takes for impossible: what falls out of a switch over every member of an enum.
-static void expectReturnsOfWrittenType(const Program& program, Function& function)
+// The program declares what the function returns. An exit with anything else is one the program considers impossible, such as falling out of a switch over every member of an enum.
+static void expectReturnsOfDeclaredType(const Program& program, Function& function)
 {
     const Type& written = program.at(function.result().expected().predicted());
     for (uint32_t index = 0; index < function.blocks.size(); ++index) {
@@ -915,7 +915,7 @@ static void expectReturnsOfWrittenType(const Program& program, Function& functio
     }
 }
 
-// Every call that enters the lookup is told by flow what comes back, so that holds of what the lookup returns.
+// Flow analysis gives the result of every call that enters the lookup, so that also holds for what the lookup returns.
 static void assumeTypeOfReturnedValues(const AnalysisContext& context, Function& function, TypeArena& types, TypeID type)
 {
     IRBuilder builder(context, function, types);
@@ -957,7 +957,7 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
     auto isCandidateFunction = [&](const Function& function) {
         return hasResultThatMayBeProven(program, function) || mayReturnInAnotherRegister(program, function, tables);
     };
-    // Establishes what is found and answers whose results have another type now.
+    // Applies the findings and returns the functions whose results changed type.
     uint64_t numberOfProvenResults = 0;
     auto establishAmong = [&](std::span<const FunctionID> functions) {
         Vector<FunctionID> changed = findProvenAmong(functions);
@@ -969,7 +969,7 @@ void proveResults(ProgramEditor& editor, const OptimizationInputs& inputs, const
         editFunctionsInParallel(editor, build, narrowedFunctions.span(), [&](unsigned index, FunctionID id, Function& function, TaskArenas& arenas) {
             TypeID type = arenas.types.intern(narrowed[index].second.type());
             if (function.results[0].isExpected() && function.results[0].site)
-                expectReturnsOfWrittenType(program, function);
+                expectReturnsOfDeclaredType(program, function);
             function.results[0].establish(Proven::byEveryArrival(ExpectedType(type)));
             if (function.role == FunctionRole::TableLookup)
                 assumeTypeOfReturnedValues(AnalysisContext { build, program, &inputs.flow, &inputs.effects, id }, function, arenas.types, type);

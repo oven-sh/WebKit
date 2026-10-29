@@ -104,15 +104,11 @@ public:
     void didFindNoRoomWithoutCollecting() { m_owesCollection = true; }
     bool owesCollection() const { return m_owesCollection; }
     JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryError(VM&);
-    // At a poll the frames of the loop's callees are gone. What they left on the stack is cleared and one more full collection runs. If it makes room, no error is owed any more.
+    // At a poll the frames of the loop's callees are gone. One more full collection runs. If it makes room, no error is owed any more.
     JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryErrorAtPoll(VM&);
     // An error that barren collections owe is offered to a poll first.
     bool errorWaitsForPoll() const { return m_errorWaitsForPoll; }
     JS_EXPORT_PRIVATE void didThrowOutOfMemoryError();
-    // A program that catches the error lets go of objects. Words of frames that are gone still name them, and a later frame is scanned with every word under it that it does not write.
-    bool hasDeadStackToClear() const { return m_stackPointerAtError; }
-    JS_EXPORT_PRIVATE void clearDeadStack(VM&);
-    JS_EXPORT_PRIVATE void* takeLowestAddressOfDeadStack(VM&);
     size_t reserveSize() const;
 
     // Makes fallible allocations use the reserve. For callers that can neither collect nor throw.
@@ -187,7 +183,6 @@ private:
     bool m_errorWaitsForPoll { false };
     bool m_hasCollectedAtPoll { false };
     bool m_allocationsAreInfallible { false };
-    void* m_stackPointerAtError { nullptr };
     size_t m_numberOfChunksReleased { 0 };
     std::atomic<size_t> m_numberOfBlocksTaken { 0 };
     OptionSet<ExhaustedHeap> m_exhaustedHeaps;

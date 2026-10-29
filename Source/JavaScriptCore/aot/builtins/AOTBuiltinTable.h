@@ -746,7 +746,7 @@ enum class BuiltinMark : uint8_t {
     RunsWaitingJobs,
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,
-    LoadsMachineCodeThatIsHandedNoValue,
+    LoadsCodeWithoutJSAccess,
 };
 
 struct BuiltinMarkedEntry {

@@ -18,6 +18,7 @@
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
+#include "AOTObjectModelCaches.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyListCache.h"
 #include "AOTSlimClosure.h"
@@ -466,6 +467,43 @@ Presence tryGetOwnValue(JSObject* object, UniquedStringImpl* name, JSValue& valu
     } else
         state.objects->layouts.didReadAbsentField(*state.instance.vm, typed.layout(), name);
     return typed.hasExtraProperties() ? Presence::Unknown : Presence::Absent;
+}
+
+static void findDescriptorFields(VM& vm, RuntimeLayoutTable& layouts, const LayoutData& layout, DescriptorFields& found)
+{
+    const CommonIdentifiers& names = *vm.propertyNames;
+    std::array<UniquedStringImpl*, 6> keys { names.enumerable.impl(), names.configurable.impl(), names.value.impl(), names.writable.impl(), names.get.impl(), names.set.impl() };
+    found.layout = &layout;
+    for (size_t index = 0; index < keys.size(); ++index) {
+        found.fields[index] = layouts.field(vm, layout, keys[index]);
+        if (!found.fields[index])
+            layouts.didReadAbsentField(vm, layout, keys[index]);
+    }
+}
+
+bool tryReadDescriptorMembers(JSObject* object, DescriptorMembers& members)
+{
+    ASSERT(isCompiledObject(object));
+    const Object& typed = *uncheckedDowncast<Object>(object);
+    State& state = typed.state();
+    const LayoutData& layout = typed.layout();
+    DescriptorFields& known = state.objects->caches->descriptorFields[layout.shape % ObjectModelCaches::numberOfDescriptorFields];
+    if (known.layout != &layout) [[unlikely]]
+        findDescriptorFields(*state.instance.vm, state.objects->layouts, layout, known);
+    bool hasExtraProperties = typed.hasExtraProperties();
+    for (size_t index = 0; index < members.size(); ++index) {
+        JSValue value;
+        if (const FieldData* field = known.fields[index]) {
+            if (field->isAccessor()) [[unlikely]]
+                return false;
+            value = typed.readInline(*field);
+        }
+        // The property may lie among the extra properties.
+        if (!value && hasExtraProperties) [[unlikely]]
+            return false;
+        members[index] = value;
+    }
+    return true;
 }
 
 void putDirect(VM& vm, JSObject* object, PropertyName name, JSValue value, unsigned attributes)

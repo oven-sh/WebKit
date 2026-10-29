@@ -1022,6 +1022,9 @@ void TypePropagation::cutAfterNeverValues()
         Origin origin = isNeverEntered ? block.terminator.origin() : function.at(block.values[index]).origin();
         for (ValueID value : block.values.span().subspan(index + keepsValue))
             explainOperationThatGoes(function, value, InPlaceOfOperation::NothingBecauseNothingComesHere);
+        // The call stays in tail position, as in IRBuilder::demoteReturnCall(): its function is gone from the stack once the callee runs.
+        if (keepsValue && block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == block.values[index])
+            m_inputs.function.edit(block.values[index], ValueEdit::Definition).isTailCall = true;
         Block& cut = m_inputs.function.edit(id);
         cut.values.shrink(index + keepsValue);
         // A handler sees the parameters of the block that it covers. Nothing is left here that throws.

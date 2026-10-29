@@ -545,19 +545,19 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         ++numberOfBoxedResults;
     };
 
-    // Where the tail calls of the callee come to an end, whoever calls it in tail position may keep his frame until it returns.
+    // If the callee's tail calls terminate, a caller that calls it in tail position may keep its frame until the callee returns.
     auto isNumberInRegister = [](Representation representation) {
         return representation == Representation::Int32 || isInt64OrMarker(representation) || isDoubleOrMarker(representation);
     };
-    std::optional<BitVector> functionsThatEndTheirTailCalls;
+    std::optional<BitVector> functionsEndingTailCalls;
     auto endsItsTailCalls = [&](FunctionID id) {
-        if (!functionsThatEndTheirTailCalls) {
+        if (!functionsEndingTailCalls) {
             BitVector ends(count);
             for (unsigned index = 0; index < count; ++index) {
                 if (recordFactsOf(program, FunctionID(index)).hasBody)
                     ends.quickSet(index);
             }
-            // A caller ends its tail calls once the callee of each of them does: each site is looked at once, when its callee is known to.
+            // A caller's tail calls terminate once those of each callee do. Each site is visited once, when its callee is known to terminate.
             constexpr uint32_t neverEnds = UINT32_MAX;
             Vector<uint32_t> numberOfSitesToWaitFor(FillWith { }, count, 0u);
             Vector<TailCallEdge> edges;
@@ -591,16 +591,16 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
                     worklist.append(edge.caller);
                 }
             }
-            functionsThatEndTheirTailCalls = WTF::move(ends);
+            functionsEndingTailCalls = WTF::move(ends);
         }
-        return functionsThatEndTheirTailCalls->quickGet(id.index());
+        return functionsEndingTailCalls->quickGet(id.index());
     };
     auto mayKeepFrameToConvertNumber = [&](const TailCallSite& site) {
         return site.calleeKind == TailCalleeKind::Direct && !site.hasCheckedCast
             && isNumberInRegister(resultOf(site.caller)) && isNumberInRegister(resultOf(site.callee)) && !haveSameRegisterRepresentation(resultOf(site.callee), resultOf(site.caller))
             && program.at(site.caller).hasOrdinaryFrame() && isEnabledFor(site.caller) && endsItsTailCalls(site.callee);
     };
-    // A cell beside a boxed value is boxed with it.
+    // A cell next to a boxed value is boxed with it.
     auto returnSameBits = [](Representation first, Representation second) {
         return first == second || (!isCellOrBoxedValue(first) && haveSameRegisterRepresentation(first, second));
     };
@@ -610,7 +610,7 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         for (TailCallSite& site : sites) {
             if (site.requirement != TailCallRequirement::Required)
                 continue;
-            // An integer where the caller returns a fraction: to have both in one form would box both, and whoever else they jump to. The caller calls, converts and returns.
+            // An integer where the caller returns a double: a common form would box both, and everything else they jump to. The caller calls, converts and returns instead.
             if (mayKeepFrameToConvertNumber(site)) {
                 site.requirement = TailCallRequirement::Allowed;
                 continue;
@@ -781,13 +781,13 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
             worklist.append(id);
         };
 
-        // All threads read the callers. What they find is noted here, in the order of the sites.
-        struct SiteThatMayReserve {
+        // All threads read the callers. Their findings are recorded here, in site order.
+        struct ReservingSite {
             TailCallEdge edge;
             std::optional<uint32_t> numberOfWords;
         };
         Vector<TailCallEdge> edges;
-        for (const SiteThatMayReserve& found : collectInParallel<SiteThatMayReserve>(loops, sites.size(), [&](unsigned index, Vector<SiteThatMayReserve>& found) {
+        for (const ReservingSite& found : collectInParallel<ReservingSite>(loops, sites.size(), [&](unsigned index, Vector<ReservingSite>& found) {
             const TailCallSite& site = sites[index];
             if (!mayReserve(site.caller))
                 return;

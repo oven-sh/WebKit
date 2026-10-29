@@ -284,10 +284,10 @@ void AllocationSinking::didBuildAfterMerge(VirtualObjectID object, BlockID merge
         candidate.mergeBlock = mergeBlock;
 }
 
-// `let sum = 0; list.forEach(value => { sum += value; })`: the arrow is inlined where the loop is expected to run, and called with its environment in the arms that are seldom taken.
-// Each such call gets a copy of the environment, and what the callee left in the copy is stored back behind the call. Then only reads and stores name the environment, and its variables become values.
-// The callee only borrows the environment: nothing holds it once the callee has returned.
-// Every variable got a value of its type where the environment was made, so it holds one from there on, wherever the program itself first reads it.
+// `let sum = 0; list.forEach(value => { sum += value; })`: the arrow function is inlined on the loop's likely path, and called with its environment on the rare paths.
+// Each such call gets a copy of the environment, and what the callee left in the copy is stored back after the call. Then only reads and stores name the environment, and its variables become values.
+// The callee only borrows the environment: nothing holds it after the callee returns.
+// Every variable was given a value of its type when the environment was created, so it holds one from then on, wherever the program first reads it.
 static PassOutcome lendCopiesOfEnvironmentsToRareCalls(FunctionPassContext& context)
 {
     Function& function = context.function;
@@ -301,13 +301,13 @@ static PassOutcome lendCopiesOfEnvironmentsToRareCalls(FunctionPassContext& cont
         ValueID environment;
         ValueID call;
     };
-    // Null for a field that holds no value of the program, as the environment around this one.
+    // Null for a field that holds no program value, such as the enclosing environment.
     auto flowOfVariable = [&](LayoutID layout, uint32_t field) -> const LocationFlow* {
         if (!program.at(program.at(layout).fields[field].declared.written()).isJavaScriptValue())
             return nullptr;
         return &flowOf(program, { layout, field }).location;
     };
-    // Of such a variable flow says only that it is stored to ahead of every read of the program. A read that a pass adds is read as a word, and the cast behind it names the fact.
+    // For such a variable, flow analysis only says that it is stored before every read by the program. A read added by a pass is read as a word, and the cast after it names the fact.
     auto isReadAsWord = [&](LayoutID layout, uint32_t field) {
         const LocationFlow* flow = flowOfVariable(layout, field);
         return flow && flow->initialization == InitializationState::StoredBeforeEveryRead;
@@ -330,7 +330,7 @@ static PassOutcome lendCopiesOfEnvironmentsToRareCalls(FunctionPassContext& cont
                 continue;
             if (made.fields().size() != program.at(made.layout()).fields.size() || made.listsOnlyStoredValues() || !isMadeWithValuesOfDeclaredTypes(made))
                 continue;
-            bool isStoredWhereCodeIsExpectedToRun = false;
+            bool isStoredInLikelyCode = false;
             Vector<ValueID, 2> calls;
             bool canLend = std::ranges::all_of(useLists.usesOf(id), [&](const Use& use) {
                 if (use.kind != Use::Kind::Operand)
@@ -340,18 +340,18 @@ static PassOutcome lendCopiesOfEnvironmentsToRareCalls(FunctionPassContext& cont
                 if (user.opcode == Opcode::GetEnvironmentField)
                     return true;
                 if (user.opcode == Opcode::PutEnvironmentField && use.operandIndex == OperandIndex::PutEnvironmentField::environment) {
-                    isStoredWhereCodeIsExpectedToRun |= at.frequency.predicted() != BlockFrequency::Rare;
+                    isStoredInLikelyCode |= at.frequency.predicted() != BlockFrequency::Rare;
                     return true;
                 }
                 if (user.opcode != Opcode::CallDirect || at.frequency.predicted() != BlockFrequency::Rare || at.handler || program.typeOf(function, use.user).hasCells())
                     return false;
-                // The callee reads and writes the variables and keeps the environment nowhere.
+                // The callee reads and writes the variables and does not retain the environment.
                 if (!usesOfBorrowedParameter.containsAll(summarizeOperand(analyses.effectContext(), function, user, use.operandIndex).uses))
                     return false;
                 calls.append(use.user);
                 return std::ranges::count(user.argumentsOperands(), id) == 1;
             });
-            if (!canLend || !isStoredWhereCodeIsExpectedToRun || calls.isEmpty())
+            if (!canLend || !isStoredInLikelyCode || calls.isEmpty())
                 continue;
             for (ValueID call : calls)
                 loans.append(Loan { id, call });
@@ -411,8 +411,8 @@ static PassOutcome lendCopiesOfEnvironmentsToRareCalls(FunctionPassContext& cont
     return PassOutcome::Changed;
 }
 
-// Where a way on which an object and a closure over it are cells meets a way on which they are not, cells in the fields that tie the two would have the object built where the closure is made, in front of every store that follows.
-// Built in front of the first branch behind that place, the two meet nothing. Where they still do, the fields hold cells.
+// If a path on which an object and a closure over it are cells meets a path on which they are not, cells in the fields that link the two would force the object to be built where the closure is created, before every later store.
+// Built before the first branch after that place, the two never meet such a path. If they still do, the fields hold cells.
 void AllocationSinking::buildUnderHandler(VirtualObjectID object)
 {
     if (at(object).willBeBuiltUnderHandler || !m_analyses.cfg().hasHandlers())
@@ -421,10 +421,10 @@ void AllocationSinking::buildUnderHandler(VirtualObjectID object)
     auto isOfFamily = [&](const Candidate& candidate) {
         return !candidate.isLeftOut && candidate.family == family;
     };
-    bool isMadeUnderHandler = std::ranges::any_of(m_candidates, [&](const Candidate& candidate) {
+    bool isCreatedUnderHandler = std::ranges::any_of(m_candidates, [&](const Candidate& candidate) {
         return isOfFamily(candidate) && !candidate.isJoin && handlerOf(candidate.block);
     });
-    if (!isMadeUnderHandler)
+    if (!isCreatedUnderHandler)
         return;
     for (Candidate& candidate : m_candidates) {
         if (isOfFamily(candidate))
@@ -693,7 +693,7 @@ bool AllocationSinking::buildBeforeBranchesInsteadOfAbandoning()
     for (Candidate& candidate : m_candidates) {
         if (candidate.isAbandoned || candidate.isJoin || candidate.isBuiltBeforeBranches)
             continue;
-        // Each build repeats its stores, and there will be one.
+        // Each build repeats its stores, and there will be only one.
         if (candidate.numberOfBuilds < 2 || candidate.numberOfFoldedStores * candidate.numberOfBuilds <= candidate.numberOfRepeatedStores)
             continue;
         if (!exceedsMaxBuilds(candidate, maxNumberOfBuilds) && paysToSink(candidate))

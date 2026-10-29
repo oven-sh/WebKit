@@ -571,7 +571,7 @@ void AccessRewriter::rewrite(const ElementAccessSite& site, const AccessOperands
 }
 
 // `{ __proto__: null, first: f(), second() { } }`, and `const made = { }; made.first = f(); made.second = g();`.
-// `numberOfStores`: no more stores than that name the object or what finishes it.
+// `numberOfStores`: at most this many stores name the object or what finishes it.
 static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder& builder, BlockID block, uint32_t allocationIndex, uint32_t numberOfStores)
 {
     const Program& program = context.program;
@@ -596,7 +596,7 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
     std::optional<uint32_t> lastListedStore;
 
     static_assert(OperandIndex::PropDefine::object == OperandIndex::PropSet::object && OperandIndex::PropDefine::object == OperandIndex::SetLiteralPrototype::object && OperandIndex::PropDefine::object == OperandIndex::FinishObject::object);
-    // Behind the last store nothing is listed: one of thousands of literals in the list that holds them all is named next at the end of the block.
+    // Nothing is listed after the last store: one of thousands of literals in the list that holds them all is next named at the end of the block.
     for (uint32_t index = allocationIndex + 1; index < values.size() && numberOfStores; ++index) {
         const Value& user = function.at(values[index]);
         unsigned numberOfUses = 0;
@@ -822,7 +822,7 @@ static bool leavesTestOfPrototypeToStore(FunctionPassContext& context, const Val
 {
     if (access.opcode != Opcode::PropSet || plan.form != AccessForm::Slot || !plan.stores() || !plan.storedValueFits || !plan.requiredProofs.contains(Proof::PrototypeLinkUnchanged) || !context.inputs.flow.seesOnlyFinishedObjects(query.site))
         return false;
-    // So is an object that this function has had made.
+    // So is an object that this function had created.
     Opcode maker = context.function.at(context.analyses.identityOf(access.objectOperand())).opcode;
     return maker != Opcode::NewObject && maker != Opcode::Call && maker != Opcode::CallDirect && maker != Opcode::Construct;
 }
@@ -2129,8 +2129,8 @@ static bool isReadOfUntypedFieldInColdCode(TestSiteReporter& reporter, const Val
     });
 }
 
-// Which objects have a field that makers outside the class fill, nobody knows. The field lies beside the cell more often than not, and a read of it there costs more bytes than a read by name.
-static bool isReadOfFieldFilledByMakersOutsideInWarmCode(TestSiteReporter& reporter, const Value& access, const PlannedAccess& tested)
+// Which objects have a field that creators outside the class fill is unknown. The field is usually stored outside the cell, where reading it takes more bytes than a read by name.
+static bool isWarmReadOfFieldFilledByOutsideCreators(TestSiteReporter& reporter, const Value& access, const PlannedAccess& tested)
 {
     FunctionPassContext& context = reporter.context();
     const Function& function = reporter.function();
@@ -2288,7 +2288,7 @@ void reportPropertyAccessTests(TestSiteReporter& reporter)
             PropertyAccessPlan refused = WTF::move(tested->plan);
             tested = planForReceiversThatClaimNoAbsence(reporter, access, *query, refused);
         }
-        if (!tested || testsPrototypeThatWasJustReplaced(reporter, access, *tested) || isReadOfUntypedFieldInColdCode(reporter, access, *tested) || isReadOfFieldFilledByMakersOutsideInWarmCode(reporter, access, *tested))
+        if (!tested || testsPrototypeThatWasJustReplaced(reporter, access, *tested) || isReadOfUntypedFieldInColdCode(reporter, access, *tested) || isWarmReadOfFieldFilledByOutsideCreators(reporter, access, *tested))
             return;
         if (tested->plan.member.kind == MemberKind::Absent && access.opcode == Opcode::PropGet && isProvenToFindFunctions(reporter.context(), reporter.use()))
             return;
@@ -3709,7 +3709,7 @@ static std::optional<PlannedSplit> planSplitOfNumberKey(FunctionPassContext& con
     return planSplitOfKey(context, site, singleElementSpan(number->type), true);
 }
 
-// A view of numbers stores a number as it is. What else the value may be becomes a number without running code, and that is rare: an optional number is undefined where nobody gave one.
+// A numeric typed array stores a number as is. Other possible values convert to a number without running code, and that is rare: an optional number is undefined when none was passed.
 static std::optional<PlannedSplit> planSplitOfStoredNumber(FunctionPassContext& context, const ValueSite& site)
 {
     const Program& program = context.program;
@@ -3717,7 +3717,7 @@ static std::optional<PlannedSplit> planSplitOfStoredNumber(FunctionPassContext& 
     const Value& value = function.at(site.value);
     if (elementAccessOf(value.opcode) != Access::Store || value.valueOperand() == value.propertyOperand())
         return std::nullopt;
-    // Two stores in line are more code than one store by key.
+    // Two inline stores are more code than one store by key.
     if (isCold(heatClassOf(context, site.block)).predicted())
         return std::nullopt;
     ValueID stored = value.valueOperand();

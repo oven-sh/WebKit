@@ -53,8 +53,8 @@ struct OwnKeyWalkPlan {
     ValueID unchangedAllocation;
 };
 
-// The lists of names that the next run of ExpandOwnKeys writes out as literals. Whoever places tests in front of that run leaves their readers alone until then.
-Vector<ValueID, 4> findKeyListsToWriteOut(FunctionPassContext&);
+// The lists of names that the next run of ExpandOwnKeys expands into literals. A pass that places tests before that run leaves their readers alone until then.
+Vector<ValueID, 4> findKeyListsToExpand(FunctionPassContext&);
 
 struct AllocationAtPoint {
     ValueID allocation;

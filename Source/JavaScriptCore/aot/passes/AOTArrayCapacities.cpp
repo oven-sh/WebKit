@@ -1461,7 +1461,7 @@ static bool collectReadsRelyingOn(FunctionPassContext& context, ValueID testID, 
     return joinsTheseAlone && !found.reads.isEmpty();
 }
 
-// A validating build asks again each test that the proof stands for, and names the proof in no operand. Answers whether it is known of each such test which proof it asks again.
+// A validating build repeats each test that the proof stands for, and names the proof in no operand. Returns whether the proof that each such test repeats is known.
 static bool collectTestsRepeatedForValidation(FunctionPassContext& context, const Value& test, ReadsBehindStorageTest& found)
 {
     if (!context.build.validates())
@@ -1509,8 +1509,8 @@ static ValueID findPositionTestInFrontOf(FunctionPassContext& context, const Rea
     const Value& test = function.at(terminator.conditionOperand());
     if (test.opcode == Opcode::IsElementPresent ? !found.reads.contains(terminator.conditionOperand()) : test.opcode != Opcode::IsInBounds || test.arrayOperand() != read.arrayOperand())
         return { };
-    // `index in list`: where that fails the program goes on as it does without an element, and an element that is there does not go that way.
-    if (test.isAskedByProgram())
+    // `index in list`: if that fails, the program continues as it does without an element, and a present element does not take that path.
+    if (test.isFromProgram())
         return { };
     if (context.analyses.identityOf(test.positionOperand()) != context.analyses.identityOf(read.positionOperand()))
         return { };
@@ -1548,8 +1548,8 @@ static std::optional<Vector<ValueID, 4>> findPresenceTestsThatLostTheirRead(Func
     for (ValueID read : found.reads) {
         if (context.function.at(read).opcode != Opcode::IsElementPresent || testsInFrontOfReads.contains(read))
             continue;
-        // Behind `index in list` a read may be gone as well, and what is no number has no arm to leave by.
-        if (context.function.at(read).isAskedByProgram())
+        // After `index in list` a read may have been removed too, and a value that is not a number has no arm to leave by.
+        if (context.function.at(read).isFromProgram())
             return std::nullopt;
         for (const Use& use : useLists.usesOf(read)) {
             if (use.kind != Use::Kind::TerminatorOperand)

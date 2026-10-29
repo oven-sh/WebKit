@@ -978,7 +978,7 @@ void computeFunctionResults(const ValueFlowResultInputs& inputs, ValueFlowStampe
         if (inputs.hasEscaped(closure)) {
             flow.cause = UnprovenCause::ReachesNativeCode;
             if (inputs.birthsOfUnknownObject)
-                flow.witness = inputs.birthsOfUnknownObject->originOfEscape(closure);
+                flow.witness = inputs.birthsOfUnknownObject->escapeOriginOf(closure);
             return;
         }
         if (inputs.isLost(closure)) {

@@ -433,6 +433,9 @@ static void reportNamesWithoutColumn(std::span<const NameCandidate> namesWithout
 static void sortByFirstMention(const ParallelLoops& loops, std::span<NameCandidate> namesWithoutColumn)
 {
     parallelSort(loops, namesWithoutColumn, [](const NameCandidate& a, const NameCandidate& b) {
+        // The table of fields takes more names than the front table. The names that code looks up get the low numbers, which are the ones it takes.
+        if (!a.tableLookupUses != !b.tableLookupUses)
+            return !!a.tableLookupUses;
         if (a.isEngineSymbol != b.isEngineSymbol)
             return a.isEngineSymbol;
         if (a.identifier.text != b.identifier.text)

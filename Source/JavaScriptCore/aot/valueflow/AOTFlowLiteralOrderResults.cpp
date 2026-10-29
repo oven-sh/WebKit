@@ -341,7 +341,7 @@ struct LiteralOrderSolver {
         }
 
         LiteralKeyOrders orders { WTF::move(keysAtAllocation) };
-        // The keys of an order of many keys, by the index of the order: a literal may define thousands. Empty: not listed yet.
+        // The keys of an order with many keys, indexed by order: a literal may define thousands. Empty means not listed yet.
         using KeySet = UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
         constexpr size_t maxKeysForLinearSearch = 16;
         Vector<KeySet, 2> keysOfLongOrders;
@@ -424,7 +424,7 @@ struct LiteralOrderSolver {
         }
     }
 
-    // The definitions of a literal run one after the other, each once, so a literal without a copy has one order: that of its text.
+    // A literal's definitions run in sequence, each once, so a literal without a spread has one order: its source order.
     bool listsOrderOfEveryObject(LayoutID id) const
     {
         if (!layouts[id.index()].createsFieldsOnlyInLiterals || hasOrdersUnread.get(id.index()))

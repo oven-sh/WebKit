@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTForwardedCalls.h"
 #include "AOTLayout.h"
 #include "AOTPropertyAccessElements.h"
 #include "AOTPropertyAccessReceivers.h"
@@ -150,7 +151,8 @@ InlineForm chooseFormOfFunctionBuiltin(const InlineBuiltinSite& site)
         // Bytecode constructs in place only where the call is written so. Every other call has a frame of the host function.
         return callIf(site, !site.value().isDoneInPlace() || site.arguments().size() < 2 || site.arguments().size() > 3, InlineForm::TwoWay);
     case InlineBuiltin::FunctionApply:
-        return InlineForm::Whole;
+        // Bytecode applies in place only where the call is written `f.apply(..)`. Every other call has a frame of Function.prototype.apply.
+        return callIf(site, !forwardsInPlace(site.value()), InlineForm::Whole);
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

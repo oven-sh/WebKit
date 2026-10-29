@@ -336,7 +336,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTKeyOrderEntries, const uint8_t*, (
     return reinterpret_cast<const uint8_t*>(objects.keyOrders.publishEntriesOfFields(objects.layouts.layoutForShape(shape), orderWord));
 }
 
-// The names that JSON.stringify lists for an object with the order word, without those in front of a position in the order.
+// The names that JSON.stringify lists for an object with this order word, excluding those before a position in the order.
 JSC_DEFINE_JIT_OPERATION(operationAOTKeyNamesInOrder, EncodedJSValue, (Instance* instance, uint32_t shape, uint32_t orderWord, uint32_t position))
 {
     constexpr Entry entry = Entry::operationAOTKeyNamesInOrder;

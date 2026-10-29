@@ -89,7 +89,7 @@ public:
     Instance* onlyInstance { nullptr };
     // The frame of the host function that throws because a class was called without `new`, while it makes the error.
     CallFrame* classCalledWithoutNew { nullptr };
-    // From where `super(..)` of compiled code enters a native constructor until that constructor asks for the Structure of what it makes, or returns. Only compared with, never read through.
+    // Set from when compiled code's `super(..)` enters a native constructor until that constructor requests the Structure for the new object, or returns. Only compared, never dereferenced.
     JSCell* parentOfSuperCall { nullptr };
     JSCell* newTargetOfSuperCall { nullptr };
     // In the innermost native code that has asked for the Exception of what it calls, and so may list the frames of the throw.

@@ -63,9 +63,9 @@ function f5 name="escapesInRareCode" parameters=[{type=boolean}, {type=anything}
   b2():
     Return v2
 # CHECK: [[escapedInRareCode]]: f0 = NewClosure function=f0
+# Code that seldom runs keeps the call by value, which takes fewer bytes.
 # CHECK: = Call v1, -, [[escapedInRareCode]]
-# CHECK-NEXT: KeepCalleeInFrame [[escapedInRareCode]]
-# CHECK-NEXT: = CallDirect v2 function=f0 [calleeIsKeptInFrame
+# CHECK-NEXT: = Call [[escapedInRareCode]], -, v2
 }
 
 function f6 name="escapesOnTheOtherSide" parameters=[{type=boolean}, {type=anything}, {type=anything}] results=[{type=anything}] {
@@ -100,6 +100,5 @@ function f7 name="callsBehindAFailedTest" parameters=[{type=boolean}, {type=anyt
     v8 = Call v7, -, v2
     Return v8
 # CHECK: b5([[eitherClosure]]: f0)
-# CHECK-NEXT: KeepCalleeInFrame [[eitherClosure]]
-# CHECK-NEXT: = CallDirect v2 function=f0 [calleeIsKeptInFrame
+# CHECK-NEXT: = Call [[eitherClosure]], -, v2
 }

@@ -205,7 +205,7 @@ struct RedundantReadElimination {
     // A read that was replaced by a value looks no more and defines no more: whatever its bit would reach, the bit of that value reaches, it comes first, and its type is as narrow.
     BitVector m_isReplacedByValue { };
     BitVector m_isReplacedByUndefined { };
-    // A new read of the location tells as much as the value that the bit stands for. Empty where nothing suspends.
+    // A new read of the location is as informative as the value that the bit stands for. Empty if nothing suspends.
     BitVector m_isAsWellReadAgain { };
     Vector<uint32_t> m_bitsReplacedByValue { };
     // By the bit of a read of the class that is solved in parts: the value found for each edge into its block so far.
@@ -663,7 +663,7 @@ struct RedundantReadElimination {
         }
     }
 
-    // What is remembered over a suspension lies in the frame, which is written out and read back. To read the location again costs less, unless more is known of the value than a read tells.
+    // A value kept across a suspension lives in the frame, which is saved and restored. Reading the location again is cheaper, unless more is known about the value than a read shows.
     void appendClearsOfSuspension(std::span<const Word> row, ActionList& actions)
     {
         for (size_t bit = findBit(row, 0); bit < m_group.size(); bit = findBit(row, bit + 1)) {
@@ -1498,8 +1498,8 @@ PassOutcome eliminateRedundantReads(FunctionPassContext& context)
 namespace {
 
 constexpr AbstractHeapSet carriedHeaps = heapsOfVariables | AbstractHeapSet { AbstractHeap::ObjectFields };
-// What these ask of an object stays as it is until something writes what they read.
-constexpr OpcodeSet testsOfObjectsMovedAheadOfLoops { Opcode::HasBirthFieldsFilled };
+// The results of these tests hold until something writes what they read.
+constexpr OpcodeSet objectTestsHoistedBeforeLoops { Opcode::HasBirthFieldsFilled };
 AOT_THRESHOLD(unsigned, maxCarriedVariablesPerLoop, 8);
 AOT_THRESHOLD(unsigned, maxRoundsPerStep, 4);
 
@@ -1604,7 +1604,7 @@ struct VariableCarrier : LoopEditor {
         Vector<VariableAccess, 2> stores { };
         Vector<BlockID, 2> blocksOfOtherWrites { };
         Expected<bool> isReadInEveryTurn { false };
-        Expected<bool> isReadInEveryWholeTurn { false };
+        Expected<bool> isReadInEveryFullIteration { false };
         bool isWrittenOnLeavingPath { false };
         // Whoever gets to the end of the block ahead of the loop has read the variable or is about to, whichever way the tests turn out.
         bool isReadWheneverLoopIsEntered { false };
@@ -1634,15 +1634,15 @@ struct VariableCarrier : LoopEditor {
     // In every loop that no path has to leave for it: the variables that the first turn reads before the loop can end. What is read ahead of an inner loop is a read of the loop around it.
     PassOutcome run()
     {
-        bool movedTestsOfObjects = false;
-        if (m_analyses.opcodesOfValues().intersects(testsOfObjectsMovedAheadOfLoops)) {
+        bool hoistedObjectTests = false;
+        if (m_analyses.opcodesOfValues().intersects(objectTestsHoistedBeforeLoops)) {
             for (BlockID header : headersFromInnermost()) {
                 const NaturalLoop* loop = m_analyses.naturalLoops().headerOf(header);
                 if (loop && isHeaderOfLoopOfProgram(header) && moveLeadingTestsAheadOf(*loop, LeadingTests::OfObjects))
-                    movedTestsOfObjects = true;
+                    hoistedObjectTests = true;
             }
-            // What the accesses of the loop name is what was proven ahead of it, not a parameter that is handed nothing else. Nothing is remembered by number from here on.
-            if (movedTestsOfObjects) {
+            // The loop's accesses name the value proven before the loop, not a parameter that is only ever passed that value. Nothing is remembered by number from here on.
+            if (hoistedObjectTests) {
                 removeTrivialParameters(m_context);
                 retype();
             }
@@ -1654,7 +1654,7 @@ struct VariableCarrier : LoopEditor {
                 isHeaderOfChangedLoop.set(header.index());
         }
         if (isHeaderOfChangedLoop.isEmpty())
-            return movedTestsOfObjects ? PassOutcome::Changed : PassOutcome::Unchanged;
+            return hoistedObjectTests ? PassOutcome::Changed : PassOutcome::Unchanged;
 
         for (unsigned round = 0; round < maxRoundsPerStep && retype(); ++round) {
             bool moved = false;
@@ -1688,7 +1688,7 @@ struct VariableCarrier : LoopEditor {
         });
     }
 
-    // A slot of an object is a variable where what the access relies on stands ahead of the loop.
+    // An object's slot is a variable if what the access relies on is established before the loop.
     bool isCarriedAccess(const NaturalLoop& loop, const MemoryAccess& access, const Value& value)
     {
         if (access.location.heap() != AbstractHeap::ObjectFields)
@@ -1755,13 +1755,13 @@ struct VariableCarrier : LoopEditor {
             return;
         // The read ahead of the loop stands for the read of the first turn, so the first turn has to get as far: a loop may well end at its first test.
         BitVector runsInFirstTurn(m_function.blocks.size());
-        // The same where the loop does not end at one of its own tests. A loop that ends at once has read the variable for nothing, which costs a load.
-        BitVector runsInFirstWholeTurn(m_function.blocks.size());
+        // The same if the loop does not exit at one of its own tests. A loop that exits immediately has read the variable for nothing, which costs a load.
+        BitVector runsInFirstFullIteration(m_function.blocks.size());
         bool mayHaveEnded = false;
         // A path that is seldom taken does not count above. That a variable has been stored may hang on the very test that such a path begins with.
         std::optional<ProgramPoint> firstWayOut;
         BitVector beginsBeforeAnyWayOut(m_function.blocks.size());
-        for (BlockID block = loop.header(); m_firstTurnRunsHere && !runsInFirstWholeTurn.set(block.index());) {
+        for (BlockID block = loop.header(); m_firstTurnRunsHere && !runsInFirstFullIteration.set(block.index());) {
             if (!mayHaveEnded)
                 runsInFirstTurn.set(block.index());
             const BlockValues& values = m_function.at(block).values;
@@ -1817,7 +1817,7 @@ struct VariableCarrier : LoopEditor {
             if (ValueID namedBase = memoryAccessOf(m_function, m_function.at(access.id)).base)
                 variable->isReadThroughCastInLoop |= loops.belongsTo(useLists.locationOf(namedBase).block, loop);
             variable->isReadInEveryTurn = variable->isReadInEveryTurn.predicted() || ((!m_firstTurnRunsHere || runsInFirstTurn.get(access.point.block.index())) && dominatesAll(access.point.block, latches.span()));
-            variable->isReadInEveryWholeTurn = variable->isReadInEveryWholeTurn.predicted() || (runsInFirstWholeTurn.get(access.point.block.index()) && dominatesAll(access.point.block, latches.span()));
+            variable->isReadInEveryFullIteration = variable->isReadInEveryFullIteration.predicted() || (runsInFirstFullIteration.get(access.point.block.index()) && dominatesAll(access.point.block, latches.span()));
             variable->isReadWheneverLoopIsEntered |= isReachedWheneverLoopIsEntered(access);
         }
 
@@ -1873,23 +1873,23 @@ struct VariableCarrier : LoopEditor {
             });
         };
         // HoistLoopInvariantReads moves a read that is all there is to a variable.
-        // A variable that goes around in a register and is still stored in every turn has gained little, and a text that is stored is a text that is made. So behind a test that may end the loop it is carried only where its stores leave the loop as well.
+        // A variable that is carried in a register but still stored in every iteration gains little, and storing a string means creating it. So after a test that may exit the loop it is only carried if its stores leave the loop too.
         std::optional<bool> storesCanLeave;
-        auto isWorthReadingAhead = [&](const CarriedVariable& variable) {
+        auto isWorthPreloading = [&](const CarriedVariable& variable) {
             if (variable.isReadInEveryTurn.predicted())
                 return true;
-            if (!variable.isReadInEveryWholeTurn.predicted() || variable.stores.isEmpty() || !variable.blocksOfOtherWrites.isEmpty() || variable.isWrittenOnLeavingPath)
+            if (!variable.isReadInEveryFullIteration.predicted() || variable.stores.isEmpty() || !variable.blocksOfOtherWrites.isEmpty() || variable.isWrittenOnLeavingPath)
                 return false;
             if (!storesCanLeave)
-                storesCanLeave = leaves.isEmpty() && nothingLooksAtVariablesIn(loop);
+                storesCanLeave = leaves.isEmpty() && noCodeObservesVariablesIn(loop);
             return *storesCanLeave;
         };
-        // A slot that the loop only reads is read ahead of it by others. An integer in a slot is added to in place, in one instruction with its test.
-        auto gainsNothingInRegister = [&](const CarriedVariable& variable) {
+        // A slot that the loop only reads is hoisted by other code. An integer in a slot is incremented in place, in one instruction with its test.
+        auto doesNotBenefitFromRegister = [&](const CarriedVariable& variable) {
             return variable.location.heap() == AbstractHeap::ObjectFields && (variable.stores.isEmpty() || typeOf(variable.reads.first()).isInteger());
         };
         m_variables.removeAllMatching([&](const CarriedVariable& variable) {
-            if (variable.isReadThroughCastInLoop || gainsNothingInRegister(variable) || !isWorthReadingAhead(variable) || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
+            if (variable.isReadThroughCastInLoop || doesNotBenefitFromRegister(variable) || !isWorthPreloading(variable) || !hasTypesOfReads(variable) || std::ranges::any_of(variable.blocksOfOtherWrites, hasToStay))
                 return true;
             return variable.stores.isEmpty() && !variable.isWrittenOnLeavingPath && !isReadBy(variable, Opcode::TypeTest) && !isReadBy(variable, Opcode::GetCapture);
         });
@@ -2141,26 +2141,26 @@ struct VariableCarrier : LoopEditor {
     struct LeadingTest {
         BlockID block;
         std::optional<size_t> parameterOfHeader;
-        // The block only computes and decides whether the loop goes on. It is asked ahead of the loop as well, and again in the first turn with the same answer.
+        // The block only computes and decides whether the loop continues. It is also evaluated before the loop, and again in the first iteration with the same result.
         bool staysInLoop { false };
     };
     enum class LeadingTests : uint8_t { OfTypes, OfObjects };
 
-    bool nothingWritesWhatIsReadBy(const NaturalLoop& loop, ValueID test)
+    bool noWriteClobbersReadsOf(const NaturalLoop& loop, ValueID test)
     {
         LocationMasks reads = m_analyses.effectsOf(test).onAnyEdge().reads;
-        auto leavesItAlone = [&](const Effects& effects) {
+        auto preservesIt = [&](const Effects& effects) {
             return !effects.mayRunOtherCode() && !effects.writes.overlaps(reads);
         };
         for (unsigned position = 0; position < loop.size(); ++position) {
             BlockID block = loop.at(position);
-            if (!leavesItAlone(m_analyses.effectsOfTerminator(block).onAnyEdge()))
+            if (!preservesIt(m_analyses.effectsOfTerminator(block).onAnyEdge()))
                 return false;
             for (ValueID value : m_function.at(block).values) {
                 Effects effects = m_analyses.effectsOf(value).onAnyEdge();
-                // A store to a slot leaves the field in its slot. Whatever else stores to a field may hand it what the slot does not hold.
+                // A store to a slot leaves the field in its slot. Any other store to a field may give it a value that the slot cannot hold.
                 bool mayTakeFieldOutOfSlot = m_function.at(value).opcode != Opcode::PutSlot && !effects.writes.restrictedTo({ AbstractHeap::ObjectFields }).isEmpty();
-                if (mayTakeFieldOutOfSlot || !leavesItAlone(effects))
+                if (mayTakeFieldOutOfSlot || !preservesIt(effects))
                     return false;
             }
         }
@@ -2200,7 +2200,7 @@ struct VariableCarrier : LoopEditor {
                 Opcode opcode = m_function.at(value).opcode;
                 return opcode == Opcode::LoopHint || makesFact(opcode) || isCastBehindFact(value);
             });
-            if (wanted == LeadingTests::OfObjects && !testsOfObjectsMovedAheadOfLoops.contains(test.opcode)) {
+            if (wanted == LeadingTests::OfObjects && !objectTestsHoistedBeforeLoops.contains(test.opcode)) {
                 bool onlyComputes = std::ranges::all_of(block.values, [&](ValueID value) {
                     return m_function.at(value).opcode == Opcode::LoopHint || m_analyses.effectsOf(value).onAnyEdge().isPure();
                 });
@@ -2223,11 +2223,11 @@ struct VariableCarrier : LoopEditor {
             if (!loops.belongsTo(taken.block, loop) || taken.block == loop.header() || !cfg.singleIncomingEdge(taken.block) || loops.belongsTo(notTaken.block, loop))
                 break;
             if (wanted == LeadingTests::OfObjects) {
-                bool asksWhatStandsAhead = true;
+                bool testsOnlyLoopInvariantValues = true;
                 test.forEachOperand([&](ValueID operand, uint32_t) {
-                    asksWhatStandsAhead &= !loops.belongsTo(useLists.locationOf(operand).block, loop);
+                    testsOnlyLoopInvariantValues &= !loops.belongsTo(useLists.locationOf(operand).block, loop);
                 });
-                if (!asksWhatStandsAhead || taken.proofs.isEmpty() || !nothingWritesWhatIsReadBy(loop, block.values.last()))
+                if (!testsOnlyLoopInvariantValues || taken.proofs.isEmpty() || !noWriteClobbersReadsOf(loop, block.values.last()))
                     break;
                 tests.append({ id, std::nullopt });
                 proven.append(m_function.at(taken.block).parameters.last());
@@ -2338,7 +2338,7 @@ struct VariableCarrier : LoopEditor {
         return changed;
     }
 
-    // What throws for lack of memory alone is not held to what the variables hold.
+    // An operation that only throws when out of memory need not see the variables' current values.
     Effects effectsOnDelayedStores(ValueID value)
     {
         Effects effects = m_analyses.effectsOf(value).onAnyEdge();
@@ -2352,8 +2352,8 @@ struct VariableCarrier : LoopEditor {
         return (!effects.mayThrow && !effects.mayRunOtherCode()) || m_context.build.isSabotaged(Sabotage::DelayedStoresPassWhatMayThrow);
     }
 
-    // Nothing leaves the loop but by its edges, and nothing in it runs code.
-    bool nothingLooksAtVariablesIn(const NaturalLoop& loop)
+    // The loop is only left through its edges, and nothing in it runs code.
+    bool noCodeObservesVariablesIn(const NaturalLoop& loop)
     {
         for (unsigned position = 0; position < loop.size(); ++position) {
             BlockID id = loop.at(position);

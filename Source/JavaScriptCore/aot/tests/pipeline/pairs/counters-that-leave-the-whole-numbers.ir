@@ -1,8 +1,0 @@
-# The program of ../../answers is one in which tests are placed, stretches behind them are copied with ways back, and counters are converted behind those tests.
-# FORM: AsRead
-# RUN: compile
-# STATISTIC: TypeTestsPlaced >= 1
-# STATISTIC: StretchCopiesToWaysBack >= 1
-# STATISTIC: CountersConverted >= 1
-# CHECK: image not empty
-# PROGRAM-OF: ../../answers/counters-that-leave-the-whole-numbers.ir

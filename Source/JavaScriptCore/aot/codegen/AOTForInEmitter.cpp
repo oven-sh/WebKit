@@ -45,12 +45,12 @@ void ForInEmitter::generateForInOpen(const ValueContext& value)
     LBasicBlock slowPath = newBlock();
     // The enumerator, and how many of its leading names the object is known to have.
     ResultsJoin<CellPointer, Integer> join(m_out);
-    const bool hasStepThatChecksPresenceOnce = m_function.values.containsIf([&](const Value& step) {
+    const bool hasStepCheckingPresenceOnce = m_function.values.containsIf([&](const Value& step) {
         return step.opcode == Opcode::ForInStep && step.keysChangeOnlyInSteps() && step.enumeratorOperand() == value.id();
     });
     // The cached state for the object's Structure and key order is current.
     auto addCurrent = [&](CellPointer enumerator) {
-        join.add(enumerator, hasStepThatChecksPresenceOnce ? zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endOwnPropertyIndex)) : integer(0));
+        join.add(enumerator, hasStepCheckingPresenceOnce ? zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endOwnPropertyIndex)) : integer(0));
     };
 
     branch(isUndefinedOrNull(object, typeOf(value->objectOperand()).primitives), { unlikelyEdge(isNullish), normalEdge(isNotNullish) });
@@ -91,7 +91,7 @@ void ForInEmitter::generateForInOpen(const ValueContext& value)
 
     auto [enumerator, numberOfCurrentNames] = join.finish();
     define(value, enumerator.as<CellPointer>());
-    if (hasStepThatChecksPresenceOnce)
+    if (hasStepCheckingPresenceOnce)
         setNumberOfCurrentNames(value.id(), numberOfCurrentNames.as<Integer>());
 }
 

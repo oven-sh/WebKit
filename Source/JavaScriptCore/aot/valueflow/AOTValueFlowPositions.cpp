@@ -296,7 +296,7 @@ bool ValueFlowPositions::turnsAwayEveryObject(ValueSetID set, const Type& type)
     return !ValueSets::isComplement(arriving) && !m_inputs.sets().meet(maker().intersect(arriving, universe.knownObjects()), universe.maskOf(maker(), m_inputs.program, type));
 }
 
-// The contents of many instances are united one instance at a time. A list of texts that has passed the limit would be written down once more at every step, one text longer.
+// The contents of many instances are merged one instance at a time. A list of strings over the limit would be rewritten at every step, one string longer.
 bool ValueFlowPositions::keepContentStringsWithinLimit(ClassParts& parts)
 {
     bool hasChanged = false;
@@ -848,7 +848,7 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, Valu
             followed = maker().unite(followed, m_inputs.solver().closuresFollowedToConstruction(calleeOfConstruction->node));
         if (m_inputs.sets().size(followed) <= m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
             listed = maker().unite(listed, maker().intersect(arriving, followed));
-        // A class that has gone out of sight and was followed to the construction is one of those that it enters.
+        // A class that has escaped and was followed to the construction is one of the classes that the construction enters.
         AOT_THRESHOLD(size_t, maxClassesFollowedToConstruction, 4);
         if (ValueSetID classes = maker().intersect(arriving, universe.constructorsWithLayouts()); m_inputs.sets().size(classes) <= maxClassesFollowedToConstruction)
             listed = maker().unite(listed, classes);
@@ -953,8 +953,8 @@ FlowSiteLoss ValueFlowPositions::lossOf(const ValueFlowPositionResult& result, V
         // Code outside the program constructs with a class that it holds.
         LayoutID layout = result.stranger && m_inputs.universe().isObject(result.stranger) ? m_inputs.universe().layoutOf(result.stranger) : LayoutID();
         FunctionID constructor = layout ? m_inputs.program.at(layout).constructor : FunctionID();
-        if (Witness origin = constructor && m_inputs.birthsOfUnknownObject ? m_inputs.birthsOfUnknownObject->originOfEscape(m_inputs.universe().closureOf(constructor)) : noWitness; hasFunction(origin))
-            return { .cause = UnprovenCause::OtherNewTarget, .witness = origin, .hasOtherRoots = m_inputs.birthsOfUnknownObject->hasOtherOriginsOfEscape(m_inputs.universe().closureOf(constructor)) };
+        if (Witness origin = constructor && m_inputs.birthsOfUnknownObject ? m_inputs.birthsOfUnknownObject->escapeOriginOf(m_inputs.universe().closureOf(constructor)) : noWitness; hasFunction(origin))
+            return { .cause = UnprovenCause::OtherNewTarget, .witness = origin, .hasOtherRoots = m_inputs.birthsOfUnknownObject->hasOtherEscapeOrigins(m_inputs.universe().closureOf(constructor)) };
         return { .cause = UnprovenCause::OtherNewTarget, .witness = witnessOfStranger };
     }
     }

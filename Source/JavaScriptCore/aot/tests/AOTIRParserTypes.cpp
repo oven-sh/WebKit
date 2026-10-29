@@ -598,20 +598,6 @@ static IDType parseBuiltinToken(TextParser& parser, IDType (BuiltinTable::*fromT
     return id;
 }
 
-template<typename IDType>
-static IDType parseBuiltinNumber(TextParser& parser)
-{
-    TextPosition position = parser.token().position;
-    IDType id(parser.parseUInt32());
-    if (parser.hasFailed())
-        return { };
-    if (!parser.builtins().contains(id)) {
-        parser.fail(InternalErrorKind::IRTextError, position);
-        return { };
-    }
-    return id;
-}
-
 BuiltinID TextParser::parseBuiltin()
 {
     return parseBuiltinToken(*this, &BuiltinTable::builtinFromToken);
@@ -652,10 +638,7 @@ RuntimeModuleID TextParser::parseRuntimeModule()
 
 RuntimeFunctionID TextParser::parseRuntimeFunction()
 {
-    // FIXME: Remove the number once no test file has one.
-    if (!at(TokenKind::Word))
-        return parseBuiltinNumber<RuntimeFunctionID>(*this);
-    RuntimeFunctionID id = runtimeFunctionFromToken(m_builtins, token().view());
+    RuntimeFunctionID id = at(TokenKind::Word) ? runtimeFunctionFromToken(m_builtins, token().view()) : RuntimeFunctionID();
     if (!id) {
         fail();
         return { };

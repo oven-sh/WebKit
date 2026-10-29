@@ -99,11 +99,11 @@ JS_EXPORT_PRIVATE void validateSlotTypes(VM&, const Object&);
 
 ALWAYS_INLINE bool validatesRuntime(VM& vm) { return vm.aotState().validatesRuntime; }
 
-// True once an image built with --aot-testing=CheckProofsAtRunTime is attached. Its code is the code of the product.
+// True once an image built with --aot-testing=CheckProofsAtRunTime is attached. Its code is identical to a production build's.
 JS_EXPORT_PRIVATE extern std::atomic<bool> imageChecksProofs;
-// What the compiler has claimed about the objects of a layout (which changes never happen to them, which names they ever get, what their slots hold)
-// is asked again where the run time changes an object, and of every object that a collection leaves.
-// The question changes nothing that the program or compiled code sees, so it is also asked of the code of the product.
+// The compiler's claims about the objects of a layout (which changes never happen to them, which names they ever get, what their slots hold)
+// are rechecked whenever the runtime changes an object, and for every object that survives a garbage collection.
+// The check changes nothing that the program or compiled code can observe, so it also runs against production code.
 ALWAYS_INLINE bool checksClaimsAboutObjects(VM& vm) { return vm.aotState().validatesRuntime || imageChecksProofs.load(std::memory_order_relaxed); }
 
 struct OperationPermissions {

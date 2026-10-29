@@ -381,7 +381,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
 
 enum class WordOfTypedArray : uint8_t { None, Length, ByteOffset };
 
-// The getters of typed arrays that answer a word of the view as it is.
+// The typed array getters that return a word of the view unchanged.
 static WordOfTypedArray findWordReturnedByGetter(Structure* receiverStructure, const ChainWalk& walk)
 {
     JSType type = receiverStructure->typeInfo().type();

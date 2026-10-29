@@ -1,0 +1,33 @@
+# A forwarded call whose callee may refuse names Function.prototype.call or apply, unless it is done in place: `f.call(..)`
+# FORM: Prepared
+# RUN: pass ResolveCalls
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="written-in-place" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0 builtinCallForm=AnyReceiver calleeName="f.call"
+    Return v2
+# CHECK: v2: anything = Call v0, v1 calleeName="f.call"
+}
+function f1 name="reached-by-value" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0 builtinCallForm=AnyReceiver
+    Return v2
+# CHECK: v2: anything = Call v0, v1 calledBuiltin=FunctionPrototypeCall
+}
+function f2 name="apply-reached-by-value" parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0 builtinCallForm=AnyReceiver
+    Return v3
+# CHECK: v3: anything = CallList v0, v1, v2 calledBuiltin=FunctionPrototypeApply
+}
+function f3 name="intrinsic-of-the-library" parameters=[{type=anything}, {type=anything}, {type=Array}] results=[{type=anything}] {
+    v3 = CallBuiltin v0, v1, v2 overload=FunctionPrototypeApply/0 builtinCallForm=AnyReceiver [isDoneInPlace]
+    Return v3
+# CHECK: v3: anything = CallList v0, v1, v2
+# CHECK-NEXT: Return v3
+}
+function f4 name="callee-cannot-refuse" parameters=[{type=function}, {type=anything}] results=[{type=anything}] {
+    v2 = CallBuiltin v0, v1 overload=FunctionPrototypeCall/0 builtinCallForm=AnyReceiver
+    Return v2
+# CHECK: v2: anything = Call v0, v1
+# CHECK-NEXT: Return v2
+}

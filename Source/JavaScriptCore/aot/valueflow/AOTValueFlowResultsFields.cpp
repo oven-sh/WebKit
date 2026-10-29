@@ -285,7 +285,7 @@ struct FieldResults {
     };
     // For the layouts that have objects.
     Vector<OptionSet<Actor>> actorsOpenOnObjectsOfLayouts { };
-    // By layout and key, where the receiver of a definition is only seen to be an object of the layout: ValueForms. A store under the name counts as the plain form.
+    // By layout and key, where the receiver of a definition is only observed to be an object of the layout: ValueForms. A store by name counts as the plain form.
     mutable UncheckedKeyHashMap<uint64_t, uint8_t> formsOfValuesSeenDefined { };
 
     ValueSetID chainBuiltByProgram(ValueSetID objects) const
@@ -434,7 +434,7 @@ struct FieldResults {
             ValueID object;
         };
         Vector<BornObject, 8> born;
-        // The keys of a birth that defines many, by its index in `born`: a literal may define thousands, and each definition asks.
+        // The keys of a creation site that defines many, by its index in `born`: a literal may define thousands, and each definition looks them up.
         struct ListedKeys {
             UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keys;
             size_t numberListed { 0 };
@@ -675,7 +675,7 @@ struct FieldResults {
         return keys.value_or(Vector<PropertyKeyID>());
     }
 
-    // An assignment under such a name lays an own property on an object that stands below Object.prototype.
+    // An assignment to such a name creates an own property on an object that inherits from Object.prototype.
     bool holdsOnlyNamesAbsentOnObjectPrototype(ValueSetMaker& maker, ValueSetID objects) const
     {
         const ValueFlowUniverse& universe = inputs.universe();
@@ -843,7 +843,7 @@ struct FieldResults {
                 for (uint32_t index : birthsByLayout.subspan(firstBirthOfLayout[position], firstBirthOfLayout[position + 1] - firstBirthOfLayout[position])) {
                     const BirthWithCopies& birth = births[index];
                     Vector<PropertyKeyID> keys(birth.definedKeys.span());
-                    // Until a source that nobody lists has been assigned, the literal stands where it was born.
+                    // Until a source with unknown keys has been assigned, the literal still has the prototype it was created with.
                     bool isJudgedAtCreation = stores.getsCopiedProperties(birth.layout);
                     bool inheritsFromObjectPrototype = birth.startsWithObjectPrototype;
                     for (const SourceOfCopyAtBirth& source : followsCopies ? birth.sources.span() : std::span<const SourceOfCopyAtBirth>()) {
@@ -894,7 +894,7 @@ struct FieldResults {
             holdWhatBirthsBring(false);
             settles();
         }
-        // `{ ...defaults, ...options }`: whatever the last copy brings, the names of the first are there.
+        // `{ ...defaults, ...options }`: whatever the last spread adds, the names of the first are present.
         for (unsigned position = 0; position < numberOfLayoutsBornWithCopies; ++position) {
             LayoutID layout = layoutBornWithCopiesAt(position);
             if (!stores.getsCopiedProperties(layout))
@@ -912,7 +912,7 @@ struct FieldResults {
         }
     }
 
-    // `{ ...defaults, ...options }.retries`: a copy whose sources nobody lists may bring the name, and then the read finds it in a field. A literal that writes names of its own is
+    // `{ ...defaults, ...options }.retries`: a spread whose sources are unknown may add the name, and then the read finds it in a field. A literal that writes names of its own is
     // expected to hold those and no others.
     void nameKeysReadFromTargetsOfCopies()
     {
@@ -923,7 +923,7 @@ struct FieldResults {
                 continue;
             if (!hasObjects(id) || !stores.getsCopiedProperties(id) || stores.hasObjectOfCodeWithoutSolve(id) || stores.keysReadFrom(id).empty())
                 continue;
-            // A name that an object above is seen to hold is taken for a read of that object.
+            // A name that an object on the prototype chain is observed to hold is treated as a read of that object.
             ValueSetID above;
             bool mayInheritFromAnything = possibleMutationsOf(id).contains(ObjectMutation::ChangePrototype) || ValueSets::isComplement(objectsAbove(maker.get(), id, above));
             ValueSetID listedAbove = mayInheritFromAnything ? maker.get().of(inputs.universe().objectOf(Builtins::ObjectPrototype)) : maker.get().intersect(above, ValueSets::complement(inputs.universe().placeholdersAlone()));
@@ -1085,7 +1085,7 @@ struct FieldResults {
 
     // Who has not accounted for the objects of a layout.
     OptionSet<Actor> actorsOpenOnObjectsWith(LayoutID id) const { return actorsOpenOnObjectsOfLayouts[id.index()]; }
-    // To a field that holds a plain value a copy is a store of a value that nobody knows.
+    // To a field that holds a plain value, a spread is a store of an unknown value.
     OptionSet<Actor> actorsOpenOnFieldsOfObjectsWith(LayoutID id) const { return stores.getsCopiedProperties(id) ? actorsOpenOnObjectsWith(id) - Actor::KeysNobodyKnows : actorsOpenOnObjectsWith(id); }
 
     OptionSet<Actor> findActorsOpenOnObjectsWith(LayoutID id, std::span<const AnswersAboutObject> answers) const
@@ -1572,15 +1572,15 @@ struct FieldResults {
         return keys;
     }
 
-    // What a function that only hands `this` on constructs is born without a property, and no literal, class field or copy fills a slot of it: a store under a name and a definition are all that create one.
+    // An object constructed by a function that only forwards `this` starts without properties, and no literal, class field or spread fills its slots: only stores by name and definitions create them.
     bool startsEmptyAndIsFilledByNameOnly(LayoutID id) const
     {
         const Layout& made = program.at(id);
         return made.kind == LayoutKind::Instance && made.has(LayoutFlags::IsConstructorFunction) && made.fields.isEmpty() && !stores.getsCopiedProperties(id);
     }
 
-    // `fill(this)` .. `function fill(made) { made.name = ..; Object.defineProperty(made, "other", { .. }) }`, where whoever else may call `fill` is not seen.
-    // What a function that only hands `this` on constructs has the fields that the program is seen to give it.
+    // `fill(this)` .. `function fill(made) { made.name = ..; Object.defineProperty(made, "other", { .. }) }`, where other callers of `fill` may not be visible.
+    // An object constructed by a function that only forwards `this` has the fields that the program is observed to give it.
     void forEachKeyStoredOnArrivingInstances(ValueSetMaker& maker, const Function& function, const ValueFlowStatement& statement, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID, uint8_t forms)> auto& functor) const
     {
         AOT_THRESHOLD(size_t, maxLayoutsArrivingAtStore, 4);
@@ -1607,7 +1607,7 @@ struct FieldResults {
         }
         if (!receiver || !key || !receiver->node)
             return;
-        // Where every receiver is listed, the tables of the stores have the key.
+        // If every receiver is listed, the store tables have the key.
         ValueSetID possible = std::as_const(heap).possibleValuesOf(maker, *receiver);
         if (!ValueSets::isComplement(possible) && sets.isSubset(possible, inputs.universe().knownObjects()))
             return;
@@ -1627,7 +1627,7 @@ struct FieldResults {
         }
     }
 
-    // The form in which the objects are seen to get a value under the key. Every other layout has plain fields: what creates their properties does not ask.
+    // The form in which the objects are observed to get a value under the key. Every other layout has plain fields: what creates their properties does not ask.
     std::optional<OptionSet<FieldForm>> formOfValueGivenUnder(LayoutID layout, PropertyKeyID key) const
     {
         if (!startsEmptyAndIsFilledByNameOnly(layout))
@@ -1663,13 +1663,13 @@ struct FieldResults {
         // A store under a name into what a read under a name has answered names a field of the layouts that are written under the name of the read, where that name tells a few layouts from all others.
         AOT_THRESHOLD(size_t, mostLayoutsToldByName, 4);
         AOT_THRESHOLD(size_t, maxLayoutsFollowedToStore, 16);
-        AOT_THRESHOLD(size_t, mostLayoutsFollowedToStoreIntoGivenObject, 4);
+        AOT_THRESHOLD(size_t, maxLayoutsFollowedToStoreIntoGivenObject, 4);
         KeysByLayout keysNamedBehindReads(numberOfLayouts);
         KeysByLayout keysNamedAtFollowedUses(numberOfLayouts);
-        KeysByLayout keysNamedWhereGivenObjectsWereFollowedTo(numberOfLayouts);
+        KeysByLayout keysNamedAtFollowedUsesOfGivenObjects(numberOfLayouts);
         KeysByLayout keysNamedOnlyByOutsideCreators(numberOfLayouts);
         KeysByLayout keysGivenToInstancesSeen(numberOfLayouts);
-        // Every statement is asked by itself, on all threads. The lists are sorted below, so the order in which the keys come says nothing.
+        // Every statement is processed independently, on all threads. The lists are sorted below, so the order in which keys arrive does not matter.
         struct KeyNamed {
             KeysByLayout* list;
             LayoutID layout;
@@ -1711,13 +1711,13 @@ struct FieldResults {
                             keysNamedInShare[share].append({ &keysNamed, layout, key, 0 });
                     };
                     nameFieldOfLayoutsIn(inputs.solver().writtenUnderNameOfReadSeenAt(receiver), mostLayoutsToldByName, false, keysNamedBehindReads);
-                    // `const node = createNode(kind); node.left = left;`: whoever has an object made and fills it on is one of its makers, though nobody knows which function made it. The store names a field of the layouts that were followed to it.
+                    // `const node = createNode(kind); node.left = left;`: code that has an object created and keeps filling it counts as one of its creators, even if the creating function is unknown. The store names a field of the layouts that were followed to it.
                     const Function& function = program.functions[index];
                     Opcode maker = function.at(sameObjectThroughCasts(function, function.at(statement.site).objectOperand())).opcode;
-                    // `function route(request) { request.parsedUrl = ..; }`: whoever is given an object fills it on as well. What was followed to a parameter is not all that arrives there, so fewer layouts are believed.
+                    // `function route(request) { request.parsedUrl = ..; }`: code that is passed an object also keeps filling it. What was followed to a parameter is not all that arrives there, so fewer layouts are trusted.
                     bool isMadeHere = maker == Opcode::Call || maker == Opcode::Construct;
                     if (ValueSetID seen = inputs.solver().seenValuesOf(receiver); seen != inputs.solver().possibleValuesOf(receiver))
-                        nameFieldOfLayoutsIn(seen, isMadeHere ? maxLayoutsFollowedToStore : mostLayoutsFollowedToStoreIntoGivenObject, isMadeHere, isMadeHere ? keysNamedAtFollowedUses : keysNamedWhereGivenObjectsWereFollowedTo);
+                        nameFieldOfLayoutsIn(seen, isMadeHere ? maxLayoutsFollowedToStore : maxLayoutsFollowedToStoreIntoGivenObject, isMadeHere, isMadeHere ? keysNamedAtFollowedUses : keysNamedAtFollowedUsesOfGivenObjects);
                 }
             }
         });
@@ -1728,7 +1728,7 @@ struct FieldResults {
                     formsOfValuesSeenDefined.add(static_cast<uint64_t>(named.layout.index()) << 32 | named.key.index(), 0).iterator->value |= named.forms;
             }
         }
-        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedAtFollowedUses, &keysNamedWhereGivenObjectsWereFollowedTo, &keysGivenToInstancesSeen }) {
+        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedAtFollowedUses, &keysNamedAtFollowedUsesOfGivenObjects, &keysGivenToInstancesSeen }) {
             for (Vector<PropertyKeyID>& keys : *keysNamed) {
                 AOT::sort(keys);
                 keys.shrink(std::unique(keys.begin(), keys.end()) - keys.begin());
@@ -1752,14 +1752,14 @@ struct FieldResults {
                 return std::ranges::binary_search(keysByLayout[index], key);
             });
             uniteSortedKeys(keysByLayout[index], keysNamedAtFollowedUses[index]);
-            // A literal says what it has. What Object.create() made inherits from an object that anybody may have given accessors. Of a class that is evaluated again and again nobody knows which evaluation made what is given.
+            // A literal shows what it has. An object from Object.create() inherits from an object that may have been given accessors. For a class that is evaluated repeatedly, the evaluation that created a given object is unknown.
             if (program.layouts[index].kind != LayoutKind::Instance || program.layouts[index].has(LayoutFlags::IsOfCreatedObject) || application.layouts[index].classFlow.evaluations != ExecutionCount::AtMostOnce)
-                keysNamedWhereGivenObjectsWereFollowedTo[index].clear();
-            // `point.norm = replacement` on one object of many: the others answer with the method of their class, and a row would be asked first by every one of them.
-            keysNamedWhereGivenObjectsWereFollowedTo[index].removeAllMatching([&](PropertyKeyID key) {
+                keysNamedAtFollowedUsesOfGivenObjects[index].clear();
+            // `point.norm = replacement` on one object of many: the others use their class's method, and every one of them would have to check a row first.
+            keysNamedAtFollowedUsesOfGivenObjects[index].removeAllMatching([&](PropertyKeyID key) {
                 return findsMemberOfClassUnder(LayoutID(index), key);
             });
-            uniteSortedKeys(keysByLayout[index], keysNamedWhereGivenObjectsWereFollowedTo[index]);
+            uniteSortedKeys(keysByLayout[index], keysNamedAtFollowedUsesOfGivenObjects[index]);
             uniteSortedKeys(keysByLayout[index], accessors);
             if (startsEmptyAndIsFilledByNameOnly(LayoutID(index))) {
                 uniteSortedKeys(keysByLayout[index], stores.keysOfValuesDefinedIn(LayoutID(index)));
@@ -1803,8 +1803,8 @@ struct FieldResults {
                 bool isOutsideFamilies = canBeDeclared && !families.isEmpty() && (declarers == layoutsWithField.end() || (!haveCommonMember(views, declarers->value.span()) && std::ranges::none_of(families, [&](LayoutSetID family) {
                     return haveCommonMember(program.at(family).completeMembers(), declarers->value.span());
                 })));
-                // Whoever stores a name that no type declares has got past the types.
-                isOutsideFamilies = isOutsideFamilies && !std::ranges::binary_search(keysNamedAtFollowedUses[id.index()], key) && !std::ranges::binary_search(keysNamedWhereGivenObjectsWereFollowedTo[id.index()], key);
+                // A store to a name that no type declares has bypassed the types.
+                isOutsideFamilies = isOutsideFamilies && !std::ranges::binary_search(keysNamedAtFollowedUses[id.index()], key) && !std::ranges::binary_search(keysNamedAtFollowedUsesOfGivenObjects[id.index()], key);
                 if (isOutsideFamilies || std::ranges::binary_search(keysDeclaredBelow[id.index()], key) || !canNameField(key) || keysOfFields.contains(key))
                     return true;
                 if (stores.accessorDefinedUnder(maker, id, key).isAccessor())
@@ -1848,7 +1848,7 @@ struct FieldResults {
                 return isAccessor;
             });
             keepMostAccessedKeys(counts, LimitID::MaxAppendedFieldsPerLayout, layout, 0, keys);
-            // Fields that are added late lie beside the cell, where there is room for so many. One more would make every cell larger, and of these nobody knows which objects get them.
+            // Fields that are added late are stored outside the cell, where there is room for this many. One more would make every cell larger, and which objects get these fields is unknown.
             Vector<PropertyKeyID> namedByOutsideCreators;
             keys.removeAllMatching([&](PropertyKeyID key) {
                 bool isNamedOnlyByThem = std::ranges::binary_search(keysNamedOnlyByOutsideCreators[index], key);
@@ -1989,7 +1989,7 @@ struct FieldResults {
         const Vector<PropertyKeyID>& sharedKeys = stores.keysStoredThroughPlaceholders();
         tables.wholeProgram.keysStoredThroughUnknownReceivers = sharedKeys;
         tables.wholeProgram.keysDefinedOnObjectsWithoutKnownLayout = stores.keysDefinedOnObjectsWithoutKnownLayout();
-        // The objects that the definition is seen to reach have a field for it now.
+        // The objects that the definition is observed to reach now have a field for it.
         tables.wholeProgram.keysDefinedOnObjectsWithoutKnownLayout.removeAllMatching([&](PropertyKeyID key) {
             return std::ranges::any_of(formsOfValuesSeenDefined.keys(), [&](uint64_t layoutAndKey) {
                 return static_cast<uint32_t>(layoutAndKey) == key.index() && std::ranges::binary_search(appendedKeys[layoutAndKey >> 32], key);
@@ -2030,7 +2030,7 @@ struct FieldResults {
                 AOT::sort(reevaluatedPrivateNames);
                 uniteSortedKeys(addedKeys, reevaluatedPrivateNames);
                 mayGainSharedKey = stores.isReachedThroughPlaceholders(id) && !std::ranges::all_of(sharedKeys, isField);
-                // An assignment that meets an accessor of the class adds nothing. That counts only where nothing else is added either: then the layout says that no object of it gains a property, which a checking build holds every object to.
+                // An assignment that hits an accessor of the class adds nothing. That only counts if nothing else is added either: then the layout says that none of its objects gains a property, which a checking build enforces for every object.
                 bool everyKeyMeetsAccessor = !mayGainSharedKey && build.isEnabled(FlowResultKind::HolderMutations, index) && std::ranges::all_of(addedKeys, [&](PropertyKeyID key) {
                     return stores.isOnlyAssignedByStatements(id, key) && assignmentsMeetAccessorOfClass(id, key);
                 });
@@ -2096,7 +2096,7 @@ struct FieldResults {
             });
             if (isCreatedAtConstruction)
                 application.layouts[index].flow.fieldCreation = FieldCreation::OnlyAtConstruction;
-            // `{ port, host: name() }`: the allocation lists nothing and the definitions behind it create the fields, each before anybody else sees the object.
+            // `{ port, host: name() }`: the allocation lists nothing and the definitions after it create the fields, each before anything else sees the object.
             LayoutID id(index);
             application.layouts[index].createsFieldsOnlyInLiterals = program.layouts[index].kind == LayoutKind::Record && hasObjects(id) && isBornWithCopies.get(index) && application.layouts[index].flow.baseState == BaseState::None
                 && build.isEnabled(FlowResultKind::ConstructorFieldOrders, index) && actorsOpenOnObjectsWith(id).isEmpty() && createsOwnFieldsBeforeObjectsAreFinished(layoutsOfObjectsWithoutListedOrder, id);

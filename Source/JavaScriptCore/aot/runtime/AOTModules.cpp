@@ -715,6 +715,13 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
             return;
         }
     }
+    // The build did not find the module, so the program does not hold it, whatever the resolver finds now.
+    if (host().createModuleNotFoundError) {
+        JSValue error = host().createModuleNotFoundError(realm, specifier, importer, isForRequire);
+        RETURN_IF_EXCEPTION(scope, void());
+        throwException(realm, scope, error);
+        return;
+    }
     throwException(realm, scope, createModuleMissingAtBuildError(realm, specifier, importer, isForRequire ? "MODULE_NOT_FOUND"_s : "ERR_MODULE_NOT_FOUND"_s));
 }
 
@@ -966,7 +973,7 @@ JSPromise* Modules::askLoaderForImport(ModuleID module, std::optional<int64_t> r
         // Where the loader makes the record of a file inline, what the file throws rejects at once: no step of this import() comes to the file ahead of that.
         ModuleRecord* made = recordIfExists(module);
         bool isMadeInline = made && loader()->isMakingRecordInline(made->moduleKey());
-        record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module, isMadeInline ? LoadOfFile::IsAskedFor : LoadOfFile::HasComeToFile) : exposeRecord(module, RecordHolder::Loader);
+        record = isCommonJSFileOrFace(module) ? recordOfCommonJSFile(module, isMadeInline ? LoadOfFile::IsAskedFor : LoadOfFile::IsRootOfImport) : exposeRecord(module, RecordHolder::Loader);
     }
     JSPromise* loaded = scope.exception() ? nullptr : loader()->requestImportModuleForKey(m_instance.globalObject, record->moduleKey(), Identifier(), nullptr, nullptr, false, referrerAsyncOrder.value_or(-1), record);
     setIsAskingHost(wasAskingHost);

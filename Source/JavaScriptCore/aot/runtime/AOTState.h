@@ -47,13 +47,13 @@ class StringKeyCache;
 struct BuiltinFamilyState;
 struct ObjectModel;
 
-// Zeroed pages of their own for what lives as long as the process. With ENABLE(AOT_GUARDED_PAGES) they lie between two pages that cannot be touched, on Linux at an address drawn for them alone.
+// Zeroed pages for data that lives as long as the process. With ENABLE(AOT_GUARDED_PAGES) they sit between two inaccessible pages, on Linux at their own random address.
 void* reserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage = OSAllocator::FastMallocPages);
 void releaseGuardedPages(void* pages, size_t bytes);
 
-// Zeroed pages for what lives no longer than a VM. What the VM takes as it starts are pieces of one mapping, which goes back to the system in one call when the VM ends:
-// threads that start or end together ask the system once each. What does not fit has pages of its own. With ENABLE(AOT_GUARDED_PAGES) everything has.
+// Zeroed pages for data that lives no longer than a VM. What the VM takes at startup are pieces of one mapping, which is unmapped in one call when the VM ends,
+// so threads that start or end together make one system call each. What does not fit gets its own pages. With ENABLE(AOT_GUARDED_PAGES) everything does.
 class PagesOfVM {
     WTF_MAKE_TZONE_ALLOCATED(PagesOfVM);
     WTF_MAKE_NONCOPYABLE(PagesOfVM);
@@ -64,9 +64,9 @@ public:
     void* allocate(size_t bytes);
     void* tryAllocate(size_t bytes);
     void release(void* pages, size_t bytes);
-    // The system has taken the pages elsewhere: nothing is mapped here any more.
+    // The system moved the pages elsewhere: nothing is mapped here any more.
     void didMoveAway(void* pages, size_t bytes);
-    // From here on a piece of the mapping that is released stays until the mapping goes, if the mapping is still whole.
+    // From here on, a released piece stays mapped until the whole mapping is released, if the mapping is still whole.
     void willReleaseEverything() { m_releasesEverything = true; }
 
 private:
@@ -76,7 +76,7 @@ private:
     size_t m_size { 0 };
     size_t m_used { 0 };
     bool m_releasesEverything { false };
-    // Where pieces went early, in no order. A piece beside one may have grown into it since.
+    // The pieces that were released early, unordered. A neighboring piece may have grown into one since.
     Vector<std::pair<uint8_t*, size_t>> m_gaps;
 };
 

@@ -1673,6 +1673,11 @@ private:
             m_objectsMadeBySpecies = m_context.unite(m_objectsMadeBySpecies, unknownObjectAlone());
         }
         m_context.mark(m_objectsMadeBySpecies, { ObjectMutation::AddProperty, ObjectMutation::StoreAfterCreation });
+        // An unknown species constructor can return any escaped object, and the built-in writes its elements and length.
+        if (m_context.contains(m_objectsMadeBySpecies, ValueFlowUniverse::unknownObject())) {
+            m_context.add(m_context.written(unknownObjectAlone(), elementsName), unknownValue(m_context, ValueFlowUnknownSource::ContentsOfEscapedObject));
+            m_context.add(m_context.written(unknownObjectAlone(), property(m_context, BuiltinNames::length)), m_universe.anyPrimitive());
+        }
 
         ClimbingSet made = known(m_objectsMadeBySpecies);
         if (m_context.meet(made, m_universe.objects())) {
@@ -2955,7 +2960,7 @@ private:
         Typed::applyPropertyAction(m_context, action, operands);
     }
 
-    // `Object.defineProperties(F.prototype, ..)`: the object that F was born with is one of the receivers.
+    // `Object.defineProperties(F.prototype, ..)`: the prototype object that F was created with is one of the receivers.
     ValueFlowObjectID prototypeObjectReadAt(BuiltinOperand position)
     {
         if (!m_call.operation || position.kind() != BuiltinOperand::Kind::Argument)
@@ -3942,7 +3947,7 @@ static bool mayBeInstance(ValueFlowRuleContext& context, const ValueFlowOperand&
     return context.meet(chain, mayBeAnything) || context.meet(chain, prototypes);
 }
 
-// The message names the class of the object: after the function that it finds under `constructor`, or else after what it finds under Symbol.toStringTag. No getter runs for it.
+// The message names the object's class, from the function found under `constructor` or else from Symbol.toStringTag. No getter runs for it.
 void describeObjectsRefusedAsFunctions(ValueFlowRuleContext& context, ClimbingSet functions)
 {
     const ValueFlowUniverse& universe = context.universe();
@@ -4134,9 +4139,9 @@ bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName na
         return true;
     if (maySymbolNobodyKnowsBeOneThatHostLooksFor(context) && mayLieUnderSymbolNobodyKnows(context))
         return true;
-    // Machine code that is loaded at run time registers what symbol it likes and lays what it likes under it.
+    // Machine code loaded at run time can register any symbol and store anything under it.
     for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode()) {
-        if (context.program().builtins().has(BuiltinMark::LoadsMachineCodeThatIsHandedNoValue, loader.callee))
+        if (context.program().builtins().has(BuiltinMark::LoadsCodeWithoutJSAccess, loader.callee))
             continue;
         if (context.holdsAnyOf(only(context, universe.objectOf(loader.callee)), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins)))
             return true;

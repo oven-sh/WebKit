@@ -408,13 +408,13 @@ static void testOnlyKeysWithAtomsAreNames(LoadedProgram& program)
     KeyName createdName = nameOfKeyWithoutAllocating(realm, keyOfNoProperty, KeyAtomization::Atomize);
     AOT_TEST_CHECK(createdName.uid && isName(createdName, atomOfKey(keyOfNoProperty)));
 
-    // A short text in pieces may spell an index, which has no atom, only where it begins with a digit.
+    // A short rope can only be an index, which has no atom, if it starts with a digit.
     AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, createRope(program, 8), KeyAtomization::OnlyExisting).kind == KeyNameKind::HasNoAtom);
     JSString* ropeOfDigits = jsString(realm, jsNontrivialString(vm, "7190"_s), jsNontrivialString(vm, "4412"_s));
-    JSString* ropeBehindDigit = jsString(realm, jsNontrivialString(vm, "7q"_s), jsNontrivialString(vm, "zz"_s));
-    AOT_TEST_CHECK(ropeOfDigits->isRope() && ropeBehindDigit->isRope());
+    JSString* ropeAfterDigit = jsString(realm, jsNontrivialString(vm, "7q"_s), jsNontrivialString(vm, "zz"_s));
+    AOT_TEST_CHECK(ropeOfDigits->isRope() && ropeAfterDigit->isRope());
     AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, ropeOfDigits, KeyAtomization::OnlyExisting).kind == KeyNameKind::NotAName);
-    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, ropeBehindDigit, KeyAtomization::OnlyExisting).kind == KeyNameKind::NotAName);
+    AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, ropeAfterDigit, KeyAtomization::OnlyExisting).kind == KeyNameKind::NotAName);
     JSString* longRope = createRope(program, 300);
     AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, longRope, KeyAtomization::OnlyExisting).kind == KeyNameKind::HasNoAtom);
     AOT_TEST_CHECK(nameOfKeyWithoutAllocating(realm, longRope, KeyAtomization::Atomize).kind == KeyNameKind::Name);
@@ -637,8 +637,8 @@ static void testLeafOperationsAnswerByName(LoadedProgram& program)
     AOT_TEST_CHECK(put(index, jsNumber(1)) == LeafAnswer::TakeSlowPath);
 }
 
-// Misses of several pairs are counted together, so the first miss of a pair may be the one that is to be filed.
-static void testFirstAdditionThatIsDueForFilingFilesNothing(LoadedProgram& program)
+// Misses of several pairs share a counter, so a pair's first miss may be the one that triggers caching.
+static void testFirstAdditionIsNotCached(LoadedProgram& program)
 {
     VM& vm = program.vm();
     Instance* instance = &program.instance();
@@ -647,7 +647,7 @@ static void testFirstAdditionThatIsDueForFilingFilesNothing(LoadedProgram& progr
     Structure* structure = constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), heldName, jsNumber(7))->structure();
     auto check = [&](const Identifier& addedName, const auto& put) {
         auto addToNextObject = [&] {
-            // What an object is given right behind the name that made its Structure makes Structures too. Here another object has come in between.
+            // A property added right after the name that created an object's Structure also creates a Structure. Here another object came in between.
             constructSecondObjectWith(program, program.realm()->nullPrototypeObjectStructure(), Identifier::fromString(vm, "8i"_s), jsNumber(0));
             JSObject* object = constructEmptyObject(vm, program.realm()->nullPrototypeObjectStructure());
             object->putDirect(vm, heldName, jsNumber(7));
@@ -1597,7 +1597,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/slot-filed-by-number-is-copied-for-keys"_s, withProgram<testSlotFiledByNumberIsCopiedForKeys> },
         { "property-lookup/leaf-operations-answer-by-name"_s, withProgram<testLeafOperationsAnswerByName> },
         { "property-lookup/leaf-operations-put-collections-off"_s, withProgram<testLeafOperationsPutCollectionsOff> },
-        { "property-lookup/first-addition-that-is-due-for-filing-files-nothing"_s, withProgram<testFirstAdditionThatIsDueForFilingFilesNothing> },
+        { "property-lookup/first-addition-that-is-due-for-filing-files-nothing"_s, withProgram<testFirstAdditionIsNotCached> },
         { "property-lookup/leaf-store-makes-a-structure-only-out-of-the-block-at-hand"_s, withProgram<testLeafStoreMakesStructureOnlyOutOfBlockAtHand> },
         { "property-lookup/leaf-operations-answer-by-index"_s, withProgram<testLeafOperationsAnswerByIndex> },
         { "property-lookup/named-change-drops-only-that-name"_s, withProgram<testNamedChangeDropsOnlyThatName> },

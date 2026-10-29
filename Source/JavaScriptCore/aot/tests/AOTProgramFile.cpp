@@ -427,10 +427,9 @@ static std::optional<uint32_t> runtimeFunctionNumberOf(StringView line)
         return std::nullopt;
     StringView rest = line.substring(prefix.length());
     size_t end = rest.find(' ');
-    StringView word = end == notFound ? rest : rest.left(end);
-    if (RuntimeFunctionID id = runtimeFunctionFromToken(BuiltinTable::singleton(), word))
+    if (RuntimeFunctionID id = runtimeFunctionFromToken(BuiltinTable::singleton(), end == notFound ? rest : rest.left(end)))
         return id.index();
-    return parseInteger<uint32_t>(word, 10, WTF::ParseIntegerWhitespacePolicy::Disallow);
+    return std::nullopt;
 }
 
 String withStandInLibrary(const String& programText)

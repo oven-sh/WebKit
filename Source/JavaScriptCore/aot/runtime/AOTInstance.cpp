@@ -513,7 +513,8 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("last array looked at in vain"_s, asMutableByteSpan(instance->arrays.lastArrayLookedAtInVain));
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
-    instance->state->caches->addClearedEachCollection("copies without frame"_s, asMutableByteSpan(instance->allocation.copiesWithoutFrame));
+    instance->allocation.copiesWithoutFrame = static_cast<const MappedCopy**>(instance->state->pages.allocate(AllocationWords::numberOfCopiesWithoutFrame * sizeof(const MappedCopy*)));
+    instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(std::span { instance->allocation.copiesWithoutFrame, AllocationWords::numberOfCopiesWithoutFrame }));
     // A place names the cell of a key and a Structure by their addresses, and the address of one that has ended goes to another.
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()));
     fillInstanceClassInfos(*instance);
@@ -1162,7 +1163,7 @@ AddressSpaceToStart askForAddressSpaceToStart(size_t sizeOfProgram, std::span<co
 AddressSpaceToStart askForAddressSpaceToStart(size_t, std::span<const size_t>) { return { }; }
 #endif
 
-// What the tables of a VM take until the first statement of a program runs. What they need beyond that they get as pages of their own.
+// The memory that a VM's tables need before the program's first statement runs. Anything beyond that gets its own pages.
 static size_t sizeOfPagesAtStart(const Image& image)
 {
     AOT_THRESHOLD(size_t, sizeOfSmallTables, 512 * KB);
@@ -1229,7 +1230,7 @@ static void* tryReservePagesForTables(const Image& image, unsigned numberOfThrea
 {
     if (!MarkedBlockCage::tryEnsureRoomForNewVMs(numberOfThreads))
         return nullptr;
-    // The thread may run another image of the executable than the thread that starts it.
+    // The thread may run a different image of the executable than the thread that started it.
     size_t size = sizeOfPagesAtStart(image);
     if (addressSpaceLeft() < size + sizeToLeaveFree)
         return nullptr;
@@ -1308,7 +1309,7 @@ void didStartThread(VM* vm)
     --s_numberOfThreadsStarting;
 }
 
-// What the thread that started this one has taken for it.
+// What the starting thread reserved for this thread.
 static std::pair<uint8_t*, size_t> takePagesOfThread()
 {
     return { std::exchange(t_pagesOfThread, nullptr), std::exchange(t_sizeOfPagesOfThread, 0) };
@@ -1372,7 +1373,7 @@ PagesOfVM::PagesOfVM(size_t sizeOfMapping)
     m_start = pagesOfThread;
     m_size = sizeOfPagesOfThread;
     if (!m_start) {
-        // Where there is no room for all at once each table asks for its own.
+        // If there is no room for all at once, each table requests its own.
         m_start = static_cast<uint8_t*>(OSAllocator::tryReserveAndCommit(sizeOfMapping, OSAllocator::FastMallocPages));
         m_size = m_start ? sizeOfMapping : 0;
     }
@@ -1387,7 +1388,7 @@ PagesOfVM::~PagesOfVM()
 {
     if (!m_start)
         return;
-    // Something else may lie by now where a piece went early.
+    // Something else may be mapped by now where a piece was released early.
     std::ranges::sort(m_gaps);
     uint8_t* start = m_start;
     for (auto [gap, size] : m_gaps) {

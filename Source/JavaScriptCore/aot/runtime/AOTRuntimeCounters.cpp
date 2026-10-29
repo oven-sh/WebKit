@@ -406,7 +406,7 @@ void AllocationCounts::willAllocateSet(Instance& instance)
         addLine(ensure(instance).m_allocations, makeString(describePlace(*instance.vm), " Set"_s), *list);
 }
 
-// The allocators of each VM that have asked for a list. An allocator comes by willRefill() before it has its first list.
+// Each VM's allocators that have requested a free list. An allocator is registered by willRefill() before it gets its first list.
 using AllocatorsOfVMs = UncheckedKeyHashMap<const VMState*, UncheckedKeyHashSet<const LocalAllocator*>>;
 static Lock allocatorsOfVMsLock;
 static AllocatorsOfVMs& allocatorsOfVMs() WTF_REQUIRES_LOCK(allocatorsOfVMsLock)
@@ -420,7 +420,7 @@ static String describeCellsOf(const LocalAllocator& allocator)
     return makeString(countedAsWord(String::fromLatin1(allocator.directory().subspace()->name().data())), ':', allocator.cellSize());
 }
 
-// A list is counted when it is used up. What is used of the lists at hand makes the sum of the lines the number of cells that were handed out.
+// A free list is counted when it is used up. Adding the used part of the current lists makes the lines sum to the number of cells handed out.
 static void addListsInUse(const VMState& state, AllocationCounts::Lines& refills)
 {
     Locker locker { allocatorsOfVMsLock };
@@ -495,7 +495,7 @@ void AllocationCounts::dump(const Instance& instance, PrintStream& out)
     Lines refills;
     if (counts)
         refills = counts->m_refills;
-    // The lists of a VM are counted for its first instance.
+    // A VM's free lists are counted for its first instance.
     if (instance.vm->aotState().instances.first() == &instance)
         addListsInUse(instance.vm->aotState(), refills);
     dumpLines(out, "refill"_s, refills);

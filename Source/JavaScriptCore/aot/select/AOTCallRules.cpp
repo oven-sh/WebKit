@@ -188,6 +188,7 @@ static void convertToCallResolved(Value& value, ValueID target)
     value.setThisValueOperand(call.thisValueOperand());
     value.setArgumentsOperands(call.argumentsOperands());
     value.setCalleeName(call.calleeName());
+    value.setCalledBuiltin(call.calledBuiltin());
     value.setAccessSite(call.accessSite());
     value.setCallees(call.callees());
 }

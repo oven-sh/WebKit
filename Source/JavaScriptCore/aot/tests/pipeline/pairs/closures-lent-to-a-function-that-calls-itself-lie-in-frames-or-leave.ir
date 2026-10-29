@@ -1,8 +1,0 @@
-# The program of ../../answers is one in which closures and objects lie in the frames of their makers because the operands of the calls that take them are summarized.
-# FORM: AsRead
-# RUN: compile
-# STATISTIC: ClosuresInFrames >= 1
-# STATISTIC: ObjectsInFrames >= 1
-# STATISTIC: CallOperandsSummarizedForFrames >= 1
-# CHECK: image not empty
-# PROGRAM-OF: ../../answers/closures-lent-to-a-function-that-calls-itself-lie-in-frames-or-leave.ir

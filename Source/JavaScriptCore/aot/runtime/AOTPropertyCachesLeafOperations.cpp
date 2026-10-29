@@ -364,7 +364,7 @@ static StructuralRead readByKey(Instance* instance, JSCell* base, JSCell* key, L
         return { value, value ? LeafPresence::Own : LeafPresence::TakeSlowPath };
     }
     case KeyNameKind::Name: {
-        // Nothing is filed for a function that stands for a key: the objects themselves answer.
+        // Nothing is cached for a function used as a key: the objects themselves are consulted.
         if (key->isObject()) {
             if (StructuralRead read = readGeneric(*instance->vm, object, name.uid); read.presence != LeafPresence::TakeSlowPath)
                 return read;
@@ -508,8 +508,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance
     return static_cast<size_t>(answer);
 }
 
-// A function of the program for a key is its text: it has no property of its own, nothing above it has Symbol.toPrimitive, and the toString that it finds is the one of the language.
-// The Structure remembers both from the first conversion for as long as they hold, and the text is there from then on.
+// A program function used as a key converts to its source text: it has no own properties, nothing on its prototype chain has Symbol.toPrimitive, and the toString it finds is the built-in one.
+// The Structure caches both from the first conversion for as long as they hold, and the string exists from then on.
 static JSString* functionSourceForKey(VM& vm, JSCell* key)
 {
     if (key->type() != SlimClosureType)
@@ -525,7 +525,7 @@ static JSString* functionSourceForKey(VM& vm, JSCell* key)
     return CompiledCallee::sourceStringIfCreated(vm, asObject(key));
 }
 
-// Only a text that begins with a digit spells an index.
+// Only a string that starts with a digit can be an index.
 static bool mayBeginWithDigit(const JSString* string)
 {
     JSRopeString::LeafIterator pieces(string);
@@ -545,7 +545,7 @@ KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, Ke
     }
     if (!key->isString()) {
         key = functionSourceForKey(globalObject->vm(), key);
-        // The first conversion has left the name in the place of the text.
+        // The first conversion atomized the string.
         if (!key || !atomOfKey(key))
             return { };
     }
@@ -713,7 +713,7 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
     return nullptr;
 }
 
-// The fields of a compiled object have names that the program spells, which are atoms wherever they are looked for, and what it has beside them lies in an ordinary object.
+// A compiled object's fields have names that appear in the program, which are atoms wherever they are looked up, and its extra properties are in an ordinary object.
 static bool findsOnlyAtomNames(JSObject* object)
 {
     if (Object* compiled = compiledObjectOrNull(object))

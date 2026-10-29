@@ -110,9 +110,9 @@ Value TestConditions::canonicalize(const Value& test) const
         else if (ValueID operand = canonical.operand(operandIndex))
             canonical.setOperand(operandIndex, m_identities.identityOf(operand));
     }
-    // Who asks does not change the answer: the test that the program wrote proves what the test in front of an access proves.
-    if (Value::opcodesWithIsAskedByProgram.contains(canonical.opcode))
-        canonical.setIsAskedByProgram(false);
+    // The origin of a test does not change its result: a test written by the program proves what a test placed before an access proves.
+    if (Value::opcodesWithIsFromProgram.contains(canonical.opcode))
+        canonical.setIsFromProgram(false);
     canonical.type = TypeID();
     canonical.setExpected({ });
     canonical.representation = Representation::Unchosen;
@@ -157,8 +157,8 @@ TestSiteReporter::TestSiteReporter(FunctionPassContext& context)
         return removedByOf(value.opcode) == PassID::ExpandIteration;
     };
     const Function& function = context.function;
-    // A list of names that ExpandOwnKeys writes out later in the same round is a literal then, and what reads a literal needs no test.
-    if (Vector<ValueID, 4> lists = findKeyListsToWriteOut(context); !lists.isEmpty()) {
+    // A list of names that ExpandOwnKeys expands later in the same round is a literal by then, and reads of a literal need no test.
+    if (Vector<ValueID, 4> lists = findKeyListsToExpand(context); !lists.isEmpty()) {
         for (BlockID block : analyses().cfg().reversePostOrder()) {
             for (ValueID id : function.at(block).values) {
                 function.at(id).forEachOperand([&](ValueID operand, uint32_t) {

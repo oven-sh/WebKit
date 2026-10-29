@@ -429,7 +429,7 @@ static bool hasManyCallers(const Program& program, const FlowResults& flow, cons
     return callers >= HeatModel::callersOfFunctionThatRunsOften;
 }
 
-// The callers of a function are seen at the entry that the engine has put in front of it, which tests or unpacks a parameter, packs a result, binds arguments or starts an async function or a generator.
+// A function's callers are seen at the entry that the engine put before it, which tests or unpacks a parameter, packs a result, binds arguments or starts an async function or a generator.
 static void followEntriesMadeByEngine(const Program& program, const FlowResults& flow, const HeatGraph& graph, std::span<const uint32_t> functionsWithBody, Vector<uint8_t>& runsOften)
 {
     Vector<uint32_t> worklist;
@@ -605,7 +605,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
             if (heat.m_hasWeights)
                 heat.m_layoutsStoredUnderNames = collectLayoutsStoredUnderNames(program, loops, functionsWithBody.span());
             isCalledInLoop = findFunctionsCalledInLoops(loops, graph, functionsWithBody.span());
-            // Each follows calls on one thread, and none asks for what another finds.
+            // Each follows calls on one thread, and none depends on another's results.
             runTasksInParallel(loops, {
                 [&] { runsInLoop = followNearlyCertainCalls(graph, isCalledInLoop); },
                 [&] { isCalledPerEvent = findFunctionsCalledPerEvent(program, graph); },
@@ -618,7 +618,7 @@ Heat estimateHeat(const Program& program, const CallGraph& callGraph, const Flow
                         functionsThatRunOften[id.index()] = hasManyCallers(program, flow, graph, id);
                     });
                     followEntriesMadeByEngine(program, flow, graph, functionsWithBody.span(), functionsThatRunOften);
-                    // What a loop calls and few others is entered no more often than cold code is. It may run all the same.
+                    // A function called by a loop and few others is entered no more often than cold code. It may still run.
                     Vector<uint8_t> functionsExpectedToRun = functionsThatRunOften;
                     for (uint32_t index : functionsWithBody)
                         functionsExpectedToRun[index] |= isCalledInLoop[index];
@@ -1461,7 +1461,7 @@ struct OutliningScan {
         // Only the body of a coroutine may hold it.
         if (value.opcode == Opcode::TakeGeneratorPrototype)
             return false;
-        // The function object that it calls lies in this frame.
+        // The function object that it calls is in this frame.
         if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
             return false;
         const Terminator& terminator = function.at(useLists.blockOf(id)).terminator;

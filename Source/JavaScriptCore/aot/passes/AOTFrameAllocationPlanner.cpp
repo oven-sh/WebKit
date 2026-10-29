@@ -326,7 +326,7 @@ bool FramePlanner::mayGiveFrameCell(ValueID value) const
     return false;
 }
 
-static bool saysThatCellMayOutliveFrame(AllocationHeapCause cause)
+static bool meansCellMayOutliveFrame(AllocationHeapCause cause)
 {
     switch (cause) {
     case AllocationHeapCause::Escapes:
@@ -357,7 +357,7 @@ void FramePlanner::moveToHeap(ObjectID object, AllocationHeapCause cause, std::o
     FrameDecision& decision = m_decisions[object.index()];
     if (decision.storage == AllocationStorage::Heap)
         return;
-    if (m_build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames) && saysThatCellMayOutliveFrame(cause) && !isArray(object))
+    if (m_build.isSabotaged(Sabotage::CellsThatAreKeptLieInFrames) && meansCellMayOutliveFrame(cause) && !isArray(object))
         return;
     decision.storage = AllocationStorage::Heap;
     decision.isLent = false;
@@ -617,7 +617,7 @@ Expected<bool> FramePlanner::mayFindBorrowingCallee(const Value& call, uint32_t 
         const Function& callee = m_program.at(id);
         if (std::optional<uint32_t> entryParameter = entryParameterOf(callee, call, operandIndex))
             return m_flow->framePointerSummary(id, *entryParameter).uses.containsOnly(usesOfBorrowedParameter);
-        // Nothing takes an argument that has no parameter.
+        // An argument without a parameter is unused.
         std::optional<uint32_t> argument = call.variadicOperandIndex(operandIndex);
         return argument && *argument >= callee.numberOfPositionalParameters() && !callee.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest, FunctionFlags::HasRestParameter });
     };
@@ -1013,7 +1013,7 @@ void FramePlanner::checkReturnCalls()
                     continue;
                 if (isCandidate(object) && m_decisions[object.index()].madeAgainAt.contains(use))
                     continue;
-                // Whoever borrows a closure gives nothing of it back, and whoever does not is handed the closure of the heap. So what comes out of the call that it was lent to is never the cell in the frame.
+                // A borrower of a closure returns no part of it, and a non-borrower is passed the heap closure. So the result of the call it was lent to is never the cell in the frame.
                 if (isCandidate(object) && isLent(object) && sameObjectThroughCasts(m_function, operand) != allocationOf(object))
                     continue;
                 if (isCandidate(object) && calleesEndTheirTailCalls())

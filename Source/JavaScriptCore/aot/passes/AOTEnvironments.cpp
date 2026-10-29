@@ -1108,7 +1108,7 @@ struct ClosureWebs {
                 const Value& value = function.at(id);
                 if (value.opcode == Opcode::GetCapture || (value.opcode == Opcode::PutEnvironmentField && storeOf(value.valueOperand()) == id))
                     continue;
-                // Whoever lists the frames finds the closure in its field of the environment, if it was made.
+                // A stack walk finds the closure in its field of the environment, if it was created.
                 if (value.opcode == Opcode::KeepCalleeInFrame && candidateOf(value.operand(0)) < closureParameters.firstCandidateWithoutField)
                     continue;
                 if ((value.opcode == Opcode::ToBoolean || value.opcode == Opcode::TypeTest) && candidateOf(value.operand(0)) != noCandidate && asksForClosure(program, function, value))

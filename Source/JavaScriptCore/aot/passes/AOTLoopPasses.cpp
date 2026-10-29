@@ -88,7 +88,7 @@ static bool hasIntegerBeyondInt32(const Program& program, const Function& functi
     return false;
 }
 
-// An int32 counter whose step may leave int32 is tested behind every step. What stays under an int32 bound is still an int32 one step on.
+// An int32 counter whose step may overflow int32 is tested after every step. A counter below an int32 bound is still an int32 one step later.
 static bool stepsBeyondInt32(FunctionPassContext& context, const InductionVariable& variable)
 {
     return context.program.typeOf(context.function, variable.parameter).isInt32() && std::ranges::any_of(variable.steppedValues, [&](ValueID stepped) {
@@ -470,8 +470,8 @@ static Vector<ValueID, 4> boundTallies(FunctionPassContext& context, IRBuilder& 
     return bounded;
 }
 
-// On a whole number that is kept as a double such an operator converts its operand in every turn, and calls where that fails. A number that is only counted up is cheapest as a double.
-static bool hasUseThatIsCheaperOnIntegers(FunctionPassContext& context, const NaturalLoop& loop, ValueID parameter)
+// On an integer kept as a double, such an operator converts its operand in every iteration, and calls if that fails. A number that is only incremented is cheapest as a double.
+static bool hasUseCheaperOnIntegers(FunctionPassContext& context, const NaturalLoop& loop, ValueID parameter)
 {
     const Function& function = context.function;
     for (unsigned index = 0; index < loop.size(); ++index) {
@@ -494,7 +494,7 @@ static bool hasUseThatIsCheaperOnIntegers(FunctionPassContext& context, const Na
     return false;
 }
 
-// A whole number that a loop hands from turn to turn, that starts as an int32 and changes by a constant in every turn, and that no test bounds, is expected to stay an int32. What is expected is tested behind the step.
+// An integer that a loop carries, that starts as an int32, changes by a constant in every iteration and is bounded by no test is expected to stay an int32. The expectation is tested after the step.
 static bool expectUnboundedCountersToStayInt32(FunctionPassContext& context, IRBuilder& builder)
 {
     struct SteppedArgument {
@@ -517,10 +517,10 @@ static bool expectUnboundedCountersToStayInt32(FunctionPassContext& context, IRB
                 break;
             if (!variable.start || !context.program.typeOf(function, variable.start).isInt32() || variable.step.kind != InductionStepKind::Constant || !Range::int32().contains(variable.step.constant))
                 continue;
-            // Where a test bounds it by a number, that number is tested for an integer in front of the loop.
+            // If a test bounds it by a number, that number is tested for being an integer before the loop.
             if (std::ranges::any_of(variable.tests, [&](const InductionTest& test) { return isBoundingRelation(test.relation, variable.direction); }))
                 continue;
-            if (!hasUseThatIsCheaperOnIntegers(context, naturalLoop, variable.parameter))
+            if (!hasUseCheaperOnIntegers(context, naturalLoop, variable.parameter))
                 continue;
             for (Edge edge : analyses.cfg().incomingEdges(loop.header)) {
                 if (analyses.naturalLoops().belongsTo(edge.from, naturalLoop))
@@ -600,8 +600,8 @@ static bool testsSumInCycle(FunctionPassContext& context)
     });
 }
 
-// `k + 1 < length` says of the counter what `k < length - 1` says, and only a test of the counter itself bounds it for what follows.
-// A number without a fraction plus a small integer is exact wherever it comes near an integer that is far from the limit of exact integers; elsewhere its sign decides both comparisons.
+// `k + 1 < length` says the same about the counter as `k < length - 1`, and only a test of the counter itself bounds it for later code.
+// An integral number plus a small integer is exact whenever it is near an integer far from the limit of exact integers; elsewhere its sign decides both comparisons.
 static bool testCountersInsteadOfSums(FunctionPassContext& context, IRBuilder& builder)
 {
     Function& function = context.function;
@@ -667,7 +667,7 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
     IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
     if (testsSumInCycle(context) && testCountersInsteadOfSums(context, builder))
         outcome = PassOutcome::Changed;
-    // In the rounds only a counter that has just got a test of its own is converted, ahead of the tests that the round would place on it. Whatever else counts has its bound by then or gets it behind the rounds.
+    // During the rounds, only a counter that has just got its own test is converted, before the tests that the round would place on it. Other counters have their bound by then or get it after the rounds.
     if (context.isInRounds && outcome == PassOutcome::Unchanged)
         return outcome;
     for (;;) {
@@ -996,12 +996,12 @@ static unsigned hoistReadsOutOfLoops(FunctionPassContext& context, Vector<Edge, 
 
 static bool mayChangeKeys(const EffectsOnEdges& effects)
 {
-    constexpr AbstractHeapSet heapsThatSayWhichKeysThereAre { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
+    constexpr AbstractHeapSet heapsDescribingKeys { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
     Effects any = effects.onAnyEdge();
-    return any.mayRunOtherCode() || any.writes.containsAny(heapsThatSayWhichKeysThereAre);
+    return any.mayRunOtherCode() || any.writes.containsAny(heapsDescribingKeys);
 }
 
-// From behind the opening of the enumerator to the entry of the loop there is one way, and nothing on it changes the keys of any object.
+// There is one path from after the enumerator's open to the loop entry, and nothing on it changes any object's keys.
 static bool leadsToLoopWithoutChangeOfKeys(FunctionPassContext& context, ValueID open, BlockID lastBlock)
 {
     const Function& function = context.function;
@@ -1026,8 +1026,8 @@ static bool leadsToLoopWithoutChangeOfKeys(FunctionPassContext& context, ValueID
     return false;
 }
 
-// Whether an enumerator still says which keys its object has is asked at each step. Where nothing else in the loop can change the keys of an object, the answer changes at most in a step that the run time takes.
-static unsigned markStepsOfLoopsThatChangeNoKeys(FunctionPassContext& context)
+// Each step checks whether the enumerator still describes its object's keys. If nothing else in the loop can change an object's keys, the result only changes in a step that the runtime handles.
+static unsigned markStepsOfKeyPreservingLoops(FunctionPassContext& context)
 {
     Function& function = context.function;
     NaturalLoops& naturalLoops = context.analyses.naturalLoops();
@@ -1035,18 +1035,18 @@ static unsigned markStepsOfLoopsThatChangeNoKeys(FunctionPassContext& context)
     for (unsigned i = 0; i < naturalLoops.numLoops(); ++i) {
         const NaturalLoop& loop = naturalLoops.loop(i);
         ValueID step;
-        bool changesNoKeys = true;
-        for (unsigned j = 0; j < loop.size() && changesNoKeys; ++j) {
+        bool preservesKeys = true;
+        for (unsigned j = 0; j < loop.size() && preservesKeys; ++j) {
             BlockID block = loop.at(j);
             for (ValueID id : function.at(block).values) {
                 if (function.at(id).opcode == Opcode::ForInStep && !step && naturalLoops.innerMostLoopOf(block) == &loop)
                     step = id;
                 else
-                    changesNoKeys &= !mayChangeKeys(context.analyses.effectsOf(id));
+                    preservesKeys &= !mayChangeKeys(context.analyses.effectsOf(id));
             }
-            changesNoKeys &= !function.at(block).isHandlerBlock() && !mayChangeKeys(context.analyses.effectsOfTerminator(block));
+            preservesKeys &= !function.at(block).isHandlerBlock() && !mayChangeKeys(context.analyses.effectsOfTerminator(block));
         }
-        if (!step || !changesNoKeys || function.at(step).keysChangeOnlyInSteps() || !function.at(step).positionOperand())
+        if (!step || !preservesKeys || function.at(step).keysChangeOnlyInSteps() || !function.at(step).positionOperand())
             continue;
         // It takes a few more bytes.
         if (!isHot(heatClassOf(context, loop.header())).predicted())
@@ -1069,7 +1069,7 @@ PassOutcome hoistLoopInvariantReads(FunctionPassContext& context)
         return PassOutcome::Unchanged;
 
     Vector<Edge, 2> entriesFromBranches;
-    unsigned numberOfChanges = markStepsOfLoopsThatChangeNoKeys(context);
+    unsigned numberOfChanges = markStepsOfKeyPreservingLoops(context);
     numberOfChanges += hoistReadsOutOfLoops(context, entriesFromBranches);
     if (!entriesFromBranches.isEmpty()) {
         IRBuilder builder(context.analyses.context(), context.function, context.types, &context.analyses);
@@ -1244,8 +1244,8 @@ static bool removeHintsOutsideCycles(FunctionPassContext& context)
     return changed;
 }
 
-// Every way round a loop leads through its header. Where the header polls, another poll in the same turn adds nothing.
-static bool removeSecondHintsOfTurns(FunctionPassContext& context)
+// Every path around a loop goes through its header. If the header polls, another poll in the same iteration adds nothing.
+static bool removeDuplicateIterationHints(FunctionPassContext& context)
 {
     const Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
@@ -1256,7 +1256,7 @@ static bool removeSecondHintsOfTurns(FunctionPassContext& context)
     };
     const NaturalLoops& loops = analyses.naturalLoops();
     const BlockCycles& cycles = analyses.blockCycles();
-    Vector<std::pair<BlockID, BitVector>, 2> secondHints;
+    Vector<std::pair<BlockID, BitVector>, 2> duplicateHints;
     for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
         const NaturalLoop& loop = loops.loop(loopIndex);
         BlockID header = loop.header();
@@ -1275,13 +1275,13 @@ static bool removeSecondHintsOfTurns(FunctionPassContext& context)
                     hints.set(position);
             }
             if (!hints.isEmpty())
-                secondHints.append({ block, WTF::move(hints) });
+                duplicateHints.append({ block, WTF::move(hints) });
         }
     }
     IRBuilder builder(analyses.context(), context.function, context.types, &analyses);
-    for (auto& [block, hints] : secondHints)
+    for (auto& [block, hints] : duplicateHints)
         builder.eraseValues(block, hints);
-    return !secondHints.isEmpty();
+    return !duplicateHints.isEmpty();
 }
 
 PassOutcome removeDeadCountedLoops(FunctionPassContext& context)
@@ -1291,7 +1291,7 @@ PassOutcome removeDeadCountedLoops(FunctionPassContext& context)
         outcome = PassOutcome::Changed;
     if (removeHintsOutsideCycles(context))
         outcome = PassOutcome::Changed;
-    if (removeSecondHintsOfTurns(context))
+    if (removeDuplicateIterationHints(context))
         outcome = PassOutcome::Changed;
     // The builder makes every edit and tells the analyses, and the search that found no more loops came behind the last one.
     if (outcome == PassOutcome::Changed)

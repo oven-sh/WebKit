@@ -1185,7 +1185,7 @@ bool ObjectInterpreter::fitsType(VirtualObjectID object, TypeID type) const
     RELEASE_ASSERT(state);
     if (isAssumedWithin(program(), *state, type) || fitsTypeWithoutCasts(object, type))
         return true;
-    // What was assumed of a result that may be absent holds, without null and undefined, of one that is there.
+    // What was assumed about a result that may be absent holds, without null and undefined, for one that is present.
     const VirtualFamily& family = m_sinking.familyOf(object);
     bool isThere = std::ranges::all_of(state->variants, [&](const ObjectVariant& variant) {
         return family.at(variant.shape).kind == VirtualShapeKind::Fields;
@@ -1716,7 +1716,7 @@ void ObjectInterpreter::buildBeforeBranch(const Terminator& terminator)
     if (numberOfLiveTargets < 2)
         return;
 
-    auto holdsWhatRefersToIt = [&](const ObjectEntry& entry) {
+    auto holdsItsReferrer = [&](const ObjectEntry& entry) {
         return std::ranges::any_of(entry.state.heldObjects, [&](const HeldObject& held) {
             return m_state.canReach(held.object, entry.object);
         });
@@ -1726,7 +1726,7 @@ void ObjectInterpreter::buildBeforeBranch(const Terminator& terminator)
         if (entry.state.isCell())
             continue;
         const Candidate& candidate = m_sinking.at(entry.object);
-        if (candidate.isBuiltBeforeBranches || (candidate.isBuiltBeforeBranchesOnceCyclic && holdsWhatRefersToIt(entry)))
+        if (candidate.isBuiltBeforeBranches || (candidate.isBuiltBeforeBranchesOnceCyclic && holdsItsReferrer(entry)))
             objects.append(entry.object);
     }
     for (VirtualObjectID object : objects)
@@ -2039,6 +2039,7 @@ void convertListCall(Value& call, std::span<const ValueID> elements)
         call.setCalleeKey(listCall.calleeKey());
         call.setCalleeName(listCall.calleeName());
         call.setExpectedResult(listCall.expectedResult());
+        call.setCalledBuiltin(listCall.calledBuiltin());
         break;
     case Opcode::ConstructList:
         call.become(Opcode::Construct);

@@ -178,7 +178,11 @@ struct LogicalFrameSite {
     unsigned inlineFrame { 0 };
     bool isTailDeleted { false };
     BuiltinID calledBuiltin { };
+    bool calleeWasEntered { false };
 };
+
+// Function.prototype.call and apply end in a tail call, so their frame is gone once the callee runs.
+bool leavesByTailCall(BuiltinID);
 
 // After a tail call the frame above a construct belongs to another function than the one that was constructed.
 // Which function the site has constructed, where something says so: the frame of the stub between the site and its callee, or the site.
@@ -197,9 +201,9 @@ LogicalFrame innermostLogicalFrame(const Image&, InlineFrameReader&, const Logic
 LogicalFrame callerOfInlinedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, const LogicalFrame&);
 OutermostVisibleFunction findOutermostVisibleFunction(const Image&, InlineFrameReader&, const CallSiteCache::Entry&, bool calleeWasEntered);
 bool isEntrypointOf(FunctionID candidate, FunctionID sourceFunction);
-// What the call says in whose place the frame, or a hidden one of the same function below it, stands in the code of a caller.
+// What is recorded for the call that was inlined as this frame, or as a hidden frame of the same function below it.
 std::optional<CalleeOfSite> calleeOfCopiedFrame(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame);
-// The caller made the function object itself and handed it to nobody.
+// The caller created the function object and has not passed it to anything.
 inline bool isCopiedForOwnFunctionObject(const Image& image, InlineFrameReader& reader, CompiledFunctionID code, LogicalFrame frame) { return calleeOfCopiedFrame(image, reader, code, frame) == CalleeOfSite::ownFunctionObject(); }
 // All frames below it in its machine frame are hidden ones of the function.
 bool hasOnlyEntrypointsBelow(const Image&, InlineFrameReader&, CompiledFunctionID, LogicalFrame, FunctionID sourceFunction);
@@ -303,6 +307,8 @@ public:
     void* callerStackPointer() const { return AOT::stackPointerOfCaller(m_cursor.callFrame, m_cursor.bytesAboveReturnAddress); }
     bool isAtFirstReadSite() const { return m_cursor.isAtFirstReadSite && m_callSite.site.firstReadSite; }
     bool calleeWasEntered() const { return m_calleeWasEntered; }
+    // TraceFrame::isAtFailedTailCall of frame().
+    bool isAtFailedTailCall() const { return !m_calleeWasEntered && m_callSite.site.isTailCall() && !m_callSite.site.calledBuiltin && frame().inlineFrame == m_callSite.site.inlineFrame; }
     bool isAmongFramesThatWait() const { return m_cursor.isAmongFramesThatWait; }
     EntryFrame* entryFrame() const { return m_cursor.entryFrame; }
     CallFrame* framePointer() const { return m_cursor.framePointer; }

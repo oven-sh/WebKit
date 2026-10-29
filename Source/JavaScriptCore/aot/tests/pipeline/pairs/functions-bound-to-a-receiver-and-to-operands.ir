@@ -1,8 +1,0 @@
-# The program of ../../answers is one in which bound functions are made as functions of their own behind a test of what is bound, and calls of them are resolved.
-# FORM: AsRead
-# RUN: compile
-# STATISTIC: BoundFunctions >= 1
-# STATISTIC: CallsResolved >= 1
-# STATISTIC: TypeTestsPlaced >= 1
-# CHECK: image not empty
-# PROGRAM-OF: ../../answers/functions-bound-to-a-receiver-and-to-operands.ir

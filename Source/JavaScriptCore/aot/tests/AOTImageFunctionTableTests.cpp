@@ -281,7 +281,7 @@ static void testSlotsAboveFrameRecord()
     AOT_TEST_CHECK(std::bit_cast<uintptr_t>(stackPointerOfCaller(record, bytesAboveReturnAddressOf(above))) == 0x1000 + sizeof(CallerFrameAndPC) + 32);
 }
 
-// The stack of a thread that is stopped in native code: function 2 has called function 1, which has called the native code.
+// The stack of a thread stopped in native code: function 2 called function 1, which called the native code.
 static SUPPRESS_ASAN void testSampleInNativeCode()
 {
     TestBuild build(4);
@@ -289,12 +289,12 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
     outer.withFrame(48);
     outer.plain(0x1002);
     outer.callFunction(1, outer.addSite());
-    uint32_t behindCallByValue = outer.callStub(callValue(1), outer.addSite()) + sizeOfNearCall;
-    uint32_t behindCallOfOtherFunction = outer.callFunction(3, outer.addSite()) + sizeOfNearCall;
-    uint32_t behindCallOfNativeCode = outer.callStub(writeBarrier(), outer.addSite()) + sizeOfNearCall;
+    uint32_t afterIndirectCall = outer.callStub(callValue(1), outer.addSite()) + sizeOfNearCall;
+    uint32_t afterCallToOtherFunction = outer.callFunction(3, outer.addSite()) + sizeOfNearCall;
+    uint32_t afterCallToNativeCode = outer.callStub(writeBarrier(), outer.addSite()) + sizeOfNearCall;
     outer.end();
     CodeSketch larger = sketchWithSite(3, 64);
-    uint32_t behindCallInLargerFrame = larger.callFunction(1, larger.addSite()) + sizeOfNearCall;
+    uint32_t afterCallInLargerFrame = larger.callFunction(1, larger.addSite()) + sizeOfNearCall;
     larger.end();
     TestImage image = build.build(bodies(plainBody(1, 32), outer.take(), larger.take()));
     const Image& loaded = *image.image;
@@ -320,36 +320,36 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
     SampledRegisters withoutFrameRecord { &stack[recordOfCaller], nativeCode, nullptr, &stack[endOfNativeFrame - 8] };
     AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
     if constexpr (isX86_64()) {
-        // A word that a frame of another size has left behind.
+        // A stale word from a frame of another size.
         stack[endOfNativeFrame - 6] = returnAddressIn(3);
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
-        // A place in the function that no call returns to.
+        // An address in the function that no call returns to.
         stack[endOfNativeFrame - 1] = const_cast<uint8_t*>(image.address(1, sizeof(uint32_t)));
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, returnAddressIn(2)));
         stack[endOfNativeFrame - 1] = returnAddressIn(1);
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
-        // A word of function 3, which had its frame record where function 1 has it and has returned. The call names function 1.
+        // A word of function 3, which had its frame record where function 1's is and has returned. The call names function 1.
         constexpr size_t endOfLargerFrame = recordOfCaller - 64 / sizeof(void*);
         stack[endOfLargerFrame - 1] = returnAddressIn(3);
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
-        // A call by value names nobody.
-        stack[recordOfCaller + 1] = const_cast<uint8_t*>(image.address(2, behindCallByValue));
-        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, image.address(2, behindCallByValue)));
-        // A word behind a call of a function: what that call entered was no native code.
-        stack[endOfLargerFrame - 1] = const_cast<uint8_t*>(image.address(3, behindCallInLargerFrame));
+        // An indirect call names no callee.
+        stack[recordOfCaller + 1] = const_cast<uint8_t*>(image.address(2, afterIndirectCall));
+        AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfOuter, image.address(2, afterIndirectCall)));
+        // A word after a call to a function: that call did not enter native code.
+        stack[endOfLargerFrame - 1] = const_cast<uint8_t*>(image.address(3, afterCallInLargerFrame));
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
-        // Function 3, which the call names, has gone on to function 1 by a tail call.
-        stack[recordOfCaller + 1] = const_cast<uint8_t*>(image.address(2, behindCallOfOtherFunction));
+        // Function 3, which the call names, tail-called function 1.
+        stack[recordOfCaller + 1] = const_cast<uint8_t*>(image.address(2, afterCallToOtherFunction));
         AOT_TEST_CHECK(isTop(withoutFrameRecord, recordOfCaller, returnAddressIn(1)));
     }
 
-    // Function 1 has returned, and the native code that function 2 has called since has its frame record where function 1 had it. The word below is what function 1 has left behind.
-    void* behindNativeCall = const_cast<uint8_t*>(image.address(2, behindCallOfNativeCode));
+    // Function 1 has returned, and the native code that function 2 called since has its frame record where function 1's was. The word below is stale, from function 1.
+    void* afterNativeCall = const_cast<uint8_t*>(image.address(2, afterCallToNativeCode));
     stack[endOfNativeFrame - 1] = returnAddressIn(1);
-    stack[recordOfCaller + 1] = behindNativeCall;
-    for (void* linkRegister : { static_cast<void*>(nullptr), behindNativeCall, nativeCode }) {
+    stack[recordOfCaller + 1] = afterNativeCall;
+    for (void* linkRegister : { static_cast<void*>(nullptr), afterNativeCall, nativeCode }) {
         SampledRegisters withOwnFrameRecord { &stack[recordOfCaller], nativeCode, linkRegister, &stack[endOfNativeFrame - 8] };
-        AOT_TEST_CHECK(isTop(withOwnFrameRecord, recordOfOuter, behindNativeCall));
+        AOT_TEST_CHECK(isTop(withOwnFrameRecord, recordOfOuter, afterNativeCall));
     }
     stack[recordOfCaller + 1] = returnAddressIn(2);
 

@@ -168,7 +168,7 @@ void AccessEmitter::putById(const OperationContext& context, Boxed receiver, Pro
         callStub(context, putByIdAtSite(mode), { receiver.value(), value.value(), siteCacheAddress(cache).value() }, { .immediate = *identifier });
         return;
     }
-    StubKey stub = RowDisplacementTable::hasColumn(*identifier) ? AOT::putById(mode) : putByIdHashed(mode);
+    StubKey stub = FieldTableEntry::hasColumn(*identifier) ? AOT::putById(mode) : putByIdHashed(mode);
     callStub(context, stub, { receiver.value(), value.value() }, { .immediate = *identifier });
 }
 

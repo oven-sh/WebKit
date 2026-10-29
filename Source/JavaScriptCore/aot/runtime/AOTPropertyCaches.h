@@ -246,13 +246,13 @@ public:
     void remove(StructureID, const CachedName&, SlotAccess);
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
-    // For a store under the name of a field that the object lacks. The filter is for all the names of a Structure: it answers for this store, and it lets the stubs create the fields behind this one.
+    // For a store to a field that the object lacks. The filter covers all the names of a Structure: it decides this store, and lets the stubs create the fields after this one.
     bool addFilterAndCheckStoreCreatesOwnField(JSGlobalObject*, Object&, uint32_t identifierNumber);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
     void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
-    // As branchIfChainMayHaveName() of the stubs: no object above has an accessor or a property that cannot be written under the name, so a store creates the object's own field.
+    // Like the stubs' branchIfChainMayHaveName(): no object on the prototype chain has an accessor or a read-only property with this name, so a store creates the object's own field.
     bool storeCreatesOwnField(const Object&, uint32_t identifierNumber) const;
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
     bool mayBeNameOfObjectPrototype(uint32_t identifierNumber) const { return m_namesOfObjectPrototypes[identifierNumber / 64] >> identifierNumber % 64 & 1; }
@@ -287,7 +287,7 @@ private:
 
     void didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull);
 
-    // Pages of the VM: all zero, and none is touched before something is written to it or read from it.
+    // Pages of the VM: zero-filled, and untouched until first read or written.
     struct Tables {
         std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
         BitPerName namesChangedOnChains;
@@ -305,7 +305,7 @@ private:
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters>& m_absenceFilters { m_tables.absenceFilters };
     uint32_t m_absenceFilterGenerationForStores { 1 };
     uint32_t m_changesUnderNamesOnChains { 0 };
-    // What a filter says, and what the names of the Object.prototypes say, it says of these.
+    // The objects that the filters and the Object.prototype name sets describe.
     ObjectsSeen m_filteredObjects;
     BitPerName& m_namesChangedOnChains { m_tables.namesChangedOnChains };
     BitPerName& m_namesOfObjectPrototypes { m_tables.namesOfObjectPrototypes };

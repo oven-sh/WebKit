@@ -58,8 +58,6 @@ struct CompiledUnwindResult {
     // False where compiled code has not called the frame that the walk began at.
     bool hasLeftRun { false };
     CompiledHandler handler;
-    // Of the frame of the handler.
-    Instance* instance { nullptr };
     ReturnSiteInRun siteOfHandler;
     // Of a run that has no handler.
     CompiledFrameIterator::RunEnd runEnd;
@@ -94,7 +92,7 @@ bool beginsInTopCompiledFrame(VM&, const ReturnAddressTrace&);
 inline constexpr ptrdiff_t offsetOfDivertedReturnInLoopPollPage = 8;
 void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance&, CallerFrameAndPC* frameRecordOfOperation);
 
-// Only what the operation itself comes to owe: it has allocated, so its caller counts on a collection here. What was owed before waits for a place that may collect.
+// Only what the operation itself made pending: it has allocated, so its caller expects a collection here. An error that was already pending waits for a place that may collect.
 class ThrowsOwedOutOfMemoryErrorAtReturn {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(ThrowsOwedOutOfMemoryErrorAtReturn);

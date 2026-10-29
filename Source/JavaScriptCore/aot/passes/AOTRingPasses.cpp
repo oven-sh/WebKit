@@ -515,7 +515,7 @@ KnownValue evaluateOperation(const Program& program, const Function& function, c
         Vector<char16_t> buffer;
         if (left.kind() == KnownValue::Kind::String)
             return KnownValue::integer(program.strings.viewOf(left.asString(), buffer).length());
-        // Texts of one length have that length, whichever of them it is.
+        // Strings that all have the same length have that length, whichever one it is.
         const Type& type = program.typeOf(function, value.operand(0));
         if (!type.hasLiteralStrings() || !type.hasOnlyPrimitives(Primitive::LiteralString))
             return { };
@@ -704,7 +704,7 @@ struct BitOfEachValue {
     Vector<uint64_t, 16> words;
 };
 
-// Nobody lists the frames from where control only goes on.
+// No stack walk starts where control only falls through.
 static bool runsToItsEnd(TerminatorKind kind)
 {
     switch (kind) {
@@ -728,19 +728,19 @@ static bool runsToItsEnd(TerminatorKind kind)
 
 static bool keepsCalleeInFrame(Opcode opcode) { return opcode == Opcode::KeepCalleeInFrame || opcode == Opcode::KeepEnvironmentOfCalleeInFrame; }
 
-// A call, and what keeps its callee, are one position in one inline frame.
+// A call and the operation that keeps its callee share one position in one inline frame.
 static uint64_t keyOfCall(uint32_t position, uint32_t inlineFrame) { return static_cast<uint64_t>(position) << 32 | inlineFrame; }
 
-// Only who lists the frames asks which function object a call has entered, and from a copy of the callee that can be done only where something may exit sideways.
-// Where those places are expected to run less often than the head of the copy, the function object is kept in front of them.
+// Only a stack walk needs to know which function object a call entered, and inside an inlined callee that can only happen where something may exit sideways.
+// If those places are expected to run less often than the head of the inlined body, the function object is kept right before them.
 struct KeptCalleeMover {
     struct Keep {
         ValueID id;
         ProgramPoint point;
         uint64_t key { 0 };
         bool stays { false };
-        // In the order of the walk.
-        Vector<ProgramPoint, 2> askedAt { };
+        // In walk order.
+        Vector<ProgramPoint, 2> queryPoints { };
     };
     struct Question {
         uint64_t key { 0 };
@@ -767,7 +767,7 @@ struct KeptCalleeMover {
         return depth;
     }
 
-    // The calls made from one depth share a word. A call whose places in a block lie around those of another one keeps its callee where it is.
+    // Calls at the same inline depth share a word. A call whose places in a block surround those of another call keeps its callee where it is.
     void didMeet(uint64_t key, BlockID block)
     {
         uint32_t word = wordOf(key);
@@ -806,7 +806,7 @@ struct KeptCalleeMover {
                     keeps.append({ id, { blockID, index }, key });
                     continue;
                 }
-                // The call itself asks, right behind what keeps its callee.
+                // The call itself needs it, right after the operation that keeps its callee.
                 if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
                     stateOfKey.add(keyOfCall(value.position, value.inlineFrame), StateOfKey { }).iterator->value.stays = true;
                 if (value.inlineFrame && analyses.mayExitSidewaysOnAnyEdge(id))
@@ -832,12 +832,12 @@ struct KeptCalleeMover {
                 if (standsInFrontOf(keep, question.point) && (!nearest || standsInFrontOf(*nearest, keep.point)))
                     nearest = &keep;
             }
-            // Ways from several of them meet in front of the place.
+            // Paths from several of them meet before the place.
             if (!nearest) {
                 stateOfKey.add(question.key, StateOfKey { }).iterator->value.stays = true;
                 continue;
             }
-            nearest->askedAt.append(question.point);
+            nearest->queryPoints.append(question.point);
         }
     }
 
@@ -855,13 +855,13 @@ struct KeptCalleeMover {
         for (Keep& keep : keeps) {
             if (keep.stays || stateOfKey.get(keep.key).stays)
                 continue;
-            double frequencyWhereAsked = 0;
+            double frequencyAtQueries = 0;
             BlockID lastBlock;
-            for (ProgramPoint point : keep.askedAt) {
+            for (ProgramPoint point : keep.queryPoints) {
                 if (point.block != std::exchange(lastBlock, point.block))
-                    frequencyWhereAsked += analyses.blockFrequencies().frequencyOf(point.block).predicted();
+                    frequencyAtQueries += analyses.blockFrequencies().frequencyOf(point.block).predicted();
             }
-            if (!keep.askedAt.isEmpty() && frequencyWhereAsked >= analyses.blockFrequencies().frequencyOf(keep.point.block).predicted())
+            if (!keep.queryPoints.isEmpty() && frequencyAtQueries >= analyses.blockFrequencies().frequencyOf(keep.point.block).predicted())
                 continue;
             moved.append(&keep);
         }
@@ -872,7 +872,7 @@ struct KeptCalleeMover {
             const Value original = function.at(keep->id);
             builder.setOrigin(original.origin());
             BlockID lastBlock;
-            for (ProgramPoint point : keep->askedAt) {
+            for (ProgramPoint point : keep->queryPoints) {
                 if (point.block != std::exchange(lastBlock, point.block))
                     builder.insertBefore(point, Value(original));
             }
@@ -919,8 +919,8 @@ struct DeadCodeEliminator {
     Vector<WaitingStore, 16> waitingStores { };
     UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lastWaitingStoreInto { };
     std::optional<Position> firstFreshAllocation { };
-    // The position and the inline frame of each, in rising order.
-    std::optional<Vector<uint64_t, 8>> callsWhoseCalleeIsAskedFor { };
+    // The position and inline frame of each, in ascending order.
+    std::optional<Vector<uint64_t, 8>> callsWithQueriedCallee { };
     Vector<ValueLocation> parameterLocations { };
     Vector<Vector<ValueID, 2>> storesInto { };
     BitVector isActive { };
@@ -993,7 +993,7 @@ struct DeadCodeEliminator {
             return false;
         case UnusedValueRule::Stays:
             if (keepsCalleeInFrame(value.opcode))
-                return isCalleeAskedFor(value);
+                return isCalleeQueried(value);
             // All that the look at a heritage does is throw, or run a getter. The type of the heritage may rule out both.
             return value.opcode != Opcode::ResolveHeritage || !observable.neitherThrowsNorRunsCode(id);
         case UnusedValueRule::StaysWithWrittenObject:
@@ -1011,34 +1011,34 @@ struct DeadCodeEliminator {
         return !writesOnlyObjects(effects.normal) || !writesOnlyObjects(effects.handler) || !waitsForWrittenObject(id, value, position);
     }
 
-    // Whoever lists the frames asks which function object a call has entered. Nobody lists them from a copy of the callee in which everything runs to its end.
-    bool isCalleeAskedFor(const Value& keep)
+    // A stack walk needs to know which function object a call entered. No stack walk starts inside an inlined callee in which nothing exits sideways.
+    bool isCalleeQueried(const Value& keep)
     {
-        if (!callsWhoseCalleeIsAskedFor) {
-            callsWhoseCalleeIsAskedFor.emplace();
-            BitVector holdsWayOut(function.inlineFrames.size());
-            auto didFindWayOutOf = [&](uint32_t frame) {
-                for (; frame && !holdsWayOut.quickSet(frame); frame = function.inlineFrames[frame].parent) { }
+        if (!callsWithQueriedCallee) {
+            callsWithQueriedCallee.emplace();
+            BitVector hasExit(function.inlineFrames.size());
+            auto didFindExitFrom = [&](uint32_t frame) {
+                for (; frame && !hasExit.quickSet(frame); frame = function.inlineFrames[frame].parent) { }
             };
             for (BlockID blockID : cfg.reversePostOrder()) {
                 const Block& block = function.at(blockID);
                 for (ValueID id : block.values) {
                     const Value& value = function.at(id);
                     if (value.opcode == Opcode::CallDirect && value.calleeIsKeptInFrame())
-                        callsWhoseCalleeIsAskedFor->append(keyOfCall(value.position, value.inlineFrame));
-                    if (value.inlineFrame && !holdsWayOut.quickGet(value.inlineFrame) && analyses.mayExitSidewaysOnAnyEdge(id))
-                        didFindWayOutOf(value.inlineFrame);
+                        callsWithQueriedCallee->append(keyOfCall(value.position, value.inlineFrame));
+                    if (value.inlineFrame && !hasExit.quickGet(value.inlineFrame) && analyses.mayExitSidewaysOnAnyEdge(id))
+                        didFindExitFrom(value.inlineFrame);
                 }
                 if (!runsToItsEnd(block.terminator.kind))
-                    didFindWayOutOf(block.terminator.inlineFrame);
+                    didFindExitFrom(block.terminator.inlineFrame);
             }
             for (uint32_t frame = 1; frame < function.inlineFrames.size(); ++frame) {
-                if (function.inlineFrames[frame].calleeIsKeptInFrame && holdsWayOut.quickGet(frame))
-                    callsWhoseCalleeIsAskedFor->append(keyOfCall(function.inlineFrames[frame].callPosition, function.inlineFrames[frame].parent));
+                if (function.inlineFrames[frame].calleeIsKeptInFrame && hasExit.quickGet(frame))
+                    callsWithQueriedCallee->append(keyOfCall(function.inlineFrames[frame].callPosition, function.inlineFrames[frame].parent));
             }
-            std::ranges::sort(*callsWhoseCalleeIsAskedFor);
+            std::ranges::sort(*callsWithQueriedCallee);
         }
-        return std::ranges::binary_search(*callsWhoseCalleeIsAskedFor, keyOfCall(keep.position, keep.inlineFrame));
+        return std::ranges::binary_search(*callsWithQueriedCallee, keyOfCall(keep.position, keep.inlineFrame));
     }
 
     void checkRules(ValueID id, const OpcodeRules& rules)
@@ -1287,8 +1287,8 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
 // FoldConstants.
 
 AOT_THRESHOLD(uint64_t, maxPrimitiveTextBytes, 24);
-AOT_THRESHOLD(uint64_t, foldedTextBytesForEachValue, 64);
-AOT_THRESHOLD(uint64_t, foldedTextsOfFullLengthInOneBody, 16);
+AOT_THRESHOLD(uint64_t, foldedStringBytesPerValue, 64);
+AOT_THRESHOLD(uint64_t, maxFullLengthFoldedStringsPerBody, 16);
 AOT_THRESHOLD(unsigned, maxOperationsBetweenTextAndPattern, 8);
 
 static std::optional<TypeofType> typeofTypeNamed(std::span<const uint8_t> text)
@@ -1499,13 +1499,13 @@ struct ConstantFolder {
         FoldingRules rules = foldingRulesOfOpcodes[static_cast<unsigned>(value.opcode)];
         if (rules.isEmpty())
             return false;
-        if (joinsOfTexts.contains(value.opcode)) {
+        if (stringJoins.contains(value.opcode)) {
             switch (letJoinWait(id, value)) {
-            case JoinOfKnownTexts::Waits:
+            case KnownStringJoin::Waits:
                 return false;
-            case JoinOfKnownTexts::IsWrittenOut:
+            case KnownStringJoin::IsExpanded:
                 return true;
-            case JoinOfKnownTexts::IsFoldedAsAnyOperation:
+            case KnownStringJoin::IsFoldedAsAnyOperation:
                 break;
             }
         }
@@ -1650,21 +1650,21 @@ struct ConstantFolder {
         return hasNarrowPart && hasWidePart;
     }
 
-    // `s = s + n + a;` line after line, all of it known: each join is used by the next alone, and nobody reads its characters. Such a join waits, and the first one that
-    // somebody else uses gathers the pieces, so that n joins leave one text and not n texts of up to n pieces.
-    static constexpr OpcodeSet joinsOfTexts { Opcode::Add, Opcode::Strcat };
-    enum class JoinOfKnownTexts : uint8_t { Waits, IsWrittenOut, IsFoldedAsAnyOperation };
-    // By the index of the value: the bytes of its text.
+    // `s = s + n + a;` line after line, all constant: each concatenation is only used by the next, and nothing reads its characters. Such a concatenation waits, and the first one with
+    // another use gathers the pieces, so that n concatenations leave one string instead of n strings of up to n pieces.
+    static constexpr OpcodeSet stringJoins { Opcode::Add, Opcode::Strcat };
+    enum class KnownStringJoin : uint8_t { Waits, IsExpanded, IsFoldedAsAnyOperation };
+    // Indexed by value: the byte size of its string.
     UncheckedKeyHashMap<uint32_t, uint64_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> waitingJoins { };
-    Vector<ValueID, 4> joinsWrittenOut { };
+    Vector<ValueID, 4> expandedJoins { };
 
-    bool isReadByOneJoinAlone(ValueID id)
+    bool isReadByOnlyOneJoin(ValueID id)
     {
         std::optional<Use> use = useLists().singleUse(id);
-        return use && use->kind == Use::Kind::Operand && joinsOfTexts.contains(function.at(use->user).opcode);
+        return use && use->kind == Use::Kind::Operand && stringJoins.contains(function.at(use->user).opcode);
     }
 
-    bool writeOutJoin(ValueID id, uint64_t bytes)
+    bool expandJoin(ValueID id, uint64_t bytes)
     {
         if (exceedsLimitOfFoldedString(id, bytes))
             return false;
@@ -1685,22 +1685,22 @@ struct ConstantFolder {
         }
         if (result.hasOverflowed() || !becomeConstant(id, KnownValue::string(context.strings.intern(StringView(result)))))
             return false;
-        context.bytesOfFoldedTexts += bytes;
+        context.bytesOfFoldedStrings += bytes;
         waitingJoins.remove(id.index());
-        // Each was read by the join above it alone, and made a text that is shorter than this one.
+        // Each was only read by the concatenation above it, and produced a shorter string than this one.
         for (ValueID join : gathered) {
             waitingJoins.remove(join.index());
             explainOperationThatGoes(function, join, InPlaceOfOperation::NothingByProofOfThePass);
             becomeUndefined(function, join);
-            joinsWrittenOut.append(join);
+            expandedJoins.append(join);
         }
         context.analyses.invalidate(FunctionAnalysis::Effects);
         return true;
     }
 
-    JoinOfKnownTexts letJoinWait(ValueID id, const Value& value)
+    KnownStringJoin letJoinWait(ValueID id, const Value& value)
     {
-        // What a text that the program makes is held in, and a text of narrow and wide parts, is the business of the rules below.
+        // The representation of a string that the program creates, and of a string with narrow and wide parts, is decided by the rules below.
         bool canWait = textsMadeByProgram.isEmpty();
         bool hasWaitingOperand = false;
         bool hasText = false;
@@ -1732,21 +1732,21 @@ struct ConstantFolder {
             mostBytes += text.size();
         }
         canWait = canWait && hasText && mostBytes <= context.limit(LimitID::MaxFoldedStringBytes);
-        if (canWait && isReadByOneJoinAlone(id)) {
+        if (canWait && isReadByOnlyOneJoin(id)) {
             waitingJoins.add(id.index(), bytes);
-            return JoinOfKnownTexts::Waits;
+            return KnownStringJoin::Waits;
         }
         if (!hasWaitingOperand)
-            return JoinOfKnownTexts::IsFoldedAsAnyOperation;
-        if (canWait && writeOutJoin(id, bytes))
-            return JoinOfKnownTexts::IsWrittenOut;
+            return KnownStringJoin::IsFoldedAsAnyOperation;
+        if (canWait && expandJoin(id, bytes))
+            return KnownStringJoin::IsExpanded;
         for (uint32_t index = 0; index < value.numberOfOperands(); ++index) {
             ValueID operand = value.operand(index);
             auto waiting = operand ? waitingJoins.find(operand.index()) : waitingJoins.end();
-            if (waiting != waitingJoins.end() && writeOutJoin(operand, waiting->value))
-                joinsWrittenOut.append(operand);
+            if (waiting != waitingJoins.end() && expandJoin(operand, waiting->value))
+                expandedJoins.append(operand);
         }
-        return JoinOfKnownTexts::IsFoldedAsAnyOperation;
+        return KnownStringJoin::IsFoldedAsAnyOperation;
     }
 
     KnownValue joinKnownStrings(ValueID id, const Value& value)
@@ -1765,7 +1765,7 @@ struct ConstantFolder {
             return { };
         KnownValue joined = evaluateStringOperation(program, context.strings, function, value, [&](ValueID operand) { return knownCharactersOf(operand); });
         if (joined.kind() == KnownValue::Kind::String)
-            context.bytesOfFoldedTexts += bytes;
+            context.bytesOfFoldedStrings += bytes;
         return joined;
     }
 
@@ -1829,15 +1829,15 @@ struct ConstantFolder {
         });
     }
 
-    // `s = s + n + a; use(s);` line after line: each text is as long as all the lines before it, and the program holds every one. So the texts of one body together are held to a few times the limit, beyond a share that grows with the body.
+    // `s = s + n + a; use(s);` line after line: each string is as long as all the lines before it, and the program keeps every one. So the strings of one body are limited in total to a few times the limit, plus an allowance that grows with the body.
     bool exceedsLimitOfFoldedString(ValueID id, uint64_t bytes)
     {
         if (bytes > context.limit(LimitID::MaxFoldedStringBytes) && feedsOnlyRegExpPatterns(id))
             return context.exceeds(LimitID::RegExpCandidateTextLength, bytes, id);
-        uint64_t together = context.bytesOfFoldedTexts + bytes;
-        uint64_t shareOfBody = foldedTextBytesForEachValue * function.values.size();
+        uint64_t together = context.bytesOfFoldedStrings + bytes;
+        uint64_t shareOfBody = foldedStringBytesPerValue * function.values.size();
         uint64_t beyondShare = together > shareOfBody ? together - shareOfBody : 0;
-        return context.exceeds(LimitID::MaxFoldedStringBytes, std::max(bytes, beyondShare / foldedTextsOfFullLengthInOneBody), id);
+        return context.exceeds(LimitID::MaxFoldedStringBytes, std::max(bytes, beyondShare / maxFullLengthFoldedStringsPerBody), id);
     }
 
     // A literal that nothing but the call uses is as created when the call begins, and nobody sees what the call leaves in it.
@@ -1945,7 +1945,7 @@ struct ConstantFolder {
             return becomeAnswer(answer->primitive);
         if (exceedsLimitOfFoldedString(id, answer->text.sizeInBytes()))
             return false;
-        context.bytesOfFoldedTexts += answer->text.sizeInBytes();
+        context.bytesOfFoldedStrings += answer->text.sizeInBytes();
         StringID characters = context.strings.intern(StringView(answer->text));
         // How the answer is held follows how the operands are, and the realm was handed literals.
         if (answer->isStoredLikeLiteral && !hasOperandMadeByProgram(value))
@@ -2034,7 +2034,7 @@ PassOutcome foldConstants(FunctionPassContext& context)
             didChangeCasts |= isCastOrConversion(opcode) || isCastOrConversion(function.at(id).opcode);
         }
     }
-    foldedValues.appendVector(folder.joinsWrittenOut);
+    foldedValues.appendVector(folder.expandedJoins);
     if (!folder.textsMadeByProgram.isEmpty()) {
         if (!foldedValues.isEmpty()) {
             context.analyses.invalidate(FunctionAnalysis::UseLists);
@@ -2597,7 +2597,7 @@ struct ControlFlowSimplifier {
             decideTerminator(builder, block, static_cast<uint32_t>(cases.size()));
             return true;
         }
-        // A subject that by its type is one of the listed integers or strings leaves nothing for the rest. The way that most cases take is asked for no more: whatever the other cases let pass goes there.
+        // A subject whose type is one of the listed integers or strings leaves nothing for the default case. The target that most cases share is no longer tested for: whatever the other cases do not match goes there.
         // Where several of many integers go one way, the bits of a window or the rows of a table tell them apart, and those want each of them listed.
         std::optional<uint32_t> caseThatTakesRest;
         if (!sharesWayOfRest && numberOfListedSubjects == numberOfValuesOf<Case>(subjectType)) {
@@ -2609,8 +2609,8 @@ struct ControlFlowSimplifier {
                     caseThatTakesRest = index;
                 }
             }
-            bool isToldApartByWindow = std::is_same_v<Case, int64_t> && greatestNumberOfCases > 1 && numberOfListedSubjects >= SwitchWindow::minCases;
-            if (isToldApartByWindow || !canDecide(Edge { block, *caseThatTakesRest }))
+            bool isDistinguishedByWindow = std::is_same_v<Case, int64_t> && greatestNumberOfCases > 1 && numberOfListedSubjects >= SwitchWindow::minCases;
+            if (isDistinguishedByWindow || !canDecide(Edge { block, *caseThatTakesRest }))
                 caseThatTakesRest = std::nullopt;
         }
         bool restIsNarrowed = caseThatTakesRest && hasEdgeResults(function, Edge { block, *caseThatTakesRest });
@@ -2650,7 +2650,7 @@ struct ControlFlowSimplifier {
         return true;
     }
 
-    // The way of the rest narrows nothing by itself: a block on it passes the subject on as the case narrowed it.
+    // The default path narrows nothing by itself: a block on it passes the subject on as the case narrowed it.
     void narrowArgumentsOfRest(BlockID block)
     {
         BlockID stub = builder.addBlock(function.at(function.at(block).terminator.otherwise().block).frequency);
@@ -3647,7 +3647,7 @@ PassOutcome hoistTestsIntoPredecessors(FunctionPassContext& context)
 
 // RemoveRedundantHandlers.
 
-// An operation that finds no room for what it allocates throws where it returns.
+// An operation whose allocation fails throws when it returns.
 static void removeUnusedHandler(Rewrite& rewrite, BlockID id, const Block& block)
 {
     auto needsHandler = [](const EffectsOnEdges& effects) {
@@ -3718,7 +3718,7 @@ static bool isPollOfLoop(const Function& function, ValueID id)
     return function.at(id).opcode == Opcode::LoopHint && !function.at(id).followsStores();
 }
 
-static bool likelyTurnsAllocateNothing(FunctionAnalyses& analyses, const NaturalLoop& loop)
+static bool likelyIterationsDoNotAllocate(FunctionAnalyses& analyses, const NaturalLoop& loop)
 {
     const Function& function = analyses.function();
     for (unsigned index = 0; index < loop.size(); ++index) {
@@ -3735,7 +3735,7 @@ static bool likelyTurnsAllocateNothing(FunctionAnalyses& analyses, const Natural
     return true;
 }
 
-// A store that adds a field throws nothing where it finds no room: a poll under the handler throws for it, and in a loop that may be the poll of the loop.
+// A store that adds a field does not throw when its allocation fails: a poll under the handler throws for it, and in a loop that may be the loop's poll.
 static bool addsFields(const Function& function, const NaturalLoop& loop)
 {
     for (unsigned index = 0; index < loop.size(); ++index) {
@@ -3750,12 +3750,12 @@ static bool addsFields(const Function& function, const NaturalLoop& loop)
     return false;
 }
 
-enum class PollsTakenOut : uint8_t { WhereLikelyTurnsAllocateNothing, WhereNoFieldIsAdded };
+enum class PollRemovalMode : uint8_t { LikelyIterationsDoNotAllocate, NoFieldIsAdded };
 
-// What else allocates and finds no room throws where it returns, under its own handler, so the poll of a loop has nothing to throw to a handler: it stops the thread for the collector or ends it.
-// Outside the handler, the back end takes the loop for what it is outside a try block. Until selection a header under a handler tells that the loop lies in the try block, which is what lets selection
-// prepare in front of the loop what may throw in it. So ahead of selection a poll goes out only where the likely turns allocate nothing, and behind it wherever the loop adds no field.
-static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context, PollsTakenOut pollsTakenOut)
+// Any other failed allocation throws when the operation returns, under its own handler, so a loop's poll has nothing to throw to a handler: it only stops the thread for the collector or terminates it.
+// Outside the handler, the back end treats the loop as it would outside a try block. Until selection, a header under a handler shows that the loop is inside the try block, which lets selection
+// hoist what may throw in the loop to before it. So before selection a poll is only removed if the likely iterations do not allocate, and after selection whenever the loop adds no field.
+static bool removeLoopPollsFromHandlers(FunctionPassContext& context, PollRemovalMode pollRemovalMode)
 {
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
@@ -3772,7 +3772,7 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context, PollsTak
     const NaturalLoops& loops = analyses.naturalLoops();
     for (unsigned loopIndex = 0; loopIndex < loops.numLoops(); ++loopIndex) {
         const NaturalLoop& loop = loops.loop(loopIndex);
-        std::optional<bool> goesOut;
+        std::optional<bool> canRemovePoll;
         for (unsigned index = 0; index < loop.size(); ++index) {
             BlockID id = loop.at(index);
             const Block& block = function.at(id);
@@ -3781,9 +3781,9 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context, PollsTak
             size_t position = block.values.findIf([&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
             if (position == notFound || !isPollOfLoop(function, block.values[position]))
                 continue;
-            if (!goesOut)
-                goesOut = pollsTakenOut == PollsTakenOut::WhereNoFieldIsAdded ? !addsFields(function, loop) : likelyTurnsAllocateNothing(analyses, loop);
-            if (!*goesOut)
+            if (!canRemovePoll)
+                canRemovePoll = pollRemovalMode == PollRemovalMode::NoFieldIsAdded ? !addsFields(function, loop) : likelyIterationsDoNotAllocate(analyses, loop);
+            if (!*canRemovePoll)
                 break;
             bool restNeedsHandler = needsHandler(analyses.effectsOfTerminator(id)) || std::ranges::any_of(block.values.span().subspan(position + 1), [&](ValueID value) { return needsHandler(analyses.effectsOf(value)); });
             polls.append({ { id, static_cast<uint32_t>(position) }, restNeedsHandler });
@@ -3800,8 +3800,8 @@ static bool takePollsOfLoopsOutOfHandlers(FunctionPassContext& context, PollsTak
     return !polls.isEmpty();
 }
 
-// A store that adds a field allocates and may not collect, so it throws nothing where it finds no room. Under a handler a poll behind the last one of a block throws for them.
-static bool pollBehindStoresThatMayAddFields(FunctionPassContext& context)
+// A store that adds a field allocates and may not collect, so it does not throw when its allocation fails. Under a handler, a poll after the last such store of a block throws for them.
+static bool pollAfterFieldAddingStores(FunctionPassContext& context)
 {
     Function& function = context.function;
     if (!context.analyses.opcodesOfValues().contains(Opcode::PutSlotOrAdd))
@@ -3839,8 +3839,8 @@ PassOutcome removeRedundantHandlers(FunctionPassContext& context)
 {
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
-    bool hasMovedPolls = pollBehindStoresThatMayAddFields(context);
-    hasMovedPolls |= takePollsOfLoopsOutOfHandlers(context, PollsTakenOut::WhereLikelyTurnsAllocateNothing);
+    bool hasMovedPolls = pollAfterFieldAddingStores(context);
+    hasMovedPolls |= removeLoopPollsFromHandlers(context, PollRemovalMode::LikelyIterationsDoNotAllocate);
     return removeRedundantHandlers(context, hasMovedPolls);
 }
 
@@ -3848,8 +3848,8 @@ PassOutcome removeRedundantHandlersAfterSelection(FunctionPassContext& context, 
 {
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
-    bool hasMovedPolls = pollBehindStoresThatMayAddFields(context);
-    hasMovedPolls |= takePollsOfLoopsOutOfHandlers(context, PollsTakenOut::WhereNoFieldIsAdded);
+    bool hasMovedPolls = pollAfterFieldAddingStores(context);
+    hasMovedPolls |= removeLoopPollsFromHandlers(context, PollRemovalMode::NoFieldIsAdded);
     if (!hasMovedPolls && !removedAllocationUnderHandler)
         return PassOutcome::Unchanged;
     return removeRedundantHandlers(context, hasMovedPolls);

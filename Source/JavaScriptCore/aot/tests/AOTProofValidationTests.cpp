@@ -813,8 +813,8 @@ static void testStorageOfArray()
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number\n"_s, { "validate"_s }, "globalThis.sink = function () { this.k[0] = 7; };"_s);
 }
 
-// The same list, asked for its first element by Array.prototype.at, which is written out for the kind of storage that the type of the list names.
-static constexpr ASCIILiteral leakedArrayOfIntegersAskedByBuiltin = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+// The same array, read by Array.prototype.at, which is expanded for the storage kind that the array's type names.
+static constexpr ASCIILiteral leakedIntegerArrayQueriedByBuiltin = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="models/Objects.ts" displayPath="models/Objects.ts" flags=[IsLibrary]
 entry module=m0
 layout L0 name="Holder" fields=[{key="k" declared={type=anything} flags=[IsRequired]}, {key="toString" declared={type=anything} flags=[IsRequired]}]
@@ -845,15 +845,15 @@ function f1 name="toLocaleString" module=m1 kind=Method role=Model flags=[HasThi
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The built-in makes no test of the kind of storage. A build that checks its proofs at run time makes it, and reports a list of another kind.
-static void testStorageOfArrayAskedByBuiltin()
+// The built-in does not test the storage kind. A build that checks its proofs at run time does, and reports an array of another kind.
+static void testArrayStorageQueriedByBuiltin()
 {
     for (ASCIILiteral statements : { "globalThis.sink = function () { this.k[0] = 0.5; };"_s, "globalThis.sink = function () { this.k[0] = 'text'; };"_s }) {
-        checkValidationFails(leakedArrayOfIntegersAskedByBuiltin, ValidationFailureKind::ArrayStorageKind, statements, { "validate"_s, "heat=EverythingIsHot"_s });
-        checkValidationFails(leakedArrayOfIntegersAskedByBuiltin, ValidationFailureKind::ValueType, statements, { "testing=CheckProofsAtRunTime"_s, "heat=EverythingIsHot"_s });
+        checkValidationFails(leakedIntegerArrayQueriedByBuiltin, ValidationFailureKind::ArrayStorageKind, statements, { "validate"_s, "heat=EverythingIsHot"_s });
+        checkValidationFails(leakedIntegerArrayQueriedByBuiltin, ValidationFailureKind::ValueType, statements, { "testing=CheckProofsAtRunTime"_s, "heat=EverythingIsHot"_s });
     }
 
-    UTF8CString numberedText = withNumbersOfModels(leakedArrayOfIntegersAskedByBuiltin);
+    UTF8CString numberedText = withNumbersOfModels(leakedIntegerArrayQueriedByBuiltin);
     checkOutputOfProgramInShell(ASCIILiteral::fromLiteralUnsafe(byteCast<char>(numberedText.data())), "number\n"_s, { "testing=CheckProofsAtRunTime"_s, "heat=EverythingIsHot"_s }, "globalThis.sink = function () { this.k[0] = 7; };"_s);
 }
 
@@ -1082,7 +1082,7 @@ std::span<const NativeTest> proofValidationTests()
         { "proof-validation/contents-of-long-array"_s, testContentsOfLongArray },
         { "proof-validation/contents-of-map"_s, testContentsOfMap },
         { "proof-validation/storage-of-array"_s, testStorageOfArray },
-        { "proof-validation/storage-of-array-asked-by-built-in"_s, testStorageOfArrayAskedByBuiltin },
+        { "proof-validation/storage-of-array-asked-by-built-in"_s, testArrayStorageQueriedByBuiltin },
         { "proof-validation/every-kind-of-mutation"_s, testEveryKindOfMutation },
         { "proof-validation/pristine-array"_s, testPristineArray },
         { "proof-validation/pristine-array-with-many-names"_s, testPristineArrayWithManyNames },

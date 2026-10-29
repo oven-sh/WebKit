@@ -358,7 +358,7 @@ void StoresByLayout::followCopiedProperties()
 
 static ValueID valueStoredUnder(const Program&, const Value& operation, ValueFlowName);
 
-// The read that delivers what the statement stores, where it is a read by name of objects alone.
+// The read that produces what the statement stores, if it is a read by name from objects only.
 std::optional<ReadOfFields> StoresByLayout::readOfFieldsStoredBy(ValueSetMaker& maker, const Writer& writer, ValueFlowName name) const
 {
     const ValueFlowStatement& statement = writer.statement;
@@ -377,7 +377,7 @@ std::optional<ReadOfFields> StoresByLayout::readOfFieldsStoredBy(ValueSetMaker& 
         ValueSetID receivers = m_heap.possibleValuesOf(maker, m_inputs.bodies().operandsOf(read)[OperandIndex::PropGet::object]);
         if (ValueSets::isComplement(receivers))
             return std::nullopt;
-        // A read of undefined or null delivers nothing.
+        // A read from undefined or null produces nothing.
         ValueSetID objects = maker.intersect(receivers, m_inputs.universe().objects());
         ValueSetID objectsAndNullish = maker.unite(objects, maker.of(std::array { ValueFlowUniverse::primitive(PrimitiveSet::Undefined), ValueFlowUniverse::primitive(PrimitiveSet::Null) }));
         if (objects == ValueSets::nothing || !m_inputs.sets().isSubset(receivers, objectsAndNullish))
@@ -387,7 +387,7 @@ std::optional<ReadOfFields> StoresByLayout::readOfFieldsStoredBy(ValueSetMaker& 
     return std::nullopt;
 }
 
-// A read finds what was stored into the object, or what an object above it holds.
+// A read finds what was stored into the object, or what an object on its prototype chain holds.
 auto StoresByLayout::objectsReadUnder(ValueSetMaker& maker, ValueSetID objects, PropertyKeyID key) const -> std::optional<CopiedObjects>
 {
     const ValueSets& sets = m_inputs.sets();
@@ -408,7 +408,7 @@ auto StoresByLayout::objectsReadUnder(ValueSetMaker& maker, ValueSetID objects, 
     ValueSetID above = m_heap.chainOf(maker, m_heap.prototypesOf(maker, objects));
     if (ValueSets::isComplement(above))
         return std::nullopt;
-    // A locked object holds what the table lists, whoever reaches it.
+    // A locked object holds what the table lists, whatever reaches it.
     if (sets.meet(maker.intersect(above, ValueSets::complement(m_inputs.universe().lockedObjects())), objectsNotFollowed) || sets.meet(above, m_inputs.universe().builtinTables().heap().holdersThatAnswerUnder(key)))
         return std::nullopt;
     for (ValueFlowName name : { ValueFlowName::property(m_inputs.program, key), ValueFlowName::getter(m_inputs.program, key), ValueFlowName::of(ValueFlowNameKind::UnknownKey), ValueFlowName::of(ValueFlowNameKind::GetterUnderUnknownKey) }) {
@@ -443,7 +443,7 @@ void StoresByLayout::followReadsOfFields()
     for (StoresIntoObjects& stores : m_storesSharedByLayouts)
         take(stores);
 
-    // A field may hold what a second field holds, which holds what a third does. No round adds a number that no store hands over, so the rounds end.
+    // A field may hold what a second field holds, which holds what a third does. No round adds a number that no store passes on, so the rounds terminate.
     for (bool didChange = !reads.isEmpty(); didChange;) {
         didChange = false;
         for (FollowedRead& read : reads) {
@@ -455,7 +455,7 @@ void StoresByLayout::followReadsOfFields()
                     numbers.unite(stores.numbersUnderUnknownKey);
                 });
             }
-            // As for a copy: a read of an int32 slot says no more than that.
+            // As for a spread: a read of an int32 slot says no more than that.
             constexpr Range integersOfSlots { minInlineInt32, INT32_MAX };
             if (!numbers.integers.isEmpty() && numbers.integers.isSubsetOf(integersOfSlots))
                 numbers.integers = integersOfSlots;
@@ -974,13 +974,13 @@ uint8_t StoresByLayout::formsOfAccessorDefinedBy(ValueSetMaker& maker, const Wri
 
 uint8_t StoresByLayout::formsOfValueDefinedByCall(ValueSetMaker& maker, const ValueFlowStatement& statement) const
 {
-    // A store under a name asks the plan of the access, which sends it by name where the field has another form. Whatever else gives an object a property may fill the slot itself.
+    // A store by name consults the access plan, which falls back to a lookup by name if the field has another form. Anything else that gives an object a property may fill the slot directly.
     if (statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::PropSet)
         return ValueForms::of(true, true, true);
     if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::Call)
         return ValueForms::unknown;
     const Program& program = m_inputs.program;
-    // `Reflect.set(object, key, value)` has three arguments too, and its third is no descriptor.
+    // `Reflect.set(object, key, value)` also has three arguments, and its third is not a descriptor.
     const Function& function = program.at(statement.function);
     const Value& callee = function.at(definitionThroughUpcasts(function, function.at(statement.site).calleeOperand()));
     BuiltinID builtin = callee.opcode == Opcode::Builtin ? program.builtins().canonicalID(callee.builtin()) : BuiltinID();

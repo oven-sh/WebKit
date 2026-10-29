@@ -825,7 +825,7 @@ static void testCallsConvertCells()
         AOT_TEST_CHECK(!lookup->effects.writes.overlaps(heaps.rangeOf(heaps.entire(heap))));
 }
 
-static void testCollectionsWriteWeakTablesAlone()
+static void testCollectionsWriteOnlyWeakTables()
 {
     HeapFixture fixture;
     AOTHeaps& heaps = fixture.heaps;
@@ -1025,7 +1025,7 @@ std::span<const NativeTest> b3HeapTests()
         { "b3-heaps/ranges-of-heaps-that-grow-inside-one-another"_s, testRangesOfHeapsThatGrowInsideOneAnother },
         { "b3-heaps/write-sets-exclude-other-heaps"_s, testWriteSetsExcludeOtherHeaps },
         { "b3-heaps/calls-convert-cells"_s, testCallsConvertCells },
-        { "b3-heaps/collections-write-weak-tables-alone"_s, testCollectionsWriteWeakTablesAlone },
+        { "b3-heaps/collections-write-weak-tables-alone"_s, testCollectionsWriteOnlyWeakTables },
         { "b3-heaps/what-cells-own-outside-the-heap"_s, testWhatCellsOwnOutsideTheHeap },
         { "b3-heaps/words-outside-the-heap-are-read-again-in-front-of-collections"_s, testWordsOutsideTheHeapAreReadAgainInFrontOfCollections },
     };

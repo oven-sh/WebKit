@@ -265,8 +265,16 @@ void CallEmitter::tailCallByConvention(const OperationContext& context, const Co
     emitTailCall(context, CallTarget::stub(call.stub, std::nullopt), placeConventionArguments(call));
 }
 
+// A stack trace tells a frame at a failed tail call from one at an ordinary call: TraceFrame::isAtFailedTailCall.
+static Origin originAtTailCall(const OperationContext& context)
+{
+    Origin origin = context.origin();
+    origin.isTailCall = true;
+    return origin;
+}
+
 // The stub that calls finds out too late that there is nothing to call: the frame that the error names is gone by then.
-void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee)
+void CallEmitter::requireCallable(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall)
 {
     ClosureTestEmitter& closures = emitter<ClosureTestEmitter>();
     LBasicBlock mayNotBeCallable = newBlock();
@@ -276,7 +284,7 @@ void CallEmitter::requireCallableBeforeTailCall(const OperationContext& context,
     m_out.branch(isKnownToBeCallable.value(), normalEdge(continuation), rareEdge(mayNotBeCallable));
 
     m_out.appendTo(mayNotBeCallable);
-    callStub(context, throwUnlessCallable(), { callee.value() }, { .throwSite = siteThatNamesCallee, .isOnRarePath = true });
+    callStub(context, throwUnlessCallable(), { callee.value() }, { .origin = isAtTailCall ? originAtTailCall(context) : context.origin(), .throwSite = siteThatNamesCallee, .isOnRarePath = true });
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -302,7 +310,7 @@ void CallEmitter::requireCallableBeforeTailCall(const ValueContext& value, Boxed
         return;
     }
 
-    CallOptions options { .throwSite = siteThatNamesCallee(value), .isOnRarePath = true };
+    CallOptions options { .origin = originAtTailCall(value), .throwSite = siteThatNamesCallee(value), .isOnRarePath = true };
     if (typeOf(value->calleeOperand()).singleBuiltin()) {
         callStub(value, throwUnlessForwardedCalleeIsCallable(), { callee.value(), thisValue.value() }, options);
         return;

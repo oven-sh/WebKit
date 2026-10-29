@@ -1076,7 +1076,7 @@ static PassOutcome foldInstanceTestsOfTypedObjects(FunctionPassContext& context)
             eraseTest(builder, function, block, test);
             continue;
         }
-        // In a validating build the test is made all the same, and its answer is compared with the one that the type stands for.
+        // A validating build still performs the test, and compares its result with the one the type implies.
         builder.setOrigin(function.at(test).origin());
         ProgramPoint end = pointBeforeTerminatorOf(function, block);
         Value boolean = IRBuilder::make(Opcode::Boolean);

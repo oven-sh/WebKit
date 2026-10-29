@@ -26,6 +26,8 @@ struct TraceFrame {
     bool isCaller : 1 { false };
     // CompiledFrameIterator::recordedCallee() is null.
     bool calleeLiesInFrame : 1 { false };
+    // The callee of a tail call refused. JSC has popped the frame by then and lists it without its function object.
+    bool isAtFailedTailCall : 1 { false };
 
     static TraceFrame of(CompiledFrameIterator&);
 };

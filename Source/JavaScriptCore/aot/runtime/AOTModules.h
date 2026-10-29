@@ -203,9 +203,9 @@ public:
     bool hasNotBegunAsFile(ModuleID) const;
     void markModulesBelowWalkedRoot(ModuleID root);
     void didStartLoad(JSPromise*, ModuleID root);
-    enum class LoadOfFile : bool { IsAskedFor, HasComeToFile };
+    enum class LoadOfFile : uint8_t { IsAskedFor, HasComeToFile, IsRootOfImport };
     ModuleRecord* recordOfCommonJSFile(ModuleID, LoadOfFile = LoadOfFile::HasComeToFile);
-    void noteLoadOfFile(ModuleID fileOrFace);
+    void noteLoadOfFile(ModuleID fileOrFace, LoadOfFile = LoadOfFile::HasComeToFile);
     bool asyncLoadMustWaitFor(ModuleID fileOrFace) const;
     bool importsFileBeingEvaluated(ModuleID root) const;
     std::optional<ModuleID> fileToWaitFor(const Identifier& key);
@@ -308,6 +308,8 @@ private:
         Vector<ModuleID> requiredModules;
         unsigned numberOfChildrenShown { 0 };
         std::optional<ModuleID> firstRequirer;
+        // Of a CommonJS file whose body the run time called: m_synchronousLoadCount at that call.
+        std::optional<uint32_t> synchronousLoadCountAtStart;
     };
 
     struct DynamicExport {
@@ -440,6 +442,9 @@ private:
     // Compared, never followed: its job holds the promise.
     JSPromise* m_importThatWaitsForQueuedJobs { nullptr };
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
+    // Each load of evaluateSynchronously() has a number. The innermost one that has not returned is the active one.
+    uint32_t m_synchronousLoadCount { 0 };
+    uint32_t m_activeSynchronousLoad { 0 };
     Structure* m_namespaceStructure { nullptr };
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
@@ -471,7 +476,7 @@ private:
         // By a CommonJS file: how many modules stand between the root and the nearest one that imports it. Made when something asks.
         Vector<uint32_t> distanceOfFiles { };
     };
-    void handGraphToLoader(FilesBeingRun&);
+    void handGraphToLoader(FilesBeingRun&, std::optional<ModuleID> finishedFile = std::nullopt);
     static void runJobsThatAreDue(VM&, MicrotaskQueue&);
     void runStepsOfLoaderInFrontOf(ModuleID file);
     void finishStepInWhichFileRan(ModuleID fileOrFace, JSValue error);

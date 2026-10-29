@@ -740,7 +740,7 @@ static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMak
         bool mayBeData = stores == StoresUnderAccessors::MayDefineValues && inputs.sets().meet(values[0], allButUndefined);
         if (mayBeData || !getter || !setter || (!*getter && !*setter)) {
             list(MethodKind::Method, { });
-            // What the program defines under the name is expected there: the guard of the member asks the object.
+            // What the program defines under the name is expected there: the member's guard checks the object.
             std::optional<FunctionID> expectedGetter = findFunctionOfProgramIn(inputs, values[1]);
             std::optional<FunctionID> expectedSetter = findFunctionOfProgramIn(inputs, values[2]);
             if (expectedGetter && expectedSetter) {

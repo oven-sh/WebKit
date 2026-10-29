@@ -73,8 +73,6 @@ static constexpr unsigned barrenCollectionsUntilError = 4;
 // While the error finds no place to be thrown: after this many a thread that can end alone is asked to, and after this many the process ends.
 static constexpr unsigned barrenCollectionsUntilThreadEnds = 8;
 static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
-// Creating the error, collections and the frame of a signal reach this far below where the error is thrown, at most.
-static constexpr size_t stackBelowErrorToClear = 64 * KB;
 
 static_assert(smallestUsableSize == smallestCellRangeSize);
 static_assert(!(randomPrefixGranule % MarkedBlock::blockSize));
@@ -638,7 +636,6 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
         return false;
     m_owesCollection = false;
     m_hasCollectedAtPoll = true;
-    clearDeadStack(vm);
     vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
@@ -652,21 +649,6 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     }
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
-}
-
-void* MarkedBlockCage::takeLowestAddressOfDeadStack(VM& vm)
-{
-    uintptr_t stackPointer = std::bit_cast<uintptr_t>(currentStackPointer());
-    uintptr_t lowest = stackPointer;
-    if (void* stackPointerAtError = std::exchange(m_stackPointerAtError, nullptr))
-        lowest = std::min(lowest, std::bit_cast<uintptr_t>(stackPointerAtError));
-    // A frame that has no stack check of its own may end below the soft limit.
-    return std::bit_cast<void*>(std::min(stackPointer, std::max(lowest - stackBelowErrorToClear, std::bit_cast<uintptr_t>(vm.stackLimit()))));
-}
-
-void MarkedBlockCage::clearDeadStack(VM& vm)
-{
-    sanitizeStackForVMFrom(vm, takeLowestAddressOfDeadStack(vm));
 }
 
 bool MarkedBlockCage::releaseLastReserve()
@@ -784,7 +766,6 @@ void MarkedBlockCage::didCreateOutOfMemoryError()
 {
     m_numberOfBarrenCollections = 0;
     m_hasCollectedAtPoll = false;
-    m_stackPointerAtError = currentStackPointer();
 }
 
 void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)

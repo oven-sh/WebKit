@@ -162,7 +162,7 @@ struct FunctionTables {
     // The program stands still from the last phase in which a collection scans the stack to the phase that ends it. So the end goes by the places that the walk beside that scan found filled.
     std::optional<uint64_t> phaseOfLastWalkOfRecordedCallees;
     Vector<uint32_t> placesFilledAtLastWalk;
-    // A byte for each function of the image, once there is such a function. It is set for the source and for the functions that its closures are made of, which is what stubs ask about.
+    // One byte per function of the image, allocated once such a function exists. It is set for the source and for the functions that implement its closures, which is what the stubs check.
     MallocSpan<uint8_t> functionsRenamedAtRunTime WTF_GUARDED_BY_LOCK(namesLock);
     std::atomic<const uint8_t*> isRenamedAtRunTime { nullptr };
     TextsByFunction sourceTexts;

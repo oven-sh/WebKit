@@ -560,13 +560,13 @@ static bool mayStop(const Effects& effects)
     return effects.mayThrow || !effects.alwaysCompletes();
 }
 
-// A frame that finds no room is the same error whichever call meets it, and a call that is left out meets none.
+// A stack overflow is the same error whichever call hits it, and an omitted call hits none.
 static bool mayStopOtherThanStackOverflow(const Effects& effects)
 {
     return effects.mayThrowOtherThanStackOverflow() || !effects.alwaysCompletes();
 }
 
-// Every call of such a function out of one loop needs the same room: the first call finds it or none does.
+// Every call of such a function from one loop needs the same stack space, so either the first call overflows or none does.
 static bool entersNoFurtherFrame(const Program& program, FunctionID id)
 {
     const Function& function = program.at(id);
@@ -626,13 +626,13 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
 
     EffectContext effectContext { program, context.inputs.effects };
     Vector<Effects, ChainShape::maxNumberOfLinks + 2> effects;
-    Vector<bool, ChainShape::maxNumberOfLinks + 2> mayStopBehindFirstCall;
+    Vector<bool, ChainShape::maxNumberOfLinks + 2> mayStopAfterFirstCall;
     for (const ChainCallback& callback : chain.callbacks) {
         CalleeList callees = callback.callee ? CalleeList::none() : CalleeList::unknown();
         if (callback.callee)
             callees.add(callback.callee);
         effects.append(effectsOfCallees(effectContext, callees, BuiltinCallMode::Call).onAnyEdge());
-        mayStopBehindFirstCall.append(mayStopOtherThanStackOverflow(effects.last()) || (mayStop(effects.last()) && !(callback.callee && entersNoFurtherFrame(program, callback.callee))));
+        mayStopAfterFirstCall.append(mayStopOtherThanStackOverflow(effects.last()) || (mayStop(effects.last()) && !(callback.callee && entersNoFurtherFrame(program, callback.callee))));
     }
     if (chain.shape.end == ChainEndKind::Join) {
         const ClassPart* part = program.typeOf(context.function, last->receiver).findClassPart(BuiltinClasses::Array);
@@ -652,7 +652,7 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         for (size_t later = earlier + 1; later < effects.size(); ++later) {
             const Effects& a = effects[earlier];
             const Effects& b = effects[later];
-            bool earlierStopsAmongLaterCalls = earlier < mayStopBehindFirstCall.size() ? mayStopBehindFirstCall[earlier] : mayStop(a);
+            bool earlierStopsAmongLaterCalls = earlier < mayStopAfterFirstCall.size() ? mayStopAfterFirstCall[earlier] : mayStop(a);
             bool stopsDiffer = (mayStopOtherThanStackOverflow(a) && mayStop(b)) || (earlierStopsAmongLaterCalls && mayStopOtherThanStackOverflow(b));
             if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (earlierStopsAmongLaterCalls && canBeObserved(b)) || stopsDiffer)
                 return ArrayChainDeclineReason::CallbacksInterfere;

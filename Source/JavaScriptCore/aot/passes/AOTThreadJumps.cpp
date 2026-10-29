@@ -673,8 +673,8 @@ struct EdgeThreader : Rewrite {
             ValueID condition = valueTestedBy(block.terminator);
             if (!condition)
                 return false;
-            // The statements of a finally block stand in front of the choice of how to go on, and every way in says which it is.
-            // What such a block makes for the code below would be merged again there, and a closure or an object that comes out of a merge is known to nobody.
+            // A finally block's statements come before the dispatch on how to continue, and every predecessor determines which way that goes.
+            // What such a block creates for later code would be merged again there, and nothing is known about a closure or object that comes out of a merge.
             bool choosesByParameter = block.parameters.contains(condition)
                 && !std::ranges::all_of(block.values, [&](ValueID value) { return analyses.isRemovableWhenUnused(value); })
                 && std::ranges::all_of(block.values, [&](ValueID value) { return std::ranges::all_of(analyses.useLists().usesOf(value), [&](const Use& use) { return use.block == id; }); });

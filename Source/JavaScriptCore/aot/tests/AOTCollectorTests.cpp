@@ -467,7 +467,6 @@ static void checkStoreAfterDeferralIsSeen()
     table->fill(realm);
     prepareCellToStoreAfterDeferral(*table, realm);
     JSCell* replaced = table->slots[0].get();
-    sanitizeStackForVM(table->test.vm());
 
     table->test.heap().collectSync(CollectionScope::Full);
 

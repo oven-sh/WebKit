@@ -114,7 +114,7 @@ struct FunctionPassContext {
     OpenSites openSites { };
     size_t numberOfBlocksWhenSinkingGaveUp { 0 };
     // Across all runs of FoldConstants.
-    uint64_t bytesOfFoldedTexts { 0 };
+    uint64_t bytesOfFoldedStrings { 0 };
     // Where in a schedule the running pass stands: in the rounds of a fixpoint, at a step for what was left for later, or neither.
     bool isInRounds { false };
     bool isBehindRounds { false };

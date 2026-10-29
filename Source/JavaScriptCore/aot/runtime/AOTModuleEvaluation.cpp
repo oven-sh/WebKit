@@ -520,6 +520,8 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
     if (isUnderAnotherEvaluation && bodyStoresStatus && !data(module).isSimple()) [[unlikely]]
         begunHere = modulesThatEvaluationWillBegin(module);
     m_instance.modules.evaluatingMark = mark;
+    if (ModuleID file = m_table.fileBehindFace(module).value_or(module); data(file).mayBeImportedWhileItRuns()) [[unlikely]]
+        ensureLoaded(file).synchronousLoadCountAtStart = m_synchronousLoadCount;
     JSValue result = callBody(module);
     m_instance.modules.evaluatingMark = outerMark;
     if (isInRecord)
@@ -936,8 +938,19 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                     throwException(m_instance.globalObject, scope, exception);
                     return true;
                 }
-                if (!queue.isEmpty())
+                if (!queue.isEmpty()) {
+                    handGraphToLoader(filesBeingRun, *failedFile);
+                    if (filesBeingRun.fileHandedToLoader) {
+                        JSValue errorOfFile;
+                        if (wasImportedWhileItRan(fileOf(*failedFile)))
+                            dropErrorOfFile(*failedFile);
+                        else
+                            errorOfFile = exception->value();
+                        finishStepInWhichFileRan(*failedFile, errorOfFile);
+                        return true;
+                    }
                     holdJobsBehind(0, *failedFile);
+                }
                 // As in the loop below.
                 if (!wasImportedWhileItRan(m_table.fileBehindFace(*failedFile).value_or(*failedFile))) {
                     m_rootWhoseFilesRanAhead = root;
@@ -983,6 +996,13 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         else
             evaluateModuleInRecord(imported);
         Exception* exception = scope.exception();
+        bool didQueueJobsAheadOfLoader = filesBeingRun.isAheadOfJobsOfLoader && numberOfJobsThatWouldWait(jobs) != numberOfJobs;
+        if (didQueueJobsAheadOfLoader && !(exception && vm.isTerminationException(exception))) [[unlikely]] {
+            TRY_CLEAR_EXCEPTION(scope, didRunFile);
+            handGraphToLoader(filesBeingRun, imported);
+            if (exception && !filesBeingRun.fileHandedToLoader)
+                throwException(m_instance.globalObject, scope, exception);
+        }
         if (filesBeingRun.fileHandedToLoader) [[unlikely]] {
             JSValue errorOfFile;
             if (exception) {
@@ -1082,13 +1102,14 @@ void Modules::handGraphsToLoader()
 
 // The loader goes through the graph as it would have behind the end of the file, and takes its steps as far as the one in which the file runs. They run no code of the program: what stands in front of the file has run.
 // From here on the registry and the queue are those of `bun run`, and the loader runs what is left of the files.
-void Modules::handGraphToLoader(FilesBeingRun& files)
+// A file that has finished and queued jobs is handed over too. If its jobs waited while the loader took those steps as jobs of its own, a job queued by a process.nextTick() callback would overtake them.
+void Modules::handGraphToLoader(FilesBeingRun& files, std::optional<ModuleID> finishedFile)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     files.isAheadOfJobsOfLoader = false;
-    std::optional<ModuleID> running;
-    {
+    std::optional<ModuleID> running = finishedFile;
+    if (!running) {
         SetForScope onlyTheseFiles(m_innermostFilesBeingRun, &files);
         SetForScope noneOutside(files.outer, nullptr);
         forEachFileOrFaceEvaluatedByLoader([&](ModuleID fileOrFace) {
@@ -1197,6 +1218,8 @@ bool Modules::stopLoadingBehindFile(ModuleID file)
 {
     if (!m_rootWhoseFilesRun)
         return false;
+    if (m_innermostFilesBeingRun && m_innermostFilesBeingRun->isAheadOfJobsOfLoader)
+        handGraphToLoader(*m_innermostFilesBeingRun, file);
     // The jobs that wait are those of the loader, and what the file queued stands among them.
     if (m_innermostFilesBeingRun && m_innermostFilesBeingRun->fileHandedToLoader)
         return true;
@@ -1915,7 +1938,7 @@ bool Modules::wasLoadedWithEarlierGraph(ModuleID module)
 }
 
 // A graph that the file requires comes to the file.
-void Modules::noteLoadOfFile(ModuleID module)
+void Modules::noteLoadOfFile(ModuleID module, LoadOfFile load)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ModuleID file = m_table.fileBehindFace(module).value_or(module);
@@ -1923,16 +1946,27 @@ void Modules::noteLoadOfFile(ModuleID module)
     if ((status(file) != ModuleStatus::Evaluating && status(module) != ModuleStatus::Evaluating) || asyncLoadMustWaitFor(file))
         return;
     ensureLoaded(file).wasLoadedWhileItRan = true;
+    if (!data(file).mayBeImportedWhileItRuns())
+        return;
     // The loader takes the names of the file as they are now. Where no importer asks for one of them, only a later require() can show them.
-    if (data(file).mayBeImportedWhileItRuns() && !didCaptureExports(file) && !m_table.faceOfFile(file))
-        RELEASE_AND_RETURN(scope, captureExports(file));
+    std::optional<ModuleID> face = m_table.faceOfFile(file);
+    if (!face) {
+        if (!didCaptureExports(file))
+            RELEASE_AND_RETURN(scope, captureExports(file));
+        return;
+    }
+    // An importer binds the names when it is linked. A load that fails before that keeps them too, if a require() inside the running file started it:
+    // the steps of any other load reach the file after its body has returned.
+    std::optional<uint32_t> countAtStart = ensureLoaded(file).synchronousLoadCountAtStart;
+    if (load != LoadOfFile::IsRootOfImport && countAtStart && m_activeSynchronousLoad > *countAtStart && !didCaptureExports(*face))
+        RELEASE_AND_RETURN(scope, captureExports(*face));
 }
 
 ModuleRecord* Modules::recordOfCommonJSFile(ModuleID module, LoadOfFile load)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    if (load == LoadOfFile::HasComeToFile) {
-        noteLoadOfFile(module);
+    if (load != LoadOfFile::IsAskedFor) {
+        noteLoadOfFile(module, load);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     ModuleRecord* record = ensureRecord(module);
@@ -2302,6 +2336,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     bool needsLoader = needsLoaderForRequire(module);
     // As in JSModuleLoader::loadModuleSync(): the steps of the loader run before require() returns, those that a file of the graph asks for among them. One of them resumes a module whose awaited promise is settled.
     std::optional<VM::SynchronousModuleQueueScope> queue(std::in_place, *m_instance.vm);
+    SetForScope activeSynchronousLoad(m_activeSynchronousLoad, ++m_synchronousLoadCount);
     auto leaveLoad = [&] {
         if (!queue)
             return;
@@ -2952,7 +2987,7 @@ JSValue Modules::resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSp
 }
 
 // In plain Bun a namespace object is extensible if require() creates it, and not if an import does: import(), or the link of a module with `import * as`.
-// Compiled code creates the object when something first looks at it, so the first require() decides here.
+// Compiled code creates the object on first use, so the first require() decides here.
 void Modules::willRequireESModule(ModuleID module)
 {
     if (m_modulesWithMarkOfRequire.get(module.index()) || namespaceIfCreated(module, ModulePhase::Evaluation))

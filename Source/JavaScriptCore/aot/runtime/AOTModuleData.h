@@ -91,7 +91,7 @@ struct ModuleData {
     uint8_t importedWhileItRunsOrAsNamespace : 1;
     uint8_t beginsLoads : 1;
     uint8_t shownByFace : 1;
-    // Of a module of the library with a body: the code was compiled for a body that is entered once.
+    // For a library module with a body: the code was compiled for a body that is entered once.
     uint8_t bodyRunsAtMostOnce : 1;
 
     bool has(Flag flag) const { return OptionSet<Flag>::fromRaw(flags).contains(flag); }

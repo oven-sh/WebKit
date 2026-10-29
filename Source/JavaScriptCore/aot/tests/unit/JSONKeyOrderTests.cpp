@@ -399,7 +399,7 @@ static void testListMembersAmongExtraMembers(LoadedProgram& program)
     }
 }
 
-static void testMalformedTextBetweenTwoForms(LoadedProgram& program)
+static void testMalformedInputBetweenTwoForms(LoadedProgram& program)
 {
     Row row(program);
     StringBuilder members;
@@ -548,7 +548,7 @@ std::span<const NativeTest> jsonKeyOrderTests()
         { "json-parser/key-orders/unknown-order"_s, withRowProgram<testUnknownOrder> },
         { "json-parser/key-orders/extra-members"_s, withRowProgram<testExtraMembers> },
         { "json-parser/key-orders/list-members-among-extra-members"_s, withRowWithListsProgram<testListMembersAmongExtraMembers> },
-        { "json-parser/key-orders/malformed-text-between-two-forms"_s, withRowProgram<testMalformedTextBetweenTwoForms> },
+        { "json-parser/key-orders/malformed-text-between-two-forms"_s, withRowProgram<testMalformedInputBetweenTwoForms> },
         { "json-parser/key-orders/declared-name-among-extra-members"_s, withRowProgram<testDeclaredNameAmongExtraMembers> },
         { "json-parser/key-orders/full-order-table"_s, withRowProgram<testFullOrderTable> },
         { "json-parser/key-orders/keys-never-enumerated"_s, withRowProgram<testKeysNeverEnumerated> },

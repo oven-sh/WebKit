@@ -681,9 +681,20 @@ static bool isCallOfValue(const ValueFlowStatement& statement)
     }
 }
 
+static std::optional<unsigned> receiverPositionOf(const ValueFlowStatement& statement)
+{
+    if (statement.kind != ValueFlowStatementKind::Operation || isCallOfValue(statement))
+        return std::nullopt;
+    std::optional<uint8_t> receiver = receiverOf(statement.opcode);
+    if (!receiver || *receiver >= statement.operandCount)
+        return std::nullopt;
+    return *receiver;
+}
+
 // Each call whose callee may be a value nobody knows, by where that value comes from. The result of another such call is followed to that call's callee,
 // and what is found on a receiver nobody knows to that receiver. `unknown-callees=names` lists the functions and objects too, `unknown-callees/16` looks at one site in sixteen.
-static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, bool printsNames, unsigned oneSiteIn)
+// `unknown-receivers` does the same for the receiver of each property access and prefixes each row with the operation.
+static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, bool printsNames, unsigned oneSiteIn, bool sortsReceivers)
 {
     constexpr unsigned mostSteps = 48;
     const ValueFlowSolver& solver = solution.solver();
@@ -836,10 +847,11 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
         if (!solver.isReached(FunctionID(index)))
             continue;
         for (const ValueFlowStatement& statement : bodies.statementsOf(index)) {
-            if (!isCallOfValue(statement))
+            std::optional<unsigned> position = sortsReceivers ? receiverPositionOf(statement) : isCallOfValue(statement) ? std::optional<unsigned>(0) : std::nullopt;
+            if (!position)
                 continue;
             ++calls;
-            ValueFlowNodeID callee = bodies.operandsOf(statement)[0].node;
+            ValueFlowNodeID callee = bodies.operandsOf(statement)[*position].node;
             if (!holdsUnknown(callee))
                 continue;
             ++unknownCallees;
@@ -849,9 +861,13 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
             Root root = rootOfNode.ensure(callee.index(), [&] {
                 return rootOf(callee);
             }).iterator->value;
-            sitesOfKind.add(root.kind, 0).iterator->value++;
-            sitesOfRoot.add(makeString(root.kind, "\t"_s, root.detail), 0).iterator->value++;
-            sitesOfShape.add(makeString(root.kind, "\t"_s, root.shape), 0).iterator->value++;
+            StringPrintStream prefix;
+            if (sortsReceivers)
+                prefix.print(statement.opcode, ": ");
+            String kind = makeString(prefix.toString(), root.kind);
+            sitesOfKind.add(kind, 0).iterator->value++;
+            sitesOfRoot.add(makeString(kind, "\t"_s, root.detail), 0).iterator->value++;
+            sitesOfShape.add(makeString(kind, "\t"_s, root.shape), 0).iterator->value++;
         }
     }
 
@@ -866,7 +882,7 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
         for (const auto& row : rows)
             out.println(row.first, "\t", row.second);
     };
-    out.println("calls ", calls, " of unknown callees ", unknownCallees, ": written in the program ", unknownCalleesWrittenIn[1], ", in the library ", unknownCalleesWrittenIn[0]);
+    out.println(sortsReceivers ? "accesses " : "calls ", calls, sortsReceivers ? " of unknown receivers " : " of unknown callees ", unknownCallees, ": written in the program ", unknownCalleesWrittenIn[1], ", in the library ", unknownCalleesWrittenIn[0]);
     printSorted(sitesOfKind, "kinds"_s);
     printSorted(sitesOfShape, "shapes"_s);
     if (printsNames)
@@ -1204,12 +1220,12 @@ void runValueFlowWhyTestCommand(TestCommandContext& context)
             printFirstCallsOfUnknownCallees(out, solution);
             continue;
         }
-        if (word.startsWith("unknown-callees"_s)) {
+        if (word.startsWith("unknown-callees"_s) || word.startsWith("unknown-receivers"_s)) {
             size_t slash = word.find('/');
             std::optional<uint32_t> oneSiteIn = slash == notFound ? std::optional<uint32_t>(1) : numberAfter(word, slash + 1);
             if (!oneSiteIn || !*oneSiteIn)
                 return printBadArgument(out, word);
-            printUnknownCallees(out, solution, word.startsWith("unknown-callees=names"_s), *oneSiteIn);
+            printUnknownCallees(out, solution, word.contains("=names"_s), *oneSiteIn, word.startsWith("unknown-receivers"_s));
             continue;
         }
         if (word == "escape-roots"_s || word == "escape-lines"_s) {

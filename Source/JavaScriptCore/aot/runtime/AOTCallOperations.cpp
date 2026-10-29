@@ -698,20 +698,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
             exceptions.thrownValue = JSValue::encode(rethrownException->value());
         return handlerCodeAndFrame;
     }
-    bool clearsDeadStack = false;
-    if (isHandled && vm.heap.cage().hasDeadStackToClear()) [[unlikely]] {
-        clearsDeadStack = true;
-        ExceptionWords& wordsOfHandler = found.instance->runtime.exceptions;
-        uintptr_t bytes = std::bit_cast<uintptr_t>(wordsOfHandler.stackPointerOfHandler) - std::bit_cast<uintptr_t>(vm.heap.cage().takeLowestAddressOfDeadStack(vm));
-        wordsOfHandler.bytesOfDeadStackBelowHandler = static_cast<uint32_t>(std::min<uintptr_t>(bytes, std::numeric_limits<uint32_t>::max()) & ~static_cast<uintptr_t>(sizeof(void*) - 1));
-        // The landing pad finds the value without a call, which would leave its frame behind on the cleared stack.
-        if (exception && !needsExceptionForEveryThrow(*instance) && (found.handler.kind == CompiledHandlerKind::Catch || takesException)) {
-            auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            wordsOfHandler.thrownValue = JSValue::encode(takesException ? JSValue(exception) : exception->value());
-            topScope.clearException();
-            return handlerCodeAndFrame;
-        }
-    }
     if (isHandled && (exception || !(takesException || needsException))) [[likely]]
         return handlerCodeAndFrame;
     bool stackIsUnobserved = false;
@@ -727,7 +713,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, 
                 return handlerCodeAndFrame;
             stackIsUnobserved = isCaughtAboveCleanup(vm, found.siteOfHandler);
             // The handler takes the value, and makes an Exception of it if it wants one. That is a call.
-            if (stackIsUnobserved && !clearsDeadStack)
+            if (stackIsUnobserved)
                 return handlerCodeAndFrame;
         }
     }

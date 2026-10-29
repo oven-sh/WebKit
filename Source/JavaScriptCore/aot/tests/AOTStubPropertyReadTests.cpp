@@ -759,7 +759,7 @@ static void testDeferredClosures()
     StubRun run = reads.read(objectWithClosure.address());
     AOT_TEST_CHECK(!run.calledOperation && run.result == closure.address());
 
-    // The stub looks for the record of the field in the layout of the object. This layout lists no field, so the read is the operation's, with every operand as it came.
+    // The stub looks up the field's record in the object's layout. This layout lists no field, so the read falls back to the operation, with every operand unchanged.
     FakeObject<sizeof(CompiledStructure)> structure;
     LayoutData layout { };
     structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &layout;

@@ -88,6 +88,8 @@ struct ModuleHost {
     bool (*isImportOfMainModule)(JSGlobalObject*, ModuleID);
     // The body of the main module.
     void (*runMainModule)(JSGlobalObject*, ModuleID entryPoint);
+    // The error of the host's resolver for a specifier that it does not find. Null in a host whose resolver has no error of its own.
+    JSValue (*createModuleNotFoundError)(JSGlobalObject*, const String& specifier, const String& importer, bool isForRequire);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -95,7 +97,7 @@ const ModuleHost& moduleHostOf(JSGlobalObject*);
 JS_EXPORT_PRIVATE std::optional<ModuleID> findModule(StringView publicPath);
 // The image holds the file as something that only an import with an attribute gets.
 JS_EXPORT_PRIVATE bool holdsFormThatAttributeAsksFor(StringView publicPath);
-// False: the two above answer no for every path that begins with `start`.
+// False: both functions above return false for every path that starts with `start`.
 JS_EXPORT_PRIVATE bool mayHoldPathStartingWith(StringView start);
 JS_EXPORT_PRIVATE String modulePath(ModuleID);
 // The URL of the source provider that the engine would run the module from. A text that the program evaluates, `new Function(text)`, has none.
@@ -107,7 +109,7 @@ JS_EXPORT_PRIVATE bool isNativeModule(ModuleID);
 // A realm that the program creates holds no compiled module. The host runs the modules of its library there as it does without an image.
 JS_EXPORT_PRIVATE bool leavesModuleToHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
-// The path of each file of a program with code, in any image that is in use, that begins with `start`. A data file is looked for on the disk. A file that several images hold comes once for each. Any thread may ask.
+// The path of each program file with code, in any image in use, that starts with `start`. Data files are looked up on disk. A file in several images is reported once per image. Callable from any thread.
 JS_EXPORT_PRIVATE void forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&);
 // Code: what the host would have to interpret or link at run time. Data files load in every executable.
 JS_EXPORT_PRIVATE bool refusesCodeOutsideImage(JSGlobalObject*, StringView path);
@@ -169,7 +171,7 @@ JS_EXPORT_PRIVATE PagesForNewThread tryReservePagesForFirstThread();
 JS_EXPORT_PRIVATE void releasePagesForNewThread(void* pages);
 // On the new thread, before it has a VM.
 JS_EXPORT_PRIVATE void adoptPagesForNewThread(void* pages);
-// On the new thread, where it ends: the pages go back if no VM has taken them. A VM takes all of them, and gives them back when it ends.
+// On the new thread, when it ends: returns the pages if no VM took them. A VM takes all of them and returns them when it ends.
 JS_EXPORT_PRIVATE void releaseUnusedPagesOfThread();
 // On the new thread, before the first statement of the program runs, or once it has run code that is not compiled, or where it ends. Until then room is kept for what the thread has yet to take.
 JS_EXPORT_PRIVATE void didStartThread(VM*);

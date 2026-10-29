@@ -448,7 +448,7 @@ static void fuseGenerator(FunctionPassContext& pass, IRBuilder& builder, const F
         // The next cut, if it is in the same block, leaves only what follows it in front of this site.
         bool isAfterCutInBlock = position + 1 < cuts.size() && cuts[position + 1].point.block == cut.point.block;
         uint32_t firstIndexOfHead = isAfterCutInBlock ? cuts[position + 1].point.index + 1 : 0;
-        // The copy of the body runs in its place. Where the copy never comes back, nothing is left of the site.
+        // The copy of the body runs in its place. If the copy never returns, nothing remains of the site.
         explainOperationThatGoes(function, steps[cut.index], InPlaceOfOperation::ItsExpansion);
         siteCuts[cut.index] = beginCut(cut);
         // Every cycle the merge creates passes through the block in front of a site. A hint in enter or leave would keep jumps from being threaded through them.

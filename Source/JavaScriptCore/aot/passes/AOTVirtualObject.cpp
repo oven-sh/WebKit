@@ -941,7 +941,7 @@ VirtualFieldAccess lookUpElement(const VirtualObjectContext& context, const Virt
             whenAbsent = AbsentField::FindsNothing;
         break;
     case Interpretation::Test:
-        // Nobody sees the storage of a list that is never built. Of an element that the built-in delivers the test goes the way it was expected to: a read gives what was delivered on either way.
+        // The storage of a list that is never built is not observable. For an element that the built-in returns, the test goes the expected way: a read gives what was returned either way.
         if (description.kind == VirtualObjectKind::BuiltinPrefix && access.opcode == Opcode::IsElementPresent)
             break;
         if (!isArray)

@@ -292,7 +292,7 @@ static void testOpenProgramBuiltWithoutForeignCallsHasNone()
     AOT_TEST_CHECK(static_cast<uint64_t>(header.code.constantsOffset) + header.code.constantsSize == header.codeSize);
 }
 
-static void testUnseenCodeThatMakesNoForeignCallsBringsNone()
+static void testUnseenCodeWithoutForeignCalls()
 {
     AOT_TEST_CHECK(headerOf(*compileProgram(evaluatesText, { })).code.ffiCodeSize);
     std::unique_ptr<CompileOutput> output = compileProgram(evaluatesText, { "exclude=ForeignCallsOfUnseenCode"_s });
@@ -356,7 +356,7 @@ std::span<const NativeTest> ffiStubTests()
         { "ffi-stubs/closed-program-has-none"_s, testClosedProgramHasNone },
         { "ffi-stubs/open-program-has-stubs"_s, testOpenProgramHasStubs },
         { "ffi-stubs/open-program-built-without-foreign-calls-has-none"_s, testOpenProgramBuiltWithoutForeignCallsHasNone },
-        { "ffi-stubs/unseen-code-that-makes-no-foreign-calls-brings-none"_s, testUnseenCodeThatMakesNoForeignCallsBringsNone },
+        { "ffi-stubs/unseen-code-that-makes-no-foreign-calls-brings-none"_s, testUnseenCodeWithoutForeignCalls },
         { "ffi-stubs/directory-is-not-executable"_s, testDirectoryIsNotExecutable },
         { "ffi-stubs/shell-calls-and-callbacks"_s, testShellCallsAndCallbacks },
         { "ffi-stubs/shell-without-stubs"_s, testShellWithoutStubs },

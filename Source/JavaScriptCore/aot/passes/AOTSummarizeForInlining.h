@@ -119,8 +119,8 @@ struct InliningSummary {
     bool hasCycle { false };
     bool hasBareReturn { false };
     bool isWrapper { false };
-    // Its rest parameter goes nowhere but into the lists of its calls, and it is short.
-    bool onlyHandsOnRestParameter { false };
+    // Its rest parameter is only spread into its calls, and it is short.
+    bool onlyForwardsRestParameter { false };
     enum class Answer : uint8_t { NotAsked, No, Yes };
     // The answer of returnsFreshAggregate() for the function, once it is made. Threads that share the summary read and write it as an atomic: each that finds none makes it, and all make the same.
     mutable Answer returnsFreshAggregate { Answer::NotAsked };

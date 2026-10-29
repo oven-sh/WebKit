@@ -135,7 +135,7 @@ static uint32_t placeAmongListsWithoutNames(Structure* structure)
     return (structure->indexingType() & IndexingShapeMask) >> 1 & (ArrayWords::numberOfStructuresWithoutNames - 1);
 }
 
-// A list without a hole and without a name, on it or above it, has an enumerator that says how many indexes there are and nothing else. Lists of one Structure and length share it.
+// An array without holes and without named properties, on it or on its prototype chain, has an enumerator that only records the number of indexes. Arrays with the same Structure and length share it.
 static JSPropertyNameEnumerator* enumeratorOfListWithoutNames(Instance& instance, JSArray* list)
 {
     VM& vm = *instance.vm;
@@ -156,8 +156,8 @@ static JSPropertyNameEnumerator* enumeratorOfListWithoutNames(Instance& instance
     return enumerator;
 }
 
-// What an object lists changes with its Structure, unless it is a dictionary, has elements, or answers for its names itself. An array answers for `length` alone, which no loop lists.
-static bool listsOtherNamesOnlyWithAnotherStructure(Structure* structure)
+// An object's enumerated keys only change with its Structure, unless it is a dictionary, has elements, or implements its own property lookup. An array only does that for `length`, which no loop enumerates.
+static bool otherNamesRequireAnotherStructure(Structure* structure)
 {
     if (structure->isDictionary() || hasIndexedProperties(structure->indexingType()))
         return false;
@@ -175,7 +175,7 @@ static void rememberListsWithoutNames(Instance& instance, JSArray* list, JSPrope
         return;
     StructureChain* chain = structure->prototypeChain(*instance.vm, instance.globalObject, list);
     for (StructureID* above = chain->head(); *above; ++above) {
-        if (!listsOtherNamesOnlyWithAnotherStructure(above->decode()))
+        if (!otherNamesRequireAnotherStructure(above->decode()))
             return;
     }
     uint32_t place = placeAmongListsWithoutNames(structure);

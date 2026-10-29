@@ -256,7 +256,7 @@ public:
     void report(std::span<const Value> tests, const Effects& effectsWhenPassed, TestOutcome = TestOutcome::IsExpectedToPass);
     void report(std::initializer_list<Value> tests, const Effects& effectsWhenPassed, TestOutcome outcome = TestOutcome::IsExpectedToPass) { report(std::span<const Value> { tests.begin(), tests.size() }, effectsWhenPassed, outcome); }
 
-    // The operations among these that no rule has claimed, in the order of the blocks.
+    // The operations among these that no rule has claimed, in block order.
     void forEachCandidate(const OpcodeSet& operations, NOESCAPE const Invocable<void(const Value&)> auto& functor)
     {
         for (const Candidate& candidate : candidates()) {
@@ -279,7 +279,7 @@ private:
         Opcode operation;
     };
 
-    // Most values of a function are of operations that no rule looks at, and each rule walks the function.
+    // Most values of a function belong to operations that no rule handles, and each rule walks the function.
     std::span<const Candidate> candidates() LIFETIME_BOUND;
     const FailedConditions& failedConditions() const;
     bool hasFailedTest(std::span<const Value> tests) const;

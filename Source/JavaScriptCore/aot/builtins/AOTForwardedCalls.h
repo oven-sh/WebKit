@@ -22,10 +22,13 @@ struct ForwardedCallPlan {
     bool constructs { false };
     // A callee that cannot refuse needs no name, and what it calls in its turn has none at the place.
     bool calleeMayRefuse { true };
+    // Function.prototype.call or apply. Its frame is listed when the callee refuses, unless the call is done in place.
+    BuiltinID tailCallingBuiltin;
 };
 
 bool forwardsCall(const BuiltinOverload&);
-bool forwardsCallOfAnyReceiver(const BuiltinOverload&);
+bool forwardsCallOfAnyReceiver(BuiltinID);
+inline bool forwardsCallOfAnyReceiver(const BuiltinOverload& overload) { return forwardsCallOfAnyReceiver(overload.builtin); }
 
 std::optional<ForwardedCallPlan> planForwardedCall(const Program&, const Function&, const BuiltinCall&);
 // The built-in refuses a callee and a new.target that are no constructors in its own words, and before it reads the list.
@@ -34,6 +37,8 @@ std::optional<BuiltinOperand> operandCalledBy(const BuiltinOverload&);
 std::optional<BuiltinOperand> operandListedBy(const BuiltinOverload&);
 
 bool isAlwaysArray(const Type&);
+// JSC compiles `f.call(..)`, `f.apply(..)` and the library's `f.$apply(..)` in place: Function.prototype.call or apply has no frame of its own. Only the first two name their callee.
+bool forwardsInPlace(const Value& builtinCall);
 
 void becomeForwardedCall(Value& call, const ForwardedCallPlan&);
 

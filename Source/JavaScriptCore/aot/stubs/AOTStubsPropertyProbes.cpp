@@ -14,6 +14,7 @@
 #include "AOTLayoutData.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
+#include "AOTPropertyCachesFront.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsConstants.h"
@@ -759,7 +760,13 @@ void generatePutValueThatSlotRefuses(StubAssembler& jit)
     bumpRuntimeCounter(jit, RuntimeCounterID::FieldsLeftSlotByStoreOfOtherType, scratch);
     jit.returnToCaller();
 
-    jit.linkToStub(cannot, isAtSite ? putByIdAtSiteBehindFieldTable(mode) : putByIdBehindFieldTable(mode));
+    if (isAtSite) {
+        jit.linkToStub(cannot, putByIdAtSiteBehindFieldTable(mode));
+        return;
+    }
+    cannot.link(&jit);
+    jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
+    jit.jumpToStub(putByIdBehindFieldTable(mode));
 }
 
 // A boolean goes into the slot of a boolean and a number into the slot of a double.
@@ -794,7 +801,9 @@ void generatePutBooleanOrDoubleField(StubAssembler& jit)
         jit.lshift32(TrustedImm32(4), scratch);
         jit.add32(TrustedImm32(sizeof(LayoutData)), scratch, name);
         jit.jumpToStub(stub);
-        jit.linkToStub(isNotCompiledObject, putByIdBehindFieldTable(mode));
+        isNotCompiledObject.link(&jit);
+        jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
+        jit.jumpToStub(putByIdBehindFieldTable(mode));
     };
 
     isStoredByItsRecord.append(jit.branch32(CCallHelpers::Below, operand, TrustedImm32(first(FieldTableEntry::firstEncodedByte))));

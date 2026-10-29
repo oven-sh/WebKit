@@ -200,7 +200,7 @@ static void captureHashTable(JSObject* object, ptrdiff_t offsetOfStorage, Operan
     state.internalState.append(hashSnapshotBytes(bytes.subspan(offsetOfIterationEntry + sizeof(EncodedJSValue))));
 }
 
-// Another thread writes shared memory and grows it while the call runs: that the bytes or their number differ behind the call says nothing about the call.
+// Another thread may write and grow shared memory during the call, so a difference in the bytes or their count after the call says nothing about the call.
 static void captureBytes(const void* bytes, size_t byteLength, bool isShared, OperandSnapshot& state)
 {
     state.bytes = bytes;
@@ -295,7 +295,7 @@ static OperandDifference differenceAt(OperandChange change, UniquedStringImpl* k
     return { change, key->isSymbol() ? makeString("[Symbol("_s, StringView(key), ")]"_s) : String(key), key, arrived };
 }
 
-// A field that holds undefined may be there without storage.
+// A field that holds undefined may exist without storage.
 static bool liesInField(VM& vm, const Object& object, const FieldData& field)
 {
     if (object.isInSlot(field))
@@ -322,7 +322,7 @@ static void compareNamedProperties(VM& vm, const Object* compiled, const Operand
             bool isStoredInField = differences.containsIf([&](const OperandDifference& field) {
                 return field.change == OperandChange::PropertyStored && field.key == key;
             });
-            // A slot that its field has left keeps its bits, and the value that comes back may have the same. Where the shape word has changed the fields were not compared.
+            // A slot that its field has left keeps its bits, and the value that returns may have the same bits. If the shape word changed, the fields were not compared.
             bool hasMovedToField = compiled && std::ranges::any_of(compiled->layout().fields(), [&](const FieldData& field) {
                 return propertyNameOf(vm, *compiled, field) == key && liesInField(vm, *compiled, field);
             });
@@ -333,7 +333,7 @@ static void compareNamedProperties(VM& vm, const Object* compiled, const Operand
             if (old.attributes != (current->attributes | PropertyAttribute::CustomValue))
                 differences.append(differenceAt(OperandChange::AttributesChanged, key, old.value != current->value ? current->value : 0));
         } else if (old.value != current->value) {
-            // An accessor of native code may keep what it was given on the object under a name that no program can spell.
+            // A native accessor may store what it was given on the object under a private name.
             bool isKeptByNativeAccessor = before.createsPropertiesLazily && key->isSymbol() && static_cast<SymbolImpl*>(key)->isPrivate();
             if (!isKeptByNativeAccessor)
                 differences.append(differenceAt(OperandChange::PropertyStored, key, current->value));
@@ -407,7 +407,7 @@ Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const Ope
         differences.append({ OperandChange::ArrayStorageChanged, makeString("length "_s, before.length, " -> "_s, after.length) });
     else if (before.indexingMode != after.indexingMode) {
         differences.append({ OperandChange::ArrayStorageChanged, makeString("indexing mode "_s, static_cast<unsigned>(before.indexingMode), " -> "_s, static_cast<unsigned>(after.indexingMode)) });
-        // Once an accessor under an index stands above an object with elements, objects that nothing was done to ask at every store what stands above them. They hold what they held.
+        // Once an indexed accessor is on the prototype chain of an object with elements, untouched objects check their chain on every store. Their contents are unchanged.
         differences.last().isRepresentationOnly = hasSlowPutArrayStorage(after.indexingMode);
     }
     else if (before.elements != after.elements && hasAnyArrayStorage(before.indexingMode)) {

@@ -11,6 +11,7 @@
 #include "AOTEdgeResults.h"
 #include "AOTFrameAllocationPointers.h"
 #include "AOTValueIdentity.h"
+#include "AOTValueSubstitution.h"
 #include <utility>
 #include <wtf/BitVector.h>
 
@@ -52,13 +53,114 @@ std::optional<InvariantOperand> findOutermostInvariantLoop(SelectionContext& con
     return outermost;
 }
 
+using LoopParameters = Vector<ValueID, 4>;
+
+// A handler edge from the loop entry reaches the handler without passing the header. After that, a value defined below the header no longer dominates its uses on the paths from the handler that avoid the header.
+// A header parameter has a value on the loop entry, and the handler can take it as an argument where the handler dominates all of those uses. Returns those parameters, or std::nullopt if there is any other such use.
+static std::optional<LoopParameters> findParametersReadAfterHandler(SelectionContext& context, BlockID header, BlockID handler)
+{
+    FunctionAnalyses& analyses = context.analyses();
+    const Function& function = context.function();
+    const Dominators& dominators = analyses.dominators();
+    LoopParameters parameters;
+    if (!dominators.dominates(header, handler))
+        return parameters;
+
+    BitVector reachedFromHandler;
+    auto isReachedFromHandler = [&](BlockID block) {
+        if (reachedFromHandler.isEmpty()) {
+            Vector<BlockID, 16> worklist { handler };
+            reachedFromHandler.set(handler.index());
+            while (!worklist.isEmpty()) {
+                for (BlockID successor : analyses.cfg().successors(worklist.takeLast())) {
+                    if (successor != header && !reachedFromHandler.set(successor.index()))
+                        worklist.append(successor);
+                }
+            }
+        }
+        return reachedFromHandler.get(block.index());
+    };
+    enum class UsesAfterHandler : uint8_t { None, BelowHandler, Elsewhere };
+    auto usesAfterHandlerOf = [&](ValueID id) {
+        UsesAfterHandler result = UsesAfterHandler::None;
+        for (const Use& use : analyses.useLists().usesOf(id)) {
+            if (!isReachedFromHandler(use.block))
+                continue;
+            if (!dominators.dominates(handler, use.block))
+                return UsesAfterHandler::Elsewhere;
+            result = UsesAfterHandler::BelowHandler;
+        }
+        return result;
+    };
+    auto isUsedAfterHandler = [&](ValueID id) {
+        return usesAfterHandlerOf(id) != UsesAfterHandler::None;
+    };
+    for (BlockID block = dominators.idom(handler); block != header; block = dominators.idom(block)) {
+        if (std::ranges::any_of(function.at(block).parameters, isUsedAfterHandler) || std::ranges::any_of(function.at(block).values, isUsedAfterHandler))
+            return std::nullopt;
+    }
+    if (std::ranges::any_of(function.at(header).values, isUsedAfterHandler))
+        return std::nullopt;
+    for (ValueID parameter : function.at(header).parameters) {
+        switch (usesAfterHandlerOf(parameter)) {
+        case UsesAfterHandler::None:
+            break;
+        case UsesAfterHandler::BelowHandler:
+            parameters.append(parameter);
+            break;
+        case UsesAfterHandler::Elsewhere:
+            return std::nullopt;
+        }
+    }
+    bool isEnteredByHandlerEdgesAlone = std::ranges::all_of(analyses.cfg().predecessors(handler), [&](BlockID predecessor) {
+        return std::ranges::none_of(function.at(predecessor).terminator.targets, [&](const Target& target) {
+            return target.block == handler;
+        });
+    });
+    if (!parameters.isEmpty() && !isEnteredByHandlerEdgesAlone)
+        return std::nullopt;
+    return parameters;
+}
+
+static void passParametersToHandler(SelectionContext& context, IRBuilder& builder, BlockID handler, const LoopParameters& parameters)
+{
+    FunctionAnalyses& analyses = context.analyses();
+    Function& function = builder.function();
+    Vector<BlockID, 8> coveredBlocks;
+    for (BlockID predecessor : analyses.cfg().predecessors(handler)) {
+        if (!coveredBlocks.contains(predecessor))
+            coveredBlocks.append(predecessor);
+    }
+    Vector<Vector<Use, 4>, 4> usesBelowHandler;
+    for (ValueID parameter : parameters) {
+        usesBelowHandler.append({ });
+        for (const Use& use : analyses.useLists().usesOf(parameter)) {
+            if (analyses.dominators().dominates(handler, use.block))
+                usesBelowHandler.last().append(use);
+        }
+    }
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        ValueID received = builder.addParameter(handler, function.at(parameters[index]).type);
+        for (BlockID block : coveredBlocks)
+            builder.appendArgument(Edge::toHandlerOf(block), parameters[index]);
+        for (const Use& use : usesBelowHandler[index])
+            replaceUse(function, use, received);
+    }
+    analyses.didChangeControlFlow();
+}
+
+struct HandlerOnEntry {
+    std::optional<Target> handler;
+    LoopParameters parametersToPass;
+};
+
 // Code emitted on the loop entry stands in for work of the first iteration, so it gets the header's handler, which receives what it would receive from the start of the first iteration.
-static std::optional<std::optional<Target>> findHandlerOnEntry(SelectionContext& context, Edge entry, BlockID header)
+static std::optional<HandlerOnEntry> findHandlerOnEntry(SelectionContext& context, Edge entry, BlockID header)
 {
     const Function& function = context.function();
     const std::optional<Target>& headerHandler = function.at(header).handler;
     if (!headerHandler || function.at(entry.from).handler == headerHandler)
-        return headerHandler;
+        return HandlerOnEntry { headerHandler, { } };
     Target handler = *headerHandler;
     const Target& target = targetOf(function, entry);
     if (target.arguments.size() != function.at(header).parameters.size())
@@ -71,7 +173,10 @@ static std::optional<std::optional<Target>> findHandlerOnEntry(SelectionContext&
         else if (!context.analyses().dominates(argument, endOfEntry))
             return std::nullopt;
     }
-    return handler;
+    std::optional<LoopParameters> parametersToPass = findParametersReadAfterHandler(context, header, handler.block);
+    if (!parametersToPass)
+        return std::nullopt;
+    return HandlerOnEntry { WTF::move(handler), WTF::move(*parametersToPass) };
 }
 
 bool canEmitOnLoopEntry(SelectionContext& context, BlockID header)
@@ -119,12 +224,17 @@ LoopEntryResult emitOnLoopEntry(SelectionContext& context, IRBuilder& builder, B
         return LoopEntryResult::NoSingleEntry;
 
     Function& function = builder.function();
-    std::optional<std::optional<Target>> handler = findHandlerOnEntry(context, *entry, header);
-    if (!handler)
+    std::optional<HandlerOnEntry> found = findHandlerOnEntry(context, *entry, header);
+    if (!found)
         return LoopEntryResult::HandlerDiffers;
+    if (!found->parametersToPass.isEmpty()) {
+        passParametersToHandler(context, builder, found->handler->block, found->parametersToPass);
+        found = findHandlerOnEntry(context, *entry, header);
+        RELEASE_ASSERT(found && found->parametersToPass.isEmpty());
+    }
 
-    BlockID preheader = ensurePreheader(builder, *entry, *handler);
-    if (*handler)
+    BlockID preheader = ensurePreheader(builder, *entry, found->handler);
+    if (found->handler)
         context.noteRemovedAllocationUnderHandler();
     Terminator jump = std::exchange(function.edit(preheader, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { });
     analyses.didChangeControlFlow();

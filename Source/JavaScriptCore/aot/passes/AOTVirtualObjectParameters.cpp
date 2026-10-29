@@ -647,7 +647,7 @@ std::optional<Promotion> ParameterPromoter::tryPromote(uint32_t parameter)
     return promotion;
 }
 
-// What the start allocates for the body alone, the body allocates. Says no where it has no place there: what stands in a block with a handler is not there for whoever comes by the handler.
+// What the start allocates only for the body is allocated by the body instead. Returns false if it cannot be placed there: a value in a block with a handler is not available on the handler's path.
 static bool moveAllocationsToBody(FunctionAnalyses& analyses, const BitVector& startBlocks, BlockID head, Function& split)
 {
     const Function& function = analyses.function();
@@ -697,8 +697,8 @@ std::optional<Promotion> ParameterPromoter::trySplitBehindEarlyReturn(ValueID ar
     auto addUse = [&](const Use& use) {
         firstUse = firstUse ? dominators.nearestCommonDominator(firstUse, use.block) : use.block;
     };
-    // An arguments object that takes the list in counts for nothing by itself: nobody can tell where it is made. Its uses count, but for a read of its length: as long as nothing else was done to the object, that is the number that the function was handed.
-    Vector<std::pair<ValueID, ValueID>, 2> answeredReads;
+    // An arguments object that captures the list does not count by itself: where it is created is not observable. Its uses count, except a read of its length: as long as nothing else was done to the object, that is the number of arguments the function was passed.
+    Vector<std::pair<ValueID, ValueID>, 2> resolvedReads;
     for (const Use& use : useLists.usesOf(argument)) {
         bool isTakenInByArgumentsObject = use.kind == Use::Kind::Operand && argumentsObjects.contains(m_function.at(use.user).opcode) && m_function.at(use.user).restOperand() == argument;
         if (!isTakenInByArgumentsObject) {
@@ -708,7 +708,7 @@ std::optional<Promotion> ParameterPromoter::trySplitBehindEarlyReturn(ValueID ar
         for (const Use& useOfObject : useLists.usesOf(use.user)) {
             bool readsLength = useOfObject.kind == Use::Kind::Operand && m_function.at(useOfObject.user).opcode == Opcode::PropGet && m_function.at(useOfObject.user).key() == m_context.program.keyOf(BuiltinNames::length);
             if (readsLength)
-                answeredReads.append({ useOfObject.user, m_function.at(use.user).countOperand() });
+                resolvedReads.append({ useOfObject.user, m_function.at(use.user).countOperand() });
             else
                 addUse(useOfObject);
         }
@@ -777,22 +777,22 @@ std::optional<Promotion> ParameterPromoter::trySplitBehindEarlyReturn(ValueID ar
     promotion.callOrigin = { m_function.position, 0 };
     promotion.head = head;
 
-    bool answersReads = false;
-    for (auto [read, answer] : answeredReads) {
+    bool resolvesReads = false;
+    for (auto [read, answer] : resolvedReads) {
         BlockID block = useLists.blockOf(read);
         if (dominators.dominates(head, block))
             continue;
-        // In a block that both parts reach, the read of the body may come behind a store.
+        // In a block that both parts reach, the body's read may come after a store.
         if (isInBody.get(block.index()))
             return std::nullopt;
         Value& answered = promotion.split.edit(read, ValueEdit::Definition);
         answered.become(Opcode::Upcast);
         answered.setValueOperand(answer);
         answered.setCastType(TypeTable::anything);
-        answersReads = true;
+        resolvesReads = true;
     }
     bool didMove = false;
-    if (answersReads) {
+    if (resolvesReads) {
         Function answered = promotion.split;
         FunctionAnalyses analysesOfAnswered(m_context, answered);
         didMove = moveAllocationsToBody(analysesOfAnswered, startBlocks, head, promotion.split);
@@ -823,7 +823,7 @@ std::optional<Promotion> ParameterPromoter::run(const BitVector& freshParameters
         if (auto promotion = trySplitBehindEarlyReturn(entryParameters[m_function.firstParameterIndex() + parameter], parameter))
             return promotion;
     }
-    // Every call makes a list of the arguments that no parameter takes.
+    // Every call creates a list of the arguments that have no parameter.
     std::optional<unsigned> hiddenRest = m_function.hiddenRestParameterIndex();
     return hiddenRest && !m_function.parameters.isEmpty() ? trySplitBehindEarlyReturn(entryParameters[*hiddenRest], 0) : std::nullopt;
 }
@@ -986,8 +986,8 @@ void promoteAggregateParameters(ProgramEditor& editor, const OptimizationInputs&
     Vector<BitVector> freshParameters = findFreshParameters(program, inputs, build);
     Vector<FunctionID> candidates = collectInParallel<FunctionID>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FunctionID>& found) {
         FunctionID id(index);
-        bool isHandedNewObject = !freshParameters[index].isEmpty() || program.at(id).has(FunctionFlags::HasHiddenRest);
-        if (isHandedNewObject && mayPromoteParameters(program.at(id)) && build.isEnabled(PassID::PromoteAggregateParameters, id))
+        bool isPassedNewObject = !freshParameters[index].isEmpty() || program.at(id).has(FunctionFlags::HasHiddenRest);
+        if (isPassedNewObject && mayPromoteParameters(program.at(id)) && build.isEnabled(PassID::PromoteAggregateParameters, id))
             found.append(id);
     });
     if (candidates.isEmpty())

@@ -319,7 +319,7 @@ static void testRangeGrowsBySegments()
 }
 
 #if OS(LINUX) && USE(MIMALLOC)
-// A range gives its free memory back at malloc's pace, and touches nothing that another range has freed: the threads of a program that end together do not wait for one another.
+// A range returns its free memory at malloc's pace and touches nothing that another range has freed, so threads that end together do not wait for one another.
 static void testReleasingFreeMemoryPurgesNoOtherRange()
 {
     if (!bmalloc::api::isEnabled())
@@ -341,12 +341,12 @@ static void testReleasingFreeMemoryPurgesNoOtherRange()
     AOT_TEST_CHECK(isResident(page));
     first.free(memory);
     first.releaseFreeMemory();
-    bool wasLeftByItsOwnRange = isResident(page);
+    bool isResidentAfterOwnRangeRelease = isResident(page);
     second.releaseFreeMemory();
-    bool wasLeftByOtherRange = isResident(page);
+    bool isResidentAfterOtherRangeRelease = isResident(page);
 
     mi_option_set(mi_option_purge_delay, delay);
-    AOT_TEST_CHECK(wasLeftByItsOwnRange && wasLeftByOtherRange);
+    AOT_TEST_CHECK(isResidentAfterOwnRangeRelease && isResidentAfterOtherRangeRelease);
 }
 #endif
 
@@ -391,8 +391,8 @@ static void testPiecesOfOneMappingGoTogether()
     AOT_TEST_CHECK(!isMapped(first) && !isMapped(second) && !isMapped(first + MB - pageSize()));
 }
 
-// Something else may be mapped where a piece has gone, so nothing there is touched again.
-static void testPieceThatGoesEarlyLeavesItsNeighbors()
+// Something else may be mapped where a piece was released, so nothing there is touched again.
+static void testEarlyReleasedPieceLeavesNeighbors()
 {
     constexpr size_t pieceSize = 64 * KB;
     uint8_t* pieces[4];
@@ -781,16 +781,16 @@ static void checkCellInFullRangeGrowsIntoSharedReserve()
     cage.free(largest);
 }
 
-struct MallocThatRefusesOnRequest : FastMalloc {
+struct MallocFailingOnRequest : FastMalloc {
     static void* tryMalloc(size_t size) { return s_refuses ? nullptr : FastMalloc::tryMalloc(size); }
     static void* tryZeroedMalloc(size_t size) { return s_refuses ? nullptr : FastMalloc::tryZeroedMalloc(size); }
     static inline bool s_refuses { false };
 };
 
-// A table that was asked to make room for one more key does not grow when the key is added. Where it gets no memory it says so and holds what it held.
-static void checkTableThatFindsNoMemoryToGrowStaysAsItWas()
+// A table that reserved room for one more key does not grow when the key is added. If the allocation fails, it reports that and keeps its contents.
+static void checkTableIsUnchangedWhenGrowthFails()
 {
-    using Map = HashMap<unsigned, unsigned, DefaultHash<unsigned>, HashTraits<unsigned>, HashTraits<unsigned>, WTF::HashTableTraits, WTF::ShouldValidateKey::Yes, MallocThatRefusesOnRequest>;
+    using Map = HashMap<unsigned, unsigned, DefaultHash<unsigned>, HashTraits<unsigned>, HashTraits<unsigned>, WTF::HashTableTraits, WTF::ShouldValidateKey::Yes, MallocFailingOnRequest>;
     Map map;
     auto holdsKeysUpTo = [&](unsigned last) {
         if (map.size() != last)
@@ -812,7 +812,7 @@ static void checkTableThatFindsNoMemoryToGrowStaysAsItWas()
     }
     AOT_TEST_CHECK(holdsKeysUpTo(key));
 
-    MallocThatRefusesOnRequest::s_refuses = true;
+    MallocFailingOnRequest::s_refuses = true;
     unsigned capacity = map.capacity();
     while (map.tryReserveCapacityForAdd()) {
         ++key;
@@ -823,23 +823,23 @@ static void checkTableThatFindsNoMemoryToGrowStaysAsItWas()
     AOT_TEST_CHECK(map.capacity() == capacity);
     AOT_TEST_CHECK(holdsKeysUpTo(key));
 
-    // Keys that were removed leave buckets that a table of the same size does without: that takes memory too.
+    // Removed keys leave deleted buckets, which a rehash at the same size drops. That also needs memory.
     for (unsigned removed = key; removed > key - 100; --removed)
         map.remove(removed);
     key -= 100;
     AOT_TEST_CHECK(!map.tryReserveCapacityForAdd());
     AOT_TEST_CHECK(holdsKeysUpTo(key));
 
-    MallocThatRefusesOnRequest::s_refuses = false;
+    MallocFailingOnRequest::s_refuses = false;
     AOT_TEST_CHECK(map.tryReserveCapacityForAdd());
     AOT_TEST_CHECK(map.capacity() == 2 * capacity);
     AOT_TEST_CHECK(holdsKeysUpTo(key));
 
     Map empty;
-    MallocThatRefusesOnRequest::s_refuses = true;
+    MallocFailingOnRequest::s_refuses = true;
     AOT_TEST_CHECK(!empty.tryReserveCapacityForAdd());
     AOT_TEST_CHECK(!empty.capacity());
-    MallocThatRefusesOnRequest::s_refuses = false;
+    MallocFailingOnRequest::s_refuses = false;
     AOT_TEST_CHECK(empty.tryReserveCapacityForAdd());
     AOT_TEST_CHECK(empty.capacity());
 
@@ -1456,42 +1456,6 @@ static void checkErrorWaitsAtFunctionEntriesAlone()
     traps.unregisterMirror(mirror);
 }
 
-static constexpr size_t sizeOfFrameAboveDeadStack = 256 * KB;
-
-static NEVER_INLINE uintptr_t createErrorInDeeperFrame(MarkedBlockCage& cage)
-{
-    volatile char frame[sizeOfFrameAboveDeadStack];
-    frame[0] = 0;
-    cage.didCreateOutOfMemoryError();
-    return std::bit_cast<uintptr_t>(&frame[0]);
-}
-
-static NEVER_INLINE void checkDeadStackInDeeperFrame(TestVM& test, bool isBelowSoftLimit)
-{
-    volatile char frame[sizeOfFrameAboveDeadStack];
-    frame[0] = 0;
-    uintptr_t endOfFrame = std::bit_cast<uintptr_t>(&frame[0]);
-    VM& vm = test.vm();
-    AOT_TEST_CHECK((endOfFrame < std::bit_cast<uintptr_t>(vm.softStackLimit())) == isBelowSoftLimit);
-    uintptr_t endOfFrameOfError = createErrorInDeeperFrame(test.cage());
-    AOT_TEST_CHECK(test.cage().hasDeadStackToClear());
-    uintptr_t lowest = std::bit_cast<uintptr_t>(test.cage().takeLowestAddressOfDeadStack(vm));
-    AOT_TEST_CHECK(!test.cage().hasDeadStackToClear());
-    AOT_TEST_CHECK(lowest < endOfFrameOfError && lowest >= std::bit_cast<uintptr_t>(vm.stackLimit()));
-    lowest = std::bit_cast<uintptr_t>(test.cage().takeLowestAddressOfDeadStack(vm));
-    AOT_TEST_CHECK(lowest > endOfFrameOfError && lowest < endOfFrame);
-}
-
-// The dead stack begins below the frame that made the error and ends below the frame that asks, wherever the soft limit lies.
-static void checkDeadStackLiesBelowTheFrameThatAsks()
-{
-    TestVM test;
-    checkDeadStackInDeeperFrame(test, false);
-    size_t softReservedZoneSize = test.vm().updateSoftReservedZoneSize(Options::maxPerThreadStackUsage());
-    checkDeadStackInDeeperFrame(test, true);
-    test.vm().updateSoftReservedZoneSize(softReservedZoneSize);
-}
-
 // A heap that stays almost full of live objects finds no room again and again, with little allocated in between. The fourth time in a row the error is owed.
 static void checkErrorIsOwedOnceCollectionsBuyNextToNothing()
 {
@@ -1852,7 +1816,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },
 #if OS(LINUX) && !ENABLE(AOT_GUARDED_PAGES)
         { "heap-cage/pages-of-a-vm/pieces-of-one-mapping-go-together"_s, testPiecesOfOneMappingGoTogether },
-        { "heap-cage/pages-of-a-vm/a-piece-that-goes-early-leaves-its-neighbors"_s, testPieceThatGoesEarlyLeavesItsNeighbors },
+        { "heap-cage/pages-of-a-vm/a-piece-that-goes-early-leaves-its-neighbors"_s, testEarlyReleasedPieceLeavesNeighbors },
 #endif
         { "heap-cage/cage/encode-decode-round-trip"_s, testEncodeDecodeRoundTrip },
         { "heap-cage/cage/base-of-any-cell"_s, testBaseOfAnyCell },
@@ -1866,7 +1830,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/no-address-in-the-image-names-a-cell-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkNoAddressInImageNamesCell> },
         { "heap-cage/cage/error-of-another-request-settles-cells-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkErrorOfAnotherRequestAndErrorOwedForCells<true>> },
 #if USE(MIMALLOC)
-        { "heap-cage/tables/a-table-that-finds-no-memory-to-grow-stays-as-it-was"_s, checkTableThatFindsNoMemoryToGrowStaysAsItWas },
+        { "heap-cage/tables/a-table-that-finds-no-memory-to-grow-stays-as-it-was"_s, checkTableIsUnchangedWhenGrowthFails },
         { "heap-cage/ballast/requests-that-may-not-fail-use-it"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailUseBallast> },
         { "heap-cage/ballast/requests-that-may-not-fail-look-in-what-the-last-piece-left"_s, runInProcessWithSharedRange<checkRequestsThatMayNotFailLookInWhatLastPieceLeft> },
         { "heap-cage/ballast/it-grows-with-the-vms"_s, runInProcessWithSharedRange<checkBallastGrowsWithVMs> },
@@ -1892,7 +1856,6 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/infallible-scope-uses-reserve"_s, withCage<checkInfallibleScopeUsesReserve> },
         { "heap-cage/cage/constants-are-compiled-in-full-cage"_s, withCage<checkConstantsAreCompiledInFullCage> },
         { "heap-cage/cage/error-waits-at-function-entries-alone"_s, withCage<checkErrorWaitsAtFunctionEntriesAlone> },
-        { "heap-cage/cage/dead-stack-lies-below-the-frame-that-asks"_s, withCage<checkDeadStackLiesBelowTheFrameThatAsks> },
         { "heap-cage/cage/error-is-owed-once-collections-buy-next-to-nothing"_s, withCage<checkErrorIsOwedOnceCollectionsBuyNextToNothing> },
         { "heap-cage/cage/error-owed-by-barren-collections-is-offered-to-a-poll-once"_s, withCage<checkErrorOwedByBarrenCollectionsIsOfferedToPollOnce> },
         { "heap-cage/cage/error-owed-for-structures-then-storage-is-heard-of-by-both"_s, withCage<checkErrorOwedForStructuresAndStorageIsHeardOfByBoth<FirstToRunOut::Structures, ErrorGiven::TheOneOwed>> },

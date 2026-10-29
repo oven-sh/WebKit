@@ -1046,12 +1046,12 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
     Structure* structure = object->structure();
     if (structure->hasPolyProto() || structure->typeInfo().overridesGetPrototype())
         return;
-    for (JSObject* holder = structure->storedPrototypeObject(); holder; holder = holder->getPrototypeDirect().getObject())
-        Object::ensureStructureForExtraPropertiesIfNeeded(m_vm, holder);
     AOT_THRESHOLD(unsigned, maxObjectsAbove, 8);
     AbsenceFilter& filter = m_absenceFilters[AbsenceFilter::indexFor(structure->id().bits())];
     if (filter.structureID == structure->id().bits() && filter.generationForStores == m_absenceFilterGenerationForStores && filter.changesUnderNames == m_changesUnderNamesOnChains)
         return;
+    for (JSObject* holder = structure->storedPrototypeObject(); holder; holder = holder->getPrototypeDirect().getObject())
+        Object::ensureStructureForExtraPropertiesIfNeeded(m_vm, holder);
     const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
     if (!identifiers || structure->realm() != globalObject)
         return;
@@ -1062,7 +1062,7 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
             return;
         m_filteredObjects.add(holder);
     }
-    // Only the names of its own fields are ever asked of the filter of a compiled object, and many names share a bit. A field whose bit is set is looked up itself, so that it pays for no other name: the accessor
+    // A compiled object's filter is only queried for the names of its own fields, and many names share a bit. A field whose bit is set is looked up directly, so that it does not pay for another name: the accessor
     // `__proto__` of Object.prototype alone is above nearly every object.
     if (const Object* receiver = compiledObjectOrNull(object)) {
         AbsenceFilter ofAllNames = std::exchange(filled, AbsenceFilter { filled.structureID, filled.generationForStores, { }, filled.changesUnderNames, 0 });
@@ -1143,7 +1143,7 @@ void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringI
 
 void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
-    // Most objects that report a change are being filled, and no filter has been made from them yet.
+    // Most objects that report a change are still being filled, and no filter has been built from them yet.
     if (!changed || m_filteredObjects.mayContain(changed))
         didChangeFilteredObject(changed, uidOrNull);
     for (Instance* instance : m_vm.aotState().instances) {

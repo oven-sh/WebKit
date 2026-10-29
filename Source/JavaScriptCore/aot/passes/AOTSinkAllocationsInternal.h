@@ -60,7 +60,7 @@ void removeEntry(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, Key v
         entries.removeAt(entry - entries.begin());
 }
 
-// `values` is in ascending order, as the entries are.
+// `values` is in ascending order, like the entries.
 template<typename Entry, size_t inlineCapacity, typename Key>
 void removeEntries(Vector<Entry, inlineCapacity>& entries, Key Entry::* key, std::span<const Key> values)
 {
@@ -270,10 +270,10 @@ struct Candidate {
     bool diesVirtual { false };
     bool diesOutsideJoins { false };
     bool isBuiltBeforeBranches { false };
-    // The same, from where the object holds what refers to it. The solver asks for it in one round and follows it from the next one on.
+    // The same, from the point where the object holds its referrer. The solver requests it in one round and follows it from the next round on.
     bool isBuiltBeforeBranchesOnceCyclic { false };
     bool willBeBuiltBeforeBranchesOnceCyclic { false };
-    // Made under a handler and needed where no handler covers: it is built before the way leaves the handler, so that whoever finds no room for it throws to that handler. Asked for and followed as above.
+    // Created under a handler and needed where no handler covers: it is built before the path leaves the handler, so that a failed allocation throws to that handler. Requested and followed as above.
     bool isBuiltUnderHandler { false };
     bool willBeBuiltUnderHandler { false };
     bool wasFruitlessBefore { false };
@@ -311,7 +311,7 @@ struct SinkingInputs {
     BitVector mergeBlocks;
     BitVector blocksWithCandidates;
     BitVector blocksWithJoins;
-    // The block of the handler of each block, as the function was read.
+    // Each block's handler block, as the function was read.
     Vector<BlockID> handlers;
     bool hasOperationsOnSlots { false };
     bool hasObjectsGivenPrototypes { false };
@@ -409,10 +409,10 @@ public:
     void setOrigin(Origin origin) { m_builder.setOrigin(origin); }
 
     void stateDidChange() { m_handlerArgumentsAreStale = true; }
-    // What is built may find no room and throw. Every block that is added between the two is covered as the block where the first one is called: the handler finds the objects as they were before.
+    // Building may fail to allocate and throw. Every block added between the two is covered like the block where the first one is called, so the handler sees the objects as they were before.
     void willBuild(ObjectInterpreter&);
     void didBuild();
-    // What is built on the ways out of a block stands in front of its terminator: the handler finds the objects as they are there.
+    // What is built on the exits of a block goes before its terminator, so the handler sees the objects as they are there.
     void willEnterEdges(ObjectInterpreter& atTerminator) { m_interpreterAtTerminator = &atTerminator; }
     void didEnterEdges() { m_interpreterAtTerminator = nullptr; }
     void willKeepThrowingValue(ObjectInterpreter&);

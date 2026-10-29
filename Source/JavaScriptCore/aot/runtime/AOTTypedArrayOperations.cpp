@@ -274,7 +274,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySetOfAnyValue, EncodedJSValue, (I
     JSValue receiver = JSValue::decode(encodedReceiver);
     JSValue given = JSValue::decode(encodedSource);
     JSValue offset = JSValue::decode(encodedOffset);
-    // What is cut off a fraction does not count.
+    // A fractional part is truncated.
     bool isPlace = offset.isUndefined() || (offset.isInt32() ? offset.asInt32() >= 0 : offset.isDouble() && offset.asDouble() > -1 && offset.asDouble() <= static_cast<double>(MAX_ARRAY_BUFFER_SIZE));
     if (receiver.isCell() && given.isCell() && isTypedArrayType(receiver.asCell()->type()) && receiver.asCell()->type() == given.asCell()->type() && isPlace) [[likely]] {
         auto* target = uncheckedDowncast<JSArrayBufferView>(receiver.asCell());

@@ -1076,13 +1076,13 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     // A range is copied as one block.
     auto mayRejoinAt = [&](ProgramPoint point) { return !wanted.isAnyProofWantedAt(point) && !stretches.isInsideRange(point); };
 
-    // The copies of a cold function of a very large program hold their stretches alone and come back nowhere: see TestPlacer::goesOnBehindStretch(). Of these points the placer then keeps the ones inside a block
-    // at which tests stand, to give those tests a block of their own, and looks at no other. So no other is looked for.
+    // The copies of a cold function in a very large program hold only their stretches and never rejoin: see TestPlacer::goesOnBehindStretch(). Of these points the placer then only keeps those inside a block
+    // that have tests, to give those tests their own block, and ignores the rest. So the rest are not searched for.
     const Heat& heat = context.inputs.heat;
-    bool copiesHoldStretchesAlone = heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted();
+    bool copiesHoldOnlyStretches = heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted();
     BitVector blocksWithTests;
     Vector<uint32_t> lastTestIn;
-    if (copiesHoldStretchesAlone) {
+    if (copiesHoldOnlyStretches) {
         lastTestIn.fill(0, function.blocks.size());
         for (const PlannedTest& test : plan.tests) {
             if (test.position != PlannedTestPosition::BeforeUse || !test.point.index)
@@ -1091,12 +1091,12 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
             lastTestIn[test.point.block.index()] = std::max(lastTestIn[test.point.block.index()], test.point.index);
         }
     }
-    if (!copiesHoldStretchesAlone || !blocksWithTests.isEmpty())
-        plan.rejoinPoints = findRejoinPoints(analyses, mayCallUnknownCode, mayRejoinAt, copiesHoldStretchesAlone ? &blocksWithTests : nullptr);
+    if (!copiesHoldOnlyStretches || !blocksWithTests.isEmpty())
+        plan.rejoinPoints = findRejoinPoints(analyses, mayCallUnknownCode, mayRejoinAt, copiesHoldOnlyStretches ? &blocksWithTests : nullptr);
 
     // Code that is rarer than what leads to it is a slow path already: the generic version of the function, or the copy of an earlier run. The copy of this run goes on there and copies none of it.
     const CFG& cfg = analyses.cfg();
-    for (BlockID block : copiesHoldStretchesAlone ? std::span<const BlockID> { } : cfg.reversePostOrder()) {
+    for (BlockID block : copiesHoldOnlyStretches ? std::span<const BlockID> { } : cfg.reversePostOrder()) {
         if (function.at(block).isHandlerBlock())
             continue;
         Expected<BlockFrequency> frequency = function.at(block).frequency;
@@ -1117,19 +1117,19 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
     plan.rejoinPoints.removeAllMatching(isSplitPoint);
 
     std::span<const StretchRange> ranges = stretches.ranges();
-    // A point behind the end of a range is one at which tests stand only if the block has tests that far behind.
-    auto hasTestsBehind = [&](const StretchRange& range) { return range.isCloned && lastTestIn[range.block.index()] >= range.end; };
-    bool looksBehindNoRange = copiesHoldStretchesAlone && std::ranges::none_of(ranges, hasTestsBehind);
-    if (looksBehindNoRange && std::ranges::none_of(ranges, &StretchRange::isCloned))
+    // A point after the end of a range only has tests if the block has tests that far down.
+    auto hasTestsAfter = [&](const StretchRange& range) { return range.isCloned && lastTestIn[range.block.index()] >= range.end; };
+    bool hasNoTestsAfterRanges = copiesHoldOnlyStretches && std::ranges::none_of(ranges, hasTestsAfter);
+    if (hasNoTestsAfterRanges && std::ranges::none_of(ranges, &StretchRange::isCloned))
         return;
-    BitVector isBehindCopiedRange = copiesHoldStretchesAlone ? BitVector() : findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
-    if (!copiesHoldStretchesAlone && isBehindCopiedRange.isEmpty())
+    BitVector isBehindCopiedRange = copiesHoldOnlyStretches ? BitVector() : findBlocksBehindRanges(function, ranges, [](const StretchRange& range) { return range.isCloned; });
+    if (!copiesHoldOnlyStretches && isBehindCopiedRange.isEmpty())
         return;
     // How soon the copy comes back follows from expected types, and is shuffled with them.
     const RecordedOptions& options = context.build.recordedOptions();
     if (options.has(TestingSwitch::ShuffleExpectedTypes) && WTF::pairIntHash(options.layoutSeed, context.id.index()) % 2) [[unlikely]]
         return;
-    for (BlockID block : copiesHoldStretchesAlone ? std::span<const BlockID> { } : cfg.reversePostOrder()) {
+    for (BlockID block : copiesHoldOnlyStretches ? std::span<const BlockID> { } : cfg.reversePostOrder()) {
         if (isBehindCopiedRange.get(block.index()) && block != cfg.root() && !function.at(block).isHandlerBlock() && mayRejoinAt(ProgramPoint::atHeadOf(block)))
             plan.rejoinPointsWithoutTests.append(ProgramPoint::atHeadOf(block));
     }
@@ -1140,8 +1140,8 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
         const TestSite& site = plan.sites.sites[use.site];
         (expectedTypeTellsResultOf(context, site) ? narrowedAsExpected : narrowedInUnknownWay).append(site.use);
     }
-    // The question above may give a type its number, and the numbers of types are in the order in which they were first asked for.
-    if (looksBehindNoRange)
+    // The query above may assign a type its number, and types are numbered in the order they are first requested.
+    if (hasNoTestsAfterRanges)
         return;
     Vector<ValueID> subjects = collectSubjectsKnownBeyondTheirTypes(context, plan);
     BitVector isKnownBetter = findValuesTypedCodeKnowsMoreAbout(analyses, context.types, { narrowedAsExpected.span(), narrowedInUnknownWay.span(), subjects.span() });
@@ -1168,7 +1168,7 @@ static void appendRejoinPoints(TestPlacementPlan& plan, FunctionPassContext& con
             if (ranges[next].isCloned)
                 firstEnd = std::min(firstEnd, ranges[next].end);
         }
-        if (firstEnd == numberOfValues || (copiesHoldStretchesAlone && lastTestIn[block.index()] < firstEnd))
+        if (firstEnd == numberOfValues || (copiesHoldOnlyStretches && lastTestIn[block.index()] < firstEnd))
             continue;
         BitVector points = findPointsWhereNothingIsKnownBetter(function, block, firstEnd, isKnownBetter, livenessOfValuesKnownBetter, isLive);
         for (const StretchRange& range : ranges.subspan(first, next - first)) {
@@ -2026,11 +2026,11 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             return !context.program.at(layout).flags.contains(LayoutFlags::IsNeverAllocated) && context.program.at(layout).flow.allocation != AllocationState::NeverAllocated;
         });
     });
-    // In code without types, what is expected of a value is read off the places that are seen to give it. An object that has left the sight of the program arrives where nobody sees it given:
-    // where the analysis has seen nothing arrive either, the layouts that hold the names and have left join what is expected.
-    // A name that built-ins answer too says little of who arrives, and a test takes only so many layouts.
-    bool isExpectedByTextAlone = isFollowed && !typeListsLayouts && !function.has(FunctionFlags::IsChecked) && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) { return !use.stamp && tellsLayoutsApart(context.program, use.key); });
-    if (isExpectedByTextAlone && !waitsForOtherSubjects) {
+    // In untyped code, a value's expected type is derived from the places observed to produce it. An escaped object arrives without an observed producer:
+    // if the analysis saw nothing arrive either, the escaped layouts that hold the names are added to the expected type.
+    // A name that built-ins also have says little about what arrives, and a test only handles so many layouts.
+    bool isExpectedFromSourceOnly = isFollowed && !typeListsLayouts && !function.has(FunctionFlags::IsChecked) && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) { return !use.stamp && tellsLayoutsApart(context.program, use.key); });
+    if (isExpectedFromSourceOnly && !waitsForOtherSubjects) {
         LayoutsToTest others = findLayoutsToTestFor(context, usesOfSubject, context.limit(LimitID::MaxDeclarationsPredictedFromNames), context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
         if (!others.layouts.predicted().isEmpty() && !others.leavesOutDeclarations) {
             Type arriving = Type::forLayouts(others.layouts.predicted().span(), context.types);
@@ -2044,7 +2044,7 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
             }
         }
     }
-    if (isExpectedByTextAlone && waitsForOtherSubjects)
+    if (isExpectedFromSourceOnly && waitsForOtherSubjects)
         return false;
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
         return true;
@@ -3918,9 +3918,9 @@ static PassOutcome markArmsThatAreSeldomTaken(FunctionPassContext& context)
     return outcome;
 }
 
-// `index in list`, where the list has a known kind of storage, nothing above it answers for an index and the key is an index, asks what the read of `list[index]` asks ahead of itself: the one test answers both.
-// The arm that it fails into is the program's, not the general form of an access. The test says so, for whoever looks for a place where an access can start over.
-static PassOutcome askForPositionsOfElements(FunctionPassContext& context)
+// `index in list`, where the list has a known storage kind, nothing on its prototype chain has indexed properties and the key is an index, performs the check that the read of `list[index]` needs first: one test serves both.
+// The arm it fails into is the program's, not the generic form of an access. The test records that, for code that looks for a place where an access can restart.
+static PassOutcome requestElementPositions(FunctionPassContext& context)
 {
     Function& function = context.function;
     if (!context.analyses.opcodesOfValues().contains(Opcode::HasArrayElement))
@@ -3942,13 +3942,13 @@ static PassOutcome askForPositionsOfElements(FunctionPassContext& context)
             ValueID guard = question.guardOperand();
             ArrayStorage arrayStorage = question.arrayStorage();
             const Type& list = context.program.typeOf(function, array);
-            // Where the kind of storage is only tested, reads of numbers are copied for another kind, and an element that does not fit the copy leaves by the arm of the test that the read has for itself.
+            // If the storage kind is only tested, reads of numbers are copied for another kind, and an element that does not fit the copy leaves through the arm of the read's own test.
             const ClassPart* part = list.singleBuiltinClass();
             bool storageIsProven = part && part->contentsAreProven && part->arrayStorage == arrayStorage && !list.mayBeUndefinedOrNull();
             if (!storageIsProven && (holdsOnlyNumbers(arrayStorage) || typeOfContentsRead({ context.program, function, context.types, TypeLevel::Expected }, list, ContentsSlot::Element).withoutPrimitives(Primitive::Undefined).isNumber()))
                 continue;
             bool isDense = pristineAspectsProvenBy(list, BuiltinClasses::Array).contains(PristineAspects::Dense);
-            // In a validating build the question is asked as it was written too, and the two answers are compared.
+            // A validating build also evaluates the original query and compares the two results.
             if (context.build.validates()) {
                 builder.setOrigin(question.origin());
                 ValueID asWritten = builder.insertBefore(ProgramPoint { block, index }, Value(question));
@@ -3958,7 +3958,7 @@ static PassOutcome askForPositionsOfElements(FunctionPassContext& context)
             test.become(isDense ? Opcode::IsInBounds : Opcode::IsElementPresent);
             test.setArrayOperand(array);
             test.setPositionOperand(key);
-            test.setIsAskedByProgram(true);
+            test.setIsFromProgram(true);
             if (!isDense) {
                 test.setGuardOperand(guard);
                 test.setArrayStorage(arrayStorage);
@@ -4032,7 +4032,7 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
 
     PassOutcome marked = markArmsThatAreSeldomTaken(context);
     marked |= askOnlyNumbersWhetherTheyEqualThemselves(context);
-    marked |= askForPositionsOfElements(context);
+    marked |= requestElementPositions(context);
     ExpectedTypesByUse expectations(context.function);
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.build.recordedOptions().usesExpectedTypes()) {

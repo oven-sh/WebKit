@@ -954,7 +954,7 @@ struct DeferralAnalysis {
                 if (!kind)
                     return;
                 found.append({ { FunctionID(index), id }, *kind });
-                // The arm that a tested read by slot falls back to is a read by name on a way that is not expected to run.
+                // The arm that a tested read by slot falls back to is a read by name on an unlikely path.
                 if (*kind == NamedAccess && !storedOf(value.opcode) && program.functions[index].at(block).frequency.predicted() == BlockFrequency::Normal)
                     found.append({ { FunctionID(index), id }, NamedReadExpectedToRun });
             });
@@ -1244,8 +1244,8 @@ struct DeferralAnalysis {
     }
 
     // A read takes an empty slot for an absent property behind a test that no field of the object lies outside its slot, or without one where the property stays in its slot.
-    // The first read by slot makes the closure as the allocation would have. The first read by name makes it in the run time, which costs as much as forty closures made beside the allocation. Where the layout is proven such reads are few. Code that only expects it makes an object for whoever comes, so the closure waits only where no code that is expected to run often asks for it by name.
-    void rejectFieldsOfExpectedLayoutsReadByNameInWarmCode()
+    // The first read by slot creates the closure as the allocation would have. The first read by name creates it in the runtime, which costs as much as forty closures created with the allocation. With a proven layout such reads are rare. With a layout that is only expected, any code may receive the object, so the closure is only deferred if no warm code reads it by name.
+    void rejectWarmFieldsReadByName()
     {
         for (ValueReference reference : accesses[NamedReadExpectedToRun]) {
             if (isCold(heat.of(program, reference.function)).predicted())
@@ -1431,8 +1431,8 @@ struct DeferralAnalysis {
         findCalleeStores();
         rejectFieldsByWhatComesIntoThem();
         times.didFinish("rejectFieldsByWhatComesIntoThem"_s);
-        rejectFieldsOfExpectedLayoutsReadByNameInWarmCode();
-        times.didFinish("rejectFieldsOfExpectedLayoutsReadByNameInWarmCode"_s);
+        rejectWarmFieldsReadByName();
+        times.didFinish("rejectWarmFieldsReadByName"_s);
         for (uint64_t numberOfChangesBefore = numberOfChanges + 1; numberOfChangesBefore != numberOfChanges;) {
             numberOfChangesBefore = numberOfChanges;
             countFolds();

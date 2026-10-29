@@ -53,7 +53,7 @@ struct FlowAppendedField {
     FieldFlow flow;
     FlowAccessorField accessor;
     bool isFilledByCreators { false };
-    // Of a field that holds a value: the form in which every definition creates the property.
+    // For a field that holds a value: the form in which every definition creates the property.
     OptionSet<FieldForm> formOfValue;
 };
 

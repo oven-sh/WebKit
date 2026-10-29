@@ -1102,11 +1102,11 @@ struct MovableCode {
     MembersFirstRead membersFirstRead { };
     // Of what is being looked at: whether every run of the item comes by it.
     bool isPassedByEveryRun { true };
-    // Object.defineProperty makes a name of a function read-only unless the descriptor says otherwise, and a store under that name throws in strict code.
-    // The function goes from body to body, so the two are told by the name: the names on either side of all that was judged to move, and those under which no store moves.
+    // Object.defineProperty makes a function's property read-only unless the descriptor says otherwise, and a store to it throws in strict code.
+    // The function moves from body to body, so the two are communicated by name: the names on either side of everything that was judged movable, and those whose stores do not move.
     Vector<StringID, 4> namesMadeReadOnly { };
     Vector<StringID, 4> namesStoredOnFunctions { };
-    Vector<StringID, 4> namesThatRefuseStores { };
+    Vector<StringID, 4> namesRejectingStores { };
 
     const Type& typeOf(const Function& function, ValueID id) const { return arenas.types.at(function.at(id).type); }
     bool isText(StringID string, ASCIILiteral text) const { return equalSpans(program.string(string), text.span8()); }
@@ -1117,7 +1117,7 @@ struct MovableCode {
         if (!lists(names, name))
             names.append(name);
     }
-    bool hasStoreUnderNameMadeReadOnly() const { return std::ranges::any_of(namesStoredOnFunctions, [&](StringID name) { return lists(namesMadeReadOnly, name); }); }
+    bool hasStoreToReadOnlyName() const { return std::ranges::any_of(namesStoredOnFunctions, [&](StringID name) { return lists(namesMadeReadOnly, name); }); }
     bool isMadeOrNoReference(const Function& function, const Knowledge& known, ValueID id) const { return known.made.get(id.index()) || !mayBeReference(typeOf(function, id)); }
     // To make a key of it runs no code.
     bool isPrimitiveKey(const Function& function, ValueID id) const { return !typeOf(function, id).hasObjects() && typeOf(function, id).isJavaScriptValue(); }
@@ -1580,7 +1580,7 @@ struct MovableCode {
             StringID name = isLikeAnyOtherName ? program.at(value.key()).text : StringID();
             if (!name)
                 return isLikeAnyOtherName;
-            if (lists(namesThatRefuseStores, name))
+            if (lists(namesRejectingStores, name))
                 return false;
             addTo(namesStoredOnFunctions, name);
             return true;
@@ -1776,7 +1776,7 @@ struct InitializerPlan {
 } // anonymous namespace
 
 // Of a body that runs at most once and stores to a variable that may stay empty.
-static void findInitializerUnits(const InitializerScanContext& context, FunctionID id, TaskArenas& arenas, Vector<InitializerUnit>& found, Vector<StringID, 4>&& namesThatRefuseStores = { })
+static void findInitializerUnits(const InitializerScanContext& context, FunctionID id, TaskArenas& arenas, Vector<InitializerUnit>& found, Vector<StringID, 4>&& namesRejectingStores = { })
 {
     constexpr uint32_t noItem = UINT32_MAX;
     enum class State : uint8_t { Stays, IsRepeated, Moves };
@@ -1785,7 +1785,7 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     const Function& function = program.at(id);
     FunctionAnalyses analyses(context.analysisContextOf(id), function);
     MovableCode code { context, arenas };
-    code.namesThatRefuseStores = WTF::move(namesThatRefuseStores);
+    code.namesRejectingStores = WTF::move(namesRejectingStores);
     CFG& cfg = analyses.cfg();
 
     Vector<BlockID, 16> spine = findBlocksThatEveryRunPasses(analyses);
@@ -2048,10 +2048,10 @@ static void findInitializerUnits(const InitializerScanContext& context, Function
     };
     for (uint32_t index = 0; index < items.size(); ++index)
         classify(index);
-    // The stores under such a name stay, with all that they keep. What else was judged leaned on them, so the look begins again.
-    if (code.hasStoreUnderNameMadeReadOnly()) {
-        code.namesThatRefuseStores.appendVector(code.namesMadeReadOnly);
-        return findInitializerUnits(context, id, arenas, found, WTF::move(code.namesThatRefuseStores));
+    // Stores to such a name stay, with everything they keep alive. Other decisions relied on them, so the scan restarts.
+    if (code.hasStoreToReadOnlyName()) {
+        code.namesRejectingStores.appendVector(code.namesMadeReadOnly);
+        return findInitializerUnits(context, id, arenas, found, WTF::move(code.namesRejectingStores));
     }
 
     auto estimatedCostOf = [&](const Item& item) -> unsigned {

@@ -490,8 +490,8 @@ static void testCompressedPointer()
     checkFindsNothing(bare);
 }
 
-// A store of a reference is handed on to a load of it behind a safepoint. The guards put the pointer in the place of the sum, and what chooses between it and the word is a pointer as before.
-static void testCompressedPointerDecodedBehindSafepoint()
+// A store of a reference is forwarded to a load of it after a safepoint. The guards replace the sum with the pointer, and the select between it and the word is still a pointer.
+static void testCompressedPointerDecodedAfterSafepoint()
 {
     Graph graph;
     B3::Value* pointer = graph.loadThrough(graph.object);
@@ -707,7 +707,7 @@ static void testSuspension()
     auto build = [](Graph& graph, Lists lists) {
         B3::Value* reference = graph.loadReference();
         B3::Value* pointer = graph.unary(B3::Opaque, graph.decode(reference));
-        // An operation that suspends may call first. The frame is saved behind the call.
+        // An operation that suspends may call first. The frame is saved after the call.
         graph.safepoint(suspensionOrigin);
         B3::PatchpointValue* suspension = graph.safepoint(suspensionOrigin);
         suspension->setIsSuspension(true);
@@ -870,7 +870,7 @@ std::span<const NativeTest> narrowReferenceValidationTests()
         { "narrow-reference-safepoint-in-inner-loop-and-use-in-outer-loop"_s, testSafepointInInnerLoopAndUseInOuterLoop },
         { "narrow-reference-cycle-with-two-entries"_s, testCycleWithTwoEntries },
         { "narrow-reference-compressed-pointer"_s, testCompressedPointer },
-        { "narrow-reference-compressed-pointer-decoded-behind-safepoint"_s, testCompressedPointerDecodedBehindSafepoint },
+        { "narrow-reference-compressed-pointer-decoded-behind-safepoint"_s, testCompressedPointerDecodedAfterSafepoint },
         { "narrow-reference-pointer-held-only-by-dead-code"_s, testPointerHeldOnlyByDeadCode },
         { "narrow-reference-displaced-only-by-dead-code"_s, testReferenceDisplacedOnlyByDeadCode },
         { "narrow-reference-in-argument-register"_s, testReferenceInArgumentRegister },

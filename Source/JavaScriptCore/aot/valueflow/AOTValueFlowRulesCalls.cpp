@@ -784,7 +784,7 @@ void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
     ClimbingSet callees = context.valueOf(context.operandsOf(statement)[0]);
     context.proxiesAskedByTheirTrapsIn(context.operandsOf(statement)[0]);
     applyEventsOfCall(statement, context, callees);
-    // Beside a value nobody knows the callee shows nothing that has escaped. A function of the library that may call an evaluator and has come here is called here all the same.
+    // Next to an unknown value, the callee shows nothing that has escaped. A library function that may call an evaluator and has arrived here is still called here.
     if (ValueFlowNodeID callee = context.operandsOf(statement)[0].node; callee && context.contains(callees, ValueFlowUniverse::unknownObject()))
         applyEventsOfCall(statement, context, context.valueWithin(ClimbingSet(universe.eventRaisingLibraryClosures()), callee));
     describeObjectsRefusedAsFunctions(context, callees);

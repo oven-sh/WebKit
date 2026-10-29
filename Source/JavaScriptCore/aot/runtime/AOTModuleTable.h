@@ -84,7 +84,7 @@ public:
     String pathTextForLineColumns(ModuleID) const;
     bool hasFilePath(ModuleID module) const { return data(module).hasExportTable() || data(module).kind == ModuleKind::CommonJs; }
     bool hasFileWithExtension(StringView) const;
-    // The path of each file of the program with code that begins with `start`, in the order of the paths.
+    // The path of each program file with code that starts with `start`, in sorted order.
     IterationStatus forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>&) const;
 
 private:

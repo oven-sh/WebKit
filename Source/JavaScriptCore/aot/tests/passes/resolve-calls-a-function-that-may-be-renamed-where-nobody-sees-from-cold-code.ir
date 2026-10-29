@@ -1,8 +1,8 @@
-# To keep the function object costs one store, so cold code too calls a function directly whose function objects may get another name where nobody sees.
+# Reading the captures and keeping the function object takes more bytes than a call by value, so cold code calls by value a function whose closures may be renamed out of sight.
 # FORM: Prepared
 # OPTIONS: heat=EverythingIsCold
 # RUN: pass ResolveCalls
-# CHECK: outcome: Changed
+# CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="renamedWhereNobodySees" kind=Arrow captures=[{type=number}] parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, RecordsCallee, RecordsCalleeOnceRenamed] {
@@ -16,6 +16,6 @@ function f2 name="callsTheFirst" parameters=[{type=f0}, {type=anything}] results
     v2 = Call v0, -, v1
     Return v2
 # CHECK-NOT: AreFunctionNamesUnchanged
-# CHECK: KeepCalleeInFrame v0
-# CHECK-NEXT: = CallDirect {{*}}, v1 function=f0 [calleeIsKeptInFrame
+# CHECK-NOT: KeepCalleeInFrame
+# CHECK: = Call v0, -, v1
 }

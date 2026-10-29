@@ -362,7 +362,7 @@ BuiltinClassID builtinBaseClassOf(const Program& program, LayoutID id)
 }
 
 // The constructor requests the Structure for the new object before it runs any program code.
-static bool asksForStructureFirst(const BuiltinTable& builtins, BuiltinClassID builtinClass)
+static bool requestsStructureFirst(const BuiltinTable& builtins, BuiltinClassID builtinClass)
 {
     return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::WeakMap || builtinClass == BuiltinClasses::WeakSet
         || builtinClass == BuiltinClasses::Array || builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Error);
@@ -501,7 +501,7 @@ void noteSubclassesOfBuiltinClasses(Program& program, const ParallelLoops& loops
     Vector<BuiltinClassID> classWithoutBrandAbove(program.layouts.size());
     bool hasClassWithoutBrand = false;
     for (auto [layout, builtinClass] : written) {
-        bool givesBrand = asksForStructureFirst(builtins, builtinClass);
+        bool givesBrand = requestsStructureFirst(builtins, builtinClass);
         (givesBrand ? program.at(layout).writtenBuiltinBase : classWithoutBrandAbove[layout.index()]) = builtinClass;
         hasClassWithoutBrand |= !givesBrand;
     }
@@ -551,7 +551,7 @@ bool carriesBrandOfClass(const Program& program, LayoutID id)
     const Layout& layout = program.at(id);
     if (!layout.writtenBuiltinBase || layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsConstructorFunction))
         return false;
-    if (layout.classFlow.evaluations != ExecutionCount::AtMostOnce || layout.flow.allocation == AllocationState::NeverAllocated || !asksForStructureFirst(program.builtins(), layout.writtenBuiltinBase))
+    if (layout.classFlow.evaluations != ExecutionCount::AtMostOnce || layout.flow.allocation == AllocationState::NeverAllocated || !requestsStructureFirst(program.builtins(), layout.writtenBuiltinBase))
         return false;
     LayoutID current = id;
     for (size_t steps = 0; steps < program.layouts.size(); ++steps) {

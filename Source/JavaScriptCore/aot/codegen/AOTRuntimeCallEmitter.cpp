@@ -620,8 +620,8 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
     // An operation whose allocation fails throws when it returns. In a function with handlers, its site records which handler, if any, is active there.
-    bool mayFindNoRoom = context && returns && request.effectsOfCallee.mayCollect && !options.pureFunction && !options.followsThrow && analyses().cfg().hasHandlers();
-    bool hasSite = effects.mayExitSideways() || options.capturesStackTrace || mayFindNoRoom;
+    bool mayFailToAllocate = context && returns && request.effectsOfCallee.mayCollect && !options.pureFunction && !options.followsThrow && analyses().cfg().hasHandlers();
+    bool hasSite = effects.mayExitSideways() || options.capturesStackTrace || mayFailToAllocate;
     if (m_options.recorded.isSabotaged(Sabotage::CallsThatThrowHaveNoSite) && returns && context && !effects.mayRunOtherCode() && !options.capturesStackTrace && !options.throwSite && !request.firstRead) [[unlikely]]
         hasSite = false;
     RELEASE_ASSERT(context || (!hasSite && (!effects.mayCollect || options.followsThrow)));
@@ -706,7 +706,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
         }
         return { };
     }
-    if ((effects.mayThrow || mayFindNoRoom) && site)
+    if ((effects.mayThrow || mayFailToAllocate) && site)
         emitter<ExceptionEmitter>().attachLandingPad(*context, patchpoint, *site, returns);
     if (neverReturns) {
         m_out.appendTo(newBlock());
@@ -821,7 +821,7 @@ RecordedSite RuntimeCallEmitter::recordedSiteOf(const OperationContext& context,
     // No stack trace lists a function that only built-in code can name.
     if (calledBuiltin && BuiltinBindings::linkTimeConstantOf(calledBuiltin))
         calledBuiltin = { };
-    bool standsForCallee = origin.isTailCall && !options.isTailCall && !options.constructs;
+    bool standsForCallee = calledBuiltin ? (origin.isTailCall || options.isTailCall) && !options.constructs : origin.isTailCall && !options.isTailCall && !options.constructs;
     // A call, and the read of the method that it calls, can throw before the callee begins.
     bool isInsideCallee = standsForCallee && (calledBuiltin || !value || !runsBeforeCalleeOf(value->opcode));
     std::optional<CallSiteKind> kind = findCallSiteKind({ .isConstruct = options.constructs, .isTailCall = options.isTailCall || origin.isTailCall, .isInsideCallee = isInsideCallee, .namesBuiltin = !!calledBuiltin });

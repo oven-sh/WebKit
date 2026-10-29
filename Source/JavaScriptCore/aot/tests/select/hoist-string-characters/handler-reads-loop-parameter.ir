@@ -1,0 +1,78 @@
+# The exception handler of the loop reads a parameter of the loop header directly, not as a handler argument. The block that flattens the string before the loop is under that handler too,
+# and the parameter has no value there. So the handler takes the parameter as an argument: the blocks of the loop pass the parameter, the block before the loop passes its initial value.
+# FORM: Prepared
+# OPTIONS: check=VerifyEachPass
+# RUN: pass Select
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="handler-reads-loop-parameter" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6) handler=b4():
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    Return v6
+  b4() role=CatchHandler:
+    v11 = CatchValue
+    Return v6
+# CHECK: b4([[received]]: undefined|number) role=CatchHandler:
+# CHECK: Return [[received]]
+# CHECK: handler=b4(v2):
+# CHECK-NEXT: flatstring = FlattenString v0
+}
+
+function f1 name="join-after-handler-reads-loop-parameter" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6) handler=b4():
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v11 = CatchValue
+    Jump -> next b5()
+  b5():
+    Return v6
+# The handler does not dominate the read, so an argument of the handler cannot replace it: the string is not flattened before the loop.
+# CHECK-NOT: FlattenString
+# CHECK: Return v6
+}
+
+function f2 name="only-the-exit-reads-loop-parameter" parameters=[{type=string}, {type=number}] results=[{type=anything}] {
+    v2 = Undefined
+    v3 = Integer integer=0
+    v4 = Integer integer=1
+    Jump -> next b1(v3, v2)
+  b1(v5, v6) handler=b4():
+    LoopHint
+    v8 = Less v5, v1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2() handler=b4():
+    v9 = CallBuiltin v0, v5 overload=StringPrototypeCharCodeAt/0 builtinCallForm=Whole
+    v10 = Add v5, v4
+    Jump -> next b1(v10, v9)
+  b3():
+    Return v6
+  b4() role=CatchHandler:
+    v11 = CatchValue
+    Return v2
+# The handler does not reach the exit of the loop, so the string is still flattened on the loop entry.
+# CHECK: handler=b4():
+# CHECK-NEXT: flatstring = FlattenString v0
+}

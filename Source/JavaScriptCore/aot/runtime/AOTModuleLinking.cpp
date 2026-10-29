@@ -510,8 +510,12 @@ JSValue Modules::evaluateForCapture(ModuleID module)
 
     std::optional<ModuleID> file = m_table.fileBehindFace(module);
     RELEASE_ASSERT(file);
-    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
-    RETURN_IF_EXCEPTION(scope, { });
+    // A require() started the file, which is still running, and its face has not begun: there is nothing to evaluate.
+    bool isFileRunningWithoutFace = status(*file) == ModuleStatus::Evaluating && (status(module) == ModuleStatus::Unlinked || status(module) == ModuleStatus::Linked);
+    if (!isFileRunningWithoutFace) {
+        evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     RELEASE_AND_RETURN(scope, exportsSeenByLoader(*file));
 }
 

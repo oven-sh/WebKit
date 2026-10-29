@@ -26,8 +26,8 @@ struct State;
 
 using ChainObjects = Vector<JSObject*, 4>;
 
-// Which objects were put in. It may take an object that never was put in for one that was, and never the other way round.
-// It holds no object: whatever lies later where one of them lay is taken for it.
+// A set of objects with false positives: it may report an object that was never added, but never misses one that was.
+// It keeps no object alive: a later object at the same address counts as the earlier one.
 class ObjectsSeen {
 public:
     void add(const JSObject* object) { m_words[hashOf(object) / 64] |= uint64_t { 1 } << hashOf(object) % 64; }
@@ -112,7 +112,7 @@ public:
     void add(std::span<JSObject* const> chainObjects, const ChainDependent&);
     // What the engine remembers in the Structure about names above its objects is forgotten with the dependent.
     void addStateOfStructure(std::span<JSObject* const> chainObjects, Structure*, UniquedStringImpl*);
-    // Most objects that report a change are being filled, and nothing has looked at them yet.
+    // Most objects that report a change are still being filled, and nothing has looked at them yet.
     void didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
     {
         if (m_objectsWithDependents.mayContain(changed))

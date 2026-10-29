@@ -29,7 +29,7 @@ AOT_THRESHOLD(size_t, maxLayoutsComparedForField, 8);
 
 namespace {
 
-// One of: a name that is asked of what the field holds, a layout that is stored in it, another field that was filled with the same value, that the code that allocates the object fills the field, or that an array is stored in it.
+// One of: a name that is read from the field's value, a layout that is stored in it, another field that was filled with the same value, that the allocating code fills the field, or that an array is stored in it.
 struct NameAskedOfField {
     FieldReference field;
     PropertyKeyID name;

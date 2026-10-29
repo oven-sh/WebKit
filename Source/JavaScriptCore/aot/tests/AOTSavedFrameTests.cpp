@@ -31,11 +31,14 @@
 #include "AOTVector.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
+#include "JSMicrotask.h"
 #include "MarkedSpaceInlines.h"
+#include "MicrotaskQueue.h"
 #include "ObjectConstructor.h"
 #include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/NoTailCalls.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
 
@@ -959,6 +962,79 @@ static void checkAdapterAboveResumedFrameWritesItsSaveArea(LoadedProgram& progra
     AOT_TEST_CHECK(!scope.exception() && numberOfSaveAreasRead == 1);
 }
 
+static const uint64_t* frameOfJobCaller;
+static unsigned numberOfJobEntriesRead;
+
+static JSC_DECLARE_HOST_FUNCTION(readFramesBelowJobCaller);
+JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* callFrame))
+{
+    if (!callFrame->argumentCount())
+        return JSValue::encode(jsNumber(1));
+    auto* frame = reinterpret_cast<const uint64_t*>(callFrame);
+    unsigned numberOfFrames = 0;
+    while (*reinterpret_cast<const uint64_t* const*>(frame) != frameOfJobCaller) {
+        frame = *reinterpret_cast<const uint64_t* const*>(frame);
+        AOT_TEST_CHECK(++numberOfFrames < 12);
+    }
+    unsigned numberOfUnwrittenWords = 0;
+    for (auto* word = reinterpret_cast<const uint64_t*>(callFrame); word < frame; ++word)
+        numberOfUnwrittenWords += *word == wordOfDeadStack;
+#if CPU(ARM64)
+    // Registers are saved in pairs: a frame that saves an odd number of them has a word of padding.
+    AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);
+#else
+    AOT_TEST_CHECK(!numberOfUnwrittenWords);
+#endif
+    ++numberOfJobEntriesRead;
+    return JSValue::encode(jsNumber(2));
+}
+
+static NEVER_INLINE void runJobOverFilledStack(JSGlobalObject* realm, VM& vm, const QueuedTask& job)
+{
+    NO_TAIL_CALLS();
+    frameOfJobCaller = static_cast<const uint64_t*>(__builtin_frame_address(0));
+    fillDeadStack();
+    auto arguments = job.arguments();
+    runInternalMicrotask(realm, vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
+}
+
+// A garbage collection reads every word of every frame. The job's own frame is gone when compiled code runs, and the frames on the way in write all of their words.
+static void checkFramesBetweenJobAndCompiledCodeAreWritten(LoadedProgram& program)
+{
+#if HAVE(MUST_TAIL_CALL) && !ENABLE(EXCEPTION_SCOPE_VERIFICATION) && !ASAN_ENABLED
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    program.realms().evaluate(realm, "globalThis.register = waitTwice => { globalThis.waitTwice = waitTwice; };"_s);
+    std::optional<ModuleID> module = findModule("main.js"_s);
+    AOT_TEST_CHECK(module);
+    evaluateModuleSynchronously(realm, *module);
+    AOT_TEST_CHECK(!scope.exception());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSFunction::create(vm, realm, 0, "readFrames"_s, readFramesBelowJobCaller, ImplementationVisibility::Public));
+    arguments.append(program.realms().evaluate(realm, "Promise.resolve(3)"_s));
+    numberOfJobEntriesRead = 0;
+    call(realm, program.realms().evaluate(realm, "waitTwice"_s), arguments, "waitTwice is a function"_s);
+    AOT_TEST_CHECK(!scope.exception() && !numberOfJobEntriesRead);
+
+    MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
+    AOT_TEST_CHECK(queue.size() == 1);
+    std::optional<QueuedTask> job;
+    queue.allOf([&](const QueuedTask& queued) {
+        job = queued;
+        return true;
+    });
+    AOT_TEST_CHECK(job->job() == InternalMicrotask::CompiledAsyncFunctionResume);
+    queue.clear();
+    runJobOverFilledStack(realm, vm, *job);
+    AOT_TEST_CHECK(!scope.exception() && numberOfJobEntriesRead == 1);
+    vm.drainMicrotasks();
+#else
+    UNUSED_PARAM(program);
+#endif
+}
+
 std::span<const NativeTest> savedFrameTests()
 {
     static constexpr NativeTest tests[] = {
@@ -982,6 +1058,7 @@ std::span<const NativeTest> savedFrameTests()
         { "saved-frame/lowest-words-are-cleared-at-the-first-save"_s, runNativeTestWithLoadedProgram<savedFrameTests, programText, checkLowestWordsAreClearedAtTheFirstSave> },
         { "saved-frame/dead-words-are-overwritten-at-a-collection"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkDeadWordsAreOverwrittenAtACollection> },
         { "saved-frame/adapter-above-a-resumed-frame-writes-its-save-area"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkAdapterAboveResumedFrameWritesItsSaveArea> },
+        { "saved-frame/frames-between-job-and-compiled-code-are-written"_s, runNativeTestWithLoadedProgram<savedFrameTests, programWithTwoAwaitsText, checkFramesBetweenJobAndCompiledCodeAreWritten> },
         { "saved-frame/listed-words-survive-a-collection"_s, testListedWordsSurviveACollection },
     };
     return tests;

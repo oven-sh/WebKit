@@ -1,6 +1,0 @@
-# The program of ../../answers is one in which the head of a function is copied into its caller and the call of the rest stays.
-# FORM: AsRead
-# RUN: compile
-# STATISTIC: InlineDecisionInlineHead >= 1
-# CHECK: image not empty
-# PROGRAM-OF: ../../answers/heads-of-functions-that-are-copied-into-their-callers.ir

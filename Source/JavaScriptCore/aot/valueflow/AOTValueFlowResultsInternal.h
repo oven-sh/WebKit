@@ -388,31 +388,31 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
     RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
 }
 
-// Where each object that code outside the program holds went out of sight. An object goes out at a statement that hands it over, or behind another object:
-// the contents behind their holder, a prototype and its constructor behind an instance, an instance behind its constructor. Those lead round in a ring,
-// so an origin is a statement that hands over by itself, and everything that follows counts for it. Nothing here follows the order of the rounds: that follows the number of threads.
-class ValueFlowOriginsOfEscapes {
-    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowOriginsOfEscapes);
+// Where each object held by code outside the program escaped. An object escapes at a statement that passes it on, or through another object:
+// contents through their holder, a prototype and its constructor through an instance, an instance through its constructor. These relations form cycles,
+// so an origin is a statement that passes an object on by itself, and everything that follows is attributed to it. Nothing here depends on the order of the rounds, which depends on the number of threads.
+class ValueFlowEscapeOrigins {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowEscapeOrigins);
 public:
-    explicit ValueFlowOriginsOfEscapes(const ValueFlowResultInputs&);
+    explicit ValueFlowEscapeOrigins(const ValueFlowResultInputs&);
 
-    // Objects go out of sight along it: at a statement that hands them over, or behind any of the objects that hold them, make them or inherit from them.
-    struct WayOut {
+    // Objects escape along it: at a statement that passes them on, or through any object that holds them, creates them or inherits from them.
+    struct EscapePath {
         uint32_t round { 0 };
         ValueFlowStatementID statement;
-        ValueSetID leaders;
-        ValueSetID brought;
+        ValueSetID through;
+        ValueSetID escaping;
     };
 
     ValueFlowStatementID originOf(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : ValueFlowStatementID(); }
-    std::span<const WayOut> ways() const LIFETIME_BOUND { return m_ways.span(); }
-    std::span<const uint32_t> waysBehind(ValueFlowObjectID leader) const LIFETIME_BOUND { return m_waysBehind.subspan(m_firstWayBehind[leader.index()], m_firstWayBehind[leader.index() + 1] - m_firstWayBehind[leader.index()]); }
+    std::span<const EscapePath> paths() const LIFETIME_BOUND { return m_paths.span(); }
+    std::span<const uint32_t> pathsThrough(ValueFlowObjectID holder) const LIFETIME_BOUND { return m_pathsThrough.subspan(m_firstPathThrough[holder.index()], m_firstPathThrough[holder.index() + 1] - m_firstPathThrough[holder.index()]); }
 
 private:
     Vector<ValueFlowStatementID> m_originOfObject;
-    Vector<WayOut> m_ways;
-    Vector<uint32_t> m_firstWayBehind;
-    Vector<uint32_t> m_waysBehind;
+    Vector<EscapePath> m_paths;
+    Vector<uint32_t> m_firstPathThrough;
+    Vector<uint32_t> m_pathsThrough;
 };
 
 class ValueFlowBirthsOfUnknownObject {
@@ -423,10 +423,10 @@ public:
     Witness witnessOf(ValueFlowNodeID) const;
     std::optional<ValueFlowUnknownSource> sourceOf(ValueFlowNodeID) const;
     bool hasSeveralRoots(ValueFlowNodeID node) const { return node && m_hasSeveralRoots.get(node.index()); }
-    // Where an object that code outside the program holds went out of sight, or the object that it followed.
-    Witness originOfEscape(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : noWitness; }
-    // Without that place the object still goes out, by a way that begins elsewhere.
-    bool hasOtherOriginsOfEscape(ValueFlowObjectID object) const { return m_hasOtherOrigins.get(object.index()); }
+    // Where an object held by code outside the program escaped, or the object through which it escaped.
+    Witness escapeOriginOf(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : noWitness; }
+    // Without that place the object still escapes, by a path that starts elsewhere.
+    bool hasOtherEscapeOrigins(ValueFlowObjectID object) const { return m_hasOtherOrigins.get(object.index()); }
 
 private:
     static constexpr uint32_t none = UINT32_MAX;

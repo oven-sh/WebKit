@@ -127,7 +127,7 @@ function f9 name="recurseAndRead" parameters=[{type=anything}, {type=anything}] 
     Return v8
 }
 function f10 name="applies" parameters=[{type=anything}] results=[{type=anything}] {
-    v1 = Call v0 calledBuiltin=FunctionPrototypeApply @120
+    v1 = Call v0 calledBuiltin=MathMin @120
     Return v1
 }
 )IR"_s;
@@ -341,10 +341,10 @@ static void testTraceWithBuiltinFormattedByGC()
     fullGC();
     for (let error of errors)
         print(names(error.stack));
-)js"_s, R"(makeError < apply < applies < dead < driver
-makeError < apply < applies < dead < driver
-makeError < apply < applies < dead < driver
-makeError < apply < applies < dead < driver
+)js"_s, R"(makeError < min < applies < dead < driver
+makeError < min < applies < dead < driver
+makeError < min < applies < dead < driver
+makeError < min < applies < dead < driver
 )"_s);
 }
 

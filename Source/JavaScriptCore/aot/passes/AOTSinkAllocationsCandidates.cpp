@@ -2117,7 +2117,7 @@ void AllocationSinking::computeInputsOf(BlockID block)
         uint64_t readMemberGuards { 0 };
     };
     const Block& contents = m_function.at(block);
-    // An operation that finds no room for what it allocates throws where it returns.
+    // An operation whose allocation fails throws when it returns.
     auto mayThrowToHandler = [&](const EffectsOnEdges& effects) {
         return effects.mayThrow() || (contents.handler && effects.onAnyEdge().mayCollect);
     };

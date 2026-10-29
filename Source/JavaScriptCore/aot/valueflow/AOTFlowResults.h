@@ -327,7 +327,7 @@ public:
     std::span<const FlowIndirectCall> indirectCallsFrom(FunctionID callerAsRead) const LIFETIME_BOUND;
 
     const ModuleFlow& module(ModuleID) const LIFETIME_BOUND;
-    // An operation of a body that is reached named the namespace object when flow looked. What flow says of the object holds for the operations that run, and such a one may stand where nothing does.
+    // An operation in a reachable body named the namespace object when flow analysis ran. What flow analysis says about the object holds for operations that run, and such an operation may be in code that never does.
     bool wasNamespaceNamedByOperation(ModuleID module) const { return m_tables.wholeProgram.modulesWithNamespaceNamedByOperations.get(module.index()); }
 
     BuiltinLocationState builtinLocation(BuiltinID member) const { return member && m_tables.builtins.constantMembers.get(member.index()) ? BuiltinLocationState::Constant : BuiltinLocationState::Unknown; }

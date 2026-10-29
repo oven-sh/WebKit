@@ -325,10 +325,10 @@ static void mergeHeldObjects(AllocationSinking& sinking, const SinkingState& int
             target.hold(field, objectInSource);
             continue;
         }
-        bool isBuiltBeforeTheWaysPart = objectInTarget && objectInSource ? false
+        bool isBuiltBeforePathsDiverge = objectInTarget && objectInSource ? false
             : objectInTarget ? sinking.buildCycleBeforeBranches(into, object, objectInTarget)
             : sinking.buildCycleBeforeBranches(from, object, objectInSource);
-        if (!isBuiltBeforeTheWaysPart)
+        if (!isBuiltBeforePathsDiverge)
             holdCellsInFamilyOf(sinking, object, field);
         if (objectInTarget)
             target.release(field);
@@ -602,7 +602,7 @@ private:
                 handlerEntry->includesCurrentState = false;
             numberOfValuesPassed = index + 1;
             bool mayThrowToHandler = handlerEntry && m_inputs.throwingValues.get(value.index());
-            // Whatever names an object may have it built, and what is built may find no room.
+            // Anything that names an object may force it to be built, and building may fail to allocate.
             bool mayBuild = handlerEntry && !(entry & AllocationSinking::onlyWritesOrThrows) && holdsObjectToBuild(state);
             if (mayThrowToHandler || mayBuild)
                 meetCurrentState(*handlerEntry, state);
@@ -624,7 +624,7 @@ private:
         interpreter.executeTerminatorOf(id);
         if (handlerEntry) {
             handlerEntry->includesCurrentState = false;
-            // The ways on may build what is left.
+            // The successor paths may build the rest.
             if (mayThrowToHandler || holdsObjectToBuild(state))
                 meetCurrentState(*handlerEntry, state);
         }
@@ -1374,7 +1374,7 @@ void ObjectInterpreter::dropDeadEntries(BlockID target, const SinkingState* head
         if (!entry.state.isCell() && !headOfTarget->find(entry.object))
             deadObjects.append(entry.object);
     }
-    // Thousands may die on one edge: they leave in one step.
+    // Thousands may die on one edge, so they are removed in one step.
     removeEntries(m_state.objects, &ObjectEntry::object, deadObjects.span());
     if (isRewriting())
         values().remove(deadObjects.span());

@@ -1106,8 +1106,8 @@ static void testHostUsesOfLibraryFunctions()
     auto drainMicrotasks = std::ranges::find(table().hostObjects(), call->arguments[2].nativeCell, &BuiltinHostObject::nativeCell);
     AOT_TEST_CHECK(drainMicrotasks != table().hostObjects().end() && drainMicrotasks->function && table().at(drainMicrotasks->function).kind == BuiltinKind::Function && table().at(drainMicrotasks->function).holder == Builtins::NativeFunctions);
 
-    // What getLightStdioWriteStreams answers holds both streams. The cell of each property keeps its stream, and the member of `console` holds it too.
-    // Whoever prints a warning calls `write` of the second, with the stream as the receiver, and drops what that answers.
+    // The result of getLightStdioWriteStreams holds both streams. Each property's cell keeps its stream, and the member of `console` holds it too.
+    // Printing a warning calls `write` on the second stream, with the stream as the receiver, and drops the result.
     for (BuiltinID stream : std::initializer_list<BuiltinID> { hostBuiltin("ProcessStdout"_s), hostBuiltin("ProcessStderr"_s) }) {
         const BuiltinHostCall* creation = findCallOfOnlyFunction(stream, 1);
         AOT_TEST_CHECK(creation && creation->arguments.size() == 7 && creation->result.list.size() == 6);
@@ -1123,7 +1123,7 @@ static void testHostUsesOfLibraryFunctions()
         AOT_TEST_CHECK(write.call->thisValue.nativeCell == uses[2].nativeCell && write.call->arguments.size() == 1 && write.call->result.areListed && write.call->result.list.empty());
     }
 
-    // The stream is the first element of what getStdioWriteStream answers. That function hangs on the call of the function that the traps of the light stream call, once for each descriptor.
+    // The stream is the first element of getStdioWriteStream's result. That function is reached through the function that the light stream's traps call, once per descriptor.
     std::span<const BuiltinCalledFunction> makersOfWholeStreams = table().calledFunctionsOf(hostBuiltin("NativeFunctionsBunProcessCppProcess_functionNeedsWholeOutputStream"_s));
     AOT_TEST_CHECK(makersOfWholeStreams.size() == 1 && makersOfWholeStreams[0].uses.areListed && makersOfWholeStreams[0].uses.list.size() == 2);
     for (const BuiltinHostUse& use : makersOfWholeStreams[0].uses.list) {

@@ -746,6 +746,7 @@ public:
         , m_runner(StubPolicy { }, std::array { head })
     {
         Instance& instance = m_runner.instance();
+        instance.allocation.copiesWithoutFrame = m_places.data();
         instance.prefix().structureIDBase = m_structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
         instance.cellCageBase = cageBase();
         instance.barrierThreshold = blackThreshold;
@@ -850,6 +851,7 @@ private:
     FakeObject<sizeOfCell> m_target;
     FakeObject<sizeOfCell> m_source;
     MappedCopy m_copy;
+    std::array<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> m_places { };
     StubRun m_lastRun { };
 };
 
@@ -962,9 +964,9 @@ static void testCopiesOfPropertiesByMovesFrom(StubKey head, [[maybe_unused]] uin
 // Every head of a call that returns nothing walks the moves by itself, also the heads that preserve registers.
 static void testCopiesOfPropertiesByMoves()
 {
-    testCopiesOfPropertiesByMovesFrom(CopiesByMoves::headThatPreservesNothing(), 78);
+    testCopiesOfPropertiesByMovesFrom(CopiesByMoves::headThatPreservesNothing(), 80);
     for (OperationCall::Saves saves : { OperationCall::Saves::CallerSavedRegisters, OperationCall::Saves::CallerSavedGPRs })
-        testCopiesOfPropertiesByMovesFrom(callOperationPreservingRegisters({ .returns = OperationCall::Returns::Void, .saves = saves }).withImmediate(offsetInRuntimeTable(CopiesByMoves::operation)), 106);
+        testCopiesOfPropertiesByMovesFrom(callOperationPreservingRegisters({ .returns = OperationCall::Returns::Void, .saves = saves }).withImmediate(offsetInRuntimeTable(CopiesByMoves::operation)), 110);
 }
 
 // Every head of a call that returns nothing copies between records of one Structure by itself, also the heads that preserve registers.
@@ -989,6 +991,8 @@ static void testCopiesOfPropertiesByChunks()
         structure.at<const LayoutData*>(CompiledStructure::offsetOfLayout()) = &layout;
     }
     Instance& instance = runner.instance();
+    std::array<const MappedCopy*, AllocationWords::numberOfCopiesWithoutFrame> places { };
+    instance.allocation.copiesWithoutFrame = places.data();
     instance.prefix().structureIDBase = structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
     instance.barrierThreshold = blackThreshold;
 

@@ -54,13 +54,13 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
     return *result;
 }
 
-// A caller that enters a function without its function object keeps that in a word of its own frame. A tail call by value out of what it has entered returns to the same place, and the word says what runs there now.
+// A caller that enters a function without its function object keeps the object in a word of its own frame. An indirect tail call from the entered function returns to the same place, and the word identifies what runs there now.
 SUPPRESS_ASAN static bool keepCalleeInFrameOfCaller(VM& vm, FunctionTables& tables, JSCell* callee, void* stackPointerOfCaller)
 {
     std::optional<FunctionID> function = functionOf(callee);
     if (!function || !tables.recordsCalleesOf(*function))
         return false;
-    // generatePollBeforeEntering() has the return address of the call on the stack: where the call has pushed it, or below that of the stub.
+    // generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
     const void* returnAddress = removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
     const VMState& state = vm.aotState();
     const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, returnAddress);
@@ -176,8 +176,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* 
     VM& vm = *instance->vm;
     // A collection that starts here goes over the frames from this one.
     AOTOperationPrologueCallFrameTracer tracer(vm, AOT_OPERATION_FRAME_RECORD());
-    if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
-        vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();
@@ -189,8 +187,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, EncodedJSValue, (Instance* 
 
 static Exception* takePendingException(VM& vm)
 {
-    if (vm.heap.cage().hasDeadStackToClear()) [[unlikely]]
-        vm.heap.cage().clearDeadStack(vm);
     DeferGC collectsWhatThrowingPutOff(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Exception* exception = scope.exception();

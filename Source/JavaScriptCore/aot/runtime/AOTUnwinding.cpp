@@ -123,7 +123,6 @@ static ALWAYS_INLINE void finishAtHandler(CompiledUnwindResult& result, Instance
     instance.runtime.exceptions.stackPointerOfHandler = stackPointer;
     result.status = CompiledUnwindStatus::FoundHandler;
     result.handler = handler;
-    result.instance = &instance;
 }
 
 // The stub takes the thrown value, hands it to whoever waits for the coroutine and returns from the frame.
@@ -511,8 +510,8 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
     return isCaughtByCallersOfNativeCode(vm, runWithoutHandler->exit) ? Action::CaptureStack : Action::CaptureStackOfThrow;
 }
 
-// Only where the operation returns into a function, by itself or through a stub that does nothing more behind it: any other stub goes on, and must not find an exception.
-// Which handler is in force at a return address is known where the address has a site of its own, and in a function without handlers.
+// Only where the operation returns into a function, directly or through a stub that does nothing more after it: any other stub continues and must not find an exception.
+// The handler active at a return address is known if the address has its own site, or the function has no handlers.
 void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
 {
     VM& vm = *instance.vm;

@@ -218,7 +218,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
     OPERATION_RETURN(scope);
 }
 
-// Every function is born with a name that is configurable, read-only and not enumerable. A descriptor that names no other attribute changes only the value: `{ value }`, `{ value, configurable: true }`.
+// Every function is created with a name that is configurable, read-only and not enumerable. A descriptor that sets no other attribute only changes the value: `{ value }`, `{ value, configurable: true }`.
 static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* function, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();

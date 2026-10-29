@@ -991,7 +991,7 @@ static void checkTransitionTableGrows(LoadedProgram& program)
     constexpr uint32_t initialMask = 1023;
     AOT_TEST_CHECK(program.instance().objects.keyOrderTransitionMask == initialMask);
 
-    // Compiled code takes the step to the next key of an order of the image without the table, so such a step has no place there.
+    // Compiled code steps to the next key of an order in the image without the table, so such a step has no entry there.
     Vector<KeyOrderTransition> seen;
     Vector<KeyOrderTransition> seenInsideOrdersOfImage;
     const KeyOrderTable& keyOrders = program.state().objects->keyOrders;

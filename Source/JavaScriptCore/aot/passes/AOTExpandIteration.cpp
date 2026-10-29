@@ -943,17 +943,17 @@ static FunctionID findGeneratorMethodOpening(FunctionPassContext& pass, ValueID 
     return isUnchangedGenerator && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Generator, .builtinClass = BuiltinClasses::Generator }) ? plan.member.method : FunctionID();
 }
 
-static bool isExpectedToBeBelowArray(FunctionPassContext& pass, ValueID iterable)
+static bool isExpectedToBeArraySubclass(FunctionPassContext& pass, ValueID iterable)
 {
     const Program& program = pass.program;
     const Type& expected = program.expectedOrTypeOf(pass.function, iterable).predicted();
     if (!expected.layouts || !expected.withoutNullish().hasOnlyLayouts())
         return false;
-    bool isBelowArray = std::ranges::all_of(membersOf(program, expected), [&](LayoutID member) {
+    bool isArraySubclass = std::ranges::all_of(membersOf(program, expected), [&](LayoutID member) {
         return program.at(member).writtenBuiltinBase == BuiltinClasses::Array;
     });
     PropertyKeyID next = program.keyOf(BuiltinNames::next);
-    return isBelowArray && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Array, .builtinClass = BuiltinClasses::Array })
+    return isArraySubclass && hasConstantIteratorMethod(pass, IterationArm { .form = IterationForm::Array, .builtinClass = BuiltinClasses::Array })
         && findMemberOfInstances({ program, pass.inputs.flow }, BuiltinClasses::ArrayIterator, next).isConstant();
 }
 
@@ -981,7 +981,7 @@ static IterationPlan planIteration(FunctionPassContext& pass, const Iteration& i
 
     // The protocol arm of a value that may be a string nobody expected walks the string itself.
     IterationPlan plan = planWithClassArms(pass, planned.value, findClassArms(pass, planned));
-    if (isOnlyAskedForNextValue && plan.hasProtocolArm() && isExpectedToBeBelowArray(pass, planned.value))
+    if (isOnlyAskedForNextValue && plan.hasProtocolArm() && isExpectedToBeArraySubclass(pass, planned.value))
         plan.arms.last().alsoWalksLists = true;
     else if (isOnlyAskedForNextValue && plan.hasProtocolArm() && !plan.arms.containsIf([](const IterationArm& arm) { return arm.form == IterationForm::String; }))
         plan.arms.last().alsoServesStrings = canServe(pass, planned, IterationArm { .form = IterationForm::String, .testedType = TypeTable::string, .namesAreProven = true });

@@ -70,7 +70,8 @@ public:
     Operand callDirect(const OperationContext&, FunctionID, std::span<const Operand> arguments, const CallOptions& = { });
 
     void tailCallByConvention(const OperationContext&, const ConventionCall&);
-    void requireCallableBeforeTailCall(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
+    void requireCallable(const OperationContext&, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee, bool isAtTailCall);
+    void requireCallableBeforeTailCall(const OperationContext& context, Boxed callee, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt) { requireCallable(context, callee, siteThatNamesCallee, true); }
     void requireCallableBeforeTailCall(const ValueContext&, Boxed callee, Boxed thisValue);
     void didEmitTailCall();
     // Says what the program calls the callee, where it calls it anything.

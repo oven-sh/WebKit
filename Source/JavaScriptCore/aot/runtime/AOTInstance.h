@@ -198,7 +198,8 @@ struct MappedCopy;
 
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
-    static constexpr unsigned numberOfCopiesWithoutFrame = 64;
+    // A large program copies between several hundred pairs of shapes and key orders. Two pairs at one place evict each other, and an evicted copy takes a frame.
+    static constexpr unsigned numberOfCopiesWithoutFrame = 2048;
     static constexpr unsigned placeOfCopyWithoutFrame(uint64_t targetWords, uint64_t sourceWords, uint32_t excludedRunNumberPlusOne)
     {
         return static_cast<uint32_t>(sourceWords + (sourceWords >> 32) + 2 * (targetWords >> 32) + excludedRunNumberPlusOne) & (numberOfCopiesWithoutFrame - 1);
@@ -219,7 +220,7 @@ struct AllocationWords {
     uint64_t compactTableHeader;
     // CompactTable::growthPlans(). Null until an operation has added to a Map or Set.
     const uint64_t* compactTableGrowthPlans;
-    const MappedCopy* copiesWithoutFrame[numberOfCopiesWithoutFrame];
+    const MappedCopy** copiesWithoutFrame;
 };
 
 // Most objects that have extra properties have one or two.

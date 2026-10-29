@@ -170,7 +170,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
     bool copiesArguments = m_context.meet(withSourcesOfCopies(m_context, known(sources)), m_tables.argumentsObjects());
     if (keepsAccessors && (mayBeUnknownObject(sources) || holdsAnything(hostObjects) || copiesArguments || m_context.meet(sources, m_universe.builtinObjects())))
         connect(target, ValueFlowProgramNodes::escaped());
-    // An object nobody knows may keep a property behind an accessor of native code, and the copy takes its two functions.
+    // An unknown object may implement a property with a native accessor, and the copy takes its getter and setter.
     if (keepsAccessors && mayBeUnknownObject(sources)) {
         for (HeapPropertyPart part : { HeapPropertyPart::Getter, HeapPropertyPart::Setter })
             add(m_context.written(known(targets), writtenName(unknownHeapKey, part)), only(m_tables.undescribedNativeCode()));
@@ -261,12 +261,12 @@ void HeapRule::readAccessorFunctions(const ValueFlowOperand& object, const HeapK
     ValueFlowNodeID found = m_context.lookup(receivers, foundName(key, part));
     connect(m_context.masked(found, m_universe.callables()), m_statement.result);
     bool mayFindAccessorOfTable = m_context.meet(accessorsFoundFrom(receivers, key, part), m_universe.builtinObjects());
-    // The table says what a read of a property answers. Whether native code keeps the property as a value or behind an accessor of its own it says of the objects of the realm, whose own properties it lists:
-    // not of what a module of native code exports, nor of an object that a built-in makes.
+    // The table describes the result of reading a property. Whether native code implements the property as a value or as its own accessor is only recorded for the realm's objects, whose own properties it lists,
+    // not for the exports of a native module, nor for an object that a built-in creates.
     ValueSetMaker& maker = m_context.maker();
     ValueSetID objectsOfRealmInTable = maker.intersect(m_universe.builtinObjects(), ValueSets::complement(maker.unite(m_tables.objectsOfNativeModules(), m_tables.objectsOfPublicModules())));
-    ValueSetID madeByNativeCode = maker.intersect(m_universe.knownObjects(), ValueSets::complement(maker.unite(objectsOfRealmInTable, m_tables.objectsWithoutPropertiesOfNativeCode())));
-    bool mayFindAccessorOfNativeCode = search == PropertySearch::OwnProperty && m_context.meet(m_context.unite(receivers, withSourcesOfCopies(m_context, known(receivers))), madeByNativeCode);
+    ValueSetID createdByNativeCode = maker.intersect(m_universe.knownObjects(), ValueSets::complement(maker.unite(objectsOfRealmInTable, m_tables.objectsWithoutPropertiesOfNativeCode())));
+    bool mayFindAccessorOfNativeCode = search == PropertySearch::OwnProperty && m_context.meet(m_context.unite(receivers, withSourcesOfCopies(m_context, known(receivers))), createdByNativeCode);
     if (mayFindAccessorOfArguments || mayFindAccessorOfTable || mayFindAccessorOfNativeCode)
         addFunctionNobodyFollows();
     if (mayFindAccessorOfTable && part == HeapPropertyPart::Getter && key.mayNameNonEnumerable(m_program.keyOf(BuiltinNames::__proto__)))

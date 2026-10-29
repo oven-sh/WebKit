@@ -283,7 +283,7 @@ static ProgramHeader segmentOfKind(unsigned kind, uintptr_t address, size_t size
     return header;
 }
 
-// Hands the objects over as dl_iterate_phdr() does.
+// Passes the objects the way dl_iterate_phdr() does.
 static std::optional<LoadedObject> findObjectAmong(std::span<const LoadedObject> objects, uintptr_t address)
 {
     LoadedObjectSearch search(address);
@@ -294,7 +294,7 @@ static std::optional<LoadedObject> findObjectAmong(std::span<const LoadedObject>
     return search.found();
 }
 
-static void testObjectIsFoundWhereverItIsListed()
+static void testObjectIsFoundInEveryList()
 {
     constexpr size_t page = 4 * KB;
     const ProgramHeader segmentsOfLinker[] = {
@@ -331,22 +331,22 @@ static void testObjectIsFoundWhereverItIsListed()
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias + 4 * page));
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias + 5 * page));
         AOT_TEST_CHECK(!found->findSegment(executable.loadBias - 1));
-        // What another object holds is in no segment of this one.
+        // An address in another object is in no segment of this one.
         AOT_TEST_CHECK(!found->findSegment(linker.loadBias + page + 16));
         AOT_TEST_CHECK(!found->findSegment(library.loadBias + page + 16));
     } while (std::ranges::next_permutation(order).found);
 }
 
-static void testLoadedExecutableIsThisProgramAlone()
+static void testLoadedExecutableIsThisProgram()
 {
     struct Others {
         const LoadedObject& executable;
         unsigned segmentsTakenForThoseOfExecutable { 0 };
     };
     Others others { loadedExecutable() };
-    const ProgramHeader* code = others.executable.findSegment(reinterpret_cast<uintptr_t>(&testLoadedExecutableIsThisProgramAlone));
+    const ProgramHeader* code = others.executable.findSegment(reinterpret_cast<uintptr_t>(&testLoadedExecutableIsThisProgram));
     AOT_TEST_CHECK(code && code->p_flags & PF_X);
-    // The kernel describes the file that it was given. That is the dynamic linker where it was started with the program as its argument.
+    // The kernel describes the file it was given, which is the dynamic linker if that was started with the program as its argument.
     if (others.executable.findSegment(getauxval(AT_ENTRY))) {
         AOT_TEST_CHECK(reinterpret_cast<uintptr_t>(others.executable.programHeaders.data()) == getauxval(AT_PHDR));
         AOT_TEST_CHECK(others.executable.programHeaders.size() == getauxval(AT_PHNUM));
@@ -388,8 +388,8 @@ std::span<const NativeTest> startupTests()
         { "startup/borrowed-text-of-a-string-is-counted-without-an-image"_s, testBorrowedTextOfStringIsCountedWithoutImage },
 #if OS(LINUX)
         { "startup/main-thread-stack-ends-above-its-first-frame"_s, testMainThreadStackEndsAboveItsFirstFrame },
-        { "startup/an-object-is-found-wherever-the-process-lists-it"_s, testObjectIsFoundWhereverItIsListed },
-        { "startup/the-loaded-executable-is-this-program-alone"_s, testLoadedExecutableIsThisProgramAlone },
+        { "startup/an-object-is-found-wherever-the-process-lists-it"_s, testObjectIsFoundInEveryList },
+        { "startup/the-loaded-executable-is-this-program-alone"_s, testLoadedExecutableIsThisProgram },
 #endif
         { "startup/property-caches-are-created-at-first-use"_s, withProgram<testPropertyCachesAreCreatedAtFirstUse> },
         { "startup/global-object-reports-changes-once-an-answer-depends-on-it"_s, withProgram<testGlobalObjectReportsChangesOnceAnAnswerDependsOnIt> },

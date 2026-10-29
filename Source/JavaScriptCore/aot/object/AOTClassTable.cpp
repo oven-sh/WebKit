@@ -421,7 +421,7 @@ Structure* ClassTable::structureWithInstanceBrand(VM& vm, JSCell* parent, JSCell
     return last.withBrand;
 }
 
-static bool isLaidOnNewInstancesBy(const BuiltinTable& table, BuiltinClassID builtinClass, UniquedStringImpl* uid)
+static bool isDefinedOnNewInstancesBy(const BuiltinTable& table, BuiltinClassID builtinClass, UniquedStringImpl* uid)
 {
     if (uid->isSymbol())
         return false;
@@ -465,7 +465,7 @@ bool ClassTable::computeHasOnlyClassFieldNames(Structure* structure)
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         UniquedStringImpl* uid = entry.key();
         std::optional<uint32_t> number = identifiers.numberOf(uid);
-        hasOnlyClassFieldNames = (number && std::ranges::binary_search(namesOfFields, *number)) || isLaidOnNewInstancesBy(table, builtinClass, uid);
+        hasOnlyClassFieldNames = (number && std::ranges::binary_search(namesOfFields, *number)) || isDefinedOnNewInstancesBy(table, builtinClass, uid);
         return hasOnlyClassFieldNames;
     });
     known = hasOnlyClassFieldNames ? id : id | structureHasOtherNames;

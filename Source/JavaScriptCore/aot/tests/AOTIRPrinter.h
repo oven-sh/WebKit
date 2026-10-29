@@ -166,7 +166,7 @@ void IRPrinter::list(const Range& range, NOESCAPE const Functor& printElement)
     m_out.print("]"_s);
 }
 
-// What IR text calls a runtime function. Null for an id that the table does not have.
+// The name of a runtime function in IR text. Null for an id that is not in the table.
 StringView tokenOf(const BuiltinTable&, RuntimeFunctionID);
 RuntimeFunctionID runtimeFunctionFromToken(const BuiltinTable&, StringView);
 

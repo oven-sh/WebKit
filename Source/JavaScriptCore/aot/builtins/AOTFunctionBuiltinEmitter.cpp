@@ -144,7 +144,7 @@ void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
     Boxed list = argumentOrUndefined(1);
     // The operation has no name for what it refuses.
     if (!typeOf(call.receiver()).isSubsetOf(m_program.at(TypeTable::function), m_program))
-        emitter<CallEmitter>().requireCallableBeforeTailCall(call.context(), function, CallEmitter::siteThatNamesCallee(*call.value()));
+        emitter<CallEmitter>().requireCallable(call.context(), function, CallEmitter::siteThatNamesCallee(*call.value()), call.context().origin().isTailCall);
     finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::Apply, { function, thisValue, list }));
 }
 

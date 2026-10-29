@@ -294,7 +294,7 @@ std::optional<MarkOfCallWithoutSite> MarkOfCallWithoutSite::read(const void* ret
     return MarkOfCallWithoutSite { Typed::ValueID(*value), static_cast<int32_t>(*callee) };
 }
 
-// What the run time finds where it changes or lists an object, and at the end of an operation, it finds on the thread of the program.
+// Checks made where the runtime changes or enumerates an object, and at the end of an operation, run on the program's thread.
 static bool isFoundOnThreadOfProgram(ValidationFailureKind kind)
 {
     switch (kind) {

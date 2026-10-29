@@ -1706,7 +1706,7 @@ static void testFieldsCreatedByTheirRecords()
         chains.filter().structureID = PropertyStores::structureID + (AbsenceFilter::numberOfFilters << StructureRowWords::granuleShift);
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);
         chains.filter().structureID = PropertyStores::structureID;
-        // A filter that was made behind every change has seen what became of the name.
+        // A filter built after every change reflects the name's current state.
         chains.namesChangedOnChains = uint64_t { 1 } << name;
         AOT_TEST_CHECK(isCreatedInEveryShape());
         chains.filter().changesUnderNames = Chains::changesUnderNames - 1;

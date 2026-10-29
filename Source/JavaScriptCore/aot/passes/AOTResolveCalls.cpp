@@ -96,11 +96,22 @@ CalleeCandidates calleeCandidates(const Program& program, const Function& functi
 static CalleeCandidates calleeCandidatesOf(const Program& program, const Function& function, const Value& operation, ValueID callee)
 {
     CalleeCandidates result = calleeCandidates(program, function, callee);
-    if (result.proof() != CalleeProof::Unknown || !admitsUnlistedFunctions(program.typeOf(function, result.value)))
+    if (result.isProven() || !admitsUnlistedFunctions(program.typeOf(function, result.value)))
+        return result;
+    if (!Value::opcodesWithCallees.contains(operation.opcode) || !operation.callees())
         return result;
     // An incomplete stamp lists the functions that flow saw arrive at the operation, among whatever else arrives there.
-    if (Value::opcodesWithCallees.contains(operation.opcode) && operation.callees())
-        result.expect(FunctionList(program.at(operation.callees()).seen().predicted().functions));
+    FunctionList seen(program.at(operation.callees()).seen().predicted().functions);
+    if (result.proof() == CalleeProof::Unknown) {
+        result.expect(WTF::move(seen));
+        return result;
+    }
+    // The declared type of a variable names its initializer. A constructor that is swapped later (`Object.assign(allocator, other)`) is only in flow's list.
+    if (operation.opcode == Opcode::Construct) {
+        for (FunctionID expected : result.expected().predicted())
+            seen.add(expected);
+        result.expect(WTF::move(seen));
+    }
     return result;
 }
 
@@ -1630,12 +1641,17 @@ struct CallResolver {
         builder.moveToEndOf(branch.taken);
     }
 
-    // The test costs bytes. Code that seldom runs keeps the one call of the value. A name that was changed stays changed, so the call behind a failed test stays as it is.
-    bool paysToTestFunctionNames(const CallSite& site)
+    bool seldomRuns(const CallSite& site)
     {
         context.planAsksAboutPlace = true;
         BlockID block = site.position.block;
-        if (function.at(block).frequency.predicted() != BlockFrequency::Normal || function.runsOnlyBehindFailedTest() || isCold(heatClassOf(context, block)).predicted())
+        return function.at(block).frequency.predicted() != BlockFrequency::Normal || function.runsOnlyBehindFailedTest() || isCold(heatClassOf(context, block)).predicted();
+    }
+
+    // The test costs code size, so rarely run code keeps the single indirect call. A renamed function stays renamed, so the call after a failed test is left as is.
+    bool paysToTestFunctionNames(const CallSite& site)
+    {
+        if (seldomRuns(site))
             return false;
         // What a function of the library is handed is mostly the caller's own function object. Where the body is copied into the caller, that one is called without a test.
         if (isLibraryCode(program, function) && function.at(sameObjectThroughCasts(function, function.at(site.position.value).calleeOperand())).opcode == Opcode::Parameter)
@@ -2034,7 +2050,7 @@ struct CallResolver {
         return std::ranges::any_of(callee.results, isNumberInRegister) || std::ranges::any_of(callee.parameters, isNumberInRegister);
     }
 
-    std::expected<Vector<FunctionID, 4>, CallDeclineReason> chooseDispatchedCallees(const CallSite& site, const CalleeCandidates& candidates, bool (*canEnter)(const Program&, FunctionID))
+    std::expected<Vector<FunctionID, 4>, CallDeclineReason> chooseDispatchedCallees(const CallSite& site, const CalleeCandidates& candidates, bool (*canEnter)(const Program&, FunctionID), uint64_t maxExpectedCallees = 1)
     {
         if (!candidates.isDispatchedAtOperation())
             return std::unexpected(candidates.hasOneExpectedCallee() ? CallDeclineReason::NeedsTest : CallDeclineReason::UnknownCallee);
@@ -2060,10 +2076,10 @@ struct CallResolver {
         // What exceeds a limit is reported, site by site.
         context.planAsksAboutPlace |= listsEveryCallee || members.size() <= 1;
         // Callees get an arm each or none: arms for some of them would be chosen by id, and the next run would take as many from the rest.
-        // A call by value boxes each number that it passes, the entry of the callee takes it out of its box, and so again for the result. A few more comparisons cost less than that.
-        AOT_THRESHOLD(uint64_t, timesAsManyArmsWhereNumbersStayInRegisters, 2);
-        bool isWithinWiderLimit = listsEveryCallee && members.size() <= context.limit(LimitID::MaxDispatchCases) * timesAsManyArmsWhereNumbersStayInRegisters && std::ranges::all_of(members, [&](FunctionID member) { return passesNumbersInRegisters(member); });
-        if ((!listsEveryCallee && members.size() > 1) || (!isWithinWiderLimit && context.exceeds(LimitID::MaxDispatchCases, members.size(), site.position.value)))
+        // An indirect call boxes each number it passes, the callee's entry unboxes it, and the same happens for the result. A few more comparisons cost less than that.
+        AOT_THRESHOLD(uint64_t, armFactorWhenNumbersStayInRegisters, 2);
+        bool isWithinWiderLimit = listsEveryCallee && members.size() <= context.limit(LimitID::MaxDispatchCases) * armFactorWhenNumbersStayInRegisters && std::ranges::all_of(members, [&](FunctionID member) { return passesNumbersInRegisters(member); });
+        if ((!listsEveryCallee && members.size() > maxExpectedCallees) || (!isWithinWiderLimit && context.exceeds(LimitID::MaxDispatchCases, members.size(), site.position.value)))
             return std::unexpected(CallDeclineReason::TooManyCallees);
         // The value of a provisional id depends on which thread asked for the function first.
         AOT::sort(members, [&](FunctionID a, FunctionID b) { return context.inputs.derivedFunctions->compare(a, b) < 0; });
@@ -2104,7 +2120,7 @@ struct CallResolver {
         RELEASE_ASSERT(site.opcode == Opcode::Call);
         const Value& call = function.at(site.position.value);
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
-        // From the first name on that a function object gets where nobody sees, a frame is named by the function object that was called. The caller keeps it in its own frame, which a tail call gives up.
+        // Once a function object gets a name where the compiler cannot see it, a frame is named by the function object that was called. The caller keeps it in its own frame, which a tail call gives up.
         if (!isTailCall(function, site.position) && !call.isTailCall) {
             auto members = chooseDispatchedCallees(site, candidates, mayBeCalledDirectlyWhileFunctionNamesAreUnchanged);
             if (!members)
@@ -2114,6 +2130,9 @@ struct CallResolver {
                 arm.keepsCalleeInFrame = isNamedByCallee(site, candidates.value, member);
                 return arm;
             });
+            // Reading the captures and keeping the callee takes more bytes than the call of the value.
+            if (std::ranges::any_of(arms, &CallArm::keepsCalleeInFrame) && seldomRuns(site))
+                return std::unexpected(CallDeclineReason::CalleeNeedsClosure);
             return [this, &site, proof = candidates.proof(), arms = WTF::move(arms), split = createCalleeSplit(site, candidates, members->span())] {
                 expansion.begin(site.position);
                 const Value& original = expansion.original();
@@ -2122,7 +2141,7 @@ struct CallResolver {
                 });
             };
         }
-        // Until then nobody can tell how a function was entered.
+        // Until then, how a function was entered is not observable.
         bool calleeEscapes = false;
         bool calleeMayHaveRenamedSibling = false;
         if (std::ranges::any_of(candidates.listed().predicted(), [&](FunctionID member) { return recordsCalleeOnlyOnceRenamed(member); })) {
@@ -2299,7 +2318,7 @@ struct CallResolver {
         FunctionID only = typeOf(closure).singleFunction();
         if (!only || typeOf(closure).mayBeUndefinedOrNull() || !mayBeCalledDirectlyOrThroughEntrypoint(program, only) || context.limit(LimitID::MaxDispatchCases) < 1 || isTailCall(function, site.position))
             return nullptr;
-        // A frame without a record shows the name that was last given to a function object of the function, unless the call says that it enters the caller's own, or keeps the function object where the frame of the caller shows it.
+        // A frame without a record shows the last name given to any function object of the function, unless the call records that it enters the caller's own, or keeps the function object where the caller's frame shows it.
         bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only) || (recordsCalleeOnlyOnceRenamed(only) && flow.closuresMayBeNamedOutOfSight(only));
         bool keepsCalleeInFrame = false;
         if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only)))) {
@@ -2313,6 +2332,8 @@ struct CallResolver {
                 return nullptr;
             keepsCalleeInFrame = true;
         }
+        if (keepsCalleeInFrame && seldomRuns(site))
+            return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))
             return nullptr;
@@ -2421,7 +2442,8 @@ struct CallResolver {
             return declined;
 
         CalleeCandidates candidates = calleeCandidatesOf(program, function, construct, construct.operand(constructorOperandIndexOf(site.opcode)));
-        auto members = chooseDispatchedCallees(site, candidates, canConstructDirectly);
+        // The class of a new object decides every access that follows, so each constructor that flow saw gets an arm.
+        auto members = chooseDispatchedCallees(site, candidates, canConstructDirectly, context.limit(LimitID::MaxDispatchCases));
         if (!members)
             return std::unexpected(members.error());
 
@@ -3336,7 +3358,7 @@ static bool canRecreateMethodClosure(const Program& program, const PropertyAcces
     return !method.has(FunctionFlags::TakesCallee) && method.captures.size() == (plan.capturesReceiver ? 1u : 0u);
 }
 
-// The frame of the caller, which keeps the function object that it calls, is there for as long as the callee runs.
+// The caller's frame, which keeps the function object it calls, exists for as long as the callee runs.
 static bool keepsFrameOfCaller(TestSiteReporter& reporter)
 {
     return !reporter.useValue().isTailCall && !isTailCall(reporter.function(), ValueSite { reporter.point().block, reporter.point().index, reporter.use() });
@@ -3702,7 +3724,7 @@ void rewriteTestedCall(TestSiteRewriter& rewriter)
         bool isNeverInlined = call.isNeverInlined();
         bool isTailCall = call.isTailCall;
         bool calleeIsPredicted = !isFollowedTo(context.program, call, function);
-        // reportClosureTest() asks about the names only where the frame of the caller goes.
+        // reportClosureTest() only checks the names where the caller's frame is given up.
         bool isNamedByCallee = !mayBeCalledDirectly(context.program, function) || (recordsCalleeOnlyOnceRenamed(context.program, function) && context.inputs.flow.closuresMayBeNamedOutOfSight(function));
         bool testsNames = std::ranges::any_of(rewriter.tests(), [](const Value& test) { return test.opcode == Opcode::AreFunctionNamesUnchanged; });
         Vector<ValueID, 8> arguments(call.variadicOperands());

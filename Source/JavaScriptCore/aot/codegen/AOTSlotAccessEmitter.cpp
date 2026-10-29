@@ -641,7 +641,7 @@ SlotAccessEmitter::CreationByDefinition SlotAccessEmitter::tryCreateFieldByDefin
         m_out.appendTo(next);
     };
     // The runtime notifies the caches about objects that inherit from a prototype.
-    auto goOnUnlessPrototype = [&] {
+    auto continueUnlessPrototype = [&] {
         if (!receiverStateOf(m_program, access->receivers).cannot(ObjectMutation::BecomePrototype))
             goOnIf(hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits));
     };
@@ -670,7 +670,7 @@ SlotAccessEmitter::CreationByDefinition SlotAccessEmitter::tryCreateFieldByDefin
             if (listsKey)
                 goOnIf(notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
         }
-        goOnUnlessPrototype();
+        continueUnlessPrototype();
     }
     ensureStorage();
     if (!orderWordAfter)

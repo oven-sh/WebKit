@@ -131,7 +131,7 @@ struct AbsenceFilter {
     uint32_t structureID;
     uint32_t generationForStores;
     uint64_t namesThatStopStores[numberOfWordsForStores];
-    // How many changes under a name had been reported when the filter was made. While there are no more, the filter says all there is to say about every name.
+    // The number of changes under a name that had been reported when the filter was built. While the count is unchanged, the filter is complete for every name.
     uint32_t changesUnderNames;
     uint32_t unused;
 };
@@ -174,9 +174,9 @@ struct KeyedValuePlace {
     static constexpr uint32_t fieldBit = 2;
     static constexpr uint32_t extraPropertyBits = absenceBit | fieldBit;
 
-    // Of a compiled object whose Structure names the Structure of what it has beside its fields.
+    // For a compiled object whose Structure identifies the Structure of its extra-property object.
     struct ExtraProperty {
-        // Where the cell has the reference to the object that holds the property.
+        // The offset in the cell of the reference to the object that holds the property.
         uint16_t hiddenWordOffset;
         // Slot::wordIndexFor() in that object.
         int16_t wordIndex;

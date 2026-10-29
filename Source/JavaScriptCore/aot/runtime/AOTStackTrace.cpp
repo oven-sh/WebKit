@@ -454,7 +454,7 @@ static ALWAYS_INLINE void countLogicalFrame(FunctionID function, TraceVisibility
 
 static NEVER_INLINE void countLogicalFrames(const Image& image, InlineFrameReader& reader, const CallSiteCache::Entry& site, bool calleeWasEntered, ShownFrameFilter& filter, CapturedRun& run, JSCell*& lastConstructorToSkip)
 {
-    for (LogicalFrame frame = innermostLogicalFrame(image, reader, { site.code, site.site.callSite, site.site.inlineFrame, site.site.isTailDeleted(calleeWasEntered), site.site.calledBuiltin });; frame = callerOfInlinedFrame(image, reader, site.code, frame)) {
+    for (LogicalFrame frame = innermostLogicalFrame(image, reader, { site.code, site.site.callSite, site.site.inlineFrame, site.site.isTailDeleted(calleeWasEntered), site.site.calledBuiltin, calleeWasEntered });; frame = callerOfInlinedFrame(image, reader, site.code, frame)) {
         countLogicalFrame(frame.function, FunctionDescription(frame.function).visibility(), frame.isTailDeleted, filter, run, lastConstructorToSkip);
         if (!frame.hasCallerInMachineFrame())
             break;
@@ -516,7 +516,8 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
             break;
         const CallSiteCache::Entry& site = walk.site();
         outermostCode = site.code;
-        if (hasRecordedCallees && (walk.image().hasCalleesOfSites(site.code.index()) || FunctionTables::of(vm).framesAreNamedByCallee(walk.image().rootFunctionOf(site.code.index())))) [[unlikely]] {
+        // Whoever keeps the callee of a frame, only a function that is named by its callee needs it.
+        if (hasRecordedCallees && (site.hasInlinedFrameRecordingCallee || (site.hasInlinedFrameRecordingCalleeOnceRenamed && FunctionTables::of(vm).recordsCalleesOfCallsByValue()) || FunctionTables::of(vm).framesAreNamedByCallee(walk.image().rootFunctionOf(site.code.index())))) [[unlikely]] {
             run.hasFrameNamedByCallee = true;
             return;
         }
@@ -554,7 +555,7 @@ static bool isSameFrame(const StackFrame& expected, const StackFrame& actual)
     if (expected.isCompiledFrame()) {
         const TraceFrame& left = expected.compiledFrame();
         const TraceFrame& right = actual.compiledFrame();
-        return left.code == right.code && left.function == right.function && left.callSite.bits() == right.callSite.bits() && left.isInlined == right.isInlined && left.isConstructCall == right.isConstructCall && left.isClassCalledWithoutNew == right.isClassCalledWithoutNew;
+        return left.code == right.code && left.function == right.function && left.callSite.bits() == right.callSite.bits() && left.isInlined == right.isInlined && left.isConstructCall == right.isConstructCall && left.isClassCalledWithoutNew == right.isClassCalledWithoutNew && left.isAtFailedTailCall == right.isAtFailedTailCall;
     }
     if (expected.callee() != actual.callee() || expected.codeBlock() != actual.codeBlock() || expected.isWasmFrame() != actual.isWasmFrame() || expected.hasBytecodeIndex() != actual.hasBytecodeIndex())
         return false;
@@ -798,7 +799,7 @@ public:
         if (record.inlineFrame || record.calledBuiltin || isTailDeleted || entry.innermostVisibility != TraceVisibility::Visible || m_numberToOmit) [[unlikely]]
             return addLogicalFrames(entry.code, record, site, isTailDeleted, isCaller);
         // emit() may ask the cache, which may move the entry.
-        TraceFrame frame { entry.code, entry.innermostFunction, site, false, false, false, false, isCaller, false };
+        TraceFrame frame { entry.code, entry.innermostFunction, site, false, false, false, false, isCaller, false, !isCaller && record.isTailCall() };
         if (!handOn())
             return false;
         m_filter = ShownFrameFilter(true);
@@ -863,7 +864,9 @@ private:
 
     NEVER_INLINE bool addLogicalFrames(CompiledFunctionID code, CallSiteRecord record, CallSiteIndex site, bool isTailDeleted, bool isCaller)
     {
-        for (LogicalFrame frame = innermostLogicalFrame(m_image, m_reader, { code, site, record.inlineFrame, isTailDeleted, record.calledBuiltin });; frame = callerOfInlinedFrame(m_image, m_reader, code, frame), isCaller = true) {
+        // A built-in that leaves by a tail call is listed only where that call failed.
+        bool isAtFailedTailCall = !isCaller && (record.calledBuiltin ? leavesByTailCall(record.calledBuiltin) : record.isTailCall());
+        for (LogicalFrame frame = innermostLogicalFrame(m_image, m_reader, { code, site, record.inlineFrame, isTailDeleted, record.calledBuiltin, isCaller });; frame = callerOfInlinedFrame(m_image, m_reader, code, frame), isCaller = true, isAtFailedTailCall = false) {
             FunctionDescription description(frame.function);
             if (m_pending && !isEntrypointOfPending(description) && !handOn())
                 return false;
@@ -874,9 +877,9 @@ private:
                 else {
                     if (!handOn())
                         return false;
-                    show({ code, frame.function, frame.callSite, !!frame.inlineFrame, false, false, false, isCaller, false }, frame);
+                    show({ code, frame.function, frame.callSite, !!frame.inlineFrame, false, false, false, isCaller, false, isAtFailedTailCall }, frame);
                 }
-            } else if (frame.isTailDeleted && description.visibility() == TraceVisibility::Visible)
+            } else if (frame.isTailDeleted && !frame.isOfCalledBuiltin && description.visibility() == TraceVisibility::Visible)
                 m_hiddenBehindTailCall = TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, false, false, false, isCaller, false };
             else if (m_hiddenBehindTailCall && !isEntrypointOf(frame.function, FunctionDescription(m_hiddenBehindTailCall->function).sourceFunction()))
                 m_hiddenBehindTailCall = std::nullopt;
@@ -980,7 +983,7 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
         shown.callee = nullptr;
         shown.isAboveFramesThatWait = false;
         isOutermostOfMachineFrame = !logicalFrame.hasCallerInMachineFrame();
-        if (!namesFramesByCallee || logicalFrame.isOfCalledBuiltin || logicalFrame.isListedBehindTailCall) [[likely]]
+        if (!namesFramesByCallee || logicalFrame.isOfCalledBuiltin || logicalFrame.isListedBehindTailCall || frame.isAtFailedTailCall) [[likely]]
             return;
         FunctionID sourceFunction = FunctionDescription(frame.function).sourceFunction();
         if (std::optional<CalleeOfSite> callee = calleeOfCopiedFrame(walk.image(), reader, frame.code, logicalFrame)) {
@@ -1137,11 +1140,11 @@ bool tryGetStackTrace(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& results, s
     return true;
 }
 
-void forEachShownFrame(CompiledFunctionID code, const CallSiteRecord& site, ShownFrameFilter& filter, const ScopedLambda<void(const TraceFrame&)>& functor)
+void forEachShownFrame(CompiledFunctionID code, const CallSiteRecord& site, ShownFrameFilter& filter, const ScopedLambda<void(const TraceFrame&)>& functor, bool calleeWasEntered)
 {
     const Image& image = *Image::current();
     InlineFrameReader reader;
-    for (LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site.callSite, site.inlineFrame, false });; frame = callerOfInlinedFrame(image, reader, code, frame)) {
+    for (LogicalFrame frame = innermostLogicalFrame(image, reader, { code, site.callSite, site.inlineFrame, site.isTailDeleted(calleeWasEntered) });; frame = callerOfInlinedFrame(image, reader, code, frame)) {
         if (filter.shows(FunctionDescription(frame.function).visibility(), frame.isTailDeleted))
             functor(TraceFrame { code, frame.function, frame.callSite, !!frame.inlineFrame, frame.isInlinedConstructCall, false, false, false, isCopiedForOwnFunctionObject(image, reader, code, frame) });
         if (!frame.hasCallerInMachineFrame())
@@ -1209,11 +1212,13 @@ String describeCodeAddresses(std::span<const void* const> addresses)
         return { };
     StringBuilder result;
     ShownFrameFilter filter;
-    for (const void* address : addresses) {
+    for (const void* const& address : addresses) {
         CodeLocation location = image->locate(address);
         if (location.kind != CodeKind::Function)
             continue;
         CallSiteRecord site = image->callSiteAt(location.function, location.offset).value_or(CallSiteRecord { CallSiteIndex(0), 0 });
+        // Every address but the first is a return address, so its callee has started. A tail call that was compiled as a plain call hides its caller, as in Error.stack.
+        bool calleeWasEntered = &address != addresses.data();
         forEachShownFrame(CompiledFunctionID(location.function), site, filter, [&](const TraceFrame& frame) {
             if (image->isObfuscated()) {
                 LineColumn position = obfuscatedPositionOf(frame);
@@ -1230,7 +1235,7 @@ String describeCodeAddresses(std::span<const void* const> addresses)
                 result.append("    at "_s, name.isEmpty() ? StringView("<anonymous>"_s) : StringView(name), '\n');
             else
                 result.append("    at "_s, name.isEmpty() ? StringView("<anonymous>"_s) : StringView(name), " ("_s, sourceLocation, ")\n"_s);
-        });
+        }, calleeWasEntered);
     }
     return result.toString();
 }

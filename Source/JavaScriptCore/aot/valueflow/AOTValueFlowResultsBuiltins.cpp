@@ -355,7 +355,7 @@ static bool isCallOfProgramUnderComputedName(const Program& program, const Witne
     return function.at(definitionThroughSameValues(function, call.operand(positionOfName))).opcode != Opcode::String;
 }
 
-// The front end leaves a constant path to the run time where no such file exists at build time.
+// The front end leaves a constant path to the runtime if no such file exists at build time.
 static bool isLoadUnderConstantName(const Program& program, const Witness& witness)
 {
     const Function& function = program.at(FunctionID(witness.function));

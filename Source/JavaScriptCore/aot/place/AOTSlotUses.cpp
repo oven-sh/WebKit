@@ -28,6 +28,7 @@
 #include <functional>
 #include <tuple>
 #include <wtf/Atomics.h>
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -369,13 +370,14 @@ public:
         m_uses.function = m_id;
         LayoutID constructed = m_function.constructedClass;
         if (constructed && m_program.at(constructed).constructor == m_id && m_function.kind != FunctionKind::BaseConstructor)
-            m_uses.creations.append({ constructed, m_weights.heatOf(entryBlock), false });
+            m_uses.creations.append({ constructed, heatOf(entryBlock), false });
         findSourcesOfResult();
         for (unsigned i = 0; i < m_function.blocks.size(); ++i) {
             for (ValueID id : m_function.blocks[i].values)
                 scanValue(BlockID(i), m_function.at(id));
             scanNames(m_function.blocks[i].terminator);
         }
+        addFillsBesideAllocations();
         if (m_readsZeroEncodingCandidate)
             findUncheckedVariableReads(m_analyses, m_inputs.zeroEncodingCandidates, m_uses.variablesWithUncheckedReads);
         AOT::sort(m_uses.accesses, accessIsOrderedBefore);
@@ -394,6 +396,50 @@ private:
         auto constant = constantThroughCasts(m_program, m_function, id);
         return constant && m_function.at(*constant).opcode == Opcode::Undefined;
     }
+
+    bool testsCallee(ValueID condition) const
+    {
+        const Value& test = m_function.at(condition);
+        if (test.opcode == Opcode::IsClosureOf)
+            return true;
+        if (test.opcode != Opcode::TypeTest)
+            return false;
+        Type tested = m_program.at(test.testedType());
+        if (tested.functions.isEmpty())
+            return false;
+        tested.functions = { };
+        return tested.isNever();
+    }
+
+    // The arms of a dispatch on the callee exclude each other, and nothing says which one a program takes: `new (allocator.getConstructor())()`. Each arm counts as if it were the one.
+    double scaleOfArm(BlockID block)
+    {
+        if (m_scaleOfArm.isEmpty()) {
+            m_scaleOfArm.fill(1.0, m_function.blocks.size());
+            bool hasDispatch = std::ranges::any_of(m_function.blocks, [&](const Block& block) {
+                return block.terminator.kind == TerminatorKind::Branch && testsCallee(block.terminator.conditionOperand());
+            });
+            if (!hasDispatch)
+                return 1.0;
+            const BlockFrequencies& frequencies = m_analyses.blockFrequencies();
+            const Dominators& dominators = m_analyses.dominators();
+            for (BlockID arm : m_analyses.cfg().reversePostOrder()) {
+                BlockID dominator = arm == entryBlock ? BlockID() : dominators.idom(arm);
+                if (!dominator)
+                    continue;
+                double scale = m_scaleOfArm[dominator.index()];
+                const Terminator& terminator = m_function.at(dominator).terminator;
+                double frequency = frequencies.frequencyOf(arm).predicted();
+                if (terminator.kind == TerminatorKind::Branch && testsCallee(terminator.conditionOperand()) && m_analyses.cfg().incomingEdges(arm).size() == 1
+                    && m_function.at(arm).frequency.predicted() == m_function.at(dominator).frequency.predicted() && frequency > 0)
+                    scale *= frequencies.frequencyOf(dominator).predicted() / frequency;
+                m_scaleOfArm[arm.index()] = scale;
+            }
+        }
+        return m_scaleOfArm[block.index()];
+    }
+
+    SiteHeat heatOf(BlockID block) { return m_weights.heatOf(block) * scaleOfArm(block); }
 
     BlockID blockOf(ValueID id)
     {
@@ -506,7 +552,7 @@ private:
     void countAllocation(LayoutID layout, BlockID block)
     {
         add(m_shared.layouts[layout.index()].allocationSites, 1);
-        m_uses.creations.append({ layout, m_weights.heatOf(block), m_weights.isInLoop(block) });
+        m_uses.creations.append({ layout, heatOf(block), m_weights.isInLoop(block) });
     }
 
     void countInitialField(LayoutID layout, FieldIndex field, bool isUndefined, BlockID block)
@@ -516,14 +562,14 @@ private:
         if (isUndefined)
             return;
         add(use.sitesInitializingWithValue, 1);
-        m_uses.fills.append({ m_rows.rowOf(layout, field), m_weights.heatOf(block) });
+        m_uses.fills.append({ m_rows.rowOf(layout, field), heatOf(block) });
     }
 
     void scanCallByName(BlockID block, const Value& call)
     {
         FunctionID callee = call.function();
         if (LayoutID constructed = m_program.at(callee).constructedClass; constructed && call.isConstruction())
-            m_uses.placesThatMake.append({ constructed, m_weights.heatOf(block) });
+            m_uses.placesThatMake.append({ constructed, heatOf(block) });
         bool isClassConstructor = m_function.kind == FunctionKind::BaseConstructor || m_function.kind == FunctionKind::DerivedConstructor;
         if (callee == m_id && call.isConstruction() && !isClassConstructor)
             return;
@@ -537,7 +583,7 @@ private:
             if (isUndefinedConstant(value.operand(*storedOperand)))
                 m_uses.storesOfUndefined.append({ value.key(), value.receivers(), 1 });
             else
-                use.fillHeat = m_weights.heatOf(block);
+                use.fillHeat = heatOf(block);
             // PutSlot declares no allocation, so it can neither create nor grow an Extension. Behind a proof that the slot is filled it finds the Extension that the creating store left.
             bool cannotAllocate = value.opcode == Opcode::PutSlot;
             use.storesIntoFilledSlots = cannotAllocate && guardProvesSlotFilled(m_analyses, value);
@@ -576,7 +622,7 @@ private:
         if (stored && isUndefinedConstant(store.operand(*stored)))
             m_uses.storesOfUndefined.append({ store.key(), receivers, 1 });
         else
-            m_uses.storesByName.append({ store.key(), receivers, m_weights.heatOf(block) });
+            m_uses.storesByName.append({ store.key(), receivers, heatOf(block) });
         if (object)
             noteStoreBehindStore(object, store, m_weights.weightOf(block));
     }
@@ -605,11 +651,23 @@ private:
             add(storesUndefined ? use.storesOfUndefined : use.storesOfConstructorWithValue, 1);
         };
         for (SlotUseFreshObject object : objects) {
-            if (!storesUndefined && frequencyOfStore * 2 <= frequencies.frequencyOf(object.block).predicted())
+            double share = frequencyOfStore / frequencies.frequencyOf(object.block).predicted();
+            if (object.allocation && !storesUndefined) {
+                // Tests split one store of the source into a store on each path.
+                auto& fill = m_fillsBesideAllocation.add(static_cast<uint64_t>(object.allocation.index()) << 32 | store.key().index(), FillOfAllocation { }).iterator->value;
+                if (!fill.firstStore)
+                    fill.firstStore = &store;
+                if (fill.firstStore == &store)
+                    fill.objects.append(object);
+                if (fill.lastStore != &store)
+                    fill.share += share;
+                fill.lastStore = &store;
+                continue;
+            }
+            if (!storesUndefined && share <= 0.5)
                 continue;
             if (object.allocation) {
-                if (storesUndefined || m_fieldsFilledBesideAllocation.add(static_cast<uint64_t>(object.allocation.index()) << 32 | store.key().index()).isNewEntry)
-                    m_uses.fillsBesideCreation.append({ object.layout, object.maker, store.key(), storesUndefined, m_weights.heatOf(blockOf(object.allocation)) });
+                m_uses.fillsBesideCreation.append({ object.layout, object.maker, store.key(), storesUndefined, heatOf(blockOf(object.allocation)) });
                 continue;
             }
             countStoreInto(object.layout);
@@ -618,12 +676,25 @@ private:
         }
     }
 
+    void addFillsBesideAllocations()
+    {
+        Vector<uint64_t> places = copyToVector(m_fillsBesideAllocation.keys());
+        AOT::sort(places);
+        for (uint64_t place : places) {
+            const FillOfAllocation& fill = m_fillsBesideAllocation.find(place)->value;
+            if (fill.share <= 0.5)
+                continue;
+            for (const SlotUseFreshObject& object : fill.objects)
+                m_uses.fillsBesideCreation.append({ object.layout, object.maker, fill.firstStore->key(), false, heatOf(blockOf(object.allocation)) });
+        }
+    }
+
     void scanCopy(BlockID block, const Value& copy)
     {
         const Value& target = m_function.at(rootOf(copy.targetOperand()));
         if (target.opcode != Opcode::NewObject || !m_inputs.context.isCompiledObject(target.layout()))
             return;
-        m_uses.copiesIntoNewObjects.append({ target.layout(), m_program.expectedOrTypeOf(m_function, copy.sourceOperand()).predicted().layouts, copy.excludedKeys(), m_weights.heatOf(block) });
+        m_uses.copiesIntoNewObjects.append({ target.layout(), m_program.expectedOrTypeOf(m_function, copy.sourceOperand()).predicted().layouts, copy.excludedKeys(), heatOf(block) });
     }
 
     void scanAllocation(BlockID block, const Value& allocation)
@@ -631,7 +702,7 @@ private:
         LayoutID layout = allocation.layout();
         countAllocation(layout, block);
         if (allocation.opcode == Opcode::NewObject && m_function.constructedClass != layout)
-            m_uses.placesThatMake.append({ layout, m_weights.heatOf(block) });
+            m_uses.placesThatMake.append({ layout, heatOf(block) });
         if (allocation.opcode == Opcode::MaterializeEnvironment)
             return;
         auto fields = allocation.fields();
@@ -726,7 +797,7 @@ private:
             add(rowUseOf(value.layout(), value.field()).environmentUses, 1);
         if (opcode == Opcode::PrivateDefine) {
             add(rowUseOf(value.layout(), value.field()).privateDefinitionsByName, 1);
-            m_uses.fills.append({ m_rows.rowOf(value.layout(), value.field()), m_weights.heatOf(block) });
+            m_uses.fills.append({ m_rows.rowOf(value.layout(), value.field()), heatOf(block) });
         }
         if (allocationOpcodes.contains(opcode))
             scanAllocation(block, value);
@@ -742,7 +813,7 @@ private:
             scanCallByName(block, value);
         if (opcode == Opcode::Construct) {
             forEachClassConstructedBy(value, [&](LayoutID constructed) {
-                m_uses.placesThatMake.append({ constructed, m_weights.heatOf(block) });
+                m_uses.placesThatMake.append({ constructed, heatOf(block) });
             });
         }
         // An indirect call runs each function observed as its callee as often as a call by name runs its callees.
@@ -775,7 +846,14 @@ private:
     FunctionUses m_uses;
     Vector<BlockID> m_blockOfValue;
     UncheckedKeyHashMap<uint32_t, LastStore, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lastStoreInto;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_fieldsFilledBesideAllocation;
+    struct FillOfAllocation {
+        const Value* firstStore { nullptr };
+        const Value* lastStore { nullptr };
+        double share { 0 };
+        Vector<SlotUseFreshObject, 2> objects;
+    };
+    UncheckedKeyHashMap<uint64_t, FillOfAllocation, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_fillsBesideAllocation;
+    Vector<double> m_scaleOfArm;
     bool m_readsZeroEncodingCandidate { false };
 };
 

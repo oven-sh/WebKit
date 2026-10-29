@@ -227,7 +227,7 @@ bool AllocationSinking::splitEdgesNeedingCode(IRBuilder& builder)
     AOT::sort(m_edgesNeedingCode, { }, [](const Edge& edge) {
         return std::pair { edge.from, edge.targetIndex };
     });
-    // What is built on the way out of a block that a handler covers is built under that handler.
+    // What is built on the exit of a block that a handler covers is built under that handler.
     for (Edge edge : m_edgesNeedingCode)
         builder.splitEdge(edge, m_function.at(edge.from).handler);
     return true;

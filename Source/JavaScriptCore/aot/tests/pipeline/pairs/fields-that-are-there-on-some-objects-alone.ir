@@ -1,8 +1,0 @@
-# The program of ../../answers is one in which fields have slots, tests are placed in front of their reads, and stretches behind those tests are copied with ways back.
-# FORM: AsRead
-# RUN: compile
-# STATISTIC: Slots >= 1
-# STATISTIC: TypeTestsPlaced >= 1
-# STATISTIC: StretchCopiesToWaysBack >= 1
-# CHECK: image not empty
-# PROGRAM-OF: ../../answers/fields-that-are-there-on-some-objects-alone.ir

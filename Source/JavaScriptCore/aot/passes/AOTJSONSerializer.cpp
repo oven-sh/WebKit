@@ -186,7 +186,7 @@ struct JSONTextWriter final : Emission {
         const Field& field = program().at(id).fields[fieldIndex];
         if (!isEnumerableStringField(program(), field))
             return MemberSupport::NotSerialized;
-        // The slot of an accessor holds its functions. What is written is what the getter answers.
+        // An accessor's slot holds its functions. The getter's result is what gets written.
         if (field.form.contains(FieldForm::IsAccessor))
             return MemberSupport::ByName;
         if (hasNoJSONText(slotContentsTypeOf(program(), { id, fieldIndex })))
@@ -979,11 +979,11 @@ struct JSONTextWriter final : Emission {
         uint64_t maxFields = build.limit(LimitID::MaxExpandedKeyFields);
         ExpectedKeyOrders expectedOrders = expectedKeyOrdersOf(program(), layout, KeyOrderLimits { maxArms * (maxFields + 1), maxFields });
         Vector<KeyOrderFamily, 4> families = groupKeyOrders(layout, expectedOrders.orders.span(), maxArms);
-        // Stores behind the creation of an object give it keys in an order that nobody has listed.
-        bool writesAnyOrder = !expectedOrders.coversEveryObject && !families.isEmpty() && tested.guard && keysAreSeenToBeAdded(layout);
+        // Stores after an object's creation give it keys in an unlisted order.
+        bool writesAnyOrder = !expectedOrders.coversEveryObject && !families.isEmpty() && tested.guard && hasObservedKeyAdditions(layout);
         Expected<BlockFrequency> frequencyOfOtherOrders = writesAnyOrder ? BlockFrequency::Normal : BlockFrequency::Rare;
         BlockID noOrder = builder().addBlock(frequencyOfOtherOrders);
-        // An arm of its own is the fastest code for an order. Of the orders at creation the longest is the likeliest to be left as it is.
+        // A dedicated arm is the fastest code for an order. Among the creation orders, the longest is the most likely to stay unchanged.
         if (writesAnyOrder) {
             auto longest = std::ranges::max_element(families, { }, [](const KeyOrderFamily& family) { return family.longestOrder.size(); });
             std::swap(families.first(), *longest);
@@ -1040,13 +1040,13 @@ struct JSONTextWriter final : Emission {
         builder().moveToEndOf(done);
     }
 
-    // Every store to some member is in sight, and not every one of them is part of a creation: the program itself gives objects of the layout a key later.
-    bool keysAreSeenToBeAdded(LayoutID layout) const
+    // Every store to some member is visible, and not all of them are part of a creation: the program itself gives objects of the layout a key later.
+    bool hasObservedKeyAdditions(LayoutID layout) const
     {
-        // What a key that is computed when the class is evaluated turns out to be, a text or a symbol, nobody knows here.
+        // Whether a key computed at class evaluation is a string or a symbol is unknown here.
         if (std::ranges::any_of(program().at(layout).fields, [](const Field& field) { return !!field.computedKey; }))
             return false;
-        // A serializer runs no code of the program itself: the host does, which first looks whether a holder is being written twice.
+        // A serializer runs no program code itself: the host does, after checking whether a holder is being written twice.
         for (uint32_t field = 0; field < program().at(layout).fields.size(); ++field) {
             if (memberSupportOf(layout, field) == MemberSupport::ByName)
                 return false;
@@ -1066,8 +1066,8 @@ struct JSONTextWriter final : Emission {
         return builder().append(make<&Value::setLayout>(Opcode::GetFieldInKeyOrder, { order, position }, layout));
     }
 
-    // A loop over the keys of the object, in their order. Each key leads to the code that writes the member of its field.
-    void appendObjectInAnyOrder(const TestedObject& tested, LayoutID layout, BlockID whenOrderIsNotListed, BlockID done)
+    // A loop over the object's keys, in order. Each key dispatches to the code that writes its field's member.
+    void appendObjectInAnyOrder(const TestedObject& tested, LayoutID layout, BlockID ifOrderIsNotListed, BlockID done)
     {
         static constexpr int64_t orderIsNotListed = -2;
         Expected<BlockFrequency> frequency = currentFrequency();
@@ -1075,7 +1075,7 @@ struct JSONTextWriter final : Emission {
 
         ValueID order = builder().append(make<&Value::setLayout>(Opcode::GetOrderWord, { object, tested.guard }, layout));
         ValueID firstField = appendFieldInKeyOrder(order, builder().appendInteger(0), layout);
-        emitJumpIf(builder().append(Opcode::StrictEq, { firstField, builder().appendInteger(orderIsNotListed) }), whenOrderIsNotListed);
+        emitJumpIf(builder().append(Opcode::StrictEq, { firstField, builder().appendInteger(orderIsNotListed) }), ifOrderIsNotListed);
         ValueID count = builder().append(Opcode::BitAnd, { builder().append(Opcode::URShift, { order, builder().appendInteger(orderWordCountShift) }), builder().appendInteger(maxFieldsInOrder) });
 
         Vector<Member, 8> members;
@@ -1099,7 +1099,7 @@ struct JSONTextWriter final : Emission {
         ValueID guard = builder().addParameter(head, TypeTable::guard);
         builder().emitJump(head, { builder().appendInteger(0), m_cursor.value, tested.guard });
 
-        // One reservation serves whichever member comes next.
+        // One reservation covers whichever member comes next.
         continueAt(head, { cursor, 0 });
         builder().append(Opcode::LoopHint, { });
         ensureCursor(1);
@@ -1142,7 +1142,7 @@ struct JSONTextWriter final : Emission {
             if (!afterUnknownCode.block)
                 continue;
 
-            // The keys that are written are those the object had at the beginning.
+            // The keys written are those the object had at the start.
             continueAt(afterUnknownCode);
             commit();
             BlockID stale = builder().addBlock(BlockFrequency::Rare);
@@ -1411,7 +1411,7 @@ struct JSONTextWriter final : Emission {
                 continue;
             IRBuilder::ProvenBranch hasStorage = builder().emitBranchWithProof(builder().append(makeArrayStorageTest(array, form.kind)));
             ValueID guards[] { pristine, hasStorage.provenOnTaken };
-            // Each object among elements that nothing is known of is a call of the host. A list that begins with one goes there whole, in one call.
+            // Each object among elements of unknown type is a host call. A list that starts with one is passed to the host whole, in one call.
             if (!listed.number && objectsAmongElementsGoToHost(form.kind, plan.element)) {
                 Value first = make<&Value::setArrayStorage, &Value::setKeyIsIntegral>(Opcode::GetArrayElement, { array, builder().appendInteger(0), builder().appendAllGuards(guards) }, form.kind, true);
                 emitJumpIf(builder().appendTypeTest(builder().append(WTF::move(first)), TypeTable::object), generic);

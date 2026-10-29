@@ -999,7 +999,7 @@ static bool mayMachineCodeRun(ValueFlowRuleContext& context)
 {
     Vector<ValueFlowObjectID, 32> loaders;
     for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode()) {
-        if (!context.program().builtins().has(BuiltinMark::LoadsMachineCodeThatIsHandedNoValue, loader.callee))
+        if (!context.program().builtins().has(BuiltinMark::LoadsCodeWithoutJSAccess, loader.callee))
             context.universe().appendObjectsOf(loader.callee, loaders);
     }
     return context.holdsAnyOf(ClimbingSet(context.maker().of(loaders.span())), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins));

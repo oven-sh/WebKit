@@ -410,8 +410,8 @@ public:
     };
     std::span<const LoggedEdge> edgesInOrderLogged() const LIFETIME_BOUND { return m_edgesInOrderLogged.span(); }
     const LoggedEdge* findLoggedEdge(ValueFlowEdge) const LIFETIME_BOUND;
-    // Of a statement that a rule has made: the statement whose run first asked for it.
-    ValueFlowStatementID statementThatFirstAskedFor(ValueFlowStatementID) const;
+    // For a statement created by a rule: the statement whose run first requested it.
+    ValueFlowStatementID firstRequesterOf(ValueFlowStatementID) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowNodeID) const;
     std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
@@ -882,7 +882,7 @@ private:
     Vector<ValueFlowStatementID> m_firstStatementsThatWereNotDueAndAdded;
     HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_positionOfLoggedEdge;
     Vector<LoggedEdge> m_edgesInOrderLogged;
-    HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstAskerOfMadeNodes;
+    HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstRequesterOfMadeNodes;
     Vector<uint32_t> m_bodiesReachedInRound;
     size_t m_paddingThatKeepsSharedListsOnTheirOwnCacheLines { 0 };
 
@@ -1008,7 +1008,7 @@ private:
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };
-    // In the order of the nodes.
+    // Sorted by node.
     ParallelArray<ValueFlowNodeSet> m_writtenUnderNamesOfReads;
     ValueSetID m_keptOutOfNodesMadeForUnknownObject { ValueSets::nothing };
     static constexpr uint32_t nodesPerShareOfListed = 1 << 12;

@@ -1,0 +1,11 @@
+# The program of ../../answers is one in which loops are separated from their unlikely paths, stretches are copied with ways back, allocations are merged at joins, objects and lists stay in frames and a text is built in a builder.
+# FORM: AsRead
+# RUN: compile
+# STATISTIC: LoopsSeparatedFromUnlikelyPaths >= 1
+# STATISTIC: WaysBackFromStretchCopies >= 1
+# STATISTIC: AllocationsMergedAtJoins >= 1
+# STATISTIC: ObjectsInFrames >= 1
+# STATISTIC: ArraysInFrames >= 1
+# STATISTIC: StringBuildersCreated >= 1
+# CHECK: image not empty
+# PROGRAM-OF: ../../answers/loops-leaving-and-rejoining-fast-copy.ir

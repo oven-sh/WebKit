@@ -280,7 +280,7 @@ struct ProgramTables {
         size_t firstListed = numberOfFunctions() - sources.size();
         return function < firstListed ? function : sources[function - firstListed];
     }
-    // The functions that closures of the source are made of. Listed only for a source that has several and recordsCalleeOnceRenamed.
+    // The functions that implement the source's closures. Listed only for a source that has several and recordsCalleeOnceRenamed.
     std::span<const Number24> closureFormsOf(uint32_t source) const
     {
         auto forms = std::ranges::equal_range(closureFormsBySource(), source, { }, [&](Number24 form) { return sourceFunctionOf(form); });

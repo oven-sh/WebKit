@@ -312,16 +312,16 @@ struct StoredUnderKey {
     bool mayBeAccessor : 1 { false };
     bool isGivenValueByOperation : 1 { false };
     bool isGivenValueByDefinition : 1 { false };
-    // `object.key = value`, which asks the chain for a setter first. Whatever else writes under the key may lay it on the object itself, whatever the chain holds.
+    // `object.key = value`, which first checks the prototype chain for a setter. Any other write under the key may define it on the object itself, whatever the chain holds.
     bool isAssigned : 1 { false };
     bool isWrittenOtherThanByAssignment : 1 { false };
     bool isNamedByOperation : 1 { false };
     bool isStoredByConstructor : 1 { false };
     bool mayBeOtherThanIntegers : 1 { false };
-    // Some store hands over what a read of a field delivers, and the numbers of that field are not added yet: StoresIntoObjects::readsOfFields.
+    // Some store passes on the result of a field read, and that field's numbers have not been added yet: StoresIntoObjects::readsOfFields.
     bool waitsForNumbersOfFields : 1 { false };
     uint8_t accessorForms { 0 };
-    // The forms in which calls that take a descriptor lay a value down under the key: ValueForms.
+    // The forms in which calls that take a descriptor define a value under the key: ValueForms.
     uint8_t formsOfDefinedValues { 0 };
     OptionSet<Actor> writers;
     Range integers { Range::empty() };
@@ -420,7 +420,7 @@ struct ValueForms {
 
     static constexpr uint8_t of(bool isWritable, bool isEnumerable, bool isConfigurable) { return 1 << ((isWritable ? 0 : 4) + (isEnumerable ? 0 : 2) + (isConfigurable ? 0 : 1)); }
 
-    // `made.name ?? (made.name = { })` beside a definition: the definition is taken for what creates the property.
+    // `made.name ?? (made.name = { })` next to a definition: the definition is assumed to create the property.
     static std::optional<OptionSet<FieldForm>> formToPlanFor(uint8_t forms)
     {
         constexpr uint8_t plain = of(true, true, true);
@@ -542,10 +542,10 @@ public:
     FlowAccessorField accessorDefinedUnder(LayoutID layout, PropertyKeyID key) const { return accessorDefinedUnder(m_heap.maker(), layout, key); }
     FlowAccessorField accessorDefinedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysOfAccessorsDefinedIn(ValueSetMaker&, LayoutID) const;
-    // ValueForms: the forms in which the objects are seen to get a value under the key. A store, a literal and a class field create the plain form.
+    // ValueForms: the forms in which the objects are observed to get a value under the key. A store, a literal and a class field create the plain form.
     uint8_t formsOfValuesGivenUnder(LayoutID, PropertyKeyID) const;
     Vector<PropertyKeyID> keysOfValuesDefinedIn(LayoutID) const;
-    // ValueForms: the forms in which the call lays a value down, if it is one of `Object.defineProperty(object, key, descriptor)`.
+    // ValueForms: the forms in which the call defines a value, if it is an `Object.defineProperty(object, key, descriptor)`.
     uint8_t formsOfValueDefinedByCall(ValueSetMaker&, const ValueFlowStatement&) const;
     bool getsAccessorsUnderKeysNobodyKnows(LayoutID) const;
     void setReceiversOfReads(ListsOfSetsByNumber&&);
@@ -603,7 +603,7 @@ private:
         OptionSet<Actor> writers;
         ValueSetID value;
         ValueFlowNumbers numbers;
-        // The numbers are those that these objects hold under the key, and `numbers` holds none.
+        // The numbers are those that these objects hold under the key, and `numbers` is empty.
         ValueSetID objectsRead;
         uint32_t keyRead;
 

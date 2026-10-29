@@ -69,7 +69,7 @@ public:
     struct NamespaceObject {
         OptionSet<Actor> open { everyActor };
         bool isCreated { false };
-        // In a body that is reached, whether or not the operation ever runs.
+        // In a reachable body, whether or not the operation ever runs.
         uint8_t isNamedByOperation { false };
         std::optional<Actor> readerUnderNamesNobodyLists;
     };

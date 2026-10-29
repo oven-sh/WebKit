@@ -535,9 +535,9 @@ static BitVector findHeadBlocks(const Function& function, FunctionAnalyses& anal
     return blocks;
 }
 
-// A short function without a loop whose rest parameter goes nowhere but into the lists of its calls. Where the caller has made the rest parameter for the call,
-// both lists go in the caller, and the arguments reach the callee in registers.
-static bool onlyHandsOnRestParameter(const Program& program, const Function& function, FunctionAnalyses& analyses, uint32_t codeBytes)
+// A short function without a loop whose rest parameter is only spread into its calls. If the caller created the rest parameter for the call,
+// both lists are eliminated in the caller, and the arguments reach the callee in registers.
+static bool onlyForwardsRestParameter(const Program& program, const Function& function, FunctionAnalyses& analyses, uint32_t codeBytes)
 {
     AOT_THRESHOLD(uint32_t, maxCodeBytes, 160);
     if (!function.has(FunctionFlags::HasRestParameter) || function.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }) || codeBytes > maxCodeBytes || analyses.cfg().hasCycle())
@@ -563,13 +563,13 @@ static bool onlyHandsOnRestParameter(const Program& program, const Function& fun
                 names.append(use.user);
                 continue;
             }
-            bool goesIntoList = (user.opcode == Opcode::AppendSpread && use.operandIndex == OperandIndex::AppendSpread::iterable)
+            bool isAppendedToList = (user.opcode == Opcode::AppendSpread && use.operandIndex == OperandIndex::AppendSpread::iterable)
                 || (user.opcode == Opcode::AppendElements && use.operandIndex == OperandIndex::AppendElements::source)
                 || (callsWithList.contains(user.opcode) && use.operandIndex == OperandIndex::CallList::list);
-            isHandedOn |= goesIntoList;
-            bool onlyLooks = user.operandKind(use.operandIndex) == OperandKind::Guard || user.opcode == Opcode::AllGuards || user.opcode == Opcode::IsPristine || user.opcode == Opcode::HasArrayStorage
+            isHandedOn |= isAppendedToList;
+            bool onlyInspects = user.operandKind(use.operandIndex) == OperandKind::Guard || user.opcode == Opcode::AllGuards || user.opcode == Opcode::IsPristine || user.opcode == Opcode::HasArrayStorage
                 || user.opcode == Opcode::ValidateType || user.opcode == Opcode::GetArrayLength || (user.opcode == Opcode::PropGet && user.key() == program.keyOf(BuiltinNames::length));
-            if (!goesIntoList && !onlyLooks)
+            if (!isAppendedToList && !onlyInspects)
                 return false;
         }
     }
@@ -1042,7 +1042,7 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     summary.likelyCodeBytes = computeLikelyBytes();
     summary.hasCycle = cfg.hasCycle();
     summary.isWrapper = isWrapperCreatedByEngine(function);
-    summary.onlyHandsOnRestParameter = onlyHandsOnRestParameter(program, function, analyses, summary.codeBytes);
+    summary.onlyForwardsRestParameter = onlyForwardsRestParameter(program, function, analyses, summary.codeBytes);
     // A loop of the library runs once for each element, however seldom the function is entered: a caller asks what it does with a function that it is handed.
     if (isCold(heat).predicted() && !(function.role == FunctionRole::Library && cfg.hasCycle()))
         return summary;
@@ -1454,7 +1454,7 @@ static bool isSiteOfChain(const Program& program, const Function& caller, const 
     return call.inlineFrame && caller.inlineFrames[call.inlineFrame].callee == call.function() && program.at(call.function()).role == FunctionRole::ChainStep;
 }
 
-static FunctionID workerThatNames(const FunctionPassContext& context, FunctionID wrapper)
+static FunctionID namingWorkerOf(const FunctionPassContext& context, FunctionID wrapper)
 {
     const Function& function = context.program.at(wrapper);
     if (function.creator.kind() != CreatorRecord::Kind::ResultWrapper)
@@ -1469,11 +1469,11 @@ static bool closesCycle(const FunctionPassContext& context, const InliningSummar
     FunctionID callee = call.function();
     if (callee == context.id)
         return true;
-    // A worker that calls its function again names the wrapper. With the worker in it the wrapper would be the whole function, and every level would make the object.
-    if (workerThatNames(context, context.id) == callee)
+    // A worker that calls its function recursively names the wrapper. With the worker inlined, the wrapper would be the whole function, and every level would allocate the object.
+    if (namingWorkerOf(context, context.id) == callee)
         return true;
-    // So that wrapper only calls the worker and puts the parts together: it is the call of the worker that closes a cycle.
-    if (workerThatNames(context, callee))
+    // So that wrapper only calls the worker and assembles the parts: the call to the worker is what closes the cycle.
+    if (namingWorkerOf(context, callee))
         return false;
     bool differsByCall = passesArgumentThat(call, summary.calledParameters, [&](ValueID argument, uint32_t) {
         return !!context.program.typeOf(context.function, argument).singleFunction();
@@ -2351,8 +2351,8 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     // In a loop of the caller the tests run at every turn wherever they stand. Beside the call they are the same tests, and the typed body behind them can be copied in.
     bool isExpectedToPassInLoop = isEntryChecks && !isCold(heat).predicted() && context.analyses.isInCycle(block) && passesEveryEntryCheck(program, caller, value, ArgumentTypes::Expected);
     bool opensTypedBody = isEntryChecks && (callerIsEntrypoint || passesEveryEntryCheck(program, caller, value) || isExpectedToPassInLoop || (!isCold(heat).predicted() && knowsMoreThanEntryChecksPassOn(context, call)));
-    bool handsOnListMadeForCall = summary.onlyHandsOnRestParameter && value.numberOfVariadicOperands() && lengthOfListMadeForCall(context, value.variadicOperands().back(), call);
-    bool isAlwaysWorthInlining = (summary.isWrapper || handsOnListMadeForCall) && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
+    bool forwardsListCreatedForCall = summary.onlyForwardsRestParameter && value.numberOfVariadicOperands() && lengthOfListMadeForCall(context, value.variadicOperands().back(), call);
+    bool isAlwaysWorthInlining = (summary.isWrapper || forwardsListCreatedForCall) && !leavesEntryChecksOutside && (!isEntryChecks || opensTypedBody) && !wouldOnlyMoveAllocationIntoCodeThatRunsOnce(context, summary, block, call, heat);
     if (canInlineWholeBody && (value.isAlwaysInlined() || isAlwaysWorthInlining)) {
         addBenefit(value.isAlwaysInlined() ? InlineBenefit::CallOverhead : InlineBenefit::Wrapper, cost);
         verdict.decision = InlineDecision::Inline;
@@ -2531,7 +2531,7 @@ static bool handsObjectToFrequentCode(FunctionPassContext& context, ValueID call
     return false;
 }
 
-// The wrapper reads the parts of the object and hands them to the body. Where the caller has just made the object, the copy takes less code than the allocation that goes, however seldom it runs.
+// The wrapper reads the object's parts and passes them to the body. If the caller has just created the object, the inlined copy is smaller than the allocation it removes, however rarely it runs.
 static bool takesNewObjectApart(FunctionPassContext& context, ValueID call)
 {
     const Function& caller = context.function;

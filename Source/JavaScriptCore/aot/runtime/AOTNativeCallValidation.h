@@ -76,8 +76,8 @@ private:
     JSValue m_result;
 };
 
-// For a validating image, where the program asks for a native binding. Which binding a native function came from is told by what the bindings have answered:
-// an answer is made anew at every asking, and making it may change the realm.
+// For a validating image, when the program requests a native binding. The binding that a native function came from is identified by what the bindings returned:
+// a result is created anew on every request, and creating it may change the realm.
 void noteNativeBindingResult(uint32_t hostNumber, JSValue answer);
 
 // For tests of the table of built-ins. Where BUN_AOT_CHECKED_NATIVE_CALLS names a file, a line for each entry whose calls were checked is appended to it, at exit and in front of the crash of a failed validation:
@@ -137,7 +137,7 @@ struct OperandDifference {
     EncodedJSValue arrived { 0 };
     // Of an element that changed.
     std::optional<uint32_t> index { };
-    // Only the written heaps declare it, whatever the row of the change says.
+    // Only the written heaps declare it, regardless of the change's row.
     bool isRepresentationOnly { false };
 };
 

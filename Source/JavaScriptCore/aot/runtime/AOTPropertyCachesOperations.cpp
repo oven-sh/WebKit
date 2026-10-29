@@ -59,7 +59,7 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
     ensureStillAliveHere(structureBefore);
 }
 
-// The first object that is given a name becomes a dictionary while it is filled, and the next one gets a Structure. What the first one did does not come again, so it says nothing of the Structure that it came with.
+// The first object that is given a name becomes a dictionary while it is filled, and the next one gets a Structure. The first object's transition does not recur, so it says nothing about the Structure it started with.
 static bool beganOrEndedAsDictionary(Structure* before, Structure* after)
 {
     return after != before && (before->isDictionary() || after->isDictionary());
@@ -213,43 +213,45 @@ static bool tryStoreExtraPropertyAndCache(Instance* instance, Object& object, co
     return true;
 }
 
-// branchUnlessTypeAccepts() decides these in the stub. Everything else it leaves to the run time.
-static bool stubCanTestType(const RuntimeType& type, JSValue value)
+// branchUnlessTypeAccepts() leaves these to the runtime. Null where the stub decides by itself.
+static ASCIILiteral whyStubCannotTestType(const RuntimeType& type, JSValue value)
 {
-    if (value.isInt32() || value.isUndefinedOrNull() || value.isBoolean())
-        return true;
-    if (value.isNumber())
-        return !type.integerRange() && (!type.primitiveSet().containsAny({ PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber }) || type.primitiveSet().containsAll({ PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber }));
-    if (!value.isCell())
-        return true;
+    constexpr OptionSet<PrimitiveSet> everyNumber { PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber };
+    if (value.isInt32() || !value.isCell()) {
+        bool isDecided = !value.isDouble() || (!type.integerRange() && (!type.primitiveSet().containsAny(everyNumber) || type.primitiveSet().containsAll(everyNumber)));
+        return isDecided ? ASCIILiteral() : "field store left the stub: absent, the stub cannot test the type: a double where the type takes some numbers"_s;
+    }
     JSCell* cell = value.asCell();
     if (cell->isString())
-        return !type.numberOfLiteralStrings;
+        return type.numberOfLiteralStrings ? "field store left the stub: absent, the stub cannot test the type: a string where the type lists strings"_s : ASCIILiteral();
     if (cell->isSymbol())
-        return type.primitiveSet().contains(PrimitiveSet::Symbol) || type.cellTests().empty();
+        return type.primitiveSet().contains(PrimitiveSet::Symbol) || type.cellTests().empty() ? ASCIILiteral() : "field store left the stub: absent, the stub cannot test the type: a symbol where the type lists symbols"_s;
     if (!cell->isObject())
-        return true;
+        return { };
     for (const RuntimeCellTest& test : type.cellTests()) {
         switch (test.kind) {
         case CellTestKind::IsObject:
-            return true;
+            return { };
         case CellTestKind::CellTypeIs:
         case CellTestKind::ShapeIn:
             break;
         case CellTestKind::IsCallable:
-            return isFunctionType(cell->type());
+            return isFunctionType(cell->type()) ? ASCIILiteral() : "field store left the stub: absent, the stub cannot test the type: callable"_s;
+        case CellTestKind::IsClosureOf:
+            return "field store left the stub: absent, the stub cannot test the type: a closure of listed functions"_s;
         case CellTestKind::InheritsClassInfo:
         case CellTestKind::IsPristine:
+            return "field store left the stub: absent, the stub cannot test the type: an object of a built-in class"_s;
         case CellTestKind::IsBuiltinCell:
-        case CellTestKind::IsClosureOf:
+            return "field store left the stub: absent, the stub cannot test the type: one built-in object"_s;
         case CellTestKind::IsSymbol:
         case CellTestKind::SharingModeIs:
         case CellTestKind::IsNamespaceOf:
         case CellTestKind::CarriesBrandOfClass:
-            return false;
+            return "field store left the stub: absent, the stub cannot test the type: another test of a cell"_s;
         }
     }
-    return true;
+    return { };
 }
 
 // For the counts alone: why a store or a definition under the name of a field got as far as the run time. The tests are those of the stub that stores by the table of fields, in its order.
@@ -268,10 +270,12 @@ static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& obj
     }
     if (!admits)
         return "field store left the stub: absent, the slot does not admit the value"_s;
-    if (!stubCanTestType(object.state().objects->layouts.typeOf(field), value))
-        return "field store left the stub: absent, the stub cannot test the type of the field"_s;
+    if (ASCIILiteral why = whyStubCannotTestType(object.state().objects->layouts.typeOf(field), value); !why.isNull())
+        return why;
     if (field.slot.representation() == SlotRepresentation::DeferredClosure)
         return "field store left the stub: absent, the slot defers a closure"_s;
+    if (field.flags & fieldMayExistWithoutStorage && !(field.flags & fieldIsStoredOnce) && value.isUndefined() && !object.slotOf(field))
+        return "field store left the stub: absent, undefined for a field that may exist without storage"_s;
     if (orderWord & orderWordHasFieldOutsideSlot)
         return "field store left the stub: absent, some field of the object lies outside its slot"_s;
     const CompiledStructure& structure = object.compiledStructure();
@@ -307,11 +311,15 @@ static bool takesAnyValue(const ProgramTables& tables, const LayoutData& layout,
     return index < tables.fieldRecordIndices().size() && FieldTableEntry { tables.fieldTableEntries()[index] }.name() == field.name && tables.fieldRecordIndices()[index] & FieldRecordIndex::isStoredWithoutTypeTest;
 }
 
-// While no field lies outside its slot, an empty slot says that the object has no such property, so an extensible object gets a plain data property by filling the slot.
-static bool canCreateFieldInSlot(const Object& object, const FieldData& field)
+// An empty slot means the object has no such property, unless the field has moved to the extra properties or exists without storage, which the key order says. An extensible object without the property gets a plain data property by filling the slot.
+static bool canCreateFieldInSlot(VM& vm, const Object& object, const FieldData& field)
 {
-    constexpr uint16_t flagsLeftToSlowPath = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand | fieldMayExistWithoutStorage;
-    return !(field.flags & flagsLeftToSlowPath) && !(object.orderWord() & (orderWordIntegrityBits | orderWordHasFieldOutsideSlot));
+    constexpr uint16_t flagsLeftToSlowPath = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand;
+    if (field.flags & flagsLeftToSlowPath || object.orderWord() & orderWordIntegrityBits)
+        return false;
+    if (field.flags & fieldMayExistWithoutStorage && object.isInKeyOrder(object.state(), field))
+        return false;
+    return !(object.orderWord() & orderWordHasFieldOutsideSlot) || !livesInExtraProperties(vm, object, field);
 }
 
 static void putToSlimClosureAndCache(const NamedAccess& access, SlimClosure& closure, JSValue value, PutMode mode)
@@ -366,9 +374,9 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
         access.caches().tables().fileAbsenceFilterForStores(globalObject, object);
     if (object && !field && tryStoreExtraPropertyAndCache(access.instance, *object, access.name(), access.site, value, mode, slot))
         return;
-    // Nothing is filed at the first miss, so the field is created without the descriptor, the walk and the classification that filing needs. A validating run keeps the walk.
+    // Nothing is cached at the first miss, so the field is created without the descriptor, chain walk and classification that caching needs. A validating run keeps the walk.
     bool createsOwnField = field && !shouldFile && !object->isInSlot(*field) && (mode == PutMode::Define || (chainLetsStoresPass && !vm.aotState().validatesRuntime));
-    if (createsOwnField && !uid->isSymbol() && canCreateFieldInSlot(*object, *field) && tryCreateField(vm, object->state(), *object, *field, value))
+    if (createsOwnField && !uid->isSymbol() && canCreateFieldInSlot(vm, *object, *field) && tryCreateField(vm, object->state(), *object, *field, value))
         return;
 
     if (shouldFile)

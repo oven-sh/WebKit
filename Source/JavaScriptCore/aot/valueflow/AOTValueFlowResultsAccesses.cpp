@@ -24,7 +24,7 @@ Witness witnessOfStatement(const Program& program, const ValueFlowStatement& sta
     return { statement.function.index(), statement.site.index(), function.locationOf(statement.site) };
 }
 
-ValueFlowOriginsOfEscapes::ValueFlowOriginsOfEscapes(const ValueFlowResultInputs& inputs)
+ValueFlowEscapeOrigins::ValueFlowEscapeOrigins(const ValueFlowResultInputs& inputs)
 {
     using ByNumber = WTF::UnsignedWithZeroKeyHashTraits<uint32_t>;
     using SetOfNode = HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, ByNumber>;
@@ -38,35 +38,35 @@ ValueFlowOriginsOfEscapes::ValueFlowOriginsOfEscapes(const ValueFlowResultInputs
 
     uint32_t numberOfObjects = universe.numberOfObjects();
     m_originOfObject.fill(ValueFlowStatementID(), numberOfObjects);
-    m_firstWayBehind.fill(0u, numberOfObjects + 1);
+    m_firstPathThrough.fill(0u, numberOfObjects + 1);
     ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
     ValueFlowNodeID carriedOut = nodes.ofHost(ValueFlowHostNode::ValuesCarriedOut);
-    // A statement that a rule has made hands over for the operation that first asked for it, or for a statement that asked for it.
-    auto operationBehind = [&](ValueFlowStatementID logger) {
-        AOT_THRESHOLD(unsigned, mostStatementsFollowed, 64);
-        for (unsigned followed = 0; logger && solver.isMadeByRule(logger) && followed < mostStatementsFollowed; ++followed)
-            logger = solver.statementThatFirstAskedFor(logger);
+    // A statement created by a rule passes values on behalf of the operation, or the statement, that first requested it.
+    auto requestingOperationOf = [&](ValueFlowStatementID logger) {
+        AOT_THRESHOLD(unsigned, maxStatementsFollowed, 64);
+        for (unsigned followed = 0; logger && solver.isMadeByRule(logger) && followed < maxStatementsFollowed; ++followed)
+            logger = solver.firstRequesterOf(logger);
         return logger;
     };
-    ValueSetID gone = maker.intersect(solver.possibleValuesOf(escaped), ValueSets::complement(universe.placeholdersAlone()));
-    if (ValueSets::isComplement(gone))
+    ValueSetID escapedObjects = maker.intersect(solver.possibleValuesOf(escaped), ValueSets::complement(universe.placeholdersAlone()));
+    if (ValueSets::isComplement(escapedObjects))
         return;
-    // A built-in that looks through what it is given hands out some of what it finds. What it finds has followed what it was given.
-    Vector<ValueFlowNodeID, 4> nodesLookedThrough;
+    // A built-in that inspects its arguments returns some of what it finds. What it finds is derived from what it was passed.
+    Vector<ValueFlowNodeID, 4> inspectedNodes;
     for (ValueFlowNodeID taking : { escaped, carriedOut }) {
         solver.graph().forEachPredecessor(taking, [&](ValueFlowNodeID predecessor) {
             const ValueFlowSolver::LoggedEdge* logged = solver.findLoggedEdge({ predecessor, taking });
-            ValueFlowStatementID operation = logged ? operationBehind(logged->statement) : ValueFlowStatementID();
+            ValueFlowStatementID operation = logged ? requestingOperationOf(logged->statement) : ValueFlowStatementID();
             if (!operation || solver.statementAt(operation).kind != ValueFlowStatementKind::Behavior)
                 return;
-            ValueFlowNodeID lookedThrough = solver.statementAt(operation).result;
-            if (lookedThrough && !ValueSets::isComplement(solver.seenValuesOf(lookedThrough)) && !nodesLookedThrough.contains(lookedThrough))
-                nodesLookedThrough.append(lookedThrough);
+            ValueFlowNodeID inspectedNode = solver.statementAt(operation).result;
+            if (inspectedNode && !ValueSets::isComplement(solver.seenValuesOf(inspectedNode)) && !inspectedNodes.contains(inspectedNode))
+                inspectedNodes.append(inspectedNode);
         });
     }
-    AOT::sort(nodesLookedThrough);
-    for (ValueFlowNodeID lookedThrough : nodesLookedThrough)
-        gone = maker.unite(gone, maker.intersect(solver.seenValuesOf(lookedThrough), ValueSets::complement(universe.placeholdersAlone())));
+    AOT::sort(inspectedNodes);
+    for (ValueFlowNodeID inspectedNode : inspectedNodes)
+        escapedObjects = maker.unite(escapedObjects, maker.intersect(solver.seenValuesOf(inspectedNode), ValueSets::complement(universe.placeholdersAlone())));
     auto forEachObject = [&](ValueSetID set, const auto& functor) {
         sets.forEachMember(set, [&](ValueFlowObjectID object) {
             if (universe.isObject(object) && object.index() < numberOfObjects)
@@ -74,43 +74,43 @@ ValueFlowOriginsOfEscapes::ValueFlowOriginsOfEscapes(const ValueFlowResultInputs
         });
     };
 
-    // A node that retires hands its predecessors straight to the node that covers it: that edge has no statement. The one that brought the value to the retired node has.
+    // A node that retires connects its predecessors directly to the node that covers it, and that edge has no statement. The edge that brought the value to the retired node has one.
     HashMap<uint32_t, Vector<const ValueFlowSolver::LoggedEdge*, 1>, IntHash<uint32_t>, ByNumber> edgesIntoRetiredNodes;
     for (const ValueFlowSolver::LoggedEdge& logged : solver.edgesInOrderLogged()) {
         if (solver.graph().isRetired(logged.edge.to))
             edgesIntoRetiredNodes.add(logged.edge.from.index(), Vector<const ValueFlowSolver::LoggedEdge*, 1> { }).iterator->value.append(&logged);
     }
-    auto isFunctionOfProgram = [&](FunctionID function) {
+    auto isProgramFunction = [&](FunctionID function) {
         if (!function || function.index() >= program.functions.size())
             return false;
         FunctionRole role = program.at(function).role;
         return role != FunctionRole::Library && role != FunctionRole::Model;
     };
-    auto isOfProgram = [&](ValueFlowStatementID id) {
-        return id && isFunctionOfProgram(solver.statementAt(id).function);
+    auto isProgramStatement = [&](ValueFlowStatementID id) {
+        return id && isProgramFunction(solver.statementAt(id).function);
     };
-    // Whoever holds an object of the program holds what the program wrote on it. What library code writes on an object of its own is followed back to where the program handed it in.
-    Vector<ValueFlowObjectID> objectsOfProgramThatAreGone;
-    forEachObject(gone, [&](ValueFlowObjectID object) {
+    // Any holder of a program object can reach what the program stored on it. What library code stores on its own object is traced back to where the program passed it in.
+    Vector<ValueFlowObjectID> escapedProgramObjects;
+    forEachObject(escapedObjects, [&](ValueFlowObjectID object) {
         FunctionID function = universe.closureFunction(object);
         if (!function)
             function = universe.functionOf(object);
         LayoutID layout = function ? LayoutID() : universe.kindOf(object) == ValueFlowObjectKind::Prototype ? universe.classLayoutOf(object) : universe.layoutOf(object);
         if (layout && program.at(layout).constructor)
             function = program.at(layout).constructor;
-        if (function ? isFunctionOfProgram(function) : !!layout)
-            objectsOfProgramThatAreGone.append(object);
+        if (function ? isProgramFunction(function) : !!layout)
+            escapedProgramObjects.append(object);
     });
-    ValueSetID goneOfProgram = maker.of(objectsOfProgramThatAreGone.span());
+    ValueSetID escapedProgramSet = maker.of(escapedProgramObjects.span());
     Vector<uint32_t> firstFieldOfLayout(program.layouts.size() + 1, [&](size_t index) {
         return index < program.layouts.size() ? nodes.field(LayoutID(static_cast<uint32_t>(index)), 0).index() : nodes.field(LayoutID(static_cast<uint32_t>(index - 1)), program.layouts[index - 1].fields.size()).index();
     });
-    struct Leaders {
+    struct EscapedHolders {
         ValueSetID objects { ValueSets::nothing };
-        // Where the leaders hold what follows them: the node of what is written on them.
-        ValueFlowNodeID holding { };
+        // The node for what is stored on them.
+        ValueFlowNodeID contents { };
     };
-    auto leadersOf = [&](ValueFlowNodeID from, ValueFlowStatementID logger) -> Leaders {
+    auto escapedHoldersOf = [&](ValueFlowNodeID from, ValueFlowStatementID logger) -> EscapedHolders {
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(from);
         while (key && key->kind == ValueFlowMadeNodeKind::Masked) {
             from = key->maskedNode();
@@ -118,68 +118,68 @@ ValueFlowOriginsOfEscapes::ValueFlowOriginsOfEscapes(const ValueFlowResultInputs
         }
         if (!key && from.index() >= firstFieldOfLayout.first() && from.index() < firstFieldOfLayout.last()) {
             LayoutID layout(static_cast<uint32_t>(std::ranges::upper_bound(firstFieldOfLayout, from.index()) - firstFieldOfLayout.begin() - 1));
-            return { maker.intersect(universe.objectsWith(layout), gone), from };
+            return { maker.intersect(universe.objectsWith(layout), escapedObjects), from };
         }
         if (!key) {
-            // What a function answers goes out once code outside the program calls it.
+            // A function's result escapes once code outside the program calls it.
             FunctionID function = logger && solver.statementAt(logger).kind != ValueFlowStatementKind::Operation ? nodes.functionOf(from) : FunctionID();
             ValueFlowObjectID closure = function && function.index() < program.functions.size() ? universe.closureOf(function) : ValueFlowObjectID();
-            return { closure && sets.contains(gone, closure) ? maker.of(closure) : ValueSets::nothing };
+            return { closure && sets.contains(escapedObjects, closure) ? maker.of(closure) : ValueSets::nothing };
         }
-        ValueSetID leaders;
+        ValueSetID through;
         switch (key->kind) {
         case ValueFlowMadeNodeKind::Written:
         case ValueFlowMadeNodeKind::WrittenUnderKind:
-            return { key->set ? maker.intersect(key->set, goneOfProgram) : ValueSets::nothing, from };
+            return { key->set ? maker.intersect(key->set, escapedProgramSet) : ValueSets::nothing, from };
         case ValueFlowMadeNodeKind::CallGroup:
             if (key->callKind() == ValueFlowCallKind::CallByNativeCode || key->callKind() == ValueFlowCallKind::ConstructByNativeCode || key->callKind() == ValueFlowCallKind::CallByHost)
-                leaders = key->set;
+                through = key->set;
             break;
         case ValueFlowMadeNodeKind::Constant:
             if (logger && solver.isMadeByRule(logger))
-                leaders = solver.keyOf(logger).set;
+                through = solver.keyOf(logger).set;
             break;
         default:
             break;
         }
-        return { leaders ? maker.intersect(leaders, gone) : ValueSets::nothing };
+        return { through ? maker.intersect(through, escapedObjects) : ValueSets::nothing };
     };
 
-    Vector<WayOut>& ways = m_ways;
-    // What code outside the program writes on an object had gone out before.
-    auto holdsWhatHasGoneOut = [&](ValueFlowNodeID node) {
+    Vector<EscapePath>& paths = m_paths;
+    // What code outside the program stores on an object had already escaped.
+    auto holdsEscapedObjects = [&](ValueFlowNodeID node) {
         for (const ValueFlowNodeKey* key = solver.keyOfMadeNode(node); key && key->kind == ValueFlowMadeNodeKind::Masked; key = solver.keyOfMadeNode(node))
             node = key->maskedNode();
         return node == escaped || node == carriedOut;
     };
-    auto addWaysBehind = [&](const Leaders& leaders, ValueSetID lookedFor, uint32_t round) {
+    auto addPathsThrough = [&](const EscapedHolders& through, ValueSetID lookedFor, uint32_t round) {
         Vector<ValueFlowNodeID, 8> written;
-        solver.graph().forEachPredecessor(leaders.holding, [&](ValueFlowNodeID value) {
+        solver.graph().forEachPredecessor(through.contents, [&](ValueFlowNodeID value) {
             written.append(value);
         });
         AOT::sort(written);
         for (ValueFlowNodeID value : written) {
             const ValueFlowNodeKey* key = solver.keyOfMadeNode(value);
-            bool repeatsWhatIsWritten = key && (key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind);
-            ValueSetID brought = repeatsWhatIsWritten || holdsWhatHasGoneOut(value) ? ValueSets::nothing : maker.intersect(solver.seenValuesOf(value), lookedFor);
-            if (brought == ValueSets::nothing)
+            bool mirrorsWrittenValues = key && (key->kind == ValueFlowMadeNodeKind::Written || key->kind == ValueFlowMadeNodeKind::WrittenUnderKind);
+            ValueSetID escaping = mirrorsWrittenValues || holdsEscapedObjects(value) ? ValueSets::nothing : maker.intersect(solver.seenValuesOf(value), lookedFor);
+            if (escaping == ValueSets::nothing)
                 continue;
-            const ValueFlowSolver::LoggedEdge* logged = solver.findLoggedEdge({ value, leaders.holding });
-            ways.append({ std::max(round, logged ? logged->round : 0), { }, leaders.objects, brought });
+            const ValueFlowSolver::LoggedEdge* logged = solver.findLoggedEdge({ value, through.contents });
+            paths.append({ std::max(round, logged ? logged->round : 0), { }, through.objects, escaping });
         }
     };
     SetOfNode seen;
-    seen.add(escaped.index(), gone);
-    Vector<std::pair<uint32_t, ValueSetID>> level { { escaped.index(), gone } };
-    for (ValueFlowNodeID lookedThrough : nodesLookedThrough) {
-        seen.add(lookedThrough.index(), gone);
-        level.append({ lookedThrough.index(), gone });
+    seen.add(escaped.index(), escapedObjects);
+    Vector<std::pair<uint32_t, ValueSetID>> level { { escaped.index(), escapedObjects } };
+    for (ValueFlowNodeID inspectedNode : inspectedNodes) {
+        seen.add(inspectedNode.index(), escapedObjects);
+        level.append({ inspectedNode.index(), escapedObjects });
     }
     Vector<ValueFlowNodeID> predecessors;
     while (!level.isEmpty()) {
         SetOfNode next;
         for (auto [node, lookedFor] : level) {
-            bool takesWhatGoesOut = ValueFlowNodeID(node) == escaped || ValueFlowNodeID(node) == carriedOut;
+            bool receivesEscapedObjects = ValueFlowNodeID(node) == escaped || ValueFlowNodeID(node) == carriedOut;
             predecessors.shrink(0);
             solver.graph().forEachPredecessor(ValueFlowNodeID(node), [&](ValueFlowNodeID predecessor) {
                 predecessors.append(predecessor);
@@ -188,65 +188,65 @@ ValueFlowOriginsOfEscapes::ValueFlowOriginsOfEscapes(const ValueFlowResultInputs
             for (ValueFlowNodeID predecessor : predecessors) {
                 if (predecessor == escaped)
                     continue;
-                ValueSetID brought = maker.intersect(solver.seenValuesOf(predecessor), lookedFor);
-                if (brought == ValueSets::nothing)
+                ValueSetID escaping = maker.intersect(solver.seenValuesOf(predecessor), lookedFor);
+                if (escaping == ValueSets::nothing)
                     continue;
-                auto goOnAt = [&](ValueFlowNodeID holding, ValueSetID held) {
-                    auto seenThere = seen.add(holding.index(), ValueSets::nothing);
+                auto continueFrom = [&](ValueFlowNodeID from, ValueSetID held) {
+                    auto seenThere = seen.add(from.index(), ValueSets::nothing);
                     ValueSetID fresh = maker.intersect(held, ValueSets::complement(seenThere.iterator->value));
                     if (fresh == ValueSets::nothing)
                         return;
                     seenThere.iterator->value = maker.unite(seenThere.iterator->value, fresh);
-                    auto entry = next.add(holding.index(), ValueSets::nothing);
+                    auto entry = next.add(from.index(), ValueSets::nothing);
                     entry.iterator->value = maker.unite(entry.iterator->value, fresh);
                 };
                 auto follow = [&](const ValueFlowSolver::LoggedEdge* logged) {
                     ValueFlowStatementID logger = logged ? logged->statement : ValueFlowStatementID();
                     uint32_t round = logged ? logged->round : 0;
-                    if (ValueFlowStatementID operation = takesWhatGoesOut ? operationBehind(logger) : ValueFlowStatementID(); operation && operation != logger) {
-                        if (isOfProgram(operation))
-                            return ways.append({ round, operation, ValueSets::nothing, brought });
+                    if (ValueFlowStatementID operation = receivesEscapedObjects ? requestingOperationOf(logger) : ValueFlowStatementID(); operation && operation != logger) {
+                        if (isProgramStatement(operation))
+                            return paths.append({ round, operation, ValueSets::nothing, escaping });
                         if (solver.statementAt(operation).kind == ValueFlowStatementKind::Behavior)
                             return;
-                        // What an operation of the library hands over has come to one of its operands.
-                        bool hasCome = false;
+                        // What a library operation passes on arrived at one of its operands.
+                        bool hasArrived = false;
                         for (const ValueFlowOperand& operand : inputs.bodies().operandsOf(solver.statementAt(operation))) {
-                            ValueSetID come = operand.node ? maker.intersect(solver.seenValuesOf(operand.node), brought) : ValueSets::nothing;
-                            if (come == ValueSets::nothing)
+                            ValueSetID arrived = operand.node ? maker.intersect(solver.seenValuesOf(operand.node), escaping) : ValueSets::nothing;
+                            if (arrived == ValueSets::nothing)
                                 continue;
-                            hasCome = true;
-                            goOnAt(operand.node, come);
+                            hasArrived = true;
+                            continueFrom(operand.node, arrived);
                         }
-                        if (hasCome)
+                        if (hasArrived)
                             return;
                     }
                     if (logged && logged->edge.to != ValueFlowNodeID(node)) {
-                        if (Leaders leaders = leadersOf(logged->edge.to, { }); leaders.objects != ValueSets::nothing)
-                            return ways.append({ round, { }, leaders.objects, brought });
+                        if (EscapedHolders through = escapedHoldersOf(logged->edge.to, { }); through.objects != ValueSets::nothing)
+                            return paths.append({ round, { }, through.objects, escaping });
                     }
-                    if (isOfProgram(logger))
-                        return ways.append({ round, logger, ValueSets::nothing, brought });
-                    if (Leaders leaders = leadersOf(predecessor, logger); leaders.objects != ValueSets::nothing) {
-                        if (!leaders.holding)
-                            return ways.append({ round, { }, leaders.objects, brought });
-                        if (!solver.keyOfMadeNode(leaders.holding))
-                            addWaysBehind(leaders, brought, round);
+                    if (isProgramStatement(logger))
+                        return paths.append({ round, logger, ValueSets::nothing, escaping });
+                    if (EscapedHolders through = escapedHoldersOf(predecessor, logger); through.objects != ValueSets::nothing) {
+                        if (!through.contents)
+                            return paths.append({ round, { }, through.objects, escaping });
+                        if (!solver.keyOfMadeNode(through.contents))
+                            addPathsThrough(through, escaping, round);
                         return;
                     }
                     const ValueFlowNodeKey* key = solver.keyOfMadeNode(predecessor);
                     if (key && key->kind == ValueFlowMadeNodeKind::Constant) {
-                        // Where a rule makes an object of the program nobody hands it over.
-                        if (ValueSetID ofLibrary = maker.intersect(brought, ValueSets::complement(goneOfProgram)); ofLibrary != ValueSets::nothing)
-                            ways.append({ round, logger, ValueSets::nothing, ofLibrary });
+                        // When a rule creates a program object, no statement passes it on.
+                        if (ValueSetID ofLibrary = maker.intersect(escaping, ValueSets::complement(escapedProgramSet)); ofLibrary != ValueSets::nothing)
+                            paths.append({ round, logger, ValueSets::nothing, ofLibrary });
                         return;
                     }
-                    goOnAt(predecessor, brought);
+                    continueFrom(predecessor, escaping);
                 };
                 if (const ValueFlowSolver::LoggedEdge* logged = solver.findLoggedEdge({ predecessor, ValueFlowNodeID(node) })) {
                     follow(logged);
                     continue;
                 }
-                auto intoRetiredNodes = takesWhatGoesOut ? edgesIntoRetiredNodes.find(predecessor.index()) : edgesIntoRetiredNodes.end();
+                auto intoRetiredNodes = receivesEscapedObjects ? edgesIntoRetiredNodes.find(predecessor.index()) : edgesIntoRetiredNodes.end();
                 if (intoRetiredNodes == edgesIntoRetiredNodes.end()) {
                     follow(nullptr);
                     continue;
@@ -261,75 +261,75 @@ ValueFlowOriginsOfEscapes::ValueFlowOriginsOfEscapes(const ValueFlowResultInputs
         AOT::sort(level, { }, [](const auto& entry) { return entry.first; });
     }
 
-    // Whoever holds an object finds what is written on it and what it inherits from.
+    // Any holder of an object can reach what is stored on it and what it inherits from.
     for (uint32_t node = solver.input().numberOfNodes; node < solver.graph().numberOfNodes(); ++node) {
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(ValueFlowNodeID(node));
         if (!key || !key->set || ValueSets::isComplement(key->set) || (key->kind != ValueFlowMadeNodeKind::Written && key->kind != ValueFlowMadeNodeKind::WrittenUnderKind))
             continue;
-        if (ValueSetID leaders = maker.intersect(key->set, goneOfProgram); leaders != ValueSets::nothing)
-            addWaysBehind({ leaders, ValueFlowNodeID(node) }, gone, 0);
+        if (ValueSetID through = maker.intersect(key->set, escapedProgramSet); through != ValueSets::nothing)
+            addPathsThrough({ through, ValueFlowNodeID(node) }, escapedObjects, 0);
     }
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         ValueFlowObjectID prototype = universe.prototypeOf(LayoutID(index));
-        if (!sets.contains(gone, prototype))
+        if (!sets.contains(escapedObjects, prototype))
             continue;
-        if (ValueSetID instances = maker.intersect(universe.objectsWith(LayoutID(index)), gone); instances != ValueSets::nothing)
-            ways.append({ 0, { }, instances, maker.of(prototype) });
-        if (LayoutID base = program.layouts[index].base; base && sets.contains(gone, universe.prototypeOf(base)))
-            ways.append({ 0, { }, maker.of(prototype), maker.of(universe.prototypeOf(base)) });
+        if (ValueSetID instances = maker.intersect(universe.objectsWith(LayoutID(index)), escapedObjects); instances != ValueSets::nothing)
+            paths.append({ 0, { }, instances, maker.of(prototype) });
+        if (LayoutID base = program.layouts[index].base; base && sets.contains(escapedObjects, universe.prototypeOf(base)))
+            paths.append({ 0, { }, maker.of(prototype), maker.of(universe.prototypeOf(base)) });
     }
-    Vector<uint32_t>& firstWayBehind = m_firstWayBehind;
-    for (const WayOut& way : ways) {
-        forEachObject(way.leaders, [&](ValueFlowObjectID leader) {
-            ++firstWayBehind[leader.index() + 1];
+    Vector<uint32_t>& firstPathThrough = m_firstPathThrough;
+    for (const EscapePath& path : paths) {
+        forEachObject(path.through, [&](ValueFlowObjectID holder) {
+            ++firstPathThrough[holder.index() + 1];
         });
     }
     for (uint32_t index = 0; index < numberOfObjects; ++index)
-        firstWayBehind[index + 1] += firstWayBehind[index];
-    m_waysBehind.grow(firstWayBehind.last());
-    Vector<uint32_t> nextWayBehind(firstWayBehind.span().first(numberOfObjects));
-    for (uint32_t index = 0; index < ways.size(); ++index) {
-        forEachObject(ways[index].leaders, [&](ValueFlowObjectID leader) {
-            m_waysBehind[nextWayBehind[leader.index()]++] = index;
+        firstPathThrough[index + 1] += firstPathThrough[index];
+    m_pathsThrough.grow(firstPathThrough.last());
+    Vector<uint32_t> nextPathThrough(firstPathThrough.span().first(numberOfObjects));
+    for (uint32_t index = 0; index < paths.size(); ++index) {
+        forEachObject(paths[index].through, [&](ValueFlowObjectID holder) {
+            m_pathsThrough[nextPathThrough[holder.index()]++] = index;
         });
     }
-    // Which of several origins is named may not follow the rounds, which follow the number of threads: it is the lowest in the text, of the program before the library.
-    // A statement that hands over only because its callee or holder is of unknown type may itself hang on an origin, so it names only what nothing else has named.
-    auto placeOf = [&](ValueFlowStatementID id) {
+    // The choice among several origins must not depend on the rounds, which depend on the number of threads: it is the first in source order, program before library.
+    // A statement that passes values on only because its callee or holder has unknown type may itself depend on an origin, so it only names what nothing else has named.
+    auto sourceOrderOf = [&](ValueFlowStatementID id) {
         const ValueFlowStatement& statement = solver.statementAt(id);
-        return std::tuple { !isOfProgram(id), statement.function.index(), statement.site.index() };
+        return std::tuple { !isProgramStatement(id), statement.function.index(), statement.site.index() };
     };
-    auto handsOverToValueOfUnknownType = [&](ValueFlowStatementID id) {
+    auto passesToValueOfUnknownType = [&](ValueFlowStatementID id) {
         if (!id || solver.statementAt(id).kind != ValueFlowStatementKind::Operation || !solver.statementAt(id).operandCount)
             return false;
         ValueFlowNodeID taking = inputs.bodies().operandsOf(solver.statementAt(id))[0].node;
         return taking && sets.contains(solver.possibleValuesOf(taking), ValueFlowUniverse::unknownObject());
     };
-    BitVector isNamed(numberOfObjects);
-    BitVector isNamedForGood(numberOfObjects);
+    BitVector hasOrigin(numberOfObjects);
+    BitVector hasFinalOrigin(numberOfObjects);
     Vector<ValueFlowObjectID> objectsToFollow;
     auto follow = [&](uint32_t index, ValueFlowStatementID origin) {
-        forEachObject(ways[index].brought, [&](ValueFlowObjectID object) {
-            if (isNamedForGood.quickGet(object.index()))
+        forEachObject(paths[index].escaping, [&](ValueFlowObjectID object) {
+            if (hasFinalOrigin.quickGet(object.index()))
                 return;
             ValueFlowStatementID& named = m_originOfObject[object.index()];
-            if (isNamed.quickSet(object.index()) && (!origin || (named && placeOf(origin) >= placeOf(named))))
+            if (hasOrigin.quickSet(object.index()) && (!origin || (named && sourceOrderOf(origin) >= sourceOrderOf(named))))
                 return;
             named = origin;
             objectsToFollow.append(object);
         });
     };
-    for (bool takesThoseToValuesOfUnknownType : { false, true }) {
-        for (uint32_t index = 0; index < ways.size(); ++index) {
-            if (ways[index].leaders == ValueSets::nothing && handsOverToValueOfUnknownType(ways[index].statement) == takesThoseToValuesOfUnknownType)
-                follow(index, ways[index].statement);
+    for (bool isConditional : { false, true }) {
+        for (uint32_t index = 0; index < paths.size(); ++index) {
+            if (paths[index].through == ValueSets::nothing && passesToValueOfUnknownType(paths[index].statement) == isConditional)
+                follow(index, paths[index].statement);
         }
         while (!objectsToFollow.isEmpty()) {
-            ValueFlowObjectID leader = objectsToFollow.takeLast();
-            for (uint32_t index : waysBehind(leader))
-                follow(index, m_originOfObject[leader.index()]);
+            ValueFlowObjectID holder = objectsToFollow.takeLast();
+            for (uint32_t index : pathsThrough(holder))
+                follow(index, m_originOfObject[holder.index()]);
         }
-        isNamedForGood = isNamed;
+        hasFinalOrigin = hasOrigin;
     }
 }
 
@@ -391,14 +391,14 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
             return m_roots.size() - 1;
         }).iterator->value;
     };
-    enum class Hangs : uint8_t { OnNothingElse, OnAnObjectThatWentOut };
-    Vector<std::pair<uint32_t, uint32_t>> seedsThatHangOnNothingElse;
-    auto seed = [&](ValueFlowNodeID node, const Witness& witness, ValueFlowUnknownSource source, Hangs hangs = Hangs::OnNothingElse) {
+    enum class SeedDependency : uint8_t { None, OnEscapedObject };
+    Vector<std::pair<uint32_t, uint32_t>> independentSeeds;
+    auto seed = [&](ValueFlowNodeID node, const Witness& witness, ValueFlowUnknownSource source, SeedDependency dependency = SeedDependency::None) {
         if (!hasFunction(witness))
             return;
         uint32_t seeded = rootAt(witness, source);
-        if (hangs == Hangs::OnNothingElse)
-            seedsThatHangOnNothingElse.append({ node.index(), seeded });
+        if (dependency == SeedDependency::None)
+            independentSeeds.append({ node.index(), seeded });
         ValueFlowUnknownSource& named = m_roots[seeded].source;
         if (source != ValueFlowUnknownSource::ThrownByRunTime && (named == ValueFlowUnknownSource::ThrownByRunTime || source < named))
             named = source;
@@ -420,16 +420,16 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
             root = seeded;
     };
 
-    ValueFlowOriginsOfEscapes origins(inputs);
-    Vector<std::pair<uint32_t, uint32_t>> nodesBehindObjects;
-    auto beginBehind = [&](ValueFlowObjectID object, ValueFlowNodeID node, ValueFlowUnknownSource source) {
+    ValueFlowEscapeOrigins origins(inputs);
+    Vector<std::pair<uint32_t, uint32_t>> nodesReachedThroughObjects;
+    auto seedThroughObject = [&](ValueFlowObjectID object, ValueFlowNodeID node, ValueFlowUnknownSource source) {
         ValueFlowStatementID origin = origins.originOf(object);
         if (!origin)
             return;
-        nodesBehindObjects.append({ object.index(), node.index() });
-        // All that hangs on one root is reported under one cause. At a statement that hands an object over that is the handing over, whatever a rule went on to answer for the object.
-        bool namesHandingOver = source == ValueFlowUnknownSource::ParameterOfEscapedFunction || source == ValueFlowUnknownSource::ContentsOfEscapedObject;
-        seed(node, witnessOfStatement(inputs.program, solver.statementAt(origin)), namesHandingOver ? source : ValueFlowUnknownSource::ParameterOfEscapedFunction, Hangs::OnAnObjectThatWentOut);
+        nodesReachedThroughObjects.append({ object.index(), node.index() });
+        // Everything that depends on one root is reported under one cause. At a statement that passes an object on, the cause is that statement, whatever a rule later derived for the object.
+        bool keepsSource = source == ValueFlowUnknownSource::ParameterOfEscapedFunction || source == ValueFlowUnknownSource::ContentsOfEscapedObject;
+        seed(node, witnessOfStatement(inputs.program, solver.statementAt(origin)), keepsSource ? source : ValueFlowUnknownSource::ParameterOfEscapedFunction, SeedDependency::OnEscapedObject);
     };
     struct Beginning {
         ValueFlowNodeID node;
@@ -458,7 +458,7 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
             continue;
         if (*source == ValueFlowUnknownSource::ParameterOfEscapedFunction) {
             if (FunctionID function = nodes.functionOf(edge.to))
-                beginBehind(inputs.universe().closureOf(function), edge.to, *source);
+                seedThroughObject(inputs.universe().closureOf(function), edge.to, *source);
             continue;
         }
         const ValueFlowNodeKey* key = solver.keyOfMadeNode(edge.to);
@@ -467,27 +467,27 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
                 ValueSetID receivers = readsThroughSet(reader);
                 if (!receivers || ValueSets::isComplement(receivers))
                     continue;
-                // Of the objects read through, those that code outside the program has written on.
+                // Of the objects read through, those that code outside the program has stored to.
                 solver.sets().forEachMember(receivers, [&](ValueFlowObjectID receiver) {
                     if (!key->set || ValueSets::isComplement(key->set) || solver.sets().contains(key->set, receiver))
-                        beginBehind(receiver, ValueFlowNodeID(reader), *source);
+                        seedThroughObject(receiver, ValueFlowNodeID(reader), *source);
                 });
             }
             continue;
         }
-        // What a rule answers for objects that have gone out begins where they went out.
+        // What a rule derives for escaped objects starts where they escaped.
         ValueFlowStatementID logger = solver.statementThatLogged(edge);
         ValueSetID asked = logger && solver.isMadeByRule(logger) ? solver.keyOf(logger).set : ValueSetID();
-        bool isBehindObjects = false;
+        bool isReachedThroughObjects = false;
         if (asked && !ValueSets::isComplement(asked)) {
             solver.sets().forEachMember(asked, [&](ValueFlowObjectID object) {
                 if (!origins.originOf(object))
                     return;
-                isBehindObjects = true;
-                beginBehind(object, edge.to, *source);
+                isReachedThroughObjects = true;
+                seedThroughObject(object, edge.to, *source);
             });
         }
-        if (!isBehindObjects)
+        if (!isReachedThroughObjects)
             beginAt(logger, edge.to, *source);
     }
     AOT::sort(derivations);
@@ -555,15 +555,15 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
         });
     }
 
-    // What each value of unknown type, and each object that went out, hangs on: nothing, one root, or several. A statement that hands objects to a callee or a holder
-    // of unknown type does so only while that value is of unknown type. Where the value hangs on one hand-over alone, so does what the statement hands over:
-    // that is how a ring of objects that lead each other out counts for the place where the first of them went out.
+    // What each value of unknown type, and each escaped object, depends on: nothing, one root, or several. A statement that passes objects to a callee or a holder
+    // of unknown type does so only while that value has unknown type. If the value depends on a single escape, so does what the statement passes on:
+    // that is how a cycle of objects that make each other escape is attributed to the place where the first of them escaped.
     constexpr uint32_t several = none - 1;
-    std::span<const ValueFlowOriginsOfEscapes::WayOut> ways = origins.ways();
-    Vector<uint32_t> rootOfWay(FillWith { }, ways.size(), none);
+    std::span<const ValueFlowEscapeOrigins::EscapePath> paths = origins.paths();
+    Vector<uint32_t> rootOfPath(FillWith { }, paths.size(), none);
     Vector<uint32_t> rootOfObject(FillWith { }, inputs.universe().numberOfObjects(), none);
     Vector<uint32_t> onlyRootOfNode(FillWith { }, numberOfNodes, none);
-    Vector<uint32_t> waysToFollow;
+    Vector<uint32_t> pathsToFollow;
     Vector<uint32_t> objectsToFollow;
     Vector<uint32_t> nodesToFollow;
     auto join = [&](Vector<uint32_t>& roots, uint32_t index, uint32_t root, Vector<uint32_t>& toFollow) {
@@ -573,47 +573,47 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
         into = into == none ? root : several;
         toFollow.append(index);
     };
-    BitVector handsOver;
-    Vector<uint32_t> rootOfStatementOfWay(FillWith { }, ways.size(), none);
-    Vector<std::pair<uint32_t, uint32_t>> waysBehindNodes;
-    for (uint32_t index = 0; index < ways.size(); ++index) {
-        if (ways[index].leaders != ValueSets::nothing)
+    BitVector isEscapeRoot;
+    Vector<uint32_t> rootOfPathStatement(FillWith { }, paths.size(), none);
+    Vector<std::pair<uint32_t, uint32_t>> pathsThroughNodes;
+    for (uint32_t index = 0; index < paths.size(); ++index) {
+        if (paths[index].through != ValueSets::nothing)
             continue;
-        Witness witness = ways[index].statement ? witnessOfStatement(inputs.program, solver.statementAt(ways[index].statement)) : noWitness;
+        Witness witness = paths[index].statement ? witnessOfStatement(inputs.program, solver.statementAt(paths[index].statement)) : noWitness;
         uint32_t root = rootAt(witness, ValueFlowUnknownSource::ParameterOfEscapedFunction);
-        rootOfStatementOfWay[index] = root;
-        handsOver.set(root);
-        const ValueFlowStatement* statement = ways[index].statement ? &solver.statementAt(ways[index].statement) : nullptr;
+        rootOfPathStatement[index] = root;
+        isEscapeRoot.set(root);
+        const ValueFlowStatement* statement = paths[index].statement ? &solver.statementAt(paths[index].statement) : nullptr;
         ValueFlowNodeID taking = statement && statement->kind == ValueFlowStatementKind::Operation && statement->operandCount ? inputs.bodies().operandsOf(*statement)[0].node : ValueFlowNodeID();
         if (taking && holders.holdsUnknownObject.quickGet(taking.index()))
-            waysBehindNodes.append({ taking.index(), index });
+            pathsThroughNodes.append({ taking.index(), index });
         else
-            join(rootOfWay, index, root, waysToFollow);
+            join(rootOfPath, index, root, pathsToFollow);
     }
-    AOT::sort(waysBehindNodes);
-    AOT::sort(nodesBehindObjects);
-    for (auto [node, root] : seedsThatHangOnNothingElse)
+    AOT::sort(pathsThroughNodes);
+    AOT::sort(nodesReachedThroughObjects);
+    for (auto [node, root] : independentSeeds)
         join(onlyRootOfNode, node, root, nodesToFollow);
-    bool haveWaysWithoutRootBegun = false;
+    bool havePathsWithoutRootStarted = false;
     for (;;) {
-        if (waysToFollow.isEmpty() && objectsToFollow.isEmpty() && nodesToFollow.isEmpty()) {
-            if (std::exchange(haveWaysWithoutRootBegun, true))
+        if (pathsToFollow.isEmpty() && objectsToFollow.isEmpty() && nodesToFollow.isEmpty()) {
+            if (std::exchange(havePathsWithoutRootStarted, true))
                 break;
-            for (auto [taking, way] : waysBehindNodes)
-                join(rootOfWay, way, rootOfWay[way] == none ? rootOfStatementOfWay[way] : none, waysToFollow);
+            for (auto [taking, path] : pathsThroughNodes)
+                join(rootOfPath, path, rootOfPath[path] == none ? rootOfPathStatement[path] : none, pathsToFollow);
         }
-        while (!waysToFollow.isEmpty()) {
-            uint32_t way = waysToFollow.takeLast();
-            solver.sets().forEachMember(ways[way].brought, [&](ValueFlowObjectID object) {
+        while (!pathsToFollow.isEmpty()) {
+            uint32_t path = pathsToFollow.takeLast();
+            solver.sets().forEachMember(paths[path].escaping, [&](ValueFlowObjectID object) {
                 if (object.index() < rootOfObject.size())
-                    join(rootOfObject, object.index(), rootOfWay[way], objectsToFollow);
+                    join(rootOfObject, object.index(), rootOfPath[path], objectsToFollow);
             });
         }
         while (!objectsToFollow.isEmpty()) {
             uint32_t object = objectsToFollow.takeLast();
-            for (uint32_t way : origins.waysBehind(ValueFlowObjectID(object)))
-                join(rootOfWay, way, rootOfObject[object], waysToFollow);
-            for (auto [leader, node] : std::ranges::equal_range(nodesBehindObjects, object, { }, &std::pair<uint32_t, uint32_t>::first))
+            for (uint32_t path : origins.pathsThrough(ValueFlowObjectID(object)))
+                join(rootOfPath, path, rootOfObject[object], pathsToFollow);
+            for (auto [holder, node] : std::ranges::equal_range(nodesReachedThroughObjects, object, { }, &std::pair<uint32_t, uint32_t>::first))
                 join(onlyRootOfNode, node, rootOfObject[object], nodesToFollow);
         }
         while (!nodesToFollow.isEmpty()) {
@@ -622,8 +622,8 @@ void ValueFlowBirthsOfUnknownObject::findRoots(const ValueFlowResultInputs& inpu
             forEachSuccessor(node, [&](uint32_t successor) {
                 join(onlyRootOfNode, successor, root, nodesToFollow);
             });
-            for (auto [taking, way] : std::ranges::equal_range(waysBehindNodes, node, { }, &std::pair<uint32_t, uint32_t>::first))
-                join(rootOfWay, way, root != several && handsOver.get(root) ? root : rootOfStatementOfWay[way], waysToFollow);
+            for (auto [taking, path] : std::ranges::equal_range(pathsThroughNodes, node, { }, &std::pair<uint32_t, uint32_t>::first))
+                join(rootOfPath, path, root != several && isEscapeRoot.get(root) ? root : rootOfPathStatement[path], pathsToFollow);
         }
     }
     m_originOfObject.fill(noWitness, rootOfObject.size());

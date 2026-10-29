@@ -1966,18 +1966,6 @@ void sanitizeStackForVM(VM& vm)
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa20, vm.lastStackTop(), stack.origin(), stack.end());
 }
 
-SUPPRESS_ASAN void sanitizeStackForVMFrom(VM& vm, void* lowestAddress)
-{
-    if (!vm.currentThreadIsHoldingAPILock())
-        return;
-    lowestAddress = std::max(lowestAddress, vm.stackLimit());
-    // A stack grows a page at a time, from the top.
-    for (uintptr_t address = WTF::roundDownToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(currentStackPointer())); address > std::bit_cast<uintptr_t>(lowestAddress); address -= pageSize())
-        static_cast<void>(*std::bit_cast<volatile char*>(address - 1));
-    vm.lowerLastStackTop(lowestAddress);
-    sanitizeStackForVM(vm);
-}
-
 // For the slow paths of calls: they run in the middle of JS, on the thread that holds the API lock, so that thread's stack
 // bounds come from the lock rather than from the two thread-local lookups sanitizeStackForVM() makes. Same checks.
 void sanitizeStackForVMInCallSlowPath(VM& vm)

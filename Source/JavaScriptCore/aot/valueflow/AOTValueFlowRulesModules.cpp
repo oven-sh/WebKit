@@ -177,7 +177,7 @@ ValueFlowSources exportedValueOf(ValueFlowRuleContext& context, const ModuleExpo
         const Program& program = context.program();
         const Module& target = program.at(entry.module);
         useModule(context, entry.module);
-        // The host reads the name off the object that the module mirrors.
+        // The host reads the name from the object that the module mirrors.
         if (target.kind == ModuleKind::Runtime)
             return ownPropertyOf(context, valueOf(context, runtimeNamespaceOf(context, target.runtimeModule)), program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.importName }));
         // The run time reads the name on the namespace object of a module of the program.

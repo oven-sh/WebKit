@@ -319,7 +319,7 @@ static NativeCallDeclaration findDeclaration(const NativeCall& call, const Nativ
             declare(CalleeInRealm, candidate, mode);
             return declaration;
         }
-        // A property that the program may replace holds a function of native code from the start, and its entry says what a call of that function does.
+        // A property that the program may replace initially holds a native function, and its entry describes what a call to that function does.
         if (kind == Kind::Object && table.at(candidate).kind == BuiltinKind::DataProperty && mayBeInRealm(candidate) && isValueOfProperty(call.realm, candidate, call.callee)) {
             declare(CalleeInRealm, candidate, mode);
             return declaration;
@@ -508,7 +508,7 @@ void noteNativeBindingResult(uint32_t hostNumber, JSValue answer)
     });
 }
 
-// Where unseen code may run, an object that native code holds may change in any way, and no proof rests on the rule.
+// If unseen code may run, an object held by native code may change in any way, and no proof relies on the rule.
 static bool isAnsweredBy(BuiltinID binding, JSObject* callee)
 {
     auto* function = dynamicDowncast<JSFunction>(callee);
@@ -942,7 +942,7 @@ private:
                     continue;
                 OperandUses declaring = difference.isRepresentationOnly ? OperandUses() : rowOf(change).uses;
                 if (!declaring.isEmpty() && isTakenForUnknownFunction()) {
-                    // Flow opens the contents of a container that native code gets, no type speaks of the length of a buffer or of a view, and the call writes every heap: Worker.prototype.postMessage takes the memory of what its list names.
+                    // Flow analysis opens the contents of a container passed to native code, no type describes the length of a buffer or view, and the call writes every heap: Worker.prototype.postMessage detaches the buffers in its transfer list.
                     bool isOfBytes = difference.change == OperandChange::InternalStateChanged || difference.change == OperandChange::BytesChanged;
                     if (isOfBytes && (operand.object->type() == ArrayBufferType || isTypedArrayTypeIncludingDataView(operand.object->type()))) {
                         noteChange(makeString(what, " (no proof rests on the bytes of what native code gets)"_s));
@@ -1055,7 +1055,7 @@ private:
     {
         if (!result || !result.isObject() || isTakenForUnknownFunction() || mayReturnHeldValue())
             return;
-        // An entry that hands on what a member of an operand answers may find a function of the table there: Date.prototype.toJSON calls whatever `toISOString` finds. Flow calls that function, and what it answers is its own doing.
+        // An entry that forwards the result of a member of an operand may find a table function there: Date.prototype.toJSON calls whatever `toISOString` resolves to. Flow analysis calls that function, and its result is its own responsibility.
         if (m_resultsOfCalledFunctions.contains(asObject(result)) && mayRunCode())
             return;
         // A result declared as anything stands for every object that native code holds, and it holds an operand that it retains.
