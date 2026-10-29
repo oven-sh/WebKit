@@ -90,6 +90,7 @@
 #include "MarkingConstraintSet.h"
 #include "MegamorphicCache.h"
 #include "ModuleLoadingContext.h"
+#include "ModuleNamespaceExportLayout.h"
 #include "ModuleProgramExecutable.h"
 #include "ModuleRegistryEntry.h"
 #include "NumberObject.h"

@@ -108,6 +108,7 @@
 #include "MinimumReservedZoneSize.h"
 #include "ModuleGraphLoadingStateInlines.h"
 #include "ModuleLoadingContextInlines.h"
+#include "ModuleNamespaceExportLayout.h"
 #include "ModuleLoaderPayloadInlines.h"
 #include "ModuleProgramCodeBlockInlines.h"
 #include "ModuleProgramExecutableInlines.h"
@@ -446,6 +447,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     moduleLoaderStructure.setWithoutWriteBarrier(JSModuleLoader::createStructure(*this, nullptr, jsNull()));
     moduleRegistryEntryStructure.setWithoutWriteBarrier(ModuleRegistryEntry::createStructure(*this, nullptr, jsNull()));
     moduleLoadingContextStructure.setWithoutWriteBarrier(ModuleLoadingContext::createStructure(*this, nullptr, jsNull()));
+    moduleNamespaceExportLayoutStructure.setWithoutWriteBarrier(ModuleNamespaceExportLayout::createStructure(*this, nullptr, jsNull()));
     moduleLoaderPayloadStructure.setWithoutWriteBarrier(ModuleLoaderPayload::createStructure(*this, nullptr, jsNull()));
     moduleGraphLoadingStateStructure.setWithoutWriteBarrier(ModuleGraphLoadingState::createStructure(*this, nullptr, jsNull()));
     promiseCombinatorsContextStructure.setWithoutWriteBarrier(JSPromiseCombinatorsContext::createStructure(*this, nullptr, jsNull()));
@@ -837,6 +839,13 @@ VM::~VM()
             debugServer.execution().notifyVMDestruction(this);
     }
 #endif
+}
+
+ModuleNamespaceExportLayoutSet& VM::ensureModuleNamespaceExportLayouts()
+{
+    if (!m_moduleNamespaceExportLayouts)
+        m_moduleNamespaceExportLayouts = makeUnique<ModuleNamespaceExportLayoutSet>(*this);
+    return *m_moduleNamespaceExportLayouts;
 }
 
 void VM::primitiveGigacageDisabledCallback(void* argument)
@@ -2437,6 +2446,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(moduleLoaderStructure);
     visitor.append(moduleRegistryEntryStructure);
     visitor.append(moduleLoadingContextStructure);
+    visitor.append(moduleNamespaceExportLayoutStructure);
     visitor.append(moduleLoaderPayloadStructure);
     visitor.append(moduleGraphLoadingStateStructure);
     visitor.append(promiseCombinatorsContextStructure);

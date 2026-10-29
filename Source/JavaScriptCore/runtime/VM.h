@@ -145,6 +145,7 @@ class MegamorphicCache;
 class JSONCache;
 class MicrotaskCallCache;
 class MicrotaskQueue;
+class ModuleNamespaceExportLayoutSet;
 class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
 class QueuedTask;
@@ -606,6 +607,7 @@ public:
     WriteBarrier<Structure> moduleLoadingContextStructure;
     WriteBarrier<Structure> moduleLoaderPayloadStructure;
     WriteBarrier<Structure> moduleGraphLoadingStateStructure;
+    WriteBarrier<Structure> moduleNamespaceExportLayoutStructure;
     WriteBarrier<Structure> promiseCombinatorsContextStructure;
     WriteBarrier<Structure> promiseCombinatorsGlobalContextStructure;
     WriteBarrier<Structure> regExpStructure;
@@ -781,6 +783,9 @@ public:
 #if ENABLE(WEBASSEMBLY)
     WeakGCMap<const Wasm::RTT*, WebAssemblyGCStructure, PtrHash<const Wasm::RTT*>> wasmGCStructureMap;
 #endif
+    // Null until the VM has a ModuleNamespaceExportLayout.
+    std::unique_ptr<ModuleNamespaceExportLayoutSet> m_moduleNamespaceExportLayouts;
+    ModuleNamespaceExportLayoutSet& ensureModuleNamespaceExportLayouts();
 
     enum class DeletePropertyMode {
         // Default behaviour of deleteProperty, matching the spec.

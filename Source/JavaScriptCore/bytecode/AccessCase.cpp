@@ -44,6 +44,7 @@
 #include "LLIntThunks.h"
 #include "LinkBuffer.h"
 #include "ModuleNamespaceAccessCase.h"
+#include "ModuleNamespaceExportLayout.h"
 #include "PropertyInlineCache.h"
 #include "ScopedArguments.h"
 #include "ScratchRegisterAllocator.h"
@@ -843,6 +844,8 @@ void AccessCase::forEachDependentCell(VM&, NOESCAPE const Functor& functor) cons
             functor(accessCase.moduleNamespaceObject());
         if (accessCase.moduleEnvironment())
             functor(accessCase.moduleEnvironment());
+        if (accessCase.exportLayout())
+            functor(accessCase.exportLayout());
         break;
     }
     case InstanceOfHit:
@@ -1291,8 +1294,10 @@ bool AccessCase::canReplace(const AccessCase& other) const
         if (other.type() != type())
             return false;
         auto& thisCase = this->as<ModuleNamespaceAccessCase>();
-        auto& otherCase = this->as<ModuleNamespaceAccessCase>();
-        return thisCase.moduleNamespaceObject() == otherCase.moduleNamespaceObject();
+        auto& otherCase = other.as<ModuleNamespaceAccessCase>();
+        // Neither kind replaces the other. A case for one namespace object serves no other object, and a case by
+        // export layout serves an object only once the object's slot for the name is filled in.
+        return thisCase.moduleNamespaceObject() == otherCase.moduleNamespaceObject() && thisCase.exportLayout() == otherCase.exportLayout();
     }
 
     case InstanceOfHit:
@@ -1811,7 +1816,9 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
         auto& rhsd = rhs.as<ModuleNamespaceAccessCase>();
         return lhsd.m_moduleNamespaceObject == rhsd.m_moduleNamespaceObject
             && lhsd.m_moduleEnvironment == rhsd.m_moduleEnvironment
-            && lhsd.m_scopeOffset == rhsd.m_scopeOffset;
+            && lhsd.m_scopeOffset == rhsd.m_scopeOffset
+            && lhsd.m_exportLayout == rhsd.m_exportLayout
+            && lhsd.m_exportIndex == rhsd.m_exportIndex;
     }
 
     case InstanceOfHit:
