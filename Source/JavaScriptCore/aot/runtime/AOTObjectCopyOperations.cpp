@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinOperationSupport.h"
 #include "AOTInstance.h"
 #include "AOTMappedCopyInlines.h"
 #include "AOTModuleHost.h"
@@ -490,7 +491,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instan
 
 static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
 {
-    bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && (!source->structure()->isDictionary() || flattenOnce(vm, source)) && source->structure()->canPerformFastPropertyEnumerationCommon();
+    bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && (!source->structure()->isDictionary() || flattenOnceUnlessCopiedAsDictionary(vm, source)) && source->structure()->canPerformFastPropertyEnumerationCommon();
     if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr)
         return copy;
     // The engine's clone leaves out a source that never got a property. Its copy is as large as it is: what is copied to be added to keeps its room.
@@ -502,29 +503,114 @@ static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObj
     return tryCopyAsOrdinaryObject(vm, globalObject, source, excluded);
 }
 
+// A copy of a record is a record: the names have the same places in it, and whoever expects the type of the source finds it. Flow counts on nothing in between: the words of the source, or an ordinary object.
+// Out of line: the operation keeps nothing alive across the calls in here.
+static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Object& source)
+{
+    if (Object* copy = &source.state() == instance->state ? Object::tryCreateCopyOfFields(vm, source) : nullptr)
+        return copy;
+    return tryCopyAsOrdinaryObject(vm, globalObject, &source, ExcludedRun { });
+}
+
+// An ordinary object with plain properties and plain elements: a map from numbers. The copy takes its Structure and a copy of its storage, holes and all.
+static JSFinalObject* tryCopyWithElements(VM& vm, JSGlobalObject* globalObject, JSObject* source)
+{
+    Structure* structure = source->structure();
+    IndexingType indexingType = structure->indexingType();
+    bool hasVector = hasInt32(indexingType) || hasDouble(indexingType) || hasContiguous(indexingType);
+    if (source->type() != FinalObjectType || !(hasVector || (indexingType & IndexingShapeMask) == ArrayStorageShape) || isCopyOnWrite(structure->indexingMode()))
+        return nullptr;
+    if (structure->isDictionary() || structure->isCompiledStructure() || !structure->canPerformFastPropertyEnumerationCommon() || !structure->isQuickPropertyAccessAllowedForEnumeration() || source->hasNonReifiedStaticProperties())
+        return nullptr;
+    if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->mayHaveImmutableProperties())
+        return nullptr;
+    if (structure->mayBePrototype() || structure->didPreventExtensions() || structure->hasBeenFlattenedBefore() || structure->hasPolyProto())
+        return nullptr;
+    if (structure->realm() != globalObject || structure->storedPrototype() != JSValue(globalObject->objectPrototype()))
+        return nullptr;
+    if (structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties()) {
+        // Every Structure with elements outside a vector says so, on account of the elements.
+        bool isPlain = !hasVector;
+        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            isPlain = isPlain && !entry.attributes();
+            return isPlain;
+        });
+        if (!isPlain)
+            return nullptr;
+    }
+
+    Butterfly* elements = source->butterfly();
+    SparseArrayValueMap* sparse = hasVector ? nullptr : elements->arrayStorage()->m_sparseMap.get();
+    if (sparse) {
+        if (sparse->sparseMode() || sparse->lengthIsReadOnly() || sparse->hasAnyKindOfGetterSetterProperties())
+            return nullptr;
+        for (const SparseArrayEntry& entry : *sparse) {
+            if (entry.attributes())
+                return nullptr;
+        }
+    }
+    DeferGC deferGC(vm);
+    size_t capacity = structure->outOfLineCapacity();
+    size_t bytesOfElements = hasVector ? static_cast<size_t>(elements->vectorLength()) * sizeof(EncodedJSValue) : ArrayStorage::sizeFor(elements->arrayStorage()->vectorLength());
+    Butterfly* butterfly = Butterfly::tryCreateUninitialized(vm, nullptr, 0, capacity, true, bytesOfElements);
+    if (!butterfly)
+        return nullptr;
+    // Room in front of the elements, which an array that was shifted has, stays behind.
+    memcpy(butterfly->propertyStorage() - capacity, elements->propertyStorage() - capacity, capacity * sizeof(EncodedJSValue) + sizeof(IndexingHeader) + bytesOfElements);
+    if (!hasVector) {
+        butterfly->arrayStorage()->m_indexBias = 0;
+        butterfly->arrayStorage()->m_sparseMap.clear();
+    }
+    JSFinalObject* copy = JSFinalObject::createWithButterfly(vm, structure, butterfly);
+    PropertyOffset endOfInlineOffsets = std::min<PropertyOffset>(structure->maxOffset() + 1, structure->inlineCapacity());
+    for (PropertyOffset offset = 0; offset < endOfInlineOffsets; ++offset)
+        copy->locationForOffset(offset)->setWithoutWriteBarrier(source->getDirect(offset));
+    if (sparse) {
+        SparseArrayValueMap* map = SparseArrayValueMap::create(vm);
+        for (const SparseArrayEntry& entry : *sparse)
+            map->add(copy, entry.index()).iterator->forceSet(vm, map, entry.get(), 0);
+        butterfly->arrayStorage()->m_sparseMap.set(vm, copy, map);
+    }
+    return copy;
+}
+
+// Out of line: the list of excluded keys takes a large frame, which the copies that need no names would pay for.
+static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!run.numberPlusOne && excludedKeys.empty() && source.isObject()) {
+        if (JSFinalObject* copy = tryCopyWithElements(vm, globalObject, asObject(source)))
+            return copy;
+    }
+    JSObject* copy = constructEmptyObject(globalObject);
+    if (!hasOwnPropertiesToCopy(source)) {
+        prepareFinalObjectAllocation(instance, InlineAllocation::DefaultFinalObject, globalObject->objectStructureForObjectConstructor());
+        return copy;
+    }
+    ExcludedKeys excluded;
+    excluded.collect(instance, globalObject, run, excludedKeys);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, (copyDataPropertiesExcluding(instance, globalObject, vm, copy, source, excluded), copy));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyObject, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyObject);
     JSValue source = JSValue::decode(encodedSource);
+    JSObject* copy = nullptr;
+    Object* compiled = !count && !excludedRun && source.isObject() ? compiledObjectOrNull(source) : nullptr;
+    if (compiled) {
+        copy = tryCopyCompiledObject(instance, globalObject, vm, *compiled);
+        if (copy) [[likely]]
+            OPERATION_RETURN(scope, copy);
+    }
     ExcludedRun run = excludedRunAt(instance, excludedRun);
-    // A copy of a record is a record: the names have the same places in it, and whoever expects the type of the source finds it. Flow counts on nothing in between: the words of the source, or an ordinary object.
-    if (!count && !excludedRun && source.isObject()) {
-        Object* record = compiledObjectOrNull(source);
-        if (Object* copy = record && &record->state() == instance->state ? Object::tryCreateCopyOfFields(vm, *record) : nullptr)
-            OPERATION_RETURN(scope, copy);
+    if (!compiled && !count && source.isObject())
+        copy = tryCopyWithoutNames(vm, globalObject, asObject(source), run);
+    if (!copy) {
+        copy = copyObjectByNames(instance, globalObject, vm, source, run, { excludedKeys, count });
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    if (!count && source.isObject()) {
-        if (JSObject* copy = tryCopyWithoutNames(vm, globalObject, asObject(source), run))
-            OPERATION_RETURN(scope, copy);
-    }
-    JSObject* copy = constructEmptyObject(globalObject);
-    if (!hasOwnPropertiesToCopy(source))
-        OPERATION_RETURN(scope, copy);
-    ExcludedKeys excluded;
-    excluded.collect(instance, globalObject, run, { excludedKeys, count });
-    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
-    copyDataPropertiesExcluding(instance, globalObject, vm, copy, source, excluded);
-    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, copy);
 }
 

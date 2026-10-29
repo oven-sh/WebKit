@@ -15,6 +15,9 @@
 #include "AOTTestSubcommands.h"
 #include "AOTVector.h"
 #include <stdlib.h>
+#include <wtf/ASCIICType.h>
+#include <wtf/DataLog.h>
+#include <wtf/FileSystem.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
@@ -199,10 +202,15 @@ static void testDoesNothing()
 {
 }
 
+static constexpr ASCIILiteral fileLeftPrefix = "leaves "_s;
+
 static void testCrashesOnRequest()
 {
-    if (getenv(crashRequestVariable))
-        CRASH();
+    if (!getenv(crashRequestVariable))
+        return;
+    TemporaryFile file(".image"_s, { });
+    dataLogLn(fileLeftPrefix, file.path());
+    CRASH();
 }
 
 #if OS(LINUX)
@@ -268,6 +276,22 @@ static void testNativeTestsAfterCrashStillRun()
     AOT_TEST_CHECK(firstCrash != notFound && secondCrash != notFound && firstCrash < secondCrash);
 }
 
+static void testCrashLeavesNoFiles()
+{
+    setCrashRequest(true);
+    ChildProcessResult result = runWith(createLauncher(), { String(nativeSubcommandName), String(singleProcessFlag), "crash-on-request/first"_s });
+    setCrashRequest(false);
+    AOT_TEST_CHECK(result.outcome == ChildProcessOutcome::Crashed);
+
+    size_t start = result.output.find(fileLeftPrefix);
+    AOT_TEST_CHECK(start != notFound);
+    start += fileLeftPrefix.length();
+    String path = result.output.substring(start, result.output.find('\n', start) - start).trim(isASCIIWhitespace<char16_t>);
+    AOT_TEST_CHECK(path.startsWith(temporaryFolder()) && path.endsWith(".image"_s));
+    AOT_TEST_CHECK(!FileSystem::fileExists(path));
+    AOT_TEST_CHECK(!FileSystem::fileExists(FileSystem::parentPath(path)));
+}
+
 static void testNativeTestsAfterNamedTest()
 {
     ChildProcessLauncher launcher = createLauncher();
@@ -326,6 +350,7 @@ std::span<const NativeTest> childProcessTests()
         { "child-process/crash"_s, testCrash },
         { "child-process/shell-crash"_s, testShellCrash },
         { "child-process/not-started"_s, testNotStarted },
+        { "child-process/crash-leaves-no-files"_s, testCrashLeavesNoFiles },
 #if OS(LINUX)
         { "child-process/ends-with-parent"_s, testChildEndsWithParent },
         { "end-parent-on-request/parent"_s, testStartsChildOnRequest },

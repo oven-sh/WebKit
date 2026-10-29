@@ -436,7 +436,7 @@ void AllocationPrefilter::materialize(uint32_t object, const Use& use)
 
 bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockID block) const
 {
-    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::Arguments };
+    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::ArrayIterator, VirtualObjectKind::Arguments };
 
     if (!isAllocation(object) || store.opcode == Opcode::AppendElement || store.opcode == Opcode::AppendHole)
         return false;

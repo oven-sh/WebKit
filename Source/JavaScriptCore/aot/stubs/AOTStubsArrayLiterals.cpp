@@ -257,7 +257,7 @@ void generateArrayOfData(StubAssembler& jit)
         jit.getEffectiveAddress(BaseIndex(storage, scratch, CCallHelpers::TimesEight, DataNodeHeader::wordsBeforeElements * sizeof(uint64_t)), storage);
     }
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator)), allocator);
-    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath);
+    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath, sizeof(JSArray));
     // A realm whose arrays are not pristine has no header for such a cell.
     jit.load64(Address(instanceGPR, Instance::offsetOfNewCopyOnWriteArrayHeader(indexingType)), scratch);
     slowPath.append(jit.branchTest64(CCallHelpers::Zero, scratch));

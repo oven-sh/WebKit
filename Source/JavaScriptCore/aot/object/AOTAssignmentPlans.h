@@ -456,6 +456,9 @@ bool definePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> 
 // The same for stores to an object on which every store writes or creates an own data property: a property that exists keeps its attributes.
 bool storePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> names, std::span<const EncodedJSValue> values);
 bool tryDefinePropertiesOf(VM&, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
+// Null unless the source is a dictionary of many plain properties. The copy has the prototype of the source.
+JSFinalObject* tryCopyDictionary(VM&, JSObject* source);
+bool flattenOnceUnlessCopiedAsDictionary(VM&, JSObject* source);
 bool tryDefinePropertiesOnOrdinaryObject(VM&, State&, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 // The whole of `{ ...first, ...second }` by a plan, which runs no code of the program. Null, with nothing done that anybody sees, where the two have to be copied one behind the other.
 JSFinalObject* tryCopyTwoObjects(VM&, State&, JSGlobalObject*, JSValue first, JSValue second);

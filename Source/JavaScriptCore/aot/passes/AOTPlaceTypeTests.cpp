@@ -1746,6 +1746,15 @@ static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access
     });
 }
 
+static bool answersWithPrototypeOfObject(const Program& program, const Value& definition)
+{
+    if (definition.opcode != Opcode::CallBuiltin)
+        return false;
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID called = builtins.canonicalID(builtins.at(definition.overload()).builtin);
+    return called == Builtins::ObjectGetPrototypeOf || called == Builtins::ReflectGetPrototypeOf;
+}
+
 static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& context)
 {
     const Program& program = context.program;
@@ -1769,6 +1778,9 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
                 continue;
             // A test for the layouts that have the name would turn such an object away, and what stands behind the test would run in the copy.
             if (PayloadWord::accessSite(opcode) && access.accessSite() && context.inputs.flow.lossOf(access.accessSite()).seesConstructedObject)
+                continue;
+            // What stands above an object is a prototype object, which has no layout. The test would turn it away every time.
+            if (answersWithPrototypeOfObject(program, function.at(context.analyses.identityOf(receiver))))
                 continue;
             // A read by name is a short call, which cold code keeps. Under a private name it is an operation of the run time.
             if (!isColdBlock)
@@ -2282,6 +2294,38 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
     }
     if (isExpectedFromSourceOnly && waitsForOtherSubjects)
         return false;
+    // Where a SourceFile was seen to arrive and other objects may, a test for every Node reads the same slots: a layout that shares each declaration with an expected one costs nothing more.
+    bool othersMayArrive = isFollowed && !followsCheckerAlone && std::ranges::all_of(usesOfSubject, [&](const NamedUse& use) {
+        return !use.stamp || !context.program.at(use.stamp).listsEveryLayout();
+    });
+    // A class with many classes below it grows the code behind the test more than the test gains.
+    AOT_THRESHOLD(size_t, maxLayoutsExpectedByDeclaration, 8);
+    if (othersMayArrive) {
+        LayoutList layoutsWithNames = withoutLayoutsOfOtherKind(context, usesOfSubject, layoutsExpectedFrom(context.program, usesOfSubject, CountedUses::All, context.limit(LimitID::MaxAccessPlanMembers))).predicted();
+        for (const NamedUse& use : usesOfSubject) {
+            TypeID expected = function.at(use.receiver).expected().predicted();
+            if (!expected || !context.types.at(expected).layouts || widenedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
+                continue;
+            auto expectedLayouts = membersOf(context.program, context.types.at(expected));
+            Vector<LayoutID, 8> sharing;
+            for (LayoutID candidate : layoutsWithNames) {
+                bool sharesEveryDeclaration = std::ranges::all_of(usesOfSubject, [&](const NamedUse& named) {
+                    LayoutID declarer = declarerOf(context.program, candidate, named.key);
+                    return declarer && std::ranges::any_of(expectedLayouts, [&](LayoutID layout) { return declarerOf(context.program, layout, named.key) == declarer; });
+                });
+                if (sharesEveryDeclaration)
+                    sharing.append(candidate);
+            }
+            if (sharing.isEmpty())
+                continue;
+            Type arriving = Type::forLayouts(sharing.span(), context.types);
+            if (arriving.isSubsetOf(context.types.at(expected), context.program))
+                continue;
+            Type widened = context.types.at(expected).unionWith(arriving, context.types);
+            if (membersOf(context.program, widened).size() <= maxLayoutsExpectedByDeclaration)
+                widenedValues.append({ use.receiver, ExpectedType(context.types.intern(widened)) });
+        }
+    }
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
         return true;
 

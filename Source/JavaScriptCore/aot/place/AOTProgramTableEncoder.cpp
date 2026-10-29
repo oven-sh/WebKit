@@ -941,7 +941,7 @@ static uint16_t fieldFlagsOf(TableEncoder& encoder, FieldReference reference)
         { declaration.flags.contains(FieldFlags::IsBrand), fieldIsBrand },
         { stability.contains(FieldStability::IsNeverDeleted), fieldIsNeverDeleted },
         { stability.contains(FieldStability::IsNeverRedefined), fieldIsNeverRedefined },
-        { stability.contains(FieldStability::IsNeverStoredWithOtherType) || encoder.slots.isExpectedInItsSlot(declarationOf(program, reference)), fieldIsNeverStoredWithOtherType },
+        { stability.contains(FieldStability::IsNeverStoredWithOtherType), fieldIsNeverStoredWithOtherType },
         { declaration.form.contains(FieldForm::IsReadOnly), fieldIsReadOnly },
         { declaration.form.contains(FieldForm::IsNotEnumerable), fieldIsNotEnumerable },
         { declaration.form.contains(FieldForm::IsNotConfigurable), fieldIsNotConfigurable },
@@ -2444,7 +2444,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : ModuleFlags::IsImportedAsNamespace);
     entry.bodyRunsAtMostOnce = module.kind == ModuleKind::RuntimeSource && module.body && encoder.flow.runsAtMostOnce(program, module.body);
     entry.kind = module.kind;
-    entry.externalKind = module.externalKind;
+    entry.externalKind = module.kind != ModuleKind::External && module.flags.contains(ModuleFlags::MayBeMocked) ? ModuleData::mayBeMockedBit : module.externalKind;
     entry.exportRule = module.exportRule;
     entry.requireResult = module.requireResult;
     entry.body = optionalNumber24(bodyEntrypointOf(encoder, module));

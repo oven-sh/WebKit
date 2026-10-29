@@ -254,6 +254,7 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
     jit.load16(Address(saved, SavedFrame::offsetOfNumberOfWordsSkippedAtBottom()), word);
 #if CPU(X86_64)
     constexpr int32_t offsetOfBottom = sizeof(void*);
+    const FPRReg pair = jit.allocateScratch(FPRInfo::fpRegT0);
     RELEASE_ASSERT(subject == X86Registers::esi && second == X86Registers::edi && count == X86Registers::ecx);
     RELEASE_ASSERT(noOverlap(subject, saved, count, source, word, second));
     jit.getEffectiveAddress(BaseIndex(sp, word, CCallHelpers::TimesEight, offsetOfBottom), source);
@@ -267,10 +268,8 @@ static void emitCopyFrameWords(StubAssembler& jit, const FrameCopyRegisters& reg
     Jump isMoved = jit.jump();
     isSmall.link(&jit);
     Label next = jit.label();
-    jit.load64(BaseIndex(source, count, CCallHelpers::TimesEight, -8), word);
-    jit.load64(BaseIndex(source, count, CCallHelpers::TimesEight, -16), second);
-    jit.store64(word, BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 8));
-    jit.store64(second, BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 16));
+    jit.loadVector(BaseIndex(source, count, CCallHelpers::TimesEight, -16), pair);
+    jit.storeVector(pair, BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 16));
     jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), count).linkTo(next, &jit);
     isEmpty.link(&jit);
     isMoved.link(&jit);

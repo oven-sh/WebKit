@@ -1,4 +1,4 @@
-# An array member is written by one loop per storage its elements allow, an odd element falls back alone, and only behind an element that may have run user code are the guards renewed
+# An array member whose storage holds numbers alone is written by one call, any other by a loop; an odd element falls back alone, and only behind an element that may have run user code are the guards renewed
 # FORM: Prepared
 # RUN: derived-functions Serializer:L0 Serializer:L1 Serializer:L2
 # STATISTIC: SerializersCreated = 4
@@ -31,30 +31,23 @@ layout L3 name="Item" fields=[{key="x" declared={type=number}}] flow={constructo
 # CHECK-NEXT: Branch [[isInt32]] -> taken [[int32]](| 0), notTaken [[notInt32]]()
 # CHECK: [[int32]]([[int32Guard]]: guard):
 # CHECK-NEXT: [[int32Key]]: buildercursor = JSONAppendKey v1, {{*}} string="list"
-# CHECK-NEXT: = JSONAppendToken v1, [[int32Key]] jsonToken=OpenArray
-# CHECK-NEXT: = AllGuards [[pristineGuard0]], [[int32Guard]]
+# CHECK-NEXT: = JSONAppendValue v1, [[int32Key]], [[numbers]] jsonPosition=Element
+# CHECK-NOT: LoopHint
 # CHECK: [[notInt32]]():
 # CHECK-NEXT: [[isDouble]]: boolean = HasArrayStorage [[numbers]] arrayStorage=Double
 # CHECK-NEXT: Branch [[isDouble]] -> taken [[double]](| 0), notTaken [[notDouble]]()
-# CHECK: ([[i0]]:{{*}}, {{*}}: buildercursor, [[g0]]: guard):
-# CHECK-NEXT: LoopHint
-# CHECK-NEXT: [[e0]]: undefined|i32{{*}}= GetArrayElement [[numbers]], [[i0]], [[g0]] arrayStorage=Int32 [keyIsIntegral]
-# CHECK-NEXT: [[isHole0]]: boolean = TypeTest [[e0]] testedType=undefined
-# CHECK-NEXT: Branch [[isHole0]] -> taken [[hole0]](| 0), notTaken [[integer0]](| 0)
-# CHECK: [[hole0]]({{*}}: undefined):
-# CHECK: = JSONAppendToken v1, {{*}} jsonToken=Null
-# CHECK: [[integer0]]([[int0]]: i32):
-# CHECK: = JSONAppendInteger v1, {{*}}, [[int0]]
-# CHECK: = JSONAppendToken v1, {{*}} jsonToken=Comma
-# CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseArray
+# CHECK: [[double]]({{*}}: guard):
+# CHECK-NEXT: [[doubleKey]]: buildercursor = JSONAppendKey v1, {{*}} string="list"
+# CHECK-NEXT: = JSONAppendValue v1, [[doubleKey]], [[numbers]] jsonPosition=Element
+# CHECK-NOT: LoopHint
 # CHECK: [[notDouble]]():
 # CHECK-NEXT: = HasArrayStorage [[numbers]] arrayStorage=Contiguous
-# CHECK: LoopHint
-# CHECK-NEXT: [[e1]]: undefined|number{{*}}= GetArrayElement [[numbers]], {{*}} arrayStorage=Double [keyIsIntegral]
-# CHECK: = JSONAppendNumber v1,
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=OpenArray
 # CHECK: LoopHint
 # CHECK-NEXT: = GetArrayElement [[numbers]], {{*}} arrayStorage=Contiguous [keyIsIntegral]
 # CHECK: = JSONAppendNumber v1,
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=Comma
+# CHECK: = JSONAppendToken v1, {{*}} jsonToken=CloseArray
 
 # CHECK: function {{*}}creator=Serializer{layout=L1}
 # CHECK: [[strings]]: Array<string> = GetSlot v0, {{*}} key="list" receivers=[L1] level=Expected

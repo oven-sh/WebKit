@@ -1611,6 +1611,7 @@ private:
                 nodeNamed(index, statement.thrown),
                 statement.firstSite == Body::none ? UINT32_MAX : universe.m_firstSiteOfFunction[index] + statement.firstSite,
                 statement.isOnlyCalledOnItsHolder,
+                statement.isOnlyReceiverOfCalls,
                 statement.guardCount,
                 first.operand + statement.firstGuard,
                 statement.guardsOfOperands,

@@ -88,8 +88,7 @@ struct ArgumentAllocator {
     uint32_t numberOfStackWords { 0 };
 };
 
-// Table: the callee is the lookup of the selector. The call enters it or an entrypoint of the selector, all of which return alike.
-enum class TailCalleeKind : uint8_t { Unknown, Direct, Table };
+enum class TailCalleeKind : uint8_t { Unknown, Direct };
 
 struct TailCallSite {
     FunctionID caller;
@@ -426,8 +425,8 @@ static void collectTailCallSitesOf(const Program& program, FunctionID caller, Ve
             }
             RELEASE_ASSERT_NOT_REACHED();
         });
-        TailCalleeKind kind = call.opcode == Opcode::CallDirect ? TailCalleeKind::Direct : call.opcode == Opcode::CallTable ? TailCalleeKind::Table : TailCalleeKind::Unknown;
-        sites.append({ caller, block, kind, kind == TailCalleeKind::Unknown ? FunctionID() : call.function(), terminator.requirement(), hasCheckedCast });
+        bool isDirect = call.opcode == Opcode::CallDirect;
+        sites.append({ caller, block, isDirect ? TailCalleeKind::Direct : TailCalleeKind::Unknown, isDirect ? call.function() : FunctionID(), terminator.requirement(), hasCheckedCast });
     });
 }
 
@@ -718,7 +717,6 @@ CallingConventions chooseCallingConventions(ProgramEditor& editor, const Optimiz
         case TailCalleeKind::Unknown:
             return haveSameRegisterRepresentation(Representation::JSValue, expected);
         case TailCalleeKind::Direct:
-        case TailCalleeKind::Table:
             return !returnsNothing(site.callee) && haveSameRegisterRepresentation(resultOf(site.callee), expected);
         }
         RELEASE_ASSERT_NOT_REACHED();

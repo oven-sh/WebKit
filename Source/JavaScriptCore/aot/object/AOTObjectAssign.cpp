@@ -14,6 +14,7 @@
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTObjectModelCaches.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyWalk.h"
 #include "AOTProgramStrings.h"
 #include "AOTRuntimeValidation.h"
@@ -93,10 +94,36 @@ static Structure* structureBeforeIntegrityLevel(Structure* structure)
     return structure;
 }
 
-static JSObject* tryCopyPlainExtraProperties(VM& vm, JSObject* extra)
+// With fewer names a Structure without a table of its own serves the object and all its copies, once the object is flattened.
+static bool isCopiedAsDictionary(Structure* structure)
+{
+    if (structure->typeInfo().type() != FinalObjectType || !structure->isDictionary() || structure->inlineSize() + structure->outOfLineSize() <= static_cast<unsigned>(Structure::s_maxTransitionLength))
+        return false;
+    if (!structure->canPerformFastPropertyEnumeration() || structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties())
+        return false;
+    return !structure->mayHaveImmutableProperties() && !structure->mayBePrototype() && !structure->didPreventExtensions() && !structure->hasPolyProto();
+}
+
+NEVER_INLINE bool flattenOnceUnlessCopiedAsDictionary(VM& vm, JSObject* source)
+{
+    return !isCopiedAsDictionary(source->structure()) && flattenOnce(vm, source);
+}
+
+// A dictionary has a Structure of its own. Its copy gets a copy of that Structure with its table, so no name is looked up.
+static NEVER_INLINE Structure* tryCopyStructureOfDictionary(VM& vm, Structure* structure)
+{
+    return isCopiedAsDictionary(structure) ? Structure::toCacheableDictionaryTransition(vm, structure) : nullptr;
+}
+
+static JSFinalObject* tryCopyPlainExtraProperties(VM& vm, JSObject* extra)
 {
     Structure* structure = structureBeforeIntegrityLevel(extra->structure());
-    if (!structure || !checkStructureForClone(structure, false) || extra->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon() || hasPrivateNames(vm, structure))
+    if (!structure || !checkStructureForClone(structure, false)) {
+        structure = structure ? tryCopyStructureOfDictionary(vm, structure) : nullptr;
+        if (!structure)
+            return nullptr;
+    }
+    if (extra->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon() || hasPrivateNames(vm, structure))
         return nullptr;
     Butterfly* butterfly = structure->outOfLineCapacity() ? Butterfly::create(vm, nullptr, 0, structure->outOfLineCapacity(), false, IndexingHeader(), 0) : nullptr;
     JSFinalObject* copy = JSFinalObject::createWithButterfly(vm, structure, butterfly);
@@ -107,6 +134,18 @@ static JSObject* tryCopyPlainExtraProperties(VM& vm, JSObject* extra)
     for (PropertyOffset offset = firstOutOfLineOffset; offset <= maxOffset; ++offset)
         copy->locationForOffset(offset)->setWithoutWriteBarrier(extra->getDirect(offset));
     return copy;
+}
+
+JSFinalObject* tryCopyDictionary(VM& vm, JSObject* source)
+{
+    return tryCopyPlainExtraProperties(vm, source);
+}
+
+// No two dictionaries have one Structure, so nothing is gained by naming it.
+static ALWAYS_INLINE Structure* structureToName(JSObject* extraProperties)
+{
+    Structure* structure = extraProperties->structure();
+    return structure->isDictionary() ? nullptr : structure;
 }
 
 ALWAYS_INLINE Object* Object::createCopyOfWords(VM& vm, const Object& source, Structure* structure)
@@ -151,7 +190,7 @@ NEVER_INLINE Object* Object::tryCreateCopyOfFieldsAndExtraProperties(VM& vm, con
         return nullptr;
     StructureTable& structures = source.state().objects->structures;
     Object* copy = createCopyOfWords(vm, source, structures.objectStructure(vm, layout.shape));
-    CompiledStructure* named = structures.withExtraProperties(vm, copy->compiledStructure(), extraProperties->structure());
+    CompiledStructure* named = structures.withExtraProperties(vm, copy->compiledStructure(), structureToName(extraProperties));
     copy->setExtraProperties(vm, extraProperties, named);
     // The stub in front copies a source whose Structure names that of its extra properties. A source that is copied once is likely to be copied again.
     if (!structure.extraPropertiesStructureID() && named->extraPropertiesStructureID() == source.extraProperties()->structureID())
@@ -260,7 +299,7 @@ bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
         CompiledStructure* structureWithExtraProperties = nullptr;
         if (extraProperties) {
             validateCopyOfExtraProperties(vm, *this, extraProperties);
-            structureWithExtraProperties = state().objects->structures.withExtraProperties(vm, compiledStructure(), extraProperties->structure());
+            structureWithExtraProperties = state().objects->structures.withExtraProperties(vm, compiledStructure(), structureToName(extraProperties));
         }
         copyFieldsOfSameLayout(vm, source);
         if (extraProperties) {

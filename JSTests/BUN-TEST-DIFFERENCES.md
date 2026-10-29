@@ -10,7 +10,8 @@ be sorted into one of three piles:
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
 3. **A known gap or bug in the fork.** Skipped with `TODO(bun)`. Section C. Remove the skip when the gap is closed.
 
-Anything that fits none of these is a regression from the sync: fix the engine, not the test.
+Anything that fits none of these is a regression from the sync: fix the engine, not the test. The exception is an
+unchanged test whose result depends on the load of the machine: those have a section of their own after C.
 
 Rules for an edit to an upstream test:
 
@@ -157,6 +158,16 @@ Rules for an edit to an upstream test:
 
 ---
 
+## Not changed: the result depends on the load of the machine
+
+Upstream's tests as upstream has them. A failure with the message given here is not a regression.
+
+| file | message | what it depends on |
+|---|---|---|
+| `stress/new-largeish-contiguous-array-with-size.js` | `Error: heap too big before forced GC: <bytes>` | with `--forceRAMSize=10000000` it allocates 1,000 arrays of 50,000 elements in a loop and then bounds `gcHeapSize()` at 10,000,000 without asking for a collection. The bound holds if the concurrent collector gets processor time before the loop ends. Run alone it passes; the more processes share the processors, the more often it fails |
+
+---
+
 ## TestWTF (`Tools/TestWebKitAPI/Tests/WTF`)
 
 Upstream's too, and run by the `test` job.
@@ -196,7 +207,8 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/regexp-flat-program-counts-turns-of-alternatives-tried-once.js` | a pattern with a `^` in one alternative and none in another: the flat program that counts turns (`yarr/YarrFlatProgram*`) walks the alternatives that are tried once and their copies in the bytecode's order, and counts the same turns |
 | `stress/regexp-flat-program-many-groups-and-surrogates.js` | in unicode mode the flat program skips positions where the first characters cannot match, counting a surrogate pair as one character, and after a failed attempt resets only the captures the attempt can have written: results match the bytecode interpreter |
 | `stress/regexp-flat-program-runs-before-back-references.js` | a run in front of a back reference: the flat program knows what the reference begins with, keeps no undo frame for a capture that is set again before anything reads it, and hands a long search to a second program that goes from one possible end of the run to the next: results match the bytecode interpreter |
-| `stress/regexp-image-mode-skips-starts-behind-a-failed-run.js` | the code a build makes for a pattern: once a run without an upper bound has failed at all its ends, the next attempt begins behind the starts that would only enter the same run, and with several alternatives the run remembers how far it failed: results match the sticky form asked at one place after the other |
+| `stress/regexp-image-mode-skips-starts-behind-a-failed-run.js` | the code a build makes for a pattern, and a flat program: once a run without an upper bound has failed at all its ends, the next attempt begins behind the starts that would only enter the same run, and with several alternatives the run remembers how far it failed: results match the sticky form asked at one place after the other |
+| `stress/regexp-lazy-run-that-stops-at-its-first-end.js` | where a pattern is analyzed, a lazy run in front of one unit becomes a run that never goes back (`.*?\]` as `[^\]]*\]`) if nothing stands behind the unit, or a run that takes all the first takes: results match the same pattern with an upper bound on the run, which is left as written |
 | `stress/regexp-flat-program-memoizes-unbounded-runs.js` | the flat program memoizes where the rest of an unbounded run has failed, keys entries only by the capture bounds a backreference can still read, and records a failed search under the bounds it started with: results and turn counts match the bytecode interpreter |
 | `stress/regexp-flat-program-remembers-failed-searches-beside-references.js` | beside references the flat program's table of failed searches has an entry for each set of the referenced groups' bounds: results and turns are the bytecode's |
 | `stress/regexp-image-code-hands-long-searches-over.js` | with `--useRegExpImageMode=1`, in a `jsc` that has the ahead-of-time compiler: the code of a pattern stops after nine turns a unit and 65,537, and the match is made again by the flat programs, which give it up where the JIT does. In a `jsc` without the compiler the option changes nothing, and both runs hold the JIT to the same answers |
@@ -220,5 +232,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.
 3. Is it a new upstream test for a feature the sync did not bring over (compare `git log upstream/main -- Source/` for
    the commit that added the test)? Bring the feature over, or skip with `TODO(bun)` naming the upstream commit, as in C.
-4. Otherwise the sync broke something. Upstream's own results for the same test and mode:
+4. Is it listed under "Not changed: the result depends on the load of the machine", with the message given there? Run it
+   alone with the flags of the failing mode. If it passes, change nothing.
+5. Otherwise the sync broke something. Upstream's own results for the same test and mode:
    `https://results.webkit.org/api/results/javascriptcore-tests/<url-encoded test.mode>?limit=5000`.

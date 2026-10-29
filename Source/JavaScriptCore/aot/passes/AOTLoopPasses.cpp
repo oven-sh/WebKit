@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <wtf/BitVector.h>
 #include <wtf/CheckedArithmetic.h>
+#include <wtf/HashMap.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -471,7 +472,7 @@ static Vector<ValueID, 4> boundTallies(FunctionPassContext& context, IRBuilder& 
 }
 
 // On an integer kept as a double, such an operator converts its operand in every iteration, and calls if that fails. A number that is only incremented is cheapest as a double.
-static bool hasUseCheaperOnIntegers(FunctionPassContext& context, const NaturalLoop& loop, ValueID parameter)
+static bool hasUseCheaperOnIntegers(FunctionPassContext& context, const NaturalLoop& loop, ValueID parameter, const BitVector& parametersExpectedToBeInt32)
 {
     const Function& function = context.function;
     for (unsigned index = 0; index < loop.size(); ++index) {
@@ -485,7 +486,7 @@ static bool hasUseCheaperOnIntegers(FunctionPassContext& context, const NaturalL
                 if (context.analyses.identityOf(operand) == parameter)
                     usesParameter = true;
                 else
-                    othersAreIntegers &= context.program.typeOf(function, operand).isInteger();
+                    othersAreIntegers &= context.program.typeOf(function, operand).isInteger() || parametersExpectedToBeInt32.get(context.analyses.identityOf(operand).index());
             });
             if (usesParameter && othersAreIntegers)
                 return true;
@@ -494,22 +495,98 @@ static bool hasUseCheaperOnIntegers(FunctionPassContext& context, const NaturalL
     return false;
 }
 
-// An integer that a loop carries, that starts as an int32, changes by a constant in every iteration and is bounded by no test is expected to stay an int32. The expectation is tested after the step.
-static bool expectUnboundedCountersToStayInt32(FunctionPassContext& context, IRBuilder& builder)
+struct HandedOnArgument {
+    Edge edge;
+    uint32_t parameterIndex;
+};
+
+// `n % d` where a loop carries n: what a program takes the remainder of is nearly always an int32, and the remainder of two numbers costs several times that of two integers. Such a number is expected to be an int32, and so is the number of a loop around it that it comes from or goes back to. The expectation is tested wherever something that need not be an int32 is handed to the loop: `n /= d`.
+static BitVector findDividendsCarriedByLoops(FunctionPassContext& context, Vector<HandedOnArgument, 4>& arguments)
 {
-    struct SteppedArgument {
-        Edge edge;
+    struct CarriedNumber {
+        BlockID header;
         uint32_t parameterIndex;
     };
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    BitVector dividends;
+    if (!analyses.opcodesOfValues().contains(Opcode::Mod))
+        return dividends;
+    // A cold function of a very large program gets no loop of its own for what is expected: each use would test for itself.
+    const Heat& heat = context.inputs.heat;
+    if (heat.isOfVeryLargeProgram() && isCold(heat.of(context.program, context.id)).predicted())
+        return dividends;
+
+    UncheckedKeyHashMap<uint32_t, CarriedNumber, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> carriedNumbers;
+    for (unsigned index = 0; index < analyses.naturalLoops().numLoops(); ++index) {
+        BlockID header = analyses.naturalLoops().loop(index).header();
+        if (!isExpectedToRun(context, analyses.naturalLoops().loop(index)).predicted())
+            continue;
+        const CompactList<ValueID>& parameters = function.at(header).parameters;
+        for (uint32_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex) {
+            const Type& type = context.program.typeOf(function, parameters[parameterIndex]);
+            if (type.isNumber() && !type.isInteger() && !function.at(parameters[parameterIndex]).expected().predicted())
+                carriedNumbers.add(parameters[parameterIndex].index(), CarriedNumber { header, parameterIndex });
+        }
+    }
+    if (carriedNumbers.isEmpty())
+        return dividends;
+
+    Vector<ValueID, 4> worklist;
+    auto add = [&](ValueID value) {
+        ValueID identity = analyses.identityOf(value);
+        if (carriedNumbers.contains(identity.index()) && !dividends.set(identity.index()))
+            worklist.append(identity);
+    };
+    for (size_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
+        for (ValueID id : function.blocks[blockIndex].values) {
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::Mod || !context.program.typeOf(function, value.rightOperand()).isNumberWithoutFraction())
+                continue;
+            auto carried = carriedNumbers.find(analyses.identityOf(value.leftOperand()).index());
+            if (carried == carriedNumbers.end())
+                continue;
+            const NaturalLoop& loop = *analyses.naturalLoops().headerOf(carried->value.header);
+            if (analyses.naturalLoops().belongsTo(BlockID(blockIndex), loop))
+                add(value.leftOperand());
+        }
+    }
+    while (!worklist.isEmpty()) {
+        auto [header, parameterIndex] = carriedNumbers.get(worklist.takeLast().index());
+        for (Edge edge : analyses.cfg().incomingEdges(header)) {
+            IncomingValue incoming = edge.isHandlerEdge() ? IncomingValue { IncomingValue::Kind::EdgeResult } : incomingValueOf(function, edge, parameterIndex);
+            if (incoming.kind != IncomingValue::Kind::Argument)
+                return { };
+            // A turn that hands on a number of any kind would pay for a test and two conversions. An integer is tested by its range alone, and a quotient without remainder becomes a division of integers.
+            const Type& handedOn = context.program.typeOf(function, incoming.argument);
+            if (analyses.naturalLoops().belongsTo(edge.from, *analyses.naturalLoops().headerOf(header)) && !handedOn.isNumberWithoutFraction() && !carriedNumbers.contains(analyses.identityOf(incoming.argument).index())) {
+                ValueID definition = sameObjectThroughCasts(function, incoming.argument).valueInFrontOfFacts();
+                if (function.at(definition).opcode != Opcode::Div || !followsTestForNoRemainder(context.program, function, analyses.cfg(), analyses.useLists().blockOf(definition), function.at(definition)))
+                    return { };
+            }
+            add(incoming.argument);
+            if (!handedOn.isInt32())
+                arguments.append({ edge, parameterIndex });
+        }
+    }
+    return dividends;
+}
+
+// An integer that a loop carries, that starts as an int32, changes by a constant in every iteration and is bounded by no test is expected to stay an int32. The expectation is tested after the step.
+static bool expectCarriedNumbersToStayInt32(FunctionPassContext& context, IRBuilder& builder)
+{
     Function& function = context.function;
     FunctionAnalyses& analyses = context.analyses;
-    Vector<SteppedArgument, 4> arguments;
+    Vector<HandedOnArgument, 4> arguments;
+    BitVector dividends = findDividendsCarriedByLoops(context, arguments);
+    if (dividends.isEmpty())
+        arguments.clear();
     for (const LoopInduction& loop : analyses.inductionVariables().loops()) {
         const NaturalLoop& naturalLoop = analyses.naturalLoops().loop(loop.loopIndex);
         std::optional<bool> isLoopExpectedToRun;
         for (const InductionVariable& variable : loop.variables) {
             const Type& type = context.program.typeOf(function, variable.parameter);
-            if (!type.isNumberWithoutFraction() || type.isInteger() || function.at(variable.parameter).expected().predicted())
+            if (!type.isNumberWithoutFraction() || type.isInteger() || function.at(variable.parameter).expected().predicted() || dividends.get(variable.parameter.index()))
                 continue;
             if (!isLoopExpectedToRun)
                 isLoopExpectedToRun = isExpectedToRun(context, naturalLoop).predicted();
@@ -520,7 +597,7 @@ static bool expectUnboundedCountersToStayInt32(FunctionPassContext& context, IRB
             // If a test bounds it by a number, that number is tested for being an integer before the loop.
             if (std::ranges::any_of(variable.tests, [&](const InductionTest& test) { return isBoundingRelation(test.relation, variable.direction); }))
                 continue;
-            if (!hasUseCheaperOnIntegers(context, naturalLoop, variable.parameter))
+            if (!hasUseCheaperOnIntegers(context, naturalLoop, variable.parameter, dividends))
                 continue;
             for (Edge edge : analyses.cfg().incomingEdges(loop.header)) {
                 if (analyses.naturalLoops().belongsTo(edge.from, naturalLoop))
@@ -704,7 +781,7 @@ PassOutcome convertCountersToIntegers(FunctionPassContext& context)
         context.build.statistics().count(StatisticID::CountersConverted, numberOfConvertedCounters);
         context.hasCountersConvertedSinceTestsWerePlaced = true;
     }
-    if (expectUnboundedCountersToStayInt32(context, builder)) {
+    if (expectCarriedNumbersToStayInt32(context, builder)) {
         context.hasCountersConvertedSinceTestsWerePlaced = true;
         outcome = PassOutcome::Changed;
     }
@@ -866,8 +943,11 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
     BlockID behindHeader = headersWhoseTestHoldsOnEntry.get(header.index()) ? findBlockBehindHeader(context, loop) : BlockID();
     auto canHoist = [&](ValueID id, BlockID block, const LoopClobbers& clobbersBeforeRead) {
         const Value& value = function.at(id);
-        if (testsOfValuesThemselves.contains(value.opcode))
-            return !keptReads.get(id.index()) && hasInvariantOperands(value);
+        if (testsOfValuesThemselves.contains(value.opcode)) {
+            // A comparison is declared to throw where it flattens a rope and memory runs out: it does not leave its handler.
+            bool staysUnderItsHandler = function.at(block).handler == function.at(preheader).handler || !context.analyses.effectsOf(id).normal.mayThrow;
+            return staysUnderItsHandler && !keptReads.get(id.index()) && hasInvariantOperands(value);
+        }
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
         if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode)) {
             if (keptReads.get(id.index()) || !hasInvariantOperands(value))

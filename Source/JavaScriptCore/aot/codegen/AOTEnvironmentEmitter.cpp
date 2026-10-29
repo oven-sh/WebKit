@@ -17,6 +17,7 @@
 #include "AOTStubsCallFrames.h"
 #include "AOTStubsClosures.h"
 #include "AirStackSlot.h"
+#include "AllowMacroScratchRegisterUsage.h"
 #include "B3SlotBaseValue.h"
 #include "B3StackmapGenerationParams.h"
 

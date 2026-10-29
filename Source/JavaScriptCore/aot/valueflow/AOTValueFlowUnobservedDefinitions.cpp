@@ -778,7 +778,9 @@ KeysOfLiterals keysStoredRightAfterAllocations(const Program& program, const Fun
                 keys.add(receiver.index(), Vector<PropertyKeyID, 8>()).iterator->value.append(value.key());
 
             if (value.opcode == Opcode::NewObject ? !program.at(value.layout()).isEnvironment() : value.opcode == Opcode::Data && program.at(value.data()).root.is<DataNode::Object>()) {
-                isFresh.set(id.index());
+                // A bit vector grows to the bit that is set and no further: thousands of objects would copy it thousands of times.
+                isFresh.ensureSize(function.values.size());
+                isFresh.quickSet(id.index());
                 objectsOfBlock.append(id);
                 ++numberOfFreshObjects;
             }

@@ -642,9 +642,10 @@ function f42 name="joinWithUnknownSeparator" parameters=[{type=Array<number, pro
 # CHECK: function [[mapToFindIndex]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=23}
 # CHECK: function [[mapToJoin]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=24}
 # CHECK: function [[filterToLength]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=33}
-# CHECK: function [[filterToFlatMap]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=41}
 # CHECK: function [[filterMapToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=96}
 # CHECK: function [[mapFilterToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=144}
 # CHECK: function [[filterMapFilterToArray]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=608}
 # CHECK: function [[mapToReduceFromValue]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=1043}
+# `pair` returns a list literal of two elements and nothing else, which the shape says: 41 + 2048.
+# CHECK: function [[filterToFlatMap]] name="traverseArray"{{*}}role=ChainStep{{*}}derivation={source=f0 parameter=2089}
 # CHECK-NOT: role=ChainStep

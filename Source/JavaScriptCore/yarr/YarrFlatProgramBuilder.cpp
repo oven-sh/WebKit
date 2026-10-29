@@ -111,6 +111,7 @@ public:
             program->stepsPerCharacterBeforeStopping = program->stepsPerCharacterBeforeStoppingOnFullMachine;
         if (!m_countsTurns)
             computeStartScan(alternatives.span().first(count));
+        findRunBehindFixedSteps();
         computeDirtyCaptureRanges();
 
         if (!program->text.isEmpty()) {
@@ -1034,6 +1035,106 @@ private:
         }
     }
 
+    static bool dependsOnMoreThanPosition(const PatternTerm& term)
+    {
+        switch (term.type) {
+        case PatternTerm::Type::NumberedBackReference:
+        case PatternTerm::Type::NamedBackReference:
+        case PatternTerm::Type::DotStarEnclosure:
+            return true;
+        case PatternTerm::Type::ParenthesesSubpattern:
+        case PatternTerm::Type::ParentheticalAssertion:
+            return std::ranges::any_of(term.parentheses.disjunction->m_alternatives, [](auto& alternative) {
+                return std::ranges::any_of(alternative->m_terms, dependsOnMoreThanPosition);
+            });
+        default:
+            return false;
+        }
+    }
+
+    static bool isTakenOnce(const PatternTerm& term)
+    {
+        return term.quantityType == QuantifierType::FixedCount && term.quantityMinCount == 1 && term.quantityMaxCount == 1 && term.parentheses.disjunction->m_alternatives.size() == 1;
+    }
+
+    // See findStartBehindFailedRun(). The claim there needs an attempt that got through the steps to fail only after the run has tried all its ends, and the search from an end
+    // to depend on the position alone. So the run is the first choice of the only alternative, in no repeated group, with no back reference behind it.
+    // A lookahead is not gone back into: with the run in one, the attempt has to match as soon as the lookahead does. Nothing may stand behind it but a reference to a group
+    // that is all of it, which reads again what the lookahead has just read: (?=(..))\1, an atomic group by other means.
+    // The JIT counts turns in the attempts that are left out here, and gives a match up by their number.
+    void findRunBehindFixedSteps()
+    {
+        auto& alternatives = m_pattern.m_body->m_alternatives;
+        bool hasTables = m_program->startScan == FlatStartScan::OneCharacter || m_program->startScan == FlatStartScan::Table;
+        if (!hasTables || m_countsTurns || m_program->jitCountsTurns || m_pattern.eitherUnicode() || m_program->endAnchoredFixedSize || m_program->mayMatchOnlyAtInputStart)
+            return;
+        if (alternatives.size() != 1 || alternatives[0]->onceThrough())
+            return;
+
+        FlatProgram::RunBehindFixedSteps found;
+        // About the terms behind the groups that are open.
+        bool standsInFrontOfNothing = true;
+        bool standsInFrontOfReference = false;
+        std::span<const PatternTerm> terms = alternatives[0]->m_terms.span();
+        for (;;) {
+            if (terms.empty())
+                return;
+            const PatternTerm& term = terms.front();
+            terms = terms.subspan(1);
+            if (term.matchDirection() != Forward)
+                return;
+            switch (term.type) {
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass: {
+                unsigned set = setForTerm(term);
+                if (hasExceededIndexLimit())
+                    return;
+                if (term.quantityType != QuantifierType::FixedCount) {
+                    if (term.quantityMaxCount != quantifyInfinite)
+                        return;
+                    if (standsInFrontOfReference || std::ranges::any_of(terms, dependsOnMoreThanPosition))
+                        return;
+                    found.runSet = set;
+                    m_program->runBehindFixedSteps = found;
+                    m_program->hasRunBehindFixedSteps = true;
+                    m_program->firstStartFoundByTablesAlone = std::numeric_limits<unsigned>::max();
+                    return;
+                }
+                if (term.quantityMaxCount > FlatProgram::RunBehindFixedSteps::maxSteps - found.steps)
+                    return;
+                for (unsigned i = 0; i < term.quantityMaxCount; ++i)
+                    found.stepSets[found.steps++] = set;
+                continue;
+            }
+            case PatternTerm::Type::ParenthesesSubpattern:
+                if (!isTakenOnce(term))
+                    return;
+                standsInFrontOfNothing &= terms.empty();
+                standsInFrontOfReference |= std::ranges::any_of(terms, dependsOnMoreThanPosition);
+                break;
+            case PatternTerm::Type::ParentheticalAssertion: {
+                if (term.invert() || term.parentheses.disjunction->m_alternatives.size() != 1)
+                    return;
+                auto& inside = term.parentheses.disjunction->m_alternatives[0]->m_terms;
+                if (!terms.empty()) {
+                    const PatternTerm& reference = terms.front();
+                    bool readsWholeLookahead = reference.type == PatternTerm::Type::NumberedBackReference && reference.quantityType == QuantifierType::FixedCount && reference.quantityMaxCount == 1
+                        && inside.size() == 1 && inside[0].type == PatternTerm::Type::ParenthesesSubpattern && inside[0].capture() && isTakenOnce(inside[0])
+                        && inside[0].parentheses.subpatternId == reference.backReferenceSubpatternId;
+                    if (!readsWholeLookahead || terms.size() > 1)
+                        return;
+                }
+                if (!standsInFrontOfNothing)
+                    return;
+                break;
+            }
+            default:
+                return;
+            }
+            terms = term.parentheses.disjunction->m_alternatives[0]->m_terms.span();
+        }
+    }
+
     void computeStartScan(Alternatives alternatives)
     {
         if (m_program->triesOnlyOnce)
@@ -1069,6 +1170,7 @@ private:
         m_program->startScan = FlatStartScan::Table;
         m_program->startTableDepth = start.depth;
         m_program->mayMatchOnlyAtInputStart = start.mayMatchOnlyAtInputStart;
+        m_program->firstStartFoundByTablesAlone = start.mayMatchOnlyAtInputStart;
         unsigned firstCount = 0;
         for (unsigned place = 0; place < start.depth; ++place) {
             forEachMember(start.at[place], [&](unsigned member) {

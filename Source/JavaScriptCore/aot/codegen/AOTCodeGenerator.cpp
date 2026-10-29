@@ -16,6 +16,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTEdgeResults.h"
+#include "AOTElementEmitterAllocation.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionAnalyses.h"
 #include "AOTGuardAvailability.h"
@@ -288,8 +289,24 @@ void CodeGenerator::generateValue(BlockID blockID, const Block& block, ValueID i
         return;
     if (function().at(id).opcode == Opcode::Mod && emitter<OperatorEmitter>().leavesRemainderToTest(id))
         return;
+    if (function().at(id).representation == Representation::Int32 && ArrayAllocationEmitter(*this).isComputedBehindAllocation(id))
+        return;
     ValueContext context(blockID, block, id, function().at(id), analyses());
     generate(context);
+}
+
+void CodeGenerator::generateValueLeftToUser(const OperationContext& user, ValueID id)
+{
+    const Value& value = function().at(id);
+    if (m_values[id.index()] || !hasRegister(value.representation))
+        return;
+    for (uint32_t i = 0; i < value.numberOfOperands(); ++i) {
+        if (ValueID operand = value.operand(i))
+            generateValueLeftToUser(user, operand);
+    }
+    ValueContext context(user.block(), function().at(user.block()), id, value, analyses());
+    generate(context);
+    setOrigin(m_out, user.valueID());
 }
 
 static constexpr OpcodeSet opcodesRelyingOnElementProofs = [] {

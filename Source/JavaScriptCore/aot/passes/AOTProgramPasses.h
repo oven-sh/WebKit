@@ -130,6 +130,9 @@ inline constexpr OpcodeSet hoistableOpcodes = hoistableReadOpcodes | lookupsHois
 
 inline constexpr AbstractHeapSet heapsOfVariables { AbstractHeap::ModuleVariables, AbstractHeap::EnvironmentFields };
 
+// `if (n % d === 0) n /= d`: the quotient, which stands in the block, comes behind a test that the same two numbers leave no remainder.
+bool followsTestForNoRemainder(const Program&, const Function&, const CFG&, BlockID, const Value& quotient);
+
 // Up to the first operation of this kind, the first turn of a loop is sure to go on, and it finds in every variable what was there ahead of the loop.
 constexpr bool mayLeaveOrStoreToVariable(const Effects& effects)
 {

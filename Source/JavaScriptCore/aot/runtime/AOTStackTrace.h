@@ -42,7 +42,7 @@ struct ReturnAddressTrace {
         IsAtFirstReadSite = 1 << 1,
     };
 
-    static constexpr unsigned limitBits = 24;
+    static constexpr unsigned limitBits = 23;
     static constexpr uint32_t maxLimit = (1u << limitBits) - 1;
     static constexpr unsigned maxOmittedFrames = 255;
     static constexpr unsigned returnAddressCountBits = 24;
@@ -77,6 +77,8 @@ struct ReturnAddressTrace {
 
     Instance* instance;
     uint32_t limit : limitBits;
+    // The trace and the frames that its owner keeps beside it are as many as the limit allows, so the stack may go on below them.
+    uint32_t isFull : 1;
     uint32_t omittedFrameCount : 8;
     uint32_t numberOfReturnAddresses : returnAddressCountBits;
     // Frames of host functions and of interpreted code that the compiled code called. The owner of the trace keeps them in front of the frames below the compiled code.

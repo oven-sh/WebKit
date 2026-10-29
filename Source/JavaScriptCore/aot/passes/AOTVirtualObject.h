@@ -48,6 +48,7 @@ enum class VirtualObjectKind : uint8_t {
     StringRange,
     ViewRange,
     BuiltinFields,
+    ArrayIterator,
     BuiltinPrefix,
 };
 
@@ -68,6 +69,8 @@ enum class VirtualFieldKind : uint8_t {
     RangeStart,
     RangeEnd,
     Operand,
+    // Where an array iterator stands in its list.
+    Position,
 };
 
 struct VirtualField {
@@ -194,6 +197,8 @@ Value makeFieldStore(const Program&, const VirtualObjectDescription&, const Fiel
 bool canHoldUnprovenValue(const Program&, const VirtualObjectDescription&, const VirtualField& named);
 Value makeFiller(const Program&, const VirtualObjectDescription&, const VirtualField& unprovenNamed);
 Value makeStoreByName(const FieldValue& unprovenNamed, ValueID cell);
+// `list.keys()`, `list.values()`, `list.entries()` and `list[Symbol.iterator]()` of what is proven to be a list.
+bool makesArrayIterator(const Program&, const Function&, const Value& call);
 void setExactReceivers(Value& slotOperation, LayoutID, TypeArena&);
 
 enum class SpeculativeLoad : uint8_t { Unknown, Safe };

@@ -424,10 +424,13 @@ int main(int argc, char** argv)
 
     switch (entry->subcommand) {
     case Subcommand::All:
+        enterTemporaryFolder();
         return runAllSubcommand(arguments, createLauncher());
     case Subcommand::Run:
+        enterTemporaryFolder();
         return runRunSubcommand(arguments, createLauncher());
     case Subcommand::Native:
+        enterTemporaryFolder();
         return runNativeSubcommand(arguments, createLauncher());
     case Subcommand::List:
         return runListSubcommand(arguments);

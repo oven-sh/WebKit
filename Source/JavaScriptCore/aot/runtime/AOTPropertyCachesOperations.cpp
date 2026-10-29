@@ -458,7 +458,7 @@ static bool tryRepeatFieldExit(Instance* instance, JSValue base, uint32_t key, J
         return false;
     PropertyCaches& caches = *instance->state->propertyCaches;
     FieldExit* exit = caches.findFieldExit(base.asCell()->structureID(), key);
-    if (!exit)
+    if (!exit || exit->isDefinition)
         return false;
     auto* object = uncheckedDowncast<Object>(base.asCell());
     // A definition asks nothing of what is above the object.

@@ -267,8 +267,6 @@ bool asksObjectWhereSlotIsEmpty(const Function& function, BlockID block, ValueID
     AOT_THRESHOLD(unsigned, maxBlocksOfEmptyArm, 16);
     BlockID current = branch.notTaken().block;
     for (unsigned steps = 0; steps < maxBlocksOfEmptyArm; ++steps) {
-        // A store by name has the value that it stores made above it.
-        bool doesSomethingElse = false;
         for (ValueID id : function.at(current).values) {
             const Value& value = function.at(id);
             if (value.opcode == Opcode::HasNoFieldOutsideSlot && sameObjectThroughCasts(function, value.objectOperand()) == object)
@@ -278,10 +276,9 @@ bool asksObjectWhereSlotIsEmpty(const Function& function, BlockID block, ValueID
             // The callee begins with the same test.
             if (value.opcode == Opcode::CallDirect && value.isAfterInlinedHead())
                 return true;
-            doesSomethingElse |= provesOf(value.opcode) == Proof::None && !isCast(value.opcode) && !isRematerializable(value);
+            if (provesOf(value.opcode) == Proof::None && !isCast(value.opcode) && !isRematerializable(value))
+                return false;
         }
-        if (doesSomethingElse)
-            return false;
         const Terminator& terminator = function.at(current).terminator;
         if (terminator.isConditionalBranch())
             current = terminator.taken().block;

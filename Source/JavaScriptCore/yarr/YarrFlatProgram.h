@@ -188,8 +188,13 @@ public:
     void setRequiredTexts(const RequiredTexts& texts)
     {
         requiredTexts = texts;
-        if (startScan == FlatStartScan::None && !texts.isEmpty())
+        if (texts.isEmpty())
+            return;
+        if (startScan == FlatStartScan::None)
             startScan = FlatStartScan::RequiredTextsAlone;
+        // The search that skips starts takes it that an attempt was made one place in front of where it is to begin.
+        if (std::exchange(hasRunBehindFixedSteps, false))
+            firstStartFoundByTablesAlone = 0;
     }
 
     Vector<FlatOp> ops;
@@ -212,6 +217,17 @@ public:
     uint8_t startTableDepth { 0 };
     // Some matches begin with a ^ that holds at the start of the input alone. The tables say nothing about them.
     bool mayMatchOnlyAtInputStart { false };
+    // In front of this place there is more to ask than the tables. 1: mayMatchOnlyAtInputStart. The greatest number: hasRunBehindFixedSteps.
+    unsigned firstStartFoundByTablesAlone { 0 };
+    // Every match begins with these steps of one unit each, and then comes a run without an upper bound. See findStartBehindFailedRun().
+    struct RunBehindFixedSteps {
+        static constexpr unsigned maxSteps = 4;
+        std::array<uint16_t, maxSteps> stepSets { };
+        uint16_t runSet { 0 };
+        uint8_t steps { 0 };
+    };
+    RunBehindFixedSteps runBehindFixedSteps;
+    bool hasRunBehindFixedSteps { false };
     static constexpr unsigned maxStartTableDepth = 4;
     // For sixteen characters at once. Bit i is set in the entry of a character's low four bits and in the entry of its high four bits if the character can be at place i, and for some that cannot.
     // The bits of the places from startTableDepth on are set everywhere.

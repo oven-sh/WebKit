@@ -275,7 +275,8 @@ private:
     const ValueFlowSolver& m_solver;
     ValueFlowRoundLog& m_log;
     const ValueFlowInstancedFunctions* const m_instancedFunctions;
-    const bool m_skipsRedundantAdds;
+    // What is seen at a node goes by the edges that lead to it, so every solve skips the same adds. Marks are read as sets alone: a solve that logs records each statement that marks.
+    const bool m_skipsRedundantMarks;
     struct alignas(32) KnownNode {
         uint64_t payloadAndSet { 0 };
         uint32_t kindAndDetail { 0 };

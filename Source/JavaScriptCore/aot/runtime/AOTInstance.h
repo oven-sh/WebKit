@@ -224,15 +224,15 @@ struct AllocationWords {
 };
 static_assert(AllocationWords::numberOfCopiesWithoutFrame * sizeof(const MappedCopy*) <= InstanceLayout::bytesReservedForCopiesWithoutFrame);
 
-// The LocalAllocator of a cell that holds an array and storage for 1, 3 or 5 elements. Until the heap has that allocator, and in a realm
+// The LocalAllocator of a cell that holds an array and storage for an odd number of elements. Until the heap has that allocator, and in a realm
 // without headers for plain arrays, the entry points to an allocator without free cells, so the stubs test neither case.
 struct ShortArrayWords {
-    static constexpr unsigned numberOfAllocators = 3;
+    static constexpr unsigned numberOfAllocators = 9;
     static constexpr unsigned indexOfAllocator(unsigned vectorLength) { return vectorLength / 2; }
     static constexpr unsigned wordsOfExhaustedAllocator = 24;
+    bool lacksAllocatorFor(unsigned vectorLength) const { return indexOfAllocator(vectorLength) < numberOfAllocators && allocators[indexOfAllocator(vectorLength)] == exhaustedAllocator; }
     void* allocators[numberOfAllocators];
-    uint64_t exhaustedAllocators[numberOfAllocators][wordsOfExhaustedAllocator];
-    bool hasEveryAllocator;
+    uint64_t exhaustedAllocator[wordsOfExhaustedAllocator];
 };
 
 // The header and the tags of a table without entries. Code that looks into the table of a Map or Set reads these for a collection that has no table yet.
@@ -369,9 +369,10 @@ struct Instance : InstanceHeader {
 
     void captureCellHeaders();
     void findShortArrayAllocators();
-    void findMissingShortArrayAllocators()
+    // Behind the allocation of an array with storage for that many elements in its cell.
+    void findMissingShortArrayAllocator(unsigned vectorLength)
     {
-        if (!shortArrays.hasEveryAllocator) [[unlikely]]
+        if (shortArrays.lacksAllocatorFor(vectorLength)) [[unlikely]]
             findShortArrayAllocators();
     }
     void didCreateInstanceStructure(BuiltinClassID, Structure*);

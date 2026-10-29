@@ -597,8 +597,13 @@ static void checkValuesByPosition(TestRealm realm)
         "(function () { }).bind(null)"_s,
         "({ a: 1, b: \"x\", c: [1, { d: null }] })"_s,
         "({})"_s,
-        "[1, 2]"_s,
         "[]"_s,
+        "[1, \"x\"]"_s,
+        "[1, [2]]"_s,
+        "Object.assign([1, 2], { toJSON() { globalThis.didRunUserCode = true; return 1 } })"_s,
+        "Object.defineProperty([1, 2], 0, { get() { globalThis.didRunUserCode = true; return 1 } })"_s,
+        "Object.setPrototypeOf([1, , 2], { __proto__: Array.prototype, 1: 7 })"_s,
+        "new (class extends Array { })(1, 2)"_s,
         "1n"_s,
         "10n ** 30n"_s,
         "Object.assign(function () { }, { toJSON() { globalThis.didRunUserCode = true; return 1 } })"_s,
@@ -631,6 +636,22 @@ static void checkValuesByPosition(TestRealm realm)
 
     for (ASCIILiteral source : cellsWithoutText)
         checkValueEverywhere(fixture, fixture.evaluate(source), unknownEverywhere);
+
+    // A list is pristine only where nothing can be added to the prototypes above it.
+    static constexpr ASCIILiteral listsOfNumbers[] = {
+        "[1, 2]"_s,
+        "[0]"_s,
+        "[1.5, -0, 1e21, 5e-324, -1.7976931348623157e308]"_s,
+        "[-2147483648, 2147483647, 9, 10, 9999, 10000, 99999999, 100000000]"_s,
+        "[1, , 3]"_s,
+        "Object.assign([1, 2], { name: 1 })"_s,
+        "[1.5, , 3.5]"_s,
+        "[1.5, Infinity, -Infinity]"_s,
+        "Array.from({ length: 5000 }, (_, index) => index * 7919 - 9999999)"_s,
+        "Array.from({ length: 5000 }, (_, index) => -1.7976931348623157e308 / (index + 1))"_s,
+    };
+    for (ASCIILiteral source : listsOfNumbers)
+        checkValueEverywhere(fixture, fixture.evaluate(source), realm == TestRealm::Locked ? parsedEverywhere : unknownEverywhere);
     AOT_TEST_CHECK(fixture.evaluate("globalThis.didRunUserCode"_s).isUndefined());
 }
 

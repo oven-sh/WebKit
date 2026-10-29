@@ -104,9 +104,26 @@ static bool isHeldAsInteger(TestSiteReporter& reporter, const OperatorSite& site
     return location.placement == ValuePlacement::Parameter && location.block != entryBlock;
 }
 
+// `x | 0` is how a program truncates: it is written where x may be a fraction. The operator converts any number in a few instructions, and a test for an integer fails at every fraction.
+static bool isTruncatedFraction(TestSiteReporter& reporter, const Value& user, ValueID operand)
+{
+    static constexpr OpcodeSet operatorsThatZeroLeavesAlone { Opcode::BitOr, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
+    if (!operatorsThatZeroLeavesAlone.contains(user.opcode))
+        return false;
+    const Type& type = reporter.typeOf(operand);
+    if (!type.isNumber() || !(type.primitives & Primitive::FractionalNumber))
+        return false;
+    bool isCommutative = user.opcode == Opcode::BitOr || user.opcode == Opcode::BitXor;
+    ValueID other = user.leftOperand() == operand ? user.rightOperand() : isCommutative ? user.leftOperand() : ValueID();
+    if (!other)
+        return false;
+    const Type& typeOfOther = reporter.typeOf(other);
+    return typeOfOther.isInteger() && typeOfOther.integers.isSingleValue() && !typeOfOther.integers.minimum;
+}
+
 static TypeID testedTypeFor(TestSiteReporter& reporter, const OperatorSite& site, const Value& user, ValueID operand)
 {
-    if (testedBitwiseOperators.contains(user.opcode) && isHeldAsInteger(reporter, site, operand))
+    if (testedBitwiseOperators.contains(user.opcode) && (isHeldAsInteger(reporter, site, operand) || isTruncatedFraction(reporter, user, operand)))
         return { };
     std::optional<Type> expected = reporter.expectedPartOf(operand);
     if (!expected)

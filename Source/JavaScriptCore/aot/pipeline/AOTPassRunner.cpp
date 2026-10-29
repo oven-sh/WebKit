@@ -120,7 +120,7 @@ static constexpr TriggersOfPass triggersOfPasses[] {
     { PassID::RemoveRedundantHandlers, { .traits = BodyTrait::Handlers } },
     { PassID::HoistLoopInvariantReads, { .opcodes = hoistableOpcodes }, { { .traits = BodyTrait::SeveralBlocks } } },
     { PassID::SimplifyBuiltinCalls, { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::ElemGet } | simplifiedIntrinsics | constantListSourceOpcodes }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::NewTemplateObject, Opcode::GetStringLength } | simplifiedIntrinsics | constantListUserOpcodes } } },
-    { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin } | int32ConvertingOperations } } },
+    { PassID::ReduceIntegerDivisions, { .opcodes = { Opcode::Div } }, { { .opcodes = OpcodeSet { Opcode::CallBuiltin, Opcode::Mod } | int32ConvertingOperations } } },
     { PassID::PlanArrayCapacities, { .opcodes = arrayCapacityOpcodes } },
     { PassID::PlanCollectionCapacities, { .opcodes = { Opcode::CallBuiltin } }, { { .traits = BodyTrait::SeveralBlocks } } },
     { PassID::FoldConstantRegExps, { .opcodes = { Opcode::CallBuiltin } } },

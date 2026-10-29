@@ -71,6 +71,7 @@ struct ModuleData {
     SlotData value;
     uint16_t flags;
     ModuleKind kind : 3;
+    // Of a module of any other kind than External the bit says that a test may mock it.
     ExternalKind externalKind : 1;
     SyntheticExportRule exportRule : 2;
     RequireResult requireResult : 2;
@@ -134,6 +135,8 @@ struct ModuleData {
     bool isESModuleOfProgram() const { return kind == ModuleKind::SourceText && !isOfLibrary(); }
     bool isUncompiledCode() const { return kind == ModuleKind::External && externalKind == ExternalKind::UncompiledCode; }
     bool isHostValue() const { return kind == ModuleKind::External && externalKind == ExternalKind::HostValue; }
+    static constexpr ExternalKind mayBeMockedBit = static_cast<ExternalKind>(1);
+    bool mayBeMocked() const { return kind != ModuleKind::External && externalKind == mayBeMockedBit; }
     bool capturesExports() const;
     // A file whose names an ES importer finds only in the object that the file exports. They are captured behind its evaluation, which no link starts.
     bool capturesExportsBehindEvaluation() const { return capturesExports() && (kind == ModuleKind::SourceText || kind == ModuleKind::CommonJs); }

@@ -459,19 +459,15 @@ void Instance::findShortArrayAllocators()
 {
     static_assert(LocalAllocator::offsetOfFreeList() + sizeof(FreeList) <= ShortArrayWords::wordsOfExhaustedAllocator * sizeof(uint64_t));
     bool hasHeaders = prefix().newArrayWithContiguousHeader;
-    shortArrays.hasEveryAllocator = true;
+    // Nothing is allocated from it, so nothing reads the size of its cells.
+    uint8_t* exhausted = reinterpret_cast<uint8_t*>(shortArrays.exhaustedAllocator);
+    new (NotNull, exhausted + LocalAllocator::offsetOfFreeList()) FreeList(static_cast<unsigned>(MarkedSpace::sizeStep));
     for (unsigned i = 0; i < ShortArrayWords::numberOfAllocators; ++i) {
         size_t cellSize = sizeOfArrayWithStorage(2 * i + 1);
-        static_assert(sizeOfArrayWithStorage(2 * ShortArrayWords::numberOfAllocators - 1) <= MarkedSpace::preciseCutoff);
+        static_assert(sizeOfArrayWithStorage(2 * ShortArrayWords::numberOfAllocators - 1) <= MarkedSpace::largeCutoff);
         RELEASE_ASSERT(ShortArrayWords::indexOfAllocator(2 * i + 1) == i && !(cellSize % MarkedSpace::sizeStep));
         LocalAllocator* allocator = hasHeaders ? vm->cellSpace().allocatorFor(cellSize, AllocatorForMode::AllocatorIfExists).localAllocator() : nullptr;
-        if (!allocator) {
-            shortArrays.hasEveryAllocator = false;
-            uint8_t* exhausted = reinterpret_cast<uint8_t*>(shortArrays.exhaustedAllocators[i]);
-            new (NotNull, exhausted + LocalAllocator::offsetOfFreeList()) FreeList(static_cast<unsigned>(cellSize));
-            allocator = reinterpret_cast<LocalAllocator*>(exhausted);
-        }
-        shortArrays.allocators[i] = allocator;
+        shortArrays.allocators[i] = allocator ? static_cast<void*>(allocator) : exhausted;
     }
 }
 

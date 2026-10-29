@@ -619,7 +619,7 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
         jit.or64(word, header);
     };
 
-    callsOperation.append(jit.branchIfNotCell(source));
+    Jump isNotCell = jit.branchIfNotCell(source);
     jit.move(count, word);
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
     Jump isNotCompiledObject = jit.branch8(CCallHelpers::NotEqual, Address(source, JSCell::typeInfoTypeOffset()), TrustedImm32(CompiledObjectType));
@@ -662,16 +662,19 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
         | Structure::s_hasBeenDictionaryBits | Structure::s_hasUnderscoreProtoPropertyExcludingOriginalProtoBits | Structure::s_hasNonConfigurablePropertiesBits;
     constexpr uint32_t bitsThatAreNeeded = Structure::s_isQuickPropertyAccessAllowedForEnumerationBits | Structure::s_didTransitionBits;
     static_assert(!TypeInfoBlob::indexingModeIncludingHistoryOffset() && sizeof(TypeInfoBlob) == sizeof(uint32_t) && JSCell::indexingTypeAndMiscOffset() == sizeof(uint32_t));
-    auto testStructureOfOrdinaryObject = [&] {
+    // Returns where the tests go on behind those of the bits.
+    auto testStructureOfOrdinaryObject = [&](JumpList& hasOtherBits) {
         loadStructure(jit, source, structure);
         jit.load32(Address(structure, Structure::bitFieldOffset()), word);
         jit.and32(TrustedImm32(static_cast<int32_t>(bitsThatForbid | bitsThatAreNeeded)), word);
-        callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(bitsThatAreNeeded))));
+        hasOtherBits.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(bitsThatAreNeeded))));
+        Label hasTestedBits = jit.label();
         callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(structure, Structure::variantOffset()), TrustedImm32(static_cast<int32_t>(Structure::StructureVariant::Normal))));
         jit.loadPtr(Address(structure, Structure::realmOffset()), word);
         callsOperation.append(jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
         jit.load64(Address(structure, Structure::prototypeOffset()), word);
         callsOperation.append(jit.branch64(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.objectPrototype))));
+        return hasTestedBits;
     };
     auto loadWordsOfOrdinaryObject = [&] {
         jit.load8(Address(structure, Structure::inlineCapacityOffset()), size);
@@ -682,13 +685,20 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
         jit.load32(Address(source, JSCell::structureIDOffset()), word);
         jit.or64(word, header);
     };
-    testStructureOfOrdinaryObject();
+    JumpList mayBeEmpty;
+    Label hasTestedBits = testStructureOfOrdinaryObject(mayBeEmpty);
     loadWordsOfOrdinaryObject();
     allocateAndCopy(false, finishNothing);
 
+    // An object that never got a property. Its copy is as large as it is: what is copied to be added to keeps its room.
+    mayBeEmpty.link(&jit);
+    callsOperation.append(jit.branch32(CCallHelpers::NotEqual, word, TrustedImm32(static_cast<int32_t>(bitsThatAreNeeded & ~Structure::s_didTransitionBits))));
+    jit.branchTestPtr(CCallHelpers::Zero, Address(structure, Structure::seenPropertiesOffset())).linkTo(hasTestedBits, &jit);
+    callsOperation.append(jit.jump());
+
     // An ordinary object with more properties than its cell holds.
     hasButterfly.link(&jit);
-    testStructureOfOrdinaryObject();
+    testStructureOfOrdinaryObject(callsOperation);
     callsOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(source, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IndexingShapeMask)));
     jit.move(structure, word);
     copyStorageOutsideCell(source);
@@ -839,6 +849,23 @@ void generateCopyObjectFrontEnd(StubAssembler& jit)
             hasNoExtension.link(&jit);
         });
     }
+
+    // Nothing is copied out of undefined or null. The operation prepares the allocation.
+    isNotCell.link(&jit);
+    static_assert((JSValue::ValueUndefined & ~JSValue::UndefinedTag) == JSValue::ValueNull);
+    constexpr unsigned kind = static_cast<unsigned>(InlineAllocation::DefaultFinalObject);
+    jit.and64(TrustedImm32(~JSValue::UndefinedTag), source, word);
+    callsOperation.append(jit.branch64(CCallHelpers::NotEqual, word, TrustedImm32(JSValue::ValueNull)));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator)), allocator);
+    callsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    allocateCell(jit, copy, allocator, word, callsOperation);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header)), word);
+    jit.store64(word, Address(copy));
+    for (size_t offset = wordSize; offset < JSFinalObject::allocationSize(JSFinalObject::defaultInlineCapacity); offset += wordSize)
+        jit.store64(TrustedImm32(0), Address(copy, offset));
+    fenceAfterAllocation(jit);
+    jit.move(TrustedImm32(0), jit.secondResult());
+    jit.returnToCaller();
 
     callsOperationWithoutExclusions.link(&jit);
     jit.move(TrustedImm32(0), excludedRun);

@@ -572,7 +572,9 @@ void AccessRewriter::rewrite(const ElementAccessSite& site, const AccessOperands
 
 // `{ __proto__: null, first: f(), second() { } }`, and `const made = { }; made.first = f(); made.second = g();`.
 // `numberOfStores`: at most this many stores name the object or what finishes it.
-static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder& builder, BlockID block, uint32_t allocationIndex, uint32_t numberOfStores)
+// The places in the block that the listed stores leave are filled with no value, in front of what was reordered, and `numberOfGaps` counts them: to close them at once would move the rest of the
+// block for each of thousands of literals.
+static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder& builder, BlockID block, uint32_t allocationIndex, uint32_t numberOfStores, uint32_t& numberOfGaps)
 {
     const Program& program = context.program;
     Function& function = context.function;
@@ -688,8 +690,15 @@ static bool listFirstStoresAtAllocation(FunctionPassContext& context, IRBuilder&
     }
     reordered.append(allocationID);
     reordered.appendVector(movedBehindAllocation);
-    editedValues.removeAt(allocationIndex, *lastListedStore - allocationIndex + 1);
-    editedValues.insertVector(allocationIndex, reordered);
+    size_t numberReplaced = *lastListedStore - allocationIndex + 1;
+    if (reordered.size() <= numberReplaced) {
+        numberOfGaps = static_cast<uint32_t>(numberReplaced - reordered.size());
+        std::ranges::fill(editedValues.mutableSpan().subspan(allocationIndex, numberOfGaps), ValueID());
+        std::ranges::copy(reordered, editedValues.mutableSpan().subspan(allocationIndex + numberOfGaps).begin());
+    } else {
+        editedValues.removeAt(allocationIndex, numberReplaced);
+        editedValues.insertVector(allocationIndex, reordered);
+    }
 
     Value& allocation = function.edit(allocationID);
     allocation.setFields(fields.span());
@@ -703,12 +712,12 @@ static bool listFirstStoresAtAllocations(FunctionPassContext& context, IRBuilder
     Function& function = context.function;
     // Only a store in the block of the allocation is listed, and its receiver is the allocation or what finishes it.
     Vector<BlockID, 8> blocksWithStoreIntoNewObject;
-    BitVector isStoredInto;
+    BitVector isStoredInto(function.values.size());
     Vector<uint32_t> numberOfStoresInto(FillWith { }, function.values.size(), 0u);
     auto addAllocationsBehind = [&](auto& self, ValueID receiver) -> bool {
         const Value& value = function.at(receiver);
         if (value.opcode == Opcode::NewObject) {
-            isStoredInto.set(receiver.index());
+            isStoredInto.quickSet(receiver.index());
             ++numberOfStoresInto[receiver.index()];
             return true;
         }
@@ -731,11 +740,22 @@ static bool listFirstStoresAtAllocations(FunctionPassContext& context, IRBuilder
     bool didChange = false;
     for (BlockID block : blocksWithStoreIntoNewObject) {
         // An allocation that has moved down is looked at again where it stands now, and finds nothing more.
+        bool leftGaps = false;
         for (uint32_t index = 0; index < function.at(block).values.size(); ++index) {
             ValueID id = function.at(block).values[index];
             const Value& value = function.at(id);
-            if (value.opcode == Opcode::NewObject && isStoredInto.get(id.index()) && value.fields().size() == value.numberOfVariadicOperands())
-                didChange |= listFirstStoresAtAllocation(context, builder, block, index, numberOfStoresInto[id.index()]);
+            if (value.opcode != Opcode::NewObject || !isStoredInto.get(id.index()) || value.fields().size() != value.numberOfVariadicOperands())
+                continue;
+            uint32_t numberOfGaps = 0;
+            didChange |= listFirstStoresAtAllocation(context, builder, block, index, numberOfStoresInto[id.index()], numberOfGaps);
+            // What was reordered begins behind the gaps, and the walk goes on behind the first of it.
+            index += numberOfGaps;
+            leftGaps |= !!numberOfGaps;
+        }
+        if (leftGaps) {
+            function.edit(block, BlockEdit::Values).values.removeAllMatching([](ValueID id) {
+                return !id;
+            });
         }
     }
     return didChange;
@@ -1101,9 +1121,7 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         test.setCountsFieldsWithoutStorage(!!methodAbove);
         BlockID failedUnasked = builder.beginPrediction();
         ValueID isFilled = builder.append(WTF::move(test));
-        // The sabotage needs an arm that answers by itself: addEmptySlotCases() gives one to a test whose empty arm is rarer.
-        bool failsSeldom = testsDeclaredType || context.build.isSabotaged(Sabotage::FieldsStayInSlotsThatDeferClosures);
-        Expected<BlockFrequency> frequencyOfFailure = failsSeldom ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
+        Expected<BlockFrequency> frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isFilled, OperandIndex::IsSlotFilled::object, expansion.frequency(), frequencyOfFailure);
         // Only an empty slot answers with the method. Where no test was asked, the name is looked up.
         BlockID byName = methodAbove ? failedUnasked : BlockID();
@@ -2907,6 +2925,10 @@ void SiteExpansion::finishArm(ValueID result)
 {
     RELEASE_ASSERT(isOpen());
     if (result && m_context.program.typeOf(function(), result).isNever()) {
+        // The call stays in tail position, as in IRBuilder::demoteReturnCall(): a stack that it throws lists its function as one that has left.
+        Opcode opcode = function().at(result).opcode;
+        if (m_tailCall && (opcode == m_original.opcode || opcode == Opcode::CallDirect || opcode == Opcode::CallTable))
+            function().edit(result, ValueEdit::Definition).isTailCall = true;
         finishArmAsUnreachable();
         return;
     }
@@ -2936,7 +2958,7 @@ void SiteExpansion::finishArmWithReturn(ValueID result)
     const Block& end = function().at(m_builder.currentBlock());
     Opcode opcode = function().at(result).opcode;
     // The casts of the terminator were resolved against the type of the original call.
-    bool endsWithTailCall = (opcode == m_original.opcode || opcode == Opcode::CallDirect || opcode == Opcode::CallTable) && !end.values.isEmpty() && end.values.last() == result
+    bool endsWithTailCall = (opcode == m_original.opcode || opcode == Opcode::CallDirect) && !end.values.isEmpty() && end.values.last() == result
         && !end.handler && program.typeOf(function(), result).isSubsetOf(program.at(m_original.type), program);
     // An arm marks its call before it is known whether the call can stay a tail call.
     if (endsWithTailCall) {

@@ -67,7 +67,9 @@ ModuleID moduleOf(const Program&, RuntimeModuleID);
 void evaluateModule(ValueFlowRuleContext&, ModuleID);
 ValueFlowSources requiredValueOf(ValueFlowRuleContext&, ModuleID);
 ValueFlowSources exportedValueOf(ValueFlowRuleContext&, const ModuleExport&);
-ValueFlowSources namespaceOf(ValueFlowRuleContext&, ModuleID, ImportPhase = ImportPhase::Evaluation);
+// The host reads an accessor of the library's off what a library module exports when the export is first read, not when it makes the namespace object.
+enum class DeferredExports : uint8_t { AreRead, AreNotRead };
+ValueFlowSources namespaceOf(ValueFlowRuleContext&, ModuleID, ImportPhase = ImportPhase::Evaluation, DeferredExports = DeferredExports::AreRead);
 
 bool isInSeenCode(ValueFlowRuleContext&, FunctionID);
 void noteRequest(ValueFlowRuleContext&, FunctionID requester, ModuleID);

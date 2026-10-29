@@ -3242,7 +3242,7 @@ struct CallResolver {
     std::optional<ReceiverCandidates> findReceiversOfTableCall(const ValueSite& position) const
     {
         const Value& call = function.at(position.value);
-        if (call.opcode != Opcode::Call || !call.calleeKey() || call.expectedResult() || call.argumentsOperands().size() > maxTableCallArguments)
+        if (call.opcode != Opcode::Call || !call.calleeKey() || call.expectedResult() || call.argumentsOperands().size() > maxTableCallArguments || isTailCall(function, position))
             return std::nullopt;
         const Value& read = function.at(CastChain(function, call.calleeOperand()).last());
         if (read.opcode != Opcode::PropGet || read.key() != call.calleeKey() || read.isFreeName() || classOfClassObject(program, typeOf(read.objectOperand())))
@@ -3312,9 +3312,6 @@ struct CallResolver {
         const Targets& targets = *found;
         // One method: a test of one bit in front of a direct call, which can be inlined, costs less than the load of an entry and an indirect call.
         if (targets.methods.size() < 2 || (!targets.hasConditions && targets.numberOfArms <= context.limit(LimitID::MaxDispatchCases)))
-            return declined;
-        // Once a method is replaced the table enters the lookup, which keeps a frame while it calls what the receiver has under the name.
-        if (targets.hasConditions && isTailCall(function, site.position))
             return declined;
 
         LayoutSetID receivers = context.types.completeLayoutSet(targets.layoutsOfTable.span());

@@ -24,6 +24,7 @@
 #include "IntlObject.h"
 #include <tuple>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -818,6 +819,7 @@ std::optional<Witness> findWorkerStartWithoutName(const ValueFlowResultInputs& i
     ValueSetID constructorObjects = makers.of(0).of(objects.span());
     BuiltinID globalThis = builtins.canonicalID(Builtins::GlobalThis);
     ValueFlowObjectID globalObject = universe.objectOf(globalThis);
+    PropertyKeyID constructorKey = program.keyOf(BuiltinNames::constructor);
     auto lists = [&](ValueSetID set, ValueFlowObjectID object) {
         return !ValueSets::isComplement(set) && sets.contains(set, object);
     };
@@ -833,6 +835,13 @@ std::optional<Witness> findWorkerStartWithoutName(const ValueFlowResultInputs& i
             std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
             if (appliesCallee(statement.opcode)) {
                 ValueSetID callees = maker.unite(ValueFlowRuleContext::valueShownToRules(operands[0], solver, maker), inputs.seenValuesOf(maker, operands[0]));
+                // A Worker is made by the host, so flow does not know it as an object and lists no callee at `new worker.constructor()`.
+                const Value& callee = function.at(definitionThroughSameValues(function, operation.operand(0)));
+                bool isUnknown = ValueSets::isComplement(callees) || sets.contains(callees, ValueFlowUniverse::unknownObject()) || sets.contains(callees, ValueFlowUniverse::untrackedObject());
+                if (isUnknown && callee.opcode == Opcode::PropGet && callee.key() == constructorKey) {
+                    found.append(witnessAt(function, FunctionID(index), statement.site));
+                    continue;
+                }
                 if (ValueSets::isComplement(callees) || !sets.meet(callees, constructorObjects))
                     continue;
                 BuiltinID named = builtinBoundTo(program, function, operation.operand(0));
@@ -905,10 +914,21 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
                 functor(universe.moduleOf(object));
         });
     };
+    // Listed once: a test run has thousands of spies, and most of what is out of sight is no namespace object.
+    std::optional<Vector<ModuleID>> namespacesOutOfSight;
     auto forEachNamespaceOutOfSight = [&](NOESCAPE const Invocable<void(ModuleID)> auto& functor) {
-        forEachNamespaceIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::escaped()), functor);
-        forEachNamespaceIn(inputs.solver().possibleValuesOf(ValueFlowProgramNodes::lost()), functor);
+        if (!namespacesOutOfSight) {
+            namespacesOutOfSight.emplace();
+            for (ValueFlowNodeID node : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost() }) {
+                forEachNamespaceIn(inputs.solver().possibleValuesOf(node), [&](ModuleID id) {
+                    namespacesOutOfSight->append(id);
+                });
+            }
+        }
+        for (ModuleID id : *namespacesOutOfSight)
+            functor(id);
     };
+    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keysReplacedOutOfSight;
     auto holdsPlaceholder = [&](ValueSetID values) {
         return ValueSets::isComplement(values) || inputs.sets().contains(values, ValueFlowUniverse::unknownObject()) || inputs.sets().contains(values, ValueFlowUniverse::untrackedObject());
     };
@@ -927,7 +947,7 @@ Vector<VariableID> collectExportsThatSpiesReplace(const ValueFlowResultInputs& i
             }
         };
         forEachNamespaceIn(holders, replaceIn);
-        if (holdsPlaceholder(holders))
+        if (holdsPlaceholder(holders) && keysReplacedOutOfSight.add(keys.index()).isNewEntry)
             forEachNamespaceOutOfSight(replaceIn);
     });
 

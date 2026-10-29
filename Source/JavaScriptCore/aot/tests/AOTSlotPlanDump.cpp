@@ -234,12 +234,6 @@ void SlotPlan::dump(PrintStream& out, const Program& program) const
         if (!isDefault(m_classCreation[index]))
             dumpClassCreation(printer, LayoutID(index), m_classCreation[index]);
     }
-    for (FieldReference field : m_fieldsExpectedInTheirSlots) {
-        printer.print(field.layout);
-        out.print(" ."_s, field.field, " "_s);
-        printer.print(fieldAt(program, field).key);
-        out.print(" expectedInSlot\n"_s);
-    }
 }
 
 } } } // namespace JSC::AOT::Typed

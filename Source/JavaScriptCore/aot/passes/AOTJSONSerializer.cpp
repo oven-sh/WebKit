@@ -1418,6 +1418,13 @@ struct JSONTextWriter final : Emission {
             }
             m_cursor = start;
             appendKeyOf(position);
+            if (!form.holdsCells) {
+                // Nothing but numbers and holes: the run time writes the list in one call, in fewer instructions a number than a loop here takes.
+                append(make<&Value::setJsonPosition, &Value::setValueOperand>(Opcode::JSONAppendValue, { }, JSONPosition::Element, array));
+                jumpTo(written);
+                builder().moveToEndOf(hasStorage.notTaken);
+                continue;
+            }
             appendToken(JSONToken::OpenArray);
             elementsMayRunUnknownCode |= appendArrayLoop({ array, builder().appendAllGuards(guards), length, plan.element, closing }, form.kind) == ElementCode::MayRunUnknownCode;
             builder().moveToEndOf(hasStorage.notTaken);

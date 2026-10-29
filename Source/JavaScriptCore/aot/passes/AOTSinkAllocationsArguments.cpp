@@ -113,6 +113,7 @@ static std::optional<Value> makeArgumentListRead(const VirtualFieldAccess& acces
     case VirtualFieldKind::RangeStart:
     case VirtualFieldKind::RangeEnd:
     case VirtualFieldKind::Operand:
+    case VirtualFieldKind::Position:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -154,6 +155,7 @@ static ArgumentsPart findArgumentsPart(const Program& program, const VirtualObje
     case VirtualFieldKind::RangeStart:
     case VirtualFieldKind::RangeEnd:
     case VirtualFieldKind::Operand:
+    case VirtualFieldKind::Position:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();

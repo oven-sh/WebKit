@@ -79,7 +79,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayFromDoubles, JSCell*, (Instance* in
         }
         for (unsigned i = 0; i < count; ++i)
             array->butterfly()->contiguousDouble().atUnsafe(i) = elements[i];
-        instance->findMissingShortArrayAllocators();
+        instance->findMissingShortArrayAllocator(capacity);
         OPERATION_RETURN(scope, array);
     }
     auto valueAt = [&](uint32_t i) {

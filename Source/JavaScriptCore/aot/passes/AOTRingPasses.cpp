@@ -44,6 +44,8 @@
 #include "AOTValueIdentity.h"
 #include "AOTValueSubstitution.h"
 #include "AOTVector.h"
+#include "AOTVirtualObject.h"
+#include "JSArrayIterator.h"
 #include "JSCInlines.h"
 #include "MathCommon.h"
 #include "PureNaN.h"
@@ -1557,9 +1559,35 @@ struct ConstantFolder {
             return foldStringCall(id, value);
         case Opcode::HasInPrototypeChain:
             return foldWalkFromNewObject(id, value);
+        case Opcode::GetInternalField:
+            return foldFieldOfNewArrayIterator(id, value);
+        case Opcode::HasJSType:
+            if (!makesArrayIterator(program, function, function.at(sameObjectThroughCasts(function, value.valueOperand()))))
+                return false;
+            return becomeBoolean(id, knownBoolean(toJSType(value.first()) <= JSArrayIteratorType && JSArrayIteratorType <= toJSType(value.last())));
         default:
             return false;
         }
+    }
+
+    // `const it = list[Symbol.iterator](); it.next()`: an array iterator gets its list and its kind when it is made, and nothing stores to either again.
+    bool foldFieldOfNewArrayIterator(ValueID id, const Value& read)
+    {
+        const Value& made = function.at(sameObjectThroughCasts(function, read.objectOperand()));
+        if (!makesArrayIterator(program, function, made))
+            return false;
+        BuiltinID builtin = program.builtins().at(made.overload()).builtin;
+        IterationKind kind = builtin == Builtins::ArrayPrototypeKeys ? IterationKind::Keys : builtin == Builtins::ArrayPrototypeValues ? IterationKind::Values : IterationKind::Entries;
+        switch (static_cast<JSArrayIterator::Field>(read.index())) {
+        case JSArrayIterator::Field::Index:
+            return false;
+        case JSArrayIterator::Field::IteratedObject:
+            becomeUpcast(function, id, made.receiverOperand());
+            return true;
+        case JSArrayIterator::Field::Kind:
+            return becomeConstant(id, KnownValue::integer(static_cast<int64_t>(kind)));
+        }
+        return false;
     }
 
     // `this instanceof F` in the body of F, behind the allocation: an object that is handed no prototype is born with the prototype object of its class, and no object of the layout ever gets another.
@@ -2864,6 +2892,20 @@ struct ControlFlowSimplifier {
         ArmOperations firstOperations = operationsOf(first);
         ArmOperations secondOperations = operationsOf(second);
 
+        // With the test goes what it found, and with the casts what was proven of the value behind it. Whatever takes the value has to take all that the test started from.
+        Arguments given = argumentsWithoutTest(function, takenEdge);
+        TypingContext typing { program, function, context.types };
+        auto isTakenAs = [&](const Block& arm, ValueID narrowed, TypeID required) {
+            return !required || program.typeOf(function, given[arm.parameters.find(narrowed)]).isSubsetOf(context.types.at(required), program);
+        };
+        auto takesWhatWasGiven = [&]<typename User>(const Block& arm, const User& user, uint32_t index, ValueID narrowed) {
+            if constexpr (std::is_same_v<User, Value>) {
+                if (user.operandKind(index) != OperandKind::Any && user.operandKind(index) != OperandKind::Declared)
+                    return false;
+            }
+            return isTakenAs(arm, narrowed, requiredTypeOfOperand(typing, user, index));
+        };
+
         auto isFactOf = [&](const Block& arm, ValueID id) {
             return function.at(id).opcode == Opcode::Specified && arm.values.contains(id);
         };
@@ -2881,7 +2923,8 @@ struct ControlFlowSimplifier {
                 return false;
             std::span<const ValueID> operands = inFirst.operands();
             for (uint32_t index = 0; index < operands.size(); ++index) {
-                if (operands[index] && narrowedValueBehindCasts(first, operands[index]) && !inFirst.operandUses(index).containsOnly({ OperandUse::Retains, OperandUse::Returns }))
+                ValueID narrowed = operands[index] ? narrowedValueBehindCasts(first, operands[index]) : ValueID();
+                if (narrowed && (!inFirst.operandUses(index).containsOnly({ OperandUse::Retains, OperandUse::Returns }) || !takesWhatWasGiven(first, inFirst, index, narrowed)))
                     return false;
             }
             return true;
@@ -2894,7 +2937,14 @@ struct ControlFlowSimplifier {
         if (!haveSameOperations || !haveSameOperands(first.terminator, second.terminator))
             return false;
         return std::ranges::equal(first.terminator.targets, second.terminator.targets, [&](const Target& a, const Target& b) {
-            return a.block == b.block && a.proofs == b.proofs && std::ranges::equal(a.arguments, b.arguments, isSameValue);
+            if (a.block != b.block || a.proofs != b.proofs || !std::ranges::equal(a.arguments, b.arguments, isSameValue))
+                return false;
+            for (size_t index = 0; index < a.arguments.size(); ++index) {
+                ValueID narrowed = narrowedValueBehindCasts(first, a.arguments[index]);
+                if (narrowed && !isTakenAs(first, narrowed, function.at(function.at(a.block).parameters[index]).type))
+                    return false;
+            }
+            return true;
         });
     }
 
@@ -3326,7 +3376,63 @@ static void reduceQuotientConvertedToInt32(Rewrite& rewrite, const Site& user)
     });
 }
 
+static bool isSameNumber(const Program& program, const Function& function, ValueID a, ValueID b)
+{
+    if (sameObjectThroughCasts(function, a) == sameObjectThroughCasts(function, b))
+        return true;
+    KnownValue known = knownValueOf(program, function, a);
+    return known.kind() == KnownValue::Kind::Integer && known == knownValueOf(program, function, b);
+}
+
+static bool isRemainderOf(const Program& program, const Function& function, ValueID id, const Value& quotient)
+{
+    const Value& remainder = function.at(sameObjectThroughCasts(function, id));
+    return remainder.opcode == Opcode::Mod
+        && isSameNumber(program, function, remainder.leftOperand(), quotient.leftOperand())
+        && isSameNumber(program, function, remainder.rightOperand(), quotient.rightOperand());
+}
+
+AOT_THRESHOLD(unsigned, maxBlocksBetweenRemainderAndQuotient, 4);
+
+bool followsTestForNoRemainder(const Program& program, const Function& function, const CFG& cfg, BlockID block, const Value& quotient)
+{
+    for (unsigned steps = 0; steps < maxBlocksBetweenRemainderAndQuotient; ++steps) {
+        auto incoming = cfg.incomingEdges(block);
+        if (incoming.size() != 1 || incoming[0].isHandlerEdge())
+            return false;
+        Edge edge = incoming[0];
+        const Terminator& terminator = function.at(edge.from).terminator;
+        if (terminator.kind == TerminatorKind::Branch && !edge.targetIndex) {
+            const Value& test = function.at(terminator.conditionOperand());
+            if (test.opcode == Opcode::StrictEq) {
+                for (unsigned i = 0; i < 2; ++i) {
+                    if (knownValueOf(program, function, test.operand(i)) == KnownValue::integer(0) && isRemainderOf(program, function, test.operand(1 - i), quotient))
+                        return true;
+                }
+            }
+        }
+        block = edge.from;
+    }
+    return false;
+}
+
+// Two integers that leave no remainder have an integer for their quotient, no further from zero than the dividend. A divisor above zero makes no negative zero of a dividend that is zero.
+static void reduceQuotientWithoutRemainder(Rewrite& rewrite, const Site& quotient)
+{
+    const Type& dividend = rewrite.typeOf(quotient.value.leftOperand());
+    const Type& divisor = rewrite.typeOf(quotient.value.rightOperand());
+    if (!dividend.isInt32() || !divisor.isInt32() || divisor.integers.minimum <= 0 || !followsTestForNoRemainder(rewrite.program, rewrite.function, rewrite.analyses.cfg(), quotient.point.block, quotient.value))
+        return;
+    rewrite.later([&rewrite, id = quotient.id] {
+        Value division = IRBuilder::make(Opcode::DivideIntegers, { rewrite.at(id).leftOperand(), rewrite.at(id).rightOperand() });
+        division.setRounding(QuotientRounding::ToInt32);
+        rewrite.become(id, WTF::move(division));
+        rewrite.count(StatisticID::IntegerDivisionsReduced);
+    });
+}
+
 static constexpr Rule integerDivisionRules[] {
+    { OpcodeSet { Opcode::Div }, reduceQuotientWithoutRemainder },
     { OpcodeSet { Opcode::CallBuiltin }, reduceRoundedQuotient },
     { int32ConvertingOperations, reduceQuotientConvertedToInt32 },
 };

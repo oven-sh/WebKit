@@ -27,6 +27,12 @@ struct ChildProcessResult {
 void setProgramPath(String&&);
 const String& programPath();
 
+// Gives this process a folder of its own for temporary files, inside the folder of the process that started it. What this
+// process starts inherits it. The folder goes when this process exits, and ChildProcessLauncher removes it after a child that
+// ended in any other way.
+void enterTemporaryFolder();
+String temporaryFolder();
+
 class ChildProcessLauncher {
 public:
     ChildProcessLauncher(String&& program, Vector<String>&& sharedArguments);

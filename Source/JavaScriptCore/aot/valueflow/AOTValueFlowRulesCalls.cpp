@@ -779,10 +779,31 @@ static ClimbingSet builtinFunctionsThatUnknownCalleeStandsFor(const ValueFlowSta
     return builtinFunctionsListedBesideUnknownObject(context, context.operandsOf(statement)[0].node);
 }
 
+// A function without `this` and a bound function do not. What nobody knows gets the receiver where the call lets it escape, which deferredExportsAt() sees.
+static bool mayLookAtReceiver(ValueFlowRuleContext& context, ClimbingSet callees)
+{
+    const ValueFlowUniverse& universe = context.universe();
+    bool mayLook = false;
+    context.forEachMember(context.restrict(callees, universe.knownObjects()), [&](ValueFlowObjectID callee) {
+        if (FunctionID function = universe.closureFunction(callee))
+            mayLook |= context.program().at(function).has(FunctionFlags::HasThis);
+        else if (BuiltinClassID builtinClass = universe.classOf(callee))
+            mayLook |= builtinClass != BuiltinClasses::BoundFunction;
+        else
+            mayLook |= context.sets().contains(universe.builtinFunctions(), callee);
+    });
+    return mayLook;
+}
+
 void runCall(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     const ValueFlowUniverse& universe = context.universe();
     ClimbingSet callees = context.valueOf(context.operandsOf(statement)[0]);
+    if (ClimbingSet namespaces = constructs(statement.opcode) ? ClimbingSet() : context.restrict(context.valueOf(context.operandsOf(statement)[1]), universe.namespaces()); context.meet(namespaces, ValueSets::anything) && mayLookAtReceiver(context, callees)) {
+        context.forEachMember(namespaces, [&](ValueFlowObjectID namespaceObject) {
+            namespaceOf(context, universe.moduleOf(namespaceObject));
+        });
+    }
     context.proxiesAskedByTheirTrapsIn(context.operandsOf(statement)[0]);
     applyEventsOfCall(statement, context, callees);
     // Next to an unknown value, the callee shows nothing that has escaped. A library function that may call an evaluator and has arrived here is still called here.
@@ -1097,6 +1118,12 @@ void runCallGroup(const ValueFlowStatement& statement, ValueFlowRuleContext& con
 
     auto handOperandsToCodeNobodySees = [&] {
         ValueFlowNodeID escaped = ValueFlowProgramNodes::escaped();
+        ValueFlowNodeID operands = context.nodes().ofHost(ValueFlowHostNode::OperandsHandedToUnseenCode);
+        context.connect(group.thisValue, operands);
+        for (unsigned index = 0; index < numberOfGroupedArguments; ++index)
+            context.connect(group.argument(index), operands);
+        context.connect(group.laterArguments, operands);
+        context.connect(group.otherArguments, operands);
         context.connect(group.thisValue, escaped);
         if (group.newTarget)
             context.connect(group.newTarget, escaped);

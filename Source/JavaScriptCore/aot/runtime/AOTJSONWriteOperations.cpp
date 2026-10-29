@@ -261,12 +261,60 @@ static ALWAYS_INLINE Latin1Character* appendPrimitive(Latin1Character* cursor, J
     return value.isNull() ? appendJSONLiteral(cursor, "null"_s) : nullptr;
 }
 
+// A pristine list has no toJSON, and a hole in it reads as undefined.
+static ALWAYS_INLINE bool isListOfNumbers(const JSCell& cell)
+{
+    return cell.type() == ArrayType && cell.isPristine() && (hasInt32(cell.indexingType()) || hasDouble(cell.indexingType()));
+}
+
+// A comma or the closing bracket follows each number.
+static constexpr size_t bytesOfNumberInList = jsonNumberBytes + 1;
+
+static ALWAYS_INLINE Latin1Character* appendNumbersWithCommas(Latin1Character* cursor, const JSArray& list, unsigned begin, unsigned end)
+{
+    const Butterfly* butterfly = list.butterfly();
+    if (hasInt32(list.indexingType())) {
+        const WriteBarrier<Unknown>* numbers = butterfly->contiguousInt32().data();
+        for (unsigned index = begin; index < end; ++index) {
+            JSValue number = numbers[index].get();
+            cursor = number ? appendJSONInteger(cursor, number.asInt32()) : appendJSONLiteral(cursor, "null"_s);
+            *cursor++ = ',';
+        }
+        return cursor;
+    }
+    const double* numbers = butterfly->contiguousDouble().data();
+    for (unsigned index = begin; index < end; ++index) {
+        // A hole is a NaN, which is written as null.
+        cursor = appendJSONNumber(cursor, numbers[index]);
+        *cursor++ = ',';
+    }
+    return cursor;
+}
+
+static ALWAYS_INLINE Latin1Character* closeListOfNumbers(Latin1Character* cursor, unsigned length)
+{
+    cursor -= !!length;
+    *cursor++ = ']';
+    return cursor;
+}
+
+static NEVER_INLINE Latin1Character* tryAppendListOfNumbersAtCursor(const StringBuilderStorage& builder, Latin1Character* cursor, const JSArray& list)
+{
+    unsigned length = list.length();
+    if (!builder.hasRoomAt(cursor, 2 + static_cast<size_t>(length) * bytesOfNumberInList + maxStringBuilderReservation))
+        return nullptr;
+    *cursor++ = '[';
+    return closeListOfNumbers(appendNumbersWithCommas(cursor, list, 0, length), length);
+}
+
 static ALWAYS_INLINE Latin1Character* tryAppendValueAtCursor(const StringBuilderStorage& builder, Latin1Character* cursor, JSValue value)
 {
     if (value.isCell()) {
         JSCell* cell = value.asCell();
         const StringImpl* flatString = cell && cell->isString() ? asString(value)->tryGetValueImpl() : nullptr;
-        return flatString ? tryAppendQuotedWithoutEscapes(builder, cursor, *flatString) : nullptr;
+        if (flatString) [[likely]]
+            return tryAppendQuotedWithoutEscapes(builder, cursor, *flatString);
+        return cell && isListOfNumbers(*cell) ? tryAppendListOfNumbersAtCursor(builder, cursor, *uncheckedDowncast<JSArray>(cell)) : nullptr;
     }
     if (!builder.hasRoomAt(cursor, jsonNumberBytes + maxStringBuilderReservation)) [[unlikely]]
         return nullptr;
@@ -290,6 +338,25 @@ static AppendedJSONValue appendJSONValue(JSGlobalObject* globalObject, StringBui
         Latin1Character* end = appendQuotedJSONString(globalObject, builder, cursor, *string->impl());
         RETURN_IF_EXCEPTION(scope, { });
         return { end, JSONOutcome::Parsed };
+    }
+
+    if (cell && isListOfNumbers(*cell)) {
+        // Most numbers are far shorter than the longest: room for all of a long list at once would be many times what it takes.
+        constexpr unsigned numbersWrittenAtOnce = 1024;
+        const JSArray& list = *uncheckedDowncast<JSArray>(cell);
+        unsigned length = list.length();
+        builder.commit(cursor);
+        cursor = builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = 2 + maxStringBuilderReservation });
+        RETURN_IF_EXCEPTION(scope, { });
+        *cursor++ = '[';
+        for (uint64_t begin = 0; begin < length; begin += numbersWrittenAtOnce) {
+            uint64_t end = std::min<uint64_t>(length, begin + numbersWrittenAtOnce);
+            builder.commit(cursor);
+            cursor = builder.reserve(globalObject, { .length = 0, .maxLengthOfRest = (end - begin) * bytesOfNumberInList + maxStringBuilderReservation });
+            RETURN_IF_EXCEPTION(scope, { });
+            cursor = appendNumbersWithCommas(cursor, list, begin, end);
+        }
+        return { closeListOfNumbers(cursor, length), JSONOutcome::Parsed };
     }
 
     builder.commit(cursor);

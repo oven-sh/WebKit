@@ -32,7 +32,7 @@ ValueFlowRuleContext::ValueFlowRuleContext(const ValueFlowSolver& solver, ValueF
     : m_solver(solver)
     , m_log(log)
     , m_instancedFunctions(solver.m_input.instancedFunctions)
-    , m_skipsRedundantAdds(!solver.m_input.isAskedHowValuesCame && !solver.m_input.remembersWhoLoggedEachEdge)
+    , m_skipsRedundantMarks(!solver.m_input.isAskedHowValuesCame && !solver.m_input.remembersWhoLoggedEachEdge)
     , m_maker(maker)
 {
 }
@@ -844,7 +844,7 @@ void ValueFlowRuleContext::connect(const ValueFlowOperand& operand, ValueFlowNod
 
 ALWAYS_INLINE bool ValueFlowRuleContext::isRedundantAdd(ValueFlowNodeID node, ValueSetID set)
 {
-    if (!m_skipsRedundantAdds || node.index() >= m_solver.graph().numberOfNodes())
+    if (node.index() >= m_solver.graph().numberOfNodes())
         return false;
     if (m_instancedFunctions && m_instancedFunctions->holdsNode(node))
         return false;
@@ -893,7 +893,7 @@ void ValueFlowRuleContext::mark(ClimbingSet objects, OptionSet<ObjectMutation> m
     ValueFlowNodeID holdingObjects;
     for (ObjectMutation mutation : mutations) {
         ValueFlowNodeID marked = mutationNode(mutation);
-        if (isRedundantAdd(marked, objects.m_set)) {
+        if (m_skipsRedundantMarks && isRedundantAdd(marked, objects.m_set)) {
             ++m_log.numberOfConnectionsOfRun;
             continue;
         }

@@ -155,6 +155,8 @@ public:
     Operand getAsDefined(ValueID) const;
     // For the one user of an operation that leaves its code to the user: from here on the user finds the operands of that operation in the forms in which it takes them.
     void takeOperandsOf(ValueID operationLeftToUser);
+    // Generates a value that generateValue() has passed over, and what it is computed from. Does nothing for a value that is there.
+    void generateValueLeftToUser(const OperationContext& user, ValueID);
     void define(const ValueContext&, Operand);
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);

@@ -58,6 +58,11 @@ static ASCIILiteral describeExit(SlotExitReason reason, JSValue value)
 
 void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingProperty leaving, SlotExitReason reason)
 {
+    if (reason == SlotExitReason::Redefinition) {
+        const FieldExit* exit = state().propertyCaches->findFieldExit(structureID(), field.name);
+        if (exit && exit->isDefinition && exit->attributes == leaving.attributes && tryRepeat(vm, *exit, leaving.valueOrAccessor))
+            return;
+    }
     willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
     validateMutation(vm, *this, field, mutationOf(reason));
     RELEASE_ASSERT(field.canLeaveSlot());
@@ -79,14 +84,16 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     count(instance(), counterFor(reason));
     state.propertyCaches->countNamed(describeExit(reason, leaving.valueOrAccessor), name);
 
-    if (reason != SlotExitReason::StoreOfOtherType || leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || state.propertyCaches->countsNames())
+    exit.isDefinition = reason == SlotExitReason::Redefinition;
+    exit.attributes = static_cast<uint8_t>(leaving.attributes);
+    if (reason == SlotExitReason::Delete || (!exit.isDefinition && leaving.attributes) || exit.attributes != leaving.attributes || hadOtherCellInPlaceOfExtraProperties || field.isPrivate() || hasOutOfLineKeyOrder() || !layout().extraPropertiesSlot() || state.propertyCaches->countsNames())
         return;
     Structure* extraStructure = extra->structure();
     if (structure()->mayBePrototype() || extraStructure->isDictionary())
         return;
     unsigned attributes;
     exit.offset = extraStructure->get(vm, name, attributes);
-    if (!isValidOffset(exit.offset) || !isInlineOffset(exit.offset) || attributes)
+    if (!isValidOffset(exit.offset) || !isInlineOffset(exit.offset) || attributes != leaving.attributes)
         return;
     exit.structureAfter = structureID();
     exit.extraPropertiesAfter = extraStructure->id();
@@ -94,7 +101,7 @@ void Object::moveFieldToExtraProperties(VM& vm, const FieldData& field, LeavingP
     exit.extraPropertiesCellSize = JSFinalObject::allocationSize(extraStructure->inlineCapacity());
     exit.offsetOfExtraPropertiesWord = layout().extraPropertiesSlot()->offset;
     SlotTraits traits = traitsOf(field.slot.representation());
-    if (!field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
+    if (!exit.isDefinition && !field.isOutOfLine() && absentPatternOf(field.slot.representation()) && traits.width >= sizeof(uint32_t)) {
         exit.absentBits = traits.absentBits;
         exit.offsetOfSlot = field.slot.offset;
         exit.widthOfSlot = traits.width;
@@ -107,13 +114,14 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
     const FieldData& field = *exit.field;
     if (structureID() != exit.structureBefore || orderWord() != exit.orderWordBefore || isInFrame() || isInSlot(field) != exit.wasInSlot)
         return false;
-    if (state().objects->layouts.slotAdmits(field, value))
+    if (!exit.isDefinition && state().objects->layouts.slotAdmits(field, value))
         return false;
+    SlotExitReason reason = exit.isDefinition ? SlotExitReason::Redefinition : SlotExitReason::StoreOfOtherType;
     JSObject* extra = extraPropertiesIfMade(*this);
     if (exit.extraPropertiesBefore ? !extra || extra->structureID() != exit.extraPropertiesBefore : hasExtraProperties())
         return false;
-    willLeaveStateOfBirth(vm, *this, field, ObjectMutation::StoreOfOtherType);
-    validateMutation(vm, *this, field, ObjectMutation::StoreOfOtherType);
+    willLeaveStateOfBirth(vm, *this, field, mutationOf(reason));
+    validateMutation(vm, *this, field, mutationOf(reason));
     // A collection forgets the exit, and then these pointers alone keep the Structures alive.
     auto* structureAfter = WTF::opaque(uncheckedDowncast<CompiledStructure>(exit.structureAfter.decode()));
     Structure* extraStructureAfter = WTF::opaque(exit.extraPropertiesAfter.decode());
@@ -131,7 +139,7 @@ bool Object::tryRepeat(VM& vm, const FieldExit& exit, JSValue value)
     at<uint32_t>(offsetOfOrderWord) = orderWordAfter;
     setPerCellBit(true);
     clear(field);
-    count(instance(), counterFor(SlotExitReason::StoreOfOtherType));
+    count(instance(), counterFor(reason));
     ensureStillAliveHere(structureAfter);
     ensureStillAliveHere(extraStructureAfter);
     return true;

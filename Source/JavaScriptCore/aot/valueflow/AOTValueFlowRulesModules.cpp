@@ -315,7 +315,7 @@ ClimbingSet withSourcesOfCopies(ValueFlowRuleContext& context, ClimbingSet objec
     }
 }
 
-static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key)
+static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSet values, std::optional<PropertyKeyID> key, DeferredExports deferredExports = DeferredExports::AreRead)
 {
     const ValueFlowUniverse& universe = context.universe();
     ValueFlowName valueName = key ? ValueFlowName::property(context.program(), *key) : everyPropertyName;
@@ -347,6 +347,8 @@ static OwnProperties readOwnProperties(ValueFlowRuleContext& context, ClimbingSe
     if (context.contains(values, ValueFlowUniverse::untrackedObject()))
         properties.others.nodes.append(context.lookup(ClimbingSet(universe.untrackedObjectAlone()), valueName));
 
+    if (deferredExports == DeferredExports::AreNotRead)
+        getters = context.restrict(getters, context.maker().unite(ValueSets::complement(universe.closures()), universe.builtinTables().heap().closuresWrittenInProgram()));
     forEachPartOfCallees(context, context.restrict(getters, universe.callables()), [&](ClimbingSet callees) {
         ValueFlowCallGroup group = context.group(callees, ValueFlowCallKind::Get);
         context.add(group.thisValue, receivers);
@@ -499,7 +501,7 @@ static void openToTestRunner(ValueFlowRuleContext& context, VariableID variable)
     context.add(location, unknownValue(context, ValueFlowUnknownSource::UndescribedNativeResult));
 }
 
-static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Vector<ModuleID, 4>& namespacesInside)
+static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Vector<ModuleID, 4>& namespacesInside, DeferredExports deferredExports)
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
@@ -574,12 +576,14 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
         // Where every own key of what the module exports is known, what the getter under a key answers lies under that key.
         std::optional<ValueSetID> keysAtCreation = keysThatObjectsWereMadeWith(context, values, OwnKeys::All);
         ClimbingSet keys = keysAtCreation ? context.unite(ClimbingSet(*keysAtCreation), context.valueOf(context.read(values, ValueFlowCellName { ValueFlowNameKind::AddedNames }))) : ClimbingSet();
+        if (module.exportRule != SyntheticExportRule::RuntimeModule)
+            deferredExports = DeferredExports::AreRead;
         if (keysAtCreation && !context.meet(keys, ValueSets::complement(universe.keys()))) {
             context.forEachMember(keys, [&](ValueFlowObjectID key) {
-                connect(context, readOwnProperties(context, values, universe.keyOf(key)).others, context.written(namespaceObject, ValueFlowName::property(program, universe.keyOf(key))));
+                connect(context, readOwnProperties(context, values, universe.keyOf(key), deferredExports).others, context.written(namespaceObject, ValueFlowName::property(program, universe.keyOf(key))));
             });
         } else
-            connect(context, readOwnProperties(context, values, std::nullopt).others, underAnyName);
+            connect(context, readOwnProperties(context, values, std::nullopt, deferredExports).others, underAnyName);
         listOwnPropertiesNobodyWrote(context, values, std::nullopt, underAnyName);
     } else if (module.kind != ModuleKind::SourceText)
         context.add(underAnyName, unknownValue(context, sourceOfWhatLoaderMakes(module)));
@@ -602,14 +606,15 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
     }
 }
 
-ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, ImportPhase phase)
+ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, ImportPhase phase, DeferredExports deferredExports)
 {
     const Program& program = context.program();
     const ValueFlowUniverse& universe = context.universe();
     if (program.at(first).kind == ModuleKind::External)
         return sourcesOf(unknownObject(context, sourceOfWhatLoaderMakes(program.at(first))));
 
-    bool staysForGood = context.isStatementOfBody();
+    // Only a namespace object that is tied to all its exports needs no second look.
+    bool staysForGood = context.isStatementOfBody() && deferredExports == DeferredExports::AreRead;
     ValueFlowNodeID tiedForGood = context.nodes().ofHost(ValueFlowHostNode::NamespacesTiedByStatementsOfBodies);
     ValueSetID tiedByThisStatement = staysForGood && context.rememberedByStatement() ? context.rememberedByStatement() : ValueSets::nothing;
     Vector<ValueFlowObjectID, 4> tiedNow;
@@ -629,7 +634,7 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
             context.add(tiedForGood, created);
         context.add(context.nodes().ofHost(ValueFlowHostNode::CreatedNamespaces), only(context, universe.namespaceOf(id)));
         useModule(context, id);
-        tieNamespaceToExports(context, id, pending);
+        tieNamespaceToExports(context, id, pending, deferredExports);
     }
     if (staysForGood && !tiedNow.isEmpty())
         context.rememberedByStatement() = context.maker().unite(tiedByThisStatement, context.maker().of(tiedNow.span()));
@@ -960,6 +965,19 @@ static ValueFlowNodeID reasonOfPromiseAt(const ValueFlowStatement& statement, Va
     return promise ? context.written(only(context, promise), { ValueFlowNameKind::Slot, BuiltinSlots::PromiseReason.index() }) : ValueFlowProgramNodes::escaped();
 }
 
+// `fs.readFileSync(path)` behind `import * as fs`: the namespace object goes to the callee and nowhere else. A callee that looks at its receiver reads the deferred exports: runCall().
+static DeferredExports deferredExportsAt(const ValueFlowStatement& statement, ValueFlowRuleContext& context, ModuleID module)
+{
+    if (!statement.isOnlyReceiverOfCalls)
+        return DeferredExports::AreRead;
+    ClimbingSet object = only(context, context.universe().namespaceOf(module));
+    for (ValueFlowNodeID elsewhere : { ValueFlowProgramNodes::escaped(), ValueFlowProgramNodes::lost(), context.nodes().ofHost(ValueFlowHostNode::HeldByNativeCode) }) {
+        if (context.holdsAnyOf(object, elsewhere))
+            return DeferredExports::AreRead;
+    }
+    return DeferredExports::AreNotRead;
+}
+
 static void escapeOperands(const ValueFlowStatement& statement, ValueFlowRuleContext& context)
 {
     for (const ValueFlowOperand& operand : context.operandsOf(statement))
@@ -1021,7 +1039,7 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
     case Opcode::ModuleNamespace:
         noteRequest(context, statement.function, operation.module());
         evaluateModule(context, operation.module());
-        connect(context, namespaceOf(context, operation.module(), operation.phase()), statement.result);
+        connect(context, namespaceOf(context, operation.module(), operation.phase(), deferredExportsAt(statement, context, operation.module())), statement.result);
         connect(context, evaluationErrorsOf(context, operation.module()), statement.thrown ? statement.thrown : ValueFlowProgramNodes::escaped());
         return;
     case Opcode::ImportModule: {

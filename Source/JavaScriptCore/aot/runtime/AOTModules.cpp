@@ -475,15 +475,9 @@ ModuleID Modules::moduleWithExportsOf(ModuleID module) const
     return face.value_or(module);
 }
 
-bool Modules::mayBeMocked(ModuleID file) const
+bool Modules::mayBeMocked(ModuleID module) const
 {
-    ModuleID module = moduleWithExportsOf(file);
-    std::span<const ModuleExportData> exports = m_table.exports(module);
-    std::span<const SyntheticExportData> syntheticExports = m_table.syntheticExports(module);
-    if (exports.empty() && syntheticExports.empty())
-        return false;
-    return std::ranges::all_of(exports, [](const ModuleExportData& entry) { return entry.kind() != ModuleExportKind::Variable || entry.isReplaceable; })
-        && std::ranges::all_of(syntheticExports, [](const SyntheticExportData& entry) { return entry.isReplaceable; });
+    return data(module).mayBeMocked();
 }
 
 // A name that the loader fills stands in three places: the variable that importers read, the table that a later link takes it from, and the namespace object.
@@ -2456,6 +2450,9 @@ void mockExport(JSGlobalObject* realm, ModuleID module, UniquedStringImpl* name,
 void willMockModule(JSGlobalObject* realm, ModuleID module, JSObject* exports)
 {
     Modules& modules = *modulesOf(realm);
+    // Compiled code names objects of a module of the library, so its body runs: the mock stands under its names alone.
+    if (modules.data(module).isOfLibrary() || !modules.table().hasFilePath(module))
+        return;
     modules.willMock(module);
     if (modules.data(module).kind != ModuleKind::CommonJs)
         return;

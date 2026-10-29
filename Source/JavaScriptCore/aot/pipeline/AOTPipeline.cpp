@@ -359,6 +359,8 @@ constexpr std::array optimizeSteps {
     // The tests of a cold function of a very large program. Nothing is inlined, expanded or sunk any more.
     ScheduleStep::runBehindRounds(PlaceTypeTests),
     ScheduleStep::runBehindRounds(ConvertCountersToIntegers),
+    // Behind its tests a number that was expected to be an int32 is one.
+    ScheduleStep::run(ReduceIntegerDivisions),
     ScheduleStep::run(ResolveCalls),
     ScheduleStep::run(ResolveAccesses),
     // Where the rounds above were cut short by their limit, ResolveCalls still finds calls to resolve here, and makes of a call with a spread what only ExpandIteration removes.

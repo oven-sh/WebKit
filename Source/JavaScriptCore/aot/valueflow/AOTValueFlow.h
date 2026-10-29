@@ -331,6 +331,8 @@ struct ValueFlowStatement {
     uint32_t firstSite { UINT32_MAX };
     // Of a PropGet: what it reads is tested, or is the callee of a call on the object it was read from, and goes nowhere else.
     bool isOnlyCalledOnItsHolder { false };
+    // Of a ModuleNamespace: the object is tested, or is the receiver of a call, and goes nowhere else.
+    bool isOnlyReceiverOfCalls { false };
     // What the tests in front of its block let through. Where one of these holds nothing the statement never runs.
     uint8_t guardCount { 0 };
     uint32_t firstGuard { 0 };

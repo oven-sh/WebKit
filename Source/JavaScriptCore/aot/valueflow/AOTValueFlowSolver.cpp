@@ -696,6 +696,7 @@ void ValueFlowSolver::StepTimes::begin()
     cpuAtStartOfStep = CPUTime::forCurrentThread();
     cpuInParallelLoopsAtStartOfStep = ParallelRegionScope::cpuTimeOfCurrentThread();
     cpuOfAllThreadsAtStartOfStep = cpuTimeOfAllThreads();
+    byBusyThreadsAtStartOfStep = BusyThreads::times();
 }
 
 void ValueFlowSolver::StepTimes::didFinish(ASCIILiteral name)
@@ -710,24 +711,35 @@ void ValueFlowSolver::StepTimes::didFinish(ASCIILiteral name)
     Seconds cpuOutsideParallelLoops = cpu - (cpuInParallelLoopsNow - std::exchange(cpuInParallelLoopsAtStartOfStep, cpuInParallelLoopsNow));
     Seconds cpuOfAllThreadsNow = cpuTimeOfAllThreads();
     Seconds cpuOfAllThreads = cpuOfAllThreadsNow - std::exchange(cpuOfAllThreadsAtStartOfStep, cpuOfAllThreadsNow);
+    BusyThreads::Times byBusyThreadsNow = BusyThreads::times();
+    BusyThreads::Times byBusyThreads = byBusyThreadsNow;
+    for (unsigned bucket = 0; bucket < BusyThreads::numberOfBuckets; ++bucket)
+        byBusyThreads[bucket] -= byBusyThreadsAtStartOfStep[bucket];
+    byBusyThreadsAtStartOfStep = byBusyThreadsNow;
     for (Step& step : steps) {
         if (step.name.characters() == name.characters()) {
             step.wall += wall;
             step.cpuOfThisThread += cpu;
             step.cpuOutsideParallelLoops += cpuOutsideParallelLoops;
             step.cpuOfAllThreads += cpuOfAllThreads;
+            for (unsigned bucket = 0; bucket < BusyThreads::numberOfBuckets; ++bucket)
+                step.byBusyThreads[bucket] += byBusyThreads[bucket];
             return;
         }
     }
-    steps.append(Step { name, wall, cpu, cpuOutsideParallelLoops, cpuOfAllThreads });
+    steps.append(Step { name, wall, cpu, cpuOutsideParallelLoops, cpuOfAllThreads, byBusyThreads });
 }
 
 void ValueFlowSolver::StepTimes::dump() const
 {
     if (!isOn)
         return;
-    for (const Step& step : steps)
-        dataLogLn("AOT flow step | ", step.name, " | ", step.wall.milliseconds(), " ms | this thread's CPU ", step.cpuOfThisThread.milliseconds(), " ms | outside parallel loops ", step.cpuOutsideParallelLoops.milliseconds(), " ms | all threads' CPU ", step.cpuOfAllThreads.milliseconds(), " ms");
+    for (const Step& step : steps) {
+        StringPrintStream byBusyThreads;
+        for (unsigned bucket = 0; bucket < BusyThreads::numberOfBuckets; ++bucket)
+            byBusyThreads.print(bucket ? ", " : "", "up to ", bucket + 1 < BusyThreads::numberOfBuckets ? BusyThreads::maxThreadsOfBucket[bucket] : UINT_MAX, ": ", step.byBusyThreads[bucket].milliseconds());
+        dataLogLn("AOT flow step | ", step.name, " | ", step.wall.milliseconds(), " ms | this thread's CPU ", step.cpuOfThisThread.milliseconds(), " ms | outside parallel loops ", step.cpuOutsideParallelLoops.milliseconds(), " ms | all threads' CPU ", step.cpuOfAllThreads.milliseconds(), " ms | ms by busy threads ", byBusyThreads.toString());
+    }
     dataLogLn("AOT flow loop over due statements | busy on all threads ", busyOnAllThreads.milliseconds(), " ms | the busiest thread of each turn ", busiestThreadOfTurn.milliseconds(), " ms | the longest share of each turn ", longestShareOfTurn.milliseconds(), " ms");
 }
 
@@ -4650,8 +4662,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             std::span<const ValueFlowOperand> operands = operandsOf(m_input.statements[stores[index].statement]);
             write(index, seenAt(operands[operands.size() - 1]), operands[0].node ? seenBehindTheRoundsAt(operands[0].node) : ValueSets::nothing);
         };
-        HashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callsWithResultAt;
-        BitVector isCallResult(numberOfNodes);
+        HashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> statementsAnsweredFrom;
+        BitVector answersStatements(numberOfNodes);
         // What a call does depends on what its callee is observed to be. The steps are in execution order. Only a node that holds the unknown object sees anything, and what comes from a node that does not hold it never changes.
         enum class StepOfCall : uint8_t { EnterFunction, HasEnteredFunction, ForwardOperand, ForwardResult };
         struct Step {
@@ -4790,8 +4802,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 hasFirstPlanRun.quickSet(index);
                 return;
             }
-            callsWithResultAt.ensure(step.to, [] { return Vector<uint32_t, 2>(); }).iterator->value.append(calls[index]);
-            isCallResult.quickSet(step.to);
+            statementsAnsweredFrom.ensure(step.to, [] { return Vector<uint32_t, 2>(); }).iterator->value.append(calls[index]);
+            answersStatements.quickSet(step.to);
         };
         auto runStepsOfCall = [&](uint32_t index, uint32_t firstStep, bool hasRun) {
             std::span<const ValueFlowOperand> operands = operandsOf(m_input.statements[calls[index]]);
@@ -5023,8 +5035,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 if (hasFirstPlanRun.quickGet(*index))
                     arriveAt(m_input.statements[calls[*index]].result, come);
             }
-            if (isCallResult.quickGet(from.index())) {
-                for (uint32_t index : callsWithResultAt.find(from.index())->value) {
+            if (answersStatements.quickGet(from.index())) {
+                for (uint32_t index : statementsAnsweredFrom.find(from.index())->value) {
                     if (m_input.statements[index].result)
                         arriveAt(m_input.statements[index].result, come);
                 }
@@ -5218,8 +5230,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                     findArrivalOf(m_input.statements[calls[*index]].result);
             }
             uint32_t numberOfCallsWithResults = 0;
-            if (isCallResult.quickGet(from.index())) {
-                const Vector<uint32_t, 2>& answered = std::as_const(callsWithResultAt).find(from.index())->value;
+            if (answersStatements.quickGet(from.index())) {
+                const Vector<uint32_t, 2>& answered = std::as_const(statementsAnsweredFrom).find(from.index())->value;
                 numberOfCallsWithResults = answered.size();
                 for (uint32_t index : answered) {
                     if (m_input.statements[index].result)
@@ -5275,8 +5287,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                     doArrival(step);
                     break;
                 case Found::ResultsForwarded:
-                    if (isCallResult.quickGet(from.index())) {
-                        for (uint32_t index : callsWithResultAt.find(from.index())->value.span().subspan(step.index)) {
+                    if (answersStatements.quickGet(from.index())) {
+                        for (uint32_t index : statementsAnsweredFrom.find(from.index())->value.span().subspan(step.index)) {
                             if (m_input.statements[index].result)
                                 arriveAt(m_input.statements[index].result, come);
                         }
@@ -5352,8 +5364,8 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
                 arriveAt(statement.result, seenAt(heritage));
                 if (!heritage.node || !holdsUnknownObject(heritage.node))
                     continue;
-                callsWithResultAt.ensure(heritage.node.index(), [] { return Vector<uint32_t, 2>(); }).iterator->value.append(index);
-                isCallResult.quickSet(heritage.node.index());
+                statementsAnsweredFrom.ensure(heritage.node.index(), [] { return Vector<uint32_t, 2>(); }).iterator->value.append(index);
+                answersStatements.quickSet(heritage.node.index());
             }
         }
         // What stands in sight in one node and goes on to a node that holds the unknown object is covered there. It has come all the same.

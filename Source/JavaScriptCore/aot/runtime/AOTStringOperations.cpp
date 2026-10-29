@@ -409,7 +409,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSubstring, JSCell*, (Instance* instance, JS
 JSC_DEFINE_JIT_OPERATION(operationAOTFlatten, void*, (Instance* instance, JSCell* string))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTFlatten);
-    auto value = cellArgument<JSString>(string, Entry::operationAOTFlatten)->value(globalObject);
+    JSString* cell = cellArgument<JSString>(string, Entry::operationAOTFlatten);
+    if (cell->isRope() && uncheckedDowncast<JSRopeString>(cell)->tryResolveFlatLatin1Parts(vm))
+        OPERATION_RETURN(scope, cell->tryGetValueImpl());
+    auto value = cell->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, value->impl());
 }

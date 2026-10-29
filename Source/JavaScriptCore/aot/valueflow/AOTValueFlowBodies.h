@@ -405,6 +405,7 @@ enum class ValueFlowHostNode : uint8_t {
     LibraryModulesRequestedByProgram,
     LibraryModulesHandedOut,
     ObjectsNobodyFollowsThatDefinitionsName,
+    OperandsHandedToUnseenCode,
     ObjectsNobodyFollowsThatStatementsGiveDisplayName,
     StoredUnderSymbolsNobodyKnows,
     StoredByLibraryUnderSymbolsNobodyKnows,
@@ -414,7 +415,7 @@ enum class ValueFlowHostNode : uint8_t {
     MembersStoredByNameThroughPlaceholders,
 };
 
-inline constexpr unsigned numberOfValueFlowHostNodes = 76;
+inline constexpr unsigned numberOfValueFlowHostNodes = 77;
 static_assert(static_cast<unsigned>(ValueFlowHostNode::MembersStoredByNameThroughPlaceholders) + 1 == numberOfValueFlowHostNodes);
 
 class ValueFlowProgramNodes {
@@ -586,6 +587,7 @@ struct ValueFlowBody {
         ValueFlowStatementKind kind { ValueFlowStatementKind::Operation };
         uint32_t firstSite { none };
         bool isOnlyCalledOnItsHolder { false };
+        bool isOnlyReceiverOfCalls { false };
         uint8_t guardCount { 0 };
         uint32_t firstGuard { 0 };
         uint32_t guardsOfOperands { 0 };

@@ -50,6 +50,9 @@ public:
 
     // The elements below the length are the caller's to store before anything can collect.
     std::pair<CellPointer, Pointer> allocateArray(const OperationContext&, Word32 length, Word32 vectorLength, IndexingType, LBasicBlock slowPath);
+    // An array of 1 to maxArrayLengthInStubKey elements in plain storage. The caller stores every element at once, and then calls finishArrayOfLength().
+    CellPointer allocateArrayOfLength(const OperationContext&, IndexingType, unsigned length);
+    void finishArrayOfLength(const OperationContext&, CellPointer array, unsigned length);
     // In a frame the cell, the indexing header and the elements lie one after the other. On the heap where the realm has no pristine arrays, or the buffer holds more than the frame has room for.
     CellPointer newArrayOf(const OperationContext&, std::span<const Boxed> elements, AllocationStorage = AllocationStorage::Heap);
     CellPointer newArrayFromBuffer(const OperationContext&, Word32 count, Pointer buffer);

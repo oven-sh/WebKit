@@ -2638,6 +2638,189 @@ public:
     // can never let `U` match (a given-back position still holds a `T` character, which `U` rejects), so all of the backtracking the
     // engine would do into `T` is futile. We mark such a `T` so the JIT can skip generating (and running) that dead backtracking.
 
+    struct TermsBehindGroup {
+        const PatternAlternative* alternative;
+        unsigned index;
+        const TermsBehindGroup* outer;
+    };
+    using TermsInOrder = Vector<const PatternTerm*, 16>;
+    static constexpr unsigned maxTermsBehindLazyRun = 64;
+
+    static bool isTakenOnce(const PatternTerm& group)
+    {
+        return group.quantityType == QuantifierType::FixedCount && group.quantityMinCount == 1 && group.quantityMaxCount == 1 && !group.parentheses.isCopy;
+    }
+
+    static bool isOneUnit(const PatternTerm& term)
+    {
+        return (term.type == PatternTerm::Type::PatternCharacter || term.type == PatternTerm::Type::CharacterClass) && term.matchDirection() == Forward && term.m_matchedSet != CharacterSetID::Unknown;
+    }
+
+    static bool isRunWithoutUpperBound(const PatternTerm& term)
+    {
+        return isOneUnit(term) && term.quantityType != QuantifierType::FixedCount && !term.quantityMinCount && term.quantityMaxCount == quantifyInfinite;
+    }
+
+    // The terms that a match goes through from a place on, up to the end of the pattern or of the lookahead. A group that is taken once and has one alternative gives its terms.
+    bool collectTermsBehind(const PatternAlternative* alternative, unsigned index, const TermsBehindGroup* outer, TermsInOrder& terms)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return false;
+        for (;;) {
+            for (; index < alternative->m_terms.size(); ++index) {
+                const PatternTerm& term = alternative->m_terms[index];
+                if (term.type == PatternTerm::Type::ParenthesesSubpattern && isTakenOnce(term) && term.matchDirection() == Forward && term.parentheses.disjunction->m_alternatives.size() == 1) {
+                    TermsBehindGroup behind { alternative, index + 1, outer };
+                    return collectTermsBehind(term.parentheses.disjunction->m_alternatives[0].get(), 0, &behind, terms);
+                }
+                if (terms.size() == maxTermsBehindLazyRun)
+                    return false;
+                terms.append(&term);
+            }
+            if (!outer)
+                return true;
+            alternative = outer->alternative;
+            index = outer->index;
+            outer = outer->outer;
+        }
+    }
+
+    // Whether the search from the term on depends on the position alone, and the JIT counts no turns in it: it gives a match up by their number.
+    static bool dependsOnPositionAlone(const PatternTerm& term)
+    {
+        switch (term.type) {
+        case PatternTerm::Type::NumberedBackReference:
+        case PatternTerm::Type::NamedBackReference:
+        case PatternTerm::Type::DotStarEnclosure:
+            return false;
+        case PatternTerm::Type::ParenthesesSubpattern:
+            if (term.quantityMaxCount != 1 || term.parentheses.isCopy)
+                return false;
+            [[fallthrough]];
+        case PatternTerm::Type::ParentheticalAssertion:
+            return std::ranges::all_of(term.parentheses.disjunction->m_alternatives, [](auto& alternative) {
+                return std::ranges::all_of(alternative->m_terms, dependsOnPositionAlone);
+            });
+        default:
+            return true;
+        }
+    }
+
+    static bool isSubset(const CharacterSet& inner, const CharacterSet& outer)
+    {
+        auto candidate = outer.ranges.begin();
+        for (auto [begin, end] : inner.ranges) {
+            while (candidate != outer.ranges.end() && candidate->second < begin)
+                ++candidate;
+            if (candidate == outer.ranges.end() || candidate->first > begin || candidate->second < end)
+                return false;
+        }
+        return true;
+    }
+
+    template<typename Functor>
+    static void forEachRangeOfDifference(const CharacterSet& set, const CharacterSet& without, const Functor& functor)
+    {
+        auto cut = without.ranges.begin();
+        for (auto [begin, end] : set.ranges) {
+            while (cut != without.ranges.end() && cut->second < begin)
+                ++cut;
+            bool reachesEnd = false;
+            for (auto next = cut; next != without.ranges.end() && next->first <= end && !reachesEnd; ++next) {
+                if (next->first > begin)
+                    functor(begin, next->first - 1);
+                reachesEnd = next->second >= end;
+                begin = next->second + 1;
+            }
+            if (!reachesEnd)
+                functor(begin, end);
+        }
+    }
+
+    // .*?\] stops at the first ], as [^\]]*\] does, unless what stands behind the ] fails there and matches behind a later ]. That cannot be
+    // - where nothing stands behind it: the pattern, or the lookahead, which is not gone back into, ends there;
+    // - where another run without an upper bound stands behind it that takes all the first run takes, and the ]. Entered behind a later ], it has only ends that it had behind the
+    //   first, and the search from an end depends on the position alone. Steps of one unit may stand between the two: where one fails, the first run cannot go on either.
+    // The run that stops there never goes back, and \[.*?\].*?# no longer walks to the end of the line from every ].
+    bool stopsAtFirstEnd(const PatternTerm& run, const TermsInOrder& behind)
+    {
+        auto& sets = m_pattern.m_firstFollowSets;
+        if (behind.isEmpty() || !isOneUnit(*behind[0]) || behind[0]->quantityType != QuantifierType::FixedCount || behind[0]->quantityMaxCount != 1)
+            return false;
+        if (behind.size() == 1)
+            return true;
+        const CharacterSet& members = sets.set(run.m_matchedSet);
+        const CharacterSet& end = sets.set(behind[0]->m_matchedSet);
+        auto holdsRunAndEnd = [&](const PatternTerm& term) {
+            return isSubset(members, sets.set(term.m_matchedSet)) && isSubset(end, sets.set(term.m_matchedSet));
+        };
+        unsigned next = 1;
+        while (next < behind.size() && isOneUnit(*behind[next]) && behind[next]->quantityType == QuantifierType::FixedCount)
+            ++next;
+        if (next == behind.size() || !isRunWithoutUpperBound(*behind[next]) || !holdsRunAndEnd(*behind[next]))
+            return false;
+        for (unsigned step = 1; step < next; ++step) {
+            if (!holdsRunAndEnd(*behind[step]) || !isSubset(sets.set(behind[step]->m_matchedSet), sets.set(behind[next]->m_matchedSet)))
+                return false;
+        }
+        return std::ranges::all_of(behind.span().subspan(next + 1), [](const PatternTerm* term) {
+            return dependsOnPositionAlone(*term);
+        });
+    }
+
+    bool replaceLazyRunsThatStopAtFirstEnd(PatternDisjunction& disjunction, const TermsBehindGroup* outer)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return false;
+        bool hasReplaced = false;
+        auto& sets = m_pattern.m_firstFollowSets;
+        for (auto& alternative : disjunction.m_alternatives) {
+            for (unsigned i = 0; i < alternative->m_terms.size(); ++i) {
+                PatternTerm& term = alternative->m_terms[i];
+                if (term.matchDirection() != Forward)
+                    continue;
+                if (term.type == PatternTerm::Type::ParentheticalAssertion) {
+                    hasReplaced |= replaceLazyRunsThatStopAtFirstEnd(*term.parentheses.disjunction, nullptr);
+                    continue;
+                }
+                if (term.type == PatternTerm::Type::ParenthesesSubpattern) {
+                    // What stands behind a run in a repeated group depends on the turn.
+                    if (isTakenOnce(term)) {
+                        TermsBehindGroup behind { alternative.get(), i + 1, outer };
+                        hasReplaced |= replaceLazyRunsThatStopAtFirstEnd(*term.parentheses.disjunction, &behind);
+                    }
+                    continue;
+                }
+                if (!isRunWithoutUpperBound(term) || term.quantityType != QuantifierType::NonGreedy)
+                    continue;
+                TermsInOrder behind;
+                if (!collectTermsBehind(alternative.get(), i + 1, outer, behind) || !stopsAtFirstEnd(term, behind))
+                    continue;
+                CharacterClassConstructor membersButEnd(false, m_pattern.compileMode());
+                bool hasMembers = false;
+                forEachRangeOfDifference(sets.set(term.m_matchedSet), sets.set(behind[0]->m_matchedSet), [&](char32_t begin, char32_t end) {
+                    membersButEnd.putRange(begin, end);
+                    hasMembers = true;
+                });
+                if (!hasMembers)
+                    continue;
+                auto characterClass = membersButEnd.charClass();
+                term.type = PatternTerm::Type::CharacterClass;
+                term.characterClass = characterClass.get();
+                term.m_invert = false;
+                term.quantityType = QuantifierType::Greedy;
+                m_pattern.m_userCharacterClasses.append(WTF::move(characterClass));
+                hasReplaced = true;
+            }
+        }
+        return hasReplaced;
+    }
+
+    bool replaceLazyRunsThatStopAtFirstEnd()
+    {
+        return !m_pattern.eitherUnicode() && replaceLazyRunsThatStopAtFirstEnd(*m_pattern.m_body, nullptr);
+    }
+
     void optimizePossessiveQuantifiers()
     {
         auto termMatchesCharacter = [&](const PatternTerm& term, char32_t ch) -> TriState {
@@ -4068,6 +4251,8 @@ ErrorCode YarrPattern::compile(StringView patternString)
 
     if (m_analysis == PatternAnalysis::Performed) {
         computeFirstFollowSets(*this, constructor.stackCheck());
+        if (constructor.replaceLazyRunsThatStopAtFirstEnd())
+            computeFirstFollowSets(*this, constructor.stackCheck());
         analyzeBacktracking(*this, constructor.stackCheck());
     }
 

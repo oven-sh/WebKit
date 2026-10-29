@@ -488,6 +488,7 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
     ValueSetID namedByDefinitions = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ObjectsNobodyFollowsThatDefinitionsName));
     bool escapedClosuresMayBeNamed = inputs.sets().contains(namedByDefinitions, ValueFlowUniverse::unknownObject());
     bool lostClosuresMayBeNamed = inputs.sets().contains(namedByDefinitions, ValueFlowUniverse::untrackedObject());
+    ValueSetID handedToUnseenCode = inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::OperandsHandedToUnseenCode));
     inputs.sets().forEachMember(inputs.solver().possibleValuesOf(inputs.bodies().nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename)), [&](ValueFlowObjectID object) {
         if (FunctionID function = inputs.universe().closureFunction(object); function && function.index() < program.functions.size())
             functions.quickSet(function.index());
@@ -517,7 +518,8 @@ static FunctionsWhoseClosuresMayBeRenamed findFunctionsWhoseClosuresMayBeRenamed
             onlyWhereNobodySees.quickSet(index);
         else if (inputs.hasEscaped(closure) || inputs.isLost(closure)) {
             outOfSight.quickSet(index);
-            if ((escapedClosuresMayBeNamed && inputs.hasEscaped(closure)) || (lostClosuresMayBeNamed && inputs.isLost(closure)))
+            // Unseen code may define any property of what it is handed.
+            if (inputs.sets().contains(handedToUnseenCode, closure) || (escapedClosuresMayBeNamed && inputs.hasEscaped(closure)) || (lostClosuresMayBeNamed && inputs.isLost(closure)))
                 namedOutOfSight.quickSet(index);
         }
     }

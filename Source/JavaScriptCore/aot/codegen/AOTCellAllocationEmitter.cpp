@@ -327,6 +327,24 @@ std::pair<CellPointer, Pointer> CellAllocationEmitter::allocateArray(const Opera
     return { array, Pointer(m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly)) };
 }
 
+CellPointer CellAllocationEmitter::allocateArrayOfLength(const OperationContext& context, IndexingType indexingType, unsigned length)
+{
+    return CellPointer(callStub(context, newArrayOfLength(arrayElementKindOf(indexingType), length), { }).first);
+}
+
+void CellAllocationEmitter::finishArrayOfLength(const OperationContext& context, CellPointer array, unsigned length)
+{
+    LBasicBlock isHavingABadTime = newBlock();
+    LBasicBlock continuation = newBlock();
+    m_out.branch(isNotZero(loadMutable64(Instance::offsetOfNewArrayHeader(ArrayWithContiguous))).value(), normalEdge(continuation), rareEdge(isHavingABadTime));
+
+    m_out.appendTo(isHavingABadTime);
+    callOperation<CellPointer>(context, RuntimeOperation::TruncateNewArray, { array, word32(static_cast<int32_t>(length)) }, { .isOnRarePath = true });
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+}
+
 CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, std::span<const Boxed> elements, AllocationStorage storage)
 {
     bool isInFrame = storage != AllocationStorage::Heap;
@@ -341,6 +359,19 @@ CellPointer CellAllocationEmitter::newArrayOf(const OperationContext& context, s
     }
     if (!isInFrame && context.shape() != CodeShape::Fast)
         return callOperation<CellPointer>(context, RuntimeOperation::NewArray, { word32(static_cast<int32_t>(length)), argumentBuffer(elements) });
+
+    if (!isInFrame && length <= maxArrayLengthInStubKey) {
+        CellPointer array = allocateArrayOfLength(context, ArrayWithContiguous, length);
+        {
+            CodeGenerator::InitializationScope scope(generator());
+            LValue butterfly = m_out.loadPtr(array.value(), m_heaps.JSArray_butterfly);
+            for (unsigned i = 0; i < length; ++i)
+                m_out.store64(elements[i].value(), butterfly, m_heaps.indexedContiguousProperties[i]);
+        }
+        emitter<BarrierEmitter>().fenceAfterInitialization();
+        finishArrayOfLength(context, array, length);
+        return array;
+    }
 
     unsigned vectorLength = std::max<unsigned>(length, BASE_CONTIGUOUS_VECTOR_LEN) | 1;
     LBasicBlock slowPath = newBlock();

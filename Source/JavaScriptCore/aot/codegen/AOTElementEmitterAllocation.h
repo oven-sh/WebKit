@@ -23,6 +23,8 @@ public:
     const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, bool hasHoles = false);
 
     CellPointer newLiteral(const ValueContext&);
+    // The one user of such a value is a literal that computes it behind its allocation, where the value goes straight into the array: no register holds it across the call.
+    bool isComputedBehindAllocation(ValueID);
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);
     CellPointer newArrayOfNumbers(const OperationContext&, std::span<const Number>);
     CellPointer newArrayOfHoles(const OperationContext&, Integer length, const ArrayStorageForm&, BuiltinID calledBuiltin);
@@ -40,6 +42,9 @@ private:
     CellPointer newLiteralAtSite(const ValueContext&, StaticsOffset);
     const ArrayStorageForm& formOfEmptyLiteral(ValueID literal, const Type& array);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
+    const ArrayStorageForm* findFormOfLiteral(std::span<const ValueID> elements, const Type& array);
+    bool storesElementsBehindAllocation(std::span<const ValueID> elements, const ArrayStorageForm&);
+    CellPointer newArrayStoredBehindAllocation(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     CellPointer newDoubleLiteral(const OperationContext&, std::span<const Number> numbersOrMarkers, uint32_t isNumberMask);
     CellPointer callNewEmptyArray(const OperationContext&, EmptyArray);
     CellPointer callNewArrayWithLength(const OperationContext&, const ArrayStorageForm&, Integer lengthAndCapacity);

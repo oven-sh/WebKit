@@ -14,7 +14,6 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTLayoutData.h"
 #include "AOTPhaseTimes.h"
-#include "AOTPropertyAccess.h"
 #include "AOTRepresentation.h"
 #include "AOTSharedMemo.h"
 #include "AOTSlotPlanSteps.h"
@@ -266,29 +265,6 @@ static BitVector findKeysDefinedByDescriptor(const Program& program, const SlotU
     return keys;
 }
 
-static Vector<FieldReference> findFieldsExpectedInTheirSlots(const Program& program, BuildContext& build)
-{
-    Vector<FieldReference> fields = collectInParallel<FieldReference>(build.parallelLoops(), program.functions.size(), [&](unsigned index, Vector<FieldReference>& found) {
-        const Function& function = program.functions[index];
-        for (uint32_t block = 0; block < function.blocks.size(); ++block) {
-            const Terminator& terminator = function.blocks[block].terminator;
-            if (!terminator.isConditionalBranch())
-                continue;
-            ValueID id = terminator.conditionOperand();
-            const Value& test = function.at(id);
-            if (test.opcode != Opcode::IsSlotFilled || test.accessSite() || asksObjectWhereSlotIsEmpty(function, BlockID(block), id))
-                continue;
-            for (LayoutID receiver : program.at(test.receivers()).written()) {
-                if (std::optional<FieldReference> field = findField(program, receiver, test.key(), BaseChain::Proven))
-                    found.append(declarationOf(program, *field));
-            }
-        }
-    });
-    AOT::sort(fields);
-    removeRepeatedElements(fields);
-    return fields;
-}
-
 SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildContext& build)
 {
     PhaseTimes times(build, PassID::PlanSlots);
@@ -326,8 +302,6 @@ SlotPlan planSlots(const Program& program, const SlotPlanInputs& inputs, BuildCo
         [&] { plan.m_keysWithColumn = timed("chooseKeysWithColumn"_s, [&] { return chooseKeysWithColumn(context, uses); }); },
         [&] { plan.m_keysDefinedByDescriptor = findKeysDefinedByDescriptor(program, uses); },
     });
-    if (build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime))
-        plan.m_fieldsExpectedInTheirSlots = findFieldsExpectedInTheirSlots(program, build);
     if (build.diagnostics().hasErrors())
         return { };
     return plan;

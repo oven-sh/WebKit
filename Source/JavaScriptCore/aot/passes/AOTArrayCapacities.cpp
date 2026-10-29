@@ -14,6 +14,7 @@
 #include "AOTBuiltinCalls.h"
 #include "AOTBuiltinIDTypes.h"
 #include "AOTCodeSizeEstimate.h"
+#include "AOTConvention.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
@@ -1908,12 +1909,148 @@ PassOutcome planCollectionCapacities(FunctionPassContext& context)
     return PassOutcome::Changed;
 }
 
+namespace {
+
+struct LiteralWithAppends {
+    ValueID literal;
+    // What flow says about the literal. Every other use of the list is a use of this.
+    ValueID claim;
+    BlockID block;
+    Vector<ValueID, 4> appends;
+    Vector<ValueID, 8> elements;
+};
+
+} // anonymous namespace
+
+static std::optional<LiteralWithAppends> findAppendsBehindLiteral(FunctionPassContext& context, BlockID block, ValueID id)
+{
+    AOT_THRESHOLD(unsigned, maxUsesOfList, 32);
+    const Program& program = context.program;
+    const Function& function = context.function;
+    const UseLists& useLists = context.analyses.useLists();
+    const Value& literal = function.at(id);
+    if (!literal.holes().empty() || literal.capacityOperand() || literal.storage() != AllocationStorage::Heap)
+        return std::nullopt;
+
+    LiteralWithAppends result { id, { }, block, { }, Vector<ValueID, 8>(literal.elementsOperands()) };
+    ValueID list = id;
+    if (std::optional<Use> use = useLists.singleUse(id); use && use->kind == Use::Kind::Operand && use->block == block) {
+        const Value& user = function.at(use->user);
+        if (user.opcode == Opcode::AssumeType && !user.factOperand())
+            list = result.claim = use->user;
+    }
+    if (useLists.useCount(list) > maxUsesOfList)
+        return std::nullopt;
+
+    Vector<std::pair<uint32_t, Use>, 8> usesInBlock;
+    for (const Use& use : useLists.usesOf(list)) {
+        if (use.kind == Use::Kind::Operand && use.block == block)
+            usesInBlock.append({ useLists.locationOf(use.user).index, use });
+    }
+    AOT::sort(usesInBlock, { }, [](const std::pair<uint32_t, Use>& use) { return use.first; });
+
+    const Terminator& terminator = function.at(block).terminator;
+    ValueID returnedCall = terminator.kind == TerminatorKind::ReturnCall ? terminator.callOperand() : ValueID();
+    ArrayStorage storage = arrayStorageAtAllocation(program, program.typeOf(function, id));
+    const Type& contents = program.at(literal.contents());
+    for (size_t i = 0; i < usesInBlock.size(); ++i) {
+        const Use& use = usesInBlock[i].second;
+        const Value& user = function.at(use.user);
+        bool isUsedTwice = i + 1 < usesInBlock.size() && usesInBlock[i + 1].first == usesInBlock[i].first;
+        if (isUsedTwice || use.user == returnedCall || user.opcode != Opcode::CallBuiltin || user.needsPristineReceiver())
+            break;
+        if (inlineImplementationOf(program, user) != InlineBuiltin::ArrayPush || !builtinOperandAt(user, use.operandIndex).isReceiver())
+            break;
+        std::span<const ValueID> arguments = builtinCallOf(program, user).arguments;
+        bool fit = std::ranges::all_of(arguments, [&](ValueID argument) {
+            const Type& type = program.typeOf(function, argument);
+            return fitsStorageOfLiteral(storage, type) && type.isSubsetOf(contents, program);
+        });
+        if (!fit)
+            break;
+        result.appends.append(use.user);
+        result.elements.append(arguments);
+    }
+    uint64_t maxLength = std::min<uint64_t>({ maxArrayLengthInStubKey, context.limit(LimitID::MaxInlineArrayLiteralLength), context.limit(LimitID::MaxArrayLiteralBatch) });
+    if (result.appends.isEmpty() || result.elements.size() > maxLength)
+        return std::nullopt;
+    // A list that goes on growing keeps the room of an empty literal, which follows what the lists of its site came to hold.
+    std::optional<ObjectID> object = context.analyses.escape().objectDefinedBy(id);
+    if (!object || CapacityPlanner { context }.collectSites(*object).size() != result.appends.size())
+        return std::nullopt;
+    return result;
+}
+
+// `const list = []; list.push(a); list.push(b);`: nothing sees the list before the last of the appends that follow it, so the list is made there, with what they append.
+static unsigned makeElementsOfAppendsBehindLiterals(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::NewArray) || !context.analyses.opcodesOfValues().contains(Opcode::CallBuiltin))
+        return 0;
+    Vector<LiteralWithAppends, 4> found;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            if (function.at(id).opcode != Opcode::NewArray)
+                continue;
+            if (std::optional<LiteralWithAppends> literal = findAppendsBehindLiteral(context, block, id))
+                found.append(WTF::move(*literal));
+        }
+    }
+    if (found.isEmpty())
+        return 0;
+
+    const UseLists& useLists = context.analyses.useLists();
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    ValueSubstitution substitution(function);
+    BitVector replaced(function.values.size());
+    BitVector changedBlocks(function.blocks.size());
+    for (const LiteralWithAppends& literal : found) {
+        ProgramPoint point = useLists.pointOf(literal.appends.last());
+        builder.setOrigin(function.at(literal.literal).origin());
+        Value list = function.at(literal.literal);
+        list.setElementsOperands(literal.elements.span());
+        ValueID newList = builder.insertBefore(point, WTF::move(list));
+        substitution.replace(literal.literal, newList);
+        replaced.quickSet(literal.literal.index());
+        if (literal.claim) {
+            Value claim = function.at(literal.claim);
+            claim.setValueOperand(newList);
+            substitution.replace(literal.claim, builder.insertBefore(point, WTF::move(claim)));
+            replaced.quickSet(literal.claim.index());
+        }
+        changedBlocks.quickSet(literal.block.index());
+    }
+    for (const LiteralWithAppends& literal : found) {
+        int64_t length = function.at(literal.literal).elementsOperands().size();
+        for (ValueID append : literal.appends) {
+            length += builtinCallOf(context.program, function.at(append)).arguments.size();
+            becomeConstant(context.program, function, context.types, append, KnownValue::integer(length));
+        }
+    }
+    builder.applyInsertions();
+    for (size_t blockIndex : changedBlocks) {
+        const BlockValues& values = function.blocks[blockIndex].values;
+        BitVector indexes(values.size());
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            if (values[index].index() < replaced.size() && replaced.quickGet(values[index].index()))
+                indexes.quickSet(index);
+        }
+        builder.eraseValues(BlockID(blockIndex), indexes);
+    }
+    substitution.apply(function, &context.analyses);
+    context.analyses.didChangeValues();
+    return found.size();
+}
+
 PassOutcome planArrayCapacities(FunctionPassContext& context)
 {
     if (!context.analyses.opcodesOfValues().intersects(arrayCapacityOpcodes))
         return PassOutcome::Unchanged;
 
+    unsigned literalsWithAppends = makeElementsOfAppendsBehindLiterals(context);
     PassOutcome converted = convertIntegerArraysBehindFailedTests(context);
+    if (literalsWithAppends)
+        converted = PassOutcome::Changed;
     unsigned constructed = chooseStorageOfConstructedArrays(context);
     // Behind the choice, which goes by the kind that the readers expect.
     if (readListsOfNumbersInEitherStorage(context) == PassOutcome::Changed)

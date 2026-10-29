@@ -855,6 +855,7 @@ private:
             Seconds cpuOfThisThread;
             Seconds cpuOutsideParallelLoops;
             Seconds cpuOfAllThreads;
+            BusyThreads::Times byBusyThreads { };
         };
 
         void begin();
@@ -866,6 +867,7 @@ private:
         Seconds cpuAtStartOfStep;
         Seconds cpuInParallelLoopsAtStartOfStep;
         Seconds cpuOfAllThreadsAtStartOfStep;
+        BusyThreads::Times byBusyThreadsAtStartOfStep { };
         Vector<Step> steps;
         Seconds busyOnAllThreads;
         Seconds busiestThreadOfTurn;

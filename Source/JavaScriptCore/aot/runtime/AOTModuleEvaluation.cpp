@@ -2167,14 +2167,20 @@ void Modules::evaluateCommonJSForLoader(ModuleID file)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    std::optional<ModuleID> face = m_table.faceOfFile(file);
+    bool hadCapturedExports = face && didCaptureExports(*face);
     evaluateCommonJS(file);
     Exception* exception = scope.exception();
     if (!exception) [[likely]] {
         // `bun run` imports an entry point, so its loader takes the names of the file when the file has run. An import() finds them as they were then.
-        if (std::optional<ModuleID> face = m_table.faceOfFile(file)) {
+        if (face) {
             // The loader has them from then on, and takes no step for them again.
             m_filesLoadedWithoutLoader.set(face->index());
-            RELEASE_AND_RETURN(scope, evaluateLoadedCommonJSFile(*face));
+            bool wasImportedBack = !hadCapturedExports && didCaptureExports(*face);
+            evaluateLoadedCommonJSFile(*face);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (wasImportedBack) [[unlikely]]
+                RELEASE_AND_RETURN(scope, copyExportsOfFinishedFile(*face));
         }
         return;
     }

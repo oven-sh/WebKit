@@ -328,8 +328,13 @@ JSFinalObject* tryCopyAsOrdinaryObject(VM& vm, JSGlobalObject* realm, JSObject* 
     DeferGC deferGC(vm);
     FieldMovePlanCache& plans = state.objects->caches->movePlans;
     const FieldMovePlan* plan = plans.find(key);
-    if (!plan)
+    if (!plan) {
+        if (!compiled && !excluded.numberPlusOne && source->structure()->isDictionary() && source->structure()->storedPrototype() == JSValue(realm->objectPrototype())) {
+            if (JSFinalObject* copy = tryCopyDictionary(vm, source))
+                return copy;
+        }
         plan = &plans.add(vm, WTF::move(key), state.objects->caches->assignmentPlans.createPlanForOrdinaryCopy(vm, realm, source, excluded));
+    }
     if (!plan->isUsable())
         return nullptr;
     if (plan->sourceHasDeferredClosures)

@@ -94,7 +94,7 @@ struct FieldData {
 };
 static_assert(sizeof(FieldData) == 16 && isImageRecord<FieldData>);
 
-// What a store of a value that the slot of a field does not take made of an object. It makes the same of every object in the same state.
+// What a store of a value that the slot of a field does not take, or a definition with attributes that the slot does not have, made of an object. It makes the same of every object in the same state.
 struct alignas(64) FieldExit {
     static constexpr unsigned numberOfPlaces = 64;
     static constexpr unsigned sizeShift = 6;
@@ -117,8 +117,11 @@ struct alignas(64) FieldExit {
     uint16_t extraPropertiesCellSize;
     uint16_t offsetOfExtraPropertiesWord;
     bool wasInSlot;
-    // Four or eight for a slot in the cell. Zero for any other, which the stubs leave to the run time.
+    // Four or eight for a slot in the cell. Zero for any other and for a definition, which the stubs leave to the run time.
     uint8_t widthOfSlot;
+    bool isDefinition;
+    // Bits of PropertyAttribute that the property has outside the slot.
+    uint8_t attributes;
 };
 static_assert(sizeof(FieldExit) == 1u << FieldExit::sizeShift && std::is_trivially_copyable_v<FieldExit>);
 

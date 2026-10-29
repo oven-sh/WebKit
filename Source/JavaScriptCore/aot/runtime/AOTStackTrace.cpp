@@ -606,6 +606,7 @@ static void fillTrace(ReturnAddressTrace& trace, Instance* instance, const Captu
 {
     trace.instance = instance;
     trace.limit = std::min<size_t>(maxStackSize, ReturnAddressTrace::maxLimit);
+    trace.isFull = false;
     trace.omittedFrameCount = run.numberOmitted;
     trace.numberOfReturnAddresses = run.returnAddresses.size();
     trace.numberOfFramesOnTop = framesAbove.numberShown;
@@ -740,6 +741,7 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
         .entryFrameOfFramesAbove = entryFrameOfFramesAbove,
         .numberOfFramesAbove = numberOfFramesAbove - framesAbove.numberShown,
     }, maxStackSize);
+    trace->isFull = numberOfFramesAbove - framesAbove.numberShown + otherFrames.size() >= maxStackSize;
 
     if (validatesRuntime(vm)) [[unlikely]]
         validateCapturedTrace(vm, owner, *trace, otherFrames, maxStackSize, lastConstructorToSkip);

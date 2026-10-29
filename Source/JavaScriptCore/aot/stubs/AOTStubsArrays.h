@@ -85,6 +85,9 @@ constexpr StubKey arrayOfData(ArrayOfData form) { return StubKey(StubFamily::Arr
 constexpr StubKey newEmptyArray(EmptyArray array) { return StubKey(StubFamily::NewEmptyArray).withForm(static_cast<uint8_t>(array)); }
 constexpr StubKey newEmptyArrayWithCapacity() { return StubKey(StubFamily::NewEmptyArrayWithCapacity); }
 constexpr StubKey newArrayWithLength(ArrayElementKind kind) { return StubKey(StubFamily::NewArrayWithLength).withForm(static_cast<uint8_t>(kind)); }
+// Takes no operand and never returns 0. The capacity is arrayLiteralVectorLength(length). The storage is plain in every realm: the caller stores the elements, and then
+// converts the array where the realm is having a bad time.
+constexpr StubKey newArrayOfLength(ArrayElementKind kind, unsigned length) { return StubKey(StubFamily::NewArrayOfLength).withForm(static_cast<uint8_t>(kind)).withCount(length); }
 // The operands are those of the operation: the length and the capacity in one word, and the indexing type.
 constexpr StubKey newArrayOfHolesSlow() { return StubKey(StubFamily::NewArrayOfHolesSlow); }
 constexpr StubKey newEmptyArrayAtSite(ArrayElementKind seed) { return StubKey(StubFamily::NewEmptyArrayAtSite).withForm(static_cast<uint8_t>(seed)); }
@@ -128,6 +131,7 @@ void emitFindSparseElement(StubAssembler&, const SparseElementSearch&, JumpList&
 static_assert(exists(arrayLiteral(0)) && exists(arrayLiteral(maxArrayElementsInRegisters)) && !exists(arrayLiteral(maxArrayElementsInRegisters).withCount(maxArrayElementsInRegisters + 1)));
 static_assert(exists(arrayLiteralWithDouble(1)) && !exists(arrayLiteralWithDouble(1).withCount(0)) && exists(arrayLiteralWithDoubleSlow()));
 static_assert(exists(newEmptyArray(EmptyArray::ContiguousCapacity3OwnStorage)) && !exists(newEmptyArray(EmptyArray::Int32DefaultCapacity).withForm(8)));
+static_assert(exists(newArrayOfLength(ArrayElementKind::Contiguous, maxArrayLengthInStubKey)) && !exists(newArrayOfLength(ArrayElementKind::Contiguous, maxArrayLengthInStubKey + 1)) && !exists(newArrayOfLength(ArrayElementKind::Int32, 0)));
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));
 static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(arrayPushDouble()) && exists(appendElements()));
 static_assert(bodyOf(arrayPushOfKnownKind()) == arrayPush());

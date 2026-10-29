@@ -1,7 +1,8 @@
 //@ runDefault("--useRegExpImageMode=1")
+//@ runDefault("--useRegExpJIT=0", "--validateRegExpFlatProgram=1")
 //@ runDefault
 
-// The code that a build makes for a pattern does not walk a run again from every place inside it. Once a run without an upper bound has failed at all its ends, the next attempt begins
+// Neither the code that a build makes for a pattern nor a flat program walks a run again from every place inside it. Once a run without an upper bound has failed at all its ends, the next attempt begins
 // behind the starts that would only enter the same run; with several alternatives the run remembers how far it failed. A sticky pattern makes one attempt and has none of that, so
 // the sticky form, asked at one place after the other, says what each pattern has to find.
 function shouldBe(actual, expected, what) {

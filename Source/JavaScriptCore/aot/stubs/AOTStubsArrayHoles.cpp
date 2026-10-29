@@ -31,6 +31,7 @@
 namespace JSC { namespace AOT {
 
 static_assert(descriptorOf(StubFamily::NewArrayWithLength).numberOfForms == static_cast<unsigned>(ArrayElementKind::Contiguous) + 1);
+static_assert(descriptorOf(StubFamily::NewArrayOfLength).numberOfForms == static_cast<unsigned>(ArrayElementKind::Contiguous) + 1);
 static_assert(descriptorOf(StubFamily::NewEmptyArrayAtSite).numberOfForms == static_cast<unsigned>(ArrayElementKind::Contiguous) + 1);
 static_assert(std::is_same_v<decltype(&operationAOTNewArrayAtReviewedSite), OperationReturnType<JSCell*> (JIT_OPERATION_ATTRIBUTES *)(Instance*, void*, uint32_t)>);
 
@@ -45,11 +46,12 @@ static void emitLoadAllocatorForCapacity(StubAssembler& jit, GPRReg capacity, GP
     jit.loadPtr(BaseIndex(allocator, scratch, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep() + sizeof(Allocator)), allocator);
 }
 
-static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, HoleArrayOperand operand, unsigned fixedCapacity = 0)
+static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, HoleArrayOperand operand, unsigned fixedCapacity = 0, unsigned fixedLength = 0)
 {
     static_assert(sizeOfArrayWithStorage(maxHoleArrayCapacity) <= MarkedSpace::largeCutoff && maxHoleArrayCapacity & 1 && arrayLiteralVectorLength(0) >= 2);
     RELEASE_ASSERT(indexingType == ArrayWithDouble || indexingType == ArrayWithInt32 || indexingType == ArrayWithContiguous);
     RELEASE_ASSERT(operand != HoleArrayOperand::None || fixedCapacity & 1);
+    RELEASE_ASSERT(fixedLength <= fixedCapacity);
     const GPRReg array = jit.result();
     // The operand comes where the allocator goes. Without a length, it is 0.
     const auto [allocator, length] = [&]() -> std::pair<GPRReg, GPRReg> {
@@ -71,6 +73,8 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
     JumpList slowPath;
     JumpList callerSlowPath;
     bool hasAllocatorInInstance = operand == HoleArrayOperand::None && ShortArrayWords::indexOfAllocator(fixedCapacity) < ShortArrayWords::numberOfAllocators;
+    // The operation makes an array with elements in plain storage even in a realm that is having a bad time.
+    RELEASE_ASSERT(!fixedLength || hasAllocatorInInstance);
     switch (operand) {
     case HoleArrayOperand::None:
         if (!hasAllocatorInInstance)
@@ -114,13 +118,18 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
 
     // The indexing header and the holes. The allocator is dead.
     switch (operand) {
-    case HoleArrayOperand::None:
-        jit.store64(TrustedImm64(static_cast<uint64_t>(fixedCapacity) << 32), Address(array, offsetOfLength));
+    case HoleArrayOperand::None: {
+        jit.store64(TrustedImm64(static_cast<uint64_t>(fixedCapacity) << 32 | fixedLength), Address(array, offsetOfLength));
+        if (fixedLength == fixedCapacity)
+            break;
         jit.move(hole, scratch);
-        for (unsigned i = 0; i + 1 < fixedCapacity; i += 2)
+        unsigned i = fixedLength;
+        for (; i + 1 < fixedCapacity; i += 2)
             jit.storePair64(scratch, scratch, storage, TrustedImm32(i * sizeof(EncodedJSValue)));
-        jit.store64(scratch, Address(storage, (fixedCapacity - 1) * sizeof(EncodedJSValue)));
+        if (i < fixedCapacity)
+            jit.store64(scratch, Address(storage, i * sizeof(EncodedJSValue)));
         break;
+    }
     case HoleArrayOperand::LengthAndCapacity: {
         jit.store32(length, Address(array, offsetOfLength));
         jit.store32(capacity, Address(array, offsetOfCapacity));
@@ -177,7 +186,7 @@ static void emitArrayOfHoles(StubAssembler& jit, IndexingType indexingType, Hole
     const GPRReg flags = capacity;
     switch (operand) {
     case HoleArrayOperand::None:
-        jit.move(TrustedImm32(fixedCapacity << holeArrayCapacityShift), lengthAndCapacity);
+        jit.move(TrustedImm32(fixedCapacity << holeArrayCapacityShift | fixedLength), lengthAndCapacity);
         break;
     case HoleArrayOperand::LengthAndCapacity:
         jit.lshift32(capacity, TrustedImm32(holeArrayCapacityShift), lengthAndCapacity);
@@ -227,6 +236,7 @@ void emitEmptyArrayOfHoles(StubAssembler& jit, EmptyArray form)
 
 StubSignature signatureOfNewEmptyArrayWithCapacity(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9) }); }
 StubSignature signatureOfNewArrayWithLength(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9) }); }
+StubSignature signatureOfNewArrayOfLength(StubKey) { return StubSignature::withGPRResult({ }); }
 StubSignature signatureOfNewEmptyArrayAtSite(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T9) }); }
 StubSignature signatureOfNewArrayFrontEnd(StubKey) { return operationFrontEndSignature(2); }
 
@@ -245,6 +255,13 @@ void generateNewEmptyArrayWithCapacity(StubAssembler& jit)
 void generateNewArrayWithLength(StubAssembler& jit)
 {
     emitArrayOfHoles(jit, indexingTypeOf(static_cast<ArrayElementKind>(jit.key().form())), HoleArrayOperand::LengthAndCapacity);
+}
+
+void generateNewArrayOfLength(StubAssembler& jit)
+{
+    static_assert(ShortArrayWords::indexOfAllocator(arrayLiteralVectorLength(maxArrayLengthInStubKey)) < ShortArrayWords::numberOfAllocators);
+    const unsigned length = jit.key().count();
+    emitArrayOfHoles(jit, indexingTypeOf(static_cast<ArrayElementKind>(jit.key().form())), HoleArrayOperand::None, arrayLiteralVectorLength(length), length);
 }
 
 // The operands are those of the operation: the count and where the values are.

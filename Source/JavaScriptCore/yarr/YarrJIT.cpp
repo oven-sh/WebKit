@@ -10955,9 +10955,10 @@ class YarrGenerator final : public YarrJITInfo {
     // attempt, which counts from the index, skips the starts that have no chance.
     // With several alternatives a start that one of them has ruled out is still open to the others. There the run keeps the place in a slot of the frame, and fails at once where it is
     // entered at or in front of it. A greedy run writes the slot when it stops, which is only right if it is sure to go through all its ends: not in a lookahead.
+    // The JIT counts the turns of repeated groups in the attempts that are left out here, and gives a match up by their number.
     void planForFailedRuns()
     {
-        if (m_failureReason || m_pattern.eitherUnicode() || m_pattern.sticky() || m_executionMode == ExecutionMode::InlineTest)
+        if (m_failureReason || m_pattern.eitherUnicode() || m_pattern.sticky() || m_executionMode == ExecutionMode::InlineTest || m_containsNestedSubpatterns)
             return;
         auto isRepeatedAlternative = [](const YarrOp& op) {
             return (op.m_op == YarrOpCode::BodyAlternativeBegin || op.m_op == YarrOpCode::BodyAlternativeNext) && !op.m_alternative->onceThrough();

@@ -282,6 +282,50 @@ static bool answersOnlyNumbers(const BuiltinTable& table, BuiltinID function)
     return isCalled;
 }
 
+static bool returnsOnlyShortLists(const Program& program, FunctionID id)
+{
+    if (!id || !program.at(id).hasBody())
+        return false;
+    const Function& function = program.at(id);
+    if (function.role == FunctionRole::EntryChecks) {
+        const auto& record = function.creator.as<CreatorRecord::EntryChecks>();
+        return returnsOnlyShortLists(program, record.body) && returnsOnlyShortLists(program, record.fallback);
+    }
+    auto isShortList = [&](ValueID id) {
+        const Value& list = function.at(sameObjectThroughCasts(function, id));
+        return list.opcode == Opcode::NewArray && list.holes().empty() && !list.capacityOperand() && list.elementsOperands().size() <= ChainShape::maxLengthOfShortList;
+    };
+    // `condition ? [x] : []` returns a parameter of the block where the two arms meet.
+    auto isShortListOnEveryEdge = [&](BlockID join, ValueID id) {
+        size_t position = function.at(join).parameters.find(id);
+        if (position == notFound)
+            return false;
+        bool arrives = false;
+        for (const Block& block : function.blocks) {
+            for (const Target& target : block.terminator.targets) {
+                if (target.block != join)
+                    continue;
+                if (position >= target.arguments.size() || !isShortList(target.arguments[position]))
+                    return false;
+                arrives = true;
+            }
+        }
+        return arrives;
+    };
+    bool returns = false;
+    for (uint32_t index = 0; index < function.blocks.size(); ++index) {
+        const Terminator& terminator = function.blocks[index].terminator;
+        if (terminator.kind == TerminatorKind::ReturnCall)
+            return false;
+        if (terminator.kind != TerminatorKind::Return)
+            continue;
+        if (!isShortList(terminator.valueOperand()) && !isShortListOnEveryEdge(BlockID(index), terminator.valueOperand()))
+            return false;
+        returns = true;
+    }
+    return returns;
+}
+
 FunctionID findChainTraversal(const Program& program)
 {
     std::span<const BuiltinOverload> overloads = program.builtins().overloadsOf(Builtins::CompilerHelpersTraverseArray);
@@ -409,8 +453,12 @@ Vector<ArrayChain> findArrayChains(FunctionPassContext& context, const BitVector
         case ChainEndKind::Every:
         case ChainEndKind::Find:
         case ChainEndKind::FindIndex:
-        case ChainEndKind::FlatMap:
             return prependCallback(chain, last, last.argumentOrNull(1));
+        case ChainEndKind::FlatMap:
+            if (!prependCallback(chain, last, last.argumentOrNull(1)))
+                return false;
+            chain.shape.flattensShortLists = returnsOnlyShortLists(program, chain.callbacks[0].callee);
+            return true;
         case ChainEndKind::Reduce:
             if (last.arguments.size() >= 2) {
                 chain.shape.hasInitialValue = true;

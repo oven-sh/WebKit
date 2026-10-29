@@ -344,7 +344,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSCell*, (Instance* instance, uin
         if (JSArray* array = hasStorageOfItsOwn ? nullptr : tryCreateArrayWithStorage(vm, structure, count, vectorLength)) {
             for (uint32_t i = 0; i < count; ++i)
                 array->butterfly()->contiguous().atUnsafe(i).setWithoutWriteBarrier(valueAt(i));
-            instance->findMissingShortArrayAllocators();
+            instance->findMissingShortArrayAllocator(vectorLength);
             OPERATION_RETURN(scope, array);
         }
         if (void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull)) {
@@ -381,7 +381,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instan
     unsigned capacity = lengthAndCapacity >> holeArrayCapacityShift;
     RELEASE_ASSERT(length <= capacity && (flags == ArrayWithDouble || flags == ArrayWithInt32 || flags == ArrayWithContiguous));
     IndexingType indexingType = static_cast<IndexingType>(flags);
-    if (globalObject->isHavingABadTime()) [[unlikely]] {
+    // The code that asks for an array with elements stores them into plain storage, and converts the array behind that.
+    if (!length && globalObject->isHavingABadTime()) [[unlikely]] {
         JSArray* array = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
         if (!array)
             throwOutOfMemoryError(globalObject, scope);
@@ -389,7 +390,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayOfHoles, JSCell*, (Instance* instan
     }
     Structure* structure = globalObject->originalArrayStructureForIndexingType(indexingType);
     if (JSArray* array = tryCreateArrayWithStorage(vm, structure, length, capacity)) {
-        instance->findMissingShortArrayAllocators();
+        instance->findMissingShortArrayAllocator(capacity);
         OPERATION_RETURN(scope, array);
     }
     void* storage = vm.auxiliarySpace().allocate(vm, Butterfly::totalSize(0, 0, true, capacity * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);

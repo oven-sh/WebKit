@@ -281,7 +281,15 @@ void ObjectInterpreter::executeAllocation(ValueID id)
         if (!stateOf(held)->isCell())
             build(held, causeOf(id, findOperandIndex(function().at(id), value)));
     }
+    // An iterator is born in front of the first element.
+    std::optional<uint32_t> position = description.kind == VirtualObjectKind::ArrayIterator ? family.findField(VirtualField::part(VirtualFieldKind::Position)) : std::nullopt;
+    if (position) {
+        for (ObjectVariant& variant : state.variants)
+            variant.shape = family.intern(shapeAfterStore(family, m_sinking.orders(), family.at(variant.shape), *position));
+    }
     const ObjectState& added = m_state.add(object, WTF::move(state));
+    if (position && isRewriting())
+        values().ensure(object).setField(*position, cursor().builder().appendInteger(0));
     if (description.kind == VirtualObjectKind::Object) {
         for (auto [field, value] : initialFields)
             willStore(m_sinking, object, added, field, { function().at(value).type });
@@ -1355,6 +1363,8 @@ void ObjectInterpreter::executeStore(ValueID id)
     if (typeProvenByFlow && isRewriting())
         stored = cursor().emit(makeAssumeType(stored, Proven::byFlowOfPosition(typeProvenByFlow)));
     storeField(object, *field, stored);
+    if (opcode == Opcode::PutInternalField && isRewriting())
+        replaceRead(id, resolve(stored));
     return didFoldStores(object, 1);
 }
 
@@ -1377,7 +1387,7 @@ std::optional<uint32_t> ObjectInterpreter::fieldFor(VirtualObjectID object, cons
 
 bool ObjectInterpreter::canStore(VirtualObjectID object, const VirtualFieldAccess& access, uint32_t field, ValueID stored) const
 {
-    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::Arguments };
+    constexpr EnumSet<VirtualObjectKind> writableKinds { VirtualObjectKind::Object, VirtualObjectKind::Environment, VirtualObjectKind::Array, VirtualObjectKind::ArrayIterator, VirtualObjectKind::Arguments };
     const VirtualFamily& family = m_sinking.familyOf(object);
     const VirtualField& virtualField = family.fieldAt(field);
     TypeID storedType = function().at(stored).type;
@@ -2861,6 +2871,10 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     ValueID cell = cursor().emit(WTF::move(allocation));
     for (const FieldValue& stored : storedByName)
         cursor().emit(makeStoreByName(stored, cell));
+    for (const FieldValue& part : parts) {
+        if (part.field.kind == VirtualFieldKind::Position)
+            cursor().emit(IRBuilder::make(Opcode::PutInternalField, { cell, part.value }));
+    }
     if (m_sinking.at(object).needsGuard) {
         Value guard(Opcode::AllGuards);
         guard.setGuardsOperands(singleElementSpan(cell));

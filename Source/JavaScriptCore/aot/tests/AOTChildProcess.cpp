@@ -10,9 +10,12 @@
 
 #include "AOTVector.h"
 #include <array>
+#include <stdlib.h>
+#include <wtf/FileSystem.h>
 #include <wtf/Lock.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/ProcessID.h>
 #include <wtf/Seconds.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
@@ -51,6 +54,11 @@ static constexpr Seconds silenceLimit = 100_s;
 static Lock spawnLock;
 
 using OutputBuffer = std::array<uint8_t, 16 * KB>;
+
+static String temporaryFolderOf(ProcessID process)
+{
+    return FileSystem::pathByAppendingComponent(temporaryFolder(), makeString("testaot-"_s, process));
+}
 
 #if OS(WINDOWS)
 
@@ -165,6 +173,7 @@ static ChildProcessResult runProcess(const Vector<StringView>& commandLine)
     CloseHandle(readEnd);
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
+    FileSystem::deleteNonEmptyDirectory(temporaryFolderOf(process.dwProcessId));
 
     constexpr DWORD exceptionSeverityBit = 0x80000000;
     ChildProcessOutcome outcome = ChildProcessOutcome::Exited;
@@ -331,6 +340,7 @@ static ChildProcessResult runProcess(const Vector<StringView>& commandLine)
 
     int status = 0;
     while (waitpid(started->process, &status, 0) < 0 && errno == EINTR) { }
+    FileSystem::deleteNonEmptyDirectory(temporaryFolderOf(started->process));
 #if OS(LINUX)
     if (WIFEXITED(status) && WEXITSTATUS(status) == exitCodeWithoutProgram && output.isEmpty())
         return { };
@@ -360,6 +370,37 @@ void setProgramPath(String&& path)
 const String& programPath()
 {
     return mutableProgramPath();
+}
+
+// Where WTF::FileSystem puts temporary files.
+String temporaryFolder()
+{
+#if OS(WINDOWS)
+    std::array<wchar_t, MAX_PATH + 1> path;
+    DWORD length = GetTempPathW(path.size(), path.data());
+    RELEASE_ASSERT(length && length < path.size());
+    return String(path.data(), length);
+#else
+    const char* path = getenv("TMPDIR");
+    return String::fromUTF8(path ? path : "/tmp");
+#endif
+}
+
+void enterTemporaryFolder()
+{
+    static NeverDestroyed<String> folder;
+    folder.get() = temporaryFolderOf(getCurrentProcessID());
+    // Of an earlier process with this number, whose parent was killed.
+    FileSystem::deleteNonEmptyDirectory(folder);
+    RELEASE_ASSERT(FileSystem::makeAllDirectories(folder));
+#if OS(WINDOWS)
+    RELEASE_ASSERT(SetEnvironmentVariableW(L"TMP", folder->wideCharacters().span().data()));
+#else
+    RELEASE_ASSERT(!setenv("TMPDIR", byteCast<char>(folder->utf8().spanIncludingNullTerminator().data()), 1));
+#endif
+    atexit([] {
+        FileSystem::deleteNonEmptyDirectory(folder);
+    });
 }
 
 String ChildProcessResult::description() const

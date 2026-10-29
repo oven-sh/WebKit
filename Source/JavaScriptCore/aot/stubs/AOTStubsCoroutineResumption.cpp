@@ -431,6 +431,7 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     const auto [saved, mode, value, count, scratch] = frame;
     const GPRReg second = jit.allocateScratch(StubRegister::A3);
     const GPRReg destination = jit.allocateScratch(StubRegister::T10);
+    const FPRReg pair = jit.allocateScratch(FPRInfo::fpRegT0);
     RELEASE_ASSERT(saved == X86Registers::edi && mode == X86Registers::esi && second == X86Registers::ecx);
     RELEASE_ASSERT(noOverlap(saved, mode, value, count, scratch, second, destination, instanceGPR));
 
@@ -464,10 +465,8 @@ static void emitCopyFrameToStack(StubAssembler& jit, const RestoredFrame& frame)
     Jump isMoved = jit.jump();
     isSmall.link(&jit);
     Label next = jit.label();
-    jit.load64(BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 8), scratch);
-    jit.load64(BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 16), second);
-    jit.store64(scratch, BaseIndex(destination, count, CCallHelpers::TimesEight, -8));
-    jit.store64(second, BaseIndex(destination, count, CCallHelpers::TimesEight, -16));
+    jit.loadVector(BaseIndex(saved, count, CCallHelpers::TimesEight, SavedFrame::offsetOfWords() - 16), pair);
+    jit.storeVector(pair, BaseIndex(destination, count, CCallHelpers::TimesEight, -16));
     jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(2), count).linkTo(next, &jit);
     isEmpty.link(&jit);
     isMoved.link(&jit);

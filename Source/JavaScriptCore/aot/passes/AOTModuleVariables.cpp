@@ -1184,8 +1184,10 @@ struct MovableCode {
     {
         size_t allocation = allocationOf(analyses.function(), object).index();
         if (!known.isKnownWhetherOnlyFilled.get(allocation)) {
-            known.isKnownWhetherOnlyFilled.set(allocation);
-            known.isOnlyFilled.set(allocation, isOnlyFilledByItsUses(analyses, object));
+            known.isKnownWhetherOnlyFilled.ensureSize(known.made.size());
+            known.isOnlyFilled.ensureSize(known.made.size());
+            known.isKnownWhetherOnlyFilled.quickSet(allocation);
+            known.isOnlyFilled.quickSet(allocation, isOnlyFilledByItsUses(analyses, object));
         }
         return known.isOnlyFilled.get(allocation);
     }
