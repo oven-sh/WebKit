@@ -66,6 +66,12 @@ inline MatchingContextHolder::MatchingContextHolder(VM& vm, RegExp* regExp, Matc
     } else {
         StackBounds stack = Thread::currentSingleton().stack();
         m_stackLimit = stack.recursionLimit(Options::reservedZoneSize());
+#if OS(WINDOWS)
+        // JIT code moves the stack pointer by a whole frame and touches no page on the way, and Windows commits a
+        // stack only through the guard page below what is committed. A VM's thread commits its stack down to its
+        // limit first (VM::updateStackLimits()). Any other thread has what it committed so far: NT_TIB::StackLimit.
+        m_stackLimit = std::max<void*>(m_stackLimit, reinterpret_cast<NT_TIB*>(NtCurrentTeb())->StackLimit);
+#endif
     }
 }
 
