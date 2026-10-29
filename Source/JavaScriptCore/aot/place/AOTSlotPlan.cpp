@@ -931,7 +931,7 @@ static bool capturesNothingButClassEnvironment(const Program& program, const Fun
 
 static bool canBeCreatedByClassRecord(const Program& program, const Function& constructor, const ClassMember& member)
 {
-    if (!member.key || program.isIndexLike(member.key) || isCreatedWithItsHolder(program, member.side, member.key))
+    if (!member.key || member.isAssignedByProgram || program.isIndexLike(member.key) || isCreatedWithItsHolder(program, member.side, member.key))
         return false;
     const Function& function = program.at(member.function);
     return function.name && capturesNothingButClassEnvironment(program, constructor, function);
@@ -963,7 +963,8 @@ static ClassCreationPlan planClass(const Program& program, const Layout& layout,
         return std::ranges::binary_search(functionsCreatedAtDefinition, function.index(), { }, &FunctionID::index);
     });
 
-    bool recordCreatesPrototypeSide = recordCreatesSide[static_cast<unsigned>(ClassSide::Prototype)];
+    // The program fills the prototype object on, so its members are made when the class is defined.
+    bool recordCreatesPrototypeSide = recordCreatesSide[static_cast<unsigned>(ClassSide::Prototype)] && std::ranges::none_of(layout.classFlow.namedMembers, &ClassMember::isAssignedByProgram);
     bool recordCreatesStaticSide = recordCreatesSide[static_cast<unsigned>(ClassSide::Static)];
     plan.createsMembersLazily = isEvaluatedOnce(program, layout) && recordCreatesPrototypeSide;
     plan.createsPrototypeBeforeClassObject = plan.createsMembersLazily && bases.everyBaseIsProvenOnce && bases.endsWithoutHeritage;
@@ -975,9 +976,10 @@ static bool isClassWithConstantNames(const Layout& layout)
 {
     if (layout.kind != LayoutKind::Instance || !layout.constructor || layout.isDerived() || layout.has(LayoutFlags::IsConstructorFunction))
         return false;
-    return std::ranges::all_of(layout.classFlow.members, [](const ClassMember& member) {
+    bool hasConstantNames = std::ranges::all_of(layout.classFlow.members, [](const ClassMember& member) {
         return !!member.key;
     });
+    return hasConstantNames && std::ranges::none_of(layout.classFlow.namedMembers, &ClassMember::isAssignedByProgram);
 }
 
 static bool definitionMakesWhatRecordsSay(const Program& program, LayoutID id)

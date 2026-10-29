@@ -1390,6 +1390,8 @@ struct NamedUse {
     bool isOnEveryPath { true };
     bool callsBuiltinMethod { false };
     bool isAnsweredByBuiltins { false };
+    // Built-ins have a member of the name too, which the program does not use.
+    bool isNameOfUnusedBuiltin { false };
 };
 
 struct LayoutsToTest {
@@ -1556,7 +1558,7 @@ static bool findsSetterOfProgram(const Program& program, PropertyKeyID key)
     });
 }
 
-static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key)
+static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access, PropertyKeyID key, bool& isNameOfUnusedBuiltin)
 {
     const BuiltinTable& builtins = context.program.builtins();
     BuiltinMemberName name = builtinMemberNameOf(context.program, key);
@@ -1572,8 +1574,12 @@ static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access
         if (found.outcome != BuiltinMemberLookup::Outcome::Found)
             return false;
         BuiltinID member = builtins.canonicalID(found.member);
+        // Flow lists how the program uses each built-in. A member that no access of the program is seen to reach speaks for no receiver, though code that nobody has seen may come by it.
+        bool isUnused = !context.inputs.flow.usesOf(member).containsAny({ BuiltinUse::Read, BuiltinUse::Called, BuiltinUse::Written });
         // `response.body = text` stores nothing: whoever stores under the name has an object in mind that takes the value.
-        return (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
+        bool isOfOtherKind = (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
+        isNameOfUnusedBuiltin |= isUnused && !isOfOtherKind;
+        return isUnused || isOfOtherKind;
     });
 }
 
@@ -1612,10 +1618,11 @@ static Vector<NamedUse> collectNamedUsesOfUnknownObjects(FunctionPassContext& co
             bool tellsLayouts = tellsLayoutsApart(program, key);
             bool isBuiltinMethodCall = !tellsLayouts && callsBuiltinMethod(context, id, key);
             // Among the layouts such a name tells as much as any other. Whether the object has a layout at all is for the other names to say.
-            bool isAnsweredByBuiltins = !tellsLayouts && !isBuiltinMethodCall && !isOfOtherKindInBuiltins(context, id, key);
+            bool isNameOfUnusedBuiltin = false;
+            bool isAnsweredByBuiltins = !tellsLayouts && !isBuiltinMethodCall && !isOfOtherKindInBuiltins(context, id, key, isNameOfUnusedBuiltin);
             if (isAnsweredByBuiltins && !isOrdinaryText(program, key))
                 continue;
-            uses.append(NamedUse { { }, id, receiver, block, key, PayloadWord::receivers(opcode) ? access.receivers() : LayoutSetID(), demandOf(context, id, key), true, isBuiltinMethodCall, isAnsweredByBuiltins });
+            uses.append(NamedUse { { }, id, receiver, block, key, PayloadWord::receivers(opcode) ? access.receivers() : LayoutSetID(), demandOf(context, id, key), true, isBuiltinMethodCall, isAnsweredByBuiltins, isNameOfUnusedBuiltin && !isAnsweredByBuiltins });
         }
     }
     return uses;
@@ -2095,6 +2102,12 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
         noteMet(layoutsStoredUnderName);
         expectLayouts(uses, layoutsStoredUnderName);
         return true;
+    }
+    // `this._events[type]` with the type "data", which is also a member of built-ins: a dictionary is stored under `_events`, and no layout that answers. A test for a layout would turn the dictionary away.
+    if (std::ranges::any_of(uses, &NamedUse::isNameOfUnusedBuiltin)) {
+        auto read = propertyReadBy(context.program, function.at(context.analyses.identityOf(uses[0].receiver)));
+        if (read && read->second && context.inputs.heat.isDictionaryStoredUnder(read->second).predicted())
+            return true;
     }
     LayoutsToTest chosen = findLayoutsToTestFor(context, uses, maxDeclarations, context.limit(LimitID::MaxAccessPlanMembers), layoutsMet);
     if (chosen.layouts.predicted().isEmpty())

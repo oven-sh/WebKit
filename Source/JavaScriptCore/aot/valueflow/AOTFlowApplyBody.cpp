@@ -791,8 +791,9 @@ static bool tryExpectInPlaceOfChecking(const Program& program, Function& functio
     Type returned = function.at(terminator.callOperand()).opcode == Opcode::Call ? Type::anything() : typing.typeOf(terminator.callOperand());
     Vector<TailCast, 2> casts;
     for (TailCast cast : terminator.casts()) {
-        // A cast that does nothing may rest on a test in front of it.
-        bool restsOnTest = cast.resolution == CastResolution::Nothing && !returned.isSubsetOf(typing.typeOf(cast.declared), program);
+        // A cast that tests nothing may rest on a test in front of it.
+        bool testsNothing = cast.resolution == CastResolution::Nothing || cast.resolution == CastResolution::Upcast;
+        bool restsOnTest = testsNothing && !returned.isSubsetOf(typing.typeOf(cast.declared), program);
         if (isCheck(cast) || restsOnTest) {
             cast.resolution = CastResolution::Nothing;
             cast.declared.expect(cast.declared.expected());

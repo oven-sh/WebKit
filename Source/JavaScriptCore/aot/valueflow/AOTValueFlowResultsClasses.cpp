@@ -528,6 +528,80 @@ static bool isWrittenForOtherObjectsToo(const ValueFlowResultInputs& inputs, con
     return reachesOthers;
 }
 
+struct PrototypeObjectsNamedByStatements {
+    struct Store {
+        unsigned count { 0 };
+        MemberConstant constant { MemberConstant::None };
+        int64_t integer { 0 };
+    };
+    static uint64_t placeOf(ValueFlowObjectID holder, PropertyKeyID key) { return static_cast<uint64_t>(holder.index()) << 32 | key.index(); }
+
+    BitVector holders;
+    UncheckedKeyHashMap<uint64_t, Store, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> stores;
+};
+
+// Message.prototype.retries = 3: the store spells the value out.
+static void noteConstant(const Function& function, ValueID operand, PrototypeObjectsNamedByStatements::Store& store)
+{
+    operand = definitionThroughUpcasts(function, operand);
+    // The member's guard compares the value, so a conversion that changes it only makes the guard fail.
+    while (function.at(operand).opcode == Opcode::Convert)
+        operand = definitionThroughUpcasts(function, function.at(operand).valueOperand());
+    const Value& stored = function.at(operand);
+    switch (stored.opcode) {
+    case Opcode::Null:
+        store.constant = MemberConstant::Null;
+        break;
+    case Opcode::Boolean:
+        store.constant = stored.boolean() ? MemberConstant::True : MemberConstant::False;
+        break;
+    case Opcode::Integer:
+        if (isInBounds<int32_t>(stored.integer())) {
+            store.constant = MemberConstant::Integer;
+            store.integer = stored.integer();
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+// Point.prototype.norm = .. and Object.defineProperty(Point.prototype, ..): the prototype objects that a statement reads out of one class to store into or to pass on.
+static PrototypeObjectsNamedByStatements collectPrototypeObjectsNamedByStatements(const ValueFlowResultInputs& inputs)
+{
+    const Program& program = inputs.program;
+    PropertyKeyID prototypeKey = program.keyOf(BuiltinNames::prototype);
+    PrototypeObjectsNamedByStatements named;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (!inputs.isReached(FunctionID(index)))
+            continue;
+        const Function& function = program.functions[index];
+        for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
+            if (statement.kind != ValueFlowStatementKind::Operation || (statement.opcode != Opcode::PropSet && statement.opcode != Opcode::Call))
+                continue;
+            size_t position = statement.opcode == Opcode::PropSet ? 0 : OperandIndex::Call::arguments;
+            const Value& value = function.at(statement.site);
+            std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
+            if (position >= operands.size() || position >= value.numberOfOperands() || !operands[position].node)
+                continue;
+            const Value& receiver = function.at(sameObjectThroughCasts(function, value.operands()[position]));
+            if (receiver.opcode != Opcode::PropGet || receiver.key() != prototypeKey)
+                continue;
+            ValueSetID possible = inputs.solver().possibleValuesOf(operands[position].node);
+            ValueFlowObjectID only = ValueSets::isComplement(possible) ? ValueFlowObjectID() : inputs.sets().onlyMember(possible);
+            if (!only || inputs.universe().kindOf(only) != ValueFlowObjectKind::Prototype)
+                continue;
+            named.holders.set(only.index());
+            if (statement.opcode == Opcode::PropSet && value.key()) {
+                auto& store = named.stores.add(PrototypeObjectsNamedByStatements::placeOf(only, value.key()), PrototypeObjectsNamedByStatements::Store { }).iterator->value;
+                if (!store.count++)
+                    noteConstant(function, value.valueOperand(), store);
+            }
+        }
+    }
+    return named;
+}
+
 // What was seen to be written under names on the prototype object of a class and on the objects that the program stores in its place, by key.
 static Vector<AssignedValue> listWhatIsAssigned(const ValueFlowResultInputs& inputs, const LedgerOfClassesAndClosures& ledger, LayoutID classLayout, AnswersAboutSets& answers)
 {
@@ -782,6 +856,58 @@ static bool listAssignedMembers(const ValueFlowResultInputs& inputs, ValueSetMak
     return listsEveryName;
 }
 
+// Object.defineProperty(Point.prototype, "norm", { get() { .. } }) and Point.prototype.scale = function () { .. } behind a class declaration: members under names that the class body does not define.
+static void listMembersAssignedToClass(const ValueFlowResultInputs& inputs, ValueSetMaker& maker, LayoutID id, const LedgerOfClassesAndClosures& ledger, std::span<const AssignedValue> assigned, std::optional<PrototypeObjectsNamedByStatements>& namedPrototypeObjects, ClassFlow& flow)
+{
+    bool definesUnknownName = std::ranges::contains(flow.members, PropertyKeyID(), &ClassMember::key);
+    auto isKeyOfClass = [&](PropertyKeyID key) {
+        auto hasKey = [&](const ClassMember& other) { return other.side == ClassSide::Prototype && other.key == key; };
+        return definesUnknownName || key == inputs.program.keyOf(BuiltinNames::constructor) || std::ranges::any_of(flow.members, hasKey);
+    };
+    auto isNamedByClass = [&](const ClassMember& member) { return isKeyOfClass(member.key); };
+    if (std::ranges::all_of(assigned, [&](const AssignedValue& entry) { return isKeyOfClass(entry.key); }))
+        return;
+    // A helper that defines properties on whatever it is passed says little about this class.
+    if (!namedPrototypeObjects)
+        namedPrototypeObjects = collectPrototypeObjectsNamedByStatements(inputs);
+    ValueFlowObjectID prototype = inputs.universe().prototypeOf(id);
+    if (!namedPrototypeObjects->holders.get(prototype.index()))
+        return;
+    ClassFlow assignedFlow;
+    bool listsEveryName = listAssignedMembers(inputs, maker, assigned, assignedFlow);
+    // One write under the name, and it is a store of a constant: the member's guard compares the value.
+    for (ClassMember& member : assignedFlow.namedMembers) {
+        auto store = member.function ? namedPrototypeObjects->stores.end() : namedPrototypeObjects->stores.find(PrototypeObjectsNamedByStatements::placeOf(prototype, member.key));
+        if (store == namedPrototypeObjects->stores.end() || store->value.count != 1 || std::ranges::count(assigned, member.key, &AssignedValue::key) != 1)
+            continue;
+        member.constant = store->value.constant;
+        member.integer = store->value.integer;
+    }
+    assignedFlow.members.removeAllMatching(isNamedByClass);
+    assignedFlow.namedMembers.removeAllMatching(isNamedByClass);
+    // Only a compiled function that runs can be called or inlined behind the member's guard, and only a constant can be read there.
+    bool hasConstant = std::ranges::any_of(assignedFlow.namedMembers, [](const ClassMember& member) { return member.constant != MemberConstant::None; });
+    if (!hasConstant && std::ranges::none_of(assignedFlow.members, [&](const ClassMember& member) { return inputs.isReached(member.function); }))
+        return;
+    for (Vector<ClassMember>* list : { &assignedFlow.members, &assignedFlow.namedMembers }) {
+        for (ClassMember& member : *list)
+            member.isAssignedByProgram = true;
+    }
+    // What is stored under a name that the body does not define is listed there already, without the mark.
+    flow.namedMembers.removeAllMatching([&](const ClassMember& member) {
+        return member.side == ClassSide::Prototype && std::ranges::contains(assignedFlow.namedMembers, member.key, &ClassMember::key);
+    });
+    flow.members.appendVector(assignedFlow.members);
+    flow.namedMembers.appendVector(assignedFlow.namedMembers);
+    AOT::sort(flow.namedMembers, { }, memberOrderOf);
+
+    if (definesUnknownName || !listsEveryName || !inputs.build.isEnabled(FlowResultKind::OwnNames, id.index()) || !inputs.build.isEnabled(FlowResultKind::HolderMutations, id.index()) || !Claims::isInSeenHandsAlone(ledger.handsOpenOn(prototype)))
+        return;
+    flow.prototypeNamesAreComplete = Claims::namesAreComplete(ledger.writersOfEveryOwnProperty(prototype), Claims::Redefinitions::AreListedUnderTheirNames, [](PropertyKeyID) {
+        return true;
+    });
+}
+
 static void noteWhatConstructorFunctionKeeps(const ValueFlowResultInputs& inputs, LayoutID id, const LedgerOfClassesAndClosures& ledger, bool listsEveryName, ClassFlow& flow)
 {
     const Layout& layout = inputs.program.at(id);
@@ -994,14 +1120,18 @@ void computeClassResults(const ValueFlowResultInputs& inputs, FlowResultTables& 
     AnswersAboutSets answers;
     noteClassesOfCreatedObjects(inputs, maker, ledger, answers, application);
     Vector<LayoutID> basesLinkedByProgram = collectBasesLinkedByProgram(inputs, ledger);
+    std::optional<PrototypeObjectsNamedByStatements> namedPrototypeObjects;
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         const Layout& layout = program.layouts[index];
         ClassFlow& flow = application.layouts[index].classFlow;
         if (!layout.constructor)
             continue;
         if (!layout.has(LayoutFlags::IsConstructorFunction)) {
-            if (classes[index].isFollowed)
+            if (classes[index].isFollowed) {
                 flow = computeClassFlow(inputs, LayoutID(index), WTF::move(classes[index]), closuresTakenOutOfMembers, ledger, answers);
+                if (flow.evaluations == ExecutionCount::AtMostOnce && (layout.base || !layout.has(LayoutFlags::HasHeritage)))
+                    listMembersAssignedToClass(inputs, maker, LayoutID(index), ledger, listWhatIsAssigned(inputs, ledger, LayoutID(index), answers).span(), namedPrototypeObjects, flow);
+            }
             continue;
         }
         flow.prototypeBase = layout.base ? layout.base : basesLinkedByProgram[index];

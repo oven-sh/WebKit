@@ -311,6 +311,7 @@ public:
         }
 
         notePropertiesThatRowsAskFor();
+        noteFunctionsWithListedKeys();
         Vector<BuiltinOverloadID, 4> selected;
         if (BuiltinOverloadID whateverIsPassed = overloadForAnotherNewTarget(m_builtins, m_builtin, m_call.kind)) {
             ValueSetMaker& maker = m_context.maker();
@@ -336,6 +337,17 @@ public:
             apply(m_builtins.at(overload));
         if (mayGetThisThatDeclaredOverloadsLeaveOut())
             applyWhatIsNotDeclared(selected.span());
+    }
+
+    // Listing the keys of a function object creates its lazy `name` and `length`, which changes its name in stack traces. The result may go unused.
+    void noteFunctionsWithListedKeys()
+    {
+        BuiltinID builtin = m_builtins.canonicalID(m_builtin);
+        if (builtin != Builtins::ObjectKeys && builtin != Builtins::ObjectGetOwnPropertyNames && builtin != Builtins::ObjectGetOwnPropertySymbols && builtin != Builtins::ReflectOwnKeys)
+            return;
+        ClimbingSet closures = m_context.restrict(valueAt(BuiltinOperand::argument(0)), m_universe.closures());
+        if (holdsAnything(closures))
+            m_context.read(closures, ValueFlowCellName { ValueFlowNameKind::AddedNames });
     }
 
     // The Throws flag of an overload covers only what follows the conversion of its operands. Any call can fail earlier: on a conversion, on the receiver check, on stack overflow.

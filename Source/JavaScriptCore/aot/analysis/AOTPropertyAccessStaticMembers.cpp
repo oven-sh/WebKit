@@ -38,6 +38,7 @@ static bool mayInterceptStore(MemberKind kind)
     switch (kind) {
     case MemberKind::Absent:
     case MemberKind::Method:
+    case MemberKind::Constant:
     case MemberKind::Variable:
         return false;
     case MemberKind::Unknown:
@@ -122,8 +123,12 @@ static MemberAnswer findFromClassObject(const PropertyAccessContext& context, co
             return walked;
         }
 
-        if (layout.has(LayoutFlags::IsConstructorFunction) && classFlow.staticLink != MemberMutability::Fixed && context.flow && context.flow->closuresAreRelinkedByProgram(layout.constructor))
+        if (layout.has(LayoutFlags::IsConstructorFunction) && classFlow.staticLink != MemberMutability::Fixed && context.flow && context.flow->closuresAreRelinkedByProgram(layout.constructor)) {
+            // Flow lists every function that the program links above this one. None has the name, before or after the links are set.
+            if (query.access == Access::Read && context.flow->closuresInheritFromFunctionPrototype(layout.constructor, query.key))
+                return finishAtChainEnd(WTF::move(walked), findBuiltinInstanceMember(context, BuiltinClasses::Function, query.key, query.access));
             return MemberAnswer::unknown(UnprovenCause::PrototypeChanged);
+        }
 
         NextHolder next = nextHolderOf(program, current, ClassSide::Static, walked.conditions);
         switch (next.step) {

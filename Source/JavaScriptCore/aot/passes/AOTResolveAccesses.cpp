@@ -413,10 +413,12 @@ void AccessRewriter::rewrite(const NamedAccessSite& site, const AccessOperands& 
         break;
     }
     case AccessForm::Constant:
-        RELEASE_ASSERT(plan.operation == Opcode::Boolean || plan.operation == Opcode::Undefined);
+        RELEASE_ASSERT(plan.operation == Opcode::Boolean || plan.operation == Opcode::Undefined || plan.operation == Opcode::Null || plan.operation == Opcode::Integer);
         value->become(plan.operation);
         if (plan.operation == Opcode::Boolean)
             value->setBoolean(plan.booleanConstant);
+        if (plan.operation == Opcode::Integer)
+            value->setInteger(plan.integerConstant);
         break;
     case AccessForm::Builtin:
         if (std::optional<Value> initialization = tryMakeInitializeBuiltin(program.builtins(), context.inputs.flow, plan.member.builtin))
@@ -1082,6 +1084,26 @@ static std::optional<PropertyAccessPlan> planMethodAboveEmptySlot(FunctionPassCo
     return plan;
 }
 
+// Message.prototype.retries = 3: every receiver finds one and the same constant on its class where it has no property of its own under the name.
+static std::optional<PropertyAccessPlan> planConstantAboveEmptySlot(FunctionPassContext& context, const SlotStamp& stamp)
+{
+    std::optional<PropertyAccessPlan> plan;
+    for (LayoutID receiver : context.program.at(stamp.receivers).completeMembers()) {
+        MemberAnswer above = findMemberOnPrototypes({ context.program, &context.inputs.flow }, { MemberStart::Instance, receiver, stamp.key, Access::Read });
+        if (above.kind != MemberKind::Constant || (plan && (plan->member.constant != above.constant || plan->member.integer != above.integer)))
+            return std::nullopt;
+        if (!plan) {
+            plan = PropertyAccessPlan { };
+            plan->form = AccessForm::Constant;
+            plan->member = above;
+        }
+        plan->receivers.add(receiver);
+        plan->requiredProofs |= above.receiverProofs;
+        addConditions(plan->conditions, above.conditions.span());
+    }
+    return plan;
+}
+
 static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBuilder& builder, Vector<NamedAccessSite>& reads)
 {
     if (reads.isEmpty())
@@ -1095,10 +1117,11 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         expansion.begin(read.site);
         ValueID object = expansion.original().objectOperand();
         std::optional<PropertyAccessPlan> methodAbove = read.plan.form == AccessForm::Slot && !testsDeclaredType ? planMethodAboveEmptySlot(context, stamp, context.program.at(expansion.original().type)) : std::nullopt;
+        std::optional<PropertyAccessPlan> constantAbove = read.plan.form == AccessForm::Slot && !methodAbove ? planConstantAboveEmptySlot(context, stamp) : std::nullopt;
         Value test = makeObjectTest(Proof::SlotFilled, object, stamp);
         test.setHoldsDeclaredType(testsDeclaredType);
         // A field that is listed and holds undefined without storage hides the method.
-        test.setCountsFieldsWithoutStorage(!!methodAbove);
+        test.setCountsFieldsWithoutStorage(methodAbove || (constantAbove && !testsDeclaredType));
         BlockID failedUnasked = builder.beginPrediction();
         ValueID isFilled = builder.append(WTF::move(test));
         Expected<BlockFrequency> frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
@@ -1134,6 +1157,27 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
             expansion.finishArm(expansion.append(WTF::move(closure)));
             if (byName)
                 builder.moveToEndOf(byName);
+        }
+        if (constantAbove) {
+            BlockID lookup = builder.addBlock(rarerOf(frequencyOfFailure, BlockFrequency::Unlikely));
+            auto continueUnless = [&](Value&& failing, bool failsWhenTrue) {
+                BlockID next = builder.addBlock(frequencyOfFailure);
+                Target onward { next, { }, { } };
+                Target toLookup { lookup, { }, { } };
+                builder.emitBranch(builder.append(WTF::move(failing)), failsWhenTrue ? WTF::move(toLookup) : WTF::move(onward), failsWhenTrue ? WTF::move(onward) : WTF::move(toLookup));
+                builder.moveToEndOf(next);
+            };
+            // The first test also fails for a value of another type.
+            if (testsDeclaredType) {
+                Value isOwn = makeObjectTest(Proof::SlotFilled, object, stamp);
+                isOwn.setCountsFieldsWithoutStorage(true);
+                continueUnless(WTF::move(isOwn), true);
+            }
+            for (Value& testOfMember : createAccessTests(context, *constantAbove, { object, { }, { stamp.key, stamp.receivers, stamp.level, { } } }).tests)
+                continueUnless(WTF::move(testOfMember), false);
+            const MemberAnswer& member = constantAbove->member;
+            expansion.finishArm(member.constant == MemberConstant::Integer ? builder.appendInteger(member.integer) : member.constant == MemberConstant::Null ? builder.append(IRBuilder::make(Opcode::Null)) : builder.appendBoolean(member.constant == MemberConstant::True));
+            builder.moveToEndOf(lookup);
         }
         if (!methodAbove || byName) {
             // The lookup starts over at the object.

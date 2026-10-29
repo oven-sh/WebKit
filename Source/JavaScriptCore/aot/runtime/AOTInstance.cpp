@@ -200,12 +200,9 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
 
 static void fillStubReturnAddresses(Instance& instance, const Image& image)
 {
-    for (const StubReturnSite& site : image.stubReturnSites()) {
-        if (!hasSingleReturnSite(site.kind))
-            continue;
-        const void*& slot = instance.stubs.returnAddresses[static_cast<unsigned>(site.kind)];
-        RELEASE_ASSERT(!slot);
-        slot = image.sharedCodeCopy(0) + site.offset;
+    for (unsigned kind = 0; kind < numberOfStubFrameKinds; ++kind) {
+        if (uint32_t offset = image.header().singleReturnSites[kind])
+            instance.stubs.returnAddresses[kind] = image.sharedCodeCopy(0) + offset;
     }
 }
 

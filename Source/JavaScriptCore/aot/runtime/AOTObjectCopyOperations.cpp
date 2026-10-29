@@ -493,6 +493,12 @@ static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObj
     bool canHaveStructureOfSource = !excluded.numberPlusOne && source->type() == FinalObjectType && (!source->structure()->isDictionary() || flattenOnce(vm, source)) && source->structure()->canPerformFastPropertyEnumerationCommon();
     if (JSObject* copy = canHaveStructureOfSource ? tryCreateObjectViaCloning(vm, globalObject, source) : nullptr)
         return copy;
+    // The engine's clone leaves out a source that never got a property. Its copy is as large as it is: what is copied to be added to keeps its room.
+    Structure* structure = source->structure();
+    bool isPlainEmptyObject = canHaveStructureOfSource && !structure->didTransition() && !structure->seenProperties().bits() && !source->butterfly() && checkStructureForClone(structure)
+        && structure->realm() == globalObject && structure->storedPrototype() == globalObject->objectPrototype();
+    if (isPlainEmptyObject)
+        return JSFinalObject::create(vm, structure);
     return tryCopyAsOrdinaryObject(vm, globalObject, source, excluded);
 }
 

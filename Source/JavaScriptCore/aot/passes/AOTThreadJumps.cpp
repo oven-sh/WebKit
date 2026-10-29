@@ -466,11 +466,16 @@ struct EdgeThreader : Rewrite {
         });
 
         // A constant that stands beside the test is no reason to pass through the block: it is made again where it is used.
+        // So is what a decided test left there, a cast of a value from above the block behind a fact. It has no code.
+        auto isCastLeftByTest = [&](const Block& block, const Value& cast) {
+            return cast.opcode == Opcode::AssumeType && cast.factOperand() && at(cast.factOperand()).opcode == Opcode::Specified
+                && !block.parameters.contains(cast.valueOperand()) && !block.values.contains(cast.valueOperand());
+        };
         const UseLists& useListsBeforeCopies = analyses.useLists();
         Vector<std::tuple<Use, ValueID, ProgramPoint>, 8> usesOutsideBlocks;
         for (BlockID candidate : candidates) {
             for (ValueID id : at(candidate).values) {
-                if (!isRematerializable(at(id)))
+                if (!isRematerializable(at(id)) && !isCastLeftByTest(at(candidate), at(id)))
                     continue;
                 for (const Use& use : useListsBeforeCopies.usesOf(id)) {
                     bool hasPointInBlock = use.kind == Use::Kind::Operand || use.kind == Use::Kind::TerminatorOperand || use.kind == Use::Kind::EdgeArgument;
@@ -480,8 +485,12 @@ struct EdgeThreader : Rewrite {
             }
         }
         // The first insertion ends the life of the use lists.
-        for (const auto& [use, constant, point] : usesOutsideBlocks)
-            replaceUse(use, insertBefore(point, at(constant).origin(), Value(at(constant))));
+        for (const auto& [use, original, point] : usesOutsideBlocks) {
+            Value copy(at(original));
+            if (copy.opcode == Opcode::AssumeType)
+                copy.setFactOperand(insertBefore(point, copy.origin(), Value(Opcode::Specified)));
+            replaceUse(use, insertBefore(point, copy.origin(), WTF::move(copy)));
+        }
         if (!usesOutsideBlocks.isEmpty()) {
             builder().applyInsertions();
             // The builder reports the copies, not the uses that now name them.

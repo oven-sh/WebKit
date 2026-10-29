@@ -691,6 +691,12 @@ static void testProgramTablesCut()
     checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { rangeOf(header, ImageSection::ProgramTables).size = sizeof(ProgramTables) - 1; });
 }
 
+static void testStubsInHeader()
+{
+    checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { header.numberOfStubsFoundByKey = rangeOf(header, ImageSection::StubAddresses).size / sizeof(StubAddressInImage) + 1; });
+    checkHeaderChange(Verdict::MalformedTables, [](ImageHeader& header) { header.singleReturnSites[static_cast<unsigned>(StubFrameKind::Adapter)] = header.code.sharedCodeSize + 1; });
+}
+
 static void testClosureFunctionRange()
 {
     checkProgramTablesChange([](ProgramTables& tables) { tables.closureFunctions.omittedWordCount = tables.closureFunctions.first + 1; });
@@ -709,6 +715,7 @@ static void testNoCode()
         header.codeSize = 0;
         header.executableSize = 0;
         header.code = { };
+        std::ranges::fill(header.singleReturnSites, 0);
         rangeOf(header, ImageSection::SharedCodeCopies).size = 0;
     });
 }
@@ -781,6 +788,12 @@ static void testStubReturnSites()
         bool nextSiteFollows = index + 1 < sites.size() && sites[index + 1].offset == site.offset + 1;
         if (!nextSiteFollows)
             AOT_TEST_CHECK(loaded.locate(copy + site.offset + 1).stubFrameKind == StubFrameKind::Plain);
+    }
+
+    for (unsigned kind = 0; kind < numberOfStubFrameKinds; ++kind) {
+        auto site = std::ranges::find(sites, static_cast<StubFrameKind>(kind), &StubReturnSite::kind);
+        bool isListed = hasSingleReturnSite(static_cast<StubFrameKind>(kind)) && site != sites.end();
+        AOT_TEST_CHECK(loaded.header().singleReturnSites[kind] == (isListed ? site->offset : 0));
     }
 }
 
@@ -872,8 +885,13 @@ static void testStubAddress()
     const Image& loaded = *smallImage().image;
     std::span<const StubAddressInImage> addresses = loaded.section<StubAddressInImage>(ImageSection::StubAddresses);
     AOT_TEST_CHECK(!addresses.empty());
-    for (size_t index = 1; index < addresses.size(); ++index)
-        AOT_TEST_CHECK(addresses[index - 1].key < addresses[index].key);
+    size_t sizeOfFirstPart = loaded.header().numberOfStubsFoundByKey;
+    AOT_TEST_CHECK(sizeOfFirstPart && sizeOfFirstPart <= addresses.size());
+    for (size_t index = 0; index < addresses.size(); ++index) {
+        AOT_TEST_CHECK(isFoundByKey(StubKey::fromBits(addresses[index].key).family()) == (index < sizeOfFirstPart));
+        AOT_TEST_CHECK(!index || index == sizeOfFirstPart || addresses[index - 1].key < addresses[index].key);
+        AOT_TEST_CHECK(loaded.stubAddress(StubKey::fromBits(addresses[index].key)) == loaded.sharedCodeCopy(0) + addresses[index].offset);
+    }
 
     auto found = std::ranges::find(addresses, enterClosure().bits(), &StubAddressInImage::key);
     AOT_TEST_CHECK(found != addresses.end());
@@ -1137,6 +1155,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/check/ffi-code-off-page-boundary"_s, testFFICodeOffPageBoundary },
         { "image/check/program-tables-magic"_s, testProgramTablesMagic },
         { "image/check/program-tables-cut"_s, testProgramTablesCut },
+        { "image/check/stubs-in-header"_s, testStubsInHeader },
         { "image/check/closure-function-range"_s, testClosureFunctionRange },
         { "image/check/string-cell-count"_s, testStringCellCount },
         { "image/check/no-code"_s, testNoCode },

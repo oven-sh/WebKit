@@ -337,7 +337,12 @@ private:
     void loadEntry(Entry, GPRReg);
     void loadCalledOperation(const CalledOperation&, GPRReg function);
     void loadFirstArgument(OperationCall::FirstArgument);
-    GPRReg setUpOperationCall(const CalledOperation&, const OperationCall&);
+#if CPU(X86_64)
+    using OperationToCall = Address;
+#else
+    using OperationToCall = GPRReg;
+#endif
+    OperationToCall setUpOperationCall(const CalledOperation&, const OperationCall&);
     void prepareCallOperation();
     void emitOperationCallAndReturn(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
     void emitOperationCallSavingNothing(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);

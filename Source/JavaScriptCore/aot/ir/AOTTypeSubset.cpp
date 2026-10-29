@@ -270,7 +270,7 @@ static bool areCallablesSubset(const Type& a, const Type& b, const BuiltinTable&
     });
 }
 
-static const ClassPart* findPartHolding(const Type& type, BuiltinClassID builtinClass, const BuiltinTable& builtins)
+const ClassPart* findPartHolding(const Type& type, BuiltinClassID builtinClass, const BuiltinTable& builtins)
 {
     if (const ClassPart* part = type.findClassPart(builtinClass))
         return part;

@@ -1130,6 +1130,10 @@ static void testCreatedFieldsWithoutStorage()
     constexpr uint64_t granuleBit = granuleBitOf(offsetInExtension);
     using FakeExtension = FakeObject<extensionCellSizeFor(2)>;
     PropertyStores stores;
+    stores.structure.at<uint32_t>(CompiledStructure::offsetOfExtensionSlot()) = SlotData::create(offsetOfExtensionWord, SlotRepresentation::Cell32).encoded();
+    // A space without allocators: the stub that grows an Extension leaves it to the operation.
+    FakeObject<sizeof(CompleteSubspace)> spaceWithoutAllocators;
+    stores.runner.instance().allocation.cagedAuxiliarySpace = std::bit_cast<void*>(spaceWithoutAllocators.address());
     CreatedFieldOrders orders(stores.runner.instance(), slotKeyFor(offsetInExtension, true));
     const uintptr_t cageBase = stores.runner.instance().cellCageBase;
     const uint64_t number = bitsOf(jsNumber(42));

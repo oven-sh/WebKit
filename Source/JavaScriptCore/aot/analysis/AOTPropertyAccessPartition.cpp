@@ -27,6 +27,8 @@ static bool haveSameMember(const MemberAnswer& a, const MemberAnswer& b)
         return a.method == b.method;
     case MemberKind::Accessor:
         return a.getter == b.getter && a.setter == b.setter;
+    case MemberKind::Constant:
+        return a.constant == b.constant && a.integer == b.integer;
     case MemberKind::Variable:
         return a.variable == b.variable;
     case MemberKind::Namespace:

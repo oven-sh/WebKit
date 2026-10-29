@@ -30,7 +30,7 @@ v(PutByIdAtSite, CalledByCode, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs
 v(PutByIdAtSiteBehindFieldTable, InternalEntry, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutByIdAtSite)
 
 // AOTStubsFieldReads.cpp
-v(PrivateGet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PrivateGet)
+v(PrivateGet, CalledByCode, (), CountAxis, 0, 21, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PrivateGet)
 
 // AOTStubsKnownFieldStores.cpp
 v(PutKnownField, CalledByCode, (Strict, Sloppy, Define), FormAxis | CountAxis, 0, 2, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, PutKnownField)

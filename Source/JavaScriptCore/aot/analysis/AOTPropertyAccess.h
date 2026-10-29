@@ -66,6 +66,7 @@ struct PropertyAccessPlan {
     KnowledgeLevel level { KnowledgeLevel::Unknown };
     Opcode operation { Opcode::Undefined };
     bool booleanConstant { false };
+    int64_t integerConstant { 0 };
     bool storedValueFits { false };
     bool capturesReceiver { false };
     bool needsMissPath { false };

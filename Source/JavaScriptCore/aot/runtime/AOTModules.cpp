@@ -598,6 +598,14 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shou
     return namespaceObject;
 }
 
+bool Modules::mayExport(ModuleID module, UniquedStringImpl* name) const
+{
+    const ModuleData& moduleData = data(module);
+    if (moduleData.kind != ModuleKind::SourceText || moduleData.capturesExports() || moduleData.hasDynamicStarExport())
+        return true;
+    return !!m_table.findExport(module, name);
+}
+
 JSObject* Modules::moduleNamespace(ModuleID module, ModulePhase phase, bool shouldPreventExtensions)
 {
     if (JSObject* namespaceObject = namespaceIfCreated(module, phase))
@@ -2304,6 +2312,12 @@ JSObject* moduleNamespace(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOrThrow(realm, module);
     return modules ? modules->moduleNamespace(module, Modules::ModulePhase::Evaluation) : nullptr;
+}
+
+bool mayExport(JSGlobalObject* realm, ModuleID module, UniquedStringImpl* name)
+{
+    Modules* modules = modulesOf(realm);
+    return !modules || modules->refusesRequestFromHost(module) || modules->mayExport(module, name);
 }
 
 JSValue requireModule(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> referrer)

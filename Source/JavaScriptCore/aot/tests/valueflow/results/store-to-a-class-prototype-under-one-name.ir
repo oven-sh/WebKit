@@ -3,7 +3,7 @@
 # A store under a name that the program spells out changes what lies under that name and nothing else: the other members of the class stay what the class defines, every name of the prototype object is still listed,
 # and what is stored is listed beside the definition. A store under a key nobody knows, and a deletion, may hit any member.
 # RUN: valueflow-apply
-# CHECK: layout L0 {{*}}constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true {{*}}namedMembers=[{key="run" function=f2 mutability=Fixed {{*}}isWritableData=true}, {key="stop" function=f3 {{*}}isWritableData=true}, {key="stop" function=f5 isWritableData=true}, {key="size" kind=Getter function=f4 mutability=Fixed{{*}}}, {key="extra"}]}
+# CHECK: layout L0 {{*}}constructorProperty=Fixed prototypeProperty=Fixed prototypeNamesAreComplete=true {{*}}namedMembers=[{key="run" function=f2 mutability=Fixed {{*}}isWritableData=true}, {key="stop" function=f3 {{*}}isWritableData=true}, {key="stop" function=f5 isWritableData=true}, {key="size" kind=Getter function=f4 mutability=Fixed{{*}}}, {key="extra" isAssignedByProgram=true constant=Integer integer=1}]}
 # CHECK: layout L1 {{*}}classFlow={evaluations=AtMostOnce staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true members=[{key="run" function=f7 closureUse=CalledOnly}] namedMembers=[{key="run" function=f7 closureUse=CalledOnly}]}
 # CHECK: layout L2 {{*}}classFlow={evaluations=AtMostOnce prototypeLink=Fixed staticLink=Fixed prototypeProperty=Fixed staticNamesAreComplete=true members=[{key="run" function=f9 closureUse=CalledOnly}] namedMembers=[{key="run" function=f9 closureUse=CalledOnly}]}
 

@@ -11,12 +11,14 @@
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCompileOptions.h"
+#include "AOTFieldTable.h"
 #include "AOTFlowResults.h"
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRegExpRequests.h"
 #include "AOTRegExpSummary.h"
+#include "AOTSlotPlan.h"
 #include "AOTStringUses.h"
 #include "AOTWasmModules.h"
 #include "YarrFlags.h"
@@ -68,6 +70,41 @@ StubPolicy chooseStubPolicy(const KeyUses& uses, const IdentifierNumbering& numb
         }
     }
     return policy;
+}
+
+void addExpectedFieldTableEntries(StubPolicy& policy, const Typed::Program& program, const Typed::SlotPlan& slots, const IdentifierNumbering& numbering)
+{
+    const BitVector& names = policy.namesWithOwnStub(Typed::Access::Read);
+    if (names.isEmpty())
+        return;
+    using Counts = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    Counts layoutsWithName;
+    Counts layoutsWithEntry;
+    for (uint32_t index = 0; index < program.layouts.size(); ++index) {
+        Typed::LayoutID id(index);
+        if (!slots.holdsCompiledObjects(id))
+            continue;
+        const auto& fields = program.at(id).fields;
+        for (uint32_t field = 0; field < fields.size(); ++field) {
+            std::optional<uint32_t> name = numbering.numberOf(fields[field].key);
+            if (!name || !names.get(*name))
+                continue;
+            layoutsWithName.add(*name, 0).iterator->value++;
+            const Typed::PlacedSlot& slot = slots.slot(id, field);
+            bool isValue = slot.representation == SlotRepresentation::JSValue || slot.representation == SlotRepresentation::Cell;
+            uint32_t word = slot.offset / sizeof(EncodedJSValue);
+            if (!slot.hasStorage() || !isValue || slot.offset % sizeof(EncodedJSValue) || word > FieldTableEntry::maxOperand)
+                continue;
+            FieldTableEntry::Form form = slot.isOutOfLine() ? FieldTableEntry::Form::OutOfLineValue : FieldTableEntry::Form::InlineValue;
+            layoutsWithEntry.add(FieldTableEntry::create(*name, form, word).bits, 0).iterator->value++;
+        }
+    }
+    // A wrong guess costs two instructions. A right one saves three in the cell and nineteen in the Extension.
+    for (auto [bits, count] : layoutsWithEntry) {
+        uint32_t name = bits >> FieldTableEntry::nameShift;
+        if (count * 2 > layoutsWithName.get(name))
+            policy.expectedFieldTableEntries.add(name, bits);
+    }
 }
 
 void addRegExpLiterals(StubPolicy& policy, const RegExpRequests& requests, bool legacyStaticsMayBeRead, BuildContext& context)

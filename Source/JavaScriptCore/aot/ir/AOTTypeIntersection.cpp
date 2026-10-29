@@ -356,7 +356,7 @@ static void subtractCallables(Type& result, const Type& removed, const BuiltinTa
 static void subtractClasses(Type& result, const Type& removed, const TypeTable& types)
 {
     auto isInsideRemovedPart = [&](const ClassPart& part) {
-        const ClassPart* partner = removed.findClassPart(part.builtinClass);
+        const ClassPart* partner = findPartHolding(removed, part.builtinClass, types.builtins());
         return partner && isPartSubset(part, *partner, types);
     };
     bool removesOnlyListedRegExps = !removed.regExpLiteralSet.isEmpty();

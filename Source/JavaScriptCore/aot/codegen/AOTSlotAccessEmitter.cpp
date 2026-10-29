@@ -712,6 +712,7 @@ uint64_t SlotAccessEmitter::granuleBitsOfStoresBehind(const ValueContext& store,
     ValueID object = store->objectOperand();
     const UseLists& uses = analyses().useLists();
     const BlockFrequencies& frequencies = analyses().blockFrequencies();
+    const CFG& cfg = analyses().cfg();
     double frequency = frequencies.frequencyOf(store.block()).predicted();
     for (const Use& use : uses.usesOf(object)) {
         if (use.kind != Use::Kind::Operand || use.user == store.id())
@@ -720,7 +721,9 @@ uint64_t SlotAccessEmitter::granuleBitsOfStoresBehind(const ValueContext& store,
         bool mayAddField = user.opcode == Opcode::PutSlotOrAdd || user.opcode == Opcode::PutSlots || user.opcode == Opcode::DefineOwnProperty;
         if (!mayAddField || user.objectOperand() != object)
             continue;
-        if (frequencies.frequencyOf(use.block).predicted() * 2 < frequency || !analyses().dominates(store.id(), use))
+        // Each store has its own tests, and a path by name around it: no store dominates the next. A granule that stays empty costs its room and nothing else.
+        bool comesLater = use.block == store.block() ? analyses().dominates(store.id(), use) : cfg.reversePostOrderIndex(use.block) > cfg.reversePostOrderIndex(store.block());
+        if (frequencies.frequencyOf(use.block).predicted() * 2 < frequency || !comesLater)
             continue;
         if (user.opcode == Opcode::DefineOwnProperty) {
             if (std::optional<FieldAccess> later = fieldCreatedByDefinition(user))

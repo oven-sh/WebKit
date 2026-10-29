@@ -11,6 +11,7 @@
 #include "AOTCompileOptions.h"
 #include "AOTLimits.h"
 #include "AOTRuntimeTable.h"
+#include "AOTStubFrames.h"
 #include "AOTVarint.h"
 #include "AOTVector.h"
 #include "CPU.h"
@@ -156,6 +157,9 @@ struct ImageHeader {
     ImageCodeRanges code;
     uint32_t flags;
     uint32_t entriesUsed[(numberOfEntries + 31) / 32];
+    // The offset into the shared code of the return site of each kind that has only one. 0 for every other kind, and for a kind whose stub is not in the image.
+    uint32_t singleReturnSites[numberOfStubFrameKinds];
+    uint32_t numberOfStubsFoundByKey;
 };
 static_assert(std::is_trivially_copyable_v<ImageHeader> && std::is_standard_layout_v<ImageHeader>);
 static_assert(!(offsetof(ImageHeader, sections) % 4));
@@ -248,6 +252,7 @@ struct ImageInnerEntry {
 };
 static_assert(sizeof(ImageInnerEntry) == 8);
 
+// StubAddresses begins with ImageHeader::numberOfStubsFoundByKey stubs that the run time finds by key, most of them while it starts. They are few, so a start reads one page of the section. Each of the two parts is sorted by key.
 struct StubAddressInImage {
     uint64_t key;
     uint32_t offset;

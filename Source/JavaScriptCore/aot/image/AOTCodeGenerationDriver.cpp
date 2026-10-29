@@ -78,6 +78,7 @@ CodeGenerationPlan prepareCodeGeneration(const Typed::PipelineOutput& pipeline, 
 
             IdentifierNumbering numbering = numberIdentifiers(program, plan.uses.keys, pipeline.slots->keysWithColumn(), context);
             StubPolicy policy = chooseStubPolicy(plan.uses.keys, numbering, context);
+            addExpectedFieldTableEntries(policy, program, *pipeline.slots, numbering);
             addRegExpLiterals(policy, *pipeline.regExpRequests, pipeline.flow->mayReadLegacyRegExpStatics(), context);
             StubOptions stubOptions = StubOptions::from(context.recordedOptions(), program, *pipeline.flow);
             stubOptions.maxNameInFieldTable = numbering.countWithFieldTableColumn() - 1;

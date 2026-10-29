@@ -129,6 +129,7 @@ public:
     void didCreatePrototypeLeftToRecord(const LayoutData&);
     void disarmMemberGuards(const LayoutData&);
     void didStoreByName(VM&, const LayoutData& instanceLayout, UniquedStringImpl*);
+    void didFindMemberByName(VM&, const LayoutData& instanceLayout, UniquedStringImpl*);
     // Whoever files the store in a cache has walked the chain above an object that has the prototype object of its class: the store creates the property until one of these objects reports a change.
     void didFindThatStoresPass(VM&, const LayoutData& instanceLayout, UniquedStringImpl*, std::span<JSObject* const> changeableObjects);
     void didChangeMember(const LayoutData&, ClassSide, UniquedStringImpl*);

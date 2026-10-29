@@ -55,8 +55,11 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
             return;
         }
     }
+    bool isFoundAbove = base.isObject() && !slot.isUnset() && !slot.isTaintedByOpaqueObject() && slot.slotBase() != asObject(base);
     instance->state->propertyCaches->cache({ structureBefore, name, SlotAccess::Read, site }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
+    if (Object* object = isFoundAbove ? compiledObjectOrNull(base) : nullptr)
+        instance->state->objects->classes.didFindMemberByName(*instance->vm, object->layout(), name.uid);
 }
 
 // The first object that is given a name becomes a dictionary while it is filled, and the next one gets a Structure. The first object's transition does not recur, so it says nothing about the Structure it started with.
@@ -138,6 +141,8 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
     Structure* structureBefore = structureForPrimitive(globalObject, base);
     if (lazy.result == LazyPrototypeReadResult::Answered) {
         access.caches().cache({ structureBefore, access.name(), SlotAccess::Read, access.site }, lazy.answer);
+        if (compiledBase && lazy.answer.kind != PropertyAnswerKind::Absent)
+            access.instance->state->objects->classes.didFindMemberByName(vm, compiledBase->layout(), uid);
         RELEASE_AND_RETURN(scope, readThroughAnswer(globalObject, receiver, lazy.answer));
     }
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);

@@ -4,11 +4,12 @@
 # Both hand a mode back beside the value. What is taken for proven of the value without a test stands behind the mode: in an arm of the switch, or of a comparison, that is not the arm of the mode that throws,
 # or where every way from the operation leads through such an arm. A cast that says nothing new, and a test, stand anywhere.
 # Value and mode may go on as arguments of edges. A parameter stands for the mode where every edge that comes from the operation hands the mode on, or drops the value:
-# it passes no copy of the value, and no copy is defined above the block. So two copies of one operation may hand value and mode on to one block.
+# it passes no copy of the value, and no copy defined above the block is named from there on before the operation runs again. So two copies of one operation may hand value and mode on to one block,
+# also where one of them stands above the other.
 # A copy that has passed an arm does not count: the result of one step may be the loop variable while the next step runs.
 # FORM: Prepared
 # RUN: verify
-# DIAGNOSTIC: ProofInFrontOfMode 14
+# DIAGNOSTIC: ProofInFrontOfMode 15
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="made" role=CoroutineRamp flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}] results=[{type=AsyncGenerator}] creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f1 promiseType=Promise promiseParameter=2}
@@ -418,4 +419,64 @@ function f26 name="badValueGoesAroundTheLoopWithoutAnArmAndIsNamedBehindTheStatu
     Return v14
   b6():
     Return v1
+}
+function f27 name="goodYieldAboveAnotherHandsValueAndModeOnToOneBlock" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f27 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = ToBoolean v1
+    Branch v6 -> taken b2(v4, v5), notTaken b1()
+  b1():
+    v7 = AsyncGeneratorYield v2, v1 @12
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    Jump -> next b2(v8, v9)
+  b2(v10, v11):
+    Switch v11 cases=[1, 2] -> case b3(), case b4(), otherwise b4()
+  b3():
+    Throw v10
+  b4():
+    v12 = AssumeType v10 provenType=undefined|int
+    Return v12
+}
+function f28 name="badValueOfYieldAboveIsNamedBehindTheModeOfTheOther" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f28 promiseType=Promise promiseParameter=2} {
+    v3 = AsyncGeneratorYield v2, v1 @12
+    v4 = ResultAt v3 index=0
+    v5 = ResultAt v3 index=1
+    v6 = ToBoolean v1
+    Branch v6 -> taken b2(v4, v5), notTaken b1()
+  b1():
+    v7 = AsyncGeneratorYield v2, v1 @12
+    v8 = ResultAt v7 index=0
+    v9 = ResultAt v7 index=1
+    Jump -> next b2(v8, v9)
+  b2(v10, v11):
+    Switch v11 cases=[1, 2] -> case b3(), case b4(), otherwise b4()
+  b3():
+    Throw v10
+  b4():
+    v12 = AssumeType v4 provenType=undefined|int
+    Return v12
+}
+function f29 name="goodYieldAboveAnotherInALoopIsNamedAgainOnlyAfterItRuns" role=CoroutineBody flags=[IsAsync, IsGenerator, TakesCallee] parameters=[{type=anything}, {type=AsyncGenerator}] results=[{type=anything}] derivation={source=f0} creator=Coroutine{kind=AsyncGenerator ramp=f0 body=f29 promiseType=Promise promiseParameter=2} {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v4 = AsyncGeneratorYield v2, v1 @12
+    v5 = ResultAt v4 index=0
+    v6 = ResultAt v4 index=1
+    v7 = ToBoolean v1
+    Branch v7 -> taken b3(v5, v6), notTaken b2()
+  b2():
+    v8 = AsyncGeneratorYield v2, v1 @12
+    v9 = ResultAt v8 index=0
+    v10 = ResultAt v8 index=1
+    Jump -> next b3(v9, v10)
+  b3(v11, v12):
+    Switch v12 cases=[1, 2] -> case b4(), case b5(), otherwise b5()
+  b4():
+    Throw v11
+  b5():
+    v13 = AssumeType v11 provenType=undefined|int
+    Jump -> next b1()
 }

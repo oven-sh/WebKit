@@ -43,6 +43,8 @@ bool overlapsAnotherClass(const BuiltinTable&, BuiltinClassID, const Type&);
 
 bool isSubset(const Type&, const Type&, const TypeTable&);
 bool isPartSubset(const ClassPart&, const ClassPart&, const TypeTable&);
+// The part for the class, or for a class above it that the same test tells from everything else.
+const ClassPart* findPartHolding(const Type&, BuiltinClassID, const BuiltinTable&);
 bool overlap(const Type&, const Type&, const TypeTable&);
 bool mayBeSameObject(const Type&, const Type&, const TypeTable&);
 BuiltinClassID builtinClassWrittenAbove(const TypeTable&, LayoutID);

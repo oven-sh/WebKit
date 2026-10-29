@@ -182,6 +182,13 @@ static bool hasWellFormedTables(const ImageHeader& header, std::span<const uint8
     if (!hasValidCodeParts || rangeOf(ImageSection::ProgramTables).size < sizeof(ProgramTables))
         return false;
 
+    if (header.numberOfStubsFoundByKey > numberOfElements(ImageSection::StubAddresses))
+        return false;
+    for (uint32_t offset : header.singleReturnSites) {
+        if (offset > code.sharedCodeSize)
+            return false;
+    }
+
     auto& tables = *reinterpret_cast<const ProgramTables*>(bytes.data() + rangeOf(ImageSection::ProgramTables).offset);
     const ClosureFunctionRangeData& closures = tables.closureFunctions;
     return tables.magic == ProgramTables::expectedMagic
@@ -341,11 +348,18 @@ CodeLocation Image::locate(const void* pc) const
     return { CodeKind::Function, StubFrameKind::Plain, index, offset - starts[index] };
 }
 
+std::span<const StubAddressInImage> Image::stubAddressesSortedWith(StubFamily family) const
+{
+    std::span addresses = section<StubAddressInImage>(ImageSection::StubAddresses);
+    size_t sizeOfFirstPart = header().numberOfStubsFoundByKey;
+    return isFoundByKey(family) ? addresses.first(sizeOfFirstPart) : addresses.subspan(sizeOfFirstPart);
+}
+
 const void* Image::stubAddress(StubKey key) const
 {
     if (sharedCodeCopies().empty())
         return nullptr;
-    std::span addresses = section<StubAddressInImage>(ImageSection::StubAddresses);
+    std::span addresses = stubAddressesSortedWith(key.family());
     auto address = std::ranges::lower_bound(addresses, key.bits(), { }, &StubAddressInImage::key);
     if (address == addresses.end() || address->key != key.bits())
         return nullptr;
@@ -355,7 +369,7 @@ const void* Image::stubAddress(StubKey key) const
 // The family is the most significant part of a key, so the stubs of a family lie side by side, by form and then by count.
 std::span<const StubAddressInImage> Image::stubAddressesOf(StubFamily family) const
 {
-    auto addresses = std::ranges::equal_range(section<StubAddressInImage>(ImageSection::StubAddresses), family, { }, [](const StubAddressInImage& address) {
+    auto addresses = std::ranges::equal_range(stubAddressesSortedWith(family), family, { }, [](const StubAddressInImage& address) {
         return StubKey::fromBits(address.key).family();
     });
     return { addresses.begin(), addresses.end() };

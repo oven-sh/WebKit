@@ -198,6 +198,11 @@ static bool holdsDeclaredMember(VM& vm, State& state, JSObject* holder, UniquedS
 {
     unsigned attributes;
     JSValue value = holder->getDirect(vm, uid, attributes);
+    if (value && member.method && (member.method->flags & methodIsConstant)) {
+        uint32_t bits = member.method->function;
+        JSValue constant = !(member.method->flags & methodIsOtherConstant) ? jsNumber(static_cast<int32_t>(bits)) : !bits ? jsNull() : jsBoolean(bits == 2);
+        return !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && value == constant;
+    }
     if (!value || !value.isCell())
         return false;
     if (member.method)
@@ -801,6 +806,25 @@ static void updateMemberGuard(VM& vm, State& state, const LayoutData& layout, co
     updateMemberGuard(vm, state, layout, guard, classes);
 }
 
+// A member that the program assigns to the prototype object is not there yet when the class is defined. An access by name that has been answered looks again.
+void ClassTable::didFindMemberByName(VM& vm, const LayoutData& instanceLayout, UniquedStringImpl* uid)
+{
+    if (!instanceLayout.isClass())
+        return;
+    const LayoutData& layout = classOfInstances(instanceLayout);
+    if (holdsFromStart(layout) || !layout.numberOfMemberGuards() || layout.evaluation() == EvaluationState::SeenTwice || !classPrototypeIfExists(layout))
+        return;
+    std::optional<uint32_t> key = vm.aotState().identifiers->numberOf(uid);
+    const MemberGuardData* guard = key ? findGuard(layout, ClassSide::Prototype, MemberGuardKind::Member, *key) : nullptr;
+    MemberGuardWatchpoints& watchpoints = watchpointsOf(m_state);
+    if (!guard || isSet(m_state, layout, *guard) || watchpoints.hasEnded(*guard) || watchpoints.wasFoundNotToHold(*guard))
+        return;
+    MemberGuardWatchpoints::MethodTableUpdate update(m_state);
+    updateMemberGuard(vm, m_state, layout, *guard);
+    if (!isSet(m_state, layout, *guard))
+        watchpoints.didFindNotToHold(*guard);
+}
+
 uint64_t* ClassTable::guardWords(const LayoutData& layout, ClassSide side) const
 {
     std::optional<uint32_t> offset = layout.classData().guardWordsOffsetFor(side);
@@ -1180,8 +1204,10 @@ void ClassTable::didChangeMember(const LayoutData& layout, ClassSide side, Uniqu
     if (side == ClassSide::Prototype)
         watchpointsOf(m_state).didChangeNameOnPrototypeSide(layout, *key);
     auto endGuardsOf = [&](const LayoutData& inheriting) {
-        if (const MemberGuardData* guard = findGuard(inheriting, side, MemberGuardKind::Member, *key))
+        if (const MemberGuardData* guard = findGuard(inheriting, side, MemberGuardKind::Member, *key)) {
             clear(m_state, inheriting, *guard);
+            watchpointsOf(m_state).mayHoldAgain(*guard);
+        }
         if (const MemberGuardData* guard = findGuard(inheriting, side, MemberGuardKind::PassedByStores, *key))
             leaveForLater(m_state, inheriting, *guard);
     };

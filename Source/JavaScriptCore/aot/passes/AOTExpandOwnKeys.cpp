@@ -1938,6 +1938,40 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
     return outcome;
 }
 
+static bool isOnlyCopiedFrom(FunctionPassContext& context, ValueID allocation, ValueID alias)
+{
+    return std::ranges::all_of(context.analyses.useLists().usesOf(alias), [&](const Use& use) {
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = context.function.at(use.user);
+        if (user.opcode == Opcode::CopyObject)
+            return user.excludedOperands().empty();
+        if (user.opcode == Opcode::CopyDataProperties)
+            return user.excludedOperands().empty() && user.targetOperand() != alias;
+        return context.analyses.sameObjectThroughCasts(use.user).valueInFrontOfFacts() == allocation && isOnlyCopiedFrom(context, allocation, use.user);
+    });
+}
+
+// `let all = {}; all = { ...all, [key]: value }`: a dictionary that never gets a property has none to copy.
+static PassOutcome replaceCopiesOfEmptyDictionaries(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    Vector<ValueID, 2> copies;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& copy = function.at(id);
+            if (copy.opcode != Opcode::CopyObject)
+                continue;
+            ValueID source = context.analyses.sameObjectThroughCasts(copy.sourceOperand()).valueInFrontOfFacts();
+            if (function.at(source).opcode == Opcode::NewDictionary && isOnlyCopiedFrom(context, source, source))
+                copies.append(id);
+        }
+    }
+    for (ValueID id : copies)
+        function.edit(id).become(Opcode::NewDictionary);
+    return copies.isEmpty() ? PassOutcome::Unchanged : PassOutcome::Changed;
+}
+
 PassOutcome expandOwnKeys(FunctionPassContext& context)
 {
     const OpcodeSet opcodes = context.analyses.opcodesOfValues();
@@ -1947,6 +1981,9 @@ PassOutcome expandOwnKeys(FunctionPassContext& context)
     bool mayHaveKeyOrderTests = opcodes.intersects(opcodesOfKeyOrderTests) && opcodes.contains(Opcode::NewObject);
     if (!mayHaveWalks && !mayHaveForInLoops && !mayHaveKeyOrderTests)
         return PassOutcome::Unchanged;
+
+    if (opcodes.contains(Opcode::CopyObject) && opcodes.contains(Opcode::NewDictionary) && replaceCopiesOfEmptyDictionaries(context) == PassOutcome::Changed)
+        return PassOutcome::Changed;
 
     EmissionInputs inputs(context);
     IRBuilder builder(inputs.analysisContext(), context.function, context.types, &context.analyses);

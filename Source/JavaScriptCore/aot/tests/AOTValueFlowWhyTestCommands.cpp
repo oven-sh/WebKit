@@ -11,6 +11,7 @@
 #include "AOTSort.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTValueFlowAnalysis.h"
+#include "AOTValueIdentity.h"
 #include "AOTValueFlowHeapTables.h"
 #include "AOTValueFlowRuleContext.h"
 #include <wtf/HashMap.h>
@@ -725,15 +726,55 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
         if (solver.graph().isRetired(logged.edge.to))
             loggerOfEdgeIntoRetiredNode.add(logged.edge.from.index(), logged.statement);
     }
-    auto whyEscaped = [&](ValueFlowObjectID object) -> Escape {
-        Vector<ValueFlowNodeID> way = solver.explain(escaped, object);
+    auto whyEscapedItself = [&](ValueFlowObjectID, const Vector<ValueFlowNodeID>& way) -> Escape {
         if (way.size() < 2)
-            return { way.isEmpty() ? "has not escaped"_s : "escaped by no statement"_s, emptyString() };
+            return { way.isEmpty() ? "has not escaped"_s : "escaped from the start"_s, emptyString() };
         ValueFlowStatementID id = solver.statementThatLogged({ way[1], way[0] });
         if (!id)
             id = loggerOfEdgeIntoRetiredNode.get(way[1].index());
-        if (!id)
-            return { "escaped by no statement"_s, emptyString() };
+        if (!id) {
+            // No rule logs an edge of a body: an operand that its operation hands to code out of sight.
+            FunctionID owner = bodies.nodes().functionOf(way[1]);
+            if (!owner)
+                return { "escaped by no statement"_s, emptyString() };
+            StringPrintStream shape;
+            if (owner.index() >= program.functions.size()) {
+                // The nodes of the host stand behind those of the functions. The number is that of ValueFlowHostNode.
+                shape.print("escaped through host node ", way[1].index() - bodies.nodes().firstNodeOf(owner));
+                if (way.size() > 2) {
+                    if (const ValueFlowNodeKey* key = solver.keyOfMadeNode(way[2]))
+                        shape.print(", out of ", nameOf(key->kind));
+                    if (ValueFlowStatementID logger = solver.statementThatLogged({ way[2], way[1] })) {
+                        const ValueFlowStatement& statement = solver.statementAt(logger);
+                        shape.print(", by ");
+                        if (statement.kind == ValueFlowStatementKind::Operation)
+                            shape.print(statement.opcode);
+                        else
+                            shape.print(nameOf(statement.kind));
+                    }
+                }
+                return { shape.toString(), emptyString() };
+            }
+            shape.print("escaped as an operand of ");
+            bool isFound = false;
+            for (const ValueFlowStatement& user : bodies.statementsOf(owner.index())) {
+                if (user.kind != ValueFlowStatementKind::Operation || isCast(user.opcode))
+                    continue;
+                isFound = std::ranges::any_of(bodies.operandsOf(user), [&](const ValueFlowOperand& operand) { return operand.node == way[1]; });
+                if (isFound) {
+                    shape.print(user.opcode);
+                    break;
+                }
+            }
+            if (!isFound)
+                shape.print("no operation");
+            shape.print(" in ", nameOf(program.at(owner).role));
+            if (way.size() > 2) {
+                if (const ValueFlowNodeKey* key = solver.keyOfMadeNode(way[2]))
+                    shape.print(", out of ", nameOf(key->kind));
+            }
+            return { shape.toString(), nameOfFunction(owner) };
+        }
         const ValueFlowStatement& statement = solver.statementAt(id);
         StringPrintStream shape;
         shape.print("escaped by ");
@@ -748,6 +789,41 @@ static void printUnknownCallees(PrintStream& out, ValueFlowSolution& solution, b
             detail.print(" in ", nameOfFunction(statement.function));
         }
         return { shape.toString(), detail.toString() };
+    };
+
+    // What an escaped object holds escapes with it. The holder that escaped for another reason is the cause.
+    auto findHolderThatCarriedOut = [&](const Vector<ValueFlowNodeID>& way) -> ValueFlowObjectID {
+        if (way.size() < 3 || way[1] != bodies.nodes().ofHost(ValueFlowHostNode::ValuesCarriedOut))
+            return { };
+        const ValueFlowNodeKey* key = solver.keyOfMadeNode(way[2]);
+        if (!key || !key->set || ValueSets::isComplement(key->set) || (key->kind != ValueFlowMadeNodeKind::WrittenUnderKind && key->kind != ValueFlowMadeNodeKind::Written))
+            return { };
+        ValueFlowObjectID holder;
+        solution.sets().forEachMember(key->set, [&](ValueFlowObjectID member) {
+            if (!holder && universe.isObject(member) && member != unknown && solution.sets().contains(solver.possibleValuesOf(escaped), member))
+                holder = member;
+        });
+        return holder;
+    };
+    auto whyEscaped = [&](ValueFlowObjectID escapedObject) -> Escape {
+        constexpr unsigned mostHoldersClimbed = 16;
+        ValueFlowObjectID object = escapedObject;
+        Vector<ValueFlowNodeID> way = solver.explain(escaped, object);
+        unsigned holdersClimbed = 0;
+        Vector<ValueFlowObjectID, mostHoldersClimbed> passed { object };
+        while (holdersClimbed < mostHoldersClimbed) {
+            ValueFlowObjectID holder = findHolderThatCarriedOut(way);
+            if (!holder || passed.contains(holder))
+                break;
+            passed.append(holder);
+            object = holder;
+            way = solver.explain(escaped, object);
+            ++holdersClimbed;
+        }
+        Escape escape = whyEscapedItself(object, way);
+        if (holdersClimbed)
+            escape.shape = makeString("held by "_s, universe.closureFunction(object) ? "a closure"_s : universe.builtinOf(object) ? "a built-in"_s : "an object"_s, " that "_s, escape.shape);
+        return escape;
     };
 
     struct Root {

@@ -417,7 +417,12 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
         if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || usesCallConvention || hasAddressInImage(linkage))
             addresses.append({ placement.key.bits(), placement.offset, usesCallConvention });
     }
-    AOT::sort(addresses, { }, &StubAddressInImage::key);
+    AOT::sort(addresses, [](const StubAddressInImage& a, const StubAddressInImage& b) {
+        bool isFirstPart = isFoundByKey(StubKey::fromBits(a.key).family());
+        if (isFirstPart != isFoundByKey(StubKey::fromBits(b.key).family()))
+            return isFirstPart;
+        return a.key < b.key;
+    });
     return bytesOf(addresses);
 }
 
@@ -512,6 +517,7 @@ struct ImageWriterInputs {
     const ImageSections& sections;
     const WTF::BitSet<numberOfEntries>& entriesUsed;
     ImageCounts counts;
+    std::span<const StubReturnSite> stubReturnSites;
 };
 
 } // anonymous namespace
@@ -693,6 +699,16 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
     header.flags = flags.toRaw();
     for (size_t entry : parts.entriesUsed)
         header.entriesUsed[entry / 32] |= 1u << entry % 32;
+    for (const StubReturnSite& site : parts.stubReturnSites) {
+        if (!hasSingleReturnSite(site.kind))
+            continue;
+        uint32_t& offset = header.singleReturnSites[static_cast<unsigned>(site.kind)];
+        RELEASE_ASSERT(!offset && site.offset);
+        offset = site.offset;
+    }
+    header.numberOfStubsFoundByKey = static_cast<uint32_t>(std::ranges::count_if(spanReinterpretCast<const StubAddressInImage>(parts.sections[ImageSection::StubAddresses].span()), [](const StubAddressInImage& address) {
+        return isFoundByKey(StubKey::fromBits(address.key).family());
+    }));
 }
 
 static void copySections(std::span<uint8_t> image, const ImageWriterInputs& parts, const ImageExtent& extent, const ParallelLoops& loops)
@@ -993,7 +1009,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     times.didFinish("collect sections"_s);
 
     CodeLinkerInputs linker { layoutInputs, result.layout, result.outlining, result.constants, inputs.instanceSizes };
-    result.image = writeImage({ inputs, linker, sections, result.entriesUsed, { static_cast<uint32_t>(functions.size()), regExps.maxOutputSize } }, context);
+    result.image = writeImage({ inputs, linker, sections, result.entriesUsed, { static_cast<uint32_t>(functions.size()), regExps.maxOutputSize }, stubs.returnSites.span() }, context);
     if (diagnostics.hasErrors())
         result.image.clear();
     times.didFinish("write image"_s);

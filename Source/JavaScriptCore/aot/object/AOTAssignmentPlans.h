@@ -123,6 +123,11 @@ struct AssignmentPlan {
         PropertyOffset sourceOffset { invalidOffset };
         StructureID lastAcceptedStructure { };
         OptionSet<ValueKind> acceptedKinds;
+        // The int32s that the field takes. A field in a narrow slot takes all but a few, so Int32 is not among acceptedKinds.
+        int32_t leastInt32 { 0 };
+        int32_t greatestInt32 { -1 };
+        // The slot holds an integer in two's complement, and each of those int32s fits it.
+        bool writesInt32AsItIs { false };
         bool sourceAlwaysFits { false };
         bool sourceFitsUnlessUndefinedOrNull { false };
         bool isDirect { false };

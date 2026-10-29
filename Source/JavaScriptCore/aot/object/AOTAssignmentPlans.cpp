@@ -581,6 +581,16 @@ void AssignmentPlanCache::fillPlan(VM& vm, AssignmentPlan& plan, unsigned index,
             .absentBits = traits.absentBits,
         });
         AssignmentPlan::FieldStore& store = fieldStores.last();
+        if (const RuntimeType& type = layouts.typeOf(*field); type.primitiveSet().contains(PrimitiveSet::Integer)) {
+            auto range = type.integerRange();
+            int64_t least = range ? std::max<int64_t>(range->first, INT32_MIN) : INT32_MIN;
+            int64_t greatest = range ? std::min<int64_t>(range->second, INT32_MAX) : INT32_MAX;
+            if (least <= greatest) {
+                store.leastInt32 = static_cast<int32_t>(least);
+                store.greatestInt32 = static_cast<int32_t>(greatest);
+                store.writesInt32AsItIs = holdsIntegersBetween(field->slot.representation(), least, greatest);
+            }
+        }
         store.copiesBitsUntested = store.sourceAlwaysFits && store.copiesBits && store.isDirect && !(field->flags & fieldMayExistWithoutStorage) && field->slot.representation() != SlotRepresentation::DeferredClosure
             && !(store.leavesUndefinedAndNullToOtherWay && property.field->slotHoldsUndefinedAndNull);
         plan.mayStoreCells |= traits.holdsCell;

@@ -12,6 +12,7 @@
 #include "AOTBodyIndex.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinCalls.h"
+#include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
 #include "AOTChooseCallingConventions.h"
 #include "AOTCodeShapes.h"
@@ -513,6 +514,26 @@ static Vector<uint8_t> findCompactFunctions(const Program& program, const FlowRe
 // A value that may be one of more layouts than this tells nothing about what lies under the name.
 AOT_THRESHOLD(size_t, maxLayoutsOfStoredValue, 4);
 
+// `Object.create(null)`, before and after the call is resolved.
+static bool makesDictionary(const Program& program, const Function& function, ValueID id)
+{
+    const Value* value = &function.at(id);
+    while (isCast(value->opcode))
+        value = &function.at(value->operand(0));
+    if (value->opcode == Opcode::NewDictionary)
+        return true;
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID callee;
+    if (value->opcode == Opcode::Call)
+        callee = singleBuiltinCalleeOf(program, function, *value);
+    else if (value->opcode == Opcode::CallBuiltin)
+        callee = builtins.canonicalID(builtins.at(value->overload()).builtin);
+    if (callee != Builtins::ObjectCreate)
+        return false;
+    std::span<const ValueID> arguments = value->argumentsOperands();
+    return arguments.size() == 1 && program.typeOf(function, arguments[0]).hasOnlyPrimitives(Primitive::Null);
+}
+
 static Vector<uint64_t> collectLayoutsStoredUnderNames(const Program& program, const ParallelLoops& loops, std::span<const uint32_t> functionsWithBody)
 {
     Vector<uint64_t> allStored = collectInParallel<uint64_t>(loops, functionsWithBody.size(), [&](unsigned k, Vector<uint64_t>& stored) {
@@ -520,6 +541,10 @@ static Vector<uint64_t> collectLayoutsStoredUnderNames(const Program& program, c
         auto add = [&](PropertyKeyID name, ValueID value) {
             if (!name || !value)
                 return;
+            if (makesDictionary(program, function, value)) {
+                stored.append(packedKeyOf(name, LayoutID()));
+                return;
+            }
             LayoutSetID layouts = program.typeOf(function, value).layouts;
             if (!layouts || program.at(layouts).written().size() > maxLayoutsOfStoredValue)
                 return;

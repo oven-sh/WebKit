@@ -21,7 +21,7 @@ struct MemberQuery {
     bool isOwnLookup { false };
 };
 
-enum class MemberKind : uint8_t { Unknown, Absent, Field, Method, Accessor, Variable, Namespace, Builtin };
+enum class MemberKind : uint8_t { Unknown, Absent, Field, Method, Accessor, Constant, Variable, Namespace, Builtin };
 
 struct MemberAnswer {
     MemberKind kind { MemberKind::Unknown };
@@ -34,6 +34,8 @@ struct MemberAnswer {
     VariableID variable;
     ModuleID module;
     BuiltinID builtin;
+    MemberConstant constant { MemberConstant::None };
+    int64_t integer { 0 };
     ProofSet receiverProofs;
     MemberConditions conditions;
     UnprovenCause cause { UnprovenCause::Unknown };

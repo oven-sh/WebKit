@@ -88,6 +88,12 @@ public:
             return image;
         return currentOfThread();
     }
+    // Null if there is no image or if threads differ: ask current() then. For callers that cannot afford the call in current().
+    static const Image* sharedByAllThreads()
+    {
+        const Image* image = s_current.load(std::memory_order_acquire);
+        return image != differsByThread() ? image : nullptr;
+    }
     static bool isRegistered() { return !!s_current.load(std::memory_order_acquire); }
     JS_EXPORT_PRIVATE static void setCurrentOfThread(const Image*);
     // For a thread whose VM runs no compiled program.
@@ -142,6 +148,8 @@ public:
     enum class FrequentStub : uint8_t { EnterClosure, EnterSlimClosure, EnterModuleBody, EnterClosureForConstruct, EnterHandlerOfJob, EnterSavedFrame, RejectInFrame, RejectInFrameBelowSpilledArguments };
     template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
+    // The part of ImageSection::StubAddresses that has the stubs of the family, sorted by key.
+    std::span<const StubAddressInImage> stubAddressesSortedWith(StubFamily) const;
     // For the stub that starts at this offset in the shared code. x86-64 only.
     bool usesCallConvention(uint32_t offsetInSharedCode) const;
     std::span<const StubReturnSite> stubReturnSites() const;

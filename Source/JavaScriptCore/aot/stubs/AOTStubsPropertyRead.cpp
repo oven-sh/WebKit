@@ -879,7 +879,7 @@ static void emitBoundNameProbe(StubAssembler& jit, uint32_t number)
 #if CPU(X86_64)
     const uint32_t upperHalf = PackedSlot::upperHalfForOwnInlineValue(static_cast<uint16_t>(number));
     Jump isNotCell = jit.branchIfNotCell(R0);
-    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame }, isNotInFieldTable);
+    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame, jit.bindingPolicy().expectedFieldTableEntry(number) }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     loadFrontRowOfCell(jit, SlotAccess::Read, R0, row, T10);
     Jump isNotOwnInlineValue = jit.branch32(CCallHelpers::NotEqual, inCell(PackedSlot::offsetOfLocation()), TrustedImm32(static_cast<int32_t>(upperHalf)));
@@ -903,7 +903,7 @@ static void emitBoundNameProbe(StubAssembler& jit, uint32_t number)
     jit.jumpToStub(getById().withCallerFrame(callerFrame));
 #else
     Jump isNotCell = jit.branchIfNotCell(R0);
-    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame }, isNotInFieldTable);
+    returnFieldByTable(jit, { R0, InvalidGPRReg, T11, T12, number, true, true, false, callerFrame, jit.bindingPolicy().expectedFieldTableEntry(number) }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     jit.move(TrustedImm32(number), T9);
     jit.load32(Address(R0, JSCell::structureIDOffset()), T11);

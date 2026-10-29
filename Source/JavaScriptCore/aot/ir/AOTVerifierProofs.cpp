@@ -270,15 +270,34 @@ void FunctionVerifier::verifyProofsOfValueBesideMode(BlockID blockOfSuspension, 
             }
         }
     };
-    // An edge drops the value where it passes no copy of it and no copy is defined above the target: past the edge the value is named only after the operation has run again.
+    auto blocksReachedBeforeNextRun = [&](BlockID start) {
+        BitVector reached(m_function.blocks.size());
+        reached.quickSet(start.index());
+        Vector<BlockID, 16> worklist { start };
+        while (!worklist.isEmpty()) {
+            forEachOutgoingEdge(m_function, worklist.takeLast(), [&](Edge, const Target& target) {
+                if (target.block != blockOfSuspension && !reached.quickSet(target.block.index()))
+                    worklist.append(target.block);
+            });
+        }
+        return reached;
+    };
+    // An edge drops the value where it passes no copy of it, and no copy defined above the target is named past the edge before the operation runs again.
     auto dropsValue = [&](Edge edge) {
         if (copiesOfValue.isEmpty())
             findCopiesOfValue();
         const Target& target = targetOf(m_function, edge);
         if (target.arguments.containsIf([&](ValueID argument) { return isCopyOfValue.get(argument.index()); }))
             return false;
+        std::optional<BitVector> reached;
         return std::ranges::none_of(copiesOfValue, [&](ValueID value) {
-            return analyses().dominators().strictlyDominates(useLists.locationOf(value).block, target.block);
+            if (!analyses().dominators().strictlyDominates(useLists.locationOf(value).block, target.block))
+                return false;
+            if (!reached)
+                reached = blocksReachedBeforeNextRun(target.block);
+            return std::ranges::any_of(useLists.usesOf(value), [&](const Use& use) {
+                return reached->quickGet(use.block.index());
+            });
         });
     };
     // A parameter stands for the mode where every edge that is reached by no arm hands the mode on or drops the value. On any other edge the mode has been asked, or the edge comes from elsewhere.

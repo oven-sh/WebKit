@@ -385,6 +385,8 @@ ALWAYS_INLINE bool FieldStoreRun::isAccepted(AssignmentPlan::FieldStore& store, 
         return true;
     if (store.sourceFitsUnlessUndefinedOrNull && !value.isUndefinedOrNull())
         return true;
+    if (value.isInt32() && value.asInt32() >= store.leastInt32 && value.asInt32() <= store.greatestInt32)
+        return true;
     if (value.isObject())
         return value.asCell()->structureID() == store.lastAcceptedStructure || acceptsObject(store, asObject(value));
     bool isKindAccepted = store.acceptedKinds.containsAny(valueKindOf(value));
@@ -508,6 +510,10 @@ ALWAYS_INLINE bool FieldStoreRun::tryStoreEveryProperty(const AssignmentSource& 
             continue;
         }
         JSValue value = source.read(store);
+        if (store.writesInt32AsItIs && value.isInt32() && value.asInt32() >= store.leastInt32 && value.asInt32() <= store.greatestInt32) {
+            *bits++ = static_cast<uint64_t>(static_cast<int64_t>(value.asInt32()));
+            continue;
+        }
         if (store.leavesUndefinedAndNullToOtherWay && value && value.isUndefinedOrNull())
             return false;
         if (value && !isAccepted(store, value)) {

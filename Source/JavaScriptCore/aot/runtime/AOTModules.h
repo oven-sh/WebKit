@@ -122,6 +122,7 @@ public:
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
     // As AbstractModuleRecord::getModuleNamespace(): the caller that creates the object decides whether it is extensible.
     JSObject* moduleNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions = true);
+    bool mayExport(ModuleID, UniquedStringImpl* name) const;
     JSObject* importMeta(ModuleID);
     JSCell* builtinCell(BuiltinID, ModuleID);
     JSString* pathString(ModuleID);
