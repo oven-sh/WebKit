@@ -141,8 +141,7 @@ void* CompleteSubspace::allocateSlow(VM& vm, size_t size, GCDeferralContext* def
     if (!result && MarkedBlockCage::isRequired() && vm.heap.cage().allocationsAreInfallible()) [[unlikely]]
         failureMode = AllocationFailureMode::Assert;
     if (!result && failureMode == AllocationFailureMode::Assert) [[unlikely]] {
-        RequestInExhaustedCage request;
-        while (!result && vm.heap.tryUseReserveOfExhaustedCage(alignedMemoryAllocator(), request))
+        while (!result && vm.heap.tryUseReserveOfExhaustedCage(alignedMemoryAllocator()))
             result = tryAllocateSlow(vm, size, deferralContext);
     }
     if (!result) [[unlikely]] {
