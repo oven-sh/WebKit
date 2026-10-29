@@ -173,6 +173,15 @@ void BufferMemoryManager::freeGrowableBoundsCheckingMemory(void* basePtr, size_t
     dataLogLnIf(Options::logWasmMemory(), "Freed virtual; state: ", *this);
 }
 
+size_t BufferMemoryManager::memoryLimit() const
+{
+    // --forceRAMSize sets this budget as it sets the heap's, so that a test gets to the end of it with a few buffers.
+    size_t memory = Options::forceRAMSize() ? Options::forceRAMSize() : ramSize();
+    if (productOverflows<size_t>(memory, 3))
+        return std::numeric_limits<size_t>::max();
+    return memory * 3;
+}
+
 bool BufferMemoryManager::tryMakeReadableAndWritable(void* address, size_t bytes)
 {
     constexpr bool readable = true;
