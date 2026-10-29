@@ -7,9 +7,10 @@
 # Windows. Bun runs it when it builds WebKit from source on Windows (scripts/build/deps/webkit.ts in oven-sh/bun).
 #
 # The same as the ICU that ships: the version (icu/source.json), clang as the compiler on both architectures, the code
-# generation floor, /MT[d], static libraries, and the data filter (stage 1b). Not the same, neither of which matters to
-# a build of Bun from source: the data is not repacked with per-item zstd (icu/compress-data.ts), and udata.cpp does
-# not carry the decompression hook (icu/udata-decompress-hook.patch), so ICU reads its data raw.
+# generation floor, /MT[d], static libraries, and the data filter (stage 1b). Not the same, none of which matters to
+# a build of Bun from source: the data is not repacked with per-item zstd (icu/compress-data.ts), udata.cpp does
+# not carry the decompression hook (icu/udata-decompress-hook.patch), so ICU reads its data raw, and
+# icu/decnum-allocation-failure.patch is not applied.
 #
 # Usage:
 #   .\build-icu.ps1 [-Platform x64|ARM64] [-BuildType Release|Debug] [-OutputDir WebKitBuild/icu]
