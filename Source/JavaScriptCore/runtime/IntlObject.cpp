@@ -1989,6 +1989,20 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
     return std::make_optional(WTF::move(timeZoneName));
 }
 
+// Links in the IANA Time Zone Database (its `backward` file) that CLDR 49, like CLDR 45 and older, has as zones of their own.
+static std::optional<ASCIILiteral> primaryOfLinkThatICUMayNotResolve(StringView timeZone)
+{
+    if (timeZone == "EST5EDT"_s)
+        return "America/New_York"_s;
+    if (timeZone == "CST6CDT"_s)
+        return "America/Chicago"_s;
+    if (timeZone == "MST7MDT"_s)
+        return "America/Denver"_s;
+    if (timeZone == "PST8PDT"_s)
+        return "America/Los_Angeles"_s;
+    return std::nullopt;
+}
+
 // Map a known-valid IANA time zone ID to its primary IANA zone identifier. On ICU 74+,
 // ucal_getIanaTimeZoneID honors the IANA "Backward" links and returns up-to-date
 // names (e.g. "Asia/Calcutta" -> "Asia/Kolkata", "America/Buenos_Aires" ->
@@ -1996,6 +2010,9 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
 // form. UTC-equivalent zones are normalized to "UTC" per ECMA-402.
 String toPrimaryIanaTimeZoneIdentifier(std::span<const char16_t> timeZone)
 {
+    if (auto primary = primaryOfLinkThatICUMayNotResolve(StringView(timeZone)))
+        return *primary;
+
     Vector<char16_t, 32> buffer;
     // Bun on macOS links against system libicucore.A.dylib whose version is
     // determined by the macOS deployment target, not the bundled ICU 74 headers.
@@ -2221,8 +2238,12 @@ String TimeZone::toString() const
 
 String TimeZone::toICUString() const
 {
-    if (!isUTCOffset())
-        return intlTimeZoneIDToString(m_id);
+    if (!isUTCOffset()) {
+        const String& identifier = intlTimeZoneIDToString(m_id);
+        if (auto primary = primaryOfLinkThatICUMayNotResolve(identifier))
+            return *primary;
+        return identifier;
+    }
     // ICU expects offsets in "GMT[+-]HHMM" form, no colon, four digits.
     int64_t offset = m_offset;
     bool negative = offset < 0;
