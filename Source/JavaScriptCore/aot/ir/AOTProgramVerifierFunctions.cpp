@@ -254,8 +254,8 @@ void ProgramVerifier::verifyDerivationChains()
         fail({ .kind = InternalErrorKind::InvalidCreatorRecord, .function = *cyclicFunction });
 }
 
-// The passes took a guard away by the summaries of their time. A call may since have taken the place of operations that stood in the callee's own body, and say more than they did.
-void ProgramVerifier::askAgainWhereGuardsDoNotLast(Vector<InternalError>& errors)
+// The passes removed a guard based on the summaries of the time. Since then a call may have replaced operations in the callee's own body, and its summary may cover more than they did.
+void ProgramVerifier::recheckUnavailableGuards(Vector<InternalError>& errors)
 {
     auto isAboutGuard = [](const InternalError& error) {
         return error.kind == InternalErrorKind::GuardNotAvailable;
@@ -263,7 +263,7 @@ void ProgramVerifier::askAgainWhereGuardsDoNotLast(Vector<InternalError>& errors
     if (!m_inputs.effects || m_inputs.effects->isEmpty() || !std::ranges::any_of(errors, isAboutGuard))
         return;
     FlowResults noResults;
-    EffectSummaries summaries = computeEffectSummariesByTypesOfOperands(m_program, m_inputs.flow ? *m_inputs.flow : noResults, m_build);
+    EffectSummaries summaries = computeEffectSummariesByOperandTypes(m_program, m_inputs.flow ? *m_inputs.flow : noResults, m_build);
     VerifierInputs inputs = m_inputs;
     inputs.effects = &summaries;
     Vector<FunctionID> functions;
@@ -305,7 +305,7 @@ void ProgramVerifier::verifyFunctionBodies()
         });
     }
 
-    askAgainWhereGuardsDoNotLast(errors);
+    recheckUnavailableGuards(errors);
 
     if (scratch)
         scratch->discard();

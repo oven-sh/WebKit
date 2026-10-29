@@ -16,8 +16,8 @@ namespace JSC { namespace AOT {
 constexpr StubKey newClosure(unsigned captures) { return StubKey(StubFamily::NewClosure).withCount(captures); }
 // The operand is the number of the function.
 constexpr StubKey newSlimClosure(unsigned slimClosureKind, unsigned captures) { return StubKey(StubFamily::NewSlimClosure).withForm(slimClosureKind).withCount(captures); }
-// The closure that a field has left unmade, over the object that has the field or over nothing, made and stored at the first read of the slot.
-// The first operand has the number of the function in its lower half and the offset of the slot in its upper half. The second is the object.
+// Creates the closure that a field deferred, capturing the object that has the field or nothing, and stores it on the first read of the slot.
+// The first operand holds the function number in its lower half and the slot offset in its upper half. The second operand is the object.
 constexpr StubKey makeClosureOfField(unsigned slimClosureKind, bool capturesObject) { return StubKey(StubFamily::MakeClosureOfField).withForm(slimClosureKind).withCount(capturesObject); }
 // The closure that the closure table holds for a function without captures, made at the first request. The immediate is the number of the generic entrypoint.
 constexpr StubKey closureOfTable() { return StubKey(StubFamily::ClosureOfTable); }

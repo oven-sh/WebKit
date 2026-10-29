@@ -361,22 +361,22 @@ BuiltinClassID builtinBaseClassOf(const Program& program, LayoutID id)
     return current ? builtinBaseClassOfLongRow(program, current) : BuiltinClassID();
 }
 
-// The constructor asks for the Structure of what it makes before it runs any code of the program.
+// The constructor requests the Structure for the new object before it runs any program code.
 static bool asksForStructureFirst(const BuiltinTable& builtins, BuiltinClassID builtinClass)
 {
     return builtinClass == BuiltinClasses::Map || builtinClass == BuiltinClasses::Set || builtinClass == BuiltinClasses::WeakMap || builtinClass == BuiltinClasses::WeakSet
         || builtinClass == BuiltinClasses::Array || builtins.isSameOrSubclassOf(builtinClass, BuiltinClasses::Error);
 }
 
-// No test tells the objects of such a class from other instances of the built-in class, and a test for its layout passes for none of them.
-// Where the program expects an object of the class, an instance of the built-in class is expected: that test its objects pass.
+// No test distinguishes objects of such a class from other instances of the built-in class, and a test for its layout never passes.
+// Where the program expects an object of the class, expect an instance of the built-in class instead: its objects pass that test.
 static void expectInstancesOfBuiltinClasses(Program& program, const ParallelLoops& loops, std::span<const BuiltinClassID> classWithoutBrandAbove)
 {
     TypeArena types(program.types);
     unsigned numberOfTypes = program.types.size();
     Vector<TypeID> typeInPlaceOf(numberOfTypes);
     BitVector isDecided(numberOfTypes);
-    // The contents of a list of such objects are changed with it. A type never holds itself.
+    // The contents of an array of such objects are changed too. A type never contains itself.
     auto decide = [&](auto& decide, TypeID id) -> TypeID {
         if (id.index() >= numberOfTypes)
             return { };
@@ -473,7 +473,7 @@ static void expectInstancesOfBuiltinClasses(Program& program, const ParallelLoop
         change(variable.declared);
 }
 
-void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops& loops)
+void noteSubclassesOfBuiltinClasses(Program& program, const ParallelLoops& loops)
 {
     const BuiltinTable& builtins = program.builtins();
     using Written = std::pair<LayoutID, BuiltinClassID>;
@@ -519,7 +519,7 @@ void noteClassesWrittenBelowBuiltinClasses(Program& program, const ParallelLoops
         expectInstancesOfBuiltinClasses(program, loops, classWithoutBrandAbove.span());
 }
 
-bool isBornWithProperties(const Program& program, LayoutID id, BuiltinClassID builtinBase)
+bool isCreatedWithProperties(const Program& program, LayoutID id, BuiltinClassID builtinBase)
 {
     if (!program.at(id).fields.isEmpty())
         return true;

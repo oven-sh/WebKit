@@ -97,7 +97,7 @@ public:
         m_readsThroughHolders = WTF::move(reads);
     }
     NamespaceObject& namespaceOf(ModuleID module) LIFETIME_BOUND { return m_namespaces[module.index()]; }
-    void noteOperationThatNamesNamespaceOf(ModuleID module) { AtomicRef(m_namespaces[module.index()].isNamedByOperation).store(true, std::memory_order_relaxed); }
+    void noteOperationNamingNamespaceOf(ModuleID module) { AtomicRef(m_namespaces[module.index()].isNamedByOperation).store(true, std::memory_order_relaxed); }
     bool isNamespaceNamedByOperation(ModuleID module) const { return m_namespaces[module.index()].isNamedByOperation; }
     void setClassObjectsStoredUnderStaticFieldsAlone(BitVector&& layouts) { m_classObjectsStoredUnderStaticFieldsAlone = WTF::move(layouts); }
 

@@ -408,7 +408,7 @@ Vector<OperandDifference> differencesBetween(VM& vm, JSObject* object, const Ope
     else if (before.indexingMode != after.indexingMode) {
         differences.append({ OperandChange::ArrayStorageChanged, makeString("indexing mode "_s, static_cast<unsigned>(before.indexingMode), " -> "_s, static_cast<unsigned>(after.indexingMode)) });
         // Once an accessor under an index stands above an object with elements, objects that nothing was done to ask at every store what stands above them. They hold what they held.
-        differences.last().isOfRepresentationAlone = hasSlowPutArrayStorage(after.indexingMode);
+        differences.last().isRepresentationOnly = hasSlowPutArrayStorage(after.indexingMode);
     }
     else if (before.elements != after.elements && hasAnyArrayStorage(before.indexingMode)) {
         // A change of integrity moves the elements of a sparse array from the vector to the map.

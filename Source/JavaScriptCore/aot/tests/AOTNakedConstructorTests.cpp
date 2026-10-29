@@ -76,8 +76,7 @@ static void checkCallThrowsTypeError(LoadedProgram& program, JSValue callee, ASC
 
 static void checkCompiledClosureNamesConstructor(LoadedProgram& program)
 {
-    AOT_TEST_CHECK(!functionImplementing(Builtins::Promise).index());
-    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(0);
+    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(functionImplementing(Builtins::Promise).index());
     AOT_TEST_CHECK(entry);
     JSCell* closure = program.state().objects->closures.closure(program.vm(), FunctionID(entry->function));
 
@@ -103,7 +102,7 @@ static void checkClassNamesClassConstructor(LoadedProgram& program)
 
 static void checkCompiledClosureIsDeclaredAsFunction(LoadedProgram& program)
 {
-    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(0);
+    const CompiledRuntimeFunctionData* entry = ModuleTable(program.instance().tables()).findRuntimeFunction(functionImplementing(Builtins::Promise).index());
     AOT_TEST_CHECK(entry);
     JSCell* closure = program.state().objects->closures.closure(program.vm(), FunctionID(entry->function));
 

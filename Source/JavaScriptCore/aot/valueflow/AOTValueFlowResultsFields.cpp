@@ -205,7 +205,7 @@ struct BirthWithCopies {
     LayoutID layout;
     bool definesKeysLeftOutByAllocation { false };
     bool hasOnlyNamedData { true };
-    bool isBornBelowObjectPrototype { true };
+    bool startsWithObjectPrototype { true };
     Vector<PropertyKeyID, 8> definedKeys;
     Vector<CopyAtBirth, 2> copies;
     Vector<SourceOfCopyAtBirth, 2> sources;
@@ -439,11 +439,11 @@ struct FieldResults {
             UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> keys;
             size_t numberListed { 0 };
         };
-        constexpr size_t mostKeysSearchedOneByOne = 16;
+        constexpr size_t maxKeysForLinearSearch = 16;
         Vector<ListedKeys> keysOfLongBirths;
         auto defines = [&](uint32_t open, PropertyKeyID key) {
             const auto& definedKeys = born[open].birth.definedKeys;
-            if (definedKeys.size() <= mostKeysSearchedOneByOne)
+            if (definedKeys.size() <= maxKeysForLinearSearch)
                 return definedKeys.contains(key);
             if (keysOfLongBirths.size() <= open)
                 keysOfLongBirths.grow(open + 1);
@@ -481,7 +481,7 @@ struct FieldResults {
                         birth.copies.append({ valueID, OperandIndex::CopyDataProperties::source, false });
                 }
                 if (value.opcode == Opcode::NewObject && canBeBornWithCopies(value.layout())) {
-                    BirthWithCopies birth { .function = id, .allocation = valueID, .layout = value.layout(), .isBornBelowObjectPrototype = !value.prototypeOperand() };
+                    BirthWithCopies birth { .function = id, .allocation = valueID, .layout = value.layout(), .startsWithObjectPrototype = !value.prototypeOperand() };
                     for (uint32_t field : value.fields()) {
                         if (PropertyKeyID key = program.at(birth.layout).fields[field].key)
                             birth.definedKeys.append(key);
@@ -692,10 +692,10 @@ struct FieldResults {
                     return;
                 }
                 forEachFieldOfObjectsWith(program, application, layout, [&](FieldReference, const Field& field) {
-                    holdsOnlyThose = holdsOnlyThose && field.key && !program.isIndexLike(field.key) && findsNothingUnder(maker, objectPrototype, field.key);
+                    holdsOnlyThose = holdsOnlyThose && field.key && !program.isIndexLike(field.key) && findsNoProperty(maker, objectPrototype, field.key);
                 });
                 for (PropertyKeyID key : stores.keysStoredInto(layout))
-                    holdsOnlyThose = holdsOnlyThose && !program.isIndexLike(key) && findsNothingUnder(maker, objectPrototype, key);
+                    holdsOnlyThose = holdsOnlyThose && !program.isIndexLike(key) && findsNoProperty(maker, objectPrototype, key);
             });
             holdsOnlyThose &= hasLayout && !inputs.classOf(object);
         });
@@ -844,15 +844,15 @@ struct FieldResults {
                     const BirthWithCopies& birth = births[index];
                     Vector<PropertyKeyID> keys(birth.definedKeys.span());
                     // Until a source that nobody lists has been assigned, the literal stands where it was born.
-                    bool isJudgedWhereBorn = stores.getsCopiedProperties(birth.layout);
-                    bool standsBelowObjectPrototype = birth.isBornBelowObjectPrototype;
+                    bool isJudgedAtCreation = stores.getsCopiedProperties(birth.layout);
+                    bool inheritsFromObjectPrototype = birth.startsWithObjectPrototype;
                     for (const SourceOfCopyAtBirth& source : followsCopies ? birth.sources.span() : std::span<const SourceOfCopyAtBirth>()) {
-                        if (source.isAssigned && isJudgedWhereBorn)
-                            standsBelowObjectPrototype = standsBelowObjectPrototype && holdsOnlyNamesAbsentOnObjectPrototype(maker, source.objects);
+                        if (source.isAssigned && isJudgedAtCreation)
+                            inheritsFromObjectPrototype = inheritsFromObjectPrototype && holdsOnlyNamesAbsentOnObjectPrototype(maker, source.objects);
                         for (PropertyKeyID key : keysSurelyCopiedFrom(maker, hasOtherSites, source.objects)) {
                             if (std::ranges::contains(source.excludedKeys, key))
                                 continue;
-                            if (!source.isAssigned || (isJudgedWhereBorn ? standsBelowObjectPrototype : inheritsNothingUnder(maker, birth.layout, objectsAboveLayout[position], key)))
+                            if (!source.isAssigned || (isJudgedAtCreation ? inheritsFromObjectPrototype : inheritsNothingUnder(maker, birth.layout, objectsAboveLayout[position], key)))
                                 keys.append(key);
                         }
                     }
@@ -925,8 +925,8 @@ struct FieldResults {
                 continue;
             // A name that an object above is seen to hold is taken for a read of that object.
             ValueSetID above;
-            bool mayStandBelowAnything = possibleMutationsOf(id).contains(ObjectMutation::ChangePrototype) || ValueSets::isComplement(objectsAbove(maker.get(), id, above));
-            ValueSetID listedAbove = mayStandBelowAnything ? maker.get().of(inputs.universe().objectOf(Builtins::ObjectPrototype)) : maker.get().intersect(above, ValueSets::complement(inputs.universe().placeholdersAlone()));
+            bool mayInheritFromAnything = possibleMutationsOf(id).contains(ObjectMutation::ChangePrototype) || ValueSets::isComplement(objectsAbove(maker.get(), id, above));
+            ValueSetID listedAbove = mayInheritFromAnything ? maker.get().of(inputs.universe().objectOf(Builtins::ObjectPrototype)) : maker.get().intersect(above, ValueSets::complement(inputs.universe().placeholdersAlone()));
             for (PropertyKeyID key : stores.keysReadFrom(id)) {
                 if (!program.isIndexLike(key) && !mayFindNameIn(maker.get(), listedAbove, key))
                     stores.noteKeyBroughtByCopies(id, key, ValueSets::nothing);
@@ -1026,10 +1026,10 @@ struct FieldResults {
     {
         if (program.isIndexLike(key) || stores.hasObjectOfCodeWithoutSolve(id) || (stores.getsCopiedProperties(id) && possibleMutationsOf(id).contains(ObjectMutation::ChangePrototype)))
             return false;
-        return findsNothingUnder(maker, objectsAbove(maker, id, above), key);
+        return findsNoProperty(maker, objectsAbove(maker, id, above), key);
     }
 
-    bool findsNothingUnder(ValueSetMaker& maker, ValueSetID above, PropertyKeyID key) const
+    bool findsNoProperty(ValueSetMaker& maker, ValueSetID above, PropertyKeyID key) const
     {
         if (mayFindNameIn(maker, above, key) || !actorsOpenOnNamesOfObjectsOfProgramAmong(inputs, maker, above).isEmpty())
             return false;
@@ -1218,7 +1218,7 @@ struct FieldResults {
         contents.storedNumbers = Vector<Vector<ValueFlowNumbers>>(numberOfLayouts);
         contents.storedInAppendedFields = Vector<Vector<ValueSetID>>(numberOfLayouts);
         contents.numbersStoredInAppendedFields = Vector<Vector<ValueFlowNumbers>>(numberOfLayouts);
-        contents.appendedFieldsGivenValuesNobodyKnows = Vector<BitVector>(numberOfLayouts);
+        contents.appendedFieldsWithUnknownValues = Vector<BitVector>(numberOfLayouts);
         Vector<Vector<FactsOfField>> known(numberOfLayouts);
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index) {
             size_t numberOfFields = program.layouts[index].fields.size();
@@ -1573,7 +1573,7 @@ struct FieldResults {
     }
 
     // What a function that only hands `this` on constructs is born without a property, and no literal, class field or copy fills a slot of it: a store under a name and a definition are all that create one.
-    bool isBornEmptyAndFilledByNameAlone(LayoutID id) const
+    bool startsEmptyAndIsFilledByNameOnly(LayoutID id) const
     {
         const Layout& made = program.at(id);
         return made.kind == LayoutKind::Instance && made.has(LayoutFlags::IsConstructorFunction) && made.fields.isEmpty() && !stores.getsCopiedProperties(id);
@@ -1581,9 +1581,9 @@ struct FieldResults {
 
     // `fill(this)` .. `function fill(made) { made.name = ..; Object.defineProperty(made, "other", { .. }) }`, where whoever else may call `fill` is not seen.
     // What a function that only hands `this` on constructs has the fields that the program is seen to give it.
-    void forEachKeyGivenToInstancesSeenToArrive(ValueSetMaker& maker, const Function& function, const ValueFlowStatement& statement, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID, uint8_t forms)> auto& functor) const
+    void forEachKeyStoredOnArrivingInstances(ValueSetMaker& maker, const Function& function, const ValueFlowStatement& statement, NOESCAPE const Invocable<void(LayoutID, PropertyKeyID, uint8_t forms)> auto& functor) const
     {
-        AOT_THRESHOLD(size_t, mostLayoutsSeenToArriveAtStore, 4);
+        AOT_THRESHOLD(size_t, maxLayoutsArrivingAtStore, 4);
         std::span<const ValueFlowOperand> operands = inputs.bodies().operandsOf(statement);
         const ValueFlowOperand* receiver = nullptr;
         PropertyKeyID key;
@@ -1614,15 +1614,15 @@ struct FieldResults {
         ValueSetID seen = inputs.seenValuesOf(maker, *receiver);
         if (ValueSets::isComplement(seen))
             return;
-        Vector<LayoutID, mostLayoutsSeenToArriveAtStore + 1> layouts;
+        Vector<LayoutID, maxLayoutsArrivingAtStore + 1> layouts;
         sets.forEachMember(maker.intersect(seen, inputs.universe().knownObjects()), [&](ValueFlowObjectID object) {
-            if (LayoutID layout = inputs.universe().layoutOf(object); layout && layouts.size() <= mostLayoutsSeenToArriveAtStore && !layouts.contains(layout))
+            if (LayoutID layout = inputs.universe().layoutOf(object); layout && layouts.size() <= maxLayoutsArrivingAtStore && !layouts.contains(layout))
                 layouts.append(layout);
         });
-        if (layouts.size() > mostLayoutsSeenToArriveAtStore)
+        if (layouts.size() > maxLayoutsArrivingAtStore)
             return;
         for (LayoutID layout : layouts) {
-            if (isBornEmptyAndFilledByNameAlone(layout))
+            if (startsEmptyAndIsFilledByNameOnly(layout))
                 functor(layout, key, forms);
         }
     }
@@ -1630,7 +1630,7 @@ struct FieldResults {
     // The form in which the objects are seen to get a value under the key. Every other layout has plain fields: what creates their properties does not ask.
     std::optional<OptionSet<FieldForm>> formOfValueGivenUnder(LayoutID layout, PropertyKeyID key) const
     {
-        if (!isBornEmptyAndFilledByNameAlone(layout))
+        if (!startsEmptyAndIsFilledByNameOnly(layout))
             return OptionSet<FieldForm>();
         uint8_t forms = stores.formsOfValuesGivenUnder(layout, key);
         if (auto seen = formsOfValuesSeenDefined.find(static_cast<uint64_t>(layout.index()) << 32 | key.index()); seen != formsOfValuesSeenDefined.end())
@@ -1649,7 +1649,7 @@ struct FieldResults {
         return false;
     }
 
-    KeysByLayout chooseAppendedKeys(KeysByLayout& keysFilledByMakersOutside) const
+    KeysByLayout chooseAppendedKeys(KeysByLayout& keysFilledByOutsideCreators) const
     {
         ValueSetMakers makers(inputs);
         KeysByLayout keysByLayout(numberOfLayouts);
@@ -1662,12 +1662,12 @@ struct FieldResults {
         }
         // A store under a name into what a read under a name has answered names a field of the layouts that are written under the name of the read, where that name tells a few layouts from all others.
         AOT_THRESHOLD(size_t, mostLayoutsToldByName, 4);
-        AOT_THRESHOLD(size_t, mostLayoutsFollowedToStore, 16);
+        AOT_THRESHOLD(size_t, maxLayoutsFollowedToStore, 16);
         AOT_THRESHOLD(size_t, mostLayoutsFollowedToStoreIntoGivenObject, 4);
         KeysByLayout keysNamedBehindReads(numberOfLayouts);
-        KeysByLayout keysNamedWhereObjectsWereFollowedTo(numberOfLayouts);
+        KeysByLayout keysNamedAtFollowedUses(numberOfLayouts);
         KeysByLayout keysNamedWhereGivenObjectsWereFollowedTo(numberOfLayouts);
-        KeysByLayout keysNamedByMakersOutsideAlone(numberOfLayouts);
+        KeysByLayout keysNamedOnlyByOutsideCreators(numberOfLayouts);
         KeysByLayout keysGivenToInstancesSeen(numberOfLayouts);
         // Every statement is asked by itself, on all threads. The lists are sorted below, so the order in which the keys come says nothing.
         struct KeyNamed {
@@ -1685,7 +1685,7 @@ struct FieldResults {
                 for (const ValueFlowStatement& statement : inputs.bodies().statementsOf(index)) {
                     if (statement.kind != ValueFlowStatementKind::Operation)
                         continue;
-                    forEachKeyGivenToInstancesSeenToArrive(makers.of(worker), program.functions[index], statement, [&](LayoutID layout, PropertyKeyID key, uint8_t forms) {
+                    forEachKeyStoredOnArrivingInstances(makers.of(worker), program.functions[index], statement, [&](LayoutID layout, PropertyKeyID key, uint8_t forms) {
                         keysNamedInShare[share].append({ &keysGivenToInstancesSeen, layout, key, forms });
                     });
                     if (statement.opcode != Opcode::PropSet)
@@ -1697,7 +1697,7 @@ struct FieldResults {
                     auto nameFieldOfLayoutsIn = [&](ValueSetID seen, size_t mostLayouts, bool everyObjectMustHaveLayout, KeysByLayout& keysNamed) {
                         if (seen == ValueSets::nothing || ValueSets::isComplement(seen))
                             return;
-                        Vector<LayoutID, mostLayoutsFollowedToStore + 1> layouts;
+                        Vector<LayoutID, maxLayoutsFollowedToStore + 1> layouts;
                         bool holdsObjectWithoutLayout = false;
                         sets.forEachMember(seen, [&](ValueFlowObjectID object) {
                             LayoutID layout = inputs.universe().layoutOf(object);
@@ -1717,7 +1717,7 @@ struct FieldResults {
                     // `function route(request) { request.parsedUrl = ..; }`: whoever is given an object fills it on as well. What was followed to a parameter is not all that arrives there, so fewer layouts are believed.
                     bool isMadeHere = maker == Opcode::Call || maker == Opcode::Construct;
                     if (ValueSetID seen = inputs.solver().seenValuesOf(receiver); seen != inputs.solver().possibleValuesOf(receiver))
-                        nameFieldOfLayoutsIn(seen, isMadeHere ? mostLayoutsFollowedToStore : mostLayoutsFollowedToStoreIntoGivenObject, isMadeHere, isMadeHere ? keysNamedWhereObjectsWereFollowedTo : keysNamedWhereGivenObjectsWereFollowedTo);
+                        nameFieldOfLayoutsIn(seen, isMadeHere ? maxLayoutsFollowedToStore : mostLayoutsFollowedToStoreIntoGivenObject, isMadeHere, isMadeHere ? keysNamedAtFollowedUses : keysNamedWhereGivenObjectsWereFollowedTo);
                 }
             }
         });
@@ -1728,7 +1728,7 @@ struct FieldResults {
                     formsOfValuesSeenDefined.add(static_cast<uint64_t>(named.layout.index()) << 32 | named.key.index(), 0).iterator->value |= named.forms;
             }
         }
-        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedWhereObjectsWereFollowedTo, &keysNamedWhereGivenObjectsWereFollowedTo, &keysGivenToInstancesSeen }) {
+        for (KeysByLayout* keysNamed : { &keysNamedBehindReads, &keysNamedAtFollowedUses, &keysNamedWhereGivenObjectsWereFollowedTo, &keysGivenToInstancesSeen }) {
             for (Vector<PropertyKeyID>& keys : *keysNamed) {
                 AOT::sort(keys);
                 keys.shrink(std::unique(keys.begin(), keys.end()) - keys.begin());
@@ -1747,11 +1747,11 @@ struct FieldResults {
             // A literal says what it has. What a constructor makes is filled on by others.
             if (program.layouts[index].kind == LayoutKind::Instance)
                 uniteSortedKeys(keysByLayout[index], keysNamedBehindReads[index]);
-            keysNamedByMakersOutsideAlone[index] = keysNamedWhereObjectsWereFollowedTo[index];
-            keysNamedByMakersOutsideAlone[index].removeAllMatching([&](PropertyKeyID key) {
+            keysNamedOnlyByOutsideCreators[index] = keysNamedAtFollowedUses[index];
+            keysNamedOnlyByOutsideCreators[index].removeAllMatching([&](PropertyKeyID key) {
                 return std::ranges::binary_search(keysByLayout[index], key);
             });
-            uniteSortedKeys(keysByLayout[index], keysNamedWhereObjectsWereFollowedTo[index]);
+            uniteSortedKeys(keysByLayout[index], keysNamedAtFollowedUses[index]);
             // A literal says what it has. What Object.create() made inherits from an object that anybody may have given accessors. Of a class that is evaluated again and again nobody knows which evaluation made what is given.
             if (program.layouts[index].kind != LayoutKind::Instance || program.layouts[index].has(LayoutFlags::IsOfCreatedObject) || application.layouts[index].classFlow.evaluations != ExecutionCount::AtMostOnce)
                 keysNamedWhereGivenObjectsWereFollowedTo[index].clear();
@@ -1761,7 +1761,7 @@ struct FieldResults {
             });
             uniteSortedKeys(keysByLayout[index], keysNamedWhereGivenObjectsWereFollowedTo[index]);
             uniteSortedKeys(keysByLayout[index], accessors);
-            if (isBornEmptyAndFilledByNameAlone(LayoutID(index))) {
+            if (startsEmptyAndIsFilledByNameOnly(LayoutID(index))) {
                 uniteSortedKeys(keysByLayout[index], stores.keysOfValuesDefinedIn(LayoutID(index)));
                 uniteSortedKeys(keysByLayout[index], keysGivenToInstancesSeen[index]);
             }
@@ -1804,7 +1804,7 @@ struct FieldResults {
                     return haveCommonMember(program.at(family).completeMembers(), declarers->value.span());
                 })));
                 // Whoever stores a name that no type declares has got past the types.
-                isOutsideFamilies = isOutsideFamilies && !std::ranges::binary_search(keysNamedWhereObjectsWereFollowedTo[id.index()], key) && !std::ranges::binary_search(keysNamedWhereGivenObjectsWereFollowedTo[id.index()], key);
+                isOutsideFamilies = isOutsideFamilies && !std::ranges::binary_search(keysNamedAtFollowedUses[id.index()], key) && !std::ranges::binary_search(keysNamedWhereGivenObjectsWereFollowedTo[id.index()], key);
                 if (isOutsideFamilies || std::ranges::binary_search(keysDeclaredBelow[id.index()], key) || !canNameField(key) || keysOfFields.contains(key))
                     return true;
                 if (stores.accessorDefinedUnder(maker, id, key).isAccessor())
@@ -1849,23 +1849,23 @@ struct FieldResults {
             });
             keepMostAccessedKeys(counts, LimitID::MaxAppendedFieldsPerLayout, layout, 0, keys);
             // Fields that are added late lie beside the cell, where there is room for so many. One more would make every cell larger, and of these nobody knows which objects get them.
-            Vector<PropertyKeyID> namedByMakersOutside;
+            Vector<PropertyKeyID> namedByOutsideCreators;
             keys.removeAllMatching([&](PropertyKeyID key) {
-                bool isNamedByThemAlone = std::ranges::binary_search(keysNamedByMakersOutsideAlone[index], key);
-                if (isNamedByThemAlone)
-                    namedByMakersOutside.append(key);
-                return isNamedByThemAlone;
+                bool isNamedOnlyByThem = std::ranges::binary_search(keysNamedOnlyByOutsideCreators[index], key);
+                if (isNamedOnlyByThem)
+                    namedByOutsideCreators.append(key);
+                return isNamedOnlyByThem;
             });
-            keepMostAccessedKeys(counts, LimitID::MaxExtensionGranules, layout, numberOfInheritedKeys + keys.size(), namedByMakersOutside);
-            uniteSortedKeys(keys, namedByMakersOutside);
+            keepMostAccessedKeys(counts, LimitID::MaxExtensionGranules, layout, numberOfInheritedKeys + keys.size(), namedByOutsideCreators);
+            uniteSortedKeys(keys, namedByOutsideCreators);
             uniteSortedKeys(keys, accessors);
             keepMostAccessedKeys(counts, LimitID::FieldsInKeyOrder, layout, largestFieldCountBelow + numberOfInheritedKeys, keys);
         }
-        keysFilledByMakersOutside = WTF::move(keysNamedWhereObjectsWereFollowedTo);
+        keysFilledByOutsideCreators = WTF::move(keysNamedAtFollowedUses);
         return keysByLayout;
     }
 
-    void appendFields(const KeysByLayout& keysByLayout, const KeysByLayout& keysFilledByMakersOutside, ValueFlowFieldContents& contents) const
+    void appendFields(const KeysByLayout& keysByLayout, const KeysByLayout& keysFilledByOutsideCreators, ValueFlowFieldContents& contents) const
     {
         ValueSetMakers makers(inputs);
         forEachIndexInParallel(loops, numberOfLayouts, [&](unsigned index, unsigned worker) {
@@ -1873,7 +1873,7 @@ struct FieldResults {
             for (PropertyKeyID key : keysByLayout[index]) {
                 FlowAppendedField field;
                 field.key = key;
-                field.isFilledByMakers = std::ranges::binary_search(keysFilledByMakersOutside[index], key);
+                field.isFilledByCreators = std::ranges::binary_search(keysFilledByOutsideCreators[index], key);
                 OptionSet<ObjectMutation> possible;
                 OptionSet<Actor> open;
                 OptionSet<Actor> writers;
@@ -1882,7 +1882,7 @@ struct FieldResults {
                 bool isStoredBeforeObjectsLeak = true;
                 bool inheritsNothing = build.isEnabled(FlowResultKind::OwnNames, index);
                 bool isFirst = true;
-                bool isGivenValuesNobodyKnows = false;
+                bool isGivenUnknownValues = false;
                 std::optional<OptionSet<FieldForm>> formOfValue;
                 bool hasOneFormOfValue = true;
                 forEachLayoutBelow(LayoutID(index), [&](LayoutID below) {
@@ -1895,11 +1895,11 @@ struct FieldResults {
                     inheritsNothing = inheritsNothing && inheritsNothingUnder(maker, below, above, key);
                     possible.add(possibleMutationsOf(below));
                     open.add(actorsOpenOnFieldsOfObjectsWith(below));
-                    stored = maker.unite(stored, stores.getsCopiedProperties(below) ? stores.storedUnderNameItself(maker, below, key) : stores.storedUnder(maker, below, key));
+                    stored = maker.unite(stored, stores.getsCopiedProperties(below) ? stores.storedUnderExactName(maker, below, key) : stores.storedUnder(maker, below, key));
                     writers.add(stores.writersSeenUnder(below, key));
                     storedNumbers.unite(stores.numbersStoredUnder(below, key));
                     if (stores.getsCopiedProperties(below)) {
-                        isGivenValuesNobodyKnows = true;
+                        isGivenUnknownValues = true;
                         writers.add(Actor::KeysNobodyKnows);
                         if (stores.mayGetAccessorUnder(below, key))
                             possible.add(ObjectMutation::RedefineProperty);
@@ -1916,8 +1916,8 @@ struct FieldResults {
                 if (inheritsNothing)
                     field.flow.prototypeName = PrototypeNameState::AbsentOnPrototypes;
                 application.layouts[index].appendedFields.append(WTF::move(field));
-                if (isGivenValuesNobodyKnows)
-                    contents.appendedFieldsGivenValuesNobodyKnows[index].set(contents.storedInAppendedFields[index].size());
+                if (isGivenUnknownValues)
+                    contents.appendedFieldsWithUnknownValues[index].set(contents.storedInAppendedFields[index].size());
                 contents.storedInAppendedFields[index].append(stored);
                 contents.numbersStoredInAppendedFields[index].append(storedNumbers);
             }
@@ -1953,8 +1953,8 @@ struct FieldResults {
 
     bool assignmentsMeetAccessorOfClass(LayoutID id, PropertyKeyID key) const
     {
-        constexpr OptionSet<ObjectMutation> mutationsThatMayHideMember { ObjectMutation::ChangePrototype, ObjectMutation::RedefineProperty, ObjectMutation::ReachUnknownJavaScript };
-        if (program.at(id).kind != LayoutKind::Instance || program.at(key).kind != PropertyKeyKind::Text || possibleMutationsOf(id).containsAny(mutationsThatMayHideMember))
+        constexpr OptionSet<ObjectMutation> memberHidingMutations { ObjectMutation::ChangePrototype, ObjectMutation::RedefineProperty, ObjectMutation::ReachUnknownJavaScript };
+        if (program.at(id).kind != LayoutKind::Instance || program.at(key).kind != PropertyKeyKind::Text || possibleMutationsOf(id).containsAny(memberHidingMutations))
             return false;
         if (stores.getsNameNobodyLists(id) || stores.hasObjectOfCodeWithoutSolve(id))
             return false;
@@ -2394,10 +2394,10 @@ ValueFlowFieldContents computeFieldResults(const ValueFlowResultInputs& inputs, 
         if (LayoutID base = provenBaseOf(results.application, LayoutID(index)))
             results.layoutsDirectlyBelow[base.index()].append(LayoutID(index));
     }
-    KeysByLayout keysFilledByMakersOutside;
-    KeysByLayout appendedKeys = results.chooseAppendedKeys(keysFilledByMakersOutside);
+    KeysByLayout keysFilledByOutsideCreators;
+    KeysByLayout appendedKeys = results.chooseAppendedKeys(keysFilledByOutsideCreators);
     times.didFinish("fields: appended keys chosen"_s);
-    results.appendFields(appendedKeys, keysFilledByMakersOutside, contents);
+    results.appendFields(appendedKeys, keysFilledByOutsideCreators, contents);
     times.didFinish("fields: fields appended"_s);
     results.computeAddedKeys(appendedKeys);
     times.didFinish("fields: added keys"_s);
@@ -2432,16 +2432,16 @@ static void typeAppendedFields(const ValueFlowResultInputs& inputs, const ValueF
                     continue;
                 ValueSetID stored = contents.storedInAppendedFields[index][field];
                 ValueFlowPositionResult result = positions.resultAmongAllValues(maker.unite(stored, maker.of(ValueFlowUniverse::primitive(PrimitiveSet::Absent))));
-                bool isGivenValuesNobodyKnows = contents.appendedFieldsGivenValuesNobodyKnows[index].get(field);
+                bool isGivenUnknownValues = contents.appendedFieldsWithUnknownValues[index].get(field);
                 if (result.proof == ValueFlowProof::Proven && result.narrowed) {
                     const ValueFlowNumbers& storedNumbers = contents.numbersStoredInAppendedFields[index][field];
                     if (!storedNumbers.isEmpty())
                         storedNumbers.narrow(*result.narrowed);
                     fields[field].position.type = arena.intern(*result.narrowed);
-                    fields[field].position.isProven = !isGivenValuesNobodyKnows;
-                    fields[field].position.replacesExpectation = isGivenValuesNobodyKnows;
+                    fields[field].position.isProven = !isGivenUnknownValues;
+                    fields[field].position.replacesExpectation = isGivenUnknownValues;
                 }
-                bool takesDeclaredType = !fields[field].position.isProven && !isGivenValuesNobodyKnows && isDeclaredInFamilies[index].get(field);
+                bool takesDeclaredType = !fields[field].position.isProven && !isGivenUnknownValues && isDeclaredInFamilies[index].get(field);
                 if (inputs.build.isEnabled(FlowResultKind::HolderMutations, index) && !fields[field].accessor.isAccessor() && !takesDeclaredType)
                     flow.stability.add(FieldStability::IsNeverStoredWithOtherType);
                 if (flow.location.initialization == InitializationState::SetAtCreation && flow.stability == everyFlagOf<FieldStability>() && !inputs.sets().isEmpty(stored)) {

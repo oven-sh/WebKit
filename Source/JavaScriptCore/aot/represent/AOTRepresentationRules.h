@@ -32,8 +32,8 @@ inline constexpr RepresentationSet integerRepresentations { Representation::Int3
 inline constexpr RepresentationSet numberRepresentations { Representation::Int32, Representation::Int64, Representation::Double };
 inline constexpr RepresentationSet optionalRepresentations { Representation::OptionalInt64, Representation::OptionalDouble };
 
-// The length of a text that is one of so many is chosen by comparing its number.
-inline constexpr size_t maxLiteralsToldApartByLength = 4;
+// Up to this many literals, the length of a string is selected by comparing its literal number.
+inline constexpr size_t maxLiteralsDistinguishedByLength = 4;
 
 inline constexpr OpcodeSet constantsInFormOfUses {
     Opcode::Undefined, Opcode::Null, Opcode::Absent, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::KeyConstant

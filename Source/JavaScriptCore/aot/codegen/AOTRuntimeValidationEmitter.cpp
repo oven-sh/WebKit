@@ -163,8 +163,8 @@ void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& cont
 {
     if (callsOutlinedBody(m_program, user))
         return;
-    // checkIsNoFrameArray() asks more of an array.
-    FrameCellsAsked asked = mayBeArray(typeOf(operand)) ? FrameCellsAsked::AllButArrays : FrameCellsAsked::All;
+    // checkIsNoFrameArray() checks more for an array.
+    FrameCellFilter asked = mayBeArray(typeOf(operand)) ? FrameCellFilter::AllButArrays : FrameCellFilter::All;
     const OperandInfo& info = operandInfoOf(user.opcode, operandIndex);
     if (!info.uses.contains(OperandUse::Retains)) {
         if (effectRuleOf(user.opcode) == EffectRule::Access && mayLeakFramePointer(m_program, &inputs().flow, m_function, user, operandIndex))
@@ -205,7 +205,7 @@ void RuntimeValidationEmitter::checkRetainedOperand(const OperationContext& cont
 void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Value& user, ValueID operand, uint32_t operandIndex)
 {
     if (mayBeArray(typeOf(operand)) && !mayBeGivenFrameArray(m_program, &inputs().flow, m_function, user, operandIndex))
-        checkIsNotFrameCell(context, get(operand), std::nullopt, FrameCellsAsked::Arrays);
+        checkIsNotFrameCell(context, get(operand), std::nullopt, FrameCellFilter::Arrays);
 }
 
 void RuntimeValidationEmitter::checkIsNoFrameArray(const OperationContext& context, const Terminator& user, ValueID operand, uint32_t)
@@ -257,8 +257,8 @@ Integer RuntimeValidationEmitter::wordBehindHeaderAt(Pointer address)
     return Integer(m_out.load64(m_out.address(m_heaps.JSObject_butterfly, address.value(), JSObject::butterflyOffset())));
 }
 
-// B3 keeps what it has loaded from the header of a cell, and from the word behind it, across a call of which AOTHeaps::mayConvertCells() says no,
-// and the word behind the header of an array across a call of which AOTHeaps::mayReplaceStorageOfArrays() says no.
+// B3 keeps what it loaded from a cell's header, and from the word after it, across a call for which AOTHeaps::mayConvertCells() is false,
+// and the word after an array's header across a call for which AOTHeaps::mayReplaceStorageOfArrays() is false.
 RuntimeValidationEmitter::OperandCells RuntimeValidationEmitter::captureOperandCells(const OperationContext& context, ComparedCells compared)
 {
     OperandCells result;

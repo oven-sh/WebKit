@@ -301,7 +301,7 @@ static bool areRegExpLiteralsSubset(const Type& a, const Type& b)
     return !a.regExpLiteralSet.isEmpty() && a.regExpLiteralSet.isSubsetOf(b.regExpLiteralSet);
 }
 
-// An object of a class that is written below a built-in class is an instance of that class, with a prototype and names of its own.
+// An object of a subclass of a built-in class is an instance of that class, with its own prototype and properties.
 BuiltinClassID builtinClassWrittenAbove(const TypeTable& types, LayoutID layout)
 {
     const Program* program = types.program();
@@ -312,13 +312,13 @@ bool isInsideSomeClassPart(const TypeTable& types, LayoutID layout, const Type& 
 {
     BuiltinClassID builtinClass = builtinClassWrittenAbove(types, layout);
     return builtinClass && std::ranges::any_of(type.classes, [&](const ClassPart& part) {
-        bool saysOnlyThatItIsAnInstance = !part.contentsAreProven && part.provenPristine.isEmpty() && !(part.builtinClass == BuiltinClasses::RegExp && !type.regExpLiteralSet.isEmpty());
-        return saysOnlyThatItIsAnInstance && types.builtins().isSameOrSubclassOf(builtinClass, part.builtinClass);
+        bool onlyProvesInstance = !part.contentsAreProven && part.provenPristine.isEmpty() && !(part.builtinClass == BuiltinClasses::RegExp && !type.regExpLiteralSet.isEmpty());
+        return onlyProvesInstance && types.builtins().isSameOrSubclassOf(builtinClass, part.builtinClass);
     });
 }
 
-// What the constructor of one class makes is an instance of the classes above it. It passes for an instance of another class where the test of that class cannot tell the two apart.
-bool mayHoldWhatConstructorMakes(const BuiltinTable& builtins, BuiltinClassID holder, BuiltinClassID constructed)
+// What one class's constructor creates is an instance of its superclasses. It passes for an instance of another class if that class's test cannot distinguish the two.
+bool mayHoldConstructedInstances(const BuiltinTable& builtins, BuiltinClassID holder, BuiltinClassID constructed)
 {
     if (builtins.isSameOrSubclassOf(constructed, holder) || builtins.isSameOrSubclassOf(holder, constructed))
         return true;
@@ -331,7 +331,7 @@ bool mayBeInsideSomeClassPart(const TypeTable& types, LayoutID layout, const Typ
 {
     BuiltinClassID builtinClass = builtinClassWrittenAbove(types, layout);
     return builtinClass && std::ranges::any_of(type.classes, [&](const ClassPart& part) {
-        return mayHoldWhatConstructorMakes(types.builtins(), part.builtinClass, builtinClass);
+        return mayHoldConstructedInstances(types.builtins(), part.builtinClass, builtinClass);
     });
 }
 

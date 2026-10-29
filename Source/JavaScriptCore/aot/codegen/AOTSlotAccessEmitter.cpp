@@ -308,7 +308,7 @@ void SlotAccessEmitter::readDeferringSlot(const ValueContext& value, bool readsE
     define(value, testsForField ? readIfMemberHasField(value, cell, access, load) : load());
 }
 
-// Where every receiver leaves the closure of one function unmade, over itself or over nothing, a stub makes it as the allocation would have.
+// If every receiver defers the closure of the same function, capturing itself or nothing, a stub creates it as the allocation would have.
 CellPointer SlotAccessEmitter::makeDeferredClosure(const ValueContext& value, CellPointer cell, const FieldAccess& access)
 {
     FunctionID function;
@@ -536,7 +536,7 @@ static OptionSet<FieldForm> formCreatedBy(OptionSet<PropertyDescriptorFlags> fla
     return form;
 }
 
-// Compiled code calls the getter that it finds in a filled slot as one of the functions that the type of the field lists.
+// Compiled code calls the getter found in a filled slot as one of the functions listed in the field's type.
 bool SlotAccessEmitter::slotTakesAccessor(const Field& field, SlotRepresentation slot, ValueID getter, ValueID setter) const
 {
     auto listsOnlyFunctionsOfProgram = [&](ValueID function) {
@@ -557,7 +557,7 @@ std::optional<FieldAccess> SlotAccessEmitter::fieldCreatedByDefinition(const Val
     ValueID stored = definition.valueOperand();
     const Type& object = typeOf(definition.objectOperand());
     LayoutID layoutID = object.hasOnlyLayouts() ? object.singleLayout(m_program) : LayoutID();
-    if (!layoutID || m_placement.layout(layoutID).storage != LayoutStorage::CompiledObject || m_placement.layout(layoutID).keysAreNeverEnumerated)
+    if (!layoutID || m_placement.layout(layoutID).storage != LayoutStorage::CompiledObject)
         return std::nullopt;
     ConstantKey constant = constantKeyOf(m_program, typeOf(definition.computedKeyOperand()));
     if (constant.kind != ConstantKeyKind::Text)
@@ -567,7 +567,7 @@ std::optional<FieldAccess> SlotAccessEmitter::fieldCreatedByDefinition(const Val
     if (!field)
         return std::nullopt;
 
-    // The attributes of a property in a slot are the form of its field.
+    // A property stored in a slot has the attributes given by its field's form.
     const Field& declaration = m_program.at(layoutID).fields[*field];
     if (declaration.form != formCreatedBy(definition.descriptorFlags()) || declaration.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsHidden }) || isFilledAtBirth(m_program, { layoutID, *field }))
         return std::nullopt;
@@ -599,7 +599,7 @@ CellPointer SlotAccessEmitter::newGetterSetter(const ValueContext& context, Valu
         CellPointer none(m_out.intPtrZero);
         return callOperation<CellPointer>(context, RuntimeOperation::NewGetterSetter, { getterID ? in<CellPointer>(getterID) : none, setterID ? in<CellPointer>(setterID) : none });
     };
-    // The allocation in line takes about 100 bytes.
+    // The inline allocation takes about 100 bytes.
     if (context.shape() != CodeShape::Fast)
         return callRunTime();
 
@@ -631,38 +631,64 @@ SlotAccessEmitter::CreationByDefinition SlotAccessEmitter::tryCreateFieldByDefin
     ValueID stored = definition->valueOperand();
     LBasicBlock leftToRunTime = nullptr;
 
-    Word32 orderWordAfter;
-    std::optional<StateOfNewObject> newObject = stateOfNewObjectBefore(definition, definition->objectOperand());
+    SlotEmitter& slots = emitter<SlotEmitter>();
+    MemoryLocation location = MemoryLocation::objectField(key, access->receivers);
+    auto goOnIf = [&](Condition condition) {
+        if (!leftToRunTime)
+            leftToRunTime = newBlock();
+        LBasicBlock next = newBlock();
+        branch(condition, { normalEdge(next), unlikelyEdge(leftToRunTime) });
+        m_out.appendTo(next);
+    };
+    // The runtime notifies the caches about objects that inherit from a prototype.
+    auto goOnUnlessPrototype = [&] {
+        if (!receiverStateOf(m_program, access->receivers).cannot(ObjectMutation::BecomePrototype))
+            goOnIf(hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits));
+    };
+    auto ensureStorage = [&] {
+        if (access->slot.isOutOfLine())
+            slots.ensureExtensionHolds(definition, cell, access->extensionWord, granuleBitOf(access->slot.offset), granuleBitsOfStoresBehind(definition, *access), OwnerBarrier::Emitted);
+    };
+
+    // An order word without flags says that the object is extensible and holds every property in its slot.
+    bool listsKey = mayCreateListedField(*access);
+    std::optional<Word32> orderWordAfter;
+    std::optional<KeyOrderStep> step;
+    std::optional<StateOfNewObject> newObject = listsKey ? stateOfNewObjectBefore(definition, definition->objectOperand()) : std::nullopt;
     if (std::optional<uint32_t> known = newObject ? orderWordAfterCreating(newObject->orderWord, access->receivers, singleElementSpan(key)) : std::nullopt)
         orderWordAfter = word32(static_cast<int32_t>(*known));
     else {
-        // The order word as a whole says that the object is extensible, holds every property in its slot, and does not list the key yet.
-        std::optional<KeyOrderStep> step = testLikeliestKeyOrderStep(cell, access->receivers, singleElementSpan(key));
-        if (!step)
-            return { };
-        leftToRunTime = newBlock();
-        LBasicBlock lacksField = newBlock();
-        branch(step->applies, { normalEdge(lacksField), unlikelyEdge(leftToRunTime) });
-        m_out.appendTo(lacksField);
-        // The run time tells the caches about the objects below a prototype.
-        if (!receiverStateOf(m_program, access->receivers).cannot(ObjectMutation::BecomePrototype)) {
-            LBasicBlock isNotPrototype = newBlock();
-            branch(hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits), { normalEdge(isNotPrototype), unlikelyEdge(leftToRunTime) });
-            m_out.appendTo(isNotPrototype);
+        if (listsKey)
+            step = testLikeliestKeyOrderStep(cell, access->receivers, singleElementSpan(key));
+        if (step && definition.shape() != CodeShape::Fast) {
+            // One test: the key comes next in the order, so the object does not list it yet. An object that got its keys in another order is left to the run time.
+            goOnIf(step->applies);
+            orderWordAfter = step->orderWordAfter;
+        } else {
+            Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(cell);
+            goOnIf(hasNoBits(orderWord, ~orderAndCountMask));
+            if (listsKey)
+                goOnIf(notEqual(bitAnd(orderWord, orderWordOrderMask), orderStoredOutOfLine));
         }
-        orderWordAfter = step->orderWordAfter;
+        goOnUnlessPrototype();
     }
+    ensureStorage();
+    if (!orderWordAfter)
+        goOnIf(slots.holdsAbsent(slots.addressOf(cell, access->slot, location, extensionWordOf(*access)), access->slot.representation));
 
-    // Whatever allocates comes first: nothing stands between the stores and their barrier.
-    SlotEmitter& slots = emitter<SlotEmitter>();
-    Representation held = Typed::representationOf(access->slot.representation);
+    // Everything that allocates comes first, so nothing separates the stores from their barrier.
     const Type& storedType = stored ? typeOf(stored) : Type::object();
     Operand operand = stored ? get(stored) : Operand(newGetterSetter(definition, definition->getterOperand(), definition->setterOperand()));
-    operand = emitter<ConversionEmitter>().inRepresentation(definition, operand, storedType, held);
-    if (access->slot.isOutOfLine())
-        slots.ensureExtensionHolds(definition, cell, access->extensionWord, granuleBitOf(access->slot.offset), granuleBitsOfStoresBehind(definition, *access), OwnerBarrier::Emitted);
-    storeField(cell, m_heaps.AOTObject_orderWord, orderWordAfter);
-    slots.storeSlot(cell, access->slot, MemoryLocation::objectField(key, access->receivers), operand, extensionWordOf(*access), storedType);
+    operand = emitter<ConversionEmitter>().inRepresentation(definition, operand, storedType, Typed::representationOf(access->slot.representation));
+    // The key is listed while the slot still says that the field is missing.
+    if (orderWordAfter)
+        storeField(cell, m_heaps.AOTObject_orderWord, *orderWordAfter);
+    else if (listsKey) {
+        takeKeyOrderStepOr(cell, step, [&] {
+            didCreateField(definition, cell, *access, true);
+        });
+    }
+    slots.storeSlot(cell, access->slot, location, operand, extensionWordOf(*access), storedType);
     if (storedType.hasCells())
         emitter<BarrierEmitter>().barrier(definition, cell);
     return { true, leftToRunTime };
@@ -849,7 +875,7 @@ bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& s
     LayoutSetID receivers;
     if (store.opcode == Opcode::DefineOwnProperty) {
         std::optional<FieldAccess> access = fieldCreatedByDefinition(store);
-        if (!access)
+        if (!access || !mayCreateListedField(*access))
             return false;
         state.mayHaveExtension |= access->slot.isOutOfLine();
         createdKeys.append(access->key);
@@ -897,7 +923,7 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const 
                 if (id == object)
                     return stateAtBirth(id);
                 const Value& value = m_function.at(id);
-                // A definition that finds the object new creates its field without asking the run time, as a store by slot does.
+                // A definition on a newly created object creates its field without calling the runtime, like a store by slot.
                 bool storesBySlotIntoObject = (storesBySlot.contains(value.opcode) || value.opcode == Opcode::DefineOwnProperty) && analyses().identityOf(value.objectOperand()) == object;
                 if (storesBySlotIntoObject)
                     storesOnTheWay.append(id);

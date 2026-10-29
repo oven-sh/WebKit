@@ -30,7 +30,7 @@ static OperatorForm chooseNumericForm(Opcode opcode, const OperatorTypes& types)
     return OperatorForm::Generic;
 }
 
-static bool isSumOfEmptyTextAndPossibleText(const OperatorSite& site, const Type& text, const Type& other)
+static bool isEmptyStringPlusPossibleString(const OperatorSite& site, const Type& text, const Type& other)
 {
     return text.singleStringLiteral() == site.typing.program.strings.emptyString() && other.primitives & Primitive::AnyString && !(other.primitives & Primitive::Absent);
 }
@@ -41,7 +41,7 @@ static OperatorForm chooseConcatenationForm(const OperatorSite& site, const Oper
     const Type& left = types.left;
     const Type& right = types.right;
     if (left.hasObjects() || right.hasObjects()) {
-        if (isSumOfEmptyTextAndPossibleText(site, left, right) || isSumOfEmptyTextAndPossibleText(site, right, left))
+        if (isEmptyStringPlusPossibleString(site, left, right) || isEmptyStringPlusPossibleString(site, right, left))
             return OperatorForm::MayBeString;
         return OperatorForm::Generic;
     }

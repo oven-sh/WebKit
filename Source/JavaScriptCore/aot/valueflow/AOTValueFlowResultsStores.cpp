@@ -1204,7 +1204,7 @@ void StoresByLayout::noteWritesInto(ValueSetMaker& maker, StoresIntoObjects& sto
         bool isFilledByAllocation = field && fieldAt(m_inputs.program, *field).flags.contains(FieldFlags::IsRequired);
         note(maker, stores, name, writes.value, isFilledByAllocation, false);
         noteWriters(stores, writes);
-        noteNumbers(stores, name, writes.numbersWhereNoReadIsFollowed());
+        noteNumbers(stores, name, writes.numbersWithoutFollowedReads());
         if (name.kind == ValueFlowNameKind::Property) {
             StoredUnderKey& stored = stores.underKey.add(name.payload, StoredUnderKey { }).iterator->value;
             stored.isGivenValueByOperation = true;
@@ -1580,7 +1580,7 @@ void StoresByLayout::noteWrites()
                         continue;
                     note(maker, placeholders[index].stores, write.name(), write.value, false, write.isNamedByOperation);
                     noteWriters(placeholders[index].stores, write);
-                    noteNumbers(placeholders[index].stores, write.name(), write.numbersWhereNoReadIsFollowed());
+                    noteNumbers(placeholders[index].stores, write.name(), write.numbersWithoutFollowedReads());
                 }
             }
             return;
@@ -1591,7 +1591,7 @@ void StoresByLayout::noteWrites()
                 const WritesThroughSet& write = writes[position];
                 note(maker, list.stores, write.name(), write.value, !write.isStoredAfterCreation, false);
                 noteWriters(list.stores, write);
-                noteNumbers(list.stores, write.name(), write.numbersWhereNoReadIsFollowed());
+                noteNumbers(list.stores, write.name(), write.numbersWithoutFollowedReads());
             }
             return;
         }
@@ -1614,7 +1614,7 @@ void StoresByLayout::noteWrites()
         }
         for (uint32_t position : writesThroughPlaceholdersInto[layout]) {
             note(maker, m_storesOfLayout[layout], writes[position].name(), writes[position].value, false, false);
-            noteNumbers(m_storesOfLayout[layout], writes[position].name(), writes[position].numbersWhereNoReadIsFollowed());
+            noteNumbers(m_storesOfLayout[layout], writes[position].name(), writes[position].numbersWithoutFollowedReads());
         }
     });
 
@@ -1834,7 +1834,7 @@ ValueSetID StoresByLayout::storedUnder(ValueSetMaker& maker, LayoutID layout, Pr
     return stored;
 }
 
-ValueSetID StoresByLayout::storedUnderNameItself(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
+ValueSetID StoresByLayout::storedUnderExactName(ValueSetMaker& maker, LayoutID layout, PropertyKeyID key) const
 {
     ValueSetID stored = ValueSets::nothing;
     forEachSourceOf(layout, ObjectsOfLayout::All, [&](const StoresIntoObjects& stores) {

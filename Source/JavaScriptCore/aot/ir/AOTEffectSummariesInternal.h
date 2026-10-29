@@ -271,7 +271,7 @@ constexpr bool isSummarizedByRole(FunctionRole role) { return role == FunctionRo
 uint64_t parametersWhoseContentsAreCalled(const Program&, FunctionID, const BorrowedParameters&);
 
 ExitReachability computeExitReachability(const Function&);
-enum class CalleesAreRead : uint8_t { AsTheyAre, ByTypesOfOperands };
+enum class CalleesAreRead : uint8_t { AsTheyAre, ByOperandTypes };
 BodySummary summarizeBodyLocally(const EffectContext&, FunctionID, FunctionAnalyses&, BodyReferenceCollector* = nullptr, CalleesAreRead = CalleesAreRead::AsTheyAre);
 FunctionSummary createFunctionSummary(Effects onReturn, Effects onThrow, Vector<ParameterSummary>&&, UnknownCodeWitness);
 
@@ -284,8 +284,8 @@ public:
     EffectSummarizer(const Program&, const FlowResults&, BuildContext&, BodySummaries&, Witnesses);
 
     void setIsOnlyCheck() { m_isOnlyCheck = true; }
-    // Only from nothing: what is kept does not say which other bodies it was made from.
-    void readCalleesByTypesOfOperands() { m_calleesAreRead = CalleesAreRead::ByTypesOfOperands; }
+    // Only from scratch: the cached result does not record which other bodies it was computed from.
+    void readCalleesByOperandTypes() { m_calleesAreRead = CalleesAreRead::ByOperandTypes; }
     void giveReferencesTo(BodyReferences* references) { m_references = references; }
     void update(EffectSummaries&);
     void bringSeedUpToDate(EffectSummaries&);

@@ -204,7 +204,7 @@ void becomeForwardedCall(Value& call, const ForwardedCallPlan& plan)
     if (plan.constructs) {
         call.become(plan.list ? Opcode::ConstructList : Opcode::Construct);
         call.setNewTargetOperand(plan.newTarget);
-        // What is written Reflect.construct(..) constructs in place, and a construction is no tail call.
+        // A call written as Reflect.construct(..) constructs in place, and a construct is never a tail call.
         call.isTailCall = false;
     } else {
         call.become(plan.list ? Opcode::CallList : Opcode::Call);

@@ -250,7 +250,7 @@ static_assert(sizeof(ImageInnerEntry) == 8);
 struct StubAddressInImage {
     uint64_t key;
     uint32_t offset;
-    // Code calls the stub as it calls a function, and the stub goes on to the callee.
+    // Code calls the stub like a function, and the stub jumps to the callee.
     uint32_t usesCallConvention;
 };
 static_assert(sizeof(StubAddressInImage) == 16);
@@ -258,17 +258,17 @@ static_assert(sizeof(StubAddressInImage) == 16);
 // SlotHandlers has an offset into the shared code for each member of PropertyCacheWords::handlers, in the order of that array.
 static constexpr uint32_t offsetOfAbsentStub = 0xffffffffu;
 
-// What a call site says of the function object that it calls.
+// What a call site records about the function object it calls.
 class CalleeOfSite {
 public:
-    // The caller has made it itself and has handed it to nobody.
+    // The caller created it and has not passed it to anything.
     static constexpr CalleeOfSite ownFunctionObject() { return CalleeOfSite(0, 0); }
-    // It lies in the frame of the caller, so many words from the place of the frame record.
+    // It is in the caller's frame, at this word offset from the frame record.
     static constexpr CalleeOfSite inFrame(int32_t word) { return CalleeOfSite(1 + 2 * (word < 0 ? 2 * static_cast<uint32_t>(-(word + 1)) + 1 : 2 * static_cast<uint32_t>(word)), 0); }
-    // The word holds it, or the environment in whose field it lies once it is made: SlotData::encoded().
+    // The word holds it, or the environment whose field holds it once it is created: SlotData::encoded().
     static constexpr CalleeOfSite inEnvironmentInFrame(int32_t word, uint32_t field) { return CalleeOfSite(inFrame(word).m_bits + 1, field); }
     static constexpr CalleeOfSite fromBits(uint32_t bits, uint32_t field) { return CalleeOfSite(bits, field); }
-    static constexpr bool bitsNameField(uint32_t bits) { return bits && !(bits & 1); }
+    static constexpr bool bitsEncodeField(uint32_t bits) { return bits && !(bits & 1); }
 
     constexpr bool isOwnFunctionObject() const { return !m_bits; }
     constexpr int32_t wordInFrame() const
@@ -277,7 +277,7 @@ public:
         uint32_t word = (m_bits - 1) / 2;
         return word & 1 ? -static_cast<int32_t>(word / 2) - 1 : static_cast<int32_t>(word / 2);
     }
-    constexpr std::optional<uint32_t> fieldOfEnvironment() const { return bitsNameField(m_bits) ? std::optional(m_field) : std::nullopt; }
+    constexpr std::optional<uint32_t> fieldInEnvironment() const { return bitsEncodeField(m_bits) ? std::optional(m_field) : std::nullopt; }
     constexpr uint32_t bits() const { return m_bits; }
     friend constexpr bool operator==(CalleeOfSite, CalleeOfSite) = default;
 
@@ -291,8 +291,8 @@ private:
     uint32_t m_bits;
     uint32_t m_field;
 };
-static_assert(CalleeOfSite::inFrame(0).wordInFrame() == 0 && CalleeOfSite::inFrame(-1).wordInFrame() == -1 && CalleeOfSite::inFrame(7).wordInFrame() == 7 && !CalleeOfSite::inFrame(0).isOwnFunctionObject() && !CalleeOfSite::inFrame(-3).fieldOfEnvironment());
-static_assert(CalleeOfSite::inEnvironmentInFrame(-3, 0).wordInFrame() == -3 && CalleeOfSite::inEnvironmentInFrame(0, 9).fieldOfEnvironment() == 9u && !CalleeOfSite::inEnvironmentInFrame(0, 0).isOwnFunctionObject());
+static_assert(CalleeOfSite::inFrame(0).wordInFrame() == 0 && CalleeOfSite::inFrame(-1).wordInFrame() == -1 && CalleeOfSite::inFrame(7).wordInFrame() == 7 && !CalleeOfSite::inFrame(0).isOwnFunctionObject() && !CalleeOfSite::inFrame(-3).fieldInEnvironment());
+static_assert(CalleeOfSite::inEnvironmentInFrame(-3, 0).wordInFrame() == -3 && CalleeOfSite::inEnvironmentInFrame(0, 9).fieldInEnvironment() == 9u && !CalleeOfSite::inEnvironmentInFrame(0, 0).isOwnFunctionObject());
 
 // frameRanges says whether the function has its frame at a return address, and at nothing else: it holds the distances between the offsets at which the answer changes, in units of codeOffsetUnit.
 struct SideTableInputs {
@@ -323,7 +323,7 @@ struct SideTableParts {
     uint32_t firstFrameMapWord { 0 };
     uint32_t numberOfFrameMapWords { 0 };
     std::span<const uint8_t> handlers;
-    // Each site as its distance from the one in front, CalleeOfSite::bits(), and the field where the bits name one.
+    // Each site is encoded as its distance from the previous site, CalleeOfSite::bits(), and the field if the bits encode one.
     std::span<const uint8_t> calleesOfSites;
     // Each site as its distance from the one in front, and its function.
     std::span<const uint8_t> constructedCallees;
@@ -402,7 +402,7 @@ inline void SideTableParts::append(Vector<uint8_t>& stream, const SideTableInput
             RELEASE_ASSERT(site > previous);
             appendVarint(rows, site - std::exchange(previous, site));
             appendVarint(rows, callee.bits());
-            if (std::optional<uint32_t> field = callee.fieldOfEnvironment())
+            if (std::optional<uint32_t> field = callee.fieldInEnvironment())
                 appendVarint(rows, *field);
         }
         appendVarint(stream, rows.size());
@@ -430,7 +430,7 @@ inline std::optional<CalleeOfSite> SideTableParts::calleeOfSiteAt(uint32_t site)
     while (cursor < end && listed < site) {
         listed += readVarint(cursor);
         uint32_t bits = static_cast<uint32_t>(readVarint(cursor));
-        uint32_t field = CalleeOfSite::bitsNameField(bits) ? static_cast<uint32_t>(readVarint(cursor)) : 0;
+        uint32_t field = CalleeOfSite::bitsEncodeField(bits) ? static_cast<uint32_t>(readVarint(cursor)) : 0;
         if (listed == site)
             return CalleeOfSite::fromBits(bits, field);
     }

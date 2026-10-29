@@ -457,7 +457,7 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
         }
     };
 
-    // Only a name that begins with a digit spells an index. Of a character of 16 bits this looks at the low half. The name has a character.
+    // Only a name that starts with a digit can be an index. For a 16-bit character this checks the low byte. The name is not empty.
     auto branchIfNameBeginsWithDigit = [&] {
         jit.loadPtr(Address(r.uid, StringImpl::dataOffset()), r.index);
         jit.load8(Address(r.index), r.index);

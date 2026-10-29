@@ -60,7 +60,7 @@ public:
     template<typename Functor> auto runProgramPassWithoutEditor(PassID, Program&, ProgramAnalyses&, const Functor&, BodiesAreChanged = BodiesAreChanged::Anyhow) -> std::invoke_result_t<Functor>;
     template<typename Functor> auto runAnalysis(PassID, const Program&, const Functor&) -> std::invoke_result_t<Functor>;
     // The analysis may not use the runner. What runs beside it may: it runs other analyses.
-    // With a lower priority, what runs beside it has the threads that the analysis leaves idle.
+    // With a lower priority, the concurrent task only gets the threads that the analysis leaves idle.
     template<typename Functor, typename Beside> auto runAnalysisBeside(PassID, const Program&, const Functor&, const Beside&, TaskPriority priorityOfBeside = TaskPriority::Foreground) -> std::invoke_result_t<Functor>;
     // The first step of the analysis runs alone, and what runs beside the second step finds what it has made.
     template<typename First, typename Second, typename Beside> auto runAnalysisInTwoSteps(PassID, const Program&, const First&, const Second&, const Beside&, TaskPriority priorityOfBeside = TaskPriority::Foreground) -> std::invoke_result_t<Second>;
@@ -299,7 +299,7 @@ private:
     enum class MayChangeBodies : bool { No, Yes };
     std::optional<PassTimer> beginProgramPass(PassID, const Program&, MayChangeBodies = MayChangeBodies::No);
     void endProgramPass(PassID, const Program&, PassTimer, PassOutcome);
-    void runTogether(NOESCAPE const ScopedLambda<void()>&, NOESCAPE const ScopedLambda<void()>&, TaskPriority priorityOfSecond) const;
+    void runTogether(NOESCAPE const ScopedLambda<void()>&, NOESCAPE const ScopedLambda<void()>&, TaskPriority secondPriority) const;
     bool canVerify(IRForm form) const { return form != IRForm::Placed || m_verifierInputs.placed; }
     void verifyAfterProgramPass(const PassDescriptor&, const Program&) const;
 

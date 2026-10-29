@@ -395,7 +395,7 @@ private:
         TypeFit fit = fitOfLayout(layout);
         m_isInside &= fit == TypeFit::Inside;
         m_isOutside &= fit == TypeFit::Outside;
-        m_fitsIfPristine &= fit == TypeFit::Inside || isInstanceThatIsNeverPristine(layout);
+        m_fitsIfPristine &= fit == TypeFit::Inside || isNeverPristineInstance(layout);
     }
 
     TypeFit fitOfMember(BuiltinPrimitive member) const { return has(member) ? TypeFit::Inside : TypeFit::Outside; }
@@ -405,7 +405,7 @@ private:
     TypeFit fitOfFunctions() const;
     TypeFit fitOfBuiltin(BuiltinID) const;
     TypeFit fitOfLayout(LayoutID) const;
-    bool isInstanceThatIsNeverPristine(LayoutID) const;
+    bool isNeverPristineInstance(LayoutID) const;
     TypeFit fitOfClassPart(const ClassPart&);
     TypeFit fitOfContents(const ClassPart&, const BuiltinTypePart& admitting) const;
 
@@ -589,7 +589,7 @@ TypeFit FitWalk::fitOfLayout(LayoutID layout) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool FitWalk::isInstanceThatIsNeverPristine(LayoutID layout) const
+bool FitWalk::isNeverPristineInstance(LayoutID layout) const
 {
     BuiltinClassID builtinClass = m_program.at(layout).writtenBuiltinBase;
     const BuiltinTypePart* admitting = builtinClass ? findPartAdmitting(m_table, m_tested, builtinClass) : nullptr;

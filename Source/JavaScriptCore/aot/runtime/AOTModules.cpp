@@ -106,6 +106,7 @@ void Modules::visitRoots(Visitor& visitor)
 #undef AOT_VISIT_REFERENCE
         }
         visitor.appendUnbarriered(m_namespaceStructure);
+        visitor.appendUnbarriered(m_extensibleNamespaceStructure);
     });
 }
 
@@ -524,7 +525,7 @@ void Modules::setNamespace(ModuleID module, ModulePhase phase, JSObject* namespa
         ensureLoaded(module).namespaceObjectFor(phase).set(*this, namespaceObject);
 }
 
-JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
+JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase, bool shouldPreventExtensions)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -542,7 +543,7 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
     // The names of a file are taken once, for whoever imports it and for the host.
     if (moduleData.kind == ModuleKind::CommonJs) {
         if (std::optional<ModuleID> face = m_table.faceOfFile(module))
-            RELEASE_AND_RETURN(scope, moduleNamespace(*face, phase));
+            RELEASE_AND_RETURN(scope, moduleNamespace(*face, phase, shouldPreventExtensions));
     }
 
     bool ranCode = false;
@@ -582,22 +583,26 @@ JSObject* Modules::createNamespace(ModuleID module, ModulePhase phase)
         exportObjects.names->setIndex(vm, i, text);
     }
 
-    if (!m_namespaceStructure) {
-        m_namespaceStructure = ModuleNamespace::createStructure(vm, realm, realm->moduleNamespaceObjectStructure()->storedPrototype());
+    bool isRequired = phase == ModulePhase::Evaluation && m_modulesWithMarkOfRequire.get(module.index());
+    if (phase == ModulePhase::Evaluation && m_modulesWithExtensibleNamespace.get(module.index()))
+        shouldPreventExtensions = false;
+    Structure*& structure = shouldPreventExtensions ? m_namespaceStructure : m_extensibleNamespaceStructure;
+    if (!structure) {
+        structure = ModuleNamespace::createStructure(vm, realm, realm->moduleNamespaceObjectStructure()->storedPrototype(), shouldPreventExtensions);
         m_storedReferences.recordAll();
     }
-    ModuleNamespace* namespaceObject = ModuleNamespace::create(vm, m_namespaceStructure, module, phase, exportObjects);
-    if (phase == ModulePhase::Evaluation && m_modulesWithMarkOfRequire.get(module.index()) && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl()))
+    ModuleNamespace* namespaceObject = ModuleNamespace::create(vm, structure, module, phase, exportObjects);
+    if (isRequired && !namespaceObject->hasExport(vm.propertyNames->__esModule.impl()))
         namespaceObject->setESModuleMarker(true);
     setNamespace(module, phase, namespaceObject);
     return namespaceObject;
 }
 
-JSObject* Modules::moduleNamespace(ModuleID module, ModulePhase phase)
+JSObject* Modules::moduleNamespace(ModuleID module, ModulePhase phase, bool shouldPreventExtensions)
 {
     if (JSObject* namespaceObject = namespaceIfCreated(module, phase))
         return namespaceObject;
-    return createNamespace(module, phase);
+    return createNamespace(module, phase, shouldPreventExtensions);
 }
 
 JSObject* Modules::importMeta(ModuleID module)
@@ -2090,7 +2095,7 @@ void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>& functor)
 
 void forEachFilePathStartingWith(StringView start, const ScopedLambda<IterationStatus(const String&)>& functor)
 {
-    Image::forEachPublishedAsCurrent([&](const Image& image) {
+    Image::forEachPublishedImage([&](const Image& image) {
         return ModuleTable(image.programTables()).forEachFilePathStartingWith(start, functor);
     });
 }
@@ -2676,9 +2681,10 @@ bool ModuleRecord::readyForSyncExecution(VisitedModuleRecords& seen)
 
 const ClassInfo ModuleNamespace::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleNamespace) };
 
-Structure* ModuleNamespace::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+Structure* ModuleNamespace::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, bool shouldPreventExtensions)
 {
-    return Structure::preventExtensionsTransition(vm, Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info()));
+    Structure* structure = Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    return shouldPreventExtensions ? Structure::preventExtensionsTransition(vm, structure) : structure;
 }
 
 ModuleNamespace::ModuleNamespace(VM& vm, Structure* structure, ModuleID module, ModulePhase phase, const DynamicExports& dynamicExports)
@@ -2719,7 +2725,7 @@ void ModuleNamespace::ensureOwnStructure(VM& vm)
     // A Structure with properties may be shared with another namespace object.
     if (hasOwnStructure() || isValidOffset(structure()->maxOffset()))
         return;
-    setStructure(vm, createStructure(vm, realm(), structure()->storedPrototype()));
+    setStructure(vm, createStructure(vm, realm(), structure()->storedPrototype(), !structure()->isStructureExtensible()));
     m_hasOwnStructure = true;
 }
 
@@ -2745,7 +2751,7 @@ std::optional<unsigned> ModuleNamespace::find(UniquedStringImpl* name) const
 
 bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<UniquedStringImpl*, 8>& names, MarkedArgumentBuffer& values)
 {
-    if (m_isDeferred || m_mayNeedEvaluation || m_dynamicExportNames)
+    if (m_isDeferred || m_mayNeedEvaluation || m_dynamicExportNames || isValidOffset(structure()->maxOffset()))
         return false;
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Modules& modules = this->modules();
@@ -2764,6 +2770,15 @@ bool ModuleNamespace::tryReadExports(JSGlobalObject* globalObject, Vector<Unique
 bool ModuleNamespace::isSymbolLikeKey(UniquedStringImpl* name) const
 {
     return name->isSymbol() || (m_isDeferred && name == vm().propertyNames->then.impl());
+}
+
+// JSModuleNamespaceObject keeps these keys as ordinary properties. Symbol.toStringTag is not stored here: getOwnPropertySlot() answers it.
+bool ModuleNamespace::isOrdinaryKey(PropertyName name) const
+{
+    VM& vm = this->vm();
+    if (name == vm.propertyNames->toStringTagSymbol)
+        return false;
+    return isSymbolLikeKey(name.uid()) || (name == vm.propertyNames->__esModule && !hasExport(name.uid()));
 }
 
 bool ModuleNamespace::evaluateIfNeeded(JSGlobalObject* globalObject)
@@ -2827,6 +2842,8 @@ bool ModuleNamespace::getOwnPropertySlot(JSObject* object, JSGlobalObject* globa
     }
     std::optional<unsigned> index = thisObject->find(name.uid());
     if (!index && !thisObject->isDynamicExport(name.uid())) {
+        if (thisObject->isOrdinaryKey(name))
+            RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(thisObject, globalObject, name, slot));
         if (name != vm.propertyNames->toStringTagSymbol)
             return false;
         slot.setValue(thisObject, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete, jsNontrivialString(vm, thisObject->m_isDeferred ? "Deferred Module"_s : "Module"_s));
@@ -2914,9 +2931,11 @@ bool ModuleNamespace::putByIndex(JSCell*, JSGlobalObject* globalObject, unsigned
     return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 }
 
-bool ModuleNamespace::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot&)
+bool ModuleNamespace::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(cell);
+    if (thisObject->isSymbolLikeKey(name.uid()) && name != globalObject->vm().propertyNames->toStringTagSymbol)
+        return Base::deleteProperty(thisObject, globalObject, name, slot);
     if (!thisObject->isSymbolLikeKey(name.uid()) && !thisObject->evaluateIfNeeded(globalObject))
         return false;
     return !thisObject->hasExport(name.uid()) && name != globalObject->vm().propertyNames->toStringTagSymbol;
@@ -2933,10 +2952,8 @@ bool ModuleNamespace::defineOwnProperty(JSObject* object, JSGlobalObject* global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = uncheckedDowncast<ModuleNamespace>(object);
-    if (name == vm.propertyNames->__esModule && descriptor.value().isTrue() && !thisObject->hasExport(name.uid())) {
-        thisObject->setESModuleMarker(true);
-        return true;
-    }
+    if (thisObject->isOrdinaryKey(name))
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, name, descriptor, shouldThrow));
     PropertyDescriptor current;
     bool isCurrentDefined = object->getOwnPropertyDescriptor(globalObject, name, current);
     RETURN_IF_EXCEPTION(scope, false);

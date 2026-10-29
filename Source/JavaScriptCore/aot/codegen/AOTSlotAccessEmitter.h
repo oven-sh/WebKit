@@ -55,7 +55,7 @@ public:
     // From where the offset of access.slot leads to the slot of this object: the cell, or an address behind it where the receivers keep the field at different offsets.
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
 
-    // Object.defineProperty(object, "key", { .. }) where the layout of the object keeps the field with the attributes that the definition creates.
+    // Object.defineProperty(object, "key", { .. }) where the object's layout keeps the field with the attributes that the definition creates.
     // Creates the field in its slot, if the object is extensible, is not a prototype and lacks the property. Otherwise the object is unchanged.
     struct CreationByDefinition {
         bool isEmitted { false };

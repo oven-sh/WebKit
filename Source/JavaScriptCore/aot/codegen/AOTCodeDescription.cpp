@@ -409,7 +409,7 @@ static Vector<std::pair<uint32_t, CalleeOfSite>> collectCalleesOfSites(const Vec
             sites.append({ i + 1, CalleeOfSite::ownFunctionObject() });
             continue;
         }
-        // Nothing writes the word of a call that no way leads to.
+        // Nothing writes the word of an unreachable call.
         if (kept.word >= records.wordsOfCallees.size() || !records.wordsOfCallees[kept.word])
             continue;
         intptr_t offset = records.wordsOfCallees[kept.word]->offsetFromFP();

@@ -198,7 +198,7 @@ void generateMakeClosureOfField(StubAssembler& jit)
     Jump needsBarrier = branchIfBarrierIsNeeded(jit, object, header);
     jit.returnToCaller();
 
-    // The request and the object are as they came when the operation has returned.
+    // The operation preserves the request and the object.
     emitLateRefill(jit, refill, slow);
     slow.link(&jit);
     const GPRReg wholeRequest = allocator;
@@ -209,7 +209,7 @@ void generateMakeClosureOfField(StubAssembler& jit)
         jit.jump().linkTo(isMade, &jit);
     });
 
-    // The barrier takes the object where the closure is, and the slot has the closure.
+    // The barrier stub takes the object in the register that holds the closure. The closure is already in the slot.
     needsBarrier.link(&jit);
     checkStubOperands(writeBarrier(), { cell });
     jit.clobberOperand(0);

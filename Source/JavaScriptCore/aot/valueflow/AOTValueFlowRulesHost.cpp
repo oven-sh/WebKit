@@ -636,7 +636,7 @@ static bool loadsOnlyLibraryModules(BuiltinID loader)
     return loader == Builtins::ProcessGetBuiltinModule;
 }
 
-bool refusesEveryText(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
+bool refusesAllSourceText(const BuiltinTable& builtins, BuiltinID builtin, RefusedCode refused)
 {
     const Builtin& entry = builtins.at(builtin);
     if (entry.origin == BuiltinOrigin::Engine)
@@ -649,7 +649,7 @@ std::optional<UnseenCodeCause> eventOfCalling(const BuiltinTable& builtins, Buil
     const Builtin& entry = builtins.at(builtin);
     if (entry.flags.contains(BuiltinFlag::LoadsModuleByName))
         return refused.codeOutsideImage || loadsOnlyLibraryModules(builtin) ? UnseenCodeCause::LoadsModuleByName : UnseenCodeCause::LoadsCodeByName;
-    if (refusesEveryText(builtins, builtin, refused))
+    if (refusesAllSourceText(builtins, builtin, refused))
         return std::nullopt;
     if (entry.flags.contains(BuiltinFlag::EvaluatesText))
         return UnseenCodeCause::EvaluatesText;
@@ -998,8 +998,10 @@ static void exposeModuleObjectOf(ValueFlowRuleContext& context, ModuleID id)
 static bool mayMachineCodeRun(ValueFlowRuleContext& context)
 {
     Vector<ValueFlowObjectID, 32> loaders;
-    for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode())
-        context.universe().appendObjectsOf(loader.callee, loaders);
+    for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode()) {
+        if (!context.program().builtins().has(BuiltinMark::LoadsMachineCodeThatIsHandedNoValue, loader.callee))
+            context.universe().appendObjectsOf(loader.callee, loaders);
+    }
     return context.holdsAnyOf(ClimbingSet(context.maker().of(loaders.span())), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins));
 }
 

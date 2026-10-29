@@ -412,8 +412,6 @@ public:
     const LoggedEdge* findLoggedEdge(ValueFlowEdge) const LIFETIME_BOUND;
     // Of a statement that a rule has made: the statement whose run first asked for it.
     ValueFlowStatementID statementThatFirstAskedFor(ValueFlowStatementID) const;
-    // At position n: what code outside the program held behind round n + 1.
-    std::span<const ValueSetID> escapedBehindEachRound() const LIFETIME_BOUND { return m_escapedBehindEachRound.span(); }
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowEdge) const;
     std::optional<ValueFlowUnknownSource> unknownSourceOf(ValueFlowNodeID) const;
     std::optional<ValueFlowNodeID> findMadeNode(const ValueFlowNodeKey&) const;
@@ -884,7 +882,6 @@ private:
     Vector<ValueFlowStatementID> m_firstStatementsThatWereNotDueAndAdded;
     HashMap<uint64_t, uint32_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_positionOfLoggedEdge;
     Vector<LoggedEdge> m_edgesInOrderLogged;
-    Vector<ValueSetID> m_escapedBehindEachRound;
     HashMap<uint32_t, ValueFlowStatementID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstAskerOfMadeNodes;
     Vector<uint32_t> m_bodiesReachedInRound;
     size_t m_paddingThatKeepsSharedListsOnTheirOwnCacheLines { 0 };
@@ -1123,9 +1120,9 @@ private:
     BitVector m_libraryFunctionsLacked;
     ValueSetID followedProxiesThatMoreMayBeDoneTo();
     bool wakeReadersOfNodesThatShowSomethingElse();
-    Vector<ValueSetID> m_allButCoveredWhenReadersWereLastWoken;
+    Vector<ValueSetID> m_uncoveredAtLastReaderWake;
     uint16_t m_stateOfCoverings { 0 };
-    mutable ListWithRoomToFill<uint16_t> m_stateOfCoveringsInWhichShownViewHolds;
+    mutable ListWithRoomToFill<uint16_t> m_coveringStateOfShownView;
     Vector<ObjectOutsideFamily> m_objectsOutsideFamilies;
     HashMap<uint32_t, ValueSetID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresFollowedToConstruction;
     BitVector m_holdsObjectOutsideFamily;

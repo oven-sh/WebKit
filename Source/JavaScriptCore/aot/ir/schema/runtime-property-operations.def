@@ -50,7 +50,7 @@ runtime EnsureExtensionGranules : void (JSCell* object, uint64_t granuleBits) ; 
 runtime EnsureExtensionGranulesWithoutCollecting : void (JSCell* object, uint64_t granuleBits) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState)
 runtime NewGetterSetter : JSCell* (JSCell* getter, JSCell* setter) ; RuntimeAllocates
 runtime HasExtraProperty : size_t (JSCell* object, uint32_t key) ; reads(all)
-runtime HasOnlyNamesOfItsClass : size_t (JSCell* object) ; reads(all)
+runtime HasOnlyClassFieldNames : size_t (JSCell* object) ; reads(all)
 runtime MaterializeDeferredClosure : JSCell* (JSCell* object, uint32_t key) ; reads(all) writes(ObjectFields, AllocatorState, RuntimeState) collects
 runtime GetFieldOutsideSlot : EncodedJSValue (JSCell* object, uint32_t key) ; reads(all)
 

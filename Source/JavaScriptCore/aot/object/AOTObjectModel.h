@@ -203,9 +203,9 @@ private:
     const ProgramTables& m_tables;
     EnvironmentShapes m_environmentShapes;
     uint32_t* m_structures { nullptr };
-    // Each once, whether or not its entry of m_structures is still filled.
-    Vector<uint32_t> m_shapesThatHadStructure;
-    BitVector m_hadStructure;
+    // Each shape once, whether or not its entry in m_structures is still set.
+    Vector<uint32_t> m_shapesWithStructure;
+    BitVector m_shapeHasStructure;
     uint32_t m_numberOfAllocationSiteRecords { 0 };
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
     // No cell has them. Every other Structure of a compiled object starts as a copy of one: the second is for objects with another prototype than their layout's.

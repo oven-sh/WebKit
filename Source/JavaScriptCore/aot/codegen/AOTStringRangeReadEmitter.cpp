@@ -185,7 +185,7 @@ void StringRangeReadEmitter::generateStringRangeCharacterOrUndefined(const Value
     }));
 }
 
-// A range that ends a constant number of units behind its start.
+// A range that ends a constant number of units after its start.
 static std::optional<int64_t> findLengthWrittenInRange(const Function& function, const Type& typeOfEnd, ValueID start, ValueID end)
 {
     if (!start || !end || !typeOfEnd.isInt32())

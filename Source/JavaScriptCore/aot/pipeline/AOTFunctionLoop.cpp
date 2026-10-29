@@ -547,15 +547,15 @@ struct FinishedCopy {
 
 } // anonymous namespace
 
-// The size says how long a function takes. One with warm code runs the long schedule and grows by what is inlined into it.
+// The size estimates how long a function takes to compile. A function with warm code runs the long schedule and grows through inlining.
 static QueuedFunction createQueuedFunction(const Program& program, FunctionID id, const Heat* heat = nullptr)
 {
     if (ProvisionalFunctions::contains(id))
         return { id, 0 };
-    AOT_THRESHOLD(uint64_t, timesAsLongWithWarmCode, 6);
+    AOT_THRESHOLD(uint64_t, warmCodeCostFactor, 6);
     uint64_t size = numberOfValuesIn(program, id);
     if (heat && heat->hasWarmCode(program, id).predicted())
-        size *= timesAsLongWithWarmCode;
+        size *= warmCodeCostFactor;
     return { id, static_cast<uint32_t>(std::min<uint64_t>(size, UINT32_MAX)) };
 }
 
@@ -581,12 +581,12 @@ static void runOnCopies(const ScheduleDescriptor& schedule, Program& programToEd
         // A function is found only when one that names it is finished, so long functions that name each other would run one after the other.
         Vector<QueuedFunction> startedEarly;
         if (schedule.functions == ScheduledFunctions::Reached) {
-            AOT_THRESHOLD(size_t, fewestValuesOfLargeFunction, 4096);
-            AOT_THRESHOLD(size_t, fewestValuesWithWarmCode, 64);
+            AOT_THRESHOLD(size_t, minValuesOfLargeFunction, 4096);
+            AOT_THRESHOLD(size_t, minValuesWithWarmCode, 64);
             startedEarly = collectInParallel<QueuedFunction>(loops, count, [&](unsigned index, Vector<QueuedFunction>& found) {
                 FunctionID id(index);
                 size_t numberOfValues = numberOfValuesIn(program, id);
-                if (numberOfValues >= fewestValuesOfLargeFunction || (heat && numberOfValues >= fewestValuesWithWarmCode && heat->hasWarmCode(program, id).predicted()))
+                if (numberOfValues >= minValuesOfLargeFunction || (heat && numberOfValues >= minValuesWithWarmCode && heat->hasWarmCode(program, id).predicted()))
                     found.append(createQueuedFunction(program, id, heat));
             });
         }

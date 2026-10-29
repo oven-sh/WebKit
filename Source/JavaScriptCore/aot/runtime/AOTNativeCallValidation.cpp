@@ -468,20 +468,20 @@ static bool isPrivateGlobal(JSGlobalObject* realm, JSObject* callee)
     return isFound;
 }
 
-struct CodeAnsweredByNativeBindings {
+struct CodeReturnedByNativeBindings {
     Lock lock;
     WTF::Vector<std::pair<uint32_t, TaggedNativeFunction>> entries WTF_GUARDED_BY_LOCK(lock);
 };
 
-static CodeAnsweredByNativeBindings& codeAnsweredByNativeBindings()
+static CodeReturnedByNativeBindings& codeReturnedByNativeBindings()
 {
-    static NeverDestroyed<CodeAnsweredByNativeBindings> code;
+    static NeverDestroyed<CodeReturnedByNativeBindings> code;
     return code;
 }
 
-void noteAnswerOfNativeBinding(uint32_t hostNumber, JSValue answer)
+void noteNativeBindingResult(uint32_t hostNumber, JSValue answer)
 {
-    CodeAnsweredByNativeBindings& code = codeAnsweredByNativeBindings();
+    CodeReturnedByNativeBindings& code = codeReturnedByNativeBindings();
     Locker locker { code.lock };
     auto note = [&](JSValue value) WTF_REQUIRES_LOCK(code.lock) {
         auto* function = dynamicDowncast<JSFunction>(value);
@@ -515,7 +515,7 @@ static bool isAnsweredBy(BuiltinID binding, JSObject* callee)
     std::optional<uint16_t> hostNumber = BuiltinBindings::hostNumberOf(binding);
     if (!function || !function->isHostFunction() || !hostNumber)
         return false;
-    CodeAnsweredByNativeBindings& code = codeAnsweredByNativeBindings();
+    CodeReturnedByNativeBindings& code = codeReturnedByNativeBindings();
     Locker locker { code.lock };
     return code.entries.contains(std::pair<uint32_t, TaggedNativeFunction> { *hostNumber, function->nativeFunction() });
 }
@@ -940,7 +940,7 @@ private:
                     fail(ValidationFailureKind::NativeCallWroteHeap, operand.object, makeString(what, ", the call writes "_s, describeMembers(m_expectation.writes), ", not "_s, describeMembers(heaps)));
                 if (didRunCode || isDoneByNativeCodeOfObject(operand, difference, uses))
                     continue;
-                OperandUses declaring = difference.isOfRepresentationAlone ? OperandUses() : rowOf(change).uses;
+                OperandUses declaring = difference.isRepresentationOnly ? OperandUses() : rowOf(change).uses;
                 if (!declaring.isEmpty() && isTakenForUnknownFunction()) {
                     // Flow opens the contents of a container that native code gets, no type speaks of the length of a buffer or of a view, and the call writes every heap: Worker.prototype.postMessage takes the memory of what its list names.
                     bool isOfBytes = difference.change == OperandChange::InternalStateChanged || difference.change == OperandChange::BytesChanged;

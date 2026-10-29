@@ -65,7 +65,7 @@ public:
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
     Condition isPristineInstance(CellPointer, OptionSet<PristineAspects>);
     Condition hasArrayStorage(CellPointer array, ArrayStorage, bool isWritable = false);
-    // Emits nothing but in a build that validates or checks proofs: there an array with another kind of storage is reported.
+    // Emits nothing except in a build that validates or checks proofs, which reports an array with a different storage kind.
     void validateStorage(const OperationContext&, CellPointer array, ArrayStorage);
     Word32 indexingMode(CellPointer array, IndexingType mask);
     Condition hasShape(Word32 maskedMode, const ArrayStorageForm& form) { return equal(maskedMode, word32(form.shape)); }

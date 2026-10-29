@@ -206,7 +206,7 @@ bool isCallThatRequiredPassRemoves(const Program& program, const Value& call)
     return !BuiltinBindings::directFunctionNumberOf(call.overload(), call.argumentsOperands().size());
 }
 
-bool answersUnboxedNumber(const Value& call)
+bool returnsUnboxedNumber(const Value& call)
 {
     if (call.opcode != Opcode::CallBuiltin || call.builtinCallForm() != BuiltinCallForm::Whole)
         return false;

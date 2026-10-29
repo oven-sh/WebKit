@@ -399,9 +399,23 @@ void generateCallWithArray(StubAssembler& jit)
     copyToListFrameAndCall(true);
 
     isLong.link(&jit);
+    JumpList isEngineCallee;
     genericPath.append(jit.branch32(CCallHelpers::Above, countGPR, TrustedImm32(maxArguments)));
-    branchIfNotCompiledCallee(jit, element, genericPath);
+    branchIfNotCompiledCallee(jit, element, isEngineCallee);
     jit.jump().linkTo(usesListFrame, &jit);
+
+    // A tail call out of a function that the interpreter entered. The callee's frame replaces the adapter's, which a call from C++ would keep on the stack.
+    isEngineCallee.link(&jit);
+    for (StubFrameKind kind : { StubFrameKind::Adapter, StubFrameKind::ArgumentList }) {
+        Address returnAddressOfKind(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(kind));
+#if CPU(ARM64)
+        jit.loadPtr(returnAddressOfKind, element);
+        jit.branchPtr(CCallHelpers::Equal, CCallHelpers::linkRegister, element).linkTo(usesListFrame, &jit);
+#else
+        jit.loadPtr(Address(sp), element);
+        jit.branchPtr(CCallHelpers::Equal, element, returnAddressOfKind).linkTo(usesListFrame, &jit);
+#endif
+    }
 
     genericPath.link(&jit);
     emitDropArgumentListFrames(jit, element);

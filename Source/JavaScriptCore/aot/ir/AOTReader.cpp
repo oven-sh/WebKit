@@ -62,8 +62,8 @@ bool Reader::readNamesAndFamilies()
     return hasStrings && hasPropertyKeys && hasFamilies;
 }
 
-// The value flow analysis tells a text apart by its key. Every text that an operation or constant data holds has one, whether or not a property is named so anywhere.
-static void internKeysOfTextConstants(Program& program, const ParallelLoops& loops)
+// The value flow analysis identifies a string by its key. Every string held by an operation or constant data has one, whether or not a property has that name.
+static void internKeysOfStringConstants(Program& program, const ParallelLoops& loops)
 {
     Vector<StringID> ofOperations = collectInParallel<StringID>(loops, program.functions.size(), [&](unsigned index, Vector<StringID>& found) {
         for (const Value& value : program.functions[index].values.span()) {
@@ -104,7 +104,7 @@ bool Reader::readListsLayoutsAndFunctions()
     if (options.verifiesProgram || options.isVerifyOnly()) {
         if (!readProgramLists() || !readLayouts() || !reportFirst(readFunctions().span()))
             return false;
-        internKeysOfTextConstants(m_program, m_build.parallelLoops());
+        internKeysOfStringConstants(m_program, m_build.parallelLoops());
         return true;
     }
 
@@ -120,7 +120,7 @@ bool Reader::readListsLayoutsAndFunctions()
     });
     if (!hasListsAndLayouts || !reportFirst(failuresInFunctions.span()))
         return false;
-    internKeysOfTextConstants(m_program, m_build.parallelLoops());
+    internKeysOfStringConstants(m_program, m_build.parallelLoops());
     return true;
 }
 

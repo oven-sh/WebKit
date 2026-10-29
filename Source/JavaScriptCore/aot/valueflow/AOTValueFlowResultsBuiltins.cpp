@@ -284,7 +284,7 @@ static Vector<FeatureUseRecord> collectFeatureUses(const ValueFlowResultInputs& 
     Vector<FeatureUseRecord> uses;
     for (size_t index : builtinsWhoseCodeRuns) {
         const Builtin& entry = builtins.at(BuiltinID(index));
-        if (entry.flags.contains(BuiltinFlag::EvaluatesText) && refusesEveryText(builtins, BuiltinID(index), inputs.solver().input().refusedCode))
+        if (entry.flags.contains(BuiltinFlag::EvaluatesText) && refusesAllSourceText(builtins, BuiltinID(index), inputs.solver().input().refusedCode))
             continue;
         uint32_t owner = classOfBuiltin[index];
         auto addUnlessRootedByMakersOfClass = [&](RemovableFeature feature) {

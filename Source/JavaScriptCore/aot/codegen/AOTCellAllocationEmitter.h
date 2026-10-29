@@ -45,7 +45,7 @@ public:
     ZeroedBy whoZeroesBody(const OperationContext&, AllocationID, unsigned storesOfZero) const;
     CellPointer allocateObjectCopy(const OperationContext&, AllocationID, CellPointer source, unsigned fieldBytes);
     CellPointer allocateInFrame(const OperationContext&, size_t size, const PlannedLayout* = nullptr);
-    // Where a build validates or checks its proofs at run time, in front of everything that leaves the frame or saves it: what the function has kept in the frame is at its end.
+    // In a build that validates or checks proofs at run time, emitted before anything that leaves or saves the frame: the cells that the function kept in the frame end their lifetime here.
     void leaveFrameOfCheckedCells();
 
     // The elements below the length are the caller's to store before anything can collect.

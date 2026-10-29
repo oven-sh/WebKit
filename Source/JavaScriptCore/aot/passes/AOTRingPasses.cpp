@@ -3844,13 +3844,13 @@ PassOutcome removeRedundantHandlers(FunctionPassContext& context)
     return removeRedundantHandlers(context, hasMovedPolls);
 }
 
-PassOutcome removeRedundantHandlersBehindSelection(FunctionPassContext& context, bool allocatesLessUnderHandler)
+PassOutcome removeRedundantHandlersAfterSelection(FunctionPassContext& context, bool removedAllocationUnderHandler)
 {
     if (!context.analyses.cfg().hasHandlers())
         return PassOutcome::Unchanged;
     bool hasMovedPolls = pollBehindStoresThatMayAddFields(context);
     hasMovedPolls |= takePollsOfLoopsOutOfHandlers(context, PollsTakenOut::WhereNoFieldIsAdded);
-    if (!hasMovedPolls && !allocatesLessUnderHandler)
+    if (!hasMovedPolls && !removedAllocationUnderHandler)
         return PassOutcome::Unchanged;
     return removeRedundantHandlers(context, hasMovedPolls);
 }

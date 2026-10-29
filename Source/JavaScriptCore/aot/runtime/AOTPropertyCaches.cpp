@@ -941,7 +941,7 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
     }
     m_hasInstance = true;
     if (instance.globalObject) {
-        m_objectsThatFiltersSpeakOf.add(instance.globalObject->objectPrototype());
+        m_filteredObjects.add(instance.globalObject->objectPrototype());
         didChangeObjectPrototype(instance.globalObject->objectPrototype(), nullptr);
     }
     publishWords(instance);
@@ -1060,7 +1060,7 @@ void VMPropertyCaches::fileAbsenceFilterForStores(JSGlobalObject* globalObject, 
     for (JSObject* holder = object->getPrototypeDirect().getObject(); holder; holder = holder->getPrototypeDirect().getObject()) {
         if (++numberOfObjects > maxObjectsAbove || !addOwnNamesThatStopStores(m_vm, *identifiers, holder, filled))
             return;
-        m_objectsThatFiltersSpeakOf.add(holder);
+        m_filteredObjects.add(holder);
     }
     // Only the names of its own fields are ever asked of the filter of a compiled object, and many names share a bit. A field whose bit is set is looked up itself, so that it pays for no other name: the accessor
     // `__proto__` of Object.prototype alone is above nearly every object.
@@ -1088,7 +1088,7 @@ bool VMPropertyCaches::storeCreatesOwnField(const Object& object, uint32_t name)
         && (filter.changesUnderNames == m_changesUnderNamesOnChains || !wasChangedOnSomeChain(name));
 }
 
-bool VMPropertyCaches::fileFilterAndAskWhetherStoreCreatesOwnField(JSGlobalObject* globalObject, Object& object, uint32_t name)
+bool VMPropertyCaches::addFilterAndCheckStoreCreatesOwnField(JSGlobalObject* globalObject, Object& object, uint32_t name)
 {
     if (!FieldTableEntry::hasColumn(name))
         return false;
@@ -1121,7 +1121,7 @@ static bool mayStopStores(JSObject* changed, UniquedStringImpl* uid)
     return isValidOffset(*offset) && (isField || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
 }
 
-void VMPropertyCaches::didChangeObjectThatFiltersSpeakOf(JSObject* changed, UniquedStringImpl* uidOrNull)
+void VMPropertyCaches::didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
     const ProgramIdentifiers* identifiers = m_vm.aotState().identifiers.get();
     if (uidOrNull && identifiers) {
@@ -1144,8 +1144,8 @@ void VMPropertyCaches::didChangeObjectThatFiltersSpeakOf(JSObject* changed, Uniq
 void VMPropertyCaches::didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull)
 {
     // Most objects that report a change are being filled, and no filter has been made from them yet.
-    if (!changed || m_objectsThatFiltersSpeakOf.mayContain(changed))
-        didChangeObjectThatFiltersSpeakOf(changed, uidOrNull);
+    if (!changed || m_filteredObjects.mayContain(changed))
+        didChangeFilteredObject(changed, uidOrNull);
     for (Instance* instance : m_vm.aotState().instances) {
         if (std::exchange(instance->propertyCaches.placesSayAbsence, 0))
             zeroSpan(instance->keyedValuePlaces().first<KeyedValuePlace::numberOfPlacesPerAccess>());

@@ -63,7 +63,7 @@ private:
     void createUnits();
     bool isCandidate(const PaddingUnit&) const;
     void findCandidates();
-    void findCompanies();
+    void findUnitGroups();
     void recordOccupiedBytes();
     void orderCandidates();
     std::optional<uint32_t> roomFor(const PaddingUnit&);
@@ -75,13 +75,13 @@ private:
     void widenAt(uint32_t unit, uint32_t offset, SlotRepresentation);
     bool widen(uint32_t unit, bool mayMoveOtherSlots);
 
-    // The units that some access reaches together. It reads them with one load as long as they have one representation, so they are widened together or not at all.
-    struct Company {
+    // Units that some access reaches together. The access uses one load as long as they share a representation, so they are widened together or not at all.
+    struct UnitGroup {
         Vector<uint32_t, 4> units;
         SlotRepresentation widened { SlotRepresentation::JSValue };
         bool staysNarrow { false };
     };
-    static constexpr uint32_t noCompany = UINT32_MAX;
+    static constexpr uint32_t noUnitGroup = UINT32_MAX;
 
     const SlotPlanContext& m_context;
     const SlotUses& m_uses;
@@ -94,8 +94,8 @@ private:
     Vector<SlotRow> m_unsharedRows;
     Vector<PaddingUnit> m_units;
     Vector<uint32_t> m_candidates;
-    Vector<Company> m_companies;
-    Vector<uint32_t> m_companyOfUnit;
+    Vector<UnitGroup> m_unitGroups;
+    Vector<uint32_t> m_groupOfUnit;
     Vector<OccupiedBytes> m_occupied;
     Vector<uint32_t> m_firstPossiblyFreeOffset;
     BitVector m_isWidened;
@@ -223,7 +223,7 @@ void PaddingWidener::findCandidates()
     });
 }
 
-void PaddingWidener::findCompanies()
+void PaddingWidener::findUnitGroups()
 {
     constexpr uint32_t noUnit = UINT32_MAX;
     Vector<uint32_t> candidateOfRow(FillWith { }, m_context.rows.count(), noUnit);
@@ -231,30 +231,30 @@ void PaddingWidener::findCompanies()
         for (SlotRow row : m_units[unit].rows)
             candidateOfRow[row] = unit;
     }
-    m_companyOfUnit.fill(noCompany, m_units.size());
+    m_groupOfUnit.fill(noUnitGroup, m_units.size());
     Vector<SlotRow, 16> rows;
     for (const JoinedRows::Set& joined : m_joinedRows.sets()) {
-        Company company;
+        UnitGroup group;
         rows.shrink(0);
         for (SlotRow row : m_joinedRows.rowsOf(joined)) {
             const PlacedSlot& slot = m_packed.slots[row];
             if (uint32_t unit = candidateOfRow[row]; unit != noUnit) {
                 rows.append(row);
-                if (!company.units.contains(unit))
-                    company.units.append(unit);
+                if (!group.units.contains(unit))
+                    group.units.append(unit);
             } else if (slot.storage == SlotStorage::Inline && isNarrow(slot.representation))
-                company.staysNarrow = true;
+                group.staysNarrow = true;
         }
-        if (company.units.isEmpty() || (company.units.size() == 1 && !company.staysNarrow))
+        if (group.units.isEmpty() || (group.units.size() == 1 && !group.staysNarrow))
             continue;
         auto widened = widenedRepresentationOf({ rows.span(), 0 });
         if (widened && widthOf(*widened) == wide)
-            company.widened = *widened;
+            group.widened = *widened;
         else
-            company.staysNarrow = true;
-        for (uint32_t unit : company.units)
-            m_companyOfUnit[unit] = m_companies.size();
-        m_companies.append(WTF::move(company));
+            group.staysNarrow = true;
+        for (uint32_t unit : group.units)
+            m_groupOfUnit[unit] = m_unitGroups.size();
+        m_unitGroups.append(WTF::move(group));
     }
 }
 
@@ -411,7 +411,7 @@ void PaddingWidener::widenAt(uint32_t index, uint32_t offset, SlotRepresentation
 
 bool PaddingWidener::widen(uint32_t index, bool mayMoveOtherSlots)
 {
-    if (m_companyOfUnit[index] == noCompany) {
+    if (m_groupOfUnit[index] == noUnitGroup) {
         auto offset = findRoomFor(m_units[index], mayMoveOtherSlots);
         if (!offset)
             return false;
@@ -419,19 +419,19 @@ bool PaddingWidener::widen(uint32_t index, bool mayMoveOtherSlots)
         return true;
     }
 
-    const Company& company = m_companies[m_companyOfUnit[index]];
-    if (company.staysNarrow)
+    const UnitGroup& group = m_unitGroups[m_groupOfUnit[index]];
+    if (group.staysNarrow)
         return false;
-    // No two units of a company lie in one layout, so the room that is found for one is still there when all have theirs.
+    // No two units of a group are in the same layout, so the room found for one is still free when all have been placed.
     Vector<uint32_t, 4> offsets;
-    for (uint32_t unit : company.units) {
+    for (uint32_t unit : group.units) {
         auto offset = findRoomFor(m_units[unit], mayMoveOtherSlots);
         if (!offset)
             return false;
         offsets.append(*offset);
     }
-    for (size_t i = 0; i < company.units.size(); ++i)
-        widenAt(company.units[i], offsets[i], company.widened);
+    for (size_t i = 0; i < group.units.size(); ++i)
+        widenAt(group.units[i], offsets[i], group.widened);
     return true;
 }
 
@@ -441,7 +441,7 @@ void PaddingWidener::run()
     findCandidates();
     if (m_candidates.isEmpty())
         return;
-    findCompanies();
+    findUnitGroups();
     recordOccupiedBytes();
     orderCandidates();
     for (bool mayMoveOtherSlots : { false, true }) {

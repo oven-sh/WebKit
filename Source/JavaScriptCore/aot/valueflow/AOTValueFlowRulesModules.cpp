@@ -160,6 +160,9 @@ static bool mayHaveExportsNobodyLists(const Module& module)
     });
 }
 
+static ValueFlowSources ownPropertyOf(ValueFlowRuleContext&, ClimbingSet values, std::optional<PropertyKeyID>);
+static ValueFlowSources runtimeNamespaceOf(ValueFlowRuleContext&, RuntimeModuleID);
+
 ValueFlowSources exportedValueOf(ValueFlowRuleContext& context, const ModuleExport& entry)
 {
     switch (entry.kind) {
@@ -170,12 +173,18 @@ ValueFlowSources exportedValueOf(ValueFlowRuleContext& context, const ModuleExpo
         return sourcesOf(context.nodes().variable(entry.variable));
     case ModuleExportKind::Namespace:
         return namespaceOf(context, entry.module, entry.phase);
-    case ModuleExportKind::Indirect:
+    case ModuleExportKind::Indirect: {
+        const Program& program = context.program();
+        const Module& target = program.at(entry.module);
         useModule(context, entry.module);
+        // The host reads the name off the object that the module mirrors.
+        if (target.kind == ModuleKind::Runtime)
+            return ownPropertyOf(context, valueOf(context, runtimeNamespaceOf(context, target.runtimeModule)), program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.importName }));
         // The run time reads the name on the namespace object of a module of the program.
-        if (context.program().at(entry.module).kind != ModuleKind::External)
+        if (target.kind != ModuleKind::External)
             connect(context, namespaceOf(context, entry.module), ValueFlowProgramNodes::escaped());
-        return unknownSources(context, sourceOfWhatLoaderMakes(context.program().at(entry.module)));
+        return unknownSources(context, sourceOfWhatLoaderMakes(target));
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -402,7 +411,7 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
             connect(context, exportedValueOf(context, entry), location);
             break;
         case ModuleExportKind::Indirect:
-            if (program.at(entry.module).kind == ModuleKind::External) {
+            if (program.at(entry.module).kind == ModuleKind::External || program.at(entry.module).kind == ModuleKind::Runtime) {
                 connect(context, exportedValueOf(context, entry), location);
                 break;
             }
@@ -759,7 +768,7 @@ void runModuleEvaluation(const ValueFlowStatement& statement, ValueFlowRuleConte
         std::optional<PropertyKeyID> key = program.types.find({ .kind = PropertyKeyKind::Text, .text = entry.name });
         connect(context, ownPropertyOf(context, values, key), variable);
         listOwnPropertiesNobodyWrote(context, values, key, variable);
-        if (context.sets().meet(context.universe().holdersOfExportsOf(id), context.universe().holdersOfLibraryExportsThatMayRaiseEvents()))
+        if (context.sets().meet(context.universe().holdersOfExportsOf(id), context.universe().eventRaisingLibraryExportHolders()))
             letSeenCodeCallEscapedFunctionsAmong(context, variable);
     }
 }

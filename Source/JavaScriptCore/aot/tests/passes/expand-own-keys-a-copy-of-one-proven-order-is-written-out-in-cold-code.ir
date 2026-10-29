@@ -1,10 +1,10 @@
 # The operation behind a spread, a rest or Object.assign finds out at run time which names its source holds, and what it has found out serves its next run. In code that seldom runs that is paid
 # for nothing. Where the source has one proven layout with one order of keys, all of them filled, a read and a definition for each field take the place of the call, without a test.
-# A source that is only expected to have the layout, or that has two orders, would need tests with the call behind them: there cold code keeps the call alone.
+# A source that is only expected to have the layout, or that has two orders, is copied behind tests, with the call on the rare path.
 # FORM: Prepared optimizing
 # OPTIONS: heat=EverythingIsCold
 # RUN: pass ExpandOwnKeys
-# STATISTIC: OwnKeyWalksExpanded = 3
+# STATISTIC: OwnKeyWalksExpanded = 5
 
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Copy" fields=[{key="first" declared={type=number}}, {key="a" declared={type=number}}, {key="b" declared={type=string}}]
@@ -63,9 +63,11 @@ function f3 name="spreadOfExpectedLayout" parameters=[{type=object}, {type=numbe
     Return v4
 # CHECK: b0(
 # CHECK-NEXT: = NewObject
+# CHECK-NEXT: = ShapeTest v0 layouts=[L1]
+# CHECK: frequency=Rare:
 # CHECK-NEXT: CopyDataProperties v2, v0
-# CHECK-NEXT: = FinishObject v2
-# CHECK-NEXT: Return v4
+# CHECK: [[a3]]:{{*}}= GetSlot v0{{*}} key="a"
+# CHECK: PropDefine v2, [[a3]] key="a"
 }
 
 function f4 name="spreadOfTwoOrders" parameters=[{type=L2}, {type=number}] results=[{type=anything}] {
@@ -76,7 +78,7 @@ function f4 name="spreadOfTwoOrders" parameters=[{type=L2}, {type=number}] resul
     Return v4
 # CHECK: b0(
 # CHECK-NEXT: = NewObject
-# CHECK-NEXT: CopyDataProperties v2, v0
-# CHECK-NEXT: = FinishObject v2
-# CHECK-NEXT: Return v4
+# CHECK-NEXT: = HasKeyOrder v0 layout=L2
+# CHECK: = HasKeyOrder v0 layout=L2
+# CHECK-NOT: HasKeyOrder
 }

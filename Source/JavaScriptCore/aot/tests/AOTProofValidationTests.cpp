@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTHostEntriesTestSupport.h"
+#include "AOTIRPrinter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTShellProgramTestSupport.h"
@@ -609,10 +610,9 @@ function f2 name="getter" results=[{type=anything}] {
 runtimefunction id=$toLocaleString function=f1
 )IR"_s;
 
-// The numbers of the models move with the table of built-ins.
 static UTF8CString withNumbersOfModels(ASCIILiteral programText)
 {
-    String text = makeStringByReplacingAll(String(programText), "$toLocaleString"_s, String::number(modelOf(Builtins::ObjectPrototypeToLocaleString).index()));
+    String text = makeStringByReplacingAll(String(programText), "$toLocaleString"_s, Typed::tokenOf(BuiltinTable::singleton(), modelOf(Builtins::ObjectPrototypeToLocaleString)).toString());
     return text.utf8();
 }
 

@@ -645,7 +645,7 @@ private:
         unsigned attributes = descriptor.attributes();
         const FieldData* field = target.fieldNamed(target.state(), name);
         if (field) {
-            // Object::defineOwnProperty() prepares the object for a lookup under a symbol.
+            // Object::defineOwnProperty() prepares the object for a lookup by symbol.
             if (name.isSymbol())
                 return false;
             if (FieldProperty current = findFieldProperty(m_vm, target, *field))
@@ -660,7 +660,7 @@ private:
                 return true;
             }
         }
-        // The names that wait come first in the order of the keys.
+        // Pending names come first in key order.
         addNewNames();
         if (!descriptor.isAccessorDescriptor())
             return target.tryDefineAbsentProperty(m_vm, field, name, descriptor.value(), attributes & ~PropertyAttribute::Accessor);

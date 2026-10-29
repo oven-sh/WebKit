@@ -68,9 +68,9 @@ private:
     CellPointer receiverOf(const InlineCall& call) { return in<CellPointer>(call.receiver()); }
     Operand resultFromRawElement(const InlineCall&, const ArrayStorageForm&, Operand rawElement);
     Operand undefinedResult(const InlineCall&);
-    // The kind of storage that the type of the receiver proves, if it proves one.
+    // The storage kind that the receiver's type proves, if any.
     const ArrayStorageForm* provenFormOf(const InlineCall&);
-    // The same for code that goes on without a test of the kind: a build that validates or checks proofs tests it here and reports another.
+    // The same, for code that continues without testing the kind: a build that validates or checks proofs tests it here and reports a mismatch.
     const ArrayStorageForm* provenFormOf(const InlineCall&, CellPointer array);
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
     // The mask is arrayStorageTestMask for a read and IndexingShapeAndWritabilityMask for a store.

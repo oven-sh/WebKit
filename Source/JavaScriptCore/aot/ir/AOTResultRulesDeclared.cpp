@@ -86,7 +86,7 @@ static std::optional<Type> tryTypeOfField(const TypingContext& context, LayoutID
     return std::nullopt;
 }
 
-static bool holdsArraysAlone(const Type& type)
+static bool holdsOnlyArrays(const Type& type)
 {
     Type object = type.withoutPrimitives(Primitive::UndefinedOrNull);
     const ClassPart* part = object.singleBuiltinClass();
@@ -99,7 +99,7 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
     BaseChain chain = isProof ? BaseChain::Proven : BaseChain::Predicted;
     Type result = Type::never();
     bool isMissingInEveryReceiver = true;
-    bool someFieldTellsNothing = false;
+    bool hasUninformativeField = false;
     for (LayoutID receiver : receivers) {
         if (context.program.at(receiver).flow.allocation == AllocationState::NeverAllocated)
             continue;
@@ -115,14 +115,14 @@ std::optional<Type> tryTypeOfFieldRead(const TypingContext& context, std::span<c
         if (!part)
             return std::nullopt;
         if (!isProof && part->isAnything()) {
-            someFieldTellsNothing = true;
+            hasUninformativeField = true;
             continue;
         }
         result = result.unionWith(*part, context.types);
     }
     if (isMissingInEveryReceiver)
         return std::nullopt;
-    if (someFieldTellsNothing && !holdsArraysAlone(result))
+    if (hasUninformativeField && !holdsOnlyArrays(result))
         return Type::anything();
     return result;
 }
@@ -140,19 +140,19 @@ static Type typeOfSlotContents(const TypingContext& context, FieldReference refe
 std::optional<Type> tryTypeOfSlotContents(const TypingContext& context, std::span<const LayoutID> receivers, PropertyKeyID key)
 {
     Type result = Type::never();
-    bool someFieldTellsNothing = false;
+    bool hasUninformativeField = false;
     for (LayoutID receiver : receivers) {
         std::optional<FieldReference> field = findField(context.program, receiver, key, BaseChain::Proven);
         if (!field)
             return std::nullopt;
         Type contents = typeOfSlotContents(context, *field);
         if (context.level == TypeLevel::Expected && contents.isAnything()) {
-            someFieldTellsNothing = true;
+            hasUninformativeField = true;
             continue;
         }
         result = result.unionWith(contents, context.types);
     }
-    if (someFieldTellsNothing && !holdsArraysAlone(result))
+    if (hasUninformativeField && !holdsOnlyArrays(result))
         return Type::anything();
     return result;
 }

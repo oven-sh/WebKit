@@ -68,7 +68,7 @@ static std::optional<uint32_t> indexOfCalledOperand(const Program& program, cons
     return indexOfOperand(call, *called);
 }
 
-// f.apply(t, list) hands an array on as it is. Of anything else a list is made first.
+// f.apply(t, list) forwards an array as is. Anything else is converted to a list first.
 static std::optional<CalledOperandTest> planTestOfList(FunctionPassContext& context, const ValueSite& site, BuiltinOverloadID id)
 {
     const Program& program = context.program;
@@ -111,7 +111,7 @@ Vector<CalledOperandTest> planTestsOfCalledOperands(FunctionPassContext& context
         for (BuiltinOverloadID overload : program.builtins().overloadIDsOf(callee)) {
             std::optional<uint32_t> operandIndex = indexOfCalledOperand(program, call, overload);
             ValueID operand = operandIndex ? call.operand(*operandIndex) : ValueID();
-            // A built-in that takes anything for its callee refuses it by itself, behind the list.
+            // A built-in that accepts any value as its callee rejects it itself, after the list is created.
             if (!operand || program.typeOf(function, operand).isSubsetOf(anyFunction, program)) {
                 std::optional<CalledOperandTest> test = planTestOfList(context, site, overload);
                 if (!test)

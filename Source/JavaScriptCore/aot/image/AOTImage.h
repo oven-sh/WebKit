@@ -95,8 +95,8 @@ public:
     JS_EXPORT_PRIVATE static const Image* find(std::span<const uint8_t> bytes);
     // Takes no lock and does not depend on the calling thread.
     static const Image* findByCodeAddress(const void*);
-    // Every image that a thread of the process has begun to use, each as the current one of the calling thread while the functor runs. Takes no lock.
-    static void forEachPublishedAsCurrent(const ScopedLambda<IterationStatus(const Image&)>&);
+    // Calls the functor for every image that any thread has started to use, with that image as the calling thread's current image. Takes no lock.
+    static void forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>&);
 
     JS_EXPORT_PRIVATE static Wire::ImageVerdict check(std::span<const uint8_t> bytes, const std::array<uint8_t, 16>& identity);
     JS_EXPORT_PRIVATE static std::optional<Wire::AdmittedCode> admittedCode(std::span<const uint8_t> bytes);
@@ -142,7 +142,7 @@ public:
     enum class FrequentStub : uint8_t { EnterClosure, EnterSlimClosure, EnterModuleBody, EnterClosureForConstruct, EnterHandlerOfJob, EnterSavedFrame, RejectInFrame, RejectInFrameBelowSpilledArguments };
     template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
-    // Of the stub that begins at the offset in the shared code. x86-64 only.
+    // For the stub that starts at this offset in the shared code. x86-64 only.
     bool usesCallConvention(uint32_t offsetInSharedCode) const;
     std::span<const StubReturnSite> stubReturnSites() const;
     std::span<const uint32_t> sharedCodeCopies() const { return section<uint32_t>(ImageSection::SharedCodeCopies); }
@@ -165,9 +165,9 @@ public:
 
     std::optional<CallSiteRecord> callSiteAt(uint32_t function, uint32_t returnOffset) const;
     // The function has made the function object that it calls at the site itself and has handed it to nobody. The site of an inline frame stands for the call whose place the frame has taken.
-    // Nothing: the site does not say which function object it calls.
+    // nullopt: the site does not record which function object it calls.
     std::optional<CalleeOfSite> calleeOfSiteAt(uint32_t function, CallSiteIndex) const;
-    bool saysCalleesOfSites(uint32_t function) const { return this->function(function).has(ImageFunctionFlag::HasCalleesOfSites); }
+    bool hasCalleesOfSites(uint32_t function) const { return this->function(function).has(ImageFunctionFlag::HasCalleesOfSites); }
     // The callee of a direct construct that may leave its frame by a tail call.
     std::optional<FunctionID> constructedCalleeAt(uint32_t function, CallSiteIndex) const;
     std::optional<PrologueCheck> prologueCheckAt(const void* returnAddress) const;

@@ -894,8 +894,8 @@ ALWAYS_INLINE CompiledStructure* StructureTable::createUsual(VM& vm, const Layou
     uint32_t& known = m_structures[layout.shape];
     known = created->id().bits();
     m_writtenStructures.record(&known);
-    if (!m_hadStructure.set(layout.shape))
-        m_shapesThatHadStructure.append(layout.shape);
+    if (!m_shapeHasStructure.set(layout.shape))
+        m_shapesWithStructure.append(layout.shape);
     // The first object that Object.create makes at some place is allocated before its class has a prototype object.
     if (usual.hasOtherPrototype && !(layout.isClass() && m_state.objects->classes.awaitsPrototypeOfCreatedObjects(layout)))
         m_state.objects->classes.didChangeInstancePrototype(vm, layout, usual.prototype);
@@ -1213,12 +1213,12 @@ void StructureTable::forgetStructuresOf(const LayoutData& classLayout)
     auto belongsToClass = [&](uint32_t shape) {
         return m_tables.hasLayoutForShape(shape) && classes.classOfInstances(m_tables.layoutForShape(shape)).index == classLayout.index;
     };
-    for (uint32_t shape : m_shapesThatHadStructure) {
+    for (uint32_t shape : m_shapesWithStructure) {
         if (m_structures[shape] && belongsToClass(shape))
             m_structures[shape] = 0;
     }
 
-    // The allocations that share a record have one shape, which a filled record holds.
+    // Allocations that share a record have the same shape, which the record stores once it is filled.
     for (AllocationSiteRecord& record : std::span { m_state.instance.objects.emptyAllocationSite() - m_numberOfAllocationSiteRecords, m_numberOfAllocationSiteRecords }) {
         uint32_t shape = shapeWordOf(static_cast<uint32_t>(record.orderAndShapeWords >> 32));
         if (record.header && shape < m_tables.firstEnvironmentShape && belongsToClass(shape))

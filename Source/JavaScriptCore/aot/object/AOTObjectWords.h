@@ -102,7 +102,7 @@ struct KeyListCacheEntry {
 static constexpr uint32_t numberOfKeyLists = 1024;
 static constexpr uint32_t indexOfKeyList(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord) % numberOfKeyLists; }
 
-// The fields of the objects with these two words, in the order of their keys, as indexes into the record of the layout. No entries: the order word does not list every own key.
+// The fields of objects with these two words, in key order, as indexes into the layout's record. Empty if the order word does not list every own key.
 struct KeyOrderEntriesCacheEntry {
     uint32_t orderWord;
     uint32_t shapeWord;
@@ -247,14 +247,14 @@ struct ClassWords {
     const PlaceOfPrototypeProperty* placesOfPrototypeProperties;
     const PrototypeOfClassObject* prototypesOfClassObjects;
     const InstanceOfClassBelow* instancesOfClassesBelow;
-    // By class, as classPrototypes: the brand that the Structure of a cell carries which a built-in constructor has made for `super(..)` of the class. Null until the first is made.
+    // By class, like classPrototypes: the brand on the Structure of cells that a built-in constructor creates for the class's `super(..)`. Null until the first one is created.
     UniquedStringImpl** brandsOfInstances;
-    // The number of a Structure that carries the brand of a class and has no property but the fields of that class and what the built-in constructor lays on its objects. With structureHasOtherNames set: it has others.
-    uint32_t* structuresWhoseNamesAreKnown;
+    // The ID of a Structure that carries a class's brand and has no properties other than the class's fields and those the built-in constructor adds. With structureHasOtherNames set, it has others.
+    uint32_t* structureNameCache;
 };
 
-constexpr uint32_t numberOfStructuresWhoseNamesAreKnown = 64;
-constexpr uint32_t shiftOfStructureWhoseNamesAreKnown = 7;
+constexpr uint32_t structureNameCacheSize = 64;
+constexpr uint32_t structureNameCacheShift = 7;
 constexpr uint32_t structureHasOtherNames = 1;
 
 static_assert(sizeof(KeyOrderTransition) == 16);

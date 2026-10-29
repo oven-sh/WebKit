@@ -745,7 +745,7 @@ private:
                 m_uses.placesThatMake.append({ constructed, m_weights.heatOf(block) });
             });
         }
-        // A call by value runs the functions that were seen to arrive as its callee as often as a call by name runs its own.
+        // An indirect call runs each function observed as its callee as often as a call by name runs its callees.
         if (CalleeSetID callees = opcode == Opcode::Construct || opcode == Opcode::Call ? value.callees() : CalleeSetID()) {
             for (FunctionID callee : m_program.at(callees).seen().predicted().functions)
                 (m_weights.isInLoop(block).predicted() ? m_uses.functionsCalledByNameInLoops : m_uses.functionsCalledByName).append(callee);
@@ -924,26 +924,26 @@ static BitVector findFunctionsThatRunInLoops(const SlotPlanContext& context, std
         return usesOf[index] ? usesOf[index]->functionsCalledByName.span() : std::span<const FunctionID>();
     };
 
-    // What a cycle of calls reaches, its members included, is what is left when functions that nobody left calls are taken away one after the other. The order they go in changes nothing.
+    // What a call cycle reaches, including its members, is what remains after repeatedly removing functions with no remaining callers. The removal order does not matter.
     Vector<uint32_t> numberOfCallsLeft(FillWith { }, numberOfFunctions, 0u);
     forEachIndexInParallel(loops, functions.size(), [&](unsigned position) {
         for (FunctionID callee : functions[position].functionsCalledByName)
             AtomicRef(numberOfCallsLeft[callee.index()]).fetch_add(1, std::memory_order_relaxed);
     });
-    AOT_THRESHOLD(size_t, fewestFunctionsTakenAwayOnPool, 512);
-    auto takeAway = [&](uint32_t index, Vector<uint32_t>& calledByNobody) {
+    AOT_THRESHOLD(size_t, minFunctionsForThreadPool, 512);
+    auto takeAway = [&](uint32_t index, Vector<uint32_t>& uncalledFunctions) {
         for (FunctionID callee : calleesOf(index)) {
             if (AtomicRef(numberOfCallsLeft[callee.index()]).fetch_sub(1, std::memory_order_relaxed) == 1)
-                calledByNobody.append(callee.index());
+                uncalledFunctions.append(callee.index());
         }
     };
-    for (Vector<uint32_t> calledByNobody = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) { return !numberOfCallsLeft[index]; }); !calledByNobody.isEmpty();) {
-        if (calledByNobody.size() < fewestFunctionsTakenAwayOnPool) {
-            takeAway(calledByNobody.takeLast(), calledByNobody);
+    for (Vector<uint32_t> uncalledFunctions = findIndicesInParallel(loops, numberOfFunctions, [&](unsigned index) { return !numberOfCallsLeft[index]; }); !uncalledFunctions.isEmpty();) {
+        if (uncalledFunctions.size() < minFunctionsForThreadPool) {
+            takeAway(uncalledFunctions.takeLast(), uncalledFunctions);
             continue;
         }
-        calledByNobody = collectInParallel<uint32_t>(loops, calledByNobody.size(), [&](unsigned position, Vector<uint32_t>& found) {
-            takeAway(calledByNobody[position], found);
+        uncalledFunctions = collectInParallel<uint32_t>(loops, uncalledFunctions.size(), [&](unsigned position, Vector<uint32_t>& found) {
+            takeAway(uncalledFunctions[position], found);
         });
     }
 

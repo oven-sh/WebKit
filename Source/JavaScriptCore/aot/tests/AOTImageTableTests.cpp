@@ -337,7 +337,7 @@ static void testCalleesOfSites()
     for (auto [site, callee] : listed)
         AOT_TEST_CHECK(parts.calleeOfSiteAt(site) == callee);
     AOT_TEST_CHECK(parts.calleeOfSiteAt(131)->wordInFrame() == -70000 && !parts.calleeOfSiteAt(130)->isOwnFunctionObject() && !parts.calleeOfSiteAt(130)->wordInFrame());
-    AOT_TEST_CHECK(parts.calleeOfSiteAt(70002)->wordInFrame() == 70000 && parts.calleeOfSiteAt(70002)->fieldOfEnvironment() == 0x1000018u && !parts.calleeOfSiteAt(131)->fieldOfEnvironment());
+    AOT_TEST_CHECK(parts.calleeOfSiteAt(70002)->wordInFrame() == 70000 && parts.calleeOfSiteAt(70002)->fieldInEnvironment() == 0x1000018u && !parts.calleeOfSiteAt(131)->fieldInEnvironment());
     for (uint32_t site : { 0u, 3u, 129u, 132u, 69999u, 70001u, 70003u })
         AOT_TEST_CHECK(!parts.calleeOfSiteAt(site));
     AOT_TEST_CHECK(std::ranges::equal(parts.handlers, handlers));

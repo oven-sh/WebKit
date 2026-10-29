@@ -1017,7 +1017,7 @@ void PointsToSolver::record(SolvedUse& solved, const ArrivedObjects& arrived)
     bool onlyCreatesFollowedAlias = solved.flowsTo && !solved.retainedBy && solved.reasons.isEmpty() && solved.uses.containsOnly({ OperandUse::Inspects, OperandUse::Returns });
     if (onlyCreatesFollowedAlias)
         return;
-    // An entry for each object at each use: a value that n objects reach, with n such values in a row, is n x n entries for each of its uses.
+    // One entry per object per use: a chain of n values, each reached by n objects, costs n x n entries per use.
     if (!takeWork(arrived.objects.size()))
         return;
     size_t size = m_results.uses.size() + arrived.objects.size();
@@ -1099,7 +1099,7 @@ void PointsToSolver::solveTerminatorOperandUse(SolvedUse& solved, const ArrivedO
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What the operation in a block keeps in its result, the same operation at the end of a block keeps in the object that its edge makes.
+// A terminator retains in the object created on its edge what the same operation inside a block retains in its result.
 void PointsToSolver::solveOperandRetainedByTerminator(SolvedUse& solved, const ArrivedObjects& arrived, TerminatorKind kind, const OperandSummary& summary)
 {
     if (summary.retainedIn == RetainedIn::Result && makesObjectOnEdge(solved.use.block)) {
@@ -1112,7 +1112,7 @@ void PointsToSolver::solveOperandRetainedByTerminator(SolvedUse& solved, const A
         solved.reasons.add(reasonForRetainingTerminator(kind));
         return;
     }
-    // Another edge may pass another object to the parameter, which keeps what its own maker gave it.
+    // Another edge may pass a different object to the parameter. That object keeps what its own creator stored in it.
     forEachObjectIn(objectsOf(solved.retainedBy).span(), [&](ObjectID container) {
         if (m_results.objects[container.index()].definition == solved.retainedBy)
             addContents(container, std::nullopt, arrived.words);

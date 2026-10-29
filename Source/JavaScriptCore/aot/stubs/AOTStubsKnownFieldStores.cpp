@@ -78,14 +78,14 @@ static void branchIfChainMayHaveName(StubAssembler& jit, GPRReg object, GPRReg s
     mayHaveName.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
     // What has happened to a name since the filter was made.
     jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.changesUnderNamesOnChains)), scratch);
-    Jump hasSeenEveryChange = jit.branch32(CCallHelpers::Equal, Address(filter, OBJECT_OFFSETOF(AbsenceFilter, changesUnderNames)), scratch);
+    Jump filterIsCurrent = jit.branch32(CCallHelpers::Equal, Address(filter, OBJECT_OFFSETOF(AbsenceFilter, changesUnderNames)), scratch);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.namesChangedOnChains)), filter);
     jit.urshift32(name, TrustedImm32(6), scratch);
     jit.load64(BaseIndex(filter, scratch, CCallHelpers::TimesEight), scratch);
     jit.urshift64(name, scratch);
     mayHaveName.append(jit.branchTest64(CCallHelpers::NonZero, scratch, TrustedImm32(1)));
 
-    hasSeenEveryChange.link(&jit);
+    filterIsCurrent.link(&jit);
     isAbsent.link(&jit);
 }
 
@@ -167,7 +167,7 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
 }
 
-static void generatePutKnownFieldThatTakesEveryNumber(StubAssembler& jit)
+static void generatePutKnownFieldAcceptingAnyNumber(StubAssembler& jit)
 {
     static_assert(traitsOf(SlotRepresentation::OptionalDouble).absentBits == absentDouble && !traitsOf(SlotRepresentation::Double).hasAbsent);
     const PutMode mode = static_cast<PutMode>(jit.key().form());
@@ -209,7 +209,7 @@ static void generatePutKnownFieldThatTakesEveryNumber(StubAssembler& jit)
 void generatePutKnownField(StubAssembler& jit)
 {
     if (jit.key().count() == 2) {
-        generatePutKnownFieldThatTakesEveryNumber(jit);
+        generatePutKnownFieldAcceptingAnyNumber(jit);
         return;
     }
     if (jit.key().count()) {

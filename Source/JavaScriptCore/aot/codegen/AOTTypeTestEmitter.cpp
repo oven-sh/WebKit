@@ -305,7 +305,7 @@ void TypeTestEmitter::test(Operand operand, const TypeTestPlan& plan, B3::Freque
         });
         return;
     case Representation::LiteralString:
-        // Whatever makes a word makes the number of a text that has one, so a word that is a cell equals no text with a number.
+        // Every producer of a word uses the literal number for a string that has one, so a word that is a cell never equals a string with a literal number.
         testWithMarkers(operand, plan, failure, [&] {
             leaveUnless(isOneOfLiteralStringWords(operand.as<LiteralStringWord>(), plan), failure);
         });

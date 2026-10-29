@@ -276,7 +276,7 @@ static const ClassPart* findOnlyClassWithElements(const BuiltinTable& builtins, 
     return found;
 }
 
-static bool hasOnlyObjectsOfClassesBelowArray(const Program& program, const Type& type)
+static bool hasOnlyArraySubclassInstances(const Program& program, const Type& type)
 {
     return type.hasOnlyLayouts() && std::ranges::all_of(membersOf(program, type), [&](LayoutID member) {
         return program.at(member).writtenBuiltinBase == BuiltinClasses::Array;
@@ -286,8 +286,8 @@ static bool hasOnlyObjectsOfClassesBelowArray(const Program& program, const Type
 static ElementReceiver elementReceiverOf(const Program& program, const ElementAccessQuery& query)
 {
     if (const ClassPart* part = query.receiver.singleBuiltinClass())
-        return { ElementReceiverKind::Class, part, false, part->builtinClass == BuiltinClasses::Array && query.receiverExpected && hasOnlyObjectsOfClassesBelowArray(program, *query.receiverExpected) };
-    if (hasOnlyObjectsOfClassesBelowArray(program, query.receiver)) {
+        return { ElementReceiverKind::Class, part, false, part->builtinClass == BuiltinClasses::Array && query.receiverExpected && hasOnlyArraySubclassInstances(program, *query.receiverExpected) };
+    if (hasOnlyArraySubclassInstances(program, query.receiver)) {
         static const NeverDestroyed<ClassPart> anyArray { ClassPart { .builtinClass = BuiltinClasses::Array } };
         return { ElementReceiverKind::Class, &anyArray.get(), false, true };
     }
@@ -335,8 +335,8 @@ static ArrayStorage expectedArrayStorageOf(const Program& program, const Element
 static ElementAccessPlan planArrayAccess(const Program& program, const ElementAccessQuery& query, NumberKey key, const ElementReceiver& receiver, ElementAccessPlan plan)
 {
     const ClassPart& part = *receiver.part;
-    bool storesAtIndexBelowArray = query.access == Access::Store && key.isArrayIndex && hasOnlyObjectsOfClassesBelowArray(program, query.receiver);
-    if (receiver.isNeverPristine && query.access != Access::Read && !storesAtIndexBelowArray)
+    bool storesIndexIntoArraySubclass = query.access == Access::Store && key.isArrayIndex && hasOnlyArraySubclassInstances(program, query.receiver);
+    if (receiver.isNeverPristine && query.access != Access::Read && !storesIndexIntoArraySubclass)
         return planByKey(query);
     plan.receiverIsNeverPristine = receiver.isNeverPristine;
     plan.requiredAspects = PristineAspects::Storage;
@@ -360,8 +360,8 @@ static bool fitsContentType(const Type& stored, TypedArrayContentType contentTyp
 {
     switch (contentType) {
     case TypedArrayContentType::Number:
-        // What is undefined, null or a boolean becomes a number without running code, in front of the store: AccessRewriter::rewrite().
-        // A value that may be a number too is tested for one first: planSplitOfStoredNumber().
+        // undefined, null and booleans convert to a number without running code, before the store: AccessRewriter::rewrite().
+        // A value that may also be a number is tested for that first: planSplitOfStoredNumber().
         return stored.isNumber() || (!stored.isNever() && stored.isNumberLike() && !(stored.primitives & Primitive::Number));
     case TypedArrayContentType::BigInt:
         return !stored.isNever() && stored.hasOnlyPrimitives(Primitive::BigInt);

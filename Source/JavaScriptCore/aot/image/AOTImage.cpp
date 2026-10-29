@@ -81,15 +81,15 @@ const Image* Image::findByCodeAddress(const void* address)
     return nullptr;
 }
 
-void Image::forEachPublishedAsCurrent(const ScopedLambda<IterationStatus(const Image&)>& functor)
+void Image::forEachPublishedImage(const ScopedLambda<IterationStatus(const Image&)>& functor)
 {
-    const Image* currentBefore = t_currentImage;
+    const Image* previousImage = t_currentImage;
     for (const Image* image = s_lastPublished.load(std::memory_order_acquire); image; image = image->m_publishedBefore) {
         t_currentImage = image;
         if (functor(*image) == IterationStatus::Done)
             break;
     }
-    t_currentImage = currentBefore;
+    t_currentImage = previousImage;
 }
 
 static_assert(!offsetof(ImageHeader, magic) && offsetof(ImageHeader, stamp) == 8 && offsetof(ImageHeader, identity) == 16 && offsetof(ImageHeader, size) == 32, "check() reads magic, stamp and identity before it knows that the rest of the header has this build's layout");

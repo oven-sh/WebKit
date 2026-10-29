@@ -619,7 +619,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     if (options.pureFunction)
         effects.reads = { };
     // A site says where in the source a frame stands and which handler is in force there.
-    // What finds no room for what it allocates throws where it returns. In a function with handlers its site says which handler is in force there, or that none is.
+    // An operation whose allocation fails throws when it returns. In a function with handlers, its site records which handler, if any, is active there.
     bool mayFindNoRoom = context && returns && request.effectsOfCallee.mayCollect && !options.pureFunction && !options.followsThrow && analyses().cfg().hasHandlers();
     bool hasSite = effects.mayExitSideways() || options.capturesStackTrace || mayFindNoRoom;
     if (m_options.recorded.isSabotaged(Sabotage::CallsThatThrowHaveNoSite) && returns && context && !effects.mayRunOtherCode() && !options.capturesStackTrace && !options.throwSite && !request.firstRead) [[unlikely]]
@@ -629,7 +629,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
     if (effects.mayCollect && context)
         emitter<BarrierEmitter>().validateBeforeCollection(*context);
 
-    // The operands of the operation are not known to be there either.
+    // The operation's operands are not known to be available either.
     bool validates = generator().validates() && context && !generator().isPassingHandlerArguments();
     RuntimeValidationEmitter::OperandCells cellsBeforeCall;
     if (validates && returns && !options.runsCodeOfHost && !mayConvertCells(effects))
@@ -764,8 +764,8 @@ StubCallResult RuntimeCallEmitter::callStubForTwoReads(const OperationContext& c
 B3::PatchpointValue* RuntimeCallEmitter::createCallPatchpoint(const OperationContext& context, const CallPatchpointRequest& request)
 {
     Effects effects = effectsOfCall(context, request.effects);
-    // Where no handler of the function takes it, a frame that finds no room ends the function: none of its code runs behind that call.
-    if (!effects.mayThrowBeyondLackOfStack() && !emitter<ExceptionEmitter>().unwindsWithinFunction(context))
+    // If no handler of the function catches it, a stack overflow in the callee ends the function: none of its code runs after that call.
+    if (!effects.mayThrowOtherThanStackOverflow() && !emitter<ExceptionEmitter>().unwindsWithinFunction(context))
         effects.mayThrow = false;
     if (effects.mayCollect)
         emitter<BarrierEmitter>().validateBeforeCollection(context);
@@ -913,11 +913,11 @@ void RuntimeCallEmitter::applyEffects(B3::PatchpointValue* patchpoint, const Eff
     B3HeapList reads;
     B3HeapList writes;
     bool replacesStorageOfArrays = conversions == CellConversions::WhateverEffectsSay || AOTHeaps::mayReplaceStorageOfArrays(effects);
-    bool saysLessThanItWrites = m_options.recorded.isSabotaged(Sabotage::CallsGiveNoArrayOtherStorage) && !effects.writes.isTop();
+    bool underreportsWrites = m_options.recorded.isSabotaged(Sabotage::CallsGiveNoArrayOtherStorage) && !effects.writes.isTop();
     m_heaps.appendHeaps(effects.reads, reads);
-    m_heaps.appendHeaps(saysLessThanItWrites ? effects.writes.without(AbstractHeap::ArrayStorage) : effects.writes, writes);
+    m_heaps.appendHeaps(underreportsWrites ? effects.writes.without(AbstractHeap::ArrayStorage) : effects.writes, writes);
     if (convertsCells)
-        m_heaps.appendHeapsOfConvertedCells(writes, replacesStorageOfArrays && !saysLessThanItWrites ? AOTHeaps::ConvertedCells::All : AOTHeaps::ConvertedCells::AllButArrays);
+        m_heaps.appendHeapsOfConvertedCells(writes, replacesStorageOfArrays && !underreportsWrites ? AOTHeaps::ConvertedCells::All : AOTHeaps::ConvertedCells::AllButArrays);
     if (effects.mayCollect)
         m_heaps.appendHeapsWrittenByCollection(writes);
     else if (accessesCollectorState)

@@ -116,7 +116,7 @@ const ArrayStorageForm& ArrayAllocationEmitter::formAtAllocation(const Type& arr
 
 const ArrayStorageForm& ArrayAllocationEmitter::formOfLiteral(const OperationContext& context, std::span<const ValueID> elements, const Type& array, bool hasHoles)
 {
-    // arrayStorageOfLiteral() says nothing of a list that is born without an element and without a hole, unless storage for every value is declared for it.
+    // arrayStorageOfLiteral() returns nothing for an array created with no elements and no holes, unless it is declared to use storage for any value.
     if (elements.empty() && !hasHoles)
         return formOfEmptyLiteral(context.valueID(), array);
     const ArrayStorageForm& form = formAtAllocation(array);

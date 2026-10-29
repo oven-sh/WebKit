@@ -390,7 +390,7 @@ constexpr UnprovenCause unprovenCauseOf(ValueFlowUnknownSource source)
 
 // Where each object that code outside the program holds went out of sight. An object goes out at a statement that hands it over, or behind another object:
 // the contents behind their holder, a prototype and its constructor behind an instance, an instance behind its constructor. Those lead round in a ring,
-// so the ways out are taken in the order in which the rounds logged them: the origin of an object is the statement at the beginning of the first way that was open to it.
+// so an origin is a statement that hands over by itself, and everything that follows counts for it. Nothing here follows the order of the rounds: that follows the number of threads.
 class ValueFlowOriginsOfEscapes {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ValueFlowOriginsOfEscapes);
 public:
@@ -402,8 +402,6 @@ public:
         ValueFlowStatementID statement;
         ValueSetID leaders;
         ValueSetID brought;
-        // The rule that follows what has gone out added them by itself: the leaders are all that had arrived since its last run.
-        bool isGuessed { false };
     };
 
     ValueFlowStatementID originOf(ValueFlowObjectID object) const { return object.index() < m_originOfObject.size() ? m_originOfObject[object.index()] : ValueFlowStatementID(); }
@@ -465,7 +463,7 @@ struct ValueFlowFieldContents {
     Vector<Vector<ValueFlowNumbers>> storedNumbers;
     Vector<Vector<ValueSetID>> storedInAppendedFields;
     Vector<Vector<ValueFlowNumbers>> numbersStoredInAppendedFields;
-    Vector<BitVector> appendedFieldsGivenValuesNobodyKnows;
+    Vector<BitVector> appendedFieldsWithUnknownValues;
 };
 
 class ValueFlowNodesAskedFor {

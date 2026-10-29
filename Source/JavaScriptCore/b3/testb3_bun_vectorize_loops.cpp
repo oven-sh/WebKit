@@ -536,7 +536,7 @@ static void testVectorizeLoopsPollsBetweenStretches()
             static int64_t numberOfPolls;
             PatchpointValue* poll = loop.graph.emptyPatchpoint(loop.loop.body);
             poll->isLoopPoll = true;
-            poll->turnsAreShort = true;
+            poll->iterationsAreShort = true;
             poll->effects = Effects::none();
             poll->effects.writesLocalState = true;
             poll->effects.exitsSideways = true;
@@ -804,7 +804,7 @@ static void testVectorizeLoopsPollsBetweenStretchesOfCountersThatMeet()
     static int64_t numberOfPolls;
     PatchpointValue* poll = loop.graph.emptyPatchpoint(loop.body);
     poll->isLoopPoll = true;
-    poll->turnsAreShort = true;
+    poll->iterationsAreShort = true;
     poll->effects = Effects::none();
     poll->effects.writesLocalState = true;
     poll->effects.exitsSideways = true;

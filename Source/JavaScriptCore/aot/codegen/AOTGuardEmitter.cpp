@@ -183,7 +183,7 @@ void GuardEmitter::generateHasNoExtraProperties(const ValueContext& value)
     ShapeTestEmitter& shapes = emitter<ShapeTestEmitter>();
     if (const Type& type = typeOf(value->objectOperand()); shapes.hasOnlyCellsWithBrands(type)) {
         CellPointer cell = in<CellPointer>(value->objectOperand());
-        defineTest(value, shapes.hasOnlyCellsBornWithoutProperties(type) ? shapes.hasNoPropertyOfItsOwn(cell) : shapes.hasOnlyNamesOfItsClass(cell));
+        defineTest(value, shapes.hasOnlyCellsCreatedWithoutProperties(type) ? shapes.hasNoPropertyOfItsOwn(cell) : shapes.hasOnlyClassFieldNames(cell));
         return;
     }
     defineTestOfCompiledObject(value, [&] {

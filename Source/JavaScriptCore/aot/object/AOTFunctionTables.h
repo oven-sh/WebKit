@@ -19,6 +19,7 @@
 #include <optional>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
+#include <wtf/MallocSpan.h>
 #include <wtf/SparseBitVector.h>
 #include <wtf/text/WTFString.h>
 
@@ -134,12 +135,12 @@ struct FunctionTables {
     bool hasRecordedCallees() const { return !recordedCalleeStorage.isEmpty(); }
     // A function whose function objects nobody is seen to rename pays nothing for its frames until the run time sees one of them get a displayName. From then on every call by value comes by the run time, which records the callees that are function objects of such a function.
     // A frame that was entered before has no record.
-    void recordCalleesOf(VM&, FunctionID sourceFunction);
+    void recordCalleesOf(VM&, FunctionID closureFunction);
     bool recordsCalleesOfCallsByValue() const { return !!isRenamedAtRunTime.load(std::memory_order_acquire); }
     bool recordsCalleesOf(FunctionID function) const
     {
         const uint8_t* isRenamed = isRenamedAtRunTime.load(std::memory_order_acquire);
-        return isRenamed && isRenamed[function.index()];
+        return isRenamed && isRenamed[sourceFunctionOf(function).index()];
     }
     void recordCalleeOfCallByValue(VM&, const void* stackPointerOfCaller, JSObject* closure);
     // Its frames are named by the function object that runs in them.
@@ -147,7 +148,7 @@ struct FunctionTables {
     std::span<RecordedCallee> recordedCallees() { return recordedCalleeStorage.mutableSpan().subspan(hasRecordedCallees() ? 1 : 0); }
     // Nothing unless the last call made from there recorded a function object of the function. Null: one that lies in a frame.
     std::optional<JSObject*> recordedCalleeOfCallFrom(const void* stackPointerOfCaller, FunctionID sourceFunction);
-    // Of a call that enters the function without its function object: the caller keeps that, or the environment that holds it, in a word of its own frame. Nothing unless a function object of the function is found there. Null: one that lies in a frame, or that was never made.
+    // For a call that enters the function without its function object: the caller keeps the function object, or the environment that holds it, in a word of its own frame. Returns nullopt unless a function object of the function is found there, and null for one that lives in a frame or was never created.
     std::optional<JSObject*> calleeKeptInFrame(VM&, const void* frameRecordOfCaller, CalleeOfSite, FunctionID sourceFunction);
     // Those of calls that may not have returned. The others leave the table.
     template<typename Visitor> void visitRecordedCallees(VM&, Visitor&, uint64_t phaseOfCollector);
@@ -161,8 +162,8 @@ struct FunctionTables {
     // The program stands still from the last phase in which a collection scans the stack to the phase that ends it. So the end goes by the places that the walk beside that scan found filled.
     std::optional<uint64_t> phaseOfLastWalkOfRecordedCallees;
     Vector<uint32_t> placesFilledAtLastWalk;
-    // A byte for each function of the image, once there is such a function. It is set for every function that was made from the renamed one too.
-    Vector<uint8_t> functionsRenamedAtRunTime WTF_GUARDED_BY_LOCK(namesLock);
+    // A byte for each function of the image, once there is such a function. It is set for the source and for the functions that its closures are made of, which is what stubs ask about.
+    MallocSpan<uint8_t> functionsRenamedAtRunTime WTF_GUARDED_BY_LOCK(namesLock);
     std::atomic<const uint8_t*> isRenamedAtRunTime { nullptr };
     TextsByFunction sourceTexts;
 };

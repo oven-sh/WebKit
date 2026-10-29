@@ -273,7 +273,7 @@ void MathBuiltinEmitter::extremum(const InlineCall& call, Extremum kind)
         finish(call, number(extremumOfNoValues(isMax)));
         return;
     }
-    // Integers of 32 bits are compared and selected as they are: nothing is widened and nothing cut again.
+    // Int32 operands are compared and selected directly, without extending and truncating.
     if (areIntegers(m_function, call) && std::ranges::all_of(arguments, [&](ValueID argument) { return typeOf(argument).isInt32(); })) {
         Word32 chosen = int32Operand(arguments[0]);
         Range range = typeOf(arguments[0]).integers;

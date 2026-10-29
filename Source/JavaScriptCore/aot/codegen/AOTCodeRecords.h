@@ -55,14 +55,14 @@ struct RecordedSite {
     FunctionID constructedCallee { };
     // The function has made the function object that it calls here itself and has handed it to nobody.
     bool callsOwnFunctionObject { false };
-    // The function object that is called here is kept in the frame: an index into SiteRecords::keptCallees, plus one.
+    // The function object called here is kept in the frame: an index into SiteRecords::keptCallees, plus one.
     uint32_t keptCalleePlusOne { 0 };
 };
 
 struct KeptCallee {
     // An index into SiteRecords::wordsOfCallees.
     uint32_t word { 0 };
-    // The position and the inline frame of the call, which are those of the operation that keeps its callee.
+    // The position and inline frame of the call, which are those of the operation that keeps its callee.
     uint64_t call { 0 };
 };
 
@@ -70,10 +70,10 @@ struct SiteRecords {
     Vector<RecordedSite> positions;
     Vector<uint32_t> inlineCallSites;
     uint32_t numberOfSitesWithoutCode { 0 };
-    // By the number of inline frames around the call. A call that is copied in keeps its word for as long as the copy runs, and the calls of the copy have the next one.
+    // Indexed by the call's inline depth. An inlined call keeps its word while the inlined body runs, and calls inside that body use the next word.
     Vector<B3::Air::StackSlot*, 2> wordsOfCallees;
     Vector<KeptCallee, 4> keptCallees;
-    // By KeptCallee::call, where the word holds an environment: SlotData::encoded() of the field that holds the function object. Nothing: the field has no storage, so no function object is made.
+    // Indexed by KeptCallee::call, for words that hold an environment: SlotData::encoded() of the field that holds the function object. nullopt if the field has no storage, so no function object is created.
     UncheckedKeyHashMap<uint64_t, std::optional<uint32_t>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> fieldsOfCallees;
 
     static uint32_t wordOfCalleeCalledFrom(const Function& function, uint32_t inlineFrame)

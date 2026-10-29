@@ -120,7 +120,8 @@ public:
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
     // What a table of exports holds under the name. In the captured exports of a module the table itself stands for a deferred export: capturedValue() reads that one.
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
-    JSObject* moduleNamespace(ModuleID, ModulePhase);
+    // As AbstractModuleRecord::getModuleNamespace(): the caller that creates the object decides whether it is extensible.
+    JSObject* moduleNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions = true);
     JSObject* importMeta(ModuleID);
     JSCell* builtinCell(BuiltinID, ModuleID);
     JSString* pathString(ModuleID);
@@ -332,7 +333,7 @@ private:
     Identifier keyOfRequest(ModuleID target);
     JSObject* namespaceIfCreated(ModuleID, ModulePhase) const;
     void setNamespace(ModuleID, ModulePhase, JSObject*);
-    JSObject* createNamespace(ModuleID, ModulePhase);
+    JSObject* createNamespace(ModuleID, ModulePhase, bool shouldPreventExtensions);
     JSObject* createTableOfExports();
     JSModuleLoader* loader() const;
 
@@ -400,6 +401,7 @@ private:
     bool mayHandOutModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     JSValue answerRequire(ModuleID);
     JSValue readExportForRequire(JSObject* namespaceObject, const Identifier& name);
+    void willRequireESModule(ModuleID);
     void markNamespaceAsRequired(ModuleID);
 
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&);
@@ -439,6 +441,7 @@ private:
     JSPromise* m_importThatWaitsForQueuedJobs { nullptr };
     const EvaluationInProgress* m_innermostEvaluation { nullptr };
     Structure* m_namespaceStructure { nullptr };
+    Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     // The pairs of a requiring and a required module that recordRequire() has seen.
     enum class RecordedRequire : uint8_t { Begun, Returned, BegunAgain, BegunAndMadeObjectOfESModule, ReturnedAndNotListed };
@@ -479,6 +482,7 @@ private:
     bool hasReachedLevelOf(FilesBeingRun&, ModuleID file);
     void findDistanceOfFiles(FilesBeingRun&);
     BitVector m_modulesWithMarkOfRequire;
+    BitVector m_modulesWithExtensibleNamespace;
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     std::optional<ModuleID> m_firstModuleRequestedByHost;

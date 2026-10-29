@@ -165,7 +165,8 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
 bool Object::hasEveryFieldOfBirth() const
 {
     State& state = this->state();
-    return std::ranges::all_of(layout().fields(), [&](const FieldData& field) {
+    // Fields are mostly filled in the order of the layout, so an unfinished object is told soonest by its last fields.
+    return std::ranges::all_of(layout().fields() | std::views::reverse, [&](const FieldData& field) {
         if (field.holdsRawValueFromBirth) {
             const void* slot = slotOf(field);
             return slot && !slotHoldsMarker(field.slot.representation(), slot);
@@ -207,7 +208,7 @@ static Object::LeavingProperty createPropertyFromDescriptor(JSGlobalObject* glob
     return { GetterSetter::create(globalObject->vm(), globalObject, getter, setter), (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor };
 }
 
-// The slot holds the property only if its attributes are the ones the layout gives the field.
+// The slot holds the property only if its attributes match the ones the layout gives the field.
 static void createField(VM& vm, Object& object, const FieldData& field, Object::LeavingProperty created)
 {
     bool fitsSlot = created.attributes == object.attributesOf(field);
@@ -546,7 +547,7 @@ bool Object::tryDefineAbsentProperty(VM& vm, const FieldData* field, PropertyNam
     if (extra && isValidOffset(extra->structure()->get(vm, name)))
         return false;
     willAddExtraProperty(vm, name);
-    // The first property is added before the object gets its extra properties, so the object changes its Structure once.
+    // The first property is added before the object gets its extra properties, so the object changes Structure only once.
     bool isFirst = !extra;
     if (isFirst)
         extra = constructEmptyObject(vm, Instance::of(structure()->realm())->realm.emptyExtraPropertiesStructure);
@@ -1004,7 +1005,7 @@ bool Object::putWithKnownField(JSCell* cell, JSGlobalObject* globalObject, Prope
         ChainWalk walk = walkChain({ globalObject, object->structure(), object, ChainWalkMode::AllocatesNothing, ChainWalkUse::UsedAtOnce }, name.uid());
         StoreThroughChain answer = storeThroughChain(walk);
         if (chainLetsStoresPass) {
-            // A walk that allocates nothing cannot always tell.
+            // A walk that cannot allocate cannot always decide this.
             RELEASE_ASSERT(answer == StoreThroughChain::CreatesOwnProperty || answer == StoreThroughChain::Unknown);
             answer = StoreThroughChain::CreatesOwnProperty;
         }

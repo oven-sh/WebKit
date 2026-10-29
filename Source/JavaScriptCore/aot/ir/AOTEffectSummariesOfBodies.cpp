@@ -195,7 +195,7 @@ static bool hasEmptyDescription(TerminatorKind kind)
     return kinds.contains(kind);
 }
 
-// A set of locations without a heap has no mask either, so the words behind the heaps need not be read.
+// A set of locations without a heap has no mask either, so the words after the heaps need not be read.
 static ALWAYS_INLINE bool isPure(const Effects& effects)
 {
     return effects.reads.isEmpty() && effects.writes.isEmpty() && effects.mayThrow == ThrowEffect(false) && !effects.mayCollect && !effects.mayCallUnknownCode && !effects.maySuspend && !effects.mayBeTerminated;
@@ -232,7 +232,7 @@ namespace {
 
 class BodySummarizer {
 public:
-    enum class ReadAs : uint8_t { Itself, ItselfAndCalleesByTypesOfOperands, GenericVersionGivenTypes, OutlinedBodyGivenTypes };
+    enum class ReadAs : uint8_t { Itself, ItselfAndCalleesByOperandTypes, GenericVersionGivenTypes, OutlinedBodyGivenTypes };
 
     BodySummarizer(const EffectContext& context, FunctionID id, FunctionAnalyses& analyses, BodyReferenceCollector* references, ReadAs readAs)
         : m_context(context)
@@ -243,7 +243,7 @@ public:
         , m_exits(computeExitReachability(m_function))
         , m_maySuspend(maySuspend(analyses))
         , m_readAs(readAs)
-        , m_genericVersionEntered(readAs == ReadAs::ItselfAndCalleesByTypesOfOperands ? genericVersionEnteredWithOwnParameters(context.program, m_function) : FunctionID())
+        , m_genericVersionEntered(readAs == ReadAs::ItselfAndCalleesByOperandTypes ? genericVersionEnteredWithOwnParameters(context.program, m_function) : FunctionID())
         , m_wordsInRow((firstBitOfParameters + m_function.numberOfEntryParameters() + bitsInWord - 1) / bitsInWord)
         , m_parametersInMemoryAsTargets(FillWith { }, m_wordsInRow, uint64_t { 0 })
     {
@@ -276,8 +276,8 @@ public:
                 m_summary.onReturn.merge(declaredBoundOf(Opcode::RejectPromise));
             addDependencyToExitBits(SummaryNode::onThrow(m_id), bitOfReturn);
         }
-        // A frame that finds no room on the stack is a RangeError at the call.
-        m_summary.onReturn.mayThrow |= ThrowEffect::onlyForLackOfStack();
+        // A stack overflow on entry is a RangeError at the call.
+        m_summary.onReturn.mayThrow |= ThrowEffect::onlyStackOverflow();
         listDependencies();
         return WTF::move(m_summary);
     }
@@ -329,7 +329,7 @@ private:
             m_summary.parameters[parameter].memory.merge(memory);
     }
 
-    // Every target is a node of the function itself, so what a source flows into is a row of bits: on return, on throw, then the entry parameters.
+    // Every target is a node of the function itself, so the targets of a source are a row of bits: on return, on throw, then the entry parameters.
     static constexpr uint32_t bitsInWord = 64;
     static constexpr uint64_t bitOfReturn = 1;
     static constexpr uint64_t bitOfThrow = 2;
@@ -397,7 +397,7 @@ private:
         addDependencyToParametersInMemoryAnd(handlerSource, handler ? exitBitsOf(handler->block) : bitOfThrow);
     }
 
-    // In the order of the sources, and of each in the order of its targets.
+    // Sorted by source, then by target.
     void listDependencies()
     {
         Vector<uint32_t, 32> positions(m_sources.size(), [](size_t position) {
@@ -580,9 +580,9 @@ private:
         }
     }
 
-    // A callee that takes more kinds of values than it is given here does what its operations do to values of the types given.
-    // So is the generic version in which this body begins again with its own parameters, and what was moved out of that version into a body of its own.
-    bool isReadWithTypesOfOperands(BlockID block, const Value& value) const
+    // A callee that accepts more kinds of values than it is passed here does what its operations do to values of the passed types.
+    // So does the generic version in which this body restarts with its own parameters, and code outlined from that version.
+    bool isReadWithOperandTypes(BlockID block, const Value& value) const
     {
         if (m_readAs == ReadAs::Itself || value.opcode != Opcode::CallDirect)
             return false;
@@ -594,7 +594,7 @@ private:
         switch (m_readAs) {
         case ReadAs::Itself:
             return false;
-        case ReadAs::ItselfAndCalleesByTypesOfOperands:
+        case ReadAs::ItselfAndCalleesByOperandTypes:
             return value.function() == m_genericVersionEntered && !m_function.at(block).handler && m_function.at(block).terminator.kind == TerminatorKind::ReturnCall
                 && std::ranges::equal(operands, m_function.at(entryBlock).parameters.span());
         case ReadAs::GenericVersionGivenTypes:
@@ -616,7 +616,7 @@ private:
         addDependencyToParametersInMemoryAnd(source, handler ? exitBitsOf(handler->block) : bitOfThrow);
     }
 
-    void summarizeCalleeWithTypesOfOperands(BlockID block, ValueID call, const EffectDescription& description)
+    void summarizeCalleeWithOperandTypes(BlockID block, ValueID call, const EffectDescription& description)
     {
         const Program& program = m_context.program;
         const Value& value = m_function.at(call);
@@ -638,11 +638,11 @@ private:
         AnalysisContext context = m_analyses.context();
         context.id = value.function();
         FunctionAnalyses analyses(context, callee);
-        // What is made of a parameter follows it: the side of a test, what two ways through the function join.
+        // Values derived from a parameter follow it: a narrowed copy after a test, a join of two paths.
         ScratchTypeArena types(program.types);
         if (!narrowedParameters.isEmpty())
             narrowValueTypesBehindChanges(TypePropagationInputs { program, value.function(), callee, analyses, types, context.build }, narrowedParameters.span());
-        BodySummary entered = BodySummarizer(m_context, value.function(), analyses, nullptr, m_readAs == ReadAs::ItselfAndCalleesByTypesOfOperands ? ReadAs::GenericVersionGivenTypes : ReadAs::OutlinedBodyGivenTypes).run();
+        BodySummary entered = BodySummarizer(m_context, value.function(), analyses, nullptr, m_readAs == ReadAs::ItselfAndCalleesByOperandTypes ? ReadAs::GenericVersionGivenTypes : ReadAs::OutlinedBodyGivenTypes).run();
 
         addToExits(block, description.own.normal, description.own.handler);
         addToExits(block, entered.onReturn, entered.onThrow);
@@ -717,7 +717,7 @@ private:
         }
         bool isGivenTypes = m_readAs == ReadAs::GenericVersionGivenTypes || m_readAs == ReadAs::OutlinedBodyGivenTypes;
         bool isUnmatchedCall = value.opcode == Opcode::CallBuiltin && value.builtinCallForm() == BuiltinCallForm::AnyReceiver;
-        EffectDescription description = isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByTypesOfOperands(program, m_function, value) : describeEffects(program, m_function, value);
+        EffectDescription description = isGivenTypes && isUnmatchedCall ? describeUnmatchedCallByOperandTypes(program, m_function, value) : describeEffects(program, m_function, value);
         m_summary.followsFieldsOfOperands |= description.followsFieldsOfOperands;
         if (m_references)
             m_references->read(value, description);
@@ -729,8 +729,8 @@ private:
             description.callsUnknownCode = true;
             description.addOwn(Effects::unknownCode());
         }
-        if (isReadWithTypesOfOperands(block, value)) [[unlikely]] {
-            summarizeCalleeWithTypesOfOperands(block, id, description);
+        if (isReadWithOperandTypes(block, value)) [[unlikely]] {
+            summarizeCalleeWithOperandTypes(block, id, description);
             return;
         }
         if (effectRuleOf(value.opcode) == EffectRule::Call && !maySuspend(value.opcode)) {
@@ -845,7 +845,7 @@ BodySummary summarizeBodyLocally(const EffectContext& context, FunctionID id, Fu
             return summarizeDescription(context.program, id, function, description);
     }
     if (function.hasBody())
-        return BodySummarizer(context, id, analyses, references, calleesAreRead == CalleesAreRead::AsTheyAre ? BodySummarizer::ReadAs::Itself : BodySummarizer::ReadAs::ItselfAndCalleesByTypesOfOperands).run();
+        return BodySummarizer(context, id, analyses, references, calleesAreRead == CalleesAreRead::AsTheyAre ? BodySummarizer::ReadAs::Itself : BodySummarizer::ReadAs::ItselfAndCalleesByOperandTypes).run();
 
     BodySummary summary;
     summary.onReturn = Effects::unknownCode();

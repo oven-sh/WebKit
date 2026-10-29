@@ -1502,8 +1502,8 @@ static void encodeRemovedFields(TableEncoder& encoder)
     setSortedTable(encoder, ProgramTableIndex::removedFields, removedFields);
 }
 
-// The run time holds what happens to an object against these lists. They are data, and no code depends on them.
-static bool listsNamesThatObjectsGet(const BuildContext& build)
+// The runtime checks what happens to an object against these lists. They are data only; no code depends on them.
+static bool encodesAddedNames(const BuildContext& build)
 {
     return build.validates() || build.recordedOptions().has(TestingSwitch::CheckProofsAtRunTime);
 }
@@ -1520,7 +1520,7 @@ static void encodeAddedNames(TableEncoder& encoder)
     const Vector<PropertyKeyID>* sharedKeys = program.keysStoredThroughUnknownReceivers();
     bool canListSharedKeys = sharedKeys && haveNumbers(*sharedKeys);
     bool listsSharedKeys = false;
-    for (unsigned index = 0; listsNamesThatObjectsGet(encoder.build) && index < program.layouts.size(); ++index) {
+    for (unsigned index = 0; encodesAddedNames(encoder.build) && index < program.layouts.size(); ++index) {
         LayoutID id(index);
         const LayoutFlow& flow = program.at(id).flow;
         if (!flow.addedKeysAreComplete || encoder.slots.storageOf(id) != LayoutStorage::CompiledObject)
@@ -1546,7 +1546,7 @@ static void encodeClassPrototypeNames(TableEncoder& encoder)
 {
     const Program& program = encoder.program;
     Vector<AddedNameData> names;
-    for (unsigned index = 0; listsNamesThatObjectsGet(encoder.build) && index < program.layouts.size(); ++index) {
+    for (unsigned index = 0; encodesAddedNames(encoder.build) && index < program.layouts.size(); ++index) {
         const ClassFlow& flow = program.layouts[index].classFlow;
         if (!flow.prototypeNamesAreComplete)
             continue;
@@ -2221,6 +2221,9 @@ void encodeFunctionTables(TableEncoder& encoder)
     encoder.setTableFrom<Number24>(ProgramTableIndex::functionSources, traces.span().subspan(firstDerived), [](const FunctionTraceRecord& trace) {
         return Number24(trace.sourceFunctionIndex);
     });
+    encoder.setTableFrom<Number24>(ProgramTableIndex::closureFormsBySource, encoder.placement.closureFormsBySource(), [](FunctionID form) {
+        return Number24(form.index());
+    });
     Vector<ImplementedBuiltinData> implementedBuiltins;
     for (uint32_t index = 0; index < traces.size(); ++index) {
         if (std::optional<BuiltinID> builtin = traces[index].implements())
@@ -2388,7 +2391,7 @@ static void appendModule(TableEncoder& encoder, ModuleID id, const Module& modul
     setDisplayPath(encoder, id, module, lists, entry);
     entry.hasInstalledPositions = module.flags.contains(ModuleFlags::HasInstalledPositions);
     entry.loadedByLoader = module.flags.contains(ModuleFlags::IsLoadedByLoader);
-    entry.importedWhileItRuns = module.flags.contains(ModuleFlags::MayBeImportedWhileItRuns);
+    entry.importedWhileItRunsOrAsNamespace = module.flags.contains(module.kind == ModuleKind::CommonJs ? ModuleFlags::MayBeImportedWhileItRuns : ModuleFlags::IsImportedAsNamespace);
     entry.bodyRunsAtMostOnce = module.kind == ModuleKind::RuntimeSource && module.body && encoder.flow.runsAtMostOnce(program, module.body);
     entry.kind = module.kind;
     entry.externalKind = module.externalKind;

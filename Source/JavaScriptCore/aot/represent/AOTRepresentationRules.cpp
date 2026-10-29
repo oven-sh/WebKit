@@ -201,7 +201,7 @@ static Representation wantedByBits(const RepresentationInputs& inputs, const Val
     return everyOperandHasDefault(inputs, operation, Representation::Cell) ? Representation::Cell : Representation::JSValue;
 }
 
-// The name of a property: its word is found once, by where its characters lie, and every comparison of the key shares it.
+// A property name from for-in: its literal-string word is looked up once, by the address of its characters, and every comparison of the key reuses it.
 static bool isEnumeratedKey(const Function& function, ValueID id)
 {
     const Value& definition = function.at(definitionThroughUpcasts(function, id));
@@ -568,7 +568,7 @@ static Representation wantedByOperation(const RepresentationInputs& inputs, cons
         return integerRepresentationOf(type);
     if (opcode == Opcode::GetMyArgumentByVal)
         return unboxedNumberOrJSValue(type);
-    if (opcode == Opcode::GetStringLength && defaultRepresentationOf(type) == Representation::LiteralString && type.stringLiterals.size() <= maxLiteralsToldApartByLength)
+    if (opcode == Opcode::GetStringLength && defaultRepresentationOf(type) == Representation::LiteralString && type.stringLiterals.size() <= maxLiteralsDistinguishedByLength)
         return Representation::Unchosen;
     if (isNewArrayElement(user, operandIndex))
         return wantedByNewArrayElement(inputs, operand);
@@ -634,7 +634,7 @@ static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuilt
     InlineBuiltin::MathImul, InlineBuiltin::MathClz32, InlineBuiltin::MathSign, InlineBuiltin::IsNaN, InlineBuiltin::IsFinite,
     InlineBuiltin::NumberIsNaN, InlineBuiltin::NumberIsFinite, InlineBuiltin::NumberIsInteger, InlineBuiltin::NumberIsSafeInteger,
 };
-static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatHandOutElement { InlineBuiltin::ArrayAt, InlineBuiltin::ArrayPop, InlineBuiltin::ArrayShift };
+static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsReturningElement { InlineBuiltin::ArrayAt, InlineBuiltin::ArrayPop, InlineBuiltin::ArrayShift };
 static constexpr EnumeratorBitSet<InlineBuiltin, numberOfEnumerators<InlineBuiltin>> builtinsThatMoveBytes { InlineBuiltin::DataViewGet, InlineBuiltin::DataViewSet, InlineBuiltin::BufferAccess };
 
 static std::optional<InlineBuiltin> inlineBuiltinOf(const Value& value)
@@ -657,12 +657,12 @@ static bool computesWithNumbers(const Terminator&)
     return false;
 }
 
-// A text lies in a list as a string. To hold it as the number of its literal it has to be looked up among the literals, which costs more than whoever compares it saves: it stays the word that was loaded, as what an element read gives.
+// An array holds a string as a JSString. Converting it to its literal number needs a lookup among the literals, which costs more than the comparison saves, so the value stays the loaded word, like the result of an element read.
 template<typename Operation>
-static Representation withoutLookUpOfElement(const Operation& operation, Representation byType)
+static Representation withoutElementLookup(const Operation& operation, Representation byType)
 {
     std::optional<InlineBuiltin> builtin = byType == Representation::LiteralString ? inlineBuiltinOf(operation) : std::nullopt;
-    return builtin && builtinsThatHandOutElement.contains(*builtin) ? Representation::JSValue : byType;
+    return builtin && builtinsReturningElement.contains(*builtin) ? Representation::JSValue : byType;
 }
 
 bool readsDoubleOutOfBytes(const Value& value)
@@ -912,13 +912,13 @@ Representation resultRepresentationOf(const RepresentationInputs& inputs, const 
         return naturalOrDefaultRepresentation(type, elementRepresentationOf(value.arrayStorage()));
     if (value.opcode == Opcode::GetTypedArrayElement)
         return inFormOfDouble(Representation::ImpureDouble, naturalOrDefaultRepresentation(type, defaultRepresentationOf(elementTypeOf(value.typedArrayType()))));
-    if (answersUnboxedNumber(value))
+    if (returnsUnboxedNumber(value))
         return Representation::Double;
     if (operationsReturningBoxedValue.contains(value.opcode) || (value.opcode == Opcode::CallBuiltin && !isCompiledInline(value.builtinCallForm())))
         return Representation::JSValue;
 
     ResultRepresentationRules rules { inputs, std::nullopt };
-    return withoutLookUpOfElement(value, inFormOfDouble(formOfDoubleMadeBy(inputs, value), applyResultRule(rules, value, 0, ResultSide::Unproven)));
+    return withoutElementLookup(value, inFormOfDouble(formOfDoubleMadeBy(inputs, value), applyResultRule(rules, value, 0, ResultSide::Unproven)));
 }
 
 Representation resultRepresentationOf(const RepresentationInputs& inputs, const Value& producer, uint32_t resultIndex)
@@ -941,7 +941,7 @@ Representation edgeResultRepresentationOf(const RepresentationInputs& inputs, Ed
     case EdgeResultKind::DeclaredResult: {
         ScratchTypeArena types(inputs.program.types);
         Representation representation = defaultRepresentationOf(computeTypeOnEdge({ inputs.program, inputs.function, types.arena() }, position));
-        return representation == Representation::Double ? formOfDoubleMadeBy(inputs, inputs.function.at(position.from).terminator) : withoutLookUpOfElement(inputs.function.at(position.from).terminator, representation);
+        return representation == Representation::Double ? formOfDoubleMadeBy(inputs, inputs.function.at(position.from).terminator) : withoutElementLookup(inputs.function.at(position.from).terminator, representation);
     }
     }
     RELEASE_ASSERT_NOT_REACHED();

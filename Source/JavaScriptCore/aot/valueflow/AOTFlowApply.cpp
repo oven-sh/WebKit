@@ -309,7 +309,7 @@ static void appendFlowFields(const Program& program, TypeArena& arena, std::span
         if (!appended.accessor.isAccessor())
             applyPosition(field.declared, appended.position);
         field.flags = { FieldFlags::IsAddedLate };
-        if (appended.isFilledByMakers)
+        if (appended.isFilledByCreators)
             field.flags.add(FieldFlags::IsFilledByCreator);
         field.flow = appended.flow;
         field.form = appended.formOfValue;

@@ -87,7 +87,7 @@ void ArrayBufferViewBuiltinEmitter::moveBytes(const OperationContext& context, C
     LBasicBlock moved = newBlock();
     m_out.branch(belowOrEqual(count, maxBytesMovedByStub).value(), normalEdge(few), normalEdge(many));
 
-    // The stub keeps every register but two, so nothing is saved around it.
+    // The stub preserves all but two registers, so nothing is saved around the call.
     m_out.appendTo(few);
     callStub(context, moveFewBytes(), { to.value(), from.value(), count.value() });
     m_out.jump(moved);
@@ -142,7 +142,7 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call
     CellPointer target = cellOperand(call.receiver());
     CellPointer source = cellOperand(call.argument(0));
     ValueID offset = call.argumentOrNull(1);
-    // What is cut off a fraction does not count, and a number that is no place in the view leaves for the function.
+    // A fractional part is truncated, and a number that is not a valid index into the view falls back to the function.
     Integer position = !offset ? integer(0) : typeOf(offset).isInteger() ? integerOperand(offset) : emitter<ConversionEmitter>().toInteger(numberOperand(offset));
     missUnless(call, haveFixedLength(target, source));
     Integer count = lengthOf(source);
@@ -161,7 +161,7 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArraySet(const InlineCall& call
     moveBytes(call.context(), target, targetOffset, source, integer(0), numberOfBytes);
     m_out.jump(done);
 
-    // A view of a detached buffer has no elements, and the function throws.
+    // A view of a detached buffer has no elements; the function throws for it.
     m_out.appendTo(nothingToMove);
     Condition targetHasMemory = isNotZero(Integer(vectorOf(target).value()));
     Condition sourceHasMemory = isNotZero(Integer(vectorOf(source).value()));

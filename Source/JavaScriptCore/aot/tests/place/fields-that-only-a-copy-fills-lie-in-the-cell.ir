@@ -6,9 +6,9 @@
 # CHECK: L0 CompiledObject size=32 extension=0
 # CHECK-NOT: out@
 # CHECK: L0 allocated=
-# CHECK-NEXT: "id" filled=100% besideCreation=100%
-# CHECK-NEXT: "name" filled=100% besideCreation=100%
-# CHECK-NEXT: "age" filled=50% besideCreation=50%
+# CHECK-NEXT: "id" filled=99% besideCreation=100%
+# CHECK-NEXT: "name" filled=99% besideCreation=100%
+# CHECK-NEXT: "age" filled=74% besideCreation=100%
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

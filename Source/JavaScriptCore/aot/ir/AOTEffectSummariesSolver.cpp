@@ -886,7 +886,7 @@ CompactEffects EffectSummarizer::compactSolvedEffectsOf(uint32_t node)
 
 void EffectSummarizer::assemble(EffectSummaries& summaries, FunctionID id)
 {
-    constexpr uint8_t flagsOfBothEdges = CompactEffects::MayThrow | CompactEffects::MayThrowBeyondLackOfStack | CompactEffects::MayThrowByRule | CompactEffects::MayCollect | CompactEffects::MayBeTerminated;
+    constexpr uint8_t flagsOfBothEdges = CompactEffects::MayThrow | CompactEffects::MayThrowOtherThanStackOverflow | CompactEffects::MayThrowByRule | CompactEffects::MayCollect | CompactEffects::MayBeTerminated;
     InternedLocationMasks& masks = m_kept.m_masks;
     auto restrictedToPerObjectHeaps = [&](uint32_t masksOfNode) {
         return m_masksOfPerObjectHeaps.get(masksOfNode, [&] {
@@ -1623,7 +1623,7 @@ void EffectSummarizer::resolveNodesInAndAboveCycles(std::span<const uint32_t> no
         Effects united = Effects::none();
         uint8_t takesInUnknownCode = 0;
         std::span<const uint32_t> members = components.membersOf(component);
-        // Many nodes have the same effects, and what is in the union stays there.
+        // Many nodes have the same effects, and the union only grows.
         std::array<CompactEffects, 16> lastMerged { };
         auto mergeEffectsOf = [&](uint32_t node) {
             CompactEffects effects = m_kept.m_effects[node];

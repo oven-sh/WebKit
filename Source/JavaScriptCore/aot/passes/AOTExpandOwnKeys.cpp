@@ -757,6 +757,16 @@ static bool walksOneProvenOrder(FunctionPassContext& context, const OwnKeyWalkPl
     return !plan.needsKeyOrderTest || (context.build.validates() && hasOnlyFilledFields(context.program, plan.arms[0]));
 }
 
+// The first copy between two shapes costs the run time thousands of instructions to plan, and most sites outside hot code see each pair a few times. A guard, a load and a store per field cost less than the plan from the first run on.
+AOT_THRESHOLD(size_t, maxFieldsOfGuardedCopyOutsideHotCode, 12);
+
+static bool isSmallGuardedCopy(const OwnKeyWalkPlan& plan)
+{
+    return std::ranges::all_of(plan.arms, [](const OwnKeyWalkArm& arm) {
+        return arm.order.size() <= maxFieldsOfGuardedCopyOutsideHotCode;
+    });
+}
+
 // The sites are listed last first: an expansion moves only the values after its point.
 static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context, std::optional<OwnKeyWalk> onlyWalk = std::nullopt)
 {
@@ -797,14 +807,14 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context, std:
         if (walk.site.walk == OwnKeyWalk::Assign) {
             if (!planAssign(context, unchanged, walk))
                 continue;
-            if (seldomRuns && (walk.remainingSourcesCall || !std::ranges::all_of(walk.walkedSources, [&](const WalkedSource& source) { return walksOneProvenOrder(context, source.plan); })))
+            if (seldomRuns && (walk.remainingSourcesCall || !std::ranges::all_of(walk.walkedSources, [&](const WalkedSource& source) { return walksOneProvenOrder(context, source.plan) || isSmallGuardedCopy(source.plan); })))
                 continue;
         } else if (isExpandedByPlan(walk.site.walk)) {
             std::optional<OwnKeyWalkPlan> plan = planOwnKeyWalk(context, unchanged, walk.site);
-            if (!plan || (seldomRuns && !walksOneProvenOrder(context, *plan)))
+            if (!plan || (seldomRuns && !walksOneProvenOrder(context, *plan) && !isSmallGuardedCopy(*plan)))
                 continue;
             // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
-            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isKeptByNobody(context, walk.site.target)) {
+            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isSmallGuardedCopy(*plan) && !isKeptByNobody(context, walk.site.target)) {
                 // The copy of all slots at once is a few words of code in front of the call, which is then laid out as the rare way: for a source that is expected to have the layout of the literal and no other.
                 if (!expectsOneLayout(context, walk.site) || !plan->arms[0].copiesFieldsAtOnce)
                     continue;

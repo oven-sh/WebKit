@@ -37,11 +37,11 @@ enum class StubFrameKind : uint8_t {
     AtStubEntry,
     // The frame is one that emitHostCallFrame() has made, and the stub does in it what the native callee would do. A run of compiled frames ends at it, as at a frame of the engine.
     InHostCallFrame,
-    // As Plain, in a frame with a record: all that the stub does behind the operation it has called is to return to its caller.
-    ReturnsBehindOperation,
+    // Like Plain, in a frame with a record: after the operation it called returns, the stub only returns to its caller.
+    ReturnsAfterOperation,
 };
 inline constexpr unsigned numberOfStubFrameKinds = 17;
-static_assert(static_cast<unsigned>(StubFrameKind::ReturnsBehindOperation) + 1 == numberOfStubFrameKinds);
+static_assert(static_cast<unsigned>(StubFrameKind::ReturnsAfterOperation) + 1 == numberOfStubFrameKinds);
 
 constexpr bool hasSingleReturnSite(StubFrameKind kind)
 {
@@ -53,7 +53,7 @@ constexpr bool hasSingleReturnSite(StubFrameKind kind)
     case StubFrameKind::ArgumentList:
         return true;
     case StubFrameKind::Plain:
-    case StubFrameKind::ReturnsBehindOperation:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::HandlerOfJob:
     case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
@@ -78,7 +78,7 @@ constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
     case StubFrameKind::PlainFunctionConstruct:
         return sizeOfSpilledArgumentRegisters;
     case StubFrameKind::Plain:
-    case StubFrameKind::ReturnsBehindOperation:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::Adapter:
     case StubFrameKind::ConstructAdapter:
     case StubFrameKind::SavedFrameAdapter:

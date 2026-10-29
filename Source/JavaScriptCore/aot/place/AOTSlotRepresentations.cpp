@@ -478,25 +478,25 @@ public:
         std::span<const JoinedRows::Set> sets = m_joinedRows.sets();
         m_timeRoomLastChangedIn.fill(0, m_context.program.layouts.size());
         m_timeClaimLastChanged.fill(0, m_claims.size());
-        Vector<uint32_t> timeOfLook(sets.size());
+        Vector<uint32_t> lastVisitTime(sets.size());
         for (size_t index = 0; index < sets.size(); ++index) {
             share(sets[index]);
-            timeOfLook[index] = m_time;
+            lastVisitTime[index] = m_time;
         }
-        // A slot that has become narrower for one set leaves room in its cell for the slot of another, which may have come first.
-        // What is decided for a set follows from the claims of its rows and from the room in their cells: where neither has changed since, it is decided as before.
-        size_t numberOfSetsLookedAtAgain = 0;
+        // A slot that became narrower for one set frees room in its cell for a slot of another set, which may have been processed earlier.
+        // The decision for a set depends only on the claims of its rows and the room in their cells, so if neither has changed the decision stands.
+        size_t numberOfSetsRevisited = 0;
         for (size_t index = 0; index < sets.size(); ++index) {
             bool hasChanged = std::ranges::any_of(m_joinedRows.rowsOf(sets[index]), [&](SlotRow row) {
-                return m_timeClaimLastChanged[row] > timeOfLook[index] || m_timeRoomLastChangedIn[m_context.rows.layoutOf(row).index()] > timeOfLook[index];
+                return m_timeClaimLastChanged[row] > lastVisitTime[index] || m_timeRoomLastChangedIn[m_context.rows.layoutOf(row).index()] > lastVisitTime[index];
             });
             if (!hasChanged)
                 continue;
-            ++numberOfSetsLookedAtAgain;
+            ++numberOfSetsRevisited;
             share(sets[index]);
         }
         if (m_context.build.options().logging.logsPhaseTimes) [[unlikely]]
-            dataLogLn("AOT shared slot claims: sets of joined rows ", sets.size(), " | looked at again ", numberOfSetsLookedAtAgain);
+            dataLogLn("AOT shared slot claims: sets of joined rows ", sets.size(), " | looked at again ", numberOfSetsRevisited);
     }
 
 private:
@@ -682,7 +682,7 @@ private:
     const JoinedRows& m_joinedRows;
     std::span<SlotClaim> m_claims;
     Vector<uint32_t> m_spareBytes;
-    // The time goes on with every unit that takes a shared claim.
+    // The time advances with every unit that takes a shared claim.
     Vector<uint32_t> m_timeRoomLastChangedIn;
     Vector<uint32_t> m_timeClaimLastChanged;
     uint32_t m_time { 0 };

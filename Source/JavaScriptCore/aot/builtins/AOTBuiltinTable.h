@@ -652,7 +652,7 @@ struct BuiltinHostObject {
     std::span<const BuiltinHostObjectField> fields { };
     std::span<const BuiltinHostObjectInternalField> internalFields { };
     bool keepsStringsOfStoredValues { false };
-    // Under each of these the object has an accessor whose two halves are native code.
+    // For each of these names the object has an accessor whose getter and setter are native code.
     std::span<const BuiltinName> nativeAccessors { };
 };
 
@@ -746,6 +746,7 @@ enum class BuiltinMark : uint8_t {
     RunsWaitingJobs,
     IsCalledWithoutStartupLoads,
     InstancesHaveMethodCalledWithStartupLoads,
+    LoadsMachineCodeThatIsHandedNoValue,
 };
 
 struct BuiltinMarkedEntry {
@@ -902,7 +903,7 @@ extern const BuiltinHostMethodCall builtinTableHostMethodCalls[];
 extern const BuiltinForms builtinTableForms[];
 extern const BuiltinNameClasses builtinTableClassesByMemberName[];
 extern const BuiltinClassTokenStorage builtinTableClassTokens;
-// One per entry of runtimeFunctions(), in that order. Only IR text names a runtime function.
+// One per entry of runtimeFunctions(), in the same order. Runtime functions are only named in IR text.
 extern const BuiltinTexts builtinTableRuntimeFunctionTokens;
 
 struct BuiltinMemberLookup {

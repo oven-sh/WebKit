@@ -36,8 +36,8 @@ struct VerifierInputs {
     const PlacedTableSizes* placed { nullptr };
     bool isOptimizing { false };
     const EffectSummaries* effects { nullptr };
-    // computeEffectSummariesByTypesOfOperands(), where they cannot be made when they are wanted: other functions are being edited.
-    const EffectSummaries* effectsByTypesOfOperands { nullptr };
+    // computeEffectSummariesByOperandTypes(), for when they cannot be computed on demand because other functions are being edited.
+    const EffectSummaries* effectsByOperandTypes { nullptr };
     bool cannotJudgeGuards { false };
     bool hasUncheckedRecords { false };
     bool lacksEngineFields { false };

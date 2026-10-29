@@ -86,7 +86,7 @@ public:
         MayCallUnknownCode = 1 << 3,
         MaySuspend = 1 << 4,
         MayBeTerminated = 1 << 5,
-        MayThrowBeyondLackOfStack = 1 << 6,
+        MayThrowOtherThanStackOverflow = 1 << 6,
     };
 
     constexpr uint32_t reads() const { return m_bits & idMask; }
@@ -346,9 +346,9 @@ private:
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, BuildContext&);
 EffectSummaries createSummariesFromFlow(const Program&, const FlowResults&, const BorrowedParameters&, BuildContext&);
 EffectSummaries computeEffectSummaries(const Program&, const FlowResults&, BuildContext&);
-// A typed body that begins again in the generic version of its function hands on its own parameters. Here that call says what the generic version does to values of their types, and so does a call
-// of what was moved out of the generic version into a body of its own. Each such callee is read once more for each such call, which is too dear for a build: the verifier asks where a guard does not last.
-EffectSummaries computeEffectSummariesByTypesOfOperands(const Program&, const FlowResults&, BuildContext&);
+// A typed body that restarts in the generic version of its function passes its own parameters. Here that call is summarized by what the generic version does to values of those types, and so is a call
+// to code outlined from the generic version. Each such callee is read again for each such call, which is too expensive for a build, so only the verifier asks, when a guard is unavailable.
+EffectSummaries computeEffectSummariesByOperandTypes(const Program&, const FlowResults&, BuildContext&);
 void updateEffectSummaries(const Program&, const FlowResults&, BuildContext&, BodySummaries& kept, EffectSummaries&, BodyReferences* = nullptr);
 FunctionSummary summarizeBody(const EffectContext&, FunctionID, FunctionAnalyses&);
 

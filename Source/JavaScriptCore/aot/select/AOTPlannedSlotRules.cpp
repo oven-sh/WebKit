@@ -30,7 +30,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-// By whether the operations find the offset of a slot by the shape of the object.
+// Depends on whether the operations find a slot's offset from the object's shape.
 using ArmsOfAgreements = std::array<HashMap<const SlotAgreement*, Vector<LayoutSetID, 4>>, 2>;
 
 struct PlannedSlotMatch {
@@ -79,8 +79,8 @@ static bool canFindOffsetByShape(Opcode opcode, const SlotAgreement& agreement)
     return operationsWithOffsetByShape.contains(opcode) && (!storedOf(opcode).has_value() || agreement.coversEveryMember());
 }
 
-// Where the operation finds the offset by the shape, the groups that keep the field in the cell in one representation need one arm between them.
-// What finds the offset grows with the layouts it tells apart, so many layouts keep an arm for each place.
+// When the operation finds the offset from the shape, the groups that keep the field inline in the same representation share one arm.
+// The offset lookup grows with the number of layouts it distinguishes, so with many layouts each slot position keeps its own arm.
 static Vector<Vector<LayoutID, 8>, 4> membersOfArms(const SlotAgreement& agreement, bool findsOffsetsByShape)
 {
     AOT_THRESHOLD(size_t, maxLayoutsOfSharedArm, 16);
@@ -370,7 +370,7 @@ static void collectMatches(SelectionContext& context, Opcode opcode, ArmsOfAgree
             follower = { };
         if (!follower && context.tryClaim(SelectionRuleID::PlannedSlots, group) != ClaimResult::Claimed)
             continue;
-        // In cold code each place keeps an arm of its own.
+        // In cold code each slot position keeps its own arm.
         bool findsOffsetsByShape = !isCold(heatClassOf(context.pass(), context.analyses().useLists().blockOf(id))).predicted()
             && canFindOffsetByShape(opcode, agreement) && (!follower || canFindOffsetByShape(function.at(follower).opcode, agreement));
         const Vector<LayoutSetID, 4>& arms = armsOfAgreements[findsOffsetsByShape].ensure(&agreement, [&] {

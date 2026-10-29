@@ -297,7 +297,7 @@ static void branchUnlessPlaceSaysAbsent(StubAssembler& jit, const KeyedProbeRegi
 }
 
 // The place is of the key. Goes on where it says in which slot of the cell the objects of the Structure have their field, with the address and the representation of that slot.
-// At doesNotSay the registers are as they were. At isNotInCell the register of the place is overwritten.
+// At doesNotSay the registers are unchanged. At isNotInCell the place register is clobbered.
 static FieldAddressRegisters findFieldByPlace(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& doesNotSay, JumpList& isNotInCell)
 {
     const FieldAddressRegisters field {
@@ -362,7 +362,7 @@ static void returnOwnValueAt(StubAssembler& jit, GPRReg base, GPRReg wordIndex)
     jit.returnToCaller();
 }
 
-// The place is of the key. Returns the value where the place says where the objects of the Structure have it beside their fields. Where it goes on, the base, the key, the StructureID and the place are as they were.
+// The place belongs to the key. Returns the value if the place records where objects of the Structure keep it among their extra properties. On fall-through the base, key, StructureID and place are unchanged.
 static void returnExtraPropertyByPlace(StubAssembler& jit, const KeyedProbeRegisters& registers, JumpList& hasNoExtraProperties)
 {
     const GPRReg hiddenWordOffset = registers.uid;
@@ -380,7 +380,7 @@ static void returnExtraPropertyByPlace(StubAssembler& jit, const KeyedProbeRegis
     doesNotSay.link(&jit);
 }
 
-// A slot of the hashed table names a property that a compiled object has beside its fields. The Structure of the object names the Structure of the object that holds those, so where the property lies holds for as long as the Structure lives.
+// A slot of the hashed table names an extra property of a compiled object. The object's Structure identifies the Structure of the object that holds the extra properties, so the property's location is valid for as long as the Structure lives.
 static void rememberExtraPropertyOfKey(StubAssembler& jit, const KeyedProbeRegisters& registers, const ProbedSlot& slot)
 {
     const CachedSlot extraProperty(slot.form, Slot::Kind::ExtraProperty, slot.header, slot.payload);

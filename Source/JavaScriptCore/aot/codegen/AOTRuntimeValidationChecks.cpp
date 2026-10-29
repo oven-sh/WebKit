@@ -84,7 +84,7 @@ void RuntimeValidationEmitter::checkValue(ValueID id, Operand operand)
         checkEnvironmentShape(operand.as<CellPointer>(), type.environment, id);
 }
 
-// Comparisons, switches and type tests compare words: a text that has a number is never held as its cell.
+// Comparisons, switches and type tests compare words, so a string that has a literal number is never held as its cell.
 void RuntimeValidationEmitter::checkLiteralStringWord(ValueID id, LiteralStringWord word)
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
@@ -552,26 +552,26 @@ void RuntimeValidationEmitter::checkIsNotReleased(const OperationContext& contex
     failUnless(notEqual(freeCell, environment), ValidationFailureKind::ValueType, { }, context.valueID());
 }
 
-void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer, FrameCellsAsked asked)
+void RuntimeValidationEmitter::checkIsNotFrameCell(const OperationContext& context, Operand operand, std::optional<Operand> retainer, FrameCellFilter asked)
 {
     if (!mayHoldPointer(operand))
         return;
     Condition escapes = isInStack(Pointer(operand.value));
     if (retainer && mayHoldPointer(*retainer))
         escapes = logicalAnd(escapes, logicalNot(isInStack(Pointer(retainer->value))));
-    if (asked == FrameCellsAsked::All) {
+    if (asked == FrameCellFilter::All) {
         failUnless(logicalNot(escapes), ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
         return;
     }
 
-    // What lies in a frame and has such a type is a cell with a header.
+    // A value of such a type that lives in a frame is a cell with a header.
     LBasicBlock liesInFrame = newBlock();
     LBasicBlock continuation = newBlock();
     m_out.branch(escapes.value(), rareEdge(liesInFrame), normalEdge(continuation));
     m_out.appendTo(liesInFrame);
     Word32 type(m_out.load8ZeroExt32(m_out.address(m_heaps.JSCell_header, operand.value, JSCell::typeInfoTypeOffset())));
     Condition isArray = equal(type, word32(ArrayType));
-    failUnless(asked == FrameCellsAsked::Arrays ? logicalNot(isArray) : isArray, ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
+    failUnless(asked == FrameCellFilter::Arrays ? logicalNot(isArray) : isArray, ValidationFailureKind::FrameCellEscaped, { }, context.valueID());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
@@ -622,7 +622,7 @@ void RuntimeValidationEmitter::poisonFrameCells(ProgramPoint point)
             poisonFields(cell, layout, m_program.at(layout).isEnvironment() ? AbstractHeap::EnvironmentFields : AbstractHeap::ObjectFields);
             continue;
         }
-        // A tail call takes what it is lent along.
+        // A tail call takes borrowed values with it.
         if (value.isLent())
             continue;
         switch (value.closureForm()) {

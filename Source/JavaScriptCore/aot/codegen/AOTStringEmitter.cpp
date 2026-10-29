@@ -203,7 +203,7 @@ Word32 StringEmitter::lengthOf(LiteralStringWord word, const Type& type)
 {
     ConversionEmitter& conversions = emitter<ConversionEmitter>();
     bool mayBeCell = type.primitives & Primitive::String;
-    Vector<std::pair<StringID, unsigned>, maxLiteralsToldApartByLength> lengths;
+    Vector<std::pair<StringID, unsigned>, maxLiteralsDistinguishedByLength> lengths;
     for (StringID literal : type.stringLiterals) {
         if (inputs().literalStrings.indexOf(literal))
             lengths.append({ literal, m_program.strings.toWTFString(literal).length() });

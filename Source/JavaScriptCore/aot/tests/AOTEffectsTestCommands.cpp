@@ -143,7 +143,7 @@ static std::span<const String> takeInputWords(TestCommandContext& context, std::
         words = words.subspan(1);
     }
     if (!words.empty() && words.front() == "summaries-by-types-of-operands"_s) {
-        inputs.summaries = computeEffectSummariesByTypesOfOperands(*context.program, inputs.flow, context.build);
+        inputs.summaries = computeEffectSummariesByOperandTypes(*context.program, inputs.flow, context.build);
         inputs.hasSummaries = true;
         words = words.subspan(1);
     }

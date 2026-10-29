@@ -293,7 +293,7 @@ bool CellAllocationEmitter::keepsCellsInFrame()
     return *m_keepsCellsInFrame;
 }
 
-// The frames of a thread lie one below the other, so the address of one word in each tells which of two was entered first.
+// A thread's frames are stacked one below the other, so comparing the address of one word in each tells which frame was entered first.
 Pointer CellAllocationEmitter::wordOfFrame()
 {
     if (!m_wordOfFrame) {

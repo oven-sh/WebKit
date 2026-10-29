@@ -297,12 +297,12 @@ bool ValueFlowPositions::turnsAwayEveryObject(ValueSetID set, const Type& type)
 }
 
 // The contents of many instances are united one instance at a time. A list of texts that has passed the limit would be written down once more at every step, one text longer.
-bool ValueFlowPositions::keepTextsOfContentsWithinLimit(ClassParts& parts)
+bool ValueFlowPositions::keepContentStringsWithinLimit(ClassParts& parts)
 {
     bool hasChanged = false;
     for (ClassPart& part : parts) {
         for (TypeID& contents : part.writtenContents) {
-            TypeID within = withTextsWithinLimit(contents);
+            TypeID within = withStringsWithinLimit(contents);
             hasChanged |= within != contents;
             contents = within;
         }
@@ -310,19 +310,19 @@ bool ValueFlowPositions::keepTextsOfContentsWithinLimit(ClassParts& parts)
     return hasChanged;
 }
 
-TypeID ValueFlowPositions::withTextsWithinLimit(TypeID id)
+TypeID ValueFlowPositions::withStringsWithinLimit(TypeID id)
 {
     if (!id)
         return id;
     const Type& type = m_types.at(id);
-    bool widensTexts = type.stringLiterals.size() > m_inputs.build.limit(LimitID::MaxLiteralsInType);
-    if (!widensTexts && type.classes.isEmpty())
+    bool widensStrings = type.stringLiterals.size() > m_inputs.build.limit(LimitID::MaxLiteralsInType);
+    if (!widensStrings && type.classes.isEmpty())
         return id;
     Type within = type;
-    bool hasChanged = keepTextsOfContentsWithinLimit(within.classes);
-    if (widensTexts)
+    bool hasChanged = keepContentStringsWithinLimit(within.classes);
+    if (widensStrings)
         within.primitives |= Primitive::String;
-    if (!widensTexts && !hasChanged)
+    if (!widensStrings && !hasChanged)
         return id;
     within.canonicalize();
     return m_types.intern(WTF::move(within));
@@ -353,7 +353,7 @@ bool ValueFlowPositions::addInstanceOfClass(Type& type, ValueFlowObjectID member
     if (listed && *listed == part && (!isRegExp || type.regExpLiteralSet == instance.regExpLiteralSet))
         return false;
     Type united = type.unionWith(instance, m_types);
-    keepTextsOfContentsWithinLimit(united.classes);
+    keepContentStringsWithinLimit(united.classes);
     bool saysSomethingElse = united.classes != type.classes || united.regExpLiteralSet != type.regExpLiteralSet;
     type = WTF::move(united);
     return saysSomethingElse;
@@ -849,8 +849,8 @@ std::optional<CalleeSet> ValueFlowPositions::calleesAt(ValueSetID possible, Valu
         if (m_inputs.sets().size(followed) <= m_inputs.build.limit(LimitID::MaxValueFlowMembersToldApart))
             listed = maker().unite(listed, maker().intersect(arriving, followed));
         // A class that has gone out of sight and was followed to the construction is one of those that it enters.
-        AOT_THRESHOLD(size_t, mostClassesFollowedToConstruction, 4);
-        if (ValueSetID classes = maker().intersect(arriving, universe.constructorsWithLayouts()); m_inputs.sets().size(classes) <= mostClassesFollowedToConstruction)
+        AOT_THRESHOLD(size_t, maxClassesFollowedToConstruction, 4);
+        if (ValueSetID classes = maker().intersect(arriving, universe.constructorsWithLayouts()); m_inputs.sets().size(classes) <= maxClassesFollowedToConstruction)
             listed = maker().unite(listed, classes);
     }
 

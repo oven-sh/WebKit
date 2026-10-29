@@ -116,7 +116,7 @@ static void putById(Instance* instance, JSValue base, uint32_t name, JSValue val
         const FieldData* field = object->fieldNamed(*instance->state, identifier);
         if (field && object->hasExtraProperties() && !object->read(*field))
             object->ensureStructureForExtraProperties(vm);
-        bool chainLetsStoresPass = field && !object->isInSlot(*field) && vm.aotState().propertyCaches->fileFilterAndAskWhetherStoreCreatesOwnField(globalObject, *object, field->name);
+        bool chainLetsStoresPass = field && !object->isInSlot(*field) && vm.aotState().propertyCaches->addFilterAndCheckStoreCreatesOwnField(globalObject, *object, field->name);
         Object::putWithKnownField(object, globalObject, identifier, value, slot, field, chainLetsStoresPass);
         RETURN_IF_EXCEPTION(scope, void());
         object->state().objects->classes.didStoreByName(vm, object->layout(), identifier.impl());
@@ -630,9 +630,9 @@ static NEVER_INLINE size_t JIT_OPERATION_ATTRIBUTES hasExtraPropertyByLookup(Ins
     OPERATION_RETURN(scope, readsAsValue);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasOnlyNamesOfItsClass, size_t, (Instance* instance, JSCell* cell))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasOnlyClassFieldNames, size_t, (Instance* instance, JSCell* cell))
 {
-    return instance->state->objects->classes.learnWhetherStructureHasOnlyNamesOfItsClass(cell->structure());
+    return instance->state->objects->classes.computeHasOnlyClassFieldNames(cell->structure());
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTHasExtraProperty, size_t, (Instance* instance, JSCell* cell, uint32_t key))

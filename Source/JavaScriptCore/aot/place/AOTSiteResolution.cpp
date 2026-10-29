@@ -414,7 +414,7 @@ bool storedFieldTakesAnyValue(const Program& program, const Placement& placement
     });
 }
 
-bool storedFieldTakesEveryNumber(const Program& program, const Placement& placement, const Function& function, const Value& store)
+bool storedFieldAcceptsAnyNumber(const Program& program, const Placement& placement, const Function& function, const Value& store)
 {
     return std::ranges::all_of(membersOf(program, program.typeOf(function, store.objectOperand())), [&](LayoutID member) {
         uint32_t field = *program.at(member).findField(store.key());

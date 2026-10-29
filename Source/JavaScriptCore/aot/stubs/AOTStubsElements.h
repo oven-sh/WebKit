@@ -27,7 +27,7 @@ constexpr StubKey putByValExpecting(bool indexIsInteger, ECMAMode mode, Expected
     return StubKey(indexIsInteger ? StubFamily::PutByValAtIndexExpecting : StubFamily::PutByValExpecting).withForm((mode.isStrict() ? 0 : numberOfExpectedElements) + static_cast<uint8_t>(expected));
 }
 
-// From one byte to this many.
+// Handles 1 to this many bytes.
 inline constexpr unsigned maxBytesMovedByStub = 16;
 constexpr StubKey moveFewBytes() { return StubKey(StubFamily::MoveFewBytes); }
 

@@ -2924,7 +2924,7 @@ bool Heap::tryCollectForExhaustedCage(GCDeferralContext* deferralContext)
     if (!MarkedBlockCage::isRequired())
         return false;
     if (deferralContext || isDeferred()) {
-        cage().didFindNoRoomWhereNothingCollects();
+        cage().didFindNoRoomWithoutCollecting();
         if (deferralContext)
             deferralContext->m_shouldGC = true;
         else

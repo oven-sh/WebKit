@@ -46,4 +46,5 @@ function f3 name="inner" role=Library enclosingRuntimeFunction=ArrayPrototypeAt 
 # SIZES-NEXT: functionRecords
 # SIZES-NEXT: functionRecordsByFunction 0 0
 # SIZES-NEXT: functionSources 2 6
+# SIZES-NEXT: closureFormsBySource 0 0
 # SIZES-NEXT: implementedBuiltins 3 24

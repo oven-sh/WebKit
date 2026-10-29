@@ -389,8 +389,8 @@ struct SeenCode {
 
 } // anonymous namespace
 
-// The record of a module that only compiled code evaluates names no body.
-static bool holdsCodeOfModule(const Function& function) { return function.module && function.isModuleBody(); }
+// The record of a module that only compiled code evaluates has no body.
+static bool isModuleBodyFunction(const Function& function) { return function.module && function.isModuleBody(); }
 
 // A module is loaded by the entry, or by a module that names it. A closure is made by a body that runs. A call of a callee that nobody knows reaches what has been made and may stand there.
 static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph& callGraph, const FlowResults& flow, const HeatGraph& graph, const ParallelArray<WeightedCallList>& calls, const FunctionsUnderNames& names, const Vector<Vector<FunctionID>>& functionsMadeBy, const BitVector& isCalledByHost, const BitVector& hasOnlySeenCallers, const Vector<Vector<uint32_t>>& namesReadBy, const Vector<Vector<uint32_t>>& holdersReadBy, const Vector<Vector<ModuleID>>& modulesLoadedBy, const Vector<uint8_t>& constructsUnknownValue, EstimateOf estimate)
@@ -430,7 +430,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
     BitVector isLoaded(program.modules.size());
     BitVector hasCode(program.modules.size());
     for (unsigned index = 0; index < count; ++index) {
-        if (program.functions[index].hasBody() && holdsCodeOfModule(program.functions[index]))
+        if (program.functions[index].hasBody() && isModuleBodyFunction(program.functions[index]))
             hasCode.quickSet(program.functions[index].module.index());
     }
     auto moduleIsLoaded = [&](FunctionID function) {
@@ -441,7 +441,7 @@ static SeenCode findWhatSeenCodeReaches(const Program& program, const CallGraph&
         return hasMaker.quickGet(function.index()) ? isMade.quickGet(function.index()) : moduleIsLoaded(function);
     };
     auto isBodyOfModule = [&](FunctionID function) {
-        return holdsCodeOfModule(program.at(function));
+        return isModuleBodyFunction(program.at(function));
     };
     // Text that the application makes at run time names what the application has made.
     bool evaluatesText = false;
@@ -658,7 +658,7 @@ static Vector<double> estimateHowSurelyNodesAreReached(const Program& program, c
             enter(entrypoint.index(), howSurely);
         for (ModuleID module : modulesLoadedBy[node])
             load(module, howSurely);
-        if (holdsCodeOfModule(program.at(function)))
+        if (isModuleBodyFunction(program.at(function)))
             load(program.at(function).module, howSurely);
         for (const WeightedCall& call : calls[node])
             enter(call.node, howSurely * std::min(call.weight, 1.0));
@@ -738,11 +738,11 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
         bool runsAsLoopDoes = estimate == EstimateOf::Classes && callGraph.callerSet(callee) != CallerSet::Complete && seen.mayEnter(callee) && !flow.runsAtMostOnce(program, callee);
         return WeightedCall { graph.nodeOf(callee).index(), std::max(runsAsLoopDoes ? frequencyConstants.iterationsPerLoop : 1.0, comesWithEvents(callee) ? entriesPerEvent[callee.index()] : 0.0) };
     };
-    struct CalleeOfHost {
+    struct HostCallee {
         FunctionID function;
         std::optional<WeightedCall> call;
     };
-    Vector<CalleeOfHost> calleesWithBody = collectInParallel<CalleeOfHost>(loops, callees.size(), [&](unsigned position, Vector<CalleeOfHost>& found) {
+    Vector<HostCallee> calleesWithBody = collectInParallel<HostCallee>(loops, callees.size(), [&](unsigned position, Vector<HostCallee>& found) {
         FunctionID callee = callees[position];
         if (!program.at(callee).hasBody() || !seen.reaches(callee) || hasOnlySeenCallers.get(callee.index()))
             return;
@@ -754,7 +754,7 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
     WeightedCallList calls;
     calls.reserveInitialCapacity(calleesWithBody.size());
     Vector<FunctionID> calleesCountedByProgram;
-    for (const CalleeOfHost& callee : calleesWithBody) {
+    for (const HostCallee& callee : calleesWithBody) {
         if (callee.call)
             calls.append(*callee.call);
         else
@@ -767,23 +767,23 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
     auto reach = [&](uint32_t node) {
         return !AtomicRef(isReached[node]).load(std::memory_order_relaxed) && !AtomicRef(isReached[node]).exchange(1, std::memory_order_relaxed);
     };
-    auto reachCalleesOf = [&](uint32_t node, Vector<uint32_t>& found) {
+    auto visitCalleesOf = [&](uint32_t node, Vector<uint32_t>& found) {
         for (const WeightedCall& call : callsOfProgram[node]) {
             if (reach(call.node))
                 found.append(call.node);
         }
     };
-    // What is reached from a set of nodes is the same in whatever order they are followed.
-    AOT_THRESHOLD(size_t, fewestNodesFollowedOnPool, 512);
+    // The set of reachable nodes does not depend on the visit order.
+    AOT_THRESHOLD(size_t, minNodesForThreadPool, 512);
     Vector<uint32_t> worklist;
-    auto followWorklist = [&] {
+    auto drainWorklist = [&] {
         while (!worklist.isEmpty()) {
-            if (worklist.size() < fewestNodesFollowedOnPool) {
-                reachCalleesOf(worklist.takeLast(), worklist);
+            if (worklist.size() < minNodesForThreadPool) {
+                visitCalleesOf(worklist.takeLast(), worklist);
                 continue;
             }
             worklist = collectInParallel<uint32_t>(loops, worklist.size(), [&](unsigned position, Vector<uint32_t>& found) {
-                reachCalleesOf(worklist[position], found);
+                visitCalleesOf(worklist[position], found);
             });
         }
     };
@@ -791,14 +791,14 @@ static WeightedCallList collectHostCalls(const Program& program, const CallGraph
         if (reach(call.node))
             worklist.append(call.node);
     }
-    followWorklist();
+    drainWorklist();
     size_t numberOfSortedCalls = calls.size();
     for (FunctionID callee : calleesCountedByProgram) {
         if (!reach(graph.nodeOf(callee).index()))
             continue;
         calls.append(callOf(callee));
         worklist.append(graph.nodeOf(callee).index());
-        followWorklist();
+        drainWorklist();
     }
     if (calls.size() > numberOfSortedCalls)
         AOT::sort(calls, { }, &WeightedCall::node);
@@ -1258,7 +1258,7 @@ HeatGraph buildHeatGraph(const Program& program, const CallGraph& callGraph, con
                 filled.m_predecessors[AtomicRef(nextPredecessor[call.node]).fetch_add(1, std::memory_order_relaxed)] = HeatNodeID(index);
             }
         });
-        // The predecessors of a node stand in the order of their numbers.
+        // A node's predecessors are sorted by index.
         forEachIndexInParallel(loops, numberOfNodes, [&](unsigned index) {
             AOT::sort(filled.m_predecessors.mutableSpan().subspan(filled.m_firstPredecessor[index], filled.m_firstPredecessor[index + 1] - filled.m_firstPredecessor[index]));
         });

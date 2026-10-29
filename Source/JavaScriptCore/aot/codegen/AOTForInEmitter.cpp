@@ -43,14 +43,14 @@ void ForInEmitter::generateForInOpen(const ValueContext& value)
     LBasicBlock isCompiledObject = newBlock();
     LBasicBlock isOtherCell = newBlock();
     LBasicBlock slowPath = newBlock();
-    // The enumerator, and how many of the names at its front the object is known to have.
+    // The enumerator, and how many of its leading names the object is known to have.
     ResultsJoin<CellPointer, Integer> join(m_out);
-    const bool hasStepThatAsksOnce = m_function.values.containsIf([&](const Value& step) {
+    const bool hasStepThatChecksPresenceOnce = m_function.values.containsIf([&](const Value& step) {
         return step.opcode == Opcode::ForInStep && step.keysChangeOnlyInSteps() && step.enumeratorOperand() == value.id();
     });
-    // What is kept for the Structure of the object, and for its key order, is current.
+    // The cached state for the object's Structure and key order is current.
     auto addCurrent = [&](CellPointer enumerator) {
-        join.add(enumerator, hasStepThatAsksOnce ? zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endOwnPropertyIndex)) : integer(0));
+        join.add(enumerator, hasStepThatChecksPresenceOnce ? zeroExtended(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endOwnPropertyIndex)) : integer(0));
     };
 
     branch(isUndefinedOrNull(object, typeOf(value->objectOperand()).primitives), { unlikelyEdge(isNullish), normalEdge(isNotNullish) });
@@ -91,7 +91,7 @@ void ForInEmitter::generateForInOpen(const ValueContext& value)
 
     auto [enumerator, numberOfCurrentNames] = join.finish();
     define(value, enumerator.as<CellPointer>());
-    if (hasStepThatAsksOnce)
+    if (hasStepThatChecksPresenceOnce)
         setNumberOfCurrentNames(value.id(), numberOfCurrentNames.as<Integer>());
 }
 
@@ -123,21 +123,21 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
 
     EnumeratorFields fields = loadFields(enumerator);
     Integer nameIndex = nameIndexOf(fields, position);
-    // Only behind the opening itself is the number written.
-    const bool asksOnce = value->keysChangeOnlyInSteps() && m_function.at(value->enumeratorOperand()).opcode == Opcode::ForInOpen;
-    LBasicBlock isOwnNameToAskAbout = asksOnce ? newBlock() : isStructureName;
-    if (asksOnce) {
+    // The count is only written right after the open itself.
+    const bool checksPresenceOnce = value->keysChangeOnlyInSteps() && m_function.at(value->enumeratorOperand()).opcode == Opcode::ForInOpen;
+    LBasicBlock isOwnNameToCheck = checksPresenceOnce ? newBlock() : isStructureName;
+    if (checksPresenceOnce) {
         LBasicBlock isNotKnownToBeCurrent = newBlock();
         Integer numberOfCurrentNames(m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), numberOfCurrentNamesOf(value->enumeratorOperand())));
         branch(below(nameIndex, numberOfCurrentNames), { normalEdge(isStructureName), normalEdge(isNotKnownToBeCurrent) });
         m_out.appendTo(isNotKnownToBeCurrent);
     }
-    branch(isOwnName(fields, nameIndex), { asksOnce ? unlikelyEdge(isOwnNameToAskAbout) : normalEdge(isOwnNameToAskAbout), normalEdge(isNotStructureName) });
+    branch(isOwnName(fields, nameIndex), { checksPresenceOnce ? unlikelyEdge(isOwnNameToCheck) : normalEdge(isOwnNameToCheck), normalEdge(isNotStructureName) });
 
-    m_out.appendTo(isOwnNameToAskAbout);
+    m_out.appendTo(isOwnNameToCheck);
     takeSlowPathUnless(m_out, isCell(object), slowPath);
     takeSlowPathUnless(m_out, hasCachedKeys(enumerator, fields, unboxCell(object)), slowPath);
-    if (asksOnce) {
+    if (checksPresenceOnce) {
         setNumberOfCurrentNames(value->enumeratorOperand(), zeroExtended(fields.endOwnPropertyIndex));
         m_out.jump(isStructureName);
         m_out.appendTo(isStructureName);
@@ -161,8 +161,8 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
     m_out.appendTo(slowPath);
     Operand arguments[] = { enumerator, object, position };
     StubCallResult next = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, RuntimeOperation::EnumeratorNext, arguments);
-    // It may have run code of the program.
-    if (asksOnce)
+    // It may have run program code.
+    if (checksPresenceOnce)
         setNumberOfCurrentNames(value->enumeratorOperand(), integer(0));
     Condition isDone = isZero(Integer(next.first));
     join.add(isDone, select(isDone, emptyString(), CellPointer(next.first)), Integer(next.second));

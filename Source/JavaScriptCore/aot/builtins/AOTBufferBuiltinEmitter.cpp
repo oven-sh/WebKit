@@ -90,7 +90,7 @@ void BufferBuiltinEmitter::generateDataViewSet(const InlineCall& call)
     finishWithUndefined(call);
 }
 
-// `source.copy(target, targetStart, sourceStart, sourceEnd)`: as many bytes as there are and as there is room for. A position that is negative, has a fraction or lies behind the source leaves for the function.
+// `source.copy(target, targetStart, sourceStart, sourceEnd)` copies as many bytes as are available and fit. A position that is negative, fractional or past the end of the source falls back to the function.
 void BufferBuiltinEmitter::generateBufferCopy(const InlineCall& call)
 {
     ArrayBufferViewBuiltinEmitter& views = emitter<ArrayBufferViewBuiltinEmitter>();

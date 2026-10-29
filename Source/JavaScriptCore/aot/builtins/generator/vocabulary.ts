@@ -590,6 +590,8 @@ export const builtinMarks = [
   "IsCalledWithoutStartupLoads",
   // Its instances have such a method, whether or not the table has their prototype object.
   "InstancesHaveMethodCalledWithStartupLoads",
+  // The machine code that it loads is passed numbers and addresses and answers with them. It is handed neither a value nor the realm, so it makes no object, registers no symbol and reads and writes no property.
+  "LoadsMachineCodeThatIsHandedNoValue",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

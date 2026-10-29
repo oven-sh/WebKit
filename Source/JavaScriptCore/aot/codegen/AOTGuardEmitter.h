@@ -49,7 +49,7 @@ private:
     uint8_t flagsTestedBy(const Value& test);
     void planTestsOfFlags();
     Condition testOfFlags(const ValueContext&);
-    // The words that these tests read are words of compiled objects. A cell of a built-in class fails them.
+    // These tests read words of compiled objects. A cell of a built-in class fails them.
     void defineTestOfCompiledObject(const ValueContext&, NOESCAPE const Invocable<Condition()> auto& test);
     Condition orderWordHasNoBits(const ValueContext&, uint32_t bits);
     CellPointer untestedCell(const OperationContext&, ValueID);

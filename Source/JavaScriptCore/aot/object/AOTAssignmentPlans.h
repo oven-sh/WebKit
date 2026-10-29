@@ -58,10 +58,10 @@ private:
     uint32_t m_runNumberPlusOne;
 };
 
-// A field that holds the word of a literal string mostly holds the word it held in the copy before. The strings of such words live as long as the instance.
+// A field that holds a literal-string word usually holds the same word as in the previous copy. The strings for such words live as long as the instance.
 template<typename Store>
 struct LiteralStringsReadByStore {
-    // Null where the word is not that of a literal string.
+    // Null if the word is not a literal-string word.
     ALWAYS_INLINE JSString* stringForWordInSlot(uint64_t word) const
     {
         if (word == store.lastLiteralStringWord) [[likely]]

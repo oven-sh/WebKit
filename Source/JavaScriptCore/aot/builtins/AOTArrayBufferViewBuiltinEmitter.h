@@ -25,7 +25,7 @@ public:
     Pointer findTypedArrayElement(CellPointer view, Integer index, LBasicBlock otherwise, LBasicBlock outside);
     Operand loadElement(CellPointer view, Pointer vector, Integer index, TypedArrayType);
     Condition haveFixedLength(CellPointer first, CellPointer second);
-    // The ranges may overlap. There is at least one byte.
+    // The ranges may overlap. The length is at least one byte.
     void moveBytes(const OperationContext&, CellPointer target, Integer targetOffset, CellPointer source, Integer sourceOffset, Integer count);
 };
 

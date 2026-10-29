@@ -297,8 +297,8 @@ private:
         return isShift(word, B3::ZShr) && pointerSource(word->child(0)) == sourceOfLow32Bits(pointer);
     }
 
-    // The pointer where the word names a cell, and the word where it is one of the constants: what is left of a decoding once the pointer that the word was made from has taken the place of the sum.
-    // An encoding chooses between the same two, and asks the pointer.
+    // The pointer if the word names a cell, or the word if it is one of the constants: what remains of a decode after the pointer that the word was encoded from has replaced the sum.
+    // An encode selects between the same two, based on the pointer.
     static bool decodesWordBesideItsPointer(B3::Value* select)
     {
         B3::Value* condition = select->child(0);

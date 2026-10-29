@@ -247,7 +247,7 @@ public:
 
     void fileAbsenceFilterForStores(JSGlobalObject*, JSObject*);
     // For a store under the name of a field that the object lacks. The filter is for all the names of a Structure: it answers for this store, and it lets the stubs create the fields behind this one.
-    bool fileFilterAndAskWhetherStoreCreatesOwnField(JSGlobalObject*, Object&, uint32_t identifierNumber);
+    bool addFilterAndCheckStoreCreatesOwnField(JSGlobalObject*, Object&, uint32_t identifierNumber);
     void didChangeObjectOnSomeChain(JSObject* changed, UniquedStringImpl* uidOrNull);
     void didStartWatchingReplacements();
     uint32_t absenceFilterGenerationForStores() const { return m_absenceFilterGenerationForStores; }
@@ -285,7 +285,7 @@ public:
 private:
     using BitPerName = std::array<uint64_t, (FieldTableEntry::maxName + 1) / 64>;
 
-    void didChangeObjectThatFiltersSpeakOf(JSObject* changed, UniquedStringImpl* uidOrNull);
+    void didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull);
 
     // Pages of the VM: all zero, and none is touched before something is written to it or read from it.
     struct Tables {
@@ -306,7 +306,7 @@ private:
     uint32_t m_absenceFilterGenerationForStores { 1 };
     uint32_t m_changesUnderNamesOnChains { 0 };
     // What a filter says, and what the names of the Object.prototypes say, it says of these.
-    ObjectsSeen m_objectsThatFiltersSpeakOf;
+    ObjectsSeen m_filteredObjects;
     BitPerName& m_namesChangedOnChains { m_tables.namesChangedOnChains };
     BitPerName& m_namesOfObjectPrototypes { m_tables.namesOfObjectPrototypes };
     std::array<uint8_t, MissesOfPairs::numberOfCounters>& m_missesOfPairs { m_tables.missesOfPairs };

@@ -16,6 +16,7 @@
 #include "AOTErrorMessages.h"
 #include "AOTFrameArrays.h"
 #include "AOTObject.h"
+#include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
@@ -212,6 +213,45 @@ static bool tryStoreExtraPropertyAndCache(Instance* instance, Object& object, co
     return true;
 }
 
+// branchUnlessTypeAccepts() decides these in the stub. Everything else it leaves to the run time.
+static bool stubCanTestType(const RuntimeType& type, JSValue value)
+{
+    if (value.isInt32() || value.isUndefinedOrNull() || value.isBoolean())
+        return true;
+    if (value.isNumber())
+        return !type.integerRange() && (!type.primitiveSet().containsAny({ PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber }) || type.primitiveSet().containsAll({ PrimitiveSet::Integer, PrimitiveSet::WholeNumber, PrimitiveSet::FractionalNumber }));
+    if (!value.isCell())
+        return true;
+    JSCell* cell = value.asCell();
+    if (cell->isString())
+        return !type.numberOfLiteralStrings;
+    if (cell->isSymbol())
+        return type.primitiveSet().contains(PrimitiveSet::Symbol) || type.cellTests().empty();
+    if (!cell->isObject())
+        return true;
+    for (const RuntimeCellTest& test : type.cellTests()) {
+        switch (test.kind) {
+        case CellTestKind::IsObject:
+            return true;
+        case CellTestKind::CellTypeIs:
+        case CellTestKind::ShapeIn:
+            break;
+        case CellTestKind::IsCallable:
+            return isFunctionType(cell->type());
+        case CellTestKind::InheritsClassInfo:
+        case CellTestKind::IsPristine:
+        case CellTestKind::IsBuiltinCell:
+        case CellTestKind::IsClosureOf:
+        case CellTestKind::IsSymbol:
+        case CellTestKind::SharingModeIs:
+        case CellTestKind::IsNamespaceOf:
+        case CellTestKind::CarriesBrandOfClass:
+            return false;
+        }
+    }
+    return true;
+}
+
 // For the counts alone: why a store or a definition under the name of a field got as far as the run time. The tests are those of the stub that stores by the table of fields, in its order.
 static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& object, const FieldData& field, JSValue value, PutMode mode)
 {
@@ -228,6 +268,8 @@ static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& obj
     }
     if (!admits)
         return "field store left the stub: absent, the slot does not admit the value"_s;
+    if (!stubCanTestType(object.state().objects->layouts.typeOf(field), value))
+        return "field store left the stub: absent, the stub cannot test the type of the field"_s;
     if (field.slot.representation() == SlotRepresentation::DeferredClosure)
         return "field store left the stub: absent, the slot defers a closure"_s;
     if (orderWord & orderWordHasFieldOutsideSlot)
@@ -237,10 +279,10 @@ static ASCIILiteral whyStubLeftFieldStore(const NamedAccess& access, Object& obj
         return "field store left the stub: absent, the object may be a prototype"_s;
     if (slotKeyFor(field.slot.offset, field.isOutOfLine()) == noSlotKey)
         return "field store left the stub: absent, the slot has no key"_s;
-    if (mode == PutMode::Define)
-        return "field store left the stub: absent, a definition: NOTHING STOOD IN THE WAY"_s;
     if (!FieldTableEntry::hasColumn(field.name))
         return "field store left the stub: absent, the name has no column"_s;
+    if (mode == PutMode::Define)
+        return "field store left the stub: absent, a definition: NOTHING STOOD IN THE WAY"_s;
     const VMPropertyCaches& tables = access.caches().tables();
     ASCIILiteral nothingElse = field.hasGuardOfStores ? "field store left the stub: absent, the field has a guard of stores (one in 16 leaves on purpose)"_s : "field store left the stub: absent: NOTHING STOOD IN THE WAY"_s;
     if (structure.flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
@@ -263,6 +305,13 @@ static bool takesAnyValue(const ProgramTables& tables, const LayoutData& layout,
         return false;
     uint32_t index = tables.fieldTableRowOf(layout.shape) + field.name;
     return index < tables.fieldRecordIndices().size() && FieldTableEntry { tables.fieldTableEntries()[index] }.name() == field.name && tables.fieldRecordIndices()[index] & FieldRecordIndex::isStoredWithoutTypeTest;
+}
+
+// While no field lies outside its slot, an empty slot says that the object has no such property, so an extensible object gets a plain data property by filling the slot.
+static bool canCreateFieldInSlot(const Object& object, const FieldData& field)
+{
+    constexpr uint16_t flagsLeftToSlowPath = fieldAttributeFlags | fieldIsPrivate | fieldIsBrand | fieldMayExistWithoutStorage;
+    return !(field.flags & flagsLeftToSlowPath) && !(object.orderWord() & (orderWordIntegrityBits | orderWordHasFieldOutsideSlot));
 }
 
 static void putToSlimClosureAndCache(const NamedAccess& access, SlimClosure& closure, JSValue value, PutMode mode)
@@ -312,10 +361,14 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
         access.caches().countNamed(whyStubLeftFieldStore(access, *object, *field, value, mode), uid);
     bool chainLetsStoresPass = false;
     if (field && mode != PutMode::Define && !object->isInSlot(*field))
-        chainLetsStoresPass = access.caches().tables().fileFilterAndAskWhetherStoreCreatesOwnField(globalObject, *object, field->name);
+        chainLetsStoresPass = access.caches().tables().addFilterAndCheckStoreCreatesOwnField(globalObject, *object, field->name);
     else if (field && mode != PutMode::Define && shouldFile && !object->compiledStructure().flags().contains(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype))
         access.caches().tables().fileAbsenceFilterForStores(globalObject, object);
     if (object && !field && tryStoreExtraPropertyAndCache(access.instance, *object, access.name(), access.site, value, mode, slot))
+        return;
+    // Nothing is filed at the first miss, so the field is created without the descriptor, the walk and the classification that filing needs. A validating run keeps the walk.
+    bool createsOwnField = field && !shouldFile && !object->isInSlot(*field) && (mode == PutMode::Define || (chainLetsStoresPass && !vm.aotState().validatesRuntime));
+    if (createsOwnField && !uid->isSymbol() && canCreateFieldInSlot(*object, *field) && tryCreateField(vm, object->state(), *object, *field, value))
         return;
 
     if (shouldFile)

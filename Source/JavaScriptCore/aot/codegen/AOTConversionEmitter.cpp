@@ -729,8 +729,8 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
 
 NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
 {
-    // A narrow reference reaches no cell that is kept in a frame. No other value has the upper half of the addresses of AOTCheckedFrameCells.h.
-    auto checkLiesInNoFrame = [&](LValue bits) {
+    // A narrow reference never refers to a cell kept in a frame. No other value has the upper half of the addresses used by AOTCheckedFrameCells.h.
+    auto checkIsNotInFrame = [&](LValue bits) {
         if (!generator().validatesOrChecksProofs())
             return;
         LBasicBlock liesInFrame = newBlock();
@@ -749,14 +749,14 @@ NarrowReference ConversionEmitter::compress(Operand operand, const Type& type)
         RELEASE_ASSERT(isValueWithoutBits(type));
         return convertMarkers(operand, type, Representation::Cell32).as<NarrowReference>();
     case Representation::Cell:
-        checkLiesInNoFrame(operand.value);
+        checkIsNotInFrame(operand.value);
         return compress(operand.as<CellPointer>());
     case Representation::Cell32:
         return operand.as<NarrowReference>();
     case Representation::JSValue: {
         Boxed value = operand.as<Boxed>();
         if (type.hasCells())
-            checkLiesInNoFrame(operand.value);
+            checkIsNotInFrame(operand.value);
         if (!(type.primitives & markerPrimitives))
             return compress(unboxCell(value));
         NarrowReference marker(low32(value).value());

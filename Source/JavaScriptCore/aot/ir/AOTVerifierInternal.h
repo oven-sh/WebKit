@@ -261,7 +261,7 @@ private:
     void verifyDerivationChains();
 
     void verifyFunctionBodies();
-    void askAgainWhereGuardsDoNotLast(Vector<InternalError>&);
+    void recheckUnavailableGuards(Vector<InternalError>&);
 
     const Program& m_program;
     IRForm m_form;

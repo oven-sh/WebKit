@@ -91,8 +91,8 @@ bool distinguishesOmittedFromUndefined(const BuiltinTable&, const BuiltinParamet
 bool overloadHasForm(const BuiltinTable&, BuiltinOverloadID, BuiltinCallForm);
 
 bool isCallThatRequiredPassRemoves(const Program&, const Value& call);
-// The native function that the call enters answers a number that is not boxed.
-bool answersUnboxedNumber(const Value& call);
+// The native function that the call enters returns an unboxed number.
+bool returnsUnboxedNumber(const Value& call);
 
 bool overloadTakesOperands(const TypingContext&, const Value& call);
 bool overloadTakesOperands(const TypingContext&, const Terminator& call);

@@ -73,13 +73,13 @@ static FieldReferenceList findUntoldFields(const Program& program, const Functio
 
 static bool isArray(const Program& program, const Function& function, ValueID value)
 {
-    auto holdsArraysAlone = [](const Type& type) {
+    auto holdsOnlyArrays = [](const Type& type) {
         Type object = type.withoutPrimitives(Primitive::UndefinedOrNull);
         const ClassPart* part = object.singleBuiltinClass();
         return part && part->builtinClass == BuiltinClasses::Array && !(type.primitives & ~Primitive::UndefinedOrNull);
     };
     TypeID expected = function.at(value).expected().predicted();
-    return holdsArraysAlone(program.typeOf(function, value)) || (expected && holdsArraysAlone(program.at(expected)));
+    return holdsOnlyArrays(program.typeOf(function, value)) || (expected && holdsOnlyArrays(program.at(expected)));
 }
 
 static void collectNamesAsked(const Program& program, const Function& function, Vector<NameAskedOfField>& found)

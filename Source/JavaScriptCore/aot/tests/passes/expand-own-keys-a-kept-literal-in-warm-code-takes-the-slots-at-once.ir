@@ -1,4 +1,4 @@
-# Outside hot code a spread into a new literal that somebody keeps copies the slots at once in front of the operation where the source is expected to have the layout of the literal and no other, and gets no arms that read and define field by field
+# Outside hot code a spread into a new literal copies the slots at once, ahead of the operation, where the source is expected to have the layout of the literal. Another expected layout gets an arm of its own
 # FORM: Prepared optimizing
 # OPTIONS: heat=OnlyLoopsAreHot
 # RUN: pass ExpandOwnKeys
@@ -29,7 +29,8 @@ function f1 name="givenOneOfTwoLayouts" parameters=[{type=object}, {type=number}
     v5 = FinishObject v2
     Return v5
 # CHECK: v2:{{*}}= NewObject layout=L0
-# CHECK-NEXT: CopyDataProperties v2, v0
-# CHECK-NOT: TryCopyFields
-# CHECK-NOT: HasKeyOrder
+# CHECK-NEXT: = TryCopyFields v2, v0 layout=L0
+# CHECK: CopyDataProperties v2, v0
+# CHECK: = ShapeTest v0 layouts=[L1]
+# CHECK: = HasKeyOrder v0{{*}} layout=L1 fields=[0, 1, 2]
 }

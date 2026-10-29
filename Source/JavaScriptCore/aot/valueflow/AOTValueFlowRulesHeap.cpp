@@ -840,9 +840,9 @@ void HeapRule::letExportsThatHaveEscapedBeCalled(const ValueFlowOperand& object,
 {
     if (key.keyClass == HeapKeyClass::Index || !isInProgramCode())
         return;
-    ClimbingSet holdersOfExports = m_context.restrict(receivers, m_universe.holdersOfLibraryExportsThatMayRaiseEvents());
+    ClimbingSet holdersOfExports = m_context.restrict(receivers, m_universe.eventRaisingLibraryExportHolders());
     if (key.keyClass == HeapKeyClass::Unknown)
-        holdersOfExports = m_context.unite(holdersOfExports, m_context.restrict(holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers), m_universe.holdersOfLibraryExportsThatMayRaiseEvents()));
+        holdersOfExports = m_context.unite(holdersOfExports, m_context.restrict(holdersOfExportsListedBesideUnknownObjectInProgram(object, receivers), m_universe.eventRaisingLibraryExportHolders()));
     if (holdsAnything(holdersOfExports) && mayCallWhateverHasEscaped(m_context))
         letSeenCodeCallEscapedFunctionsAmong(m_context, key.keyClass == HeapKeyClass::Name ? m_context.lookup(holdersOfExports, nameOfLookupForValue(key), useOfLookupUnder(key)) : m_context.lookup(holdersOfExports, everyPropertyOfListedHoldersOfExports));
 }
@@ -976,6 +976,12 @@ void HeapRule::runCreateArguments(const ValueFlowOperand& count, const ValueFlow
     connect(count, propertyNamed(BuiltinNames::length));
     if (callee)
         connect(*callee, propertyNamed(BuiltinNames::callee));
+    else {
+        // Strict arguments have a `callee` accessor, and both of its functions are native.
+        HeapKey calleeKey { HeapKeyClass::Name, m_tables.calleeKey() };
+        for (HeapPropertyPart part : { HeapPropertyPart::Getter, HeapPropertyPart::Setter })
+            add(m_context.written(arguments, writtenName(calleeKey, part)), only(m_tables.undescribedNativeCode()));
+    }
     BuiltinID iteratorMethod = m_builtins.findOwnMember(m_builtins.at(BuiltinClasses::Array).prototype, BuiltinNames::iteratorSymbol);
     add(propertyNamed(BuiltinNames::iteratorSymbol), iteratorMethod ? only(m_universe.objectOf(iteratorMethod)) : unknownObject(ValueFlowUnknownSource::UndescribedNativeResult));
 }

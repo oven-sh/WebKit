@@ -477,7 +477,7 @@ const CallSiteCache::Entry* CompiledFrameIterator::findFunctionFrame(Cursor& cur
         case StubFrameKind::InHostCallFrame:
             RELEASE_ASSERT_NOT_REACHED();
         case StubFrameKind::Plain:
-        case StubFrameKind::ReturnsBehindOperation:
+        case StubFrameKind::ReturnsAfterOperation:
         case StubFrameKind::ArgumentList:
         case StubFrameKind::HostCall:
         case StubFrameKind::BelowSpilledArguments:
@@ -703,7 +703,7 @@ std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
     RunEnd runEnd;
     const void* stackPointer = callerStackPointer();
     while (const CallSiteCache::Entry* entry = findCallerFunctionFrame(cursor, exit, runEnd)) {
-        if (entry->saysCallee)
+        if (entry->hasRecordedCallee)
             return calleeSaidBy(*m_image->calleeOfSiteAt(entry->code.index(), entry->site.callSite), cursor.callFrame);
         // A function object of the same function that is called by value in tail position has a record of its own.
         if (!isEntrypointOf(entry->innermostFunction, source) && (!isFormThatLeftByTailCall(entry->innermostFunction, source, entry->site.isTailCall()) || tables.recordedCalleeOfCallFrom(stackPointer, source)))
@@ -834,7 +834,7 @@ static bool callsFunction(StubFrameKind kind)
     case StubFrameKind::PlainFunctionConstruct:
         return true;
     case StubFrameKind::Plain:
-    case StubFrameKind::ReturnsBehindOperation:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
     case StubFrameKind::FirstOfTwoReads:
@@ -1025,7 +1025,7 @@ static CallSiteCache::Entry createFunctionEntry(const Image& image, InlineFrameR
     FunctionDescription innermostDescription(innermost.function);
     entry.innermostVisibility = innermostDescription.visibility();
     entry.innermostIsAsync = innermostDescription.isAsync();
-    entry.saysCallee = image.calleeOfSiteAt(location.function, entry.site.callSite).has_value();
+    entry.hasRecordedCallee = image.calleeOfSiteAt(location.function, entry.site.callSite).has_value();
     entry.namesConstructedCallee = image.constructedCalleeAt(location.function, entry.site.callSite).has_value();
     entry.outermostVisibleFunction = findOutermostVisibleFunction(image, reader, entry, true);
     entry.shownFrameCount = countShownFrames(image, reader, entry.code, entry.site, ShownFrameFilter(true), entry.site.isTailCall());

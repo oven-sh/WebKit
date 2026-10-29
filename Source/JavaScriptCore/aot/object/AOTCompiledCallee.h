@@ -37,8 +37,8 @@ JS_EXPORT_PRIVATE unsigned length(JSObject* callee);
 // Of a slim closure. It looks for neither property.
 JS_EXPORT_PRIVATE bool canAssumeNameAndLengthAreOriginal(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE JSValue sourceText(JSGlobalObject*, JSObject* callee);
-// What sourceText() has answered with for the function of the callee, while that string lives. It allocates nothing.
-JSString* sourceTextIfMade(VM&, JSObject* callee);
+// The string that sourceText() returned for the callee's function, if it is still alive. Does not allocate.
+JSString* sourceStringIfCreated(VM&, JSObject* callee);
 JS_EXPORT_PRIVATE FunctionKind kind(JSObject* callee);
 JS_EXPORT_PRIVATE bool isBoundFunction(JSObject* callee);
 

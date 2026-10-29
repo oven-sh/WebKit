@@ -64,7 +64,7 @@ SUPPRESS_ASAN static bool keepCalleeInFrameOfCaller(VM& vm, FunctionTables& tabl
     const void* returnAddress = removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
     const VMState& state = vm.aotState();
     const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, returnAddress);
-    if (!site || site->isStubReturnSite() || !site->saysCallee)
+    if (!site || site->isStubReturnSite() || !site->hasRecordedCallee)
         return false;
     CalleeOfSite said = *state.image->calleeOfSiteAt(site->code.index(), site->site.callSite);
     if (said.isOwnFunctionObject())

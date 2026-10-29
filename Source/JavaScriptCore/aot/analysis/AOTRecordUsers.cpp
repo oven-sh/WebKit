@@ -324,7 +324,7 @@ Vector<FunctionID> findFunctionsSeeing(const Program& program, const ChangedReco
 
     auto addMarksOfSources = [&](Node count, const auto& forEachSourceOf) {
         constexpr unsigned nodesInShare = 512;
-        // Marks are only added, so they end the same in whatever order nodes take those of their sources. Most come within a few steps of a source. A long chain is followed from source to target below.
+        // Marks are only added, so the result does not depend on the order in which nodes take marks from their sources. Most marks arrive within a few steps. Long chains are followed from source to target below.
         AOT_THRESHOLD(unsigned, maxRoundsOverAllNodes, 3);
         bool isFinished = false;
         for (unsigned round = 0; round < maxRoundsOverAllNodes && !isFinished; ++round) {

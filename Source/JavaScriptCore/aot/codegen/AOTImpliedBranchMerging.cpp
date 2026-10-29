@@ -368,8 +368,8 @@ static bool tryMergeBitTests(B3::Procedure& proc, B3::BasicBlock* first)
     return true;
 }
 
-// What a condition is where a branch on another one was taken, or was not.
-static TriState evaluateBehindBranch(B3::Value* condition, B3::Value* branchCondition, bool wasTaken)
+// The value of a condition, given that a branch on another condition was or was not taken.
+static TriState evaluateAfterBranch(B3::Value* condition, B3::Value* branchCondition, bool wasTaken)
 {
     if (condition == branchCondition)
         return triState(wasTaken);
@@ -393,7 +393,7 @@ static B3::Value* findSideChosenOnEveryPathTo(B3::BasicBlock* block, B3::Value* 
         B3::BasicBlock* predecessor = block->predecessor(0);
         B3::Value* terminal = predecessor->last();
         if (terminal->opcode() == B3::Branch && predecessor->successorBlock(0) != predecessor->successorBlock(1)) {
-            TriState holds = evaluateBehindBranch(select->child(0), terminal->child(0), predecessor->successorBlock(0) == block);
+            TriState holds = evaluateAfterBranch(select->child(0), terminal->child(0), predecessor->successorBlock(0) == block);
             if (holds != TriState::Indeterminate)
                 return select->child(holds == TriState::True ? 1 : 2);
         }

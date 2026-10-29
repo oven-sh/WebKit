@@ -135,17 +135,17 @@ static bool canAccessBufferInline(const InlineBuiltinSite& site)
     return !offset || offset->isNumber();
 }
 
-static TypedArrayType elementsOfView(const InlineBuiltinSite& site, const Type& view)
+static TypedArrayType elementTypeOfView(const InlineBuiltinSite& site, const Type& view)
 {
     TypedArrayType elements = view.isObject() ? typedArrayTypeOf(site.context.program().builtins(), view) : NotTypedArray;
     return isTypedView(elements) ? elements : NotTypedArray;
 }
 
-// The bytes of a view of one known kind go into a view of a known kind. Each position is a number. The tests take more bytes than a call, so they stand in code that runs often.
+// Copies bytes between typed arrays of known types, at numeric positions. The inline checks are larger than a call, so this is only used in hot code.
 static bool canCopyBufferInline(const InlineBuiltinSite& site)
 {
     std::span<const ValueID> arguments = site.arguments();
-    if (site.shape != CodeShape::Fast || arguments.empty() || arguments.size() > 4 || !elementsOfView(site, receiverTypeOf(site)) || !elementsOfView(site, site.typeOf(arguments[0])))
+    if (site.shape != CodeShape::Fast || arguments.empty() || arguments.size() > 4 || !elementTypeOfView(site, receiverTypeOf(site)) || !elementTypeOfView(site, site.typeOf(arguments[0])))
         return false;
     return std::ranges::all_of(arguments.subspan(1), [&](ValueID position) {
         return site.typeOf(position).isNumber();
@@ -187,14 +187,14 @@ static bool canCopyTypedArrayInline(const InlineBuiltinSite& site)
     return arguments.size() == 1 && hasInlineElementAccess(typedArrayTypeOf(site.context.program().builtins(), site.typeOf(arguments[0])));
 }
 
-// Elements of one kind go into a view of the same kind as they lie in memory.
+// Elements copied into a typed array of the same type are copied as raw bytes.
 static bool canSetTypedArrayInline(const InlineBuiltinSite& site)
 {
     std::span<const ValueID> arguments = site.arguments();
     if (site.shape != CodeShape::Fast || arguments.empty() || arguments.size() > 2)
         return false;
-    TypedArrayType elements = elementsOfView(site, receiverTypeOf(site));
-    return elements && elementsOfView(site, site.typeOf(arguments[0])) == elements && (arguments.size() == 1 || site.typeOf(arguments[1]).isNumber());
+    TypedArrayType elements = elementTypeOfView(site, receiverTypeOf(site));
+    return elements && elementTypeOfView(site, site.typeOf(arguments[0])) == elements && (arguments.size() == 1 || site.typeOf(arguments[1]).isNumber());
 }
 
 InlineForm chooseFormOfArrayBufferViewBuiltin(const InlineBuiltinSite& site)

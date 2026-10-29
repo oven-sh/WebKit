@@ -184,7 +184,7 @@ bool CodeGenerator::hasTypeOnlyBehindTest(ValueID parameter)
 
 static bool isPinnedByEffects(const Effects& effects)
 {
-    return effects.mayThrowBeyondLackOfStack() || effects.mayBeTerminated || effects.mayRunOtherCode() || effects.mayCollect || !effects.writes.isEmpty();
+    return effects.mayThrowOtherThanStackOverflow() || effects.mayBeTerminated || effects.mayRunOtherCode() || effects.mayCollect || !effects.writes.isEmpty();
 }
 
 static bool isCallOrPhi(B3::Opcode opcode)
@@ -287,7 +287,7 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
     constexpr unsigned headerSize = sizeof(JSCell);
 
     ASSERT(!(type.primitives & ~cellPrimitives));
-    // The word of a built-in that the realm lacks, or whose place held something else when it was first asked for, is zero.
+    // The word is zero for a built-in that the realm lacks, or whose property held another value when it was first looked up.
     if (!type.builtins.isEmpty())
         return 0;
     if (type.environment)
@@ -353,7 +353,7 @@ static std::optional<int64_t> constantStepOf(const InductionStep& step, Represen
     return amount.value();
 }
 
-// Once the other ways into such a cycle are gone, an edge that enters the loop today is one of its back edges, and it hands the counter on as it is.
+// Once the other entries into such a cycle are removed, an edge that enters the loop today becomes a back edge, and it passes the counter unchanged.
 static bool isOnCycleWithSeveralEntries(FunctionAnalyses& analyses, const LoopInduction& induction)
 {
     const NaturalLoops& loops = analyses.naturalLoops();

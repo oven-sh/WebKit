@@ -64,8 +64,8 @@ constexpr StubKey putByIdAtSiteBehindFieldTable(PutMode mode) { return StubKey(S
 constexpr StubKey putKnownField(PutMode mode) { return StubKey(StubFamily::PutKnownField).withForm(static_cast<uint8_t>(mode)); }
 // For a caller that knows that the slot lies in the cell and holds any value as it is, and that the type of the field is that of any value.
 constexpr StubKey putKnownFieldThatTakesAnyValue(PutMode mode) { return putKnownField(mode).withCount(1); }
-// For a caller that knows that the slot lies in the cell and holds a double, and that the type of the field takes every number.
-constexpr StubKey putKnownFieldThatTakesEveryNumber(PutMode mode) { return putKnownField(mode).withCount(2); }
+// For a caller that knows the slot is inline and holds a double, and that the field's type accepts any number.
+constexpr StubKey putKnownFieldAcceptingAnyNumber(PutMode mode) { return putKnownField(mode).withCount(2); }
 constexpr StubKey putByIdOnce(PutMode mode) { return StubKey(StubFamily::PutByIdOnce).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey createKnownField(PutMode mode) { return StubKey(StubFamily::CreateKnownField).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey putBooleanOrDoubleField(PutMode mode) { return StubKey(StubFamily::PutBooleanOrDoubleField).withForm(static_cast<uint8_t>(mode)); }

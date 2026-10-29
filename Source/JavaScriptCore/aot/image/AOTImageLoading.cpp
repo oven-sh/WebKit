@@ -293,8 +293,8 @@ int LoadedObjectSearch::visit(const LoadedObject& object)
 const LoadedObject& loadedExecutable()
 {
     static const LoadedObject executable = [] {
-        static constexpr uint8_t byteOfEngine { };
-        LoadedObjectSearch search(reinterpret_cast<uintptr_t>(&byteOfEngine));
+        static constexpr uint8_t byteInEngine { };
+        LoadedObjectSearch search(reinterpret_cast<uintptr_t>(&byteInEngine));
         dl_iterate_phdr([](struct dl_phdr_info* object, size_t, void* data) {
             size_t numberOfHeaders = object->dlpi_phdr ? object->dlpi_phnum : 0;
             return static_cast<LoadedObjectSearch*>(data)->visit({ object->dlpi_addr, { object->dlpi_phdr, numberOfHeaders } });

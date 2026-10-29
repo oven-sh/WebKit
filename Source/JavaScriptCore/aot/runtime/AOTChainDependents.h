@@ -115,7 +115,7 @@ public:
     // Most objects that report a change are being filled, and nothing has looked at them yet.
     void didChange(JSObject* changed, UniquedStringImpl* uidOrNull)
     {
-        if (m_objectsThatGotDependents.mayContain(changed))
+        if (m_objectsWithDependents.mayContain(changed))
             dropDependentsOn(changed, uidOrNull);
     }
     bool hasDependents(JSObject* object) const { return m_dependentsByObject.contains(object); }
@@ -158,7 +158,7 @@ private:
     Vector<ChainDependentOwner*, 8> m_owners;
     UncheckedKeyHashSet<StructureID> m_structuresWithState;
     UncheckedKeyHashMap<JSObject*, ObjectDependents> m_dependentsByObject;
-    ObjectsSeen m_objectsThatGotDependents;
+    ObjectsSeen m_objectsWithDependents;
     size_t m_numberOfDependentsAddedSinceOwnersWereAsked { 0 };
     size_t m_numberOfDependentsLeftWhenOwnersWereAsked { 0 };
     RememberedSlotSet m_writtenSinceCollection;

@@ -101,7 +101,7 @@ public:
     // The last of the reserve of this VM. From here on the VM also takes from the reserve that is kept for all VMs of its range.
     bool releaseLastReserve();
     // The range was full where no collection may run. The collection runs where collections are allowed again. If it makes room for all of the reserve that releaseReserve() gave out, no error is owed any more.
-    void didFindNoRoomWhereNothingCollects() { m_owesCollection = true; }
+    void didFindNoRoomWithoutCollecting() { m_owesCollection = true; }
     bool owesCollection() const { return m_owesCollection; }
     JS_EXPORT_PRIVATE bool tryTakeBackOutOfMemoryError(VM&);
     // At a poll the frames of the loop's callees are gone. What they left on the stack is cleared and one more full collection runs. If it makes room, no error is owed any more.
@@ -167,9 +167,9 @@ public:
 private:
     void didAllocate(const void*, size_t);
     bool hasHeapThatReleasedReserve() const;
-    bool tryKeepReleasedReservesAgain(VM&);
-    bool tryKeepOwnReleasedReserveAgain();
-    bool tryKeepBallastAgain();
+    bool tryRestoreReleasedReserves(VM&);
+    bool tryRestoreOwnReserve();
+    bool tryRestoreBallast();
     bool releaseOwnLastReserve();
     bool tryUseSharedReserve();
 

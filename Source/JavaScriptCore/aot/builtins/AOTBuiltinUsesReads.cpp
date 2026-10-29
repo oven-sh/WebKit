@@ -54,8 +54,8 @@ std::optional<Type> testedTypeOfExpectedInstances(const Program& program, TypeAr
     return Type::function();
 }
 
-// Instances of a class and of classes below it: a Uint8Array or a Buffer. Each class finds the same member at a place that never changes, and the type proves of each that its instances have the names they were made with.
-static std::optional<MemberSite> findMemberOfClassAndClassesBelow(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, const Type& present)
+// Instances of a class and its subclasses, such as Uint8Array and Buffer. Every class finds the same member at a fixed location, and the type proves that instances still have the properties they were created with.
+static std::optional<MemberSite> findMemberInClassOrSubclasses(const BuiltinUseInputs& inputs, ValueID receiver, PropertyKeyID key, const Type& present)
 {
     if (!present.isObject() || !present.hasOnlyClassObjects() || present.classes.size() < 2)
         return std::nullopt;
@@ -92,7 +92,7 @@ static std::optional<MemberSite> findMember(const BuiltinUseInputs& inputs, Valu
     MemberSite site { .receiver = receiver, .key = key };
     site.start = builtinReceiverOf(program, present);
     if (!site.start) {
-        if (std::optional<MemberSite> found = findMemberOfClassAndClassesBelow(inputs, receiver, key, present))
+        if (std::optional<MemberSite> found = findMemberInClassOrSubclasses(inputs, receiver, key, present))
             return found;
         TypeID expectedType = inputs.function.at(receiver).expected().predicted();
         if (!expectedType)

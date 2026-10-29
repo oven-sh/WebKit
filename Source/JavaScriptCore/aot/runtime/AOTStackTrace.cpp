@@ -321,7 +321,7 @@ private:
     {
         switch (kind) {
         case StubFrameKind::Plain:
-        case StubFrameKind::ReturnsBehindOperation:
+        case StubFrameKind::ReturnsAfterOperation:
         case StubFrameKind::EngineCallee:
         case StubFrameKind::HostCall:
         case StubFrameKind::GeneratorBody:
@@ -516,7 +516,7 @@ static void captureRun(VM& vm, RunWalk& walk, CapturedRun& run, size_t maxStackS
             break;
         const CallSiteCache::Entry& site = walk.site();
         outermostCode = site.code;
-        if (hasRecordedCallees && (walk.image().saysCalleesOfSites(site.code.index()) || FunctionTables::of(vm).framesAreNamedByCallee(walk.image().rootFunctionOf(site.code.index())))) [[unlikely]] {
+        if (hasRecordedCallees && (walk.image().hasCalleesOfSites(site.code.index()) || FunctionTables::of(vm).framesAreNamedByCallee(walk.image().rootFunctionOf(site.code.index())))) [[unlikely]] {
             run.hasFrameNamedByCallee = true;
             return;
         }
@@ -1031,7 +1031,7 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
         if (!knowsCallee && isOutermostOfMachineFrame) [[unlikely]] {
             // Whatever else stands there is left to CompiledFrameIterator::recordedCallee().
             TraceFrame& frame = *lister.frameNotHandedOn();
-            if (caller.saysCallee) {
+            if (caller.hasRecordedCallee) {
                 CalleeOfSite callee = *walk.image().calleeOfSiteAt(caller.code.index(), caller.site.callSite);
                 setCallee(frame, callee.isOwnFunctionObject() ? nullptr : tables.calleeKeptInFrame(vm, walk.machineFrame(), callee, FunctionDescription(frame.function).sourceFunction()));
             } else if (caller.innermostVisibility == TraceVisibility::Visible && !caller.site.isTailCall())

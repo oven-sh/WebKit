@@ -85,12 +85,12 @@ static ValueID appendResolvedTailCast(IRBuilder& builder, ValueID result, const 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-BlockID IRBuilder::splitEdge(Edge edge, std::optional<Target> handlerOfAddedBlock)
+BlockID IRBuilder::splitEdge(Edge edge, std::optional<Target> newBlockHandler)
 {
     RELEASE_ASSERT(m_insertions.isEmpty());
     RELEASE_ASSERT(!edge.isHandlerEdge());
 
-    std::optional<Target> handler = std::exchange(m_handler, WTF::move(handlerOfAddedBlock));
+    std::optional<Target> handler = std::exchange(m_handler, WTF::move(newBlockHandler));
     BlockID added = addBlock(rarerOf(m_function.at(edge.from).frequency, m_function.at(targetOf(m_function, edge).block).frequency));
     m_handler = WTF::move(handler);
 

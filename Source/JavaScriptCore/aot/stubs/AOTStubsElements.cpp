@@ -49,7 +49,7 @@ StubSignature signatureOfMoveFewBytes(StubKey)
     return StubSignature::withoutResult({ gprOf(StubRegister::A0), gprOf(StubRegister::A1), gprOf(StubRegister::A2) });
 }
 
-// The ranges may overlap: every byte is read before one is written. The first and the last word of a range cover all of it.
+// The ranges may overlap, so every byte is read before any is written. The first and last word of a range cover all of it.
 void generateMoveFewBytes(StubAssembler& jit)
 {
     const GPRReg target = jit.operand(0);

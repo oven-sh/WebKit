@@ -312,20 +312,22 @@ bool FunctionTables::framesAreNamedByCallee(FunctionID function)
     return recordsCalleesOf(function) || FunctionDescription(function).recordsCallee();
 }
 
-void FunctionTables::recordCalleesOf(VM& vm, FunctionID sourceFunction)
+void FunctionTables::recordCalleesOf(VM& vm, FunctionID closureFunction)
 {
-    if (recordsCalleesOf(sourceFunction))
+    if (recordsCalleesOf(closureFunction))
         return;
     {
         Locker locker { namesLock };
-        size_t numberOfFunctions = programTables().numberOfFunctions();
-        if (functionsRenamedAtRunTime.isEmpty())
-            functionsRenamedAtRunTime.fill(0, numberOfFunctions);
-        for (size_t index = 0; index < numberOfFunctions; ++index) {
-            if (sourceFunctionOf(FunctionID(index)) == sourceFunction)
-                functionsRenamedAtRunTime[index] = 1;
-        }
-        if (isRenamedAtRunTime.exchange(functionsRenamedAtRunTime.span().data(), std::memory_order_release))
+        const ProgramTables& tables = programTables();
+        if (!functionsRenamedAtRunTime)
+            functionsRenamedAtRunTime = MallocSpan<uint8_t>::zeroedMalloc(tables.numberOfFunctions());
+        std::span<uint8_t> isRenamed = functionsRenamedAtRunTime.mutableSpan();
+        uint32_t sourceFunction = tables.sourceFunctionOf(closureFunction.index());
+        isRenamed[closureFunction.index()] = 1;
+        for (Number24 form : tables.closureFormsOf(sourceFunction))
+            isRenamed[form] = 1;
+        isRenamed[sourceFunction] = 1;
+        if (isRenamedAtRunTime.exchange(isRenamed.data(), std::memory_order_release))
             return;
     }
     VMState& state = vm.aotState();
@@ -390,7 +392,7 @@ SUPPRESS_ASAN std::optional<JSObject*> FunctionTables::calleeKeptInFrame(VM& vm,
     bool liesInFrame = Thread::currentSingleton().stack().contains(kept) || CheckedFrameCells::isInRange(kept);
     if (!liesInFrame && (!kept || kept->isPreciseAllocation() || !HeapUtil::isJSCellStorage(vm.heap, vm.heap.objectSpace().blocks().filter(), kept)))
         return std::nullopt;
-    if (std::optional<uint32_t> field = site.fieldOfEnvironment(); field && kept->type() == CompiledEnvironmentType) {
+    if (std::optional<uint32_t> field = site.fieldInEnvironment(); field && kept->type() == CompiledEnvironmentType) {
         SlotData slot = SlotData::decode(*field);
         JSCell* closure = cellInSlot(slot.representation(), reinterpret_cast<const uint8_t*>(kept) + slot.offset, vm.heap.cage().base());
         return closure && isFunctionObjectOfFunction(closure) ? asObject(closure) : nullptr;
@@ -510,7 +512,7 @@ void didChangeDisplayName(VM& vm, JSObject* closure)
     FunctionTables& tables = FunctionTables::of(vm);
     FunctionID sourceFunction = sourceFunctionOf(closureFunction);
     if (FunctionDescription(closureFunction).recordsCalleeOnceRenamed())
-        tables.recordCalleesOf(vm, sourceFunction);
+        tables.recordCalleesOf(vm, closureFunction);
     if (!isNamedInFramesByFunction(closureFunction))
         return;
     if (hasInitialNameWithoutProperty(closure))
@@ -681,7 +683,7 @@ void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
 {
     FunctionID function = *functionOf(closure);
     if (FunctionDescription(function).recordsCalleeOnceRenamed())
-        FunctionTables::of(vm).recordCalleesOf(vm, sourceFunctionOf(function));
+        FunctionTables::of(vm).recordCalleesOf(vm, function);
     nameFramesOfFunction(vm, closure, name);
 }
 
@@ -837,7 +839,7 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
     RELEASE_AND_RETURN(scope, jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "function* "_s : "function "_s, name, "() { [native code] }"_s));
 }
 
-JSString* sourceTextIfMade(VM& vm, JSObject* callee)
+JSString* sourceStringIfCreated(VM& vm, JSObject* callee)
 {
     FunctionID function = checkedFunctionOf(callee);
     FunctionKindData kindData = functionKindData(function);

@@ -623,8 +623,8 @@ TypeID TypePropagation::computeParameter(const TypingContext& context, ValueID i
     return joined;
 }
 
-// Every cycle of values passes an edge that leads back. What has grown in front of a parameter has been widened there, and comes to an end by itself.
-bool TypePropagation::growsOnEdgeThatLeadsBack(TypeLevel level, ValueID parameter, TypeID old, TypeID grown)
+// Every cycle of values passes through a back edge. Growth before a parameter has already been widened there, so it terminates on its own.
+bool TypePropagation::growsOnBackEdge(TypeLevel level, ValueID parameter, TypeID old, TypeID grown)
 {
     ValueLocation location = locationForRule(parameter);
     if (location.placement != ValuePlacement::Parameter)
@@ -638,12 +638,12 @@ bool TypePropagation::growsOnEdgeThatLeadsBack(TypeLevel level, ValueID paramete
         return false;
     TypeArena& types = m_inputs.types;
     TypingContext context = typingContext(level);
-    TypeID withWhatComesFromFront = old;
+    TypeID withForwardEdgeTypes = old;
     for (Edge edge : incomingEdges) {
         if (!leadsBack(edge) && !passesNothing(edge.from))
-            withWhatComesFromFront = types.unionOf(withWhatComesFromFront, computeIncomingType(context, edge, location.index));
+            withForwardEdgeTypes = types.unionOf(withForwardEdgeTypes, computeIncomingType(context, edge, location.index));
     }
-    return types.unionOf(withWhatComesFromFront, grown) != withWhatComesFromFront;
+    return types.unionOf(withForwardEdgeTypes, grown) != withForwardEdgeTypes;
 }
 
 TypeID TypePropagation::computeTypeOnEdge(const TypingContext& context, EdgeResultPosition position, const EdgeResult& result)
@@ -755,7 +755,7 @@ bool TypePropagation::update(TypeLevel level, Direction direction, ValueID id, T
     TypeID next = computed;
     if (direction == Direction::Ascending) {
         next = types.unionOf(old, computed);
-        if (next != old && old != TypeTable::never && growsOnEdgeThatLeadsBack(level, id, old, next))
+        if (next != old && old != TypeTable::never && growsOnBackEdge(level, id, old, next))
             next = widenGrownParameter(id, old, next);
         if (next != computed)
             m_valuesAboveTheirRules.append(id);
@@ -1028,7 +1028,7 @@ void TypePropagation::cutAfterNeverValues()
         if (cut.values.isEmpty())
             cut.handler = std::nullopt;
         cut.terminator.become(TerminatorKind::Unreachable);
-        cut.terminator.setCutBy(m_inputs.build.passToNameAtUnreachableEnd());
+        cut.terminator.setCutBy(m_inputs.build.passToReportForUnreachableCode());
         cut.terminator.setOrigin(origin);
         ++m_outcome.cutBlocks;
     }

@@ -27,7 +27,7 @@ struct ArrayWords {
     uint32_t elementsLookedAtInVain;
     uint32_t placeThatConverts;
     uint8_t shortYoungArraysConverted[numberOfCounts];
-    // A for-in loop over a list of such a Structure finds no name, on the list or above it, while the objects above have the Structures of the chain.
+    // A for-in loop over an array with such a Structure finds no named property on the array or its prototype chain, as long as the chain's objects keep their Structures.
     const void* chainsAboveListsWithoutNames[numberOfStructuresWithoutNames];
     uint32_t structuresOfListsWithoutNames[numberOfStructuresWithoutNames];
 };

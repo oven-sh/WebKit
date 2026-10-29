@@ -561,9 +561,9 @@ static bool mayStop(const Effects& effects)
 }
 
 // A frame that finds no room is the same error whichever call meets it, and a call that is left out meets none.
-static bool mayStopBeyondLackOfStack(const Effects& effects)
+static bool mayStopOtherThanStackOverflow(const Effects& effects)
 {
-    return effects.mayThrowBeyondLackOfStack() || !effects.alwaysCompletes();
+    return effects.mayThrowOtherThanStackOverflow() || !effects.alwaysCompletes();
 }
 
 // Every call of such a function out of one loop needs the same room: the first call finds it or none does.
@@ -632,7 +632,7 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         if (callback.callee)
             callees.add(callback.callee);
         effects.append(effectsOfCallees(effectContext, callees, BuiltinCallMode::Call).onAnyEdge());
-        mayStopBehindFirstCall.append(mayStopBeyondLackOfStack(effects.last()) || (mayStop(effects.last()) && !(callback.callee && entersNoFurtherFrame(program, callback.callee))));
+        mayStopBehindFirstCall.append(mayStopOtherThanStackOverflow(effects.last()) || (mayStop(effects.last()) && !(callback.callee && entersNoFurtherFrame(program, callback.callee))));
     }
     if (chain.shape.end == ChainEndKind::Join) {
         const ClassPart* part = program.typeOf(context.function, last->receiver).findClassPart(BuiltinClasses::Array);
@@ -653,7 +653,7 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
             const Effects& a = effects[earlier];
             const Effects& b = effects[later];
             bool earlierStopsAmongLaterCalls = earlier < mayStopBehindFirstCall.size() ? mayStopBehindFirstCall[earlier] : mayStop(a);
-            bool stopsDiffer = (mayStopBeyondLackOfStack(a) && mayStop(b)) || (earlierStopsAmongLaterCalls && mayStopBeyondLackOfStack(b));
+            bool stopsDiffer = (mayStopOtherThanStackOverflow(a) && mayStop(b)) || (earlierStopsAmongLaterCalls && mayStopOtherThanStackOverflow(b));
             if ((mayAccessSameMemory(a, b) && !context.build.isSabotaged(Sabotage::CallbacksOfOneChainShareNoMemory)) || (earlierStopsAmongLaterCalls && canBeObserved(b)) || stopsDiffer)
                 return ArrayChainDeclineReason::CallbacksInterfere;
             if (mayStop(b) && canBeObserved(a))
@@ -661,7 +661,7 @@ ArrayChainDeclineReason checkInterleaving(FunctionPassContext& context, const Ar
         }
     }
     bool skipsCallThatShows = last->method->stopsEarly && std::ranges::any_of(effects.span().first(chain.shape.numberOfLinks()), [](const Effects& step) {
-        return canBeObserved(step) || mayStopBeyondLackOfStack(step);
+        return canBeObserved(step) || mayStopOtherThanStackOverflow(step);
     });
     if (skipsCallThatShows)
         return ArrayChainDeclineReason::SkippedCallIsObservable;

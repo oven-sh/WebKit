@@ -958,8 +958,14 @@ private:
         m_plainDataOfResult = { };
         if (ValueFlowNodeID result = nodeTakingResult(); result && overload.result.testedOperand)
             answerWhetherInstance(overload.result, result);
-        else if (result)
-            m_context.add(result, answersObjectsOfNativeCell(overload) ? m_tables.primitivesOf(overload.result.type) : valueOfType(overload.result.type, m_resultObject));
+        else if (result) {
+            ValueSetID answer = answersObjectsOfNativeCell(overload) ? m_tables.primitivesOf(overload.result.type) : valueOfType(overload.result.type, m_resultObject);
+            m_context.add(result, answer);
+            // The program holds a loader that a call returns to it, just like one it names.
+            FunctionID caller = m_context.functionOfStatement();
+            if (ValueSetID loaders = m_context.maker().intersect(answer, m_tables.heap().objectsThatLetInUnseenCode()); loaders != ValueSets::nothing && caller && isWrittenInProgram(m_program.at(caller)))
+                m_context.add(m_context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), loaders);
+        }
         if (m_call.operation)
             allocateTypedResult(overload, *m_call.operation, m_call, m_resultObject, m_plainDataOfResult, m_context);
         if (const BuiltinType& answer = m_builtins.at(overload.result.type); isConstruction(m_call.kind) && (answer.isAnything() || answer.flags.containsAny({ BuiltinTypeFlag::HasAnyObject, BuiltinTypeFlag::HasAnyFunction })))
@@ -4130,6 +4136,8 @@ bool mayBeFoundOnObjectNobodyKnows(ValueFlowRuleContext& context, BuiltinName na
         return true;
     // Machine code that is loaded at run time registers what symbol it likes and lays what it likes under it.
     for (const BuiltinLoaderOfMachineCode& loader : context.program().builtins().loadersOfMachineCode()) {
+        if (context.program().builtins().has(BuiltinMark::LoadsMachineCodeThatIsHandedNoValue, loader.callee))
+            continue;
         if (context.holdsAnyOf(only(context, universe.objectOf(loader.callee)), context.nodes().ofHost(ValueFlowHostNode::RunBuiltins)))
             return true;
     }

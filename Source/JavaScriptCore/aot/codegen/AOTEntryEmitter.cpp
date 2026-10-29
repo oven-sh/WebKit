@@ -162,7 +162,7 @@ static uint8_t argumentsBorrowedBy(const FlowResults& flow, FunctionID id, const
 
     uint8_t borrowed = 0;
     for (unsigned argument = 0; argument < ClosureWord::numberOfBorrowedArguments; ++argument) {
-        // Nothing takes an argument that has no parameter.
+        // An argument without a parameter is unused.
         if (argument >= entrypoint.numberOfPositionalParameters() || flow.framePointerSummary(id, entrypoint.firstParameterIndex() + argument).uses.containsOnly(usesOfBorrowedParameter))
             borrowed |= 1u << argument;
     }

@@ -181,7 +181,7 @@ private:
         ValueID value;
     };
 
-    // The operations of one callee stay in the order of the input, which is ordered by (function, value).
+    // The operations of one callee keep the input order, which is sorted by (function, value).
     static Vector<DirectCall> groupByCallee(const ParallelLoops& loops, std::span<const CollectedOperation> operations, Typed::Opcode opcode)
     {
         RELEASE_ASSERT(operations.size() <= UINT32_MAX);

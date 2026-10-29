@@ -21,7 +21,7 @@ class ThrowEffect {
 public:
     constexpr ThrowEffect(bool mayThrow = true)
         : m_mayThrow(mayThrow)
-        , m_mayThrowBeyondLackOfStack(mayThrow)
+        , m_mayThrowOtherThanStackOverflow(mayThrow)
         , m_mayThrowByRule(mayThrow)
     {
     }
@@ -33,22 +33,22 @@ public:
         return result;
     }
 
-    // The frame of a function that is entered finds no room.
-    static constexpr ThrowEffect onlyForLackOfStack()
+    // Entering a function overflows the stack.
+    static constexpr ThrowEffect onlyStackOverflow()
     {
         ThrowEffect result = onlyForLackOfMemory();
-        result.m_mayThrowBeyondLackOfStack = false;
+        result.m_mayThrowOtherThanStackOverflow = false;
         return result;
     }
 
     constexpr operator bool() const { return m_mayThrow; }
-    constexpr bool beyondLackOfStack() const { return m_mayThrowBeyondLackOfStack; }
+    constexpr bool otherThanStackOverflow() const { return m_mayThrowOtherThanStackOverflow; }
     constexpr bool byRule() const { return m_mayThrowByRule; }
 
     constexpr ThrowEffect& operator|=(ThrowEffect other)
     {
         m_mayThrow |= other.m_mayThrow;
-        m_mayThrowBeyondLackOfStack |= other.m_mayThrowBeyondLackOfStack;
+        m_mayThrowOtherThanStackOverflow |= other.m_mayThrowOtherThanStackOverflow;
         m_mayThrowByRule |= other.m_mayThrowByRule;
         return *this;
     }
@@ -56,19 +56,19 @@ public:
     constexpr ThrowEffect intersectedWith(ThrowEffect other) const
     {
         ThrowEffect result(m_mayThrow && other.m_mayThrow);
-        result.m_mayThrowBeyondLackOfStack = m_mayThrowBeyondLackOfStack && other.m_mayThrowBeyondLackOfStack;
+        result.m_mayThrowOtherThanStackOverflow = m_mayThrowOtherThanStackOverflow && other.m_mayThrowOtherThanStackOverflow;
         result.m_mayThrowByRule = m_mayThrowByRule && other.m_mayThrowByRule;
         return result;
     }
 
     constexpr bool isSubsetOf(ThrowEffect other) const { return !m_mayThrow || other.m_mayThrow; }
-    constexpr bool saysNoMoreThan(ThrowEffect other) const { return isSubsetOf(other) && (!m_mayThrowBeyondLackOfStack || other.m_mayThrowBeyondLackOfStack) && (!m_mayThrowByRule || other.m_mayThrowByRule); }
+    constexpr bool saysNoMoreThan(ThrowEffect other) const { return isSubsetOf(other) && (!m_mayThrowOtherThanStackOverflow || other.m_mayThrowOtherThanStackOverflow) && (!m_mayThrowByRule || other.m_mayThrowByRule); }
 
     friend constexpr bool operator==(ThrowEffect, ThrowEffect) = default;
 
 private:
     bool m_mayThrow : 1;
-    bool m_mayThrowBeyondLackOfStack : 1;
+    bool m_mayThrowOtherThanStackOverflow : 1;
     bool m_mayThrowByRule : 1;
 };
 
@@ -95,7 +95,7 @@ struct Effects {
     constexpr bool isRemovableWhenUnused() const { return writes.containsOnly(heapsWhoseWritesNobodySees) && !mayThrowByRule() && !mayBeTerminated && !mayRunOtherCode(); }
     constexpr bool isUnobservable() const { return isRemovableWhenUnused() && !mayThrow; }
     constexpr bool mayThrowByRule() const { return mayThrow.byRule(); }
-    constexpr bool mayThrowBeyondLackOfStack() const { return mayThrow.beyondLackOfStack(); }
+    constexpr bool mayThrowOtherThanStackOverflow() const { return mayThrow.otherThanStackOverflow(); }
     constexpr bool alwaysCompletes() const { return !mayBeTerminated && !mayRunOtherCode(); }
     constexpr bool mayRunOtherCode() const { return maySuspend || mayCallUnknownCode; }
     constexpr bool mayExitSideways() const { return mayThrow || mayBeTerminated || mayRunOtherCode(); }

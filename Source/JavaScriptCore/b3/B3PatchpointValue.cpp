@@ -45,8 +45,8 @@ void PatchpointValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
         out.print(constraintComma, constraint);
     out.print(resultConstraints.size() > 1 ? "]"_s : ""_s);
 
-    if (turnsAreShort)
-        out.print(comma, "turnsAreShort"_s);
+    if (iterationsAreShort)
+        out.print(comma, "iterationsAreShort"_s);
     if (isLoopPoll)
         out.print(comma, "isLoopPoll"_s);
     if (pureFunction) {

@@ -65,8 +65,8 @@ struct PlacedFunctionSites : SiteLists {
     Vector<GlobalBindingSite> globalBindingSites;
     FunctionID function;
     Vector<LayoutSetID> receiversOfStoresThatMayAdd;
-    // What the stores and the definitions under a known key may create, in the sequence of the body.
-    Vector<FieldCreationUse> fieldCreationsAsWritten;
+    // The fields that stores and definitions with a known key may create, in body order.
+    Vector<FieldCreationUse> sourceFieldCreations;
     uint32_t numberOfOperationsWithWordForSiteCache { 0 };
 };
 
@@ -257,13 +257,13 @@ private:
                     fields.append(*field);
             }
             if (!fields.isEmpty()) {
-                m_sites->fieldCreationsAsWritten.append(FieldCreationUse { member, fields });
+                m_sites->sourceFieldCreations.append(FieldCreationUse { member, fields });
                 m_sites->fieldCreations.append(FieldCreationUse { member, WTF::move(fields) });
             }
         }
     }
 
-    // `Object.defineProperty(exports, "name", { enumerable: true, get })` creates the field, and it comes where the definition stands among the stores.
+    // `Object.defineProperty(exports, "name", { enumerable: true, get })` creates the field, positioned where the definition appears among the stores.
     void appendFieldCreationByDefinition(const Value& definition)
     {
         LayoutSetID receivers = knownSetOf(definition.objectOperand());
@@ -280,7 +280,7 @@ private:
             std::optional<FieldIndex> field = m_program.at(member).findField(*key);
             if (!field || !slots.slot(member, *field).hasStorage())
                 continue;
-            m_sites->fieldCreationsAsWritten.append(FieldCreationUse { member, { *field } });
+            m_sites->sourceFieldCreations.append(FieldCreationUse { member, { *field } });
             if (slots.slot(member, *field).canBeCreatedByStore())
                 m_sites->fieldCreations.append(FieldCreationUse { member, { *field } });
         }
@@ -923,8 +923,8 @@ PlacedSites BodyScansForPlacement::takeSites(const PlacementContext& context)
         [&] { mergeEach(&SiteLists::shapeTests); },
         [&] {
             for (PlacedFunctionSites* function : functions)
-                sites.fieldCreationsAsWritten.appendVector(WTF::move(function->fieldCreationsAsWritten));
-            std::ranges::stable_sort(sites.fieldCreationsAsWritten, { }, &FieldCreationUse::layout);
+                sites.sourceFieldCreations.appendVector(WTF::move(function->sourceFieldCreations));
+            std::ranges::stable_sort(sites.sourceFieldCreations, { }, &FieldCreationUse::layout);
             mergeEach(&SiteLists::allocations, &SiteLists::keyOrderTests, &SiteLists::fieldCreations, &SiteLists::guards);
             sites.guards.removeAllMatching([&](const GuardUse& guard) {
                 return speaksOfNameOrLengthMadeOnDemand(program, guard) || isLookedForAboveRecords(context, guard);

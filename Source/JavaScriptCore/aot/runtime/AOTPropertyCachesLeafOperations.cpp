@@ -510,7 +510,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPutByValGeneric, size_t, (Instance
 
 // A function of the program for a key is its text: it has no property of its own, nothing above it has Symbol.toPrimitive, and the toString that it finds is the one of the language.
 // The Structure remembers both from the first conversion for as long as they hold, and the text is there from then on.
-static JSString* textOfFunctionForKey(VM& vm, JSCell* key)
+static JSString* functionSourceForKey(VM& vm, JSCell* key)
 {
     if (key->type() != SlimClosureType)
         return nullptr;
@@ -522,7 +522,7 @@ static JSString* textOfFunctionForKey(VM& vm, JSCell* key)
     auto* function = dynamicDowncast<JSFunction>(toString);
     if (!function || !function->isHostFunction() || function->nativeFunction() != toTagged(NativeFunction(functionProtoFuncToString)))
         return nullptr;
-    return CompiledCallee::sourceTextIfMade(vm, asObject(key));
+    return CompiledCallee::sourceStringIfCreated(vm, asObject(key));
 }
 
 // Only a text that begins with a digit spells an index.
@@ -544,7 +544,7 @@ KeyName nameOfKeyWithoutAllocating(JSGlobalObject* globalObject, JSCell* key, Ke
         return uid.isPrivate() || isPreparedBeforeLookups(globalObject->vm(), &uid) ? KeyName { } : KeyName { KeyNameKind::Name, &uid };
     }
     if (!key->isString()) {
-        key = textOfFunctionForKey(globalObject->vm(), key);
+        key = functionSourceForKey(globalObject->vm(), key);
         // The first conversion has left the name in the place of the text.
         if (!key || !atomOfKey(key))
             return { };
@@ -714,7 +714,7 @@ std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValu
 }
 
 // The fields of a compiled object have names that the program spells, which are atoms wherever they are looked for, and what it has beside them lies in an ordinary object.
-static bool findsOnlyNamesThatAreAtoms(JSObject* object)
+static bool findsOnlyAtomNames(JSObject* object)
 {
     if (Object* compiled = compiledObjectOrNull(object))
         return !hasPendingStars(*compiled) && !compiled->structure()->typeInfo().overridesGetPrototype();
@@ -724,7 +724,7 @@ static bool findsOnlyNamesThatAreAtoms(JSObject* object)
 bool hasOnlyOrdinaryLookupsOnChain(JSObject* base)
 {
     for (JSObject* object = base; object; object = object->getPrototypeDirect().getObject()) {
-        if (!findsOnlyNamesThatAreAtoms(object))
+        if (!findsOnlyAtomNames(object))
             return false;
     }
     return true;

@@ -32,7 +32,7 @@ constexpr StubKey equalsLiteralOfLength(ComparedOperand operand, unsigned length
 // ToNumber of the literal is NaN, so no number, boolean or BigInt is loosely equal to it. The stub does not test that.
 constexpr StubKey looseEqualsLiteral() { return StubKey(StubFamily::LooseEqualsLiteral); }
 constexpr StubKey literalStringToString() { return StubKey(StubFamily::LiteralStringToString); }
-// The operand is a string cell or, unless the caller knows better, no cell. The stub does not test the type of a cell.
+// The operand is a string cell or, unless the caller knows otherwise, not a cell. The stub does not check the cell's type.
 constexpr StubKey toLiteralString(ComparedOperand operand) { return StubKey(StubFamily::ToLiteralString).withForm(operand == ComparedOperand::String); }
 constexpr StubKey shortStringOfValue() { return StubKey(StubFamily::ShortStringOfValue); }
 

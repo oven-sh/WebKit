@@ -68,7 +68,7 @@ public:
         return select(isReference, cell, immediate);
     }
 
-    // Most tables have no deleted entries: the entry at the start is looked at in line, and the loop that passes deleted ones stands off the likely path.
+    // Most tables have no deleted entries, so the first entry is checked inline and the loop that skips deleted entries is off the likely path.
     LValue firstAliveEntry(LValue start, LValue used, LBasicBlock hasNoEntry, NOESCAPE const Invocable<LValue(LValue)> auto& isAlive)
     {
         LBasicBlock isFirstUsed = m_out.newBlock();
@@ -88,12 +88,12 @@ public:
         m_out.branch(m_out.below(candidate, used), normalEdge(isUsed), unlikelyEdge(hasNoEntry));
 
         m_out.appendTo(isUsed);
-        ValueFromBlock aliveBehindDeletedEntries = m_out.anchor(candidate);
+        ValueFromBlock liveAfterDeletedEntries = m_out.anchor(candidate);
         m_out.addIncomingToPhi(deletedEntry, m_out.anchor(candidate));
         m_out.branch(isAlive(candidate), normalEdge(found), normalEdge(loop));
 
         m_out.appendTo(found);
-        return m_out.phi(B3::Int64, aliveAtStart, aliveBehindDeletedEntries);
+        return m_out.phi(B3::Int64, aliveAtStart, liveAfterDeletedEntries);
     }
 
     TableEntry compactEntryAt(Collection kind, CompactTable::Width keyWidth, std::optional<CompactTable::Width> expectedValueWidth, LValue table, LValue keys, LValue entryIndex)
@@ -160,7 +160,7 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     m_out.branch(m_out.isNull(storage), normalEdge(hasNoEntry), rareEdge(slowPath));
 
     m_out.appendTo(isCurrent);
-    // Where code is compiled a collection gets a compact table with its first entry. A table of the other kind is the stub's.
+    // In compiled code a collection gets a compact table with its first entry. The stub handles the other kind of table.
     m_out.branch(hasCellType(CellPointer(storage), JSCellButterflyType).value(), rareEdge(slowPath), normalEdge(isCompact));
 
     m_out.appendTo(isCompact);
@@ -194,7 +194,7 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     m_out.jump(isMarked);
 
     m_out.appendTo(isMarked);
-    // A number never fits a short value either. Where the values may be of both kinds nobody knows which width the table has.
+    // A number never fits a short value either. If the values may be of both kinds, the table's width is unknown.
     std::optional<CompactTable::Width> expectedValueWidth;
     if (kind == Collection::Map) {
         Type values = typeOfContentsRead({ m_program, m_function, types(), TypeLevel::Expected }, typeOf(value->mapOperand()), ContentsSlot::Value).withoutPrimitives(Primitive::Undefined | Primitive::Null | Primitive::Boolean);

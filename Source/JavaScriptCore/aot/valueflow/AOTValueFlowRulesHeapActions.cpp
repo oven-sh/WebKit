@@ -13,6 +13,18 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+// The `callee` accessor of strict arguments is not enumerable. Any other native accessor on an arguments object was copied there, and a copy is written under the unknown key.
+ClimbingSet HeapRule::gettersOfEnumerableProperties(ClimbingSet holders)
+{
+    ValueFlowName everyGetter = foundName(unknownHeapKey, HeapPropertyPart::Getter);
+    ClimbingSet argumentsObjects = m_context.restrict(holders, m_tables.argumentsObjects());
+    if (!holdsAnything(argumentsObjects) || m_context.contains(m_context.valueOf(m_context.readWhatWasWritten(argumentsObjects, writtenName(unknownHeapKey, HeapPropertyPart::Getter))), m_tables.undescribedNativeCode()))
+        return m_context.valueOf(m_context.readWhatWasWritten(holders, everyGetter));
+    ClimbingSet gettersOfArguments = m_context.restrict(m_context.valueOf(m_context.readWhatWasWritten(argumentsObjects, everyGetter)), ValueSets::complement(only(m_tables.undescribedNativeCode())));
+    ClimbingSet others = m_context.restrict(holders, ValueSets::complement(m_tables.argumentsObjects()));
+    return m_context.unite(gettersOfArguments, m_context.valueOf(m_context.readWhatWasWritten(others, everyGetter)));
+}
+
 void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOperand& everySource, CopiedProperties copiedProperties)
 {
     bool storesThroughSetters = copiedProperties == CopiedProperties::AreAssigned;
@@ -123,7 +135,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
             connect(exports, node);
     }
 
-    ClimbingSet getters = m_context.valueOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyGetter));
+    ClimbingSet getters = keepsAccessors ? m_context.valueOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, known(sources)), everyGetter)) : gettersOfEnumerableProperties(withSourcesOfCopies(m_context, known(sources)));
     if (mayBeUntrackedObject(sources)) {
         for (ClimbingSet holders : { ClimbingSet(m_universe.knownObjects()), untrackedObjectAlone(), unknownObjectAlone() }) {
             for (ValueFlowNodeID node : nodesTakingCopies)
@@ -141,7 +153,7 @@ void HeapRule::copyProperties(const ValueFlowOperand& target, const ValueFlowOpe
         ValueFlowObjectsToldApart toldApart = tellObjectsApart(m_context, m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), known(sources)));
         ClimbingSet holdingSuchGetter(toldApart.rest);
         for (ValueSetID group : toldApart.groups) {
-            if (mayBeAccessorNobodyKnows(m_context.valueOf(m_context.readWhatWasWritten(withSourcesOfCopies(m_context, ClimbingSet(group)), everyGetter))))
+            if (mayBeAccessorNobodyKnows(gettersOfEnumerableProperties(withSourcesOfCopies(m_context, ClimbingSet(group)))))
                 holdingSuchGetter = m_context.unite(holdingSuchGetter, ClimbingSet(group));
         }
         readSources.belowAccessorNobodyKnows = holdingSuchGetter;

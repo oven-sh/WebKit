@@ -113,7 +113,7 @@ struct FunctionPassContext {
     ChangeLog& changes { changeLogOf(analyses) };
     OpenSites openSites { };
     size_t numberOfBlocksWhenSinkingGaveUp { 0 };
-    // Of all the runs of FoldConstants.
+    // Across all runs of FoldConstants.
     uint64_t bytesOfFoldedTexts { 0 };
     // Where in a schedule the running pass stands: in the rounds of a fixpoint, at a step for what was left for later, or neither.
     bool isInRounds { false };
@@ -227,7 +227,7 @@ using FunctionPass = PassOutcome (*)(FunctionPassContext&);
 
 #define AOT_DECLARE_FUNCTION_PASS(id, function) PassOutcome function(FunctionPassContext&);
 FOR_EACH_AOT_FUNCTION_PASS(AOT_DECLARE_FUNCTION_PASS)
-PassOutcome removeRedundantHandlersBehindSelection(FunctionPassContext&, bool allocatesLessUnderHandler);
+PassOutcome removeRedundantHandlersAfterSelection(FunctionPassContext&, bool removedAllocationUnderHandler);
 #undef AOT_DECLARE_FUNCTION_PASS
 
 struct PassDescriptor {

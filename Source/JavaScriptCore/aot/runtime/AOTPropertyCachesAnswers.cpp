@@ -382,7 +382,7 @@ PropertyAnswer classifyNamespaceRead(const ReadQuery& query)
 enum class WordOfTypedArray : uint8_t { None, Length, ByteOffset };
 
 // The getters of typed arrays that answer a word of the view as it is.
-static WordOfTypedArray findWordThatGetterAnswers(Structure* receiverStructure, const ChainWalk& walk)
+static WordOfTypedArray findWordReturnedByGetter(Structure* receiverStructure, const ChainWalk& walk)
 {
     JSType type = receiverStructure->typeInfo().type();
     if (!isTypedArrayType(type) || !isValidOffset(walk.offset))
@@ -395,8 +395,8 @@ static WordOfTypedArray findWordThatGetterAnswers(Structure* receiverStructure, 
         return WordOfTypedArray::Length;
     if (getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteOffset)))
         return WordOfTypedArray::ByteOffset;
-    bool answersLength = elementSize(typedArrayType(type)) == 1 && getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteLength));
-    return answersLength ? WordOfTypedArray::Length : WordOfTypedArray::None;
+    bool returnsLength = elementSize(typedArrayType(type)) == 1 && getter->nativeFunction() == toTagged(NativeFunction(typedArrayViewProtoGetterFuncByteLength));
+    return returnsLength ? WordOfTypedArray::Length : WordOfTypedArray::None;
 }
 
 static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
@@ -422,7 +422,7 @@ static PropertyAnswer classifyReadAboveReceiver(const ReadQuery& query)
         if (isValue && !(walk.attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             kind = isValidOffset(walk.offset) ? PropertyAnswerKind::Value : PropertyAnswerKind::InheritedField;
         else if (isGetter && isValidOffset(walk.offset) && (walk.attributes & PropertyAttribute::Accessor)) {
-            wordOfTypedArray = findWordThatGetterAnswers(query.structureBefore, walk);
+            wordOfTypedArray = findWordReturnedByGetter(query.structureBefore, walk);
             kind = wordOfTypedArray == WordOfTypedArray::None ? PropertyAnswerKind::Accessor : PropertyAnswerKind::TypedArrayLength;
         }
         else if (query.mode == ChainWalkMode::MayAllocate && (staticField = StaticFields::findFieldForCache(query.globalObject->vm(), walk.holder, query.uid)))

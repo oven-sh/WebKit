@@ -278,7 +278,7 @@ static void reportOperationsOf(const Program& program, FunctionID id, ExecutionC
             if (VariableID exports = exportsVariableReadBy(program, value))
                 locations.note(locations.of(exports), ReadNoted::ByLoader);
             if (value.opcode == Opcode::ModuleNamespace || value.opcode == Opcode::ImportModule)
-                locations.noteOperationThatNamesNamespaceOf(value.module());
+                locations.noteOperationNamingNamespaceOf(value.module());
             bool isCreation = value.opcode == Opcode::NewObject;
             forEachLocationStoredBy(program, locations, value, [&](uint32_t location) {
                 writes.append({ location, { isCreation ? Actor::Creation : Actor::Statements, isCreation ? WriteForm::AtCreation : WriteForm::Store, { }, { }, id, site, traitsOfOperationThatNamesPlace } });

@@ -88,7 +88,7 @@ struct ModuleData {
     uint8_t loadedByLoader : 1;
     uint8_t faceOfFile : 1;
     uint8_t importedByModule : 1;
-    uint8_t importedWhileItRuns : 1;
+    uint8_t importedWhileItRunsOrAsNamespace : 1;
     uint8_t beginsLoads : 1;
     uint8_t shownByFace : 1;
     // Of a module of the library with a body: the code was compiled for a body that is entered once.
@@ -120,7 +120,9 @@ struct ModuleData {
     // Something other than the import of a module may be the first to ask for it: the host, an import(), a require().
     bool mayBeginLoad() const { return beginsLoads; }
     // A CommonJS file that leads by a require() to an ES module that imports it. No code of the image takes what a require() of it answers for what the file exports.
-    bool mayBeImportedWhileItRuns() const { return importedWhileItRuns; }
+    bool mayBeImportedWhileItRuns() const { return kind == ModuleKind::CommonJs && importedWhileItRunsOrAsNamespace; }
+    // An ES module that another module imports with `import * as`. In plain Bun the link of that importer creates the namespace object.
+    bool isImportedAsNamespace() const { return kind == ModuleKind::SourceText && importedWhileItRunsOrAsNamespace; }
     // The helpers of the bundler, which have the form of a file of the program and answer to their name like a module of the library.
     bool isLibraryCodeWithFilePath() const { return has(Flag::IsLibraryCodeWithFilePath); }
     // Code of the host, whatever its form.

@@ -343,8 +343,8 @@ void describeBuiltinCall(const Program& program, const Function& function, const
     describeTypedResult(program, call.overload, value.expectedResult(), description);
 }
 
-// The operands fitted no overload when the call was resolved, so the call counts as one that is handed anything. Here it is judged by the types that its operands have now.
-EffectDescription describeUnmatchedCallByTypesOfOperands(const Program& program, const Function& function, const Value& value)
+// The operands matched no overload when the call was resolved, so the call counts as one that may be passed anything. Here it is judged by its operands' current types.
+EffectDescription describeUnmatchedCallByOperandTypes(const Program& program, const Function& function, const Value& value)
 {
     BuiltinCall call = builtinCallOf(program, value);
     RELEASE_ASSERT(call.form == BuiltinCallForm::AnyReceiver);

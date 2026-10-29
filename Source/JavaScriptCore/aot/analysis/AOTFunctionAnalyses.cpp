@@ -251,7 +251,7 @@ static uint32_t hashOf(const EffectsOnEdges& effectsOnEdges)
     for (const Effects* effects : { &effectsOnEdges.normal, &effectsOnEdges.handler }) {
         hasher.add(effects->reads.mixedWords());
         hasher.add(effects->writes.mixedWords());
-        hasher.add(WTF::packBools(static_cast<bool>(effects->mayThrow), effects->mayThrowBeyondLackOfStack(), effects->mayThrowByRule(), effects->mayCollect, effects->mayCallUnknownCode, effects->maySuspend, effects->mayBeTerminated));
+        hasher.add(WTF::packBools(static_cast<bool>(effects->mayThrow), effects->mayThrowOtherThanStackOverflow(), effects->mayThrowByRule(), effects->mayCollect, effects->mayCallUnknownCode, effects->maySuspend, effects->mayBeTerminated));
     }
     return static_cast<uint32_t>(hasher.hash);
 }

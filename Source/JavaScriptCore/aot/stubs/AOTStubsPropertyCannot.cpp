@@ -75,8 +75,8 @@ static void setUpSetterCall(StubAssembler& jit, PutMode mode, OperationCall& cal
     call.constantArguments[0] = OperationCall::ConstantArgument { operationArgumentGPR(4), static_cast<uint32_t>(mode) };
 }
 
-// A field in the cell whose closure is not made yet. The record of the field says which function it is a closure of and whether it captures the object, and the stub that serves the reads by slot makes it.
-// Falls through with every operand as it came where the operation has to look.
+// An inline field whose closure has not been created yet. The field's record gives the closure's function and whether it captures the object; the stub that serves slot reads creates it.
+// Falls through with every operand unchanged if the operation has to do the lookup.
 static void emitMakeClosureOfFieldAndReturn(StubAssembler& jit)
 {
     constexpr unsigned fieldSizeShift = WTF::fastLog2(static_cast<unsigned>(sizeof(FieldData)));

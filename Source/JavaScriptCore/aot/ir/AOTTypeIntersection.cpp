@@ -48,7 +48,7 @@ static void intersectLiterals(Type& result, const Type& a, const Type& b, Litera
     else if (b.primitives & part.widenedBit)
         literals = a.*part.literals;
     else {
-        // The shorter list is copied: each case of a switch meets the whole union with one literal.
+        // The shorter list is copied: each case of a switch intersects the whole union with one literal.
         bool isFirstShorter = (a.*part.literals).size() <= (b.*part.literals).size();
         literals = (isFirstShorter ? a : b).*part.literals;
         literals.intersect((isFirstShorter ? b : a).*part.literals);
@@ -160,7 +160,7 @@ static ClassPart intersectParts(const ClassPart& a, const ClassPart& b, TypeAren
     return result;
 }
 
-// An array keeps the kind of storage that is proven of it, so none has two.
+// An array keeps its proven storage kind, so no array has two.
 static bool haveDifferentProvenStorage(const ClassPart& a, const ClassPart& b)
 {
     return a.contentsAreProven && b.contentsAreProven && a.arrayStorage != ArrayStorage::Other && b.arrayStorage != ArrayStorage::Other && a.arrayStorage != b.arrayStorage;
@@ -236,8 +236,8 @@ static void intersectClasses(Type& result, const Type& a, const Type& b, TypeAre
     }
 }
 
-// What is an object of one of these layouts and an instance of one of those built-in classes is an object of a class that is written below such a class.
-// Where the part of the built-in class says more than that the object is an instance, no type says what both hold: a cast answers with what lies inside its target.
+// An object of one of these layouts that is also an instance of one of those built-in classes is an object of a subclass of such a class.
+// If the built-in class part proves more than that the object is an instance, no type expresses both, so a cast returns what lies inside its target.
 static void intersectLayoutsWithClasses(Type& result, const Type& layouts, const Type& classes, TypeArena& arena, bool castsToClasses)
 {
     if (!layouts.layouts || classes.classes.isEmpty())
@@ -254,7 +254,7 @@ static void intersectLayoutsWithClasses(Type& result, const Type& layouts, const
             continue;
         }
         for (const ClassPart& part : classes.classes) {
-            if (!mayHoldWhatConstructorMakes(builtins, part.builtinClass, builtinClass))
+            if (!mayHoldConstructedInstances(builtins, part.builtinClass, builtinClass))
                 continue;
             if (result.findClassPart(part.builtinClass))
                 continue;

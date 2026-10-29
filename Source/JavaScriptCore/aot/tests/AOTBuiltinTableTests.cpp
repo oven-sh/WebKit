@@ -130,10 +130,12 @@ static void testMarks()
             return loader.callee == callee && loader.named == named;
         });
     };
-    AOT_TEST_CHECK(table().loadersOfMachineCode().size() == 5 && isReportedAs(Builtins::ProcessDlopen, Builtins::ProcessDlopen));
+    AOT_TEST_CHECK(table().loadersOfMachineCode().size() == 8 && isReportedAs(Builtins::ProcessDlopen, Builtins::ProcessDlopen));
     AOT_TEST_CHECK(isReportedAs(hostBuiltin("NativeFunctionsFfiBindTsCc"_s), hostBuiltin("BunFfiCc"_s)));
     AOT_TEST_CHECK(isReportedAs(hostBuiltin("BunFFIDlopen"_s), hostBuiltin("BunFfiDlopen"_s)) && isReportedAs(hostBuiltin("BunFFILinkSymbols"_s), hostBuiltin("BunFfiLinkSymbols"_s)));
     AOT_TEST_CHECK(isReportedAs(hostBuiltin("BunFFICfunction"_s), hostBuiltin("BunFfiCFunction"_s)));
+    AOT_TEST_CHECK(isReportedAs(hostBuiltin("NativeFunctionsFfiBindTsOpenLibrary"_s), hostBuiltin("BunFfiDlopen"_s)) && isReportedAs(hostBuiltin("NativeFunctionsFfiBindTsLinkLibrary"_s), hostBuiltin("BunFfiLinkSymbols"_s)));
+    AOT_TEST_CHECK(isReportedAs(hostBuiltin("NativeFunctionsFfiBindTsMakeFunction"_s), hostBuiltin("BunFfiCFunction"_s)));
 }
 
 static void testGlobalThisIsFirst()

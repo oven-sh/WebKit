@@ -461,7 +461,7 @@ std::span<const uint16_t> KeyOrderTable::entriesInOrder(const LayoutData& layout
 
 const uint16_t* KeyOrderTable::publishEntriesOfFields(const LayoutData& layout, uint32_t orderWord)
 {
-    static constexpr uint16_t entriesOfNoKey[1] { };
+    static constexpr uint16_t emptyEntries[1] { };
     auto findEntries = [&]() -> const uint16_t* {
         if (orderWord & (orderWordHasFieldOutsideSlot | orderWordHasExtraProperties) || isOrderStoredOutOfLine(orderWord) || layout.keysAreNeverEnumerated)
             return nullptr;
@@ -470,7 +470,7 @@ const uint16_t* KeyOrderTable::publishEntriesOfFields(const LayoutData& layout, 
             if (index >= layout.numberOfFields)
                 return nullptr;
         }
-        return entries.empty() ? entriesOfNoKey : entries.data();
+        return entries.empty() ? emptyEntries : entries.data();
     };
     const uint16_t* entries = findEntries();
     uint32_t shapeWord = shapeWordOf(layout.shape);

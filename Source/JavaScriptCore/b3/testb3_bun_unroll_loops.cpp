@@ -543,7 +543,7 @@ static Policy policyThatPollsBetweenStretches()
 static PatchpointValue* appendPollOfShortTurns(Graph& graph, BasicBlock* block, PollState& state)
 {
     PatchpointValue* poll = appendPoll(graph, block, state);
-    poll->turnsAreShort = true;
+    poll->iterationsAreShort = true;
     return poll;
 }
 
@@ -659,13 +659,13 @@ static void testUnrollLoopsDropsPollOfLoopWhoseTurnsAreKnownToBeFew()
 // The loop keeps polling on every iteration when its iterations may be long or the policy does not allow polling between stretches.
 static void testUnrollLoopsKeepsPollThatMustRunOnEveryTurn()
 {
-    enum class Reason : uint8_t { TurnsMayBeLong, Policy };
-    for (Reason reason : { Reason::TurnsMayBeLong, Reason::Policy }) {
+    enum class Reason : uint8_t { IterationsMayBeLong, Policy };
+    for (Reason reason : { Reason::IterationsMayBeLong, Reason::Policy }) {
         for (Walks walks : { Walks::Nothing, Walks::Data }) {
             CountedSum sum(LessThan, 1, 0, reason == Reason::Policy ? loopPolicy() : policyThatPollsBetweenStretches(), walks);
             PollState state;
             PatchpointValue* poll = appendPoll(sum.graph, sum.loop.body, state);
-            poll->turnsAreShort = reason != Reason::TurnsMayBeLong;
+            poll->iterationsAreShort = reason != Reason::IterationsMayBeLong;
             sum.graph.increase(sum.loop.body, sum.loop.sum, sum.graph.get(sum.loop.body, sum.loop.index));
             sum.finish(sum.loop.body, TestPlace::Bottom);
 

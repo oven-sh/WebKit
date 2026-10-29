@@ -28,8 +28,8 @@ enum class LoopEntryResult : uint8_t { Unknown, NoSingleEntry, HandlerDiffers, E
 using LoopEntryEmitter = ScopedLambda<void(IRBuilder&)>;
 
 bool canEmitOnLoopEntry(SelectionContext&, BlockID header);
-// Whether what is emitted on the entry stands in a new block under a handler that the block in front of the loop does not have.
-bool entersLoopUnderNewHandlerEdge(SelectionContext&, BlockID header);
+// Whether code emitted on the loop entry goes into a new block under a handler that the block before the loop does not have.
+bool loopEntryGetsNewHandlerEdge(SelectionContext&, BlockID header);
 LoopEntryResult emitOnLoopEntry(SelectionContext&, IRBuilder&, BlockID header, NOESCAPE const LoopEntryEmitter&);
 
 } } } // namespace JSC::AOT::Typed

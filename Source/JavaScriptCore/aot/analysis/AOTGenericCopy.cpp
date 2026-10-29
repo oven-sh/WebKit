@@ -108,7 +108,7 @@ static void forEachValueFedBy(const Function& function, const Use& use, NOESCAPE
     }
 }
 
-Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt, const BitVector* blocksAskedFor)
+Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const ScopedLambda<bool(ValueID)>& mayCallUnknownCode, NOESCAPE const ScopedLambda<bool(ProgramPoint)>& mayRejoinAt, const BitVector* requestedBlocks)
 {
     const Program& program = analyses.program();
     const Function& function = analyses.function();
@@ -126,7 +126,7 @@ Vector<ProgramPoint> findRejoinPoints(FunctionAnalyses& analyses, NOESCAPE const
 
     Vector<uint32_t, 32> endOfEarlierReads;
     for (BlockID block : cfg.reversePostOrder()) {
-        if (blocksAskedFor && !blocksAskedFor->get(block.index()))
+        if (requestedBlocks && !requestedBlocks->get(block.index()))
             continue;
         const Block& contents = function.at(block);
         if (contents.isHandlerBlock() || (loops && loops->headerOf(block)))

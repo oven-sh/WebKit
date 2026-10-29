@@ -603,6 +603,10 @@ static void printFunctionTraces(const TablesContext& context)
             .flag("async"_s, trace.isAsync).flag("rejectsOnThrow"_s, trace.rejectsOnThrow).flag("namedByOwner"_s, trace.isNamedByOwner)
             .flag("nakedConstructor"_s, trace.isNakedConstructor).flag("namedByComputedKey"_s, trace.isNamedByComputedKey);
     }
+    for (uint32_t index = 0; index < context.tables.numberOfFunctions(); ++index) {
+        for (uint32_t form : context.tables.closureFormsOf(index))
+            context.out.println("closureForm f", form, " source=f", index);
+    }
 }
 
 static void printFunctionTexts(const TablesContext& context)

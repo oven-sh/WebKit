@@ -87,7 +87,7 @@ ArrayStorageFormList ArrayBuiltinEmitter::candidateFormsOf(const InlineCall& cal
 
 void ArrayBuiltinEmitter::forEachFormOrMiss(const InlineCall& call, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>& functor)
 {
-    // The kind of storage does not say whether the storage is shared with a literal.
+    // The storage kind does not tell whether the storage is shared with a literal.
     if (const ArrayStorageForm* proven = provenFormOf(call, array); proven && mask != IndexingShapeAndWritabilityMask)
         return functor(*proven);
     ElementAccessEmitter::ShapeTest test = mask == IndexingShapeAndWritabilityMask ? &ElementAccessEmitter::hasWritableShape : &ElementAccessEmitter::hasShape;

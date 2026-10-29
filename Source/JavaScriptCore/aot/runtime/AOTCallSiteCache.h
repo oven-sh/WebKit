@@ -44,7 +44,7 @@ public:
         bool isInModuleBody : 1 { false };
         bool innermostIsAsync : 1 { false };
         // Image::calleeOfSiteAt() has an answer.
-        bool saysCallee : 1 { false };
+        bool hasRecordedCallee : 1 { false };
         // Image::constructedCalleeAt() has an answer.
         bool namesConstructedCallee : 1 { false };
         // Once the callee of the site has been entered.

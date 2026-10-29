@@ -260,6 +260,7 @@ static_assert(sizeof(FunctionWithLargeCountsData) == 7 && isImageRecord<Function
     v(functionRecords, FunctionRecordData) \
     v(functionRecordsByFunction, FunctionRecordByFunctionData) \
     v(functionSources, Number24) \
+    v(closureFormsBySource, Number24) \
     v(implementedBuiltins, ImplementedBuiltinData) \
     v(closureFunctionKinds, FunctionKindData) \
     v(functionLengths, uint8_t) \

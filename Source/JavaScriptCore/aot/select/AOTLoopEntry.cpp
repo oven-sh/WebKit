@@ -52,14 +52,14 @@ std::optional<InvariantOperand> findOutermostInvariantLoop(SelectionContext& con
     return outermost;
 }
 
-// What is emitted on the entry stands for what the first turn does, so it has the handler of the header, which gets what it would get from the head of the first turn.
+// Code emitted on the loop entry stands in for work of the first iteration, so it gets the header's handler, which receives what it would receive from the start of the first iteration.
 static std::optional<std::optional<Target>> findHandlerOnEntry(SelectionContext& context, Edge entry, BlockID header)
 {
     const Function& function = context.function();
-    const std::optional<Target>& handlerOfHeader = function.at(header).handler;
-    if (!handlerOfHeader || function.at(entry.from).handler == handlerOfHeader)
-        return handlerOfHeader;
-    Target handler = *handlerOfHeader;
+    const std::optional<Target>& headerHandler = function.at(header).handler;
+    if (!headerHandler || function.at(entry.from).handler == headerHandler)
+        return headerHandler;
+    Target handler = *headerHandler;
     const Target& target = targetOf(function, entry);
     if (target.arguments.size() != function.at(header).parameters.size())
         return std::nullopt;
@@ -84,7 +84,7 @@ bool canEmitOnLoopEntry(SelectionContext& context, BlockID header)
     return entry && findHandlerOnEntry(context, *entry, header);
 }
 
-bool entersLoopUnderNewHandlerEdge(SelectionContext& context, BlockID header)
+bool loopEntryGetsNewHandlerEdge(SelectionContext& context, BlockID header)
 {
     const Function& function = context.function();
     const NaturalLoops& loops = context.analyses().naturalLoops();
@@ -125,7 +125,7 @@ LoopEntryResult emitOnLoopEntry(SelectionContext& context, IRBuilder& builder, B
 
     BlockID preheader = ensurePreheader(builder, *entry, *handler);
     if (*handler)
-        context.noteAllocatesLessUnderHandler();
+        context.noteRemovedAllocationUnderHandler();
     Terminator jump = std::exchange(function.edit(preheader, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator, Terminator { });
     analyses.didChangeControlFlow();
 

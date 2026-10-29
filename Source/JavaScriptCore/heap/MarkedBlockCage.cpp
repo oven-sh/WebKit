@@ -562,17 +562,17 @@ bool MarkedBlockCage::hasHeapThatReleasedReserve() const
     return m_hasReleasedReserve || m_exhaustedHeaps.containsAny({ ExhaustedHeap::Structures, ExhaustedHeap::Storage, ExhaustedHeap::Tables });
 }
 
-bool MarkedBlockCage::tryKeepReleasedReservesAgain(VM& vm)
+bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
 {
     if (!hasHeapThatReleasedReserve())
         return false;
     if (m_exhaustedHeaps.contains(ExhaustedHeap::Structures)) {
-        if (!StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain())
+        if (!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve())
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Structures);
     }
     if (m_exhaustedHeaps.contains(ExhaustedHeap::Storage)) {
-        if (!tryKeepBallastAgain())
+        if (!tryRestoreBallast())
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Storage);
     }
@@ -581,13 +581,13 @@ bool MarkedBlockCage::tryKeepReleasedReservesAgain(VM& vm)
             return false;
         m_exhaustedHeaps.remove(ExhaustedHeap::Tables);
     }
-    if (m_hasReleasedReserve && !tryKeepOwnReleasedReserveAgain())
+    if (m_hasReleasedReserve && !tryRestoreOwnReserve())
         return false;
     m_exhaustedHeaps = { };
     return true;
 }
 
-bool MarkedBlockCage::tryKeepOwnReleasedReserveAgain()
+bool MarkedBlockCage::tryRestoreOwnReserve()
 {
     if (!m_hasReleasedReserve || !m_numberOfChunksReleased)
         return false;
@@ -607,7 +607,7 @@ bool MarkedBlockCage::tryKeepOwnReleasedReserveAgain()
     return true;
 }
 
-bool MarkedBlockCage::tryKeepBallastAgain()
+bool MarkedBlockCage::tryRestoreBallast()
 {
 #if USE(MIMALLOC)
     keepAddressSpaceBallast();
@@ -625,7 +625,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryError(VM& vm)
     vm.heap.collectForExhaustedCage();
     if (!vm.traps().needsOutOfMemoryError())
         return false;
-    if (!tryKeepReleasedReservesAgain(vm))
+    if (!tryRestoreReleasedReserves(vm))
         return false;
     vm.traps().setNeedsOutOfMemoryError(false);
     return true;
@@ -643,7 +643,7 @@ bool MarkedBlockCage::tryTakeBackOutOfMemoryErrorAtPoll(VM& vm)
     if (!vm.traps().needsOutOfMemoryError())
         return false;
     if (hasHeapThatReleasedReserve()) {
-        if (!tryKeepReleasedReservesAgain(vm))
+        if (!tryRestoreReleasedReserves(vm))
             return false;
     } else {
         // How much the program can allocate now says whether this collection was barren too.
@@ -875,7 +875,7 @@ void MarkedBlockCage::didUseAddressSpaceBallast(VM& vm)
         willUseLastReserve(vm);
     MarkedBlockCage& cage = vm.heap.cage();
     cage.addExhaustedHeap(ExhaustedHeap::Storage);
-    cage.didFindNoRoomWhereNothingCollects();
+    cage.didFindNoRoomWithoutCollecting();
     vm.traps().setNeedsOutOfMemoryError(true);
 }
 
@@ -887,14 +887,14 @@ void MarkedBlockCage::willAddSymbol(VM& vm)
         return;
     MarkedBlockCage& cage = vm.heap.cage();
     cage.addExhaustedHeap(ExhaustedHeap::Tables);
-    cage.didFindNoRoomWhereNothingCollects();
+    cage.didFindNoRoomWithoutCollecting();
     vm.traps().setNeedsOutOfMemoryError(true);
 }
 
 bool MarkedBlockCage::throwErrorForMissingAddressSpaceBallast(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope)
 {
 #if USE(MIMALLOC)
-    if (bmalloc::api::isThisThreadExemptFromAddressSpaceBallast() || vm.heap.cage().tryKeepBallastAgain())
+    if (bmalloc::api::isThisThreadExemptFromAddressSpaceBallast() || vm.heap.cage().tryRestoreBallast())
         return false;
     if (!vm.traps().needsOutOfMemoryError())
         didUseAddressSpaceBallast(vm);

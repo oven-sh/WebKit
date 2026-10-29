@@ -169,7 +169,7 @@ void decodeCell32(StubAssembler& jit, GPRReg word, GPRReg result)
 
 void encodeCellOfProgram(StubAssembler& jit, GPRReg cell, GPRReg word)
 {
-    // The byte in front of a cell that is kept in a frame cannot be read (AOTCheckedFrameCells.h), and the byte in front of any other can.
+    // The byte before a cell kept in a frame is unreadable (AOTCheckedFrameCells.h); the byte before any other cell is readable.
     if (jit.options().checksProofs)
         jit.branchTest8(CCallHelpers::Zero, Address(cell, -1)).link(&jit);
     encodeCell32(jit, cell, word);

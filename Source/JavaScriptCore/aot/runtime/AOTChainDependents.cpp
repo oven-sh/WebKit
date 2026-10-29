@@ -86,7 +86,7 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
         return;
     for (JSObject* object : chainObjects) {
         ASSERT(object->mayBePrototype());
-        m_objectsThatGotDependents.add(object);
+        m_objectsWithDependents.add(object);
         ObjectDependents& dependents = m_dependentsByObject.ensure(object, [] {
             return ObjectDependents();
         }).iterator->value;

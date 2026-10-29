@@ -59,7 +59,7 @@ static bool letsThrowPass(StubFrameKind kind)
 {
     switch (kind) {
     case StubFrameKind::Plain:
-    case StubFrameKind::ReturnsBehindOperation:
+    case StubFrameKind::ReturnsAfterOperation:
     case StubFrameKind::EngineCallee:
     case StubFrameKind::HostCall:
     case StubFrameKind::GeneratorBody:
@@ -235,7 +235,7 @@ CompiledUnwindResult unwindRun(VM& vm, const ReturnSiteInRun& start, EntryFrame*
             case StubFrameKind::InHostCallFrame:
                 RELEASE_ASSERT_NOT_REACHED();
             case StubFrameKind::Plain:
-            case StubFrameKind::ReturnsBehindOperation:
+            case StubFrameKind::ReturnsAfterOperation:
             case StubFrameKind::ArgumentList:
             case StubFrameKind::HostCall:
             case StubFrameKind::FirstOfTwoReads:
@@ -521,7 +521,7 @@ void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance& instance, CallerFram
         return;
     CallFrame* frameThatReturns = std::bit_cast<CallFrame*>(frameRecordOfOperation);
     CodeLocation location = image.locate(removeCodePtrTag(frameThatReturns->rawReturnPC()));
-    if (location.kind == CodeKind::Stub && location.stubFrameKind == StubFrameKind::ReturnsBehindOperation) {
+    if (location.kind == CodeKind::Stub && location.stubFrameKind == StubFrameKind::ReturnsAfterOperation) {
         frameThatReturns = static_cast<CallFrame*>(frameThatReturns->callerFrameOrEntryFrame());
         location = image.locate(removeCodePtrTag(frameThatReturns->rawReturnPC()));
     }

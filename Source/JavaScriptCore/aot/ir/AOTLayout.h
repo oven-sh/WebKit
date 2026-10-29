@@ -116,13 +116,13 @@ std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID,
 LayoutID expectedBaseOf(const Layout&);
 LayoutID predictedHeritageOf(const Layout&);
 BuiltinClassID builtinBaseClassOf(const Program&, LayoutID);
-// `class A extends Map`, and every class that is written below A: Layout::writtenBuiltinBase says Map. It is what the text says, so it stays as it is through the whole build.
-void noteClassesWrittenBelowBuiltinClasses(Program&, const ParallelLoops&);
-// The objects of the class are cells that the constructor of a built-in class makes for `super(..)`. Their Structures carry a brand of the class from birth on, whatever becomes of the object.
+// `class A extends Map`, and every subclass of A: Layout::writtenBuiltinBase is Map. It reflects the source, so it never changes during the build.
+void noteSubclassesOfBuiltinClasses(Program&, const ParallelLoops&);
+// Objects of the class are cells that a built-in class's constructor creates for `super(..)`. Their Structures carry the class's brand from creation, whatever happens to the object later.
 bool carriesBrandOfClass(const Program&, LayoutID);
-// The objects of a class below a built-in class have properties from their construction on: the fields of the class, or what the built-in constructor lays on them.
-bool isBornWithProperties(const Program&, LayoutID, BuiltinClassID builtinBase);
-// HasNoExtraProperties can tell such an object that has only those properties from one that has got others.
+// Objects of a subclass of a built-in class have properties from construction on: the class's fields, or those the built-in constructor adds.
+bool isCreatedWithProperties(const Program&, LayoutID, BuiltinClassID builtinBase);
+// HasNoExtraProperties can distinguish such an object that has only those properties from one that has gained others.
 bool hasTestForOtherNames(const Program&, LayoutID);
 bool hasOnlyCompiledBases(const Program&, LayoutID);
 bool isEvaluatedOnce(const Program&, const Layout&);

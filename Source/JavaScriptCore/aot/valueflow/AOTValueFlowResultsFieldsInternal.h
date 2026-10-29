@@ -519,7 +519,7 @@ public:
 
     ValueSetID storedUnder(LayoutID layout, PropertyKeyID key) { return storedUnder(m_heap.maker(), layout, key); }
     ValueSetID storedUnder(ValueSetMaker&, LayoutID, PropertyKeyID) const;
-    ValueSetID storedUnderNameItself(ValueSetMaker&, LayoutID, PropertyKeyID) const;
+    ValueSetID storedUnderExactName(ValueSetMaker&, LayoutID, PropertyKeyID) const;
     ValueFlowNumbers numbersStoredUnder(LayoutID, PropertyKeyID, ObjectsOfLayout = ObjectsOfLayout::All) const;
     bool isStoredAfterCreation(LayoutID, PropertyKeyID) const;
     OptionSet<Actor> writersSeenUnder(LayoutID, PropertyKeyID) const;
@@ -608,7 +608,7 @@ private:
         uint32_t keyRead;
 
         ValueFlowName name() const { return { static_cast<ValueFlowNameKind>(detail), payload }; }
-        ValueFlowNumbers numbersWhereNoReadIsFollowed() const { return objectsRead == ValueSets::nothing ? numbers : ValueFlowNumbers::any(); }
+        ValueFlowNumbers numbersWithoutFollowedReads() const { return objectsRead == ValueSets::nothing ? numbers : ValueFlowNumbers::any(); }
         auto group() const { return std::tuple { set, detail, payload, familyOfReceiver, familyDeclaredForReceiver, fillsTypedResult, createsData, copyLeavingOutKeys, objectsRead.index(), keyRead }; }
         uint32_t hashOfGroup() const
         {

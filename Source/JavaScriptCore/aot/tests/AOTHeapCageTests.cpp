@@ -1597,7 +1597,7 @@ static void runOutOfStructures(VM& vm)
 {
     // A whole reserve, as the allocator keeps once a quarter of its heap is in use.
     StructureAlignedMemoryAllocator::releaseReserve();
-    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain());
+    AOT_TEST_CHECK(StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
 
     AOT_TEST_CHECK(StructureAlignedMemoryAllocator::releaseReserve());
     vm.heap.cage().addExhaustedHeap(MarkedBlockCage::ExhaustedHeap::Structures);
@@ -1640,7 +1640,7 @@ static void checkErrorOwedForStructuresAndStorageIsHeardOfByBoth()
         AOT_TEST_CHECK(createOutOfMemoryError(realm));
     AOT_TEST_CHECK(!vm.traps().needsOutOfMemoryError() && !test.cage().describeExhaustedLimit().contains("Structures"_s));
     // Only an allocator that still waits for the error takes back what it gave out.
-    AOT_TEST_CHECK(!StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain());
+    AOT_TEST_CHECK(!StructureAlignedMemoryAllocator::tryRestoreReleasedReserve());
 }
 
 #if OS(LINUX) && !ASAN_ENABLED && USE(MIMALLOC)

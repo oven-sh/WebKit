@@ -102,20 +102,20 @@ public:
     ALWAYS_INLINE ThrowsOwedOutOfMemoryErrorAtReturn(Instance* instance, CallerFrameAndPC* frameRecordOfOperation)
         : m_instance(*instance)
         , m_frameRecordOfOperation(frameRecordOfOperation)
-        , m_wasOwed(instance->vm->traps().needsOutOfMemoryError())
+        , m_wasPending(instance->vm->traps().needsOutOfMemoryError())
     {
     }
 
     ALWAYS_INLINE ~ThrowsOwedOutOfMemoryErrorAtReturn()
     {
-        if (m_instance.vm->traps().needsOutOfMemoryError() && !m_wasOwed) [[unlikely]]
+        if (m_instance.vm->traps().needsOutOfMemoryError() && !m_wasPending) [[unlikely]]
             throwOwedOutOfMemoryErrorAtReturnOfOperation(m_instance, m_frameRecordOfOperation);
     }
 
 private:
     Instance& m_instance;
     CallerFrameAndPC* m_frameRecordOfOperation;
-    bool m_wasOwed;
+    bool m_wasPending;
 };
 
 } // namespace AOT

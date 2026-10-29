@@ -165,10 +165,11 @@ MemberAnswer findNamespaceExport(const PropertyAccessContext& context, const Mem
     case PropertyKeyKind::WellKnownSymbol:
         if (!key.symbol || *key.symbol == WellKnownSymbol::ToStringTag)
             return MemberAnswer::unknown(UnprovenCause::Unknown);
-        return createProvenAnswer(MemberKind::Absent);
+        [[fallthrough]];
     case PropertyKeyKind::CreatedSymbol:
     case PropertyKeyKind::RegisteredSymbol:
-        return createProvenAnswer(MemberKind::Absent);
+        // A namespace object created by require() is extensible: Object.defineProperty() can add a symbol key.
+        return MemberAnswer::unknown(UnprovenCause::PropertyAdded);
     case PropertyKeyKind::EnginePrivateName:
     case PropertyKeyKind::ModulePrivateName:
     case PropertyKeyKind::PrivateName:

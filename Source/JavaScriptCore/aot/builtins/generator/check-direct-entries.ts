@@ -209,7 +209,7 @@ function findFieldsProblems({ result, code: { directEntry } }: ModelOverload): s
   return problems;
 }
 
-// A number comes back. Nothing says that the function failed, and compiled code makes no frame for the call.
+// Returns a number. The function has no way to report failure, and compiled code sets up no frame for the call.
 function findNumberProblems({ result, effects, flags, code: { directEntry } }: ModelOverload): string[] {
   const { symbol, returnsFields = false, returnsNumber = false } = directEntry!;
   if (!returnsNumber) return [];

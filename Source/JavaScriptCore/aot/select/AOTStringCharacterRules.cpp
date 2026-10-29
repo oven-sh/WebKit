@@ -140,13 +140,13 @@ static bool suspendsBetween(SelectionContext& context, ProgramPoint first, Progr
     });
 }
 
-// A reader that resolves ropes may throw, and so may the flattening in its place: it goes no further out than the handler of the reader reaches.
+// A reader that resolves ropes may throw, and so may the flattening that replaces it, so the flattening is hoisted no further than the reader's handler covers.
 static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& context, PairTable& table, BlockID user, BlockID outermostHeader, bool userResolvesRopes)
 {
     const Function& function = context.function();
     const NaturalLoops& loops = context.analyses().naturalLoops();
     std::optional<BlockID> header;
-    std::optional<BlockID> headerUnderHandlerOfUser;
+    std::optional<BlockID> headerSharingUserHandler;
     // What is invariant in a loop is invariant in the loops inside it, and a loop around a suspending loop suspends too.
     for (const NaturalLoop* loop = loops.innerMostLoopOf(user); loop; loop = loops.innerMostOuterLoop(*loop)) {
         bool loopSuspends = table.suspendingLoops.ensure(loop->header(), [&] {
@@ -160,11 +160,11 @@ static std::optional<BlockID> findLoopWithoutSuspension(SelectionContext& contex
             break;
         header = loop->header();
         if (function.at(loop->header()).handler == function.at(user).handler)
-            headerUnderHandlerOfUser = header;
+            headerSharingUserHandler = header;
         if (loop->header() == outermostHeader)
             break;
     }
-    return userResolvesRopes && headerUnderHandlerOfUser ? headerUnderHandlerOfUser : header;
+    return userResolvesRopes && headerSharingUserHandler ? headerSharingUserHandler : header;
 }
 
 // The reader has a string. Outside the loop the same value may have a wider type, which the loop entry tests.
@@ -318,7 +318,7 @@ static void pairReadersBehindFirstReader(SelectionContext& context, Vector<Pair>
 }
 
 // The flat string of a loop is defined on the only entry of the header, so it reaches all that the header dominates, the code behind the loop included.
-// Where the entry gets a block of its own under the handler of the header, the handler has one more way in, from in front of the header: what lies behind the handler is reached without the flat string.
+// When the entry gets its own block under the header's handler, the handler gains a predecessor before the header, so code after the handler can be reached without the flat string.
 static bool reaches(SelectionContext& context, const Pair& pair, ProgramPoint point)
 {
     FunctionAnalyses& analyses = context.analyses();
@@ -326,7 +326,7 @@ static bool reaches(SelectionContext& context, const Pair& pair, ProgramPoint po
         return analyses.dominates(pair.firstReader, point);
     if (pair.header == point.block || !analyses.dominators().dominates(pair.header, point.block))
         return false;
-    return !entersLoopUnderNewHandlerEdge(context, pair.header) || analyses.naturalLoops().belongsTo(point.block, *analyses.naturalLoops().headerOf(pair.header));
+    return !loopEntryGetsNewHandlerEdge(context, pair.header) || analyses.naturalLoops().belongsTo(point.block, *analyses.naturalLoops().headerOf(pair.header));
 }
 
 // A string that was flattened stays flat: a place that the flattening of the same string dominates takes that flat string.
@@ -428,7 +428,7 @@ static void rewriteReader(SelectionContext& context, GroupRewriter& rewriter, co
 {
     ValueID root = match.group.root;
     if (flat && match.resolvesRopes && rewriter.function().at(context.analyses().useLists().blockOf(root)).handler)
-        context.noteAllocatesLessUnderHandler();
+        context.noteRemovedAllocationUnderHandler();
     // The reader runs only where the value is a string, and there the flat string has been made.
     if (flat && context.typeOf(flat).mayBeUnspecified())
         flat = rewriter.insert(makeCastBehindFact(rewriter.function(), rewriter.builder().types(), flat, rewriter.insert(IRBuilder::make(Opcode::Specified))));

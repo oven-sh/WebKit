@@ -207,7 +207,7 @@ public:
         return !reserve.isEmpty();
     }
 
-    bool tryKeepReleasedReserveAgain()
+    bool tryRestoreReleasedReserve()
     {
         {
             Locker locker(m_reserveLock);
@@ -388,9 +388,9 @@ bool StructureAlignedMemoryAllocator::releaseReserve()
     return s_structureMemoryManager->releaseReserve();
 }
 
-bool StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain()
+bool StructureAlignedMemoryAllocator::tryRestoreReleasedReserve()
 {
-    return s_structureMemoryManager->tryKeepReleasedReserveAgain();
+    return s_structureMemoryManager->tryRestoreReleasedReserve();
 }
 
 void StructureAlignedMemoryAllocator::didThrowOutOfMemoryError()
@@ -455,7 +455,7 @@ bool StructureAlignedMemoryAllocator::releaseReserve()
     return false;
 }
 
-bool StructureAlignedMemoryAllocator::tryKeepReleasedReserveAgain()
+bool StructureAlignedMemoryAllocator::tryRestoreReleasedReserve()
 {
     return false;
 }

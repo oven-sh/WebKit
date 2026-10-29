@@ -237,7 +237,7 @@ void JSONParseEmitter::generateJSONParseExtraMembers(const ValueContext& value)
     defineResults(value, { outcome, state.extra, cursorOrSourceEnd(isParsed, next.value()), state.order });
 }
 
-// No shape: the objects of the layout keep no order of their keys.
+// No shape: objects of the layout do not track key order.
 uint32_t JSONParseEmitter::shapeWithKeyOrderOf(LayoutID layout) const
 {
     const ShapeTable& shapes = m_placement.shapes();
@@ -250,7 +250,7 @@ void JSONParseEmitter::generateGetOrderWord(const ValueContext& value)
     ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
     CellPointer object = in<CellPointer>(value->objectOperand());
     Word32 orderWord = shapeTests.orderWordOf(object);
-    // The word of an object of the layout's other shape, which keeps no order, says nothing about its keys.
+    // The word of an object with the layout's other shape, which tracks no order, says nothing about its keys.
     uint32_t shape = shapeWithKeyOrderOf(value->layout());
     if (shape && m_placement.shapes().shapesOf(value->layout()).count > 1)
         orderWord = select(equal(shapeTests.shapeWordOf(object), word32(static_cast<int32_t>(shapeWordOf(shape)))), orderWord, word32(static_cast<int32_t>(outOfLineOrderWord)));
@@ -264,11 +264,11 @@ void JSONParseEmitter::generateGetFieldInKeyOrder(const ValueContext& value)
     static constexpr size_t maxFieldsWithoutRecord = 4;
     static_assert(sizeof(KeyOrderEntriesCacheEntry) == 16);
 
-    // An order lists the fields by their places among the fields with a record, which stand in the sequence of the fields.
+    // An order lists fields by their index among the fields that have a record, which are in field order.
     LayoutID layout = value->layout();
     uint32_t shape = shapeWithKeyOrderOf(layout);
     const Vector<Field>& fields = m_program.at(layout).fields;
-    Vector<uint32_t, maxFieldsWithoutRecord> firstRecordsBehindGaps;
+    Vector<uint32_t, maxFieldsWithoutRecord> firstRecordsAfterGaps;
     bool listsEveryKey = !!shape;
     uint32_t numberOfRecords = 0;
     for (FieldIndex field = 0; field < fields.size() && listsEveryKey; ++field) {
@@ -276,8 +276,8 @@ void JSONParseEmitter::generateGetFieldInKeyOrder(const ValueContext& value)
             ++numberOfRecords;
             continue;
         }
-        listsEveryKey = !isEnumerableStringField(m_program, fields[field]) && firstRecordsBehindGaps.size() < maxFieldsWithoutRecord;
-        firstRecordsBehindGaps.append(numberOfRecords);
+        listsEveryKey = !isEnumerableStringField(m_program, fields[field]) && firstRecordsAfterGaps.size() < maxFieldsWithoutRecord;
+        firstRecordsAfterGaps.append(numberOfRecords);
     }
     if (!listsEveryKey) {
         define(value, word32(orderIsNotListed));
@@ -322,7 +322,7 @@ void JSONParseEmitter::generateGetFieldInKeyOrder(const ValueContext& value)
     m_out.appendTo(hasKey);
     Word32 record(m_out.load16ZeroExt32(m_out.address(heap, offsetBy(list, zeroExtended(position), 1).value(), 0)));
     Word32 field = record;
-    for (uint32_t firstRecord : firstRecordsBehindGaps)
+    for (uint32_t firstRecord : firstRecordsAfterGaps)
         field = add(field, low32(zeroExtended(aboveOrEqual(record, word32(static_cast<int32_t>(firstRecord))))));
     result.add(field);
 
@@ -337,7 +337,7 @@ void JSONParseEmitter::generateGetFieldInKeyOrder(const ValueContext& value)
 
 void JSONParseEmitter::generateGetKeyNamesInOrder(const ValueContext& value)
 {
-    // Where the objects keep no order, no position in an order is ever found.
+    // If the objects track no order, no position in an order is ever found.
     uint32_t shape = shapeWithKeyOrderOf(value->layout());
     if (!shape) {
         define(value, undefined());

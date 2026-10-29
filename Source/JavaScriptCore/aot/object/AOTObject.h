@@ -174,7 +174,7 @@ public:
     bool isInSlot(const FieldData&) const;
     JSValue read(const FieldData&) const;
     JSValue readInline(const FieldData&) const;
-    // The word of a literal string is read here too, by whoever answers stringForWordInSlot().
+    // stringForWordInSlot() also reads a literal-string word here.
     JSValue readInline(const FieldData&, const auto* strings) const;
     // Calls the functor with an int32_t, a bool or a double where the slot holds one, and with a JSValue otherwise, which is empty for an absent field.
     template<typename Functor, typename Strings = std::nullptr_t> auto readInlineUnboxed(const FieldData&, const Functor&, Strings = nullptr) const;
@@ -210,7 +210,7 @@ public:
     void setPrototypeKeepingShape(VM&, JSValue prototype);
     void setPrototypeAtCreation(VM&, JSValue prototype);
 
-    // The caller may know that no object above has an accessor or a property that cannot be written under the name.
+    // The caller may know that no object on the prototype chain has an accessor or a read-only property with this name.
     static bool putWithKnownField(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&, const FieldData*, bool chainLetsStoresPass = false);
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
     // False with a TypeError thrown, and the object as it was, where the layout keeps the field from what the caller asks for. A caller that looks at neither meets the error at its next check.
@@ -218,7 +218,7 @@ public:
     // The same, but a property that exists keeps its attributes.
     bool storeDirectFromNativeCode(VM&, PropertyName, JSValue);
     bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
-    // The caller has already looked the name up: `field` is fieldNamed(name).
+    // The caller has already looked up the name: `field` is fieldNamed(name).
     bool tryDefineAbsentProperty(VM&, const FieldData*, PropertyName, JSValue valueOrAccessor, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);

@@ -639,16 +639,16 @@ void StubAssembler::checkStackBeforeEntering()
     pollIfBelow(trapAwareSoftStackLimitWord(), pollBeforeEntering(PollBeforeEnteringForm::Plain));
 }
 
-// Native code that finds no room for what it allocates goes on with what is kept aside. sp is as at the entry of this stub, so what the poll throws is thrown at the site of the call.
-// Nothing is entered here, so a stack that is merely used up is no reason to throw.
+// Native code whose allocation fails continues with the reserve. sp is as it was at the stub's entry, so what the poll throws is thrown at the call site.
+// No function is entered here, so an exhausted stack alone is not a reason to throw.
 void StubAssembler::pollBeforeReturningFromNativeCode()
 {
     if (key().callerFrame() == CallerFrame::StubFrame)
         return;
-    Jump mayOwe = branchPtr(Below, stackPointerRegister, trapAwareSoftStackLimitWord());
+    Jump mayHavePendingTrap = branchPtr(Below, stackPointerRegister, trapAwareSoftStackLimitWord());
     Label afterPoll = label();
-    addOutOfLinePart([mayOwe, afterPoll](StubAssembler& jit) {
-        mayOwe.link(&jit);
+    addOutOfLinePart([mayHavePendingTrap, afterPoll](StubAssembler& jit) {
+        mayHavePendingTrap.link(&jit);
         jit.branchPtr(Below, stackPointerRegister, softStackLimitWord()).linkTo(afterPoll, &jit);
         jit.pollAtStubEntry(pollBeforeEntering(PollBeforeEnteringForm::Plain));
         jit.jump().linkTo(afterPoll, &jit);

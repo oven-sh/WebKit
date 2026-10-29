@@ -87,8 +87,8 @@ ClassTable::ClassTable(State& state)
     state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
     state.caches->addClearedEachCollection("instances of classes below"_s, asWritableBytes(std::span { m_instancesOfClassesBelow }));
     state.caches->addClearedEachCollection("structures with brands"_s, asWritableBytes(std::span { m_structuresWithBrands }));
-    state.instance.classes.structuresWhoseNamesAreKnown = m_structuresWhoseNamesAreKnown.data();
-    state.caches->addClearedEachCollection("structures whose names are known"_s, asWritableBytes(std::span { m_structuresWhoseNamesAreKnown }));
+    state.instance.classes.structureNameCache = m_structureNameCache.data();
+    state.caches->addClearedEachCollection("structures whose names are known"_s, asWritableBytes(std::span { m_structureNameCache }));
 }
 
 ClassTable::~ClassTable() = default;
@@ -386,7 +386,7 @@ void ClassTable::registerClassPrototype(const LayoutData& classLayout, JSObject*
     }
 }
 
-Symbol* ClassTable::brandOfInstanceMadeBy(VM& vm, JSCell* parent, JSCell* newTarget)
+Symbol* ClassTable::instanceBrandFor(VM& vm, JSCell* parent, JSCell* newTarget)
 {
     auto* classObject = dynamicDowncast<Closure>(newTarget);
     const LayoutData* classLayout = classObject ? classObject->classData() : nullptr;
@@ -411,12 +411,12 @@ Symbol* ClassTable::brandOfInstanceMadeBy(VM& vm, JSCell* parent, JSCell* newTar
     return brand;
 }
 
-Structure* ClassTable::structureOfInstanceMadeBy(VM& vm, JSCell* parent, JSCell* newTarget, Structure* structure)
+Structure* ClassTable::structureWithInstanceBrand(VM& vm, JSCell* parent, JSCell* newTarget, Structure* structure)
 {
     StructureWithBrand& last = m_structuresWithBrands[indexOfStructureWithBrand(newTarget)];
     if (last.withoutBrand == structure && last.newTarget == newTarget && last.parent == parent) [[likely]]
         return last.withBrand;
-    Symbol* brand = brandOfInstanceMadeBy(vm, parent, newTarget);
+    Symbol* brand = instanceBrandFor(vm, parent, newTarget);
     last = { parent, newTarget, structure, brand ? Structure::setBrandTransition(vm, structure, brand) : structure };
     return last.withBrand;
 }
@@ -434,9 +434,9 @@ static bool isLaidOnNewInstancesBy(const BuiltinTable& table, BuiltinClassID bui
     return false;
 }
 
-bool ClassTable::learnWhetherStructureHasOnlyNamesOfItsClass(Structure* structure)
+bool ClassTable::computeHasOnlyClassFieldNames(Structure* structure)
 {
-    // A dictionary gets and loses names and stays the same Structure.
+    // A dictionary Structure stays the same while properties are added and removed.
     if (!structure->isBrandedStructure() || structure->isDictionary())
         return false;
     const LayoutData* classLayout = nullptr;
@@ -445,7 +445,7 @@ bool ClassTable::learnWhetherStructureHasOnlyNamesOfItsClass(Structure* structur
             classLayout = layoutOfBrand;
     }
     uint32_t id = structure->id().bits();
-    uint32_t& known = m_structuresWhoseNamesAreKnown[id >> shiftOfStructureWhoseNamesAreKnown & (numberOfStructuresWhoseNamesAreKnown - 1)];
+    uint32_t& known = m_structureNameCache[id >> structureNameCacheShift & (structureNameCacheSize - 1)];
     uint32_t namesOffset = classLayout ? classLayout->classData().namesOfFieldsOffset : 0;
     if (!namesOffset) {
         known = id | structureHasOtherNames;
@@ -461,15 +461,15 @@ bool ClassTable::learnWhetherStructureHasOnlyNamesOfItsClass(Structure* structur
     BuiltinClassID builtinClass = table.at(BuiltinID(highest->classData().builtinBase)).instanceClass;
 
     const ProgramIdentifiers& identifiers = *m_state.instance.vm->aotState().identifiers;
-    bool hasOnlyNamesOfItsClass = true;
+    bool hasOnlyClassFieldNames = true;
     structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
         UniquedStringImpl* uid = entry.key();
         std::optional<uint32_t> number = identifiers.numberOf(uid);
-        hasOnlyNamesOfItsClass = (number && std::ranges::binary_search(namesOfFields, *number)) || isLaidOnNewInstancesBy(table, builtinClass, uid);
-        return hasOnlyNamesOfItsClass;
+        hasOnlyClassFieldNames = (number && std::ranges::binary_search(namesOfFields, *number)) || isLaidOnNewInstancesBy(table, builtinClass, uid);
+        return hasOnlyClassFieldNames;
     });
-    known = hasOnlyNamesOfItsClass ? id : id | structureHasOtherNames;
-    return hasOnlyNamesOfItsClass;
+    known = hasOnlyClassFieldNames ? id : id | structureHasOtherNames;
+    return hasOnlyClassFieldNames;
 }
 
 bool ClassTable::carriesBrandOfClass(Structure* structure, uint32_t rankOfClass) const
@@ -484,7 +484,7 @@ Structure* RuntimeHooks::addBrandForSuperCall(VM& vm, JSFunction* newTarget, Str
     vmState.newTargetOfSuperCall = nullptr;
     Instance* instance = Instance::of(newTarget->realm());
     State* state = instance ? instance->state : nullptr;
-    return state && state->objects ? state->objects->classes.structureOfInstanceMadeBy(vm, vmState.parentOfSuperCall, newTarget, structure) : structure;
+    return state && state->objects ? state->objects->classes.structureWithInstanceBrand(vm, vmState.parentOfSuperCall, newTarget, structure) : structure;
 }
 
 bool ClassTable::keepsStructuresForNextEvaluation(const Closure& classObject, const LayoutData& classLayout) const

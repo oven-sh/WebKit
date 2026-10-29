@@ -95,12 +95,12 @@ public:
     JSObject* classPrototypeIfExists(const LayoutData&) const;
     JSObject* createClassPrototype(VM&, const LayoutData&, JSObject* parent);
     void registerClassPrototype(const LayoutData&, JSObject*);
-    // Null where what the parent makes for that new.target is told from other cells of the built-in class by nothing.
-    Symbol* brandOfInstanceMadeBy(VM&, JSCell* parent, JSCell* newTarget);
-    Structure* structureOfInstanceMadeBy(VM&, JSCell* parent, JSCell* newTarget, Structure*);
+    // Null if nothing distinguishes the objects that the parent creates for that new.target from other cells of the built-in class.
+    Symbol* instanceBrandFor(VM&, JSCell* parent, JSCell* newTarget);
+    Structure* structureWithInstanceBrand(VM&, JSCell* parent, JSCell* newTarget, Structure*);
     bool carriesBrandOfClass(Structure*, uint32_t rankOfClass) const;
-    // Allocates nothing.
-    bool learnWhetherStructureHasOnlyNamesOfItsClass(Structure*);
+    // Does not allocate.
+    bool computeHasOnlyClassFieldNames(Structure*);
     Structure* lazyClassObjectStructureInheritingFrom(VM&, JSObject* parent);
     Structure* classObjectStructureInheritingFrom(VM&, JSObject* parent);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -231,10 +231,10 @@ private:
     void rememberInstanceOfClassBelow(InstanceOfClassBelow);
     void rememberInstanceOfOtherEvaluation(VM&, const Object& instance, JSObject* prototype, uint32_t allocation);
     std::array<InstanceOfClassBelow, numberOfInstancesOfClassesBelow> m_instancesOfClassesBelow { };
-    // By the rank of the class plus one.
+    // Keyed by the class's rank plus one.
     HashMap<uint32_t, Symbol*> m_brandsOfInstances;
     HashMap<UniquedStringImpl*, const LayoutData*> m_classesByBrand;
-    std::array<uint32_t, numberOfStructuresWhoseNamesAreKnown> m_structuresWhoseNamesAreKnown { };
+    std::array<uint32_t, structureNameCacheSize> m_structureNameCache { };
     struct StructureWithBrand {
         JSCell* parent;
         JSCell* newTarget;

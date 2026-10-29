@@ -109,7 +109,7 @@ void HintEmitter::emitPoll(const ValueContext& value)
     B3::PatchpointValue* patchpoint = m_out.patchpoint(B3::Void);
     patchpoint->isLoopPoll = !emitter<ExceptionEmitter>().unwindsWithinFunction(value);
     const NaturalLoop* loop = analyses().naturalLoops().innerMostLoopOf(value.block());
-    patchpoint->turnsAreShort = loop && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
+    patchpoint->iterationsAreShort = loop && likelyPathsAlwaysComplete(analyses(), *loop).predicted();
     Effects effects = value.effects().onAnyEdge();
     RELEASE_ASSERT(effects.mayBeTerminated && effects.mayThrow && !effects.mayThrowByRule());
     // Handling a trap stops the thread for the collector or ends it. It looks at no object of the program, runs none of its code and looks no name up:

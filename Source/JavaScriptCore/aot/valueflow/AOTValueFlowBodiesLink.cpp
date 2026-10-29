@@ -1193,7 +1193,7 @@ private:
         universe.m_holdersOfExportsOfModule.fill(ValueSets::nothing, m_program.modules.size());
         universe.m_holdersOfLibraryExports = ValueSets::nothing;
         universe.m_holdersOfLibraryExportsThatRaiseNoEvent = ValueSets::nothing;
-        universe.m_holdersOfLibraryExportsThatMayRaiseEvents = ValueSets::nothing;
+        universe.m_eventRaisingLibraryExportHolders = ValueSets::nothing;
         BitVector mayRaiseEvents = libraryModulesThatMayRaiseEvents();
         for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
             if (m_program.modules[index].kind != ModuleKind::RuntimeSource)
@@ -1201,14 +1201,14 @@ private:
             appendHoldersOfExports(list, ModuleID(index));
             universe.m_holdersOfExportsOfModule[index] = take();
             universe.m_holdersOfLibraryExports = maker.unite(universe.m_holdersOfLibraryExports, universe.m_holdersOfExportsOfModule[index]);
-            ValueSetID& holders = mayRaiseEvents.get(index) ? universe.m_holdersOfLibraryExportsThatMayRaiseEvents : universe.m_holdersOfLibraryExportsThatRaiseNoEvent;
+            ValueSetID& holders = mayRaiseEvents.get(index) ? universe.m_eventRaisingLibraryExportHolders : universe.m_holdersOfLibraryExportsThatRaiseNoEvent;
             holders = maker.unite(holders, universe.m_holdersOfExportsOfModule[index]);
         }
         for (uint32_t index = 0; index < m_program.functions.size(); ++index) {
             if (ModuleID module = m_program.functions[index].module; module && mayRaiseEvents.get(module.index()))
                 list.append(universe.closureOf(FunctionID(index)));
         }
-        universe.m_closuresOfLibraryModulesThatMayRaiseEvents = take();
+        universe.m_eventRaisingLibraryClosures = take();
         universe.m_objectsOfLibraryFoundByNameAlone = maker.unite(universe.m_holdersOfLibraryExports, universe.m_prototypeObjectsOfLibraryClasses);
 
         list.append(ValueFlowUniverse::primitive(PrimitiveSet::String));

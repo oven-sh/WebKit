@@ -300,7 +300,7 @@ void IRBuilder::prepare(Value& value)
     value.type = resultTypeOf(m_context.program, m_function, value, m_types, memo);
     if (!keepsExpectedTypes(m_context.program))
         return;
-    // A value that is written after another one brings what was expected of that one.
+    // A value modeled on another one carries over that value's expected type.
     if (TypeID brought = value.expected().predicted())
         value.setExpected(ExpectedType(partInside(m_context.program, m_types, brought, value.type)));
     else
@@ -645,7 +645,7 @@ void IRBuilder::emitRethrow(ValueID exception)
 
 void IRBuilder::emitUnreachable()
 {
-    openTerminator().setCutBy(context().build.passToNameAtUnreachableEnd());
+    openTerminator().setCutBy(context().build.passToReportForUnreachableCode());
     closeBlock();
 }
 

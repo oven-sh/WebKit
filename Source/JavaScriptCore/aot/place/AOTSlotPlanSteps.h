@@ -229,7 +229,7 @@ struct SlotClaim {
     bool isSetAtCreation { false };
     bool needsAbsentState { false };
     bool needsWideReference { false };
-    // The reference is wide because few such objects are made. Beside a layout that keeps it narrow it is narrow too.
+    // The reference is wide because few such objects are created. Next to a layout that keeps it narrow, it is narrow too.
     bool isWideByChoice { false };
     bool deferredClosureCapturesObject { false };
     bool deferredClosureCapturesEnvironment { false };

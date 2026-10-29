@@ -52,7 +52,7 @@ public:
     static void initializeStructureAddressSpace();
 
     static bool releaseReserve();
-    static bool tryKeepReleasedReserveAgain();
+    static bool tryRestoreReleasedReserve();
     static void didThrowOutOfMemoryError();
 };
 

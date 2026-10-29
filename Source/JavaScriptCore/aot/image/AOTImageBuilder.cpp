@@ -412,7 +412,7 @@ static Vector<uint8_t> encodeStubAddresses(const StubBlob& blob)
     Vector<StubAddressInImage> addresses;
     for (auto& placement : blob.placements) {
         StubLinkage linkage = descriptorOf(placement.key.family()).linkage;
-        // Only where a call pushes its return address does a walk over the stack of a stopped thread ask what a call goes to.
+        // Only needed where a call pushes its return address: there, walking a stopped thread's stack has to look up the target of a call.
         bool usesCallConvention = isX86_64() && linkage == StubLinkage::CalledByCode && signatureOf(placement.key).usesCallConvention;
         if (AOT_CHECKS_ASAN_SHADOW_IN_COMPILED_CODE || usesCallConvention || hasAddressInImage(linkage))
             addresses.append({ placement.key.bits(), placement.offset, usesCallConvention });

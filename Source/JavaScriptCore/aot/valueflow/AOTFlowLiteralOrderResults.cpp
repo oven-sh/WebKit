@@ -60,7 +60,7 @@ struct LiteralCreation {
     Vector<CopiedObjects, 1> copies;
     LiteralKeyOrders orders;
     bool hasOrdersLeftOut { false };
-    bool hasOrderNobodyKnows { false };
+    bool hasUnknownOrder { false };
 };
 
 } // anonymous namespace
@@ -334,7 +334,7 @@ struct LiteralOrderSolver {
         KeyOrder keysAtAllocation;
         for (uint32_t field : allocation.fields()) {
             if (!fields[field].key) {
-                creation.hasOrderNobodyKnows = true;
+                creation.hasUnknownOrder = true;
                 return false;
             }
             keysAtAllocation.append(fields[field].key);
@@ -343,11 +343,11 @@ struct LiteralOrderSolver {
         LiteralKeyOrders orders { WTF::move(keysAtAllocation) };
         // The keys of an order of many keys, by the index of the order: a literal may define thousands. Empty: not listed yet.
         using KeySet = UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-        constexpr size_t mostKeysSearchedOneByOne = 16;
+        constexpr size_t maxKeysForLinearSearch = 16;
         Vector<KeySet, 2> keysOfLongOrders;
         auto define = [&](size_t index, PropertyKeyID key) {
             KeyOrder& order = orders[index];
-            if (order.size() <= mostKeysSearchedOneByOne) {
+            if (order.size() <= maxKeysForLinearSearch) {
                 appendIfAbsent(order, key);
                 return;
             }
@@ -365,7 +365,7 @@ struct LiteralOrderSolver {
         for (const LiteralPiece& piece : literal.pieces) {
             switch (piece.kind) {
             case PieceKind::DefinesUnknownProperty:
-                creation.hasOrderNobodyKnows = true;
+                creation.hasUnknownOrder = true;
                 return false;
             case PieceKind::DefinesKey:
                 for (size_t index = 0; index < orders.size(); ++index)
@@ -431,7 +431,7 @@ struct LiteralOrderSolver {
             return false;
         return std::ranges::all_of(creationsOfLayout[id.index()], [&](uint32_t index) {
             const LiteralCreation& creation = creations[index];
-            return creation.copies.isEmpty() && !creation.hasOrdersLeftOut && !creation.hasOrderNobodyKnows;
+            return creation.copies.isEmpty() && !creation.hasOrdersLeftOut && !creation.hasUnknownOrder;
         });
     }
 

@@ -255,7 +255,7 @@ static bool joinsTextsThatFitInString(const Program& program, const Function& fu
     return texts.fitInString();
 }
 
-// Only a BigInt is allocated, and only a position outside the view, or a view whose length may change, takes the operation of the run time.
+// Only a BigInt is allocated, and only an out-of-range position, or a view whose length may change, calls the runtime operation.
 static bool readsNumberInsideView(const Value& value)
 {
     return value.opcode == Opcode::GetTypedArrayElement && value.isInsideView() && hasInlineElementAccess(value.typedArrayType());

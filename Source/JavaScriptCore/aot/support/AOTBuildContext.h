@@ -54,11 +54,11 @@ public:
     const CompileOptions& options() const { return m_options; }
     const RecordedOptions& recordedOptions() const { return m_options.recorded; }
     bool validates() const { return m_options.recorded.validates; }
-    // A build that reports where an end that cannot be reached is reached says which pass made the end.
-    PassID passToNameAtUnreachableEnd() const
+    // A build that reports when unreachable code is reached records which pass marked the code unreachable.
+    PassID passToReportForUnreachableCode() const
     {
-        bool reportsEnds = validates() || m_options.recorded.has(TestingSwitch::CheckProofsAtRunTime);
-        return reportsEnds ? currentWork().pass.load(std::memory_order_relaxed) : PassID::None;
+        bool reportsUnreachableCode = validates() || m_options.recorded.has(TestingSwitch::CheckProofsAtRunTime);
+        return reportsUnreachableCode ? currentWork().pass.load(std::memory_order_relaxed) : PassID::None;
     }
     bool isSabotaged(Sabotage part) const { return m_options.recorded.isSabotaged(part); }
 

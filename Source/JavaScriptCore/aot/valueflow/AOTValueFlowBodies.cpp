@@ -10,7 +10,6 @@
 
 #include "AOTBuiltinMembers.h"
 #include "AOTCFG.h"
-#include "AOTDominators.h"
 #include "AOTEdgeResults.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTEffectsOfOperands.h"
@@ -620,23 +619,14 @@ private:
     bool isTypedByChecks(ValueID id) const { return isBehindCheck(id) && takesTypeFromOperands(m_function.at(id).opcode); }
 
     // A block that one edge leads to is entered only behind what that edge is behind. Out of a test the edge brings the tested value as the test lets it through.
-    // A join block inherits the guards of its immediate dominator, because every path to it goes through that block.
     void findGuardsOf(BlockID id)
     {
         if (m_guardsOfBlock.isEmpty())
             m_guardsOfBlock.grow(m_function.blocks.size());
         std::span<const Edge> incoming = m_cfg.incomingEdges(id);
-        if (id == entryBlock || incoming.empty())
+        if (id == entryBlock || incoming.size() != 1)
             return;
         GuardsOfBlock& guards = m_guardsOfBlock[id.index()];
-        if (incoming.size() != 1) {
-            if (!m_hasGuards)
-                return;
-            if (!m_dominators)
-                m_dominators = makeUnique<Dominators>(m_cfg, false);
-            guards.values = m_guardsOfBlock[m_dominators->idom(id).index()].values;
-            return;
-        }
         guards.values = m_guardsOfBlock[incoming[0].from.index()].values;
         const Block& block = m_function.at(id);
         for (uint32_t index = 0; index < block.parameters.size(); ++index) {
@@ -662,7 +652,6 @@ private:
         if (guards.values.size() == mostGuardsOfBlock)
             guards.values.removeAt(0);
         guards.values.append(guard);
-        m_hasGuards = true;
     }
 
     // What the edge brings of the operand of the last conversion is a guard already.
@@ -2081,8 +2070,6 @@ private:
     UncheckedKeyHashSet<uint64_t> m_hashedSources;
     Vector<BlockParameter, 16> m_blockParameters;
     Vector<GuardsOfBlock> m_guardsOfBlock;
-    std::unique_ptr<Dominators> m_dominators;
-    bool m_hasGuards { false };
     Vector<ValueID, 8> m_returnedValues;
     bool m_returnsCall { false };
     Vector<NodeName, 16> m_caughtNodes;

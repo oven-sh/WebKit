@@ -658,7 +658,7 @@ void ElementAccessEmitter::generateGetEnumeratorIndexedLength(const ValueContext
     define(value, zeroExtended(loadField<Word32>(in<CellPointer>(value->enumeratorOperand()), m_heaps.JSPropertyNameEnumerator_indexLength)));
 }
 
-// An own element in storage of one of the three forms. Whatever else may answer for the position fails the test.
+// An own element in one of the three storage forms. Anything else that could supply the element fails the test.
 void ElementAccessEmitter::generateIsElementInStorage(const ValueContext& value)
 {
     defineTestByBranching(value, [&](BranchTargets targets) {
@@ -667,7 +667,7 @@ void ElementAccessEmitter::generateIsElementInStorage(const ValueContext& value)
         CellPointer object = operand.is<CellPointer>() ? operand.as<CellPointer>() : unboxCell(operand.as<Boxed>());
         if (!operand.is<CellPointer>())
             branchUnless(isCell(operand.as<Boxed>()), targets.notTaken.block());
-        // One arm for the three forms: an element is eight bytes in each, and only what marks a hole differs.
+        // One arm for all three forms: an element is eight bytes in each, and only the hole marker differs.
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape && !(IndexingShapeMask & 1));
         Word32 shape = indexingMode(object, IndexingShapeMask);
         branchUnless(belowOrEqual(sub(shape, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), targets.notTaken.block());
@@ -679,7 +679,7 @@ void ElementAccessEmitter::generateIsElementInStorage(const ValueContext& value)
     });
 }
 
-// The position is an index of the enumerator, whatever the type says of it in a copy of the loop that has no proofs.
+// The position is an enumerator index, whatever its type says in a copy of the loop without proofs.
 void ElementAccessEmitter::generateToEnumeratorPosition(const ValueContext& value)
 {
     Operand position = get(value->positionOperand());

@@ -218,11 +218,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
     OPERATION_RETURN(scope);
 }
 
-// A descriptor that has a value and nothing else leaves the property what it is but for the value. Every function is born with a name that can be configured and not written.
+// Every function is born with a name that is configurable, read-only and not enumerable. A descriptor that names no other attribute changes only the value: `{ value }`, `{ value, configurable: true }`.
 static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* function, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();
-    if (name != vm.propertyNames->name || !bits.hasValue || bits.hasWritable || bits.hasEnumerable || bits.hasConfigurable || bits.hasGet || bits.hasSet || !value.isString())
+    if (name != vm.propertyNames->name || !bits.hasValue || !value.isString())
+        return false;
+    if ((bits.hasWritable && bits.isWritable) || (bits.hasEnumerable && bits.isEnumerable) || (bits.hasConfigurable && !bits.isConfigurable))
         return false;
     constexpr unsigned attributesAtBirth = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum;
     if (auto* classObject = dynamicDowncast<Closure>(function)) {

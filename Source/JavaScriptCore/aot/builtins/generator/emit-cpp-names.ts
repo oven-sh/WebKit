@@ -272,7 +272,7 @@ function emitNameArray({ cppType, name, elements, numberOfCharacters }: TableArr
   ]);
 }
 
-// builtinTableData does not point here, so a link that has no IR text drops the tokens.
+// builtinTableData does not reference this, so a link without IR text drops the tokens.
 function emitFunctionTokens(model: TableModel): string {
   const view = "constinit const BuiltinTexts builtinTableRuntimeFunctionTokens";
   if (model.functions.length === 0) return `${view} { };`;

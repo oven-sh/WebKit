@@ -649,7 +649,7 @@ void PassRunner::verifyAfterProgramPass(const PassDescriptor& descriptor, const 
     // Not ProgramAnalyses::effects(): summaries cached here would reach later passes, and the output would depend on this option.
     EffectSummaries effects;
     const PassDescriptor& summarizer = descriptorOf(PassID::ComputeEffectSummaries);
-    // A pass that is run by itself was given summaries made without results of the flow analysis. What it leaves is judged by such too.
+    // A pass that runs on its own gets summaries computed without flow analysis results, so its output is verified against the same kind of summaries.
     FlowResults noResults;
     if (summarizer.accepts(program.form()) && m_build.isEnabled(summarizer.id, FunctionID()))
         effects = computeEffectSummaries(program, m_verifierInputs.flow ? *m_verifierInputs.flow : noResults, m_build);
@@ -679,10 +679,10 @@ bool PassRunner::mayRunAnalysesTogether() const
     return !m_stopAfter && !m_build.options().logging.dumpedPass;
 }
 
-void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAPE const ScopedLambda<void()>& second, TaskPriority priorityOfSecond) const
+void PassRunner::runTogether(NOESCAPE const ScopedLambda<void()>& first, NOESCAPE const ScopedLambda<void()>& second, TaskPriority secondPriority) const
 {
-    if (priorityOfSecond != TaskPriority::Foreground) {
-        Ref<BackgroundTask> task = BackgroundTask::start(m_build.parallelLoops(), priorityOfSecond, { }, [&] {
+    if (secondPriority != TaskPriority::Foreground) {
+        Ref<BackgroundTask> task = BackgroundTask::start(m_build.parallelLoops(), secondPriority, { }, [&] {
             second();
         });
         first();
@@ -1014,12 +1014,12 @@ void PassRunner::verifyAfterFunctionPass(const PassDescriptor& descriptor, Funct
     Vector<InternalError> errors;
     if (verifiesFunction && !isAsVerified) {
         errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, inputs);
-        bool someGuardDoesNotLast = std::ranges::any_of(errors, [](const InternalError& error) {
+        bool hasUnavailableGuard = std::ranges::any_of(errors, [](const InternalError& error) {
             return error.kind == InternalErrorKind::GuardNotAvailable;
         });
-        if (someGuardDoesNotLast && inputs.effectsByTypesOfOperands) {
+        if (hasUnavailableGuard && inputs.effectsByOperandTypes) {
             VerifierInputs finer = inputs;
-            finer.effects = inputs.effectsByTypesOfOperands;
+            finer.effects = inputs.effectsByOperandTypes;
             errors = findErrorsInFunction(context.program, context.id, context.function, form, m_build, finer);
         }
     }

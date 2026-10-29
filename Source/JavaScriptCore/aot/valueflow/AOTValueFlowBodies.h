@@ -169,8 +169,8 @@ public:
     ValueSetID holdersOfLibraryExports() const { return m_holdersOfLibraryExports; }
     ValueSetID holdersOfExportsOf(ModuleID module) const { return m_holdersOfExportsOfModule[module.index()]; }
     ValueSetID holdersOfLibraryExportsThatRaiseNoEvent() const { return m_holdersOfLibraryExportsThatRaiseNoEvent; }
-    ValueSetID holdersOfLibraryExportsThatMayRaiseEvents() const { return m_holdersOfLibraryExportsThatMayRaiseEvents; }
-    ValueSetID closuresOfLibraryModulesThatMayRaiseEvents() const { return m_closuresOfLibraryModulesThatMayRaiseEvents; }
+    ValueSetID eventRaisingLibraryExportHolders() const { return m_eventRaisingLibraryExportHolders; }
+    ValueSetID eventRaisingLibraryClosures() const { return m_eventRaisingLibraryClosures; }
     ValueSetID prototypeObjectsOfLibraryClasses() const { return m_prototypeObjectsOfLibraryClasses; }
     ValueSetID instancesBelowLibraryClasses() const { return m_instancesBelowLibraryClasses; }
     ValueSetID objectsOfLibraryFoundByNameAlone() const { return m_objectsOfLibraryFoundByNameAlone; }
@@ -306,8 +306,8 @@ private:
     ValueSetID m_holdersOfLibraryExports;
     Vector<ValueSetID> m_holdersOfExportsOfModule;
     ValueSetID m_holdersOfLibraryExportsThatRaiseNoEvent;
-    ValueSetID m_holdersOfLibraryExportsThatMayRaiseEvents;
-    ValueSetID m_closuresOfLibraryModulesThatMayRaiseEvents;
+    ValueSetID m_eventRaisingLibraryExportHolders;
+    ValueSetID m_eventRaisingLibraryClosures;
     ValueSetID m_prototypeObjectsOfLibraryClasses;
     ValueSetID m_objectsOfLibraryFoundByNameAlone;
     ValueSetID m_instancesBelowLibraryClasses;

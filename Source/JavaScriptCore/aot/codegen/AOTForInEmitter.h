@@ -39,7 +39,7 @@ public:
     Condition describesOrdinaryObject(CellPointer enumerator) { return isZero(loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWordMask)); }
 
 private:
-    // For the steps of a loop in which nothing but a step changes keys: how many of the names at the front the object is known to have. None behind a step that the run time took, until the next step has asked.
+    // For the steps of a loop in which only a step changes keys: how many of the leading names the object is known to have. Zero after a step that the runtime handled, until the next step has checked.
     B3::Variable* numberOfCurrentNamesOf(ValueID open);
     void setNumberOfCurrentNames(ValueID open, Integer);
 

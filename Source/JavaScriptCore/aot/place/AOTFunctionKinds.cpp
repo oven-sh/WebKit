@@ -306,6 +306,37 @@ static ClosureFunctionRange closureFunctionRangeOf(const Program& program)
     return { FunctionID(firstClosureFunction), FunctionID(endOfClosureFunctions), firstClosureFunction };
 }
 
+static Vector<FunctionID> closureFormsBySourceOf(const Program& program)
+{
+    // The word of a closure names the entrypoint for calls.
+    BitVector isConstructEntrypoint(program.functions.size());
+    for (const Function& function : program.functions) {
+        const auto* entrypoint = function.creator.tryAs<CreatorRecord::Entrypoint>();
+        if (entrypoint && entrypoint->constructEntrypoint)
+            isConstructEntrypoint.quickSet(entrypoint->constructEntrypoint.index());
+    }
+    struct Form {
+        FunctionID source;
+        FunctionID function;
+    };
+    Vector<Form> forms;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        if (!hasClosureWordOf(program.functions[index].role) || isConstructEntrypoint.quickGet(index))
+            continue;
+        FunctionID source = firstSourceOf(program, FunctionID(index));
+        if (program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed))
+            forms.append({ source, FunctionID(index) });
+    }
+    std::ranges::stable_sort(forms, { }, [](const Form& form) { return form.source.index(); });
+    Vector<FunctionID> result;
+    for (size_t index = 0; index < forms.size(); ++index) {
+        bool isOneOfSeveral = (index && forms[index - 1].source == forms[index].source) || (index + 1 < forms.size() && forms[index + 1].source == forms[index].source);
+        if (isOneOfSeveral)
+            result.append(forms[index].function);
+    }
+    return result;
+}
+
 static bool hasClosureCell(const Program& program, const BitVector& layoutConstructors, const Function& function)
 {
     if (function.role != FunctionRole::GenericEntrypoint || function.derivation.parameter != callEntrypointParameter || !function.hasBody())
@@ -372,6 +403,7 @@ FunctionNumbering numberFunctions(const PlacementContext& context, const PlacedS
     });
     numbering.closureCellNumbers = numberClosureCells(program, loops, declaredByVariables);
     numbering.closureFunctions = closureFunctionRangeOf(program);
+    numbering.closureFormsBySource = closureFormsBySourceOf(program);
     return numbering;
 }
 
@@ -407,7 +439,7 @@ static TraceVisibility visibilityOf(const Function& function, bool implementsBui
         // What the front end hides is a function of its own that no trace lists, unless it is a built-in that programs can call. What its role hides is a part of a function that traces list.
         if (function.has(FunctionFlags::IsHiddenInStackTraces) && !implementsBuiltin)
             return TraceVisibility::Hidden;
-        // The record of the tests at the head of a function says what holds of the function whose id they took.
+        // The function that holds another function's entry tests is shown as the function whose id it took.
         if (capabilitiesOf(function.role).contains(FunctionCapabilities::IsHiddenInStackTraces))
             return TraceVisibility::VisibleOnlyOnTop;
         return function.isHiddenInStackTraces() ? TraceVisibility::VisibleOnlyOnTop : TraceVisibility::Visible;
@@ -495,7 +527,7 @@ static bool isCompilerFunction(const BuiltinTable& builtins, const Function& sou
     return source.enclosingRuntimeFunction && builtins.at(source.enclosingRuntimeFunction).role == RuntimeFunctionRole::CompilerFunction;
 }
 
-// Only compiled code calls a helper of the compiler, though the engine may have written it.
+// Only compiled code calls a compiler helper, even one that is implemented in the engine.
 static bool isCalledByPrograms(const BuiltinTable& builtins, const Function& source, std::optional<BuiltinID> builtin)
 {
     return builtin && !isCompilerFunction(builtins, source) && builtins.at(*builtin).holder != Builtins::CompilerHelpers;

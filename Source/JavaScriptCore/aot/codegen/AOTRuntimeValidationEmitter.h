@@ -33,7 +33,7 @@ public:
     void validateParameters(BlockID, const Block&);
     void validateOperands(const OperationContext&);
     void validateResult(const ValueContext&);
-    // Objects: the header and the word behind it of every operand that is an object. Arrays: the word behind the header of every operand that is an array.
+    // Objects: the header and the following word of every operand that is an object. Arrays: the word after the header of every operand that is an array.
     enum class ComparedCells : uint8_t { Objects, Arrays };
     OperandCells captureOperandCells(const OperationContext&, ComparedCells);
     void checkCellsWereNotConverted(const OperandCells& beforeCall);
@@ -62,9 +62,9 @@ public:
     // A short form of a test answers as the whole test does.
     void checkTypeTestsAgree(Condition, CellPointer tested);
     void checkGuardIsAvailable(const OperationContext&, ValueID guard, uint32_t operandIndex);
-    // What may be given an array of a frame and what may be given any other cell of a frame are two questions. The operand tells at run time which of them is asked.
-    enum class FrameCellsAsked : uint8_t { All, Arrays, AllButArrays };
-    void checkIsNotFrameCell(const OperationContext&, Operand, std::optional<Operand> retainer, FrameCellsAsked = FrameCellsAsked::All);
+    // Whether an operation may receive an array kept in a frame and whether it may receive any other frame cell are separate questions. The operand determines at run time which one applies.
+    enum class FrameCellFilter : uint8_t { All, Arrays, AllButArrays };
+    void checkIsNotFrameCell(const OperationContext&, Operand, std::optional<Operand> retainer, FrameCellFilter = FrameCellFilter::All);
     void checkIsNotReleased(const OperationContext&, CellPointer environment, LayoutID);
     void poisonFrameCells(ProgramPoint);
     void poisonEnvironment(CellPointer, LayoutID);
