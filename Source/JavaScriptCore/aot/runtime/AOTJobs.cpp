@@ -585,6 +585,63 @@ void runAsyncFunctionResumeJob(JSGlobalObject* globalObject, VM& vm, InternalMic
     resumeAsyncFunction(globalObject, vm, context, resolution, isRejected, isEnteredByJobLoop);
 }
 
+bool hasCompiledBody(JSAsyncGenerator* generator)
+{
+    return savedFrameIn(generator->frame());
+}
+
+static NEVER_INLINE JSValue stackOverflowErrorOfAsyncGeneratorBody(JSGlobalObject* realm)
+{
+    return createStackOverflowError(realm);
+}
+
+// asyncGeneratorBodyCall() in JSMicrotask.cpp, for a compiled body.
+static ALWAYS_INLINE void resumeAsyncGeneratorBody(VM& vm, JSAsyncGenerator* generator, JSValue resumeValue, JSGenerator::ResumeMode resumeMode, MicrotaskCallCache* microtaskCallCache)
+{
+    SavedFrame* saved = savedFrameIn(generator->frame());
+    int32_t state = generator->state();
+    generator->setState(static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Executing));
+    AsyncGeneratorBodyEntry entry = willEnterAsyncGeneratorBody(generator, microtaskCallCache && microtaskCallCache->isOwnedByJobLoop());
+
+    JSValue value;
+    JSValue error;
+    bool isTerminated = false;
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+        error = stackOverflowErrorOfAsyncGeneratorBody(saved->realm());
+    else {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        // Built here, so that it takes no words of this frame: SavedFrame::getCallData() would return it in memory and write part of it.
+        CallData callData = CallData::forCompiledCode(entry.instance->state->coroutines->savedFrameEntrypoint(), entry.instance->globalObject);
+        // The entry finds the frame in its callee and reads no JSGenerator::Argument::Frame. An odd number of arguments would also leave a word of padding unwritten on x86-64.
+        value = enterCompiledCode(vm, callData, saved, generator->thisValue(), generator,
+            generator, jsNumber(state >> JSAsyncGenerator::reasonShift), resumeValue, jsNumber(static_cast<int32_t>(resumeMode)));
+        if (scope.exception()) [[unlikely]] {
+            error = scope.exception()->value();
+            isTerminated = !scope.clearExceptionExceptTermination();
+        }
+    }
+    generator = didReturnFromAsyncGeneratorBody(entry, generator, value, error, isTerminated);
+    if (!generator || isTerminated)
+        return;
+    finishAsyncGeneratorBodyCall(generator->realm(), generator, value, error, microtaskCallCache);
+}
+
+static NEVER_INLINE void resumeAsyncGeneratorBodyInAsyncContext(JSGlobalObject* globalObject, VM& vm, JSAsyncGenerator* generator, JSValue resumeValue, JSGenerator::ResumeMode resumeMode, MicrotaskCallCache* microtaskCallCache, JSValue asyncContext)
+{
+    AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
+    resumeAsyncGeneratorBody(vm, generator, resumeValue, resumeMode, microtaskCallCache);
+}
+
+void runAsyncGeneratorBodyJob(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t status, JSValue, JSValue resolution, JSValue context, JSValue asyncContext, MicrotaskCallCache* microtaskCallCache)
+{
+    auto* generator = uncheckedDowncast<JSAsyncGenerator>(context);
+    JSGenerator::ResumeMode resumeMode = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected ? JSGenerator::ResumeMode::ThrowMode
+        : task == InternalMicrotask::AsyncGeneratorBodyCallReturn ? JSGenerator::ResumeMode::ReturnMode : JSGenerator::ResumeMode::NormalMode;
+    if (vm.isAsyncContextTrackingEnabled()) [[unlikely]]
+        return resumeAsyncGeneratorBodyInAsyncContext(globalObject, vm, generator, resolution, resumeMode, microtaskCallCache, asyncContext);
+    resumeAsyncGeneratorBody(vm, generator, resolution, resumeMode, microtaskCallCache);
+}
+
 void resumeDriver(VM& vm, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop)
 {
     RELEASE_ASSERT(driver->classInfo() == SavedFrame::info());

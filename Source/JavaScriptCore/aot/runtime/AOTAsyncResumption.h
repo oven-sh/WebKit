@@ -37,6 +37,9 @@ JS_EXPORT_PRIVATE void runAsyncFunctionResumeJob(JSGlobalObject*, VM&, InternalM
 JS_EXPORT_PRIVATE void runHandlerJob(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, JSValue promise, JSValue handler, JSValue argument, JSValue asyncContext, MicrotaskCallCache*);
 // A BunPerformMicrotaskJob whose function gets no argument, where no async context is in place. Only if canEnterFunctionOfJob(). What it throws is reported before this returns.
 JS_EXPORT_PRIVATE void runFunctionJob(JSGlobalObject*, VM&, InternalMicrotask, uint8_t, JSValue function, JSValue, JSValue, JSValue, MicrotaskCallCache*);
+// An AsyncGeneratorBodyCallNormal or AsyncGeneratorBodyCallReturn job. Only if hasCompiledBody().
+JS_EXPORT_PRIVATE void runAsyncGeneratorBodyJob(JSGlobalObject*, VM&, InternalMicrotask, uint8_t status, JSValue, JSValue resolution, JSValue generator, JSValue asyncContext, MicrotaskCallCache*);
+JS_EXPORT_PRIVATE bool hasCompiledBody(JSAsyncGenerator*);
 JS_EXPORT_PRIVATE void resumeDriver(VM&, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
 
 // For the request of an async generator, or of the wrapper of a sync iterator, that settles the target.

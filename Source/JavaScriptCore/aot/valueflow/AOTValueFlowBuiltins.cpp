@@ -1839,6 +1839,8 @@ private:
                 functor(heldPrototypeObjectsOfLibraryClasses(m_context));
             bool mayBeEndOfChain = m_context.meet(objects, m_universe.placeholdersAlone());
             bool mayBeNamespace = false;
+            // Where the table does not say what stands above an object, one stand-in is listed there. It ends the walk, but the object it stands for may have any object above it.
+            bool mayBeUndescribed = m_context.contains(objects, m_tables.heap().undescribedNativeCode());
             // Of what the host makes for each module the table lists on the object itself what stands on an object of the host right above it. Whoever holds that one reads those members, with any receiver.
             Vector<ValueFlowObjectID, 4> objectsOfModules;
             m_context.forEachMember(known(objects), [&](ValueFlowObjectID object) {
@@ -1860,7 +1862,7 @@ private:
                 m_context.add(ValueFlowProgramNodes::escaped(), ClimbingSet(m_context.maker().of(objectsOfModules.span())));
                 constant = m_context.maker().unite(constant, unknownObjectSet(m_context, ValueFlowUnknownSource::ObjectWithoutLayout));
             }
-            if (mayBeNamespace)
+            if (mayBeNamespace || mayBeUndescribed)
                 constant = m_context.maker().unite(constant, unknownObjectSet(m_context, ValueFlowUnknownSource::ObjectWithoutLayout));
             if (mayBeEndOfChain)
                 constant = m_context.maker().unite(constant, m_context.maker().of(ValueFlowUniverse::primitive(PrimitiveSet::Null)));

@@ -1231,7 +1231,7 @@ private:
             ValueFlowObjectID object = universe.m_objectOfSite[site];
             if (LayoutID layout = universe.m_sites[site].layout)
                 ofLayout[layout.index()].append(object);
-            if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult)
+            if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult && !universe.m_sites[site].builtinClass)
                 continue;
             if (BuiltinClassID builtinClass = universe.m_sites[site].builtinClass)
                 ofClass[builtinClass.index()].append(object);

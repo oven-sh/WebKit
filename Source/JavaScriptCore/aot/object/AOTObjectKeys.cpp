@@ -524,6 +524,12 @@ void Object::didCreateField(State& state, const FieldData& field, bool withStora
             return;
         }
     }
+    if (!hasFlagsInOrderWord() && !hasOutOfLineKeyOrder() && !(field.flags & fieldMayExistWithoutStorage)) {
+        if (std::optional<uint32_t> after = keyOrders.tryAppendToAddedOrder(layout, before, field)) {
+            setOrderAndCount(*after);
+            return;
+        }
+    }
     if (tryListFieldBehindNamedKey(state, field))
         return;
     AddedEntries added = entriesPositioningExtraKeys(state, *this);

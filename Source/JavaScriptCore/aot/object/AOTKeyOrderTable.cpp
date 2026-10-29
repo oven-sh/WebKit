@@ -600,8 +600,10 @@ const FieldData* KeyOrderTable::fieldAt(const LayoutData& layout, uint32_t slotK
     std::span<const FieldData> fields = layout.fields();
     FieldFoundLast& last = m_fieldsFoundLast[layout.shape % m_fieldsFoundLast.size()];
     size_t first = last.shape == layout.shape && last.next < fields.size() ? last.next : 0;
+    uint32_t offset = slotKey & ~outOfLineSlotKey;
+    bool isOutOfLine = slotKey & outOfLineSlotKey;
     auto hasKey = [&](const FieldData& field) {
-        return slotKeyFor(field.slot.offset, field.isOutOfLine()) == slotKey;
+        return field.slot.offset == offset && field.isOutOfLine() == isOutOfLine;
     };
     AOT_THRESHOLD(size_t, longestWalk, 16);
     auto fieldsBehind = fields.subspan(first, std::min(longestWalk, fields.size() - first));
@@ -674,6 +676,26 @@ std::optional<uint32_t> KeyOrderTable::orderAfterCreating(const LayoutData& layo
     if (!storage.continuations.find(layout.shape, before, entry))
         storage.continuations.add({ layout.shape, before, entry, static_cast<uint16_t>(orderOf(*result)) });
     return publish(*result);
+}
+
+// No order continues another from the end of an added one: orderAfterCreating() and orderStartingWith() both make the added order longer there. So nothing is known or published about this step yet.
+std::optional<uint32_t> KeyOrderTable::tryAppendToAddedOrder(const LayoutData& layout, uint32_t orderWord, const FieldData& field)
+{
+    ASSERT(!(orderWord & ~orderAndCountMask) && !isOrderStoredOutOfLine(orderWord));
+    uint32_t order = orderOf(orderWord);
+    if (order < layout.numberOfOrders)
+        return std::nullopt;
+    Storage& storage = *m_storage;
+    AddedOrder*& added = storage.ordersOf(layout).addedOrders[order - layout.numberOfOrders];
+    uint32_t count = countOf(orderWord);
+    if (count != added->length || count >= runtimeLimitValue(*m_state.instance.vm, LimitID::FieldsInKeyOrder))
+        return std::nullopt;
+    uint16_t entry = static_cast<uint16_t>(layout.indexOf(field));
+    ASSERT(!storage.continuations.find(layout.shape, orderWord, entry));
+    storage.append(added, singleElementSpan(entry));
+    uint32_t after = orderWordOf(order, count + 1);
+    publishTransition(layout, orderWord, field, after);
+    return after;
 }
 
 JSPropertyNameEnumerator* KeyOrderTable::enumerator(const LayoutData& layout, uint32_t orderWord, StructureChain* prototypeChain) const

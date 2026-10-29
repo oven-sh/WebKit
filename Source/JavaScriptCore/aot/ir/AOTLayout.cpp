@@ -492,6 +492,9 @@ void noteSubclassesOfBuiltinClasses(Program& program, const ParallelLoops& loops
                 return;
             BuiltinID constructor = builtins.canonicalID(named);
             BuiltinClassID instanceClass = builtins.at(constructor).instanceClass;
+            // A conversion to Object proves nothing of an object, so a value that is converted would not get the type that stands in place of the layout.
+            if (instanceClass == BuiltinClasses::Object)
+                return;
             if (instanceClass && !builtins.at(instanceClass).hasClosureInstances && !isFunctionClass(builtins, instanceClass) && !builtins.at(instanceClass).isPrimitiveWrapper && builtins.at(instanceClass).constructor && builtins.canonicalID(builtins.at(instanceClass).constructor) == constructor)
                 found.append({ definition.layout(), instanceClass });
         });

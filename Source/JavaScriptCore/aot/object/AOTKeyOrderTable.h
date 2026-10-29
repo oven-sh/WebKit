@@ -62,6 +62,8 @@ public:
     std::optional<uint32_t> stepInsideOrderOfImage(const LayoutData&, uint32_t orderWord, uint16_t entry) const;
     enum class Step : bool { IsPublished, IsNotPublished };
     std::optional<uint32_t> orderAfterCreating(const LayoutData&, uint32_t orderWord, uint16_t entry, Step = Step::IsPublished);
+    // For an object without extra keys that has every key of an order added at run time: most objects that have left the orders of the image get all their later fields this way.
+    std::optional<uint32_t> tryAppendToAddedOrder(const LayoutData&, uint32_t orderWord, const FieldData&);
     bool positionsExtraKeys(const LayoutData&, uint32_t orderWord, uint32_t numberOfExtraKeys);
 
     // Neither lists an order with an extra key or with a field that is anything but a writable, enumerable, configurable data property.

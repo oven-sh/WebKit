@@ -2271,6 +2271,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::AsyncGeneratorBodyCallNormal: {
         JSValue contextArg = argument2;
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && AOT::hasCompiledBody(uncheckedDowncast<JSAsyncGenerator>(contextArg))) {
+            scope.release();
+            LEAVE_FOR_COMPILED_JOB(AOT::runAsyncGeneratorBodyJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
+        }
+#endif
 #if USE(BUN_JSC_ADDITIONS)
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
@@ -2282,6 +2288,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::AsyncGeneratorBodyCallReturn: {
         JSValue contextArg = argument2;
+#if ENABLE(AOT)
+        if (vm.hasCompiledCode() && AOT::hasCompiledBody(uncheckedDowncast<JSAsyncGenerator>(contextArg))) {
+            scope.release();
+            LEAVE_FOR_COMPILED_JOB(AOT::runAsyncGeneratorBodyJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
+        }
+#endif
 #if USE(BUN_JSC_ADDITIONS)
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif

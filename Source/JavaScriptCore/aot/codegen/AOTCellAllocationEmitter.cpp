@@ -307,6 +307,13 @@ void CellAllocationEmitter::leaveFrameOfCheckedCells()
 {
     if (!generator().validatesOrChecksProofs() || !keepsCellsInFrame())
         return;
+    // The operation unmaps the cells of this frame, so every access to one stays in front of it. Its declared effects name no heap that a cell lies in.
+    B3::PatchpointValue* clobber = m_out.patchpoint(B3::Void);
+    clobber->effects = B3::Effects::none();
+    clobber->effects.reads = B3::HeapRange::top();
+    clobber->effects.writes = B3::HeapRange::top();
+    clobber->setRunsWithoutFrame(true);
+    clobber->setGenerator([](CCallHelpers&, const B3::StackmapGenerationParams&) { });
     Operand arguments[] { wordOfFrame() };
     callWithoutSite(RuntimeOperation::LeaveFrameOfCheckedCells, arguments, Representation::Void, { });
 }
