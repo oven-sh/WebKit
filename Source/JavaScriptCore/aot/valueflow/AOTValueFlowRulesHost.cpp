@@ -117,7 +117,6 @@ void enterFromNativeCode(ValueFlowRuleContext& context, FunctionID function, Nat
         ClimbingSet instance = only(context, universe.instanceOf(callee.constructedClass));
         context.connect(context.lookup(only(context, universe.closureOf(function)), ValueFlowName::property(context.program().keyOf(BuiltinNames::prototype))), context.written(instance, prototypeLinkName));
         context.add(nodes.entryParameter(function, *callee.thisParameterIndex()), instance);
-        context.add(escaped, instance);
     }
     if (const auto* summary = nodes.resultSummaryOf(function))
         handOutOfFunction(context, callee, summary->ownResult);

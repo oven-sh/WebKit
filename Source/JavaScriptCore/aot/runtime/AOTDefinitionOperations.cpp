@@ -218,16 +218,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineField, void, (Instance* instance, Enc
     OPERATION_RETURN(scope);
 }
 
-static bool tryDefineAbsentPropertyOfCompiledObject(VM& vm, Object& object, const FieldData* field, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
-{
-    if (!field)
-        return object.tryDefineAbsentExtraProperty(vm, name, valueOrAccessor, attributes);
-    if (field->isPrivate() || object.isNotExtensible() || object.getDirectFromNativeCode(vm, name, nullptr))
-        return false;
-    object.putDirectFromNativeCode(vm, name, valueOrAccessor, attributes);
-    return true;
-}
-
 // A descriptor that has a value and nothing else leaves the property what it is but for the value. Every function is born with a name that can be configured and not written.
 static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* function, PropertyName name, JSValue value, PropertyDescriptorBits bits)
 {
@@ -293,7 +283,7 @@ static bool tryDefineAbsentProperty(JSGlobalObject* globalObject, JSObject* obje
     if (isAccessor)
         stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());
     if (compiled)
-        return tryDefineAbsentPropertyOfCompiledObject(vm, *compiled, field, name, stored, attributes);
+        return compiled->tryDefineAbsentProperty(vm, field, name, stored, attributes);
     if (object->tryPutDirectByExistingTransition(vm, name, stored, attributes))
         return true;
     if (isValidOffset(structure->get(vm, name)))
@@ -444,6 +434,15 @@ static void prepareAllocationOfAccessors(Instance* instance)
     instance->allocation.getterOfAccessorWithoutGetter = instance->globalObject->nullGetterFunction();
     instance->allocation.setterOfAccessorWithoutSetter = instance->globalObject->nullSetterFunction();
     prepareInlineAllocation<GetterSetter>(instance, InlineAllocation::GetterSetter, instance->vm->getterSetterStructure.get());
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewGetterSetter, JSCell*, (Instance* instance, JSCell* getter, JSCell* setter))
+{
+    constexpr Entry entry = Entry::operationAOTNewGetterSetter;
+    AOT_OPERATION_BEGIN(instance, entry);
+    prepareAllocationOfAccessors(instance);
+    JSCell* accessor = GetterSetter::create(vm, globalObject, getter ? cellArgument<JSObject>(getter, entry) : nullptr, setter ? cellArgument<JSObject>(setter, entry) : nullptr);
+    OPERATION_RETURN(scope, accessor);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTDefineAccessor, void, (Instance* instance, EncodedJSValue object, EncodedJSValue key, EncodedJSValue function, uint32_t accessorFlags))

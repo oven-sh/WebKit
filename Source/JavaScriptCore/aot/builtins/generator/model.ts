@@ -641,6 +641,7 @@ export type ModelFunctionRole = RuntimeFunctionRole | "Model";
 
 export interface ModelFunction {
   id: number;
+  token: string;
   role: ModelFunctionRole;
   file: string;
   name: string;

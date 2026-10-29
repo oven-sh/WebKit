@@ -207,6 +207,15 @@ static Object::LeavingProperty createPropertyFromDescriptor(JSGlobalObject* glob
     return { GetterSetter::create(globalObject->vm(), globalObject, getter, setter), (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor };
 }
 
+// The slot holds the property only if its attributes are the ones the layout gives the field.
+static void createField(VM& vm, Object& object, const FieldData& field, Object::LeavingProperty created)
+{
+    bool fitsSlot = created.attributes == object.attributesOf(field);
+    if (fitsSlot && tryCreateField(vm, object.state(), object, field, created.valueOrAccessor))
+        return;
+    object.moveFieldToExtraProperties(vm, field, created, fitsSlot ? SlotExitReason::StoreOfOtherType : SlotExitReason::Redefinition);
+}
+
 static bool defineExtraProperty(Object* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
@@ -214,7 +223,7 @@ static bool defineExtraProperty(Object* object, JSGlobalObject* globalObject, Pr
     JSObject* extra = object->extraProperties();
     if (!parseIndex(name) && !object->isNotExtensible() && (!extra || !isValidOffset(extra->structure()->get(vm, name)))) {
         Object::LeavingProperty created = createPropertyFromDescriptor(globalObject, descriptor);
-        if (object->tryDefineAbsentExtraProperty(vm, name, created.valueOrAccessor, created.attributes))
+        if (object->tryDefineAbsentProperty(vm, nullptr, name, created.valueOrAccessor, created.attributes))
             return true;
         extra = object->extraProperties();
     }
@@ -253,22 +262,19 @@ static bool defineFieldProperty(Object* object, JSGlobalObject* globalObject, co
         return isDefined;
     }
 
+    if (!current) {
+        if (object->isNotExtensible())
+            return typeError(globalObject, scope, shouldThrow, NonExtensibleObjectPropertyDefineError);
+        createField(vm, *object, field, createPropertyFromDescriptor(globalObject, descriptor));
+        return true;
+    }
+
     PropertyDescriptor currentDescriptor;
-    if (current)
-        currentDescriptor.setDescriptor(current.valueOrAccessor, current.attributes);
-    bool isValid = validateAndApplyPropertyDescriptor(globalObject, nullptr, name, !object->isNotExtensible(), descriptor, !!current, currentDescriptor, shouldThrow);
+    currentDescriptor.setDescriptor(current.valueOrAccessor, current.attributes);
+    bool isValid = validateAndApplyPropertyDescriptor(globalObject, nullptr, name, !object->isNotExtensible(), descriptor, true, currentDescriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, false);
     if (!isValid)
         return false;
-
-    if (!current) {
-        Object::LeavingProperty created = createPropertyFromDescriptor(globalObject, descriptor);
-        bool fitsSlot = created.attributes == object->attributesOf(field);
-        if (fitsSlot && tryCreateField(vm, object->state(), *object, field, created.valueOrAccessor))
-            return true;
-        object->moveFieldToExtraProperties(vm, field, created, fitsSlot ? SlotExitReason::StoreOfOtherType : SlotExitReason::Redefinition);
-        return true;
-    }
 
     unsigned attributes = descriptor.attributesOverridingCurrent(currentDescriptor);
     if (field.isAccessor() && descriptor.isAccessorDescriptor() && attributes == object->attributesOf(field)) {
@@ -520,18 +526,36 @@ bool Object::tryDefineAccessorsOfLiteral(VM& vm, JSGlobalObject* globalObject, s
 
 bool Object::tryDefineAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
 {
-    if (parseIndex(name) || name.isPrivateName() || isNotExtensible() || fieldNamed(state(), name))
+    return !fieldNamed(state(), name) && tryDefineAbsentProperty(vm, nullptr, name, valueOrAccessor, attributes);
+}
+
+bool Object::tryDefineAbsentProperty(VM& vm, const FieldData* field, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
+{
+    ASSERT(field == fieldNamed(state(), name));
+    if (isNotExtensible())
+        return false;
+    if (field) {
+        if (field->isPrivate() || findFieldProperty(vm, *this, *field))
+            return false;
+        createField(vm, *this, *field, { valueOrAccessor, attributes });
+        return true;
+    }
+    if (parseIndex(name) || name.isPrivateName())
         return false;
     JSObject* extra = extraProperties();
     if (extra && isValidOffset(extra->structure()->get(vm, name)))
         return false;
-    extra = ensureExtraProperties(vm);
-    if (!extra)
-        return false;
     willAddExtraProperty(vm, name);
+    // The first property is added before the object gets its extra properties, so the object changes its Structure once.
+    bool isFirst = !extra;
+    if (isFirst)
+        extra = constructEmptyObject(vm, Instance::of(structure()->realm())->realm.emptyExtraPropertiesStructure);
     if (!extra->tryPutDirectByExistingTransition(vm, name, valueOrAccessor, attributes))
         putProperty(vm, extra, name, { valueOrAccessor, attributes });
-    didChangeExtraProperties(vm);
+    if (isFirst)
+        adoptExtraProperties(vm, extra);
+    else
+        didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
     return true;
 }

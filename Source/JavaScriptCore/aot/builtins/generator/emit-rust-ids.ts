@@ -46,6 +46,7 @@ export function emitRustIds(model: TableModel, schema: Schema): string {
     emitCount("NAME_COUNT", model.names.length),
     `const RUNTIME_FUNCTION_LIMIT: u32 = ${computeRuntimeFunctionLimit(model.functions)};\n`,
     ...enums.map(emitTokenTables),
+    emitFunctionTokens(model.functions),
     emitNameConstants(nameConstants),
   ].join("");
 }
@@ -140,6 +141,23 @@ function emitTokenTables({ name, countName, variants, tokenTables }: IdEnum): st
       `static ${tokenTables.byTokenName}: [${name}; ${countName}]`,
       sortByBytes(variants).map(token => `${name}::${token}`),
     ),
+  ].join("");
+}
+
+function emitFunctionTokens(functions: readonly ModelFunction[]): string {
+  return [
+    emitArray(
+      `static RUNTIME_FUNCTION_TOKENS: [(RuntimeFunction, &str); ${functions.length}]`,
+      functions.map(({ id, token }) => `(${formatRuntimeFunction(id)}, ${formatString(token)})`),
+    ),
+    "impl RuntimeFunction {\n",
+    "    pub fn name(self) -> &'static str {\n",
+    "        match RUNTIME_FUNCTION_TOKENS.binary_search_by_key(&self, |&(function, _)| function) {\n",
+    "            Ok(position) => RUNTIME_FUNCTION_TOKENS[position].1,\n",
+    '            Err(_) => "<invalid runtimefunction>",\n',
+    "        }\n",
+    "    }\n",
+    "}\n",
   ].join("");
 }
 

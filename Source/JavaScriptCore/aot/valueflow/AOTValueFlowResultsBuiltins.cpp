@@ -355,6 +355,16 @@ static bool isCallOfProgramUnderComputedName(const Program& program, const Witne
     return function.at(definitionThroughSameValues(function, call.operand(positionOfName))).opcode != Opcode::String;
 }
 
+// The front end leaves a constant path to the run time where no such file exists at build time.
+static bool isLoadUnderConstantName(const Program& program, const Witness& witness)
+{
+    const Function& function = program.at(FunctionID(witness.function));
+    const Value& load = function.at(ValueID(witness.value));
+    if (load.opcode != Opcode::ImportDynamic && load.opcode != Opcode::RequireDynamic)
+        return false;
+    return function.at(definitionThroughSameValues(function, load.specifierOperand())).opcode == Opcode::String;
+}
+
 static void warnAboutLoadsUnderComputedNames(const Program& program, BuildContext& build, std::span<const UnseenCodeRecord> records)
 {
     Vector<SourceLocation> reportedLocations;
@@ -362,7 +372,7 @@ static void warnAboutLoadsUnderComputedNames(const Program& program, BuildContex
         if (record.cause != UnseenCodeCause::LoadsModuleByName || record.witness.value == Wire::none)
             continue;
         bool isCallOfLoader = record.builtin != Wire::none;
-        if (isCallOfLoader && !isCallOfProgramUnderComputedName(program, record.witness))
+        if (isCallOfLoader ? !isCallOfProgramUnderComputedName(program, record.witness) : isLoadUnderConstantName(program, record.witness))
             continue;
         if (hasModule(record.witness.location)) {
             if (reportedLocations.contains(record.witness.location))

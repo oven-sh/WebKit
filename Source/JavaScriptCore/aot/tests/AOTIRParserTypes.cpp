@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTIRPrinter.h"
 #include "AOTSort.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -651,7 +652,16 @@ RuntimeModuleID TextParser::parseRuntimeModule()
 
 RuntimeFunctionID TextParser::parseRuntimeFunction()
 {
-    return parseBuiltinNumber<RuntimeFunctionID>(*this);
+    // FIXME: Remove the number once no test file has one.
+    if (!at(TokenKind::Word))
+        return parseBuiltinNumber<RuntimeFunctionID>(*this);
+    RuntimeFunctionID id = runtimeFunctionFromToken(m_builtins, token().view());
+    if (!id) {
+        fail();
+        return { };
+    }
+    advance();
+    return id;
 }
 
 } } } // namespace JSC::AOT::Typed

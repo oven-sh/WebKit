@@ -31,7 +31,7 @@ std::span<const NativeTest> nakedConstructorTests();
 static constexpr ASCIILiteral programText = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
-runtimefunction id=0 function=f1
+runtimefunction id=PromiseConstructorPromise function=f1
 layout L0 kind=Instance name="Widget" constructor=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -44,7 +44,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v7 = Call v5, -, v6
     Return
 }
-function f1 name="Promise" module=m1 kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=object}] {
+function f1 name="Promise" module=m1 kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] enclosingRuntimeFunction=PromiseConstructorPromise parameters=[{type=anything}] results=[{type=object}] {
     v2 = Builtin builtin=GlobalThis
     Return v2
 }

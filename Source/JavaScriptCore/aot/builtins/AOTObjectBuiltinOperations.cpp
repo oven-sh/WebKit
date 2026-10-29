@@ -643,25 +643,29 @@ private:
     {
         Object& target = *m_compiledTarget;
         unsigned attributes = descriptor.attributes();
-        if (const FieldData* field = target.fieldNamed(target.state(), name)) {
-            if (attributes || !descriptor.isDataDescriptor() || target.attributesOf(*field))
+        const FieldData* field = target.fieldNamed(target.state(), name);
+        if (field) {
+            // Object::defineOwnProperty() prepares the object for a lookup under a symbol.
+            if (name.isSymbol())
                 return false;
-            FieldProperty current = findFieldProperty(m_vm, target, *field);
-            return current && current.isInSlot && target.tryStore(m_vm, *field, descriptor.value());
+            if (FieldProperty current = findFieldProperty(m_vm, target, *field))
+                return !attributes && descriptor.isDataDescriptor() && !current.attributes && current.isInSlot && target.tryStore(m_vm, *field, descriptor.value());
+        } else {
+            JSObject* extra = target.extraProperties();
+            if (parseIndex(name) || name.isPrivateName() || (extra && isValidOffset(extra->structure()->get(m_vm, name))))
+                return false;
+            if (!attributes && descriptor.isDataDescriptor()) {
+                m_newNames.append(name.uid());
+                m_newValues.appendWithCrashOnOverflow(descriptor.value());
+                return true;
+            }
         }
-        JSObject* extra = target.extraProperties();
-        if (parseIndex(name) || name.isPrivateName() || (extra && isValidOffset(extra->structure()->get(m_vm, name))))
-            return false;
-        if (!attributes && descriptor.isDataDescriptor()) {
-            m_newNames.append(name.uid());
-            m_newValues.appendWithCrashOnOverflow(descriptor.value());
-            return true;
-        }
+        // The names that wait come first in the order of the keys.
         addNewNames();
         if (!descriptor.isAccessorDescriptor())
-            return target.tryDefineAbsentExtraProperty(m_vm, name, descriptor.value(), attributes & ~PropertyAttribute::Accessor);
+            return target.tryDefineAbsentProperty(m_vm, field, name, descriptor.value(), attributes & ~PropertyAttribute::Accessor);
         auto* accessor = GetterSetter::create(m_vm, m_globalObject, descriptor.getterObject(), descriptor.setterObject());
-        return target.tryDefineAbsentExtraProperty(m_vm, name, accessor, (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor);
+        return target.tryDefineAbsentProperty(m_vm, field, name, accessor, (attributes & ~PropertyAttribute::ReadOnly) | PropertyAttribute::Accessor);
     }
 
     VM& m_vm;

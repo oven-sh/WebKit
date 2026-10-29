@@ -1088,25 +1088,6 @@ static void nameResultsOfOnlyArm(FunctionPassContext& context, IRBuilder& builde
     }
     substitution.apply(function, &context.analyses);
     builder.removeParameters(continuation, named);
-
-    // Flow has proven that the storage of the list stays as it was born, and here stands how it is born.
-    for (ValueID id : function.at(continuation).values) {
-        const Value& assumed = function.at(id);
-        if (assumed.opcode != Opcode::AssumeType)
-            continue;
-        const Value& made = function.at(assumed.operand(0));
-        if (made.opcode != Opcode::NewArray || made.arrayStorage() == ArrayStorage::Other || assumed.type != assumed.provenType())
-            continue;
-        Type type = context.types.at(assumed.provenType());
-        if (type.classes.size() != 1 || !type.classes[0].provenPristine.contains(PristineAspects::Storage) || type.classes[0].arrayStorage != ArrayStorage::Other)
-            continue;
-        type.classes[0].arrayStorage = made.arrayStorage();
-        TypeID withStorage = context.types.intern(type);
-        ProofScope scope = Proven::asClaimedBy(assumed).scope();
-        Value& edited = function.edit(id);
-        edited.setProvenType(Proven::byFlow(withStorage, scope));
-        edited.type = withStorage;
-    }
 }
 
 static void expandWalk(FunctionPassContext& context, Emission& emission, const PlannedWalk& walk)

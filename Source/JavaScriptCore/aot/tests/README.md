@@ -478,8 +478,8 @@ Every optional pass but the named ones and `AnalyzeFlow` is off.
 
 A program has one built-ins table, and whoever links `testaot` compiles it: the engine's entries (`aot/builtins/*.builtins.ts`) and a
 host's. WebKit's own build links the stand-in host's (`aot/tests/host`), which has few entries. Bun's build links Bun's. IR text names an
-entry, a class, a slot, a result layout, a runtime module and an overload by its token (`builtin=MathMax`, `Array<number>`,
-`overload=MathMax/0`). A test that needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads
+entry, a class, a slot, a result layout, a runtime module, a runtime function and an overload by its token (`builtin=MathMax`,
+`Array<number>`, `runtimefunction id=ArrayPrototypeMap`, `overload=MathMax/0`). A test that needs a built-in with some attribute (starts an instance, loads a module, runs unseen code, reads
 `this`) names a real entry that has it.
 
 A test in this folder says the same under both tables:

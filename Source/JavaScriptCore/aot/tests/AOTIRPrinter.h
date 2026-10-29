@@ -166,6 +166,10 @@ void IRPrinter::list(const Range& range, NOESCAPE const Functor& printElement)
     m_out.print("]"_s);
 }
 
+// What IR text calls a runtime function. Null for an id that the table does not have.
+StringView tokenOf(const BuiltinTable&, RuntimeFunctionID);
+RuntimeFunctionID runtimeFunctionFromToken(const BuiltinTable&, StringView);
+
 inline bool needsEscape(uint8_t byte)
 {
     return byte < 0x20 || byte >= 0x7f || byte == '"' || byte == '\\';

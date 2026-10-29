@@ -6,8 +6,8 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=55 function=f1
-runtimefunction id=70 function=f2
+runtimefunction id=DisposableStackPrototypeGetDisposeMethod function=f1
+runtimefunction id=GeneratorPrototypeNext function=f2
 
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
@@ -18,11 +18,11 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v5 = Call v4, v1 calleeKey="next"
     Return
 }
-function f1 name="getDisposeMethod" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=55 parameters=[{type=anything}] results=[{type=anything}] {
+function f1 name="getDisposeMethod" role=Library flags=[IsHiddenInStackTraces] enclosingRuntimeFunction=DisposableStackPrototypeGetDisposeMethod parameters=[{type=anything}] results=[{type=anything}] {
     v1 = PropGet v0 key="dispose"
     Return v1
 }
-function f2 name="next" role=Library flags=[HasThis, IsHiddenInStackTraces] enclosingRuntimeFunction=70 parameters=[{type=anything}] results=[{type=anything}] {
+function f2 name="next" role=Library flags=[HasThis, IsHiddenInStackTraces] enclosingRuntimeFunction=GeneratorPrototypeNext parameters=[{type=anything}] results=[{type=anything}] {
     v2 = PropGet v0 key="state"
     Return v2
 }

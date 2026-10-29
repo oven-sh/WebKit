@@ -5,11 +5,11 @@
 # CHECK: outcome: Unchanged
 
 module m0 path="main.js" displayPath="main.js"
-runtimefunction id=0 function=f0
+runtimefunction id=PromiseConstructorPromise function=f0
 layout L0 kind=Instance name="Deferred" constructor=f3 flags=[HasHeritage]
 layout L1 kind=Instance name="Mixed" constructor=f4 flags=[HasHeritage]
 layout L2 kind=Instance name="Index" constructor=f5 flags=[HasHeritage]
-function f0 name="Promise" kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] length=1 enclosingRuntimeFunction=0 parameters=[{type=anything}] results=[{type=Promise}] {
+function f0 name="Promise" kind=BaseConstructor role=Library flags=[HasNewTarget, HasExplicitName, IsNakedConstructor] length=1 enclosingRuntimeFunction=PromiseConstructorPromise parameters=[{type=anything}] results=[{type=Promise}] {
     v2 = CreatePromise v0
     Return v2
 }

@@ -55,6 +55,15 @@ public:
     // From where the offset of access.slot leads to the slot of this object: the cell, or an address behind it where the receivers keep the field at different offsets.
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
 
+    // Object.defineProperty(object, "key", { .. }) where the layout of the object keeps the field with the attributes that the definition creates.
+    // Creates the field in its slot, if the object is extensible, is not a prototype and lacks the property. Otherwise the object is unchanged.
+    struct CreationByDefinition {
+        bool isEmitted { false };
+        // Where control goes if the field was not created. Null for an object that the function has just allocated.
+        LBasicBlock leftToRunTime { nullptr };
+    };
+    CreationByDefinition tryCreateFieldByDefinition(const ValueContext& definition, CellPointer);
+
     // Lists the key.
     bool didCreateField(const ValueContext&, CellPointer, const FieldAccess&, bool needsStorage, std::optional<uint32_t> placePlusOne = std::nullopt);
 
@@ -85,6 +94,9 @@ private:
     std::optional<StateOfNewObject> stateOfObjectsThatMeet(BlockID, ValueID parameter);
     bool leavesObjectsAsTheyAre(ValueID);
     bool applyStoreBySlot(StateOfNewObject&, const Value& store) const;
+    std::optional<FieldAccess> fieldCreatedByDefinition(const Value& definition) const;
+    bool slotTakesAccessor(const Field&, SlotRepresentation, ValueID getter, ValueID setter) const;
+    CellPointer newGetterSetter(const ValueContext&, ValueID getter, ValueID setter);
 
     const FieldAccess& fieldAccessOf(const ValueContext&) const;
     Operand readSlot(const ValueContext&, CellPointer, const FieldAccess&, bool absentIsUndefined);

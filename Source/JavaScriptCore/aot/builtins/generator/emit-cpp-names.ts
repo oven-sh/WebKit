@@ -272,6 +272,17 @@ function emitNameArray({ cppType, name, elements, numberOfCharacters }: TableArr
   ]);
 }
 
+// builtinTableData does not point here, so a link that has no IR text drops the tokens.
+function emitFunctionTokens(model: TableModel): string {
+  const view = "constinit const BuiltinTexts builtinTableRuntimeFunctionTokens";
+  if (model.functions.length === 0) return `${view} { };`;
+  const { cppType, elements } = createTexts("", model.functions.map(getToken));
+  return joinBlocks([
+    emitTexts(`static constinit const ${cppType} runtimeFunctionTokens`, elements),
+    `${view} = runtimeFunctionTokens;`,
+  ]);
+}
+
 export function emitCppNames(model: TableModel): string {
   const { pools, arrays } = nameArraysOf(model);
   const namedLists = namedListsOf(model).map(({ cppType, array, items, format }) =>
@@ -283,6 +294,7 @@ export function emitCppNames(model: TableModel): string {
   const body = joinBlocks([
     ...pools.map(pool => pool.emit()),
     ...arrays.map(emitNameArray),
+    emitFunctionTokens(model),
     "inline namespace AOT_NAMESPACE_OF_ENGINE_LIST {",
     ...namedLists,
     "}",

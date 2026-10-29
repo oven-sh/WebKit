@@ -1663,7 +1663,7 @@ struct FieldResults {
         // A store under a name into what a read under a name has answered names a field of the layouts that are written under the name of the read, where that name tells a few layouts from all others.
         AOT_THRESHOLD(size_t, mostLayoutsToldByName, 4);
         AOT_THRESHOLD(size_t, mostLayoutsFollowedToStore, 16);
-        AOT_THRESHOLD(size_t, mostLayoutsFollowedToStoreIntoGivenObject, 2);
+        AOT_THRESHOLD(size_t, mostLayoutsFollowedToStoreIntoGivenObject, 4);
         KeysByLayout keysNamedBehindReads(numberOfLayouts);
         KeysByLayout keysNamedWhereObjectsWereFollowedTo(numberOfLayouts);
         KeysByLayout keysNamedWhereGivenObjectsWereFollowedTo(numberOfLayouts);
@@ -1717,7 +1717,7 @@ struct FieldResults {
                     // `function route(request) { request.parsedUrl = ..; }`: whoever is given an object fills it on as well. What was followed to a parameter is not all that arrives there, so fewer layouts are believed.
                     bool isMadeHere = maker == Opcode::Call || maker == Opcode::Construct;
                     if (ValueSetID seen = inputs.solver().seenValuesOf(receiver); seen != inputs.solver().possibleValuesOf(receiver))
-                        nameFieldOfLayoutsIn(seen, isMadeHere ? mostLayoutsFollowedToStore : mostLayoutsFollowedToStoreIntoGivenObject, true, isMadeHere ? keysNamedWhereObjectsWereFollowedTo : keysNamedWhereGivenObjectsWereFollowedTo);
+                        nameFieldOfLayoutsIn(seen, isMadeHere ? mostLayoutsFollowedToStore : mostLayoutsFollowedToStoreIntoGivenObject, isMadeHere, isMadeHere ? keysNamedWhereObjectsWereFollowedTo : keysNamedWhereGivenObjectsWereFollowedTo);
                 }
             }
         });

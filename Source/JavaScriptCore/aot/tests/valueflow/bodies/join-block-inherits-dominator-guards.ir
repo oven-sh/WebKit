@@ -1,0 +1,77 @@
+# function F(options, flag) { const signal = options.signal; if (signal) { if (flag) first(); listen(signal) } }   F({}, true)
+# The call to `listen` follows the inner `if`, so it is in a join block. A join block inherits the guards of its immediate dominator:
+# `signal` is never truthy, so neither call runs. With an object in `signal` both run.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# CHECK: unreached f3
+# RUN(GIVEN): valueflow-solve unreached
+# GIVEN-NOT: unreached f5
+# GIVEN-NOT: unreached f6
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="None"
+layout L1 name="Given" fields=[{key="signal" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewObject layout=L0
+    v2 = Boolean boolean=true
+    v3 = Call v0, -, v1, v2
+    v4 = NewClosure function=f4
+    v5 = NewObject layout=L0
+    v6 = NewObject -, v5 layout=L1 fields=[0]
+    v7 = Call v4, -, v6, v2
+    Return
+}
+function f1 name="F" role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="signal"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+  b1(v4):
+    v5 = ToBoolean v1
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v6):
+    v7 = NewClosure function=f2
+    v8 = Call v7, -
+    Jump -> next b4()
+  b3(v9):
+    Jump -> next b4()
+  b4():
+    v10 = NewClosure function=f3
+    v11 = Call v10, -, v4
+    Return
+  b5(v12):
+    Return
+}
+function f2 name="first" results=[{type=anything}] {
+    Return
+}
+function f3 name="listen" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f4 name="G" role=Library parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = PropGet v0 key="signal"
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b5(| 0)
+  b1(v4):
+    v5 = ToBoolean v1
+    Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v6):
+    v7 = NewClosure function=f5
+    v8 = Call v7, -
+    Jump -> next b4()
+  b3(v9):
+    Jump -> next b4()
+  b4():
+    v10 = NewClosure function=f6
+    v11 = Call v10, -, v4
+    Return
+  b5(v12):
+    Return
+}
+function f5 name="firstWhenGiven" results=[{type=anything}] {
+    Return
+}
+function f6 name="listenWhenGiven" parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}

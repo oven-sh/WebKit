@@ -11,6 +11,7 @@
 #include "AOTAllocationEmitter.h"
 #include "AOTBarrierEmitter.h"
 #include "AOTBlockFrequencies.h"
+#include "AOTCellAllocationEmitter.h"
 #include "AOTCellFormat.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
@@ -21,6 +22,8 @@
 #include "AOTNarrowFieldTypes.h"
 #include "AOTObjectWords.h"
 #include "AOTPlacement.h"
+#include "AOTPropertyAccessElements.h"
+#include "AOTPropertyAccessReceivers.h"
 #include "AOTResultRules.h"
 #include "AOTRuntimeValidation.h"
 #include "AOTRuntimeValidationEmitter.h"
@@ -519,16 +522,163 @@ void SlotAccessEmitter::generatePutSlotOrAdd(const ValueContext& value)
     store();
 }
 
+static OptionSet<FieldForm> formCreatedBy(OptionSet<PropertyDescriptorFlags> flags)
+{
+    OptionSet<FieldForm> form;
+    if (flags.containsAny({ PropertyDescriptorFlags::HasGet, PropertyDescriptorFlags::HasSet }))
+        form.add(FieldForm::IsAccessor);
+    else if (!flags.contains(PropertyDescriptorFlags::IsWritable))
+        form.add(FieldForm::IsReadOnly);
+    if (!flags.contains(PropertyDescriptorFlags::IsEnumerable))
+        form.add(FieldForm::IsNotEnumerable);
+    if (!flags.contains(PropertyDescriptorFlags::IsConfigurable))
+        form.add(FieldForm::IsNotConfigurable);
+    return form;
+}
+
+// Compiled code calls the getter that it finds in a filled slot as one of the functions that the type of the field lists.
+bool SlotAccessEmitter::slotTakesAccessor(const Field& field, SlotRepresentation slot, ValueID getter, ValueID setter) const
+{
+    auto listsOnlyFunctionsOfProgram = [&](ValueID function) {
+        const Type& type = typeOf(function);
+        return !type.functions.isEmpty() && !type.primitives && !type.anyFunction && !type.anyObject && !type.layouts && type.classes.isEmpty() && type.builtins.isEmpty();
+    };
+    Representation held = Typed::representationOf(slot);
+    if (held != Representation::Cell && held != Representation::Cell32 && held != Representation::JSValue)
+        return false;
+    if ((getter && !listsOnlyFunctionsOfProgram(getter)) || (setter && !listsOnlyFunctionsOfProgram(setter)))
+        return false;
+    const Type& getters = m_program.at(slotTypeOf(m_program, field));
+    return getter ? typeOf(getter).isSubsetOf(getters, m_program) : getters.anyFunction;
+}
+
+std::optional<FieldAccess> SlotAccessEmitter::fieldCreatedByDefinition(const Value& definition) const
+{
+    ValueID stored = definition.valueOperand();
+    const Type& object = typeOf(definition.objectOperand());
+    LayoutID layoutID = object.hasOnlyLayouts() ? object.singleLayout(m_program) : LayoutID();
+    if (!layoutID || m_placement.layout(layoutID).storage != LayoutStorage::CompiledObject || m_placement.layout(layoutID).keysAreNeverEnumerated)
+        return std::nullopt;
+    ConstantKey constant = constantKeyOf(m_program, typeOf(definition.computedKeyOperand()));
+    if (constant.kind != ConstantKeyKind::Text)
+        return std::nullopt;
+    std::optional<PropertyKeyID> key = m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = constant.text });
+    std::optional<uint32_t> field = key ? m_program.at(layoutID).findField(*key) : std::nullopt;
+    if (!field)
+        return std::nullopt;
+
+    // The attributes of a property in a slot are the form of its field.
+    const Field& declaration = m_program.at(layoutID).fields[*field];
+    if (declaration.form != formCreatedBy(definition.descriptorFlags()) || declaration.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsHidden }) || isFilledAtBirth(m_program, { layoutID, *field }))
+        return std::nullopt;
+    const PlacedSlot& slot = m_placement.slot(layoutID, *field);
+    if (!slot.canBeCreatedByStore() || slot.mayExistWithoutStorage || slot.representation == SlotRepresentation::DeferredClosure)
+        return std::nullopt;
+    TypeID contents = slotTypeOf(m_program, declaration);
+    bool slotTakesProperty = declaration.form.contains(FieldForm::IsAccessor)
+        ? slotTakesAccessor(declaration, slot.representation, definition.getterOperand(), definition.setterOperand())
+        : stored && typeOf(stored).isSubsetOf(m_program.at(contents), m_program);
+    if (!slotTakesProperty)
+        return std::nullopt;
+
+    FieldAccess access;
+    access.key = *key;
+    access.receivers = object.layouts;
+    access.isStore = true;
+    access.coverage = FieldAccess::Coverage::EveryMember;
+    access.slot = slot;
+    access.extensionWord = m_placement.slots().extensionWord(layoutID);
+    access.membersWithField = object.layouts;
+    access.contents = contents;
+    return access;
+}
+
+CellPointer SlotAccessEmitter::newGetterSetter(const ValueContext& context, ValueID getterID, ValueID setterID)
+{
+    auto callRunTime = [&] {
+        CellPointer none(m_out.intPtrZero);
+        return callOperation<CellPointer>(context, RuntimeOperation::NewGetterSetter, { getterID ? in<CellPointer>(getterID) : none, setterID ? in<CellPointer>(setterID) : none });
+    };
+    // The allocation in line takes about 100 bytes.
+    if (context.shape() != CodeShape::Fast)
+        return callRunTime();
+
+    const B3::AbstractHeap& allocatorState = m_heaps.entire(AbstractHeap::AllocatorState);
+    const B3::AbstractHeap& fields = m_heaps.entire(AbstractHeap::ObjectFields);
+    LBasicBlock hasNoCell = newBlock();
+    Join<CellPointer> join(m_out);
+    CellPointer getter = getterID ? in<CellPointer>(getterID) : CellPointer(m_out.loadPtr(instanceField(allocatorState, AOT_INSTANCE_OFFSET(allocation.getterOfAccessorWithoutGetter))));
+    CellPointer setter = setterID ? in<CellPointer>(setterID) : CellPointer(m_out.loadPtr(instanceField(allocatorState, AOT_INSTANCE_OFFSET(allocation.setterOfAccessorWithoutSetter))));
+    {
+        CodeGenerator::InitializationScope scope(generator());
+        CellPointer pair = emitter<CellAllocationEmitter>().allocateCellWithHeader(InlineAllocation::GetterSetter, hasNoCell);
+        m_out.storePtr(getter.value(), m_out.address(fields, pair.value(), GetterSetter::offsetOfGetter()));
+        m_out.storePtr(setter.value(), m_out.address(fields, pair.value(), GetterSetter::offsetOfSetter()));
+        emitter<BarrierEmitter>().fenceAfterInitialization();
+        join.add(pair);
+    }
+    m_out.appendTo(hasNoCell);
+    join.add(callRunTime());
+    return join.finish();
+}
+
+SlotAccessEmitter::CreationByDefinition SlotAccessEmitter::tryCreateFieldByDefinition(const ValueContext& definition, CellPointer cell)
+{
+    std::optional<FieldAccess> access = fieldCreatedByDefinition(definition.value());
+    if (!access)
+        return { };
+    PropertyKeyID key = access->key;
+    ValueID stored = definition->valueOperand();
+    LBasicBlock leftToRunTime = nullptr;
+
+    Word32 orderWordAfter;
+    std::optional<StateOfNewObject> newObject = stateOfNewObjectBefore(definition, definition->objectOperand());
+    if (std::optional<uint32_t> known = newObject ? orderWordAfterCreating(newObject->orderWord, access->receivers, singleElementSpan(key)) : std::nullopt)
+        orderWordAfter = word32(static_cast<int32_t>(*known));
+    else {
+        // The order word as a whole says that the object is extensible, holds every property in its slot, and does not list the key yet.
+        std::optional<KeyOrderStep> step = testLikeliestKeyOrderStep(cell, access->receivers, singleElementSpan(key));
+        if (!step)
+            return { };
+        leftToRunTime = newBlock();
+        LBasicBlock lacksField = newBlock();
+        branch(step->applies, { normalEdge(lacksField), unlikelyEdge(leftToRunTime) });
+        m_out.appendTo(lacksField);
+        // The run time tells the caches about the objects below a prototype.
+        if (!receiverStateOf(m_program, access->receivers).cannot(ObjectMutation::BecomePrototype)) {
+            LBasicBlock isNotPrototype = newBlock();
+            branch(hasNoBits(loadField<Word32>(loadStructure(cell), m_heaps.Structure_bitField), Structure::s_mayBePrototypeBits), { normalEdge(isNotPrototype), unlikelyEdge(leftToRunTime) });
+            m_out.appendTo(isNotPrototype);
+        }
+        orderWordAfter = step->orderWordAfter;
+    }
+
+    // Whatever allocates comes first: nothing stands between the stores and their barrier.
+    SlotEmitter& slots = emitter<SlotEmitter>();
+    Representation held = Typed::representationOf(access->slot.representation);
+    const Type& storedType = stored ? typeOf(stored) : Type::object();
+    Operand operand = stored ? get(stored) : Operand(newGetterSetter(definition, definition->getterOperand(), definition->setterOperand()));
+    operand = emitter<ConversionEmitter>().inRepresentation(definition, operand, storedType, held);
+    if (access->slot.isOutOfLine())
+        slots.ensureExtensionHolds(definition, cell, access->extensionWord, granuleBitOf(access->slot.offset), granuleBitsOfStoresBehind(definition, *access), OwnerBarrier::Emitted);
+    storeField(cell, m_heaps.AOTObject_orderWord, orderWordAfter);
+    slots.storeSlot(cell, access->slot, MemoryLocation::objectField(key, access->receivers), operand, extensionWordOf(*access), storedType);
+    if (storedType.hasCells())
+        emitter<BarrierEmitter>().barrier(definition, cell);
+    return { true, leftToRunTime };
+}
+
 uint64_t SlotAccessEmitter::granuleBitsOfStoresBehind(const ValueContext& store, const FieldAccess& access)
 {
     RELEASE_ASSERT(access.slot.isOutOfLine());
     uint64_t bits = granuleBitOf(access.slot.offset);
-    auto add = [&](FieldAccessID id, ValueID stored) {
-        if (!id)
-            return;
-        const FieldAccess& later = m_placement.fieldAccess(id);
-        if (later.slot.isOutOfLine() && later.extensionWord.hasLocationOf(access.extensionWord) && needsStorageFor(later.slot, typeOf(stored)))
+    auto addAccess = [&](const FieldAccess& later, bool needsStorage) {
+        if (later.slot.isOutOfLine() && later.extensionWord.hasLocationOf(access.extensionWord) && needsStorage)
             bits |= granuleBitOf(later.slot.offset);
+    };
+    auto add = [&](FieldAccessID id, ValueID stored) {
+        if (id)
+            addAccess(m_placement.fieldAccess(id), needsStorageFor(m_placement.fieldAccess(id).slot, typeOf(stored)));
     };
 
     ValueID object = store->objectOperand();
@@ -539,11 +689,16 @@ uint64_t SlotAccessEmitter::granuleBitsOfStoresBehind(const ValueContext& store,
         if (use.kind != Use::Kind::Operand || use.user == store.id())
             continue;
         const Value& user = m_function.at(use.user);
-        bool mayAddField = user.opcode == Opcode::PutSlotOrAdd || user.opcode == Opcode::PutSlots;
+        bool mayAddField = user.opcode == Opcode::PutSlotOrAdd || user.opcode == Opcode::PutSlots || user.opcode == Opcode::DefineOwnProperty;
         if (!mayAddField || user.objectOperand() != object)
             continue;
         if (frequencies.frequencyOf(use.block).predicted() * 2 < frequency || !analyses().dominates(store.id(), use))
             continue;
+        if (user.opcode == Opcode::DefineOwnProperty) {
+            if (std::optional<FieldAccess> later = fieldCreatedByDefinition(user))
+                addAccess(*later, true);
+            continue;
+        }
         if (user.opcode == Opcode::PutSlotOrAdd) {
             add(user.fieldAccess(), user.valueOperand());
             continue;
@@ -692,7 +847,14 @@ bool SlotAccessEmitter::applyStoreBySlot(StateOfNewObject& state, const Value& s
     };
 
     LayoutSetID receivers;
-    if (store.opcode == Opcode::PutSlots) {
+    if (store.opcode == Opcode::DefineOwnProperty) {
+        std::optional<FieldAccess> access = fieldCreatedByDefinition(store);
+        if (!access)
+            return false;
+        state.mayHaveExtension |= access->slot.isOutOfLine();
+        createdKeys.append(access->key);
+        receivers = access->receivers;
+    } else if (store.opcode == Opcode::PutSlots) {
         PayloadListView<PlacedKey> placedKeys = store.placedKeys();
         std::span<const ValueID> stored = store.valuesOperands();
         if (placedKeys.size() != stored.size())
@@ -735,7 +897,9 @@ std::optional<StateOfNewObject> SlotAccessEmitter::stateOfNewObjectBefore(const 
                 if (id == object)
                     return stateAtBirth(id);
                 const Value& value = m_function.at(id);
-                if (storesBySlot.contains(value.opcode) && analyses().identityOf(value.objectOperand()) == object)
+                // A definition that finds the object new creates its field without asking the run time, as a store by slot does.
+                bool storesBySlotIntoObject = (storesBySlot.contains(value.opcode) || value.opcode == Opcode::DefineOwnProperty) && analyses().identityOf(value.objectOperand()) == object;
+                if (storesBySlotIntoObject)
                     storesOnTheWay.append(id);
                 else if (!leavesObjectsAsTheyAre(id))
                     return std::nullopt;

@@ -1,7 +1,7 @@
-# A runtime function number the built-ins table does not have
+# A runtime function the built-ins table does not have
 # RUN: print
 # DIAGNOSTIC: IRTextError
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="f" role=Library results=[{type=anything}]
-runtimefunction id=4294967000 function=f0
+runtimefunction id=NoSuchFunction function=f0

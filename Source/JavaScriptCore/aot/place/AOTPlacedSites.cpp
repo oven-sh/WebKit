@@ -263,7 +263,7 @@ private:
         }
     }
 
-    // `Object.defineProperty(exports, "name", { enumerable: true, get })`: the run time creates the field, and it comes where the definition stands among the stores.
+    // `Object.defineProperty(exports, "name", { enumerable: true, get })` creates the field, and it comes where the definition stands among the stores.
     void appendFieldCreationByDefinition(const Value& definition)
     {
         LayoutSetID receivers = knownSetOf(definition.objectOperand());
@@ -278,8 +278,11 @@ private:
             if (!m_context.isCompiledObject(member) || slots.layout(member).keysAreNeverEnumerated)
                 continue;
             std::optional<FieldIndex> field = m_program.at(member).findField(*key);
-            if (field && slots.slot(member, *field).hasStorage())
-                m_sites->fieldCreationsAsWritten.append(FieldCreationUse { member, { *field } });
+            if (!field || !slots.slot(member, *field).hasStorage())
+                continue;
+            m_sites->fieldCreationsAsWritten.append(FieldCreationUse { member, { *field } });
+            if (slots.slot(member, *field).canBeCreatedByStore())
+                m_sites->fieldCreations.append(FieldCreationUse { member, { *field } });
         }
     }
 
