@@ -186,6 +186,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 |---|---|
 | `stress/bun-async-context-propagation.js` | the embedder's async-context slot is captured when a job is scheduled and current while it runs |
 | `stress/bun-aot-builtins-table.js` | the ahead-of-time compiler's table of built-ins (`Source/JavaScriptCore/aot/builtins/*.builtins.ts`) agrees with the engine. **After a sync that removes, renames, moves or reimplements a built-in that the table knows this fails, and each line it prints names the entry to fix.** |
+| `complex/bun-stack-bounds-unreadable-stack-limit.js` (with its entry in `complex.yaml`, upstream's file, of which nothing else changes, and the helper `Tools/Scripts/jsc-stress-test-helpers/deny-prlimit64`) | under a seccomp filter that makes `prlimit64()` fail, so that `getrlimit(RLIMIT_STACK)` cannot be read, the bound of the main thread's stack is 8 MB below its origin: a nest of groups that fits in that compiles, and one that does not fit throws |
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
 | `stress/bun-object-assign-calls-indexed-setters-on-the-chain.js` | `Object.assign()` stores with `[[Set]]` on its fast path too: an indexed setter on the target's prototype chain is called, and a read-only element there refuses the store |
