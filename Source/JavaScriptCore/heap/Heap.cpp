@@ -720,6 +720,13 @@ void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyRe
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
         reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size - std::min(size, bytesAlreadyReported));
+#if USE(BUN_JSC_ADDITIONS)
+        // A resizable buffer holds the mappings of its reservation until it is collected, and the size above does not count them.
+        if (buffer->isResizableOrGrowableShared() && ++m_resizableArrayBuffersSinceCollectionRequest >= resizableArrayBuffersPerCollectionRequest) {
+            m_resizableArrayBuffersSinceCollectionRequest = 0;
+            collectAsync();
+        }
+#endif
     }
 }
 
