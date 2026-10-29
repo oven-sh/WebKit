@@ -44,6 +44,9 @@ constexpr bool readsFrameRecordOfCaller(StubFamily family)
     }
 }
 
+// A tail call by value gives up the frame that says which closure runs above it. The stubs that make one have a form of their own: StubAssembler::checkStackBeforeEnteringCallee().
+enum class CallPosition : uint8_t { Ordinary, Tail };
+
 class StubKey {
 public:
     static constexpr unsigned maxNumberOfForms = 64;

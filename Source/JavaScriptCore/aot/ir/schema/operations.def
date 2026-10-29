@@ -115,7 +115,7 @@ operation LogicalNot (value: Boolean/inspects) -> natural(boolean) ; none ; flow
 operation TypeOf (value: Any/inspects) -> natural(string) ; none ; runtime = TypeOf ; flow = TableProves
 operation ToString (value: Any/Converted, engine from Selected form: OperatorForm, engine calledBuiltin?: Builtin) -> natural(string) ; CreatesString by Operator ; runtime = ToString ; flow = TableProves ; hasOwnFoldingRule = true
 operation Strcat (parts...: Any/Converted) [| engine isLikelyKey] -> natural(string) ; CreatesString ; runtime = Concatenate ; flow = TableProves
-operation ToPropertyKey (value: Any/Converted, engine calledBuiltin?: Builtin) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; flow = TableProves ; flowRule = ToPropertyKey ; hasOwnFoldingRule = true
+operation ToPropertyKey (value: Any/Converted, engine calledBuiltin?: Builtin) -> natural(string | symbol) ; CreatesString ; runtime = ToKey ; replaces = CallBuiltin, NewObject, SetLiteralPrototype ; flow = TableProves ; flowRule = ToPropertyKey ; hasOwnFoldingRule = true
 operation ToObject (value: Any/returns, message?: String, engine calledBuiltin?: Builtin) -> natural(object) ; Allocates throws ; runtime = ToObject ; flow = Copies ; flowRule = ConversionToObject
 operation ToThis (value: Any/returns) -> natural(object) ; Allocates ; runtime = ToThis ; flow = Copies ; flowRule = ConversionToObject
 

@@ -225,7 +225,7 @@ static void testDumpedNames()
     AOT_TEST_CHECK(dumpedNameOf(equal(true)) == "Equal.Strict"_s);
     AOT_TEST_CHECK(dumpedNameOf(putById(PutMode::Define)) == "PutById.Define"_s);
     AOT_TEST_CHECK(dumpedNameOf(putById(PutMode::Define).withImmediate(17)) == "PutById.Define#17"_s);
-    AOT_TEST_CHECK(dumpedNameOf(callValue(2)) == "CallValue.n2"_s);
+    AOT_TEST_CHECK(dumpedNameOf(callValue(2)) == "CallValue.Ordinary.n2"_s && dumpedNameOf(callValue(2, CallPosition::Tail)) == "CallValue.InTailPosition.n2"_s);
     AOT_TEST_CHECK(dumpedNameOf(getById().withCallerFrame(CallerFrame::StubFrame)) == "GetById.StubFrame"_s);
     AOT_TEST_CHECK(dumpedNameOf(throwAtSite(ThrowSiteSource::FaultSite, CallerFrame::Frameless)) == "ThrowAtFault.Frameless"_s);
     AOT_TEST_CHECK(dumpedNameOf(StubKey(StubFamily::ArraySlice).withForm(4)) == "ArraySlice.<no form 4>"_s);

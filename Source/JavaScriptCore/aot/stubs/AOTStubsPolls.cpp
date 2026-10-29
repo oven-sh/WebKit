@@ -38,11 +38,17 @@ static void callPollBeforeEntering(StubAssembler& jit, unsigned bytesAboveSavedR
         return;
     }
     constexpr GPRReg A2 = gprOf(StubRegister::A2);
-    static_assert(noOverlap(calleeGPR, A0, A1, A2));
+    constexpr GPRReg A3 = gprOf(StubRegister::A3);
+    static_assert(noOverlap(calleeGPR, A0, A1, A2, A3));
     // A call by value passes nothing in a floating-point register and keeps nothing in one.
     jit.preservingRegistersClobberedBy(StubCallee::Operation, false, RegisterSet::allFPRs(), [&](unsigned bytes) {
         jit.move(calleeGPR, A1);
         jit.addPtr(TrustedImm32(bytes + bytesAboveSavedRegisters), sp, A2);
+        // On x86-64 this stub has a frame record of its own.
+        if (isX86())
+            jit.loadPtr(Address(fp), A3);
+        else
+            jit.move(fp, A3);
         jit.move(instanceGPR, A0);
         jit.callOperation(Entry::operationAOTPollBeforeEnteringFunctionObject, T11);
     });

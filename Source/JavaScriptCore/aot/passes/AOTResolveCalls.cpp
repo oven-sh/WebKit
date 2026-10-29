@@ -270,7 +270,7 @@ Value makeDirectCall(const ValueInsertion& insertion, const DirectCallRequest& r
     const Function& callee = program.at(request.callee);
     RELEASE_ASSERT(request.captures.size() == callee.captures.size());
     RELEASE_ASSERT(request.calleeValue || !callee.has(FunctionFlags::TakesCallee));
-    RELEASE_ASSERT(!callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) || insertion.function.role == FunctionRole::GenericEntrypoint || request.callsOwnFunctionObject);
+    RELEASE_ASSERT(request.calleeKeptInFrame || !callee.capabilities.contains(FunctionCapabilities::RecordsCallee) || callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) || insertion.function.role == FunctionRole::GenericEntrypoint || request.callsOwnFunctionObject);
     RELEASE_ASSERT(!request.restArray || callee.has(FunctionFlags::HasRestParameter));
 
     auto insert = [&](Value&& value) { return insertWithOrigin(insertion, WTF::move(value)); };
@@ -457,6 +457,17 @@ bool mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(const Program& program, F
         return mayBeCalledDirectlyOrThroughEntrypoint(program, id);
     // The tests at the head of a function stay where the entrypoint alone enters them.
     return callee.capabilities.contains(FunctionCapabilities::RecordsCalleeOnceRenamed) && callee.role != FunctionRole::EntryChecks && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
+}
+
+// A function that can leave by a tail call may have another of its function objects run above the call.
+bool mayBeCalledDirectlyWhereCalleeIsKept(const Program& program, FunctionID id)
+{
+    if (mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, id))
+        return true;
+    FunctionID source = id;
+    while (FunctionID next = program.at(source).derivation.source)
+        source = next;
+    return program.at(source).has(FunctionCapabilities::MakesNoTailCall) && program.at(id).role != FunctionRole::EntryChecks && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
 }
 
 bool mayBeCalledDirectlyOrThroughEntrypoint(const Program& program, FunctionID id)
@@ -2122,7 +2133,7 @@ struct CallResolver {
         CalleeCandidates candidates = calleeCandidatesOf(context, call, call.calleeOperand(), site.position.block);
         // Once a function object gets a name where the compiler cannot see it, a frame is named by the function object that was called. The caller keeps it in its own frame, which a tail call gives up.
         if (!isTailCall(function, site.position) && !call.isTailCall) {
-            auto members = chooseDispatchedCallees(site, candidates, mayBeCalledDirectlyWhileFunctionNamesAreUnchanged);
+            auto members = chooseDispatchedCallees(site, candidates, mayBeCalledDirectlyWhereCalleeIsKept);
             if (!members)
                 return std::unexpected(members.error());
             auto arms = members->map<Vector<CallArm, 4>>([&](FunctionID member) {
@@ -2322,7 +2333,7 @@ struct CallResolver {
         bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only) || (recordsCalleeOnlyOnceRenamed(only) && flow.closuresMayBeNamedOutOfSight(only));
         bool keepsCalleeInFrame = false;
         if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only)))) {
-            if (call.isTailCall || !mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(program, only))
+            if (call.isTailCall || !mayBeCalledDirectlyWhereCalleeIsKept(program, only))
                 return nullptr;
             callsOwnFunctionObject = false;
             keepsCalleeInFrame = true;
@@ -3366,7 +3377,7 @@ static bool keepsFrameOfCaller(TestSiteReporter& reporter)
 
 static bool mayBeCalledDirectlyAt(TestSiteReporter& reporter, FunctionID function)
 {
-    return keepsFrameOfCaller(reporter) ? mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(reporter.program(), function) : mayBeCalledDirectly(reporter.program(), function);
+    return keepsFrameOfCaller(reporter) ? mayBeCalledDirectlyWhereCalleeIsKept(reporter.program(), function) : mayBeCalledDirectly(reporter.program(), function);
 }
 
 static void reportClosureTest(TestSiteReporter& reporter, ValueID callee, FunctionID function)

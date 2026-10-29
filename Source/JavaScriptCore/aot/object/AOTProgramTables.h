@@ -142,6 +142,8 @@ struct ProgramTables {
     static constexpr uint32_t expectedMagic = 0x44505943;
     static constexpr uint32_t mayRunInMultipleInstances = 1;
     static constexpr uint32_t neverReadsLegacyRegExpStatics = 2;
+    // Of functions that record their callee from the start. Such a function may run without a record.
+    static constexpr uint32_t callersKeepCallees = 4;
 
     uint32_t magic;
     uint32_t flags;

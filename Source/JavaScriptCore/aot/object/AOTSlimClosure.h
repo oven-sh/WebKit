@@ -152,6 +152,8 @@ public:
     unsigned numberOfReferences() const { return captureCountsOf(function()).references; }
     State& state() const;
     JSValue lookForNameProperty(VM&);
+    // ClosureWord::isRenamedBit.
+    void markRenamed() { setPerCellBit(true); }
 
 private:
     ReifiedSlimClosure() = delete;

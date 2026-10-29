@@ -54,43 +54,53 @@ static const RuntimeType& runtimeTypeAt(Instance* instance, uint32_t type)
     return *result;
 }
 
-// A caller that enters a function without its function object keeps the object in a word of its own frame. An indirect tail call from the entered function returns to the same place, and the word identifies what runs there now.
-SUPPRESS_ASAN static bool keepCalleeInFrameOfCaller(VM& vm, FunctionTables& tables, JSCell* callee, void* stackPointerOfCaller)
+// A tail call by value gives up a frame and returns to where that frame would have returned. Whoever holds the closure that runs above that place holds the callee from now on:
+// a caller that entered a function without its closure has a word for it in its own frame, and the adapter has the callee slot of its frame.
+SUPPRESS_ASAN static void passHolderToCalleeOfTailCall(VM& vm, FunctionTables& tables, JSCell* callee, void* stackPointerOfCaller, CallFrame* framePointerOfCaller)
 {
     std::optional<FunctionID> function = functionOf(callee);
     if (!function || !tables.recordsCalleesOf(*function))
-        return false;
+        return;
     // generatePollBeforeEntering() has the call's return address on the stack: where the call pushed it, or below the stub's.
     const void* returnAddress = removeCodePtrTag(static_cast<void* const*>(stackPointerOfCaller)[isX86() ? -1 : -2]);
     const VMState& state = vm.aotState();
     const CallSiteCache::Entry* site = state.callSiteCache->resolve(*state.image, returnAddress);
-    if (!site || site->isStubReturnSite())
-        return false;
+    while (site && site->isStubReturnSite() && site->stubFrameKind == StubFrameKind::ArgumentList) {
+        auto* record = reinterpret_cast<CallerFrameAndPC*>(framePointerOfCaller);
+        stackPointerOfCaller = record + 1;
+        framePointerOfCaller = record->callerFrame;
+        site = state.callSiteCache->resolve(*state.image, removeCodePtrTag(record->returnPC));
+    }
+    if (!site)
+        return;
+    if (site->isStubReturnSite()) {
+        if (site->stubFrameKind == StubFrameKind::Adapter)
+            framePointerOfCaller->setCallee(asObject(callee));
+        return;
+    }
     std::optional<CalleeOfSite> said = state.image->calleeOfSiteAt(site->code.index(), site->site.callSite);
-    // The function that leaves may have been inlined, whole or its entrypoint alone. The word is that of the inlined frame, and the stack walk reads it for a frame of the same function.
-    if (!said && site->site.isTailCall() && FunctionDescription(site->innermostFunction).sourceFunction() == sourceFunctionOf(*function))
+    // The tail call of a function that was inlined is a call of the machine, and the word is that of the inlined frame.
+    if (!said && site->site.isTailCall())
         said = calleeOfCopiedFrame(*state.image, state.callSiteCache->inlineFrames(), site->code, { site->innermostFunction, site->site.callSite, site->site.inlineFrame, site->innermostIsInlinedConstructCall, false });
     if (!said || said->isOwnFunctionObject())
-        return false;
+        return;
     auto* frameRecord = reinterpret_cast<JSCell**>(static_cast<char*>(stackPointerOfCaller) + site->frame.frameSizeInBytes() - site->frame.bytesAboveFrameRecord());
     frameRecord[said->wordInFrame()] = callee;
-    return true;
 }
 
-// The limit that sends a call here lies above every frame once calls by value record their callees.
-static bool recordCalleeInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller)
+// The limit that sends a tail call here lies above every frame once a closure was renamed.
+static bool passHolderInsteadOfPolling(Instance* instance, JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller)
 {
     FunctionTables& tables = FunctionTables::of(*instance->vm);
     if (!tables.recordsCalleesOfCallsByValue())
         return false;
-    if (!keepCalleeInFrameOfCaller(*instance->vm, tables, callee, stackPointerOfCaller))
-        tables.recordCalleeOfCallByValue(*instance->vm, stackPointerOfCaller, asObject(callee));
+    passHolderToCalleeOfTailCall(*instance->vm, tables, callee, stackPointerOfCaller, static_cast<CallFrame*>(framePointerOfCaller));
     return stackPointerOfCaller >= instance->stackMirror.get().trapAwareSoftStackLimit();
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller))
+JSC_DEFINE_JIT_OPERATION(operationAOTPollBeforeEnteringFunctionObject, void, (Instance* instance, JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller))
 {
-    if (recordCalleeInsteadOfPolling(instance, callee, stackPointerOfCaller))
+    if (passHolderInsteadOfPolling(instance, callee, stackPointerOfCaller, framePointerOfCaller))
         return ExceptionOperationImplicitResult<void> { nullptr };
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPollBeforeEnteringFunctionObject);
     vm.traps().handleTraps(VMTraps::AsyncEvents);

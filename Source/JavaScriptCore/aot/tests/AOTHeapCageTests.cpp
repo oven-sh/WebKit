@@ -316,6 +316,56 @@ static void testRangeGrowsBySegments()
 }
 
 #if OS(LINUX) && USE(MIMALLOC)
+static bool canRead(uintptr_t address)
+{
+    int ends[2];
+    AOT_TEST_CHECK(!pipe(ends));
+    bool result = write(ends[1], std::bit_cast<const void*>(address), 1) == 1;
+    close(ends[0]);
+    close(ends[1]);
+    return result;
+}
+
+static void testRangeReservedWholeHasAccessInItsSegmentsOnly()
+{
+    if (!bmalloc::api::isEnabled())
+        return;
+    constexpr size_t size = GB;
+    ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
+        .name = "Range reserved whole"_s,
+        .size = size,
+        .minSize = size,
+        .alignment = GB,
+        .unusedPrefixSize = blockSize,
+        .placement = ReservedRangeHeap::Placement::RandomWindow,
+        .initialAccess = ReservedRangeHeap::InitialAccess::None,
+    });
+    AOT_TEST_CHECK(range && range->size() == size && range->reservedSize() == size && range->initialSegmentSize() == size);
+    AOT_TEST_CHECK(!canRead(range->start()) && canRead(range->start() + blockSize) && !canRead(range->start() + size / 2) && !canRead(range->start() + size - blockSize));
+
+    // Larger than the first segment.
+    void* large = range->tryAllocate(200 * MB);
+    AOT_TEST_CHECK(large && isInside(*range, large, 200 * MB));
+    fill(large, 64, 7);
+    AOT_TEST_CHECK(isFilled(large, 64, 7));
+    range->free(large);
+
+    Vector<void*> blocks;
+    while (blocks.size() * blockSize < size / 8) {
+        void* block = range->tryAllocateAligned(blockSize, blockSize);
+        AOT_TEST_CHECK(block && isInside(*range, block, blockSize) && !(std::bit_cast<uintptr_t>(block) % blockSize));
+        fill(block, 64, static_cast<uint8_t>(blocks.size()));
+        blocks.append(block);
+    }
+    AOT_TEST_CHECK(!canRead(range->start()) && range->reservedSize() == size);
+    for (size_t index = 0; index < blocks.size(); ++index)
+        AOT_TEST_CHECK(isFilled(blocks[index], 64, static_cast<uint8_t>(index)));
+
+    // The last segment ends where the range ends.
+    while (range->tryAllocateAligned(blockSize, blockSize)) { }
+    AOT_TEST_CHECK(canRead(range->start() + size - blockSize));
+}
+
 // A range returns its free memory at malloc's pace and touches nothing that another range has freed, so threads that end together do not wait for one another.
 static void testReleasingFreeMemoryPurgesNoOtherRange()
 {
@@ -1406,6 +1456,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/exhaustion-returns-null"_s, testExhaustionReturnsNull },
         { "heap-cage/reserved-range/grows-by-segments"_s, testRangeGrowsBySegments },
 #if OS(LINUX) && USE(MIMALLOC)
+        { "heap-cage/reserved-range/reserved-whole-has-access-in-its-segments-only"_s, testRangeReservedWholeHasAccessInItsSegmentsOnly },
         { "heap-cage/reserved-range/releasing-free-memory-purges-no-other-range"_s, testReleasingFreeMemoryPurgesNoOtherRange },
 #endif
         { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },

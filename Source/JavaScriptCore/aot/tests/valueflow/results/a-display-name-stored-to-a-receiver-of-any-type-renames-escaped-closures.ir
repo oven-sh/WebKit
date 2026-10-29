@@ -4,7 +4,7 @@
 # FORM: AsRead
 # RUN: pipeline CreateEntrypoints
 # CHECK-LABEL: function f2 name="made"
-# CHECK: RecordsCallee, RecordsCalleeOnceRenamed
+# CHECK: RecordsCallee, NotesLooksForName
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

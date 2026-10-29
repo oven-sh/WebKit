@@ -368,9 +368,9 @@ static constexpr PassSet optionalPassesOfCompactFunctions {
     PassID::RemoveTrivialParameters, PassID::EliminateDeadCode, PassID::RemoveRedundantHandlers, PassID::RetypeValues, PassID::CompactBlocks, PassID::ResolveAwaitedCalls,
 };
 
-static constexpr PassSet optionalPassesOfGenericVersions = optionalPassesOfCompactFunctions | PassSet { PassID::InsertObjectCoercibleChecks, PassID::EliminateRedundantReads };
+static constexpr PassSet optionalPassesOfGenericVersions = optionalPassesOfCompactFunctions | PassSet { PassID::InsertObjectCoercibleChecks, PassID::EliminateRedundantReads, PassID::ExpandOwnKeys };
 
-static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfCompactFunctions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths };
+static constexpr PassSet optionalPassesOfColdAsyncFunctions = optionalPassesOfCompactFunctions | PassSet { PassID::PlaceTypeTests, PassID::InsertObjectCoercibleChecks, PassID::SinkAllocations, PassID::FinishBirths, PassID::ExpandOwnKeys };
 
 // An async function waits between its steps, so what it costs is seldom its own code.
 static const PassSet* optionalPassesOfShortScheduleFor(const Function& function, bool hasNoWarmCode, bool isCompact)
@@ -401,8 +401,10 @@ PassOutcome PassRunner::runSchedule(FunctionSchedule schedule, const Program& pr
     const bool readsHeat = schedule == FunctionSchedule::Prepare || schedule == FunctionSchedule::Optimize;
     const bool hasNoWarmCode = readsHeat && !inputs.heat.hasWarmCode(program, id).predicted();
     run.optionalPassesOfShortSchedule = optionalPassesOfShortScheduleFor(function, hasNoWarmCode, readsHeat && inputs.heat.isCompact(program, id).predicted());
-    if (run.optionalPassesOfShortSchedule)
+    if (run.optionalPassesOfShortSchedule) {
         run.maxRounds = maxRoundsOfShortSchedule;
+        context.isShortSchedule = true;
+    }
     if (contents) {
         RELEASE_ASSERT(!m_build.options().verifiesAfterEveryPass || *contents == contentsOf(function));
         run.setContents(*contents, function);

@@ -73,7 +73,7 @@ struct JSONLevelWords {
     ZeroedStorage<StackManager::Mirror> limit;
 };
 
-// A stub that is about to jump into the code of a function object compares the stack pointer with this limit. It is the limit of the stack, or lies above every frame from the time on that such calls record their callees.
+// A stub that makes a tail call by value compares the stack pointer with this limit. It is the limit of the stack, or lies above every frame once the run time has seen a function object get a name.
 struct CallByValueWords {
     ZeroedStorage<StackManager::Mirror> limit;
     // FunctionTables::isRenamedAtRunTime.
@@ -466,7 +466,7 @@ static_assert(sizeof(UniquedStringImpl) == 24, "The image holds a header of this
 
 JS_EXPORT_PRIVATE JSCell* livenessToken(Instance*);
 // From now on every stub that is about to jump into the code of a function object polls first.
-void makeCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
+void makeTailCallsByValuePoll(Instance&, const uint8_t* isRenamedAtRunTime);
 
 } } // namespace JSC::AOT
 

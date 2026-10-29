@@ -109,6 +109,6 @@ function f2 name="addAll" module=m0 position=104 flags=[IsChecked, HasExplicitNa
 # NONE-NOT: Branch(
 # NONE-LABEL: end of function
 # CALLS-LABEL: f2: size=
-# CALLS-NEXT: stub CallWithArray x1
+# CALLS-NEXT: stub CallWithArray.InTailPosition x1
 # CALLS-NEXT: stub ClosureOfTable x1
 # CALLS-NEXT: f{{*}}: size=

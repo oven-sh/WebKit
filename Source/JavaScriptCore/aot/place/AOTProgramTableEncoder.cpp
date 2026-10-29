@@ -2971,7 +2971,8 @@ EncodedProgramTables encodeProgramTables(const ProgramTableInputs& inputs, Build
     const ShapeTable& shapes = encoder.placement.shapes();
     ClosureFunctionRange closureFunctions = encoder.placement.closureFunctions();
     header.magic = ProgramTables::expectedMagic;
-    header.flags = (encoder.flow.programInstances() == ProgramInstances::AtMostOne ? 0 : ProgramTables::mayRunInMultipleInstances) | (encoder.flow.mayReadLegacyRegExpStatics() ? 0 : ProgramTables::neverReadsLegacyRegExpStatics);
+    header.flags = (encoder.flow.programInstances() == ProgramInstances::AtMostOne ? 0 : ProgramTables::mayRunInMultipleInstances) | (encoder.flow.mayReadLegacyRegExpStatics() ? 0 : ProgramTables::neverReadsLegacyRegExpStatics)
+        | (std::ranges::any_of(encoder.program.functions, [](const Function& function) { return function.has(FunctionCapabilities::MakesNoTailCall); }) ? ProgramTables::callersKeepCallees : 0);
     header.instanceSizes = inputs.instanceSizes;
     header.numberOfShapes = shapes.numberOfShapes();
     header.firstEnvironmentShape = shapes.firstEnvironmentShape();

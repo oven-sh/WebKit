@@ -82,7 +82,7 @@ private:
         void* mallocArena { nullptr };
     };
 
-    ReservedRangeHeap(uintptr_t start, size_t, const Backing&, const Request&);
+    ReservedRangeHeap(uintptr_t start, size_t, size_t reservedSize, const Backing&, const Request&);
     ~ReservedRangeHeap() = delete;
 
     static uintptr_t tryReserve(size_t, const Request&);
@@ -104,6 +104,8 @@ private:
     const size_t m_initialSegmentSize;
     const BackEnd m_backEnd;
     const bool m_isGrowable;
+    // All of the range is reserved, and a new segment only gets access.
+    const bool m_isReservedWhole;
     const OSAllocator::Usage m_usage;
     const ASCIILiteral m_name;
     std::atomic<void*> m_mallocHeap;

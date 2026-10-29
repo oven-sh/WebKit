@@ -38,9 +38,14 @@
 #include "TopExceptionScope.h"
 #include <stdlib.h>
 #include <wtf/DataLog.h>
+#include <wtf/HexNumber.h>
 #include <wtf/NoTailCalls.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/MakeString.h>
+
+#if OS(UNIX)
+#include <dlfcn.h>
+#endif
 
 namespace JSC { namespace AOT {
 
@@ -982,6 +987,18 @@ static void checkAdapterAboveResumedFrameWritesItsSaveArea(LoadedProgram& progra
 static const uint64_t* frameOfJobCaller;
 static unsigned numberOfJobEntriesRead;
 
+static String describeCodeAddress(const void* address)
+{
+#if OS(UNIX)
+    Dl_info info;
+    if (dladdr(address, &info) && info.dli_fbase) {
+        size_t offset = static_cast<const uint8_t*>(address) - static_cast<const uint8_t*>(info.dli_fbase);
+        return makeString(String::fromUTF8(info.dli_sname ? info.dli_sname : "a function without an exported name"), ", at "_s, hex(offset), " in "_s, String::fromUTF8(info.dli_fname));
+    }
+#endif
+    return makeString("code at "_s, hex(std::bit_cast<uintptr_t>(address)));
+}
+
 static JSC_DECLARE_HOST_FUNCTION(readFramesBelowJobCaller);
 JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* callFrame))
 {
@@ -989,13 +1006,21 @@ JSC_DEFINE_HOST_FUNCTION(readFramesBelowJobCaller, (JSGlobalObject*, CallFrame* 
         return JSValue::encode(jsNumber(1));
     auto* frame = reinterpret_cast<const uint64_t*>(callFrame);
     unsigned numberOfFrames = 0;
+    unsigned numberOfUnwrittenWords = 0;
     while (*reinterpret_cast<const uint64_t* const*>(frame) != frameOfJobCaller) {
-        frame = *reinterpret_cast<const uint64_t* const*>(frame);
+        // The words between two frame records belong to the caller, and the callee returns into it.
+        auto* frameOfCaller = *reinterpret_cast<const uint64_t* const*>(frame);
+        for (auto* word = frame + 2; word < frameOfCaller; ++word) {
+            if (*word != wordOfDeadStack)
+                continue;
+            ++numberOfUnwrittenWords;
+            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
+        }
+        frame = frameOfCaller;
         AOT_TEST_CHECK(++numberOfFrames < 12);
     }
-    unsigned numberOfUnwrittenWords = 0;
-    for (auto* word = reinterpret_cast<const uint64_t*>(callFrame); word < frame; ++word)
-        numberOfUnwrittenWords += *word == wordOfDeadStack;
+    if (numberOfUnwrittenWords)
+        dataLogLn(numberOfUnwrittenWords, " unwritten words in ", numberOfFrames, " frames");
 #if CPU(ARM64)
     // Registers are saved in pairs: a frame that saves an odd number of them has a word of padding.
     AOT_TEST_CHECK(numberOfUnwrittenWords <= numberOfFrames);

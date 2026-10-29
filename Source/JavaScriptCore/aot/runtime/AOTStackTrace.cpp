@@ -718,7 +718,7 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
     }
     // A return address does not say which function object runs in the frame.
     FunctionTables& tables = FunctionTables::of(vm);
-    bool hasRecordedCallees = tables.hasRecordedCallees() || tables.recordsCalleesOfCallsByValue();
+    bool hasRecordedCallees = tables.framesMayBeNamedByCallee();
     Instance* instance = findInstance(vm, *start);
     if (!instance)
         return nullptr;
@@ -961,7 +961,7 @@ static ALWAYS_INLINE bool forEachShownFrameOfRun(VM& vm, RunWalk& walk, bool cal
 {
     ASSERT(!walk.isAtEnd());
     FunctionTables& tables = FunctionTables::of(vm);
-    bool namesFramesByCallee = tables.hasRecordedCallees() || tables.recordsCalleesOfCallsByValue();
+    bool namesFramesByCallee = tables.framesMayBeNamedByCallee();
 
     InlineFrameReader& reader = vm.aotState().callSiteCache->inlineFrames();
 

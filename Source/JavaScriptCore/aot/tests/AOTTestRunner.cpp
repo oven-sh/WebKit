@@ -18,9 +18,12 @@
 #include "AOTTestSubcommands.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include "JSCConfig.h"
+#include "Options.h"
 #include <algorithm>
 #include <wtf/FileSystem.h>
 #include <wtf/NumberOfCores.h>
+#include <wtf/Scope.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/MakeString.h>
 
@@ -296,6 +299,14 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
     for (const String& word : variant.optionWords) {
         if (std::optional<String> sentence = applyOptionWord(options, word))
             failures.append(TestFailure { 1, WTF::move(*sentence) });
+    }
+    OptionsStorage optionsOfProcess = g_jscConfig.options;
+    auto restoreOptionsOfProcess = makeScopeExit([&] {
+        g_jscConfig.options = optionsOfProcess;
+    });
+    for (const OptionWord& option : file.jscOptions) {
+        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), /* verify = */ false))
+            failures.append(TestFailure { option.line, makeString("unknown JSC option "_s, option.word) });
     }
     if (!failures.isEmpty())
         return failures;

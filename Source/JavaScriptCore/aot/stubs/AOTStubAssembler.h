@@ -165,9 +165,11 @@ public:
     void checkStackBeforeEntering(GPRReg endOfFrame);
     // The next thing is a jump into the code of the function object in calleeGPR, with the stack as at the entry of this stub.
     void checkStackBeforeEnteringCallee();
+    CallPosition callPosition() const { return m_callPosition; }
+    void setCallPosition(CallPosition position) { m_callPosition = position; }
     // In a frame of this stub, ahead of the call that returns to the label. What the poll throws leaves the frame as if the callee had thrown it.
     void pollBeforeCall(Label returnSite);
-    static Address limitOfCallsByValue();
+    static Address limitOfTailCallsByValue();
     static Address softStackLimitWord();
     static Address trapAwareSoftStackLimitWord();
 
@@ -337,6 +339,7 @@ private:
     RelocationRecorder m_relocations;
 
     StubKey m_key;
+    CallPosition m_callPosition { CallPosition::Ordinary };
     StubSignature m_signature;
     StubRecording m_recording;
     RegisterSet m_allocated;

@@ -118,6 +118,8 @@ struct FunctionPassContext {
     // Where in a schedule the running pass stands: in the rounds of a fixpoint, at a step for what was left for later, or neither.
     bool isInRounds { false };
     bool isBehindRounds { false };
+    // The schedule leaves out most optional passes, and those that run keep the code small.
+    bool isShortSchedule { false };
     bool hasUsesAwaitingExpansion { false };
     bool hasCountersConvertedSinceTestsWerePlaced { false };
     // The opcodes of the values in the blocks where the run of a pass begins, for a pass that the runner starts by what the body holds.

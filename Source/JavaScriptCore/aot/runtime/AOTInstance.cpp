@@ -337,7 +337,7 @@ static void* loopPollPage(Instance* instance)
 }
 #endif
 
-void makeCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunTime)
+void makeTailCallsByValuePoll(Instance& instance, const uint8_t* isRenamedAtRunTime)
 {
     StackManager::Mirror& limit = instance.callsByValue.limit.get();
     if (!limit.isOnList())
@@ -354,7 +354,7 @@ static void registerStackMirror(Instance* instance, VM& vm)
     vm.traps().registerMirror(instance->jsonLevels.limit.get());
     vm.traps().registerMirror(instance->callsByValue.limit.get());
     if (FunctionTables* tables = vm.aotState().functionTables.get(); tables && tables->recordsCalleesOfCallsByValue())
-        makeCallsByValuePoll(*instance, tables->isRenamedAtRunTime.load(std::memory_order_acquire));
+        makeTailCallsByValuePoll(*instance, tables->isRenamedAtRunTime.load(std::memory_order_acquire));
 #if CPU(X86_64) && (OS(LINUX) || OS(WINDOWS))
     VMState::LoopPollPages& loopPollPages = vm.aotState().loopPollPages;
     // The list grows outside the lock: a request to malloc may tell this thread that it owes an error, which takes the lock. This thread alone changes the list.

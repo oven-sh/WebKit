@@ -156,6 +156,7 @@ private:
     void collectCalls();
     void choosePositions(const FlowResultTables&);
     void collectWriters(const FlowResultTables&);
+    void addSharedWriters(NOESCAPE const ScopedLambda<bool(const CallByValue&)>& sharesWriters);
     BitVector collectWritersOfMaps(ValueFlowHeapView&);
     std::optional<uint32_t> indexOfMap(ValueFlowObjectID) const;
     const ReadOfMaps* readOfMapsAt(FunctionID caller, ValueID site) const;
@@ -550,6 +551,89 @@ void NumbersOfPositions::choosePositions(const FlowResultTables& tables)
     });
 }
 
+// Appends, for each set of many callees and each argument position, the arguments that calls of the set pass there. A parameter with no other writer uses that range as it is.
+void NumbersOfPositions::addSharedWriters(NOESCAPE const ScopedLambda<bool(const CallByValue&)>& sharesWriters)
+{
+    const Program& program = m_inputs.program;
+    struct SharedRange {
+        uint32_t set;
+        uint32_t argument;
+        uint32_t firstWriter { 0 };
+        uint32_t endOfWriters { 0 };
+    };
+    using Argument = std::tuple<uint32_t, uint32_t, FunctionID, ValueID>;
+    Vector<Argument> arguments;
+    for (const CallByValue& call : m_calls) {
+        if (!sharesWriters(call))
+            continue;
+        std::span<const ValueID> operands = program.at(call.caller).at(call.site).variadicOperands();
+        for (uint32_t argument = 0; argument < operands.size(); ++argument)
+            arguments.append({ call.callees.index(), argument, call.caller, operands[argument] });
+    }
+    if (arguments.isEmpty())
+        return;
+    AOT::sort(arguments);
+    removeRepeatedElements(arguments);
+
+    Vector<SharedRange> ranges;
+    for (auto [set, argument, function, value] : arguments) {
+        if (ranges.isEmpty() || ranges.last().set != set || ranges.last().argument != argument)
+            ranges.append({ set, argument, static_cast<uint32_t>(m_writers.size()), static_cast<uint32_t>(m_writers.size()) });
+        m_writers.append({ UINT32_MAX, function, value });
+        ranges.last().endOfWriters = m_writers.size();
+    }
+
+    // The ranges that reach each followed parameter.
+    Vector<std::pair<uint32_t, uint32_t>> rangesOfPositions;
+    for (uint32_t first = 0; first < ranges.size();) {
+        uint32_t end = first;
+        while (end < ranges.size() && ranges[end].set == ranges[first].set)
+            ++end;
+        m_inputs.sets().forEachMember(ValueSetID(ranges[first].set), [&](ValueFlowObjectID member) {
+            FunctionID id = m_inputs.universe().closureFunction(member);
+            if (!id)
+                return;
+            const Function& callee = program.at(id);
+            uint32_t firstPosition = m_firstEntryParameter[id.index()] + callee.firstParameterIndex();
+            for (uint32_t range = first; range < end && ranges[range].argument < callee.numberOfPositionalParameters(); ++range) {
+                if (m_isFollowed.quickGet(firstPosition + ranges[range].argument))
+                    rangesOfPositions.append({ firstPosition + ranges[range].argument, range });
+            }
+        });
+        first = end;
+    }
+    AOT::sort(rangesOfPositions);
+    removeRepeatedElements(rangesOfPositions);
+
+    size_t next = 0;
+    for (FollowedPosition& followed : m_followed) {
+        size_t first = next;
+        while (next < rangesOfPositions.size() && rangesOfPositions[next].first == followed.position)
+            ++next;
+        if (first == next)
+            continue;
+        if (next - first == 1 && followed.firstWriter == followed.endOfWriters) {
+            followed.firstWriter = ranges[rangesOfPositions[first].second].firstWriter;
+            followed.endOfWriters = ranges[rangesOfPositions[first].second].endOfWriters;
+            continue;
+        }
+        Vector<Writer> merged;
+        auto add = [&](uint32_t firstWriter, uint32_t endOfWriters) {
+            for (const Writer& writer : m_writers.subspan(firstWriter, endOfWriters - firstWriter))
+                merged.append({ followed.position, writer.function, writer.value });
+        };
+        add(followed.firstWriter, followed.endOfWriters);
+        for (size_t index = first; index < next; ++index)
+            add(ranges[rangesOfPositions[index].second].firstWriter, ranges[rangesOfPositions[index].second].endOfWriters);
+        AOT::sort(merged);
+        removeRepeatedElements(merged);
+        followed.firstWriter = m_writers.size();
+        m_writers.appendVector(merged);
+        followed.endOfWriters = m_writers.size();
+    }
+    RELEASE_ASSERT(next == rangesOfPositions.size());
+}
+
 void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
 {
     const Program& program = m_inputs.program;
@@ -600,8 +684,15 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
                 add(m_firstResult[id.index()], terminator.valueOperand());
         }
     });
+    // The same arguments reach every callee of a call. With many callees they are listed once for each set of callees, below: n calls of any of n functions would be n * n writers.
+    AOT_THRESHOLD(size_t, minCalleesOfSharedWriters, 16);
+    auto sharesWriters = [&](const CallByValue& call) {
+        return m_inputs.sets().size(call.callees) >= minCalleesOfSharedWriters;
+    };
     m_writers.appendVector(collectInParallel<Writer>(m_inputs.loops(), m_calls.size(), [&](unsigned index, Vector<Writer>& writers) {
         const CallByValue& call = m_calls[index];
+        if (sharesWriters(call))
+            return;
         std::span<const ValueID> arguments = program.at(call.caller).at(call.site).variadicOperands();
         m_inputs.sets().forEachMember(call.callees, [&](ValueFlowObjectID member) {
             FunctionID id = m_inputs.universe().closureFunction(member);
@@ -636,6 +727,7 @@ void NumbersOfPositions::collectWriters(const FlowResultTables& tables)
         m_followed.append({ static_cast<uint32_t>(position), first, writer });
     }
     RELEASE_ASSERT(writer == m_writers.size());
+    addSharedWriters(sharesWriters);
 
     m_numbersByRules = Vector<ValueFlowNumbers>(m_writers.size(), [](size_t) { return ValueFlowNumbers::any(); });
     m_rulesHaveMoved = Vector<uint8_t>(FillWith { }, m_writers.size(), static_cast<uint8_t>(0));

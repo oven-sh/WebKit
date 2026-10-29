@@ -916,6 +916,8 @@ ReifiedSlimClosure* SlimClosure::becomeReified(VM& vm, Structure* structure, std
     static_assert(offsetOfWord() == butterflyOffset());
     RELEASE_ASSERT(structure->outOfLineCapacity() == values.size() && getPrototypeDirect() == structure->storedPrototype());
     bool takesName = nameWasLookedFor();
+    // ReifiedSlimClosure::markRenamed().
+    setPerCellBit(false);
     Butterfly* butterfly = Butterfly::createUninitialized(vm, this, 0, values.size(), false, 0);
     for (unsigned i = 0; i < values.size(); ++i)
         butterfly->propertyStorage()[offsetInOutOfLineStorage(firstOutOfLineOffset + i)].setWithoutWriteBarrier(values[i]);

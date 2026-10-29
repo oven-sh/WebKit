@@ -1241,6 +1241,15 @@ void setExactReceivers(Value& slotOperation, LayoutID layout, TypeArena& types)
     slotOperation.setReceivers(types.completeLayoutSet(singleElementSpan(layout)));
 }
 
+static bool isListedByAllocation(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
+{
+    bool isListed = false;
+    forEachInitialField(context, description, [&](const VirtualField& initialField, ValueID) {
+        isListed |= initialField == field;
+    });
+    return isListed;
+}
+
 SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
 {
     const Program& program = context.program;
@@ -1258,8 +1267,10 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
     case VirtualObjectKind::Object: {
         std::optional<uint32_t> layoutField = field.kind == VirtualFieldKind::Named ? layoutFieldOf(program, description, field) : std::nullopt;
         // The read of a slot that defers its closure creates the closure and stores it.
+        // A field that is always filled is filled once the object is finished. The load may stand earlier, so the allocation itself has to fill the field.
         isSafe = layoutField && canReadSlotWithoutGuard(program, description, *layoutField)
-            && flowOf(program, { description.layout, *layoutField }).location.deferral == ClosureDeferral::Unknown;
+            && flowOf(program, { description.layout, *layoutField }).location.deferral == ClosureDeferral::Unknown
+            && isListedByAllocation(context, description, field);
         break;
     }
     case VirtualObjectKind::Opaque:
@@ -1273,15 +1284,6 @@ SpeculativeLoad canLoadSpeculatively(const VirtualObjectContext& context, const 
         break;
     }
     return isSafe ? SpeculativeLoad::Safe : SpeculativeLoad::Unknown;
-}
-
-static bool isListedByAllocation(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)
-{
-    bool isListed = false;
-    forEachInitialField(context, description, [&](const VirtualField& initialField, ValueID) {
-        isListed |= initialField == field;
-    });
-    return isListed;
 }
 
 LateStore canStoreLate(const VirtualObjectContext& context, const VirtualObjectDescription& description, const VirtualField& field)

@@ -61,6 +61,7 @@ TailCallRequirement tailCallRequirementOf(const Function& body);
 bool mayBeCalledDirectly(const Program&, FunctionID callee);
 // Also a function whose calls by value record their callee from the first time on that a function object is renamed where nobody sees: whoever calls it directly stands behind AreFunctionNamesUnchanged.
 bool mayBeCalledDirectlyWhileFunctionNamesAreUnchanged(const Program&, FunctionID callee);
+bool mayBeCalledDirectlyWhereCalleeIsKept(const Program&, FunctionID callee);
 // A function that records its callee for stack frames does so in its entrypoint, which a call by value enters.
 bool mayBeCalledDirectlyOrThroughEntrypoint(const Program&, FunctionID callee);
 bool canCallWithoutClosure(const Program&, FunctionID callee);

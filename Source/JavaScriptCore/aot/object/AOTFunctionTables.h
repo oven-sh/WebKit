@@ -135,8 +135,9 @@ struct FunctionTables {
     // Where compiled code finds an entry from further out. The table grows until every call that may not have returned has a place of its own.
     void recordCallee(VM&, const void* stackPointerOfCaller, JSObject* closure);
     bool hasRecordedCallees() const { return !recordedCalleeStorage.isEmpty(); }
-    // A function whose function objects nobody is seen to rename pays nothing for its frames until the run time sees one of them get a displayName. From then on every call by value comes by the run time, which records the callees that are function objects of such a function.
-    // A frame that was entered before has no record.
+    // A function whose function objects nobody is seen to rename pays nothing for its frames. The run time marks the function object that it sees get a name, and a marked one is entered through the adapter, whose frame holds it.
+    // From the first such name on a tail call by value comes by the run time: it gives up the frame above whatever holds the callee, so the holder is told who runs there now.
+    // A frame that was entered before the name was given has no holder.
     void recordCalleesOf(VM&, FunctionID closureFunction);
     bool recordsCalleesOfCallsByValue() const { return !!isRenamedAtRunTime.load(std::memory_order_acquire); }
     bool recordsCalleesOf(FunctionID function) const
@@ -144,7 +145,8 @@ struct FunctionTables {
         const uint8_t* isRenamed = isRenamedAtRunTime.load(std::memory_order_acquire);
         return isRenamed && isRenamed[sourceFunctionOf(function).index()];
     }
-    void recordCalleeOfCallByValue(VM&, const void* stackPointerOfCaller, JSObject* closure);
+    // Otherwise every frame is named by its function.
+    bool framesMayBeNamedByCallee() const { return hasRecordedCallees() || recordsCalleesOfCallsByValue() || (programTables().flags & ProgramTables::callersKeepCallees); }
     // Its frames are named by the function object that runs in them.
     bool framesAreNamedByCallee(FunctionID);
     std::span<RecordedCallee> recordedCallees() { return recordedCalleeStorage.mutableSpan().subspan(hasRecordedCallees() ? 1 : 0); }

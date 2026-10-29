@@ -262,7 +262,7 @@ void CallEmitter::callFromArgumentListFrame(const CallTarget& target, const Plac
 
 void CallEmitter::tailCallByConvention(const OperationContext& context, const ConventionCall& call)
 {
-    emitTailCall(context, CallTarget::stub(call.stub, std::nullopt), placeConventionArguments(call));
+    emitTailCall(context, CallTarget::stub(call.stub.withForm(static_cast<uint8_t>(CallPosition::Tail)), std::nullopt), placeConventionArguments(call));
 }
 
 // A stack trace tells a frame at a failed tail call from one at an ordinary call: TraceFrame::isAtFailedTailCall.

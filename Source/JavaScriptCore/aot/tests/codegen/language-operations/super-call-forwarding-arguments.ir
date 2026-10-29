@@ -7,7 +7,7 @@
 # CHECK: stub SuperConstructWithList x1
 # CHECK-NOT: stub CallWithList
 # CHECK-LABEL: f2: size=
-# CHECK: stub CallWithList x1
+# CHECK: stub CallWithList.Ordinary x1
 # CHECK-NOT: stub SuperConstructWithList
 
 module m0 path="main.js" displayPath="main.js"

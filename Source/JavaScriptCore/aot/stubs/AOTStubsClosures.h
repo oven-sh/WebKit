@@ -29,7 +29,7 @@ constexpr StubKey valueIsClosureOf() { return StubKey(StubFamily::ValueIsClosure
 constexpr StubKey valueEndsItsTailCalls() { return StubKey(StubFamily::ValueEndsItsTailCalls); }
 
 // closure is a slim closure, with or without properties.
-void loadSlimClosureWord(StubAssembler&, GPRReg closure, GPRReg word);
+void loadSlimClosureWord(StubAssembler&, GPRReg closure, GPRReg word, JumpList* isRenamed = nullptr);
 
 static_assert(exists(newClosure(0)) && exists(newClosure(ClosureRequest::maxNumberOfCaptures)) && !exists(newClosure(ClosureRequest::maxNumberOfCaptures + 1)));
 static_assert(exists(newSlimClosure(0, 0)) && exists(newSlimClosure(numberOfSlimClosureKinds - 1, ClosureRequest::maxSlimClosureCaptures)));

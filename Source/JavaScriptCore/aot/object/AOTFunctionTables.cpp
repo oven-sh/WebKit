@@ -204,7 +204,8 @@ JSString* initialNamePropertyString(VM& vm, State& state, FunctionID function)
 // So is a frame without a record of a function that records its callees only once one of them was renamed.
 static bool isNamedInFramesByFunction(FunctionID closureFunction)
 {
-    return !functionKindData(closureFunction).isBound() && !functionKindData(sourceFunctionOf(closureFunction)).isGenerator && !FunctionDescription(closureFunction).recordsCallee();
+    FunctionDescription description(closureFunction);
+    return !functionKindData(closureFunction).isBound() && !functionKindData(sourceFunctionOf(closureFunction)).isGenerator && !description.recordsCallee() && !description.recordsCalleeOnceRenamed();
 }
 
 // functionName() can run at the end of a GC, where of() cannot create the tables.
@@ -333,7 +334,7 @@ void FunctionTables::recordCalleesOf(VM& vm, FunctionID closureFunction)
     VMState& state = vm.aotState();
     Locker locker { state.instancesLock };
     for (Instance* instance : state.instances)
-        makeCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
+        makeTailCallsByValuePoll(*instance, isRenamedAtRunTime.load(std::memory_order_acquire));
 }
 
 // In the lowest bit of the function object: a collection has left the entry in the table. The call that writes the entry anew takes the mark away.
@@ -357,16 +358,6 @@ static FunctionID sourceFunctionOf(const RecordedCallee& entry)
     if (liesInFrame(entry))
         return FunctionID(safeCast<uint32_t>(std::bit_cast<uintptr_t>(entry.closure) >> numberOfMarks));
     return sourceFunctionOf(*functionOf(closureOnHeapOf(entry)));
-}
-
-void FunctionTables::recordCalleeOfCallByValue(VM& vm, const void* stackPointer, JSObject* closure)
-{
-    std::optional<FunctionID> function = functionOf(closure);
-    if (!function || !recordsCalleesOf(*function))
-        return;
-    if (Thread::currentSingleton().stack().contains(closure) || CheckedFrameCells::isInRange(closure))
-        closure = std::bit_cast<JSObject*>(static_cast<uintptr_t>(sourceFunctionOf(*function).index()) << numberOfMarks | markOfClosureInFrame);
-    recordCallee(vm, stackPointer, closure);
 }
 
 std::optional<JSObject*> FunctionTables::recordedCalleeOfCallFrom(const void* stackPointer, FunctionID sourceFunction)
@@ -506,13 +497,23 @@ static bool hasInitialNameWithoutProperty(JSObject* callee)
     return !rareData || !rareData->hasReifiedName();
 }
 
+static void markRenamed(JSObject* closure)
+{
+    if (auto* full = dynamicDowncast<Closure>(closure))
+        full->markRenamed();
+    else
+        uncheckedDowncast<ReifiedSlimClosure>(closure)->markRenamed();
+}
+
 void didChangeDisplayName(VM& vm, JSObject* closure)
 {
     FunctionID closureFunction = *functionOf(closure);
     FunctionTables& tables = FunctionTables::of(vm);
     FunctionID sourceFunction = sourceFunctionOf(closureFunction);
-    if (FunctionDescription(closureFunction).recordsCalleeOnceRenamed())
+    if (FunctionDescription(closureFunction).recordsCalleeOnceRenamed()) {
         tables.recordCalleesOf(vm, closureFunction);
+        markRenamed(closure);
+    }
     if (!isNamedInFramesByFunction(closureFunction))
         return;
     if (hasInitialNameWithoutProperty(closure))
@@ -688,8 +689,10 @@ static void nameFramesOfFunction(VM& vm, JSObject* closure, const String& name)
 void didDefineNameProperty(VM& vm, JSObject* closure, const String& name)
 {
     FunctionID function = *functionOf(closure);
-    if (FunctionDescription(function).recordsCalleeOnceRenamed())
+    if (FunctionDescription(function).recordsCalleeOnceRenamed()) {
         FunctionTables::of(vm).recordCalleesOf(vm, function);
+        markRenamed(closure);
+    }
     nameFramesOfFunction(vm, closure, name);
 }
 

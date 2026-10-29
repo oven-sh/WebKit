@@ -761,10 +761,16 @@ static bool walksOneProvenOrder(FunctionPassContext& context, const OwnKeyWalkPl
 AOT_THRESHOLD(size_t, maxArmsOfGuardedCopyOutsideHotCode, 2);
 AOT_THRESHOLD(size_t, maxFieldsOfGuardedCopyOutsideHotCode, 12);
 
-static bool isSmallGuardedCopy(const OwnKeyWalkPlan& plan)
+static bool isSmallGuardedCopy(const Program& program, const OwnKeyWalkPlan& plan)
 {
-    return plan.arms.size() <= maxArmsOfGuardedCopyOutsideHotCode && std::ranges::all_of(plan.arms, [](const OwnKeyWalkArm& arm) {
-        return arm.order.size() <= maxFieldsOfGuardedCopyOutsideHotCode;
+    return plan.arms.size() <= maxArmsOfGuardedCopyOutsideHotCode && std::ranges::all_of(plan.arms, [&](const OwnKeyWalkArm& arm) {
+        if (arm.order.size() > maxFieldsOfGuardedCopyOutsideHotCode)
+            return false;
+        // A number stored over a function stays in the slot, where the read by slot takes it for a closure that is not made yet.
+        bool keepsTypesOfFields = receiverStateOf(program, arm.layout).impossibleMutations.contains(ObjectMutation::StoreOfOtherType);
+        return keepsTypesOfFields || std::ranges::none_of(arm.order, [&](uint32_t field) {
+            return program.at(program.at(arm.layout).fields[field].declared.written()).mayBeFunction();
+        });
     });
 }
 
@@ -784,7 +790,7 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context, std:
             if (!site || (onlyWalk && site->walk != *onlyWalk))
                 continue;
             Expected<HeatClass> heat = heatClassByOwnLoops(context, block);
-            if (context.runsAtMostOnce(block) || isCold(heat).predicted()) {
+            if (context.isShortSchedule || context.runsAtMostOnce(block) || isCold(heat).predicted()) {
                 if (site->walk == OwnKeyWalk::Spread || site->walk == OwnKeyWalk::Assign) {
                     rarelyRunCopies.set(site->value.index());
                     sites.append(WTF::move(*site));
@@ -808,14 +814,14 @@ static Vector<PlannedWalk, 4> planOwnKeyWalks(FunctionPassContext& context, std:
         if (walk.site.walk == OwnKeyWalk::Assign) {
             if (!planAssign(context, unchanged, walk))
                 continue;
-            if (seldomRuns && (walk.remainingSourcesCall || !std::ranges::all_of(walk.walkedSources, [&](const WalkedSource& source) { return walksOneProvenOrder(context, source.plan) || isSmallGuardedCopy(source.plan); })))
+            if (seldomRuns && (walk.remainingSourcesCall || !std::ranges::all_of(walk.walkedSources, [&](const WalkedSource& source) { return walksOneProvenOrder(context, source.plan) || isSmallGuardedCopy(context.program, source.plan); })))
                 continue;
         } else if (isExpandedByPlan(walk.site.walk)) {
             std::optional<OwnKeyWalkPlan> plan = planOwnKeyWalk(context, unchanged, walk.site);
-            if (!plan || (seldomRuns && !walksOneProvenOrder(context, *plan) && !isSmallGuardedCopy(*plan)))
+            if (!plan || (seldomRuns && !walksOneProvenOrder(context, *plan) && !isSmallGuardedCopy(context.program, *plan)))
                 continue;
             // A load and a store for each field take the place of the call. Arms behind tests, with the call behind them, are worth their bytes in hot code, or where they leave no object to make.
-            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isSmallGuardedCopy(*plan) && !isKeptByNobody(context, walk.site.target)) {
+            if (fillingLiteralsOutsideHotCode.contains(walk.site.value) && !walksWithoutTests(*plan) && !isSmallGuardedCopy(context.program, *plan) && !isKeptByNobody(context, walk.site.target)) {
                 // The copy of all slots at once is a few words of code in front of the call, which is then laid out as the rare way: for a source that is expected to have the layout of the literal and no other.
                 if (!expectsOneLayout(context, walk.site) || !plan->arms[0].copiesFieldsAtOnce)
                     continue;
@@ -1935,8 +1941,9 @@ static PassOutcome defineFieldsOfMergedLiterals(FunctionPassContext& context, IR
 PassOutcome expandOwnKeys(FunctionPassContext& context)
 {
     const OpcodeSet opcodes = context.analyses.opcodesOfValues();
-    bool mayHaveWalks = opcodes.intersects(opcodesOfWalks);
-    bool mayHaveForInLoops = opcodes.contains(Opcode::ForInStep);
+    // A short schedule expands only small copies: the runtime's plan for a copy costs more than most of these functions ever get back.
+    bool mayHaveWalks = context.isShortSchedule ? opcodes.contains(Opcode::CopyDataProperties) : opcodes.intersects(opcodesOfWalks);
+    bool mayHaveForInLoops = !context.isShortSchedule && opcodes.contains(Opcode::ForInStep);
     bool mayHaveKeyOrderTests = opcodes.intersects(opcodesOfKeyOrderTests) && opcodes.contains(Opcode::NewObject);
     if (!mayHaveWalks && !mayHaveForInLoops && !mayHaveKeyOrderTests)
         return PassOutcome::Unchanged;
@@ -1950,7 +1957,7 @@ PassOutcome expandOwnKeys(FunctionPassContext& context)
 
     Vector<PlannedWalk, 4> walks;
     if (mayHaveWalks)
-        walks = planOwnKeyWalks(context);
+        walks = planOwnKeyWalks(context, context.isShortSchedule ? std::optional { OwnKeyWalk::Spread } : std::nullopt);
     for (const PlannedWalk& walk : walks) {
         if (!walk.walkedSources.isEmpty())
             expandWalk(context, emission, walk);

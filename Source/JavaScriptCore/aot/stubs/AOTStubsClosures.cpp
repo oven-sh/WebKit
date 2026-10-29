@@ -427,11 +427,13 @@ void generateMaterializeEnvironment(StubAssembler& jit)
     jit.returnToCaller();
 }
 
-void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word)
+void loadSlimClosureWord(StubAssembler& jit, GPRReg closure, GPRReg word, JumpList* isRenamed)
 {
     ASSERT(noOverlap(closure, word, instanceGPR));
     jit.load64(Address(closure, offsetOfSlimClosureWord), word);
     Jump isSlimClosure = jit.branchIfType(closure, SlimClosureType);
+    if (isRenamed)
+        isRenamed->append(jit.branchTest8(CCallHelpers::NonZero, Address(closure, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit)));
     jit.load32(Address(word, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), word);
     jit.lshift64(TrustedImm32(3), word);
     jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), word);
@@ -495,7 +497,7 @@ void generateValueIsClosureOf(StubAssembler& jit)
 #endif
     }
 
-    loadClosureWordOfThisRealm(jit, value, { word, scratch, word, scratch }, isNotClosure);
+    loadClosureWordOfThisRealm(jit, value, { word, scratch, word, scratch }, isNotClosure, RenamedClosures::AreLikeOthers);
     jit.urshift64(TrustedImm32(ClosureWord::functionShift), word);
     jit.returnFlags32(CCallHelpers::Equal, word, expectedUpperHalf);
 

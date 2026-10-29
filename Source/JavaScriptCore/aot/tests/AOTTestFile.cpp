@@ -25,7 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 namespace {
 
-enum class DirectiveKind : uint8_t { Run, Requires, Form, Options, Diagnostic, Statistic, Loss, Library, Todo };
+enum class DirectiveKind : uint8_t { Run, Requires, Form, Options, JSCOptions, Diagnostic, Statistic, Loss, Library, Todo };
 
 template<typename T>
 struct NamedValue {
@@ -95,6 +95,7 @@ private:
     void parseCheckLine(const DirectiveLine&);
     void parseForm(const DirectiveLine&);
     void parseOptions(const DirectiveLine&);
+    void parseJSCOptions(const DirectiveLine&);
     void parseDiagnostic(const DirectiveLine&);
     void parseStatistic(const DirectiveLine&);
     void parseLoss(const DirectiveLine&);
@@ -128,6 +129,7 @@ static constexpr NamedValue<DirectiveKind> directiveKinds[] = {
     { "REQUIRES"_s, DirectiveKind::Requires },
     { "FORM"_s, DirectiveKind::Form },
     { "OPTIONS"_s, DirectiveKind::Options },
+    { "JSC-OPTIONS"_s, DirectiveKind::JSCOptions },
     { "DIAGNOSTIC"_s, DirectiveKind::Diagnostic },
     { "STATISTIC"_s, DirectiveKind::Statistic },
     { "LOSS"_s, DirectiveKind::Loss },
@@ -517,6 +519,9 @@ void TestFileParser::parseOtherDirective(const DirectiveLine& directive)
     case DirectiveKind::Options:
         parseOptions(directive);
         return;
+    case DirectiveKind::JSCOptions:
+        parseJSCOptions(directive);
+        return;
     case DirectiveKind::Diagnostic:
         parseDiagnostic(directive);
         return;
@@ -693,6 +698,20 @@ void TestFileParser::parseOptions(const DirectiveLine& directive)
     }
     for (StringView word : words)
         m_file.optionWords.append(OptionWord { word.toString(), directive.line });
+}
+
+void TestFileParser::parseJSCOptions(const DirectiveLine& directive)
+{
+    auto words = splitWords(directive.value);
+    bool isWellFormed = !words.isEmpty() && std::ranges::all_of(words, [](StringView word) {
+        return word.startsWith("--"_s) && word.contains('=');
+    });
+    if (!isWellFormed) {
+        addError(directive.line, "JSC-OPTIONS is written --<name>=<value> { --<name>=<value> }"_s);
+        return;
+    }
+    for (StringView word : words)
+        m_file.jscOptions.append(OptionWord { word.toString(), directive.line });
 }
 
 void TestFileParser::parseDiagnostic(const DirectiveLine& directive)

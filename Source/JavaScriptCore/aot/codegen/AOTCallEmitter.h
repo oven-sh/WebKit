@@ -62,6 +62,7 @@ public:
     void generateResultAt(const ValueContext&);
 
     Boxed callValue(const OperationContext&, const ValueCall&, const CallOptions& = { });
+    static CallPosition positionOf(const OperationContext& context, const CallOptions& options = { }) { return options.isTailCall || context.origin().isTailCall ? CallPosition::Tail : CallPosition::Ordinary; }
     Boxed callByConvention(const OperationContext&, const ConventionCall&, const CallOptions& = { });
     Boxed constructValue(const OperationContext&, ConstructSyntax, Boxed callee, Boxed newTarget, std::span<const ValueID> arguments, std::optional<ThrowSite> siteThatNamesCallee = std::nullopt);
     Boxed superConstructWithList(const OperationContext&, Boxed parent, Boxed newTarget, Word32 count, Pointer list);

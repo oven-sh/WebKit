@@ -68,6 +68,7 @@ StubRecording StubAssembler::generateBody(StubKey body, const ScopedLambda<void(
     RELEASE_ASSERT(!m_key.hasFamily());
 
     m_key = body;
+    m_callPosition = CallPosition::Ordinary;
     m_signature = signatureOf(body);
     m_recording = { };
     m_recording.body = body;
@@ -619,7 +620,7 @@ void StubAssembler::jumpToExceptionHandler()
     jumpToStub(handleException(false));
 }
 
-CCallHelpers::Address StubAssembler::limitOfCallsByValue()
+CCallHelpers::Address StubAssembler::limitOfTailCallsByValue()
 {
     return Address(instanceGPR, AOT_INSTANCE_OFFSET(callsByValue.limit) + StackManager::Mirror::offsetOfTrapAwareSoftStackLimit());
 }
@@ -669,7 +670,11 @@ void StubAssembler::checkStackBeforeEntering(GPRReg endOfFrame)
 
 void StubAssembler::checkStackBeforeEnteringCallee()
 {
-    pollIfBelow(limitOfCallsByValue(), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject));
+    if (m_callPosition == CallPosition::Ordinary) {
+        checkStackBeforeEntering();
+        return;
+    }
+    pollIfBelow(limitOfTailCallsByValue(), pollBeforeEntering(PollBeforeEnteringForm::FunctionObject));
 }
 
 void StubAssembler::pollIfBelow(Address limit, StubKey poll)

@@ -691,7 +691,7 @@ bool CompiledFrameIterator::isConstructCall()
 std::optional<JSObject*> CompiledFrameIterator::recordedCallee()
 {
     FunctionTables& tables = FunctionTables::of(*m_vm);
-    if (!tables.hasRecordedCallees() && !tables.recordsCalleesOfCallsByValue()) [[likely]]
+    if (!tables.framesMayBeNamedByCallee()) [[likely]]
         return std::nullopt;
 
     // The entrypoint records the callee. Its frame, or the one that took its place in a tail call, is the outermost of the hidden frames of the function.

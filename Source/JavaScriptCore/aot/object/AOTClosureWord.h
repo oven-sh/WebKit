@@ -19,6 +19,9 @@ struct ClosureWord {
 #else
     static constexpr unsigned offsetUnit = 1;
 #endif
+    // No code is so large that an offset has its top bit set: AOTImageFormat.h. The run time sets the bit in the word of one closure, which has properties by then, when that closure gets another name
+    // and its function is named in frames by its closures. Calls by value enter such a closure through the adapter, whose frame holds it. A slim closure with properties has no word of its own: its per-cell bit says the same.
+    static constexpr unsigned isRenamedBit = numberOfOffsetBits - 1;
     static constexpr unsigned functionShift = numberOfOffsetBits;
     static constexpr unsigned numberOfFunctionBits = 22;
     // Bit i from here on: nobody holds argument i, or what is read through it, any more when a call through this word returns. Whoever calls may pass a closure that lies in his own frame there.
@@ -83,7 +86,7 @@ struct ClosureWord {
     }
 
     static constexpr uint32_t functionOf(uint64_t word) { return word >> functionShift & functionMask; }
-    static constexpr uintptr_t addressOf(uint64_t word, uintptr_t code) { return code + (word & offsetMask) * offsetUnit; }
+    static constexpr uintptr_t addressOf(uint64_t word, uintptr_t code) { return code + (word & offsetMask & ~(1ULL << isRenamedBit)) * offsetUnit; }
     static constexpr unsigned numberOfParametersOf(uint64_t word) { return maxNumberOfParameters - (word >> numberOfParametersShift & maxNumberOfParameters); }
     // Read as a signed number, the top byte of a word is at least this where the function may be called and declares no more parameters than the call passes arguments.
     static constexpr int8_t minTopByteOfCalleeTaking(unsigned numberOfArguments)

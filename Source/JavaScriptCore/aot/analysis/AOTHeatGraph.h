@@ -81,7 +81,7 @@ public:
     unsigned numNodes() const { return numberOfFunctions() + 2 + m_numberOfNames; }
     unsigned index(Node node) const { return node.index(); }
     Node node(unsigned index) const { return m_isPresent[index] ? Node(index) : Node(); }
-    std::span<const Node> successors(Node node) const LIFETIME_BOUND { return m_successors.span().subspan(m_firstSuccessor[node.index()], m_firstSuccessor[node.index() + 1] - m_firstSuccessor[node.index()]); }
+    std::span<const Node> successors(Node node) const LIFETIME_BOUND { return m_successors.span().subspan(m_firstSuccessor[node.index()], m_numberOfSuccessors[node.index()]); }
     std::span<const Node> predecessors(Node node) const LIFETIME_BOUND { return m_predecessors.span().subspan(m_firstPredecessor[node.index()], m_firstPredecessor[node.index() + 1] - m_firstPredecessor[node.index()]); }
     double multiplierOf(Node from, unsigned successorIndex) const { return m_multipliers[m_firstSuccessor[from.index()] + successorIndex]; }
 
@@ -104,7 +104,9 @@ private:
     unsigned m_numberOfNames { 0 };
     Vector<double> m_entriesPerEvent;
     Vector<bool> m_isPresent;
+    // Nodes with equal lists of successors and multipliers share one range.
     Vector<uint32_t> m_firstSuccessor;
+    Vector<uint32_t> m_numberOfSuccessors;
     Vector<Node> m_successors;
     Vector<double> m_multipliers;
     Vector<uint32_t> m_firstPredecessor;

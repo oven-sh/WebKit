@@ -138,6 +138,7 @@ REQUIRES: [ x86_64 | arm64 ] { word }
 REQUIRES(<prefix>): [ x86_64 | arm64 ] { word }
 FORM: ( AsRead | Prepared | Selected | Placed ) [ optimizing ]
 OPTIONS: <option word> { option word }
+JSC-OPTIONS: --<name>=<value> { --<name>=<value> }
 <P>: p
 <P>-NEXT: p
 <P>-NOT: p
@@ -194,7 +195,10 @@ built-in, or asks what flow knows about one, writes `# LIBRARY: own` or the `run
 
 `FORM` overrides the command's default form. `FORM: Prepared optimizing` reads and verifies the program as it is in the middle of the
 optimization stage: operations of `AsRead` and of `Prepared` are legal together, and a stored type may be wider than its rule gives.
-`OPTIONS`, `DIAGNOSTIC`, `STATISTIC` and `LOSS` apply to every `RUN` in the file.
+`OPTIONS`, `JSC-OPTIONS`, `DIAGNOSTIC`, `STATISTIC` and `LOSS` apply to every `RUN` in the file.
+
+`JSC-OPTIONS` sets JSC options in the process that runs the commands, as `--<name>=<value>` on the command line of `testaot` does, and only while the
+file runs. It is for a build that must not depend on an option of the process. The shell of `run-in-shell` is another process and takes its own options.
 
 `REQUIRES` is for output that depends on the target architecture, which is the CPU `testaot` was built for. The `RUN` lines with
 its prefix (`REQUIRES:` goes with `RUN:`) run only on that architecture. Their check lines are parsed on every architecture, so a

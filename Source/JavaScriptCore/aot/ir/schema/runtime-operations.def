@@ -187,7 +187,7 @@ runtime ReportEscapedFrameCell : void (void* cell) ; reads(all) writes(ExternalS
 runtime ContentsHaveType : size_t (JSCell* container, uint32_t contentsSlot, uint32_t type) ; reads(all)
 runtime ValidateLookup : size_t (JSCell* receiver, uint32_t key, JSCell* expected) ; RuntimeCreatesConstant
 runtime PollSlow : void () ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
-runtime PollBeforeEnteringFunctionObject : void (JSCell* callee, void* stackPointerOfCaller) ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
+runtime PollBeforeEnteringFunctionObject : void (JSCell* callee, void* stackPointerOfCaller, void* framePointerOfCaller) ; reads(all) writes(AllocatorState, RuntimeState) throws terminates collects
 runtime PollAtPrologue : void* (uint8_t* returnAddress) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 
 runtime DirectEval : EncodedJSValue (EncodedJSValue text, uint32_t request, uint32_t count, const EncodedJSValue* operands) ; unknownCode

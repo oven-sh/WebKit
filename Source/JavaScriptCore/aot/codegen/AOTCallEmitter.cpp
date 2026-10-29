@@ -426,9 +426,11 @@ Boxed CallEmitter::callValue(const OperationContext& context, const ValueCall& c
     LValue countOperand = nullptr;
     if (call.lentArguments) {
         RELEASE_ASSERT(count <= numberOfArgumentGPRs && !(call.lentArguments >> count));
-        conventionCall.stub = callValueLending(count, call.lentArguments);
-    } else
+        conventionCall.stub = callValueLending(count, call.lentArguments, positionOf(context, options));
+    } else {
         chooseStubThatCallsValue(conventionCall, countOperand, call.calleeIsCell);
+        conventionCall.stub = conventionCall.stub.withForm(static_cast<uint8_t>(positionOf(context, options)));
+    }
     return callByConvention(context, conventionCall, options);
 }
 

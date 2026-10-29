@@ -107,6 +107,22 @@ static bool canGrow(const ReservedRangeHeap::Request& request)
 #endif
 }
 
+// malloc gets a range that is reserved without access in segments, each as large as all before it, and each with access from the start.
+// If it got memory that it has to commit, it would ask the system for access once for every 64 KB that it first uses.
+static size_t sizeOfFirstSegment(size_t reservedSize, const ReservedRangeHeap::Request& request)
+{
+#if OS(LINUX) && USE(MIMALLOC)
+    if (usesMalloc() && request.initialAccess == ReservedRangeHeap::InitialAccess::None && !canGrow(request)) {
+        size_t size = roundUpToMultipleOf<mallocChunkSize>(request.unusedPrefixSize + minSegmentSize);
+        if (size + minSegmentSize <= reservedSize)
+            return size;
+    }
+#else
+    UNUSED_PARAM(request);
+#endif
+    return reservedSize;
+}
+
 static bool reservesWithoutAccess(const ReservedRangeHeap::Request& request)
 {
 #if OS(LINUX)
@@ -209,11 +225,11 @@ ReservedRangeHeap* ReservedRangeHeap::tryCreate(const Request& request)
         size_t nextSize = std::max(size / 2 / sizeStep * sizeStep, request.minSize);
         bool hasAnotherAttempt = attempt + 1 < maxReservationAttempts && nextSize < size;
         if (uintptr_t start = tryReserve(size, request)) {
-            std::optional<Backing> backing = tryCreateBacking(start, size, request);
+            std::optional<Backing> backing = tryCreateBacking(start, sizeOfFirstSegment(size, request), request);
             if (!backing && !(hasAnotherAttempt && nextSize >= request.unusedPrefixSize + mallocChunkSize))
                 backing = Backing { BackEnd::Granules, nullptr, size };
             if (backing)
-                return new ReservedRangeHeap(start, isGrowable && backing->backEnd == BackEnd::Malloc ? request.size : backing->size, *backing, request);
+                return new ReservedRangeHeap(start, isGrowable && backing->backEnd == BackEnd::Malloc ? request.size : size, size, *backing, request);
             releaseReservation(start, size, request);
         }
         if (!hasAnotherAttempt)
@@ -315,8 +331,15 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     // The region is a fresh reservation, so it reads as zero once committed (is_zero). Without
     // that, mimalloc zeroes the arena's bookkeeping for all of the region's slices up front, which
     // for a 4 GB region is about 40 KB of pages touched before the first allocation.
+    void* memory = std::bit_cast<void*>(start + request.unusedPrefixSize);
+    size_t memorySize = size - request.unusedPrefixSize;
+    bool isCommitted = false;
+#if OS(LINUX)
+    // Where the system counts writable memory against a limit it may refuse. malloc then commits what it uses.
+    isCommitted = reservesWithoutAccess(request) && !mprotect(memory, memorySize, PROT_READ | PROT_WRITE);
+#endif
     mi_arena_id_t arena { };
-    if (!mi_manage_os_memory_ex(std::bit_cast<void*>(start + request.unusedPrefixSize), size - request.unusedPrefixSize, false, false, true, -1, true, &arena))
+    if (!mi_manage_os_memory_ex(memory, memorySize, isCommitted, false, true, -1, true, &arena))
         return std::nullopt;
     mi_heap_t* heap = mi_heap_new_in_arena(arena);
     RELEASE_ASSERT(heap);
@@ -338,16 +361,17 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
 #endif
 }
 
-ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, const Backing& backing, const Request& request)
+ReservedRangeHeap::ReservedRangeHeap(uintptr_t start, size_t size, size_t reservedSize, const Backing& backing, const Request& request)
     : m_start(start)
     , m_size(size)
-    , m_initialSegmentSize(backing.size)
+    , m_initialSegmentSize(reservedSize)
     , m_backEnd(backing.backEnd)
     , m_isGrowable(size > backing.size)
+    , m_isReservedWhole(reservedSize == size)
     , m_usage(request.usage)
     , m_name(request.name)
     , m_mallocHeap(backing.mallocHeap)
-    , m_reservedSize(backing.size)
+    , m_reservedSize(reservedSize)
 {
     RELEASE_ASSERT((m_backEnd == BackEnd::Malloc) == !!backing.mallocHeap);
     RELEASE_ASSERT(!m_isGrowable || m_backEnd == BackEnd::Malloc);
@@ -539,6 +563,22 @@ bool ReservedRangeHeap::tryAddSegment(size_t allocationSize)
 {
 #if OS(LINUX) && USE(MIMALLOC)
     size_t minSize = std::max(minSegmentSize, roundUpToMultipleOf<mallocChunkSize>(allocationSize) + mallocChunkSize);
+    if (m_isReservedWhole) {
+        size_t left = m_size - m_segmentsEnd;
+        if (left < minSize)
+            return false;
+        size_t size = std::min(std::max(minSize, m_segmentsEnd), left);
+        // What is too small for a segment of its own goes with this one.
+        if (left - size < minSegmentSize)
+            size = left;
+        std::optional<Backing> backing = tryCreateBacking(m_start + m_segmentsEnd, size, Request { .name = m_name, .usage = m_usage, .initialAccess = InitialAccess::None });
+        if (!backing)
+            return false;
+        m_segmentHeaps.append(backing->mallocHeap);
+        m_segmentArenas.append(backing->mallocArena);
+        m_segmentsEnd += size;
+        return true;
+    }
     size_t size = std::max(minSize, roundUpToMultipleOf<mallocChunkSize>(reservedSize() / 2));
     size_t left = addressSpaceLeft();
     if (left < minSize + addressSpaceToLeaveBesideSegment)
