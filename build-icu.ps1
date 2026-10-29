@@ -7,10 +7,9 @@
 # Windows. Bun runs it when it builds WebKit from source on Windows (scripts/build/deps/webkit.ts in oven-sh/bun).
 #
 # The same as the ICU that ships: the version (icu/source.json), clang as the compiler on both architectures, the code
-# generation floor, /MT[d], static libraries, and the data filter (stage 1b). Not the same, none of which matters to
-# a build of Bun from source: the data is not repacked with per-item zstd (icu/compress-data.ts), udata.cpp does
-# not carry the decompression hook (icu/udata-decompress-hook.patch), so ICU reads its data raw, and
-# icu/decnum-allocation-failure.patch is not applied.
+# generation floor, /MT[d], static libraries, and the data filter (stage 1b). Not the same, neither of which matters to
+# a build of Bun from source: the data is not repacked with per-item zstd (icu/compress-data.ts), and udata.cpp does
+# not carry the decompression hook (icu/udata-decompress-hook.patch), so ICU reads its data raw.
 #
 # Usage:
 #   .\build-icu.ps1 [-Platform x64|ARM64] [-BuildType Release|Debug] [-OutputDir WebKitBuild/icu]
@@ -18,6 +17,7 @@
 # Requirements:
 #   - Visual Studio 2022 with C++ workload
 #   - Python 3 (accessible via 'py -3')
+#   - Git
 
 param(
     [ValidateSet("x64", "ARM64")]
@@ -102,6 +102,9 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     $extractDir = Split-Path -Parent $OutputDir
     tar.exe -xzf $ICU_TARBALL -C $extractDir
     if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
+    # The patch has to stay a plain diff: in a directory of a repository, git apply skips a "diff --git" one and exits with 0.
+    git -C $OutputDir apply --ignore-whitespace (Join-Path $PSScriptRoot "icu/decnum-allocation-failure.patch")
+    if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
     Set-Content -Path $ICU_SOURCE_STAMP -Value $ICU_VERSION
 }
 
