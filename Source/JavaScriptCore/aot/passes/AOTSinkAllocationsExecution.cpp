@@ -308,6 +308,8 @@ void ObjectInterpreter::executeCast(ValueID id)
         return executeOther(id);
 
     VariantCastOutcomes outcomes = evaluateCastOnVariants(m_sinking.shapeContext(object), *stateOf(object), function().at(id));
+    if (function().at(id).opcode == Opcode::AssumeType)
+        narrowToProvenType(object, function().at(id).provenType());
     if (outcomes.canSplit())
         splitThrowingVariants(id, object, outcomes.throwingTagBits);
     else if (!outcomes.alwaysPasses()) {
@@ -1325,7 +1327,7 @@ void ObjectInterpreter::executeStore(ValueID id)
     }
     TypeID typeProvenByFlow;
     if (!canStore(object, *access, *field, stored)) {
-        if (opcode != Opcode::PropSet || !canStoreUnprovenValue(object, *access, *field))
+        if ((opcode != Opcode::PropSet && opcode != Opcode::PropDefine) || !canStoreUnprovenValue(object, *access, *field))
             return executeAccessOnCell(id, object);
         if (!objectOf(stored))
             typeProvenByFlow = typeOfFieldThatStaysInSlot(m_sinking, object, *stateOf(object), *field);
@@ -2025,6 +2027,22 @@ void ObjectInterpreter::forgetAnswersOfTests()
 {
     for (TestEntry& entry : m_state.tests)
         entry = TestEntry { entry.test, hasLastingAnswer(function().at(entry.test)) ? VirtualObjectID() : entry.object, std::nullopt };
+}
+
+// An AssumeType is a proof, so a variant outside its type cannot reach it: `r.ok ? r.value : r.error`.
+void ObjectInterpreter::narrowToProvenType(VirtualObjectID object, TypeID provenType)
+{
+    const ObjectState& state = *stateOf(object);
+    if (state.variants.size() < 2 || hasUntaggedVariant(state))
+        return;
+    ShapeContext context = m_sinking.shapeContext(object);
+    uint32_t keptTagBits = 0;
+    for (const ObjectVariant& variant : state.variants) {
+        if (evaluateTypeTestOfShape(context, context.family.at(variant.shape), program().at(provenType)) != KnownBoolean::False)
+            keptTagBits |= variant.tagMask();
+    }
+    if (keptTagBits && keptTagBits != state.tagBits())
+        narrow(object, keptTagBits);
 }
 
 void ObjectInterpreter::narrow(VirtualObjectID object, uint32_t keptTagBits)

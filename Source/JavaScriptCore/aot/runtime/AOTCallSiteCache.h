@@ -34,6 +34,8 @@ public:
         // Of such an entry only address and stubFrameKind say anything.
         bool isStubReturnSite() const { return !code; }
         ALWAYS_INLINE std::optional<unsigned> shownFrameCountFor(bool hasShownFrame, bool calleeWasEntered) const;
+        // The frame of an entrypoint that called the body in tail position and stays on the stack to return a known result. The body may have left by a tail call since.
+        bool isOfEntrypointAtTailCall() const { return outermostVisibleFunction == OutermostVisibleFunction::None && site.isTailCall(); }
         const HandlerRecord* exceptionHandler() const { return handler && handler->catchesExceptions() ? &*handler : nullptr; }
 
         const void* address { nullptr };

@@ -778,7 +778,7 @@ bool HeapRule::mayBeFunctionByType(const ValueFlowOperand& object)
     return (definition.opcode == Opcode::Expect ? m_program.at(definition.expectedType().predicted()) : m_program.typeOf(function, value)).mayBeFunction();
 }
 
-// A stack frame shows the own property `name` or `displayName` of the function object. A rule reads no closure that has escaped beside the object nobody knows, so the node of the operand hands on its closures.
+// A stack frame shows the own property `name` or `displayName` of the function object. A closure that has escaped is not listed beside the unknown object: the run time notices when it is renamed.
 void HeapRule::noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, const HeapKey& key, ClimbingSet receivers)
 {
     if (key.keyClass == HeapKeyClass::Index || (key.keyClass == HeapKeyClass::Name && key.name != m_tables.nameKey() && key.name != m_tables.displayNameKey()))
@@ -795,9 +795,6 @@ void HeapRule::noteClosuresThatMayBeRenamed(const ValueFlowOperand& object, cons
     ClimbingSet closures = m_context.restrict(known(receivers), m_universe.closures());
     if (writesTextOfName && holdsAnything(closures))
         add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsName), std::exchange(closures, { }));
-    // The modules of the run time name a function of the program only under the key as it is written.
-    if (object.node && (key.keyClass == HeapKeyClass::Name || isInProgramCode()) && m_context.meet(receivers, m_universe.placeholdersAlone()))
-        connect(object.node, m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename));
     if (holdsAnything(closures)) {
         add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), closures);
         add(m_context.nodes().ofHost(ValueFlowHostNode::ClosuresThatStatementsGiveDisplayName), closures);

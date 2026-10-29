@@ -142,6 +142,7 @@ public:
     JSString* makeIntegerKey(VM&, uint32_t integer, std::span<const Latin1Character>);
 
     size_t maxCachedKeyLength() const { return m_maxCachedKeyLength; }
+    // Null where there is no memory for the text.
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
     enum class EqualHashes : uint8_t { AreToldApart, LeaveUndecided };
     // Calls nothing where equal hashes or a 16-bit key leave it undecided, which is then no answer.
@@ -170,10 +171,14 @@ public:
         return matchingKey(entry, characters);
     }
     ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const { return *lookUpCachedKey<EqualHashes::AreToldApart>(characters, hash); }
+    // Null where there is no memory for the text.
     JSString* makeKey(VM&, std::span<const Latin1Character>, unsigned hash);
     ALWAYS_INLINE JSString* makeKey(VM& vm, std::span<const Latin1Character> characters, unsigned hash, const KeyByParts& parts, bool isName = false)
     {
-        JSString* key = jsNontrivialString(vm, isName ? nameWith(characters, hash) : String(StringImpl::create(characters, hash)));
+        String text = isName ? nameWith(characters, hash) : String(StringImpl::tryCreate(characters, hash));
+        if (text.isNull()) [[unlikely]]
+            return nullptr;
+        JSString* key = jsNontrivialString(vm, WTF::move(text));
         if (!canEncode(key)) [[unlikely]]
             return key;
         addCachedKey(key, hash);

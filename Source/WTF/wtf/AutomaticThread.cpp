@@ -190,6 +190,12 @@ bool AutomaticThread::tryEnsureUnderlyingThread(const AbstractLocker& locker)
     return m_hasUnderlyingThread;
 }
 
+void AutomaticThread::waitUntilHasWaited(const AbstractLocker&)
+{
+    while (m_hasUnderlyingThread && !m_hasWaited)
+        m_hasWaitedCondition.wait(*m_lock);
+}
+
 void AutomaticThread::start(const AbstractLocker&, FailedCreation failedCreation)
 #else
 void AutomaticThread::start(const AbstractLocker&)
@@ -200,6 +206,9 @@ void AutomaticThread::start(const AbstractLocker&)
     RefPtr<AutomaticThread> preserveThisForThread = this;
     
     m_hasUnderlyingThread = true;
+#if ENABLE(AOT)
+    m_hasWaited = false;
+#endif
 
     auto stackSpec = stackSpecification();
     switch (stackSpec.kind()) {
@@ -234,6 +243,9 @@ void AutomaticThread::start(const AbstractLocker&)
             auto stopImpl = [&] (const AbstractLocker& locker) {
                 thread->threadIsStopping(locker);
                 thread->m_hasUnderlyingThread = false;
+#if ENABLE(AOT)
+                m_hasWaitedCondition.notifyAll();
+#endif
             };
             
             auto stopPermanently = [&] (const AbstractLocker& locker) {
@@ -264,6 +276,13 @@ void AutomaticThread::start(const AbstractLocker&)
 
                         // Shut the thread down after a timeout.
                         m_isWaiting = true;
+#if ENABLE(AOT)
+                        // A woken waiter has to take the lock, and this thread releases it only once it has everything it needs to wait.
+                        if (!m_hasWaited) {
+                            m_hasWaited = true;
+                            m_hasWaitedCondition.notifyAll();
+                        }
+#endif
 #if USE(MIMALLOC)
                         // Only the owning thread can return the memory its thread-local heap holds.
                         // A compiler thread frees tens of MB of temporaries after a large compile,

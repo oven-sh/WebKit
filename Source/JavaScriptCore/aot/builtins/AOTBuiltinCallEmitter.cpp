@@ -265,6 +265,11 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             defineResult(callOperation<Boxed>(value, RuntimeOperation::ArrayJoinOfAnyReceiver, { boxedOperand(value, receiver), separator, calleeOf(value, overload) }));
             return;
         }
+        // A member that is a slot of the object itself, a number or a cell has no accessor function to call.
+        if (overload.mode == BuiltinCallMode::Get && receiver && !BuiltinCellKey::getter(overload.builtin).hasCell(m_builtins)) {
+            defineResult(emitter<AccessEmitter>().getById(value, boxedOperand(value, receiver), keyOf(overload), SiteCacheID()));
+            return;
+        }
         callFunction();
         return;
     case BuiltinCallForm::Whole:

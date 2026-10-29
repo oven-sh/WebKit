@@ -534,6 +534,8 @@ void CompiledFrameIterator::enterMachineFrame(const CallSiteCache::Entry* entry)
         return;
     }
     m_callSite = *entry;
+    if (!m_codeAbove || !entry->isOfEntrypointAtTailCall())
+        m_codeAbove = entry->code;
     m_hasReadFrame = false;
     if (!m_instance) [[unlikely]] {
         m_instance = tryFindInstance();
@@ -569,9 +571,9 @@ std::optional<TraceFrame> CompiledFrameIterator::findConstructedFunctionThatLeft
         constructed = runEnd.constructedFunction();
     else if (caller->site.isConstruct())
         constructed = functionConstructedAt(*m_image, *caller, cursor.plainFunctionConstructFrame);
-    if (!constructed || isCodeOf(*m_image, m_callSite.code, constructed))
+    if (!constructed || isCodeOf(*m_image, m_codeAbove, constructed))
         return std::nullopt;
-    return frameOfConstructedFunctionThatLeft(*m_image, constructed, m_callSite.code);
+    return frameOfConstructedFunctionThatLeft(*m_image, constructed, m_codeAbove);
 }
 
 void CompiledFrameIterator::listConstructedFunctionsThatLeft()

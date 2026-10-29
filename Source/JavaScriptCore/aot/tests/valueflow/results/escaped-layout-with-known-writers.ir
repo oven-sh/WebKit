@@ -1,0 +1,27 @@
+# globalThis[process.argv[9]] = { score: 1 }; const kept = { grade: 2 }; kept.grade
+# The first object escapes: it may be the value of any expression that flow knows nothing about. Flow still knows every writer of its field.
+# LIBRARY: own
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Stored" fields=[{key="score" {{*}}writers=AllKnown
+# CHECK-NOT: neverEscapes
+# CHECK: layout L1 name="Kept"
+# CHECK: neverEscapes=true}
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Stored" fields=[{key="score" declared={type=number}}]
+layout L1 name="Kept" fields=[{key="grade" declared={type=number}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=GlobalThis
+    v3 = Builtin builtin=Process
+    v4 = PropGet v3 key="argv"
+    v5 = Integer integer=9
+    v6 = ElemGet v4, v5
+    ElemSet v2, v6, v1 mode=Strict
+    v8 = Integer integer=2
+    v9 = NewObject -, v8 layout=L1 fields=[0]
+    v10 = PropGet v9 key="grade"
+    Return v10
+}

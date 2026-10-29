@@ -37,6 +37,7 @@ record LayoutFlow engine {
     constructorOrders: List<FieldOrder> fieldCreation: FieldCreation observedUses: ObservedUse cause: UnprovenCause witness: Witness
     impossibleMutations: ObjectMutation keys: KeyEnumeration addedKeys: List<PropertyKey> addedKeysAreComplete: Bool
     isReachedThroughUnknownReceivers: Bool ownAccessors: List<ClassMember> ownAccessorsAreComplete: Bool closureEnvironmentField: UInt32?
+    neverEscapes: Bool
 }
 record ClassMember engine {
     key: PropertyKey? side: ClassSide kind: MethodKind function: Function(Dispatch)? mutability: MemberMutability closureUse: ClosureUse

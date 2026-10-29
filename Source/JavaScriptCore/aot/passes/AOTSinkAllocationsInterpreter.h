@@ -157,6 +157,7 @@ private:
     void buildBeforeBranch(const Terminator&);
     void buildBeforeLeavingHandler(const Terminator&);
     void narrow(VirtualObjectID, uint32_t keptTagBits);
+    void narrowToProvenType(VirtualObjectID, TypeID provenType);
     void narrowOnEdge(const Terminator&, uint32_t targetIndex);
     void forgetAnswersOfTests();
     std::optional<TestEntry> answerAtBranch(ValueID condition) const;

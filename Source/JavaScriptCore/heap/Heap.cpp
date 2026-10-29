@@ -2937,11 +2937,14 @@ void Heap::collectForExhaustedCage()
     if (vm().hasCompiledCode())
         AOT::HeapHooks::willCollectForExhaustedCage(vm());
 #endif
+    // Helper threads allocate memory of their own.
+    collector().willCollectWithoutHelpers();
     collectNow(Sync, CollectionScope::Full);
 #if ASAN_ENABLED
     // Under ASan a block keeps the cells that a collection found dead until the next collection.
     collectNow(Sync, CollectionScope::Full);
 #endif
+    collector().didCollectWithoutHelpers();
 }
 
 bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocator)

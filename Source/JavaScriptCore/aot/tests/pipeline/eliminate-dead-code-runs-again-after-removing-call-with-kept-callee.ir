@@ -1,0 +1,28 @@
+# EliminateDeadCode removes a call that nobody needs. It judged the kept callee while the call was still there, so the callee goes in the next run, which must not be left out.
+# Without flow results every closure may be renamed, so a direct call keeps its callee in the frame.
+# With VerifyEachPass each pass that is left out runs on a copy of the function, and a change there is SkippedPassChangesFunction.
+# OPTIONS: heat=EverythingIsHot check=VerifyEachPass disable=flow-results,pass:InlineCalls
+# RUN: pipeline RemoveUnreadFields
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+
+function f0 name="" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3
+    Return v4
+}
+
+function f1 name="callsForNothing" parameters=[{type=f2}, {type=anything}] results=[{type=anything}] {
+    v2 = Call v0, -, v1
+    Return v1
+# CHECK-NOT: function=f2
+# CHECK: Return v1
+}
+
+function f2 name="identity" parameters=[{type=anything}] results=[{type=anything}] {
+    Return v0
+}

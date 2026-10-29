@@ -1772,8 +1772,9 @@ static LayoutsToTest keepLikeliestDeclarations(FunctionPassContext& context, con
     return { LayoutList(kept.span()), kept.size() < layouts.size() };
 }
 
-// Whoever gets hold of an object may store to it. Where flow knows every writer of a field, no object with that field has reached code that flow does not see, and none comes out of it.
-static LayoutList withoutLayoutsThatStayInSight(const Program& program, std::span<const NamedUse> uses, const LayoutList& layouts)
+// Flow lists on each access of a field the layouts that it saw arrive there. Beside those, only an object that has escaped can arrive.
+// An access of a method has no such list, so it rules out nothing.
+static LayoutList withoutLayoutsThatCannotArrive(const Program& program, std::span<const NamedUse> uses, const LayoutList& layouts)
 {
     LayoutList layoutsSeenToArrive;
     for (const NamedUse& use : uses) {
@@ -1782,11 +1783,10 @@ static LayoutList withoutLayoutsThatStayInSight(const Program& program, std::spa
     }
     LayoutList kept;
     for (LayoutID layout : layouts) {
-        bool staysInSight = std::ranges::any_of(uses, [&](const NamedUse& use) {
-            std::optional<FieldReference> field = findField(program, layout, use.key, BaseChain::Predicted);
-            return field && fieldAt(program, *field).flow.location.writers == WriterState::AllKnown;
+        bool wouldBeListed = std::ranges::any_of(uses, [&](const NamedUse& use) {
+            return findField(program, layout, use.key, BaseChain::Predicted).has_value();
         });
-        if (!staysInSight || layoutsSeenToArrive.contains(layout))
+        if (!wouldBeListed || !program.at(layout).flow.neverEscapes || layoutsSeenToArrive.contains(layout))
             kept.add(layout);
     }
     return kept;
@@ -1813,7 +1813,7 @@ static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::spa
             return LayoutList();
         LayoutList layouts = allocatedLayoutsWith(program, names.span(), maxLayouts);
         if (layouts.size() <= maxLayouts)
-            layouts = withoutLayoutsThatStayInSight(program, uses, layouts);
+            layouts = withoutLayoutsThatCannotArrive(program, uses, layouts);
         if (!layouts.isEmpty())
             return layouts;
     }
@@ -1829,7 +1829,7 @@ static Expected<LayoutList> layoutsExpectedFrom(const Program& program, std::spa
                 layoutsWithAnyName.add(layout);
         }
     }
-    return withoutLayoutsThatStayInSight(program, uses, layoutsWithAnyName);
+    return withoutLayoutsThatCannotArrive(program, uses, layoutsWithAnyName);
 }
 
 static Expected<bool> resolvesSomeUse(FunctionPassContext& context, std::span<const NamedUse> uses, const Expected<LayoutList>& layouts)

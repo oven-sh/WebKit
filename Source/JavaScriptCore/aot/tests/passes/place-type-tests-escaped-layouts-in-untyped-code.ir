@@ -1,6 +1,6 @@
 # for (const entry of list) entry.ownMark
 # The text of untyped code says that `entry` is a Written: that is the literal it sees put into the list. The analysis has seen nothing arrive. Made holds the name too, and its objects have reached
-# code that nobody sees, so they may come out of it here: the test takes both. Kept holds the name and every writer of its field is known: no object of it has left, and none is expected.
+# code that nobody sees, so they may come out of it here: the test takes both. Kept holds the name and none of its objects escapes: none is expected.
 # Where the analysis has seen something arrive, and in a function that the checker has checked, what is expected stays.
 # FORM: Prepared
 # RUN: pass PlaceTypeTests
@@ -9,7 +9,7 @@
 module m0 path="main.js" displayPath="main.js"
 layout L0 name="Written" fields=[{key="ownMark" declared={type=anything} flow={occupancy=AlwaysFilled}}]
 layout L1 name="Made" fields=[{key="ownMark" declared={type=anything} flow={occupancy=AlwaysFilled}}, {key="other" declared={type=anything}}]
-layout L2 name="Kept" fields=[{key="ownMark" declared={type=anything} flow={location={writers=AllKnown} occupancy=AlwaysFilled}}]
+layout L2 name="Kept" fields=[{key="ownMark" declared={type=anything} flow={occupancy=AlwaysFilled}}] flow={neverEscapes=true}
 
 function f0 name="nothing-is-seen-to-arrive" parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

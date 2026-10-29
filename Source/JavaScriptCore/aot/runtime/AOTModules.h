@@ -302,6 +302,7 @@ private:
         bool wasLoadedWhileItRan { false };
         bool isAnsweredWithNamespace { false };
         bool bindsEarlierCapture { false };
+        bool didDropError { false };
         bool isBeingLoadedByLoader { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;

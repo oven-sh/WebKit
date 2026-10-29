@@ -562,6 +562,8 @@ bool Collector::canSkipMarking()
 
 void Collector::startHelpers()
 {
+    if (startsHelpersLazily() && m_collectionsWithoutHelpers.load(std::memory_order_relaxed))
+        return;
     if (m_hasStartedHelpers.exchange(true))
         return;
     RELEASE_ASSERT(!m_parallelMarkersShouldExit);
@@ -735,6 +737,11 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
         m_markingConditionVariable.notifyAll();
     }
     m_helperClient.finish();
+#if ENABLE(AOT)
+    // Let the threads this collection started finish their first-time allocations before it ends.
+    if (startsHelpersLazily() && hasStartedHelpers())
+        m_helperClient.pool().waitUntilThreadsHaveWaited();
+#endif
 
     assertMarkStacksEmpty();
     RELEASE_ASSERT(m_raceMarkStack->isEmpty());

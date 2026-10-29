@@ -175,7 +175,8 @@ static TypeID typeOfCarriedField(const AllocationSinking& sinking, VirtualObject
         if (hasStored(shape, fieldIndex))
             type = types.unionOf(type, typeOf(contentsOf(shapes, family.descriptionOf(shape), fieldIndex), types));
     }
-    if (type != TypeTable::never && field.kind == VirtualFieldKind::Element) {
+    // A join passes its fields on to other joins of the family, whose variants may differ, so every join carries the union over the family.
+    if (type != TypeTable::never && (field.kind == VirtualFieldKind::Element || (candidate.isJoin && field.isProperty()))) {
         for (const VirtualObjectDescription& description : family.descriptions())
             type = types.unionOf(type, typeOf(contentsOf(shapes, description, fieldIndex), types));
     }

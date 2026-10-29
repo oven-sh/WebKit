@@ -160,6 +160,15 @@ void ParallelHelperPool::ensureThreads(unsigned numThreads)
         didMakeWorkAvailable(locker);
 }
 
+#if ENABLE(AOT)
+void ParallelHelperPool::waitUntilThreadsHaveWaited()
+{
+    Locker locker { *m_lock };
+    for (RefPtr<AutomaticThread>& thread : m_threads)
+        thread->waitUntilHasWaited(locker);
+}
+#endif
+
 void ParallelHelperPool::doSomeHelping()
 {
     ParallelHelperClient* client;

@@ -73,6 +73,10 @@ public:
     WTF_EXPORT_PRIVATE ~ParallelHelperPool();
 
     WTF_EXPORT_PRIVATE void ensureThreads(unsigned numThreads);
+#if ENABLE(AOT)
+    // Returns once every thread that has been started has begun to wait for work for the first time.
+    WTF_EXPORT_PRIVATE void waitUntilThreadsHaveWaited();
+#endif
 
     unsigned numberOfThreads() const { return m_numThreads; }
     

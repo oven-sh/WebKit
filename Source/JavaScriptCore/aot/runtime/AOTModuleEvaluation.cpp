@@ -945,6 +945,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 }
                 if (!queue.isEmpty()) {
                     handGraphToLoader(filesBeingRun, *failedFile);
+                    RETURN_IF_EXCEPTION(scope, true);
                     if (filesBeingRun.fileHandedToLoader) {
                         JSValue errorOfFile;
                         if (wasImportedWhileItRan(fileOf(*failedFile)))
@@ -978,6 +979,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 }
                 if (lastFile) {
                     handGraphToLoader(filesBeingRun, *lastFile);
+                    RETURN_IF_EXCEPTION(scope, true);
                     if (filesBeingRun.fileHandedToLoader) {
                         finishStepInWhichFileRan(*lastFile, JSValue());
                         return true;
@@ -1023,6 +1025,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         if (didQueueJobsAheadOfLoader && !(exception && vm.isTerminationException(exception))) [[unlikely]] {
             TRY_CLEAR_EXCEPTION(scope, didRunFile);
             handGraphToLoader(filesBeingRun, imported);
+            RETURN_IF_EXCEPTION(scope, didRunFile);
             if (exception && !filesBeingRun.fileHandedToLoader)
                 throwException(m_instance.globalObject, scope, exception);
         }
@@ -2049,6 +2052,7 @@ void Modules::dropErrorOfFile(ModuleID fileOrFace)
         return;
     recordIfExists(fileOrFace)->setEvaluationError(*m_instance.vm, JSValue());
     setStatus(fileOrFace, ModuleStatus::Evaluated);
+    ensureLoaded(fileOrFace).didDropError = true;
 }
 
 // Of a file whose body has just thrown. The file ran in front of every ES module that imports it, so one that has begun was loaded by the file itself.

@@ -377,6 +377,8 @@ private:
     bool m_constructedFunctionLeftOnTop { false };
     std::optional<TraceFrame> m_constructedFunctionThatLeft;
     FunctionID m_calleeFunction;
+    // Of the nearest machine frame, from this one up, that is not Entry::isOfEntrypointAtTailCall().
+    CompiledFunctionID m_codeAbove;
     Exit m_exit;
     RunEnd m_runEnd;
     InlineFrameReader m_inlineFrames;

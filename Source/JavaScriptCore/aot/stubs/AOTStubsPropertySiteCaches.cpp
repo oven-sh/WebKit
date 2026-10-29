@@ -271,7 +271,7 @@ void generateGetByIdAtSite(StubAssembler& jit)
 
     isEmpty.link(&jit);
     JumpList isNotInFieldTable;
-    returnFieldByTable(jit, { registers.receiver, registers.identifierNumber, registers.structureID, registers.header, std::nullopt, false, true }, isNotInFieldTable);
+    returnFieldByTable(jit, { registers.receiver, registers.identifierNumber, registers.structureID, registers.header, std::nullopt, nameHasColumn, true }, isNotInFieldTable);
     isNotInFieldTable.link(&jit);
     countMissOfEmptySite(jit, registers.site, registers.scratch, isDue);
     jit.jumpToStub(nameHasColumn ? getByIdBehindFieldTable() : tables);

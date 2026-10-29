@@ -502,6 +502,8 @@ function(AOT_COMPUTE_SOURCES)
     if (COMPILER_IS_CLANG)
         set_source_files_properties(${JavaScriptCoreAOTCompiledForSize_SOURCES} ${JavaScriptCore_AOT_GENERATED_SOURCES_COMPILED_FOR_SIZE} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-force-attribute=optsize>")
         set_source_files_properties(${JavaScriptCoreAOTCompiledForMinimumSize_SOURCES} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-force-attribute=minsize>")
+        # Unrolling loops whose trip count is not known adds 2% to this code and no speed. Under ThinLTO loops are unrolled in the link, so this counts where the objects are machine code.
+        set_source_files_properties(${JavaScriptCoreAOT_SOURCES} PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-mllvm=-unroll-runtime=false>")
     endif ()
     if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
         # A switch that has no default names every enumerator: whoever adds one is shown each question it has to answer.

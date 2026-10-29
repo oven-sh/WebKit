@@ -456,7 +456,7 @@ bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockI
         return false;
     if (admissionOf(m_sinking, description, access.field, { m_function.at(store.valueOperand()).type }) != Admission::Refused)
         return false;
-    return store.opcode != Opcode::PropSet || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
+    return (store.opcode != Opcode::PropSet && store.opcode != Opcode::PropDefine) || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
 }
 
 bool AllocationPrefilter::mayBeScalarReplacedBy(uint32_t object, const Use& use, BuiltinCallForm formOfCall)
@@ -1621,14 +1621,17 @@ static void ensureFieldsInUse(const VirtualObjectContext& context, const EscapeA
 }
 
 // One value carries a field for every variant of a join. What is read from a literal array is cast to what its variants hold.
-static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const VirtualFamily& family, bool followsUndefinedAndNullInFields)
+// A property of plain objects is also carried with the union of its types, as in `{ ok: true, value }` and `{ ok: false, error }`, unless the parts are returned.
+static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const VirtualFamily& family, bool followsUndefinedAndNullInFields, bool returnsParts)
 {
     std::span<const VirtualObjectDescription> descriptions = family.descriptions();
     if (descriptions.size() < 2 || std::ranges::all_of(descriptions, [](const VirtualObjectDescription& description) { return description.kind == VirtualObjectKind::Array; }))
         return false;
 
+    bool carriesUnionsOfProperties = !returnsParts && std::ranges::all_of(descriptions, [](const VirtualObjectDescription& description) { return description.kind == VirtualObjectKind::Object; });
     for (uint32_t field = 0; field < family.numberOfFields(); ++field) {
         const VirtualField& virtualField = family.fieldAt(field);
+        bool carriesUnion = carriesUnionsOfProperties && virtualField.isProperty();
         TypeID commonType;
         bool commonlyHoldsUndefinedAndNullToo = false;
         for (const VirtualObjectDescription& description : descriptions) {
@@ -1636,7 +1639,7 @@ static bool givesOneFieldSeveralTypes(const VirtualObjectContext& context, const
             if (type == TypeTable::never)
                 continue;
             bool holdsUndefinedAndNull = followsUndefinedAndNullInFields && holdsUndefinedAndNullToo(context, description, virtualField);
-            if (commonType && (commonType != type || commonlyHoldsUndefinedAndNullToo != holdsUndefinedAndNull))
+            if (commonType && ((commonType != type && !carriesUnion) || commonlyHoldsUndefinedAndNullToo != holdsUndefinedAndNull))
                 return true;
             commonType = type;
             commonlyHoldsUndefinedAndNullToo = holdsUndefinedAndNull;
@@ -2044,7 +2047,7 @@ void AllocationSinking::createFamilies(std::span<const DescribedObject> describe
         VirtualFamilyID family = m_candidates[index].family;
         if (m_families[family.index()].numberOfFields() > maxFields)
             familiesWithTooManyFields.set(family.index());
-        else if (givesOneFieldSeveralTypes(m_objectContext, m_families[family.index()], m_policy.followsUndefinedAndNullInFields))
+        else if (givesOneFieldSeveralTypes(m_objectContext, m_families[family.index()], m_policy.followsUndefinedAndNullInFields, m_policy.returnedObjects == ReturnedObjects::StayVirtual))
             familiesWithoutJoins.set(family.index());
     }
     for (uint32_t index = 0; index < numberOfCandidates; ++index) {
@@ -2190,6 +2193,9 @@ bool AllocationSinking::storesByNameWaitIn(BlockID block) const
 {
     if (m_inputs.isLargeForItsWork)
         return true;
+    // A returned part has no slot to fit. The test belongs where the caller builds the object, if it ever does.
+    if (m_policy.returnedObjects == ReturnedObjects::StayVirtual)
+        return false;
     if (m_policy.blocksThatMayGetTests && !mayGetTests(block))
         return false;
     return !m_inputs.hasOperationsOnSlots || m_function.at(block).frequency.predicted() == BlockFrequency::Normal;

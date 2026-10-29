@@ -293,6 +293,18 @@ public:
             string->setHash(hash);
         return string;
     }
+    static RefPtr<StringImpl> tryCreate(std::span<const Latin1Character> characters, unsigned hash)
+    {
+        ASSERT(!characters.empty());
+        ASSERT(hash == StringHasher::computeHashAndMaskTop8Bits(characters));
+        std::span<Latin1Character> copy;
+        RefPtr string = tryCreateUninitialized(characters.size(), copy);
+        if (!string) [[unlikely]]
+            return nullptr;
+        copyCharacters(copy, characters);
+        string->setHash(hash);
+        return string;
+    }
 
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createUninitialized(size_t length, std::span<Latin1Character>&);
     WTF_EXPORT_PRIVATE static Ref<StringImpl> createUninitialized(size_t length, std::span<char16_t>&);

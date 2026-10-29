@@ -377,7 +377,7 @@ ValueFlowSolver::ValueFlowSolver(const ValueFlowSolverInput& input, ValueSets& s
         }
     }
     if (m_input.nodes && m_input.universe) {
-        for (ValueFlowHostNode taking : { ValueFlowHostNode::ClosuresThatStatementsMayRename, ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach, ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed }) {
+        for (ValueFlowHostNode taking : { ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach, ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed }) {
             m_graph.handOnWhatArrivesAtRetiredNodesTo(m_input.nodes->ofHost(taking), [](const void* solver, ValueFlowNodeID node) {
                 return static_cast<const ValueFlowSolver*>(solver)->isMadeForUnknownObject(node);
             }, this);
@@ -6227,7 +6227,6 @@ bool ValueFlowSolver::solve()
                 m_graph.setMask(m_input.lost, ValueSets::complement(m_objectsAlwaysFollowed));
             if (m_input.nodes && m_input.universe) {
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::NamespacesCarriedOutAsValues), m_input.universe->builtinTables().heap().namespacesNotedWhenCarriedOut());
-                m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatStatementsMayRename), m_input.universe->closures());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::ClosuresThatDefinitionsCompare), m_input.universe->closures());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsThatWritesUnderUnknownKeysReach), m_input.universe->builtinTables().heap().prototypeObjectsThatListingDoesNotName());
                 m_graph.setMask(m_input.nodes->ofHost(ValueFlowHostNode::PrototypeObjectsOfLibraryClassesWhoseOwnKeysAreListed), m_input.universe->prototypeObjectsOfLibraryClasses());

@@ -623,6 +623,9 @@ void Modules::captureExportsAgain(ModuleID fileOrFace)
     if (!isCommonJSFileOrFace(module) || !didCaptureExports(module))
         return;
     LoadedModule& loaded = ensureLoaded(module);
+    // The body threw, so the load that started it made no record of its own. The loader of `bun run` keeps the one of the link that came while the file ran.
+    if (loaded.didDropError)
+        return;
     loaded.capturedExports.set(*this, nullptr);
     loaded.deferredExportsSource.set(*this, nullptr);
     loaded.capturedFields.set(*this, nullptr);

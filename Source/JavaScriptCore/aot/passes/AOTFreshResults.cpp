@@ -190,8 +190,8 @@ static FreshResultShape shapeOfReturns(const AllocationSinking& sinking)
                 break;
             case VirtualShapeKind::Fields: {
                 FreshResultVariant variant = variantOfShape(sinking, returned.object, objectShape);
-                // Only a rare arm stores a value that nothing proves to fit its field, whatever merges with it on the way to the return.
-                if (hasUnprovenField(family, objectShape))
+                // Once type tests are placed, only a rare arm stores a value that nothing proves to fit its field, whatever merges with it before the return.
+                if (hasUnprovenField(family, objectShape) && sinking.inputs().hasOperationsOnSlots)
                     variant.frequency = BlockFrequency::Rare;
                 addVariant(WTF::move(variant));
                 break;

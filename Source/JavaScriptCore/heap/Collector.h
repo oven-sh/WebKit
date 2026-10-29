@@ -120,6 +120,9 @@ public:
     size_t LEGACY_NODELETE totalMaxEdenSize();
 
     bool hasStartedHelpers() const { return m_hasStartedHelpers.load(std::memory_order_relaxed); }
+    // Between the two calls, a collection that starts its helpers lazily starts none: the thread that conducts it marks alone.
+    void willCollectWithoutHelpers() { m_collectionsWithoutHelpers.fetch_add(1, std::memory_order_relaxed); }
+    void didCollectWithoutHelpers() { m_collectionsWithoutHelpers.fetch_sub(1, std::memory_order_relaxed); }
 
     void dump(PrintStream&) const;
 
@@ -240,6 +243,7 @@ private:
     Lock m_parallelSlotVisitorLock;
     Lock m_raceMarkStackLock;
     std::atomic<bool> m_hasStartedHelpers { false };
+    std::atomic<unsigned> m_collectionsWithoutHelpers { 0 };
     RefPtr<SharedTask<void(SlotVisitor&)>> m_bonusVisitorTask WTF_GUARDED_BY_LOCK(m_markingMutex);
     std::unique_ptr<MarkStackArray> m_sharedCollectorMarkStack;
     std::unique_ptr<MarkStackArray> m_sharedMutatorMarkStack;

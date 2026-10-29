@@ -456,6 +456,9 @@ void CallEmitter::generateCall(const ValueContext& value)
         tailCallValue(value, call);
         return;
     }
+    // The tail call of an inlined function. A stack trace leaves that function out once the callee is entered, as it does after a real tail call.
+    if (value->isTailCall && mayForwardCallToReceiver(value))
+        requireCallableBeforeTailCall(value, call.callee, call.thisValue);
     define(value, callValue(value, call, { .throwSite = siteThatNamesCallee(value) }));
 }
 

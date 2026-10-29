@@ -35,6 +35,8 @@ void CallEmitter::generateCallList(const ValueContext& value)
         .thisValue = thisValue.value(),
     };
     if (!value.returnCall()) {
+        if (value->isTailCall && mayForwardCallToReceiver(value))
+            requireCallableBeforeTailCall(value, callee, thisValue);
         define(value, callByConvention(value, call, { .throwSite = siteThatNamesCallee(value) }));
         return;
     }
