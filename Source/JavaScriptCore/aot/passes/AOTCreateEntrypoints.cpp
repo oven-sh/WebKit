@@ -178,9 +178,13 @@ static void markFunctionsThatRecordTheirCallee(ProgramEditor& editor, const Flow
             continue;
         FunctionID written = writtenFunctionOf(id);
         if (!flow.closuresMayBeRenamed(id) && !namedBySeveralKeys.quickGet(written.index())) {
-            if (flow.closuresGoOutOfSightUnnamed(id) && (!flow.closureIsMadeOnce(id) || hasSeveralForms.quickGet(written.index()))) {
+            bool isMadeOnce = flow.closureIsMadeOnce(id) && !hasSeveralForms.quickGet(written.index());
+            if (flow.closuresGoOutOfSightUnnamed(id) && !isMadeOnce) {
                 writtenWithClosuresOutOfSight.append(written);
                 statistics.count(StatisticID::RenamableFunctionsOutOfSightUnnamed, 1);
+            } else if ((function.kind == FunctionKind::Getter || function.kind == FunctionKind::Setter) && flow.function(written).closureUse != ClosureUse::CalledOnly && !isMadeOnce) {
+                // A frame of an accessor shows "get " or "set " once its own function object was asked for its name. The run time sees each look.
+                writtenWithClosuresOutOfSight.append(written);
             }
             continue;
         }

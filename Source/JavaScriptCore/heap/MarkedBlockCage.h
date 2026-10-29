@@ -129,6 +129,8 @@ public:
     JS_EXPORT_PRIVATE String describeExhaustedLimit() const;
     using ExhaustionHandler = void (*)();
     JS_EXPORT_PRIVATE static void setExhaustionHandler(ExhaustionHandler);
+    // Before the first VM. See ReservedRangeHeap::setCommitsOnDemand().
+    JS_EXPORT_PRIVATE static void setCommitsOnDemand(bool);
 
     // Called on the thread of the VM, inside an allocation, when the error that is owed has found no place to be thrown and the last of the reserve is given out, or full collections keep freeing next to nothing.
     // A host that can end this thread alone asks for its termination here.

@@ -54,6 +54,9 @@ public:
 
     uintptr_t start() const { return m_start; }
     size_t size() const { return m_size; }
+    // For a system that charges writable memory when access is given, used or not. malloc then gets a range whole and commits what it uses.
+    JS_EXPORT_PRIVATE static void setCommitsOnDemand(bool);
+
     size_t initialSegmentSize() const { return m_initialSegmentSize; }
     size_t reservedSize() const { return m_reservedSize.load(std::memory_order_relaxed); }
     bool contains(const void* pointer) const { return std::bit_cast<uintptr_t>(pointer) - m_start < m_size; }

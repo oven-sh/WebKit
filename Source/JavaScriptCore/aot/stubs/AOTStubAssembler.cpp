@@ -444,6 +444,7 @@ void StubAssembler::addReference(StubKey target, StubReference::Kind kind)
     RegisterSet savedAround;
     switch (kind) {
     case StubReference::Kind::Jump:
+    case StubReference::Kind::JumpAfterFailedAllocation:
         if (!m_savedRegisterStack.isEmpty() && !neverReturns(target))
             crashWhileGenerating("it jumps to another stub out of a region that saves registers"_s);
         checkHasNoBorrowedFPRs();
@@ -475,6 +476,16 @@ void StubAssembler::linkToStub(Jump jump, StubKey target)
 {
     addReference(target, StubReference::Kind::Jump);
     m_pendingJumps.append({ jump, target });
+}
+
+// Not the handler that preserves registers: it would carry the registers of the frame that ran out of memory, and with them the objects that filled the heap, into the frame of the handler.
+void StubAssembler::jumpToExceptionHandlerAfterFailedAllocation()
+{
+    if (key().callerFrame() == CallerFrame::StubFrame)
+        emitFunctionEpilogue();
+    StubKey handler = handleException(false);
+    addReference(handler, StubReference::Kind::JumpAfterFailedAllocation);
+    m_pendingJumps.append({ jump(), handler });
 }
 
 void StubAssembler::linkToStub(JumpList& jumps, StubKey target)

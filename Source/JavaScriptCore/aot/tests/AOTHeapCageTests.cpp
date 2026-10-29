@@ -366,6 +366,38 @@ static void testRangeReservedWholeHasAccessInItsSegmentsOnly()
     AOT_TEST_CHECK(canRead(range->start() + size - blockSize));
 }
 
+static void testRangeThatCommitsOnDemandHasAccessToWhatIsUsed()
+{
+    if (!bmalloc::api::isEnabled())
+        return;
+    constexpr size_t size = GB;
+    ReservedRangeHeap::setCommitsOnDemand(true);
+    ReservedRangeHeap* range = ReservedRangeHeap::tryCreate({
+        .name = "Range that commits on demand"_s,
+        .size = size,
+        .minSize = size,
+        .alignment = GB,
+        .unusedPrefixSize = blockSize,
+        .placement = ReservedRangeHeap::Placement::RandomWindow,
+        .initialAccess = ReservedRangeHeap::InitialAccess::None,
+    });
+    AOT_TEST_CHECK(range && range->size() == size && range->reservedSize() == size);
+    // Well inside what would be the first segment.
+    AOT_TEST_CHECK(!canRead(range->start() + 32 * MB) && !canRead(range->start() + size - blockSize));
+
+    void* block = range->tryAllocateAligned(blockSize, blockSize);
+    AOT_TEST_CHECK(block && isInside(*range, block, blockSize));
+    fill(block, blockSize, 7);
+    AOT_TEST_CHECK(isFilled(block, blockSize, 7) && !canRead(range->start() + 32 * MB));
+
+    // One piece of memory for malloc: larger than any segment but the last would be.
+    void* large = range->tryAllocate(600 * MB);
+    AOT_TEST_CHECK(large && isInside(*range, large, 600 * MB));
+    range->free(large);
+    range->free(block);
+    ReservedRangeHeap::setCommitsOnDemand(false);
+}
+
 // A range returns its free memory at malloc's pace and touches nothing that another range has freed, so threads that end together do not wait for one another.
 static void testReleasingFreeMemoryPurgesNoOtherRange()
 {
@@ -1458,6 +1490,7 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/reserved-range/grows-by-segments"_s, testRangeGrowsBySegments },
 #if OS(LINUX) && USE(MIMALLOC)
         { "heap-cage/reserved-range/reserved-whole-has-access-in-its-segments-only"_s, testRangeReservedWholeHasAccessInItsSegmentsOnly },
+        { "heap-cage/reserved-range/commits-on-demand-has-access-to-what-is-used"_s, testRangeThatCommitsOnDemandHasAccessToWhatIsUsed },
         { "heap-cage/reserved-range/releasing-free-memory-purges-no-other-range"_s, testReleasingFreeMemoryPurgesNoOtherRange },
 #endif
         { "heap-cage/reserved-range/random-windows-lie-far-apart"_s, testRandomWindowsLieFarApart },

@@ -25,11 +25,12 @@ struct OperationCallShape {
     OperationCall::FirstArgument firstArgument;
     OperationCall::Saves saves;
     bool checksException;
+    bool checksFailedAllocation { false };
 
     friend constexpr bool operator==(const OperationCallShape&, const OperationCallShape&) = default;
 };
 
-inline constexpr OperationCallShape operationCallShapes[13] = {
+inline constexpr OperationCallShape operationCallShapes[15] = {
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::GlobalObject, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::VM, OperationCall::Saves::Nothing, true },
@@ -43,9 +44,11 @@ inline constexpr OperationCallShape operationCallShapes[13] = {
     { OperationCall::Returns::Double, OperationCall::FirstArgument::VM, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Double, OperationCall::FirstArgument::None, OperationCall::Saves::Nothing, true },
     { OperationCall::Returns::Pair, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, true },
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, false, true },
+    { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::Nothing, false, true },
 };
 
-inline constexpr OperationCallShape preservingCallShapes[9] = {
+inline constexpr OperationCallShape preservingCallShapes[11] = {
     { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
     { OperationCall::Returns::Void, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, true },
     { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
@@ -55,6 +58,8 @@ inline constexpr OperationCallShape preservingCallShapes[9] = {
     { OperationCall::Returns::Value, OperationCall::FirstArgument::None, OperationCall::Saves::CallerSavedRegisters, false },
     { OperationCall::Returns::Double, OperationCall::FirstArgument::None, OperationCall::Saves::CallerSavedRegisters, false },
     { OperationCall::Returns::Double, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, true },
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedRegisters, false, true },
+    { OperationCall::Returns::Value, OperationCall::FirstArgument::Instance, OperationCall::Saves::CallerSavedGPRs, false, true },
 };
 
 constexpr std::optional<uint8_t> findOperationCallShape(std::span<const OperationCallShape> shapes, const OperationCallShape& shape)
@@ -79,9 +84,23 @@ constexpr StubKey tailCallOperation(OperationCall::FirstArgument firstArgument)
     return StubKey(StubFamily::TailCallOperation).withForm(static_cast<uint8_t>(firstArgument));
 }
 
+// A stub that tail calls the operation has no place to test for the error of a failed allocation.
+constexpr StubKey callOperationThatMayFailToAllocate(OperationCall::Returns returns)
+{
+    constexpr auto instance = OperationCall::FirstArgument::Instance;
+    // These read the exception from the VM whatever the operation returns.
+    if (returns == OperationCall::Returns::Double || returns == OperationCall::Returns::Pair)
+        return callOperation(returns, instance);
+    std::optional<uint8_t> form = findOperationCallShape(operationCallShapes, { returns, instance, OperationCall::Saves::Nothing, false, true });
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(form);
+    return StubKey(StubFamily::CallOperation).withForm(*form);
+}
+
 constexpr StubKey callOperationFor(Entry entry, OperationCall::Returns returns, OperationCall::FirstArgument firstArgument)
 {
-    return effectsOf(entry).mayThrow ? callOperation(returns, firstArgument) : tailCallOperation(firstArgument);
+    if (effectsOf(entry).mayThrow)
+        return callOperation(returns, firstArgument);
+    return mayFailToAllocate(entry, firstArgument) ? callOperationThatMayFailToAllocate(returns) : tailCallOperation(firstArgument);
 }
 
 // The stub may save and test more than the call asks for. A void call without a test does not get returnValueGPR back.
@@ -96,7 +115,7 @@ constexpr std::optional<StubKey> tryCallOperationPreservingRegisters(const Opera
     if (call.returns == OperationCall::Returns::Double && call.saves == OperationCall::Saves::CallerSavedGPRs)
         return std::nullopt;
 
-    OperationCallShape shape { call.returns, call.firstArgument, call.saves, call.checksException };
+    OperationCallShape shape { call.returns, call.firstArgument, call.saves, call.checksException, call.checksFailedAllocation };
     switch (call.firstArgument) {
     case OperationCall::FirstArgument::GlobalObject:
     case OperationCall::FirstArgument::VM:
@@ -107,8 +126,10 @@ constexpr std::optional<StubKey> tryCallOperationPreservingRegisters(const Opera
         shape.saves = OperationCall::Saves::CallerSavedRegisters;
         break;
     case OperationCall::FirstArgument::Instance:
-        if (call.returns == OperationCall::Returns::Double)
+        if (call.returns == OperationCall::Returns::Double) {
             shape.checksException = true;
+            shape.checksFailedAllocation = false;
+        }
         break;
     }
     if (shape.returns == OperationCall::Returns::Void && !shape.checksException)

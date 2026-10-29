@@ -158,7 +158,7 @@ StringImpl::~StringImpl()
     }
 }
 
-void StringImpl::destroy(StringImpl* stringImpl)
+NEVER_INLINE void StringImpl::destroy(StringImpl* stringImpl)
 {
     stringImpl->~StringImpl();
     StringImplMalloc::free(stringImpl);

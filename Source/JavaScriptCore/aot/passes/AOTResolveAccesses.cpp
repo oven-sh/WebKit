@@ -895,7 +895,7 @@ static ValueID appendCallOfGetterInSlot(FunctionPassContext& context, IRBuilder&
     ValueID getter = builder.append(WTF::move(read));
 
     std::optional<Vector<FunctionID, 2>> getters = gettersInSlots(program, plan.receivers.span(), stamp.key);
-    if (getters && getters->size() == 1 && mayBeCalledDirectly(program, getters->first())) {
+    if (getters && getters->size() == 1 && mayBeCalledDirectlyWhereCalleeIsKept(program, getters->first())) {
         FunctionID callee = getters->first();
         Vector<ValueID, 8> captures = appendCaptures(builder, callee, getter);
         return appendDirectCall(builder, {
@@ -904,6 +904,7 @@ static ValueID appendCallOfGetterInSlot(FunctionPassContext& context, IRBuilder&
             .thisValue = object,
             .calleeValue = program.at(callee).has(FunctionFlags::TakesCallee) ? getter : ValueID(),
             .accessSite = stamp.accessSite,
+            .calleeKeptInFrame = keepsCalleeOfAccessor(program, callee) ? getter : ValueID(),
             .calleeIsPredicted = stamp.level != KnowledgeLevel::Proven,
         });
     }
@@ -999,7 +1000,7 @@ static FunctionID findOnlyGetterCalledAt(FunctionPassContext& context, AccessSit
             return { };
         getter = call.callee;
     }
-    return getter && context.program.at(getter).kind == FunctionKind::Getter && mayBeCalledDirectly(context.program, getter) ? getter : FunctionID();
+    return getter && context.program.at(getter).kind == FunctionKind::Getter && mayBeCalledDirectlyWhereCalleeIsKept(context.program, getter) ? getter : FunctionID();
 }
 
 static void expandReadsUnderPrototypesThatMayBeReplaced(FunctionPassContext& context, IRBuilder& builder, Vector<NamedAccessSite>& reads)
@@ -1043,6 +1044,7 @@ static void expandReadsUnderPrototypesThatMayBeReplaced(FunctionPassContext& con
                 .thisValue = object,
                 .calleeValue = context.program.at(getter).has(FunctionFlags::TakesCallee) ? branch.provenOnTaken : ValueID(),
                 .accessSite = stamp.accessSite,
+                .calleeKeptInFrame = keepsCalleeOfAccessor(context.program, getter) ? branch.provenOnTaken : ValueID(),
                 .calleeIsPredicted = true,
             }));
             builder.moveToEndOf(branch.notTaken);

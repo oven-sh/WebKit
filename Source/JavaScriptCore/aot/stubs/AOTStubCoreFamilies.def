@@ -4,9 +4,9 @@
  */
 
 // AOTStubsOperations.cpp
-v(CallOperation, CalledByCode, (ValueWithInstance, ValueWithGlobalObject, ValueWithVM, Value, VoidWithInstance, VoidWithGlobalObject, VoidWithVM, Void, DoubleWithInstance, DoubleWithGlobalObject, DoubleWithVM, Double, PairWithInstance), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersLikeCall, NoEffects, CallOperation)
+v(CallOperation, CalledByCode, (ValueWithInstance, ValueWithGlobalObject, ValueWithVM, Value, VoidWithInstance, VoidWithGlobalObject, VoidWithVM, Void, DoubleWithInstance, DoubleWithGlobalObject, DoubleWithVM, Double, PairWithInstance, ValueWithInstanceMayFailToAllocate, VoidWithInstanceMayFailToAllocate), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersLikeCall, NoEffects, CallOperation)
 v(TailCallOperation, CalledByCode, (Instance, GlobalObject, VM, None), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersLikeCall, NoEffects, TailCallOperation)
-v(CallOperationPreservingRegisters, CalledByCode, (VoidWithInstance, VoidWithInstanceOnlyGPRs, ValueWithInstance, ValueWithInstanceOnlyGPRs, ValueWithInstanceNoExceptionCheck, ValueWithInstanceOnlyGPRsNoExceptionCheck, ValueNoExceptionCheck, DoubleNoExceptionCheck, DoubleWithInstance), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersOnlyScratch, NoEffects, CallOperationPreservingRegisters)
+v(CallOperationPreservingRegisters, CalledByCode, (VoidWithInstance, VoidWithInstanceOnlyGPRs, ValueWithInstance, ValueWithInstanceOnlyGPRs, ValueWithInstanceNoExceptionCheck, ValueWithInstanceOnlyGPRsNoExceptionCheck, ValueNoExceptionCheck, DoubleNoExceptionCheck, DoubleWithInstance, ValueWithInstanceMayFailToAllocate, ValueWithInstanceOnlyGPRsMayFailToAllocate), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, OperationOffset, MayCall, ClobbersOnlyScratch, NoEffects, CallOperationPreservingRegisters)
 v(ThrowAtSite, CalledByCode, (WordsAfterCall, WordInRegister), FormAxis | NeverReturns, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, ThrowAtSite)
 v(ThrowAtFault, EnteredByRuntime, (), CallerFrameAxis | NeverReturns, 0, 0, AllISAs, AllISAs, NoChoice, Never, MayCall, ClobbersLikeCall, NoEffects, ThrowAtFault)
 

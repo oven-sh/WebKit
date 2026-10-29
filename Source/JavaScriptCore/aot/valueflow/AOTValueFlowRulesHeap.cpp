@@ -15,6 +15,7 @@
 #include "AOTSchemaOperandIndexes.h"
 #include "AOTValueFlowBuiltins.h"
 #include "AOTValueFlowRulesModules.h"
+#include "ProxyObject.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -1503,10 +1504,23 @@ void HeapRule::runOperation()
             readOwn(array, elementsName, m_context.written(ClimbingSet(only(site)), elementsName));
         return;
     }
-    case Opcode::GetInternalField:
-        readOwn(operand(At::GetInternalField::object), internalFieldsName, m_statement.result);
+    case Opcode::GetInternalField: {
+        const ValueFlowOperand& object = operand(At::GetInternalField::object);
+        // A proxy keeps its target and its handler in internal fields. One that `new Proxy()` made cannot be revoked, so neither is ever null.
+        ClimbingSet objects = m_context.valueOf(object);
+        // This also says that the statement deals with proxies itself, so holding one here does not open it.
+        ClimbingSet proxies = m_context.proxiesAskedByTheirTrapsIn(object);
+        if (holdsAnything(proxies)) {
+            BuiltinSlotID slot = operation().index() == static_cast<uint32_t>(ProxyObject::Field::Handler) ? BuiltinSlots::ProxyHandler : BuiltinSlots::ProxyTarget;
+            connect(m_context.readWhatWasWritten(proxies, ValueFlowName { ValueFlowNameKind::Slot, slot.index() }), m_statement.result);
+        }
+        // Nothing is said of other objects before one arrives: what is added once stays.
+        if (!m_context.meet(objects, ValueSets::complement(m_context.withMembersOf(ValueSets::nothing, proxies))))
+            return;
+        readOwn(object, internalFieldsName, m_statement.result);
         add(m_statement.result, m_universe.anyPrimitive());
         return;
+    }
     case Opcode::PutInternalField:
         write(m_context.valueOf(operand(At::PutInternalField::object)), internalFieldsName, operand(At::PutInternalField::value));
         connect(operand(At::PutInternalField::value), m_statement.result);

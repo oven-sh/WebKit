@@ -454,25 +454,6 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 }
 #endif
 
-static bool handleDivertedReturn(PlatformRegisters& registers)
-{
-    auto* instance = std::bit_cast<Instance*>(registerOf(registers, instanceGPR));
-    void* target = findStub(*instance->vm->aotState().image, handleException(false));
-    if (!target)
-        return false;
-    uintptr_t returnAddress = std::bit_cast<uintptr_t>(instance->runtime.exceptions.stackPointerOfHandler);
-#if CPU(ARM64)
-    registerOf(registers, ARM64Registers::lr) = returnAddress;
-#elif CPU(X86_64)
-    void*& stackPointer = MachineContext::stackPointerImpl(registers);
-    auto* top = static_cast<uintptr_t*>(stackPointer);
-    *--top = returnAddress;
-    stackPointer = top;
-#endif
-    MachineContext::setInstructionPointer(registers, target);
-    return true;
-}
-
 bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
 {
     if (CheckedFrameCells::isInRange(faultingAddress) && CheckedFrameCells::isInUse()) [[unlikely]] {
@@ -486,8 +467,6 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
         return false;
     // This may run on another thread than the code it is about, so the registers say which image that code belongs to.
     void* pc = instructionPointer->untaggedPtr();
-    if (std::bit_cast<uintptr_t>(pc) == registerOf(registers, instanceGPR) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage) [[unlikely]]
-        return handleDivertedReturn(registers);
     const Image* image = Image::findByCodeAddress(pc);
     if (!image)
         return false;

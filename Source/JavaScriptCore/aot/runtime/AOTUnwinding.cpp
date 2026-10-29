@@ -510,20 +510,19 @@ NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, con
     return isCaughtByCallersOfNativeCode(vm, runWithoutHandler->exit) ? Action::CaptureStack : Action::CaptureStackOfThrow;
 }
 
-// Only where the operation returns into a function, directly or through a stub that does nothing more after it: any other stub continues and must not find an exception.
+// Only where the operation returns to a stub that tests for an exception and then returns into a function: any other stub continues and must not find an exception.
 // The handler active at a return address is known if the address has its own site, or the function has no handlers.
-void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
+void throwOwedOutOfMemoryErrorBeforeReturn(Instance& instance, CallerFrameAndPC* frameRecordOfOperation)
 {
     VM& vm = *instance.vm;
     const Image& image = *vm.aotState().image;
-    if (vm.exceptionForInspection() || !image.stubAddress(handleException(false)))
+    // The error is thrown only after a collection has found no room. While the operation puts collections off, the error waits for a poll.
+    if (vm.exceptionForInspection() || vm.heap.isDeferred())
         return;
-    CallFrame* frameThatReturns = std::bit_cast<CallFrame*>(frameRecordOfOperation);
-    CodeLocation location = image.locate(removeCodePtrTag(frameThatReturns->rawReturnPC()));
-    if (location.kind == CodeKind::Stub && location.stubFrameKind == StubFrameKind::ReturnsAfterOperation) {
-        frameThatReturns = static_cast<CallFrame*>(frameThatReturns->callerFrameOrEntryFrame());
-        location = image.locate(removeCodePtrTag(frameThatReturns->rawReturnPC()));
-    }
+    CodeLocation location = image.locate(removeCodePtrTag(std::bit_cast<CallFrame*>(frameRecordOfOperation)->rawReturnPC()));
+    if (location.kind != CodeKind::Stub || location.stubFrameKind != StubFrameKind::ReturnsAfterOperation)
+        return;
+    location = image.locate(removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()));
     if (location.kind != CodeKind::Function)
         return;
     if (catchesExceptions(image, location.function) && !image.returnSiteInfoAt(location.function, location.offset).site)
@@ -541,8 +540,6 @@ void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance& instance, CallerFram
         }
         EXCEPTION_ASSERT_UNUSED(topScope, topScope.exception());
     }
-    instance.runtime.exceptions.stackPointerOfHandler = removeCodePtrTag(frameThatReturns->rawReturnPC());
-    frameThatReturns->setReturnPC(reinterpret_cast<char*>(&instance) + InstanceLayout::offsetOfLoopPollPage() + offsetOfDivertedReturnInLoopPollPage);
 }
 
 } // namespace JSC::AOT

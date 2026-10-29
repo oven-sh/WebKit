@@ -1,6 +1,6 @@
 # const match = pattern.exec(text); return match && match[1];
-# The read of an element stands behind a test of the storage and a test that the element is there, and the result of the call behind what is assumed of a list that a built-in has just made.
-# The list is never built: nobody sees its storage, both tests go the way they were expected to, and what was assumed of a result that may be null holds, without null, of one that is there.
+# The read of an element stands behind a test of the storage and a test that the element is there. `1 in list` asks that second test as well and shows its answer,
+# and a built-in that hands over its first elements without building the list does not say which of them are there. So the list is built.
 # FORM: Prepared
 # RUN: pass SinkAllocations
 
@@ -30,10 +30,28 @@ function f0 name="firstGroup" parameters=[{type=RegExp}, {type=string}] results=
     Jump -> next b6(v14)
   b6(v15: undefined|null|string):
     Return v15
-# CHECK: v2:{{*}}= CallBuiltin v0, v1 overload=RegExpPrototypeExec/0 builtinCallForm=Prefix prefixLength=2
-# CHECK: [[group]]: undefined|string = SubstringOrUndefined v1,
-# CHECK-NOT: HasArrayStorage
-# CHECK-NOT: IsElementPresent
-# CHECK-NOT: GetArrayElement
-# CHECK-NOT: ElemGet
+# CHECK-NOT: builtinCallForm=Prefix
+# CHECK: = IsElementPresent v5, v6,
+}
+
+function f1 name="asked" parameters=[{type=Array<string, proven, pristine[Storage, Names]>}, {type=int[0, 2]}] results=[{type=boolean}] {
+    v2 = Integer integer=0
+    v3 = CallBuiltin v0, v2, v1 overload=ArrayPrototypeSplice/0
+    v4 = AssumeType v3 provenType=Array<string, proven, pristine[Storage, Names]>
+    v5 = Integer integer=1
+    v6 = HasArrayStorage v4 arrayStorage=Contiguous
+    Branch v6 -> taken b1(| 0), notTaken b3()
+  b1(v7: guard):
+    v8 = IsElementPresent v4, v5, v7 arrayStorage=Contiguous [keyIsIntegral]
+    Branch v8 -> taken b2(| 0), notTaken b3()
+  b2(v9: guard):
+    v10 = Boolean boolean=true
+    Jump -> next b4(v10)
+  b3() frequency=Unlikely:
+    v11 = ElemHas v4, v5 [keyIsIntegral]
+    Jump -> next b4(v11)
+  b4(v12: boolean):
+    Return v12
+# CHECK-NOT: builtinCallForm=Prefix
+# CHECK: = IsElementPresent v4, v5,
 }

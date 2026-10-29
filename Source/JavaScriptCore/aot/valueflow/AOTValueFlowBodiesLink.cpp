@@ -1227,10 +1227,13 @@ private:
             if (BuiltinClassID builtinClass = universe.m_classOfCoroutineResult[index])
                 ofClass[builtinClass.index()].append(universe.coroutineResultOf(FunctionID(index)));
         }
+        Vector<ValueFlowObjectID> proxiesFromNamedConstructor;
         for (uint32_t site = 0; site < universe.m_sites.size(); ++site) {
             ValueFlowObjectID object = universe.m_objectOfSite[site];
             if (LayoutID layout = universe.m_sites[site].layout)
                 ofLayout[layout.index()].append(object);
+            if (universe.m_sites[site].isProxyFromNamedConstructor)
+                proxiesFromNamedConstructor.append(object);
             if (universe.m_sites[site].origin == ValueFlowSiteOrigin::BuiltinResult)
                 continue;
             if (BuiltinClassID builtinClass = universe.m_sites[site].builtinClass)
@@ -1238,6 +1241,7 @@ private:
             else if (!universe.m_sites[site].layout)
                 list.append(object);
         }
+        universe.m_proxiesFromNamedConstructor = maker.of(proxiesFromNamedConstructor.span());
         fileAllocationsOfBaseClassesUnderClassesBelow(maker, ofLayout);
         universe.m_objectsWithAnyLayout = maker.unite(take(), universe.m_placeholdersAlone);
         for (uint32_t index = 0; index < m_program.layouts.size(); ++index) {
@@ -1529,10 +1533,16 @@ private:
             ValueSetID instances = ValueSets::nothing;
             for (BuiltinClassID builtinClass : mask.insideOneOfClasses)
                 instances = maker.unite(instances, universe.instancesOf(builtinClass));
+            // The test is of the type of the cell. A proxy may be callable, but no closure is a proxy.
+            if (mask.insideOneOfClasses.size() == 1 && mask.insideOneOfClasses[0] == BuiltinClasses::Proxy)
+                instances = maker.intersect(instances, ValueSets::complement(universe.closures()));
             linked.set = maker.intersect(linked.set, instances);
         }
-        for (BuiltinClassID builtinClass : mask.outsideClasses)
+        for (BuiltinClassID builtinClass : mask.outsideClasses) {
             linked.set = maker.intersect(linked.set, ValueSets::complement(universe.sureInstancesOf(builtinClass)));
+            if (builtinClass == BuiltinClasses::Proxy)
+                linked.set = maker.intersect(linked.set, ValueSets::complement(universe.proxiesFromNamedConstructor()));
+        }
         if (linked.familyObjects)
             linked.familyObjects = maker.intersect(linked.familyObjects, linked.set);
         return linked;
@@ -1603,6 +1613,7 @@ private:
                 statement.isOnlyCalledOnItsHolder,
                 statement.guardCount,
                 first.operand + statement.firstGuard,
+                statement.guardsOfOperands,
             };
         });
         std::ranges::transform(body.observedValues, m_result.m_observedValues.mutableSpan().subspan(first.observedValue).begin(), [&](const Body::ObservedValue& observed) {

@@ -55,6 +55,8 @@ struct OperationCall {
     FirstArgument firstArgument { FirstArgument::Instance };
     Saves saves { Saves::Nothing };
     bool checksException { true };
+    // For an operation that cannot throw but allocates. If the allocation fails, the error is pending in the VM when the operation returns.
+    bool checksFailedAllocation { false };
     // Set after the registers are saved, so a call that saves them leaves the argument registers as they were.
     std::optional<GPRReg> secondArgumentIn { };
     std::optional<GPRReg> thirdArgumentIn { };
@@ -64,6 +66,20 @@ struct OperationCall {
     std::optional<GPRReg> valueDestination { };
     std::optional<SpilledArguments> spilledArguments { };
 };
+
+// An operation of this run time that allocates throws the error of a failed allocation as it returns, even if it cannot throw otherwise.
+constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument firstArgument)
+{
+    switch (entry) {
+    // These take the pending exception and throw nothing.
+    case Entry::operationAOTCatch:
+    case Entry::operationAOTCatchException:
+    case Entry::operationAOTCatchValueAndException:
+        return false;
+    default:
+        return firstArgument == OperationCall::FirstArgument::Instance && effectsOf(entry).mayCollect;
+    }
+}
 
 struct PreservingCall {
     StubCallee callee { StubCallee::CompiledCode };
@@ -142,6 +158,7 @@ public:
 
     void callStub(StubKey);
     void jumpToStub(StubKey target) { linkToStub(jump(), target); }
+    void jumpToExceptionHandlerAfterFailedAllocation();
     void linkToStub(Jump, StubKey);
     void linkToStub(JumpList&, StubKey);
     void loadStubAddress(StubKey, GPRReg);

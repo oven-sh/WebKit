@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTStubFrontEnds.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
 #include "VM.h"
@@ -64,7 +65,9 @@ void StubAssembler::callOperationAndReturn(Entry entry, const OperationCall& ope
     // An operation that cannot throw leaves the register that reports an exception undefined.
     bool exceptionIsInRegister = operationCall.returns == OperationCall::Returns::Value || operationCall.returns == OperationCall::Returns::Void;
     RELEASE_ASSERT(!operationCall.checksException || !exceptionIsInRegister || effectsOf(entry).mayThrow);
-    emitOperationCallAndReturn(entry, operationCall, beforeReturn);
+    OperationCall call = operationCall;
+    call.checksFailedAllocation = mayFailToAllocate(entry, call.firstArgument) && !call.checksException;
+    emitOperationCallAndReturn(entry, call, beforeReturn);
 }
 
 void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
@@ -72,6 +75,7 @@ void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation,
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
     RELEASE_ASSERT(!operationCall.valueDestination || operationCall.returns == OperationCall::Returns::Value);
+    RELEASE_ASSERT(!operationCall.checksException || !operationCall.checksFailedAllocation);
     if (operationCall.spilledArguments) {
         RELEASE_ASSERT(!operationCall.secondArgumentIn && !operationCall.thirdArgumentIn && !operationCall.fourthArgumentIn && !operationCall.fifthArgumentIn);
         RELEASE_ASSERT(!operationCall.constantArguments[0] && !operationCall.constantArguments[1]);
@@ -184,7 +188,15 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
     } else
         emitFunctionEpilogueWithEmptyFrame();
     Jump exception;
-    if (operationCall.checksException) {
+    auto testPendingException = [&] {
+        static_assert(noOverlap(gprOf(StubRegister::A3), GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2));
+        GPRReg vm = reuseScratch(StubRegister::A3);
+        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+        exception = branchTestPtr(NonZero, Address(vm, VM::exceptionOffset()));
+    };
+    if (operationCall.checksFailedAllocation)
+        testPendingException();
+    else if (operationCall.checksException) {
         switch (operationCall.returns) {
         case OperationCall::Returns::Value:
             exception = branchTestPtr(NonZero, GPRInfo::returnValueGPR2);
@@ -196,13 +208,9 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
             loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), function);
             exception = branchTestPtr(NonZero, Address(function, VM::exceptionOffset()));
             break;
-        case OperationCall::Returns::Pair: {
-            static_assert(noOverlap(gprOf(StubRegister::A3), GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2));
-            GPRReg vm = reuseScratch(StubRegister::A3);
-            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
-            exception = branchTestPtr(NonZero, Address(vm, VM::exceptionOffset()));
+        case OperationCall::Returns::Pair:
+            testPendingException();
             break;
-        }
         }
     }
     if (operationCall.valueDestination) {
@@ -211,10 +219,13 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
     }
     beforeReturn();
     ret();
-    if (!operationCall.checksException)
+    if (!exception.isSet())
         return;
     exception.link(this);
-    jumpToExceptionHandler();
+    if (operationCall.checksFailedAllocation)
+        jumpToExceptionHandlerAfterFailedAllocation();
+    else
+        jumpToExceptionHandler();
 }
 
 #if CPU(X86_64)
@@ -275,8 +286,9 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         call(function, OperationPtrTag);
         bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     });
-    if (operationCall.checksException) {
-        if (returnsDouble) {
+    const bool testsException = operationCall.checksException || operationCall.checksFailedAllocation;
+    if (testsException) {
+        if (returnsDouble || operationCall.checksFailedAllocation) {
             loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
             loadPtr(Address(scratch, VM::exceptionOffset()), scratch);
         } else
@@ -296,13 +308,17 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         recordClobber(*valueDestination);
     emitFunctionEpilogue();
     Jump exception;
-    if (operationCall.checksException)
+    if (testsException)
         exception = branchTestPtr(NonZero, scratch);
     beforeReturn();
     ret();
-    if (!operationCall.checksException)
+    if (!testsException)
         return;
     exception.link(this);
+    if (operationCall.checksFailedAllocation) {
+        jumpToExceptionHandlerAfterFailedAllocation();
+        return;
+    }
     if (key().callerFrame() == CallerFrame::StubFrame)
         emitFunctionEpilogue();
     jumpToStub(handleException(true));
@@ -348,8 +364,9 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         call(function, OperationPtrTag);
         bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     });
-    if (operationCall.checksException) {
-        if (returnsDouble) {
+    const bool testsException = operationCall.checksException || operationCall.checksFailedAllocation;
+    if (testsException) {
+        if (returnsDouble || operationCall.checksFailedAllocation) {
             loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), scratch);
             loadPtr(Address(scratch, VM::exceptionOffset()), scratch);
         } else
@@ -369,22 +386,38 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         loadPairDouble(Address(sp, (numberOfGPRs + i) * 8), fpr(i), fpr(i + 1));
     emitFunctionEpilogue();
     Jump exception;
-    if (operationCall.checksException)
+    if (testsException)
         exception = branchTestPtr(NonZero, scratch);
     beforeReturn();
     ret();
-    if (!operationCall.checksException)
+    if (!testsException)
         return;
     exception.link(this);
+    if (operationCall.checksFailedAllocation) {
+        jumpToExceptionHandlerAfterFailedAllocation();
+        return;
+    }
     if (key().callerFrame() == CallerFrame::StubFrame)
         emitFunctionEpilogue();
     jumpToStub(handleException(true));
 }
 #endif
 
+static bool isCalledByFrontEnd(Entry entry)
+{
+    return std::ranges::any_of(operationFrontEnds(), [&](const OperationFrontEnd& frontEnd) {
+        return frontEnd.raw == entry;
+    });
+}
+
 void StubAssembler::emitOperationTailCall(const CalledOperation& operation, OperationCall::FirstArgument firstArgument)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
+    // After a tail call there is no place to test for the error of a failed allocation. A front end was called by a stub that tests.
+    if (const Entry* entry = std::get_if<Entry>(&operation); entry && mayFailToAllocate(*entry, firstArgument) && !effectsOf(*entry).mayThrow && !isCalledByFrontEnd(*entry)) {
+        callOperationAndReturn(*entry, { .firstArgument = firstArgument, .checksException = false });
+        return;
+    }
     // No operand is live here: the arguments are in place, and this is none of their registers.
     constexpr GPRReg function = gprOf(StubRegister::Operation);
     loadFirstArgument(firstArgument);

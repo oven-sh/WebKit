@@ -89,32 +89,8 @@ bool isCaughtAboveCleanup(VM&, const ReturnSiteInRun& siteOfCleanup);
 // Whether the trace was taken where native code now stands. True where compiled code has not called it.
 bool beginsInTopCompiledFrame(VM&, const ReturnAddressTrace&);
 
-inline constexpr ptrdiff_t offsetOfDivertedReturnInLoopPollPage = 8;
-void throwOwedOutOfMemoryErrorAtReturnOfOperation(Instance&, CallerFrameAndPC* frameRecordOfOperation);
-
-// Only what the operation itself made pending: it has allocated, so its caller expects a collection here. An error that was already pending waits for a place that may collect.
-class ThrowsOwedOutOfMemoryErrorAtReturn {
-    WTF_FORBID_HEAP_ALLOCATION;
-    WTF_MAKE_NONCOPYABLE(ThrowsOwedOutOfMemoryErrorAtReturn);
-public:
-    ALWAYS_INLINE ThrowsOwedOutOfMemoryErrorAtReturn(Instance* instance, CallerFrameAndPC* frameRecordOfOperation)
-        : m_instance(*instance)
-        , m_frameRecordOfOperation(frameRecordOfOperation)
-        , m_wasPending(instance->vm->traps().needsOutOfMemoryError())
-    {
-    }
-
-    ALWAYS_INLINE ~ThrowsOwedOutOfMemoryErrorAtReturn()
-    {
-        if (m_instance.vm->traps().needsOutOfMemoryError() && !m_wasPending) [[unlikely]]
-            throwOwedOutOfMemoryErrorAtReturnOfOperation(m_instance, m_frameRecordOfOperation);
-    }
-
-private:
-    Instance& m_instance;
-    CallerFrameAndPC* m_frameRecordOfOperation;
-    bool m_wasPending;
-};
+// For an operation whose allocation failed. It throws only if the stub that called the operation tests for an exception and the function it returns to expects one there.
+void throwOwedOutOfMemoryErrorBeforeReturn(Instance&, CallerFrameAndPC* frameRecordOfOperation);
 
 } // namespace AOT
 } // namespace JSC

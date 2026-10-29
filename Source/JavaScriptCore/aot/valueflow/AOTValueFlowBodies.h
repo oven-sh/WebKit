@@ -80,6 +80,7 @@ struct ValueFlowSite {
     LayoutID layout;
     BuiltinClassID builtinClass;
     bool namesPrototype { false };
+    bool isProxyFromNamedConstructor { false };
 
     friend bool operator==(const ValueFlowSite&, const ValueFlowSite&) = default;
 };
@@ -194,6 +195,7 @@ public:
     ValueSetID instancesOf(BuiltinClassID builtinClass) const { return m_objectsOfClass[builtinClass.index()]; }
     ValueSetID objectsWith(LayoutID layout) const { return m_objectsOfLayout[layout.index()]; }
     ValueSetID sureInstancesOf(BuiltinClassID builtinClass) const { return m_sureInstancesOfClass[builtinClass.index()]; }
+    ValueSetID proxiesFromNamedConstructor() const { return m_proxiesFromNamedConstructor; }
     // By what an object was made as, whether or not compiled code has a test for the class.
     ValueSetID objectsThatMayBeMadeAs(BuiltinClassID builtinClass) const { return m_objectsThatMayBeMadeAs[builtinClass.index()]; }
     ValueSetID objectsMadeAs(BuiltinClassID builtinClass) const { return m_objectsMadeAs[builtinClass.index()]; }
@@ -260,6 +262,7 @@ private:
     Vector<ValueSetID> m_objectsOfLayout;
     Vector<ValueSetID> m_objectsOfClass;
     Vector<ValueSetID> m_sureInstancesOfClass;
+    ValueSetID m_proxiesFromNamedConstructor { ValueSets::nothing };
     Vector<ValueSetID> m_objectsThatMayBeMadeAs;
     Vector<ValueSetID> m_objectsMadeAs;
     ValueSetID m_objectsAllocatedAsIterators;
@@ -584,6 +587,7 @@ struct ValueFlowBody {
         bool isOnlyCalledOnItsHolder { false };
         uint8_t guardCount { 0 };
         uint32_t firstGuard { 0 };
+        uint32_t guardsOfOperands { 0 };
     };
 
     struct ObservedValue {

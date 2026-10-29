@@ -445,6 +445,11 @@ static bool recordsCalleeOnlyOnceRenamed(const Program& program, FunctionID call
     return program.at(source).has(FunctionCapabilities::RecordsCalleeOnceRenamed) && !program.at(source).has(FunctionCapabilities::RecordsCallee);
 }
 
+bool keepsCalleeOfAccessor(const Program& program, FunctionID accessor)
+{
+    return !mayBeCalledDirectly(program, accessor) || recordsCalleeOnlyOnceRenamed(program, accessor);
+}
+
 bool mayBeCalledDirectly(const Program& program, FunctionID id)
 {
     return !program.at(id).capabilities.contains(FunctionCapabilities::RecordsCallee) && mayBeCalledDirectlyOrThroughEntrypoint(program, id);
@@ -2308,7 +2313,7 @@ struct CallResolver {
         if (!recordsCalleeOnlyOnceRenamed(callee))
             return false;
         context.planAsksAboutPlace = true;
-        return flow.closuresMayBeNamedOutOfSight(callee) || callsOwnClosureThatEscapes(site, closure, callee);
+        return isAccessor(program.at(callee)) || flow.closuresMayBeNamedOutOfSight(callee) || callsOwnClosureThatEscapes(site, closure, callee);
     }
 
     bool callsOwnClosureThatEscapes(const CallSite& site, ValueID closure, FunctionID callee)
@@ -2330,7 +2335,7 @@ struct CallResolver {
         if (!only || typeOf(closure).mayBeUndefinedOrNull() || !mayBeCalledDirectlyOrThroughEntrypoint(program, only) || context.limit(LimitID::MaxDispatchCases) < 1 || isTailCall(function, site.position))
             return nullptr;
         // A frame without a record shows the last name given to any function object of the function, unless the call records that it enters the caller's own, or keeps the function object where the caller's frame shows it.
-        bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only) || (recordsCalleeOnlyOnceRenamed(only) && flow.closuresMayBeNamedOutOfSight(only));
+        bool callsOwnFunctionObject = !mayBeCalledDirectly(program, only) || (recordsCalleeOnlyOnceRenamed(only) && (isAccessor(program.at(only)) || flow.closuresMayBeNamedOutOfSight(only)));
         bool keepsCalleeInFrame = false;
         if (callsOwnFunctionObject && (call.isTailCall || call.calledBuiltin() || !isHandedToNobodyAround(site, findClosureCreation(function, closure, only)))) {
             if (call.isTailCall || !mayBeCalledDirectlyWhereCalleeIsKept(program, only))
@@ -2343,7 +2348,8 @@ struct CallResolver {
                 return nullptr;
             keepsCalleeInFrame = true;
         }
-        if (keepsCalleeInFrame && seldomRuns(site))
+        // A small accessor is inlined, and nothing is left of the call.
+        if (keepsCalleeInFrame && !isAccessor(program.at(only)) && seldomRuns(site))
             return nullptr;
         // appendCall() puts no call where the receiver cannot be what the callee takes.
         if (cannotBeThisOf(program.at(only), call.thisValueOperand()))

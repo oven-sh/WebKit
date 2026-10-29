@@ -107,12 +107,19 @@ static bool canGrow(const ReservedRangeHeap::Request& request)
 #endif
 }
 
+static bool s_commitsOnDemand;
+
+void ReservedRangeHeap::setCommitsOnDemand(bool commitsOnDemand)
+{
+    s_commitsOnDemand = commitsOnDemand;
+}
+
 // malloc gets a range that is reserved without access in segments, each as large as all before it, and each with access from the start.
 // If it got memory that it has to commit, it would ask the system for access once for every 64 KB that it first uses.
 static size_t sizeOfFirstSegment(size_t reservedSize, const ReservedRangeHeap::Request& request)
 {
 #if OS(LINUX) && USE(MIMALLOC)
-    if (usesMalloc() && request.initialAccess == ReservedRangeHeap::InitialAccess::None && !canGrow(request)) {
+    if (usesMalloc() && request.initialAccess == ReservedRangeHeap::InitialAccess::None && !canGrow(request) && !s_commitsOnDemand) {
         size_t size = roundUpToMultipleOf<mallocChunkSize>(request.unusedPrefixSize + std::max(request.firstSegmentSize, minSegmentSize));
         if (size + minSegmentSize <= reservedSize)
             return size;
@@ -336,7 +343,7 @@ auto ReservedRangeHeap::tryCreateBacking(uintptr_t start, size_t size, const Req
     bool isCommitted = false;
 #if OS(LINUX)
     // Where the system counts writable memory against a limit it may refuse. malloc then commits what it uses.
-    isCommitted = reservesWithoutAccess(request) && !mprotect(memory, memorySize, PROT_READ | PROT_WRITE);
+    isCommitted = reservesWithoutAccess(request) && !s_commitsOnDemand && !mprotect(memory, memorySize, PROT_READ | PROT_WRITE);
 #endif
     mi_arena_id_t arena { };
     if (!mi_manage_os_memory_ex(memory, memorySize, isCommitted, false, true, -1, true, &arena))

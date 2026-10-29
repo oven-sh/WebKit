@@ -819,6 +819,11 @@ void logExhaustedAddressSpace()
         MarkedBlockCage::logExhaustion(MarkedBlockCage::ExhaustedHeap::Cells);
 }
 
+void MarkedBlockCage::setCommitsOnDemand(bool commitsOnDemand)
+{
+    ReservedRangeHeap::setCommitsOnDemand(commitsOnDemand);
+}
+
 void MarkedBlockCage::setExhaustionHandler(ExhaustionHandler handler)
 {
     s_exhaustionHandler.store(handler, std::memory_order_relaxed);

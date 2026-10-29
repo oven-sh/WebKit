@@ -487,7 +487,7 @@ RuntimeCallEmitter::CallRequest RuntimeCallEmitter::createEntryRequest(AOT::Entr
         && numberOfGPRArgumentsOf(signature, first) <= GPRInfo::numberOfArgumentRegisters
         && (first != OperationCall::FirstArgument::None || !checksException);
     if (callerOptions.isOnRarePath && canPreserveRegisters) {
-        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException };
+        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException, .checksFailedAllocation = !checksException && mayFailToAllocate(entry, first) };
         request.key = callOperationPreservingRegisters(*request.preservingCall);
     } else
         request.key = callOperationFor(entry, returns, first);

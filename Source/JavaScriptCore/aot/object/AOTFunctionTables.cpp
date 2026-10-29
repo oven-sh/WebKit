@@ -708,6 +708,12 @@ void didLookForNameProperty(VM& vm, JSObject* closure)
     if (functionKindData(function).isBound() || functionKindData(sourceFunction).isGenerator)
         return;
     FunctionTables& tables = FunctionTables::of(vm);
+    // Other function objects of the accessor keep the name without "get " or "set " in their frames. An accessor without captures is called without its function object, so its frames cannot tell.
+    if (functionKindData(function).accessor() != MethodKind::Method && FunctionDescription(function).recordsCalleeOnceRenamed() && captureCountsOf(function).captures && !dynamicDowncast<SlimClosure>(closure)) {
+        tables.recordCalleesOf(vm, function);
+        markRenamed(closure);
+        return;
+    }
     Locker locker { tables.namesLock };
     if (!tables.namesLookedFor.add(sourceFunction.index()))
         return;
