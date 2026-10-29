@@ -2944,6 +2944,8 @@ bool Heap::tryUseReserveOfExhaustedCage(AlignedMemoryAllocator* exhaustedAllocat
 {
     if (!MarkedBlockCage::isRequired())
         return false;
+    if (exhaustedAllocator == fastMallocAllocator.get() || exhaustedAllocator == primitiveGigacageAllocator.get())
+        return false;
     if (exhaustedAllocator == structureAllocator.get()) {
         if (!StructureAlignedMemoryAllocator::releaseReserve())
             return false;
