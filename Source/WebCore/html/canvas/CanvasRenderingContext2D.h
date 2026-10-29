@@ -47,8 +47,6 @@ public:
 
     void setFont(const String&);
 
-    CanvasDirection direction() const;
-
     void fillText(const String& text, double x, double y, std::optional<double> maxWidth = std::nullopt);
     void strokeText(const String& text, double x, double y, std::optional<double> maxWidth = std::nullopt);
     Ref<TextMetrics> measureText(const String& text);
@@ -57,6 +55,7 @@ private:
     CanvasRenderingContext2D(CanvasBase&, CanvasRenderingContext2DSettings&&, bool usesCSSCompatibilityParseMode);
 
     const FontProxy* fontProxy() final;
+    AtomString inheritedLanguage() const final;
 
     std::optional<Style::Filter> setFilterStringWithoutUpdatingStyle(const String&) override;
     RefPtr<Filter> createFilter(const FloatRect& bounds) const override;

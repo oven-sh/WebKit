@@ -42,6 +42,7 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp-load-from-cache-storage.tentative.https.html.headers
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/isolate-and-require-corp.tentative.https.html.headers
+/LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/location-replace-keeps-entry.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/message-channel.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/navigate-across-policies.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/no-secure-context-https-iframe.tentative.html
@@ -50,6 +51,8 @@ List of files:
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/origin-agent-cluster.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/partial-deployment.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-cache-storage-corp.tentative.https.html
+/LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-cached-and-service-worker-responses.tentative.https.html
+/LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-dedicated-worker.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/reporting-subresource-corp.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/reporting.tentative.https.html
 /LayoutTests/imported/w3c/web-platform-tests/html/document-isolation-policy/service-worker-coep-credentialless-proxy.https.tentative.window.js

@@ -1,4 +1,4 @@
-# [[1]].flatMap(same), beside a function of the library that no record describes (runtimefunction 73) and that calls flatIntoArrayWithCallback (runtimefunction 41) too
+# [[1]].flatMap(same), beside a function of the library that no record describes (runtimefunction 72) and that calls flatIntoArrayWithCallback (runtimefunction 40) too
 # Nothing says what a call of the other function does, so what it hands to the linked function may be any value, and the linked function calls it: code that nobody compiles may write.
 # Called by the code behind described built-ins alone: linked-function-that-only-the-code-behind-described-built-ins-calls-is-such-code-too.ir
 # LIBRARY: own

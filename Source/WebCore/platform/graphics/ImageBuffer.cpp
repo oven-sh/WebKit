@@ -28,7 +28,6 @@
 #include "config.h"
 #include "ImageBuffer.h"
 
-#include "BitmapImage.h"
 #include "Filter.h"
 #include "FilterImage.h"
 #include "FilterResults.h"
@@ -287,8 +286,7 @@ static RefPtr<NativeImage> copyImageBufferToNativeImage(Ref<ImageBuffer> source,
 
 RefPtr<ImageBuffer> ImageBuffer::clone() const
 {
-    // FIXME: Remove suppression once rdar://189998365 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return copyImageBuffer(const_cast<ImageBuffer&>(*this), PreserveResolution::Yes);
+    return copyImageBuffer(const_cast<ImageBuffer&>(*this), PreserveResolution::Yes);
 }
 
 GraphicsContext& ImageBuffer::context() const

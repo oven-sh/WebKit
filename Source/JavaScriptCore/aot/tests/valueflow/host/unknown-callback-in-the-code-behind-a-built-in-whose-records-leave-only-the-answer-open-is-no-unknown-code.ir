@@ -1,5 +1,5 @@
 # [1].find(isOne)
-# One function of the library runs for all calls of Array.prototype.find (runtimefunction 35), so it is entered with operands nobody knows, reads their members and calls the callback among them.
+# One function of the library runs for all calls of Array.prototype.find (runtimefunction 34), so it is entered with operands nobody knows, reads their members and calls the callback among them.
 # The records of find say what every call does to its operands. Only what a receiver that is no array as it was made answers is left to the code.
 # They have handed `isOne` the element where the call is. Nothing in this program is code that nobody compiles: no such code writes anything,
 # neither the array nor `isOne` is in unknown hands, `isOne` gets the number and nothing else, and no getter of another class under the name `length` is used.

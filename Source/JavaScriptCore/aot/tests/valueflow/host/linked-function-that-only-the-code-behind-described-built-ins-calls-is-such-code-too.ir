@@ -1,5 +1,5 @@
-# [[1]].flatMap(same), where the library's flatMap hands the callback to flatIntoArrayWithCallback (runtimefunction 41), a function that the files of the engine link by name
-# The code behind Array.prototype.flatMap (runtimefunction 42) is entered with operands nobody knows and calls the linked function directly with them. No realm holds that function, no row says that
+# [[1]].flatMap(same), where the library's flatMap hands the callback to flatIntoArrayWithCallback (runtimefunction 40), a function that the files of the engine link by name
+# The code behind Array.prototype.flatMap (runtimefunction 41) is entered with operands nobody knows and calls the linked function directly with them. No realm holds that function, no row says that
 # native code calls it and no other statement names it: the callback that it calls is an operand of a call whose records say what it is called with.
 # No code that nobody compiles writes anything, no value nobody knows is called, and `same` is in nobody's hands.
 # Named by another function too: linked-function-that-other-code-calls-too-calls-unknown-code.ir

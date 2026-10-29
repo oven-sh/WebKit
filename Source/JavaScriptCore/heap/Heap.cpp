@@ -1983,10 +1983,7 @@ void Heap::checkConn(GCConductor conn)
 
 void Heap::stopThePeriphery()
 {
-    if (m_worldIsStopped) {
-        dataLog("FATAL: world already stopped.\n");
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+    RELEASE_ASSERT(!m_worldIsStopped);
     
     if (m_mutatorDidRun)
         m_mutatorExecutionVersion++;
@@ -2012,10 +2009,7 @@ void Heap::resumeThePeriphery()
 
     m_barriersExecuted = 0;
     
-    if (!m_worldIsStopped) {
-        dataLog("Fatal: collector does not believe that the world is stopped.\n");
-        RELEASE_ASSERT_NOT_REACHED();
-    }
+    RELEASE_ASSERT(m_worldIsStopped);
     m_worldIsStopped = false;
 }
 
@@ -2023,21 +2017,16 @@ bool Heap::stopTheMutator()
 {
     for (;;) {
         unsigned oldState = m_worldState.load();
+        // Only called by the collector thread when it is conducting.
+        RELEASE_ASSERT(!(oldState & mutatorHasConnBit));
+
         if (oldState & stoppedBit) {
             RELEASE_ASSERT(!(oldState & hasAccessBit));
             RELEASE_ASSERT(!(oldState & mutatorWaitingBit));
-            RELEASE_ASSERT(!(oldState & mutatorHasConnBit));
             return true;
-        }
-        
-        if (oldState & mutatorHasConnBit) {
-            RELEASE_ASSERT(!(oldState & hasAccessBit));
-            RELEASE_ASSERT(!(oldState & stoppedBit));
-            return false;
         }
 
         if (!(oldState & hasAccessBit)) {
-            RELEASE_ASSERT(!(oldState & mutatorHasConnBit));
             RELEASE_ASSERT(!(oldState & mutatorWaitingBit));
             // We can stop the world instantly.
             if (m_worldState.compareExchangeWeak(oldState, oldState | stoppedBit))
@@ -2063,20 +2052,12 @@ NEVER_INLINE void Heap::resumeTheMutator()
     dataLogLnIf(HeapInternal::verbose, "Resuming the mutator.");
     for (;;) {
         unsigned oldState = m_worldState.load();
-        if (!!(oldState & hasAccessBit) != !(oldState & stoppedBit)) {
-            dataLog("Fatal: hasAccess = ", !!(oldState & hasAccessBit), ", stopped = ", !!(oldState & stoppedBit), "\n");
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        if (oldState & mutatorHasConnBit) {
-            dataLog("Fatal: mutator has the conn.\n");
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        
-        if (!(oldState & stoppedBit)) {
-            dataLogLnIf(HeapInternal::verbose, "Returning because not stopped.");
-            return;
-        }
-        
+        // Only called by the collector thread when it is conducting, after it stopped the mutator.
+        RELEASE_ASSERT(oldState & stoppedBit, oldState);
+        RELEASE_ASSERT(!(oldState & hasAccessBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorHasConnBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorWaitingBit), oldState);
+
         if (m_worldState.compareExchangeWeak(oldState, oldState & ~stoppedBit)) {
             dataLogLnIf(HeapInternal::verbose, "CASing and returning.");
             ParkingLot::unparkAll(&m_worldState);
@@ -2185,8 +2166,10 @@ void Heap::acquireAccessSlow()
 {
     for (;;) {
         unsigned oldState = m_worldState.load();
-        RELEASE_ASSERT(!(oldState & hasAccessBit));
-        
+        RELEASE_ASSERT(!(oldState & hasAccessBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorHasConnBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorWaitingBit), oldState);
+
         if (oldState & stoppedBit) {
             if (HeapInternal::verboseStop) {
                 dataLogLn("Stopping in acquireAccess!");
@@ -2212,15 +2195,10 @@ void Heap::releaseAccessSlow()
 {
     for (;;) {
         unsigned oldState = m_worldState.load();
-        if (!(oldState & hasAccessBit)) {
-            dataLog("FATAL: Attempting to release access but the mutator does not have access.\n");
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        if (oldState & stoppedBit) {
-            dataLog("FATAL: Attempting to release access but the mutator is stopped.\n");
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        
+        RELEASE_ASSERT(oldState & hasAccessBit, oldState);
+        RELEASE_ASSERT(!(oldState & stoppedBit), oldState);
+        RELEASE_ASSERT(!(oldState & mutatorWaitingBit), oldState);
+
         if (handleNeedCollectionEpilogue(oldState))
             continue;
 
@@ -2285,6 +2263,9 @@ void Heap::relinquishConn()
     while (relinquishConn(m_worldState.load())) { }
 }
 
+// The epilogue clears VM caches that hold cells marking did not keep alive, so a mutator runs it before returning from
+// the heap. It also finishes the collection's own bookkeeping, which the heap's next collection would overwrite, so it
+// must run before the next collection begins.
 NEVER_INLINE bool Heap::handleNeedCollectionEpilogue(unsigned oldState)
 {
     // RELEASE_ASSERT(oldState & hasAccessBit);
@@ -2309,7 +2290,10 @@ void Heap::handleNeedCollectionEpilogue()
 
 void Heap::setNeedCollectionEpilogue()
 {
-    m_worldState.exchangeOr(needCollectionEpilogueBit);
+    unsigned oldState = m_worldState.exchangeOr(needCollectionEpilogueBit);
+    // Only End sets this, once per collection, while the mutator is stopped or conducting.
+    RELEASE_ASSERT(!(oldState & needCollectionEpilogueBit), oldState);
+    RELEASE_ASSERT((oldState & stoppedBit) || (oldState & mutatorHasConnBit), oldState);
     ParkingLot::unparkAll(&m_worldState);
     m_stopIfNecessaryTimer->scheduleSoon();
 }
@@ -2330,12 +2314,18 @@ void Heap::waitWhileNeedCollectionEpilogue()
 
 void Heap::setMutatorWaiting()
 {
-    m_worldState.exchangeOr(mutatorWaitingBit);
+    unsigned oldState = m_worldState.exchangeOr(mutatorWaitingBit);
+    RELEASE_ASSERT(oldState & hasAccessBit, oldState);
+    RELEASE_ASSERT(!(oldState & stoppedBit), oldState);
 }
 
 void Heap::clearMutatorWaiting()
 {
-    m_worldState.exchangeAnd(~mutatorWaitingBit);
+    unsigned oldState = m_worldState.exchangeAnd(~mutatorWaitingBit);
+    if (oldState & mutatorWaitingBit) {
+        RELEASE_ASSERT(oldState & hasAccessBit, oldState);
+        RELEASE_ASSERT(!(oldState & stoppedBit), oldState);
+    }
 }
 
 void Heap::sweepAndClearCachesInEpilogue()

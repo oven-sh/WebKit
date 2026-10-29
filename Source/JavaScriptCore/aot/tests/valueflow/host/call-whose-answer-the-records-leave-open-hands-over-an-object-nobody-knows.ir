@@ -1,5 +1,5 @@
 # Array.prototype.find.call(handedIn, take)
-# The receiver is an object nobody knows, so the call enters the library's function (runtimefunction 35) with it. The body reads members of it, and they may be accessors: code that nobody compiles may write.
+# The receiver is an object nobody knows, so the call enters the library's function (runtimefunction 34) with it. The body reads members of it, and they may be accessors: code that nobody compiles may write.
 # LIBRARY: own
 # RUN: valueflow-why flag=h6
 # CHECK: flag=h6

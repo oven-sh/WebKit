@@ -649,6 +649,7 @@ public:
     WriteBarrier<NativeExecutable> m_promiseAllSettledSlowRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnyRejectFunctionExecutable;
     WriteBarrier<NativeExecutable> m_promiseAnySlowRejectFunctionExecutable;
+    WriteBarrier<NativeExecutable> m_proxyRevokeExecutable;
 
     WriteBarrier<JSCell> m_orderedHashTableDeletedValue;
     WriteBarrier<JSCell> m_orderedHashTableSentinel;
@@ -773,6 +774,7 @@ public:
     inline NativeExecutable* promiseAllSettledSlowRejectFunctionExecutable();
     inline NativeExecutable* promiseAnyRejectFunctionExecutable();
     inline NativeExecutable* promiseAnySlowRejectFunctionExecutable();
+    inline NativeExecutable* proxyRevokeExecutable();
 
     WeakGCMap<WTF::SymbolImpl*, Symbol, PtrHash<WTF::SymbolImpl*>> symbolImplToSymbolMap;
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> atomStringToJSStringMap;
@@ -1403,6 +1405,7 @@ private:
     NativeExecutable* promiseAllSettledSlowRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnyRejectFunctionExecutableSlow();
     NativeExecutable* promiseAnySlowRejectFunctionExecutableSlow();
+    NativeExecutable* proxyRevokeExecutableSlow();
 
     void updateStackLimits();
 

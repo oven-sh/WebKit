@@ -182,7 +182,9 @@ NeedsAnchorToBeMouseFocusableQuirk:
   conditions: [ElementSelector]
   accessor: needsAnchorToBeMouseFocusable
 
+# affirm.com rdar://190768633
 # ceac.state.gov https://bugs.webkit.org/show_bug.cgi?id=193478
+# cnn.com rdar://190735753
 # weather.com rdar://139689157
 # thetimes.com rdar://190263358
 # madisoncity.k12.al.us https://bugs.webkit.org/show_bug.cgi?id=296989
@@ -587,7 +589,7 @@ ShouldExposeShowModalDialog:
 
 # rdar://133423460
 ShouldFlipScreenDimensionsQuirk:
-  available: flipScreenDimensionsQuirks
+  available: iOSFamily
   accessor: shouldFlipScreenDimensions
 
 # disneyplus: rdar://137613110
@@ -716,11 +718,11 @@ ShouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasQuirk:
 
 # webex.com rdar://143715630
 NeedsWebExScrollabilityQuirk:
-  available: "iOSFamily && desktopContentModeQuirks"
+  available: appleTV
 
 # rdar://138806698
 ShouldSupportHoverMediaQueriesQuirk:
-  available: desktopContentModeQuirks
+  available: appleTV
   accessor: shouldSupportHoverMediaQueries
 
 # cbssports.com <rdar://139478801>.
