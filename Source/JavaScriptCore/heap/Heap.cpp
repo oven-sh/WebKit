@@ -2165,8 +2165,9 @@ void Heap::waitForCollector(NOESCAPE const Func& func)
             relinquishConn();
         else if (relinquishConn(oldState))
             continue;
-        else if (!done && (oldState & mutatorHasConnBit)) [[unlikely]] {
-            // There is no thread to take the conn.
+        // The conn is still ours only when there is no thread to take it (Collector::tryEnsureThreadForWork()):
+        // parking would then wait for a collector that never comes.
+        if (!done && (m_worldState.load() & mutatorHasConnBit)) [[unlikely]] {
             collectInMutatorThreadUntilDone();
             continue;
         }
