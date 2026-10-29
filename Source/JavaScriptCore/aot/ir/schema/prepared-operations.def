@@ -91,7 +91,7 @@ operation CallForwardVarargs (callee: Any/calls, thisValue: Any/retains, firstAr
 operation ConstructSuperForwardVarargs (layout: Layout, parent: Any/calls, newTarget: Any/retains, firstArgument: UInt32, with CallStamp) -> declared(layout) ; unknownCode by Call ; accessClass = IndirectCall
 
 family Environment Prepared..Placed
-operation GetCapture (function: Function(Dispatch), index: UInt32, closure: Callable/inspects) -> declared(function) ; none ; interpreted = Read
+operation GetCapture (function: Function(Dispatch), index: UInt32, closure: Callable/inspects) -> declared(function) ; none ; AsRead..Placed ; interpreted = Read ; flow = Copies ; flowsWithoutRule = true
 operation MaterializeEnvironment (environment: Environment/inspects+returns, layout: Layout, from Placed allocation?: Allocation) -> natural(same(environment)) ; Allocates reads(EnvironmentFields) ; runtime = MaterializeEnvironment ; allocatesInline = true ; boundTo = Frame
 operation MarkEnvironmentEscaped (environment: Environment/inspects) -> none ; writes(RuntimeState) ; boundTo = Frame
 operation ReleaseEnvironment (environment: Environment/inspects) -> none ; reads(RuntimeState) writes(EnvironmentFields, AllocatorState, RuntimeState) ; boundTo = Frame

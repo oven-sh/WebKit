@@ -555,6 +555,14 @@ bool Object::tryDefineAbsentProperty(VM& vm, const FieldData* field, PropertyNam
     JSObject* extra = extraProperties();
     if (extra && isValidOffset(extra->structure()->get(vm, name)))
         return false;
+    return tryAddAbsentExtraProperty(vm, name, valueOrAccessor, attributes);
+}
+
+bool Object::tryAddAbsentExtraProperty(VM& vm, PropertyName name, JSValue valueOrAccessor, unsigned attributes)
+{
+    if (isNotExtensible())
+        return false;
+    JSObject* extra = extraProperties();
     willAddExtraProperty(vm, name);
     // The first property is added before the object gets its extra properties, so the object changes Structure only once.
     bool isFirst = !extra;
@@ -568,6 +576,29 @@ bool Object::tryDefineAbsentProperty(VM& vm, const FieldData* field, PropertyNam
         didChangeExtraProperties(vm);
     didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Add, name.uid());
     return true;
+}
+
+Object::ExtraPropertyFound Object::findExtraProperty(VM& vm, PropertyName name) const
+{
+    using Kind = ExtraPropertyFound::Kind;
+    if (parseIndex(name) || name.isPrivateName())
+        return { Kind::Other, { } };
+    JSObject* extra = extraProperties();
+    if (!extra)
+        return { Kind::Absent, { } };
+    LeavingProperty current;
+    current.valueOrAccessor = extra->getDirect(vm, name, current.attributes);
+    if (!current.valueOrAccessor)
+        return { Kind::Absent, { } };
+    bool isFixed = current.attributes & (PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessorOrValue);
+    return { isFixed ? Kind::Other : Kind::MayBeRedefinedInEveryWay, current };
+}
+
+void Object::replaceExtraProperty(VM& vm, PropertyName name, LeavingProperty property)
+{
+    putProperty(vm, extraProperties(), name, property);
+    didChangeExtraProperties(vm);
+    didChangeOwnProperties(vm, *this, VM::StructureChainIntegrityEvent::Change, name.uid());
 }
 
 static void setOrdinaryObjectIntegrity(JSGlobalObject* globalObject, JSObject* ordinary, Object::Integrity integrity)

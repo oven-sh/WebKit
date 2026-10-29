@@ -707,6 +707,12 @@ void Modules::throwFailure(ModuleFailureID id, bool isForRequire)
         key = loader()->resolve(realm, m_state.strings->string(vm, failure.specifierString()), pathString(failure.importerModule()), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, void());
+    if (!isForRequire) {
+        // `import` passes the resolved key to the loader, which resolves it again.
+        DisallowVMEntry disallowVMEntry(vm);
+        key = loader()->resolve(realm, jsString(vm, key.string()), pathString(failure.importerModule()), nullptr, true);
+    }
+    RETURN_IF_EXCEPTION(scope, void());
     if (host().createLoadError) {
         JSValue error = host().createLoadError(realm, key.string());
         RETURN_IF_EXCEPTION(scope, void());

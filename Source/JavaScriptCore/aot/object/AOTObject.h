@@ -220,6 +220,15 @@ public:
     bool tryDefineAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
     // The caller has already looked up the name: `field` is fieldNamed(name).
     bool tryDefineAbsentProperty(VM&, const FieldData*, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    // What the properties that no field holds say of a name that is the name of no field.
+    struct ExtraPropertyFound {
+        enum class Kind : uint8_t { Absent, MayBeRedefinedInEveryWay, Other };
+        Kind kind;
+        LeavingProperty property;
+    };
+    ExtraPropertyFound findExtraProperty(VM&, PropertyName) const;
+    bool tryAddAbsentExtraProperty(VM&, PropertyName, JSValue valueOrAccessor, unsigned attributes);
+    void replaceExtraProperty(VM&, PropertyName, LeavingProperty);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     bool tryDefineAbsentGetterInSlot(VM&, JSGlobalObject*, const FieldData&, UniquedStringImpl* name, JSObject* getter, unsigned attributes);
     // The keys are strings, each followed by its function. Bit i of `getters` says that function i is a getter. True if all of them now lie in slots. Otherwise the object is as it was.

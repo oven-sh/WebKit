@@ -370,6 +370,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     auto leave = [&](EvaluationFrame& frame) {
         const ModuleData& moduleData = data(frame.module);
         ModuleRecord* record = frame.record;
+        bool hadCapturedExports = didCaptureExports(frame.module);
         if (record && (*record->pendingAsyncDependencies() > 0 || moduleData.hasTopLevelAwait())) {
             record->setAsyncEvaluationOrder(vm.incrementModuleAsyncEvaluationCount());
             if (!*record->pendingAsyncDependencies())
@@ -378,7 +379,10 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
             callBodyUnderOwnMark(frame.module, moduleData.evaluatesItself());
         RETURN_IF_EXCEPTION(scope, void());
         if (moduleData.capturesExportsBehindEvaluation()) [[unlikely]] {
-            captureExports(frame.module);
+            if (!hadCapturedExports && didCaptureExports(frame.module))
+                copyExportsOfFinishedFile(frame.module);
+            else
+                captureExports(frame.module);
             RETURN_IF_EXCEPTION(scope, void());
         }
 

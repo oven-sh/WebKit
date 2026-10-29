@@ -37,6 +37,8 @@
 #include <array>
 #include <atomic>
 #include <wtf/BitVector.h>
+#include <wtf/HashMap.h>
+#include <wtf/Hasher.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -532,6 +534,30 @@ struct TableParameters {
 struct FoundCallees {
     BitVector functions;
     BitVector calleeSets;
+    BitVector typedCalleeLists;
+};
+
+class InternedCalleeLists {
+public:
+    uint32_t intern(std::span<const FunctionID> list)
+    {
+        Hasher hasher;
+        for (FunctionID function : list)
+            add(hasher, function.index());
+        auto& known = m_listsByHash.add(hasher.hash(), Vector<uint32_t, 1> { }).iterator->value;
+        for (uint32_t index : known) {
+            if (std::ranges::equal(lists[index], list))
+                return index;
+        }
+        known.append(lists.size());
+        lists.append(Vector<FunctionID>(list));
+        return known.last();
+    }
+
+    Vector<Vector<FunctionID>> lists;
+
+private:
+    UncheckedKeyHashMap<unsigned, Vector<uint32_t, 1>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_listsByHash;
 };
 
 } // anonymous namespace
@@ -643,7 +669,10 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
         Vector<AccessSiteID> sites;
         Vector<CalleeSetOfSite> calleeSets;
         Vector<CalleeOfSite> typedCallees;
+        Vector<CalleeListOfSite> typedCalleeLists;
+        InternedCalleeLists lists;
     };
+    AOT_THRESHOLD(size_t, minCalleesOfSharedList, 16);
     Vector<Vector<Chunk>> chunks = collectChunksInParallel<Chunk>(loops, program.functions.size(), { }, [&](unsigned index, Vector<Chunk>& found) {
         const Function& function = program.functions[index];
         forEachListedValue(program, FunctionID(index), Value::opcodesWithCallees, [&](BlockID, uint32_t, ValueID, const Value& call) {
@@ -659,10 +688,16 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
             if (!callee)
                 return;
             CalleeCandidates candidates = calleeCandidates(program, function, callee);
-            for (FunctionID listed : program.typeOf(function, candidates.value).functions)
-                found[0].typedCallees.append({ site, listed });
-            for (FunctionID listed : candidates.expected().predicted())
-                found[0].typedCallees.append({ site, listed });
+            auto add = [&](std::span<const FunctionID> callees) {
+                if (callees.size() >= minCalleesOfSharedList) {
+                    found[0].typedCalleeLists.append({ site, found[0].lists.intern(callees) });
+                    return;
+                }
+                for (FunctionID listed : callees)
+                    found[0].typedCallees.append({ site, listed });
+            };
+            add(program.typeOf(function, candidates.value).functions.span());
+            add(candidates.expected().predicted());
         });
     });
     Vector<Chunk*> filled;
@@ -710,6 +745,16 @@ CalleesOfSites collectCalleesOfSites(const Program& program, BuildContext& build
         },
         [&] {
             join(&Chunk::typedCallees, result.typedCallees);
+        },
+        [&] {
+            InternedCalleeLists lists;
+            for (Chunk* chunk : filled) {
+                for (const CalleeListOfSite& entry : chunk->typedCalleeLists)
+                    result.typedCalleeLists.append({ entry.site, lists.intern(chunk->lists.lists[entry.list].span()) });
+            }
+            AOT::sort(result.typedCalleeLists);
+            removeRepeatedElements(result.typedCalleeLists);
+            result.lists = WTF::move(lists.lists);
         },
     });
     build.destroyLater(WTF::move(chunks));
@@ -761,6 +806,8 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
                 found.calleeSets.set(entry.callees.index());
             for (const CalleeOfSite& entry : std::ranges::equal_range(sites.typedCallees, site, { }, &CalleeOfSite::site))
                 found.functions.set(entry.callee.index());
+            for (const CalleeListOfSite& entry : std::ranges::equal_range(sites.typedCalleeLists, site, { }, &CalleeListOfSite::site))
+                found.typedCalleeLists.set(entry.list);
         });
     });
     if (mayFindAnything.load(std::memory_order_relaxed))
@@ -779,9 +826,15 @@ void closeEntrypointsThatNothingEnters(ProgramEditor& editor, const FlowResults&
     for (const FlowIndirectCall& call : flow.indirectCalls())
         mayBeEntered.set(call.callee.index());
     BitVector calleeSets;
+    BitVector typedCalleeLists;
     for (const FoundCallees& found : foundByWorker) {
         mayBeEntered.merge(found.functions);
         calleeSets.merge(found.calleeSets);
+        typedCalleeLists.merge(found.typedCalleeLists);
+    }
+    for (size_t list : typedCalleeLists) {
+        for (FunctionID function : sites.lists[list])
+            mayBeEntered.set(function.index());
     }
     for (size_t set : calleeSets) {
         for (FunctionID function : program.at(CalleeSetID(static_cast<uint32_t>(set))).followed().value())

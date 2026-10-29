@@ -62,7 +62,7 @@ struct SubcommandEntry {
 static constexpr ASCIILiteral filterFlag = "--filter"_s;
 static constexpr ASCIILiteral jobsFlag = "--jobs"_s;
 
-static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, optionFlag, onlyDiagnosticFlag };
+static constexpr ASCIILiteral runFlags[] { filterFlag, jobsFlag, showOutputFlag, singleProcessRunFlag, optionFlag, onlyDiagnosticFlag };
 static constexpr ASCIILiteral nativeFlags[] { previousNativeTestFlag, singleProcessFlag, nativeTestPartFlag };
 static constexpr ASCIILiteral printFlags[] { "--until"_s, "--function"_s, "--wire"_s, "--command"_s };
 static constexpr ASCIILiteral compileFlags[] { "--output"_s };
@@ -70,7 +70,7 @@ static constexpr ASCIILiteral fuzzReaderFlags[] { "--seed"_s, "--count"_s };
 
 static constexpr SubcommandEntry subcommandEntries[] {
     { "all"_s, Subcommand::All, { }, "<folder>"_s },
-    { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
+    { runSubcommandName, Subcommand::Run, runFlags, "<file or folder>.. [--filter=<text>] [--jobs=<n>] [--show-output] [--single-process] [--option=<option word>].. [--only-diagnostic=<kind>]"_s },
     { nativeSubcommandName, Subcommand::Native, nativeFlags, "[<filter>] [--after=<name>] [--part=<i>/<n>] [--single-process]"_s },
     { "list"_s, Subcommand::List, { }, "commands|passes|options|limits|statistics|diagnostics|image-format"_s },
     { "print"_s, Subcommand::Print, printFlags, "<program> [--until=<PassID>] [--function=f<n>].. [--wire] [--command=\"<command> { argument }\"] { option word }"_s },
@@ -182,10 +182,14 @@ static int runRunSubcommand(std::span<const String> arguments, const ChildProces
             request.showsOutput = true;
             continue;
         }
+        if (argument == singleProcessRunFlag) {
+            request.launcher = nullptr;
+            continue;
+        }
 
         StringView flagName = flagNameOf(argument);
         StringView value = StringView(argument).substring(flagName.length() + 1);
-        if (flagName == showOutputFlag)
+        if (flagName == showOutputFlag || flagName == singleProcessRunFlag)
             return reportError(exitCodeForInvalidCommandLine, "testaot run: ", flagName, " takes no value");
         if (value.isEmpty())
             return reportError(exitCodeForInvalidCommandLine, "testaot run: ", flagName, " needs a value");

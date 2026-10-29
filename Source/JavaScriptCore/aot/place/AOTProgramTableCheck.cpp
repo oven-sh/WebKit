@@ -453,8 +453,10 @@ static ExpectedRuntimeType computeExpectedRuntimeType(const TableEncoder& encode
     case TypeTestVerdict::NeverPasses:
         return { .id = id };
     case TypeTestVerdict::NeedsTest:
-        // A function without a generic entrypoint has no closures, so its test has no record.
+        // A function without a generic entrypoint has no closures, and a class without a rank has no instances, so their tests have no record.
         plan.cellTests.removeAllMatching([&](const CellTest& test) {
+            if (test.kind == CellTestKind::CarriesBrandOfClass)
+                return !encoder.placement.rankOfClass(test.classLayout);
             return test.kind == CellTestKind::IsClosureOf && !encoder.findEntrypoint(test.function);
         });
         // In a plan, String says that some string passes. In a record it says that every string passes.

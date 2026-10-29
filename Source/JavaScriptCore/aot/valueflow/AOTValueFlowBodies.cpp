@@ -898,6 +898,11 @@ private:
                 connect(captures[index], NodeName::entryParameter(value.function(), index));
             return;
         }
+        // A capture is an entry parameter of the closure's function, and NewClosure passes it there.
+        case Opcode::GetCapture:
+            if (carriesValue(id))
+                setNode(id, NodeName::entryParameter(value.function(), value.index()));
+            return;
         case Opcode::CallDirect:
             return describeCallDirect(block, id, value);
         case Opcode::Results:

@@ -273,7 +273,23 @@ static bool tryDefineNameOfFunction(JSGlobalObject* globalObject, JSObject* func
     return true;
 }
 
-static bool tryDefineAbsentProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
+// ValidateAndApplyPropertyDescriptor for a property that is configurable: nothing is refused. What the descriptor leaves out stays as it is, or takes its default where a value becomes an accessor or an accessor a value.
+static NEVER_INLINE Object::LeavingProperty redefinedBy(JSGlobalObject* globalObject, Object::LeavingProperty current, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
+{
+    bool wasAccessor = current.attributes & PropertyAttribute::Accessor;
+    bool isEnumerable = bits.hasEnumerable ? bits.isEnumerable : !(current.attributes & PropertyAttribute::DontEnum);
+    unsigned attributes = (isEnumerable ? PropertyAttribute::None : PropertyAttribute::DontEnum) | (bits.hasConfigurable && !bits.isConfigurable ? PropertyAttribute::DontDelete : PropertyAttribute::None);
+    if (bits.hasGet || bits.hasSet || (wasAccessor && !bits.hasValue && !bits.hasWritable)) {
+        auto* held = wasAccessor ? uncheckedDowncast<GetterSetter>(current.valueOrAccessor) : nullptr;
+        JSObject* newGetter = bits.hasGet ? valueOrGetter.getObject() : held && !held->isGetterNull() ? held->getter() : nullptr;
+        JSObject* newSetter = bits.hasSet ? setter.getObject() : held && !held->isSetterNull() ? held->setter() : nullptr;
+        return { GetterSetter::create(globalObject->vm(), globalObject, newGetter, newSetter), attributes | PropertyAttribute::Accessor };
+    }
+    bool isWritable = bits.hasWritable ? bits.isWritable : !wasAccessor && !(current.attributes & PropertyAttribute::ReadOnly);
+    return { bits.hasValue ? valueOrGetter : wasAccessor ? jsUndefined() : current.valueOrAccessor, attributes | (isWritable ? PropertyAttribute::None : PropertyAttribute::ReadOnly) };
+}
+
+static bool tryDefineWithoutDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue valueOrGetter, JSValue setter, PropertyDescriptorBits bits)
 {
     VM& vm = globalObject->vm();
     Object* compiled = compiledObjectOrNull(object);
@@ -294,11 +310,21 @@ static bool tryDefineAbsentProperty(JSGlobalObject* globalObject, JSObject* obje
         return true;
     if (field && compiled->isInSlot(*field))
         return false;
+    if (compiled && !field) {
+        using Kind = Object::ExtraPropertyFound::Kind;
+        Object::ExtraPropertyFound found = compiled->findExtraProperty(vm, name);
+        if (found.kind == Kind::Other)
+            return false;
+        if (found.kind == Kind::MayBeRedefinedInEveryWay) {
+            compiled->replaceExtraProperty(vm, name, redefinedBy(globalObject, found.property, valueOrGetter, setter, bits));
+            return true;
+        }
+    }
     JSValue stored = bits.hasValue ? valueOrGetter : jsUndefined();
     if (isAccessor)
         stored = GetterSetter::create(vm, globalObject, bits.hasGet ? valueOrGetter.getObject() : nullptr, setter.getObject());
     if (compiled)
-        return compiled->tryDefineAbsentProperty(vm, field, name, stored, attributes);
+        return field ? compiled->tryDefineAbsentProperty(vm, field, name, stored, attributes) : compiled->tryAddAbsentExtraProperty(vm, name, stored, attributes);
     if (object->tryPutDirectByExistingTransition(vm, name, stored, attributes))
         return true;
     if (isValidOffset(structure->get(vm, name)))
@@ -370,7 +396,7 @@ static bool tryDefineOwnPropertyFromBits(JSGlobalObject* globalObject, JSObject*
         return false;
     if (bits.hasSet && !isFunctionOrUndefined(setter))
         return false;
-    if (tryDefineAbsentProperty(globalObject, object, name, valueOrGetter, setter, bits))
+    if (tryDefineWithoutDescriptor(globalObject, object, name, valueOrGetter, setter, bits))
         return true;
     if (!definesWithoutOtherCode(vm, object, name, valueOrGetter, bits))
         return false;
@@ -646,7 +672,7 @@ static bool tryDefineLiveBinding(JSGlobalObject* globalObject, JSObject* target,
     }
     if (!valueOrGetter)
         valueOrGetter = getterOfBinding();
-    return tryDefineAbsentProperty(globalObject, target, targetKey, valueOrGetter, setter, bits);
+    return tryDefineWithoutDescriptor(globalObject, target, targetKey, valueOrGetter, setter, bits);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryDefineLiveBinding, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedSource, EncodedJSValue encodedSourceKey, EncodedJSValue encodedTargetKey, JSCell* getter))

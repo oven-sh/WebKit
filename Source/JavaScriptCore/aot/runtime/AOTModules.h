@@ -347,6 +347,7 @@ private:
     void didLinkEntryPoint();
     bool didCaptureExports(ModuleID) const;
     void captureExports(ModuleID);
+    void copyExportsOfFinishedFile(ModuleID face);
     bool isNativeModule(ModuleID) const;
     JSObject* generateNativeModuleExports(ModuleID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
     JSValue requireNativeModule(ModuleID);

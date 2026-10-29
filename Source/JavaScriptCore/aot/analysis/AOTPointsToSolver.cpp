@@ -233,7 +233,12 @@ private:
     void addObjectSharingItsValue(ValueID);
     bool makesObjectOnEdge(BlockID from) const;
     void add(ValueID, ObjectID);
+    struct WordRange {
+        uint32_t first { std::numeric_limits<uint32_t>::max() };
+        uint32_t end { 0 };
+    };
     void addAll(ValueID, std::span<const ObjectWord>);
+    void addAll(ValueID, std::span<const ObjectWord>, WordRange nonzero);
     void addAll(ValueID, const ArrivedObjects&);
     void takeSets();
     size_t mirroredWhenBackward(size_t index) const { return m_sweep == Sweep::Forward ? index : m_function.values.size() - 1 - index; }
@@ -299,10 +304,6 @@ private:
     Vector<ObjectWord> m_wordsOfSets;
     Vector<ObjectWord> m_arrivalsOfSets;
     // The words of a set's arrivals that may hold a bit. In a function of thousands of objects a row is long and nearly every set holds one object.
-    struct WordRange {
-        uint32_t first { std::numeric_limits<uint32_t>::max() };
-        uint32_t end { 0 };
-    };
     Vector<WordRange> m_arrivedWordsOfSets;
     Vector<bool> m_setsThatMayBeUntracked;
     Vector<ObjectWord, 2> m_newContents;
@@ -943,10 +944,16 @@ void PointsToSolver::add(ValueID value, ObjectID object)
 // The words lie outside the table of all sets, which may move here.
 void PointsToSolver::addAll(ValueID value, std::span<const ObjectWord> objects)
 {
+    addAll(value, objects, WordRange { 0, static_cast<uint32_t>(objects.size()) });
+}
+
+// All words outside the range are zero.
+void PointsToSolver::addAll(ValueID value, std::span<const ObjectWord> objects, WordRange nonzero)
+{
     if (definesObject(value))
         return;
     // No value has an empty set.
-    if (std::ranges::all_of(objects, [](ObjectWord word) { return !word; }))
+    if (std::ranges::all_of(objects.subspan(nonzero.first, nonzero.end - nonzero.first), [](ObjectWord word) { return !word; }))
         return;
 
     ValueSetID set = ensureSet(value);
@@ -966,7 +973,7 @@ void PointsToSolver::addAll(ValueID value, std::span<const ObjectWord> objects)
 
     WordRange& range = m_arrivedWordsOfSets[set.index()];
     ObjectWord arrived = 0;
-    for (uint32_t index = 0; index < objects.size(); ++index) {
+    for (uint32_t index = nonzero.first; index < nonzero.end; ++index) {
         ObjectWord newObjects = objects[index] & ~words[index];
         if (!newObjects)
             continue;
@@ -1574,13 +1581,17 @@ void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, std::span<
 
     ContainerState& state = ensureContainer(container);
     SlotState& holder = state.ensure(slot);
-    ObjectWord added = 0;
+    // A store adds an object or two, and every reader of the slot hears of them: it looks at the words that hold them, not at a word for every 64 objects of the function.
+    WordRange added { m_wordsPerSet, 0 };
     for (unsigned index = 0; index < m_wordsPerSet; ++index) {
         m_newContents[index] = objects[index] & ~holder.objects[index];
         holder.objects[index] |= m_newContents[index];
-        added |= m_newContents[index];
+        if (m_newContents[index]) {
+            added.first = std::min(added.first, index);
+            added.end = index + 1;
+        }
     }
-    if (!added)
+    if (!added.end)
         return;
 
     size_t firstNewEntry = holder.contents.size();
@@ -1594,8 +1605,11 @@ void PointsToSolver::addContents(ObjectID container, ObjectSlot slot, std::span<
         }
     };
     forEachOverlappingSlot(state, slot, [&](SlotState& overlapping) {
+        // n stores into slots that nobody tells apart, each heard by n readers, are n * n steps.
+        if (!takeWork(overlapping.readers.size()))
+            return;
         for (ValueID reader : overlapping.readers)
-            addAll(reader, m_newContents.span());
+            addAll(reader, m_newContents.span(), added);
         for (const ContentsApplication& application : overlapping.applications)
             apply(application.uses, application.reason);
     });
