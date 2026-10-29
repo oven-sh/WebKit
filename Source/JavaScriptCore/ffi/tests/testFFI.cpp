@@ -2409,6 +2409,9 @@ static void testOptimizingTierPointerArgumentWithNonViewCells()
         arguments.append(view);
         if (callFunction(hot, arguments) != viewAddress)
             ++warmupMismatches;
+        // Each tier compiles on another thread. Wait for it: no number of calls bounds how long it
+        // takes, and the first compile of a process reads the compiler's code from disk.
+        vm.heap.completeAllJITPlans();
     }
     FFI_CHECK(!warmupMismatches);
     FFI_CHECK(installedInFTL());

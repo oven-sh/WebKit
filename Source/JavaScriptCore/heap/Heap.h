@@ -493,7 +493,7 @@ public:
     
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 
-    void completeAllJITPlans();
+    JS_EXPORT_PRIVATE void completeAllJITPlans();
 
     void reportBytesMarked(size_t bytes) { m_bytesMarkedThisCycle.exchangeAdd(bytes, std::memory_order_relaxed); }
 
