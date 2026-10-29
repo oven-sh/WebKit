@@ -207,18 +207,15 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
         }
 
         if (result == static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure)) {
-            // Punt to the bytecode interpreter. Only the mutator may compile bytecode; the compiler
-            // thread must use the bytecode that already exists, and bails out if there is no
-            // bytecode.
+            // Punt to the bytecode interpreter. A compiler thread bails out instead: its JIT code can fail
+            // where the mutator's does not (the stack is another one), and the interpreter reports a search
+            // that it gives up as no match, which strength reduction would fold.
             if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
                 byteCodeCompileIfNecessary(&vm);
                 if (m_state == ParseError)
                     return throwError();
-            }
-            if (!m_regExpBytecode) {
-                ASSERT(matchFrom == Yarr::MatchFrom::CompilerThread);
+            } else
                 return result;
-            }
             {
                 Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
                 result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
@@ -375,18 +372,13 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
         if (result.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure))
             return result;
 
-        // Punt to the bytecode interpreter. Only the mutator may compile bytecode; the compiler
-        // thread must use the bytecode that already exists, and bails out if there is no
-        // bytecode.
+        // Punt to the bytecode interpreter. A compiler thread bails out instead, as in the overload above.
         if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
             byteCodeCompileIfNecessary(&vm);
             if (m_state == ParseError)
                 return throwError();
-        }
-        if (!m_regExpBytecode) {
-            ASSERT(matchFrom == Yarr::MatchFrom::CompilerThread);
+        } else
             return result;
-        }
     }
 #endif
 
