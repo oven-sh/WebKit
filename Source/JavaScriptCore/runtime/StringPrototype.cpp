@@ -2229,6 +2229,8 @@ static JSValue normalize(JSGlobalObject* globalObject, JSString* string, Normali
 
     status = U_ZERO_ERROR;
     unorm2_normalize(normalizer, characters, view->length(), buffer.data(), buffer.size(), &status);
+    if (isICUMemoryAllocationError(status))
+        return throwOutOfMemoryError(globalObject, scope);
     ASSERT(U_SUCCESS(status));
 
     RELEASE_AND_RETURN(scope, jsString(vm, result.releaseNonNull()));

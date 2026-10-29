@@ -110,7 +110,7 @@ static std::unique_ptr<UDateFormat, UDateFormatDeleter> openDateFormat(const ASC
     // Failure here means unsupported calendar, and can safely be ignored.
     UErrorCode calStatus = U_ZERO_ERROR;
     UCalendar* cal = const_cast<UCalendar*>(udat_getCalendar(dateFormat));
-    ucal_setGregorianChange(cal, minECMAScriptTime, &calStatus);
+    ucal_setGregorianChange(cal, prolepticGregorianChangeDate, &calStatus);
 
     return std::unique_ptr<UDateFormat, UDateFormatDeleter>(dateFormat);
 }
@@ -1793,7 +1793,7 @@ static std::unique_ptr<UFormattedDateInterval, UFormattedDateIntervalDeleter> fo
     };
 
     // UFormattedDateInterval does not have a way to configure gregorian calendar change date while ECMAScript requires that
-    // gregorian calendar change should not have effect (we are setting ucal_setGregorianChange(cal, minECMAScriptTime, &status) explicitly).
+    // gregorian calendar change should not have effect (we are setting ucal_setGregorianChange(cal, prolepticGregorianChangeDate, &status) explicitly).
     // As a result, if the input date is older than gregorian calendar change date (Oct 15, 1582), the formatted string becomes
     // julian calendar date.
     // udtitvfmt_formatCalendarToResult API offers the way to set calendar to each date of the input, so that we can use UDateFormat's

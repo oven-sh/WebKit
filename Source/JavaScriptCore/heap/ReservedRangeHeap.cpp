@@ -73,8 +73,8 @@ static_assert(!(sizeStep % granuleSize));
 static constexpr size_t mallocChunkSize = 32 * MB;
 #if OS(LINUX) && USE(MIMALLOC)
 static constexpr size_t minSegmentSize = 2 * mallocChunkSize;
-// malloc and the stacks of threads go on taking address space. They have this and the ballast.
-static constexpr size_t addressSpaceToLeaveBesideSegment = 32 * MB - sizeOfAddressSpaceBallast;
+// malloc and the stacks of threads go on taking address space.
+static constexpr size_t addressSpaceToLeaveBesideSegment = 32 * MB;
 static constexpr unsigned maxSegmentPlacements = 8;
 #endif
 static constexpr unsigned maxRandomPlacements = 16;

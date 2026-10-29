@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 126 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 129 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A9 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -115,6 +115,17 @@ Rules for an edit to an upstream test:
 - Fork code: `DecoderStringTable::jsStringFor` (`runtime/CachedTypes.h:132`): loading a cache interns nothing.
 - File: `stress/jsstring-definitely-atom-bit.js`: `$skipModes << "bytecode-cache"`. The other modes run it unchanged.
 
+### A10. The bundled ICU is 79.1 (CLDR 49)
+
+- `icu/source.json`. The macOS lanes use the system's ICU, so each test keeps upstream's expectation for ICU older than 79
+  (`$vm.icuVersion()`), or adds CLDR 49's text to the list where the test already accepts a list.
+- `stress/intl-date-pattern-includes-literal-text.js`: CLDR 49 removed fr's `HH 'h'` pattern: `23 h` → `23`.
+- `stress/intl-datetimeformat-resolved-options-am-pm.js`: th's short time pattern is now `HH:mm น.`, and ICU uses it for a
+  2-digit hour but not for a numeric one. `resolvedOptions()` reports a 2-digit hour, so the recreated formatter prints
+  `10:05 น.` where the original prints `10:05`.
+- `stress/intl-extended-timezone-names.js`: CLDR 49 removed zh-Hant's short names for America/Los_Angeles: `PDT` → `GMT-7`,
+  `PT` → `洛杉磯時間`.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -188,6 +199,9 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/regexp-image-code-hands-long-searches-over.js` | with `--useRegExpImageMode=1`, in a `jsc` that has the ahead-of-time compiler: the code of a pattern stops after nine turns a unit and 65,537, and the match is made again by the flat programs, which give it up where the JIT does. In a `jsc` without the compiler the option changes nothing, and both runs hold the JIT to the same answers |
 | `stress/switch-string-substring-of-base-widened-by-atomization.js` | a `switch` over strings that reads the characters of a substring in place, in its base, goes by the width that the base has now: atomizing the base may have put an equal 16-bit string in its place since the substring was made (DFG and FTL) |
 | `stress/bun-weak-map-and-set-shrunk-before-eden-collection.js` | the buffer of a `WeakMap` or `WeakSet` counts in the heap's size as it is behind a collection (`WeakMapImpl::reconcileWeakReferencesAtGCEnd`; upstream counts it as the last visit found it), but an eden collection never leaves that size below what the collection before it left: a buffer that shrank stops counting at the next full collection |
+| `stress/intl-timezone-posix-style.js` | `EST5EDT`, `CST6CDT`, `MST7MDT` and `PST8PDT` stay aliases of their `America/*` zones (tc39/ecma402#1103) on every ICU, including those where CLDR treats them as canonical zones (45 and earlier, 49 and later): accepted, kept as written, not in `supportedValuesOf`, same offsets and names as the primary zone, and resolved to it when they are the host's zone |
+| `stress/temporal-calendar-gregory-near-min-date.js` | the `gregory` calendar agrees with the ISO calendar in the first years of Temporal's range: reading fields, building from fields and formatting (`prolepticGregorianChangeDate`, `runtime/JSDateMath.h`) |
+| the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | keeps the file's coverage on CLDR 49, where fr's pattern no longer has literal text: an `h` inside literal text is not mistaken for the hour field |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
 
 `jsc` cannot compile a program ahead of time by itself (the compiler's input comes from the front end, in Bun's repository), so
@@ -197,7 +211,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A9 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.
