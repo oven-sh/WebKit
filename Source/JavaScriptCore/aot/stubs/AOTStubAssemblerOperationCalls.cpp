@@ -126,7 +126,7 @@ void StubAssembler::loadFirstArgument(OperationCall::FirstArgument firstArgument
     }
 }
 
-StubAssembler::OperationToCall StubAssembler::setUpOperationCall(const CalledOperation& operation, const OperationCall& operationCall)
+GPRReg StubAssembler::setUpOperationCall(const CalledOperation& operation, const OperationCall& operationCall)
 {
     constexpr GPRReg second = operationArgumentGPR(1);
     constexpr GPRReg third = operationArgumentGPR(2);
@@ -157,25 +157,8 @@ StubAssembler::OperationToCall StubAssembler::setUpOperationCall(const CalledOpe
         move(TrustedImm32(static_cast<int32_t>(constant->value)), constant->argument);
     }
     loadFirstArgument(operationCall.firstArgument);
-#if CPU(X86_64)
-    // The call reads the operation from the table.
-    return WTF::switchOn(operation,
-        [&](Entry entry) {
-            recordCall(entry);
-            loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), function);
-            return Address(function, offsetInRuntimeTable(entry));
-        },
-        [&](GPRReg offset) {
-            RELEASE_ASSERT(noOverlap(offset, operationArgumentGPR(0), operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3)));
-            m_recording.hasUnknownEffects = true;
-            recordClobber(offset);
-            add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), offset);
-            return Address(offset);
-        });
-#else
     loadCalledOperation(operation, function);
     return function;
-#endif
 }
 
 // No stub has an operand in it, and an operation does not preserve it.
@@ -189,7 +172,7 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless && !operationCall.spilledArguments);
     const bool callerIsStub = key().callerFrame() == CallerFrame::StubFrame;
-    const OperationToCall function = setUpOperationCall(operation, operationCall);
+    const GPRReg function = setUpOperationCall(operation, operationCall);
     if (callerIsStub) {
 #if CPU(ARM64)
         pushToSave(linkRegister);
@@ -310,7 +293,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
             move(sp, operationArgumentGPR(2));
             move(TrustedImm32(operationCall.spilledArguments->countWord), operationArgumentGPR(1));
         }
-        const OperationToCall function = setUpOperationCall(operation, operationCall);
+        const GPRReg function = setUpOperationCall(operation, operationCall);
         prepareCallOperation();
         call(function, OperationPtrTag);
         bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
@@ -401,7 +384,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
             move(TrustedImm32(operationCall.spilledArguments->countWord), operationArgumentGPR(1));
             addPtr(TrustedImm32(8), sp, operationArgumentGPR(2));
         }
-        const OperationToCall function = setUpOperationCall(operation, operationCall);
+        const GPRReg function = setUpOperationCall(operation, operationCall);
         prepareCallOperation();
         call(function, OperationPtrTag);
         bindReturnLabel(StubFrameKind::ReturnsAfterOperation);

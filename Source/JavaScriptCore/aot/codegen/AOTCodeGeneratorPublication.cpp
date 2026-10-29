@@ -300,7 +300,7 @@ static unsigned leastCellSizeOf(const Program& program, const Placement& placeme
     std::optional<unsigned> least;
     for (LayoutID member : membersOf(program, type)) {
         const PlannedLayout& layout = placement.layout(member);
-        unsigned size = layout.hasSlots() ? layout.size : headerSize;
+        unsigned size = layout.holdsCompiledObjects() ? layout.size : headerSize;
         least = least ? std::min(*least, size) : size;
     }
     return least.value_or(0);

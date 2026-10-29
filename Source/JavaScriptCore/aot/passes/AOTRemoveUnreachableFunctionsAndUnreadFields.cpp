@@ -828,10 +828,12 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                 // Most keys are the key of no candidate, and then no member has a candidate under the key.
                 if (!keysOfCandidates.get(key.index()))
                     return;
-                // Nothing says which objects arrive here. On one without the field the store would create a property.
-                if (mayReachAnyLayout && createsPropertyByName(opcode)) {
-                    for (auto [keyOfCandidate, candidate] : std::ranges::equal_range(candidatesByKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first))
-                        markLive(candidate);
+                // Nothing says which objects arrive here. On one without the field a store would create a property. A read may be one of those whose value flow saw only called.
+                if (mayReachAnyLayout) {
+                    for (auto [keyOfCandidate, candidate] : std::ranges::equal_range(candidatesByKey, key, { }, &std::pair<PropertyKeyID, uint32_t>::first)) {
+                        if (createsPropertyByName(opcode) || fieldAt(program, fields[candidate]).flow.location.reads == ReadState::OnlyCalled)
+                            markLive(candidate);
+                    }
                     return;
                 }
 
