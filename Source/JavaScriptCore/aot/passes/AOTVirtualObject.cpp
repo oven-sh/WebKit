@@ -848,7 +848,11 @@ static bool definesPlainDataField(const Program& program, const VirtualObjectDes
     if (access.opcode != Opcode::PropDefine || keyLookupOf(program, access.key()) != KeyLookup::Ordinary)
         return false;
     std::optional<uint32_t> field = layoutFieldOf(program, description, VirtualField::named(access.key()));
-    return field && !fieldAt(program, { description.layout, *field }).flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsHidden });
+    if (!field)
+        return false;
+    // A slot gives its property the attributes of the field's form.
+    const auto& declaration = fieldAt(program, { description.layout, *field });
+    return declaration.form.isEmpty() && !declaration.flags.containsAny({ FieldFlags::IsMethod, FieldFlags::IsHidden });
 }
 
 static bool hasLayoutPrototype(const VirtualObjectContext& context, const VirtualObjectDescription& description)
