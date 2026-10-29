@@ -18,7 +18,6 @@ enum ClosureUse { | engine Unknown CalledOnly }
 enum NamespaceUse { | engine Unknown NamedReadsOnly NeverCreated }
 enum BuiltinLocationState { | engine Unknown Constant }
 enum StoreNaming { | engine Unknown EveryStoreNamesLocation }
-enum MemberConstant { | engine None Null False True Integer }
 
 flags ObjectMutation {
     | engine ReachNativeCode ReachUnknownJavaScript DeleteField RedefineProperty AddProperty ChangeIntegrity ChangePrototype BecomePrototype
@@ -42,7 +41,7 @@ record LayoutFlow engine {
 }
 record ClassMember engine {
     key: PropertyKey? side: ClassSide kind: MethodKind function: Function(Dispatch)? mutability: MemberMutability closureUse: ClosureUse
-    isWritableData: Bool isAssignedByProgram: Bool constant: MemberConstant integer: Int64
+    isWritableData: Bool isAssignedByProgram: Bool
 }
 record ClassFlow engine {
     evaluations: ExecutionCount prototypeLink: MemberMutability staticLink: MemberMutability constructorProperty: MemberMutability

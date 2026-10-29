@@ -131,9 +131,6 @@ static_assert(sizeof(VariableData) == 8 && isImageRecord<VariableData>);
 static constexpr uint32_t methodHasComputedName = 1;
 static constexpr uint32_t methodTakesEnvironment = 2;
 static constexpr uint32_t methodIsCreatedAtDefinition = 4;
-// The member is a data property. `function` holds an int32, or with methodIsOtherConstant 0 for null, 1 for false, 2 for true.
-static constexpr uint32_t methodIsConstant = 8;
-static constexpr uint32_t methodIsOtherConstant = 16;
 
 struct MethodData {
     static constexpr unsigned nameBits = FieldData::nameBits;
@@ -145,7 +142,7 @@ struct MethodData {
     MethodKind kind() const { return static_cast<MethodKind>(kindBits); }
 };
 static_assert(sizeof(MethodData) == 8 && isImageRecord<MethodData>);
-static_assert(numberOfEnumerators<MethodKind> <= 1u << 2 && methodIsOtherConstant < 1u << (30 - MethodData::nameBits));
+static_assert(numberOfEnumerators<MethodKind> <= 1u << 2 && methodIsCreatedAtDefinition < 1u << (30 - MethodData::nameBits));
 
 static constexpr unsigned numberOfClassSides = numberOfEnumerators<ClassSide>;
 

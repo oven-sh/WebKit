@@ -17,10 +17,8 @@ struct DeclaredMember {
     FunctionID setter;
     MemberMutability mutability { MemberMutability::Fixed };
     bool isWritableData { false };
-    MemberConstant constant { MemberConstant::None };
-    int64_t integer { 0 };
 
-    bool isDeclared() const { return method || getter || setter || constant != MemberConstant::None; }
+    bool isDeclared() const { return method || getter || setter; }
     bool isListedWithoutDefinition() const { return !isDeclared() && mutability != MemberMutability::Fixed; }
     bool isAccessor() const { return getter || setter; }
 };

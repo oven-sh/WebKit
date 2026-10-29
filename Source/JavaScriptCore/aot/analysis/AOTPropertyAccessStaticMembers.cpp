@@ -38,7 +38,6 @@ static bool mayInterceptStore(MemberKind kind)
     switch (kind) {
     case MemberKind::Absent:
     case MemberKind::Method:
-    case MemberKind::Constant:
     case MemberKind::Variable:
         return false;
     case MemberKind::Unknown:

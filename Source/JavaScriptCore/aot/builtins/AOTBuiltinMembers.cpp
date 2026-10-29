@@ -240,7 +240,6 @@ static LocationProof proofOfLookup(const BuiltinTable& table, const MemberAnswer
     case MemberKind::Field:
     case MemberKind::Method:
     case MemberKind::Accessor:
-    case MemberKind::Constant:
     case MemberKind::Variable:
     case MemberKind::Namespace:
         return LocationProof::Unknown;

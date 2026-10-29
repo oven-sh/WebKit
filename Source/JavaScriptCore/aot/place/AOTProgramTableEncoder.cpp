@@ -1194,20 +1194,6 @@ static ClassRecordParts collectClassRecordParts(TableEncoder& encoder, LayoutID 
             parts.methods.append(method);
             ++(side == ClassSide::Static ? data.numberOfStaticMethods : data.numberOfMethods);
         }
-        for (const ClassMember& member : layout.classFlow.namedMembers) {
-            if (member.side != side || member.constant == MemberConstant::None || !classConstructor)
-                continue;
-            MethodData method { };
-            method.name = encoder.identifierNumber(member.key, "a member in the record of the class"_s, id);
-            PartWithoutNames rest(encoder);
-            if (!rest.isWritten())
-                continue;
-            method.kindBits = static_cast<uint32_t>(MethodKind::Method);
-            method.flags = methodIsCreatedAtDefinition | methodIsConstant | (member.constant == MemberConstant::Integer ? 0 : methodIsOtherConstant);
-            method.function = member.constant == MemberConstant::Integer ? static_cast<uint32_t>(static_cast<int32_t>(member.integer)) : member.constant == MemberConstant::Null ? 0 : member.constant == MemberConstant::False ? 1 : 2;
-            parts.methods.append(method);
-            ++(side == ClassSide::Static ? data.numberOfStaticMethods : data.numberOfMethods);
-        }
     }
 
     for (const StaticField& field : layout.staticFields) {

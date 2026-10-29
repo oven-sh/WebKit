@@ -57,9 +57,6 @@ void MemberAnswer::dump(PrintStream& out) const
         out.print(" setter=");
         dumpFunction(out, setter);
         break;
-    case MemberKind::Constant:
-        out.print(" constant=", enumName(constant), " integer=", integer);
-        break;
     case MemberKind::Variable:
         out.print(" variable=V", variable.index());
         break;
@@ -129,12 +126,6 @@ void setDeclaredMember(MemberAnswer& answer, const DeclaredMember& member, Layou
         answer.kind = MemberKind::Accessor;
         answer.getter = member.getter;
         answer.setter = member.setter;
-        return;
-    }
-    if (!member.method && member.constant != MemberConstant::None) {
-        answer.kind = MemberKind::Constant;
-        answer.constant = member.constant;
-        answer.integer = member.integer;
         return;
     }
     answer.kind = MemberKind::Method;
@@ -226,13 +217,9 @@ static DeclaredMember findNamedMember(const ClassFlow& classFlow, ClassSide side
         if (function && function != entry.function)
             hasCompetingDefinitions = true;
         function = entry.function;
-        member.constant = entry.constant;
-        member.integer = entry.integer;
         if (entry.mutability != MemberMutability::Fixed)
             member.mutability = MemberMutability::Unknown;
     }
-    if (entries.size() != 1)
-        member.constant = MemberConstant::None;
     if (member.method && member.isAccessor()) {
         hasCompetingDefinitions = true;
         member.method = { };
@@ -249,10 +236,6 @@ DeclaredMember findDeclaredMember(const ClassFlow& classFlow, ClassSide side, Pr
         return member;
     DeclaredMember defined = findMemberAsDefined(classFlow, side, key);
     defined.isWritableData = member.isWritableData;
-    if (!defined.isDeclared()) {
-        defined.constant = member.constant;
-        defined.integer = member.integer;
-    }
     return defined;
 }
 
@@ -489,8 +472,6 @@ static MemberAnswer walkPrototypes(const PropertyAccessContext& context, const M
         }
 
         DeclaredMember member = findDeclaredMember(layout.classFlow, ClassSide::Prototype, key);
-        if (query.access == Access::Store)
-            member.constant = MemberConstant::None;
         bool isPassedByStore = query.access == Access::Store && member.isWritableData;
         if (isPassedByStore && member.mutability == MemberMutability::Fixed)
             return finish(createProvenAnswer(MemberKind::Absent));

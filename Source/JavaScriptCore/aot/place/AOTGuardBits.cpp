@@ -137,7 +137,7 @@ bool setHoldsWhileClear(const Program& program, const GuardBitTable& table, std:
     return std::ranges::none_of(members, [&](GuardBitID member) {
         const PlacedGuardBit& placed = table.bits[member.index()];
         const Layout& layout = program.at(placed.classLayout);
-        return layout.has(LayoutFlags::IsConstructorFunction) || std::ranges::any_of(layout.classFlow.namedMembers, &ClassMember::isAssignedByProgram) || isAwaitedBeforeClassExists(program, placed);
+        return layout.has(LayoutFlags::IsConstructorFunction) || std::ranges::any_of(layout.classFlow.members, &ClassMember::isAssignedByProgram) || isAwaitedBeforeClassExists(program, placed);
     });
 }
 

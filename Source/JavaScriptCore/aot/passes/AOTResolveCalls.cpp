@@ -1788,7 +1788,6 @@ struct CallResolver {
             return direct;
         }
         case MemberKind::Builtin:
-        case MemberKind::Constant:
         case MemberKind::Variable:
         case MemberKind::Namespace:
             return originalOperations;
@@ -1913,7 +1912,6 @@ struct CallResolver {
             return opcode == Opcode::SuperGet ? std::optional(FunctionID()) : std::nullopt;
         case MemberKind::Unknown:
         case MemberKind::Field:
-        case MemberKind::Constant:
         case MemberKind::Variable:
         case MemberKind::Namespace:
         case MemberKind::Builtin:

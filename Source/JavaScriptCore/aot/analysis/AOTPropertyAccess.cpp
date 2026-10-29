@@ -280,14 +280,6 @@ PropertyAccessPlan planMemberArm(const PropertyAccessContext& context, const Pro
         else
             planKnownValue(AccessForm::Call);
         break;
-    case MemberKind::Constant:
-        if (query.access == Access::Has)
-            setConstant(Opcode::Boolean, true);
-        else if (query.access == Access::Read) {
-            setConstant(answer.constant == MemberConstant::Null ? Opcode::Null : answer.constant == MemberConstant::Integer ? Opcode::Integer : Opcode::Boolean, answer.constant == MemberConstant::True);
-            plan.integerConstant = answer.integer;
-        }
-        break;
     case MemberKind::Variable:
         if (query.access != Access::Has)
             planVariableArm(context, query, arm, plan);

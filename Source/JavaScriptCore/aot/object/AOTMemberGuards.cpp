@@ -198,11 +198,6 @@ static bool holdsDeclaredMember(VM& vm, State& state, JSObject* holder, UniquedS
 {
     unsigned attributes;
     JSValue value = holder->getDirect(vm, uid, attributes);
-    if (value && member.method && (member.method->flags & methodIsConstant)) {
-        uint32_t bits = member.method->function;
-        JSValue constant = !(member.method->flags & methodIsOtherConstant) ? jsNumber(static_cast<int32_t>(bits)) : !bits ? jsNull() : jsBoolean(bits == 2);
-        return !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && value == constant;
-    }
     if (!value || !value.isCell())
         return false;
     if (member.method)

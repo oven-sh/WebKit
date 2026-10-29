@@ -55,7 +55,7 @@ static void fileRead(Instance* instance, JSValue base, Structure* structureBefor
             return;
         }
     }
-    bool isFoundAbove = base.isObject() && !slot.isUnset() && !slot.isTaintedByOpaqueObject() && slot.slotBase() != asObject(base);
+    bool isFoundAbove = (answer.kind == PropertyAnswerKind::Value || answer.kind == PropertyAnswerKind::Accessor) && answer.holder;
     instance->state->propertyCaches->cache({ structureBefore, name, SlotAccess::Read, site }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
     if (Object* object = isFoundAbove ? compiledObjectOrNull(base) : nullptr)
@@ -141,8 +141,6 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver)
     Structure* structureBefore = structureForPrimitive(globalObject, base);
     if (lazy.result == LazyPrototypeReadResult::Answered) {
         access.caches().cache({ structureBefore, access.name(), SlotAccess::Read, access.site }, lazy.answer);
-        if (compiledBase && lazy.answer.kind != PropertyAnswerKind::Absent)
-            access.instance->state->objects->classes.didFindMemberByName(vm, compiledBase->layout(), uid);
         RELEASE_AND_RETURN(scope, readThroughAnswer(globalObject, receiver, lazy.answer));
     }
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
