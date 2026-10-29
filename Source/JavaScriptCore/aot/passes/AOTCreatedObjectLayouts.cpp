@@ -120,12 +120,6 @@ void giveLayoutsToCreatedObjects(Program& program, const BitVector& copiesOfMake
         layout.module = function.module;
         layout.position = function.at(creation.call).position;
         layout.flags = { LayoutFlags::IsOfCreatedObject };
-        // Every call of this place reads the prototype from one variable.
-        const Value* prototype = &function.at(function.at(creation.call).variadicOperands()[0]);
-        if (prototype->opcode == Opcode::CheckInitialized)
-            prototype = &function.at(prototype->operand(0));
-        if (prototype->opcode == Opcode::GetModuleVariable)
-            layout.prototypeVariable = prototype->variable();
         creation.layout = editor.addLayout(WTF::move(layout));
         if (hasPlace)
             layoutsByPlace.add(place, creation.layout);

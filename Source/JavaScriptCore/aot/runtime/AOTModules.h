@@ -121,6 +121,9 @@ public:
     bool isMocked(ModuleID module) const { return m_mockedModules.get(module.index()); }
     // What the graph of the root reaches without going through a mocked module. Nothing if no module is mocked.
     std::optional<BitVector> modulesNotBehindMocks(ModuleID root) const;
+    bool hasBegunToLoad(ModuleID) const;
+    void deferMock(ModuleID);
+    void runMocksBelow(ModuleID root);
     JSObject* capturedExports(ModuleID);
     // Empty if the module has no export of the name.
     JSValue capturedValue(ModuleID, const Identifier&);
@@ -522,6 +525,7 @@ private:
     BitVector m_modulesWithEarlierNamespaceInValue;
     BitVector m_modulesEvaluatedUnderAnotherEvaluation;
     BitVector m_mockedModules;
+    BitVector m_modulesWithMockToRun;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     bool m_didTakeStepOfMainModule { false };
     bool m_didTakeLoadPromiseBelowMainModule { false };

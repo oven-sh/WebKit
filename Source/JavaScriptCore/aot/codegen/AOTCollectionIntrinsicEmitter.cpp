@@ -16,6 +16,8 @@
 #include "AOTStringEmitter.h"
 #include "AOTUseLists.h"
 #include "AOTVector.h"
+#include "JSMapIterator.h"
+#include "JSSetIterator.h"
 #include "JSCellButterfly.h"
 #include "JSMap.h"
 #include "JSSet.h"
@@ -265,6 +267,98 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
 
     auto results = join.finish();
     defineResults(value, std::span<const Operand>(results).first(numberOfResults));
+}
+
+void CollectionIntrinsicEmitter::generateIteratorStep(Collection kind, const ValueContext& value)
+{
+    using IteratorStepJoin = ResultsJoin<Condition, Boxed>;
+    static_assert(static_cast<unsigned>(JSMapIterator::Field::Entry) == static_cast<unsigned>(JSSetIterator::Field::Entry) && static_cast<unsigned>(JSMapIterator::Field::IteratedObject) == static_cast<unsigned>(JSSetIterator::Field::IteratedObject));
+    static_assert(static_cast<unsigned>(JSMapIterator::Field::Storage) == static_cast<unsigned>(JSSetIterator::Field::Storage) && static_cast<unsigned>(JSMapIterator::Field::Kind) == static_cast<unsigned>(JSSetIterator::Field::Kind));
+    CellPointer iterator = in<CellPointer>(value->iteratorOperand());
+    auto addStepByOperation = [&](IteratorStepJoin& join) {
+        std::array<Operand, 1> arguments { iterator };
+        StubCallResult step = emitter<RuntimeCallEmitter>().callOperationReturningPair(value, kind == Collection::Map ? RuntimeOperation::StepMapIterator : RuntimeOperation::StepSetIterator, arguments);
+        join.add(Condition(m_out.notZero64(step.first)), Boxed(step.second));
+    };
+    IteratorStepJoin join(m_out);
+    if (value.shape() != CodeShape::Fast) {
+        addStepByOperation(join);
+        auto results = join.finish();
+        defineResults(value, std::span<const Operand>(results));
+        return;
+    }
+
+    auto field = [&](JSSetIterator::Field index) { return m_out.address(iterator.value(), m_heaps.JSInternalFieldObjectImpl_internalFields[static_cast<unsigned>(index)]); };
+    TableReader reader(generator());
+    LBasicBlock isCurrent = newBlock();
+    LBasicBlock hasTable = newBlock();
+    LBasicBlock isCompact = newBlock();
+    LBasicBlock isStartKnown = newBlock();
+    LBasicBlock isHeapTable = newBlock();
+    LBasicBlock hasWideKeys = newBlock();
+    LBasicBlock hasNarrowKeys = newBlock();
+    LBasicBlock slowPath = newBlock();
+
+    // The iterator stands in the table that the collection holds, and hands out keys or values: everything else is the operation's.
+    LValue storage = m_out.load64(field(JSSetIterator::Field::Storage));
+    LValue owner = m_out.load64(field(JSSetIterator::Field::IteratedObject));
+    LValue iterationKind = m_out.load64(field(JSSetIterator::Field::Kind));
+    m_out.branch(m_out.equal(storage, reader.storageOf(CellPointer(owner))), normalEdge(isCurrent), rareEdge(slowPath));
+
+    m_out.appendTo(isCurrent);
+    m_out.branch(m_out.bitOr(m_out.isNull(storage), m_out.equal(iterationKind, m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(IterationKind::Entries)))))), rareEdge(slowPath), normalEdge(hasTable));
+
+    m_out.appendTo(hasTable);
+    m_out.branch(hasCellType(CellPointer(storage), JSCellButterflyType).value(), rareEdge(slowPath), normalEdge(isCompact));
+
+    m_out.appendTo(isCompact);
+    LValue entry = m_out.load64(field(JSSetIterator::Field::Entry));
+    m_out.branch(m_out.below(entry, m_out.constInt64(JSValue::NumberTag)), rareEdge(slowPath), normalEdge(isStartKnown));
+
+    m_out.appendTo(isStartKnown);
+    Word32 flags(m_out.load8ZeroExt32(reader.tableField(storage, CompactTable::offsetOfKeysShift())));
+    branchUnless(hasNoBits(flags, CompactTable::keysAreInImage), slowPath);
+    m_out.jump(isHeapTable);
+
+    m_out.appendTo(isHeapTable);
+    LValue start = m_out.zeroExtPtr(m_out.castToInt32(entry));
+    LValue used = m_out.zeroExtPtr(m_out.load32(reader.tableField(storage, CompactTable::offsetOfUsed())));
+    LValue column = reader.keysOf(storage);
+    m_out.branch(hasNoBits(flags, CompactTable::keysAreWide).value(), normalEdge(hasNarrowKeys), normalEdge(hasWideKeys));
+
+    auto addStepInTable = [&](CompactTable::Width keyWidth) {
+        LValue entryIndex = reader.firstAliveEntry(start, used, slowPath, [&](LValue candidate) {
+            if (keyWidth == CompactTable::Width::Wide)
+                return m_out.notZero64(m_out.load64(reader.elementAt(column, candidate, 3)));
+            return m_out.notZero32(m_out.load32(reader.elementAt(column, candidate, 2)));
+        });
+        LBasicBlock marks = newBlock();
+        LBasicBlock isMarked = newBlock();
+        TypedPointer byteWithMark = m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), storage, CompactTable::offsetOfKeysShift());
+        Word32 flagsAndMark(m_out.load8ZeroExt32(byteWithMark));
+        m_out.branch(hasNoBits(flagsAndMark, CompactTable::wasWalked).value(), unlikelyEdge(marks), normalEdge(isMarked));
+
+        m_out.appendTo(marks);
+        m_out.store32As8(m_out.bitOr(flagsAndMark.value(), m_out.constInt32(CompactTable::wasWalked)), byteWithMark);
+        m_out.jump(isMarked);
+
+        m_out.appendTo(isMarked);
+        m_out.store64(m_out.bitOr(m_out.add(entryIndex, m_out.constInt64(1)), m_out.constInt64(JSValue::NumberTag)), field(JSSetIterator::Field::Entry));
+        TableEntry found = reader.compactEntryAt(kind, keyWidth, std::nullopt, storage, column, entryIndex);
+        Boxed handedOut = found.key;
+        if (kind == Collection::Map)
+            handedOut = select(Condition(m_out.equal(iterationKind, m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(IterationKind::Keys)))))), found.key, found.value);
+        join.add(boolean(false), handedOut);
+    };
+    m_out.appendTo(hasNarrowKeys);
+    addStepInTable(CompactTable::Width::Narrow);
+    m_out.appendTo(hasWideKeys);
+    addStepInTable(CompactTable::Width::Wide);
+
+    m_out.appendTo(slowPath);
+    addStepByOperation(join);
+    auto results = join.finish();
+    defineResults(value, std::span<const Operand>(results));
 }
 
 // Storage of another kind answers anything: the operation that follows looks again.

@@ -71,8 +71,6 @@ enum class VirtualFieldKind : uint8_t {
     Operand,
     // Where an array iterator stands in its list.
     Position,
-    // What `Object.create` was handed.
-    PrototypeLink,
 };
 
 struct VirtualField {

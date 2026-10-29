@@ -1,4 +1,4 @@
-# Two values compare the same however often they are asked, whatever runs in between: the second comparison of the same two goes, in either order of the operands. A comparison with another value stays, and so does one that the first does not come before on every way.
+# Two values compare the same however often they are asked, whatever runs in between: the second comparison of the same two goes, in either order of the operands, and two literals of one text are one value. A comparison with another value stays, and so does one that the first does not come before on every way.
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass EliminateRedundantReads
@@ -56,4 +56,19 @@ function f3 name="onOneWay" parameters=[{type=anything}, {type=anything}, {type=
     Return v5
 # CHECK: b2():
 # CHECK-NEXT: = StrictEq v0, v1
+}
+
+function f4 name="twoLiteralsOfOneText" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+    v2 = String string="fast"
+    v3 = StrictEq v0, v2
+    v4 = Call v1, v3
+    v5 = String string="fast"
+    v6 = StrictEq v0, v5
+    v7 = String string="slow"
+    v8 = StrictEq v0, v7
+    v9 = Call v1, v6, v8
+    Return v9
+# CHECK: v3: boolean = StrictEq v0, v2
+# CHECK: v8: boolean = StrictEq v0, v7
+# CHECK-NEXT: = Call v1, v3, v8
 }

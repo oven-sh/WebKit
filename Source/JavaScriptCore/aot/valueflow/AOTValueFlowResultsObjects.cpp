@@ -616,7 +616,8 @@ static void createClassesOfClosures(const ValueFlowResultInputs& inputs, const V
 {
     const Program& program = inputs.program;
     Vector<AllocationClass> classesOfClosures = collectInParallel<AllocationClass>(inputs.loops(), program.functions.size(), [&](unsigned index, Vector<AllocationClass>& classes) {
-        if (!inputs.isReached(FunctionID(index)) || calls.functionsNamedByUnsolvedCode.get(index) || !inputs.build.isEnabled(FlowResultKind::HolderMutations, index))
+        // A function that nobody calls may still have a closure that the program reads.
+        if (calls.functionsNamedByUnsolvedCode.get(index) || !inputs.build.isEnabled(FlowResultKind::HolderMutations, index))
             return;
         ValueFlowObjectID closure = inputs.universe().closureOf(FunctionID(index));
         OptionSet<ObjectMutation> possible = possibleMutationsOf(inputs, links, closure);

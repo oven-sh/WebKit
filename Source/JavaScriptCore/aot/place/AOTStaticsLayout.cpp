@@ -566,6 +566,7 @@ std::pair<StaticsPlan, LiteralSites> placeStatics(const PlacementContext& contex
         && placeRegion(placeModuleBuiltinCells)
         && placeRegion([&] { literals.sharedStorageOffsets = allocateEach(sites.copyOnWriteArrays.size(), allocateRoot); })
         && placeRegion(placeStorageInImage)
+        && placeRegion([&] { literals.cellOffsetsOfDataMadeOnce = allocateEach(sites.dataMadeOnce.size(), allocateRoot); })
         && placeRegion([&] { literals.regExpCellOffsets = allocateEach(sites.regExpLiterals.size(), allocateRoot); })
         && placeRegion([&] { literals.templateObjectOffsets = allocateEach(sites.templateObjects.size(), allocateRoot); })
         && placeRegion([&] { literals.profiledLiteralOffsets = allocateEach(sites.profiledArrayLiterals.size(), allocateWord); })

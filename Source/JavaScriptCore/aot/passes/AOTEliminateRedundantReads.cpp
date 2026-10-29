@@ -1555,8 +1555,13 @@ static PassOutcome dropRepeatedStrictComparisons(FunctionPassContext& context)
             if (!questions.contains(value.opcode) || keptReads.get(values[index].index()))
                 continue;
             // No value has the last index, so a length is no comparison.
-            uint64_t left = sameObjectThroughCasts(function, value.operand(0)).valueInFrontOfFacts().index();
-            uint64_t right = value.opcode == Opcode::StrictEq ? sameObjectThroughCasts(function, value.rightOperand()).valueInFrontOfFacts().index() : std::numeric_limits<uint32_t>::max();
+            // Two literals of one text are one value.
+            auto askedValueOf = [&](ValueID operand) -> uint64_t {
+                ValueID root = sameObjectThroughCasts(function, operand).valueInFrontOfFacts();
+                return function.at(root).opcode == Opcode::String ? 1u << 31 | function.at(root).string().index() : root.index();
+            };
+            uint64_t left = askedValueOf(value.operand(0));
+            uint64_t right = value.opcode == Opcode::StrictEq ? askedValueOf(value.rightOperand()) : std::numeric_limits<uint32_t>::max();
             uint64_t operands = std::min(left, right) << 32 | std::max(left, right);
             auto found = innermost.find(operands);
             std::optional<uint32_t> outer = found == innermost.end() ? std::nullopt : std::optional(found->value);

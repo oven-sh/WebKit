@@ -241,6 +241,8 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         return;
     }
 
+    runMocksBelow(root);
+    RETURN_IF_EXCEPTION(scope, void());
     noteModulesLoadedWith(root);
     std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(root);
 
@@ -2419,6 +2421,8 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    runMocksBelow(module);
+    RETURN_IF_EXCEPTION(scope, void());
     const ModuleData& moduleData = data(module);
 
     auto throwAsyncModuleError = [&] {
@@ -2698,6 +2702,8 @@ JSValue Modules::answerRequire(ModuleID target)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    runMocksBelow(target);
+    RETURN_IF_EXCEPTION(scope, { });
     const ModuleData& targetData = data(target);
     if (m_state.statics->fillsVariablesWithFiles() && (status(target) == ModuleStatus::Linking || status(target) == ModuleStatus::Evaluating))
         m_state.statics->fillVariablesOfAllFiles();

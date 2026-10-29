@@ -1253,9 +1253,17 @@ void HeapRule::readEvaluators(const ValueFlowOperand& object, const HeapKey& key
         if (described)
             readMember(member, module, described, getters);
     };
+    FunctionID reader = m_context.functionOfStatement();
+    bool isReadByProgram = reader && isWrittenInProgram(m_program.at(reader));
     forEachMemberUnder(found, key, [&](BuiltinID member, ModuleID module) {
-        if (m_tables.letsInUnseenCode(member))
-            answer(member, module);
+        if (!m_tables.letsInUnseenCode(member))
+            return;
+        answer(member, module);
+        // The program holds what makes a loader once it reads it off its holder by name, however it came by the holder. Only such a maker: a key like `require` or `load` finds a loader
+        // on every holder that an imprecise read may reach, and that would open the program.
+        BuiltinID canonical = m_builtins.canonicalID(member);
+        if (isReadByProgram && !m_builtins.letsInUnseenCodeWhenCalled(canonical))
+            add(m_context.nodes().ofHost(ValueFlowHostNode::LoadersAndEvaluatorsThatProgramNames), only(m_universe.objectOf(canonical)));
     });
     if (mayAnswerMemberLeftOut) {
         ClimbingSet leftOut = m_context.valueWithin(ClimbingSet(m_tables.objectsThatLetInUnseenCode()), m_context.nodes().ofHost(ValueFlowHostNode::BuiltinsHeldWithoutBeingListed));

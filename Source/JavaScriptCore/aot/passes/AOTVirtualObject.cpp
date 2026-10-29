@@ -217,21 +217,6 @@ bool makesArrayIterator(const Program& program, const Function& function, const 
     return builtin == Builtins::ArrayPrototypeKeys || builtin == Builtins::ArrayPrototypeValues || builtin == Builtins::ArrayPrototypeEntries;
 }
 
-// An object that Object.create makes is born below what the first call of the place was handed. Where every call hands the same object, the test of the prototype can only pass.
-static bool isStablePrototypeLink(const Program& program, const Function& function, const VirtualObjectDescription& description, const Value& link)
-{
-    if (link.replacedCalleeOperand() || link.replacedThisOperand())
-        return false;
-    VariableID read = program.at(description.layout).prototypeVariable;
-    const Type& prototype = program.typeOf(function, link.prototypeOperand());
-    if (!read || !prototype.hasObjects() || prototype.primitives)
-        return false;
-    const Variable& variable = program.at(read);
-    bool readsSeeOnlyStoredValue = variable.initialization == VariableInitialization::Uninitialized
-        || (variable.initialization == VariableInitialization::Undefined && variable.flow.initialization == InitializationState::StoredBeforeEveryRead);
-    return readsSeeOnlyStoredValue && !variable.owner && !variable.function && !variable.declared.isExpected() && variable.flow.writers == WriterState::AllKnown && variable.flow.stores == StoreCount::AtMostOnce;
-}
-
 static bool isPassedToHandler(FunctionAnalyses& analyses, ValueID alias)
 {
     return std::ranges::any_of(analyses.useLists().usesOf(alias), [&](const Use& use) {
@@ -485,7 +470,6 @@ std::optional<uint32_t> layoutFieldOf(const Program& program, const VirtualObjec
     case VirtualFieldKind::RangeEnd:
     case VirtualFieldKind::Operand:
     case VirtualFieldKind::Position:
-    case VirtualFieldKind::PrototypeLink:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -576,7 +560,6 @@ TypeID typeOfField(const VirtualObjectContext& context, const VirtualObjectDescr
     case VirtualFieldKind::Operand:
         return typeOfInitialValue(context, description, field);
     case VirtualFieldKind::Position:
-    case VirtualFieldKind::PrototypeLink:
         // The library's next() adds one to whatever it reads, and only then is it known to have read a number.
         return TypeTable::anything;
     }
@@ -879,10 +862,6 @@ VirtualFieldAccess lookUpField(const VirtualObjectContext& context, const Virtua
         if (description.kind != VirtualObjectKind::StringRange)
             return { };
         return { FieldLookup::DynamicElement, AbsentField::Unknown, PresentField::IsOwnData, { }, access.positionOperand() };
-    case Opcode::SetLiteralPrototype:
-        if (description.kind != VirtualObjectKind::Object || !description.layout || !isStablePrototypeLink(context.program, context.function, description, access))
-            return { };
-        return createFieldAccess(VirtualField::part(VirtualFieldKind::PrototypeLink), PresentField::IsOwnData, AbsentField::FindsNothing);
     case Opcode::GetInternalField:
     case Opcode::PutInternalField:
         if (description.kind != VirtualObjectKind::ArrayIterator || access.index() != static_cast<uint32_t>(JSArrayIterator::Field::Index))

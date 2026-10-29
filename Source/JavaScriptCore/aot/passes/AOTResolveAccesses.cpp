@@ -1121,7 +1121,9 @@ static void expandReadsOfFieldsThatMayBeEmpty(FunctionPassContext& context, IRBu
         test.setCountsFieldsWithoutStorage(!!methodAbove);
         BlockID failedUnasked = builder.beginPrediction();
         ValueID isFilled = builder.append(WTF::move(test));
-        Expected<BlockFrequency> frequencyOfFailure = testsDeclaredType ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
+        // The sabotage needs an arm that answers by itself: addEmptySlotCases() gives one to a test whose empty arm is rarer.
+        bool failsSeldom = testsDeclaredType || context.build.isSabotaged(Sabotage::FieldsStayInSlotsThatDeferClosures);
+        Expected<BlockFrequency> frequencyOfFailure = failsSeldom ? rarerOf(expansion.frequency(), BlockFrequency::Unlikely) : expansion.frequency();
         IRBuilder::ProvenBranch branch = builder.emitBranchWithProof(isFilled, OperandIndex::IsSlotFilled::object, expansion.frequency(), frequencyOfFailure);
         // Only an empty slot answers with the method. Where no test was asked, the name is looked up.
         BlockID byName = methodAbove ? failedUnasked : BlockID();

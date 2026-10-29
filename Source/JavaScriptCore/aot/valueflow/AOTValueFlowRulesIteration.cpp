@@ -583,6 +583,8 @@ void runStepOfLibrary(const ValueFlowStatement& statement, ValueFlowRuleContext&
     context.add(statement.result, universe.undefinedValue());
     switch (statement.opcode) {
     case Opcode::StepArrayIterator:
+    case Opcode::StepMapIterator:
+    case Opcode::StepSetIterator:
         connectContentsOfSlot(context, objects, steppedValuesName, statement.result);
         return;
     case Opcode::MapNext:

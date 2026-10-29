@@ -1388,6 +1388,73 @@ static void countRepresentations(FunctionPassContext& pass, uint32_t numberOfCon
     count(StatisticID::ReferencesCompressed, numberOfValuesIn[std::to_underlying(Representation::Cell32)]);
 }
 
+// `a[i++]`, `return id++`: where the number goes on being used behind its step, the old and the new number need a register each, and the loop moves the new one back into place. Behind its last use the old number dies at the step, which then adds in place. It goes as late as it may: an operator with one user is emitted where that user stands.
+static bool moveStepsBehindOtherUsesOfWhatTheyStep(FunctionPassContext& pass)
+{
+    constexpr size_t farthestMove = 32;
+    Function& function = pass.function;
+    const UseLists& useLists = pass.analyses.useLists();
+    auto isStep = [&](const Value& value) {
+        bool isByConstant = (value.opcode == Opcode::Add || value.opcode == Opcode::Sub) && function.at(value.operand(1)).opcode == Opcode::Integer;
+        if (!isByConstant && value.opcode != Opcode::Increment && value.opcode != Opcode::Decrement)
+            return false;
+        Representation representation = value.representation;
+        return (representation == Representation::Int32 || representation == Representation::Int64) && function.at(value.operand(0)).representation == representation;
+    };
+    bool hasMoved = false;
+    for (BlockID block : pass.analyses.cfg().reversePostOrder()) {
+        for (size_t index = function.at(block).values.size(); index--;) {
+            const auto& values = function.at(block).values;
+            ValueID step = values[index];
+            const Value& value = function.at(step);
+            if (!isStep(value) || !pass.analyses.hasNoEffects(step))
+                continue;
+            ValueID stepped = value.operand(0);
+            bool diesHere = std::ranges::all_of(useLists.usesOf(stepped), [&](const Use& use) {
+                return use.kind == Use::Kind::Operand && use.block == block;
+            });
+            bool isOnlyPassedOn = std::ranges::all_of(useLists.usesOf(step), [&](const Use& use) {
+                return use.kind != Use::Kind::HandlerArgument;
+            });
+            if (!diesHere || !isOnlyPassedOn)
+                continue;
+            size_t latest = index;
+            bool isUsedBehindStep = false;
+            for (size_t later = index + 1; later < std::min(values.size(), index + farthestMove); ++later) {
+                bool usesStep = false;
+                bool usesStepped = false;
+                function.at(values[later]).forEachOperand([&](ValueID operand, uint32_t) {
+                    usesStep |= operand == step;
+                    usesStepped |= operand == stepped;
+                });
+                // A call stands in front of the results taken from it, and a test in front of the branch that takes it.
+                bool mayStandBehind = pass.analyses.hasNoEffects(values[later]) && std::ranges::none_of(useLists.usesOf(values[later]), [](const Use& use) {
+                    return use.kind == Use::Kind::TerminatorOperand;
+                });
+                if (usesStep || !mayStandBehind)
+                    break;
+                isUsedBehindStep |= usesStepped;
+                latest = later;
+            }
+            if (!isUsedBehindStep)
+                continue;
+            bool isEveryUseSeen = std::ranges::count_if(std::span<const ValueID>(values.begin() + index, values.begin() + latest + 1), [&](ValueID id) {
+                bool usesStepped = false;
+                function.at(id).forEachOperand([&](ValueID operand, uint32_t) {
+                    usesStepped |= operand == stepped;
+                });
+                return usesStepped;
+            }) == static_cast<std::ptrdiff_t>(useLists.useCount(stepped));
+            if (!isEveryUseSeen)
+                continue;
+            auto& edited = function.edit(block, BlockEdit::Values).values;
+            std::rotate(edited.begin() + index, edited.begin() + index + 1, edited.begin() + latest + 1);
+            hasMoved = true;
+        }
+    }
+    return hasMoved;
+}
+
 PassOutcome chooseRepresentations(FunctionPassContext& pass)
 {
     RELEASE_ASSERT(pass.inputs.placement && pass.inputs.callingConventions && !pass.function.representationsAreChosen);
@@ -1426,6 +1493,11 @@ PassOutcome chooseRepresentations(FunctionPassContext& pass)
         pass.keptAnalyses = controlFlowAnalyses;
     } else
         pass.keptAnalyses = allAnalyses;
+    if (moveStepsBehindOtherUsesOfWhatTheyStep(pass)) {
+        pass.analyses.didChangeValues();
+        if (function.blocks.size() == numberOfBlocksBefore)
+            pass.keptAnalyses = controlFlowAnalyses;
+    }
 
     function.representationsAreChosen = true;
     countRepresentations(pass, inserter.numberOfConversions);

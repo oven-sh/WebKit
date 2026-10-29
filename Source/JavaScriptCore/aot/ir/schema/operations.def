@@ -2,7 +2,7 @@ enum AllocationStorage { | engine Heap Frame FrameUntilMaterialized }
 enum ClosureForm { | engine Full Slim Deferred Singleton }
 enum ArrayLiteralStorage { | engine Fresh Profiled }
 enum TailCallRequirement { | engine Required Allowed }
-enum DataEncoding { | engine Unselected Expanded ReadOnlyTree CopyOnWriteArray }
+enum DataEncoding { | engine Unselected Expanded ReadOnlyTree CopyOnWriteArray MadeOnce }
 enum ExpectedElements { | engine Anything Int32Array Uint8Array }
 enum OperatorForm {
     | engine Unselected Generic Integers CheckedIntegers Numbers NumberAndValue Bits Booleans BigInts Strings StringAndValue Int32AndValue
@@ -28,7 +28,7 @@ operation String (string: String) -> constant ; CreatesConstant ; runtime = Stri
 operation BigInt (digits: String) -> constant ; CreatesConstant ; runtime = BigIntConstant ; flow = TableProves ; flowsWithoutRule = true
 operation Builtin (builtin: Builtin) [isNotReadFromHolder] -> constant ; CreatesConstant ; runtime = BuiltinCell ; flow = TableProves ; flowRule = Module
 operation ModuleBuiltin (builtin: Builtin, module: Module(Referrer)) -> constant ; Allocates UsesRuntime throws ; runtime = ModuleBuiltinCell ; flow = TableProves
-operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
+operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) [| engine isNeverToldApart] -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
 operation NewClosure (function: Function(Closure), captures...: Declared/retains(result), with CellStamp, engine from Selected closureForm: ClosureForm) [| engine isMadeOnDemand isHeldByClosureTable isLent] -> constant ; Allocates ; runtime = NewClosureSlow ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowsWithoutRule = true
 engine operation KeyConstant (key: PropertyKey) -> constant ; CreatesConstant ; runtime = KeyConstant ; flow = TableProves ; flowsWithoutRule = true
 operation Unspecified (valueType: Type) -> declared(valueType) ; none ; Prepared..Placed
@@ -77,7 +77,7 @@ operation DefineSetter (object: Object/inspects+definesName, function: Callable/
 operation TryDefineLiveBinding (target: Any/inspects+definesName, source: Any/inspects, sourceKey: Any/inspects, targetKey: Any/inspects, getter: Callable/retains(target)) -> natural(boolean) ; DefinesProperty ; branches = May ; runtime = TryDefineLiveBinding ; flow = Unsound ; flowRule = Heap
 operation TryReExportFields (target: Any/inspects+definesName, source: Any/retains(target), function: Function(Closure)) [reusesDescriptors keyIsFirstCapture] -> natural(boolean) ; DefinesProperty ; branches = May ; runtime = TryReExportFields ; flow = TableProves ; flowRule = Heap
 operation SetFunctionName (function: Callable/inspects+definesName, computedKey: PropertyKey/inspects, methodKind: MethodKind) -> none ; reads(NamedProperties, StringStorage) writes(NamedProperties, StringStorage, RuntimeState) throws collects ; runtime = SetFunctionName ; flow = Copies ; flowRule = Heap
-operation SetLiteralPrototype (object: Object/inspects+changesPrototype, prototype: Any/retains(object)+becomesPrototype, engine replacedCallee?: Any/inspects, engine replacedThis?: Any/inspects) [| engine refusesOtherValues] -> none ; reads(PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, MemberGuards, Elements[Object], RuntimeState) throws collects ; runtime = SetLiteralPrototype ; flow = Copies ; flowRule = Heap ; interpreted = Store
+operation SetLiteralPrototype (object: Object/inspects+changesPrototype, prototype: Any/retains(object)+becomesPrototype, engine replacedCallee?: Any/inspects, engine replacedThis?: Any/inspects) [| engine refusesOtherValues] -> none ; reads(PrototypeLinks, ShapeWords) writes(PrototypeLinks, ShapeWords, MemberGuards, Elements[Object], RuntimeState) throws collects ; runtime = SetLiteralPrototype ; flow = Copies ; flowRule = Heap
 operation CopyDataProperties (target: Object/inspects+assignsFrom(source), source: Any/Copied, excludedKeys: List<PropertyKey>, excluded...: PropertyKey/inspects, engine from Placed request?: Request) -> none ; DefinesProperty ; interpreted = List ; runtime = CopyDataProperties ; flow = Copies ; flowRule = Heap ; hasOwnFoldingRule = true
 operation CopyObject (source: Any/Copied, excludedKeys: List<PropertyKey>, excluded...: PropertyKey/inspects, engine from Placed request?: Request) -> natural(object) ; DefinesProperty ; runtime = CopyObject ; flow = Allocates ; flowRule = Heap
 operation GetSuperBase (homeKind: HomeObjectKind, home: Object/inspects) -> natural(object | null) ; reads(PrototypeLinks) ; runtime = GetSuperBase ; flow = TableProves ; flowRule = Heap

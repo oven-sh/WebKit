@@ -58,6 +58,7 @@
 #include <wtf/FastBitVector.h>
 #include <wtf/PrintStream.h>
 #include <wtf/UnionFind.h>
+#include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC { namespace AOT { namespace Typed {

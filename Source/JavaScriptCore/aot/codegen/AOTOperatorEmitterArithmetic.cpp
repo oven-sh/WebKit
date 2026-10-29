@@ -400,10 +400,48 @@ public:
             if (std::optional<Number> result = powerWithConstantBase(*constantBase, exponent))
                 return *result;
         }
+        if (exponent.value()->opcode() == B3::IToD)
+            return powerWithWholeExponent(base, exponent);
         return callLeaf<Number>(RuntimeOperation::Pow, { base, exponent });
     }
 
 private:
+    // What operationMathPow does for such an exponent, in the same order of multiplications.
+    Number powerWithWholeExponent(Number base, Number exponent)
+    {
+        LBasicBlock test = newBlock();
+        LBasicBlock step = newBlock();
+        LBasicBlock genericPath = newBlock();
+        LBasicBlock done = newBlock();
+        Integer whole = wholeExponentOrElse(exponent, genericPath);
+        branchUnless(belowOrEqual(whole, static_cast<int64_t>(maxExponentForIntegerMathPow)), genericPath);
+        ValueFromBlock firstBits = m_out.anchor(whole.value());
+        ValueFromBlock firstResult = m_out.anchor(number(1).value());
+        ValueFromBlock firstSquare = m_out.anchor(base.value());
+        m_out.jump(test);
+
+        m_out.appendTo(test);
+        LValue bits = m_out.phi(B3::Int64, firstBits);
+        LValue result = m_out.phi(B3::Double, firstResult);
+        LValue square = m_out.phi(B3::Double, firstSquare);
+        ValueFromBlock finished = m_out.anchor(result);
+        branch(Condition(m_out.notEqual(bits, m_out.constInt64(0))), { normalEdge(step), normalEdge(done) });
+
+        m_out.appendTo(step);
+        LValue isOdd = m_out.testNonZero64(bits, m_out.constInt64(1));
+        m_out.addIncomingToPhi(result, m_out.anchor(m_out.select(isOdd, m_out.doubleMul(result, square), result)));
+        m_out.addIncomingToPhi(square, m_out.anchor(m_out.doubleMul(square, square)));
+        m_out.addIncomingToPhi(bits, m_out.anchor(m_out.lShr(bits, m_out.constInt32(1))));
+        m_out.jump(test);
+
+        m_out.appendTo(genericPath);
+        ValueFromBlock generic = m_out.anchor(callLeaf<Number>(RuntimeOperation::Pow, { base, exponent }).value());
+        m_out.jump(done);
+
+        m_out.appendTo(done);
+        return Number(m_out.phi(B3::Double, finished, generic));
+    }
+
     std::optional<Number> powerWithConstantExponent(Number base, double exponent)
     {
         if (std::abs(exponent) == 0.5) {

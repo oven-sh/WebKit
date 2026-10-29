@@ -454,7 +454,7 @@ bool AllocationPrefilter::neverFolds(uint32_t object, const Value& store, BlockI
         return true;
     if (store.opcode == Opcode::PropDelete)
         return false;
-    if (admissionOf(m_sinking, description, access.field, { m_function.at(valueStoredBy(store)).type }) != Admission::Refused)
+    if (admissionOf(m_sinking, description, access.field, { m_function.at(store.valueOperand()).type }) != Admission::Refused)
         return false;
     return (store.opcode != Opcode::PropSet && store.opcode != Opcode::PropDefine) || m_sinking.storesByNameWaitIn(block) || !canHoldUnprovenValue(m_program, description, access.field);
 }
@@ -627,7 +627,7 @@ void AllocationPrefilter::classify(ValueID name, uint32_t object, const Use& use
             if (neverFolds(object, user, use.block))
                 materialize(object, use);
             else
-                addEvent(EventKind::Store, object, use, storesWithoutValue.contains(user.opcode) ? noObject : objectNamedBy(valueStoredBy(user)).value_or(noObject));
+                addEvent(EventKind::Store, object, use, storesWithoutValue.contains(user.opcode) ? noObject : objectNamedBy(user.valueOperand()).value_or(noObject));
             return;
         }
         std::optional<uint32_t> holder = objectNamedBy(user.operand(0));
@@ -637,7 +637,7 @@ void AllocationPrefilter::classify(ValueID name, uint32_t object, const Use& use
                 m_objects[find(*source)].holdsUnmodeledObjects = true;
             } else
                 materialize(object, use);
-        } else if (!storesWithoutValue.contains(user.opcode) && valueStoredBy(user) == name)
+        } else if (!storesWithoutValue.contains(user.opcode) && user.valueOperand() == name)
             addEvent(EventKind::Hold, object, use, *holder);
         return;
     }

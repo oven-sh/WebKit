@@ -24,7 +24,10 @@
 namespace JSC { namespace AOT {
 
 static constexpr ASCIILiteral stepsOfCollections = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
 entry module=m0
+runtimefunction id=MapIteratorPrototypeNext function=f1
+runtimefunction id=SetIteratorPrototypeNext function=f2
 function f0 name="main" kind=Module results=[{type=anything}] {
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="print" [isFreeName]
@@ -142,6 +145,22 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v83 = PropGet v77 key="done"
     v84 = Call v1, -, v82, v83
     Return
+}
+function f1 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=MapIteratorPrototypeNext results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = StepMapIterator v1
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2
+    v5 = CreateIteratorResult v3, v4
+    Return v5
+}
+function f2 name="next" module=m1 role=Library flags=[HasThis] enclosingRuntimeFunction=SetIteratorPrototypeNext results=[{type=anything}] {
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = StepSetIterator v1
+    v3 = ResultAt v2 index=1
+    v4 = ResultAt v2
+    v5 = CreateIteratorResult v3, v4
+    Return v5
 }
 )IR"_s;
 

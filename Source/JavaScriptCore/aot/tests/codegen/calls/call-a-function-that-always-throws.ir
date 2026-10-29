@@ -82,16 +82,17 @@ function f2 name="twiceOf" module=m0 position=88 flags=[IsChecked, HasExplicitNa
     Return v10
 }
 
-# The callee always throws, so the block that calls it is rare. The likely way has no call and sets up no frame.
+# The callee always throws, so the block that calls it is rare and ends at the call. The likely way has no call, sets up no frame and moves nothing for it.
 # CHECK-LABEL: name="twiceOf" role=Source
 # CHECK: Double b@[[value]] = ArgumentReg(
 # CHECK: Int32 b@[[isNegative]] = LessThan(b@[[value]],
 # CHECK-NEXT: Branch(b@[[isNegative]], Terminal,
-# CHECK: BB#{{*}}: ; frequency = 1.00
+# CHECK: BB#{{*}}: ; frequency = 0.99
 # CHECK: Double b@[[twice]] = Add(b@[[value]], b@[[value]],
 # CHECK-NEXT: Return(b@[[twice]], Terminal)
 # CHECK: BB#{{*}}: ; frequency = 0.00
 # CHECK: Patchpoint(b@[[value]]:Register({{*}}), resultConstraints = Register({{*}}), {{*}}:CallDirect)
+# CHECK-NEXT: Oops(Terminal)
 # CHECK-LABEL: end of function
 # NONE-LABEL: name="twiceOf" role=Source
 # NONE-NOT: Patchpoint(
@@ -100,5 +101,5 @@ function f2 name="twiceOf" module=m0 position=88 flags=[IsChecked, HasExplicitNa
 # CALLS-LABEL: f2: size=
 # CALLS-NEXT: function f1 x1
 # CALLS-NEXT: f{{*}}: size=
-# X64: instructions: 5, patchpoints: 0, rare instructions: 7
-# ARM64: instructions: 4, patchpoints: 0, rare instructions: 6
+# X64: instructions: 4, patchpoints: 0, rare instructions: 3
+# ARM64: instructions: 3, patchpoints: 0, rare instructions: 3

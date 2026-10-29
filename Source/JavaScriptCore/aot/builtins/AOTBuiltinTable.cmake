@@ -47,6 +47,8 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
     aot/builtins/handwritten/JSIteratorHelperPrototype.ts
     aot/builtins/handwritten/MapPrototype.ts
     aot/builtins/handwritten/ObjectConstructor.ts
+    aot/builtins/handwritten/MapIteratorPrototype.ts
+    aot/builtins/handwritten/SetIteratorPrototype.ts
     aot/builtins/handwritten/SetPrototype.ts
     aot/builtins/handwritten/TypedArrayPrototype.ts
 )

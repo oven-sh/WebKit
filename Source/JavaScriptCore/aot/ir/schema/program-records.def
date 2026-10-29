@@ -16,7 +16,7 @@ record Layout wire extendedEngine {
     kind: LayoutKind name: String? module: Module(Referrer)? position: UInt32 base: Layout? constructor: Function(Constructor)?
     fields: Span<Field> staticFields: Span<StaticField> supertypes: Span<Layout> sorted computedKeyCount: UInt32 flags: LayoutFlags
     declaredOrder: Span<UInt32>
-    | engine builtinLayout: BuiltinLayout? namespaceOf: Module(Referrer)? ownFieldCount: UInt32 writtenBuiltinBase: BuiltinClass? flow: LayoutFlow classFlow: ClassFlow prototypeVariable: Variable?
+    | engine builtinLayout: BuiltinLayout? namespaceOf: Module(Referrer)? ownFieldCount: UInt32 writtenBuiltinBase: BuiltinClass? flow: LayoutFlow classFlow: ClassFlow
 }
 
 enum VariableInitialization { Uninitialized Undefined Function }

@@ -1,8 +1,8 @@
-# Whether two values are strictly equal never changes, and the comparison runs no code of the program: two values from outside the loop are compared once, in front of the loop. What the loop defines is compared in the loop.
+# Whether two values are strictly equal never changes, and the comparison runs no code of the program: two values from outside the loop are compared once, in front of the loop. A literal that is written in the loop goes with the comparison. What the loop defines is compared in the loop.
 # FORM: Prepared
 # OPTIONS: check=VerifyEachPass
 # RUN: pass HoistLoopInvariantReads
-# STATISTIC: HoistLoopInvariantReadsChanges = 1
+# STATISTIC: HoistLoopInvariantReadsChanges = 2
 
 module m0 path="main.js" displayPath="main.js"
 function f0 name="valuesFromOutside" parameters=[{type=anything}, {type=anything}, {type=boolean}] results=[{type=anything}] {
@@ -36,4 +36,24 @@ function f1 name="valueOfTheLoop" parameters=[{type=anything}, {type=anything}] 
     Return v2
 # CHECK: b1(v2
 # CHECK: = StrictEq v2, v1
+}
+
+function f2 name="literalWrittenInTheLoop" parameters=[{type=anything}, {type=boolean}] results=[{type=anything}] {
+    Jump -> next b1()
+  b1():
+    LoopHint
+    Branch v1 -> taken b2(), notTaken b4()
+  b2():
+    v3 = String string="fast"
+    v4 = StrictEq v0, v3
+    Branch v4 -> taken b1(), notTaken b3()
+  b3():
+    Jump -> next b1()
+  b4():
+    Return v0
+# CHECK: b0(
+# CHECK-NEXT: [[literal]]: "fast" = String string="fast"
+# CHECK-NEXT: v4: boolean = StrictEq v0, [[literal]]
+# CHECK: b2():
+# CHECK: Branch v4 -> taken b1(), notTaken b3()
 }

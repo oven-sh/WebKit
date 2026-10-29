@@ -154,4 +154,4 @@ function f4 module=m0 position=6 kind=Initializer flags=[HasThis, IsChecked, IsH
 # CALLS-NOT: operation
 # CALLS: f{{*}}: size=
 # X64: instructions: 6, patchpoints: 2
-# ARM64: instructions: 9, patchpoints: 2, rare instructions: 2
+# ARM64: instructions: 7, patchpoints: 2, rare instructions: 2

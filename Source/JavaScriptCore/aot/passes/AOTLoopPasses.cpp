@@ -901,11 +901,26 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         });
         return result;
     };
+    // `mode === "fast"`: a constant goes wherever its user goes.
+    auto isConstantOfLoop = [&](ValueID operand) {
+        BlockID block = definingBlock[operand.index()];
+        return block && body.get(block.index()) && familyOf(function.at(operand).opcode) == OperationFamily::Constant;
+    };
+    auto testsInvariantValues = [&](const Value& value) {
+        bool result = true;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            BlockID block = definingBlock[operand.index()];
+            result &= block && (!body.get(block.index()) || isConstantOfLoop(operand));
+        });
+        return result;
+    };
     bool hasCandidate = false;
     for (unsigned i = 0; i < loop.size() && !hasCandidate; ++i) {
         hasCandidate = std::ranges::any_of(function.at(loop.at(i)).values, [&](ValueID id) {
             const Value& value = function.at(id);
-            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || testsOfValuesThemselves.contains(value.opcode) || isCollectionLookup(program, value))
+            if (testsOfValuesThemselves.contains(value.opcode))
+                return testsInvariantValues(value);
+            if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode) || isCollectionLookup(program, value))
                 return hasInvariantOperands(value);
             return hoistableReadOpcodes.contains(value.opcode) && variableAccessOf(function, value).kind == MemoryAccess::Kind::Read;
         });
@@ -946,7 +961,7 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
         if (testsOfValuesThemselves.contains(value.opcode)) {
             // A comparison is declared to throw where it flattens a rope and memory runs out: it does not leave its handler.
             bool staysUnderItsHandler = function.at(block).handler == function.at(preheader).handler || !context.analyses.effectsOf(id).normal.mayThrow;
-            return staysUnderItsHandler && !keptReads.get(id.index()) && hasInvariantOperands(value);
+            return staysUnderItsHandler && !keptReads.get(id.index()) && testsInvariantValues(value);
         }
         // A look-up that runs no code and cannot throw finds the same in every turn while nothing that it reads is written, and nobody sees it where no turn asks.
         if (lookupsHoistedWhereTheyRunNoCode.contains(value.opcode)) {
@@ -1032,6 +1047,22 @@ static unsigned hoistReadsOutOf(FunctionPassContext& context, const NaturalLoop&
                 valuesAroundFact.removeFirst(fact);
                 function.edit(preheader).values.append(fact);
                 definingBlock[fact.index()] = preheader;
+            }
+            if (testsOfValuesThemselves.contains(function.at(id).opcode)) {
+                Vector<std::pair<uint32_t, ValueID>, 2> constants;
+                function.at(id).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                    if (isConstantOfLoop(operand))
+                        constants.append({ operandIndex, operand });
+                });
+                for (auto [operandIndex, constant] : constants) {
+                    Value copy = function.at(constant);
+                    builder.setOrigin(copy.origin());
+                    ValueID copied = builder.addDetached(WTF::move(copy));
+                    function.edit(preheader).values.append(copied);
+                    while (definingBlock.size() < function.values.size())
+                        definingBlock.append(preheader);
+                    function.edit(id).setOperand(operandIndex, copied);
+                }
             }
             if (!hasInvariantOperands(function.at(id))) {
                 function.edit(preheader).values.append(readAheadAndAssumeInPlace(context, builder, remaining, id));

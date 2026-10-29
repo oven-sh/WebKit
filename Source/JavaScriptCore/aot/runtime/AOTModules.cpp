@@ -468,6 +468,49 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
     return false;
 }
 
+bool Modules::hasBegunToLoad(ModuleID module) const
+{
+    // Compiled code requires a CommonJS file without a word to the run time: no mock can wait for that.
+    if (data(module).kind == ModuleKind::CommonJs)
+        return true;
+    ModuleStatus current = status(module);
+    if ((current != ModuleStatus::Unlinked && current != ModuleStatus::Linked) || didCaptureExports(module))
+        return true;
+    return data(module).isESModuleOfProgram() && wasLoadedWithGraph(module);
+}
+
+void Modules::deferMock(ModuleID module)
+{
+    m_modulesWithMockToRun.set(module.index());
+    if (!data(module).isOfLibrary() && m_table.hasFilePath(module))
+        willMock(module);
+}
+
+void Modules::runMocksBelow(ModuleID root)
+{
+    if (m_modulesWithMockToRun.isEmpty()) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    BitVector reached(m_table.size());
+    Vector<ModuleID, 32> work { root };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (reached.quickSet(module.index()))
+            continue;
+        if (m_modulesWithMockToRun.get(module.index())) {
+            m_modulesWithMockToRun.clear(module.index());
+            host().runMock(m_instance.globalObject, module);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        if (isMocked(module))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            if (!request.isHoisted)
+                work.append(request.targetModule());
+        }
+    }
+}
+
 // ES modules import a CommonJS file through its face.
 ModuleID Modules::moduleWithExportsOf(ModuleID module) const
 {
@@ -887,6 +930,8 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
+    runMocksBelow(module);
+    RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
@@ -1002,6 +1047,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
+    runMocksBelow(module);
+    RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (m_innermostFilesBeingRun) [[unlikely]] {
         handGraphsToLoader();
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -2452,6 +2499,24 @@ void mockExport(JSGlobalObject* realm, ModuleID module, UniquedStringImpl* name,
 {
     if (Modules* modules = modulesOf(realm))
         modules->tryReplaceExport(modules->moduleWithExportsOf(module), name, value);
+}
+
+bool hasBegunToLoad(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return !modules || modules->hasBegunToLoad(module);
+}
+
+void deferMock(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->deferMock(module);
+}
+
+void runMocksBelow(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->runMocksBelow(module);
 }
 
 void willMockModule(JSGlobalObject* realm, ModuleID module, JSObject* exports)

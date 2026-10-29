@@ -94,6 +94,8 @@ struct ModuleHost {
     JSValue (*createModuleNotFoundError)(JSGlobalObject*, const String& specifier, const String& importer, bool isForRequire);
     // The object between every `require` and Function.prototype. Null in a host that has none.
     JSObject* (*requirePrototype)(JSGlobalObject*);
+    // A graph has come to a module with a mock whose factory has not run. Null in a host without mocks.
+    void (*runMock)(JSGlobalObject*, ModuleID);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -153,6 +155,10 @@ JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
 // The build saw a call that mocks the module: every export of it can be replaced.
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
+// The module has not begun to load: the factory of the mock runs when a graph comes to it (ModuleHost::runMock).
+JS_EXPORT_PRIVATE bool hasBegunToLoad(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void runMocksBelow(JSGlobalObject*, ModuleID);
 // Comes before the mockExport() of each name. A module that has not run yet never runs: neither its body nor, for its sake, what it imports. require() answers a CommonJS file with the object.
 JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSObject* exports);
 // Stores one export of the mock. A name that the module does not export is passed over.

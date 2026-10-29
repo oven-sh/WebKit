@@ -33,8 +33,8 @@ TypeID TypingContext::typeIDOf(const DeclaredType& declared) const
     TypeID expected = declared.expected().predicted();
     const Type& type = types.at(expected);
     bool isCounter = type.isInteger() && (type.integers.maximum == maxExactInteger || type.integers.minimum == -maxExactInteger);
-    Range small = type.integers.intersectWith(Range::int32());
-    return isCounter && !small.isEmpty() ? types.intern(Type::integer(small)) : expected;
+    Range withinInt32 = type.integers.intersectWith(Range::int32());
+    return isCounter && !withinInt32.isEmpty() ? types.intern(Type::integer(withinInt32)) : expected;
 }
 
 static TypeID typeIDOfField(const TypingContext& context, const Field& field)

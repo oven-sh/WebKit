@@ -117,6 +117,8 @@ struct InliningSummary {
     Vector<ReceiverParameter, 1> receiverParameters;
     Vector<KeyParameter, 1> keyParameters;
     bool neverReturns { false };
+    // Nothing in it loops: it does not spin, it ends by throwing.
+    bool onlyThrows { false };
     bool hasCycle { false };
     bool hasBareReturn { false };
     bool isWrapper { false };
@@ -144,6 +146,7 @@ public:
     bool contains(FunctionID id) const { return id.index() < m_summaries.size(); }
     const InliningSummary& of(const Program&, FunctionID id) const LIFETIME_BOUND { return contains(id) ? m_summaries[id.index()] : m_unknown; }
     bool neverReturns(const Program& program, FunctionID id) const { return of(program, id).neverReturns; }
+    bool onlyThrows(const Program& program, FunctionID id) const { return of(program, id).onlyThrows; }
     // What returnsFreshAggregate() says of a function that can be inlined.
     bool returnsFreshAggregate(const Program&, FunctionID) const;
 

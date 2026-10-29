@@ -69,8 +69,10 @@ export default b.declarations(
     "GeneratorPrototype",
     "IteratorOperations",
     "JSIteratorHelperPrototype",
+    "MapIteratorPrototype",
     "MapPrototype",
     "ObjectConstructor",
+    "SetIteratorPrototype",
     "SetPrototype",
     "TypedArrayPrototype",
   ),
@@ -127,6 +129,8 @@ export default b.declarations(
     isRegExpObject: "RegExpObjectType",
     isSet: "JSSetType",
     isWrapForValidIterator: "JSWrapForValidIteratorType",
+    isMapIterator: "JSMapIteratorType",
+    isSetIterator: "JSSetIteratorType",
   }),
   b.intrinsic("isTypedArrayView", "Call", {
     intrinsic: "HasJSType",
@@ -224,6 +228,8 @@ export default b.declarations(
   operation("ResumeGenerator", "resumeGenerator"),
   operation("SetNext", "setNext"),
   operation("StepArrayIterator", "stepArrayIterator"),
+  operation("StepMapIterator", "stepMapIterator"),
+  operation("StepSetIterator", "stepSetIterator"),
   operation("StepGenerator", "stepGenerator"),
 
   enumerators("Typed::ArrayStorage", {

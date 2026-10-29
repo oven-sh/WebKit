@@ -342,6 +342,8 @@ void Modules::link(ModuleID root)
 void Modules::link(const ModuleLinkWalk& walk)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    runMocksBelow(walk.root());
+    RETURN_IF_EXCEPTION(scope, void());
 
     VisitedModuleRecords visited;
     captureSyntheticExports(walk, visited);
