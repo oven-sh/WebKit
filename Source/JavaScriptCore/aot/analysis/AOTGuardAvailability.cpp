@@ -1305,7 +1305,7 @@ bool GuardAvailability::mayBeEndedAt(ValueID guard, const Value& user, ProgramPo
 GuardState GuardAvailability::stateAt(ValueID guard, ProgramPoint point) const
 {
     solveFor(guard);
-    return Cursor(*this, point).stateOf(guard);
+    return cursorAt(point).stateOf(guard);
 }
 
 bool GuardAvailability::canSolveForAnyWriters(uint32_t guardIndex) const
@@ -1538,13 +1538,34 @@ GuardState GuardAvailability::stateAt(ValueID guard, ProofSet reliedOn, ValueID 
     if (std::optional<GuardState> state = stateSeenWithoutSolving(guard, reliedOn, subject, point))
         return *state;
     solveFor(guard);
-    return Cursor(*this, point).stateOf(guard, reliedOn, subject);
+    return cursorAt(point).stateOf(guard, reliedOn, subject);
 }
 
 GuardState GuardAvailability::stateAt(ValueID guard, const Value& user, ProgramPoint point) const
 {
     solveFor(guard);
-    return Cursor(*this, point).stateOf(guard, user);
+    return cursorAt(point).stateOf(guard, user);
+}
+
+const GuardAvailability::Cursor& GuardAvailability::cursorAt(ProgramPoint point) const
+{
+    std::optional<Cursor>& cursor = m_cursorOfLastQuestion;
+    if (cursor && cursor->m_block == point.block && cursor->m_index <= point.index && cursor->m_numberOfSolvesSeen == m_solution.numberOfSolves)
+        cursor->advanceTo(point.index);
+    else
+        cursor.emplace(Cursor(*this, point));
+    return *cursor;
+}
+
+void GuardAvailability::walk(BitVector& available, BlockID block, uint32_t firstIndex, uint32_t endIndex) const
+{
+    std::span<const Kill> kills = killsIn(block);
+    auto kill = std::ranges::lower_bound(kills, firstIndex, { }, &Kill::index);
+    for (uint32_t index = firstIndex; index < endIndex; ++index) {
+        for (; kill != kills.end() && kill->index == index; ++kill)
+            available.exclude(m_solution.killSets[kill->killSet].components);
+        applyDefinitions(available, m_solution.solvedGuards, block, index);
+    }
 }
 
 GuardAvailability::Cursor::Cursor(const GuardAvailability& availability, BlockID block)
@@ -1572,10 +1593,7 @@ void GuardAvailability::Cursor::replay() const
         return;
 
     m_available = solution.availableAtHead[m_block.index()];
-    for (uint32_t index = 0; index < m_index; ++index) {
-        m_availability.applyKills(m_available, m_block, index);
-        m_availability.applyDefinitions(m_available, solution.solvedGuards, m_block, index);
-    }
+    m_availability.walk(m_available, m_block, 0, m_index);
 }
 
 void GuardAvailability::Cursor::solveFor(ValueID guard) const
@@ -1588,14 +1606,9 @@ void GuardAvailability::Cursor::solveFor(ValueID guard) const
 void GuardAvailability::Cursor::advanceTo(uint32_t index)
 {
     RELEASE_ASSERT(index >= m_index && index <= m_availability.m_function.at(m_block).values.size());
-    if (!isInSolvedBlock()) {
-        m_index = index;
-        return;
-    }
-    for (; m_index < index; ++m_index) {
-        m_availability.applyKills(m_available, m_block, m_index);
-        m_availability.applyDefinitions(m_available, m_availability.m_solution.solvedGuards, m_block, m_index);
-    }
+    if (isInSolvedBlock())
+        m_availability.walk(m_available, m_block, m_index, index);
+    m_index = index;
 }
 
 GuardState GuardAvailability::Cursor::stateOf(ValueID guard, const ProofSet* reliedOn, ValueID subject) const

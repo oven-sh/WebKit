@@ -304,11 +304,11 @@ Occurrence UseEffectHistory::AtPoint::occurrenceOf(ObjectID object) const
 
     bool hasOccurred = !!(m_head[wordIndexOf(object)] & maskOf(object));
     if (!m_actions.empty()) {
-        for (auto& action : std::ranges::equal_range(m_actions, object, { }, &Action::object)) {
-            if (action.index >= m_index)
-                break;
-            hasOccurred = action.kind == ActionKind::Event;
-        }
+        // The last action in front of the point decides.
+        auto actions = std::ranges::equal_range(m_actions, object, { }, &Action::object);
+        auto end = std::ranges::lower_bound(actions, m_index, { }, &Action::index);
+        if (end != actions.begin())
+            hasOccurred = std::prev(end)->kind == ActionKind::Event;
     }
     return hasOccurred ? Occurrence::MayHaveOccurred : Occurrence::HasNotOccurred;
 }

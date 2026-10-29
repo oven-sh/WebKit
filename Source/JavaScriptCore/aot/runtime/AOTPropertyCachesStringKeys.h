@@ -265,8 +265,8 @@ private:
     uint32_t encode(const JSCell* cell) const { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(cell) >> MarkedBlockCage::shift); }
     ALWAYS_INLINE void addCachedKey(JSString* key, unsigned hash)
     {
-        if (m_cachedKeys.isEmpty()) [[unlikely]]
-            m_cachedKeys.fill(0, minTableSize);
+        if (m_cachedKeys.isEmpty() && !tryResize(m_cachedKeys, minTableSize)) [[unlikely]]
+            return;
         size_t tableSize = m_cachedKeys.size();
         uint64_t* entry = m_cachedKeys.mutableSpan().data() + firstIndex(hash, tableSize);
         bool evicts = false;
@@ -280,8 +280,8 @@ private:
     }
     ALWAYS_INLINE void addKeyByParts(const KeyByParts& parts, JSString* key)
     {
-        if (m_keysByParts.isEmpty()) [[unlikely]]
-            m_keysByParts.fill({ }, minTableSize);
+        if (m_keysByParts.isEmpty() && !tryResize(m_keysByParts, minTableSize)) [[unlikely]]
+            return;
         size_t tableSize = m_keysByParts.size();
         KeyByParts* entry = m_keysByParts.mutableSpan().data() + firstIndex(parts.hash, tableSize);
         bool evicts = false;
@@ -310,6 +310,16 @@ private:
     size_t removeDeadCaseConversions(VM&);
     size_t removeDeadIntegerKeys(VM&);
     void resizeIntegerKeys(size_t tableSize);
+    // The table becomes an empty one of that size and its former entries are handed back. Where there is no memory for it, the table stays as it is: what it does not hold is made again.
+    template<typename T>
+    static std::optional<Vector<T>> tryResize(Vector<T>& table, size_t size)
+    {
+        Vector<T> resized;
+        if (!resized.tryReserveCapacity(size))
+            return std::nullopt;
+        resized.fill({ }, size);
+        return std::exchange(table, WTF::move(resized));
+    }
     void growCachedKeys();
     void growKeysByParts();
     void publishIntegerKeys();

@@ -1,10 +1,10 @@
 # function makeKept(): Kept  function makeOther(): Other  function take(kept: Kept) {}  take(makeKept())  makeOther()
-# Past the limit on edges flow no longer tells callees apart: `makeKept()` may call whatever function has been made, so an Other stands in the set of its result. That is what flow cannot rule out,
-# not what it knows to arrive, and the type of `kept` may take it away: a validating build reports nothing.
+# Past the limit on edges flow stops and claims nothing about the program, so there is nothing for a validating build to hold against the types: it reports that flow stopped, and nothing else.
 # FORM: AsRead
 # RUN: pipeline AnalyzeFlow
 # OPTIONS: validate limit=MaxValueFlowEdgesLogged:1
 # LOSS: MaxValueFlowEdgesLogged
+# DIAGNOSTIC: ProgramTooLargeToAnalyze
 
 module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0

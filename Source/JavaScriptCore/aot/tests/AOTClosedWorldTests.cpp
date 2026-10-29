@@ -553,7 +553,7 @@ static void testProgramThatWasNotAnalyzedIsOpen()
 {
     AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s, "exclude=CodeOutsideImage"_s }) == open);
     // Any load may name a file outside the image, so only the options say whether one is loaded.
-    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == loadsCodeFromOutside);
+    AOT_TEST_CHECK(flagsOf(printsSum, { "disable=flow-results"_s }) == (runsOnlyCodeOfImage ? open : loadsCodeFromOutside));
 }
 
 static void testObfuscationIsAnotherFlag()

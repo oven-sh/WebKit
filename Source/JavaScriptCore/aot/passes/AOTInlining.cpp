@@ -2943,7 +2943,8 @@ static Vector<ValueSite> findCallsOfHeads(const AnalysisContext& context, const 
         for (uint32_t valueIndex = 0; valueIndex < block.values.size(); ++valueIndex) {
             ValueID call = block.values[valueIndex];
             const Value& value = caller.at(call);
-            if (value.opcode != Opcode::CallDirect || call == tailCall || value.isAfterInlinedHead() || value.function() == context.id || !headOf[value.function().index()])
+            // InlineCalls copies the tests that it can read before accesses are resolved. Here the head also holds the fields that the function reads, so a call that stands behind such a copy is looked at again.
+            if (value.opcode != Opcode::CallDirect || call == tailCall || value.function() == context.id || !headOf[value.function().index()])
                 continue;
             const Function& callee = program.at(value.function());
             if (value.numberOfOperands() != callee.numberOfEntryParameters() || !program.at(program.provenTypeOf(callee.result())).isSubsetOf(program.at(value.type), program))

@@ -2547,9 +2547,11 @@ JSString* StringKeyCache::makeKey(VM& vm, std::span<const Latin1Character> chara
 
 void StringKeyCache::growCachedKeys()
 {
-    Vector<uint64_t> former = std::exchange(m_cachedKeys, { });
-    m_cachedKeys.fill(0, former.size() * 2);
-    for (uint64_t formerEntry : former) {
+    m_cachedKeyEvictionCount = 0;
+    std::optional former = tryResize(m_cachedKeys, m_cachedKeys.size() * 2);
+    if (!former)
+        return;
+    for (uint64_t formerEntry : *former) {
         if (!formerEntry)
             continue;
         unsigned hash = formerEntry >> 32;
@@ -2558,7 +2560,6 @@ void StringKeyCache::growCachedKeys()
             index += m_cachedKeys[index + 1] ? hash >> 23 & 1 : 1;
         m_cachedKeys[index] = formerEntry;
     }
-    m_cachedKeyEvictionCount = 0;
 }
 
 void StringKeyCache::cacheKeyByParts(const KeyByParts& parts, JSString* key)
@@ -2572,9 +2573,10 @@ void StringKeyCache::cacheKeyByParts(const KeyByParts& parts, JSString* key)
 void StringKeyCache::resizeIntegerKeys(size_t tableSize)
 {
     m_integerKeyEvictionCount = 0;
-    Vector<uint64_t> former = std::exchange(m_integerKeys, { });
-    m_integerKeys.fill(0, tableSize);
-    for (uint64_t formerEntry : former) {
+    std::optional former = tryResize(m_integerKeys, tableSize);
+    if (!former)
+        return;
+    for (uint64_t formerEntry : *former) {
         if (formerEntry)
             m_integerKeys[formerEntry >> 32 & (tableSize - 1)] = formerEntry;
     }
@@ -2586,7 +2588,8 @@ void StringKeyCache::cacheIntegerKey(VM& vm, uint32_t integer, JSString* keyOrNu
     if (keyOrNull && !vm.heap.cage().contains(keyOrNull))
         return;
     if (m_integerKeys.isEmpty()) [[unlikely]] {
-        m_integerKeys.fill(0, minIntegerKeyTableSize);
+        if (!tryResize(m_integerKeys, minIntegerKeyTableSize))
+            return;
         publishIntegerKeys();
     }
     size_t tableSize = m_integerKeys.size();
@@ -2617,9 +2620,10 @@ void StringKeyCache::growKeysByParts()
     m_keysByPartsEvictionCount = 0;
     if (m_keysByParts.size() >= maxKeysByPartsTableSize)
         return;
-    Vector<KeyByParts> former = std::exchange(m_keysByParts, { });
-    m_keysByParts.fill({ }, former.size() * 2);
-    for (const KeyByParts& entry : former) {
+    std::optional former = tryResize(m_keysByParts, m_keysByParts.size() * 2);
+    if (!former)
+        return;
+    for (const KeyByParts& entry : *former) {
         if (!entry.countAndKinds)
             continue;
         uint32_t count = entry.countAndKinds & 0xff;

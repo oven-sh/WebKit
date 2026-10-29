@@ -1422,6 +1422,8 @@ struct CallResolver {
             addAccess(value);
         else if (value.opcode == Opcode::Call) {
             content.add(value.callees());
+            // A tail call gives up the frame that would keep the callee, so it is planned another way.
+            content.add(static_cast<uint32_t>(isTailCall(function, site.position) || value.isTailCall));
             if (value.accessSite() && flow.hasResults()) {
                 std::span<const FlowBoundFunctionAtSite> seen = flow.boundFunctionsSeenAt(value.accessSite(), FlowBoundFunctionUseAtSite::Called).predicted();
                 content.add(static_cast<uint32_t>(seen.size()));

@@ -1269,7 +1269,9 @@ PassOutcome eliminateDeadCode(FunctionPassContext& context)
 
     context.keptAnalyses = allAnalyses;
     // With fewer objects left, the escape analysis may prove more on a second run.
-    context.reachedFixpoint = !usedEscapeAnalysis;
+    // isCalleeQueried() looks at the function before the sweep, which may remove the call or the last exit that asks for a kept callee.
+    bool hasKeptCallees = eliminator.callsWithQueriedCallee.has_value();
+    context.reachedFixpoint = !usedEscapeAnalysis && !hasKeptCallees;
     bool mayHaveGivenControlFlowWork = eliminator.madeEdgesAlikeOrBlocksEmpty || eliminator.tookArgumentsFromEmptyBlocks || eliminator.cfg.hasHandlers();
     context.passesLeftIdle = { };
     if (!eliminator.tookProofsFromEdges) {

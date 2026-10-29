@@ -293,7 +293,8 @@ FlowReport reportUsesOfLibraryCode(const FlowResults& flow)
     if (flow.hasResults())
         return reportUsesOfLibraryCode(flow.unseenCode(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked());
     Vector<Wire::UnseenCodeRecord> unseenCode(flow.unseenCode());
-    unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
+    if (unseenCode.isEmpty())
+        unseenCode.append(Wire::UnseenCodeRecord { .cause = UnseenCodeCause::FlowResultDisabled });
     return reportUsesOfLibraryCode(unseenCode.span(), flow.loadsOfMachineCode(), flow.builtinUses(), flow.libraryFunctionsLacked());
 }
 

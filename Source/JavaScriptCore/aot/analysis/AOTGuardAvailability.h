@@ -277,6 +277,8 @@ private:
     void addKill(BlockID, uint32_t index, BitVector&& killClasses) const;
 
     void applyDefinitions(BitVector& available, const BitVector& guardIndexes, BlockID, uint32_t index) const;
+    void walk(BitVector& available, BlockID, uint32_t firstIndex, uint32_t endIndex) const;
+    const Cursor& cursorAt(ProgramPoint) const LIFETIME_BOUND;
     void applyKills(BitVector& available, BlockID, uint32_t index) const;
     void enterEdge(BitVector& available, const BitVector& guardIndexes, Edge) const;
     enum class KillsOfSolve : bool { No, Yes };
@@ -309,6 +311,8 @@ private:
     Vector<uint32_t> m_killClassesBySubject;
     uint32_t m_numberOfKillClassesOfNamedGuards { 0 };
     mutable Solution m_solution;
+    // Where the last question about one point was asked. Passes ask in the order of the block, so the next question is mostly a few values further on.
+    mutable std::optional<Cursor> m_cursorOfLastQuestion;
 };
 
 enum class EarlierTest : uint8_t { Unknown, Failed };

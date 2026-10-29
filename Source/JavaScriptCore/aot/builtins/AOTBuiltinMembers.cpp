@@ -267,6 +267,11 @@ BuiltinMemberAnswer findMemberFrom(const BuiltinLookupContext& context, BuiltinI
     if (!name)
         return { };
     const BuiltinTable& table = context.program.builtins();
+    // What the host keeps on the global object under a private name of the engine. Only the host stores there.
+    if (name.isPrivateAlias && table.canonicalID(holder) == table.canonicalID(Builtins::GlobalThis)) {
+        if (BuiltinID member = table.findOwnMember(Builtins::PrivateGlobals, name.name))
+            return { BuiltinMemberLookup::Outcome::Found, table.canonicalID(member), LocationProof::Constant, member };
+    }
     return answerFor(context, table.canonicalID(holder), key, table.findMember(holder, name.name), name);
 }
 
@@ -286,16 +291,17 @@ BuiltinMemberAnswer findMemberOfInstances(const BuiltinLookupContext& context, B
     return answerFor(context, table.canonicalID(prototype), key, found, name);
 }
 
-static bool canBeShadowedByScript(const BuiltinLookupContext& context, PropertyKeyID key)
-{
-    if (isLockedLocation(context.program, Builtins::GlobalThis, key))
-        return false;
-    return !context.flow.hasResults() || context.flow.unseenScriptsCanRun();
-}
-
 static bool canHaveGlobalBinding(const Program& program, PropertyKeyID key)
 {
     return program.at(key).kind == PropertyKeyKind::Text && keyLookupOf(program, key) == KeyLookup::Ordinary;
+}
+
+static bool canBeShadowedByScript(const BuiltinLookupContext& context, PropertyKeyID key)
+{
+    // No script can declare a private name of the engine.
+    if (!canHaveGlobalBinding(context.program, key) || isLockedLocation(context.program, Builtins::GlobalThis, key))
+        return false;
+    return !context.flow.hasResults() || context.flow.unseenScriptsCanRun();
 }
 
 FreeNameAnswer freeNameAnswerOf(const BuiltinLookupContext& context, PropertyKeyID key, bool seesScriptBindings)

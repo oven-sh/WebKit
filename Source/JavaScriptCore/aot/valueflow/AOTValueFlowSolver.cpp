@@ -6302,15 +6302,28 @@ bool ValueFlowSolver::solve()
             letSomeDueStatementsWait();
         if (m_hasLongRows && !isFullRound)
             letLongRowsGoFirst();
-        if (!runRules())
+        // Giving values up one by one past the budget costs more than all the rounds before it. Flow stops, and the build goes on without what it would have found.
+        auto stopsPastEdgeBudget = [&] {
+            if (!m_saturates || (!m_counters.isPastEdgeBudget && std::max<uint64_t>(m_graph.numberOfEdges(), numberOfReaders()) <= m_input.mostEdgesLogged))
+                return false;
+            m_counters.isPastEdgeBudget = true;
+            if (RefPtr<BackgroundTask> task = std::exchange(m_insertionOfNodesThatRead, nullptr))
+                task->finish();
+            if (m_input.build)
+                m_input.build->gaveUp(LimitID::MaxValueFlowEdgesLogged, Subject { });
+            return true;
+        };
+        if (!runRules() || stopsPastEdgeBudget())
             return false;
         MonotonicTime afterRules = MonotonicTime::now();
         bool hasAdded = merge();
         MonotonicTime afterMerge = MonotonicTime::now();
+        if (stopsPastEdgeBudget())
+            return false;
         m_graph.solve(moved, ValueFlowGraph::RetiredNodes::AreFoundAndConnectedByCaller);
         m_stepTimes.didFinish("values: the graph solved"_s);
-        if (m_saturates && std::max<uint64_t>(m_graph.numberOfEdges(), numberOfReaders()) > m_input.mostEdgesLogged)
-            m_counters.isPastEdgeBudget = true;
+        if (stopsPastEdgeBudget())
+            return false;
         if (m_input.escaped && m_input.lost && m_input.placeholders.untracked && !m_haveLostObjectsEscaped && m_sets.contains(m_graph.valueOf(m_input.escaped), m_input.placeholders.untracked)) {
             m_haveLostObjectsEscaped = true;
             m_edgesOfRound.append(ValueFlowEdge { m_input.lost, m_input.escaped });

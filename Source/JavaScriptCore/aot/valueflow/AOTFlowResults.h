@@ -347,6 +347,7 @@ public:
     BuiltinHolderState builtinHolder(BuiltinID holder) const { return holder && m_tables.builtins.intactHolders.get(holder.index()) ? BuiltinHolderState::Intact : BuiltinHolderState::Unknown; }
     bool listsKeysOf(BuiltinID canonicalHolder) const { return m_mayListKeysOfEveryHolder || m_tables.builtins.holdersWithListedKeys.get(canonicalHolder.index()); }
     void setMayListKeysOfEveryHolder() { m_mayListKeysOfEveryHolder = true; }
+    void setReasonForNoResults(UnseenCodeCause cause) { m_tables.wholeProgram.unseenCode.append(UnseenCodeRecord { .cause = cause }); }
     // The fields whose types were taken back as the results were applied. Their reads have no checks yet.
     std::span<const FieldReference> fieldsTakenBack() const LIFETIME_BOUND { return m_fieldsTakenBack.span(); }
     void setFieldsTakenBack(Vector<FieldReference>&& fields) { m_fieldsTakenBack = WTF::move(fields); }

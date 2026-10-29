@@ -1787,6 +1787,18 @@ void Pipeline::runPlacementStage()
         stage.run(PassID::CheckPlacement);
 }
 
+// Code generation writes function numbers into closure words, which have no room for a larger one. The image builder checks the same limit, but only after the code is generated.
+void Pipeline::checkNumberOfFunctions()
+{
+    if (m_runner.isStopped())
+        return;
+    uint64_t count = m_program.functions.size();
+    while (count && !m_program.functions[count - 1].hasBody())
+        --count;
+    if (m_build.exceeds(LimitID::ImageFunctions, count))
+        m_build.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::TooManyFunctions, .limit = LimitID::ImageFunctions, .count = clampTo<uint32_t>(count) });
+}
+
 void Pipeline::runRepresentationStage()
 {
     TimedStage stage(*this, Stage::ChooseRepresentations);
@@ -1885,6 +1897,7 @@ void Pipeline::runAllStages(NOESCAPE const ReaderOfFinishedBodies& readBesideLas
         runPlacementStage();
         runRepresentationStage();
     }
+    checkNumberOfFunctions();
     {
         // A run that was stopped after a pass hands out what its passes used. What it never computed stays the default result.
         PhaseTimes times(m_build, Stage::GenerateCode);

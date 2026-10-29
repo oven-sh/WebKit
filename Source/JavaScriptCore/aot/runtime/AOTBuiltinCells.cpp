@@ -28,6 +28,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
 #include "AOTVector.h"
+#include "BuiltinNames.h"
 #include "DeferTermination.h"
 #include "GetterSetter.h"
 #include "GlobalObjectMethodTable.h"
@@ -409,14 +410,17 @@ JSValue BuiltinCells::fillValue(JSGlobalObject* realm, BuiltinCellKey key)
 
     const BuiltinTable& table = BuiltinTable::singleton();
     const Builtin& member = table.at(key.builtin());
-    JSCell* holder = findObject(member.holder);
+    // The host keeps its private globals on the global object, each under the private name of the engine that is spelled as the member is.
+    bool isPrivateGlobal = member.holder == Builtins::PrivateGlobals;
+    PrivateSymbolImpl* privateName = isPrivateGlobal ? vm.propertyNames->builtinNames().lookUpPrivateName(table.identifierOf(vm, member.name)) : nullptr;
+    JSCell* holder = isPrivateGlobal ? (privateName ? realm : nullptr) : findObject(member.holder);
     if (!holder) {
         if (!BuiltinBindings::provides(member.origin))
             exitForWantOfHost(table, key.builtin());
         dataLogLn("AOT: the holder of the built-in value ", table.textOf(key.builtin()), " (key ", key.encoded(), ") is not in this realm");
         CRASH();
     }
-    JSValue value = asObject(holder)->get(realm, table.identifierOf(vm, member.name));
+    JSValue value = asObject(holder)->get(realm, privateName ? Identifier::fromUid(*privateName) : table.identifierOf(vm, member.name));
     RETURN_IF_EXCEPTION(scope, { });
     // What the host ran may have read the member too.
     if (JSValue filledDuringRead = JSValue::decode(*word))
