@@ -97,7 +97,6 @@ class JSString;
 class JSValue;
 class MachineThreads;
 class MarkStackArray;
-class RequestInExhaustedCage;
 class MarkStackMergingConstraint;
 class MarkedBlockCage;
 class BlockDirectory;
@@ -396,7 +395,7 @@ public:
     JS_EXPORT_PRIVATE AlignedMemoryAllocator* cellAllocator();
     bool tryCollectForExhaustedCage(GCDeferralContext*);
     void collectForExhaustedCage();
-    bool tryUseReserveOfExhaustedCage(AlignedMemoryAllocator*, RequestInExhaustedCage&);
+    bool tryUseReserveOfExhaustedCage(AlignedMemoryAllocator*);
 
     bool validatesCellVisits() const { return m_validatesCellVisits; }
     void setValidatesCellVisits(bool validates) { m_validatesCellVisits = validates; }
