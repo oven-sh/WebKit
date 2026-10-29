@@ -808,7 +808,7 @@ ClimbingSet HeapRule::receiversBelowAccessorNobodyKnows(ClimbingSet start, const
         ValueFlowNodeID chainAbove = m_context.lookup(known(above), prototypeLinkName);
         return mayHoldAccessorNobodyKnows(chainUpToPrototypeObjectsOfEntries(above, chainAbove, key).value_or(m_context.unite(above, m_context.valueOf(chainAbove))), key, part);
     };
-    start = m_context.membersMissingFrom(ValueFlowProgramNodes::escaped(), start);
+    start = m_context.membersMissingNowFrom(ValueFlowProgramNodes::escaped(), start);
     if (!holdsAnything(start) || !mayLieAbove(start))
         return { };
 

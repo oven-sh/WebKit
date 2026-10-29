@@ -471,6 +471,7 @@ bool ValueFlowRuleContext::holdsAnyOf(ClimbingSet within, ValueFlowNodeID named)
     return false;
 }
 
+ClimbingSet ValueFlowRuleContext::membersMissingNowFrom(ValueFlowNodeID node, ClimbingSet set) { return restrict(set, ValueSets::complement(m_maker.intersect(valueHeldInGraph(m_solver.graph(), node), set.m_set))); }
 ClimbingSet ValueFlowRuleContext::membersMissingFrom(ValueFlowNodeID node, ClimbingSet set) { return restrict(set, ValueSets::complement(valueWithin(set, node).m_set)); }
 
 ValueSetID& ValueFlowRuleContext::rememberedByStatement()

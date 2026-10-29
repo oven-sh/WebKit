@@ -95,6 +95,8 @@ public:
     ClimbingSet valueWithinAskedLast(ClimbingSet within, ValueFlowNodeID);
     bool holdsAnyOf(ClimbingSet within, ValueFlowNodeID);
     ClimbingSet membersMissingFrom(ValueFlowNodeID, ClimbingSet);
+    // For a rule that a node's growth can only make do less: it is not woken by it.
+    ClimbingSet membersMissingNowFrom(ValueFlowNodeID, ClimbingSet);
     ClimbingSet newSince(ValueFlowNodeID);
     void addUnlessHeld(ValueFlowNodeID, ValueFlowObjectID);
     static constexpr unsigned numberOfSetsRememberedByThread = 3;

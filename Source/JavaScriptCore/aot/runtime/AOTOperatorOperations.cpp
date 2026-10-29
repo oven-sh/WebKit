@@ -106,7 +106,7 @@ AOT_DEFINE_UNARY_OPERATION(operationAOTToNumeric, EncodedJSValue, JSValue::encod
 
 // What JSObject::toString() calls for an instance of a class with a toString() of its own. The caches of reads by name say what its two reads find, so no chain is walked.
 // Null where they do not say so: nothing has run then, and the generic path starts from the beginning.
-static JSCell* compiledToStringOrNull(Instance* instance, Object& object)
+static JSObject* compiledToStringOrNull(Instance* instance, Object& object, CallData& callData)
 {
     VM& vm = *instance->vm;
     PropertyCaches& caches = *instance->state->propertyCaches;
@@ -126,9 +126,11 @@ static JSCell* compiledToStringOrNull(Instance* instance, Object& object)
     if (method->kind != Slot::Kind::Value || method->has(Slot::isOwn))
         return nullptr;
     JSValue function = valueAtOffset(asObject(method->holder), method->offsetInStorage());
-    if (!function.isCell() || (function.asCell()->type() != SlimClosureType && function.asCell()->type() != CompiledClosureType))
+    if (!function.isCell())
         return nullptr;
-    return function.asCell();
+    // A class has the type of a closure too, and calling it throws: the generic path says so.
+    callData = compiledCallDataOf(function.asCell());
+    return callData.type == CallData::Type::Compiled ? asObject(function) : nullptr;
 }
 
 // JSObject::ordinaryToPrimitive() from where toString() has answered with an object.
@@ -155,10 +157,11 @@ static NEVER_INLINE JSString* toStringOfCompiledObject(Instance* instance, Objec
     VM& vm = *instance->vm;
     JSGlobalObject* globalObject = instance->globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSCell* method = compiledToStringOrNull(instance, object);
+    CallData callData;
+    JSObject* method = compiledToStringOrNull(instance, object, callData);
     if (!method)
         RELEASE_AND_RETURN(scope, JSValue(&object).toString(globalObject));
-    JSValue result = callCompiledCode(globalObject, method, &object, ArgList());
+    JSValue result = callCompiledCode(vm, method, callData, &object, nullptr, ArgList());
     RETURN_IF_EXCEPTION(scope, jsEmptyString(vm));
     if (result.isString()) [[likely]]
         return asString(result);

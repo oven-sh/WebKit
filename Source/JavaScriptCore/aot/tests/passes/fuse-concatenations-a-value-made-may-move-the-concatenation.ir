@@ -1,4 +1,4 @@
-# Neighboring texts of a concatenation are joined by new values, and making a value may move the concatenation. Each function makes more values than the last one, so that one of them moves it. Under the address sanitizer a read of the old place is an error.
+# Neighboring texts of a concatenation are joined by new values, and making a value may move the concatenation. Each function makes more values than the last one, so that one of them moves it. A read of the old place reads what memory holds by then, so this test goes red only where that memory has been reused.
 # FORM: Prepared
 # RUN: pass FuseConcatenations
 
