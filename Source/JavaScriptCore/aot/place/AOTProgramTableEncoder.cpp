@@ -938,7 +938,7 @@ static uint16_t fieldFlagsOf(TableEncoder& encoder, FieldReference reference)
         { slot.deferredClosureCapturesObject, fieldDeferredClosureCapturesObject },
         { slot.deferredClosureCapturesEnvironment, fieldDeferredClosureCapturesEnvironment },
         { declaration.flags.contains(FieldFlags::IsPrivate) || (declaration.flags.contains(FieldFlags::IsHidden) && !declaration.key), fieldIsPrivate },
-        { declaration.flags.contains(FieldFlags::IsBrand), fieldIsBrand },
+        { declaration.flags.contains(FieldFlags::IsBrand) && flowOf(program, reference).location.reads != ReadState::NeverRead, fieldIsBrand },
         { stability.contains(FieldStability::IsNeverDeleted), fieldIsNeverDeleted },
         { stability.contains(FieldStability::IsNeverRedefined), fieldIsNeverRedefined },
         { stability.contains(FieldStability::IsNeverStoredWithOtherType), fieldIsNeverStoredWithOtherType },

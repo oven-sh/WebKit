@@ -274,7 +274,7 @@ struct CapacityPlanner {
     {
         std::optional<ObjectID> object = analyses.escape().objectDefinedBy(id);
         Vector<AppendSite, 4> sites = object ? collectSites(*object) : Vector<AppendSite, 4> { };
-        if (sites.isEmpty())
+        if (sites.isEmpty() || appendsAlsoToArraysFromElsewhere(*object))
             return std::nullopt;
 
         const UseLists& useLists = analyses.useLists();
@@ -345,6 +345,19 @@ struct CapacityPlanner {
                 result.repeatedChecks.append(term);
         });
         return result;
+    }
+
+    // `(groups[key] ??= []).push(x)`: an array that comes back from elsewhere has outlived its literal, so one pass over the appends says nothing of what it will hold.
+    bool appendsAlsoToArraysFromElsewhere(ObjectID object)
+    {
+        const EscapeAnalysis& escape = analyses.escape();
+        return std::ranges::any_of(escape.usesOf(object), [&](const ObjectUse& objectUse) {
+            if (objectUse.use.kind != Use::Kind::Operand)
+                return false;
+            const Value& user = function.at(objectUse.use.user);
+            bool isAppend = user.opcode == Opcode::CallBuiltin ? appendKindOf(user) && builtinOperandAt(user, objectUse.use.operandIndex).isReceiver() : appendKindOf(user) && isWrittenOperand(user.opcode, objectUse.use.operandIndex);
+            return isAppend && escape.pointsTo(user.operand(objectUse.use.operandIndex)).mayBeUntracked;
+        });
     }
 
     std::optional<AppendKind> appendKindOf(const Value& value) const

@@ -2528,7 +2528,7 @@ static JSRegExpResult matchByPolicy(const FlatProgram& program, std::span<const 
 }
 
 template<typename CharType>
-static ALWAYS_INLINE JSRegExpResult matchOneSetOrRun(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output)
+static ALWAYS_INLINE JSRegExpResult matchOneSetOrRun(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output, StartSearch& search)
 {
     const FlatOp& op = program.ops[0];
     const CharacterSetBits& members = program.characterSets[op.set];
@@ -2536,7 +2536,6 @@ static ALWAYS_INLINE JSRegExpResult matchOneSetOrRun(const FlatProgram& program,
         return unit > 0xff ? wideRangesContain(program.wideRanges.span(), members, unit) : contains(members, program.wideRanges.span(), static_cast<Latin1Character>(unit));
     };
     unsigned length = input.size();
-    StartSearch search { start };
     for (unsigned from = start; from < length; ++from) {
         if (program.startScan != FlatStartScan::None) {
             from = findStartByTables<CharType, SkipsStarts::No>(program, input.data(), length, from, search);
@@ -2562,7 +2561,10 @@ template<typename CharType>
 static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output, FlatMatchPolicy policy)
 {
     if (program.isOneSetOrRun && policy == FlatMatchPolicy::HandsOverEarly)
-        return matchOneSetOrRun(program, input, start, output);
+    {
+        StartSearch search { start };
+        return matchOneSetOrRun(program, input, start, output, search);
+    }
     if (program.needsFullMachine)
         return matchByPolicy<CharType, true>(program, input, start, output, policy);
     return matchByPolicy<CharType, false>(program, input, start, output, policy);
@@ -2592,6 +2594,23 @@ JSRegExpResult matchFlatProgram(const FlatProgram& program, StringView input, un
     if (input.is8Bit())
         return match(program, input.span8(), start, output, policy);
     return match(program, input.span16(), start, output, policy);
+}
+
+template<typename CharType>
+static NEVER_INLINE bool collectOneSetOrRun(const FlatProgram& program, std::span<const CharType> input, Vector<unsigned, 128>& matches)
+{
+    StartSearch search { 0 };
+    std::array<unsigned, 2> output;
+    for (unsigned from = 0; matchOneSetOrRun(program, input, from, output.data(), search) == JSRegExpResult::Match; from = output[1]) {
+        if (!matches.tryAppend(std::span<const unsigned> { output })) [[unlikely]]
+            return false;
+    }
+    return true;
+}
+
+bool collectMatchesOfOneSetOrRun(const FlatProgram& program, StringView input, Vector<unsigned, 128>& matches)
+{
+    return input.is8Bit() ? collectOneSetOrRun(program, input.span8(), matches) : collectOneSetOrRun(program, input.span16(), matches);
 }
 
 JSRegExpResult matchFlatProgramBehindSurrogate(const FlatProgram& program, StringView input, unsigned start, unsigned* output, FlatMatchPolicy policy)

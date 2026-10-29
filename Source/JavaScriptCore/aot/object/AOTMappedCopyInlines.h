@@ -232,7 +232,7 @@ ALWAYS_INLINE bool tryCopyByFieldMapWithoutFrame(Instance& instance, JSCell* tar
 
     std::array<const uint8_t*, 2> storagesOfSource { cellOfSource, nullptr };
     if (copy->granuleBitsOfSource) {
-        if (copy->readsOrdinaryObject) {
+        if (copy->readsOrdinaryObject && !copy->granuleBitsFilled) {
             for (const MappedCopy::Move& move : copy->moves) {
                 uint8_t* slotOfTarget = cellOfTarget + move.to;
                 bool didMove = tryMove(instance.cellCageBase, move, cellOfSource + move.from, [&]<typename T>(T bits) ALWAYS_INLINE_LAMBDA {
@@ -246,15 +246,17 @@ ALWAYS_INLINE bool tryCopyByFieldMapWithoutFrame(Instance& instance, JSCell* tar
             *reinterpret_cast<uint32_t*>(cellOfTarget + offsetOfOrderWord) = copy->orderWordAfter;
             return true;
         }
-        const uint8_t* word = cellOfSource + copy->offsetOfExtensionWordInSource;
-        if (copy->extensionWordOfSourceIsWide) [[unlikely]] {
-            storagesOfSource[1] = *reinterpret_cast<const uint8_t* const*>(word);
-            if (!storagesOfSource[1])
+        if (!copy->readsOrdinaryObject) {
+            const uint8_t* word = cellOfSource + copy->offsetOfExtensionWordInSource;
+            if (copy->extensionWordOfSourceIsWide) [[unlikely]] {
+                storagesOfSource[1] = *reinterpret_cast<const uint8_t* const*>(word);
+                if (!storagesOfSource[1])
+                    return false;
+            } else
+                storagesOfSource[1] = reinterpret_cast<const uint8_t*>(MarkedBlockCage::decode(instance.cellCageBase, *reinterpret_cast<const uint32_t*>(word))) + offsetOfEmptyExtensionInCage;
+            if (*reinterpret_cast<const uint64_t*>(storagesOfSource[1] + offsetOfExtensionGranuleBits) != copy->granuleBitsOfSource)
                 return false;
-        } else
-            storagesOfSource[1] = reinterpret_cast<const uint8_t*>(MarkedBlockCage::decode(instance.cellCageBase, *reinterpret_cast<const uint32_t*>(word))) + offsetOfEmptyExtensionInCage;
-        if (*reinterpret_cast<const uint64_t*>(storagesOfSource[1] + offsetOfExtensionGranuleBits) != copy->granuleBitsOfSource)
-            return false;
+        }
     }
     std::array<uint8_t*, 2> storagesOfTarget { cellOfTarget, nullptr };
     if (copy->granuleBitsFilled) {

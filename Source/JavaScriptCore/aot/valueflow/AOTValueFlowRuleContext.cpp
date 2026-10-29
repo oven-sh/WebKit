@@ -484,6 +484,9 @@ bool ValueFlowRuleContext::isStatementOfBody() const { return m_statement.index(
 
 bool ValueFlowRuleContext::wasAddedInEarlierRound(ValueFlowNodeID node, ClimbingSet set) const
 {
+    // Only the edges of earlier rounds have reached the graph's values.
+    if (!m_unknownSource && sets().isSubset(set.m_set, m_solver.graph().valueOf(node)))
+        return true;
     std::optional<ValueFlowNodeID> holding = m_solver.findMadeNode(keyOfConstant(set.m_set));
     return holding && m_solver.graph().hasAdded(ValueFlowEdge { *holding, node });
 }

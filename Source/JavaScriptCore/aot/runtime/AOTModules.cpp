@@ -1177,6 +1177,8 @@ void Modules::runJobsThatAreDue(VM& vm, MicrotaskQueue& jobs)
     auto scope = DECLARE_THROW_SCOPE(vm);
     // What they queue goes to the queue of the realm. As in MicrotaskQueue::drain(), only a termination stops the remaining jobs.
     jobs.allOf([&](const QueuedTask& job) {
+        if (job.globalObject()->microtaskRunnability() == QueuedTaskResult::Discard)
+            return true;
         auto arguments = job.arguments();
         runInternalMicrotask(job.globalObject(), vm, job.job(), job.payload(), arguments[0], arguments[1], arguments[2], arguments[3]);
         return !scope.exception() || scope.tryClearException();

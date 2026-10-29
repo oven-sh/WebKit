@@ -19,6 +19,7 @@
 #include "AOTFunctionAnalyses.h"
 #include "AOTHeat.h"
 #include "AOTIRBuilder.h"
+#include "AOTKnownValue.h"
 #include "AOTMemoryLocation.h"
 #include "AOTMethodDispatch.h"
 #include "AOTNaturalLoops.h"
@@ -1687,6 +1688,119 @@ static PassOutcome forwardStoresToMembersOfClosures(FunctionPassContext& context
     return PassOutcome::Changed;
 }
 
+// `list[k + 1]` three times in one iteration. The sum of two integers is the same however often it is computed. Once the sums are one value, what was asked of the first is known of the others:
+// that the element is there, and what it holds.
+static PassOutcome dropRepeatedIntegerSums(FunctionPassContext& context)
+{
+    if (!context.analyses.opcodesOfValues().contains(Opcode::Add))
+        return PassOutcome::Unchanged;
+
+    struct Sum {
+        uint64_t operands;
+        ValueID result;
+        BlockID block;
+        // The sum of the same operands above this one in the dominator tree.
+        std::optional<uint32_t> outer;
+    };
+    struct Repeated {
+        ProgramPoint point;
+        ValueID first;
+    };
+    const Program& program = context.program;
+    Function& function = context.function;
+    size_t numberOfSums = 0;
+    for (const Block& block : function.blocks) {
+        numberOfSums += std::ranges::count_if(block.values, [&](ValueID id) {
+            return function.at(id).opcode == Opcode::Add;
+        });
+    }
+    if (numberOfSums < 2)
+        return PassOutcome::Unchanged;
+
+    // A constant counts by its value: each use may have a constant of its own.
+    constexpr uint32_t isConstant = 1u << 31;
+    auto keyOf = [&](ValueID operand) -> std::optional<uint32_t> {
+        if (!program.typeOf(function, operand).isInteger())
+            return std::nullopt;
+        KnownValue known = knownValueOf(program, function, operand);
+        if (known.kind() == KnownValue::Kind::Integer) {
+            int64_t integer = known.asInteger();
+            if (integer < -(1 << 30) || integer >= 1 << 30)
+                return std::nullopt;
+            return isConstant | (static_cast<uint32_t>(integer) & ~isConstant);
+        }
+        return sameObjectThroughCasts(function, operand).valueInFrontOfFacts().index();
+    };
+
+    BitVector keptReads = context.build.validates() ? findReadsKeptForValidation(function) : BitVector();
+    const Dominators& dominators = context.analyses.dominators();
+    Vector<Sum, 16> made;
+    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> innermost;
+    Vector<size_t, 16> numberMadeAtEntry;
+    Vector<Repeated, 8> repeated;
+    ValueSubstitution substitution(function);
+    dominators.walkTree([&](BlockID block) {
+        numberMadeAtEntry.append(made.size());
+        const BlockValues& values = function.at(block).values;
+        for (uint32_t index = 0; index < values.size(); ++index) {
+            const Value& value = function.at(values[index]);
+            if (value.opcode != Opcode::Add || keptReads.get(values[index].index()))
+                continue;
+            std::optional<uint32_t> left = keyOf(value.leftOperand());
+            std::optional<uint32_t> right = left ? keyOf(value.rightOperand()) : std::nullopt;
+            if (!right)
+                continue;
+            uint64_t operands = static_cast<uint64_t>(std::min(*left, *right)) << 32 | std::max(*left, *right);
+            auto found = innermost.find(operands);
+            std::optional<uint32_t> outer = found == innermost.end() ? std::nullopt : std::optional(found->value);
+            // What throws in the middle of a block goes to its handler, which the end of the block does not dominate.
+            std::optional<uint32_t> earlier = outer;
+            while (earlier && made[*earlier].block != block && !dominators.terminatorDominates(made[*earlier].block, block))
+                earlier = made[*earlier].outer;
+            // Behind a test an operand may be known more closely, and its sum with it.
+            if (earlier && function.at(made[*earlier].result).type == value.type && function.at(made[*earlier].result).expected().predicted() == value.expected().predicted()) {
+                substitution.replace(values[index], made[*earlier].result);
+                repeated.append({ { block, index }, made[*earlier].result });
+                continue;
+            }
+            innermost.set(operands, static_cast<uint32_t>(made.size()));
+            made.append({ operands, values[index], block, outer });
+        }
+    }, [&](BlockID) {
+        for (size_t numberAtEntry = numberMadeAtEntry.takeLast(); made.size() > numberAtEntry; made.removeLast()) {
+            if (made.last().outer)
+                innermost.set(made.last().operands, *made.last().outer);
+            else
+                innermost.remove(made.last().operands);
+        }
+    });
+    if (repeated.isEmpty())
+        return PassOutcome::Unchanged;
+    substitution.apply(function, &context.analyses);
+    IRBuilder builder(context.analyses.context(), function, context.types, &context.analyses);
+    if (context.build.validates()) {
+        // The repeated sum stays, and its answer is held against the first one's.
+        for (const Repeated& sum : repeated) {
+            auto [block, index] = sum.point;
+            ValueID kept = function.at(block).values[index];
+            builder.setOrigin(function.at(kept).origin());
+            builder.insertBefore({ block, index + 1 }, IRBuilder::make(Opcode::ValidateSameValue, { kept, sum.first }));
+        }
+        builder.applyInsertions();
+    } else {
+        // The walk enters a block once, so the sums of one block lie side by side.
+        for (size_t next = 0; next < repeated.size();) {
+            BlockID block = repeated[next].point.block;
+            BitVector erased;
+            for (; next < repeated.size() && repeated[next].point.block == block; ++next)
+                erased.set(repeated[next].point.index);
+            builder.eraseValues(block, erased);
+        }
+    }
+    context.analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
 {
     if (!context.analyses.opcodesOfValues().contains(Opcode::InitializeBuiltin))
@@ -1752,9 +1866,10 @@ static PassOutcome dropRepeatedInitializations(FunctionPassContext& context)
 
 PassOutcome eliminateRedundantReads(FunctionPassContext& context)
 {
-    PassOutcome outcome = PassOutcome::Unchanged;
+    // First: reads and tests under one sum are then reads and tests under one key.
+    PassOutcome outcome = dropRepeatedIntegerSums(context);
     if (context.analyses.opcodesOfValues().intersects(opcodesReadingAccessedHeaps))
-        outcome = RedundantReadElimination { context }.run();
+        outcome |= RedundantReadElimination { context }.run();
     outcome |= dropRepeatedMapSets(context);
     outcome |= dropRepeatedBrandTests(context);
     outcome |= dropRepeatedStrictComparisons(context);

@@ -119,6 +119,8 @@ public:
     void willMock(ModuleID module) { m_mockedModules.set(module.index()); }
     void markEvaluated(ModuleID module) { setStatus(module, ModuleStatus::Evaluated); }
     bool isMocked(ModuleID module) const { return m_mockedModules.get(module.index()); }
+    // What the graph of the root reaches without going through a mocked module. Nothing if no module is mocked.
+    std::optional<BitVector> modulesNotBehindMocks(ModuleID root) const;
     JSObject* capturedExports(ModuleID);
     // Empty if the module has no export of the name.
     JSValue capturedValue(ModuleID, const Identifier&);

@@ -176,8 +176,9 @@ static bool hasStorage(const SlotPlanContext& context, const FieldInputs& field)
         return !isRemovedField(context.program, field.reference);
     if (!context.isCompiledObject(field.reference.layout))
         return false;
-    constexpr OptionSet<FieldFlags> privateNameFlags { FieldFlags::IsPrivate, FieldFlags::IsBrand };
-    if (field.declaration.flags.containsAny(privateNameFlags))
+    if (field.declaration.flags.contains(FieldFlags::IsBrand))
+        return !isRemovedField(context.program, field.reference);
+    if (field.declaration.flags.contains(FieldFlags::IsPrivate))
         return true;
 
     if (field.declaration.form.contains(FieldForm::IsAccessor))

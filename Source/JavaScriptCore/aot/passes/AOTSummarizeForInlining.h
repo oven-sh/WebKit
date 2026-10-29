@@ -96,6 +96,7 @@ struct InliningSummary {
     bool canInlineWholeBody() const { return barrier == InlineBarrier::None && blocksBoundToFrame.isEmpty(); }
     bool canInlineHead() const { return barrier == InlineBarrier::None && !headBlocks.isEmpty(); }
 
+    bool testsParentOfClass { false };
     InlineBarrier barrier { InlineBarrier::Unknown };
     uint32_t codeBytes { 0 };
     // The larger of two parts: the code that is expected to run, without the tests of declared types, and the code that is not.

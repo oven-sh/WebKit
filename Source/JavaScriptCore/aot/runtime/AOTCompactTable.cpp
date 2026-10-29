@@ -161,7 +161,10 @@ CompactTable* CompactTable::tryCreate(JSGlobalObject* globalObject, Width key, W
     table->m_keysShiftAndFlags = keysShiftFor(table->m_indexBits, capacity) | (key == Width::Wide ? keysAreWide : 0);
     table->m_valueWidth = value;
     size_t keys = table->offsetOfKeys();
-    memsetSpan(std::span { table->at<uint8_t>(offsetOfIndex()), keys - offsetOfIndex() }, table->slotKind() == SlotKind::Tag ? 0 : 0xff);
+    if (table->slotKind() == SlotKind::Tag)
+        *table->at<uint64_t>(offsetOfIndex()) = 0;
+    else
+        zeroSpan(std::span { table->at<uint8_t>(offsetOfIndex()), keys - offsetOfIndex() });
     zeroSpan(std::span { table->at<uint8_t>(keys), size - keys });
     table->finishCreation(vm);
     return table;
@@ -244,6 +247,38 @@ unsigned CompactTable::hashOfStoredKey(JSValue key)
     return rapidHashMix64(JSValue::encode(key)) & hashMask;
 }
 
+uint32_t CompactTable::nextSlotWithTag(const uint8_t* tags, unsigned indexBits, uint8_t tag, uint32_t homeSlot, uint32_t previous)
+{
+    uint32_t mask = (1u << indexBits) - 1;
+    uint32_t first = (previous == noSlot ? homeSlot : previous) & ~(slotsPerGroup - 1);
+    unsigned skipped = previous == noSlot ? 0 : (previous & (slotsPerGroup - 1)) + 1;
+    uint64_t pattern = tag * onesOfTags;
+    while (true) {
+        uint64_t eightTags = WTF::unalignedLoad<uint64_t>(tags + first);
+        uint64_t difference = eightTags ^ pattern;
+        uint64_t flags = (difference - onesOfTags) & ~difference & onesOfTags << 7;
+        flags = skipped == slotsPerGroup ? 0 : flags >> (skipped * 8) << (skipped * 8);
+        for (; flags; flags &= flags - 1) {
+            uint32_t slot = first + WTF::ctz(flags) / 8;
+            if (slot != homeSlot)
+                return slot;
+        }
+        if (freeSlotsAmong(eightTags))
+            return noSlot;
+        first = (first + slotsPerGroup) & mask;
+        skipped = 0;
+    }
+}
+
+uint32_t CompactTable::findFreeSlotBehindHome(const uint8_t* tags, unsigned indexBits, uint32_t homeSlot)
+{
+    uint32_t mask = (1u << indexBits) - 1;
+    for (uint32_t first = homeSlot & ~(slotsPerGroup - 1);; first = (first + slotsPerGroup) & mask) {
+        if (uint64_t free = freeSlotsAmong(WTF::unalignedLoad<uint64_t>(tags + first)))
+            return first + WTF::ctz(free) / 8;
+    }
+}
+
 void CompactTable::insertIntoIndex(SlotKind kind, uint8_t* index, unsigned indexBits, uint32_t entry, unsigned hash)
 {
     withSlotKind(kind, [&](auto constantKind) ALWAYS_INLINE_LAMBDA {
@@ -253,7 +288,10 @@ void CompactTable::insertIntoIndex(SlotKind kind, uint8_t* index, unsigned index
 
 void CompactTable::addToIndex(uint32_t entry, unsigned hash)
 {
-    insertIntoIndex(slotKind(), at<uint8_t>(offsetOfIndex()), m_indexBits, entry, hash);
+    if (slotKind() == SlotKind::Tag)
+        insertIntoIndex<SlotKind::Tag>(at<uint8_t>(offsetOfIndex()), 0, entry, hash);
+    else
+        insertIntoIndex(slotKind(), at<uint8_t>(offsetOfIndex()), m_indexBits, entry, hash);
 }
 
 void CompactTable::fillIndex(uint32_t count)
@@ -500,7 +538,7 @@ CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSValue key, unsigned hash
     if (keepsSlots)
         copyWords(to, at<uint64_t>(offsetOfIndex()), (keys - offsetOfIndex()) / sizeof(uint64_t));
     else if (indexBits)
-        fillWords(to, std::numeric_limits<uint64_t>::max(), (keys - offsetOfIndex()) / sizeof(uint64_t));
+        fillWords(to, 0, (keys - offsetOfIndex()) / sizeof(uint64_t));
     else
         *to++ = *at<uint64_t>(offsetOfIndex()) | static_cast<uint64_t>(hash >> tagShiftOfTags) << (count * 8);
     const uint32_t* largerKeys = reinterpret_cast<const uint32_t*>(to);
@@ -785,7 +823,7 @@ void CompactTable::removeAllEntries()
         *at<uint64_t>(offsetOfIndex()) = 0;
         return;
     }
-    memsetSpan(std::span { at<uint8_t>(offsetOfIndex()), offsetOfKeys() - offsetOfIndex() }, 0xff);
+    zeroSpan(std::span { at<uint8_t>(offsetOfIndex()), offsetOfKeys() - offsetOfIndex() });
 }
 
 bool CompactTable::tryClearInPlace(JSObject* owner)
@@ -1063,27 +1101,20 @@ static NEVER_INLINE bool gatherDistinctStrings(uintptr_t cageBase, std::span<con
 template<CompactTable::SlotKind kind>
 uint32_t CompactTable::fillWithHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>> strings)
 {
-    using Format = SlotFormat<kind>;
-    using IndexSlot = typename Format::Slot;
-    IndexSlot* slots = at<IndexSlot>(offsetOfIndex());
+    uint8_t* index = at<uint8_t>(offsetOfIndex());
     uint32_t* keys = at<uint32_t>(offsetOfKeys());
     uint32_t used = 0;
     for (auto& string : strings) {
         JSString* key = asString(string.get());
         const StringImpl* impl = key->tryGetValueImpl();
         unsigned hash = impl->existingHash();
-        uint32_t tag = Format::tagOf(hash) << Format::entryBits;
-        forEachSlotInProbeOrder(slots, m_indexBits, hash, [&](IndexSlot& slot) ALWAYS_INLINE_LAMBDA {
-            if (slot == Format::freeSlot) {
-                slot = static_cast<IndexSlot>(tag | used);
-                keys[used++] = MarkedBlockCage::encode(cageBase, key);
-                return IterationStatus::Done;
-            }
-            uint32_t entry = slot ^ tag;
-            if (entry < 1u << Format::entryBits && holdsSameText(cageBase, keys[entry], impl, hash))
-                return IterationStatus::Done;
-            return IterationStatus::Continue;
+        bool isPresent = !!probeIndex<kind>(index, m_indexBits, used, hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            return holdsSameText(cageBase, keys[entry], impl, hash);
         });
+        if (isPresent)
+            continue;
+        insertIntoIndex<kind>(index, m_indexBits, used, hash);
+        keys[used++] = MarkedBlockCage::encode(cageBase, key);
     }
     return used;
 }
@@ -1525,8 +1556,6 @@ std::optional<Vector<uint8_t>> TableInImage::tryEncode(std::span<const Key> keys
     Vector<uint8_t> bytes(FillWith { }, size, static_cast<uint8_t>(0));
     memcpy(bytes.mutableSpan().data(), &header, sizeof(header));
     uint8_t* index = bytes.mutableSpan().data() + sizeof(TableInImage);
-    if (slotKind != CompactTable::SlotKind::Tag)
-        memset(index, 0xff, sizeOfIndex);
     uint32_t* strings = reinterpret_cast<uint32_t*>(bytes.mutableSpan().data() + offsetOfStrings);
     if (header.hasValues)
         memcpy(bytes.mutableSpan().data() + offsetOfValues, values.data(), values.size_bytes());

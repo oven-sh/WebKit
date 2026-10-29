@@ -192,6 +192,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     // Whether this has matched since the last full collection began.
     bool wasUsedInCurrentFullCollectionCycle(VM&) const;
 
+#if ENABLE(AOT)
+    // A global search of a pattern that is one set or a run of one set, in one pass. False: search match by match.
+    bool collectMatchesOfOneSetOrRun(VM&, StringView, Vector<unsigned, 128>& matches);
+#endif
+
     bool hasCode()
     {
 #if ENABLE(AOT)

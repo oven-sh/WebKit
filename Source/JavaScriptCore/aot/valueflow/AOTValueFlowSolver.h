@@ -749,6 +749,7 @@ private:
     void findUnknownSources(NOESCAPE const ScopedLambda<void()>& whatRunsBesideTheWalk);
     void report();
     void dumpBytesByTable() const;
+    void dumpReadersByStatement() const;
     void dumpEdgesByEnds() const;
     static void forEachListOfOneRound(auto& solver, NOESCAPE const auto& functor);
     // The lists that each round fills anew keep the room that the largest round took. The rounds are largest in the middle of a solve, and the tables at its end.

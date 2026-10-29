@@ -1488,11 +1488,18 @@ void HeapRule::runOperation()
         readOwn(operand(At::GetContiguousIndex::array), elementsName, m_statement.result);
         add(m_statement.result, m_universe.undefinedValue());
         return;
+    case Opcode::GetOwnContiguousIndex:
+        readOwn(operand(At::GetOwnContiguousIndex::array), elementsName, m_statement.result);
+        return;
     case Opcode::GetDoubleIndex:
+    case Opcode::GetOwnDoubleIndex:
         add(m_statement.result, kinds(Primitive::Number));
         return;
     case Opcode::PutContiguousIndex:
         write(m_context.valueOf(operand(At::PutContiguousIndex::array)), elementsName, operand(At::PutContiguousIndex::value));
+        return;
+    case Opcode::PutOwnContiguousIndex:
+        write(m_context.valueOf(operand(At::PutOwnContiguousIndex::array)), elementsName, operand(At::PutOwnContiguousIndex::value));
         return;
     case Opcode::TryPutByValDirect:
         write(m_context.valueOf(operand(At::TryPutByValDirect::array)), elementsName, operand(At::TryPutByValDirect::value));
@@ -1507,6 +1514,7 @@ void HeapRule::runOperation()
         answerBoolean();
         return;
     case Opcode::PutDoubleIndex:
+    case Opcode::PutOwnDoubleIndex:
         write(m_context.valueOf(operand(At::PutDoubleIndex::array)), elementsName, operand(At::PutDoubleIndex::value));
         return;
     case Opcode::TruncateNewArray: {

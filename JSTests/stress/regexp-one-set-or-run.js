@@ -18,3 +18,14 @@ function check(source, flags, text) {
 const sources = ["\\d+", "\\d", "[aeiou]", "[aeiou]+", "\\s+", "\\w+", "\\W", "[^a]", "[^a]+", ".", ".+", "[\\u0100-\\u0200]+", "\\S+", "x+", "[x]", "[xX]", "[Aa]+"];
 const texts = ["", "a", "1", "ab12 cd", "   ", "\n\n", "aeiou", "xxXX", "ĀāaȀ", "é", "abc😀def", "12345678901234567890123456789012345678", "a".repeat(40) + "1", " ".repeat(33) + "x"];
 for (const s of sources) for (const f of ["", "g", "i", "m", "s", "gi", "y", "d"]) for (const t of texts) check(s, f, t);
+
+// The last match stays known behind a global replace.
+for (const [source, text, replacement] of [["\\d+", "a12b345c", "#"], ["\\d+", "a12b345c", ""], ["[ab]", "xaybz", "$&$&"], ["\\s+", "a  b   c", " "], ["x+", "yy", "#"]]) {
+    "untouched".match(/untouched/);
+    const expected = text.replace(new RegExp(source + "|(?!)", "g"), replacement);
+    const lastMatch = RegExp.lastMatch, leftContext = RegExp.leftContext, rightContext = RegExp.rightContext;
+    "untouched".match(/untouched/);
+    const actual = text.replace(new RegExp(source, "g"), replacement);
+    if (actual !== expected || RegExp.lastMatch !== lastMatch || RegExp.leftContext !== leftContext || RegExp.rightContext !== rightContext)
+        throw new Error(source + " on " + text + ": " + actual + " " + RegExp.lastMatch + " " + RegExp.leftContext + " " + RegExp.rightContext);
+}

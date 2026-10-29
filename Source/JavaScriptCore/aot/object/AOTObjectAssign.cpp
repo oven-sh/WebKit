@@ -1041,6 +1041,19 @@ void describeMovesForStub(MappedCopy& copy)
     copy.structureOfSourceForStub = copy.structureOfSource;
 }
 
+static bool tryDescribeNewExtension(VM& vm, MappedCopy& copy, const Object& target)
+{
+    SlotData word = *target.compiledStructure().extensionSlot();
+    copy.offsetOfExtensionWordInTarget = word.offset;
+    copy.extensionWordOfTargetIsWide = word.representation() == SlotRepresentation::Cell;
+    Allocator allocator = vm.heap.cagedAuxiliarySpace<SubspaceAccess::OnMainThread>()->allocatorFor(extensionCellSizeFor(std::popcount(copy.granuleBitsFilled)), AllocatorForMode::EnsureAllocator);
+    if (!allocator)
+        return false;
+    copy.allocatorOfNewExtension = allocator.localAllocator();
+    copy.sizeOfNewExtension = copy.allocatorOfNewExtension->cellSize();
+    return true;
+}
+
 static bool takesNoFrame(VM& vm, State& state, MappedCopy& copy, const Object& target, const Object& source)
 {
     if (state.objects->caches->assignmentPlans.countsCopies() || validatesRuntime(vm))
@@ -1054,16 +1067,8 @@ static bool takesNoFrame(VM& vm, State& state, MappedCopy& copy, const Object& t
         copy.offsetOfExtensionWordInSource = word.offset;
         copy.extensionWordOfSourceIsWide = word.representation() == SlotRepresentation::Cell;
     }
-    if (copy.granuleBitsFilled) {
-        SlotData word = *target.compiledStructure().extensionSlot();
-        copy.offsetOfExtensionWordInTarget = word.offset;
-        copy.extensionWordOfTargetIsWide = word.representation() == SlotRepresentation::Cell;
-        Allocator allocator = vm.heap.cagedAuxiliarySpace<SubspaceAccess::OnMainThread>()->allocatorFor(extensionCellSizeFor(std::popcount(copy.granuleBitsFilled)), AllocatorForMode::EnsureAllocator);
-        if (!allocator)
-            return false;
-        copy.allocatorOfNewExtension = allocator.localAllocator();
-        copy.sizeOfNewExtension = copy.allocatorOfNewExtension->cellSize();
-    }
+    if (copy.granuleBitsFilled && !tryDescribeNewExtension(vm, copy, target))
+        return false;
     copy.structureOfTarget = target.structureID();
     copy.structureOfSource = source.structureID();
     describeMovesForStub(copy);
@@ -1082,6 +1087,8 @@ static NEVER_INLINE void offerCopyWithoutFrame(VM& vm, State& state, MappedCopy&
 
 bool clearFieldsMovedInVain(const MappedCopy& copy, const MappedCopy::Move* end, JSCell* target)
 {
+    if (copy.numberOfCopiesInVain < UINT8_MAX)
+        ++copy.numberOfCopiesInVain;
     for (const MappedCopy::Move* move = copy.moves.begin(); move != end; ++move) {
         if (!move->writesExtension && !move->overwritesField)
             clearSlot(move->representationOfTarget, reinterpret_cast<uint8_t*>(target) + move->to);
@@ -1299,7 +1306,7 @@ static std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const Run
 {
     using Kind = MappedCopy::MoveKind;
     const FieldData& to = *store.to;
-    if (store.from || !store.isDirect || to.isOutOfLine() || to.holdsRawValueFromBirth || to.flags & (fieldIsStoredOnce | fieldAttributeFlags | fieldMayExistWithoutStorage))
+    if (store.from || !store.isDirect || to.holdsRawValueFromBirth || to.flags & (fieldIsStoredOnce | fieldAttributeFlags))
         return std::nullopt;
     switch (to.slot.representation()) {
     case SlotRepresentation::Int32:
@@ -1315,7 +1322,8 @@ static std::optional<MappedCopy::MoveKind> moveKindOutOfOrdinaryObject(const Run
     case SlotRepresentation::OptionalCell32:
         return store.acceptedKinds.contains(ValueKind::String) ? std::optional(Kind::BoxedAsNarrowString) : std::nullopt;
     case SlotRepresentation::JSValue:
-        return acceptsEveryValue(layouts.typeOf(to)) ? Kind::JSValueUnlessMarker : Kind::BoxedAsJSValue;
+        // Every value but undefined and null takes the move that tests its kind.
+        return acceptsEveryValue(layouts.typeOf(to)) && !store.leavesUndefinedAndNullToOtherWay ? Kind::JSValueUnlessMarker : Kind::BoxedAsJSValue;
     default:
         return std::nullopt;
     }
@@ -1326,7 +1334,7 @@ static bool tryDescribeCopyOutOfOrdinaryObject(VM& vm, State& state, const Assig
 {
     if (state.objects->caches->assignmentPlans.countsCopies() || validatesRuntime(vm))
         return false;
-    if (plan.orderWordBeforeRun != unorderedOrderWord || !plan.extraPropertyStores.isEmpty() || plan.granuleBitsFilled || plan.orderWordAfterRun & ~orderAndCountMask || isOrderStoredOutOfLine(plan.orderWordAfterRun))
+    if (plan.orderWordBeforeRun != unorderedOrderWord || !plan.extraPropertyStores.isEmpty() || plan.orderWordAfterRun & ~orderAndCountMask || isOrderStoredOutOfLine(plan.orderWordAfterRun))
         return false;
     for (const AssignmentPlan::FieldStore& store : plan.fieldStores) {
         std::optional<MappedCopy::MoveKind> kind = moveKindOutOfOrdinaryObject(state.objects->layouts, store);
@@ -1334,13 +1342,17 @@ static bool tryDescribeCopyOutOfOrdinaryObject(VM& vm, State& state, const Assig
             return false;
         const FieldData& to = *store.to;
         SlotRepresentation representation = to.slot.representation();
-        MappedCopy::Move move { static_cast<uint32_t>(JSObject::offsetOfInlineStorage() + store.sourceOffset * sizeof(EncodedJSValue)), to.slot.offset, *kind, static_cast<uint8_t>(widthOf(representation)),
-            false, false, SlotRepresentation::JSValue, representation, store.acceptedKinds.toRaw(), target.layout().indexOf(to) };
+        uint32_t offsetInTarget = to.isOutOfLine() ? offsetInExtensionWith(plan.granuleBitsFilled, to.slot.offset) : to.slot.offset;
+        MappedCopy::Move move { static_cast<uint32_t>(JSObject::offsetOfInlineStorage() + store.sourceOffset * sizeof(EncodedJSValue)), offsetInTarget, *kind, static_cast<uint8_t>(widthOf(representation)),
+            false, to.isOutOfLine(), SlotRepresentation::JSValue, representation, store.acceptedKinds.toRaw(), target.layout().indexOf(to) };
         move.leastInt32 = store.leastInt32;
         move.greatestInt32 = store.greatestInt32;
         copy.moves.append(move);
         copy.mayStoreCells |= traitsOf(representation).holdsCell;
     }
+    copy.granuleBitsFilled = plan.granuleBitsFilled;
+    if (copy.granuleBitsFilled && !tryDescribeNewExtension(vm, copy, target))
+        return false;
     copy.targetWords = static_cast<uint64_t>(target.shapeWord()) << 32 | unorderedOrderWord;
     copy.sourceWords = 0;
     copy.readsOrdinaryObject = true;
@@ -1368,10 +1380,13 @@ static NEVER_INLINE void offerCopyOutOfOrdinaryObject(VM& vm, State& state, Assi
     }
     MappedCopy& copy = *plan.copyWithoutFrame;
     const MappedCopy*& place = *copy.placeOfOwnedCopy;
-    // A collection empties the place. Another copy in it is one of two sources that take turns, and a value that did not go to its slot as it is brings us back with the place ours.
-    if (!place)
+    // A collection empties the place. Another copy in it is one of two sources that take turns. An empty free list also brings us back with the place ours, and costs nothing here.
+    if (!place) {
         copy.numberOfCopiesInVain = 0;
-    else if (++copy.numberOfCopiesInVain > maxNumberOfCopiesInVain) {
+        copy.numberOfTurnsLost = 0;
+    } else if (place != &copy)
+        ++copy.numberOfTurnsLost;
+    if (copy.numberOfCopiesInVain > maxNumberOfCopiesInVain || copy.numberOfTurnsLost > maxNumberOfCopiesInVain) {
         plan.mayCopyWithoutFrame = false;
         plan.copyWithoutFrame = nullptr;
         return;
@@ -1485,7 +1500,10 @@ static bool tryAssignOrDefinePropertiesOf(VM& vm, Object& target, JSObject* sour
     JSObject* extra = target.extraProperties();
     State& state = target.state();
     AssignmentPlanCache& plans = state.objects->caches->assignmentPlans;
-    AssignmentPlan* plan = plans.planFor(vm, &target, extra, *assignmentSource);
+    // The plan that ran last between these two Structures: no walk through the sets of plans.
+    AssignmentPlan* plan = extra || !excludedNames.empty() ? nullptr : plans.recentPlan(target.structureID(), source->structureID(), assignmentSource->orderWord, 0);
+    if (!plan || !plan->isFor(target.structureID(), StructureID(), *assignmentSource))
+        plan = plans.planFor(vm, &target, extra, *assignmentSource);
     if (!defines && plan->isUsable && plan->storesNameBehindSymbol) {
         // Stores that go one by one through the objects above take the names first, then the symbols.
         if (!PropertyWalk::wouldPerformFastPut(vm, &target))

@@ -279,6 +279,25 @@ bool Modules::checkIsSettledForLinks(ModuleID module) const
     return isSettled;
 }
 
+std::optional<BitVector> Modules::modulesNotBehindMocks(ModuleID root) const
+{
+    if (m_mockedModules.isEmpty()) [[likely]]
+        return std::nullopt;
+    BitVector reached(m_table.size());
+    Vector<ModuleID, 32> work { root };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        if (reached.quickSet(module.index()) || isMocked(module))
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            // The list of a root holds the files of its whole graph, and says nothing of who imports them.
+            if (!request.isHoisted)
+                work.append(request.targetModule());
+        }
+    }
+    return reached;
+}
+
 // JavaScriptCore's loader creates a module of the run time when it fetches it, in an earlier job than the one that links and evaluates the importing graph.
 bool Modules::loadRuntimeModules(ModuleID root)
 {
@@ -290,10 +309,13 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk, NativeModuleLoading
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
 
     bool didRunModule = false;
+    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(walk.root());
     walk.replay(scope, [&](ModuleID module) {
         return status(module) == ModuleStatus::Unlinked;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf != ModuleLinkWalk::Leaf::CapturesExports || data(module).exportRule != SyntheticExportRule::RuntimeModule)
+            return;
+        if (notBehindMocks && !notBehindMocks->quickGet(module.index())) [[unlikely]]
             return;
         if (isNativeModule(module)) {
             if (nativeModuleLoading == NativeModuleLoading::Eager && !didCaptureExports(module)) {
@@ -358,6 +380,8 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
         resolvesNames |= moduleResolvesNames && !findsItsNamesInLibraryAlone(module);
     });
 
+    // What only a mocked module imports never runs.
+    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(walk.root());
     // Only an uncompiled module asks which modules are on the path.
     bool needsPath = data(walk.root()).reachesUncompiledCode();
     Vector<ModuleID, 16> path;
@@ -373,6 +397,8 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             path.append(module);
         return true;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
+        if (notBehindMocks && !notBehindMocks->quickGet(module.index())) [[unlikely]]
+            return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (module != walk.root()) {
                 bindLatestCapture(module);
@@ -421,7 +447,10 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
     };
 
     Vector<ModuleID, 16> modulesThatResolveNames;
+    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(walk.root());
     bool didEnterRoot = walk.replay(scope, isUnlinked, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
+        if (notBehindMocks && !notBehindMocks->quickGet(module.index())) [[unlikely]]
+            return;
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             // Every CommonJS file of a graph runs before the graph fails for a name that one of them lacks: a module of the graph checks the names behind them.
             if (!data(module).capturesExportsBehindEvaluation())
@@ -439,7 +468,8 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         RETURN_IF_EXCEPTION(scope, void());
         setValue(module, namespaceObject);
     }, [&](ModuleID module, bool resolvesNames) {
-        if (resolvesNames)
+        // The body of a mocked module reads no name of what it imports.
+        if (resolvesNames && !isMocked(module) && (!notBehindMocks || notBehindMocks->quickGet(module.index())))
             modulesThatResolveNames.append(module);
     });
     RETURN_IF_EXCEPTION(scope, void());

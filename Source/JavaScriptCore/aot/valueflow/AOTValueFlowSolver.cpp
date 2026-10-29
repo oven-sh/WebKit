@@ -5339,7 +5339,18 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
         };
         m_stepTimes.didFinish("behind the rounds: covered: stores, calls and reads listed by node"_s);
         findOnAllThreadsAndDo(calls.size(), findCall, runCall);
-        // The class above a class is seen to be the one that its declaration names.
+        // The class above a class is seen to be the one that its declaration names. Where it names none, that is what the definition of the class is seen to extend.
+        HashMap<uint32_t, Vector<uint32_t, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> definitionsOfClasses;
+        for (uint32_t index : findIndicesInParallel(m_loops, m_input.statements.size(), [&](unsigned index) {
+            const ValueFlowStatement& statement = m_input.statements[index];
+            if (statement.kind != ValueFlowStatementKind::Operation || statement.opcode != Opcode::NewClass || !isReached(statement.function))
+                return false;
+            const Value& definition = m_input.program->at(statement.function).at(statement.site);
+            return definition.heritageOperand() && !m_input.program->at(definition.layout()).base;
+        })) {
+            const ValueFlowStatement& statement = m_input.statements[index];
+            definitionsOfClasses.ensure(m_input.program->at(statement.function).at(statement.site).layout().index(), [] { return Vector<uint32_t, 1>(); }).iterator->value.append(index);
+        }
         for (uint32_t index : findIndicesInParallel(m_loops, m_input.statements.size(), [&](unsigned index) {
             const ValueFlowStatement& statement = m_input.statements[index];
             return statement.kind == ValueFlowStatementKind::Operation && statement.opcode == Opcode::GetSuperBase && statement.result && isReached(statement.function);
@@ -5351,6 +5362,17 @@ void ValueFlowSolver::leaveOutWhatIsCoveredInTheEnd()
             LayoutID base = m_input.program->at(function.constructedClass).base;
             if (FunctionID constructor = base ? m_input.program->at(base).constructor : FunctionID())
                 arriveAt(statement.result, maker.intersect(maker.of(m_input.universe->closureOf(constructor)), followed));
+            auto definitions = definitionsOfClasses.find(function.constructedClass.index());
+            if (definitions == definitionsOfClasses.end())
+                continue;
+            for (uint32_t definition : definitions->value) {
+                const ValueFlowOperand& heritage = operandsOf(m_input.statements[definition])[OperandIndex::NewClass::heritage];
+                arriveAt(statement.result, seenAt(heritage));
+                if (!heritage.node || !holdsUnknownObject(heritage.node))
+                    continue;
+                statementsAnsweredFrom.ensure(heritage.node.index(), [] { return Vector<uint32_t, 2>(); }).iterator->value.append(index);
+                answersStatements.quickSet(heritage.node.index());
+            }
         }
         // What stands in sight in one node and goes on to a node that holds the unknown object is covered there. It has come all the same.
         Vector<Vector<FoundStep>> arrivalsFromVisibleNodesPerShare((firstNodeOfHost + nodesPerShare - 1) / nodesPerShare);
@@ -6389,6 +6411,8 @@ bool ValueFlowSolver::solve()
                     edgesInLogs += thread->log.edges.size();
                 dataLogLn("AOT flow stops in round ", m_counters.rounds, " | budget ", m_input.mostEdgesLogged, " | edges ", m_graph.numberOfEdges(), " | edges logged ", m_counters.edgesLogged, " | edges in the logs of this round ", edgesInLogs, " | readers ", numberOfReaders(), " | statements ", numberOfStatements(), " | nodes ", m_graph.numberOfNodes(), " | resident ", PhaseTimes::residentMegabytes(), " MB");
                 dumpEdgesByEnds();
+                dumpBytesByTable();
+                dumpReadersByStatement();
                 forEachKindOfStatementRun([&](ValueFlowStatementKind kind, Opcode opcode, const RunsAndEdges& row) {
                     dataLogLn("AOT flow runs | ", kind == ValueFlowStatementKind::Operation ? nameOf(opcode) : "kind"_s, " ", static_cast<unsigned>(kind), " | runs ", row.runs, " | added nothing ", row.runsThatAddedNothing, " | connections ", row.connections, " | edges logged ", row.edgesLogged);
                 });
@@ -6508,6 +6532,7 @@ bool ValueFlowSolver::solve()
     }
     if (m_stepTimes.isOn) {
         dumpBytesByTable();
+        dumpReadersByStatement();
         dataLogLn("AOT flow totals at rest | edges ", m_graph.numberOfEdges(), " | edges logged ", m_counters.edgesLogged, " | readers ", numberOfReaders(), " | statements ", numberOfStatements(), " | nodes ", m_graph.numberOfNodes());
         dumpEdgesByEnds();
     }
@@ -6605,6 +6630,60 @@ void ValueFlowSolver::dumpEdgesByEnds() const
     dataLog("AOT flow edges | largest fan-out ", largestFanOut, " | names written ", byName.size(), " | edges out of what is written under the names with the most");
     for (uint64_t count : byName.span().first(std::min<size_t>(byName.size(), 16)))
         dataLog(" ", count);
+    dataLogLn();
+}
+
+void ValueFlowSolver::dumpReadersByStatement() const
+{
+    Vector<uint32_t> readersOfStatement;
+    readersOfStatement.fill(0, numberOfStatements());
+    auto count = [&](const auto& readers) {
+        for (const Reader& reader : readers)
+            ++readersOfStatement[reader.statement.index()];
+    };
+    for (const WatchShard& shard : m_watchShards)
+        count(shard.readers);
+    for (const ReaderShard& shard : m_readerShards)
+        count(shard.readers);
+
+    struct Row {
+        uint64_t statements { 0 };
+        uint64_t readers { 0 };
+    };
+    HashMap<uint32_t, Row, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> rows;
+    Vector<uint32_t> byReaders;
+    for (uint32_t index = 0; index < readersOfStatement.size(); ++index) {
+        if (!readersOfStatement[index])
+            continue;
+        const ValueFlowStatement& statement = statementAt(ValueFlowStatementID(index));
+        Row& row = rows.add(static_cast<uint32_t>(statement.kind) << 16 | static_cast<uint32_t>(statement.opcode), Row { }).iterator->value;
+        ++row.statements;
+        row.readers += readersOfStatement[index];
+        byReaders.append(index);
+    }
+    for (const auto& entry : rows) {
+        auto kind = static_cast<ValueFlowStatementKind>(entry.key >> 16);
+        dataLogLn("AOT flow readers | ", kind == ValueFlowStatementKind::Operation ? nameOf(static_cast<Opcode>(entry.key & 0xffff)) : "kind"_s, " ", static_cast<unsigned>(kind), " | statements ", entry.value.statements, " | readers ", entry.value.readers);
+    }
+    std::sort(byReaders.begin(), byReaders.end(), [&](uint32_t left, uint32_t right) { return readersOfStatement[left] > readersOfStatement[right]; });
+    for (uint32_t index : byReaders.span().first(std::min<size_t>(byReaders.size(), 24))) {
+        const ValueFlowStatement& statement = statementAt(ValueFlowStatementID(index));
+        dataLogLn("AOT flow readers of one statement | ", readersOfStatement[index], " | kind ", static_cast<unsigned>(statement.kind), " | opcode ", nameOf(statement.opcode), " | function ", statement.function.index());
+    }
+    Vector<uint32_t> byNodes;
+    auto nodesRead = [&](uint32_t index) {
+        const NodesOfName& nodes = m_names[index].read;
+        return nodes.ofFewObjects.size() + nodes.ofManyObjects.size() + nodes.ofVeryManyObjects.size();
+    };
+    for (uint32_t index = 0; index < m_names.size(); ++index)
+        byNodes.append(index);
+    std::sort(byNodes.begin(), byNodes.end(), [&](uint32_t left, uint32_t right) { return nodesRead(left) > nodesRead(right); });
+    uint64_t allNodesRead = 0;
+    for (uint32_t index : byNodes)
+        allNodesRead += nodesRead(index);
+    dataLog("AOT flow nodes read by name | names ", byNodes.size(), " | nodes ", allNodesRead, " | most");
+    for (uint32_t index : byNodes.span().first(std::min<size_t>(byNodes.size(), 24)))
+        dataLog(" ", nodesRead(index));
     dataLogLn();
 }
 

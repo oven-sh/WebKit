@@ -148,7 +148,7 @@ public:
         at<uint8_t>(CompactTable::offsetOfValueWidth()) = static_cast<uint8_t>(valueWidth);
         at<uint8_t>(CompactTable::offsetOfStatus()) = static_cast<uint8_t>(CompactTable::Status::Live);
         if (m_indexBits)
-            memsetSpan(std::span(index(), sizeOfIndex), 0xff);
+            zeroSpan(std::span(index(), sizeOfIndex));
     }
 
     uint64_t address() const { return std::bit_cast<uintptr_t>(m_bytes); }

@@ -1090,6 +1090,12 @@ InliningSummary summarizeFunctionForInlining(const AnalysisContext& context, con
     summary.barrier = computeBarrier();
     if (summary.barrier == InlineBarrier::NoBody)
         return summary;
+    if (function.constructedClass && !program.at(function.constructedClass).base && !program.at(function.constructedClass).writtenBuiltinBase) {
+        for (const Block& block : function.blocks) {
+            for (ValueID id : block.values)
+                summary.testsParentOfClass |= function.at(id).opcode == Opcode::GetSuperBase;
+        }
+    }
     findDifferenceOfParameters(function, summary);
 
     const CFG& cfg = analyses.cfg();
@@ -2446,6 +2452,10 @@ InlineVerdict computeInlineVerdict(FunctionPassContext& context, const InliningS
     double leastFrequencyOfHotCall = context.inputs.heat.of(program, context.id).predicted() == HeatClass::RunsOnce ? frequencyConstants.iterationsPerLoop : HeatModel::minWeightOfCallInLoop;
     if (heat.predicted() == HeatClass::Warm && context.inputs.heat.callsInLoopsAreHot().predicted() && context.analyses.blockFrequencies().frequencyOf(block).predicted() >= leastFrequencyOfHotCall)
         heat = HeatClass::Hot;
+
+    // The test of the parent of a class that extends a value, and the making of `this`, are more than a call: where it is not hot, each place that makes the class would hold them.
+    if (summary.testsParentOfClass && !isHot(heat).predicted())
+        return { .decision = InlineDecision::CostExceedsBenefit };
 
     // How often the caller is entered is a product along paths of calls. A loop around the call is in the text.
     bool isRepeatedByCaller = isHot(heat).predicted() && context.analyses.isInCycle(block);

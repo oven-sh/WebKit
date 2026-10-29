@@ -49,7 +49,7 @@ static constexpr OperandUses usesOfArrayReaders { OperandUse::Inspects, OperandU
 static constexpr OpcodeSet readersOfArraysWhereTheyLie {
     Opcode::TypeTest, Opcode::IsPristine, Opcode::StrictEq, Opcode::ValueEqualsLiteral, Opcode::ToBoolean,
     Opcode::HasArrayStorage, Opcode::IsInBounds, Opcode::IsElementPresent, Opcode::GetArrayLength, Opcode::GetArrayElement, Opcode::HasSpareArrayCapacity,
-    Opcode::ArrayStorageKind, Opcode::HasContiguousIndex, Opcode::GetContiguousIndex,
+    Opcode::ArrayStorageKind, Opcode::HasContiguousIndex, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex,
     Opcode::CallList, Opcode::AppendElements, Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments,
     Opcode::ValidateType, Opcode::ValidateSameValue,
 };

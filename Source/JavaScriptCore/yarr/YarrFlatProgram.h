@@ -371,6 +371,8 @@ void removeUnneededLogging(FlatProgram&);
 void removeLogging(std::span<FlatOp>);
 JSRegExpResult matchFlatProgram(const FlatProgram&, StringView input, unsigned start, unsigned* output, FlatMatchPolicy = FlatMatchPolicy::HandsOverEarly);
 JS_EXPORT_PRIVATE JSRegExpResult matchFlatProgram(const FlatProgram&, std::span<const Latin1Character> input, unsigned start, unsigned* output, FlatMatchPolicy = FlatMatchPolicy::HandsOverEarly);
+// Of a program with isOneSetOrRun: the start and end of every match, as a global search finds them. False: out of memory.
+bool collectMatchesOfOneSetOrRun(const FlatProgram&, StringView input, Vector<unsigned, 128>& matches);
 // For a match that matchFlatProgram() has given up with JSRegExpResult::JITCodeFailure: see FlatProgram::decodesSurrogatePairs.
 JSRegExpResult matchFlatProgramBehindSurrogate(const FlatProgram&, StringView input, unsigned start, unsigned* output, FlatMatchPolicy = FlatMatchPolicy::HandsOverEarly);
 void validateFlatProgramResult(const FlatProgram&, StringView input, unsigned start, RegExpMatchOutcome flatProgramOutcome, RegExpMatchOutcome interpreterOutcome);

@@ -30,7 +30,7 @@ static const Function& recordOf(const Program& program, FunctionID function)
     return program.at(function);
 }
 
-static constexpr OpcodeSet arrayElementReads { Opcode::GetArrayElement, Opcode::GetContiguousIndex };
+static constexpr OpcodeSet arrayElementReads { Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex };
 
 static Type typeOfKeyConstant(const TypingContext& context, PropertyKeyID id)
 {

@@ -64,6 +64,9 @@ public:
 
     ValueFlowStatementID statement() const { return m_statement; }
     ValueSetID& rememberedByStatement();
+    // The exports that requiring a module looks for. Rules over the whole program ask per module, and a module may have thousands of exports.
+    const ModuleExport* defaultExportOf(ModuleID);
+    const ModuleExport* moduleExportsExportOf(ModuleID);
     FunctionID functionOfStatement() const;
     std::span<const ValueFlowOperand> operandsOf(const ValueFlowStatement&) LIFETIME_BOUND;
     bool canBeReached(const ValueFlowStatement&);
@@ -310,6 +313,8 @@ private:
         uint32_t madeNodes { 0 };
     };
     std::array<KnownNode, 2048> m_knownNodes { };
+    Vector<std::array<const ModuleExport*, 2>> m_exportsLookedFor;
+    const ModuleExport* findExportLookedFor(ModuleID, unsigned which);
     struct ConstantOfTurn {
         uint64_t detailAndSet { 0 };
         uint32_t turn { 0 };

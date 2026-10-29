@@ -1300,7 +1300,10 @@ void ObjectInterpreter::executeStore(ValueID id)
     if (!stateOf(object)->isVirtual())
         return executeAccessOnCell(id, object);
 
-    ValueID stored = storesWithoutValue.contains(opcode) ? ValueID() : function().at(id).valueOperand();
+    // A caller makes a result that is split into parts anew from its fields, and it would not know the link.
+    if (opcode == Opcode::SetLiteralPrototype && m_sinking.policy().returnedObjects == ReturnedObjects::StayVirtual)
+        return executeAccessOnCell(id, object);
+    ValueID stored = storesWithoutValue.contains(opcode) ? ValueID() : valueStoredBy(function().at(id));
     if (opcode == Opcode::AppendElement || opcode == Opcode::AppendHole) {
         std::optional<uint32_t> length = commonArrayLengthOf(m_sinking.familyOf(object), *stateOf(object));
         if (!length || exceedsLimit(LimitID::MaxVirtualArrayLength, static_cast<uint64_t>(*length) + 1, object))
@@ -2874,6 +2877,11 @@ ValueID ObjectInterpreter::emitAllocation(VirtualObjectID object, const VirtualS
     for (const FieldValue& part : parts) {
         if (part.field.kind == VirtualFieldKind::Position)
             cursor().emit(IRBuilder::make(Opcode::PutInternalField, { cell, part.value }));
+        if (part.field.kind == VirtualFieldKind::PrototypeLink) {
+            Value link = IRBuilder::make(Opcode::SetLiteralPrototype, { cell, part.value });
+            link.setRefusesOtherValues(true);
+            cursor().emit(WTF::move(link));
+        }
     }
     if (m_sinking.at(object).needsGuard) {
         Value guard(Opcode::AllGuards);

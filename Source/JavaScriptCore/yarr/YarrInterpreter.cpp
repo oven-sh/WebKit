@@ -3663,6 +3663,13 @@ static void validateRequiredTexts(BytecodePattern* bytecode, StringView input, u
     CRASH();
 }
 
+bool collectMatchesOfOneSetOrRun(BytecodePattern* bytecode, StringView input, Vector<unsigned, 128>& matches)
+{
+    // bytecode->m_body: the checking mode, which compares every match.
+    const FlatProgram* program = bytecode->m_flatProgram.get();
+    return program && program->isOneSetOrRun && !bytecode->m_body && collectMatchesOfOneSetOrRun(*program, input, matches);
+}
+
 NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     JSC_REMOVABLE_DEFINITION(RegExp, interpret);

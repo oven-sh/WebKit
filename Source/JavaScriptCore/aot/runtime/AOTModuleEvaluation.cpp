@@ -242,6 +242,7 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     }
 
     noteModulesLoadedWith(root);
+    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(root);
 
     EvaluationFrames frames;
     EvaluationInProgress evaluation { frames, m_innermostEvaluation };
@@ -268,6 +269,8 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
     };
 
     auto enter = [&](ModuleID module) {
+        if (notBehindMocks && !notBehindMocks->quickGet(module.index())) [[unlikely]]
+            return false;
         const ModuleData& moduleData = data(module);
         if (moduleData.kind == ModuleKind::CommonJs) {
             evaluateCommonJS(module);
@@ -432,6 +435,8 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
                 ModuleID required(requests[frame.next++]);
                 StoredModuleStatus stored = storedStatus(required);
                 if (stored == StoredModuleStatus::Evaluated)
+                    continue;
+                if (notBehindMocks && !notBehindMocks->quickGet(required.index())) [[unlikely]]
                     continue;
                 const ModuleData& requiredData = data(required);
                 // It was linked with its importer, whether or not a status was stored for it.
@@ -895,6 +900,12 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         }
     }
 
+    // A file that only a mocked module imports never runs.
+    std::optional<BitVector> notBehindMocks = modulesNotBehindMocks(root);
+    auto isBehindMock = [&](ModuleID module) {
+        return notBehindMocks && !notBehindMocks->quickGet(module.index());
+    };
+
     // No link has come to the files. Whoever evaluates a record takes the names behind the body.
     bool didCaptureLibraryModules = false;
     for (const ModuleRequestData& request : m_table.requests(root)) {
@@ -906,6 +917,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 continue;
             break;
         }
+        if (isBehindMock(imported)) [[unlikely]]
+            continue;
         if (!std::exchange(didCaptureLibraryModules, true)) {
             captureExportsOfLibraryModules(root);
             RETURN_IF_EXCEPTION(scope, false);
@@ -1027,6 +1040,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
                 continue;
             break;
         }
+        if (isBehindMock(imported)) [[unlikely]]
+            continue;
         ModuleStatus statusAtStart = status(imported);
         if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
             continue;
@@ -1246,6 +1261,11 @@ void Modules::runStepsOfLoaderInFrontOf(ModuleID file)
         queue.moveTasksBehind(0, turn.get());
         size_t stepsTaken = 0;
         bool hasComeToFile = !turn->allOf([&](const QueuedTask& job) {
+            // As MicrotaskQueue::drain(), a retired realm's job is dropped. Its fetch step may carry the key of this realm's file.
+            if (job.globalObject()->microtaskRunnability() == QueuedTaskResult::Discard) {
+                ++stepsTaken;
+                return true;
+            }
             auto arguments = job.arguments();
             if (job.job() == InternalMicrotask::ModuleRegistryFetchSettled && hasKey(file, uncheckedDowncast<ModuleRegistryEntry>(arguments[2])->key()))
                 return false;
@@ -1767,7 +1787,8 @@ bool Modules::planLevelsOfLoad(ModuleID root, RefPtr<PlanOfLoad>* planWithoutWay
         uint32_t firstPlaceOfNext = firstPlaceFound + next.first;
         for (uint32_t importer = levels.last().first; importer < next.first; ++importer) {
             firstRequestOfPlace.append(requestedPlaces.size());
-            if (found[importer].isFile)
+            // What only a mocked module imports is not loaded.
+            if (found[importer].isFile || isMocked(found[importer].module))
                 continue;
             uint32_t laterRequests = found[importer].laterRequests;
             for (const ModuleRequestData& request : m_table.requests(found[importer].module)) {

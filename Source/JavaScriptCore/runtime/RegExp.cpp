@@ -530,6 +530,16 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
     return Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
 }
 
+bool RegExp::collectMatchesOfOneSetOrRun(VM& vm, StringView subject, Vector<unsigned, 128>& matches)
+{
+    if (m_state != NotCompiled && m_state != ByteCode)
+        return false;
+    compileIfNecessary(vm, subject.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, subject);
+    if (m_state != ByteCode || !m_regExpBytecode)
+        return false;
+    return Yarr::collectMatchesOfOneSetOrRun(m_regExpBytecode.get(), subject, matches);
+}
+
 void RegExp::countInterpretedMatch(VM& vm)
 {
     AOT::count(vm, AOT::RuntimeCounterID::RegExpMatchesInterpreted);

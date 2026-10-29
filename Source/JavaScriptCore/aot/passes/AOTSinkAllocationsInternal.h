@@ -214,6 +214,7 @@ private:
 };
 
 inline constexpr OpcodeSet storesWithoutValue { Opcode::AppendHole, Opcode::PropDelete };
+inline ValueID valueStoredBy(const Value& store) { return store.opcode == Opcode::SetLiteralPrototype ? store.prototypeOperand() : store.valueOperand(); }
 
 class AllocationSinking;
 class ObjectInterpreter;

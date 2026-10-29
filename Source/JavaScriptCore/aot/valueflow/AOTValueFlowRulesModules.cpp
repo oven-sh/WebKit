@@ -108,12 +108,6 @@ ModuleID moduleOf(const Program& program, RuntimeModuleID runtimeModule)
     return { };
 }
 
-static const ModuleExport* findExport(const Module& module, StringID name)
-{
-    auto found = std::ranges::find(module.exports, name, &ModuleExport::name);
-    return found == module.exports.end() ? nullptr : &*found;
-}
-
 static bool moduleHasCode(const Program& program, const Module& module)
 {
     return module.body && program.at(module.body).hasBody();
@@ -403,7 +397,7 @@ static ValueFlowSources defaultExportOf(ValueFlowRuleContext& context, ModuleID 
     const Module& module = program.at(id);
     if (!hasExportTableOf(module.kind))
         return moduleExportsValueOf(context, id);
-    if (const ModuleExport* entry = findExport(module, program.stringOf(BuiltinNames::defaultKeyword)))
+    if (const ModuleExport* entry = context.defaultExportOf(id))
         return exportedValueOf(context, *entry);
     if (module.kind == ModuleKind::Data)
         return unknownSources(context, ValueFlowUnknownSource::DataFromOutside);
@@ -460,8 +454,7 @@ ValueFlowSources requiredValueOf(ValueFlowRuleContext& context, ModuleID id)
         ValueFlowSources sources = namespaceOf(context, id);
         if (module.requireResult == RequireResult::NamespaceIfImported)
             append(context, sources, defaultExportOf(context, id));
-        BuiltinName name = program.builtins().nameOf(byteCast<uint8_t>("module.exports"_s.span()));
-        if (const ModuleExport* entry = name ? findExport(module, program.stringOf(name)) : nullptr)
+        if (const ModuleExport* entry = context.moduleExportsExportOf(id))
             append(context, sources, exportedValueOf(context, *entry));
         if (module.kind == ModuleKind::SourceText)
             append(context, sources, sourcesOf(objectThatLoaderMakes(context)));
@@ -630,13 +623,15 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
     Vector<ModuleID, 4> pending { first };
     while (!pending.isEmpty()) {
         ModuleID id = pending.takeLast();
+        ClimbingSet created = only(context, universe.namespaceOf(id));
+        bool isTiedByThisStatement = context.sets().contains(tiedByThisStatement, universe.namespaceOf(id));
+        // Most calls end here: the program may have thousands of modules, and the list of those visited as many bits.
+        if (!isTiedByThisStatement && context.wasAddedInEarlierRound(tiedForGood, created))
+            continue;
         if (visited.set(id.index()))
             continue;
-        ClimbingSet created = only(context, universe.namespaceOf(id));
         bool staysForGood = isOfBody && (deferredExports == DeferredExports::AreRead || listsAllItsExports(program.at(id)));
-        if (!context.sets().contains(tiedByThisStatement, universe.namespaceOf(id))) {
-            if (context.wasAddedInEarlierRound(tiedForGood, created))
-                continue;
+        if (!isTiedByThisStatement) {
             // Every use of the namespace may run in one round, and uses times exports is what would reach the edge budget.
             if (staysForGood && !context.isFirstToTieNamespaceInThisRound(id))
                 continue;
@@ -1136,6 +1131,27 @@ void runModuleOperation(const ValueFlowStatement& statement, ValueFlowRuleContex
     if (statement.thrown)
         context.add(statement.thrown, unknownValue(context, ValueFlowUnknownSource::ThrownByRunTime));
 }
+
+const ModuleExport* ValueFlowRuleContext::findExportLookedFor(ModuleID id, unsigned which)
+{
+    static const ModuleExport notLookedFor { };
+    const Program& program = this->program();
+    if (m_exportsLookedFor.isEmpty())
+        m_exportsLookedFor = Vector<std::array<const ModuleExport*, 2>>(program.modules.size(), [](size_t) {
+            return std::array<const ModuleExport*, 2> { &notLookedFor, &notLookedFor };
+        });
+    const ModuleExport*& known = m_exportsLookedFor[id.index()][which];
+    if (known != &notLookedFor)
+        return known;
+    BuiltinName name = which ? program.builtins().nameOf(byteCast<uint8_t>("module.exports"_s.span())) : BuiltinNames::defaultKeyword;
+    const Module& module = program.at(id);
+    auto found = name ? std::ranges::find(module.exports, program.stringOf(name), &ModuleExport::name) : module.exports.end();
+    known = found == module.exports.end() ? nullptr : &*found;
+    return known;
+}
+
+const ModuleExport* ValueFlowRuleContext::defaultExportOf(ModuleID id) { return findExportLookedFor(id, 0); }
+const ModuleExport* ValueFlowRuleContext::moduleExportsExportOf(ModuleID id) { return findExportLookedFor(id, 1); }
 
 } } } // namespace JSC::AOT::Typed
 

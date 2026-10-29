@@ -2305,29 +2305,54 @@ static bool expectLayoutsOf(FunctionPassContext& context, std::span<NamedUse> us
     // A class with many classes below it grows the code behind the test more than the test gains.
     AOT_THRESHOLD(size_t, maxLayoutsExpectedByDeclaration, 8);
     if (othersMayArrive) {
-        LayoutList layoutsWithNames = withoutLayoutsOfOtherKind(context, usesOfSubject, layoutsExpectedFrom(context.program, usesOfSubject, CountedUses::All, context.limit(LimitID::MaxAccessPlanMembers))).predicted();
+        std::optional<LayoutList> layoutsWithNames;
+        Vector<std::pair<TypeID, TypeID>, 2> widenedTypes;
+        Vector<Vector<LayoutID, 8>> declarers;
         for (const NamedUse& use : usesOfSubject) {
             TypeID expected = function.at(use.receiver).expected().predicted();
             if (!expected || !context.types.at(expected).layouts || widenedValues.containsIf([&](const auto& listed) { return listed.first == use.receiver; }))
                 continue;
-            auto expectedLayouts = membersOf(context.program, context.types.at(expected));
-            Vector<LayoutID, 8> sharing;
-            for (LayoutID candidate : layoutsWithNames) {
-                bool sharesEveryDeclaration = std::ranges::all_of(usesOfSubject, [&](const NamedUse& named) {
-                    LayoutID declarer = declarerOf(context.program, candidate, named.key);
-                    return declarer && std::ranges::any_of(expectedLayouts, [&](LayoutID layout) { return declarerOf(context.program, layout, named.key) == declarer; });
-                });
-                if (sharesEveryDeclaration)
-                    sharing.append(candidate);
+            if (size_t known = widenedTypes.findIf([&](const auto& listed) { return listed.first == expected; }); known != notFound) {
+                if (widenedTypes[known].second)
+                    widenedValues.append({ use.receiver, ExpectedType(widenedTypes[known].second) });
+                continue;
             }
-            if (sharing.isEmpty())
+            widenedTypes.append({ expected, TypeID() });
+            auto expectedLayouts = membersOf(context.program, context.types.at(expected));
+            if (expectedLayouts.size() > maxLayoutsExpectedByDeclaration)
+                continue;
+            if (!layoutsWithNames)
+                layoutsWithNames = withoutLayoutsOfOtherKind(context, usesOfSubject, layoutsExpectedFrom(context.program, usesOfSubject, CountedUses::All, context.limit(LimitID::MaxAccessPlanMembers))).predicted();
+            declarers.resize(usesOfSubject.size());
+            for (size_t index = 0; index < usesOfSubject.size(); ++index) {
+                declarers[index].clear();
+                for (LayoutID layout : expectedLayouts)
+                    declarers[index].append(declarerOf(context.program, layout, usesOfSubject[index].key));
+            }
+            Vector<LayoutID, 8> sharing;
+            for (LayoutID candidate : *layoutsWithNames) {
+                bool sharesEveryDeclaration = true;
+                for (size_t index = 0; index < usesOfSubject.size() && sharesEveryDeclaration; ++index) {
+                    LayoutID declarer = declarerOf(context.program, candidate, usesOfSubject[index].key);
+                    sharesEveryDeclaration = declarer && declarers[index].contains(declarer);
+                }
+                if (!sharesEveryDeclaration)
+                    continue;
+                sharing.append(candidate);
+                if (sharing.size() > maxLayoutsExpectedByDeclaration)
+                    break;
+            }
+            if (sharing.isEmpty() || sharing.size() > maxLayoutsExpectedByDeclaration)
                 continue;
             Type arriving = Type::forLayouts(sharing.span(), context.types);
             if (arriving.isSubsetOf(context.types.at(expected), context.program))
                 continue;
             Type widened = context.types.at(expected).unionWith(arriving, context.types);
-            if (membersOf(context.program, widened).size() <= maxLayoutsExpectedByDeclaration)
-                widenedValues.append({ use.receiver, ExpectedType(context.types.intern(widened)) });
+            if (membersOf(context.program, widened).size() <= maxLayoutsExpectedByDeclaration) {
+                TypeID widenedType = context.types.intern(widened);
+                widenedTypes.last().second = widenedType;
+                widenedValues.append({ use.receiver, ExpectedType(widenedType) });
+            }
         }
     }
     if (isFollowed || typeListsLayouts || isAllocatedHere(context, usesOfSubject[0].receiver))
@@ -4461,17 +4486,25 @@ static PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& c
                 if (accesses.contains(access.opcode) && analyses.identityOf(access.objectOperand()) == array && analyses.identityOf(access.propertyOperand()) == identityOfPosition && analyses.dominates(access.objectOperand(), ProgramPoint::atHeadOf(whenBelow))) {
                     // A list that the program holds as anything is no operand of the test.
                     const Type& held = context.program.typeOf(function, access.objectOperand());
-                    if (held.singleBuiltinClass() && held.singleBuiltinClass()->builtinClass == BuiltinClasses::Array && !held.mayBeUndefinedOrNull())
+                    // A position that another test has narrowed since may become a constant: the test would no longer speak of it.
+                    ValueID named = analyses.sameObjectThroughCasts(access.propertyOperand()).valueInFrontOfFacts();
+                    bool isPositionTested = named == analyses.sameObjectThroughCasts(position).valueInFrontOfFacts() || (function.at(named).opcode == Opcode::Parameter && analyses.useLists().blockOf(named) == whenBelow);
+                    if (isPositionTested && held.singleBuiltinClass() && held.singleBuiltinClass()->builtinClass == BuiltinClasses::Array && !held.mayBeUndefinedOrNull())
                         accessed = access.objectOperand();
                     break;
                 }
             }
         }
-        // `k < list.length && k < n`: the arm of the first comparison holds the second, and its test answers both.
-        if (accessed && !armsWithTest.contains(block)) {
-            comparisons.append({ block, accessed, operandOfPosition });
-            armsWithTest.append(whenBelow);
+        if (!accessed)
+            continue;
+        // `k < list.length && k < n`: the arm of the first comparison holds the second. The test stands behind the last, where the position is the one that the access names.
+        if (size_t first = armsWithTest.find(block); first != notFound) {
+            comparisons[first] = { block, accessed, operandOfPosition };
+            armsWithTest[first] = whenBelow;
+            continue;
         }
+        comparisons.append({ block, accessed, operandOfPosition });
+        armsWithTest.append(whenBelow);
     }
     if (comparisons.isEmpty())
         return PassOutcome::Unchanged;

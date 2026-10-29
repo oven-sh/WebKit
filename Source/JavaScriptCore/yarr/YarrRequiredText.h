@@ -38,6 +38,9 @@ struct RequiredText {
     // That unit is text[indexInText], and the rest of the text stands around it. A letter that matches in both cases is in lower case and has 0x20 in caseMask. Empty: the unit is all that is known.
     Vector<Latin1Character, 16> text;
     Vector<Latin1Character, 16> caseMask;
+    // The first eight units of the text and of the mask, for a text of no more than eight.
+    uint64_t firstUnitsOfText { 0 };
+    uint64_t firstUnitsOfCaseMask { 0 };
     unsigned indexInText { 0 };
     // Of a pattern in unicode mode: no attempt begins between the halves of a surrogate pair.
     bool decodesSurrogatePairs { false };

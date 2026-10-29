@@ -22,6 +22,10 @@ public:
     void generateArrayStorageKind(const ValueContext&);
     void generateHasContiguousIndex(const ValueContext&);
     void generateGetContiguousIndex(const ValueContext&);
+    void generateGetOwnContiguousIndex(const ValueContext&);
+    void generateGetOwnDoubleIndex(const ValueContext&);
+    void generatePutOwnContiguousIndex(const ValueContext&);
+    void generatePutOwnDoubleIndex(const ValueContext&);
     void generateGetDoubleIndex(const ValueContext&);
     void generatePutContiguousIndex(const ValueContext& value) { putInBounds(value, arrayStorageFormOf(ArrayStorage::Contiguous)); }
     void generatePutDoubleIndex(const ValueContext& value) { putInBounds(value, arrayStorageFormOf(ArrayStorage::Double)); }

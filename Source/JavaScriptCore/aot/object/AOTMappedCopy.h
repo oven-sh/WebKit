@@ -133,7 +133,8 @@ struct MappedCopy {
     // Of a copy that a plan owns: where the instance keeps it for the stub. The plan may go at any time.
     const MappedCopy** placeOfOwnedCopy { nullptr };
     // Copies that took a frame though this one was kept at its place, since it was last put there.
-    uint8_t numberOfCopiesInVain { 0 };
+    mutable uint8_t numberOfCopiesInVain { 0 };
+    uint8_t numberOfTurnsLost { 0 };
     Vector<Move> moves;
 };
 

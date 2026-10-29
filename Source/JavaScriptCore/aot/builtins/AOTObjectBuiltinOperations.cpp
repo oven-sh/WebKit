@@ -31,6 +31,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "ObjectConstructor.h"
+#include "ObjectConstructorInlines.h"
 #include "ObjectInitializationScope.h"
 #include "ObjectPrototype.h"
 #include "ObjectPrototypeInlines.h"
@@ -453,7 +454,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectAssignWithoutCode, size_t, (Instance*
         OPERATION_RETURN(scope, false);
     if (Object* compiled = compiledObjectOrNull(source); compiled && compiled->layout().kind() == LayoutKind::Record && !compiled->hasFlagsInOrderWord() && !countOf(compiled->orderWord()))
         OPERATION_RETURN(scope, true);
-    OPERATION_RETURN(scope, PropertyWalk::tryAssign(vm, cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode), asObject(source)));
+    JSObject* object = cellArgument<JSObject>(target, Entry::operationAOTObjectAssignWithoutCode);
+    JSObject* from = asObject(source);
+    if (compiledObjectOrNull(object))
+        OPERATION_RETURN(scope, PropertyWalk::tryAssign(vm, object, from));
+    JSFinalObject* ordinary = dynamicDowncast<JSFinalObject>(object);
+    if (!ordinary || !from->staticPropertiesReified() || !ordinary->isStructureExtensible() || !(ordinary->canPerformFastPutInlineExcludingProto() || PropertyWalk::wouldPerformFastPut(vm, ordinary)))
+        OPERATION_RETURN(scope, false);
+    Vector<UniquedStringImpl*, 8> names;
+    MarkedArgumentBuffer values;
+    bool didAssign = objectAssignFast(globalObject, ordinary, from, names, values);
+    OPERATION_RETURN_IF_EXCEPTION(scope, true);
+    OPERATION_RETURN(scope, didAssign);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTObjectCreate, JSCell*, (Instance* instance, JSCell* prototypeOrNull))

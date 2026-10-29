@@ -2734,13 +2734,15 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
     auto isWide = [&](StringID text) { return std::ranges::any_of(program.string(text), [](uint8_t byte) { return byte > 0xc3; }); };
     for (size_t blockIndex = 0; blockIndex < function.blocks.size(); ++blockIndex) {
         BlockID block(blockIndex);
-        const BlockValues& values = function.at(block).values;
-        for (uint32_t index = 0; index < values.size(); ++index) {
-            const Value& concatenation = function.at(values[index]);
-            if (concatenation.opcode != Opcode::Strcat)
+        for (uint32_t index = 0; index < function.at(block).values.size(); ++index) {
+            ValueID id = function.at(block).values[index];
+            if (function.at(id).opcode != Opcode::Strcat)
                 continue;
+            // The builder makes values, which may move this one.
+            Vector<ValueID, 16> operands;
+            operands.append(function.at(id).operands());
             Vector<ValueID, 16> parts;
-            for (ValueID part : concatenation.operands()) {
+            for (ValueID part : operands) {
                 std::optional<StringID> right = textOf(part);
                 std::optional<StringID> left = parts.isEmpty() || !right ? std::nullopt : textOf(parts.last());
                 // How a text is held follows its literal, so a narrow one and a wide one stay apart.
@@ -2756,9 +2758,9 @@ PassOutcome fuseConcatenations(FunctionPassContext& context)
                 parts.last() = builder.insertBefore({ block, index }, WTF::move(joined));
             }
             // A concatenation of one part would be a conversion, and FoldConstants has already asked for what is wholly known.
-            if (parts.size() < 2 || parts.size() == concatenation.numberOfOperands())
+            if (parts.size() < 2 || parts.size() == operands.size())
                 continue;
-            becomeConcatenationOf(values[index], parts.span());
+            becomeConcatenationOf(id, parts.span());
             didJoinTexts = true;
         }
         builder.applyInsertions();

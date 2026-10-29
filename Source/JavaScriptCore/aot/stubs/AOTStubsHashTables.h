@@ -57,9 +57,8 @@ struct HashTableLookup {
 struct InsertionPointExits {
     // hash: the hash of the key.
     JumpList amongTags;
-    // cursor: address of the free slot. hash: the tag of the key, at its position in a slot.
-    JumpList atShortSlot;
-    JumpList atLongSlot;
+    // cursor: the number of the free slot. hash: its low byte is the tag of the key.
+    JumpList atSlot;
 };
 
 // owner and key are intact at every exit.

@@ -522,6 +522,16 @@ ALWAYS_INLINE size_t findText(const RequiredText& required, std::span<const Char
         if (from < before)
             continue;
         const CharType* candidate = subject.data() + (from - before);
+        if constexpr (sizeof(CharType) == 1) {
+            if (length - (from - before) >= sizeof(uint64_t) && required.text.size() <= sizeof(uint64_t)) {
+                uint64_t units;
+                memcpy(&units, candidate, sizeof(units));
+                uint64_t kept = required.text.size() == sizeof(uint64_t) ? ~0ull : (1ull << (required.text.size() * 8)) - 1;
+                if (((units | required.firstUnitsOfCaseMask) & kept) == required.firstUnitsOfText)
+                    return from;
+                continue;
+            }
+        }
         bool isSame = true;
         for (unsigned i = 0; i < required.text.size() && isSame; ++i)
             isSame = (candidate[i] | required.caseMask[i]) == required.text[i];
@@ -654,6 +664,10 @@ RequiredTexts findRequiredTexts(const YarrPattern& pattern)
         return { };
     RequiredTexts result = find(pattern);
     for (auto& required : result) {
+        for (unsigned i = 0; i < std::min<size_t>(required.text.size(), sizeof(uint64_t)); ++i) {
+            required.firstUnitsOfText |= static_cast<uint64_t>(required.text[i]) << (i * 8);
+            required.firstUnitsOfCaseMask |= static_cast<uint64_t>(required.caseMask[i]) << (i * 8);
+        }
         for (unsigned word = 0; word < 2; ++word) {
             for (uint64_t rest = required.asciiMembers[word]; rest; rest &= rest - 1) {
                 unsigned unit = word * 64 + std::countr_zero(rest);

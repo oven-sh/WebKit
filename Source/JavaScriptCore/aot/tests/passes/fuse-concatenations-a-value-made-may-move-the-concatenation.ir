@@ -1,0 +1,194 @@
+# Neighboring texts of a concatenation are joined by new values, and making a value may move the concatenation. Each function makes more values than the last one, so that one of them moves it. Under the address sanitizer a read of the old place is an error.
+# FORM: Prepared
+# RUN: pass FuseConcatenations
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="join1" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="a0"
+    v2 = String string="b0"
+    v3 = Strcat v0, v1, v2, v0
+    Return v3
+# CHECK: "a0b0" = String string="a0b0"
+# CHECK-NOT: = String string="a0"
+}
+
+function f1 name="join2" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="a0"
+    v2 = String string="b0"
+    v3 = String string="a1"
+    v4 = String string="b1"
+    v5 = Strcat v0, v1, v2, v0, v3, v4, v0
+    Return v5
+# CHECK: "a0b0" = String string="a0b0"
+# CHECK-NOT: = String string="a0"
+}
+
+function f2 name="join3" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="a0"
+    v2 = String string="b0"
+    v3 = String string="a1"
+    v4 = String string="b1"
+    v5 = String string="a2"
+    v6 = String string="b2"
+    v7 = Strcat v0, v1, v2, v0, v3, v4, v0, v5, v6, v0
+    Return v7
+# CHECK: "a0b0" = String string="a0b0"
+# CHECK-NOT: = String string="a0"
+}
+
+function f3 name="join5" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="a0"
+    v2 = String string="b0"
+    v3 = String string="a1"
+    v4 = String string="b1"
+    v5 = String string="a2"
+    v6 = String string="b2"
+    v7 = String string="a3"
+    v8 = String string="b3"
+    v9 = String string="a4"
+    v10 = String string="b4"
+    v11 = Strcat v0, v1, v2, v0, v3, v4, v0, v5, v6, v0, v7, v8, v0, v9, v10, v0
+    Return v11
+# CHECK: "a0b0" = String string="a0b0"
+# CHECK-NOT: = String string="a0"
+}
+
+function f4 name="join9" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="a0"
+    v2 = String string="b0"
+    v3 = String string="a1"
+    v4 = String string="b1"
+    v5 = String string="a2"
+    v6 = String string="b2"
+    v7 = String string="a3"
+    v8 = String string="b3"
+    v9 = String string="a4"
+    v10 = String string="b4"
+    v11 = String string="a5"
+    v12 = String string="b5"
+    v13 = String string="a6"
+    v14 = String string="b6"
+    v15 = String string="a7"
+    v16 = String string="b7"
+    v17 = String string="a8"
+    v18 = String string="b8"
+    v19 = Strcat v0, v1, v2, v0, v3, v4, v0, v5, v6, v0, v7, v8, v0, v9, v10, v0, v11, v12, v0, v13, v14, v0, v15, v16, v0, v17, v18, v0
+    Return v19
+# CHECK: "a0b0" = String string="a0b0"
+# CHECK-NOT: = String string="a0"
+}
+
+function f5 name="join17" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="a0"
+    v2 = String string="b0"
+    v3 = String string="a1"
+    v4 = String string="b1"
+    v5 = String string="a2"
+    v6 = String string="b2"
+    v7 = String string="a3"
+    v8 = String string="b3"
+    v9 = String string="a4"
+    v10 = String string="b4"
+    v11 = String string="a5"
+    v12 = String string="b5"
+    v13 = String string="a6"
+    v14 = String string="b6"
+    v15 = String string="a7"
+    v16 = String string="b7"
+    v17 = String string="a8"
+    v18 = String string="b8"
+    v19 = String string="a9"
+    v20 = String string="b9"
+    v21 = String string="a10"
+    v22 = String string="b10"
+    v23 = String string="a11"
+    v24 = String string="b11"
+    v25 = String string="a12"
+    v26 = String string="b12"
+    v27 = String string="a13"
+    v28 = String string="b13"
+    v29 = String string="a14"
+    v30 = String string="b14"
+    v31 = String string="a15"
+    v32 = String string="b15"
+    v33 = String string="a16"
+    v34 = String string="b16"
+    v35 = Strcat v0, v1, v2, v0, v3, v4, v0, v5, v6, v0, v7, v8, v0, v9, v10, v0, v11, v12, v0, v13, v14, v0, v15, v16, v0, v17, v18, v0, v19, v20, v0, v21, v22, v0, v23, v24, v0, v25, v26, v0, v27, v28, v0, v29, v30, v0, v31, v32, v0, v33, v34, v0
+    Return v35
+# CHECK: "a0b0" = String string="a0b0"
+# CHECK-NOT: = String string="a0"
+}
+
+function f6 name="join33" parameters=[{type=string}] results=[{type=anything}] {
+    v1 = String string="a0"
+    v2 = String string="b0"
+    v3 = String string="a1"
+    v4 = String string="b1"
+    v5 = String string="a2"
+    v6 = String string="b2"
+    v7 = String string="a3"
+    v8 = String string="b3"
+    v9 = String string="a4"
+    v10 = String string="b4"
+    v11 = String string="a5"
+    v12 = String string="b5"
+    v13 = String string="a6"
+    v14 = String string="b6"
+    v15 = String string="a7"
+    v16 = String string="b7"
+    v17 = String string="a8"
+    v18 = String string="b8"
+    v19 = String string="a9"
+    v20 = String string="b9"
+    v21 = String string="a10"
+    v22 = String string="b10"
+    v23 = String string="a11"
+    v24 = String string="b11"
+    v25 = String string="a12"
+    v26 = String string="b12"
+    v27 = String string="a13"
+    v28 = String string="b13"
+    v29 = String string="a14"
+    v30 = String string="b14"
+    v31 = String string="a15"
+    v32 = String string="b15"
+    v33 = String string="a16"
+    v34 = String string="b16"
+    v35 = String string="a17"
+    v36 = String string="b17"
+    v37 = String string="a18"
+    v38 = String string="b18"
+    v39 = String string="a19"
+    v40 = String string="b19"
+    v41 = String string="a20"
+    v42 = String string="b20"
+    v43 = String string="a21"
+    v44 = String string="b21"
+    v45 = String string="a22"
+    v46 = String string="b22"
+    v47 = String string="a23"
+    v48 = String string="b23"
+    v49 = String string="a24"
+    v50 = String string="b24"
+    v51 = String string="a25"
+    v52 = String string="b25"
+    v53 = String string="a26"
+    v54 = String string="b26"
+    v55 = String string="a27"
+    v56 = String string="b27"
+    v57 = String string="a28"
+    v58 = String string="b28"
+    v59 = String string="a29"
+    v60 = String string="b29"
+    v61 = String string="a30"
+    v62 = String string="b30"
+    v63 = String string="a31"
+    v64 = String string="b31"
+    v65 = String string="a32"
+    v66 = String string="b32"
+    v67 = Strcat v0, v1, v2, v0, v3, v4, v0, v5, v6, v0, v7, v8, v0, v9, v10, v0, v11, v12, v0, v13, v14, v0, v15, v16, v0, v17, v18, v0, v19, v20, v0, v21, v22, v0, v23, v24, v0, v25, v26, v0, v27, v28, v0, v29, v30, v0, v31, v32, v0, v33, v34, v0, v35, v36, v0, v37, v38, v0, v39, v40, v0, v41, v42, v0, v43, v44, v0, v45, v46, v0, v47, v48, v0, v49, v50, v0, v51, v52, v0, v53, v54, v0, v55, v56, v0, v57, v58, v0, v59, v60, v0, v61, v62, v0, v63, v64, v0, v65, v66, v0
+    Return v67
+# CHECK: "a0b0" = String string="a0b0"
+# CHECK-NOT: = String string="a0"
+}
+

@@ -100,6 +100,38 @@ void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value
     defineAs(value, select(isFilled, element, undefined()), typeOf(value.id()));
 }
 
+// For an array that the library made, filled and handed to nothing else: its form holds, and it holds the index.
+void ArrayIntrinsicEmitter::generateGetOwnContiguousIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    ArrayElements storage = elements().elementsOf(array);
+    Boxed element(m_out.load64(elements().elementOfUnknownForm(storage, integerOperand(value->positionOperand()))));
+    ensureStillAliveHere(array);
+    defineAs(value, element, typeOf(value.id()));
+}
+
+void ArrayIntrinsicEmitter::generateGetOwnDoubleIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    ArrayElements storage = elements().elementsOf(array);
+    define(value, elements().loadRawElement(doubles, storage, integerOperand(value->positionOperand())).as<Number>());
+}
+
+void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    ValueID stored = value->valueOperand();
+    Operand rawElement = get(stored);
+    elements().storeRawElement(contiguous, elements().elementsOf(array), integerOperand(value->positionOperand()), rawElement);
+    barrierAfterStore(value, array, rawElement, typeOf(stored));
+}
+
+void ArrayIntrinsicEmitter::generatePutOwnDoubleIndex(const ValueContext& value)
+{
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    elements().storeRawElement(doubles, elements().elementsOf(array), integerOperand(value->positionOperand()), get(value->valueOperand()));
+}
+
 void ArrayIntrinsicEmitter::putInBounds(const ValueContext& value, const ArrayStorageForm& form)
 {
     CellPointer array = in<CellPointer>(value->arrayOperand());

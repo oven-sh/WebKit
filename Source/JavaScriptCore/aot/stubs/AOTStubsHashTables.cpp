@@ -26,30 +26,22 @@ static_assert(CompactTable::hashBits + StringImpl::s_flagCount == 32);
 static_assert(CompactTable::probeStartFor(CompactTable::hashBits, CompactTable::hashMask) == CompactTable::hashMask && CompactTable::probeStartFor(CompactTable::hashBits + 2, 1) == 4);
 
 struct IndexSlotFormat {
-    CCallHelpers::Scale scale;
-    unsigned tagShift;
-    unsigned entryBits;
-    uint32_t tagMask;
-    uint32_t freeSlot;
+    unsigned entryBytes;
+    // The index has a tag byte and an entry number for each slot.
+    CCallHelpers::Scale bytesOfSlot;
 };
 
 template<CompactTable::SlotKind kind>
 static constexpr IndexSlotFormat indexSlotFormatOf()
 {
-    using Format = CompactTable::SlotFormat<kind>;
-    using Slot = typename Format::Slot;
-    return {
-        sizeof(Slot) == sizeof(uint16_t) ? CCallHelpers::TimesTwo : CCallHelpers::TimesFour,
-        Format::tagShift,
-        Format::entryBits,
-        static_cast<Slot>(~0u << Format::entryBits),
-        Format::freeSlot,
-    };
+    constexpr unsigned entryBytes = CompactTable::SlotFormat<kind>::entryBytes;
+    static_assert(entryBytes == 1 || entryBytes == 3);
+    return { entryBytes, entryBytes == 1 ? CCallHelpers::TimesTwo : CCallHelpers::TimesFour };
 }
 
 static constexpr IndexSlotFormat shortSlotFormat = indexSlotFormatOf<CompactTable::SlotKind::Short>();
 static constexpr IndexSlotFormat longSlotFormat = indexSlotFormatOf<CompactTable::SlotKind::Long>();
-static constexpr IndexSlotFormat hugeSlotFormat = indexSlotFormatOf<CompactTable::SlotKind::Huge>();
+static_assert(4 * static_cast<uint64_t>(CompactTable::maxCapacityWithLongSlots) <= 3 * (static_cast<uint64_t>(1) << CompactTable::hashBits));
 
 struct CompactTableSearch {
     bool isInImage;
@@ -357,64 +349,182 @@ static void emitProbeTags(StubAssembler& jit, const HashTableRegisters& register
     absent.append(jit.jump());
 }
 
-static void emitMoveTagIntoSlotPosition(StubAssembler& jit, GPRReg hash, const IndexSlotFormat& format)
+// cursor = CompactTable::probeStartFor(cursor, hash), for an index with no more bits than the hash. keys is 1 << cursor.
+static void emitLoadHomeSlot(StubAssembler& jit, const HashTableRegisters& registers)
 {
-    if (format.tagShift >= format.entryBits)
-        jit.urshift32(TrustedImm32(format.tagShift - format.entryBits), hash);
-    else
-        jit.lshift32(TrustedImm32(format.entryBits - format.tagShift), hash);
-    jit.and32(TrustedImm32(static_cast<int32_t>(format.tagMask)), hash);
+    const GPRReg slot = registers.cursor;
+    jit.sub32(registers.keys, TrustedImm32(1), slot);
+    jit.and32(registers.hash, slot);
 }
 
-// candidate = CompactTable::probeStartFor(cursor, hash). keys is 1 << cursor. Overwrites cursor and entry.
-static void emitLoadProbeStart(StubAssembler& jit, const HashTableRegisters& registers, const IndexSlotFormat& format)
+// tags = where the tags begin: as many bytes in front of the keys as there are slots.
+static void emitLoadTags(StubAssembler& jit, const HashTableRegisters& registers, GPRReg tags)
 {
-    const GPRReg indexBits = registers.cursor;
-    const GPRReg spreadHash = registers.entry;
-    const GPRReg start = registers.candidate;
+    jit.sub64(registers.keys, registers.table, tags);
+    jit.sub64(TrustedImm32(CompactTable::offsetOfIndex()), tags);
+    Jump hasLongSlots = jit.branch32(CCallHelpers::Above, Address(registers.table, CompactTable::offsetOfCapacity()), TrustedImm32(CompactTable::maxCapacityWithShortSlots));
+    jit.urshift64(TrustedImm32(1), tags);
+    Jump isShifted = jit.jump();
+    hasLongSlots.link(&jit);
+    Jump hasHugeSlots = jit.branch32(CCallHelpers::Above, Address(registers.table, CompactTable::offsetOfCapacity()), TrustedImm32(CompactTable::maxCapacityWithLongSlots));
+    jit.urshift64(TrustedImm32(2), tags);
+    Jump isShiftedByTwo = jit.jump();
+    hasHugeSlots.link(&jit);
+    jit.urshift64(TrustedImm32(3), tags);
+    isShifted.link(&jit);
+    isShiftedByTwo.link(&jit);
+    jit.sub64(registers.keys, tags, tags);
+}
 
-    jit.sub32(registers.keys, TrustedImm32(1), start);
-    if (format.entryBits < CompactTable::hashBits) {
-        jit.and32(registers.hash, start);
+// entry = the number in the slot.
+static void emitLoadEntryNumber(StubAssembler& jit, const HashTableRegisters& registers, const IndexSlotFormat& format, GPRReg slot, GPRReg entry)
+{
+    constexpr int32_t index = CompactTable::offsetOfIndex();
+    ASSERT(slot != entry);
+    if (format.entryBytes == 1) {
+        jit.load8(BaseIndex(registers.table, slot, CCallHelpers::TimesOne, index), entry);
         return;
     }
-    jit.move(registers.hash, spreadHash);
-    Jump hashCoversIndex = jit.branch32(CCallHelpers::BelowOrEqual, indexBits, TrustedImm32(CompactTable::hashBits));
-    jit.sub32(TrustedImm32(CompactTable::hashBits), indexBits);
-    jit.lshift32(indexBits, spreadHash);
-    hashCoversIndex.link(&jit);
-    jit.and32(spreadHash, start);
+    jit.getEffectiveAddress(BaseIndex(slot, slot, CCallHelpers::TimesTwo), entry);
+    jit.load32(BaseIndex(registers.table, entry, CCallHelpers::TimesOne, index), entry);
+    jit.and32(TrustedImm32(0xffffff), entry);
 }
 
-static void emitProbeSlots(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, const IndexSlotFormat& format, HashTableExits& exits)
+static void emitCountTrailingZerosOfNonZero(StubAssembler& jit, GPRReg source, GPRReg count)
+{
+#if CPU(X86_64)
+    jit.m_assembler.bsfq_rr(source, count);
+#else
+    jit.countTrailingZeros64(source, count);
+#endif
+}
+
+// tags holds eight tags, and every byte of hash is the tag that is looked for.
+// matches = a set bit at the top of each tag that may be that one. taken = the complement of the difference: its top bit of a tag is set where the slot is taken.
+static void emitCompareEightTags(StubAssembler& jit, const HashTableRegisters& registers, GPRReg tags, GPRReg matches, GPRReg taken)
+{
+    jit.xor64(registers.hash, tags, taken);
+    jit.move(TrustedImm64(-static_cast<int64_t>(CompactTable::onesOfTags)), matches);
+    jit.add64(taken, matches);
+    jit.not64(taken);
+    jit.and64(taken, matches);
+    jit.and64(TrustedImm64(CompactTable::onesOfTags << 7), matches);
+}
+
+// Behind this search of the home slot all kinds of slots share emitSearchGroups(): candidate is where the tags begin, and hash the tag.
+static void emitProbeHomeSlot(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, const IndexSlotFormat& format, JumpList& searchesGroups, HashTableExits& exits)
 {
     constexpr int32_t index = CompactTable::offsetOfIndex();
     auto [owner, key, hash, table, cursor, keys, entry, candidate] = registers;
-    const bool isShort = format.scale == CCallHelpers::TimesTwo;
-    JumpList& atFreeSlot = isShort ? exits.insertionPoints.atShortSlot : exits.insertionPoints.atLongSlot;
-    JumpList& absent = search.findsInsertionPoint ? atFreeSlot : exits.absent;
+    JumpList& absent = search.findsInsertionPoint ? exits.insertionPoints.atSlot : exits.absent;
     jit.move(TrustedImm32(1), keys);
     jit.lshift32(cursor, keys);
-    emitLoadProbeStart(jit, registers, format);
-    jit.getEffectiveAddress(BaseIndex(table, candidate, format.scale, index), cursor);
-    jit.getEffectiveAddress(BaseIndex(table, keys, format.scale, index), keys);
-    emitMoveTagIntoSlotPosition(jit, hash, format);
+    emitLoadHomeSlot(jit, registers);
+    jit.urshift32(TrustedImm32(CompactTable::tagShiftOfSlots), hash);
+    jit.or32(TrustedImm32(CompactTable::takenSlot), hash);
+    // The tags begin behind 1 or 3 bytes for each slot, and the keys behind one more.
+    if (format.entryBytes == 1) {
+        jit.getEffectiveAddress(BaseIndex(table, keys, CCallHelpers::TimesOne, index), candidate);
+        jit.getEffectiveAddress(BaseIndex(table, keys, CCallHelpers::TimesTwo, index), keys);
+    } else {
+        jit.getEffectiveAddress(BaseIndex(table, keys, format.bytesOfSlot, index), candidate);
+        jit.sub64(keys, candidate);
+        jit.add64(candidate, keys);
+    }
 
-    Label loop = jit.label();
-    if (isShort)
-        jit.load16(Address(cursor), entry);
-    else
-        jit.load32(Address(cursor), entry);
-    absent.append(jit.branch32(CCallHelpers::Equal, entry, TrustedImm32(static_cast<int32_t>(format.freeSlot))));
-    jit.xor32(hash, entry);
+    // Most keys are in their home slot.
+    jit.load8(BaseIndex(candidate, cursor, CCallHelpers::TimesOne), entry);
+    Jump isNotAtHome = jit.branch32(CCallHelpers::NotEqual, entry, hash);
+    emitLoadEntryNumber(jit, registers, format, cursor, entry);
+    JumpList hasOtherKey;
+    emitCompareWithEntry(jit, registers, search, hasOtherKey, exits);
+    hasOtherKey.link(&jit);
+    emitLoadTags(jit, registers, candidate);
+    searchesGroups.append(jit.jump());
+
+    isNotAtHome.link(&jit);
+    absent.append(jit.branchTest32(CCallHelpers::Zero, entry));
+    searchesGroups.append(jit.jump());
+}
+
+// cursor is the number of a free slot at an insertion point, and the low byte of hash the tag.
+static void emitSearchGroups(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, HashTableExits& exits)
+{
+    constexpr uint64_t tops = CompactTable::onesOfTags << 7;
+    auto [owner, key, hash, table, cursor, keys, entry, candidate] = registers;
+    jit.and32(TrustedImm32(~static_cast<int32_t>(CompactTable::slotsPerGroup - 1)), cursor);
+    jit.load64(BaseIndex(candidate, cursor, CCallHelpers::TimesOne), entry);
+    jit.move(TrustedImm64(CompactTable::onesOfTags), candidate);
+    jit.mul64(candidate, hash);
+
+    Label compareTags = jit.label();
+    emitCompareEightTags(jit, registers, entry, candidate, entry);
+#if CPU(X86_64)
+    // The last conjunction has set the flags.
+    Jump hasNoMatch = Jump(jit.m_assembler.jCC(X86Assembler::ConditionE));
+#else
+    Jump hasNoMatch = jit.branchTest64(CCallHelpers::Zero, candidate);
+#endif
+
+    Label nextMatch = jit.label();
+    emitCountTrailingZerosOfNonZero(jit, candidate, candidate);
+    jit.urshift32(TrustedImm32(3), candidate);
+    jit.add32(candidate, cursor);
+    {
+        Jump hasLongSlots = jit.branch32(CCallHelpers::Above, Address(table, CompactTable::offsetOfCapacity()), TrustedImm32(CompactTable::maxCapacityWithShortSlots));
+        emitLoadEntryNumber(jit, registers, shortSlotFormat, cursor, entry);
+        Jump isLoaded = jit.jump();
+        hasLongSlots.link(&jit);
+        Jump hasHugeSlots = jit.branch32(CCallHelpers::Above, Address(table, CompactTable::offsetOfCapacity()), TrustedImm32(CompactTable::maxCapacityWithLongSlots));
+        emitLoadEntryNumber(jit, registers, longSlotFormat, cursor, entry);
+        Jump isLoadedFromLong = jit.jump();
+        hasHugeSlots.link(&jit);
+        jit.lshift64(cursor, TrustedImm32(3), entry);
+        jit.sub64(cursor, entry);
+        jit.load32(BaseIndex(table, entry, CCallHelpers::TimesOne, CompactTable::offsetOfIndex()), entry);
+        isLoaded.link(&jit);
+        isLoadedFromLong.link(&jit);
+    }
     JumpList next;
-    next.append(jit.branch32(CCallHelpers::Above, entry, TrustedImm32((1 << format.entryBits) - 1)));
     emitCompareWithEntry(jit, registers, search, next, exits);
+
+    // The matches above that slot. table holds the shift meanwhile.
     next.link(&jit);
-    jit.addPtr(TrustedImm32(1 << format.scale), cursor);
-    jit.branchPtr(CCallHelpers::NotEqual, cursor, keys).linkTo(loop, &jit);
-    jit.addPtr(TrustedImm32(index), table, cursor);
-    jit.jump().linkTo(loop, &jit);
+    emitLoadTags(jit, registers, entry);
+    jit.and32(TrustedImm32(CompactTable::slotsPerGroup - 1), cursor, table);
+    jit.sub32(table, cursor);
+    jit.load64(BaseIndex(entry, cursor, CCallHelpers::TimesOne), entry);
+    jit.lshift32(TrustedImm32(3), table);
+    jit.add32(TrustedImm32(7), table);
+    emitCompareEightTags(jit, registers, entry, candidate, entry);
+    jit.urshift64(table, candidate);
+    jit.urshift64(TrustedImm32(1), candidate);
+    jit.lshift64(TrustedImm32(1), candidate);
+    jit.lshift64(table, candidate);
+    emitReloadTable(jit, registers, search);
+    jit.branchTest64(CCallHelpers::NonZero, candidate).linkTo(nextMatch, &jit);
+
+    // A free slot among the eight ends the search.
+    hasNoMatch.link(&jit);
+    jit.not64(entry);
+    if (search.findsInsertionPoint) {
+        jit.and64(TrustedImm64(tops), entry);
+        Jump isFull = jit.branchTest64(CCallHelpers::Zero, entry);
+        emitCountTrailingZerosOfNonZero(jit, entry, candidate);
+        jit.urshift32(TrustedImm32(3), candidate);
+        jit.add32(candidate, cursor);
+        exits.insertionPoints.atSlot.append(jit.jump());
+        isFull.link(&jit);
+    } else
+        exits.absent.append(jit.branchTest64(CCallHelpers::NonZero, entry, TrustedImm64(tops)));
+    // The next eight. The number of slots is what lies between the tags and the keys.
+    emitLoadTags(jit, registers, candidate);
+    jit.sub64(keys, candidate, entry);
+    jit.add32(TrustedImm32(CompactTable::slotsPerGroup), cursor);
+    jit.sub32(TrustedImm32(1), entry);
+    jit.and32(entry, cursor);
+    jit.load64(BaseIndex(candidate, cursor, CCallHelpers::TimesOne), entry);
+    jit.jump().linkTo(compareTags, &jit);
 }
 
 static void emitSearchCompactTable(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, HashTableExits& exits)
@@ -435,15 +545,42 @@ static void emitSearchCompactTable(StubAssembler& jit, const HashTableRegisters&
 #if CPU(X86_64)
     jit.load8(indexBits, cursor);
 #endif
+    JumpList searchesGroups;
     Jump hasLongOrHugeSlots = jit.branch32(CCallHelpers::Above, capacity, TrustedImm32(CompactTable::maxCapacityWithShortSlots));
-    emitProbeSlots(jit, registers, search, shortSlotFormat, exits);
+    emitProbeHomeSlot(jit, registers, search, shortSlotFormat, searchesGroups, exits);
 
     hasLongOrHugeSlots.link(&jit);
     Jump hasHugeSlots = jit.branch32(CCallHelpers::Above, capacity, TrustedImm32(CompactTable::maxCapacityWithLongSlots));
-    emitProbeSlots(jit, registers, search, longSlotFormat, exits);
+    emitProbeHomeSlot(jit, registers, search, longSlotFormat, searchesGroups, exits);
 
+    // A table of more than twelve million entries. The search of the first eight tags finds a key in its home slot too.
     hasHugeSlots.link(&jit);
-    emitProbeSlots(jit, registers, search, hugeSlotFormat, exits);
+    {
+        constexpr int32_t index = CompactTable::offsetOfIndex();
+        const GPRReg hash = registers.hash;
+        const GPRReg keys = registers.keys;
+        const GPRReg entry = registers.entry;
+        const GPRReg table = registers.table;
+        const GPRReg tags = registers.candidate;
+        jit.move(TrustedImm32(1), keys);
+        jit.lshift64(cursor, keys);
+        jit.move(hash, entry);
+        Jump hashCoversIndex = jit.branch32(CCallHelpers::BelowOrEqual, cursor, TrustedImm32(CompactTable::hashBits));
+        jit.sub32(TrustedImm32(CompactTable::hashBits), cursor);
+        jit.lshift32(cursor, entry);
+        hashCoversIndex.link(&jit);
+        jit.sub32(keys, TrustedImm32(1), cursor);
+        jit.and32(entry, cursor);
+        jit.urshift32(TrustedImm32(CompactTable::tagShiftOfSlots), hash);
+        jit.or32(TrustedImm32(CompactTable::takenSlot), hash);
+        jit.getEffectiveAddress(BaseIndex(table, keys, CCallHelpers::TimesEight, index), tags);
+        jit.sub64(keys, tags);
+        jit.add64(tags, keys);
+        (search.findsInsertionPoint ? exits.insertionPoints.atSlot : exits.absent).append(jit.branchTest8(CCallHelpers::Zero, BaseIndex(tags, cursor, CCallHelpers::TimesOne)));
+    }
+
+    searchesGroups.link(&jit);
+    emitSearchGroups(jit, registers, search, exits);
 
     if (!search.comparesStrings)
         return;

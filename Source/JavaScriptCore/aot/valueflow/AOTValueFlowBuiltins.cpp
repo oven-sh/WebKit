@@ -2735,10 +2735,31 @@ private:
         return callees;
     }
 
+    // `m.call(o)` where m makes an array iterator is `o.m()`: it makes the object of this call, not the one object that stands for all that native code makes.
+    ClimbingSet applyBuiltinsCalledInPlace(const BuiltinCallback& callback, ClimbingSet callees)
+    {
+        if (callback.constructs || m_builtins.canonicalID(m_builtin) != m_builtins.canonicalID(Builtins::FunctionPrototypeCall) || !m_call.operation || m_call.arguments.empty() || m_call.otherArguments.node || m_call.otherArguments.constant != ValueSets::nothing)
+            return callees;
+        ValueFlowBuiltinCall description = m_call;
+        description.kind = ValueFlowCallKind::Call;
+        description.thisValue = m_call.arguments[0];
+        description.arguments = m_call.arguments.subspan(1);
+        description.operation = nullptr;
+        Vector<ValueFlowObjectID, 4> applied;
+        m_context.forEachMember(m_context.restrict(callees, m_universe.builtinFunctions()), [&](ValueFlowObjectID callee) {
+            BuiltinID builtin = m_builtins.canonicalID(m_universe.builtinOf(callee));
+            if (builtin != Builtins::ArrayPrototypeValues && builtin != Builtins::ArrayPrototypeKeys && builtin != Builtins::ArrayPrototypeEntries)
+                return;
+            applied.append(callee);
+            applyBuiltin(builtin, description, m_context);
+        });
+        return applied.isEmpty() ? callees : m_context.restrict(callees, ValueSets::complement(m_context.maker().of(applied.span())));
+    }
+
     void applyCallback(const BuiltinCallback& callback)
     {
         describeObjectsRefusedAsFunctions(m_context, valueAt(callback.callee));
-        forEachPartOfCallees(m_context, calleesOf(callback), [&](ClimbingSet callees) {
+        forEachPartOfCallees(m_context, applyBuiltinsCalledInPlace(callback, calleesOf(callback)), [&](ClimbingSet callees) {
             ValueFlowCallGroup group = m_context.group(callees, callback.constructs ? ValueFlowCallKind::ConstructByNativeCode : ValueFlowCallKind::CallByNativeCode, originOfOperands());
             if (callback.constructs) {
                 if (callback.newTarget.kind == BuiltinPlaceKind::None)

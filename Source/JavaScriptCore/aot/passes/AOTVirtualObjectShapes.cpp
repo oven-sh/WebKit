@@ -99,6 +99,7 @@ std::optional<uint32_t> VirtualFamily::findCounterpart(uint32_t field) const
     case VirtualFieldKind::RangeEnd:
     case VirtualFieldKind::Operand:
     case VirtualFieldKind::Position:
+    case VirtualFieldKind::PrototypeLink:
         return std::nullopt;
     }
     RELEASE_ASSERT_NOT_REACHED();

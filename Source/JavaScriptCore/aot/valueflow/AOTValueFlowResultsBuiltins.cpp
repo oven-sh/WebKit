@@ -867,6 +867,18 @@ ValueFlowClassesOfBuiltinResults computeClassesOfBuiltinResults(const ValueFlowR
                 continue;
             }
             ValueSetID builtinCallees = maker.intersect(callees, universe.builtinFunctions());
+            // `m.call(o)`: a built-in m makes the object of this call.
+            ValueFlowObjectID callOfFunctions = universe.objectOf(builtins.canonicalID(Builtins::FunctionPrototypeCall));
+            if (inputs.sets().contains(builtinCallees, callOfFunctions) && inputs.bodies().operandsOf(call).size() > 2) {
+                ValueSetID forwarded = inputs.possibleValuesOf(maker, inputs.bodies().operandsOf(call)[1]);
+                if (!ValueSets::isComplement(forwarded)) {
+                    for (BuiltinID made : { Builtins::ArrayPrototypeValues, Builtins::ArrayPrototypeKeys, Builtins::ArrayPrototypeEntries }) {
+                        ValueFlowObjectID object = universe.objectOf(builtins.canonicalID(made));
+                        if (inputs.sets().contains(forwarded, object))
+                            builtinCallees = maker.unite(builtinCallees, maker.of(object));
+                    }
+                }
+            }
             // Whatever rule answers a call with the object of the call has noted as what it made the object.
             ASSERT(!call.result || !inputs.sets().contains(inputs.solver().possibleValuesOf(call.result), object) || hasNotedAllocation.get(object.index()));
             inputs.sets().forEachMember(builtinCallees, [&](ValueFlowObjectID callee) {

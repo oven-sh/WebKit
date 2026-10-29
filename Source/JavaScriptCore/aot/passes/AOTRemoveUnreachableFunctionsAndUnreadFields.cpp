@@ -214,6 +214,9 @@ static constexpr OperandUses keyedStoreUses { OperandUse::StoresByKey, OperandUs
 
 static bool isUnread(const BuildContext& build, const Layout& layout, const Field& field)
 {
+    // The brand of a class without private methods only tells its evaluations apart. A private field says by itself whether an object has it.
+    if (field.flags.contains(FieldFlags::IsBrand))
+        return !field.flags.containsAny({ FieldFlags::IsInherited, FieldFlags::IsBrandOfMethods }) && layout.classFlow.evaluations == ExecutionCount::AtMostOnce;
     constexpr OptionSet<FieldFlags> excludedFlags { FieldFlags::IsInherited, FieldFlags::IsPrivate, FieldFlags::IsBrand, FieldFlags::IsHidden };
     if (field.flags.containsAny(excludedFlags) || field.form.contains(FieldForm::IsAccessor))
         return false;
@@ -873,7 +876,9 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     return;
                 AOT::sort(found);
                 removeRepeatedElements(found);
-                bool isRemovableStore = isRemovableSlotStore(opcode) && !stores.keepsObjectAlive(value.operand(*storedOf(opcode)), value.operand(*receiverOf(opcode)));
+                // The class holds its token, whatever becomes of the store of a brand.
+                bool isStoreOfBrand = fieldAt(program, fields[found[0]]).flags.contains(FieldFlags::IsBrand);
+                bool isRemovableStore = isRemovableSlotStore(opcode) && (isStoreOfBrand || !stores.keepsObjectAlive(value.operand(*storedOf(opcode)), value.operand(*receiverOf(opcode))));
                 addAccess(WTF::move(found), reachesOnlyCandidates && (isRemovableStore || isUnusedSlotRead()));
             };
 
@@ -882,7 +887,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
                     markFieldsLive(layout);
                 auto addNamedField = [&](uint32_t field, ValueID stored, ValueID holder) {
                     if (auto candidate = candidateOf(layout, field))
-                        addAccess({ *candidate }, stored && !stores.keepsObjectAlive(stored, holder));
+                        addAccess({ *candidate }, stored && (fieldAt(program, { layout, field }).flags.contains(FieldFlags::IsBrand) || !stores.keepsObjectAlive(stored, holder)));
                 };
                 for (const PayloadFieldInfo& field : payloadFieldsOf(opcode)) {
                     if (field.kind == PayloadKind::Field) {
@@ -960,7 +965,7 @@ void removeUnreadFields(ProgramEditor& editor, const OptimizationInputs& inputs,
         if (field.flow.occupancy == Occupancy::FilledAtBirth || field.flow.occupancy == Occupancy::FilledWithValueAtBirth)
             field.flow.occupancy = Occupancy::Unknown;
         // A validating build tells the run time which names it took away, so that a lookup of one from outside compiled code ends the process.
-        if (build.validates())
+        if (build.validates() && !field.flags.contains(FieldFlags::IsBrand))
             field.flags.add(FieldFlags::IsRemovedAsUnread);
         ++numberOfRemovedFields;
     }

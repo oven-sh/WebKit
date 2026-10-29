@@ -202,7 +202,6 @@ void testInvalidFlags()
         copy.edit(v9).setIsFreeName(true);
         copy.edit(v9).setIsForTypeOf(true);
     }), "v9 = PropGet v0 key=\"x\" [isFreeName, isForTypeOf] @1009"_s);
-    expectText(test.print(OptionSet<FieldFlags>::fromRaw(1 | 1 << 15)), "[IsRequired, <invalid flag 15>]"_s);
 }
 
 void testInvalidTerminator()

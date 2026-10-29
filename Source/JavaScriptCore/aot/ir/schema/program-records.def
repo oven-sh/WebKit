@@ -3,7 +3,7 @@ enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObj
     | engine Closure(true, false, false, false, false, false) CoroutineFrame(true, false, false, false, false, false) BuiltinResult(false, false, true, false, false, false) ModuleNamespace(false, false, false, false, false, false)
 }
 flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType | engine IsDerived IsOfCreatedObject }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted IsFilledByCreator IsCountedWith }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted IsFilledByCreator IsCountedWith }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
@@ -16,7 +16,7 @@ record Layout wire extendedEngine {
     kind: LayoutKind name: String? module: Module(Referrer)? position: UInt32 base: Layout? constructor: Function(Constructor)?
     fields: Span<Field> staticFields: Span<StaticField> supertypes: Span<Layout> sorted computedKeyCount: UInt32 flags: LayoutFlags
     declaredOrder: Span<UInt32>
-    | engine builtinLayout: BuiltinLayout? namespaceOf: Module(Referrer)? ownFieldCount: UInt32 writtenBuiltinBase: BuiltinClass? flow: LayoutFlow classFlow: ClassFlow
+    | engine builtinLayout: BuiltinLayout? namespaceOf: Module(Referrer)? ownFieldCount: UInt32 writtenBuiltinBase: BuiltinClass? flow: LayoutFlow classFlow: ClassFlow prototypeVariable: Variable?
 }
 
 enum VariableInitialization { Uninitialized Undefined Function }
