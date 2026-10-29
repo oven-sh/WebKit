@@ -60,8 +60,10 @@ public:
         Cached, // cached loadPromise settled -> finishLoading or evaluationError
     };
 
-    static ModuleLoadingContext* create(JSGlobalObject*, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    static ModuleLoadingContext* create(JSGlobalObject*, JSModuleLoader*, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
+    // For a request that a load makes for one of its modules. It takes the async context of that load, from the payload.
+    static ModuleLoadingContext* create(VM&, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
+    // For a load. asyncContext: of whoever starts the load, or of the load that this one is a step of.
+    static ModuleLoadingContext* create(VM&, JSModuleLoader*, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, JSValue asyncContext = { });
 
     Step step() const { return m_step; }
     void setStep(Step s) { m_step = s; }
@@ -75,8 +77,9 @@ public:
     void module(VM& vm, AbstractModuleRecord* mod) { m_module.set(vm, this, mod); }
     JSModuleLoader* loader() const { return m_loader.get(); }
 #if USE(BUN_JSC_ADDITIONS)
-    // The async context of whoever asked for the module: create() takes what is current in its realm. The jobs that this
-    // context goes to (ModuleLoadStep, ModuleLoadTopSettled, ModuleLoadLinkEvaluateSettled) run under it where it is a store.
+    // The async context of the load that this request belongs to: what was current where import() was called. The jobs
+    // that this context goes to (ModuleLoadStep, ModuleLoadTopSettled, ModuleLoadLinkEvaluateSettled) run under it where
+    // it is a store. Empty for a synchronous load, whose jobs all run inside the call of require().
     JSValue asyncContext() const { return m_asyncContext.get(); }
 #endif
 

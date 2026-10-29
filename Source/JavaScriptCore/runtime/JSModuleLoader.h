@@ -50,6 +50,8 @@ enum class ModuleLoadFlag : uint8_t {
     Dynamic = 1 << 1,
     UseImportMap = 1 << 2,
     Deferred = 1 << 3,
+    // JSModuleLoader::loadModuleSync(): every step of the load runs inside the call, in the async context of its caller.
+    Synchronous = 1 << 4,
 };
 
 class JSModuleLoader final : public JSCell {
@@ -93,6 +95,11 @@ public:
     // (the default): whatever is current when a module is executed.
     JSValue asyncContext() const { return m_asyncContext.get(); }
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
+
+    // The async context of the load that a payload stands for: what was current where import() was called. A load
+    // keeps it in its cells (ModuleLoadingContext, ModuleLoaderPayload, ModuleGraphLoadingState), and every request
+    // that the load makes takes it from there, not from what is current where the request is made.
+    static JSValue asyncContextOfLoad(JSCell* payload);
 #endif
 
     DECLARE_INFO;
@@ -101,7 +108,8 @@ public:
 
     // APIs to control the module loader.
     void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
-    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSValue);
+    // asyncContext: of the load that the module is provided for. See ModuleRegistryEntry::ensureModulePromise().
+    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSValue, JSValue asyncContext = { });
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { }, AbstractModuleRecord* recordInPlaceOfFetch = nullptr);
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
@@ -174,7 +182,7 @@ public:
     JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
     void continueModuleLoading(JSGlobalObject*, ModuleGraphLoadingState*, ModuleCompletion result);
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
-    JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
+    JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>, JSValue asyncContext = { });
 
     // If moduleData is a JSSourceCode, then it's a JavaScript/WebAssembly/JSON/text source code,
     // and JSC is responsible for turning it into a usable module. Otherwise, the host has already

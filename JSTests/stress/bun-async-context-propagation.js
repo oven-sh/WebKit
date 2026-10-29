@@ -219,3 +219,37 @@ let log = [];
     }
     shouldBe(settled.length, Object.keys(expectedSettled).length, "all imports settled");
 }
+
+// A module that waits for a dependency with a top-level await runs when the body of the dependency ends, in the job of
+// whoever began to evaluate the dependency. So a module that B imports runs under A where A's import() began the
+// dependency, as in Node.js. Each import() settles under its own context.
+{
+    log = [];
+    let open;
+    globalThis.gate = new Promise(resolve => { open = resolve; });
+    const settled = [];
+    const settle = name => [() => settled.push([name, get()]), error => settled.push([name, get(), error])];
+    const resources = "./resources/bun-async-context-propagation/";
+    inContext(A, () => {
+        import(resources + "waits-first.js").then(...settle("waits first"));
+    });
+    drainMicrotasks();
+    inContext(B, () => {
+        import(resources + "waits-second.js").then(...settle("waits second"));
+    });
+    drainMicrotasks();
+    shouldBe(log.length, 1, "the dependency waits");
+    open();
+    drainMicrotasks();
+    shouldBe(get(), undefined, "residue after the modules that waited");
+    const expected = { "waits before its await": A, "waits behind its await": A, "waits first": A, "waits second": A };
+    for (const [name, ctx] of log)
+        shouldBe(ctx, expected[name], name);
+    shouldBe(log.length, Object.keys(expected).length, "all modules that waited ran");
+    const expectedSettled = { "waits first": A, "waits second": B };
+    for (const [name, ctx, error] of settled) {
+        shouldBe(error, undefined, "import() of " + name + " rejected with " + error + ":");
+        shouldBe(ctx, expectedSettled[name], "import() of " + name);
+    }
+    shouldBe(settled.length, Object.keys(expectedSettled).length, "both imports settled");
+}

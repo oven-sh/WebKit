@@ -857,7 +857,7 @@ void Modules::resumeDeferredLoadsOfFinishedFiles()
 }
 
 // `bun run` runs an imported CommonJS file while it loads the graph of the importer. No ES module of that graph has begun by then, so a require() in the file that leads back to one evaluates it there and then.
-bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load)
+bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load, JSValue asyncContextOfImport)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -896,6 +896,8 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     FilesBeingRun filesBeingRun { root, std::nullopt, m_innermostFilesBeingRun, jobs == JobsOfImportedFiles::WaitForLoader, load };
     filesBeingRun.asyncContext = AsyncContextSwapScope::current(vm, m_instance.globalObject);
+    // What the jobs of the loader would run under: the async context of the load, not what is current here.
+    JSValue asyncContextOfLoad = load ? load->asyncContext() : asyncContextOfImport;
     SetForScope innermostFilesBeingRun(m_innermostFilesBeingRun, &filesBeingRun);
     SetForScope modulesWhoseFilesRunAheadOfLoader(vm.aotState().modulesWhoseFilesRunAheadOfLoader, filesBeingRun.isAheadOfJobsOfLoader ? this : vm.aotState().modulesWhoseFilesRunAheadOfLoader);
     // The start of the root calls the files one after the other, and leaves where one of them has queued a job or where the root would begin.
@@ -904,7 +906,7 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             {
                 // As for a file below. The files run in one call here, so one of them leaves the next what it entered.
-                ModuleLoaderAsyncContextScope asyncContextOfFiles(vm, m_instance.globalObject, filesBeingRun.asyncContext);
+                ModuleLoaderAsyncContextScope asyncContextOfFiles(vm, m_instance.globalObject, asyncContextOfLoad);
                 callBodyUnderOwnMark(root, false, true);
             }
             didRunFile = true;
@@ -984,10 +986,10 @@ bool Modules::evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles j
         filesBeingRun.fileOrFace = imported;
         filesBeingRun.numberOfJobsInFrontOfFile = numberOfJobs;
         {
-            // The loader of `bun run` runs the file in a job of its own, under the async context of whoever asked for the file: what the file enters ends with that job where the job has a store.
+            // The loader of `bun run` runs the file in a job of its own, under the async context of the load that asked for the file: what the file enters ends with that job where the load has a store.
             std::optional<ModuleLoaderAsyncContextScope> asyncContextOfFile;
             if (jobs == JobsOfImportedFiles::WaitForLoader)
-                asyncContextOfFile.emplace(vm, m_instance.globalObject, filesBeingRun.asyncContext);
+                asyncContextOfFile.emplace(vm, m_instance.globalObject, asyncContextOfLoad);
             // As the start of the root would call it.
             if (storedStatus(imported) < StoredModuleStatus::InRecord && data(imported).evaluatesItself())
                 evaluateByCallingBody(imported);
@@ -1122,7 +1124,7 @@ void Modules::handGraphToLoader(FilesBeingRun& files)
         SetForScope fileBeingHandedToLoader(m_fileBeingHandedToLoader, fileOf(*running));
         // The steps were due before any require() of the file began.
         SetForScope noSynchronousLoad(vm.m_synchronousModuleQueueSetAside, vm.m_synchronousModuleQueue);
-        // And before the file entered an async context: they take what was current then, for themselves and for the requests that they make.
+        // And before the file entered an async context: a step of a load that keeps none runs under what was current then.
         AsyncContextSwapScope asyncContextBeforeFiles(vm, m_instance.globalObject, files.asyncContext);
         if (files.load) {
             ModuleRecord* record = recordIfExists(files.root);

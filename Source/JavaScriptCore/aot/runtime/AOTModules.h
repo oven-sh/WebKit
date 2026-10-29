@@ -169,7 +169,8 @@ public:
     // Says whether the start that asks goes on to run the module.
     bool beginModuleInRecord(ModuleID);
     // Says whether a file ran.
-    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr);
+    // asyncContextOfImport: of the import() that the files run for, where no load of the loader is given. A file that the loader would run in a job of its own runs under the async context of its load: ModuleLoaderAsyncContextScope.
+    bool evaluateImportedCommonJSFiles(ModuleID root, JobsOfImportedFiles = JobsOfImportedFiles::StayQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, JSValue asyncContextOfImport = { });
     void queueJobsThatWaitForLoader();
     void handGraphsToLoader();
     void didLoadGraph(ModuleID root);
@@ -467,7 +468,7 @@ private:
         std::optional<ModuleID> fileHandedToLoader { };
         // By a CommonJS file: how many modules stand between the root and the nearest one that imports it. Made when something asks.
         Vector<uint32_t> distanceOfFiles { };
-        // The async context that was current before the files ran. The steps of the loader that were due by then run under it: handGraphToLoader().
+        // The async context that was current before the files ran. A step of the loader that was due by then, of a load that keeps no async context, runs under it: handGraphToLoader().
         JSValue asyncContext { };
     };
     void handGraphToLoader(FilesBeingRun&);

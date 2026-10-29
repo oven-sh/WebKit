@@ -74,9 +74,21 @@ public:
     ScriptFetchParameters::Type moduleType() const;
     AbstractModuleRecord* record() const;
     JSPromise* ensureFetchPromise(JSGlobalObject*);
-    JSPromise* ensureModulePromise(JSGlobalObject*);
-    // What ModuleRegistryFetchSettled settles. The job reads it here: its reaction keeps the async context where it would keep a cell.
-    JSPromise* modulePromise() const { return m_modulePromise.get(); }
+    // asyncContext: of the load that asks. The first load that asks has the record made: ModuleRegistryFetchSettled makes
+    // it, which runs the body of a CommonJS module, under that context where it is a store.
+    JSPromise* ensureModulePromise(JSGlobalObject*, JSValue asyncContext = { });
+#if USE(BUN_JSC_ADDITIONS)
+    // For the job that makes the record. The entry does not keep the context behind it.
+    JSValue takeAsyncContext()
+    {
+        JSValue asyncContext = m_asyncContext.get();
+        m_asyncContext.clear();
+        return asyncContext;
+    }
+    // For a synchronous load that takes the fetch over: the record is made inside the call of require(), in the
+    // context of its caller.
+    void clearAsyncContext() { m_asyncContext.clear(); }
+#endif
     JSPromise* loadPromise() const;
     JSValue error(JSGlobalObject*) const;
     JSValue fetchError() const;
@@ -90,7 +102,7 @@ public:
     void setStatus(Status);
 
     void provideFetch(JSGlobalObject*, SourceCode&&);
-    void provideFetch(JSGlobalObject*, JSValue);
+    void provideFetch(JSGlobalObject*, JSValue, JSValue asyncContext = { });
     void fetchComplete(JSGlobalObject*, AbstractModuleRecord*);
 #if USE(BUN_JSC_ADDITIONS)
     // For an embedder that already built the module record: leaves the entry Fetched without allocating the
@@ -123,6 +135,9 @@ private:
     // The fetch / instantiation / evaluation errors are mutually exclusive: m_status
     // disambiguates which kind m_error holds (FetchFailed / InstantiationFailed / EvaluationFailed).
     WriteBarrier<Unknown> m_error;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
+#endif
     Status m_status { Status::New };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };

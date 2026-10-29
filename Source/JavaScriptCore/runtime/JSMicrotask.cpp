@@ -1099,11 +1099,11 @@ static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSM
 
 static void moduleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, ThrowScope& scope, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
 {
-    // arguments[0] = unused: the reaction keeps the async context there
+    // arguments[0] = pre-created modulePromise
     // arguments[1] = resolution (JSSourceCode* for JS/WASM/JSON/text, JSValue for anything else) or rejection (error)
-    // arguments[2] = ModuleRegistryEntry*, which holds the pre-created modulePromise
+    // arguments[2] = ModuleRegistryEntry*
     auto* entry = uncheckedDowncast<ModuleRegistryEntry>(arguments[2]);
-    auto* modulePromise = entry->modulePromise();
+    auto* modulePromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
 #if USE(BUN_JSC_ADDITIONS)
     // hostLoadImportedModule may have already replayed this step inline while
@@ -1216,7 +1216,11 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
             if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
                 compiled->willBeLoadedByImport();
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), context->asyncContext());
+#else
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher());
+#endif
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1333,7 +1337,11 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         if (!moduleData.inherits<AbstractModuleRecord>()) {
 #endif
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+        context->loader()->provideFetch(globalObject, specifier, type, moduleData, context->asyncContext());
+#else
         context->loader()->provideFetch(globalObject, specifier, type, moduleData);
+#endif
         if (scope.exception()) {
             intermediatePromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1361,7 +1369,11 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
 #endif
             loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
         } else {
+#if USE(BUN_JSC_ADDITIONS)
+            combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher, context->asyncContext());
+#else
             combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
+#endif
             if (context->evaluate())
                 innerLoadFlags.add(ModuleLoadFlag::Evaluate);
             loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
@@ -2473,8 +2485,13 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImport(globalObject, argument0, argument1, argument2, argument3));
     }
 
-    case InternalMicrotask::CompiledModuleImportSettled:
-        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, argument2, static_cast<JSPromise::Status>(payload)));
+    case InternalMicrotask::CompiledModuleImportSettled: {
+        // argument2 is the module, paired with the async context of the import() where there is one.
+        JSValue module = argument2;
+        JSValue asyncContext = AsyncContextSwapScope::unwrapContextTuple(module);
+        ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, asyncContext);
+        RELEASE_AND_RETURN(scope, AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, module, static_cast<JSPromise::Status>(payload), asyncContext));
+    }
 
     case InternalMicrotask::CompiledModuleImportStep: {
         ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, argument3);
@@ -2496,7 +2513,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::ModuleRegistryFetchSettled: {
 #if USE(BUN_JSC_ADDITIONS)
-        ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, argument3);
+        ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleRegistryEntry>(argument2)->takeAsyncContext());
 #endif
         moduleRegistryFetchSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;

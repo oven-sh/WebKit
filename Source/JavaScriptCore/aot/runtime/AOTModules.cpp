@@ -763,6 +763,12 @@ static void queueStepOfImport(JSPromise* importPromise, JSValue module, uint8_t 
     realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, module, error, asyncContext);
 }
 
+// CompiledModuleImportSettled has a cell, so its reaction has no place for the async context of the import(). Where there is one, the module goes to the job paired with it: runInternalMicrotask() takes the pair apart.
+static JSValue contextOfImportSettled(JSGlobalObject* realm, ModuleID module, JSValue asyncContext)
+{
+    return AsyncContextSwapScope::wrap(realm->vm(), realm, jsNumber(module.index()), asyncContext);
+}
+
 void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue error, uint8_t stepsLeft, JSValue asyncContext)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
@@ -772,15 +778,14 @@ void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue 
         modulesOf(promise->realm())->finishImportOfEvaluatedModule(promise, ModuleID(static_cast<uint32_t>(module.asInt32())), error);
 }
 
-void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status status)
+void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status status, JSValue asyncContext)
 {
     auto* promise = uncheckedDowncast<JSPromise>(importPromise);
     RELEASE_ASSERT(status != JSPromise::Status::Pending);
     Modules* modules = modulesOf(promise->realm());
     ModuleID imported(static_cast<uint32_t>(module.asInt32()));
-    // This job has a cell, and with it no place for the async context of the import(): the steps behind it are queued without one.
     if (modules->isImportedByLoader(imported))
-        queueStepOfImport(promise, module, numberOfJobsBehindEvaluation - 1, JSValue(), status == JSPromise::Status::Rejected ? resolution : JSValue());
+        queueStepOfImport(promise, module, numberOfJobsBehindEvaluation - 1, asyncContext, status == JSPromise::Status::Rejected ? resolution : JSValue());
     else if (status == JSPromise::Status::Rejected)
         promise->reject(promise->vm(), resolution);
     else
@@ -1248,7 +1253,7 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
             import.jobsRun = jobInWhichLoaderAsksRoot - 1;
             if (!m_orderOfCountedJobs.isEmpty())
                 m_orderOfCountedJobs.appendUsingFunctor(import.jobsRun, [&](size_t) { return import.serial; });
-            evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::WaitForLoader, ErrorOfImportedFile::IsLeftToLoader);
+            evaluateImportedCommonJSFiles(module, JobsOfImportedFiles::WaitForLoader, ErrorOfImportedFile::IsLeftToLoader, nullptr, import.asyncContext.get());
             RETURN_IF_EXCEPTION(scope, void());
             if (import.jobsOfLoader || m_rootWhoseFilesRanAhead == module || storedStatus(module) != StoredModuleStatus::Unlinked)
                 return goOnWithLoader();
@@ -1358,7 +1363,7 @@ void Modules::decideHowCountedImportGoesOn(CountedImport& import)
         queueStepOfImport(importPromise, jsNumber(module.index()), numberOfJobsBehindEvaluation, import.asyncContext.get(), evaluation->result());
         return;
     case JSPromise::Status::Pending:
-        evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, jsNumber(module.index()));
+        evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, contextOfImportSettled(m_instance.globalObject, module, import.asyncContext.get()));
         return;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -1459,7 +1464,7 @@ void Modules::continueImport(JSPromise* importPromise, ModuleID module, std::opt
     RETURN_IF_EXCEPTION(scope, void());
     switch (evaluation->status()) {
     case JSPromise::Status::Pending:
-        evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, jsNumber(module.index()));
+        evaluation->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::CompiledModuleImportSettled, importPromise, contextOfImportSettled(m_instance.globalObject, module, asyncContext));
         return;
     case JSPromise::Status::Fulfilled:
         RELEASE_AND_RETURN(scope, resolveWithNamespace(importPromise, module));
