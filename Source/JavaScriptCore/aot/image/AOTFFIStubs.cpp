@@ -27,7 +27,7 @@ bool mayUseFFI(const Typed::PipelineOutput& pipeline, const CompileOptions& opti
 {
     if (options.excludesForeignCalls())
         return false;
-    OptionSet<ImageFlag> flags = flagsForUnseenCode(pipeline);
+    OptionSet<ImageFlag> flags = flagsForUnseenCode(pipeline, options);
     if (flags.contains(ImageFlag::AdmitsUnknownJavaScript) && (!options.excludesForeignCallsOfUnseenCode() || flags.contains(ImageFlag::AdmitsLibraryText)))
         return true;
     const Typed::FlowResults& flow = *pipeline.flow;

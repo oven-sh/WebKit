@@ -432,11 +432,16 @@ static Vector<uint8_t> encodeSlotHandlers(const StubBlob& blob)
     return bytesOf(offsets);
 }
 
-OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline)
+OptionSet<ImageFlag> flagsForUnseenCode(const Typed::PipelineOutput& pipeline, const CompileOptions& options)
 {
     const Typed::FlowResults& flow = *pipeline.flow;
-    if (!flow.hasResults())
-        return { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
+    if (!flow.hasResults()) {
+        OptionSet<ImageFlag> flags { ImageFlag::AdmitsUnknownJavaScript, ImageFlag::LoadsModulesByName, ImageFlag::AdmitsLibraryText, ImageFlag::FindsDataFilesByName };
+        // Any load may name a file outside the image, so only the options say whether one is loaded.
+        if (!options.excludesCodeOutsideImage())
+            flags.add(ImageFlag::LoadsCodeOutsideImage);
+        return flags;
+    }
 
     OptionSet<ImageFlag> flags;
     if (flow.findsFilesOfProgramByName())
@@ -680,7 +685,7 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
         .constantsOffset = layout.constantsOffset,
         .constantsSize = safeCast<uint32_t>(parts.linker.constants.bytes.size()),
     };
-    OptionSet<ImageFlag> flags = flagsForUnseenCode(parts.inputs.pipeline);
+    OptionSet<ImageFlag> flags = flagsForUnseenCode(parts.inputs.pipeline, context.options());
     if (context.options().obfuscates())
         flags.add(ImageFlag::IsObfuscated);
     if (Typed::namesWaysToModuleObjects(*parts.inputs.pipeline.program))

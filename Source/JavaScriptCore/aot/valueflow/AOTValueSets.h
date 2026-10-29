@@ -713,6 +713,8 @@ public:
     ValueSetID pass(ValueSetID value, ValueSetID mask, ValueSetID familyObjects, ValueFlowMaskKind, const ValueFlowPlaceholders&, const ValueFlowCoveredObjects& = { });
     ValueSetID uniteAll(std::span<const ValueSetID>);
     void appendParts(ValueSetID, Vector<ValueSetID>&);
+    // Like appendParts(), but a set that spans several groups of places gets one part per group first. Two sets that differ in one group then share the parts of all other groups.
+    void appendCoarseParts(ValueSetID, Vector<ValueSetID>&);
     void addBytesTo(ValueFlowBytesByTable&) const;
 
 private:

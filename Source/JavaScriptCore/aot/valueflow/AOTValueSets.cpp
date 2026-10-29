@@ -1692,6 +1692,20 @@ void ValueSetMaker::appendParts(ValueSetID set, Vector<ValueSetID>& parts)
     }
 }
 
+void ValueSetMaker::appendCoarseParts(ValueSetID set, Vector<ValueSetID>& parts)
+{
+    if (!ValueSets::isComplement(set) && !ValueSets::holdsOneMember(ValueSets::storedSetOf(set)) && set != ValueSets::nothing) {
+        const ValueSets::Run& run = m_sets.m_lists.at(ValueSets::storedSetOf(set));
+        if (!ValueSets::isShort(run) && run.numberOfWords > 1) {
+            // Runs never move, so the span stays valid while the parts are interned.
+            for (uint64_t entry : run.span())
+                parts.append(ValueSetID(internList(singleElementSpan(entry)) * 2));
+            return;
+        }
+    }
+    appendParts(set, parts);
+}
+
 ValueSetID ValueSetMaker::uniteAll(std::span<const ValueSetID> sets)
 {
     if (sets.size() < 3 || std::ranges::any_of(sets, ValueSets::isComplement)) {

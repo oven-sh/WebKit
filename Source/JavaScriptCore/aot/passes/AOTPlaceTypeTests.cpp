@@ -1572,6 +1572,9 @@ static bool isOfOtherKindInBuiltins(FunctionPassContext& context, ValueID access
         if (found.outcome != BuiltinMemberLookup::Outcome::Found)
             return false;
         BuiltinID member = builtins.canonicalID(found.member);
+        // Flow lists how the program uses each built-in. A member that no access of the program is seen to reach speaks for no receiver, though code that nobody has seen may come by it.
+        if (!context.inputs.flow.usesOf(member).containsAny({ BuiltinUse::Read, BuiltinUse::Called, BuiltinUse::Written }))
+            return true;
         // `response.body = text` stores nothing: whoever stores under the name has an object in mind that takes the value.
         return (stores && isGetterAlone(builtins, member)) || (builtins.at(member).kind == BuiltinKind::Method) != asksForMethod;
     });

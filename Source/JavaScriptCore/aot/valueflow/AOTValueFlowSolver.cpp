@@ -1238,7 +1238,7 @@ private:
         case ValueFlowMadeNodeKind::Lookup:
             m_setsOfParts.shrink(0);
             if (key.name().kind == ValueFlowNameKind::PrototypeLink)
-                m_maker->appendParts(key.set, m_setsOfParts);
+                m_maker->appendCoarseParts(key.set, m_setsOfParts);
             for (ValueSetID part : m_setsOfParts)
                 wishes.append(Wish { number, ValueFlowNodeKey::named(ValueFlowMadeNodeKind::Lookup, part, key.name()) });
             if (m_setsOfParts.isEmpty())
@@ -2141,8 +2141,12 @@ std::optional<uint32_t> ValueFlowSolver::makeNodesWhereAskedFor(const ValueFlowN
     made.staysAtRest = key.set == ValueSets::nothing && (key.kind == ValueFlowMadeNodeKind::Written || key.kind == ValueFlowMadeNodeKind::CallGroup);
     Vector<ValueSetID> setsOfParts;
     bool mayHaveParts = key.kind == ValueFlowMadeNodeKind::CallGroup || (key.kind == ValueFlowMadeNodeKind::Lookup && key.name().kind == ValueFlowNameKind::PrototypeLink);
-    if (mayHaveParts && !made.staysAtRest)
-        maker.appendParts(key.set, setsOfParts);
+    if (mayHaveParts && !made.staysAtRest) {
+        if (key.kind == ValueFlowMadeNodeKind::Lookup)
+            maker.appendCoarseParts(key.set, setsOfParts);
+        else
+            maker.appendParts(key.set, setsOfParts);
+    }
     bool hasStatement = !made.staysAtRest && setsOfParts.isEmpty() && (key.kind == ValueFlowMadeNodeKind::Lookup || key.kind == ValueFlowMadeNodeKind::CallGroup || key.kind == ValueFlowMadeNodeKind::Hub);
 
     IndexOfMadeNodes& index = indexOfMadeNodesWith(hash);

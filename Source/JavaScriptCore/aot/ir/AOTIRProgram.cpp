@@ -697,8 +697,8 @@ Vector<ModuleID, 2> formsInImage(const Program& program, ModuleID named)
         std::span<const uint8_t> path = program.string(program.at(file).path);
         // A form stands under the path of its file, a question mark and the name of the form.
         if (program.at(file).kind == ModuleKind::Data) {
-            if (auto mark = std::ranges::find_last(path, '?'); !mark.empty())
-                path = path.first(mark.begin() - path.begin());
+            if (auto mark = std::find(path.rbegin(), path.rend(), '?'); mark != path.rend())
+                path = path.first(path.rend() - mark - 1);
         }
         for (uint32_t index = 0; index < program.modules.size(); ++index) {
             const Module& module = program.modules[index];
