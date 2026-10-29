@@ -5,7 +5,8 @@ function shouldBe(actual, expected) {
         throw new Error("expected " + JSON.stringify(expected) + " but got " + JSON.stringify(actual));
 }
 
-// These are links in the IANA time zone database, but some CLDR versions (45 and earlier, 49 and later) treat them as canonical zones.
+// tzdata 2026d made these zones again and CLDR 49 treats them as canonical (as CLDR 45 and earlier did), but they should stay aliases.
+// https://github.com/tc39/ecma402/issues/1103
 const links = [
     ["EST5EDT", "America/New_York", 240],
     ["CST6CDT", "America/Chicago", 300],

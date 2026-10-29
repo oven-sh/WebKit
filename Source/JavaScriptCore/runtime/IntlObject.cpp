@@ -1989,9 +1989,9 @@ static std::optional<String> canonicalizeTimeZoneNameFromICUTimeZone(String&& ti
     return std::make_optional(WTF::move(timeZoneName));
 }
 
-// These are links in the IANA time zone database, but CLDR 49 (like CLDR 45 and earlier) treats them as canonical zones,
-// so ICU does not resolve them.
-// https://github.com/eggert/tz/blob/main/backward
+// tzdata 2026d turned these from links back into zones, and CLDR 49 followed. TC39-TG2 agreed that they should stay
+// non-primary identifiers, as they were with tzdata 2024b through 2026c.
+// https://github.com/tc39/ecma402/issues/1103
 static std::optional<ASCIILiteral> mapPOSIXStyleTimeZoneToPrimary(StringView timeZone)
 {
     if (timeZone == "EST5EDT"_s)
