@@ -48,7 +48,12 @@ for (let locale of ["en-GB", "ja", "ko", "ar", "th", "de", "ru", "fr"]) {
     for (let hour12 of [true, false]) {
         let { original, resolved, recreated } = roundTrip(locale, { hour: "numeric", minute: "numeric", hour12 });
         shouldBe("dayPeriod" in resolved, false);
-        shouldBe(recreated.format(time), original.format(time));
+        // Bun: upstream expects the two to be equal in th too. In CLDR 49 (ICU 79) th's pattern for a 2-digit hour, which is what is resolved, ends with "\u0E19.", and its pattern for a numeric hour does not.
+        if (locale === "th" && !hour12 && $vm.icuVersion() >= 79) {
+            shouldBe(original.format(time), "10:05");
+            shouldBe(recreated.format(time), "10:05 \u0E19.");
+        } else
+            shouldBe(recreated.format(time), original.format(time));
         shouldBe(recreated.resolvedOptions().hourCycle, resolved.hourCycle);
     }
 }

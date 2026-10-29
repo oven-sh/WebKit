@@ -1,10 +1,10 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 124 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 127 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A9 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A10 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -114,6 +114,17 @@ Rules for an edit to an upstream test:
 - Fork code: `DecoderStringTable::jsStringFor` (`runtime/CachedTypes.h:132`): loading a cache interns nothing.
 - File: `stress/jsstring-definitely-atom-bit.js`: `$skipModes << "bytecode-cache"`. The other modes run it unchanged.
 
+### A10. The lanes' ICU is 79.1, with CLDR 49's text
+
+- `icu/source.json`. The macOS lanes run with the system's ICU, so each of these keeps upstream's expectation for an ICU
+  before 79 (`$vm.icuVersion()`), or lists CLDR 49's text beside it where the test already takes a list.
+- `stress/intl-date-pattern-includes-literal-text.js`: fr has no `HH 'h'`: `23 h` → `23`.
+- `stress/intl-datetimeformat-resolved-options-am-pm.js`: th's short time is `HH:mm น.`, which ICU takes for a 2-digit hour;
+  a numeric hour has `HH:mm`. A format made again from `resolvedOptions()`, where the hour is 2-digit, prints `10:05 น.`
+  for the first one's `10:05`.
+- `stress/intl-extended-timezone-names.js`: zh-Hant has no short names for America/Los_Angeles: `PDT` → `GMT-7`,
+  `PT` → `洛杉磯時間`.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -186,6 +197,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/regexp-image-code-hands-long-searches-over.js` | with `--useRegExpImageMode=1`, in a `jsc` that has the ahead-of-time compiler: the code of a pattern stops after nine turns a unit and 65,537, and the match is made again by the flat programs, which give it up where the JIT does. In a `jsc` without the compiler the option changes nothing, and both runs hold the JIT to the same answers |
 | `stress/switch-string-substring-of-base-widened-by-atomization.js` | a `switch` over strings that reads the characters of a substring in place, in its base, goes by the width that the base has now: atomizing the base may have put an equal 16-bit string in its place since the substring was made (DFG and FTL) |
 | `stress/bun-weak-map-and-set-shrunk-before-eden-collection.js` | the buffer of a `WeakMap` or `WeakSet` counts in the heap's size as it is behind a collection (`WeakMapImpl::reconcileWeakReferencesAtGCEnd`; upstream counts it as the last visit found it), but an eden collection never leaves that size below what the collection before it left: a buffer that shrank stops counting at the next full collection |
+| the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | what the file holds the engine to with fr, whose pattern has no literal text in CLDR 49: an `h` in a pattern's literal text is not taken for the hour |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
 
 `jsc` cannot compile a program ahead of time by itself (the compiler's input comes from the front end, in Bun's repository), so
@@ -195,7 +207,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A9 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.
