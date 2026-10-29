@@ -195,6 +195,7 @@ template<typename CharType, SkipsStarts skipsStarts>
 static ALWAYS_INLINE unsigned findStartByTables(const FlatProgram& program, const CharType* input, unsigned length, unsigned from, StartSearch& search)
 {
     unsigned none = length + 1;
+    bool keepsPlaces = true;
     StartCandidates& candidates = search.candidates;
     unsigned depth = program.startTableDepth;
     auto entryOf = [&](unsigned at) -> unsigned {
@@ -235,13 +236,14 @@ static ALWAYS_INLINE unsigned findStartByTables(const FlatProgram& program, cons
         if (from < program.firstStartFoundByTablesAlone) [[unlikely]] {
             if (!program.skipsStartsBehindFailedRuns)
                 return 0;
-            // The search by a table keeps places, which would be handed out without coming here.
-            if (program.startScan != FlatStartScan::OneCharacter)
-                return findStartBehindFailedRun(program, input, length, from, from, search);
             if (from != search.startOffset) {
+                if (program.startScan != FlatStartScan::OneCharacter)
+                    return findStartBehindFailedRun(program, input, length, from, from, search);
                 size_t found = WTF::find(std::span { input, length }, static_cast<CharType>(program.onlyStartCharacter), from);
                 return found == notFound ? none : findStartBehindFailedRun(program, input, length, from, found, search);
             }
+            // No attempt has failed yet. The places of the table would be handed out without coming here.
+            keepsPlaces = false;
         }
     }
     if (program.startScan == FlatStartScan::OneCharacter) {
@@ -291,8 +293,10 @@ static ALWAYS_INLINE unsigned findStartByTables(const FlatProgram& program, cons
             for (; mask; mask &= mask - 1) {
                 unsigned place = from + std::countr_zero(mask) / StartCandidates::bitsPerCharacter;
                 if (canBeginAt(place)) {
-                    candidates.begin = from;
-                    candidates.mask = mask;
+                    if (keepsPlaces) {
+                        candidates.begin = from;
+                        candidates.mask = mask;
+                    }
                     return place;
                 }
             }
@@ -2523,10 +2527,42 @@ static JSRegExpResult matchByPolicy(const FlatProgram& program, std::span<const 
     return matchForgetting<CharType, isFull>(program, input.data(), length, start, output, matchLimit);
 }
 
+template<typename CharType>
+static ALWAYS_INLINE JSRegExpResult matchOneSetOrRun(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output)
+{
+    const FlatOp& op = program.ops[0];
+    const CharacterSetBits& members = program.characterSets[op.set];
+    auto isMember = [&](CharType unit) ALWAYS_INLINE_LAMBDA {
+        return unit > 0xff ? wideRangesContain(program.wideRanges.span(), members, unit) : contains(members, program.wideRanges.span(), static_cast<Latin1Character>(unit));
+    };
+    unsigned length = input.size();
+    StartSearch search { start };
+    for (unsigned from = start; from < length; ++from) {
+        if (program.startScan != FlatStartScan::None) {
+            from = findStartByTables<CharType, SkipsStarts::No>(program, input.data(), length, from, search);
+            if (from >= length)
+                break;
+        }
+        if (!isMember(input[from]))
+            continue;
+        unsigned end = from + 1;
+        if (op.kind != FlatOp::Kind::Set) {
+            while (end < length && isMember(input[end]))
+                ++end;
+        }
+        output[0] = from;
+        output[1] = end;
+        return JSRegExpResult::Match;
+    }
+    return JSRegExpResult::NoMatch;
+}
+
 // Whatever is not the common case.
 template<typename CharType>
 static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output, FlatMatchPolicy policy)
 {
+    if (program.isOneSetOrRun && policy == FlatMatchPolicy::HandsOverEarly)
+        return matchOneSetOrRun(program, input, start, output);
     if (program.needsFullMachine)
         return matchByPolicy<CharType, true>(program, input, start, output, policy);
     return matchByPolicy<CharType, false>(program, input, start, output, policy);

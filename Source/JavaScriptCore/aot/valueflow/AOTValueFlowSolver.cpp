@@ -6291,6 +6291,8 @@ bool ValueFlowSolver::solve()
         m_seedOfSchedule = m_input.build->recordedOptions().has(TestingSwitch::DelayFlowRules) + 2 * m_input.build->recordedOptions().has(TestingSwitch::DelayOtherFlowRules) + 4 * m_input.build->recordedOptions().numberOfFlowSchedule;
     m_stepTimes.isOn = m_input.build && m_input.build->options().logging.logsPhaseTimes;
     m_stepTimes.begin();
+    if (m_input.program)
+        m_roundThatTiedNamespace = std::make_unique<std::atomic<uint32_t>[]>(m_input.program->modules.size() + 1);
     m_graph.addNodes(m_input.numberOfNodes);
     runTasksInParallel(m_loops, {
         [&] {
@@ -6381,6 +6383,16 @@ bool ValueFlowSolver::solve()
             m_counters.isPastEdgeBudget = true;
             if (RefPtr<BackgroundTask> task = std::exchange(m_insertionOfNodesThatRead, nullptr))
                 task->finish();
+            if (m_stepTimes.isOn) {
+                uint64_t edgesInLogs = 0;
+                for (const std::unique_ptr<Thread>& thread : m_threads)
+                    edgesInLogs += thread->log.edges.size();
+                dataLogLn("AOT flow stops in round ", m_counters.rounds, " | budget ", m_input.mostEdgesLogged, " | edges ", m_graph.numberOfEdges(), " | edges logged ", m_counters.edgesLogged, " | edges in the logs of this round ", edgesInLogs, " | readers ", numberOfReaders(), " | statements ", numberOfStatements(), " | nodes ", m_graph.numberOfNodes(), " | resident ", PhaseTimes::residentMegabytes(), " MB");
+                dumpEdgesByEnds();
+                forEachKindOfStatementRun([&](ValueFlowStatementKind kind, Opcode opcode, const RunsAndEdges& row) {
+                    dataLogLn("AOT flow runs | ", kind == ValueFlowStatementKind::Operation ? nameOf(opcode) : "kind"_s, " ", static_cast<unsigned>(kind), " | runs ", row.runs, " | added nothing ", row.runsThatAddedNothing, " | connections ", row.connections, " | edges logged ", row.edgesLogged);
+                });
+            }
             if (m_input.build)
                 m_input.build->gaveUp(LimitID::MaxValueFlowEdgesLogged, Subject { });
             return true;
@@ -6494,8 +6506,11 @@ bool ValueFlowSolver::solve()
         for (size_t index = 0; index < m_usesOfBuiltin.size(); ++index)
             m_addedByGeneralRules.builtinsUsedMore += index < usesAtRest.size() ? m_usesOfBuiltin[index] != usesAtRest[index] : !m_usesOfBuiltin[index].isEmpty();
     }
-    if (m_stepTimes.isOn)
+    if (m_stepTimes.isOn) {
         dumpBytesByTable();
+        dataLogLn("AOT flow totals at rest | edges ", m_graph.numberOfEdges(), " | edges logged ", m_counters.edgesLogged, " | readers ", numberOfReaders(), " | statements ", numberOfStatements(), " | nodes ", m_graph.numberOfNodes());
+        dumpEdgesByEnds();
+    }
     m_stepTimes.begin();
     fillNumbersThatNobodyGave();
     m_stepTimes.didFinish("behind the rounds: numbers that nobody gave"_s);
@@ -6542,6 +6557,55 @@ bool ValueFlowSolver::solve()
         releaseInOrder(m_threads, m_readerShards, m_watchShards, m_firstSetWatchedForCoverOfMember, m_setsWatchedForCoverOfMembers, m_isWatched, m_listenersOfNode, m_readersOfFunction, m_valuesShownToStatement, m_freeUses, m_readersOfWorker, m_newMembersOfWorker, m_watchesToTestOfWorker, m_newMembers, m_nodesOfManyObjects, m_rememberedByStatement, m_linkShards, m_edgesOfRound, m_edgesInFrontOfLinks, m_readToLink, m_writtenToLink);
     });
     return true;
+}
+
+// Where the edge budget goes: edges by the kinds of their two ends, and how many of them the names with the most take.
+void ValueFlowSolver::dumpEdgesByEnds() const
+{
+    constexpr unsigned kinds = 11;
+    constexpr unsigned ends = kinds + 1;
+    static constexpr std::array<ASCIILiteral, ends> names { "Constant"_s, "Read"_s, "Written"_s, "Lookup"_s, "CallGroup"_s, "Hub"_s, "Masked"_s, "Marked"_s, "WrittenUnderKind"_s, "ReadUnderKind"_s, "Instance"_s, "Body"_s };
+    auto recordOf = [&](ValueFlowNodeID node) {
+        return node.index() < m_input.numberOfNodes ? noSolverIndex : m_madeNodesOfNode[node.index() - m_input.numberOfNodes];
+    };
+    auto endOf = [&](uint32_t record) {
+        return record == noSolverIndex ? kinds : static_cast<unsigned>(m_madeNodes[record].key.kind);
+    };
+    std::array<uint64_t, ends> nodes { };
+    std::array<std::array<uint64_t, ends>, ends> edges { };
+    HashMap<uint64_t, uint64_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> edgesOfName;
+    uint64_t largestFanOut = 0;
+    for (uint32_t index = 0; index < m_graph.numberOfNodes(); ++index) {
+        uint32_t record = recordOf(ValueFlowNodeID(index));
+        unsigned from = endOf(record);
+        ++nodes[from];
+        uint64_t fanOut = 0;
+        m_graph.forEachSuccessor(ValueFlowNodeID(index), [&](ValueFlowNodeID to) {
+            ++edges[from][endOf(recordOf(to))];
+            ++fanOut;
+        });
+        largestFanOut = std::max(largestFanOut, fanOut);
+        if (from == static_cast<unsigned>(ValueFlowMadeNodeKind::Written) && fanOut) {
+            const ValueFlowNodeKey& key = m_madeNodes[record].key;
+            edgesOfName.add(static_cast<uint64_t>(key.detail) << 32 | key.payload, 0).iterator->value += fanOut;
+        }
+    }
+    for (unsigned from = 0; from < ends; ++from) {
+        dataLog("AOT flow edges | from ", names[from], " | nodes ", nodes[from], " | to");
+        for (unsigned to = 0; to < ends; ++to) {
+            if (edges[from][to])
+                dataLog(" ", names[to], " ", edges[from][to]);
+        }
+        dataLogLn();
+    }
+    Vector<uint64_t> byName;
+    for (uint64_t count : edgesOfName.values())
+        byName.append(count);
+    std::ranges::sort(byName, std::greater { });
+    dataLog("AOT flow edges | largest fan-out ", largestFanOut, " | names written ", byName.size(), " | edges out of what is written under the names with the most");
+    for (uint64_t count : byName.span().first(std::min<size_t>(byName.size(), 16)))
+        dataLog(" ", count);
+    dataLogLn();
 }
 
 void ValueFlowSolver::dumpBytesByTable() const

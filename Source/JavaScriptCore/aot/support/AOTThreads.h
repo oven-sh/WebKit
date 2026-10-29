@@ -59,6 +59,8 @@ public:
     // Memory that one thread allocated and another freed stays with the first until that thread looks. Every thread looks before its next task, and the resting ones are woken for it.
     // Nothing waits: what comes next runs beside it.
     JS_EXPORT_PRIVATE void giveFreeMemoryBack() const;
+    // The same for the threads at work: each looks between the runs of a loop.
+    JS_EXPORT_PRIVATE void askThreadsAtWorkForFreeMemory() const;
 
     // Loops and tasks that a task starts have its priority unless they name another.
     JS_EXPORT_PRIVATE static TaskPriority currentPriority();

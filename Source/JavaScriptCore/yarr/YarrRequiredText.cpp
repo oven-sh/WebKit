@@ -455,7 +455,8 @@ RequiredText makeRequiredText(const Candidate& candidate)
     result.matchesAllNonASCII = places[rarest].matchesAllNonASCII;
     result.leastDistance = distance.least;
     result.greatestDistance = distance.greatest;
-    if (endsWalkSoon(candidate)) {
+    // At a fixed distance the place of the unit says where the match begins.
+    if (endsWalkSoon(candidate) && distance.least != distance.greatest) {
         Place inFront = unitsInFrontOf(candidate, candidate.begin + rarest);
         result.asciiMembersInFront = inFront.asciiMembers;
         result.allNonASCIICanStandInFront = inFront.matchesAllNonASCII;

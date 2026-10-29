@@ -386,12 +386,19 @@ void ParallelLoops::sendRestingThreadsBack() const
     m_restingThreads->close();
 }
 
-void ParallelLoops::giveFreeMemoryBack() const
+void ParallelLoops::askThreadsAtWorkForFreeMemory() const
 {
     if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
         return;
     s_giveFreeMemoryOfCurrentThreadBack.store(m_hostPool->giveFreeMemoryOfCurrentThreadBack, std::memory_order_relaxed);
     s_timesAskedForFreeMemory.fetch_add(1, std::memory_order_release);
+}
+
+void ParallelLoops::giveFreeMemoryBack() const
+{
+    askThreadsAtWorkForFreeMemory();
+    if (!m_hostPool || !m_hostPool->giveFreeMemoryOfCurrentThreadBack)
+        return;
     giveFreeMemoryOfCurrentThreadBackIfAsked();
     RestingThreads::Task task { [](void*) { }, nullptr, TaskPriority::Foreground, InheritedWork::ofCurrentThread() };
     for (unsigned left = numberOfRestingThreads(); left && m_restingThreads->tryHandOver(task); --left) { }
@@ -588,6 +595,7 @@ void forEachIndexInParallel(const ParallelLoops& loops, unsigned count, NOESCAPE
                 continue;
             for (unsigned index = first; index < end; ++index)
                 functor(index, worker);
+            giveFreeMemoryOfCurrentThreadBackIfAsked();
             run = std::min(run * 2, longestRun);
             first = next.load(std::memory_order_relaxed);
         }

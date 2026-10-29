@@ -488,6 +488,14 @@ bool ValueFlowRuleContext::wasAddedInEarlierRound(ValueFlowNodeID node, Climbing
     return holding && m_solver.graph().hasAdded(ValueFlowEdge { *holding, node });
 }
 
+bool ValueFlowRuleContext::isFirstToTieNamespaceInThisRound(ModuleID module)
+{
+    // Each edge must keep the statement that logs it first, whichever thread runs first.
+    if (m_solver.m_input.remembersWhoLoggedEachEdge)
+        return true;
+    return m_solver.m_roundThatTiedNamespace[module.index()].exchange(m_solver.m_counters.rounds, std::memory_order_relaxed) != m_solver.m_counters.rounds;
+}
+
 ClimbingSet ValueFlowRuleContext::membersNewToThread(ClimbingSet set, unsigned number)
 {
     ValueSetID before = m_rememberedByThread[number];

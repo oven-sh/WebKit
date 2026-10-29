@@ -112,6 +112,13 @@ bool ModuleTable::holdsPathStartingWith(StringView start) const
     return place < byPath.size() && pathText(ModuleID(byPath[place])).startsWith(start);
 }
 
+std::span<const ImportOfHeldFileData> ModuleTable::importsOfHeldFile(ModuleID file) const
+{
+    std::span<const ImportOfHeldFileData> imports = m_tables->importsOfHeldFiles();
+    auto found = std::ranges::equal_range(imports, file.index(), { }, &ImportOfHeldFileData::file);
+    return { found.begin(), found.end() };
+}
+
 std::optional<ModuleID> ModuleTable::findRuntimeSource(uint32_t registryID) const
 {
     std::span<const CompiledRuntimeModuleData> runtimeModules = m_tables->compiledRuntimeModules();

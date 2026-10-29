@@ -2756,6 +2756,42 @@ static PassOutcome markNoReturnCallBlocks(FunctionPassContext& context)
     return outcome;
 }
 
+// What stays in a block behind such a call takes registers and moves on the path that does not call. A call in tail position stays one.
+static PassOutcome cutBehindNoReturnCalls(FunctionPassContext& context)
+{
+    Function& caller = context.function;
+    bool didCut = false;
+    for (BlockID blockID : context.analyses.cfg().reversePostOrder()) {
+        const Block& block = caller.at(blockID);
+        size_t index = block.values.findIf([&](ValueID id) {
+            const Value& value = caller.at(id);
+            return value.opcode == Opcode::CallDirect && context.inputs.inlining.neverReturns(context.program, value.function());
+        });
+        if (index == notFound)
+            continue;
+        ValueID call = block.values[index];
+        bool isLast = index + 1 == block.values.size();
+        if (isLast && block.terminator.kind == TerminatorKind::Unreachable)
+            continue;
+        if (block.terminator.kind == TerminatorKind::ReturnCall && block.terminator.callOperand() == call)
+            continue;
+        Origin origin = caller.at(call).origin();
+        for (ValueID value : block.values.span().subspan(index + 1))
+            explainOperationThatGoes(caller, value, InPlaceOfOperation::NothingBecauseNothingComesHere);
+        Block& cut = caller.edit(blockID);
+        cut.values.shrink(index + 1);
+        cut.terminator.become(TerminatorKind::Unreachable);
+        cut.terminator.setCutBy(context.build.passToReportForUnreachableCode());
+        cut.terminator.setOrigin(origin);
+        didCut = true;
+    }
+    if (!didCut)
+        return PassOutcome::Unchanged;
+    compactFunction(caller);
+    context.analyses.didChangeControlFlow();
+    return PassOutcome::Changed;
+}
+
 static const InliningSummary& inliningSummaryOf(FunctionPassContext& context, FunctionID callee)
 {
     const Program& program = context.program;
@@ -3012,6 +3048,7 @@ PassOutcome inlineCalls(FunctionPassContext& context)
         copyAcceptedSites(context, builder, sites.span());
         outcome = PassOutcome::Changed;
     }
+    outcome |= cutBehindNoReturnCalls(context);
     // Every analysis is dropped behind a copied body, those that look into a call behind the choice of a callee version, the frequencies behind the mark on a block.
     if (outcome == PassOutcome::Changed)
         context.keptAnalyses = allAnalyses - FunctionAnalysis::Effects;

@@ -2,7 +2,7 @@ enum AllocationStorage { | engine Heap Frame FrameUntilMaterialized }
 enum ClosureForm { | engine Full Slim Deferred Singleton }
 enum ArrayLiteralStorage { | engine Fresh Profiled }
 enum TailCallRequirement { | engine Required Allowed }
-enum DataEncoding { | engine Unselected Expanded ReadOnlyTree CopyOnWriteArray MadeOnce }
+enum DataEncoding { | engine Unselected Expanded ReadOnlyTree CopyOnWriteArray }
 enum ExpectedElements { | engine Anything Int32Array Uint8Array }
 enum OperatorForm {
     | engine Unselected Generic Integers CheckedIntegers Numbers NumberAndValue Bits Booleans BigInts Strings StringAndValue Int32AndValue
@@ -28,7 +28,7 @@ operation String (string: String) -> constant ; CreatesConstant ; runtime = Stri
 operation BigInt (digits: String) -> constant ; CreatesConstant ; runtime = BigIntConstant ; flow = TableProves ; flowsWithoutRule = true
 operation Builtin (builtin: Builtin) [isNotReadFromHolder] -> constant ; CreatesConstant ; runtime = BuiltinCell ; flow = TableProves ; flowRule = Module
 operation ModuleBuiltin (builtin: Builtin, module: Module(Referrer)) -> constant ; Allocates UsesRuntime throws ; runtime = ModuleBuiltinCell ; flow = TableProves
-operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) [| engine isNeverToldApart] -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
+operation Data (data: Data, engine allocationSite?: AllocationSite, engine arrayStorage: ArrayStorage, engine from Selected encoding: DataEncoding, engine from Placed request?: Request) -> constant ; Allocates throws ; runtime = NewFromData ; interpreted = Allocation ; flow = Allocates ; flowRule = Heap
 operation NewClosure (function: Function(Closure), captures...: Declared/retains(result), with CellStamp, engine from Selected closureForm: ClosureForm) [| engine isMadeOnDemand isHeldByClosureTable isLent] -> constant ; Allocates ; runtime = NewClosureSlow ; interpreted = Allocation ; allocatesInline = true ; flow = Allocates ; flowsWithoutRule = true
 engine operation KeyConstant (key: PropertyKey) -> constant ; CreatesConstant ; runtime = KeyConstant ; flow = TableProves ; flowsWithoutRule = true
 operation Unspecified (valueType: Type) -> declared(valueType) ; none ; Prepared..Placed

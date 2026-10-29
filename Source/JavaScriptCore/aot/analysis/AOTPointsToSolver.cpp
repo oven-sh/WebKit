@@ -2007,11 +2007,29 @@ void PointsToSolver::collectContents()
             continue;
         ContainerState* state = &m_containers[index];
         markLeakedEntries(*state);
-        size_t first = m_results.contents.size();
+        // One container and one slot hold each object once, so sorting the slots and then the objects of each gives the one sorted order.
+        // n objects with fields that may hold any of the n are n * n entries, most of them already in order.
+        Vector<SlotState*, 8> slots;
         forEachOverlappingSlot(*state, std::nullopt, [&](SlotState& slot) {
-            m_results.contents.appendVector(slot.contents);
+            if (slot.slot)
+                slots.append(&slot);
         });
-        AOT::sort(m_results.contents.mutableSpan().subspan(first), isOrderedBefore);
+        AOT::sort(slots.mutableSpan(), [](const SlotState* a, const SlotState* b) {
+            return *a->slot < *b->slot;
+        });
+        auto appendSorted = [&](const SlotState& slot) {
+            size_t first = m_results.contents.size();
+            m_results.contents.appendVector(slot.contents);
+            auto entries = m_results.contents.mutableSpan().subspan(first);
+            auto hasEarlierObject = [](const SolvedContents& a, const SolvedContents& b) {
+                return a.object < b.object;
+            };
+            if (!std::ranges::is_sorted(entries, hasEarlierObject))
+                AOT::sort(entries, hasEarlierObject);
+        };
+        appendSorted(state->unknownSlot);
+        for (const SlotState* slot : slots)
+            appendSorted(*slot);
     }
     ASSERT(std::ranges::is_sorted(m_results.contents, isOrderedBefore));
 }

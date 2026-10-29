@@ -32,18 +32,10 @@ static bool canBeShared(const DataNode& element)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static bool holdsLists(const Data& record)
-{
-    const auto* array = record.root.tryAs<DataNode::Array>();
-    return array && std::ranges::any_of(array->elements, [](const DataNode& element) { return element.is<DataNode::Array>(); });
-}
-
 // Storage in the image may have holes. Storage that the first array of the site creates has none, and it is kept for the arrays that follow: where none follows, the array has storage of its own.
-static DataEncoding encodingOf(const Data& record, bool runsAtMostOnce, bool mayBeMadeOnce)
+static DataEncoding encodingOf(const Data& record, bool runsAtMostOnce)
 {
     const auto* array = record.root.tryAs<DataNode::Array>();
-    if (array && mayBeMadeOnce && !runsAtMostOnce)
-        return DataEncoding::MadeOnce;
     if (array && (isStorageOfArray(*array) || (!runsAtMostOnce && std::ranges::all_of(array->elements, canBeShared))))
         return DataEncoding::CopyOnWriteArray;
     return DataEncoding::ReadOnlyTree;
@@ -56,10 +48,7 @@ void selectDataEncoding(SelectionContext& context)
     uint32_t count = 0;
     for (ValueID id : context.valuesWith(Opcode::Data)) {
         Value& value = function.edit(id);
-        // One cell for every evaluation takes more code than the call of the stub that makes a cell around shared storage. A list of lists has no such stub.
-        const Data& record = program.at(value.data());
-        bool mayBeMadeOnce = value.isNeverToldApart() && (context.shapeAt(id) == CodeShape::Fast || holdsLists(record));
-        value.setEncoding(encodingOf(record, context.pass().runsAtMostOnce(context.pass().analyses.useLists().blockOf(id)), mayBeMadeOnce));
+        value.setEncoding(encodingOf(program.at(value.data()), context.pass().runsAtMostOnce(context.pass().analyses.useLists().blockOf(id))));
         ++count;
     }
     context.didSelectForms(SelectionRuleID::DataEncoding, count);

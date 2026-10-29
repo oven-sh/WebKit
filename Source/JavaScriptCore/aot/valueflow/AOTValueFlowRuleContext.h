@@ -97,6 +97,7 @@ public:
     static constexpr unsigned numberOfSetsRememberedByThread = 3;
     ClimbingSet membersNewToThread(ClimbingSet, unsigned number);
     bool wasAddedInEarlierRound(ValueFlowNodeID, ClimbingSet) const;
+    bool isFirstToTieNamespaceInThisRound(ModuleID);
     bool isStatementOfBody() const;
     ClimbingSet markedAmong(ClimbingSet objects, OptionSet<ObjectMutation>);
 

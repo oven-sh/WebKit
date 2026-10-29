@@ -1946,10 +1946,6 @@ struct UnwrittenLiteral {
     ValueID literal;
     DataNode contents;
     DataID data;
-    // One cell may stand for every list that the literal makes.
-    bool isNeverToldApart { false };
-    // The lists inside the literal, and the casts between them and it.
-    Vector<ValueID> deadValues { };
 };
 
 struct DictionaryLiteral {
@@ -1963,19 +1959,13 @@ struct DictionaryLiteral {
     DataID data;
 };
 
-struct DataNeverToldApart {
-    ValueID value;
-    DataID data;
-};
-
 struct ConstantCollectionSites {
-    bool isEmpty() const { return sites.isEmpty() && unwrittenLiterals.isEmpty() && dictionaries.isEmpty() && dataNeverToldApart.isEmpty(); }
+    bool isEmpty() const { return sites.isEmpty() && unwrittenLiterals.isEmpty() && dictionaries.isEmpty(); }
 
     FunctionID function;
     Vector<ConstructionSite> sites;
     Vector<UnwrittenLiteral> unwrittenLiterals;
     Vector<DictionaryLiteral> dictionaries;
-    Vector<DataNeverToldApart> dataNeverToldApart;
 };
 
 using KeyIdentity = std::pair<uint8_t, uint64_t>;
@@ -2135,10 +2125,8 @@ static std::optional<DataNode> constantNodeOf(const Program& program, const Func
 }
 
 // The arrays of a literal of constants that the optimizer has left in the heap, and that no store of the program reaches, are cells around one storage: it lies in the image unless it holds strings.
-// Where nothing can tell two of them apart either, one cell stands for all, and the literal may hold such lists too.
-static std::optional<UnwrittenLiteral> tryReadUnwrittenLiteral(const AnalysisContext& context, const Function& function, ValueID id, NOESCAPE const Invocable<FunctionAnalyses&()> auto& analyses)
+static std::optional<DataNode> tryReadUnwrittenLiteral(const AnalysisContext& context, const Function& function, const Value& literal)
 {
-    const Value& literal = function.at(id);
     if (literal.storage() != AllocationStorage::Heap || literal.capacityOperand() || !literal.holes().empty() || !context.flow)
         return std::nullopt;
     AllocationSiteID site = literal.allocationSite();
@@ -2146,44 +2134,17 @@ static std::optional<UnwrittenLiteral> tryReadUnwrittenLiteral(const AnalysisCon
     if (!allocationClass || !context.flow->at(allocationClass).impossibleMutations.contains(ObjectMutation::StoreAfterCreation))
         return std::nullopt;
 
-    UnwrittenLiteral result { id, DataNode(DataNode::Undefined { }), { }, context.flow->identityIsNeverObserved(site) };
-    // Only the literal uses such a list.
-    auto tryReadListInside = [&](ValueID element) -> std::optional<DataNode> {
-        if (!result.isNeverToldApart)
-            return std::nullopt;
-        const UseLists& useLists = analyses().useLists();
-        size_t numberOfDeadValues = result.deadValues.size();
-        for (ValueID inner = element; useLists.useCount(inner) == 1; inner = function.at(inner).operand(0)) {
-            const Value& value = function.at(inner);
-            result.deadValues.append(inner);
-            if (value.opcode == Opcode::NewArray) {
-                std::optional<UnwrittenLiteral> list = tryReadUnwrittenLiteral(context, function, inner, analyses);
-                if (!list || !list->isNeverToldApart)
-                    break;
-                result.deadValues.appendVector(list->deadValues);
-                return WTF::move(list->contents);
-            }
-            if (value.opcode != Opcode::Upcast && (value.opcode != Opcode::AssumeType || value.factOperand()))
-                break;
-        }
-        result.deadValues.shrink(numberOfDeadValues);
-        return std::nullopt;
-    };
-
     DataNode::Array array { literal.contents(), { } };
     array.elements.reserveInitialCapacity(literal.elementsOperands().size());
     for (ValueID element : literal.elementsOperands()) {
         std::optional<DataNode> constant = constantNodeOf(context.program, function, element);
-        if (!constant)
-            constant = tryReadListInside(element);
         if (!constant || constant->is<DataNode::BigInt>())
             return std::nullopt;
         array.elements.append(WTF::move(*constant));
     }
     if (array.elements.isEmpty() || arrayStorageOfData(context.program, array) != arrayStorageAtAllocation(context.program, context.program.at(literal.type)))
         return std::nullopt;
-    result.contents = DataNode(WTF::move(array));
-    return result;
+    return DataNode(WTF::move(array));
 }
 
 static bool namesGuard(const auto& user)
@@ -2398,7 +2359,7 @@ static std::optional<ConstantCollectionKind> collectionKindOf(const Program& pro
 
 static void collectSites(const AnalysisContext& context, Vector<ConstantCollectionSites>& found)
 {
-    constexpr OpcodeSet opcodesOfSites { Opcode::NewDictionary, Opcode::NewArray, Opcode::CallBuiltin, Opcode::Data };
+    constexpr OpcodeSet opcodesOfSites { Opcode::NewDictionary, Opcode::NewArray, Opcode::CallBuiltin };
     if (!mayListValueWith(context.program, context.id, opcodesOfSites))
         return;
     const Function& function = context.program.at(context.id);
@@ -2414,18 +2375,15 @@ static void collectSites(const AnalysisContext& context, Vector<ConstantCollecti
         if (value.opcode == Opcode::NewDictionary) {
             if (std::optional<DictionaryLiteral> literal = tryReadDictionary(analyses(), id))
                 inFunction.dictionaries.append(WTF::move(*literal));
-        } else if (value.opcode == Opcode::Data) {
-            if (context.flow && value.allocationSite() && context.flow->identityIsNeverObserved(value.allocationSite()))
-                inFunction.dataNeverToldApart.append({ id, value.data() });
         } else if (value.opcode == Opcode::NewArray) {
-            std::optional<UnwrittenLiteral> unwritten = tryReadUnwrittenLiteral(context, function, id, analyses);
-            if (!unwritten)
+            std::optional<DataNode> contents = tryReadUnwrittenLiteral(context, function, value);
+            if (!contents)
                 return;
             // Storage with cells is made by the first array, for those that follow.
-            if (!isStorageOfArray(*unwritten->contents.tryAs<DataNode::Array>()) && analyses().executionCountOf(analyses().useLists().blockOf(id)) == ExecutionCount::AtMostOnce)
+            if (!isStorageOfArray(*contents->tryAs<DataNode::Array>()) && analyses().executionCountOf(analyses().useLists().blockOf(id)) == ExecutionCount::AtMostOnce)
                 return;
             if (!hasToStayLiteral(analyses(), id))
-                inFunction.unwrittenLiterals.append(WTF::move(*unwritten));
+                inFunction.unwrittenLiterals.append({ id, WTF::move(*contents), { } });
         } else if (std::optional<ConstantCollectionKind> kind = collectionKindOf(context.program, value)) {
             if (std::optional<ConstructionSite> site = tryReadConstruction(analyses(), id, *kind))
                 inFunction.sites.append(WTF::move(*site));
@@ -2435,12 +2393,6 @@ static void collectSites(const AnalysisContext& context, Vector<ConstantCollecti
     inFunction.unwrittenLiterals.removeAllMatching([&](const UnwrittenLiteral& unwritten) {
         return std::ranges::any_of(inFunction.sites, [&](const ConstructionSite& site) {
             return site.deadValues.contains(unwritten.literal);
-        });
-    });
-    // So does a list inside a literal that has become one constant.
-    inFunction.unwrittenLiterals.removeAllMatching([&](const UnwrittenLiteral& unwritten) {
-        return std::ranges::any_of(inFunction.unwrittenLiterals, [&](const UnwrittenLiteral& outer) {
-            return outer.deadValues.contains(unwritten.literal);
         });
     });
     if (!inFunction.isEmpty())
@@ -2501,16 +2453,9 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
         FunctionAnalyses analyses(context, function);
         const UseLists& useLists = analyses.useLists();
         HashMap<ValueID, uint32_t> usesByLiterals;
-        auto countElementsOf = [&](ValueID literal) {
-            for (ValueID element : function.at(literal).elementsOperands())
-                ++usesByLiterals.add(element, 0).iterator->value;
-        };
         for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals) {
-            countElementsOf(unwritten.literal);
-            for (ValueID inner : unwritten.deadValues) {
-                if (function.at(inner).opcode == Opcode::NewArray)
-                    countElementsOf(inner);
-            }
+            for (ValueID element : function.at(unwritten.literal).elementsOperands())
+                ++usesByLiterals.add(element, 0).iterator->value;
         }
         for (const DictionaryLiteral& dictionary : found.dictionaries) {
             for (ValueID definition : dictionary.deadValues)
@@ -2527,15 +2472,8 @@ static void rewriteFunction(const AnalysisContext& context, Function& function, 
         dictionary.become(Opcode::Data);
         dictionary.setData(literal.data);
     }
-    for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals) {
-        addDeadValues(unwritten.deadValues);
-        becomeReadOfData(unwritten.literal, Opcode::Data, unwritten.data).setIsNeverToldApart(unwritten.isNeverToldApart);
-    }
-    for (const DataNeverToldApart& data : found.dataNeverToldApart) {
-        Value& value = function.edit(data.value);
-        value.setData(data.data);
-        value.setIsNeverToldApart(true);
-    }
+    for (const UnwrittenLiteral& unwritten : found.unwrittenLiterals)
+        becomeReadOfData(unwritten.literal, Opcode::Data, unwritten.data);
     Vector<ValueID> constructions;
     constructions.reserveInitialCapacity(found.sites.size());
     for (const ConstructionSite& site : found.sites) {
@@ -2616,11 +2554,8 @@ ConstantCollections embedConstantCollections(ProgramEditor& editor, const FlowRe
                 site.data = findOrAddData(editor, recordsByHash, WTF::move(site.contents), module);
             collections.m_collections.append(ConstantCollection { site.data, site.kind });
         }
-        // One cell stands for the lists of one record. Flow speaks of the lists of one site, and a list of another site with the same contents may be compared with these.
         for (UnwrittenLiteral& unwritten : entry.unwrittenLiterals)
-            unwritten.data = unwritten.isNeverToldApart ? editor.addData(Data { WTF::move(unwritten.contents), module }) : findOrAddData(editor, recordsByHash, WTF::move(unwritten.contents), module);
-        for (DataNeverToldApart& data : entry.dataNeverToldApart)
-            data.data = editor.addData(Data { DataNode(program.at(data.data).root), module });
+            unwritten.data = findOrAddData(editor, recordsByHash, WTF::move(unwritten.contents), module);
         for (DictionaryLiteral& dictionary : entry.dictionaries)
             dictionary.data = findOrAddData(editor, recordsByHash, DataNode(WTF::move(dictionary.contents)), module);
     }

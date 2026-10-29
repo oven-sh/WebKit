@@ -512,73 +512,15 @@ static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobal
     return tryCopyAsOrdinaryObject(vm, globalObject, &source, ExcludedRun { });
 }
 
-// An ordinary object with plain properties and plain elements: a map from numbers. The copy takes its Structure and a copy of its storage, holes and all.
-static JSFinalObject* tryCopyWithElements(VM& vm, JSGlobalObject* globalObject, JSObject* source)
-{
-    Structure* structure = source->structure();
-    IndexingType indexingType = structure->indexingType();
-    bool hasVector = hasInt32(indexingType) || hasDouble(indexingType) || hasContiguous(indexingType);
-    if (source->type() != FinalObjectType || !(hasVector || (indexingType & IndexingShapeMask) == ArrayStorageShape) || isCopyOnWrite(structure->indexingMode()))
-        return nullptr;
-    if (structure->isDictionary() || structure->isCompiledStructure() || !structure->canPerformFastPropertyEnumerationCommon() || !structure->isQuickPropertyAccessAllowedForEnumeration() || source->hasNonReifiedStaticProperties())
-        return nullptr;
-    if (structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() || structure->mayHaveImmutableProperties())
-        return nullptr;
-    // A branded Structure would hand the copy the private brand of the source.
-    if (structure->variant() != Structure::StructureVariant::Normal || structure->mayBePrototype() || structure->didPreventExtensions() || structure->hasBeenFlattenedBefore() || structure->hasPolyProto())
-        return nullptr;
-    if (structure->realm() != globalObject || structure->storedPrototype() != JSValue(globalObject->objectPrototype()))
-        return nullptr;
-    if (structure->hasNonEnumerableProperties() || structure->hasNonConfigurableProperties()) {
-        // Every Structure with elements outside a vector says so, on account of the elements.
-        bool isPlain = !hasVector;
-        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            isPlain = isPlain && !entry.attributes();
-            return isPlain;
-        });
-        if (!isPlain)
-            return nullptr;
-    }
-
-    Butterfly* elements = source->butterfly();
-    SparseArrayValueMap* sparse = hasVector ? nullptr : elements->arrayStorage()->m_sparseMap.get();
-    if (sparse) {
-        if (sparse->sparseMode() || sparse->lengthIsReadOnly() || sparse->hasAnyKindOfGetterSetterProperties())
-            return nullptr;
-        for (const SparseArrayEntry& entry : *sparse) {
-            if (entry.attributes())
-                return nullptr;
-        }
-    }
-    DeferGC deferGC(vm);
-    size_t capacity = structure->outOfLineCapacity();
-    size_t bytesOfElements = hasVector ? static_cast<size_t>(elements->vectorLength()) * sizeof(EncodedJSValue) : ArrayStorage::sizeFor(elements->arrayStorage()->vectorLength());
-    Butterfly* butterfly = Butterfly::tryCreateUninitialized(vm, nullptr, 0, capacity, true, bytesOfElements);
-    if (!butterfly)
-        return nullptr;
-    // Room in front of the elements, which an array that was shifted has, stays behind.
-    memcpy(butterfly->propertyStorage() - capacity, elements->propertyStorage() - capacity, capacity * sizeof(EncodedJSValue) + sizeof(IndexingHeader) + bytesOfElements);
-    if (!hasVector) {
-        butterfly->arrayStorage()->m_indexBias = 0;
-        butterfly->arrayStorage()->m_sparseMap.clear();
-    }
-    JSFinalObject* copy = JSFinalObject::createWithButterflyCopyingInlineStorage(vm, structure, butterfly, source->inlineStorage());
-    if (sparse) {
-        SparseArrayValueMap* map = SparseArrayValueMap::create(vm);
-        for (const SparseArrayEntry& entry : *sparse)
-            map->add(copy, entry.index()).iterator->forceSet(vm, map, entry.get(), 0);
-        vm.mutatorFence();
-        butterfly->arrayStorage()->m_sparseMap.set(vm, copy, map);
-    }
-    return copy;
-}
-
 // Out of line: the list of excluded keys takes a large frame, which the copies that need no names would pay for.
 static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue source, ExcludedRun run, std::span<const EncodedJSValue> excludedKeys)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!run.numberPlusOne && excludedKeys.empty() && source.isObject()) {
-        if (JSFinalObject* copy = tryCopyWithElements(vm, globalObject, asObject(source)))
+        JSObject* object = asObject(source);
+        Structure* structure = object->structure();
+        JSFinalObject* copy = structure->realm() == globalObject && structure->storedPrototype() == JSValue(globalObject->objectPrototype()) ? tryCopyWithElements(vm, object) : nullptr;
+        if (copy)
             return copy;
     }
     JSObject* copy = constructEmptyObject(globalObject);

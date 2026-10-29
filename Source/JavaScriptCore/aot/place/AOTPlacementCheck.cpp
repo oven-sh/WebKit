@@ -1462,8 +1462,6 @@ struct SiteCheck : PlacementCheckContext {
     {
         if (record.data != value.data() || (record.sharedStorageOffset || record.node) != (value.encoding() == DataEncoding::CopyOnWriteArray))
             return false;
-        if (!!record.cellOffset != (value.encoding() == DataEncoding::MadeOnce) || (record.cellOffset && !isRoot(statics, *record.cellOffset)))
-            return false;
         if (record.node)
             return !record.sharedStorageOffset && isStorageOfArray(program.at(record.data).root.as<DataNode::Array>());
         return !record.sharedStorageOffset || isRoot(statics, *record.sharedStorageOffset);

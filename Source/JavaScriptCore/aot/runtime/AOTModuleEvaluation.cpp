@@ -2667,17 +2667,10 @@ bool Modules::isHeldForImport(ModuleID target) const
 {
     if (namespaceIfCreated(target, ModulePhase::Evaluation))
         return true;
-    for (unsigned index = 0; index < m_table.size(); ++index) {
-        ModuleID importer(index);
-        bool wasLoaded = status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint());
-        if (data(importer).kind != ModuleKind::SourceText || !wasLoaded)
-            continue;
-        for (const ModuleRequestData& request : m_table.imports(importer)) {
-            if (request.targetModule() == target)
-                return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(m_table.importsOfHeldFile(target), [&](const ImportOfHeldFileData& import) {
+        ModuleID importer(import.importer);
+        return status(importer) > ModuleStatus::Linked || (m_entryPointIsLinked && data(importer).isLinkedWithEntryPoint());
+    });
 }
 
 JSValue Modules::answerRequire(ModuleID target)

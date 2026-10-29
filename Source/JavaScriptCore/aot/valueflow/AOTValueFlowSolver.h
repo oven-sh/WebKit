@@ -749,6 +749,7 @@ private:
     void findUnknownSources(NOESCAPE const ScopedLambda<void()>& whatRunsBesideTheWalk);
     void report();
     void dumpBytesByTable() const;
+    void dumpEdgesByEnds() const;
     static void forEachListOfOneRound(auto& solver, NOESCAPE const auto& functor);
     // The lists that each round fills anew keep the room that the largest round took. The rounds are largest in the middle of a solve, and the tables at its end.
     void giveBackRoomOfLargerRounds(uint64_t sizeOfRound);
@@ -1015,6 +1016,7 @@ private:
     HashMap<uint32_t, Vector<ValueFlowStatementID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_readersOfFunction;
     HashMap<uint32_t, Vector<ValueFlowNodeSet, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesShownToStatement;
     mutable ListWithRoomToFill<ValueSetID> m_rememberedByStatement;
+    std::unique_ptr<std::atomic<uint32_t>[]> m_roundThatTiedNamespace;
 
     Vector<Covering, 2> m_coverings;
     ValueSetID m_takenByRetiredNodes { ValueSets::nothing };

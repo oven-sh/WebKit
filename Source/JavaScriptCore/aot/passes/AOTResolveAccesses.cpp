@@ -1892,7 +1892,9 @@ PassOutcome resolveAccesses(FunctionPassContext& context)
                 PropertyAccessPlan planOfCalledRead = planPropertyAccess(accessContext, *query);
                 isRefused = isRefused && isRefusedWhereverItStands(planOfCalledRead) && planOfCalledRead.limit == plan.limit;
                 if (!isRefused) {
-                    query->isOnlyCalled = isNobodysObject(context.analyses, site.value);
+                    // A frame of such a method shows the name of the object that was called, so a closure made here would hide a new name.
+                    bool framesReadCallee = planOfCalledRead.form == AccessForm::Method && program.at(planOfCalledRead.member.method).capabilities.contains(FunctionCapabilities::RecordsCallee);
+                    query->isOnlyCalled = !framesReadCallee && isNobodysObject(context.analyses, site.value);
                     if (query->isOnlyCalled)
                         plan = WTF::move(planOfCalledRead);
                     else
@@ -3638,7 +3640,9 @@ static std::optional<PlannedSplit> planSplitByArms(FunctionPassContext& context,
         PropertyAccessPlan plan = planWithReceivers(context, queryOfArm, query.start, { .proof = query.receivers.proof, .level = query.receivers.level, .proven = arm.layouts });
         // `response.emit === ownEmit`: behind the tests of its class the method is a constant, and the comparison folds.
         bool comparesMethod = plan.form == AccessForm::Method && !plan.capturesReceiver && (isOnlyAskedOrCalled || isOnlyComparedByIdentity(context, site.value));
-        return isAccessArmForm(plan.form) || comparesMethod;
+        // `value.constructor`: behind the tests of its class it is one class object, and a by-name read would walk to it.
+        bool readsClassObject = plan.form == AccessForm::Method && !plan.capturesReceiver && context.program.nameClassOf(query.key) == NameClass::Constructor;
+        return isAccessArmForm(plan.form) || comparesMethod || readsClassObject;
     });
     if (dispatch.arms.isEmpty())
         return std::nullopt;

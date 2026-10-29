@@ -19,7 +19,10 @@
 #include "AOTFrameAllocationPointers.h"
 #include "AOTGenericCopy.h"
 #include "AOTHeat.h"
+#include "AOTInlineBuiltinForms.h"
+#include "AOTIntegerRelations.h"
 #include "AOTNarrowFieldTypes.h"
+#include "AOTProgramPasses.h"
 #include "AOTPropertyAccess.h"
 #include "AOTPropertyAccessCache.h"
 #include "AOTPropertyAccessElements.h"
@@ -30,6 +33,7 @@
 #include "AOTSort.h"
 #include "AOTSplitUnions.h"
 #include "AOTTypePropagation.h"
+#include "AOTValueSubstitution.h"
 #include <algorithm>
 #include <limits>
 #include <ranges>
@@ -4307,6 +4311,223 @@ static PassOutcome requestElementPositions(FunctionPassContext& context)
     return outcome;
 }
 
+struct ListMadeWithLength {
+    ValueID list;
+    ValueID length;
+};
+
+static Vector<ListMadeWithLength, 2> findListsMadeWithLength(FunctionPassContext& context)
+{
+    const Function& function = context.function;
+    Vector<ListMadeWithLength, 2> found;
+    if (!context.analyses.opcodesOfValues().contains(Opcode::CallBuiltin))
+        return found;
+    for (BlockID block : context.analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            const Value& value = function.at(id);
+            if (value.opcode != Opcode::CallBuiltin || value.argumentsOperands().empty() || inlineImplementationOf(context.program, value) != InlineBuiltin::ArrayWithLength)
+                continue;
+            // Anything but a number would be the only element.
+            if (context.program.typeOf(function, value.argumentsOperands()[0]).isNumber())
+                found.append({ id, value.argumentsOperands()[0] });
+        }
+    }
+    return found;
+}
+
+// `new Array(n)` has the length n until something changes it. Nothing has where every use of the list that may come in front of the block only reads it or stores below n.
+static bool hasLengthItWasMadeWith(FunctionPassContext& context, IntegerRelations& relations, ValueID creation, ValueID length, BlockID at)
+{
+    static constexpr OpcodeSet reads { Opcode::HasArrayStorage, Opcode::IsInBounds, Opcode::IsElementPresent, Opcode::GetArrayElement, Opcode::GetArrayLength, Opcode::AllGuards };
+    const Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    const EscapeAnalysis& escape = analyses.escape();
+    std::optional<ObjectID> object = escape.gaveUp() ? std::nullopt : escape.objectDefinedBy(creation);
+    BlockID blockOfCreation = analyses.useLists().blockOf(creation);
+    if (!object || !analyses.dominators().dominates(blockOfCreation, at))
+        return false;
+
+    // Whoever passes the creation goes on with another list.
+    BitVector comesInFront;
+    Vector<BlockID, 16> worklist { at };
+    comesInFront.set(at.index());
+    while (!worklist.isEmpty()) {
+        BlockID block = worklist.takeLast();
+        if (block == blockOfCreation)
+            continue;
+        for (BlockID predecessor : analyses.cfg().predecessors(block)) {
+            if (!comesInFront.set(predecessor.index()))
+                worklist.append(predecessor);
+        }
+    }
+    for (const ObjectUse& objectUse : escape.usesOf(*object)) {
+        const Use& use = objectUse.use;
+        if (!comesInFront.get(use.block.index()) || use.isEdgeUse())
+            continue;
+        if (use.kind != Use::Kind::Operand)
+            return false;
+        const Value& user = function.at(use.user);
+        if (isCast(user.opcode) || reads.contains(user.opcode) || storageMeasuredBy(context.program, user))
+            continue;
+        bool isKeyed = (user.opcode == Opcode::ElemGet || user.opcode == Opcode::ElemSet) && use.operandIndex == OperandIndex::ElemGet::object && user.keyIsIntegral();
+        static_assert(OperandIndex::ElemGet::object == OperandIndex::ElemSet::object);
+        if (isKeyed && user.opcode == Opcode::ElemGet)
+            continue;
+        ValueID position = isKeyed ? user.propertyOperand() : user.opcode == Opcode::PutArrayElement && use.operandIndex == OperandIndex::PutArrayElement::array ? user.positionOperand() : ValueID();
+        if (!position || relations.isAtLeast(position, 0, use.block) != IntegerRelations::Answer::Proven || relations.isAtMost(position, length, -1, use.block) != IntegerRelations::Answer::Proven)
+            return false;
+    }
+    return true;
+}
+
+// `k < list.length` in front of `list[k]` asks what the access needs to know. The test for that stands behind the comparison and fails into the arm of the program, which it never does.
+// So the access has no test of its own, whose generic arm would write the list and come back into the loop: nobody could then say that the list keeps its length.
+static PassOutcome askWhetherComparedPositionsAreInBounds(FunctionPassContext& context)
+{
+    static constexpr OpcodeSet accesses { Opcode::ElemGet, Opcode::ElemSet };
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    if (!analyses.opcodesOfValues().intersects(accesses) || !analyses.opcodesOfValues().intersects({ Opcode::Less, Opcode::Greater }))
+        return PassOutcome::Unchanged;
+
+    struct Comparison {
+        BlockID block;
+        ValueID array;
+        uint32_t operandOfPosition;
+    };
+    Vector<Comparison, 4> comparisons;
+    Vector<BlockID, 4> armsWithTest;
+    Vector<ListMadeWithLength, 2> listsMade = findListsMadeWithLength(context);
+    std::optional<IntegerRelations> relations;
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        const Terminator& terminator = function.at(block).terminator;
+        if (terminator.kind != TerminatorKind::Branch || function.at(block).frequency.predicted() == BlockFrequency::Rare || isCold(heatClassOf(context, block)).predicted())
+            continue;
+        const Value& comparison = function.at(terminator.conditionOperand());
+        if (comparison.opcode != Opcode::Less && comparison.opcode != Opcode::Greater)
+            continue;
+        uint32_t operandOfPosition = comparison.opcode == Opcode::Less ? 0 : 1;
+        ValueID position = comparison.operand(operandOfPosition);
+        ValueID length = sameObjectBehindFacts(function, comparison.operand(1 - operandOfPosition));
+        std::optional<MeasuredStorage> measured = storageMeasuredBy(context.program, function.at(length));
+        const Type& typeOfPosition = context.program.typeOf(function, position);
+        if (!typeOfPosition.isInteger() || typeOfPosition.integers.minimum < 0)
+            continue;
+        // The length is the one that the list has where the comparison is made.
+        ValueID owner;
+        if (measured && measured->heap == AbstractHeap::ArrayStorage) {
+            const Type& list = context.program.typeOf(function, measured->owner);
+            const BlockValues& values = function.at(block).values;
+            size_t indexOfLength = values.find(length);
+            if (indexOfLength == notFound || !list.singleBuiltinClass() || list.mayBeUndefinedOrNull() || !pristineAspectsProvenBy(list, BuiltinClasses::Array).contains(PristineAspects::Storage))
+                continue;
+            bool isCurrent = std::ranges::none_of(values.span().subspan(indexOfLength + 1), [&](ValueID id) {
+                const EffectsOnEdges& effects = analyses.effectsOf(id);
+                return effects.normal.writes.contains(AbstractHeap::ArrayStorage) || effects.handler.writes.contains(AbstractHeap::ArrayStorage) || effects.onAnyEdge().mayRunOtherCode();
+            });
+            if (isCurrent)
+                owner = measured->owner;
+        } else {
+            for (const ListMadeWithLength& made : listsMade) {
+                if (analyses.identityOf(made.length) != analyses.identityOf(length))
+                    continue;
+                if (!relations)
+                    relations.emplace(analyses);
+                if (hasLengthItWasMadeWith(context, *relations, made.list, made.length, block)) {
+                    owner = made.list;
+                    break;
+                }
+            }
+        }
+        BlockID whenBelow = terminator.taken().block;
+        if (!owner || !terminator.notTaken().proofs.isEmpty() || analyses.cfg().predecessors(whenBelow).size() != 1)
+            continue;
+        const BlockValues& valuesBelow = function.at(whenBelow).values;
+        if (!valuesBelow.isEmpty() && function.at(valuesBelow.first()).opcode == Opcode::IsInBounds)
+            continue;
+        ValueID array = analyses.identityOf(owner);
+        // Only a list made with its length: other lists may yet turn out to be literals, whose walks are written out and go, which a test in the loop would stop.
+        const Value& madeBy = function.at(analyses.sameObjectThroughCasts(array).valueInFrontOfFacts());
+        if (madeBy.opcode != Opcode::CallBuiltin || inlineImplementationOf(context.program, madeBy) != InlineBuiltin::ArrayWithLength)
+            continue;
+        ValueID identityOfPosition = analyses.identityOf(position);
+        // The test names the list as the access does: code generation gives `new Array(n)` the storage that the only cast behind it expects.
+        ValueID accessed;
+        for (BlockID other : analyses.cfg().reversePostOrder()) {
+            if (accessed || !analyses.dominators().dominates(whenBelow, other))
+                continue;
+            for (ValueID id : function.at(other).values) {
+                const Value& access = function.at(id);
+                if (accesses.contains(access.opcode) && analyses.identityOf(access.objectOperand()) == array && analyses.identityOf(access.propertyOperand()) == identityOfPosition && analyses.dominates(access.objectOperand(), ProgramPoint::atHeadOf(whenBelow))) {
+                    // A list that the program holds as anything is no operand of the test.
+                    const Type& held = context.program.typeOf(function, access.objectOperand());
+                    if (held.singleBuiltinClass() && held.singleBuiltinClass()->builtinClass == BuiltinClasses::Array && !held.mayBeUndefinedOrNull())
+                        accessed = access.objectOperand();
+                    break;
+                }
+            }
+        }
+        // `k < list.length && k < n`: the arm of the first comparison holds the second, and its test answers both.
+        if (accessed && !armsWithTest.contains(block)) {
+            comparisons.append({ block, accessed, operandOfPosition });
+            armsWithTest.append(whenBelow);
+        }
+    }
+    if (comparisons.isEmpty())
+        return PassOutcome::Unchanged;
+
+    IRBuilder builder(analyses.context(), function, context.types, &analyses);
+    for (const Comparison& comparison : comparisons) {
+        ValueID position = ensureEdgeResult(builder, analyses, Edge { comparison.block, 0 }, comparison.operandOfPosition);
+        BlockID whenBelow = function.at(comparison.block).terminator.taken().block;
+        Target whenNotBelow = function.at(comparison.block).terminator.notTaken();
+        BlockID rest = builder.splitBlock(ProgramPoint::atHeadOf(whenBelow));
+        function.edit(whenBelow, { BlockEdit::Terminator, BlockEdit::Edges, BlockEdit::Arguments }).terminator = Terminator { };
+        builder.moveToEndOf(whenBelow);
+        builder.setOrigin(function.at(function.at(comparison.block).terminator.conditionOperand()).origin());
+        builder.setHandler(function.at(whenBelow).handler);
+        Value test = IRBuilder::make(Opcode::IsInBounds, { comparison.array, position });
+        test.setIsFromProgram(true);
+        IRBuilder::ProvenBranch isInBounds = builder.emitBranchWithProof(builder.append(WTF::move(test)), 0, BlockFrequency::Normal, BlockFrequency::Rare, { BlockID(), WTF::move(whenNotBelow) });
+        builder.moveToEndOf(isInBounds.taken);
+        builder.emitJump(rest);
+    }
+    return PassOutcome::Changed;
+}
+
+// `list.length` of a list that still has the length it was made with is that length.
+static PassOutcome readLengthsThatListsWereMadeWith(FunctionPassContext& context)
+{
+    Function& function = context.function;
+    FunctionAnalyses& analyses = context.analyses;
+    Vector<ListMadeWithLength, 2> listsMade = findListsMadeWithLength(context);
+    if (listsMade.isEmpty() || context.build.validates())
+        return PassOutcome::Unchanged;
+    std::optional<IntegerRelations> relations;
+    ValueSubstitution substitution(function);
+    for (BlockID block : analyses.cfg().reversePostOrder()) {
+        for (ValueID id : function.at(block).values) {
+            std::optional<MeasuredStorage> measured = storageMeasuredBy(context.program, function.at(id));
+            if (!measured || measured->heap != AbstractHeap::ArrayStorage)
+                continue;
+            for (const ListMadeWithLength& made : listsMade) {
+                const Type& length = context.program.typeOf(function, made.length);
+                if (analyses.identityOf(measured->owner) != made.list || !length.isInteger() || !length.integers.isSubsetOf(Range::uint32()))
+                    continue;
+                if (!relations)
+                    relations.emplace(analyses);
+                if (hasLengthItWasMadeWith(context, *relations, made.list, made.length, block))
+                    substitution.replace(id, made.length);
+            }
+        }
+    }
+    if (substitution.isEmpty())
+        return PassOutcome::Unchanged;
+    substitution.apply(function, &analyses);
+    analyses.didChangeValues();
+    return PassOutcome::Changed;
+}
+
 // `x !== x`: only NaN differs from itself. So what is no number has its answer, and the test for a number is no guess that sends other values into a copy.
 static PassOutcome askOnlyNumbersWhetherTheyEqualThemselves(FunctionPassContext& context)
 {
@@ -4366,6 +4587,8 @@ PassOutcome placeTypeTests(FunctionPassContext& context)
     PassOutcome marked = markArmsThatAreSeldomTaken(context);
     marked |= askOnlyNumbersWhetherTheyEqualThemselves(context);
     marked |= requestElementPositions(context);
+    marked |= askWhetherComparedPositionsAreInBounds(context);
+    marked |= readLengthsThatListsWereMadeWith(context);
     ExpectedTypesByUse expectations(context.function);
     PassOutcome outcome = PassOutcome::Unchanged;
     if (context.build.recordedOptions().usesExpectedTypes()) {

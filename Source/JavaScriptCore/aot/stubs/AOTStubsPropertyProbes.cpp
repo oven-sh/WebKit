@@ -1228,9 +1228,20 @@ void returnByFrontCell(StubAssembler& jit, GPRReg receiver, GPRReg column, GPRRe
     isNotAbsent.link(&jit);
     // `error.message`: an own value in the butterfly needs no handler.
     constexpr int32_t upperBitsOfOwnOutOfLineValue = PackedSlot::isOutOfLine << 8;
-    Jump needsHandler = jit.branch16(CCallHelpers::NotEqual, inCell(PackedSlot::offsetOfLocation()), TrustedImm32(upperBitsOfOwnOutOfLineValue));
+    Jump isNotOwnOutOfLineValue = jit.branch16(CCallHelpers::NotEqual, inCell(PackedSlot::offsetOfLocation()), TrustedImm32(upperBitsOfOwnOutOfLineValue));
     jit.load32SignedExtendTo64(inCell(PackedSlot::offsetOfPayload()), cell);
     jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), plane);
+    jit.load64(BaseIndex(plane, cell, CCallHelpers::TimesEight), jit.result());
+    jit.returnToCaller();
+
+    // `object.method`, `instance.constructor`: a value in the cell of the prototype. The cell names the holder and the place in it.
+    isNotOwnOutOfLineValue.link(&jit);
+    constexpr int32_t biasedBitsOfInheritedInlineValue = static_cast<uint8_t>(Slot::Kind::Value) ^ PackedSlot::ownInlineValueBits;
+    Jump needsHandler = jit.branch8(CCallHelpers::NotEqual, inCell(PackedSlot::offsetOfBiasedKindAndFlags()), TrustedImm32(biasedBitsOfInheritedInlineValue));
+    jit.load8SignedExtendTo32(inCell(PackedSlot::offsetOfLocation()), cell);
+    jit.signExtend32ToPtr(cell, cell);
+    jit.load32(inCell(PackedSlot::offsetOfPayload()), index);
+    decodeCell32(jit, index, plane);
     jit.load64(BaseIndex(plane, cell, CCallHelpers::TimesEight), jit.result());
     jit.returnToCaller();
 

@@ -54,6 +54,7 @@ public:
         ModuleID memberOfCycle;
     };
     std::optional<LinkPlanOfRoot> linkPlanOfRoot(ModuleID) const;
+    std::span<const ImportOfHeldFileData> importsOfHeldFile(ModuleID) const;
     std::span<const ModuleExportData> exports(ModuleID module) const { return listOf(m_tables->moduleExports(), module, &ModuleData::firstExport); }
     const IndirectExportData& indirectExport(const ModuleExportData&) const;
     std::span<const SyntheticExportData> syntheticExports(ModuleID module) const { return listOf(m_tables->syntheticExports(), module, &ModuleData::firstSyntheticExport); }

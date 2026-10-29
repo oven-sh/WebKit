@@ -2739,6 +2739,19 @@ void encodeModuleTables(TableEncoder& encoder)
     encoder.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     encoder.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
     encoder.setTable(ProgramTableIndex::moduleRequests, lists.requests);
+    Vector<ImportOfHeldFileData> importsOfHeldFiles;
+    for (uint32_t importer = 0; importer + 1 < lists.modules.size(); ++importer) {
+        if (lists.modules[importer].kind != ModuleKind::SourceText)
+            continue;
+        uint32_t firstRequest = lists.modules[importer].firstRequest;
+        for (const ModuleRequestData& request : lists.requests.span().subspan(firstRequest, lists.modules[importer + 1].firstRequest - firstRequest)) {
+            if (!request.isRequire && lists.modules[request.target()].requireResult == RequireResult::NamespaceIfImported)
+                importsOfHeldFiles.append({ request.target(), importer });
+        }
+    }
+    AOT::sort(importsOfHeldFiles, std::ranges::less { }, &ImportOfHeldFileData::key);
+    importsOfHeldFiles.shrink(std::ranges::unique(importsOfHeldFiles, { }, &ImportOfHeldFileData::key).begin() - importsOfHeldFiles.begin());
+    encoder.setTable(ProgramTableIndex::importsOfHeldFiles, importsOfHeldFiles);
     encoder.setTable(ProgramTableIndex::linkRequests, encodeModuleNumbers(encoder, contracted.linkRequests));
     encoder.setTable(ProgramTableIndex::evaluationRequests, encodeModuleNumbers(encoder, contracted.evaluationRequests));
     encoder.setTable(ProgramTableIndex::groupsLoadedWithGroups, encodeModuleNumbers(encoder, groupsLoadedWithGroups));

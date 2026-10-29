@@ -391,6 +391,14 @@ struct ModuleFailureData {
     StringID specifierString() const { return StringID(specifier); }
 };
 
+// An ES module that imports a file whose require() answers depending on whether it is imported.
+struct ImportOfHeldFileData {
+    uint64_t key() const { return static_cast<uint64_t>(file) << 32 | importer; }
+
+    uint32_t file;
+    uint32_t importer;
+};
+
 struct CompiledRuntimeModuleData {
     uint32_t registryID;
     uint32_t module;
@@ -414,6 +422,7 @@ static_assert(sizeof(SyntheticExportData) == 8 && isImageRecord<SyntheticExportD
 static_assert(sizeof(RequiredNameData) == 8 && isImageRecord<RequiredNameData>);
 static_assert(sizeof(ExportStatementData) == 12 && isImageRecord<ExportStatementData>);
 static_assert(sizeof(ModuleFailureData) == 8 && isImageRecord<ModuleFailureData>);
+static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
 static_assert(sizeof(CompiledRuntimeModuleData) == 8 && isImageRecord<CompiledRuntimeModuleData>);
 static_assert(sizeof(CompiledRuntimeFunctionData) == 12 && isImageRecord<CompiledRuntimeFunctionData>);
 static_assert(sizeof(ModuleData::Flag) == sizeof(ModuleData::flags));
@@ -439,6 +448,7 @@ static_assert(static_cast<unsigned>(ModuleKind::External) < 8 && static_cast<uns
     v(moduleFailures, ModuleFailureData) \
     v(modulesByPath, uint16_t) \
     v(modulesOfUncompiledCode, uint32_t) \
+    v(importsOfHeldFiles, ImportOfHeldFileData) \
     v(compiledRuntimeModules, CompiledRuntimeModuleData) \
     v(compiledRuntimeFunctions, CompiledRuntimeFunctionData)
 

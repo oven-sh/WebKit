@@ -106,7 +106,11 @@ public:
         if (!m_countsTurns)
             program->stepsPerCharacterBeforeStoppingOnFullMachine = program->jitCountsTurns ? 32 : program->memoRows ? 8 : 0;
         program->needsFullMachine = std::ranges::any_of(program->ops, isStepBackward);
-        program->isEnteredOutOfLine = m_countsTurns || program->needsFullMachine;
+        const auto& ops = program->ops;
+        bool isOneRun = ops[0].kind == Kind::PossessiveRun && ops[0].target == 1 && ops[0].argument == quantifyInfinite;
+        // The last op is where a failure goes.
+        program->isOneSetOrRun = !m_countsTurns && !program->numSubpatterns && !program->triesOnlyOnce && !m_decodesSurrogatePairs && ops.size() == 3 && ops[1].kind == Kind::Match && (isOneRun || ops[0].kind == Kind::Set);
+        program->isEnteredOutOfLine = m_countsTurns || program->needsFullMachine || program->isOneSetOrRun;
         if (!program->needsFullMachine)
             program->stepsPerCharacterBeforeStopping = program->stepsPerCharacterBeforeStoppingOnFullMachine;
         if (!m_countsTurns)

@@ -606,6 +606,14 @@ static void tieNamespaceToExports(ValueFlowRuleContext& context, ModuleID id, Ve
     }
 }
 
+// Whether anything reads the deferred exports makes no difference to what a module like this ties.
+static bool listsAllItsExports(const Module& module)
+{
+    return !mayHaveExportsNobodyLists(module) && !module.syntheticExports.containsIf([](const SyntheticExport& entry) {
+        return !entry.variable;
+    });
+}
+
 ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, ImportPhase phase, DeferredExports deferredExports)
 {
     const Program& program = context.program();
@@ -614,9 +622,9 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
         return sourcesOf(unknownObject(context, sourceOfWhatLoaderMakes(program.at(first))));
 
     // Only a namespace object that is tied to all its exports needs no second look.
-    bool staysForGood = context.isStatementOfBody() && deferredExports == DeferredExports::AreRead;
+    bool isOfBody = context.isStatementOfBody();
     ValueFlowNodeID tiedForGood = context.nodes().ofHost(ValueFlowHostNode::NamespacesTiedByStatementsOfBodies);
-    ValueSetID tiedByThisStatement = staysForGood && context.rememberedByStatement() ? context.rememberedByStatement() : ValueSets::nothing;
+    ValueSetID tiedByThisStatement = isOfBody && context.rememberedByStatement() ? context.rememberedByStatement() : ValueSets::nothing;
     Vector<ValueFlowObjectID, 4> tiedNow;
     BitVector visited;
     Vector<ModuleID, 4> pending { first };
@@ -625,10 +633,15 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
         if (visited.set(id.index()))
             continue;
         ClimbingSet created = only(context, universe.namespaceOf(id));
+        bool staysForGood = isOfBody && (deferredExports == DeferredExports::AreRead || listsAllItsExports(program.at(id)));
         if (!context.sets().contains(tiedByThisStatement, universe.namespaceOf(id))) {
             if (context.wasAddedInEarlierRound(tiedForGood, created))
                 continue;
-            tiedNow.append(universe.namespaceOf(id));
+            // Every use of the namespace may run in one round, and uses times exports is what would reach the edge budget.
+            if (staysForGood && !context.isFirstToTieNamespaceInThisRound(id))
+                continue;
+            if (staysForGood)
+                tiedNow.append(universe.namespaceOf(id));
         }
         if (staysForGood)
             context.add(tiedForGood, created);
@@ -636,7 +649,7 @@ ValueFlowSources namespaceOf(ValueFlowRuleContext& context, ModuleID first, Impo
         useModule(context, id);
         tieNamespaceToExports(context, id, pending, deferredExports);
     }
-    if (staysForGood && !tiedNow.isEmpty())
+    if (!tiedNow.isEmpty())
         context.rememberedByStatement() = context.maker().unite(tiedByThisStatement, context.maker().of(tiedNow.span()));
 
     ClimbingSet namespaceObject = only(context, universe.namespaceOf(first));

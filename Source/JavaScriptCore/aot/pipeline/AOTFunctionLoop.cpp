@@ -417,7 +417,12 @@ static void runInPlace(FunctionSchedule schedule, Program& program, const Optimi
     didFinish("order functions, open phases"_s);
     {
         ProgramCaches caches(program, runner.build());
+        // A pass frees on the thread that runs it what another thread allocated, and the allocator keeps that until the thread that allocated it looks.
+        // Selection, where a build holds the most, makes each function anew.
+        const unsigned batchesBetweenRequests = std::max<unsigned>(batches.size() / 4, 1);
         auto runBatch = [&](unsigned batchIndex) {
+            if (schedule == FunctionSchedule::Select && batchIndex && !(batchIndex % batchesBetweenRequests))
+                loops.askThreadsAtWorkForFreeMemory();
             std::span<const uint64_t> functionsInBatch = order.subspan(batches[batchIndex].first, batches[batchIndex].size);
             for (uint64_t key : functionsInBatch) {
                 unsigned i = static_cast<unsigned>(key);

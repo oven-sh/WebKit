@@ -190,7 +190,9 @@ public:
         requiredTexts = texts;
         if (texts.isEmpty())
             return;
-        if (startScan == FlatStartScan::None)
+        // A text at a fixed distance names the one place to try, and the attempt there fails as soon as the table would.
+        bool isTextAtFixedDistance = texts.size() == 1 && !texts[0].text.isEmpty() && texts[0].leastDistance == texts[0].greatestDistance;
+        if (startScan == FlatStartScan::None || isTextAtFixedDistance)
             startScan = FlatStartScan::RequiredTextsAlone;
         // The search that skips starts takes it that an attempt was made one place in front of where it is to begin.
         if (std::exchange(skipsStartsBehindFailedRuns, false))
@@ -278,6 +280,8 @@ public:
     std::unique_ptr<FlatProgram> programThatFindsEndsOfRuns;
     bool needsFullMachine { false };
     bool isEnteredOutOfLine { false };
+    // The pattern is one set, or a run of at least one of its members: [aeiou], \d+. A match needs no machine.
+    bool isOneSetOrRun { false };
     // Rows are numbered in this order: position-keyed, run-suffix, capture-keyed.
     unsigned memoRows { 0 };
     unsigned positionKeyedMemoRows { 0 };

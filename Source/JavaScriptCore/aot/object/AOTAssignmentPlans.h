@@ -458,6 +458,8 @@ bool storePropertiesInOrder(VM&, Object& target, std::span<UniquedStringImpl*> n
 bool tryDefinePropertiesOf(VM&, Object& target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 // Null unless the source is a dictionary of many plain properties. The copy has the prototype of the source.
 JSFinalObject* tryCopyDictionary(VM&, JSObject* source);
+// Null unless the source has plain properties and plain elements. The copy has the Structure of the source.
+JSFinalObject* tryCopyWithElements(VM&, JSObject* source);
 bool flattenOnceUnlessCopiedAsDictionary(VM&, JSObject* source);
 bool tryDefinePropertiesOnOrdinaryObject(VM&, State&, JSObject* target, JSObject* source, std::span<UniquedStringImpl* const> excludedNames);
 // The whole of `{ ...first, ...second }` by a plan, which runs no code of the program. Null, with nothing done that anybody sees, where the two have to be copied one behind the other.

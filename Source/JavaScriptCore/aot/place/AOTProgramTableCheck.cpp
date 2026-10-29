@@ -234,6 +234,7 @@ static void checkSortedTables(const TableCheck& check)
     check.expect(std::ranges::all_of(check.tables.staticsOfImportedFiles(), [&](uint32_t file) {
         return file + 1 < check.tables.staticsOfFiles().size();
     }), ProgramTableRule::TableOutOfBounds);
+    checkAscending(check.tables.importsOfHeldFiles(), &ImportOfHeldFileData::key);
     checkAscending(check.tables.compiledRuntimeModules(), &CompiledRuntimeModuleData::registryID);
     checkAscending(check.tables.compiledRuntimeFunctions(), &CompiledRuntimeFunctionData::id);
 

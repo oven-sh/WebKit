@@ -146,29 +146,11 @@ void ConstantEmitter::generateData(const ValueContext& value)
     case DataEncoding::Expanded:
     case DataEncoding::ReadOnlyTree:
     case DataEncoding::CopyOnWriteArray:
-    case DataEncoding::MadeOnce:
         break;
     }
     std::optional<Request> request = value->request();
     if (!request) {
         failAndDefineZero(value, InternalErrorKind::PlacedPayloadMissing);
-        return;
-    }
-    if (value->encoding() == DataEncoding::MadeOnce) {
-        const RequestRecord* record = m_placement.requests().recordAt(*request);
-        const DataRecord* data = record ? std::get_if<DataRecord>(record) : nullptr;
-        if (!data || !data->cellOffset) {
-            failAndDefineZero(value, InternalErrorKind::PlacedPayloadMissing);
-            return;
-        }
-        TypedPointer cellWord = emitter<StaticsEmitter>().inStatics(m_heaps.entire(AbstractHeap::AllocatorState), *data->cellOffset);
-        defineCell(value, permanentCell(cellWord, false, [&] {
-            CellPointer cell = callOperation<CellPointer>(value, RuntimeOperation::NewFromData, { word32(static_cast<int32_t>(request->value())) }, { .isOnRarePath = true });
-            mutatorFence();
-            m_out.store64(cell.value(), cellWord);
-            emitter<BarrierEmitter>().markCardOfStatics(*data->cellOffset);
-            return cell;
-        }));
         return;
     }
     if (value->encoding() == DataEncoding::CopyOnWriteArray) {

@@ -90,6 +90,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
 # CHECK-NEXT: moduleFailures 0 0
 # CHECK-NEXT: modulesByPath 1 2
 # CHECK-NEXT: modulesOfUncompiledCode 0 0
+# CHECK-NEXT: importsOfHeldFiles 0 0
 # CHECK-NEXT: compiledRuntimeModules 0 0
 # CHECK-NEXT: compiledRuntimeFunctions 0 0
 # CHECK-NEXT: namedStrings
