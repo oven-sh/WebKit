@@ -1,0 +1,59 @@
+# class Plain { member = hand }  class Holder { get member() {} }  plain = new Plain()  hand(new Holder())  for (..) plain.member
+# A read that is proven to find a field runs no code, whatever the field holds: it enters no getter that another class defines under the name, and the host enters that getter once
+# FORM: AsRead
+# RUN: heat-graph flow
+# RUN(CLASSES): heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Plain" constructor=f1 fields=[{key="member" declared={type=anything}}]
+layout L1 kind=Instance name="Holder" constructor=f2
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hand" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = FinishClass v3 layout=L0
+    v5 = NewClosure function=f2
+    v6 = NewClass v5 layout=L1
+    v7 = NewClosure function=f3
+    DefineMethod v6, v7 layout=L1 methodKind=Getter key="member"
+    v9 = FinishClass v6 layout=L1
+    v10 = Construct v4
+    v11 = Construct v9
+    v12 = Call v1, -, v11
+    v13 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v15 = PropGet v10 key="member"
+    Branch v13 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="Plain" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="hand" [isFreeName]
+    v4 = NewObject v1, v3 layout=L0 fields=[0]
+    Return v4
+}
+function f2 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L1
+    v2 = NewObject v1 layout=L1
+    Return v2
+}
+function f3 name="member" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+# CHECK: f0 size 22 mass 57.000000: f1*1.000000 f2*1.000000
+# CHECK-NOT: *
+# CHECK: host: f0*1.000000 f3*1.000000
+# CLASSES: f0 size 22: f1*1.000000 f2*1.000000
+# CLASSES-NOT: *
+# CLASSES: host: f0*1.000000 f3*1.000000
+# CLASSES-NEXT: unknown:
+# CLASSES-NEXT: activations:

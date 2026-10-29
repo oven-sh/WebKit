@@ -1,0 +1,78 @@
+# const kShown = Symbol("shown"), kKept = Symbol("kept"), kOther = Symbol("other")
+# class Holder { get [kShown]() {} set [kShown](value) {} get [kKept]() {} set [kKept](value) {} get [kOther]() {} }  unknown = hand(new Holder())  for (..) { unknown[kShown]; unknown[kKept] = 1 }
+# A key that is one symbol is a name as well: a read under it that runs code nobody knows may enter a getter that lies under the symbol, and a store a setter.
+# The read enters no setter, the store no getter, and nothing reads under the third symbol: the host enters those once
+# FORM: AsRead
+# RUN: heat-graph flow
+# RUN(CLASSES): heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hand" [isFreeName]
+    v2 = Builtin builtin=Symbol
+    v3 = String string="shown"
+    v4 = Call v2, -, v3 callNumber=100 @100
+    v5 = String string="kept"
+    v6 = Call v2, -, v5 callNumber=101 @120
+    v7 = String string="other"
+    v8 = Call v2, -, v7 callNumber=102 @140
+    v9 = NewClosure function=f1
+    v10 = NewClass v9 layout=L0
+    v11 = NewClosure function=f2
+    DefineMethod v10, v11 layout=L0 methodKind=Getter key=symbol("shown")@m0:100
+    v13 = NewClosure function=f3
+    DefineMethod v10, v13 layout=L0 methodKind=Setter index=1 key=symbol("shown")@m0:100
+    v15 = NewClosure function=f4
+    DefineMethod v10, v15 layout=L0 methodKind=Getter index=2 key=symbol("kept")@m0:101
+    v17 = NewClosure function=f5
+    DefineMethod v10, v17 layout=L0 methodKind=Setter index=3 key=symbol("kept")@m0:101
+    v19 = NewClosure function=f6
+    DefineMethod v10, v19 layout=L0 methodKind=Getter index=4 key=symbol("other")@m0:102
+    v21 = FinishClass v10 layout=L0
+    v22 = Construct v21
+    v23 = Call v1, -, v22
+    v24 = ToBoolean v1
+    v25 = Integer integer=1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v27 = ElemGet v23, v4
+    ElemSet v23, v6, v25 mode=Strict
+    Branch v24 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="shown" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f3 name="shown" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f4 name="kept" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f5 name="kept" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f6 name="other" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+# CHECK: f0 size 36 mass 80.000000: f1*1.000000 unknown*3.000000
+# CHECK-NOT: *
+# CHECK: host: f0*1.000000 f2*1.000000 f3*1.000000 f4*1.000000 f5*1.000000 f6*1.000000
+# CLASSES: f0 size 36: f1*1.000000 unknown*3.000000
+# CLASSES-NOT: *
+# CLASSES: host: f0*1.000000 f2*10.000000 f3*1.000000 f4*1.000000 f5*10.000000 f6*1.000000
+# CLASSES-NEXT: unknown:
+# CLASSES-NEXT: activations:

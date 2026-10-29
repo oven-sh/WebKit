@@ -1,0 +1,72 @@
+# class Holder { get member() { return this.inner } get inner() {} get looped() {} get lone() {} }  function read(holder: Holder) { return holder.member }  for (..) { read(input as Holder); (input as Holder).looped }
+# A getter under a name that is read where the read runs code nobody knows is no cold code: `read` is expected to find `member`, `member` is expected to find `inner`, and the loop of the module reads `looped`.
+# Nothing reads under `lone`, which the host enters once: it is cold. The thresholds and the order of the hottest functions are what they are without the getters
+# FORM: AsRead
+# OPTIONS: only-passes=EstimateHeat
+# RUN: pipeline EstimateHeat
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 methodKind=Getter key="member"
+    v6 = NewClosure function=f3
+    DefineMethod v3, v6 layout=L0 methodKind=Getter index=1 key="inner"
+    v8 = NewClosure function=f4
+    DefineMethod v3, v8 layout=L0 methodKind=Getter index=2 key="looped"
+    v10 = NewClosure function=f5
+    DefineMethod v3, v10 layout=L0 methodKind=Getter index=3 key="lone"
+    v12 = FinishClass v3 layout=L0
+    v13 = PropGet v0 key="sink" [isFreeName]
+    v14 = Construct v12
+    v15 = Call v13, -, v14
+    v16 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v18 = Convert v1 declared={type=L0} illTypedCause=Assertion
+    v19 = CallDirect v18 function=f6
+    v20 = PropGet v18 key="looped"
+    Branch v16 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="member" kind=Getter flags=[HasThis] thisType={type=L0} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="inner"
+    Return v1
+}
+function f3 name="inner" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f4 name="looped" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f5 name="lone" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f6 name="read" parameters=[{type=L0}] results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="member"
+    Return v1
+}
+# CHECK: f2 Warm 0 10
+# CHECK-NEXT: f3 Warm 21 20
+# CHECK-NEXT: f4 Warm 0 10
+# CHECK-NEXT: f5 Cold 0 1
+# CHECK-NEXT: f6 Hot 92 10
+# CHECK-NEXT: hottest: f6 f0 f3 f1 f2 f4 f5
+# CHECK-NEXT: thresholds: cold=1 hot=10

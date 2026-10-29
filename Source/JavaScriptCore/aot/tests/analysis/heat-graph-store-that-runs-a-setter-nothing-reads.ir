@@ -1,0 +1,66 @@
+# class Holder { set only(value) {} set never(value) {} }  unknown = hand(new Holder())  for (..) unknown.only = 1
+# A store under a name that runs code nobody knows may enter a setter that a class defines under the name. Nothing reads under `only` and nothing calls it:
+# where classes are estimated the store alone reaches its setter, also where nothing is known of the flow of values. Nothing stores under `never`.
+# The ranks are what they are without the rule: there nothing reaches either setter unless flow has the host enter it
+# FORM: AsRead
+# RUN: heat-graph flow
+# RUN(CLASSES): heat-graph flow classes
+# RUN(NOFLOW): heat-graph
+# RUN(NOFLOWCLASSES): heat-graph classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hand" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 methodKind=Setter key="only"
+    v6 = NewClosure function=f3
+    DefineMethod v3, v6 layout=L0 methodKind=Setter index=1 key="never"
+    v8 = FinishClass v3 layout=L0
+    v9 = Construct v8
+    v10 = Call v1, -, v9
+    v11 = ToBoolean v1
+    v12 = Integer integer=1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    PropSet v10, v12 key="only" mode=Strict
+    Branch v11 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="only" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+function f3 name="never" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+# CHECK: f0 size 20 mass 55.000000: f1*1.000000
+# CHECK-NOT: *
+# CHECK: host: f0*1.000000 f2*1.000000 f3*1.000000
+# CLASSES: f0 size 20: f1*1.000000
+# CLASSES-NOT: *
+# CLASSES: host: f0*1.000000 f2*10.000000 f3*1.000000
+# CLASSES-NEXT: unknown:
+# CLASSES-NEXT: activations:
+# NOFLOW: host: f0*1.000000 f1*1.000000 f4*1.000000
+# NOFLOW-NEXT: unknown:
+# NOFLOW-NEXT: activations:
+# NOFLOW: f2 0.000000
+# NOFLOW-NEXT: f3 0.000000
+# NOFLOWCLASSES: host: f0*10.000000 f1*10.000000 f2*10.000000 f4*10.000000
+# NOFLOWCLASSES-NEXT: unknown:
+# NOFLOWCLASSES-NEXT: activations:
+# NOFLOWCLASSES: f3 0.000000

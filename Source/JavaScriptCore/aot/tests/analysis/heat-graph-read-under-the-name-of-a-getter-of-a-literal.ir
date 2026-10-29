@@ -1,0 +1,51 @@
+# above = { get lazy() {}, set lazy(value) {} }  unknown = hand(above)  unknown()  for (..) { unknown.lazy; unknown.lazy = 1 }
+# An accessor that a literal defines is no member of a class: a read or a store under its name does not enter it.
+# A call of a value nobody knows reaches it, and the host enters it once
+# FORM: AsRead
+# RUN: heat-graph flow
+# RUN(CLASSES): heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Above" fields=[{key="lazy" declared={type=anything} flags=[IsRequired] form=[IsAccessor]}]
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hand" [isFreeName]
+    v2 = NewObject layout=L0 fields=[]
+    v3 = NewClosure function=f1
+    DefineGetter v2, v3 key="lazy"
+    v5 = NewClosure function=f2
+    DefineSetter v2, v5 key="lazy"
+    v7 = FinishObject v2
+    v8 = Call v1, -, v7
+    v9 = Call v8, -
+    v10 = ToBoolean v1
+    v11 = Integer integer=1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = PropGet v8 key="lazy"
+    PropSet v8, v11 key="lazy" mode=Strict
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="lazy" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+function f2 name="lazy" kind=Setter flags=[HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+    Return
+}
+# CHECK: f0 size 19 mass 63.000000: unknown*1.000000
+# CHECK-NOT: *
+# CHECK: host: f0*1.000000 f1*1.000000 f2*1.000000
+# CHECK-NEXT: unknown:
+# CHECK-NEXT: activations:
+# CLASSES: f0 size 19: unknown*1.000000
+# CLASSES-NOT: *
+# CLASSES: host: f0*1.000000 f1*1.000000 f2*1.000000
+# CLASSES-NEXT: unknown:
+# CLASSES-NEXT: activations:

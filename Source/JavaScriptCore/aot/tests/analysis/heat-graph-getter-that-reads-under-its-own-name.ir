@@ -1,0 +1,56 @@
+# class Holder { get lone() { return this.inner.lone } get inner() {} }  unknown = hand(new Holder())  for (..) unknown.inner
+# What a getter reads under its own name does not say that anything else enters the getter: nothing else reads under `lone`, and the host enters it once.
+# The read under `lone` in its body, and the read of the loop, may enter `inner`
+# FORM: AsRead
+# RUN: heat-graph flow
+# RUN(CLASSES): heat-graph flow classes
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Holder" constructor=f1
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hand" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f2
+    DefineMethod v3, v4 layout=L0 methodKind=Getter key="lone"
+    v6 = NewClosure function=f3
+    DefineMethod v3, v6 layout=L0 methodKind=Getter index=1 key="inner"
+    v8 = FinishClass v3 layout=L0
+    v9 = Construct v8
+    v10 = Call v1, -, v9
+    v11 = ToBoolean v1
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v13 = PropGet v10 key="inner"
+    Branch v11 -> taken b2(), notTaken b3()
+  b2():
+    Jump -> next b1()
+  b3():
+    Return
+}
+function f1 name="Holder" kind=BaseConstructor flags=[HasNewTarget] results=[{type=anything}] {
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    Return v2
+}
+function f2 name="lone" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="inner"
+    v2 = PropGet v1 key="lone"
+    Return v2
+}
+function f3 name="inner" kind=Getter flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+    Return
+}
+# CHECK: f2 size 3 mass 3.000000: f3*1.000000
+# CHECK-NOT: *
+# CHECK: host: f0*1.000000 f2*1.000000 f3*1.000000
+# CLASSES: f2 size 3: f3*1.000000
+# CLASSES-NOT: *
+# CLASSES: host: f0*1.000000 f2*1.000000 f3*10.000000
+# CLASSES-NEXT: unknown:
+# CLASSES-NEXT: activations:
