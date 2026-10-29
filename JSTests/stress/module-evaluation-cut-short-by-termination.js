@@ -157,5 +157,31 @@ cutShortInside("top-level await", "tla-spin", (directory) => ({
     },
 }));
 
+// 6. An import() joins the evaluation: the body calls import() of its own module and lets that job run, so the job
+// waits for the capability of the evaluation. The evaluation is the first read of a deferred namespace and not a job,
+// so the termination does not take the queue, and the import() is settled with the capability.
+cutShortInside("joined import()", "joined-spin", (directory) => {
+    let namespace;
+    import.defer(directory + "joined-spin.js").then((value) => { namespace = value; });
+    drainMicrotasks();
+    let joined = "not made";
+    cutShort.join = () => {
+        joined = "pending";
+        import(directory + "joined-spin.js").then(() => { joined = "fulfilled"; }, (error) => { joined = "rejected with " + describe(error); });
+        drainMicrotasks();
+    };
+    return {
+        start() {
+            namespace.before;
+        },
+        check() {
+            drainMicrotasks();
+            shouldBe(joined, "rejected with null", "joined import(): the import() that the body made");
+            shouldBe(outcome(import(directory + "joined-spin.js")), "rejected with null", "joined import(): a later import()");
+            shouldBe(cutShort.log.join(), "joined-spin", "joined import(): no body ran afterwards");
+        },
+    };
+});
+
 if (failures.length)
     throw new Error(`${failures.length} failed:\n` + failures.join("\n"));

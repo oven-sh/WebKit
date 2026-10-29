@@ -532,8 +532,8 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
 NEVER_INLINE void CyclicModuleRecord::setEvaluationError(VM& vm, JSValue error)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    // The embedder can withdraw a termination (VM::cancelTermination) and run script again, so the value of a pending
-    // termination never becomes the error of a module. Like V8, record null.
+    // Script can run again after a termination: an embedder withdraws it (VM::cancelTermination), and the shell goes
+    // on to its next file. So the value of a pending termination never becomes the error of a module. Like V8, record null.
     if (vm.hasPendingTerminationException() && error == vm.terminationException()->value()) [[unlikely]]
         error = jsNull();
 #endif
@@ -652,10 +652,11 @@ JSPromise* CyclicModuleRecord::evaluate(JSGlobalObject* globalObject)
             cyclic->setEvaluationError(vm, exception->value());
         }
 #if USE(BUN_JSC_ADDITIONS)
-        // A termination cannot reject the capability that this call made, so the module does not keep it: the next
-        // Evaluate() makes a rejected one. The error of the modules is null (setEvaluationError).
+        // For a termination the error of the modules is null (setEvaluationError), and the capability is rejected with
+        // the same null. Step 9.d cannot do that: it takes the exception off the VM, and a termination stays there.
+        // The rejection is handled, so that no rejection tracker runs while the termination is pending.
         if (vm.isTerminationException(exception)) [[unlikely]] {
-            module->m_topLevelCapability.clear();
+            capability->rejectAsHandled(vm, jsNull());
             RELEASE_AND_RETURN(scope, nullptr);
         }
 #endif
